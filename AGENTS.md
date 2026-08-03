@@ -21,9 +21,12 @@ cargo build --workspace
 # Run the whole test suite.
 cargo test --workspace
 
-# Run one crate only (crates are core and compute today).
+# Run one crate only (crates are core, compute, invocation, and selection
+# today).
 cargo test -p core
 cargo test -p compute
+cargo test -p invocation
+cargo test -p selection
 
 # Formatting check (must stay clean; enforced in verification).
 cargo fmt --check
@@ -35,9 +38,13 @@ cargo fmt
 cargo clippy --workspace --tests
 ```
 
-The shared foundation crate is named `core` and the compute crate is `compute`.
-Add each new crate directory to the `members` list in the root `Cargo.toml` as
-it lands, and keep the member list in sync with the directories under
+The shared foundation crate is named `core`, the compute crate is `compute`,
+the argument-translation crate is `invocation`, and the candidate-selection
+crate is `selection`. A process-entry-point crate (reserved name:
+`entrypoint`) is planned for a later slice, once ownership of the process
+surface is settled; it does not exist yet and is not a workspace member.
+Add each new crate directory to the `members` list in the root `Cargo.toml`
+as it lands, and keep the member list in sync with the directories under
 `crates/`.
 
 ## Gotchas
@@ -80,6 +87,20 @@ it lands, and keep the member list in sync with the directories under
   public runtime configuration with its allowed value sets and builder.
 - `crates/compute`: destination-selected compute strategy skeleton. Concrete
   forward-pass and attention compute land in later slices.
+- `crates/invocation`: pure translation of command-line argument tokens into
+  a validated invocation request, a help short-circuit, or one of six typed
+  failures, plus usage-text rendering and the pure outcome-to-exit-status and
+  outcome-to-stream routing decisions. Performs no filesystem, environment,
+  or process I/O.
+- `crates/selection`: candidate selection from a per-candidate score vector
+  under a validated shaping configuration (temperature, top-k, top-p,
+  repetition penalty, seed), an accumulated history, and a step position.
+  Numeric parity with any upstream implementation is out of scope; only the
+  observable contract is exercised.
+- `crates/entrypoint` (reserved, not yet created): the process entry point
+  that will read raw argument tokens, call `invocation`, and apply the
+  returned exit status and stream routing. Blocked pending a decision on
+  which unit owns the process surface; see the implementation plan.
 
 ## Verification policy
 

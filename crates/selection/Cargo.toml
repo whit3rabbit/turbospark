@@ -1,0 +1,15 @@
+[package]
+name = "selection"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Candidate selection: shaping configuration and the deterministic-or-randomized draw."
+
+[lib]
+name = "selection"
+path = "src/lib.rs"
+
+[dependencies]
+# Aliased so references are not confused with the standard library `core`.
+foundation = { package = "core", path = "../core" }
