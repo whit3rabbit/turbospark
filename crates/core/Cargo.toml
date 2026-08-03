@@ -1,0 +1,15 @@
+[package]
+name = "core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Shared primitives and public runtime configuration."
+
+[lib]
+name = "core"
+path = "src/lib.rs"
+
+[dependencies]
+# Half-precision (IEEE-754 binary16) logits. MIT OR Apache-2.0.
+half = "2"

@@ -1,0 +1,11 @@
+[workspace]
+resolver = "2"
+members = ["crates/core", "crates/compute"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.82"
+license = "MIT"
+authors = ["Clean-room implementation"]
+description = "Behavior-compatible Rust implementation of an approved local inference engine and its command-line surface."

@@ -1,0 +1,11 @@
+[package]
+name = "compute"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Destination-selected compute strategy for the model forward pass."
+
+[dependencies]
+# Aliased so references are not confused with the standard library `core`.
+foundation = { package = "core", path = "../core" }

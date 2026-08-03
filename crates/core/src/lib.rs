@@ -1,0 +1,17 @@
+//! Core leaf crate: shared primitives and the public runtime configuration.
+//!
+//! Downstream crates should depend on this crate under an alias, for example
+//! `foundation = { package = "core", path = "../core" }`, so that references
+//! to it are not confused with the standard library `core` crate in the
+//! extern prelude.
+
+pub mod error;
+pub mod primitives;
+pub mod runtime_config;
+
+pub use error::Error;
+pub use primitives::{LogitValue, LogitsView, TokenId};
+pub use runtime_config::{
+    AttentionStrategy, CacheReplacement, HeadProjection, RuntimeConfig, RuntimeConfigBuilder,
+    ALLOWED_CACHE_SLOTS, ALLOWED_CHUNK_SIZES, DEFAULT_CACHE_SLOTS, DEFAULT_CHUNK_SIZE,
+};
