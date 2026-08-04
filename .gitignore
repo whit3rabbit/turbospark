@@ -1,2 +1,5 @@
 # Cargo build output (large, fully derived from sources).
 /target
+
+# macOS Finder metadata.
+.DS_Store

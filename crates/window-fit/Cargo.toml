@@ -1,0 +1,11 @@
+[package]
+name = "window-fit"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Pure, deterministic conversation-window fitting."
+
+[lib]
+name = "window_fit"
+path = "src/lib.rs"

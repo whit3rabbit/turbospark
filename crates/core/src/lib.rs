@@ -5,10 +5,12 @@
 //! to it are not confused with the standard library `core` crate in the
 //! extern prelude.
 
+pub mod chunk_sizing;
 pub mod error;
 pub mod primitives;
 pub mod runtime_config;
 
+pub use chunk_sizing::{resolve_automatic_chunk_size, InputLength};
 pub use error::Error;
 pub use primitives::{LogitValue, LogitsView, TokenId};
 pub use runtime_config::{

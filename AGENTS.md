@@ -21,12 +21,13 @@ cargo build --workspace
 # Run the whole test suite.
 cargo test --workspace
 
-# Run one crate only (crates are core, compute, invocation, and selection
-# today).
+# Run one crate only (crates are core, compute, invocation, selection, and
+# window-fit today).
 cargo test -p core
 cargo test -p compute
 cargo test -p invocation
 cargo test -p selection
+cargo test -p window-fit
 
 # Formatting check (must stay clean; enforced in verification).
 cargo fmt --check
@@ -63,7 +64,10 @@ as it lands, and keep the member list in sync with the directories under
    validate the value first, or contain the panic with
    `std::panic::catch_unwind`. The allowed sets are exposed as the const arrays
    in `crates/core/src/runtime_config.rs`; read from them rather than
-   re-hardcoding the literals.
+   re-hardcoding the literals. Automatic chunk-size resolution (the
+   three-state rule that turns an unknown-or-known input length into one
+   concrete allowed chunk size) lives in `crates/core/src/chunk_sizing.rs`
+   and reads the same allowed-set constants; it does not redeclare them.
 
 3. The half-precision logit element is backed by the maintained `half` crate
    (version 2, MIT OR Apache-2.0) because the native `f16` type is unstable on
@@ -97,6 +101,13 @@ as it lands, and keep the member list in sync with the directories under
   repetition penalty, seed), an accumulated history, and a step position.
   Numeric parity with any upstream implementation is out of scope; only the
   observable contract is exercised.
+- `crates/window-fit`: pure, deterministic conversation-window fitting.
+  Drops the oldest eligible turns from a conversation, using a
+  caller-supplied whole-conversation length measurement, until the
+  measured length is under a caller-supplied bound or nothing eligible
+  remains. An optional leading instruction turn and the newest turn are
+  never removed. Performs no input or output and holds no state between
+  calls.
 - `crates/entrypoint` (reserved, not yet created): the process entry point
   that will read raw argument tokens, call `invocation`, and apply the
   returned exit status and stream routing. Blocked pending a decision on
