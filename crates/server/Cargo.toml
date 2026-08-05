@@ -1,0 +1,30 @@
+[package]
+name = "mrefrust-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "OpenAI-compatible Chat Completions server on loopback: request/response envelopes, SSE streaming framing, and the axum router, wired to the raw-completion loop."
+
+[lib]
+name = "mrefrust_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "mference-server"
+path = "src/main.rs"
+
+[dependencies]
+foundation = { package = "mrefrust-core", path = "../core" }
+runtime = { package = "mrefrust-runtime", path = "../runtime" }
+selection = { package = "mrefrust-selection", path = "../selection" }
+tokenizer = { package = "mrefrust-tokenizer", path = "../tokenizer" }
+axum = { version = "0.7", features = ["json"] }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "macros", "sync"] }
+tokio-stream = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+futures = "0.3"
+
+[dev-dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

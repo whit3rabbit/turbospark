@@ -3,3 +3,9 @@
 
 # macOS Finder metadata.
 .DS_Store
+
+# AI
+CLAUDE.md
+CLAUDE.local.md
+ROADMAP.md
+.syntext/

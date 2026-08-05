@@ -1,0 +1,20 @@
+[package]
+name = "mrefrust-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "The mference-check process entry point: reads argv, calls the invocation crate, applies its exit-status/stream-routing decisions, and prints the resolved request. No model loading yet (see AGENTS.md)."
+
+[[bin]]
+name = "mference-check"
+path = "src/main.rs"
+
+[dependencies]
+invocation = { package = "mrefrust-invocation", path = "../invocation" }
+runtime = { package = "mrefrust-runtime", path = "../runtime" }
+selection = { package = "mrefrust-selection", path = "../selection" }
+tokenizer = { package = "mrefrust-tokenizer", path = "../tokenizer" }
+repack = { package = "mrefrust-repack", path = "../repack" }
+model_io = { package = "mrefrust-model-io", path = "../model-io" }
+serde_json = "1"

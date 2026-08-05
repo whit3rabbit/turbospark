@@ -1,11 +1,9 @@
 //! Integration tests for automatic chunk-size resolution.
 //!
-//! The core crate is referenced by its package name `core`; within this
-//! integration test crate the path `core::` resolves to the dependency
-//! because there is no conflicting `extern crate core` here.
+//! The core crate is referenced by its package name `mrefrust-core` (`mrefrust_core`).
 
-use core::chunk_sizing::{resolve_automatic_chunk_size, InputLength};
-use core::runtime_config::{ALLOWED_CHUNK_SIZES, DEFAULT_CHUNK_SIZE};
+use mrefrust_core::chunk_sizing::{resolve_automatic_chunk_size, InputLength};
+use mrefrust_core::runtime_config::{ALLOWED_CHUNK_SIZES, DEFAULT_CHUNK_SIZE};
 
 #[test]
 fn a_request_made_before_the_length_is_known_uses_the_fixed_default() {

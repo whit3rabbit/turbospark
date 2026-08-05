@@ -1,0 +1,17 @@
+[package]
+name = "mrefrust-bench"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Throughput benchmark harness: three fixed prompts, fixed seeds, a discarded warmup run per prompt, driven through the raw-completion loop."
+
+[[bin]]
+name = "mference-bench"
+path = "src/main.rs"
+
+[dependencies]
+foundation = { package = "mrefrust-core", path = "../core" }
+runtime = { package = "mrefrust-runtime", path = "../runtime" }
+selection = { package = "mrefrust-selection", path = "../selection" }
+tokenizer = { package = "mrefrust-tokenizer", path = "../tokenizer" }

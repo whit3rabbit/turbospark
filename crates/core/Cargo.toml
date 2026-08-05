@@ -1,5 +1,5 @@
 [package]
-name = "core"
+name = "mrefrust-core"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -7,7 +7,7 @@ license.workspace = true
 description = "Shared primitives and public runtime configuration."
 
 [lib]
-name = "core"
+name = "mrefrust_core"
 path = "src/lib.rs"
 
 [dependencies]

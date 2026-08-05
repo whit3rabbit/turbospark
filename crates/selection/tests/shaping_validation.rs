@@ -4,7 +4,7 @@
 //! configuration is rejected at construction time with a distinguishable
 //! descriptive error, and no selection is attempted.
 
-use selection::ShapingConfig;
+use mrefrust_selection::ShapingConfig;
 
 #[test]
 fn non_finite_or_negative_temperature_is_rejected() {

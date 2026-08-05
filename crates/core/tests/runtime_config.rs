@@ -2,10 +2,9 @@
 //!
 //! Covers foundation scenarios test-005, test-006, test-007, test-008, and the
 //! value-set edge case. The core crate is referenced by its package name
-//! `core`; within this integration test crate the path `core::` resolves to
-//! the dependency because there is no conflicting `extern crate core` here.
+//! `mrefrust-core` (`mrefrust_core`).
 
-use core::runtime_config::{
+use mrefrust_core::runtime_config::{
     AttentionStrategy, CacheReplacement, HeadProjection, RuntimeConfig, RuntimeConfigBuilder,
     ALLOWED_CACHE_SLOTS, ALLOWED_CHUNK_SIZES, DEFAULT_CACHE_SLOTS, DEFAULT_CHUNK_SIZE,
 };
@@ -137,7 +136,7 @@ fn non_default_overrides_round_trip_through_getters() {
 
 #[test]
 fn primitives_are_re_exported_with_documented_widths() {
-    use core::{LogitValue, LogitsView, TokenId};
+    use mrefrust_core::{LogitValue, LogitsView, TokenId};
 
     let id: TokenId = 0;
     let logit: LogitValue = LogitValue::from_bits(0);

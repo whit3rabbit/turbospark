@@ -1,0 +1,141 @@
+//! `model_weights.bin`'s leading index region: a fixed header followed by a
+//! fixed-width entry table and a string table. Ported from
+//! `Infrastructure/ModelIO/ResidentIndex.swift`.
+
+use std::collections::HashMap;
+use std::io::Read;
+use std::path::Path;
+
+use crate::error::ModelError;
+
+pub const HEADER_BYTES: usize = 24;
+pub const ENTRY_BYTES: usize = 72;
+
+/// `indexSize` is the full byte size of the leading index region: it
+/// INCLUDES the header itself, the entry table, the string table, and the
+/// writer's page padding. The resident tensor region starts at file byte
+/// `index_size`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResidentIndexHeader {
+    pub index_size: u64,
+    pub resident_size: u64,
+    pub entry_count: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResidentIndexEntry {
+    pub name: String,
+    pub dtype: u8,
+    /// Absolute file offset of the packed weight bytes (>= `index_size`).
+    pub file_offset: u64,
+    pub size_bytes: u64,
+    pub shape: (u32, u32, u32, u32),
+    pub scale_offset: u64,
+    pub scale_size: u64,
+    pub bias_offset: u64,
+    pub bias_size: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResidentIndex {
+    pub header: ResidentIndexHeader,
+    pub entries: HashMap<String, ResidentIndexEntry>,
+}
+
+fn corrupt(detail: impl Into<String>) -> ModelError {
+    ModelError::IndexCorrupt {
+        detail: detail.into(),
+    }
+}
+
+/// Read the header + index region out of `model_weights.bin`. The tensor
+/// data region (starting at byte `header.index_size`) is not read here.
+pub fn load(file_path: &Path) -> Result<ResidentIndex, ModelError> {
+    let mut file = std::fs::File::open(file_path).map_err(|e| ModelError::IoFailed {
+        call: "open".to_string(),
+        detail: e.to_string(),
+    })?;
+
+    let mut header_buf = [0u8; HEADER_BYTES];
+    file.read_exact(&mut header_buf)
+        .map_err(|_| corrupt("short read for IndexHeader"))?;
+    let header = ResidentIndexHeader {
+        index_size: u64::from_le_bytes(header_buf[0..8].try_into().unwrap()),
+        resident_size: u64::from_le_bytes(header_buf[8..16].try_into().unwrap()),
+        entry_count: u64::from_le_bytes(header_buf[16..24].try_into().unwrap()),
+    };
+
+    if header.index_size < HEADER_BYTES as u64 {
+        return Err(corrupt(format!(
+            "indexSize {} < header size {HEADER_BYTES}",
+            header.index_size
+        )));
+    }
+    let expected_entry_table_end = HEADER_BYTES as u64 + header.entry_count * ENTRY_BYTES as u64;
+    if expected_entry_table_end > header.index_size {
+        return Err(corrupt(format!(
+            "header+entries ({expected_entry_table_end}) > indexSize {}",
+            header.index_size
+        )));
+    }
+
+    let region_len = header.index_size as usize;
+    let mut index_buf = vec![0u8; region_len];
+    {
+        use std::io::Seek;
+        file.seek(std::io::SeekFrom::Start(0))
+            .map_err(|e| ModelError::IoFailed {
+                call: "seek".to_string(),
+                detail: e.to_string(),
+            })?;
+    }
+    file.read_exact(&mut index_buf)
+        .map_err(|_| corrupt("short read for index region"))?;
+
+    let mut entries = HashMap::with_capacity(header.entry_count as usize);
+    for i in 0..header.entry_count as usize {
+        let base = HEADER_BYTES + i * ENTRY_BYTES;
+        let p = &index_buf[base..base + ENTRY_BYTES];
+        let name_offset = u32::from_le_bytes(p[0..4].try_into().unwrap()) as usize;
+        let name_length = u16::from_le_bytes(p[4..6].try_into().unwrap()) as usize;
+        let dtype = p[6];
+        // byte 7 reserved
+        let file_offset = u64::from_le_bytes(p[8..16].try_into().unwrap());
+        let size_bytes = u64::from_le_bytes(p[16..24].try_into().unwrap());
+        let s0 = u32::from_le_bytes(p[24..28].try_into().unwrap());
+        let s1 = u32::from_le_bytes(p[28..32].try_into().unwrap());
+        let s2 = u32::from_le_bytes(p[32..36].try_into().unwrap());
+        let s3 = u32::from_le_bytes(p[36..40].try_into().unwrap());
+        let scale_offset = u64::from_le_bytes(p[40..48].try_into().unwrap());
+        let scale_size = u64::from_le_bytes(p[48..56].try_into().unwrap());
+        let bias_offset = u64::from_le_bytes(p[56..64].try_into().unwrap());
+        let bias_size = u64::from_le_bytes(p[64..72].try_into().unwrap());
+
+        if name_offset < HEADER_BYTES || name_offset + name_length > region_len {
+            return Err(corrupt(format!(
+                "entry {i} name range [{name_offset}, {}) out of index region [{HEADER_BYTES}, {region_len})",
+                name_offset + name_length
+            )));
+        }
+        let name = String::from_utf8_lossy(&index_buf[name_offset..name_offset + name_length])
+            .into_owned();
+
+        let entry = ResidentIndexEntry {
+            name: name.clone(),
+            dtype,
+            file_offset,
+            size_bytes,
+            shape: (s0, s1, s2, s3),
+            scale_offset,
+            scale_size,
+            bias_offset,
+            bias_size,
+        };
+        if entries.contains_key(&name) {
+            return Err(corrupt(format!("duplicate tensor name {name}")));
+        }
+        entries.insert(name, entry);
+    }
+
+    Ok(ResidentIndex { header, entries })
+}

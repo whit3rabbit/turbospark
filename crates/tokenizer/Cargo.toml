@@ -1,0 +1,19 @@
+[package]
+name = "mrefrust-tokenizer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Tokenizer wrapper, chat-template rendering, streaming detokenizer, and tool-call parsing for the supported model dialects."
+
+[lib]
+name = "mrefrust_tokenizer"
+path = "src/lib.rs"
+
+[dependencies]
+foundation = { package = "mrefrust-core", path = "../core" }
+tokenizers = { version = "0.20", default-features = false, features = ["onig"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+minijinja = { version = "2", features = ["json"] }
+minijinja-contrib = { version = "2", features = ["pycompat"] }

@@ -6,7 +6,7 @@
 //! (obl-select-edge-001, obl-select-edge-002).
 
 use foundation::{LogitValue, LogitsView, TokenId};
-use selection::{select, ShapingConfig};
+use mrefrust_selection::{select, ShapingConfig};
 
 fn logits(values: &[f32]) -> Vec<LogitValue> {
     values.iter().map(|&v| LogitValue::from_f32(v)).collect()

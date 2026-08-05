@@ -4,7 +4,7 @@
 //! Corresponds to behavior-spec test-020, test-021, test-022, test-023, and
 //! test-024.
 
-use invocation::{parse, ParseFailure, ParseOutcome};
+use mrefrust_invocation::{parse, ParseFailure, ParseOutcome};
 
 fn tok(items: &[&str]) -> Vec<String> {
     items.iter().map(|s| s.to_string()).collect()

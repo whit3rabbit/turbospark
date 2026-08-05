@@ -1,0 +1,25 @@
+[package]
+name = "mrefrust-runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "The raw-completion prefill+decode loop: wires a LogitProducer, the tokenizer, and the selection sampler into one token generation loop."
+
+[lib]
+name = "mrefrust_runtime"
+path = "src/lib.rs"
+
+[dependencies]
+foundation = { package = "mrefrust-core", path = "../core" }
+selection = { package = "mrefrust-selection", path = "../selection" }
+tokenizer = { package = "mrefrust-tokenizer", path = "../tokenizer" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+gpu = { package = "mrefrust-gpu", path = "../gpu" }
+model_io = { package = "mrefrust-model-io", path = "../model-io" }
+compute = { package = "mrefrust-compute", path = "../compute" }
+half = "2"
+
+[dev-dependencies]
+mrefrust-repack = { path = "../repack" }

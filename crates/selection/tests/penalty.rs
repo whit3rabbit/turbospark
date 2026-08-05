@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 
 use foundation::{LogitValue, LogitsView, TokenId};
-use selection::{select, ShapingConfig};
+use mrefrust_selection::{select, ShapingConfig};
 
 fn logits(values: &[f32]) -> Vec<LogitValue> {
     values.iter().map(|&v| LogitValue::from_f32(v)).collect()

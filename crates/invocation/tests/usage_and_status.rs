@@ -3,9 +3,9 @@
 //! Corresponds to behavior-spec test-006 (obl-parse-006) and the
 //! diagnostic-surface obligation obl-parse-diag-001.
 
-use invocation::diagnostics::{exit_status, stream_routing, ExitStatus};
-use invocation::options::OPTIONS;
-use invocation::{parse, render_usage, ParseOutcome};
+use mrefrust_invocation::diagnostics::{exit_status, stream_routing, ExitStatus};
+use mrefrust_invocation::options::OPTIONS;
+use mrefrust_invocation::{parse, render_usage, ParseOutcome};
 
 fn tok(items: &[&str]) -> Vec<String> {
     items.iter().map(|s| s.to_string()).collect()

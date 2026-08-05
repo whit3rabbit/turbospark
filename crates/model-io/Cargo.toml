@@ -1,0 +1,18 @@
+[package]
+name = "mrefrust-model-io"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Model install layout: manifest/arch validation, packed-expert layout, resident tensor index, SHA-256 verification, and the trusted install receipt."
+
+[lib]
+name = "mrefrust_model_io"
+path = "src/lib.rs"
+
+[dependencies]
+foundation = { package = "mrefrust-core", path = "../core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+memmap2 = "0.9"
