@@ -952,6 +952,7 @@ dependencies = [
 name = "mrefrust-bench"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "mrefrust-core",
  "mrefrust-repack",
  "mrefrust-runtime",

@@ -38,6 +38,25 @@ impl std::fmt::Display for GpuError {
 
 impl std::error::Error for GpuError {}
 
+/// Runs `f` inside an Objective-C autorelease pool.
+///
+/// Not optional bookkeeping -- a correctness requirement for any loop that
+/// encodes work repeatedly. `MTLCommandQueue.commandBuffer` and
+/// `MTLCommandBuffer.computeCommandEncoder` return AUTORELEASED objects:
+/// the `metal` crate's `to_owned()` adds our own retain, and dropping the
+/// wrapper drops it, but the pool's retain lives until the pool drains.
+/// Swift drains one per run-loop turn; a plain Rust binary has exactly one
+/// pool, around `main`, so without an inner pool every command buffer and
+/// encoder the process ever created stays alive until exit.
+///
+/// Measured cost of getting this wrong on the real Gemma 4 install: ~6 KiB
+/// per command buffer, 31 command buffers per token, ~180 KiB per decoded
+/// token, growing without bound. `crates/bench/tests/memory_oracle.rs`'s
+/// steady-state guard is what catches a regression here.
+pub fn autorelease_pool<R>(f: impl FnOnce() -> R) -> R {
+    metal::objc::rc::autoreleasepool(f)
+}
+
 /// Owns the Metal device and command queue, and caches one
 /// [`ComputePipelineState`] per (library source, function name) pair so
 /// repeated dispatches of the same kernel skip recompilation.

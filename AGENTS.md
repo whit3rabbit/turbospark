@@ -66,6 +66,36 @@ cargo run -p mrefrust-server --bin mference-server -- <tokenizer-dir> [port]
 cargo run -p mrefrust-bench --bin mference-bench -- <tokenizer-dir>
 ```
 
+### Real-model smoke (needs the pinned install)
+
+`mference-check` only runs a real forward pass in `--prompt` mode.
+`--messages-file` and `--chat` parse, print the resolved request, and stop
+(no chat-template wiring yet -- see `DEVIATIONS.md`). Passing a
+messages file and reading the "note:" line as output is the fastest way to
+waste an afternoon, so: apply the chat template yourself and pass it as a
+prompt. An instruction-tuned model given a bare prompt babbles; that is the
+template missing, not a decode bug.
+
+```sh
+cargo build --release -p mrefrust-cli
+
+# Gemma 4 turn markup, greedy. Coherent English or the flow is broken.
+P=$'<|turn>user\nExplain how coastal wetlands reduce flood damage.<turn|>\n<|turn>model\n<|channel>thought\n<channel|>'
+./target/release/mference-check --model ~/models/gemma4.gturbo \
+  --prompt "$P" --max-new 400 --seed 1 --temperature 0.0001 --top-k 1
+
+# SAMPLED, at the CLI defaults (T=0.2, top-k 64, top-p 0.95). Run this too:
+# greedy is argmax and survives whole classes of distribution bugs that
+# sampling does not (see Gotcha 13).
+./target/release/mference-check --model ~/models/gemma4.gturbo \
+  --prompt "$P" --max-new 400 --seed 20260721
+
+# Peak phys_footprint vs the design's own static accounting, plus the
+# steady-state leak guard (Gotcha 14).
+MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
+  cargo test -p mrefrust-bench --test memory_oracle --release -- --ignored --nocapture
+```
+
 Add each new crate directory to the `members` list in the root `Cargo.toml`
 as it lands, and keep the member list in sync with the directories under
 `crates/`.
@@ -129,7 +159,7 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
    (`rmsnorm_no_scale`, `rms_norm_bf16w`, both `_perhead` norm variants,
    `rope_proportional_neox` (which with `rotated_pairs = head_dim/2` IS
    default full-head NeoX -- no separate default-rope wrapper exists),
-   `logit_softcap_softmax`, `dequant_int4_gemv_simd`, `dequant_int8_gemv_simd`
+   the port-local `logit_softcap_fp16`, `dequant_int4_gemv_simd`, `dequant_int8_gemv_simd`
    (both with offset-bound resident variants), `router_gemv_gemma4_r4`,
    two-pass split-KV `attention_decode`, `moe_decode` decode pair, and
    `utility` elementwise kernels including the port-local `scalar_mul_fp16`)
@@ -214,6 +244,61 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     trained, so generated tokens are structurally real but semantically
     meaningless.
 
+13. **`LogitProducer::produce` writes LOGITS, never probabilities.**
+    `selection::select` softmaxes whatever it is handed. A producer that
+    also normalizes makes it `softmax(softmax(z))`, which over V=262144
+    collapses to near-uniform: top-p/top-k still rank correctly (softmax is
+    monotone) but the temperature reweight is destroyed, so sampling
+    degenerates into a coin flip among the surviving top-k. GREEDY LOOKS
+    FINE THROUGHOUT -- `argmax` is monotone too -- so a greedy-only smoke
+    test proves nothing here. This bit the Gemma 4 head once: it dispatched
+    the fused `logit_softcap_softmax`, mirroring Swift's kernel, but Swift
+    samples on the GPU from probs while this port samples on the host from
+    logits. The head now dispatches the cap alone
+    (`utility.metal`'s port-local `logit_softcap_fp16`) and returns
+    `softcap * tanh(z / softcap)`, which is also what HF's
+    `*ForCausalLM.forward` returns. Guarded by the softcap-bound assertion
+    in `crates/runtime/tests/real_forward_gemma4.rs` and the
+    does-not-normalize assertion in `crates/gpu/tests/utility_and_pass.rs`.
+    Rule for any new model: decide where the normalization lives ONCE, put
+    it in the sampler, and never in a producer.
+
+14. **Wrap every repeated Metal encode in `gpu::autorelease_pool`.**
+    `MTLCommandQueue.commandBuffer` and
+    `MTLCommandBuffer.computeCommandEncoder` return AUTORELEASED objects.
+    The `metal` crate's `to_owned()` adds our retain and drops it, but the
+    pool's retain survives until the pool drains -- and a plain Rust binary
+    has exactly one pool, around `main`. Without an inner pool every
+    command buffer the process ever created stays alive to exit: measured
+    at ~6 KiB per command buffer, 31 per token, ~180 KiB per decoded token,
+    linear and unbounded. It reads as "memory grows with prompt length"
+    because longer prompts mean more `produce` calls.
+    `RealForwardRunner::produce` opens one pool per token. Any new decode
+    loop, prefill path, or benchmark that encodes in a loop needs the same.
+    Caught by `memory_oracle.rs`'s steady-state guard, not by
+    `gpu_buffer_allocations()` -- these are not our allocations.
+
+15. **`KvCacheManager::new`'s `fp16_ring_enabled` is not cosmetic, and its
+    comment can lie.** Passing `false` gives every sliding-window layer a
+    full `max_context` buffer. On real Gemma 4 (25 SWA layers of 30, 1024
+    window, 4096 context) that is 922 MiB of KV instead of 280 MiB, and it
+    is invisible in output correctness -- a linear layout is simply a ring
+    big enough to never wrap. The runner enables it and passes
+    `ring_capacity(layer)` into `encode_attention_decode`, which
+    specializes `FC_ATTN_RING_CAP` into the pipeline (0 keeps the identity
+    addressing full-attention layers need). When adding a model, derive the
+    ring flag from the layer mask, not from an assumption about the family,
+    and verify with a prompt+generation longer than the ring: coherent text
+    past position `sliding_window + 1` is the proof.
+
+16. **`phys_footprint` counts the resident weight mapping.** A read-only
+    `mmap` on its own would not (clean file-backed pages are excluded), but
+    `newBufferWithBytesNoCopy` makes Metal pin the range. So the honest
+    accounting for an install is `resident weights + KV + expert slot
+    capacity + process baseline`, and `crates/bench/tests/memory_oracle.rs`
+    asserts the peak against exactly that with no slack. Do not "explain"
+    a footprint number by assuming the weights are free.
+
 ## Layout
 
 Update layout as needed:
@@ -289,7 +374,7 @@ crates
 - `crates/gpu`: Metal device/pipeline-cache context and per-kernel dispatch.
   macOS-only; compiles to nothing elsewhere. Multiple kernels
   (`rmsnorm_no_scale`, `rms_norm_bf16w`, `rope_proportional_neox`,
-  `logit_softcap_softmax`, `dequant_int4_gemv_simd`, `dequant_int8_gemv_simd`,
+  `logit_softcap_fp16`, `dequant_int4_gemv_simd`, `dequant_int8_gemv_simd`,
   two-pass split-KV `attention_decode`, `moe_decode` decode pair, and
   `utility` elementwise kernels) are wired end to end and parity-tested against
   the matching `mrefrust_compute` reference on real hardware. `KvCacheManager`
@@ -378,10 +463,22 @@ cargo fmt --check
 cargo clippy --workspace --tests
 ```
 
+Anything that touches the decode path, the output head, the KV cache, or a
+Metal encode loop additionally needs the real-model gates from "Real-model
+smoke" above, all three of them:
+
+1. greedy generation stays coherent (catches broken math),
+2. SAMPLED generation stays coherent (catches distribution bugs that greedy
+   cannot see -- Gotcha 13),
+3. the memory oracle passes (catches allocation and retain bugs that
+   correctness cannot see -- Gotchas 14 to 16).
+
 Numerics parity with any upstream implementation is explicitly out of scope;
 only the structural and configuration contracts are exercised by the tests,
 except where a real CPU-vs-GPU parity test exists (`crates/gpu`'s
 `rms_norm_parity.rs`).
 
 See `DEVIATIONS.md` for the full list of what this port scaffolds versus
-fully implements, and `ROADMAP.md` for phase-by-phase scope.
+fully implements, `ROADMAP.md` for phase-by-phase scope, and
+`docs/NEW_MODEL.md` for the end-to-end checklist for wiring a new model
+family (what to map, what to specialize, what to measure, in order).

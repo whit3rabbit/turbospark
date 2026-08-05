@@ -125,3 +125,26 @@ void scalar_mul_fp16(
     if (tid >= count) return;
     x[tid] = x[tid] * half(scalar);
 }
+
+// Port-local addition (not in the Swift utility.metal): the softcap half of
+// logit.metal's `logit_softcap_softmax`, in place, without the softmax.
+//
+// The Swift original samples on the GPU from softmaxed probs, so its head
+// pairs the cap with a softmax in one kernel. This port samples on the host
+// through `selection::select`, which takes LOGITS and runs its own softmax
+// -- so the head must hand it the softcapped logits (what HF's
+// `Gemma*ForCausalLM.forward` returns) and stop there. Capping with a
+// separate softmax pass would double-softmax and flatten the distribution.
+//
+// FP32 tanh, matching the fused kernel's inline `softcap * tanh(z / softcap)`
+// and `mrefrust_compute::logit_softcap_softmax`'s first step.
+[[kernel, max_total_threads_per_threadgroup(256)]]
+void logit_softcap_fp16(
+    device half*    logits  [[buffer(0)]],
+    constant float& softcap [[buffer(1)]],
+    constant uint&  count   [[buffer(2)]],
+    uint            tid     [[thread_position_in_grid]]
+) {
+    if (tid >= count) return;
+    logits[tid] = half(softcap * tanh(float(logits[tid]) / softcap));
+}

@@ -23,8 +23,16 @@
 //!   h1 = rmsnorm_bf16w(SharedExpertInt8(dense_x), post_ffn_1)
 //!   h2 = rmsnorm_bf16w(moe(routed_x, idx, w), post_ffn_2)
 //!   h += rmsnorm_bf16w(h1 + h2, post_ffn); h *= layer_scalar[L]
-//! logits = int4_gemv(rmsnorm_bf16w(h, model.norm), embed^T)
+//! logits = softcap(int4_gemv(rmsnorm_bf16w(h, model.norm), embed^T))
 //! ```
+//!
+//! The head stops at the softcapped logits (what HF's
+//! `Gemma*ForCausalLM.forward` returns and what `LogitProducer` documents),
+//! not at probabilities: the softmax belongs to `selection::select`, which
+//! runs its own. The Swift original fuses cap+softmax because it samples on
+//! the GPU from probs; doing that here and then handing probs to `select`
+//! softmaxes twice and flattens the distribution to near-uniform over the
+//! surviving top-k.
 //!
 //! Selected by `open()` when the resident index carries the source
 //! checkpoint's verbatim `language_model.` tensor names (what
@@ -500,6 +508,7 @@ impl RealForwardRunner {
                 seq_len,
                 kv_start,
                 attn_scale,
+                self.kv.ring_capacity(layer) as u32,
             )
             .map_err(gpu_err)?;
             encode_gemv_any(
@@ -862,27 +871,28 @@ impl RealForwardRunner {
             (&self.scratch.normed, 0),
             (&self.scratch.logits, 0),
         )?;
-        gpu::encode_logit_softcap_softmax(
-            &mut self.context,
-            &pass,
-            (&self.scratch.logits, 0),
-            (&self.scratch.probs, 0),
-            vocab as u32,
-            arch.final_logit_softcap as f32,
-        )
-        .map_err(gpu_err)?;
+        if arch.final_logit_softcap > 0.0 {
+            gpu::encode_logit_softcap(
+                &mut self.context,
+                &pass,
+                (&self.scratch.logits, 0),
+                arch.final_logit_softcap as f32,
+                vocab as u32,
+            )
+            .map_err(gpu_err)?;
+        }
         pass.commit_and_wait();
         self.kv.advance();
 
-        let probs16 = gpu::read_buffer_f16(&self.scratch.probs, 0, vocab);
-        if probs16.len() != logits.len() {
+        let head = gpu::read_buffer_f16(&self.scratch.logits, 0, vocab);
+        if head.len() != logits.len() {
             return Err(RealForwardError::Unsupported(format!(
                 "vocab mismatch: model has {}, caller expected {}",
-                probs16.len(),
+                head.len(),
                 logits.len()
             )));
         }
-        logits.copy_from_slice(&probs16);
+        logits.copy_from_slice(&head);
         Ok(())
     }
 }

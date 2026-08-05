@@ -7,7 +7,7 @@
 //! kernel stack on real Metal hardware. Since the weights are synthetic,
 //! the generated token ids are not semantically meaningful — only the
 //! pipeline (embedding lookup, per-layer projections, RoPE, attention,
-//! FFN, final softcapped-softmax, sampling, detokenization, stop handling)
+//! FFN, final logit softcap, host sampling, detokenization, stop handling)
 //! is real, see `real_forward.rs`'s own module docs and `DEVIATIONS.md`.
 
 use std::path::PathBuf;

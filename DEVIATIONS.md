@@ -95,7 +95,7 @@ live network).
 - **Six kernels, from six of fourteen `.metal` shader files, are vendored
   and dispatched:** `rmsnorm.metal`'s `rmsnorm_no_scale`, `rope.metal`'s
   `rope_proportional_neox` (Gemma 4's proportional NeoX RoPE),
-  `logit.metal`'s `logit_softcap_softmax`, `dequant_int4.metal`'s
+  `utility.metal`'s port-local `logit_softcap_fp16`, `dequant_int4.metal`'s
   `dequant_int4_gemv_simd`, `dequant_int8.metal`'s
   `dequant_int8_gemv_simd`, and `attention.metal`'s two-pass split-KV
   decode attention (`attention_decode_partial` + `attention_decode_combine`,
@@ -172,10 +172,16 @@ live network).
   resident buffer). Sliding-window decode attention works through the
   full `attention_decode_partial` kernel's `kv_start` argument over the
   linear KV layout (parity-tested against the CPU `window` reference in
-  `crates/gpu/tests/attention_swa.rs`); the `attention_decode_gqa_swa_partial`
-  performance variant and the KV ring addressing (`FC_ATTN_RING_CAP`)
-  remain undispatched — with linear layouts sized at `max_context`, the
-  ring is a memory optimization, not a correctness need. `rmsnorm_bf16w`
+  `crates/gpu/tests/attention_swa.rs`). KV ring addressing
+  (`FC_ATTN_RING_CAP`) is dispatched too: `encode_attention_decode` takes a
+  `ring_capacity` and specializes it into the pipeline, and
+  `RealForwardRunner` fills it from `KvCacheManager::ring_capacity`, so
+  sliding-window layers allocate `sliding_window + 1` rows instead of
+  `max_context` (at Gemma 4's 1024 window over a 4096 context, 280 MiB of
+  KV instead of 922 MiB). Parity-tested against the same CPU window
+  reference with K/V folded into a ring, in the same file. The
+  `attention_decode_gqa_swa_partial` performance variant remains
+  undispatched. `rmsnorm_bf16w`
   (learned norm weights) and its per-head siblings are dispatched,
   parity-tested, and fed by the real-checkpoint tensor mapping (see the
   real Gemma 4 pipeline entry below).
@@ -192,6 +198,23 @@ live network).
   documented. `logit.metal`'s fused lm_head GEMV variants
   (`lm_head_greedy_int4_rows_chunk_raw`/`_reduce`) are unported for the
   same reason (no CPU reference).
+- **The output head stops at softcapped LOGITS, not probabilities -- a
+  consequence of the descoped `sample` kernel.** Swift's head hands
+  `Sampler` raw FP16 logits and the sampler runs `logit_softcap_softmax`
+  itself, because its GPU `sample` kernel consumes normalized probs. This
+  port samples on the host through `selection::select`, whose documented
+  input is a *score* vector and which runs its own softmax. So
+  `RealForwardRunner` dispatches the cap alone (`utility.metal`'s
+  port-local `logit_softcap_fp16`) and returns `softcap * tanh(z /
+  softcap)` -- exactly what HF's `Gemma*ForCausalLM.forward` returns, and
+  what `LogitProducer::produce` documents. Net math matches Swift; only
+  the split between producer and sampler moves. Dispatching the fused
+  `logit_softcap_softmax` here instead softmaxes twice: over V=262144 the
+  second pass flattens a peaked distribution to near-uniform over the
+  surviving top-k, which reads as fluent text derailing into word salad
+  after a few dozen tokens. The bound is guarded in
+  `crates/runtime/tests/real_forward_gemma4.rs` and the cap-without-
+  normalization in `crates/gpu/tests/utility_and_pass.rs`.
 - **KV cache, GDN recurrent-state, and DSV4 state managers: all
   implemented and tested against real Metal hardware.** `KvCacheManager`
   (`crates/gpu/src/kv_cache.rs`) allocates real per-layer `metal::Buffer`s
@@ -262,7 +285,7 @@ live network).
   (the K projection is written directly into its cache slot by the GEMV
   and RoPE'd there in place; for `attention_k_eq_v` architectures the K
   buffer is bound as V too, so the V buffers stay untouched), then an FFN
-  stage and a final real GPU `logit_softcap_softmax`
+  stage and a final real GPU `logit_softcap_fp16`
   dispatch. The memory path now matches the Swift original: the whole
   resident region is ONE zero-copy `MTLBuffer` over the mmap
   (`gpu::ResidentGpuWeights`), every projection binds weights/scales/

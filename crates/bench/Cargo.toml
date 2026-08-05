@@ -18,3 +18,7 @@ tokenizer = { package = "mrefrust-tokenizer", path = "../tokenizer" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 repack = { package = "mrefrust-repack", path = "../repack" }
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+# phys_footprint sampling for tests/memory_oracle.rs (proc_pid_rusage).
+libc = "0.2"

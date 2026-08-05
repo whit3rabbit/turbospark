@@ -175,3 +175,35 @@ fn encoded_chain_matches_one_shot_dispatches() {
         assert_eq!(batched[i].to_bits(), step2[i].to_bits(), "i={i}");
     }
 }
+
+#[test]
+fn logit_softcap_matches_the_fused_kernel_cap() {
+    let mut context = MetalContext::new().expect("Metal device");
+    let n = 512usize;
+    let softcap = 30.0f32;
+    // Span the saturating range: the cap only matters where |z| >> softcap.
+    let logits: Vec<f16> = (0..n)
+        .map(|i| f16::from_f32((i as f32 - n as f32 / 2.0) * 1.5))
+        .collect();
+
+    let buf = context.new_buffer_with_data(&to_le(&logits));
+    let pass = context.begin_pass();
+    mrefrust_gpu::encode_logit_softcap(&mut context, &pass, (&buf, 0), softcap, n as u32)
+        .expect("encode");
+    pass.commit_and_wait();
+    let got = read_halfs(&buf, n);
+
+    for i in 0..n {
+        let want = softcap * (logits[i].to_f32() / softcap).tanh();
+        let diff = (got[i].to_f32() - want).abs();
+        assert!(diff < 0.02, "i={i} got {} want {want}", got[i].to_f32());
+        assert!(got[i].to_f32().abs() <= softcap, "i={i} escapes the cap");
+    }
+
+    // The cap alone must NOT normalize: a softmaxed vector would sum to 1.
+    let sum: f32 = got.iter().map(|v| v.to_f32()).sum();
+    assert!(
+        (sum - 1.0).abs() > 0.5,
+        "the softcap kernel must not softmax; got sum {sum}"
+    );
+}

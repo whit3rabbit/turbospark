@@ -123,3 +123,33 @@ pub fn encode_scalar_mul(
     );
     Ok(())
 }
+
+/// `logits[i] = softcap * tanh(logits[i] / softcap)`, in place -- the output
+/// head's final step for architectures with a logit softcap (see the
+/// shader's port-local note on why the cap is dispatched without the
+/// softmax `logit_softcap_softmax` fuses onto it).
+pub fn encode_logit_softcap(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    logits: (&metal::Buffer, u64),
+    softcap: f32,
+    count: u32,
+) -> Result<(), GpuError> {
+    let pipeline = context.pipeline(
+        SOURCE,
+        "logit_softcap_fp16",
+        &FunctionConstantValues::new(),
+        b"",
+    )?;
+    pass.encode_threads_3d(
+        &pipeline,
+        &[(logits.0, 0, logits.1)],
+        &[
+            (crate::bytes::f32_bytes(&softcap), 1),
+            (u32_bytes(&count), 2),
+        ],
+        (grid_for(count), 1, 1),
+        (THREADS_PER_GROUP, 1, 1),
+    );
+    Ok(())
+}

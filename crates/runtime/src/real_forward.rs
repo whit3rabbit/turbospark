@@ -1,10 +1,16 @@
 //! A real (not scripted) [`LogitProducer`]: runs an actual dense
 //! transformer forward pass through the real GPU kernels
 //! `mrefrust_gpu` wires (`rmsnorm_no_scale`, `rope_proportional_neox`,
-//! `dequant_int4_gemv_simd`, `logit_softcap_softmax`, and the two-pass
+//! `dequant_int4_gemv_simd`, `logit_softcap_fp16`, and the two-pass
 //! split-KV decode `attention_decode`) against real, resident,
 //! INT4-affine-quantized weights loaded through `mrefrust_model_io`.
 //! macOS/Metal only, matching `mrefrust_gpu`'s own platform gate.
+//!
+//! Output contract: `produce` writes SOFTCAPPED LOGITS, never
+//! probabilities. `selection::select` runs the softmax; doing it here too
+//! flattens the distribution (see `real_forward_gemma4.rs`'s header for
+//! the full argument and `DEVIATIONS.md` for why the split differs from
+//! Swift's).
 //!
 //! Memory model (matching the Swift original):
 //! - Weights: ONE zero-copy `MTLBuffer` over the mmap of
@@ -15,7 +21,14 @@
 //!   allocated once; the K projection is written directly into its cache
 //!   slot by the GEMV and RoPE'd there in place. `attention_k_eq_v`
 //!   architectures bind the K buffer as V too, so V buffers stay
-//!   untouched (their pages never become resident).
+//!   untouched (their pages never become resident). Sliding-window
+//!   layers ride a ring of `sliding_window + 1` rows, not `max_context`
+//!   -- the runner passes `KvCacheManager::ring_capacity` to the
+//!   attention dispatch, which specializes it into the kernel.
+//! - Autorelease: one pool per token, around `produce`. Command buffers
+//!   and encoders are autoreleased Objective-C objects; without a pool
+//!   they accumulate for the process lifetime (see
+//!   `gpu::autorelease_pool`).
 //! - Dispatch: the whole token is encoded into ONE command buffer with a
 //!   serial compute encoder (`gpu::PassEncoder`) for dense architectures
 //!   — one commit + one wait per token. The FP16 residual stream and all
@@ -45,7 +58,7 @@
 //! a real-checkpoint tensor mapping) — see `DEVIATIONS.md`.
 //!
 //! Full-attention (mask 1) and sliding-window (mask 0, via attention
-//! `kv_start` over the linear KV layout) layers are supported; linear
+//! `kv_start` over a ring-addressed KV layout) layers are supported; linear
 //! (Qwen GDN) and compressed (DeepSeek DSV4) layers are not (their
 //! kernels are unported). FFN may be dense, routed-resident, or
 //! routed-streamed. The synthetic installs in `mrefrust_repack`
@@ -127,7 +140,7 @@ const PACKED_LAYOUT_MAX_BYTES: u64 = 64 * 1024 * 1024;
 /// Activation scratch, allocated once at open (the decode hot path never
 /// allocates a Metal buffer): the FP16 residual stream `x`, the normed /
 /// projection / FFN intermediates, the attention partials, and the final
-/// logits+probs. The whole token chains through these on the GPU inside
+/// logits (softcapped in place). The whole token chains through these on the GPU inside
 /// one (dense) or a few (MoE) command buffers.
 pub(crate) struct DecodeScratch {
     pub(crate) x: gpu::MetalBuffer,
@@ -142,7 +155,6 @@ pub(crate) struct DecodeScratch {
     pub(crate) ffn_out: gpu::MetalBuffer,
     pub(crate) ffn_normed: gpu::MetalBuffer,
     pub(crate) logits: gpu::MetalBuffer,
-    pub(crate) probs: gpu::MetalBuffer,
     /// Router logits (`num_experts` halfs), the per-slot activation rows
     /// (`top_k * moe_inter` halfs), the 8-slot routing-weight vector, and
     /// an all-zero residual (the phase-2 kernel fuses a residual add; the
@@ -179,7 +191,6 @@ impl DecodeScratch {
             ffn_out: halfs(hidden),
             ffn_normed: halfs(hidden),
             logits: halfs(vocab),
-            probs: halfs(vocab),
             router_logits: halfs(arch.num_experts.max(1) as u64),
             // Sized for ALL EIGHT kernel slots, not just top_k, and
             // zero-filled once: moe_phase2_down_reduce_k8 unconditionally
@@ -231,6 +242,28 @@ impl RealForwardRunner {
         self.context.buffer_allocation_count()
     }
 
+    /// The resolved architecture this runner was opened with.
+    pub fn arch(&self) -> &ArchConfig {
+        &self.arch
+    }
+
+    /// Bytes of the `mmap`'d resident weight region (one zero-copy
+    /// `MTLBuffer`). Clean file-backed pages, so this is RSS, not
+    /// `phys_footprint`.
+    pub fn resident_bytes(&self) -> u64 {
+        self.weights.data().len() as u64
+    }
+
+    /// One packed expert's byte stride, if the install streams experts.
+    /// The per-layer slot cache holds `EXPERT_CACHE_SLOTS` of these.
+    pub fn expert_stride(&self) -> Option<u64> {
+        self.streamers
+            .iter()
+            .flatten()
+            .next()
+            .map(|s| s.layout().expert_stride)
+    }
+
     /// [`RealForwardRunner::open`] with an explicit KV capacity: the
     /// per-layer K/V buffers are sized `max_context * kv_stride` up front
     /// (the decode hot path never allocates), so generation past
@@ -273,13 +306,22 @@ impl RealForwardRunner {
         let weights = gpu::ResidentGpuWeights::wrap(context.device(), buffer)
             .map_err(RealForwardError::Gpu)?;
 
-        // All-full-attention only (checked above), so no SWA ring is in
-        // play: every layer gets a linear max_context-capacity buffer.
+        // Sliding-window layers only ever attend over the last
+        // `sliding_window` positions, so they get a ring of
+        // `sliding_window + 1` rows instead of the whole context -- the
+        // Swift original's `fp16RingEnabled` sizing. At Gemma 4's 1024
+        // window and a 4096 context that is 1025 rows instead of 4096, a
+        // ~600 MiB saving on the 25 SWA layers. `1` is this runner's
+        // prefill chunk: `run_raw_completion` feeds one token per call
+        // (no `ChunkedPrefillRunner` impl), so no chunk ever writes more
+        // than one row ahead of the attention that reads it. Full layers
+        // keep a linear max_context buffer; `ring_capacity(layer)` is 0
+        // for them, which keeps the kernel's slot addressing the identity.
         let kv = gpu::KvCacheManager::new(
             context.device(),
             &expecting,
             max_context,
-            false,
+            true,
             None,
             1,
             None,
@@ -571,13 +613,17 @@ impl LogitProducer for RealForwardRunner {
         self.kv.reset();
     }
 
+    /// One pool per token, not per process. Every command buffer and
+    /// compute encoder this token creates is autoreleased; without a pool
+    /// scoped here they would all stay alive until the process exits (see
+    /// `gpu::autorelease_pool`).
     fn produce(
         &mut self,
         token: i32,
         position: usize,
         logits: &mut [LogitValue],
     ) -> Result<(), String> {
-        self.produce_inner(token, position, logits)
+        gpu::autorelease_pool(|| self.produce_inner(token, position, logits))
             .map_err(|e| e.to_string())
     }
 }
@@ -799,8 +845,11 @@ impl RealForwardRunner {
             // would write and bind `v_slot` here instead.
             //
             // Sliding-window layers (mask 0) attend only the trailing
-            // `sliding_window` positions of the linear KV layout via
-            // kv_start; full-attention layers (mask 1) start at 0.
+            // `sliding_window` positions via kv_start; full-attention
+            // layers (mask 1) start at 0. Under the SWA ring the physical
+            // rows wrap, but kv_start stays a LOGICAL position -- the ring
+            // holds `sliding_window + 1` rows, so the window this asks
+            // for is always still resident.
             let kv_start = if self.arch.full_attention_layer_mask[layer] == 0 {
                 seq_len.saturating_sub(self.arch.sliding_window as u32)
             } else {
@@ -820,6 +869,7 @@ impl RealForwardRunner {
                 seq_len,
                 kv_start,
                 attn_scale,
+                self.kv.ring_capacity(layer) as u32,
             )
             .map_err(gpu_err)?;
             gpu::encode_dequant_int4_gemv_resident(
@@ -1068,27 +1118,30 @@ impl RealForwardRunner {
             (&self.scratch.logits, 0),
         )
         .map_err(gpu_err)?;
-        gpu::encode_logit_softcap_softmax(
-            &mut self.context,
-            &pass,
-            (&self.scratch.logits, 0),
-            (&self.scratch.probs, 0),
-            vocab as u32,
-            softcap,
-        )
-        .map_err(gpu_err)?;
+        // Stop at the softcapped logits, not at probabilities: the softmax
+        // is `selection::select`'s job (see real_forward_gemma4.rs's header).
+        if softcap > 0.0 {
+            gpu::encode_logit_softcap(
+                &mut self.context,
+                &pass,
+                (&self.scratch.logits, 0),
+                softcap,
+                vocab as u32,
+            )
+            .map_err(gpu_err)?;
+        }
         pass.commit_and_wait();
         self.kv.advance();
 
-        let probs16 = gpu::read_buffer_f16(&self.scratch.probs, 0, vocab);
-        if probs16.len() != logits.len() {
+        let head = gpu::read_buffer_f16(&self.scratch.logits, 0, vocab);
+        if head.len() != logits.len() {
             return Err(RealForwardError::Unsupported(format!(
                 "vocab mismatch: model has {}, caller expected {}",
-                probs16.len(),
+                head.len(),
                 logits.len()
             )));
         }
-        logits.copy_from_slice(&probs16);
+        logits.copy_from_slice(&head);
         Ok(())
     }
 }

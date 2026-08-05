@@ -40,29 +40,34 @@ fn greedy_decode(runner: &mut RealForwardRunner, steps: usize) -> Vec<i32> {
     let mut token = 5i32;
     let mut out = Vec::new();
     for position in 0..steps {
-        let mut probs = vec![f16::from_f32(0.0); VOCAB as usize];
+        let mut head = vec![f16::from_f32(0.0); VOCAB as usize];
         runner
-            .produce(token, position, &mut probs)
+            .produce(token, position, &mut head)
             .expect("produce succeeds");
-        let sum: f32 = probs.iter().map(|p| p.to_f32()).sum();
-        let bad: Vec<(usize, f32)> = probs
+        let bad: Vec<(usize, f32)> = head
             .iter()
             .enumerate()
-            .filter(|(_, p)| !p.to_f32().is_finite())
-            .map(|(i, p)| (i, p.to_f32()))
+            .filter(|(_, v)| !v.to_f32().is_finite())
+            .map(|(i, v)| (i, v.to_f32()))
             .collect();
         assert!(
             bad.is_empty(),
-            "non-finite probability at position {position}: {} bad of {}, first {:?}",
+            "non-finite logit at position {position}: {} bad of {}, first {:?}",
             bad.len(),
-            probs.len(),
+            head.len(),
             &bad[..bad.len().min(8)]
         );
+        // `produce` returns SOFTCAPPED LOGITS, not probabilities: the
+        // softmax belongs to `selection::select`. Guard the contract by the
+        // softcap bound -- probabilities would all sit inside [0, 1].
+        let softcap = 30.0f32;
+        let max = head.iter().map(|v| v.to_f32()).fold(f32::MIN, f32::max);
+        let min = head.iter().map(|v| v.to_f32()).fold(f32::MAX, f32::min);
         assert!(
-            (sum - 1.0).abs() < 0.05,
-            "probabilities sum to {sum} at position {position}"
+            min >= -softcap && max <= softcap,
+            "logits [{min}, {max}] escape the softcap bound at position {position}"
         );
-        let argmax = probs
+        let argmax = head
             .iter()
             .enumerate()
             .max_by(|a, b| a.1.to_f32().total_cmp(&b.1.to_f32()))

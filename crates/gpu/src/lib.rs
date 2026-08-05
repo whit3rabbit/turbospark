@@ -11,11 +11,15 @@
 //!
 //! Status: parity-tested dispatches (each against a `mrefrust_compute`
 //! CPU reference on real hardware): `rmsnorm_no_scale`,
-//! `rope_proportional_neox`, `logit_softcap_softmax`,
+//! `rope_proportional_neox`, `logit_softcap_fp16` (the port-local
+//! cap-without-softmax head; `logit_softcap_softmax` stays vendored and
+//! parity-tested but undispatched -- see `DEVIATIONS.md`),
 //! `dequant_int4_gemv_simd` (staged, resident-offset-bound, and
 //! encoder-level forms), `dequant_int8_gemv_simd`, the two-pass split-KV
-//! decode attention, `utility.metal`'s elementwise kernels
-//! (gelu/silu mul, residual add), and `moe.metal`'s decode pair
+//! decode attention (linear and ring KV addressing),
+//! `utility.metal`'s elementwise kernels
+//! (gelu/silu mul, residual add, scalar mul, logit softcap), and
+//! `moe.metal`'s decode pair
 //! (`moe_phase1_gate_up_act_u16load` + `moe_phase2_down_reduce_k8`,
 //! reading expert blobs zero-copy through a `RoutedBlobs` argument
 //! buffer). The memory-model pieces are production-wired:
@@ -69,7 +73,7 @@ pub use attention_decode::{
 pub use bytes::read_f32_buffer;
 #[cfg(target_os = "macos")]
 pub use context::{
-    dispatch_one_threadgroup_per_row, dispatch_one_threadgroup_per_row_offsets,
+    autorelease_pool, dispatch_one_threadgroup_per_row, dispatch_one_threadgroup_per_row_offsets,
     dispatch_threads_3d, read_buffer_f16, write_buffer_bytes, GpuError, MetalContext, PassEncoder,
 };
 #[cfg(target_os = "macos")]
@@ -108,7 +112,9 @@ pub use rms_norm::{
 #[cfg(target_os = "macos")]
 pub use rope::{encode_rope_proportional_neox, rope_proportional_neox};
 #[cfg(target_os = "macos")]
-pub use utility::{encode_gelu_mul, encode_residual_add, encode_scalar_mul, encode_silu_mul};
+pub use utility::{
+    encode_gelu_mul, encode_logit_softcap, encode_residual_add, encode_scalar_mul, encode_silu_mul,
+};
 
 /// The Metal buffer handle, re-exported so downstream crates (e.g.
 /// `crates/runtime`) can hold scratch buffers without their own `metal`

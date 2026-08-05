@@ -18,10 +18,13 @@
 //! path (`attention_prefill_causal_tiled`,
 //! `attention_prefill_full_tensorops_2d_validity_v2`); neither is
 //! dispatched here. Multi-chunk split-KV (`num_chunks > 1`, for very long
-//! contexts) and the ring-buffer KV addressing (`FC_ATTN_RING_CAP`) are
-//! also not exercised — this dispatch always uses one chunk over a plain
-//! (non-ring) KV layout, matching how `crates/runtime`'s
-//! `RealForwardRunner` keeps KV history today.
+//! contexts) is not exercised -- this dispatch always uses one chunk.
+//! Ring-buffer KV addressing (`FC_ATTN_RING_CAP`) IS wired:
+//! [`encode_attention_decode`] takes a `ring_capacity`, which
+//! `RealForwardRunner` fills from `KvCacheManager::ring_capacity` so
+//! sliding-window layers can hold `window + prefill_chunk` rows instead of
+//! the whole context. Zero keeps the plain linear layout, which the
+//! slice-input entry points below always use.
 
 use half::f16;
 use metal::{FunctionConstantValues, MTLDataType};
@@ -48,7 +51,7 @@ const THREADS_PER_GROUP: u64 = 256; // kAttnThreads.
 /// always `1` (see module docs), and `scale` is whatever the caller passes
 /// (its bytes go into the pipeline-cache constants key, so different
 /// scales cache as distinct pipelines).
-fn unused_function_constants(scale: f32) -> FunctionConstantValues {
+fn unused_function_constants(scale: f32, ring_capacity: u32) -> FunctionConstantValues {
     let values = FunctionConstantValues::new();
     let zero_u32: u32 = 0;
     let one_u32: u32 = 1;
@@ -59,7 +62,13 @@ fn unused_function_constants(scale: f32) -> FunctionConstantValues {
     values.set_constant_value_at_index((&use_fc as *const bool).cast(), MTLDataType::Bool, 63);
     values.set_constant_value_at_index((&scale as *const f32).cast(), MTLDataType::Float, 64);
     values.set_constant_value_at_index((&one_u32 as *const u32).cast(), MTLDataType::UInt, 65);
-    values.set_constant_value_at_index((&zero_u32 as *const u32).cast(), MTLDataType::UInt, 69);
+    // 0 keeps `attn_ring_slot` the identity (linear KV); a positive value
+    // makes the kernel address K/V modulo the ring capacity.
+    values.set_constant_value_at_index(
+        (&ring_capacity as *const u32).cast(),
+        MTLDataType::UInt,
+        69,
+    );
     values
 }
 
@@ -142,18 +151,29 @@ pub fn encode_attention_decode(
     seq_len: u32,
     kv_start: u32,
     scale: f32,
+    ring_capacity: u32,
 ) -> Result<(), GpuError> {
     assert_eq!(num_q_heads % num_kv_heads, 0);
     assert!(kv_start < seq_len);
-    let kv_bytes = (seq_len * num_kv_heads * head_dim) as u64 * 2;
+    // Under a ring the buffer holds `ring_capacity` rows, not `seq_len`;
+    // logical positions above that wrap onto rows already allocated.
+    let rows = if ring_capacity > 0 {
+        ring_capacity.min(seq_len)
+    } else {
+        seq_len
+    };
+    let kv_bytes = (rows * num_kv_heads * head_dim) as u64 * 2;
     assert!(k_buffer.length() >= kv_bytes, "K buffer too small");
     assert!(v_buffer.length() >= kv_bytes, "V buffer too small");
 
     let chunk_len = seq_len - kv_start;
     let num_chunks: u32 = 1;
 
-    let constants = unused_function_constants(scale);
-    let constants_key = scale.to_le_bytes();
+    let constants = unused_function_constants(scale, ring_capacity);
+    // Both the scale and the ring capacity are specialized into the
+    // pipeline, so both belong in the pipeline-cache key.
+    let mut constants_key = scale.to_le_bytes().to_vec();
+    constants_key.extend_from_slice(&ring_capacity.to_le_bytes());
     let partial_pipeline = context.pipeline(
         SOURCE,
         "attention_decode_partial",
@@ -238,7 +258,7 @@ pub fn attention_decode_buffers(
     let chunk_len = seq_len;
     let num_chunks: u32 = 1;
 
-    let constants = unused_function_constants(scale);
+    let constants = unused_function_constants(scale, 0);
     let constants_key = scale.to_le_bytes();
     let partial_pipeline = context.pipeline(
         SOURCE,

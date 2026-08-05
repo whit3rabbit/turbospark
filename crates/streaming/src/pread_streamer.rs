@@ -157,6 +157,12 @@ impl PreadExpertStreamer {
         })
     }
 
+    /// The stream layout this streamer was built with (expert stride,
+    /// per-expert offsets, file window).
+    pub fn layout(&self) -> &StreamLayout {
+        &self.layout
+    }
+
     pub fn slot_data(&self, slot: usize) -> &[u8] {
         &self.slots[slot].as_slice()[..self.layout.expert_stride as usize]
     }

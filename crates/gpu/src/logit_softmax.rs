@@ -1,8 +1,15 @@
+//! NOT dispatched by `RealForwardRunner`. The output head applies the
+//! cap alone (`utility.metal`'s `logit_softcap_fp16`) because this port
+//! samples on the host, where `selection::select` runs its own softmax;
+//! fusing the softmax in here too would softmax twice. Kept vendored and
+//! parity-tested so the fused form is available if a GPU sampler ever
+//! lands. See `DEVIATIONS.md`.
+//!
 //! Host-side dispatch for the `logit_softcap_softmax` kernel in
 //! `shaders/logit.metal` (vendored verbatim from `Metal/Sampling/logit.metal`
 //! — the whole file, since the kernel shares helper functions with the rest
-//! of that translation unit; only `logit_softcap_softmax` itself is
-//! dispatched here). Matches `mrefrust_compute::logit_softcap_softmax`
+//! of that translation unit; only `logit_softcap_softmax` itself has a
+//! wrapper here). Matches `mrefrust_compute::logit_softcap_softmax`
 //! exactly: `softmax(softcap * tanh(logit / softcap))`.
 //!
 //! The rest of `logit.metal` (the `sample` kernel and the fused lm_head
