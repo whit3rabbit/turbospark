@@ -11,7 +11,9 @@ ASCII: no emojis and no em dashes (project rule).
 `docs/TESTING.md` covers what the suite proves and how tests are gated
 (macOS, `#[ignore]`d, env-var). `docs/BENCHMARKING.md` covers the three
 `mference-bench` modes, how peak memory is measured, and the memory
-oracle that asserts this port against the published Swift baselines.
+oracle that asserts this port against per-chip baseline rows (mostly the
+published Swift numbers; see `docs/BENCHMARKING.md` for which rows are
+Swift parity claims and which are this port measuring itself).
 
 Do your best to keep code files under 400 lines but it's a suggestion not a hard rule. If over 400, decide if refactoring makes sense.
 
@@ -77,10 +79,12 @@ cargo run -p mrefrust-bench --bin mference-bench -- <tokenizer-dir>
 # phys_footprint (the Swift-parity memory counter). Use --release.
 cargo run --release -p mrefrust-bench --bin mference-bench -- --model ~/models/gemma4.gturbo
 
-# The memory oracle: asserts this port's peak footprint (and, on chips
-# with a published Swift baseline row, decode tok/s) against the Swift
-# original's docs/BENCHMARKS.md. Skips with a note if the env var is
-# unset. Takes several minutes. See docs/BENCHMARKING.md.
+# The memory oracle: asserts endOfTurn on every protocol case, peak
+# footprint under the ceiling, no growth on a replayed warm case, and
+# (where a row exists) a decode tok/s floor. Each row records whether it
+# came from Swift's docs/BENCHMARKS.md or from this port measuring itself
+# -- printed every run. Skips with a note if the env var is unset. Takes
+# ~10 minutes. See docs/BENCHMARKING.md.
 MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
   cargo test -p mrefrust-bench --test memory_oracle --release -- --ignored --nocapture
 
@@ -432,7 +436,7 @@ Workspace directory structure and crate layout:
 - `crates/cli`: the `mference-check` binary process entry point (see Gotcha 7). Parses `argv`, applies `invocation`'s exit-status and stream-routing decisions, prints the resolved request for a validated invocation, and (macOS, `src/generate.rs`) attempts real generation against `--model` via `RealForwardRunner` (see Gotcha 12) in all three modes: `--prompt` (raw text), `--messages-file` (rendered through chat template), and `--chat` (interactive REPL in `src/chat.rs`, trimming turns with `mrefrust-window-fit`).
 - `crates/repack`: safetensors header parsing (pure, tested against synthetic fixtures), `RangeSource` trait for ranged reads (HTTP-backed for real installs, in-memory for tests) with two-step header-fetch plan, per-row int4/int8 quantization repack (reusing `mrefrust_compute`'s quantizer), byte-exact `.gturbo` directory assembly (`write_gturbo_install`), real named resident-tensor index writer (`write_gturbo_install_with_resident_index`), synthetic install builders (`synthetic_model.rs`, `synthetic_real.rs`), Hugging Face Llama checkpoint repacker (`hf_checkpoint.rs`), Gemma 4 mlx-community checkpoint repacker & streamed pipeline (`gemma4_checkpoint.rs`), install verifier (`install_verifier.rs`), and manifest peeker (`manifest_peek.rs`).
 - `crates/server`: OpenAI-compatible `/v1/chat/completions` HTTP server on loopback (`mference-server` binary, axum framework), supporting both full-response (non-streaming) and SSE-streaming responses, powered by `ScriptedChatModel` wired to `mrefrust-runtime`. `ScriptedChatModel` is the only backend (see Gotcha 10); real weights are future work.
-- `crates/bench`: the `mference-bench` binary plus benchmark library (`mrefrust_bench`). The scripted default (three fixed prompts, fixed seed, discarded warmup) measures loop overhead via `ScriptedLogitProducer`. `--model <install-dir>` (macOS) is the real Swift-comparison mode: frozen community protocol (`protocol.rs`) driven through `RealForwardRunner`, reporting split prefill/decode tok/s and peak `phys_footprint` from the mach sampler (`memory.rs`). `tests/memory_oracle.rs` (`#[ignore]`d, gated on `MREFRUST_GEMMA4_INSTALL_DIR`) asserts peak footprint against Swift baselines. Full details in `docs/BENCHMARKING.md`.
+- `crates/bench`: the `mference-bench` binary plus benchmark library (`mrefrust_bench`). The scripted default (three fixed prompts, fixed seed, discarded warmup) measures loop overhead via `ScriptedLogitProducer`. `--model <install-dir>` (macOS) is the real Swift-comparison mode: frozen community protocol (`protocol.rs`) driven through `RealForwardRunner`, reporting split prefill/decode tok/s and peak `phys_footprint` from the mach sampler (`memory.rs`). `tests/memory_oracle.rs` (`#[ignore]`d, gated on `MREFRUST_GEMMA4_INSTALL_DIR`) asserts peak footprint against per-chip baseline rows, plus a steady-state replay guard; each row carries a `source` recording whether it is a Swift parity number or this port's own measurement. Full details in `docs/BENCHMARKING.md`.
 - `docs/`: repository documentation directory. `docs/BENCHMARKING.md` details benchmark harness modes, mach memory sampling, and the memory oracle baseline assertions; `docs/TESTING.md` documents test suite organization, macOS and environment-variable gating conventions, and test writing rules.
 
 ## Verification policy

@@ -127,24 +127,42 @@ What it asserts, in order:
 3. **Decode tok/s** at or above the Swift floor, per case, only when the
    chip brand matches a baseline row.
 
-Baselines come from Swift's `docs/BENCHMARKS.md` Gemma 4 rows. Chip
+Most rows come from Swift's `docs/BENCHMARKS.md` Gemma 4 table. Chip
 detection is `sysctl machdep.cpu.brand_string`, matched by substring,
-most specific row first.
+most specific row first (so `Apple M4 Max` must precede any future bare
+`Apple M4`).
 
-| Chip | Swift peak footprint | Ceiling used | Swift decode | Floor used |
-| --- | --- | --- | --- | --- |
-| Apple M5 Pro (24 GB) | 2,126-2,142 MiB | 2,250 MiB | 31.01-35.17 tok/s | 31.0 |
-| Apple M2 (8 GB) | 1,776-1,971 MiB | 2,070 MiB | 5.10-6.30 tok/s | 5.1 |
-| Anything else | - | 2,250 MiB | - | reported, not asserted |
+| Chip | Source peak footprint | Ceiling used | Source decode | Floor used | Source |
+| --- | --- | --- | --- | --- | --- |
+| Apple M5 Pro (24 GB) | 2,126-2,142 MiB | 2,250 MiB | 31.01-35.17 tok/s | 31.0 | Swift docs |
+| Apple M4 Max (36 GB) | 2,120-2,197 MiB | 2,300 MiB | 11.60-20.40 tok/s | 10.0 | THIS PORT |
+| Apple M2 (8 GB) | 1,776-1,971 MiB | 2,070 MiB | 5.10-6.30 tok/s | 5.1 | Swift docs |
+| Anything else | - | 2,250 MiB | - | reported, not asserted | - |
 
-Ceilings are the documented peak plus about 5 percent. That is Swift's
-own cross-run variance (its repeat table spans 1,388-1,464 MiB on
-identical runs); more headroom than that would hide a regression the size
-of a single KV layer. Throughput floors take the documented minimum
-verbatim, since Swift's cross-run throughput spread is around 1 percent.
+**The M4 Max row is not a parity claim.** Swift publishes no M4 Max row
+and has not been run on that machine, so both numbers are this port
+measuring itself and the row only catches a regression against its own
+past behaviour. The `ChipBaseline::source` field carries this, and it is
+printed on every run and quoted in the failure message, so a red build
+says which kind of number it broke. Replace both with Swift's if that run
+ever happens; a real parity number would very likely be tighter.
 
-A tok/s failure means the port decodes slower than Swift on that
-hardware. It is a finding, not a broken test.
+Its ceiling (2,300 MiB) lands ABOVE the generic 2,250 default rather than
+below it, because the measured peak spread on that machine is 77 MiB of
+expert-slot warming and a 2,250 ceiling would flake on the spread alone.
+Its floor sits about 14 percent under the slowest measured case, covering
+the ~1.5 tok/s run-to-run spread this port shows (wider than the ~1
+percent Swift reports, so a Swift-style verbatim-minimum floor would be
+too tight here).
+
+Swift-sourced ceilings are the documented peak plus about 5 percent. That
+is Swift's own cross-run variance (its repeat table spans 1,388-1,464 MiB
+on identical runs); more headroom than that would hide a regression the
+size of a single KV layer. Their throughput floors take the documented
+minimum verbatim.
+
+A tok/s failure on a Swift-sourced row means the port decodes slower than
+Swift on that hardware. It is a finding, not a broken test.
 
 ## Static KV accounting
 
@@ -159,30 +177,40 @@ multi-minute oracle run.
 
 ## Current measured state (2026-08-05)
 
-Apple M4 Max, real `gemma4.gturbo` install, oracle run:
+Apple M4 Max 36 GB, real `gemma4.gturbo` install, three clean oracle runs
+at merge a772b67. All cases stop `endOfTurn`; the oracle passes.
 
-| case | prompt tok | tok/s | cumulative peak |
-| --- | ---: | ---: | ---: |
-| short-explanation | 61 | 23.7 | 2,711 MiB |
-| medium-review | 430 | 19.2 | 3,404 MiB |
-| long-synthesis | 3,015 | 13.8 | 5,332 MiB |
+| case | prompt tok | tok/s (runs 1 / 2 / 3) |
+| --- | ---: | ---: |
+| short-explanation | 61 | 20.35 / 20.27 / 20.40 |
+| medium-review | 430 | 15.97 / 15.77 / 15.78 |
+| long-synthesis | 3,015 | 11.71 / 11.60 / 11.62 |
 
-The oracle fails on this install, for two reasons, both real:
+Peak footprint 2,120 / 2,197 / 2,197 MiB, around the band Swift publishes
+for the M5 Pro (2,126-2,142 MiB) despite this being a different chip.
 
-1. **No case reaches `endOfTurn`.** Generation degrades into word salad
-   after roughly 40 tokens and runs to the 1024-token budget. Degradation
-   starts around sequence length 100, far below the 1,152-row ring, so it
-   is not KV-ring related; suspicion is on the real-checkpoint decode flow
-   in `crates/runtime/src/real_forward_gemma4.rs`.
-2. **Peak footprint is over budget**, 5,332 MiB against a 2,250 MiB
-   ceiling. Static accounting explains only about 3.1 GiB (1.50 GiB of
-   expert slot capacity at 16 slots x 30 layers x 3,358,720-byte stride,
-   1.26 GiB of resident weights, 305 MiB of KV); the rest, and the growth
-   with prompt length, is unexplained. Per-token Metal buffer allocation
-   is already asserted flat, so the growth is host-side.
+Two problems this document previously tracked as open are closed, and
+neither was what the numbers suggested:
 
-Both are tracked as follow-up work, not regressions from the benchmark
-harness itself.
+1. **Word salad after ~40 tokens, no case reaching `endOfTurn`.** The
+   output head returned probabilities where the host sampler expects
+   logits, so `selection::select` softmaxed an already-normalized vector.
+   Over V=262144 that flattens the distribution to near-uniform, and
+   because softmax is monotone the ranking survived, so greedy decoding
+   stayed byte-identical to correct and only sampling showed it. The head
+   now applies the logit softcap alone. See `AGENTS.md` Gotcha 16.
+2. **Peak footprint 5,332 MiB against a 2,250 ceiling, with ~2 GiB
+   unexplained by static accounting.** Command buffers and encoders are
+   autoreleased Objective-C objects and a Rust binary has one autorelease
+   pool, around `main`, so every command buffer the process created stayed
+   alive: ~180 KiB per decoded token, linear, which reads as "grows with
+   prompt length". Decode now runs one pool per token. That closed the
+   entire unexplained gap. See `AGENTS.md` Gotcha 17.
+
+The earlier suspicion that the growth was "host-side, since per-token
+Metal buffer allocation is already asserted flat" was right about the
+location and wrong about the owner: the allocations were Metal's, just
+not ours to count.
 
 ## Measurement hygiene
 

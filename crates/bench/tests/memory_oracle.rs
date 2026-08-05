@@ -39,25 +39,68 @@ struct ChipBaseline {
     brand_substr: &'static str,
     footprint_ceiling_mib: u64,
     tok_s_floor: f64,
+    /// Where the two numbers came from. Not decoration: a row measured
+    /// from THIS port is a regression guard against its own past self,
+    /// while a row from the Swift docs is a parity claim. Reading a
+    /// self-measured row as parity is the mistake this field exists to
+    /// prevent, so it is printed on every run and quoted in the failure.
+    source: &'static str,
 }
 
-/// Swift docs/BENCHMARKS.md Gemma 4 rows, most specific substring first
-/// ("Apple M2" also matches M2 Pro/Max, whose real floors are strictly
-/// higher -- acceptable for a floor). Ceilings are the documented peak
-/// footprint + ~5%, the Swift docs' own cross-run variance band; more
-/// headroom would mask a regression on the order of one KV layer.
+const SWIFT_DOCS: &str = "Swift docs/BENCHMARKS.md";
+
+/// Per-chip rows, MOST SPECIFIC SUBSTRING FIRST -- the lookup takes the
+/// first `contains` hit, so "Apple M4 Max" must precede any future bare
+/// "Apple M4" row, and "Apple M2" deliberately also matches M2 Pro/Max
+/// (whose real floors are strictly higher, which is safe for a floor).
+///
+/// Ceilings are the measured peak range's high end + ~5%, the cross-run
+/// variance band; more headroom would mask a regression on the order of
+/// one KV layer. Floors are below the SLOWEST case, since one floor is
+/// asserted against every case.
 const BASELINES: &[ChipBaseline] = &[
     // M5 Pro 24GB: peak footprint 2,126-2,142 MiB, decode 31.01-35.17 tok/s.
     ChipBaseline {
         brand_substr: "Apple M5 Pro",
         footprint_ceiling_mib: 2250,
         tok_s_floor: 31.0,
+        source: SWIFT_DOCS,
+    },
+    // M4 Max 36GB (the development machine; see CLAUDE.local.md).
+    //
+    // NOT a Swift baseline: the Swift engine has no published row for this
+    // chip and has not been run here, so these are THIS PORT's own numbers
+    // and the row only catches regressions against them. Replace both with
+    // Swift's if that run ever happens -- a real parity number would very
+    // likely be tighter.
+    //
+    // Three clean oracle runs, merge a772b67, release build:
+    //   peak footprint     2,120 / 2,197 / 2,197 MiB
+    //   short-explanation  20.348 / 20.272 / 20.402 tok/s
+    //   medium-review      15.972 / 15.773 / 15.783 tok/s
+    //   long-synthesis     11.710 / 11.601 / 11.623 tok/s
+    //
+    // The 77 MiB peak spread is expert-slot warming, which depends on
+    // which experts the sampled route actually touches, so the ceiling is
+    // the high end + ~5% and lands ABOVE the generic 2,250 default rather
+    // than below it. That is the honest number for this machine; a 2,250
+    // ceiling here would flake on the spread alone. The floor sits ~14%
+    // under the slowest observed case, covering the ~1.5 tok/s run-to-run
+    // spread CLAUDE.local.md documents. Those three runs agree to within
+    // 0.15 tok/s, but they went back to back on a warm machine, which is
+    // not the condition the floor has to survive.
+    ChipBaseline {
+        brand_substr: "Apple M4 Max",
+        footprint_ceiling_mib: 2300,
+        tok_s_floor: 10.0,
+        source: "this port, measured locally -- NOT a Swift baseline",
     },
     // M2 8GB: peak footprint 1,776-1,971 MiB, decode 5.10-6.30 tok/s.
     ChipBaseline {
         brand_substr: "Apple M2",
         footprint_ceiling_mib: 2070,
         tok_s_floor: 5.1,
+        source: SWIFT_DOCS,
     },
 ];
 
@@ -86,8 +129,8 @@ fn real_install_peak_footprint_and_throughput_meet_swift_baselines() {
         .and_then(|b| BASELINES.iter().find(|row| b.contains(row.brand_substr)));
     match baseline {
         Some(row) => eprintln!(
-            "memory_oracle: chip {:?} -> ceiling {} MiB, tok/s floor {}",
-            brand, row.footprint_ceiling_mib, row.tok_s_floor
+            "memory_oracle: chip {:?} -> ceiling {} MiB, tok/s floor {} (source: {})",
+            brand, row.footprint_ceiling_mib, row.tok_s_floor, row.source
         ),
         None => eprintln!(
             "memory_oracle: chip {brand:?} not in the baseline table -> ceiling \
@@ -188,11 +231,13 @@ fn real_install_peak_footprint_and_throughput_meet_swift_baselines() {
     let ceiling_mib = baseline.map_or(UNKNOWN_CHIP_FOOTPRINT_CEILING_MIB, |row| {
         row.footprint_ceiling_mib
     });
+    let ceiling_source = baseline.map_or(SWIFT_DOCS, |row| row.source);
     eprintln!("memory_oracle: session peak {peak_mib} MiB, ceiling {ceiling_mib} MiB");
     assert!(
         peak_mib <= ceiling_mib,
-        "peak phys_footprint {peak_mib} MiB exceeds the Swift baseline ceiling \
-         {ceiling_mib} MiB: this port uses more memory than the Swift engine"
+        "peak phys_footprint {peak_mib} MiB exceeds the {ceiling_mib} MiB \
+         ceiling from {ceiling_source}: this port uses more memory than that \
+         ceiling allows"
     );
 
     // The throughput floor, when this chip has a published row.
@@ -201,10 +246,11 @@ fn real_install_peak_footprint_and_throughput_meet_swift_baselines() {
             let tok_s = result.tokens_per_second();
             assert!(
                 tok_s >= row.tok_s_floor,
-                "{}: {tok_s:.3} tok/s is under the Swift floor {} for {}",
+                "{}: {tok_s:.3} tok/s is under the {} floor for {} (source: {})",
                 result.case_id,
                 row.tok_s_floor,
-                row.brand_substr
+                row.brand_substr,
+                row.source
             );
         }
     } else {
