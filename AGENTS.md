@@ -268,7 +268,10 @@ crates
   hand-rolled native tool chat; the generic Jinja-templated tool chat for
   Gemma/ChatML (`minijinja` + `minijinja-contrib`'s `pycompat`, rendering
   the checkpoint's own `chat_template.jinja`, tested against the real
-  vendored Qwen ChatML template); streaming detokenizer and stop matcher;
+  vendored Qwen ChatML template); streaming detokenizer and stop matcher
+  (the stop set unions the dialect's own stops with the checkpoint's
+  `generation_config.json` `eos_token_id` list -- that file, not
+  `tokenizer_config.json`, is the authority for multi-stop checkpoints);
   Gemma/Qwen/DeepSeek tool-call DSL parsers and a streaming structured
   assistant-output decoder.
 - `crates/model-io`: `manifest.json` decode and field-by-field validation

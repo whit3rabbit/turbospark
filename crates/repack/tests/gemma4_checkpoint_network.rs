@@ -125,6 +125,7 @@ fn repacks_the_real_gemma4_checkpoint() {
         "tokenizer.json",
         "tokenizer_config.json",
         "chat_template.jinja",
+        "generation_config.json",
     ] {
         std::fs::write(dir.join(name), get(name)).expect("tokenizer sidecar");
     }

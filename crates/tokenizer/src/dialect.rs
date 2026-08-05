@@ -82,7 +82,8 @@ struct Resolved {
 
 impl MfTokenizer {
     /// Load a `tokenizer.json` (and, if present alongside it,
-    /// `tokenizer_config.json` for the Gemma dialect's BOS/EOS token names)
+    /// `tokenizer_config.json` for the Gemma dialect's BOS/EOS token names,
+    /// plus `generation_config.json` for the checkpoint's full EOS set)
     /// from a directory.
     pub fn load_from_dir(dir: &Path) -> Result<Self, TokenizerError> {
         let tokenizer_path = dir.join("tokenizer.json");
@@ -94,13 +95,25 @@ impl MfTokenizer {
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default();
         let chat_template_source = std::fs::read_to_string(dir.join("chat_template.jinja")).ok();
-        Self::new(tokenizer, &config, chat_template_source)
+        // `generation_config.json` is the authority for the checkpoint's
+        // FULL end-of-sequence set: `tokenizer_config.json` only ever
+        // carries one `eos_token` string, so a multi-stop checkpoint
+        // looks single-stop without this. The real Gemma 4 26B-A4B
+        // declares `eos_token_id: [1, 106, 50]` while its
+        // tokenizer_config says only `<eos>`.
+        let extra_eos = std::fs::read_to_string(dir.join("generation_config.json"))
+            .ok()
+            .and_then(|s| serde_json::from_str::<GenerationConfig>(&s).ok())
+            .map(|g| g.eos_ids())
+            .unwrap_or_default();
+        Self::new(tokenizer, &config, chat_template_source, &extra_eos)
     }
 
     fn new(
         tokenizer: Tokenizer,
         config: &TokenizerConfig,
         chat_template_source: Option<String>,
+        extra_eos: &[i32],
     ) -> Result<Self, TokenizerError> {
         let dialect = if special_token_id(&tokenizer, DEEPSEEK_USER_MARK).is_some() {
             ChatDialect::Deepseek
@@ -109,11 +122,14 @@ impl MfTokenizer {
         } else {
             ChatDialect::Gemma
         };
-        let resolved = match dialect {
+        let mut resolved = match dialect {
             ChatDialect::Gemma => resolve_gemma(&tokenizer, config)?,
             ChatDialect::ChatMl => resolve_chatml(&tokenizer)?,
             ChatDialect::Deepseek => resolve_deepseek(&tokenizer)?,
         };
+        resolved
+            .stop_token_ids
+            .extend(extra_eos.iter().copied().filter(|&id| id >= 0));
         Ok(Self {
             dialect,
             bos_id: resolved.bos_id,
@@ -177,6 +193,31 @@ impl MfTokenizer {
 struct TokenizerConfig {
     bos_token: Option<String>,
     eos_token: Option<String>,
+}
+
+/// The slice of `generation_config.json` this loader reads. HF writes
+/// `eos_token_id` as either one integer or an array of them.
+#[derive(Default, serde::Deserialize)]
+struct GenerationConfig {
+    #[serde(default)]
+    eos_token_id: Option<EosTokenIds>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+enum EosTokenIds {
+    One(i64),
+    Many(Vec<i64>),
+}
+
+impl GenerationConfig {
+    fn eos_ids(&self) -> Vec<i32> {
+        match &self.eos_token_id {
+            Some(EosTokenIds::One(id)) => vec![*id as i32],
+            Some(EosTokenIds::Many(ids)) => ids.iter().map(|&id| id as i32).collect(),
+            None => Vec::new(),
+        }
+    }
 }
 
 /// Resolves a token string to its ID, rejecting the unk-token fallback some
