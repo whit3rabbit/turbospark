@@ -56,7 +56,7 @@ cargo fmt
 cargo clippy --workspace --tests
 
 # Run the CLI (validates the invocation; on macOS with --prompt mode also
-# attempts real generation against --model — see DEVIATIONS.md for scope).
+# attempts real generation against --model (see DEVIATIONS.md for scope)).
 cargo run -p mrefrust-cli --bin mference-check -- --model /path/to/model --prompt "hi"
 
 # Run the OpenAI-compatible server (scripted responses; see DEVIATIONS.md).
@@ -118,35 +118,35 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
    `mference-check`) is the process entry point that reads `argv`, calls
    `mrefrust-invocation::parse`, and applies its pure exit-status/stream-routing
    decisions. This resolves what an earlier note here called the reserved,
-   not-yet-created `mrefrust-entrypoint` name; that name is not used. It does
-   not load a model yet (see `DEVIATIONS.md`).
+   not-yet-created `mrefrust-entrypoint` name; that name is not used. On macOS
+   with `--prompt` mode, it also attempts real generation against `--model`
+   via `RealForwardRunner` (see `DEVIATIONS.md`).
 
 8. `crates/gpu` is the one crate with a hard platform gate: everything in
    `src/` is `#[cfg(target_os = "macos")]`, so `cargo build --workspace` /
    `cargo test --workspace` succeed on Linux with the crate compiling to
-   (effectively) nothing. Five kernel dispatches (`rmsnorm_no_scale`,
-   `rope_proportional_neox`, `logit_softcap_softmax`,
-   `dequant_int4_gemv_simd`, `dequant_int8_gemv_simd`, from five of the
-   fourteen original `.metal` shader files) are real, parity-tested Metal
-   pipelines compiled from vendored MSL source at runtime, matching how
-   Mference itself builds pipelines. `MetalContext::pipeline` takes
-   caller-supplied `FunctionConstantValues`, so a new kernel module owns
+   (effectively) nothing. Dispatched, parity-tested Metal pipelines
+   (`rmsnorm_no_scale`, `rms_norm_bf16w`, `rope_proportional_neox`,
+   `logit_softcap_softmax`, `dequant_int4_gemv_simd`, `dequant_int8_gemv_simd`,
+   two-pass split-KV `attention_decode`, `moe_decode` decode pair, and
+   `utility` elementwise kernels) are compiled from vendored MSL source at
+   runtime, matching how Mference itself builds pipelines. `MetalContext::pipeline`
+   takes caller-supplied `FunctionConstantValues`, so a new kernel module owns
    its own specialization rather than sharing one hardcoded set.
-   `KvCacheManager` (`kv_cache.rs`) is now `RealForwardRunner`'s
-   production KV cache (persistent per-layer buffers, K written in place
-   by the GEMV). `GdnStateManager` (`gdn_state.rs`) and `Dsv4StateManager`
-   (`dsv4_state.rs`) allocate real per-layer Metal buffers but stay
-   unwired (their compute kernels are unported);
-   `PrefillChunkScratchLayout`/`PrefillChunkScratchBuffers`
+   `KvCacheManager` (`kv_cache.rs`) is `RealForwardRunner`'s production KV cache
+   (persistent per-layer buffers, K written in place by the GEMV).
+   `GdnStateManager` (`gdn_state.rs`) and `Dsv4StateManager` (`dsv4_state.rs`)
+   allocate real per-layer Metal buffers but stay unwired (their compute
+   kernels are unported); `PrefillChunkScratchLayout`/`PrefillChunkScratchBuffers`
    (`prefill_scratch.rs`) size and allocate the chunked-prefill scratch
    buffers, also undispatched (the tile kernel is descoped). The memory
    path is zero-copy end to end: `ResidentGpuWeights` wraps the resident
    mmap in ONE `newBufferWithBytesNoCopy` MTLBuffer, `PassEncoder` batches
-   a whole dense token into one command buffer, and the vendored
-   `moe.metal` decode kernels read streamed expert blobs in place through
-   a `RoutedBlobs` argument buffer. See `DEVIATIONS.md` for the full
-   wired/unwired list, and why `sample` (`logit.metal`) was deliberately
-   left unported rather than shipped without a way to verify it.
+   a whole token into one command buffer, and the vendored `moe.metal` decode
+   kernels read streamed expert blobs in place through a `RoutedBlobs` argument
+   buffer. See `DEVIATIONS.md` for the full wired/unwired list, and why `sample`
+   (`logit.metal`) was deliberately left unported rather than shipped without a
+   way to verify it.
 
 9. `crates/model-io` and `crates/streaming` are the two crates that
    intentionally carry unsafe code and platform `cfg`s (mmap in
@@ -157,14 +157,13 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
    attribute and no workspace-level lint enforces it, so unsafe code is not
    actually compiler-blocked there today, even though none uses any.
 
-10. `crates/runtime`'s `LogitProducer` trait has no real (GPU-forward-pass
-    -backed) implementation: no trained `.gturbo` weights exist to validate
-    one against. `ScriptedLogitProducer` (a fixed replayed logit sequence)
-    is what every test, and `crates/server`'s `ScriptedChatModel`, drive the
-    raw-completion loop with. Wiring a real producer is future work once
-    `crates/gpu` has enough kernels ported to run a full forward pass.
+10. `crates/runtime`'s `LogitProducer` trait has `RealForwardRunner` (macOS/GPU
+    only) as its real GPU-forward-pass-backed implementation, while
+    `ScriptedLogitProducer` (a fixed replayed logit sequence) is what unit
+    tests and `crates/server`'s `ScriptedChatModel` drive the raw-completion
+    loop with (since no trained `.gturbo` weights exist to validate against).
     Chunked prefill is wired regardless (`ChunkedPrefillRunner`,
-    `run_raw_completion_chunked`) — `ScriptedLogitProducer` implements it
+    `run_raw_completion_chunked`) -- `ScriptedLogitProducer` implements it
     by consuming one scripted step per chunk; see `DEVIATIONS.md`.
 
 11. Tokenizer fixture gotcha: the vendored test fixtures under
@@ -172,7 +171,7 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     high placeholder token ids (e.g. `248044`) in their `tokenizer.json`
     `added_tokens` list, but the `tokenizers` crate's loader renumbers
     added tokens sequentially after the base vocab (which has only 258
-    entries in these toy fixtures) — so the *actual* ids only exist at load
+    entries in these toy fixtures) -- so the *actual* ids only exist at load
     time. Never hardcode a token id from reading the fixture JSON; resolve
     it from a loaded `MfTokenizer` (`token_to_id`, `end_of_turn_id`, etc.)
     instead.
@@ -203,8 +202,8 @@ Update layout as needed:
 ```
 crates
 ├── bench              # mference-bench: fixed-prompt throughput harness
-├── cli               # mference-check binary: the process entry point
-├── compute           # CPU reference kernels + destination compute strategy
+├── cli                # mference-check binary: the process entry point
+├── compute            # CPU reference kernels + destination compute strategy
 ├── core               # shared primitives, errors, runtime config
 ├── gpu                # Metal pipeline cache + kernel dispatch (macOS only)
 ├── invocation         # CLI argument parsing, request assembly, diagnostics
@@ -266,19 +265,19 @@ crates
   `unsafe`-carrying module (macOS `F_RDADVISE`; a documented no-op
   elsewhere).
 - `crates/gpu`: Metal device/pipeline-cache context and per-kernel dispatch.
-  macOS-only; compiles to nothing elsewhere. Five kernels
-  (`rmsnorm_no_scale`, `rope_proportional_neox`, `logit_softcap_softmax`,
-  `dequant_int4_gemv_simd`, `dequant_int8_gemv_simd`) are wired end to end
-  and parity-tested against the matching `mrefrust_compute` reference on
-  real hardware. `KvCacheManager`, `GdnStateManager`, and
-  `Dsv4StateManager` allocate and manage real per-layer Metal buffers (see
-  Gotcha 8); `PrefillChunkScratchLayout`/`PrefillChunkScratchBuffers` size
-  and allocate the chunked-prefill scratch buffers. None of the four is
-  wired to an actual dispatch — `RealForwardRunner` (see below) is
-  dense-only and doesn't need KV/GDN/DSV4/prefill-tile state, and no
-  chunked-prefill kernel is vendored to write through the scratch buffers.
-  Attention, MoE, and the `sample` kernel (no CPU reference exists to
-  verify a port against) are not yet vendored or dispatched.
+  macOS-only; compiles to nothing elsewhere. Multiple kernels
+  (`rmsnorm_no_scale`, `rms_norm_bf16w`, `rope_proportional_neox`,
+  `logit_softcap_softmax`, `dequant_int4_gemv_simd`, `dequant_int8_gemv_simd`,
+  two-pass split-KV `attention_decode`, `moe_decode` decode pair, and
+  `utility` elementwise kernels) are wired end to end and parity-tested against
+  the matching `mrefrust_compute` reference on real hardware. `KvCacheManager`
+  allocates and manages real per-layer Metal KV buffers used by
+  `RealForwardRunner`. `GdnStateManager` and `Dsv4StateManager` allocate real
+  per-layer Metal buffers but stay unwired (their compute kernels are unported);
+  `PrefillChunkScratchLayout`/`PrefillChunkScratchBuffers` size and allocate the
+  chunked-prefill scratch buffers, also undispatched (the tile kernel is
+  descoped). The `sample` kernel (no CPU reference exists to verify a port
+  against) and fused lm_head are not yet vendored or dispatched.
 - `crates/runtime`: the raw-completion prefill+decode loop
   (`run_raw_completion`), wiring a `LogitProducer`, the tokenizer's
   streaming detokenizer and stop matcher, and `selection::select` into one
@@ -292,12 +291,12 @@ crates
   real GPU router GEMV plus real GPU GEMVs for each selected expert, with
   host-side top-k selection and the same CPU-bridged gated activation.
   See Gotcha 12.
-- `crates/cli`: the `mference-check` binary — the resolved process entry
+- `crates/cli`: the `mference-check` binary: the resolved process entry
   point (see Gotcha 7). Parses `argv`, applies `invocation`'s exit-status
   and stream-routing decisions, prints the resolved request for a
   validated invocation, and (macOS, `--prompt` mode only,
   `src/generate.rs`) attempts real generation against `--model` via
-  `RealForwardRunner` — see Gotcha 12.
+  `RealForwardRunner` (see Gotcha 12).
 - `crates/repack`: safetensors header parsing (pure, tested against
   synthetic fixtures, no network needed), a `RangeSource` trait for ranged
   reads (HTTP-backed for real installs, in-memory for tests) with the
@@ -310,22 +309,22 @@ crates
   verification. `synthetic_model.rs`'s `build_synthetic_gemma4_install`
   (dense) and `build_synthetic_gemma4_moe_install` (routed-expert FFN) use
   the resident writer to build full, real, small "tiny Gemma 4" `.gturbo`
-  installs with deterministic (not trained) INT4-affine weights — what
+  installs with deterministic (not trained) INT4-affine weights: what
   `crates/runtime`'s `RealForwardRunner` runs against, since no trained
   checkpoint exists in this environment (see Gotcha 12).
   `hf_checkpoint.rs`'s `orchestrate_llama_checkpoint` walks a real
   *downloaded* HF checkpoint's Llama-family-named tensors through the
-  quantizer and writer end to end — proven against a real ~269MB
+  quantizer and writer end to end: proven against a real ~269MB
   Hugging Face Hub download in a network-gated, `#[ignore]`d test
   (`tests/hf_checkpoint_network.rs`; run explicitly, not part of the
   default suite). Not proven to also run through `RealForwardRunner`
-  (separate V projection, scaled RMSNorm — that runner doesn't support
+  (separate V projection, scaled RMSNorm: that runner doesn't support
   either yet); see `DEVIATIONS.md`.
 - `crates/server`: OpenAI-compatible `/v1/chat/completions` on loopback
   (axum), both the full-response and SSE-streaming shapes, wired to
   `mrefrust-runtime`. `ScriptedChatModel` is the only backend (see
   Gotcha 10); real weights are future work.
-- `crates/bench`: the `mference-bench` binary — three fixed prompts, a
+- `crates/bench`: the `mference-bench` binary: three fixed prompts, a
   fixed seed, a discarded warmup run per prompt, driven through the real
   `run_raw_completion` loop and timed. Measures this port's loop overhead
   via a `ScriptedLogitProducer`, not real inference throughput (no real

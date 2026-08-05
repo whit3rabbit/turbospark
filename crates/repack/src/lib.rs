@@ -5,6 +5,7 @@
 //! streaming installer described in the ROADMAP.
 #![forbid(unsafe_code)]
 
+mod gemma4_checkpoint;
 mod gturbo_writer;
 mod hf_checkpoint;
 mod install_verifier;
@@ -14,6 +15,11 @@ mod resident_writer;
 mod safetensors_header;
 mod synthetic_model;
 
+pub use gemma4_checkpoint::{
+    classify_gemma4, orchestrate_gemma4_checkpoint, parse_gemma4_config, parse_gemma4_quantization,
+    write_gemma4_install, Gemma4Bucket, Gemma4Error, Gemma4Quant, Gemma4RepackOutput,
+    GTURBO_PAGE_BYTES,
+};
 pub use gturbo_writer::{
     write_gturbo_install, write_gturbo_install_with_resident_index,
     write_gturbo_install_with_resident_index_and_experts, ExpertBlob, LayerBlobs, SubTensor,
@@ -27,7 +33,10 @@ pub use ranged_download::{
 pub use repack::{
     int4_packed_bytes, int8_packed_bytes, quantize_matrix_int4, quantize_matrix_int8, RepackError,
 };
-pub use resident_writer::{build_resident_weights_bin, ResidentTensorSpec};
+pub use resident_writer::{
+    build_resident_weights_bin, build_resident_weights_bin_mixed, RawTensorSpec, ResidentEntrySpec,
+    ResidentTensorSpec, DTYPE_BF16, DTYPE_FP16, DTYPE_FP32, DTYPE_INT8_AFFINE,
+};
 pub use safetensors_header::{
     parse_header, required_prefix_len, SafetensorsHeader, SafetensorsHeaderError, TensorInfo,
     DEFAULT_MAX_HEADER_BYTES,

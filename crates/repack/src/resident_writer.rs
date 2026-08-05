@@ -27,6 +27,37 @@ pub struct ResidentTensorSpec {
 /// and `crates/runtime`'s `RealForwardRunner`.
 const DTYPE_INT4_AFFINE: u8 = 4;
 
+/// INT8-affine dtype tag: same packed+scales+biases entry shape as INT4,
+/// one byte per element instead of one nibble.
+pub const DTYPE_INT8_AFFINE: u8 = 5;
+
+/// Raw (unquantized, companion-less) dtype tags, matching the Swift
+/// repacker's `IndexEntry` convention: 1 = BF16, 2 = FP16, 3 = FP32.
+pub const DTYPE_BF16: u8 = 1;
+pub const DTYPE_FP16: u8 = 2;
+pub const DTYPE_FP32: u8 = 3;
+
+/// One named raw tensor (a norm vector, a scalar like `router.scale`):
+/// bytes stored verbatim, no scale/bias companions, `dtype` one of
+/// [`DTYPE_BF16`]/[`DTYPE_FP16`]/[`DTYPE_FP32`].
+#[derive(Debug, Clone)]
+pub struct RawTensorSpec {
+    pub name: String,
+    pub dtype: u8,
+    pub bytes: Vec<u8>,
+    /// Logical shape, rank padded to 4 with trailing zeros.
+    pub shape: (u32, u32, u32, u32),
+}
+
+/// A resident entry: this port's INT4- or INT8-affine packed layout
+/// (weight bytes + BF16 scales + BF16 biases) or a raw tensor.
+#[derive(Debug, Clone)]
+pub enum ResidentEntrySpec {
+    Int4(ResidentTensorSpec),
+    Int8(ResidentTensorSpec),
+    Raw(RawTensorSpec),
+}
+
 fn u16_slice_to_le_bytes(values: &[u16]) -> Vec<u8> {
     let mut out = Vec::with_capacity(values.len() * 2);
     for v in values {
@@ -39,6 +70,43 @@ fn u16_slice_to_le_bytes(values: &[u16]) -> Vec<u8> {
 /// table, then the raw tensor data region (packed bytes, then scale bytes,
 /// then bias bytes, back to back per tensor, in `specs` order).
 pub fn build_resident_weights_bin(specs: &[ResidentTensorSpec]) -> Vec<u8> {
+    let views: Vec<EntryView<'_>> = specs
+        .iter()
+        .map(|t| EntryView::Packed(t, DTYPE_INT4_AFFINE))
+        .collect();
+    build_from_views(&views)
+}
+
+/// [`build_resident_weights_bin`] over a mix of INT4-affine and raw
+/// (BF16/FP16/FP32) entries — what a real checkpoint repack produces:
+/// pass-through quantized projections plus unquantized norms/scalars.
+pub fn build_resident_weights_bin_mixed(specs: &[ResidentEntrySpec]) -> Vec<u8> {
+    let views: Vec<EntryView<'_>> = specs
+        .iter()
+        .map(|s| match s {
+            ResidentEntrySpec::Int4(t) => EntryView::Packed(t, DTYPE_INT4_AFFINE),
+            ResidentEntrySpec::Int8(t) => EntryView::Packed(t, DTYPE_INT8_AFFINE),
+            ResidentEntrySpec::Raw(r) => EntryView::Raw(r),
+        })
+        .collect();
+    build_from_views(&views)
+}
+
+enum EntryView<'a> {
+    Packed(&'a ResidentTensorSpec, u8),
+    Raw(&'a RawTensorSpec),
+}
+
+impl EntryView<'_> {
+    fn name(&self) -> &str {
+        match self {
+            EntryView::Packed(t, _) => &t.name,
+            EntryView::Raw(r) => &r.name,
+        }
+    }
+}
+
+fn build_from_views(specs: &[EntryView<'_>]) -> Vec<u8> {
     let entry_count = specs.len();
     let entry_table_bytes = entry_count * ENTRY_BYTES;
     let string_table_start = HEADER_BYTES + entry_table_bytes;
@@ -46,8 +114,8 @@ pub fn build_resident_weights_bin(specs: &[ResidentTensorSpec]) -> Vec<u8> {
     let mut name_ranges = Vec::with_capacity(entry_count);
     let mut names_len = 0usize;
     for spec in specs {
-        name_ranges.push((string_table_start + names_len, spec.name.len()));
-        names_len += spec.name.len();
+        name_ranges.push((string_table_start + names_len, spec.name().len()));
+        names_len += spec.name().len();
     }
     let string_table_end = string_table_start + names_len;
     // Align the index region to the Swift repacker's Layout.pageBytes
@@ -60,8 +128,10 @@ pub fn build_resident_weights_bin(specs: &[ResidentTensorSpec]) -> Vec<u8> {
 
     let mut data = Vec::new();
     struct Placed {
-        packed_offset: u64,
-        packed_size: u64,
+        dtype: u8,
+        weight_offset: u64,
+        weight_size: u64,
+        shape: (u32, u32, u32, u32),
         scale_offset: u64,
         scale_size: u64,
         bias_offset: u64,
@@ -69,22 +139,48 @@ pub fn build_resident_weights_bin(specs: &[ResidentTensorSpec]) -> Vec<u8> {
     }
     let mut placed = Vec::with_capacity(entry_count);
     for spec in specs {
-        let packed_offset = index_size as u64 + data.len() as u64;
-        data.extend_from_slice(&spec.packed);
-        let scale_bytes = u16_slice_to_le_bytes(&spec.scales);
-        let scale_offset = index_size as u64 + data.len() as u64;
-        data.extend_from_slice(&scale_bytes);
-        let bias_bytes = u16_slice_to_le_bytes(&spec.biases);
-        let bias_offset = index_size as u64 + data.len() as u64;
-        data.extend_from_slice(&bias_bytes);
-        placed.push(Placed {
-            packed_offset,
-            packed_size: spec.packed.len() as u64,
-            scale_offset,
-            scale_size: scale_bytes.len() as u64,
-            bias_offset,
-            bias_size: bias_bytes.len() as u64,
-        });
+        // 4-byte-align every entry's start: packed u32 weights are read
+        // with 4-byte loads by some kernels, and BF16 entries can leave
+        // the cursor 2 mod 4.
+        while data.len() % 4 != 0 {
+            data.push(0);
+        }
+        match spec {
+            EntryView::Packed(t, dtype) => {
+                let weight_offset = index_size as u64 + data.len() as u64;
+                data.extend_from_slice(&t.packed);
+                let scale_bytes = u16_slice_to_le_bytes(&t.scales);
+                let scale_offset = index_size as u64 + data.len() as u64;
+                data.extend_from_slice(&scale_bytes);
+                let bias_bytes = u16_slice_to_le_bytes(&t.biases);
+                let bias_offset = index_size as u64 + data.len() as u64;
+                data.extend_from_slice(&bias_bytes);
+                placed.push(Placed {
+                    dtype: *dtype,
+                    weight_offset,
+                    weight_size: t.packed.len() as u64,
+                    shape: (t.rows, t.cols, 0, 0),
+                    scale_offset,
+                    scale_size: scale_bytes.len() as u64,
+                    bias_offset,
+                    bias_size: bias_bytes.len() as u64,
+                });
+            }
+            EntryView::Raw(r) => {
+                let weight_offset = index_size as u64 + data.len() as u64;
+                data.extend_from_slice(&r.bytes);
+                placed.push(Placed {
+                    dtype: r.dtype,
+                    weight_offset,
+                    weight_size: r.bytes.len() as u64,
+                    shape: r.shape,
+                    scale_offset: 0,
+                    scale_size: 0,
+                    bias_offset: 0,
+                    bias_size: 0,
+                });
+            }
+        }
     }
 
     let mut out = vec![0u8; index_size];
@@ -92,20 +188,19 @@ pub fn build_resident_weights_bin(specs: &[ResidentTensorSpec]) -> Vec<u8> {
     out[8..16].copy_from_slice(&(data.len() as u64).to_le_bytes());
     out[16..24].copy_from_slice(&(entry_count as u64).to_le_bytes());
 
-    for (i, spec) in specs.iter().enumerate() {
+    for (i, p) in placed.iter().enumerate() {
         let base = HEADER_BYTES + i * ENTRY_BYTES;
         let (name_offset, name_len) = name_ranges[i];
-        let p = &placed[i];
         out[base..base + 4].copy_from_slice(&(name_offset as u32).to_le_bytes());
         out[base + 4..base + 6].copy_from_slice(&(name_len as u16).to_le_bytes());
-        out[base + 6] = DTYPE_INT4_AFFINE;
+        out[base + 6] = p.dtype;
         out[base + 7] = 0;
-        out[base + 8..base + 16].copy_from_slice(&p.packed_offset.to_le_bytes());
-        out[base + 16..base + 24].copy_from_slice(&p.packed_size.to_le_bytes());
-        out[base + 24..base + 28].copy_from_slice(&spec.rows.to_le_bytes());
-        out[base + 28..base + 32].copy_from_slice(&spec.cols.to_le_bytes());
-        out[base + 32..base + 36].copy_from_slice(&0u32.to_le_bytes());
-        out[base + 36..base + 40].copy_from_slice(&0u32.to_le_bytes());
+        out[base + 8..base + 16].copy_from_slice(&p.weight_offset.to_le_bytes());
+        out[base + 16..base + 24].copy_from_slice(&p.weight_size.to_le_bytes());
+        out[base + 24..base + 28].copy_from_slice(&p.shape.0.to_le_bytes());
+        out[base + 28..base + 32].copy_from_slice(&p.shape.1.to_le_bytes());
+        out[base + 32..base + 36].copy_from_slice(&p.shape.2.to_le_bytes());
+        out[base + 36..base + 40].copy_from_slice(&p.shape.3.to_le_bytes());
         out[base + 40..base + 48].copy_from_slice(&p.scale_offset.to_le_bytes());
         out[base + 48..base + 56].copy_from_slice(&p.scale_size.to_le_bytes());
         out[base + 56..base + 64].copy_from_slice(&p.bias_offset.to_le_bytes());
@@ -113,7 +208,7 @@ pub fn build_resident_weights_bin(specs: &[ResidentTensorSpec]) -> Vec<u8> {
     }
     for (i, spec) in specs.iter().enumerate() {
         let (name_offset, name_len) = name_ranges[i];
-        out[name_offset..name_offset + name_len].copy_from_slice(spec.name.as_bytes());
+        out[name_offset..name_offset + name_len].copy_from_slice(spec.name().as_bytes());
     }
 
     out.extend_from_slice(&data);
