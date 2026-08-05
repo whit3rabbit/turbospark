@@ -13,7 +13,10 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use mrefrust_repack::{build_synthetic_gemma4_install, build_synthetic_gemma4_moe_install};
+use mrefrust_repack::{
+    build_synthetic_gemma4_install, build_synthetic_gemma4_moe_install,
+    build_synthetic_gemma4_moe_streamed_install, build_synthetic_gemma4_swa_install,
+};
 use mrefrust_runtime::{
     run_raw_completion, GenerationConfig, RawDecodeProgress, RealForwardRunner,
 };
@@ -160,4 +163,172 @@ fn real_forward_runner_generates_real_tokens_through_a_moe_layer() {
         "MoE routing must be deterministic"
     );
     assert_eq!(first.reason, second.reason);
+}
+
+/// A mixed sliding-window/full-attention install (mask alternating 0/1,
+/// the shape real Gemma 4 has) runs end to end and deterministically:
+/// mask-0 layers attend only the trailing `sliding_window` positions via
+/// `kv_start` (parity-tested against the CPU window reference in
+/// `crates/gpu/tests/attention_swa.rs`).
+#[test]
+fn mixed_swa_and_full_attention_layers_generate_deterministically() {
+    let tokenizer = load_tokenizer();
+    let vocab_size = tokenizer.vocab_size;
+    let dir = temp_dir();
+    // Window of 4 with a longer prompt: late decode steps genuinely
+    // exercise the windowed path (seq_len > window).
+    let arch = build_synthetic_gemma4_swa_install(&dir, vocab_size as i64, 4, 4, "swa-test")
+        .expect("SWA install should write");
+    let mut runner = RealForwardRunner::open(&dir, arch).expect("SWA install should open");
+    let prompt_ids = tokenizer.encode("a longer prompt to overflow the window", false);
+    assert!(prompt_ids.len() > 4, "prompt must exceed the window");
+    let config = greedy_config(6);
+
+    let mut first_tokens = Vec::new();
+    run_raw_completion(
+        &mut runner,
+        &tokenizer,
+        &prompt_ids,
+        &config,
+        4096,
+        vocab_size,
+        |e| {
+            if let RawDecodeProgress::Token { id, .. } = e {
+                first_tokens.push(id);
+            }
+        },
+    )
+    .expect("SWA generation should run to a stop condition");
+    assert!(!first_tokens.is_empty());
+
+    let mut second_tokens = Vec::new();
+    run_raw_completion(
+        &mut runner,
+        &tokenizer,
+        &prompt_ids,
+        &config,
+        4096,
+        vocab_size,
+        |e| {
+            if let RawDecodeProgress::Token { id, .. } = e {
+                second_tokens.push(id);
+            }
+        },
+    )
+    .expect("second SWA generation should run");
+    assert_eq!(first_tokens, second_tokens);
+}
+
+/// The dense decode hot path must allocate ZERO Metal buffers: weights
+/// are the one zero-copy resident buffer, KV and activation scratch are
+/// preallocated at open. This is the steady-state memory guarantee the
+/// Swift original's design rests on, asserted exactly rather than via a
+/// noisy RSS threshold.
+#[test]
+fn dense_decode_allocates_no_gpu_buffers_per_token() {
+    let tokenizer = load_tokenizer();
+    let vocab_size = tokenizer.vocab_size;
+    let dir = temp_dir();
+    let arch = build_synthetic_gemma4_install(&dir, vocab_size as i64, 2, "steady-state")
+        .expect("synthetic install should write");
+    let mut runner = RealForwardRunner::open(&dir, arch).expect("install should open");
+    let prompt_ids = tokenizer.encode("hi", false);
+
+    // Warmup: one full generation to fault in every code path.
+    run_raw_completion(
+        &mut runner,
+        &tokenizer,
+        &prompt_ids,
+        &greedy_config(2),
+        4096,
+        vocab_size,
+        |_| {},
+    )
+    .expect("warmup generation");
+
+    let before = runner.gpu_buffer_allocations();
+    run_raw_completion(
+        &mut runner,
+        &tokenizer,
+        &prompt_ids,
+        &greedy_config(16),
+        4096,
+        vocab_size,
+        |_| {},
+    )
+    .expect("steady-state generation");
+    let after = runner.gpu_buffer_allocations();
+
+    assert_eq!(
+        before, after,
+        "dense decode must not allocate Metal buffers per token"
+    );
+}
+
+/// A streamed-expert install (experts in packed_experts/layer files, read
+/// through the PreadExpertStreamer's aligned slot cache with parallel
+/// pread) carries the SAME deterministic weights as the resident-expert
+/// install, so it must generate the exact same token sequence.
+#[test]
+fn streamed_expert_install_matches_resident_expert_install() {
+    let tokenizer = load_tokenizer();
+    let vocab_size = tokenizer.vocab_size;
+    let config = greedy_config(6);
+    let prompt_ids = tokenizer.encode("hi", false);
+
+    let resident_dir = temp_dir();
+    let resident_arch =
+        build_synthetic_gemma4_moe_install(&resident_dir, vocab_size as i64, 2, 4, 2, "moe-a")
+            .expect("resident MoE install should write");
+    let mut resident_runner =
+        RealForwardRunner::open(&resident_dir, resident_arch).expect("resident install opens");
+    let mut resident_tokens = Vec::new();
+    run_raw_completion(
+        &mut resident_runner,
+        &tokenizer,
+        &prompt_ids,
+        &config,
+        4096,
+        vocab_size,
+        |e| {
+            if let RawDecodeProgress::Token { id, .. } = e {
+                resident_tokens.push(id);
+            }
+        },
+    )
+    .expect("resident MoE generation should run");
+
+    let streamed_dir = temp_dir();
+    let streamed_arch = build_synthetic_gemma4_moe_streamed_install(
+        &streamed_dir,
+        vocab_size as i64,
+        2,
+        4,
+        2,
+        "moe-a",
+    )
+    .expect("streamed MoE install should write");
+    let mut streamed_runner =
+        RealForwardRunner::open(&streamed_dir, streamed_arch).expect("streamed install opens");
+    let mut streamed_tokens = Vec::new();
+    run_raw_completion(
+        &mut streamed_runner,
+        &tokenizer,
+        &prompt_ids,
+        &config,
+        4096,
+        vocab_size,
+        |e| {
+            if let RawDecodeProgress::Token { id, .. } = e {
+                streamed_tokens.push(id);
+            }
+        },
+    )
+    .expect("streamed MoE generation should run");
+
+    assert!(!resident_tokens.is_empty());
+    assert_eq!(
+        resident_tokens, streamed_tokens,
+        "streamed experts must be numerically identical to resident experts"
+    );
 }

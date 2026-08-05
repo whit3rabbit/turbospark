@@ -35,6 +35,10 @@ impl ResidentBuffer {
         let mapped_len = slice_shift + resident_size as usize;
 
         let mapping = unsafe_map(&file, aligned_offset, mapped_len)?;
+        // The decode path touches scattered tensors, not a sequential
+        // sweep; the Swift original advises POSIX_MADV_RANDOM for the
+        // same reason. Advisory only: failure changes nothing observable.
+        let _ = mapping.advise(memmap2::Advice::Random);
         Ok(Self {
             mapping,
             slice_shift,
@@ -47,10 +51,38 @@ impl ResidentBuffer {
     pub fn data(&self) -> &[u8] {
         &self.mapping[self.slice_shift..self.slice_shift + self.resident_size]
     }
+
+    /// The whole page-aligned mapping, starting at the page boundary at or
+    /// below `file_offset`. A GPU backend wrapping this memory zero-copy
+    /// (Metal's `newBufferWithBytesNoCopy` requires a page-aligned base)
+    /// wraps this slice and adds [`ResidentBuffer::slice_shift`] to every
+    /// tensor offset.
+    pub fn mapped_bytes(&self) -> &[u8] {
+        &self.mapping
+    }
+
+    /// Byte distance from the mapping base to logical offset 0 of
+    /// [`ResidentBuffer::data`]. Zero whenever `file_offset` was already
+    /// page-aligned (the `.gturbo` writer page-aligns the resident region).
+    pub fn slice_shift(&self) -> usize {
+        self.slice_shift
+    }
 }
 
 fn page_size_bytes() -> u64 {
-    4096
+    // Real page size, not a constant: Apple Silicon macOS uses 16 KiB
+    // pages, and a hardcoded 4096 would produce a non-page-aligned mmap
+    // offset (mmap would fail) for file offsets between 4 KiB multiples
+    // and 16 KiB multiples.
+    // SAFETY: sysconf(_SC_PAGESIZE) reads a process constant; no memory
+    // is touched.
+    #[allow(unsafe_code)]
+    let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+    if page > 0 {
+        page as u64
+    } else {
+        4096
+    }
 }
 
 fn unsafe_map(file: &File, offset: u64, len: usize) -> Result<Mmap, ModelError> {

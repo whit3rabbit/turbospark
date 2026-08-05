@@ -17,7 +17,7 @@ pub use expert_cache::{
     coalesced_adjacent_advice_ranges, ExpertCache, ExpertCachePlan, ExpertCachePolicy,
     ExpertIoAdviceResult,
 };
-pub use pread_streamer::PreadExpertStreamer;
+pub use pread_streamer::{AlignedSlot, PreadExpertStreamer};
 pub use rdadvice::{call as rdadvice_call, clipped_byte_count, RdAdviceCallResult};
 pub use stream_layout::StreamLayout;
 

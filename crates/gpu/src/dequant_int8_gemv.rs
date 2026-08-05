@@ -81,6 +81,7 @@ pub fn dequant_int8_gemv(
         SOURCE,
         "dequant_int8_gemv_simd",
         &unused_function_constants(),
+        b"",
     )?;
     let threadgroups = m.div_ceil(ROWS_PER_THREADGROUP as usize) as u64;
     dispatch_one_threadgroup_per_row(

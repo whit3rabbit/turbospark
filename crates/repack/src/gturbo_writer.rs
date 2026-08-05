@@ -101,6 +101,52 @@ pub fn write_gturbo_install(
     layers: &[LayerBlobs],
     resident_tensor_bytes: &[u8],
 ) -> Result<(), WriterError> {
+    let weights_bytes = build_empty_resident_index(resident_tensor_bytes);
+    write_gturbo_install_impl(
+        dir,
+        arch,
+        model_id,
+        expert_stride,
+        experts_per_layer,
+        layers,
+        &weights_bytes,
+    )
+}
+
+/// The general assembly: a caller-supplied complete `model_weights.bin`
+/// (real resident index included) PLUS packed-expert layer files. This is
+/// what a streamed-MoE install needs: attention/router weights resident,
+/// routed experts in `packed_experts/layer_NN.bin` files read at decode
+/// time by `mrefrust-streaming`'s `PreadExpertStreamer`.
+pub fn write_gturbo_install_with_resident_index_and_experts(
+    dir: &Path,
+    arch: &ArchConfig,
+    model_id: &str,
+    resident_weights_bin: &[u8],
+    expert_stride: u64,
+    experts_per_layer: usize,
+    layers: &[LayerBlobs],
+) -> Result<(), WriterError> {
+    write_gturbo_install_impl(
+        dir,
+        arch,
+        model_id,
+        expert_stride,
+        experts_per_layer,
+        layers,
+        resident_weights_bin,
+    )
+}
+
+fn write_gturbo_install_impl(
+    dir: &Path,
+    arch: &ArchConfig,
+    model_id: &str,
+    expert_stride: u64,
+    experts_per_layer: usize,
+    layers: &[LayerBlobs],
+    weights_bytes: &[u8],
+) -> Result<(), WriterError> {
     std::fs::create_dir_all(dir.join("packed_experts")).map_err(|e| io_err(dir, e))?;
 
     let mut layout_layers = Vec::with_capacity(layers.len());
@@ -174,8 +220,7 @@ pub fn write_gturbo_install(
     .map_err(|e| io_err(&layout_path, e))?;
 
     let weights_path = dir.join("model_weights.bin");
-    let weights_bytes = build_empty_resident_index(resident_tensor_bytes);
-    std::fs::write(&weights_path, &weights_bytes).map_err(|e| io_err(&weights_path, e))?;
+    std::fs::write(&weights_path, weights_bytes).map_err(|e| io_err(&weights_path, e))?;
 
     let manifest_path = dir.join("manifest.json");
     let manifest_json = build_manifest_json(

@@ -62,18 +62,33 @@ live network).
 
 ## Phase 5 (model-io, streaming)
 
-- **No Metal buffer wrapping.** `ResidentBuffer` exposes the `mmap`'d
-  region as a plain `&[u8]` slice, not an `MTLBuffer` — that wrapping
-  belongs to `crates/gpu` once it needs to address this memory from a
-  kernel.
-- **`PreadExpertStreamer` reads sequentially, not via
-  `DispatchQueue.concurrentPerform`.** Still correct, just not pipelined;
-  a thread pool can be reintroduced once there is a GPU consumer to
-  pipeline reads against.
-- Page size is hardcoded to 4 KiB rather than queried from the OS
-  (`getpagesize()` in Swift) — true for every platform this workspace
-  targets (see `AGENTS.md`'s Stack section), and the manifest format has
-  no per-install page-size field to validate against regardless.
+- **Metal buffer wrapping: RESOLVED.** `ResidentBuffer` still exposes the
+  `mmap`'d region as a plain `&[u8]` slice (plus `mapped_bytes()`/
+  `slice_shift()` accessors), and `crates/gpu`'s `ResidentGpuWeights`
+  (`resident_metal.rs`) now wraps the whole mapping in ONE shared-storage
+  `MTLBuffer` via `newBufferWithBytesNoCopy`, exactly as the Swift
+  original's `ResidentBuffer.swift` does — zero-copy, proven by pointer
+  identity on real hardware (`crates/gpu/tests/resident_metal.rs`). The
+  mapping also gets `POSIX_MADV_RANDOM`, matching Swift.
+- **`PreadExpertStreamer`: RESOLVED to the Swift shape.** Slots are now
+  `posix_memalign`(2 MiB)-aligned, page-rounded allocations made once at
+  open (`AlignedSlot`), exposing their base pointer so `crates/gpu` can
+  wrap each slot zero-copy (`wrap_page_aligned_no_copy`); cache-plan
+  misses are read in parallel, one thread per miss into its own disjoint
+  slot (`std::thread::scope`, the `DispatchQueue.concurrentPerform`
+  equivalent). The streamer is now wired into `crates/runtime`'s
+  `RealForwardRunner` MoE path (its first production consumer): a
+  streamed-expert install is proven to generate the exact token sequence
+  the resident-expert install with identical weights generates
+  (`crates/runtime/tests/real_forward.rs`,
+  `streamed_expert_install_matches_resident_expert_install`). The GPU
+  still reads expert weights via the CPU `run_ffn` bridge, not the slot
+  buffers directly — that lands with the Phase B MoE kernels.
+- Page size: RESOLVED — now queried via `sysconf(_SC_PAGESIZE)` (16 KiB
+  on Apple Silicon), no longer hardcoded to 4 KiB, and the repack
+  resident-index writer 16 KiB-aligns the resident region (matching the
+  Swift repacker's `Layout.pageBytes`) so the mapping starts page-aligned
+  with a zero slice shift, as `newBufferWithBytesNoCopy` requires.
 
 ## Phase 6 (GPU)
 
@@ -146,14 +161,24 @@ live network).
   (`full_attention_layer_mask` values `{0,3,4}` — zero full-attention
   layers at all) cannot run through this port at any speed until these
   kernels exist, unlike the three descoped-for-throughput items above.
-  The dense gated FFN is NOT affected by this: Phase 7's `RealForwardRunner`
-  runs it for real on the CPU via the already-tested
-  `mrefrust_compute::run_ffn` reference rather than skipping it, since no
-  GPU FFN/MoE kernel exists yet — see Phase 7 below. The embedding lookup
-  is also not GPU-dispatched (`dequant_int4.metal`'s `embed_lookup_int4`
-  kernel is unported, for the same reason); `RealForwardRunner` uses
-  `mrefrust_compute::quant::embed_lookup_int4`'s CPU reference instead,
-  which is a real, tested, byte-exact-contract implementation, not a stub.
+  The dense gated FFN is NOT affected by this: it now runs fully on the
+  GPU (gate/up/down GEMVs plus `utility.metal`'s
+  `gelu_mul_fp16`/`silu_mul_fp16` activation — vendored and parity-tested
+  in `crates/gpu/tests/utility_and_pass.rs`), as does streamed MoE (the
+  `moe.metal` decode pair; see Phase 7 below); only resident-expert MoE
+  (synthetic-only) keeps the CPU `run_ffn` bridge. The embedding lookup
+  is GPU-dispatched too (`embed_lookup_int4`, parity-tested in
+  `crates/gpu/tests/scaled_norm_and_embed.rs`, bound as offsets into the
+  resident buffer). Sliding-window decode attention works through the
+  full `attention_decode_partial` kernel's `kv_start` argument over the
+  linear KV layout (parity-tested against the CPU `window` reference in
+  `crates/gpu/tests/attention_swa.rs`); the `attention_decode_gqa_swa_partial`
+  performance variant and the KV ring addressing (`FC_ATTN_RING_CAP`)
+  remain undispatched — with linear layouts sized at `max_context`, the
+  ring is a memory optimization, not a correctness need. `rmsnorm_bf16w`
+  (learned norm weights) is dispatched and parity-tested but not yet fed
+  by any tensor mapping (no real-checkpoint install exists to carry norm
+  weights).
 - **`logit.metal`'s `sample` kernel: formally descoped, not ported.**
   Unlike every other kernel this port has vendored, `sample` has no CPU
   reference in `mrefrust_compute` to verify a port against — it is a
@@ -232,22 +257,46 @@ live network).
   real GPU `rmsnorm_no_scale` dispatch, real GPU `dequant_int4_gemv_simd`
   dispatches for the Q/K/O projections, real GPU `rope_proportional_neox`
   dispatches on Q and K, real GPU `attention_decode` (the two-pass
-  split-KV decode kernel from `attention.metal`) over a host-held
-  `Vec<f16>` KV history (not `gpu::KvCacheManager`'s GPU-resident buffers —
-  a performance simplification, not a correctness one, since
-  `attention_decode` reads this history the same way regardless of where
-  it lives), then an FFN stage and a final real GPU `logit_softcap_softmax`
-  dispatch. The FFN stage branches on `arch.num_experts`:
-  - **Dense (`num_experts == 0`):** a CPU-bridged gated FFN
-    (`mrefrust_compute::run_ffn`, since no GPU FFN kernel is vendored).
-  - **MoE (`num_experts > 0`), new this round:** a real GPU router GEMV
-    (`dequant_int4_gemv_simd` again — a router weight matrix is just
-    another GEMV), then host-side top-k selection and softmax weighting
-    (`topk_softmax`, plain Rust — cheap enough at any real `num_experts`
-    count that a kernel isn't warranted), then for each *selected* expert
-    only (not the full table) a real GPU gate/up/down GEMV plus the same
-    CPU-bridged `mrefrust_compute::run_ffn` gated activation the dense
-    path uses, weighted and summed. This is not
+  split-KV decode kernel from `attention.metal`) over
+  `gpu::KvCacheManager`'s persistent GPU-resident per-layer K/V buffers
+  (the K projection is written directly into its cache slot by the GEMV
+  and RoPE'd there in place; for `attention_k_eq_v` architectures the K
+  buffer is bound as V too, so the V buffers stay untouched), then an FFN
+  stage and a final real GPU `logit_softcap_softmax`
+  dispatch. The memory path now matches the Swift original: the whole
+  resident region is ONE zero-copy `MTLBuffer` over the mmap
+  (`gpu::ResidentGpuWeights`), every projection binds weights/scales/
+  biases as offsets into it, all activation scratch is preallocated at
+  open, and a dense token is encoded as ONE command buffer (serial
+  compute encoder, `gpu::PassEncoder`) with a single wait — residual
+  adds and the gated-FFN activation run on the GPU in FP16
+  (`utility.metal`), as Swift does, rather than in host f32 (a deliberate
+  Swift-parity numeric change; the golden-token guard in
+  `crates/runtime/tests/golden_tokens.rs` was re-verified across it).
+  The FFN stage branches on `arch.num_experts`:
+  - **Dense (`num_experts == 0`):** fully GPU: gate/up GEMVs,
+    `gelu_mul_fp16`/`silu_mul_fp16`, down GEMV, all in the same command
+    buffer as the rest of the token.
+  - **MoE (`num_experts > 0`) on streamed installs (packed expert
+    files):** the Swift CB1/CB2 decode shape. The router GEMV rides the
+    token's first command buffer; its logits are the one host readback
+    per MoE layer (host `topk_softmax` selects and weights — NOT the
+    `router_topk_select_k8` kernel, whose softmax-over-top-k semantics
+    differ from this port's softmax-over-all-then-renormalize; a
+    documented deviation until the kernel selector is adopted
+    wholesale); the selected experts are `pread` in parallel into the
+    streamer's aligned slots; then a second command buffer runs the
+    vendored `moe.metal` decode kernels
+    (`moe_phase1_gate_up_act_u16load` + `moe_phase2_down_reduce_k8`,
+    parity-tested in `crates/gpu/tests/moe_decode.rs`) reading the
+    expert blobs IN PLACE from the slots' zero-copy Metal buffers via a
+    `RoutedBlobs` argument buffer — no expert byte reaches the host.
+    The router readback is a full command-buffer wait, not yet the
+    Swift `MTLSharedEvent` passive wait with the phase1-hit-CB-before-
+    pread and one-layer-pipelined routed CB overlap (a throughput
+    refinement, not a memory/capability gap). Resident-expert MoE
+    installs (a synthetic-only shape) still use the CPU
+    `run_ffn` bridge (`moe_ffn_host`). The old bridge description: not
     `mrefrust_compute::apply_streamed_routed`'s residual-fused form (that
     function bakes the residual add into the combine step; this runner
     adds the residual itself afterward, through the same sandwich-norm

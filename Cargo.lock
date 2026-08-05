@@ -953,6 +953,7 @@ name = "mrefrust-bench"
 version = "0.1.0"
 dependencies = [
  "mrefrust-core",
+ "mrefrust-repack",
  "mrefrust-runtime",
  "mrefrust-selection",
  "mrefrust-tokenizer",
@@ -995,6 +996,7 @@ dependencies = [
  "mrefrust-compute",
  "mrefrust-core",
  "mrefrust-model-io",
+ "mrefrust-repack",
 ]
 
 [[package]]
@@ -1008,6 +1010,7 @@ dependencies = [
 name = "mrefrust-model-io"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "memmap2",
  "mrefrust-core",
  "serde",
@@ -1038,6 +1041,7 @@ dependencies = [
  "mrefrust-model-io",
  "mrefrust-repack",
  "mrefrust-selection",
+ "mrefrust-streaming",
  "mrefrust-tokenizer",
 ]
 

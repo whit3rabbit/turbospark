@@ -17,6 +17,7 @@ pub enum GpuError {
     LibraryCompile(String),
     FunctionNotFound(String),
     PipelineCreate(String),
+    BufferCreate(String),
 }
 
 impl std::fmt::Display for GpuError {
@@ -27,6 +28,9 @@ impl std::fmt::Display for GpuError {
             GpuError::FunctionNotFound(name) => write!(f, "kernel function not found: {name}"),
             GpuError::PipelineCreate(detail) => {
                 write!(f, "pipeline state creation failed: {detail}")
+            }
+            GpuError::BufferCreate(detail) => {
+                write!(f, "buffer creation failed: {detail}")
             }
         }
     }
@@ -41,7 +45,9 @@ pub struct MetalContext {
     device: Device,
     queue: CommandQueue,
     libraries: HashMap<&'static str, Library>,
-    pipelines: HashMap<(&'static str, &'static str), ComputePipelineState>,
+    functions: HashMap<(&'static str, &'static str, Vec<u8>), metal::Function>,
+    pipelines: HashMap<(&'static str, &'static str, Vec<u8>), ComputePipelineState>,
+    buffer_allocations: std::sync::atomic::AtomicU64,
 }
 
 impl MetalContext {
@@ -52,8 +58,53 @@ impl MetalContext {
             device,
             queue,
             libraries: HashMap::new(),
+            functions: HashMap::new(),
             pipelines: HashMap::new(),
+            buffer_allocations: std::sync::atomic::AtomicU64::new(0),
         })
+    }
+
+    fn function(
+        &mut self,
+        source: &'static str,
+        function_name: &'static str,
+        constants: &FunctionConstantValues,
+        constants_key: &[u8],
+    ) -> Result<metal::Function, GpuError> {
+        let key = (source, function_name, constants_key.to_vec());
+        if !self.functions.contains_key(&key) {
+            let library = self.library(source)?;
+            let function = library
+                .get_function(function_name, Some(constants.clone()))
+                .map_err(|_| GpuError::FunctionNotFound(function_name.to_string()))?;
+            self.functions.insert(key.clone(), function);
+        }
+        Ok(self.functions[&key].clone())
+    }
+
+    /// Builds (cached per function) an argument encoder for the argument
+    /// buffer bound at `buffer_index` of `function_name` — how the MoE
+    /// kernels receive their `RoutedBlobs` pointer array, matching the
+    /// Swift original's `makeArgumentEncoder(bufferIndex:)`.
+    pub fn argument_encoder(
+        &mut self,
+        source: &'static str,
+        function_name: &'static str,
+        constants: &FunctionConstantValues,
+        constants_key: &[u8],
+        buffer_index: u64,
+    ) -> Result<metal::ArgumentEncoder, GpuError> {
+        let function = self.function(source, function_name, constants, constants_key)?;
+        Ok(function.new_argument_encoder(buffer_index))
+    }
+
+    /// Running count of Metal buffers this context has allocated
+    /// (`new_buffer_with_data` + `new_output_buffer`). The decode hot path
+    /// is required to allocate none: steady-state tests assert this stays
+    /// flat across generated tokens.
+    pub fn buffer_allocation_count(&self) -> u64 {
+        self.buffer_allocations
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     pub fn device(&self) -> &Device {
@@ -68,27 +119,33 @@ impl MetalContext {
     /// them to be set before a pipeline state can be built, even indices
     /// the shader's own `is_function_constant_defined` guard means are
     /// conditionally unread (see each kernel module's own constants
-    /// helper, e.g. `rms_norm::unused_function_constants`). Returns an
-    /// owned (cheaply-cloned, Objective-C reference-counted) handle so
-    /// callers don't hold a borrow of the context across the dispatch call
-    /// that follows.
+    /// helper, e.g. `rms_norm::unused_function_constants`).
+    ///
+    /// `FunctionConstantValues` offers no introspection, so callers must
+    /// also pass `constants_key`: a byte fingerprint of every value that
+    /// went into `constants` (empty when the constants are the same fixed
+    /// set every call). Two calls with the same function but different
+    /// constant values then cache as distinct pipelines — the Swift
+    /// original keys its PSO cache the same way (name + sorted constants).
+    ///
+    /// Returns an owned (cheaply-cloned, Objective-C reference-counted)
+    /// handle so callers don't hold a borrow of the context across the
+    /// dispatch call that follows.
     pub fn pipeline(
         &mut self,
         source: &'static str,
         function_name: &'static str,
         constants: &FunctionConstantValues,
+        constants_key: &[u8],
     ) -> Result<ComputePipelineState, GpuError> {
-        let key = (source, function_name);
+        let key = (source, function_name, constants_key.to_vec());
         if !self.pipelines.contains_key(&key) {
-            let library = self.library(source)?;
-            let function = library
-                .get_function(function_name, Some(constants.clone()))
-                .map_err(|_| GpuError::FunctionNotFound(function_name.to_string()))?;
+            let function = self.function(source, function_name, constants, constants_key)?;
             let pipeline = self
                 .device
                 .new_compute_pipeline_state_with_function(&function)
                 .map_err(GpuError::PipelineCreate)?;
-            self.pipelines.insert(key, pipeline);
+            self.pipelines.insert(key.clone(), pipeline);
         }
         Ok(self.pipelines[&key].clone())
     }
@@ -110,7 +167,24 @@ impl MetalContext {
         &self.queue
     }
 
+    /// Opens one command buffer + one serial compute encoder to batch many
+    /// kernel dispatches into a single submission (the Swift original
+    /// encodes a whole layer, or more, per command buffer instead of one
+    /// kernel per buffer with a synchronous wait each). Serial dispatch
+    /// order within the encoder guarantees each dispatch sees the previous
+    /// one's writes.
+    pub fn begin_pass(&self) -> PassEncoder {
+        let command_buffer = self.queue.new_command_buffer().to_owned();
+        let encoder = command_buffer.new_compute_command_encoder().to_owned();
+        PassEncoder {
+            command_buffer,
+            encoder,
+        }
+    }
+
     pub fn new_buffer_with_data<T>(&self, data: &[T]) -> metal::Buffer {
+        self.buffer_allocations
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let byte_len = std::mem::size_of_val(data) as u64;
         self.device.new_buffer_with_data(
             data.as_ptr().cast(),
@@ -120,9 +194,127 @@ impl MetalContext {
     }
 
     pub fn new_output_buffer(&self, byte_len: u64) -> metal::Buffer {
+        self.buffer_allocations
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.device
             .new_buffer(byte_len, MTLResourceOptions::StorageModeShared)
     }
+}
+
+/// An open command buffer + serial compute encoder; see
+/// [`MetalContext::begin_pass`]. Every `encode_*` call appends one
+/// dispatch; nothing runs until [`PassEncoder::commit_and_wait`] (or
+/// [`PassEncoder::commit`]).
+pub struct PassEncoder {
+    command_buffer: metal::CommandBuffer,
+    encoder: metal::ComputeCommandEncoder,
+}
+
+impl PassEncoder {
+    /// Appends one `dispatchThreadgroups` call. Buffer bindings are
+    /// `(buffer, argument index, byte offset)`.
+    pub fn encode_threadgroups(
+        &self,
+        pipeline: &ComputePipelineState,
+        buffers: &[(&metal::Buffer, u64, u64)],
+        bytes: &[(&[u8], u64)],
+        threadgroups: u64,
+        threads_per_group: u64,
+    ) {
+        self.encoder.set_compute_pipeline_state(pipeline);
+        for &(buffer, index, offset) in buffers {
+            self.encoder.set_buffer(index, Some(buffer), offset);
+        }
+        for &(data, index) in bytes {
+            self.encoder
+                .set_bytes(index, data.len() as u64, data.as_ptr().cast());
+        }
+        self.encoder.dispatch_thread_groups(
+            MTLSize::new(threadgroups, 1, 1),
+            MTLSize::new(threads_per_group, 1, 1),
+        );
+    }
+
+    /// Appends one `dispatchThreads` call (non-threadgroup-quantized grid).
+    pub fn encode_threads_3d(
+        &self,
+        pipeline: &ComputePipelineState,
+        buffers: &[(&metal::Buffer, u64, u64)],
+        bytes: &[(&[u8], u64)],
+        grid: (u64, u64, u64),
+        threadgroup: (u64, u64, u64),
+    ) {
+        self.encoder.set_compute_pipeline_state(pipeline);
+        for &(buffer, index, offset) in buffers {
+            self.encoder.set_buffer(index, Some(buffer), offset);
+        }
+        for &(data, index) in bytes {
+            self.encoder
+                .set_bytes(index, data.len() as u64, data.as_ptr().cast());
+        }
+        self.encoder.dispatch_threads(
+            MTLSize::new(grid.0, grid.1, grid.2),
+            MTLSize::new(threadgroup.0, threadgroup.1, threadgroup.2),
+        );
+    }
+
+    /// Declares a buffer referenced only indirectly (through an argument
+    /// buffer's pointer array) as read by the pass — Metal's
+    /// `useResource(_:usage:.read)`, required for the MoE expert blobs.
+    pub fn use_read_buffer(&self, buffer: &metal::Buffer) {
+        self.encoder
+            .use_resource(buffer, metal::MTLResourceUsage::Read);
+    }
+
+    /// Ends encoding, commits, and blocks until the GPU finishes. Shared-
+    /// storage outputs are CPU-readable after this returns.
+    pub fn commit_and_wait(self) {
+        self.encoder.end_encoding();
+        self.command_buffer.commit();
+        self.command_buffer.wait_until_completed();
+    }
+
+    /// Ends encoding and commits without waiting (for callers that overlap
+    /// CPU work with the GPU and synchronize later themselves).
+    pub fn commit(self) -> metal::CommandBuffer {
+        self.encoder.end_encoding();
+        self.command_buffer.commit();
+        self.command_buffer
+    }
+}
+
+/// Host-writes `bytes` into a shared-storage buffer at `offset` (a plain
+/// memcpy into unified memory). Callers sequence this against GPU work
+/// themselves: write before committing the pass that reads it.
+pub fn write_buffer_bytes(buffer: &metal::Buffer, offset: usize, bytes: &[u8]) {
+    assert!(offset + bytes.len() <= buffer.length() as usize);
+    // SAFETY: bounds asserted above against a live shared-storage
+    // `MTLBuffer`'s allocation; the source and destination never overlap
+    // (one is a Rust slice, the other a Metal allocation).
+    #[allow(unsafe_code)]
+    unsafe {
+        std::ptr::copy_nonoverlapping(
+            bytes.as_ptr(),
+            (buffer.contents() as *mut u8).add(offset),
+            bytes.len(),
+        );
+    }
+}
+
+/// Host-reads `count` halfs from a shared-storage buffer starting at
+/// `byte_offset`. Only valid after the pass that wrote them completed.
+pub fn read_buffer_f16(buffer: &metal::Buffer, byte_offset: usize, count: usize) -> Vec<half::f16> {
+    assert!(byte_offset + count * 2 <= buffer.length() as usize);
+    // SAFETY: bounds asserted above; u16 has no invalid bit patterns and
+    // the 2-byte alignment holds for any offset this crate binds halfs at.
+    #[allow(unsafe_code)]
+    let bits = unsafe {
+        std::slice::from_raw_parts(
+            (buffer.contents() as *const u8).add(byte_offset) as *const u16,
+            count,
+        )
+    };
+    bits.iter().map(|&b| half::f16::from_bits(b)).collect()
 }
 
 /// One threadgroup per row/head, `threads_per_group` threads each — the
@@ -140,6 +332,38 @@ pub fn dispatch_one_threadgroup_per_row(
     encoder.set_compute_pipeline_state(pipeline);
     for &(buffer, index) in buffers {
         encoder.set_buffer(index, Some(buffer), 0);
+    }
+    for &(data, index) in bytes {
+        encoder.set_bytes(index, data.len() as u64, data.as_ptr().cast());
+    }
+    encoder.dispatch_thread_groups(
+        MTLSize::new(rows, 1, 1),
+        MTLSize::new(threads_per_group, 1, 1),
+    );
+    encoder.end_encoding();
+    command_buffer.commit();
+    command_buffer.wait_until_completed();
+}
+
+/// Like [`dispatch_one_threadgroup_per_row`], but each buffer binding
+/// carries an explicit byte offset — the shape used to bind tensors as
+/// offsets into the one shared resident-weights `MTLBuffer`
+/// (`ResidentGpuWeights`) instead of staging copies. Offsets need only
+/// match the kernel argument's element alignment (2 for `half`/`bfloat`,
+/// 1 for `uint8_t`), which the `.gturbo` layout guarantees.
+pub fn dispatch_one_threadgroup_per_row_offsets(
+    context: &MetalContext,
+    pipeline: &ComputePipelineState,
+    buffers: &[(&metal::Buffer, u64, u64)],
+    bytes: &[(&[u8], u64)],
+    rows: u64,
+    threads_per_group: u64,
+) {
+    let command_buffer = context.queue().new_command_buffer();
+    let encoder = command_buffer.new_compute_command_encoder();
+    encoder.set_compute_pipeline_state(pipeline);
+    for &(buffer, index, offset) in buffers {
+        encoder.set_buffer(index, Some(buffer), offset);
     }
     for &(data, index) in bytes {
         encoder.set_bytes(index, data.len() as u64, data.as_ptr().cast());

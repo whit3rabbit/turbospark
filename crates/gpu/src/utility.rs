@@ -1,0 +1,97 @@
+//! Host-side dispatch for `shaders/utility.metal` (vendored from
+//! `Metal/Primitives/utility.metal`, plus the `gelu_pytorch_tanh` helper it
+//! borrows from `moe.metal` — see the shader's own header). These are the
+//! small elementwise kernels that keep activations on the GPU between the
+//! big kernels: gated-FFN activation multiplies and the residual add.
+//!
+//! `sigmoid_gate_mul_fp16`, `sigmoid_scalar_mul_fp16`, and
+//! `split_q_gate_fp16` (all Qwen 3.6-specific) are vendored but not yet
+//! dispatched — no Qwen path exists in this port yet.
+
+use metal::FunctionConstantValues;
+
+use crate::bytes::u32_bytes;
+use crate::context::{GpuError, MetalContext, PassEncoder};
+
+const SOURCE: &str = include_str!("shaders/utility.metal");
+const THREADS_PER_GROUP: u64 = 256;
+
+fn grid_for(count: u32) -> u64 {
+    (count as u64).div_ceil(THREADS_PER_GROUP) * THREADS_PER_GROUP
+}
+
+fn encode_elementwise(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    function_name: &'static str,
+    buffers: &[(&metal::Buffer, u64, u64)],
+    count: u32,
+    count_index: u64,
+) -> Result<(), GpuError> {
+    let pipeline = context.pipeline(SOURCE, function_name, &FunctionConstantValues::new(), b"")?;
+    pass.encode_threads_3d(
+        &pipeline,
+        buffers,
+        &[(u32_bytes(&count), count_index)],
+        (grid_for(count), 1, 1),
+        (THREADS_PER_GROUP, 1, 1),
+    );
+    Ok(())
+}
+
+/// `out[i] = gelu_pytorch_tanh(gate[i]) * up[i]` (Gemma's GeGLU).
+pub fn encode_gelu_mul(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    gate: (&metal::Buffer, u64),
+    up: (&metal::Buffer, u64),
+    out: (&metal::Buffer, u64),
+    count: u32,
+) -> Result<(), GpuError> {
+    encode_elementwise(
+        context,
+        pass,
+        "gelu_mul_fp16",
+        &[(gate.0, 0, gate.1), (up.0, 1, up.1), (out.0, 2, out.1)],
+        count,
+        3,
+    )
+}
+
+/// `out[i] = silu(gate[i]) * up[i]` (Qwen's SwiGLU).
+pub fn encode_silu_mul(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    gate: (&metal::Buffer, u64),
+    up: (&metal::Buffer, u64),
+    out: (&metal::Buffer, u64),
+    count: u32,
+) -> Result<(), GpuError> {
+    encode_elementwise(
+        context,
+        pass,
+        "silu_mul_fp16",
+        &[(gate.0, 0, gate.1), (up.0, 1, up.1), (out.0, 2, out.1)],
+        count,
+        3,
+    )
+}
+
+/// `hidden[i] += delta[i]`, in place, in FP16 — the residual stream stays
+/// on the GPU exactly as the Swift original keeps it.
+pub fn encode_residual_add(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    hidden: (&metal::Buffer, u64),
+    delta: (&metal::Buffer, u64),
+    count: u32,
+) -> Result<(), GpuError> {
+    encode_elementwise(
+        context,
+        pass,
+        "residual_add_fp16",
+        &[(hidden.0, 0, hidden.1), (delta.0, 1, delta.1)],
+        count,
+        2,
+    )
+}

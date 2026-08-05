@@ -27,7 +27,7 @@ use half::f16;
 use metal::{FunctionConstantValues, MTLDataType};
 
 use crate::bytes::{f32_bytes, half_slice_to_le_bytes, read_half_buffer, u32_bytes};
-use crate::context::{dispatch_one_threadgroup_per_row, GpuError, MetalContext};
+use crate::context::{dispatch_one_threadgroup_per_row, GpuError, MetalContext, PassEncoder};
 
 const SOURCE: &str = include_str!("shaders/attention.metal");
 const THREADS_PER_GROUP: u64 = 256; // kAttnThreads.
@@ -45,11 +45,9 @@ const THREADS_PER_GROUP: u64 = 256; // kAttnThreads.
 /// instead of the runtime buffer argument — a dummy `0` for
 /// `FC_ATTN_NUM_CHUNKS` previously caused a `% 0` inside the kernel. Both
 /// must be set to this dispatch's real, fixed values: `num_chunks` is
-/// always `1` (see module docs), and `scale` is whatever the caller passes.
-/// Because `MetalContext::pipeline` caches by function name only (not by
-/// constants), every `attention_decode` call against one `MetalContext`
-/// must use the same `scale` (true in practice: one architecture has one
-/// fixed attention scale for its whole lifetime).
+/// always `1` (see module docs), and `scale` is whatever the caller passes
+/// (its bytes go into the pipeline-cache constants key, so different
+/// scales cache as distinct pipelines).
 fn unused_function_constants(scale: f32) -> FunctionConstantValues {
     let values = FunctionConstantValues::new();
     let zero_u32: u32 = 0;
@@ -87,9 +85,151 @@ pub fn attention_decode(
     assert_eq!(v.len(), (seq_len * num_kv_heads * head_dim) as usize);
     assert_eq!(num_q_heads % num_kv_heads, 0);
 
-    let q_buffer = context.new_buffer_with_data(&half_slice_to_le_bytes(q));
     let k_buffer = context.new_buffer_with_data(&half_slice_to_le_bytes(k));
     let v_buffer = context.new_buffer_with_data(&half_slice_to_le_bytes(v));
+    attention_decode_buffers(
+        context,
+        q,
+        &k_buffer,
+        &v_buffer,
+        head_dim,
+        num_q_heads,
+        num_kv_heads,
+        seq_len,
+        scale,
+    )
+}
+
+/// Caller-owned scratch for the two-pass decode attention: the partial
+/// max/denominator/output accumulators the combine pass folds. Sized once
+/// (per runner) for `num_q_heads`/`head_dim`; reused every token.
+pub struct AttentionScratch {
+    pub m: metal::Buffer,
+    pub d: metal::Buffer,
+    pub o: metal::Buffer,
+}
+
+impl AttentionScratch {
+    pub fn new(context: &MetalContext, num_q_heads: u32, head_dim: u32) -> Self {
+        Self {
+            m: context.new_output_buffer(num_q_heads as u64 * 4),
+            d: context.new_output_buffer(num_q_heads as u64 * 4),
+            o: context.new_output_buffer((num_q_heads * head_dim) as u64 * 4),
+        }
+    }
+}
+
+/// Encoder-level variant of [`attention_decode_buffers`]: Q at a
+/// `(buffer, byte offset)` view, K/V read in place from persistent cache
+/// buffers, output written to `out`, both passes appended to `pass`.
+///
+/// `kv_start` restricts attention to `[kv_start, seq_len)` — pass
+/// `seq_len - window` (clamped at 0) for a sliding-window layer over a
+/// linear (non-ring) KV layout, `0` for full attention; the kernel's
+/// chunk arithmetic handles both identically.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_attention_decode(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    q: (&metal::Buffer, u64),
+    k_buffer: &metal::Buffer,
+    v_buffer: &metal::Buffer,
+    scratch: &AttentionScratch,
+    out: (&metal::Buffer, u64),
+    head_dim: u32,
+    num_q_heads: u32,
+    num_kv_heads: u32,
+    seq_len: u32,
+    kv_start: u32,
+    scale: f32,
+) -> Result<(), GpuError> {
+    assert_eq!(num_q_heads % num_kv_heads, 0);
+    assert!(kv_start < seq_len);
+    let kv_bytes = (seq_len * num_kv_heads * head_dim) as u64 * 2;
+    assert!(k_buffer.length() >= kv_bytes, "K buffer too small");
+    assert!(v_buffer.length() >= kv_bytes, "V buffer too small");
+
+    let chunk_len = seq_len - kv_start;
+    let num_chunks: u32 = 1;
+
+    let constants = unused_function_constants(scale);
+    let constants_key = scale.to_le_bytes();
+    let partial_pipeline = context.pipeline(
+        SOURCE,
+        "attention_decode_partial",
+        &constants,
+        &constants_key,
+    )?;
+    pass.encode_threadgroups(
+        &partial_pipeline,
+        &[
+            (q.0, 0, q.1),
+            (k_buffer, 1, 0),
+            (v_buffer, 2, 0),
+            (&scratch.m, 3, 0),
+            (&scratch.d, 4, 0),
+            (&scratch.o, 5, 0),
+        ],
+        &[
+            (u32_bytes(&head_dim), 6),
+            (u32_bytes(&num_q_heads), 7),
+            (u32_bytes(&num_kv_heads), 8),
+            (u32_bytes(&seq_len), 9),
+            (u32_bytes(&kv_start), 10),
+            (u32_bytes(&chunk_len), 11),
+            (u32_bytes(&num_chunks), 12),
+            (f32_bytes(&scale), 13),
+        ],
+        num_q_heads as u64,
+        THREADS_PER_GROUP,
+    );
+
+    let combine_pipeline = context.pipeline(
+        SOURCE,
+        "attention_decode_combine",
+        &constants,
+        &constants_key,
+    )?;
+    pass.encode_threadgroups(
+        &combine_pipeline,
+        &[
+            (&scratch.m, 0, 0),
+            (&scratch.d, 1, 0),
+            (&scratch.o, 2, 0),
+            (out.0, 3, out.1),
+        ],
+        &[(u32_bytes(&head_dim), 4), (u32_bytes(&num_chunks), 5)],
+        num_q_heads as u64,
+        THREADS_PER_GROUP,
+    );
+    Ok(())
+}
+
+/// Same two-pass decode attention, but K and V are read straight out of
+/// caller-owned persistent buffers (`KvCacheManager`'s per-layer K/V, in
+/// linear `[seq_len, num_kv_heads, head_dim]` layout starting at offset 0)
+/// instead of being re-uploaded per token. This is the shape the runner's
+/// decode loop uses; `attention_decode` (slice K/V) remains for parity
+/// tests.
+#[allow(clippy::too_many_arguments)]
+pub fn attention_decode_buffers(
+    context: &mut MetalContext,
+    q: &[f16],
+    k_buffer: &metal::Buffer,
+    v_buffer: &metal::Buffer,
+    head_dim: u32,
+    num_q_heads: u32,
+    num_kv_heads: u32,
+    seq_len: u32,
+    scale: f32,
+) -> Result<Vec<f16>, GpuError> {
+    assert_eq!(q.len(), (num_q_heads * head_dim) as usize);
+    assert_eq!(num_q_heads % num_kv_heads, 0);
+    let kv_bytes = (seq_len * num_kv_heads * head_dim) as u64 * 2;
+    assert!(k_buffer.length() >= kv_bytes, "K buffer too small");
+    assert!(v_buffer.length() >= kv_bytes, "V buffer too small");
+
+    let q_buffer = context.new_buffer_with_data(&half_slice_to_le_bytes(q));
     let m_buffer = context.new_output_buffer((num_q_heads as usize * 4) as u64);
     let d_buffer = context.new_output_buffer((num_q_heads as usize * 4) as u64);
     let o_buffer = context.new_output_buffer((num_q_heads * head_dim) as u64 * 4);
@@ -99,14 +239,20 @@ pub fn attention_decode(
     let num_chunks: u32 = 1;
 
     let constants = unused_function_constants(scale);
-    let partial_pipeline = context.pipeline(SOURCE, "attention_decode_partial", &constants)?;
+    let constants_key = scale.to_le_bytes();
+    let partial_pipeline = context.pipeline(
+        SOURCE,
+        "attention_decode_partial",
+        &constants,
+        &constants_key,
+    )?;
     dispatch_one_threadgroup_per_row(
         context,
         &partial_pipeline,
         &[
             (&q_buffer, 0),
-            (&k_buffer, 1),
-            (&v_buffer, 2),
+            (k_buffer, 1),
+            (v_buffer, 2),
             (&m_buffer, 3),
             (&d_buffer, 4),
             (&o_buffer, 5),
@@ -126,7 +272,12 @@ pub fn attention_decode(
     );
 
     let out_buffer = context.new_output_buffer((num_q_heads * head_dim) as u64 * 2);
-    let combine_pipeline = context.pipeline(SOURCE, "attention_decode_combine", &constants)?;
+    let combine_pipeline = context.pipeline(
+        SOURCE,
+        "attention_decode_combine",
+        &constants,
+        &constants_key,
+    )?;
     dispatch_one_threadgroup_per_row(
         context,
         &combine_pipeline,

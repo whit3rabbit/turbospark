@@ -15,8 +15,9 @@ mod safetensors_header;
 mod synthetic_model;
 
 pub use gturbo_writer::{
-    write_gturbo_install, write_gturbo_install_with_resident_index, ExpertBlob, LayerBlobs,
-    SubTensor, WriterError,
+    write_gturbo_install, write_gturbo_install_with_resident_index,
+    write_gturbo_install_with_resident_index_and_experts, ExpertBlob, LayerBlobs, SubTensor,
+    WriterError,
 };
 pub use hf_checkpoint::{orchestrate_llama_checkpoint, LlamaCheckpointDims, OrchestrateError};
 pub use install_verifier::verify_install_full_sha256;
@@ -32,10 +33,11 @@ pub use safetensors_header::{
     DEFAULT_MAX_HEADER_BYTES,
 };
 pub use synthetic_model::{
-    build_synthetic_gemma4_install, build_synthetic_gemma4_moe_install, down_proj_name,
-    embed_lm_head_name, expert_down_proj_name, expert_gate_proj_name, expert_up_proj_name,
-    gate_proj_name, k_proj_name, o_proj_name, q_proj_name, router_name, tiny_gemma4_arch,
-    up_proj_name,
+    build_synthetic_gemma4_install, build_synthetic_gemma4_moe_install,
+    build_synthetic_gemma4_moe_streamed_install, build_synthetic_gemma4_swa_install,
+    down_proj_name, embed_lm_head_name, expert_down_proj_name, expert_gate_proj_name,
+    expert_up_proj_name, gate_proj_name, k_proj_name, o_proj_name, q_proj_name, router_name,
+    tiny_gemma4_arch, up_proj_name,
 };
 
 // Token id width consumed from the core primitives, keeping the dependency

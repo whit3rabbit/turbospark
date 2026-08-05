@@ -19,6 +19,7 @@ tokenizer = { package = "mrefrust-tokenizer", path = "../tokenizer" }
 gpu = { package = "mrefrust-gpu", path = "../gpu" }
 model_io = { package = "mrefrust-model-io", path = "../model-io" }
 compute = { package = "mrefrust-compute", path = "../compute" }
+streaming = { package = "mrefrust-streaming", path = "../streaming" }
 half = "2"
 
 [dev-dependencies]

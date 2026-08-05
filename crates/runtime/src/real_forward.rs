@@ -6,40 +6,54 @@
 //! INT4-affine-quantized weights loaded through `mrefrust_model_io`.
 //! macOS/Metal only, matching `mrefrust_gpu`'s own platform gate.
 //!
-//! What this is NOT: production parity with the Swift `RealForwardRunner`.
-//! No GPU MoE/FFN kernel is vendored (see `DEVIATIONS.md`), so both the
-//! dense gated FFN and the MoE routed-expert FFN are bridged on the CPU
-//! with the already-tested `mrefrust_compute` reference (`run_ffn`)
-//! instead of being skipped. For MoE layers, only the router GEMV and each
-//! selected expert's gate/up/down GEMVs run on the GPU (the same
-//! `dequant_int4_gemv_simd` kernel every other projection uses); top-k
-//! expert selection and softmax weighting are plain host arithmetic (no
-//! kernel needed — `num_experts` is small enough that this is not a
-//! meaningful cost center in a reference implementation), and the
-//! weighted combine is a simple accumulate, not
-//! `compute::apply_streamed_routed`'s residual-fused form (this runner
-//! adds the residual itself, after the same sandwich-norm step the dense
-//! path uses). Every other op — embedding lookup, both RMSNorms per
-//! layer, both projections' RoPE, causal attention, every INT4 GEMV
-//! projection, and the final softcapped-softmax — runs for real on the
-//! GPU. KV history is kept in host `Vec<f16>` per layer rather than
-//! `gpu::KvCacheManager`'s GPU-resident buffers (a performance
-//! simplification, not a correctness one: `gpu::attention_decode` reads
-//! this history the same way regardless of where it lives; wiring
-//! `KvCacheManager` in is future work).
+//! Memory model (matching the Swift original):
+//! - Weights: ONE zero-copy `MTLBuffer` over the mmap of
+//!   `model_weights.bin` (`gpu::ResidentGpuWeights`); every projection
+//!   binds weights/scales/biases as offsets into it. No weight bytes are
+//!   staged or copied per dispatch.
+//! - KV: persistent per-layer GPU buffers (`gpu::KvCacheManager`),
+//!   allocated once; the K projection is written directly into its cache
+//!   slot by the GEMV and RoPE'd there in place. `attention_k_eq_v`
+//!   architectures bind the K buffer as V too, so V buffers stay
+//!   untouched (their pages never become resident).
+//! - Dispatch: the whole token is encoded into ONE command buffer with a
+//!   serial compute encoder (`gpu::PassEncoder`) for dense architectures
+//!   — one commit + one wait per token. The FP16 residual stream and all
+//!   intermediates live in preallocated GPU scratch (`DecodeScratch`);
+//!   the hot path allocates no Metal buffers. Residual adds and the
+//!   gated-FFN activation run on the GPU (`utility.metal`), FP16, as the
+//!   Swift original does.
 //!
-//! Only all-full-attention architectures are supported (no sliding-window/
-//! linear/compressed-attention layers, no hyper-connection residual), with
-//! either `num_experts == 0` (dense FFN every layer) or `num_experts > 0`
-//! (routed-expert FFN every layer, no separate dense/shared branch summed
-//! in alongside it — real Gemma 4 sums both; this runner does only one or
-//! the other per architecture). `mrefrust_repack::build_synthetic_gemma4_install`
-//! (dense) and `build_synthetic_gemma4_moe_install` (routed) are the two
-//! shapes this runner is exercised against, since no trained `.gturbo`
-//! checkpoint exists in this environment. A real checkpoint of either exact
-//! shape would run through unmodified.
+//! MoE layers follow the Swift CB1/CB2 decode shape: the router GEMV
+//! rides the first command buffer, its logits are the one host readback
+//! per layer (top-k selection + the expert `pread` need them on the CPU),
+//! then a second command buffer runs the real vendored `moe.metal`
+//! decode kernels (`moe_phase1_gate_up_act_u16load` +
+//! `moe_phase2_down_reduce_k8`), reading the expert blobs IN PLACE from
+//! the streamer's zero-copy slot buffers through a `RoutedBlobs` argument
+//! buffer. No expert byte reaches the host on streamed installs.
+//!
+//! What this is NOT yet: production parity with the Swift
+//! `RealForwardRunner`. Resident-expert MoE installs (a synthetic-only
+//! shape) still use the CPU `compute::run_ffn` bridge; top-k selection is
+//! host arithmetic (`topk_softmax`), not the `router_topk_select_k8`
+//! kernel; the router readback is a full command-buffer wait, not the
+//! `MTLSharedEvent` passive wait + phase1-hit/pipelined-CB overlap the
+//! Swift original layers on top; and no learned norm weights, separate V
+//! projection, per-head q/k norms, or shared-expert branch are wired yet
+//! (the `rmsnorm_bf16w` kernel is dispatched and parity-tested, awaiting
+//! a real-checkpoint tensor mapping) — see `DEVIATIONS.md`.
+//!
+//! Full-attention (mask 1) and sliding-window (mask 0, via attention
+//! `kv_start` over the linear KV layout) layers are supported; linear
+//! (Qwen GDN) and compressed (DeepSeek DSV4) layers are not (their
+//! kernels are unported). FFN may be dense, routed-resident, or
+//! routed-streamed. The synthetic installs in `mrefrust_repack`
+//! (`build_synthetic_gemma4_install` and its `_swa`/`_moe`/
+//! `_moe_streamed` variants) are the shapes this runner is exercised
+//! against, since no trained `.gturbo` checkpoint exists in this
+//! environment.
 
-use std::collections::HashMap;
 use std::path::Path;
 
 use foundation::LogitValue;
@@ -73,20 +87,114 @@ impl std::error::Error for RealForwardError {}
 
 const RMS_EPS: f32 = 1e-6;
 
-struct CachedScales {
-    scales: Vec<u16>,
-    biases: Vec<u16>,
-}
-
 pub struct RealForwardRunner {
     context: gpu::MetalContext,
-    buffer: ResidentBuffer,
+    /// The whole resident region as one zero-copy `MTLBuffer` over the
+    /// mmap (see `gpu::ResidentGpuWeights`); every GPU projection binds
+    /// weights/scales/biases as offsets into it, Swift-style. No weight
+    /// bytes are staged or copied per dispatch.
+    weights: gpu::ResidentGpuWeights,
     index: ResidentIndex,
     arch: ArchConfig,
-    scales: HashMap<String, CachedScales>,
-    kv_k: Vec<Vec<f16>>,
-    kv_v: Vec<Vec<f16>>,
+    /// Persistent per-layer GPU K/V buffers (allocated once, written one
+    /// token-stride per step, reset via `MADV_DONTNEED`) — the Swift
+    /// original's `KVCacheManager` shape, replacing the old host
+    /// `Vec<f16>` history that was re-uploaded whole every token.
+    kv: gpu::KvCacheManager,
+    scratch: DecodeScratch,
+    /// One zero-copy `MTLBuffer` per streamer slot, wrapped once at open
+    /// over the slot's page-aligned allocation — the GPU MoE kernels read
+    /// expert weights straight out of these through the `RoutedBlobs`
+    /// argument buffer. Declared BEFORE `streamers` so the buffers drop
+    /// before the allocations they alias.
+    slot_buffers: Vec<Vec<gpu::MetalBuffer>>,
+    streamers: Vec<Option<streaming::PreadExpertStreamer>>,
+    /// Uniform blob-relative sub-tensor offsets + the reusable argument
+    /// buffer, present when the install packs experts.
+    moe_offsets: Option<gpu::MoeExpertOffsets>,
+    routed_blobs: Option<gpu::RoutedBlobsBuffer>,
 }
+
+/// Matches `RuntimeConfig`'s default `expert_cache_slots`.
+const EXPERT_CACHE_SLOTS: usize = 16;
+const PACKED_LAYOUT_MAX_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Activation scratch, allocated once at open (the decode hot path never
+/// allocates a Metal buffer): the FP16 residual stream `x`, the normed /
+/// projection / FFN intermediates, the attention partials, and the final
+/// logits+probs. The whole token chains through these on the GPU inside
+/// one (dense) or a few (MoE) command buffers.
+struct DecodeScratch {
+    x: gpu::MetalBuffer,
+    normed: gpu::MetalBuffer,
+    q: gpu::MetalBuffer,
+    attn_out: gpu::MetalBuffer,
+    o: gpu::MetalBuffer,
+    o_normed: gpu::MetalBuffer,
+    ffn_gate: gpu::MetalBuffer,
+    ffn_up: gpu::MetalBuffer,
+    ffn_act: gpu::MetalBuffer,
+    ffn_out: gpu::MetalBuffer,
+    ffn_normed: gpu::MetalBuffer,
+    logits: gpu::MetalBuffer,
+    probs: gpu::MetalBuffer,
+    /// Router logits (`num_experts` halfs), the per-slot activation rows
+    /// (`top_k * moe_inter` halfs), the 8-slot routing-weight vector, and
+    /// an all-zero residual (the phase-2 kernel fuses a residual add; the
+    /// sandwich-norm path needs the raw combined output, so it feeds
+    /// zeros) — MoE-only, allocated tiny for dense architectures.
+    router_logits: gpu::MetalBuffer,
+    moe_acts: gpu::MetalBuffer,
+    routing_w: gpu::MetalBuffer,
+    zero_hidden: gpu::MetalBuffer,
+    attn: gpu::AttentionScratch,
+}
+
+impl DecodeScratch {
+    fn new(context: &gpu::MetalContext, arch: &ArchConfig) -> Self {
+        let hidden = arch.hidden_size as u64;
+        let qk_dim = (arch.num_heads * arch.full_head_dim) as u64;
+        let inter = arch.intermediate_size.max(arch.moe_intermediate_size) as u64;
+        let vocab = arch.vocab_size as u64;
+        let halfs = |n: u64| context.new_output_buffer(n.max(1) * 2);
+        Self {
+            x: halfs(hidden),
+            normed: halfs(hidden),
+            q: halfs(qk_dim),
+            attn_out: halfs(qk_dim),
+            o: halfs(hidden),
+            o_normed: halfs(hidden),
+            ffn_gate: halfs(inter),
+            ffn_up: halfs(inter),
+            ffn_act: halfs(inter),
+            ffn_out: halfs(hidden),
+            ffn_normed: halfs(hidden),
+            logits: halfs(vocab),
+            probs: halfs(vocab),
+            router_logits: halfs(arch.num_experts.max(1) as u64),
+            moe_acts: halfs((arch.top_k_experts.max(1) * arch.moe_intermediate_size.max(1)) as u64),
+            routing_w: {
+                let buffer = context.new_output_buffer(gpu::MAX_STREAMED_EXPERTS as u64 * 2);
+                gpu::write_buffer_bytes(&buffer, 0, &[0u8; gpu::MAX_STREAMED_EXPERTS * 2]);
+                buffer
+            },
+            zero_hidden: {
+                let buffer = context.new_output_buffer(hidden.max(1) * 2);
+                gpu::write_buffer_bytes(&buffer, 0, &vec![0u8; hidden.max(1) as usize * 2]);
+                buffer
+            },
+            attn: gpu::AttentionScratch::new(
+                context,
+                arch.num_heads as u32,
+                arch.full_head_dim as u32,
+            ),
+        }
+    }
+}
+
+/// KV capacity when the caller does not say otherwise; matches the CLI's
+/// `--max-context` default. `open_with_max_context` overrides it.
+const DEFAULT_MAX_CONTEXT: usize = 4096;
 
 impl RealForwardRunner {
     /// Opens a `.gturbo` install directory whose `manifest.json` matches
@@ -96,13 +204,42 @@ impl RealForwardRunner {
     /// (dense FFN) or positive (routed-expert FFN); see module docs for
     /// what MoE support here does and does not cover.
     pub fn open(dir: &Path, expecting: ArchConfig) -> Result<Self, RealForwardError> {
+        Self::open_with_max_context(dir, expecting, DEFAULT_MAX_CONTEXT)
+    }
+
+    /// Metal buffers allocated so far by this runner's context. The dense
+    /// decode hot path allocates none: all weights are the zero-copy
+    /// resident buffer, KV and activation scratch are preallocated at
+    /// open. Tests assert this stays flat across generated tokens.
+    pub fn gpu_buffer_allocations(&self) -> u64 {
+        self.context.buffer_allocation_count()
+    }
+
+    /// [`RealForwardRunner::open`] with an explicit KV capacity: the
+    /// per-layer K/V buffers are sized `max_context * kv_stride` up front
+    /// (the decode hot path never allocates), so generation past
+    /// `max_context` positions is a hard error, matching the loop's own
+    /// admission check.
+    pub fn open_with_max_context(
+        dir: &Path,
+        expecting: ArchConfig,
+        max_context: usize,
+    ) -> Result<Self, RealForwardError> {
+        // Full attention (1) and sliding-window (0) layers are supported;
+        // linear (2, Qwen GDN) and compressed (3/4, DeepSeek DSV4) layers
+        // still are not (their compute kernels are unported).
         if expecting
             .full_attention_layer_mask
             .iter()
-            .any(|&kind| kind != 1)
+            .any(|&kind| kind > 1)
         {
             return Err(RealForwardError::Unsupported(
-                "only all-full-attention (dense) architectures are supported".to_string(),
+                "linear/compressed attention layers are not supported yet".to_string(),
+            ));
+        }
+        if expecting.full_attention_layer_mask.contains(&0) && expecting.sliding_window <= 0 {
+            return Err(RealForwardError::Unsupported(
+                "sliding-window layers require a positive sliding_window".to_string(),
             ));
         }
 
@@ -116,34 +253,147 @@ impl RealForwardRunner {
             index.header.resident_size,
         )
         .map_err(RealForwardError::Model)?;
-        let context = gpu::MetalContext::new().map_err(RealForwardError::Gpu)?;
+        let mut context = gpu::MetalContext::new().map_err(RealForwardError::Gpu)?;
+        let weights = gpu::ResidentGpuWeights::wrap(context.device(), buffer)
+            .map_err(RealForwardError::Gpu)?;
 
-        let mut scales = HashMap::with_capacity(index.entries.len());
-        for (name, entry) in &index.entries {
-            let scale_local = (entry.scale_offset - index.header.index_size) as usize;
-            let bias_local = (entry.bias_offset - index.header.index_size) as usize;
-            let scale_bytes = &buffer.data()[scale_local..scale_local + entry.scale_size as usize];
-            let bias_bytes = &buffer.data()[bias_local..bias_local + entry.bias_size as usize];
-            scales.insert(
-                name.clone(),
-                CachedScales {
-                    scales: le_bytes_to_u16(scale_bytes),
-                    biases: le_bytes_to_u16(bias_bytes),
-                },
-            );
-        }
+        // All-full-attention only (checked above), so no SWA ring is in
+        // play: every layer gets a linear max_context-capacity buffer.
+        let kv = gpu::KvCacheManager::new(
+            context.device(),
+            &expecting,
+            max_context,
+            false,
+            None,
+            1,
+            None,
+        )
+        .map_err(RealForwardError::Gpu)?;
 
+        let scratch = DecodeScratch::new(&context, &expecting);
+
+        // Streamed experts, when the install packs them: one streamer per
+        // layer over its `packed_experts/layer_NN.bin` file.
+        let layout = model_io::load_packed_experts_layout(dir, PACKED_LAYOUT_MAX_BYTES)
+            .map_err(RealForwardError::Model)?;
         let num_layers = expecting.num_layers as usize;
+        let mut streamers: Vec<Option<streaming::PreadExpertStreamer>> = Vec::new();
+        let experts_layout = if layout.num_layers > 0 {
+            for layer in 0..num_layers {
+                let entry = layout
+                    .layers
+                    .iter()
+                    .find(|l| l.layer == layer)
+                    .ok_or_else(|| {
+                        RealForwardError::Unsupported(format!(
+                            "packed_experts layout missing layer {layer}"
+                        ))
+                    })?;
+                let stream_layout = streaming::StreamLayout::from_packed_experts_layer(
+                    entry,
+                    dir,
+                    layout.expert_stride,
+                );
+                let streamer = streaming::PreadExpertStreamer::open(
+                    stream_layout,
+                    EXPERT_CACHE_SLOTS,
+                    streaming::ExpertCachePolicy::DEFAULT,
+                )
+                .map_err(|e| RealForwardError::Unsupported(format!("expert streamer: {e}")))?;
+                streamers.push(Some(streamer));
+            }
+            Some(layout)
+        } else {
+            streamers.resize_with(num_layers, || None);
+            None
+        };
+
+        // Wrap every streamer slot's aligned allocation in a zero-copy
+        // Metal buffer once, and resolve the uniform expert sub-tensor
+        // offsets the MoE kernels index blobs with.
+        let mut slot_buffers: Vec<Vec<gpu::MetalBuffer>> = Vec::with_capacity(streamers.len());
+        for streamer in &streamers {
+            match streamer {
+                Some(s) => {
+                    let mut wrapped = Vec::with_capacity(EXPERT_CACHE_SLOTS);
+                    for slot in 0..EXPERT_CACHE_SLOTS {
+                        let (ptr, len) = s.slot_allocation(slot);
+                        wrapped.push(
+                            gpu::wrap_page_aligned_no_copy(context.device(), ptr, len)
+                                .map_err(RealForwardError::Gpu)?,
+                        );
+                    }
+                    slot_buffers.push(wrapped);
+                }
+                None => slot_buffers.push(Vec::new()),
+            }
+        }
+        let use_silu = expecting.hidden_activation.contains("silu");
+        let (moe_offsets, routed_blobs) = match &experts_layout {
+            Some(layout) => {
+                let offsets = moe_offsets_from_layout(layout)?;
+                let routed = gpu::RoutedBlobsBuffer::new(&mut context, use_silu)
+                    .map_err(RealForwardError::Gpu)?;
+                (Some(offsets), Some(routed))
+            }
+            None => (None, None),
+        };
+        drop(experts_layout);
+
         Ok(Self {
             context,
-            buffer,
+            weights,
             index,
             arch: expecting,
-            scales,
-            kv_k: vec![Vec::new(); num_layers],
-            kv_v: vec![Vec::new(); num_layers],
+            kv,
+            scratch,
+            slot_buffers,
+            streamers,
+            moe_offsets,
+            routed_blobs,
         })
     }
+}
+
+/// Resolves the shader's uniform `ExpertOffsets` from the decoded blob
+/// layout (first expert of the first layer; the writer packs every blob
+/// identically). The phase-2 down projection reads its weight bytes with
+/// 4-byte loads, so `down`'s offset must be 4-byte aligned.
+fn moe_offsets_from_layout(
+    layout: &model_io::PackedExpertsLayout,
+) -> Result<gpu::MoeExpertOffsets, RealForwardError> {
+    let entry = &layout
+        .layers
+        .first()
+        .and_then(|l| l.experts.first())
+        .ok_or_else(|| {
+            RealForwardError::Unsupported("packed_experts layout has no experts".to_string())
+        })?
+        .sub_tensors;
+    let get = |name: &str| -> Result<u32, RealForwardError> {
+        entry
+            .get(name)
+            .map(|s| s.offset as u32)
+            .ok_or_else(|| RealForwardError::MissingTensor(format!("expert blob {name}")))
+    };
+    let offsets = gpu::MoeExpertOffsets {
+        gate_w: get("gate")?,
+        gate_s: get("gate_scales")?,
+        gate_b: get("gate_biases")?,
+        up_w: get("up")?,
+        up_s: get("up_scales")?,
+        up_b: get("up_biases")?,
+        down_w: get("down")?,
+        down_s: get("down_scales")?,
+        down_b: get("down_biases")?,
+    };
+    if offsets.down_w % 4 != 0 {
+        return Err(RealForwardError::Unsupported(format!(
+            "down projection offset {} is not 4-byte aligned",
+            offsets.down_w
+        )));
+    }
+    Ok(offsets)
 }
 
 fn le_bytes_to_u16(bytes: &[u8]) -> Vec<u16> {
@@ -161,6 +411,14 @@ fn f16_to_f32(v: &[f16]) -> Vec<f32> {
     v.iter().map(|x| x.to_f32()).collect()
 }
 
+fn f16_slice_to_le_bytes(v: &[f16]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(v.len() * 2);
+    for x in v {
+        out.extend_from_slice(&x.to_bits().to_le_bytes());
+    }
+    out
+}
+
 fn tensor_bytes<'a>(
     index: &'a ResidentIndex,
     data: &'a [u8],
@@ -174,49 +432,66 @@ fn tensor_bytes<'a>(
     Ok(&data[local..local + entry.size_bytes as usize])
 }
 
-#[allow(clippy::too_many_arguments)]
-fn gpu_rows<'a>(
-    index: &'a ResidentIndex,
-    data: &'a [u8],
-    scales: &'a HashMap<String, CachedScales>,
+/// Resolves `name` to an offset-bound matrix view into the one shared
+/// resident `MTLBuffer` — the zero-copy binding every GPU projection
+/// dispatches against. Validates the entry's packed size against the
+/// caller's expected shape (the offsets are trusted after that; the index
+/// was already bounds-validated at load).
+fn resident_matrix<'a>(
+    weights: &'a gpu::ResidentGpuWeights,
+    index: &ResidentIndex,
     name: &str,
     rows: usize,
     cols: usize,
-) -> Result<Vec<gpu::Int4AffineRowGpu<'a>>, RealForwardError> {
-    let packed_all = tensor_bytes(index, data, name)?;
-    let cached = scales
+) -> Result<gpu::Int4ResidentMatrix<'a>, RealForwardError> {
+    let entry = index
+        .entries
         .get(name)
         .ok_or_else(|| RealForwardError::MissingTensor(name.to_string()))?;
-    let row_bytes = cols / 2;
-    let groups = cols / 64;
-    Ok((0..rows)
-        .map(|r| gpu::Int4AffineRowGpu {
-            packed: &packed_all[r * row_bytes..(r + 1) * row_bytes],
-            scales: &cached.scales[r * groups..(r + 1) * groups],
-            biases: &cached.biases[r * groups..(r + 1) * groups],
-        })
-        .collect())
+    if entry.size_bytes as usize != rows * cols / 2 {
+        return Err(RealForwardError::Unsupported(format!(
+            "tensor {name}: packed size {} does not match shape {rows}x{cols}",
+            entry.size_bytes
+        )));
+    }
+    let base = index.header.index_size;
+    Ok(gpu::Int4ResidentMatrix {
+        buffer: weights.buffer(),
+        weights_offset: weights.gpu_offset(entry.file_offset - base),
+        scales_offset: weights.gpu_offset(entry.scale_offset - base),
+        biases_offset: weights.gpu_offset(entry.bias_offset - base),
+        rows,
+        cols,
+    })
 }
 
+/// Host copies for the CPU FFN bridge only (`compute::run_ffn` has no GPU
+/// counterpart yet — see module docs). Converts the tensor's BF16
+/// scale/bias bytes on each call; goes away with the GPU FFN/MoE kernels.
 fn owned_rows(
     index: &ResidentIndex,
     data: &[u8],
-    scales: &HashMap<String, CachedScales>,
     name: &str,
     rows: usize,
     cols: usize,
 ) -> Result<Vec<compute::quant::Int4AffineRow>, RealForwardError> {
     let packed_all = tensor_bytes(index, data, name)?;
-    let cached = scales
+    let entry = index
+        .entries
         .get(name)
         .ok_or_else(|| RealForwardError::MissingTensor(name.to_string()))?;
+    let base = index.header.index_size;
+    let scale_local = (entry.scale_offset - base) as usize;
+    let bias_local = (entry.bias_offset - base) as usize;
+    let scales = le_bytes_to_u16(&data[scale_local..scale_local + entry.scale_size as usize]);
+    let biases = le_bytes_to_u16(&data[bias_local..bias_local + entry.bias_size as usize]);
     let row_bytes = cols / 2;
     let groups = cols / 64;
     Ok((0..rows)
         .map(|r| compute::quant::Int4AffineRow {
             packed: packed_all[r * row_bytes..(r + 1) * row_bytes].to_vec(),
-            scales: cached.scales[r * groups..(r + 1) * groups].to_vec(),
-            biases: cached.biases[r * groups..(r + 1) * groups].to_vec(),
+            scales: scales[r * groups..(r + 1) * groups].to_vec(),
+            biases: biases[r * groups..(r + 1) * groups].to_vec(),
         })
         .collect())
 }
@@ -259,73 +534,9 @@ fn topk_softmax(logits: &[f32], k: usize) -> (Vec<usize>, Vec<f32>) {
 /// CPU-bridged), weighted and summed. Only the selected experts' weights
 /// are ever read, not the full expert table.
 #[allow(clippy::too_many_arguments)]
-fn moe_ffn(
-    context: &mut gpu::MetalContext,
-    index: &ResidentIndex,
-    data: &[u8],
-    scale_cache: &HashMap<String, CachedScales>,
-    layer: usize,
-    x: &[f32],
-    hidden: usize,
-    moe_inter: usize,
-    num_experts: usize,
-    top_k: usize,
-) -> Result<Vec<f32>, RealForwardError> {
-    let x16 = f32_to_f16(x);
-    let router_rows = gpu_rows(
-        index,
-        data,
-        scale_cache,
-        &layer_name("router", layer),
-        num_experts,
-        hidden,
-    )?;
-    let logits16 = gpu::dequant_int4_gemv(context, &router_rows, &x16, hidden)
-        .map_err(RealForwardError::Gpu)?;
-    let (selected, weights) = topk_softmax(&f16_to_f32(&logits16), top_k);
-
-    let mut combined = vec![0f32; hidden];
-    for (&e, &w) in selected.iter().zip(weights.iter()) {
-        let gate_rows = owned_rows(
-            index,
-            data,
-            scale_cache,
-            &format!("layer{layer}.expert{e}.gate_proj"),
-            moe_inter,
-            hidden,
-        )?;
-        let up_rows = owned_rows(
-            index,
-            data,
-            scale_cache,
-            &format!("layer{layer}.expert{e}.up_proj"),
-            moe_inter,
-            hidden,
-        )?;
-        let down_rows = owned_rows(
-            index,
-            data,
-            scale_cache,
-            &format!("layer{layer}.expert{e}.down_proj"),
-            hidden,
-            moe_inter,
-        )?;
-        let out = compute::run_ffn(&gate_rows, &up_rows, &down_rows, x, hidden, moe_inter);
-        for (c, o) in combined.iter_mut().zip(out.iter()) {
-            *c += w * o;
-        }
-    }
-    Ok(combined)
-}
-
 impl LogitProducer for RealForwardRunner {
     fn reset(&mut self) {
-        for k in &mut self.kv_k {
-            k.clear();
-        }
-        for v in &mut self.kv_v {
-            v.clear();
-        }
+        self.kv.reset();
     }
 
     fn produce(
@@ -340,6 +551,63 @@ impl LogitProducer for RealForwardRunner {
 }
 
 impl RealForwardRunner {
+    /// The routed-expert FFN host bridge: a real GPU router GEMV, host
+    /// top-k, then each selected expert's gate/up/down + gated activation
+    /// via `compute::run_ffn`, weighted and summed. Expert weights come
+    /// from the per-layer `PreadExpertStreamer` (LFU slot cache, parallel
+    /// pread on misses) when the install packs them, or from the resident
+    /// region by name otherwise. Phase B moves the expert math onto the
+    /// GPU reading the slots directly.
+    fn moe_ffn_host(&mut self, layer: usize, x: &[f32]) -> Result<Vec<f32>, RealForwardError> {
+        let hidden = self.arch.hidden_size as usize;
+        let moe_inter = self.arch.moe_intermediate_size as usize;
+        let num_experts = self.arch.num_experts as usize;
+        let top_k = self.arch.top_k_experts as usize;
+
+        let x16 = f32_to_f16(x);
+        let router = resident_matrix(
+            &self.weights,
+            &self.index,
+            &layer_name("router", layer),
+            num_experts,
+            hidden,
+        )?;
+        let logits16 = gpu::dequant_int4_gemv_resident(&mut self.context, &router, &x16)
+            .map_err(RealForwardError::Gpu)?;
+        let (selected, weights) = topk_softmax(&f16_to_f32(&logits16), top_k);
+
+        let mut combined = vec![0f32; hidden];
+        let data = self.weights.data();
+        for (&e, &w) in selected.iter().zip(weights.iter()) {
+            let gate_rows = owned_rows(
+                &self.index,
+                data,
+                &format!("layer{layer}.expert{e}.gate_proj"),
+                moe_inter,
+                hidden,
+            )?;
+            let up_rows = owned_rows(
+                &self.index,
+                data,
+                &format!("layer{layer}.expert{e}.up_proj"),
+                moe_inter,
+                hidden,
+            )?;
+            let down_rows = owned_rows(
+                &self.index,
+                data,
+                &format!("layer{layer}.expert{e}.down_proj"),
+                hidden,
+                moe_inter,
+            )?;
+            let out = compute::run_ffn(&gate_rows, &up_rows, &down_rows, x, hidden, moe_inter);
+            for (c, o) in combined.iter_mut().zip(out.iter()) {
+                *c += w * o;
+            }
+        }
+        Ok(combined)
+    }
+
     fn produce_inner(
         &mut self,
         token: i32,
@@ -348,11 +616,11 @@ impl RealForwardRunner {
     ) -> Result<(), RealForwardError> {
         let hidden = self.arch.hidden_size as usize;
         let inter = self.arch.intermediate_size as usize;
-        let num_heads = self.arch.num_heads as usize;
-        let num_kv_heads = self.arch.num_full_kv_heads as usize;
-        let head_dim = self.arch.full_head_dim as usize;
-        let qk_dim = num_heads * head_dim;
-        let kv_dim = num_kv_heads * head_dim;
+        let num_heads = self.arch.num_heads as u32;
+        let num_kv_heads = self.arch.num_full_kv_heads as u32;
+        let head_dim = self.arch.full_head_dim as u32;
+        let qk_dim = (num_heads * head_dim) as usize;
+        let kv_dim = (num_kv_heads * head_dim) as usize;
         let vocab = self.arch.vocab_size as usize;
         let rotated_pairs =
             ((head_dim as f64 * self.arch.partial_rotary_factor) / 2.0).round() as u32;
@@ -364,185 +632,420 @@ impl RealForwardRunner {
         } else {
             1.0
         };
+        let use_silu = self.arch.hidden_activation.contains("silu");
+        let sandwich = self.arch.ffn_sandwich_norms;
 
-        let context = &mut self.context;
-        let data = self.buffer.data();
-        let index = &self.index;
-        let scale_cache = &self.scales;
+        // The KV cache is positional: tokens must arrive in order from the
+        // position the cache is at (reset() rewinds to 0).
+        if position != self.kv.position() {
+            return Err(RealForwardError::Unsupported(format!(
+                "non-sequential position {position}; KV cache is at {}",
+                self.kv.position()
+            )));
+        }
+        if !self.arch.attention_k_eq_v {
+            return Err(RealForwardError::Unsupported(
+                "only attention_k_eq_v architectures are supported".to_string(),
+            ));
+        }
+        let seq_len = (position + 1) as u32;
 
-        let embed_bytes = tensor_bytes(index, data, "embed_lm_head")?;
-        let embed_cached = scale_cache
+        let gpu_err = RealForwardError::Gpu;
+        // The embedding row dequant runs on the GPU (embed_lookup_int4,
+        // table/scales/biases bound as offsets into the resident buffer),
+        // seeding the FP16 residual stream in place: the whole token is
+        // GPU-side from the first byte.
+        let embed = self
+            .index
+            .entries
             .get("embed_lm_head")
             .ok_or_else(|| RealForwardError::MissingTensor("embed_lm_head".to_string()))?;
-        let mut x = compute::quant::embed_lookup_int4(
-            embed_bytes,
-            &embed_cached.scales,
-            &embed_cached.biases,
-            token as usize,
-            hidden,
+        if (token as usize) >= self.arch.vocab_size as usize {
+            return Err(RealForwardError::Unsupported(format!(
+                "token id {token} outside vocab {}",
+                self.arch.vocab_size
+            )));
+        }
+        let base = self.index.header.index_size;
+        let embed_table = self.weights.gpu_offset(embed.file_offset - base);
+        let embed_scales = self.weights.gpu_offset(embed.scale_offset - base);
+        let embed_biases = self.weights.gpu_offset(embed.bias_offset - base);
+
+        let mut pass = self.context.begin_pass();
+        gpu::encode_embed_lookup_int4(
+            &mut self.context,
+            &pass,
+            (self.weights.buffer(), embed_table),
+            (self.weights.buffer(), embed_scales),
+            (self.weights.buffer(), embed_biases),
+            (&self.scratch.x, 0),
+            token as u32,
+            hidden as u32,
             embed_scale,
-        );
-
+        )
+        .map_err(gpu_err)?;
         for layer in 0..self.arch.num_layers as usize {
-            let x16 = f32_to_f16(&x);
-            let normed16 =
-                gpu::rms_norm_no_scale(context, &x16, RMS_EPS).map_err(RealForwardError::Gpu)?;
-
-            let q_rows = gpu_rows(
-                index,
-                data,
-                scale_cache,
+            let q_proj = resident_matrix(
+                &self.weights,
+                &self.index,
                 &layer_name("q_proj", layer),
                 qk_dim,
                 hidden,
             )?;
-            let mut q16 = gpu::dequant_int4_gemv(context, &q_rows, &normed16, hidden)
-                .map_err(RealForwardError::Gpu)?;
-            let k_rows = gpu_rows(
-                index,
-                data,
-                scale_cache,
+            let k_proj = resident_matrix(
+                &self.weights,
+                &self.index,
                 &layer_name("k_proj", layer),
                 kv_dim,
                 hidden,
             )?;
-            let mut k16 = gpu::dequant_int4_gemv(context, &k_rows, &normed16, hidden)
-                .map_err(RealForwardError::Gpu)?;
-
-            q16 = gpu::rope_proportional_neox(
-                context,
-                &q16,
-                position as u32,
-                1,
-                num_heads as u32,
-                head_dim as u32,
-                rotated_pairs,
-                theta,
-            )
-            .map_err(RealForwardError::Gpu)?;
-            k16 = gpu::rope_proportional_neox(
-                context,
-                &k16,
-                position as u32,
-                1,
-                num_kv_heads as u32,
-                head_dim as u32,
-                rotated_pairs,
-                theta,
-            )
-            .map_err(RealForwardError::Gpu)?;
-
-            let v16 = if self.arch.attention_k_eq_v {
-                k16.clone()
-            } else {
-                return Err(RealForwardError::Unsupported(
-                    "only attention_k_eq_v architectures are supported".to_string(),
-                ));
-            };
-
-            self.kv_k[layer].extend_from_slice(&k16);
-            self.kv_v[layer].extend_from_slice(&v16);
-            let seq_len = position + 1;
-
-            let attn16 = gpu::attention_decode(
-                context,
-                &q16,
-                &self.kv_k[layer],
-                &self.kv_v[layer],
-                head_dim as u32,
-                num_heads as u32,
-                num_kv_heads as u32,
-                seq_len as u32,
-                attn_scale,
-            )
-            .map_err(RealForwardError::Gpu)?;
-            let o_rows = gpu_rows(
-                index,
-                data,
-                scale_cache,
+            let o_proj = resident_matrix(
+                &self.weights,
+                &self.index,
                 &layer_name("o_proj", layer),
                 hidden,
                 qk_dim,
             )?;
-            let o16 = gpu::dequant_int4_gemv(context, &o_rows, &attn16, qk_dim)
-                .map_err(RealForwardError::Gpu)?;
-            let post_attn16 = if self.arch.ffn_sandwich_norms {
-                gpu::rms_norm_no_scale(context, &o16, RMS_EPS).map_err(RealForwardError::Gpu)?
+            let (k_buf, k_off) = self.kv.k_slot(layer, position);
+
+            gpu::encode_rms_norm_no_scale(
+                &mut self.context,
+                &pass,
+                (&self.scratch.x, 0),
+                (&self.scratch.normed, 0),
+                hidden as u32,
+                RMS_EPS,
+            )
+            .map_err(gpu_err)?;
+            gpu::encode_dequant_int4_gemv_resident(
+                &mut self.context,
+                &pass,
+                &q_proj,
+                (&self.scratch.normed, 0),
+                (&self.scratch.q, 0),
+            )
+            .map_err(gpu_err)?;
+            // The K projection lands DIRECTLY in its persistent cache
+            // slot, and RoPE rotates it there in place — no staging row.
+            gpu::encode_dequant_int4_gemv_resident(
+                &mut self.context,
+                &pass,
+                &k_proj,
+                (&self.scratch.normed, 0),
+                (k_buf, k_off as u64),
+            )
+            .map_err(gpu_err)?;
+            gpu::encode_rope_proportional_neox(
+                &mut self.context,
+                &pass,
+                (&self.scratch.q, 0),
+                position as u32,
+                num_heads,
+                head_dim,
+                rotated_pairs,
+                theta,
+            )
+            .map_err(gpu_err)?;
+            gpu::encode_rope_proportional_neox(
+                &mut self.context,
+                &pass,
+                (k_buf, k_off as u64),
+                position as u32,
+                num_kv_heads,
+                head_dim,
+                rotated_pairs,
+                theta,
+            )
+            .map_err(gpu_err)?;
+
+            // attention_k_eq_v: the K buffer is bound as both K and V, so
+            // the V buffers are never written at all (their untouched
+            // pages never become resident). A separate-V architecture
+            // would write and bind `v_slot` here instead.
+            //
+            // Sliding-window layers (mask 0) attend only the trailing
+            // `sliding_window` positions of the linear KV layout via
+            // kv_start; full-attention layers (mask 1) start at 0.
+            let kv_start = if self.arch.full_attention_layer_mask[layer] == 0 {
+                seq_len.saturating_sub(self.arch.sliding_window as u32)
             } else {
-                o16
+                0
             };
-            let post_attn32 = f16_to_f32(&post_attn16);
-            for i in 0..hidden {
-                x[i] += post_attn32[i];
-            }
-
-            let x16b = f32_to_f16(&x);
-            let pre_ffn16 =
-                gpu::rms_norm_no_scale(context, &x16b, RMS_EPS).map_err(RealForwardError::Gpu)?;
-            let pre_ffn32 = f16_to_f32(&pre_ffn16);
-
-            let ffn_out32 = if self.arch.num_experts > 0 {
-                moe_ffn(
-                    context,
-                    index,
-                    data,
-                    scale_cache,
-                    layer,
-                    &pre_ffn32,
-                    hidden,
-                    self.arch.moe_intermediate_size as usize,
-                    self.arch.num_experts as usize,
-                    self.arch.top_k_experts as usize,
-                )?
+            gpu::encode_attention_decode(
+                &mut self.context,
+                &pass,
+                (&self.scratch.q, 0),
+                k_buf,
+                k_buf,
+                &self.scratch.attn,
+                (&self.scratch.attn_out, 0),
+                head_dim,
+                num_heads,
+                num_kv_heads,
+                seq_len,
+                kv_start,
+                attn_scale,
+            )
+            .map_err(gpu_err)?;
+            gpu::encode_dequant_int4_gemv_resident(
+                &mut self.context,
+                &pass,
+                &o_proj,
+                (&self.scratch.attn_out, 0),
+                (&self.scratch.o, 0),
+            )
+            .map_err(gpu_err)?;
+            let attn_delta = if sandwich {
+                gpu::encode_rms_norm_no_scale(
+                    &mut self.context,
+                    &pass,
+                    (&self.scratch.o, 0),
+                    (&self.scratch.o_normed, 0),
+                    hidden as u32,
+                    RMS_EPS,
+                )
+                .map_err(gpu_err)?;
+                &self.scratch.o_normed
             } else {
-                let gate_rows = owned_rows(
-                    index,
-                    data,
-                    scale_cache,
+                &self.scratch.o
+            };
+            gpu::encode_residual_add(
+                &mut self.context,
+                &pass,
+                (&self.scratch.x, 0),
+                (attn_delta, 0),
+                hidden as u32,
+            )
+            .map_err(gpu_err)?;
+
+            gpu::encode_rms_norm_no_scale(
+                &mut self.context,
+                &pass,
+                (&self.scratch.x, 0),
+                (&self.scratch.normed, 0),
+                hidden as u32,
+                RMS_EPS,
+            )
+            .map_err(gpu_err)?;
+
+            if self.arch.num_experts > 0 && self.streamers[layer].is_some() {
+                // Streamed MoE, the Swift CB1/CB2 shape: the router GEMV
+                // rides the current pass; its logits are the one host
+                // readback per layer (top-k + expert pread need them);
+                // then a second pass runs the real GPU MoE kernels
+                // reading the expert blobs in place from the slot
+                // buffers. No expert byte ever reaches the host.
+                let num_experts = self.arch.num_experts as usize;
+                let top_k = self.arch.top_k_experts as usize;
+                let moe_inter = self.arch.moe_intermediate_size as u32;
+                let router = resident_matrix(
+                    &self.weights,
+                    &self.index,
+                    &layer_name("router", layer),
+                    num_experts,
+                    hidden,
+                )?;
+                gpu::encode_dequant_int4_gemv_resident(
+                    &mut self.context,
+                    &pass,
+                    &router,
+                    (&self.scratch.normed, 0),
+                    (&self.scratch.router_logits, 0),
+                )
+                .map_err(gpu_err)?;
+                pass.commit_and_wait();
+
+                let router_logits = f16_to_f32(&gpu::read_buffer_f16(
+                    &self.scratch.router_logits,
+                    0,
+                    num_experts,
+                ));
+                let (selected, route_weights) = topk_softmax(&router_logits, top_k);
+                let streamer = self.streamers[layer].as_mut().expect("checked above");
+                let plan =
+                    streamer.plan_experts_cached(&selected, &std::collections::HashSet::new());
+                let slots = streamer
+                    .execute_expert_cache_plan(&plan)
+                    .map_err(|e| RealForwardError::Unsupported(format!("expert stream: {e}")))?;
+
+                let mut routing16 = vec![f16::from_f32(0.0); gpu::MAX_STREAMED_EXPERTS];
+                for (i, &w) in route_weights.iter().enumerate() {
+                    routing16[i] = f16::from_f32(w);
+                }
+                gpu::write_buffer_bytes(
+                    &self.scratch.routing_w,
+                    0,
+                    &f16_slice_to_le_bytes(&routing16),
+                );
+
+                let layer_slots = &self.slot_buffers[layer];
+                let blob_refs: Vec<(&gpu::MetalBuffer, u64)> =
+                    slots.iter().map(|&s| (&layer_slots[s], 0u64)).collect();
+                let routed = self.routed_blobs.as_ref().expect("layout implies blobs");
+                let offsets = self.moe_offsets.as_ref().expect("layout implies offsets");
+                routed
+                    .bind(&mut self.context, use_silu, &blob_refs)
+                    .map_err(gpu_err)?;
+
+                pass = self.context.begin_pass();
+                for &(buffer, _) in &blob_refs {
+                    pass.use_read_buffer(buffer);
+                }
+                gpu::encode_moe_phase1(
+                    &mut self.context,
+                    &pass,
+                    routed,
+                    offsets,
+                    (&self.scratch.normed, 0),
+                    (&self.scratch.moe_acts, 0),
+                    hidden as u32,
+                    moe_inter,
+                    top_k as u32,
+                    use_silu,
+                )
+                .map_err(gpu_err)?;
+                gpu::encode_moe_phase2(
+                    &mut self.context,
+                    &pass,
+                    routed,
+                    offsets,
+                    (&self.scratch.moe_acts, 0),
+                    (&self.scratch.routing_w, 0),
+                    (&self.scratch.zero_hidden, 0),
+                    (&self.scratch.ffn_out, 0),
+                    hidden as u32,
+                    moe_inter,
+                    use_silu,
+                )
+                .map_err(gpu_err)?;
+            } else if self.arch.num_experts > 0 {
+                // Resident-expert MoE (synthetic-only): the host bridge.
+                pass.commit_and_wait();
+                let pre_ffn32 = f16_to_f32(&gpu::read_buffer_f16(&self.scratch.normed, 0, hidden));
+                let combined = self.moe_ffn_host(layer, &pre_ffn32)?;
+                gpu::write_buffer_bytes(
+                    &self.scratch.ffn_out,
+                    0,
+                    &f16_slice_to_le_bytes(&f32_to_f16(&combined)),
+                );
+                pass = self.context.begin_pass();
+            } else {
+                let gate_proj = resident_matrix(
+                    &self.weights,
+                    &self.index,
                     &layer_name("gate_proj", layer),
                     inter,
                     hidden,
                 )?;
-                let up_rows = owned_rows(
-                    index,
-                    data,
-                    scale_cache,
+                let up_proj = resident_matrix(
+                    &self.weights,
+                    &self.index,
                     &layer_name("up_proj", layer),
                     inter,
                     hidden,
                 )?;
-                let down_rows = owned_rows(
-                    index,
-                    data,
-                    scale_cache,
+                let down_proj = resident_matrix(
+                    &self.weights,
+                    &self.index,
                     &layer_name("down_proj", layer),
                     hidden,
                     inter,
                 )?;
-                compute::run_ffn(&gate_rows, &up_rows, &down_rows, &pre_ffn32, hidden, inter)
-            };
-
-            let ffn16 = f32_to_f16(&ffn_out32);
-            let post_ffn16 = if self.arch.ffn_sandwich_norms {
-                gpu::rms_norm_no_scale(context, &ffn16, RMS_EPS).map_err(RealForwardError::Gpu)?
-            } else {
-                ffn16
-            };
-            let post_ffn32 = f16_to_f32(&post_ffn16);
-            for i in 0..hidden {
-                x[i] += post_ffn32[i];
+                gpu::encode_dequant_int4_gemv_resident(
+                    &mut self.context,
+                    &pass,
+                    &gate_proj,
+                    (&self.scratch.normed, 0),
+                    (&self.scratch.ffn_gate, 0),
+                )
+                .map_err(gpu_err)?;
+                gpu::encode_dequant_int4_gemv_resident(
+                    &mut self.context,
+                    &pass,
+                    &up_proj,
+                    (&self.scratch.normed, 0),
+                    (&self.scratch.ffn_up, 0),
+                )
+                .map_err(gpu_err)?;
+                let act = if use_silu {
+                    gpu::encode_silu_mul
+                } else {
+                    gpu::encode_gelu_mul
+                };
+                act(
+                    &mut self.context,
+                    &pass,
+                    (&self.scratch.ffn_gate, 0),
+                    (&self.scratch.ffn_up, 0),
+                    (&self.scratch.ffn_act, 0),
+                    inter as u32,
+                )
+                .map_err(gpu_err)?;
+                gpu::encode_dequant_int4_gemv_resident(
+                    &mut self.context,
+                    &pass,
+                    &down_proj,
+                    (&self.scratch.ffn_act, 0),
+                    (&self.scratch.ffn_out, 0),
+                )
+                .map_err(gpu_err)?;
             }
+
+            let ffn_delta = if sandwich {
+                gpu::encode_rms_norm_no_scale(
+                    &mut self.context,
+                    &pass,
+                    (&self.scratch.ffn_out, 0),
+                    (&self.scratch.ffn_normed, 0),
+                    hidden as u32,
+                    RMS_EPS,
+                )
+                .map_err(gpu_err)?;
+                &self.scratch.ffn_normed
+            } else {
+                &self.scratch.ffn_out
+            };
+            gpu::encode_residual_add(
+                &mut self.context,
+                &pass,
+                (&self.scratch.x, 0),
+                (ffn_delta, 0),
+                hidden as u32,
+            )
+            .map_err(gpu_err)?;
         }
 
-        let x16 = f32_to_f16(&x);
-        let normed_final16 =
-            gpu::rms_norm_no_scale(context, &x16, RMS_EPS).map_err(RealForwardError::Gpu)?;
-        let lm_rows = gpu_rows(index, data, scale_cache, "embed_lm_head", vocab, hidden)?;
-        let raw_logits16 = gpu::dequant_int4_gemv(context, &lm_rows, &normed_final16, hidden)
-            .map_err(RealForwardError::Gpu)?;
-        let probs16 = gpu::logit_softcap_softmax(context, &raw_logits16, softcap)
-            .map_err(RealForwardError::Gpu)?;
+        let lm_head = resident_matrix(&self.weights, &self.index, "embed_lm_head", vocab, hidden)?;
+        gpu::encode_rms_norm_no_scale(
+            &mut self.context,
+            &pass,
+            (&self.scratch.x, 0),
+            (&self.scratch.normed, 0),
+            hidden as u32,
+            RMS_EPS,
+        )
+        .map_err(gpu_err)?;
+        gpu::encode_dequant_int4_gemv_resident(
+            &mut self.context,
+            &pass,
+            &lm_head,
+            (&self.scratch.normed, 0),
+            (&self.scratch.logits, 0),
+        )
+        .map_err(gpu_err)?;
+        gpu::encode_logit_softcap_softmax(
+            &mut self.context,
+            &pass,
+            (&self.scratch.logits, 0),
+            (&self.scratch.probs, 0),
+            vocab as u32,
+            softcap,
+        )
+        .map_err(gpu_err)?;
+        pass.commit_and_wait();
+        self.kv.advance();
 
+        let probs16 = gpu::read_buffer_f16(&self.scratch.probs, 0, vocab);
         if probs16.len() != logits.len() {
             return Err(RealForwardError::Unsupported(format!(
                 "vocab mismatch: model has {}, caller expected {}",

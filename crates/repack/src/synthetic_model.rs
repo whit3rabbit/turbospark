@@ -178,6 +178,158 @@ pub fn build_synthetic_gemma4_install(
     Ok(arch)
 }
 
+/// A dense tiny-Gemma4 install whose layers ALTERNATE sliding-window
+/// (mask 0) and full attention (mask 1), with `sliding_window` positions
+/// of window — the mixed attention-kind shape real Gemma 4 has (25 SWA +
+/// 5 full layers), at toy size. Weights are identical to
+/// [`build_synthetic_gemma4_install`] (same seeds).
+pub fn build_synthetic_gemma4_swa_install(
+    dir: &std::path::Path,
+    vocab_size: i64,
+    num_layers: i64,
+    sliding_window: i64,
+    model_id: &str,
+) -> Result<ArchConfig, WriterError> {
+    let mut arch = tiny_gemma4_arch(vocab_size, num_layers);
+    arch.sliding_window = sliding_window;
+    arch.full_attention_layer_mask = (0..num_layers).map(|l| (l % 2 == 1) as u8).collect();
+
+    let hidden = HIDDEN_SIZE as usize;
+    let inter = INTERMEDIATE_SIZE as usize;
+    let qk_dim = (NUM_HEADS * FULL_HEAD_DIM) as usize;
+    let vocab = vocab_size as usize;
+
+    let mut specs = Vec::with_capacity(1 + num_layers as usize * 6);
+    specs.push(quantized_tensor(&embed_lm_head_name(), vocab, hidden, 1));
+    for l in 0..num_layers {
+        let base = 1000u64 * (l as u64 + 1);
+        specs.push(quantized_tensor(&q_proj_name(l), qk_dim, hidden, base + 1));
+        specs.push(quantized_tensor(&k_proj_name(l), qk_dim, hidden, base + 2));
+        specs.push(quantized_tensor(&o_proj_name(l), hidden, qk_dim, base + 3));
+        specs.push(quantized_tensor(
+            &gate_proj_name(l),
+            inter,
+            hidden,
+            base + 4,
+        ));
+        specs.push(quantized_tensor(&up_proj_name(l), inter, hidden, base + 5));
+        specs.push(quantized_tensor(
+            &down_proj_name(l),
+            hidden,
+            inter,
+            base + 6,
+        ));
+    }
+
+    let resident_bytes = build_resident_weights_bin(&specs);
+    write_gturbo_install_with_resident_index(dir, &arch, model_id, &resident_bytes)?;
+    Ok(arch)
+}
+
+/// Like [`build_synthetic_gemma4_moe_install`], with IDENTICAL weights
+/// (same deterministic seeds), but the routed experts live in
+/// `packed_experts/layer_NN.bin` blob files instead of the resident
+/// region — the streamed layout `mrefrust-streaming`'s
+/// `PreadExpertStreamer` reads at decode time. A runner over this install
+/// must produce exactly the tokens the resident-expert variant produces.
+pub fn build_synthetic_gemma4_moe_streamed_install(
+    dir: &std::path::Path,
+    vocab_size: i64,
+    num_layers: i64,
+    num_experts: i64,
+    top_k: i64,
+    model_id: &str,
+) -> Result<ArchConfig, WriterError> {
+    let mut arch = tiny_gemma4_arch(vocab_size, num_layers);
+    arch.num_experts = num_experts;
+    arch.top_k_experts = top_k;
+    arch.moe_intermediate_size = INTERMEDIATE_SIZE;
+
+    let hidden = HIDDEN_SIZE as usize;
+    let inter = INTERMEDIATE_SIZE as usize;
+    let qk_dim = (NUM_HEADS * FULL_HEAD_DIM) as usize;
+    let vocab = vocab_size as usize;
+
+    let mut specs = Vec::with_capacity(1 + num_layers as usize * 4);
+    specs.push(quantized_tensor(&embed_lm_head_name(), vocab, hidden, 1));
+    for l in 0..num_layers {
+        let base = 1000u64 * (l as u64 + 1);
+        specs.push(quantized_tensor(&q_proj_name(l), qk_dim, hidden, base + 1));
+        specs.push(quantized_tensor(&k_proj_name(l), qk_dim, hidden, base + 2));
+        specs.push(quantized_tensor(&o_proj_name(l), hidden, qk_dim, base + 3));
+        specs.push(quantized_tensor(
+            &router_name(l),
+            num_experts as usize,
+            hidden,
+            base + 4,
+        ));
+    }
+    let resident_bytes = build_resident_weights_bin(&specs);
+
+    // Expert blobs: the same nine sub-tensors per expert the real format
+    // packs ({gate,up,down} x {weights,scales,biases}), with the same
+    // deterministic seeds the resident-expert builder uses.
+    let u16_le = |v: &[u16]| -> Vec<u8> {
+        let mut out = Vec::with_capacity(v.len() * 2);
+        for x in v {
+            out.extend_from_slice(&x.to_le_bytes());
+        }
+        out
+    };
+    let mut layers = Vec::with_capacity(num_layers as usize);
+    let mut max_blob = 0u64;
+    for l in 0..num_layers {
+        let base = 1000u64 * (l as u64 + 1);
+        let mut experts = Vec::with_capacity(num_experts as usize);
+        for e in 0..num_experts {
+            let ebase = base + 100 + 10 * e as u64;
+            let gate = quantized_tensor("gate", inter, hidden, ebase + 1);
+            let up = quantized_tensor("up", inter, hidden, ebase + 2);
+            let down = quantized_tensor("down", hidden, inter, ebase + 3);
+            let mut sub_tensors = Vec::with_capacity(9);
+            let mut used = 0u64;
+            for (role, spec) in [("gate", &gate), ("up", &up), ("down", &down)] {
+                for (suffix, bytes, dtype) in [
+                    ("", spec.packed.clone(), "u32"),
+                    ("_scales", u16_le(&spec.scales), "bf16"),
+                    ("_biases", u16_le(&spec.biases), "bf16"),
+                ] {
+                    used += bytes.len() as u64;
+                    sub_tensors.push(crate::gturbo_writer::SubTensor {
+                        role: format!("{role}{suffix}"),
+                        bytes,
+                        dtype: dtype.to_string(),
+                        shape: vec![spec.rows as u64, spec.cols as u64],
+                    });
+                }
+            }
+            max_blob = max_blob.max(used);
+            experts.push(crate::gturbo_writer::ExpertBlob {
+                expert: e as usize,
+                sub_tensors,
+            });
+        }
+        layers.push(crate::gturbo_writer::LayerBlobs {
+            layer: l as usize,
+            experts,
+        });
+    }
+    // One page-rounded stride for the whole model (16 KiB pages), matching
+    // the Swift repacker's roundUpToPage(expertStride).
+    let expert_stride = max_blob.div_ceil(16_384) * 16_384;
+
+    crate::gturbo_writer::write_gturbo_install_with_resident_index_and_experts(
+        dir,
+        &arch,
+        model_id,
+        &resident_bytes,
+        expert_stride,
+        num_experts as usize,
+        &layers,
+    )?;
+    Ok(arch)
+}
+
 pub fn router_name(layer: i64) -> String {
     format!("layer{layer}.router")
 }

@@ -14,10 +14,36 @@ use half::f16;
 use metal::FunctionConstantValues;
 
 use crate::bytes::{f32_bytes, half_slice_to_le_bytes, read_half_buffer, u32_bytes};
-use crate::context::{dispatch_one_threadgroup_per_row, GpuError, MetalContext};
+use crate::context::{dispatch_one_threadgroup_per_row, GpuError, MetalContext, PassEncoder};
 
 const SOURCE: &str = include_str!("shaders/logit.metal");
 const THREADS_PER_GROUP: u64 = 256;
+
+/// Encoder-level variant of [`logit_softcap_softmax`]: `V` halfs read at
+/// `logits`, probabilities written at `probs`, appended to `pass`.
+pub fn encode_logit_softcap_softmax(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    logits: (&metal::Buffer, u64),
+    probs: (&metal::Buffer, u64),
+    v: u32,
+    softcap: f32,
+) -> Result<(), GpuError> {
+    let pipeline = context.pipeline(
+        SOURCE,
+        "logit_softcap_softmax",
+        &FunctionConstantValues::new(),
+        b"",
+    )?;
+    pass.encode_threadgroups(
+        &pipeline,
+        &[(logits.0, 0, logits.1), (probs.0, 1, probs.1)],
+        &[(u32_bytes(&v), 2), (f32_bytes(&softcap), 3)],
+        1,
+        THREADS_PER_GROUP,
+    );
+    Ok(())
+}
 
 /// `softmax(softcap * tanh(logit / softcap))`, dispatched on the GPU via
 /// `logit_softcap_softmax`. `logits.len()` is the vocab size `V`.
@@ -36,6 +62,7 @@ pub fn logit_softcap_softmax(
         SOURCE,
         "logit_softcap_softmax",
         &FunctionConstantValues::new(),
+        b"",
     )?;
     dispatch_one_threadgroup_per_row(
         context,

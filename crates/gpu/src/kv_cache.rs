@@ -206,6 +206,23 @@ impl KvCacheManager {
         )
     }
 
+    /// Host-writes one token's K row (`stride(layer)` bytes) into the
+    /// layer's persistent K buffer at `position`'s physical slot. Shared
+    /// storage mode makes this a plain memcpy into unified memory — O(1)
+    /// per token, replacing any full-history re-upload. (The deeper form,
+    /// a kernel writing its projection output straight into the slot,
+    /// comes with encoder-level dispatch batching.)
+    pub fn write_k(&self, layer: usize, position: usize, bytes: &[u8]) {
+        let (buffer, offset) = self.k_slot(layer, position);
+        write_into(buffer, offset, bytes);
+    }
+
+    /// Host-writes one token's V row; see [`KvCacheManager::write_k`].
+    pub fn write_v(&self, layer: usize, position: usize, bytes: &[u8]) {
+        let (buffer, offset) = self.v_slot(layer, position);
+        write_into(buffer, offset, bytes);
+    }
+
     pub fn key_view(&self, layer: usize) -> KvView<'_> {
         self.key_view_at(layer, self.position)
     }
@@ -297,7 +314,34 @@ impl KvCacheManager {
 }
 
 fn page_size_bytes() -> usize {
-    4096
+    // SAFETY: sysconf(_SC_PAGESIZE) reads a process constant; no memory is
+    // touched. 16 KiB on Apple Silicon; the reset() advise rounds buffer
+    // lengths DOWN to whole pages, so the real page size advises more of
+    // each buffer than a hardcoded 4096 would.
+    #[allow(unsafe_code)]
+    let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+    if page > 0 {
+        page as usize
+    } else {
+        4096
+    }
+}
+
+fn write_into(buffer: &metal::Buffer, offset: usize, bytes: &[u8]) {
+    assert!(offset + bytes.len() <= buffer.length() as usize);
+    // SAFETY: `buffer` is a live shared-storage `MTLBuffer`; the range
+    // [offset, offset + bytes.len()) is inside its allocation (asserted
+    // above). The caller sequences this against GPU reads the same way the
+    // Swift original does: the write happens before the command buffer
+    // that reads the slot is committed.
+    #[allow(unsafe_code)]
+    unsafe {
+        std::ptr::copy_nonoverlapping(
+            bytes.as_ptr(),
+            (buffer.contents() as *mut u8).add(offset),
+            bytes.len(),
+        );
+    }
 }
 
 fn advise_dontneed(

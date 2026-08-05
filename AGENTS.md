@@ -132,17 +132,21 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
    Mference itself builds pipelines. `MetalContext::pipeline` takes
    caller-supplied `FunctionConstantValues`, so a new kernel module owns
    its own specialization rather than sharing one hardcoded set.
-   `KvCacheManager` (`kv_cache.rs`), `GdnStateManager` (`gdn_state.rs`),
-   and `Dsv4StateManager` (`dsv4_state.rs`) allocate and manage real
-   per-layer Metal buffers (KV ring/full slots, GDN delta-rule state and
-   conv-tail, DSV4's CSA/HCA window/compressed/indexer buffers);
+   `KvCacheManager` (`kv_cache.rs`) is now `RealForwardRunner`'s
+   production KV cache (persistent per-layer buffers, K written in place
+   by the GEMV). `GdnStateManager` (`gdn_state.rs`) and `Dsv4StateManager`
+   (`dsv4_state.rs`) allocate real per-layer Metal buffers but stay
+   unwired (their compute kernels are unported);
    `PrefillChunkScratchLayout`/`PrefillChunkScratchBuffers`
    (`prefill_scratch.rs`) size and allocate the chunked-prefill scratch
-   buffers. None of these four is wired to any forward pass or dispatch,
-   since no kernel reads or writes through them yet. See `DEVIATIONS.md`
-   for what is not wired yet, and why `sample` (`logit.metal`) was
-   deliberately left unported rather than shipped without a way to verify
-   it.
+   buffers, also undispatched (the tile kernel is descoped). The memory
+   path is zero-copy end to end: `ResidentGpuWeights` wraps the resident
+   mmap in ONE `newBufferWithBytesNoCopy` MTLBuffer, `PassEncoder` batches
+   a whole dense token into one command buffer, and the vendored
+   `moe.metal` decode kernels read streamed expert blobs in place through
+   a `RoutedBlobs` argument buffer. See `DEVIATIONS.md` for the full
+   wired/unwired list, and why `sample` (`logit.metal`) was deliberately
+   left unported rather than shipped without a way to verify it.
 
 9. `crates/model-io` and `crates/streaming` are the two crates that
    intentionally carry unsafe code and platform `cfg`s (mmap in
@@ -174,15 +178,16 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     instead.
 
 12. `crates/runtime::RealForwardRunner` (macOS/GPU only, gated the same way
-    `crates/gpu` is) supports both dense (`num_experts == 0`) and MoE
-    (`num_experts > 0`) architectures, but `open()` still rejects any
-    `full_attention_layer_mask` entry other than `1` (full attention).
-    None of the three production baselines (`gemma4_26b_a4b`,
-    `qwen36_35b_a3b`, `deepseek_v4_flash_284b_a13b`) can run through it —
-    all three mix full attention with sliding-window/linear/compressed
-    layers. Build a test/demo install with
-    `mrefrust_repack::build_synthetic_gemma4_install` (dense) or
-    `build_synthetic_gemma4_moe_install` (MoE) instead of hand-writing an
+    `crates/gpu` is) supports dense and MoE FFN (resident or streamed
+    experts) and both full-attention (mask 1) and sliding-window (mask 0)
+    layers; `open()` rejects only linear (2) and compressed (3/4) layers,
+    whose kernels are unported. Gemma 4's mask shape now passes; it is
+    blocked instead on a real-checkpoint repack mapping and the
+    learned-weight runner features (see ROADMAP's production-parity
+    section). Qwen 3.6 and DeepSeek-V4-Flash remain blocked on GDN/DSV4.
+    Build a test/demo install with
+    `mrefrust_repack::build_synthetic_gemma4_install` (dense) or its
+    `_swa`/`_moe`/`_moe_streamed` variants instead of hand-writing an
     `ArchConfig`; their non-shape fields are pinned to match
     `gemma4_26b_a4b()`'s own values on purpose (see their module docs for
     why: `manifest.json`'s optional fields fall back to the Gemma 4

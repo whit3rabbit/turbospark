@@ -15,7 +15,7 @@ use half::f16;
 use metal::{FunctionConstantValues, MTLDataType};
 
 use crate::bytes::{f32_bytes, half_slice_to_le_bytes, read_half_buffer, u32_bytes};
-use crate::context::{dispatch_threads_3d, GpuError, MetalContext};
+use crate::context::{dispatch_threads_3d, GpuError, MetalContext, PassEncoder};
 
 const SOURCE: &str = include_str!("shaders/rope.metal");
 
@@ -32,6 +32,43 @@ fn unused_function_constants() -> FunctionConstantValues {
     values.set_constant_value_at_index((&zero as *const u32).cast(), MTLDataType::UInt, 52);
     values.set_constant_value_at_index((&use_fc as *const bool).cast(), MTLDataType::Bool, 53);
     values
+}
+
+/// Encoder-level variant of [`rope_proportional_neox`]: rotates `[1,
+/// num_heads, head_dim]` halfs in place at `data` (a `(buffer, byte
+/// offset)` view — which may sit inside a persistent KV buffer, rotating
+/// the K row directly in its cache slot), appended to `pass`.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_rope_proportional_neox(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    data: (&metal::Buffer, u64),
+    position: u32,
+    num_heads: u32,
+    head_dim: u32,
+    rotated_pairs: u32,
+    theta: f32,
+) -> Result<(), GpuError> {
+    let pipeline = context.pipeline(
+        SOURCE,
+        "rope_proportional_neox",
+        &unused_function_constants(),
+        b"",
+    )?;
+    pass.encode_threads_3d(
+        &pipeline,
+        &[(data.0, 0, data.1)],
+        &[
+            (u32_bytes(&position), 1),
+            (u32_bytes(&head_dim), 2),
+            (u32_bytes(&num_heads), 3),
+            (f32_bytes(&theta), 4),
+            (u32_bytes(&rotated_pairs), 5),
+        ],
+        (rotated_pairs.max(1) as u64, num_heads.max(1) as u64, 1),
+        (1, 1, 1),
+    );
+    Ok(())
 }
 
 /// Applies Gemma 4's proportional NeoX RoPE in place, dispatched on the
@@ -56,6 +93,7 @@ pub fn rope_proportional_neox(
         SOURCE,
         "rope_proportional_neox",
         &unused_function_constants(),
+        b"",
     )?;
     dispatch_threads_3d(
         context,

@@ -50,9 +50,13 @@ pub fn build_resident_weights_bin(specs: &[ResidentTensorSpec]) -> Vec<u8> {
         names_len += spec.name.len();
     }
     let string_table_end = string_table_start + names_len;
-    // Page-align the index region (not required by the reader, but matches
-    // the page-aligned convention the rest of this format uses).
-    let index_size = string_table_end.div_ceil(4096) * 4096;
+    // Align the index region to the Swift repacker's Layout.pageBytes
+    // (16 KiB, the Apple Silicon page size). This makes the resident data
+    // region start page-aligned, which is what lets the runtime mmap it
+    // and hand the mapping straight to Metal via newBufferWithBytesNoCopy
+    // (page-aligned base required) with a zero slice shift.
+    const PAGE_BYTES: usize = 16_384;
+    let index_size = string_table_end.div_ceil(PAGE_BYTES) * PAGE_BYTES;
 
     let mut data = Vec::new();
     struct Placed {

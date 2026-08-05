@@ -9,20 +9,26 @@
 //! exposes nothing, so `cargo build --workspace` / `cargo test --workspace`
 //! still succeed on Linux CI; only macOS gets the real implementation.
 //!
-//! Status: the pipeline cache and five kernel dispatches
-//! (`rmsnorm_no_scale`, `rope_proportional_neox`, `logit_softcap_softmax`,
-//! `dequant_int4_gemv_simd`, `dequant_int8_gemv_simd`) are wired end-to-end
-//! and parity-tested against `mrefrust_compute` on real hardware.
-//! `KvCacheManager`, `GdnStateManager`, and `Dsv4StateManager` (real Metal
-//! buffer allocation, position/capacity bookkeeping ported from the Swift
-//! originals) are also wired, as is `PrefillChunkScratchLayout`/
-//! `PrefillChunkScratchBuffers` (chunked-prefill scratch-space sizing and
-//! allocation). What's not yet vendored or dispatched: attention, MoE, the
-//! `sample` kernel (no CPU reference exists to verify a port against — see
-//! `DEVIATIONS.md`), the chunked-prefill tile-pipeline kernel itself (the
-//! scratch buffers it would use are allocated but nothing writes through
-//! them yet), and the GDN/DSV4 compute kernels that would read and write
-//! through their respective state managers.
+//! Status: parity-tested dispatches (each against a `mrefrust_compute`
+//! CPU reference on real hardware): `rmsnorm_no_scale`,
+//! `rope_proportional_neox`, `logit_softcap_softmax`,
+//! `dequant_int4_gemv_simd` (staged, resident-offset-bound, and
+//! encoder-level forms), `dequant_int8_gemv_simd`, the two-pass split-KV
+//! decode attention, `utility.metal`'s elementwise kernels
+//! (gelu/silu mul, residual add), and `moe.metal`'s decode pair
+//! (`moe_phase1_gate_up_act_u16load` + `moe_phase2_down_reduce_k8`,
+//! reading expert blobs zero-copy through a `RoutedBlobs` argument
+//! buffer). The memory-model pieces are production-wired:
+//! `ResidentGpuWeights` (one `newBufferWithBytesNoCopy` MTLBuffer over
+//! the resident mmap), `wrap_page_aligned_no_copy` (streamer slot wrap),
+//! `KvCacheManager` (persistent K/V, `RealForwardRunner`'s cache),
+//! `PassEncoder` (many kernels per command buffer, serial encoder), and
+//! the pipeline cache keyed by function constants. Still vendored-only or
+//! absent: the `sample` kernel and fused lm_head (no CPU reference — see
+//! `DEVIATIONS.md`), `moe.metal`'s routers/top-k selectors/INT2 family,
+//! the chunked-prefill tile pipeline (scratch allocated, kernel
+//! descoped), `fused.metal`, and the GDN/DSV4 compute kernels (state
+//! managers only).
 
 #[cfg(target_os = "macos")]
 mod attention_decode;
@@ -43,18 +49,32 @@ mod kv_cache;
 #[cfg(target_os = "macos")]
 mod logit_softmax;
 #[cfg(target_os = "macos")]
+mod moe_decode;
+#[cfg(target_os = "macos")]
 mod prefill_scratch;
+#[cfg(target_os = "macos")]
+mod resident_metal;
 #[cfg(target_os = "macos")]
 mod rms_norm;
 #[cfg(target_os = "macos")]
 mod rope;
+#[cfg(target_os = "macos")]
+mod utility;
 
 #[cfg(target_os = "macos")]
-pub use attention_decode::attention_decode;
+pub use attention_decode::{
+    attention_decode, attention_decode_buffers, encode_attention_decode, AttentionScratch,
+};
 #[cfg(target_os = "macos")]
-pub use context::{dispatch_one_threadgroup_per_row, dispatch_threads_3d, GpuError, MetalContext};
+pub use context::{
+    dispatch_one_threadgroup_per_row, dispatch_one_threadgroup_per_row_offsets,
+    dispatch_threads_3d, read_buffer_f16, write_buffer_bytes, GpuError, MetalContext, PassEncoder,
+};
 #[cfg(target_os = "macos")]
-pub use dequant_int4_gemv::{dequant_int4_gemv, Int4AffineRowGpu};
+pub use dequant_int4_gemv::{
+    dequant_int4_gemv, dequant_int4_gemv_resident, encode_dequant_int4_gemv_resident,
+    encode_embed_lookup_int4, Int4AffineRowGpu, Int4ResidentMatrix,
+};
 #[cfg(target_os = "macos")]
 pub use dequant_int8_gemv::{dequant_int8_gemv, Int8AffineRowGpu};
 #[cfg(target_os = "macos")]
@@ -64,13 +84,27 @@ pub use gdn_state::GdnStateManager;
 #[cfg(target_os = "macos")]
 pub use kv_cache::{KvCacheManager, KvView, LayerKind};
 #[cfg(target_os = "macos")]
-pub use logit_softmax::logit_softcap_softmax;
+pub use logit_softmax::{encode_logit_softcap_softmax, logit_softcap_softmax};
+#[cfg(target_os = "macos")]
+pub use moe_decode::{
+    encode_moe_phase1, encode_moe_phase2, MoeExpertOffsets, RoutedBlobsBuffer, MAX_STREAMED_EXPERTS,
+};
 #[cfg(target_os = "macos")]
 pub use prefill_scratch::{PrefillChunkScratchBuffers, PrefillChunkScratchLayout};
 #[cfg(target_os = "macos")]
-pub use rms_norm::rms_norm_no_scale;
+pub use resident_metal::{wrap_page_aligned_no_copy, ResidentGpuWeights};
 #[cfg(target_os = "macos")]
-pub use rope::rope_proportional_neox;
+pub use rms_norm::{encode_rms_norm_bf16w, encode_rms_norm_no_scale, rms_norm_no_scale};
+#[cfg(target_os = "macos")]
+pub use rope::{encode_rope_proportional_neox, rope_proportional_neox};
+#[cfg(target_os = "macos")]
+pub use utility::{encode_gelu_mul, encode_residual_add, encode_silu_mul};
+
+/// The Metal buffer handle, re-exported so downstream crates (e.g.
+/// `crates/runtime`) can hold scratch buffers without their own `metal`
+/// dependency.
+#[cfg(target_os = "macos")]
+pub use metal::Buffer as MetalBuffer;
 
 // Token id width consumed from the core primitives, keeping the dependency
 // edge live and documenting the interchange type this crate uses throughout.
