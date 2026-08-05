@@ -39,6 +39,8 @@
 //! `mrefrust_repack::write_gemma4_install` writes). The synthetic
 //! short-name installs keep the plain flow in `real_forward.rs`.
 
+use std::time::Instant;
+
 use foundation::LogitValue;
 use half::f16;
 use model_io::{ArchConfig, ResidentIndex};
@@ -273,7 +275,120 @@ impl RealGemmaState {
 }
 
 impl RealForwardRunner {
+    /// The shared (dense) expert branch: INT8 gate/up on `dense_x`, gated
+    /// activation, down projection, then `post_feedforward_layernorm_1`,
+    /// encoded into its own command buffer and committed without waiting.
+    ///
+    /// It reads only `dense_x`, which the router's command buffer already
+    /// produced, so the caller can commit this before waiting on the
+    /// router and let it run on the GPU through the router readback and
+    /// the blocking expert `pread`. Buffers on one queue execute in commit
+    /// order, so nothing needs an explicit fence. That overlap is what the
+    /// Swift original buys with an `MTLSharedEvent` signalled mid-buffer;
+    /// metal-rs 0.33 binds no wait-until-signaled-value, and spinning on
+    /// `signaledValue` would steal the SoC power budget the GPU needs, so
+    /// a second command buffer buys it instead.
+    fn encode_shared_expert_branch(
+        &mut self,
+        layer: usize,
+        hidden: usize,
+        inter: usize,
+        use_silu: bool,
+    ) -> Result<(), RealForwardError> {
+        let gpu_err = RealForwardError::Gpu;
+        let shared_pass = self.context.begin_pass();
+        // Shared INT8 branch on dense_x -> h1, then post_ffn_1.
+        let real = self.real.as_ref().expect("real state present");
+        for (name, rows, cols, x_buf, y_buf) in [
+            (
+                layer_tensor(layer, "mlp.gate_proj.weight"),
+                inter,
+                hidden,
+                &real.dense_x,
+                &self.scratch.ffn_gate,
+            ),
+            (
+                layer_tensor(layer, "mlp.up_proj.weight"),
+                inter,
+                hidden,
+                &real.dense_x,
+                &self.scratch.ffn_up,
+            ),
+        ] {
+            encode_gemv_any(
+                &mut self.context,
+                &shared_pass,
+                &self.weights,
+                &self.index,
+                &name,
+                rows,
+                cols,
+                (x_buf, 0),
+                (y_buf, 0),
+            )?;
+        }
+        let act = if use_silu {
+            gpu::encode_silu_mul
+        } else {
+            gpu::encode_gelu_mul
+        };
+        act(
+            &mut self.context,
+            &shared_pass,
+            (&self.scratch.ffn_gate, 0),
+            (&self.scratch.ffn_up, 0),
+            (&self.scratch.ffn_act, 0),
+            inter as u32,
+        )
+        .map_err(gpu_err)?;
+        let real = self.real.as_ref().expect("real state present");
+        encode_gemv_any(
+            &mut self.context,
+            &shared_pass,
+            &self.weights,
+            &self.index,
+            &layer_tensor(layer, "mlp.down_proj.weight"),
+            hidden,
+            inter,
+            (&self.scratch.ffn_act, 0),
+            (&real.h1, 0),
+        )?;
+        let post_ffn1 = norm_view(
+            &self.weights,
+            &self.index,
+            &layer_tensor(layer, "post_feedforward_layernorm_1.weight"),
+            hidden,
+        )?;
+        gpu::encode_rms_norm_bf16w(
+            &mut self.context,
+            &shared_pass,
+            (&real.h1, 0),
+            post_ffn1,
+            (&real.h1, 0),
+            hidden as u32,
+            RMS_EPS,
+        )
+        .map_err(gpu_err)?;
+        shared_pass.commit();
+        Ok(())
+    }
+
+    /// Times the whole forward pass into `phases.total_nanos`; the inner
+    /// function accumulates the per-phase buckets it is carved into.
     pub(crate) fn produce_real_gemma4(
+        &mut self,
+        token: i32,
+        position: usize,
+        logits: &mut [LogitValue],
+    ) -> Result<(), RealForwardError> {
+        let started = Instant::now();
+        let result = self.produce_real_gemma4_inner(token, position, logits);
+        self.phases.calls += 1;
+        self.phases.total_nanos += started.elapsed().as_nanos() as u64;
+        result
+    }
+
+    fn produce_real_gemma4_inner(
         &mut self,
         token: i32,
         position: usize,
@@ -489,10 +604,18 @@ impl RealForwardRunner {
             )
             .map_err(gpu_err)?;
 
-            let kv_start = if is_full {
-                0
+            // SWA layers switch to the ring pipeline once seq_len outgrows
+            // the ring (Swift activation rule; identity mapping below
+            // capacity keeps the linear pipeline byte-identical until the
+            // first wrap).
+            let (kv_start, active_ring) = if is_full {
+                (0, 0)
             } else {
-                seq_len.saturating_sub(arch.sliding_window as u32)
+                let ring = self.kv.ring_capacity(layer) as u32;
+                (
+                    seq_len.saturating_sub(arch.sliding_window as u32),
+                    if ring > 0 && seq_len > ring { ring } else { 0 },
+                )
             };
             gpu::encode_attention_decode(
                 &mut self.context,
@@ -507,8 +630,8 @@ impl RealForwardRunner {
                 num_kv_l,
                 seq_len,
                 kv_start,
+                active_ring,
                 attn_scale,
-                self.kv.ring_capacity(layer) as u32,
             )
             .map_err(gpu_err)?;
             encode_gemv_any(
@@ -631,9 +754,17 @@ impl RealForwardRunner {
                 hidden as u32,
             )
             .map_err(gpu_err)?;
-            pass.commit_and_wait();
+            let cb1 = pass.commit();
+            if self.shared_cb_overlap {
+                self.encode_shared_expert_branch(layer, hidden, inter, use_silu)?;
+            }
+
+            let t_wait = Instant::now();
+            cb1.wait();
+            self.phases.gpu_wait_nanos += t_wait.elapsed().as_nanos() as u64;
 
             // Host: kernel-semantics top-k + expert streaming.
+            let t_router = Instant::now();
             let real = self.real.as_ref().expect("real state present");
             let router_logits = gpu::read_f32_buffer(&real.router_logits_f32, num_experts);
             let (selected, route_weights) =
@@ -646,13 +777,108 @@ impl RealForwardRunner {
                 ))
             })?;
             let plan = streamer.plan_experts_cached(&selected, &std::collections::HashSet::new());
+            let (requests, hits) = (plan.experts.len() as u64, plan.hits as u64);
+            self.phases.expert_requests += requests;
+            self.phases.expert_hits += hits;
+            // The router bucket is the readback, the top-k and the slot
+            // plan; the hit dispatch and the pread have their own.
+            self.phases.router_nanos += t_router.elapsed().as_nanos() as u64;
+
+            // Slot order for this layer's MoE dispatches: cache MISSES
+            // first, then cache hits. Both phase-1 kernels read
+            // `blob[slot]` for `slot < top_k` and write `acts[slot * F]`,
+            // so a misses-first order lets the miss dispatch keep the full
+            // argument buffer and offset 0, while the hit dispatch takes
+            // its own argument buffer and an `acts` offset. Nothing else in
+            // the layer depends on the router's own ranking, as long as
+            // `routing_w` is permuted to match.
+            let mut is_miss = vec![false; selected.len()];
+            for &index in &plan.misses {
+                is_miss[index] = true;
+            }
+            let mut order: Vec<usize> = plan.misses.clone();
+            let miss_count = order.len();
+            order.extend((0..selected.len()).filter(|&i| !is_miss[i]));
+            let hit_count = order.len() - miss_count;
+
+            // The hit experts are already in slot memory, so their phase-1
+            // GEMV can run on the GPU through the blocking pread below.
+            // It needs its OWN argument buffer: the host rebinds the main
+            // one for the full slot list after the pread, which would race
+            // a dispatch still reading it. Slot memory itself is safe --
+            // `plan` reserves hit slots before picking eviction victims, so
+            // the parallel miss reads never write a slot this reads.
+            let t_hit = Instant::now();
+            let dispatched_hits = self.hit_cb_overlap && hit_count > 0;
+            if dispatched_hits {
+                let layer_slots = &self.slot_buffers[layer];
+                let hit_refs: Vec<(&gpu::MetalBuffer, u64)> = order[miss_count..]
+                    .iter()
+                    .map(|&i| (&layer_slots[plan.assigned_slots[i]], 0u64))
+                    .collect();
+                let routed_hits = self
+                    .routed_blobs_hits
+                    .as_ref()
+                    .expect("layout implies blobs");
+                routed_hits
+                    .bind(&mut self.context, use_silu, &hit_refs)
+                    .map_err(gpu_err)?;
+                let hit_pass = self.context.begin_pass();
+                for &(buffer, _) in &hit_refs {
+                    hit_pass.use_read_buffer(buffer);
+                }
+                let real = self.real.as_ref().expect("real state present");
+                let offsets = self.moe_offsets.as_ref().expect("layout implies offsets");
+                gpu::encode_moe_phase1(
+                    &mut self.context,
+                    &hit_pass,
+                    routed_hits,
+                    offsets,
+                    (&real.routed_x, 0),
+                    (
+                        &self.scratch.moe_acts,
+                        miss_count as u64 * moe_inter as u64 * 2,
+                    ),
+                    hidden as u32,
+                    moe_inter,
+                    hit_count as u32,
+                    use_silu,
+                )
+                .map_err(gpu_err)?;
+                // Committed, never waited on: buffers execute in commit
+                // order, so these `acts` rows land before the phase 2
+                // encoded below reads them.
+                hit_pass.commit();
+            }
+            self.phases.hit_cb_nanos += t_hit.elapsed().as_nanos() as u64;
+
+            let streamer = self.streamers[layer]
+                .as_mut()
+                .expect("streamer presence checked above");
+            let t_io = Instant::now();
             let slots = streamer
                 .execute_expert_cache_plan(&plan)
                 .map_err(|e| RealForwardError::Unsupported(format!("expert stream: {e}")))?;
+            self.phases.expert_io_nanos += t_io.elapsed().as_nanos() as u64;
 
+            if !self.shared_cb_overlap {
+                self.encode_shared_expert_branch(layer, hidden, inter, use_silu)?;
+            }
+            // Re-borrowed after the encode above, which needs `&mut self`.
+            let real = self.real.as_ref().expect("real state present");
+
+            let t_bind = Instant::now();
+            // One list in the misses-first slot order, holding each slot's
+            // blob AND its routing weight together: the kernel pairs
+            // `blob[slot]` with `routing_w[slot]`, and pairing them here
+            // too is what keeps the permutation from drifting apart.
+            let ordered: Vec<(usize, f32)> = order
+                .iter()
+                .map(|&i| (slots[i], route_weights[i]))
+                .collect();
             let mut routing16 = vec![f16::from_f32(0.0); gpu::MAX_STREAMED_EXPERTS];
-            for (i, &w) in route_weights.iter().enumerate() {
-                routing16[i] = f16::from_f32(w);
+            for (slot, &(_, weight)) in ordered.iter().enumerate() {
+                routing16[slot] = f16::from_f32(weight);
             }
             gpu::write_buffer_bytes(
                 &self.scratch.routing_w,
@@ -661,8 +887,10 @@ impl RealForwardRunner {
             );
 
             let layer_slots = &self.slot_buffers[layer];
-            let blob_refs: Vec<(&gpu::MetalBuffer, u64)> =
-                slots.iter().map(|&s| (&layer_slots[s], 0u64)).collect();
+            let blob_refs: Vec<(&gpu::MetalBuffer, u64)> = ordered
+                .iter()
+                .map(|&(slot, _)| (&layer_slots[slot], 0u64))
+                .collect();
             let routed = self.routed_blobs.as_ref().ok_or_else(|| {
                 RealForwardError::Unsupported("install has no routed-blob buffer".to_string())
             })?;
@@ -670,100 +898,37 @@ impl RealForwardRunner {
             routed
                 .bind(&mut self.context, use_silu, &blob_refs)
                 .map_err(gpu_err)?;
+            self.phases.bind_nanos += t_bind.elapsed().as_nanos() as u64;
 
             pass = self.context.begin_pass();
             for &(buffer, _) in &blob_refs {
                 pass.use_read_buffer(buffer);
             }
 
-            // Shared INT8 branch on dense_x -> h1, then post_ffn_1.
-            let real = self.real.as_ref().expect("real state present");
-            for (name, rows, cols, x_buf, y_buf) in [
-                (
-                    layer_tensor(layer, "mlp.gate_proj.weight"),
-                    inter,
-                    hidden,
-                    &real.dense_x,
-                    &self.scratch.ffn_gate,
-                ),
-                (
-                    layer_tensor(layer, "mlp.up_proj.weight"),
-                    inter,
-                    hidden,
-                    &real.dense_x,
-                    &self.scratch.ffn_up,
-                ),
-            ] {
-                encode_gemv_any(
+            // Routed branch on routed_x -> h2 (zero residual: the sandwich
+            // combine needs the raw routed output), then post_ffn_2. Phase
+            // 1 here covers only the slots the hit command buffer did not
+            // already take, which are the low ones by construction.
+            let main_phase1_k = if dispatched_hits {
+                miss_count
+            } else {
+                order.len()
+            };
+            if main_phase1_k > 0 {
+                gpu::encode_moe_phase1(
                     &mut self.context,
                     &pass,
-                    &self.weights,
-                    &self.index,
-                    &name,
-                    rows,
-                    cols,
-                    (x_buf, 0),
-                    (y_buf, 0),
-                )?;
+                    routed,
+                    offsets,
+                    (&real.routed_x, 0),
+                    (&self.scratch.moe_acts, 0),
+                    hidden as u32,
+                    moe_inter,
+                    main_phase1_k as u32,
+                    use_silu,
+                )
+                .map_err(gpu_err)?;
             }
-            let act = if use_silu {
-                gpu::encode_silu_mul
-            } else {
-                gpu::encode_gelu_mul
-            };
-            act(
-                &mut self.context,
-                &pass,
-                (&self.scratch.ffn_gate, 0),
-                (&self.scratch.ffn_up, 0),
-                (&self.scratch.ffn_act, 0),
-                inter as u32,
-            )
-            .map_err(gpu_err)?;
-            let real = self.real.as_ref().expect("real state present");
-            encode_gemv_any(
-                &mut self.context,
-                &pass,
-                &self.weights,
-                &self.index,
-                &layer_tensor(layer, "mlp.down_proj.weight"),
-                hidden,
-                inter,
-                (&self.scratch.ffn_act, 0),
-                (&real.h1, 0),
-            )?;
-            let post_ffn1 = norm_view(
-                &self.weights,
-                &self.index,
-                &layer_tensor(layer, "post_feedforward_layernorm_1.weight"),
-                hidden,
-            )?;
-            gpu::encode_rms_norm_bf16w(
-                &mut self.context,
-                &pass,
-                (&real.h1, 0),
-                post_ffn1,
-                (&real.h1, 0),
-                hidden as u32,
-                RMS_EPS,
-            )
-            .map_err(gpu_err)?;
-
-            // Routed branch on routed_x -> h2 (zero residual: the sandwich
-            // combine needs the raw routed output), then post_ffn_2.
-            gpu::encode_moe_phase1(
-                &mut self.context,
-                &pass,
-                routed,
-                offsets,
-                (&real.routed_x, 0),
-                (&self.scratch.moe_acts, 0),
-                hidden as u32,
-                moe_inter,
-                top_k as u32,
-                use_silu,
-            )
-            .map_err(gpu_err)?;
             gpu::encode_moe_phase2(
                 &mut self.context,
                 &pass,
@@ -881,7 +1046,9 @@ impl RealForwardRunner {
             )
             .map_err(gpu_err)?;
         }
+        let t_wait = Instant::now();
         pass.commit_and_wait();
+        self.phases.gpu_wait_nanos += t_wait.elapsed().as_nanos() as u64;
         self.kv.advance();
 
         let head = gpu::read_buffer_f16(&self.scratch.logits, 0, vocab);

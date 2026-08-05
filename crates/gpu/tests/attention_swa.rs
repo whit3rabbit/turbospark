@@ -70,8 +70,8 @@ fn swa_kv_start_matches_cpu_window_reference() {
         num_kv_heads,
         seq_len,
         kv_start,
-        scale,
         0,
+        scale,
     )
     .expect("encode");
     pass.commit_and_wait();
@@ -93,22 +93,22 @@ fn swa_kv_start_matches_cpu_window_reference() {
     }
 }
 
-/// The same window, but K/V live in a ring of `window + 1` rows instead of
-/// a full `seq_len` buffer: the kernel must address them modulo the ring
-/// capacity and land on the identical result. This is what lets
-/// sliding-window layers hold `window + 1` rows instead of `max_context`.
+/// Ring-layout parity: the same window over a wrapped ring buffer
+/// (`FC_ATTN_RING_CAP = 9`, so K/V row for logical position `p` lives at
+/// `p % 9`) must match the CPU reference computed on the linear layout.
+/// The dead ring rows are poisoned with huge values to prove the kernel
+/// never reads outside the live window's slots.
 #[test]
-fn swa_ring_addressing_matches_the_linear_layout() {
+fn swa_ring_layout_matches_cpu_window_reference() {
     let mut context = MetalContext::new().expect("Metal device");
     let head_dim = 32u32;
     let num_q_heads = 4u32;
     let num_kv_heads = 2u32;
     let seq_len = 24u32;
     let window = 7u32;
-    let ring_capacity = window + 1;
+    let ring_capacity = 9u32;
     let scale = 0.125f32;
     let kv_start = seq_len - window;
-    let row = (num_kv_heads * head_dim) as usize;
 
     let q16: Vec<f16> = (0..(num_q_heads * head_dim) as usize)
         .map(|i| f16::from_f32(((i as f32) * 0.19).sin()))
@@ -133,15 +133,17 @@ fn swa_ring_addressing_matches_the_linear_layout() {
         Some(scale),
     );
 
-    // Fold the last `ring_capacity` logical rows into their ring slots,
-    // exactly as KvCacheManager's `position % capacity` writer does.
-    let mut k_ring = vec![f16::from_f32(0.0); ring_capacity as usize * row];
-    let mut v_ring = k_ring.clone();
-    for p in (seq_len - ring_capacity)..seq_len {
-        let slot = (p % ring_capacity) as usize;
+    // Scatter the live rows into ring layout; poison everything else.
+    let row = (num_kv_heads * head_dim) as usize;
+    let ring_len = ring_capacity as usize * row;
+    let poison = f16::from_f32(1.0e4);
+    let mut k_ring = vec![poison; ring_len];
+    let mut v_ring = vec![poison; ring_len];
+    for p in kv_start..seq_len {
         let src = p as usize * row;
-        k_ring[slot * row..(slot + 1) * row].copy_from_slice(&k16[src..src + row]);
-        v_ring[slot * row..(slot + 1) * row].copy_from_slice(&v16[src..src + row]);
+        let dst = (p % ring_capacity) as usize * row;
+        k_ring[dst..dst + row].copy_from_slice(&k16[src..src + row]);
+        v_ring[dst..dst + row].copy_from_slice(&v16[src..src + row]);
     }
 
     let q_buf = context.new_buffer_with_data(&to_le(&q16));
@@ -164,8 +166,8 @@ fn swa_ring_addressing_matches_the_linear_layout() {
         num_kv_heads,
         seq_len,
         kv_start,
-        scale,
         ring_capacity,
+        scale,
     )
     .expect("encode");
     pass.commit_and_wait();

@@ -8,6 +8,11 @@ a behavior-compatible port of the Mference Swift inference engine (see
 scaffolded rather than fully wired). Keep all code, comments, and docs
 ASCII: no emojis and no em dashes (project rule).
 
+`docs/TESTING.md` covers what the suite proves and how tests are gated
+(macOS, `#[ignore]`d, env-var). `docs/BENCHMARKING.md` covers the three
+`mference-bench` modes, how peak memory is measured, and the memory
+oracle that asserts this port against the published Swift baselines.
+
 Do your best to keep code files under 400 lines but it's a suggestion not a hard rule. If over 400, decide if refactoring makes sense.
 
 ## Stack
@@ -55,8 +60,10 @@ cargo fmt
 # Lint the workspace and its tests (must stay clean).
 cargo clippy --workspace --tests
 
-# Run the CLI (validates the invocation; on macOS with --prompt mode also
-# attempts real generation against --model (see DEVIATIONS.md for scope)).
+# Run the CLI (validates the invocation; on macOS also attempts real
+# generation against --model in all three modes: --prompt (raw text),
+# --messages-file (JSON conversation, chat template applied), and --chat
+# (interactive REPL). See DEVIATIONS.md for scope.
 cargo run -p mrefrust-cli --bin mference-check -- --model /path/to/model --prompt "hi"
 
 # Run the OpenAI-compatible server (scripted responses; see DEVIATIONS.md).
@@ -64,37 +71,49 @@ cargo run -p mrefrust-server --bin mference-server -- <tokenizer-dir> [port]
 
 # Run the throughput benchmark harness (scripted producer; see DEVIATIONS.md).
 cargo run -p mrefrust-bench --bin mference-bench -- <tokenizer-dir>
+
+# Real-install benchmark (macOS): frozen community protocol against a real
+# .gturbo install, reporting split prefill/decode tok/s and peak
+# phys_footprint (the Swift-parity memory counter). Use --release.
+cargo run --release -p mrefrust-bench --bin mference-bench -- --model ~/models/gemma4.gturbo
+
+# The memory oracle: asserts this port's peak footprint (and, on chips
+# with a published Swift baseline row, decode tok/s) against the Swift
+# original's docs/BENCHMARKS.md. Skips with a note if the env var is
+# unset. Takes several minutes. See docs/BENCHMARKING.md.
+MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
+  cargo test -p mrefrust-bench --test memory_oracle --release -- --ignored --nocapture
+
+# The other two #[ignore]d tests: real checkpoint downloads (many GB).
+cargo test -p mrefrust-repack --test gemma4_checkpoint_network --release -- --ignored --nocapture
+cargo test -p mrefrust-repack --test hf_checkpoint_network --release -- --ignored --nocapture
 ```
 
 ### Real-model smoke (needs the pinned install)
 
-`mference-check` only runs a real forward pass in `--prompt` mode.
-`--messages-file` and `--chat` parse, print the resolved request, and stop
-(no chat-template wiring yet -- see `DEVIATIONS.md`). Passing a
-messages file and reading the "note:" line as output is the fastest way to
-waste an afternoon, so: apply the chat template yourself and pass it as a
-prompt. An instruction-tuned model given a bare prompt babbles; that is the
-template missing, not a decode bug.
+Run BOTH of these on any change to the decode path, the output head, the
+KV cache, or a Metal encode loop. Greedy alone is not a smoke test: it is
+`argmax`, and `argmax` is invariant under every monotone transform of the
+distribution, so it stays byte-identical to correct through bugs that
+destroy sampling entirely (Gotcha 16).
 
 ```sh
 cargo build --release -p mrefrust-cli
+printf '[{"role":"user","content":"Explain how coastal wetlands reduce flood damage."}]' > /tmp/p.json
 
-# Gemma 4 turn markup, greedy. Coherent English or the flow is broken.
-P=$'<|turn>user\nExplain how coastal wetlands reduce flood damage.<turn|>\n<|turn>model\n<|channel>thought\n<channel|>'
+# 1. Greedy. Catches broken math.
 ./target/release/mference-check --model ~/models/gemma4.gturbo \
-  --prompt "$P" --max-new 400 --seed 1 --temperature 0.0001 --top-k 1
+  --messages-file /tmp/p.json --max-new 400 --seed 1 --temperature 0.0001 --top-k 1
 
-# SAMPLED, at the CLI defaults (T=0.2, top-k 64, top-p 0.95). Run this too:
-# greedy is argmax and survives whole classes of distribution bugs that
-# sampling does not (see Gotcha 13).
+# 2. SAMPLED, at the CLI defaults (T=0.2, top-k 64, top-p 0.95). Catches
+#    distribution bugs greedy cannot see. Must stay coherent for the whole
+#    run and reach EndOfTurn on a short question.
 ./target/release/mference-check --model ~/models/gemma4.gturbo \
-  --prompt "$P" --max-new 400 --seed 20260721
-
-# Peak phys_footprint vs the design's own static accounting, plus the
-# steady-state leak guard (Gotcha 14).
-MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
-  cargo test -p mrefrust-bench --test memory_oracle --release -- --ignored --nocapture
+  --messages-file /tmp/p.json --max-new 400 --seed 20260721
 ```
+
+A bare `--prompt` on an instruction-tuned model babbles: that is the chat
+template missing, not a decode bug. `--messages-file` applies it for you.
 
 Add each new crate directory to the `members` list in the root `Cargo.toml`
 as it lands, and keep the member list in sync with the directories under
@@ -149,8 +168,9 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
    `mrefrust-invocation::parse`, and applies its pure exit-status/stream-routing
    decisions. This resolves what an earlier note here called the reserved,
    not-yet-created `mrefrust-entrypoint` name; that name is not used. On macOS
-   with `--prompt` mode, it also attempts real generation against `--model`
-   via `RealForwardRunner` (see `DEVIATIONS.md`).
+   it also attempts real generation against `--model` via `RealForwardRunner`,
+   in all three modes (`--prompt`, `--messages-file`, `--chat`) (see
+   `DEVIATIONS.md`).
 
 8. `crates/gpu` is the one crate with a hard platform gate: everything in
    `src/` is `#[cfg(target_os = "macos")]`, so `cargo build --workspace` /
@@ -166,7 +186,13 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
    are compiled from vendored MSL source at
    runtime, matching how Mference itself builds pipelines. `MetalContext::pipeline`
    takes caller-supplied `FunctionConstantValues`, so a new kernel module owns
-   its own specialization rather than sharing one hardcoded set.
+   its own specialization rather than sharing one hardcoded set. The
+   library/function/pipeline caches key on the shader source's ADDRESS, not
+   its text: a caller MUST pass the same `&'static str` (an `include_str!`
+   constant) for a given file every call, or it recompiles instead of
+   hitting the cache. Keying on the text meant rehashing tens of kilobytes
+   of MSL per dispatch, ~900 dispatches per decoded token, which was most
+   of this port's CPU encode cost.
    `KvCacheManager` (`kv_cache.rs`) is `RealForwardRunner`'s production KV cache
    (persistent per-layer buffers, K written in place by the GEMV).
    `GdnStateManager` (`gdn_state.rs`) and `Dsv4StateManager` (`dsv4_state.rs`)
@@ -228,8 +254,34 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     INT8 shared-expert branch, sandwich tail, `layer_scalar`). Real
     Gemma 4 26B-A4B is PROVEN end to end: the pinned checkpoint repacks
     through the streamed pipeline and generates coherent chat-formatted
-    answers via `mference-check` (see DEVIATIONS.md — raw prompts babble,
-    the IT model needs its `<|turn>` markup). Qwen 3.6 and
+    answers via `mference-check` (see DEVIATIONS.md -- raw prompts babble,
+    the IT model needs its `<|turn>` markup, which `--messages-file` and
+    `--chat` now render for you). `RealForwardRunner::phase_counters`
+    accumulates per-phase decode timings (GPU wait, router readback,
+    expert `pread`, routed bind) plus expert-cache hit counts; run
+    `mference-check` with `MFERENCE_PHASES=1` to print the breakdown.
+    The shared-expert branch rides its own command buffer, committed
+    before the router wait so it overlaps the host's expert `pread`
+    (`PassEncoder::commit` -> `CommittedPass::wait`); `MFERENCE_SHARED_CB=0`
+    reverts to encoding it after the pread, which is the A/B seam any
+    throughput claim here should be measured against (interleave the two,
+    the run-to-run spread is wider than the effect). `MFERENCE_HIT_CB=0`
+    is the sibling seam for the same trick applied to the routed experts:
+    each layer's slots are ordered cache MISSES first, then hits, so the
+    already-resident hits' phase-1 GEMV can be dispatched on its own
+    command buffer (with its own `RoutedBlobsBuffer` -- rebinding the
+    shared one would race that dispatch) before the `pread`, leaving the
+    misses to the main pass with an `acts` offset of zero. Weight and
+    blob for a slot are carried in one list so the permutation cannot
+    drift apart. It buys less than it looks: it already hides ALL the
+    phase-1 work the hits can offer, but that is only ~1.15 ms/token of
+    GPU wait against ~0.76 ms/token of extra host bind+commit, ~+1%
+    net.
+    Slot count comes from `open_with_options`
+    (`--expert-cache-slots`, allowed 8/16/24/32, default 16, ~3.2 MB of
+    pinned host memory per slot per layer on the 26B); it was hardcoded
+    to 16 before, so measurements taken with the flag set are only
+    meaningful from that change on. Qwen 3.6 and
     DeepSeek-V4-Flash remain blocked on GDN/DSV4. Build a test/demo
     install with
     `mrefrust_repack::build_synthetic_gemma4_install` (dense) or its
@@ -242,9 +294,34 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     baseline when omitted, so anything else needs those fields written
     explicitly). The weights these produce are deterministic but not
     trained, so generated tokens are structurally real but semantically
-    meaningless.
+    meaningless -- and a short generation can decode to the EMPTY STRING.
+    Tests may assert that generation ran (token counts, stop reason, the
+    log lines) but never that specific text appeared.
+    These fixtures' routers are also near-UNIFORM: the top-k routing
+    weights barely differ, so permuting which slot holds which expert is
+    numerically a no-op and no test on them can catch a weight-to-slot
+    pairing bug. Fuse such pairings structurally instead of testing them.
+    To get a real cache hit/miss mix, pass `open_with_options` a slot
+    count BELOW `num_experts` (the allowed 8/16/24/32 set is the CLI
+    flag's, not this function's).
 
-13. **`LogitProducer::produce` writes LOGITS, never probabilities.**
+13. `st` (the ripgrep-alike used here) skips gitignored files, so it finds
+    NOTHING in `ROADMAP.md` -- that file is gitignored on purpose (see
+    Gotcha 5's sibling note about local-only edits). Read or `grep` it
+    directly.
+
+14. Adding one flag to `crates/invocation` touches five places, two of them
+    non-obvious: the `OPTIONS` table, BOTH parser dispatch `match`es (each
+    ends in `unreachable!`, so a missing arm is a runtime panic, not a
+    compile error), the `InvocationRequest` literal, and
+    `tests/usage_and_status.rs`'s hardcoded option-count assertion.
+
+15. `real_forward_gemma4.rs`'s per-token function interleaves
+    `let real = self.real.as_ref()` bindings with `&mut self` calls. A new
+    `&mut self` call between such a binding and its last use is E0502;
+    re-bind `real` after the call (the file already does this repeatedly).
+
+16. **`LogitProducer::produce` writes LOGITS, never probabilities.**
     `selection::select` softmaxes whatever it is handed. A producer that
     also normalizes makes it `softmax(softmax(z))`, which over V=262144
     collapses to near-uniform: top-p/top-k still rank correctly (softmax is
@@ -263,7 +340,7 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     Rule for any new model: decide where the normalization lives ONCE, put
     it in the sampler, and never in a producer.
 
-14. **Wrap every repeated Metal encode in `gpu::autorelease_pool`.**
+17. **Wrap every repeated Metal encode in `gpu::autorelease_pool`.**
     `MTLCommandQueue.commandBuffer` and
     `MTLCommandBuffer.computeCommandEncoder` return AUTORELEASED objects.
     The `metal` crate's `to_owned()` adds our retain and drops it, but the
@@ -278,179 +355,85 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     Caught by `memory_oracle.rs`'s steady-state guard, not by
     `gpu_buffer_allocations()` -- these are not our allocations.
 
-15. **`KvCacheManager::new`'s `fp16_ring_enabled` is not cosmetic, and its
+18. **`KvCacheManager::new`'s `fp16_ring_enabled` is not cosmetic, and its
     comment can lie.** Passing `false` gives every sliding-window layer a
     full `max_context` buffer. On real Gemma 4 (25 SWA layers of 30, 1024
-    window, 4096 context) that is 922 MiB of KV instead of 280 MiB, and it
+    window, 4096 context) that is 922 MiB of KV instead of 320 MiB, and it
     is invisible in output correctness -- a linear layout is simply a ring
-    big enough to never wrap. The runner enables it and passes
+    big enough to never wrap, so nothing fails, the process is just fat.
+    The runner enables it, sizes SWA layers at
+    `min(max_context, sliding_window + 128)`, and passes
     `ring_capacity(layer)` into `encode_attention_decode`, which
-    specializes `FC_ATTN_RING_CAP` into the pipeline (0 keeps the identity
-    addressing full-attention layers need). When adding a model, derive the
-    ring flag from the layer mask, not from an assumption about the family,
-    and verify with a prompt+generation longer than the ring: coherent text
-    past position `sliding_window + 1` is the proof.
+    specializes `FC_ATTN_RING_CAP` into the pipeline. Two traps in that
+    last step: 0 must keep the identity addressing full-attention layers
+    need, and the capacity MUST go into the pipeline-cache constants key
+    or ring dispatches silently reuse the linear pipeline. When adding a
+    model, derive the ring flag from the layer mask, not from an
+    assumption about the family, and verify with a prompt plus generation
+    longer than the ring -- coherent text past position `sliding_window +
+    128` is the proof.
 
-16. **`phys_footprint` counts the resident weight mapping.** A read-only
+19. **`phys_footprint` counts the resident weight mapping.** A read-only
     `mmap` on its own would not (clean file-backed pages are excluded), but
     `newBufferWithBytesNoCopy` makes Metal pin the range. So the honest
     accounting for an install is `resident weights + KV + expert slot
-    capacity + process baseline`, and `crates/bench/tests/memory_oracle.rs`
-    asserts the peak against exactly that with no slack. Do not "explain"
-    a footprint number by assuming the weights are free.
+    capacity + process baseline`. Do not "explain" a footprint number by
+    assuming the weights are free -- on the real install they are 1,291 of
+    its MiB. `crates/bench/tests/memory_oracle.rs` asserts the session
+    peak against the published Swift ceiling, and separately that a
+    replayed warm case stops growing (Gotcha 17).
 
 ## Layout
 
-Update layout as needed:
+Workspace directory structure and crate layout:
 
 ```
-crates
-├── bench              # mference-bench: fixed-prompt throughput harness
-├── cli                # mference-check binary: the process entry point
-├── compute            # CPU reference kernels + destination compute strategy
-├── core               # shared primitives, errors, runtime config
-├── gpu                # Metal pipeline cache + kernel dispatch (macOS only)
-├── invocation         # CLI argument parsing, request assembly, diagnostics
-├── model-io           # manifest/arch validation, packed-expert layout,
-│                      # resident index, SHA-256 verify, install receipt
-├── repack             # safetensors header parsing, ranged-download
-│                      # planning, int4/int8 repack, full-install verify
-├── runtime            # the raw-completion prefill+decode loop
-├── selection          # token sampling: shaping, truncation, penalty, choose
-├── server             # OpenAI-compatible Chat Completions server (axum)
-├── streaming          # pread-based expert streamer + LFU/LRU cache policy
-├── tokenizer          # tokenizer wrapper, chat templates, tool-call parsing
-└── window-fit         # conversation-window fitting (turn dropping)
+.
++-- Cargo.lock         # lockfile committed for reproducible workspace builds
++-- Cargo.toml         # workspace manifest declaring members and workspace metadata
++-- AGENTS.md          # developer guide and gotchas (CLAUDE.md is a symlink to this)
++-- CLAUDE.local.md    # local developer notes (gitignored)
++-- DEVIATIONS.md      # scaffolded vs fully wired feature inventory
++-- LICENSE            # MIT license
++-- Makefile           # build, test, fmt, clippy wrapper targets
++-- README.md          # repository overview and quickstart
++-- ROADMAP.md         # phase-by-phase scope tracking (gitignored)
++-- rust-toolchain.toml # toolchain pin (stable Rust 1.82+)
++-- crates
+|   +-- bench          # mference-bench binary & harness (throughput benchmark)
+|   +-- cli            # mference-check binary (process entry point & CLI runner)
+|   +-- compute        # CPU reference kernels & compute strategy marker
+|   +-- core           # shared primitives (TokenId, LogitValue), RuntimeConfig, chunking
+|   +-- gpu            # Metal pipeline cache & GPU kernel dispatches (macOS only)
+|   +-- invocation     # CLI argument parsing, request assembly & exit status routing
+|   +-- model-io       # manifest validation, packed-expert layout, resident index & mmap
+|   +-- repack         # safetensors header parsing, ranged downloads, int4/8 repack, gturbo writer
+|   +-- runtime        # raw-completion prefill+decode loop & RealForwardRunner (macOS)
+|   +-- selection      # token sampling (temperature, top-k, top-p, repetition penalty, choose)
+|   +-- server         # OpenAI-compatible Chat Completions HTTP server (axum)
+|   +-- streaming      # pread-based expert streamer & LFU/LRU slot cache
+|   +-- tokenizer      # tokenizer wrapper, chat templates (text/Jinja), stop matcher, DSL parser
+|   \-- window-fit     # deterministic conversation-window fitting & turn dropping
+\-- docs
+    +-- BENCHMARKING.md# benchmark modes, mach memory sampling & memory oracle details
+    \-- TESTING.md     # test suite organization, platform gating & testing rules
 ```
 
-- `crates/core`: shared primitives (token id, logit value, logits view) and the
-  public runtime configuration with its allowed value sets and builder.
-- `crates/compute`: CPU reference kernels (RmsNorm, WHT, RoPE, causal
-  attention, int4/int8 affine quant + GEMV, embedding lookup, MoE FFN,
-  logit softcap-softmax, RelError/tolerance table) plus the
-  destination-selected compute strategy marker type. These are the
-  numerical ground truth `crates/gpu`'s kernels are validated against.
-- `crates/invocation`: pure translation of command-line argument tokens into
-  a validated invocation request, a help short-circuit, or one of six typed
-  failures, plus usage-text rendering and the pure outcome-to-exit-status and
-  outcome-to-stream routing decisions. Performs no filesystem, environment,
-  or process I/O.
-- `crates/selection`: candidate selection from a per-candidate score vector
-  under a validated shaping configuration (temperature, top-k, top-p,
-  repetition penalty, seed), an accumulated history, and a step position.
-  Numeric parity with any upstream implementation is out of scope; only the
-  observable contract is exercised.
-- `crates/window-fit`: pure, deterministic conversation-window fitting.
-  Drops the oldest eligible turns from a conversation, using a
-  caller-supplied whole-conversation length measurement, until the
-  measured length is under a caller-supplied bound or nothing eligible
-  remains. An optional leading instruction turn and the newest turn are
-  never removed. Performs no input or output and holds no state between
-  calls.
-- `crates/tokenizer`: wraps the HF `tokenizers` crate; resolves the Gemma
-  4 / ChatML (Qwen) / DeepSeek-V4 chat dialect from a loaded tokenizer's
-  special tokens; renders the text-only chat templates plus DeepSeek's
-  hand-rolled native tool chat; the generic Jinja-templated tool chat for
-  Gemma/ChatML (`minijinja` + `minijinja-contrib`'s `pycompat`, rendering
-  the checkpoint's own `chat_template.jinja`, tested against the real
-  vendored Qwen ChatML template); streaming detokenizer and stop matcher
-  (the stop set unions the dialect's own stops with the checkpoint's
-  `generation_config.json` `eos_token_id` list -- that file, not
-  `tokenizer_config.json`, is the authority for multi-stop checkpoints);
-  Gemma/Qwen/DeepSeek tool-call DSL parsers and a streaming structured
-  assistant-output decoder.
-- `crates/model-io`: `manifest.json` decode and field-by-field validation
-  against a resolved `ArchConfig` (with the three canonical Gemma
-  4/Qwen3.6/DeepSeek-V4-Flash baselines), `packed_experts/layout.json`
-  decode, the `model_weights.bin` resident tensor index reader, an `mmap`'d
-  resident-buffer view, streaming SHA-256 verification, and the trusted
-  install receipt. Allowed a narrow amount of `unsafe` (the `mmap` call).
-- `crates/streaming`: routed-expert `pread` streamer with a fixed per-layer
-  slot cache. The LFU/LRU eviction policy (`ExpertCache`) is pure logic,
-  separated from the actual file I/O so it can be tested against scripted
-  access traces without a real model install. `rdadvice` is the other
-  `unsafe`-carrying module (macOS `F_RDADVISE`; a documented no-op
-  elsewhere).
-- `crates/gpu`: Metal device/pipeline-cache context and per-kernel dispatch.
-  macOS-only; compiles to nothing elsewhere. Multiple kernels
-  (`rmsnorm_no_scale`, `rms_norm_bf16w`, `rope_proportional_neox`,
-  `logit_softcap_fp16`, `dequant_int4_gemv_simd`, `dequant_int8_gemv_simd`,
-  two-pass split-KV `attention_decode`, `moe_decode` decode pair, and
-  `utility` elementwise kernels) are wired end to end and parity-tested against
-  the matching `mrefrust_compute` reference on real hardware. `KvCacheManager`
-  allocates and manages real per-layer Metal KV buffers used by
-  `RealForwardRunner`. `GdnStateManager` and `Dsv4StateManager` allocate real
-  per-layer Metal buffers but stay unwired (their compute kernels are unported);
-  `PrefillChunkScratchLayout`/`PrefillChunkScratchBuffers` size and allocate the
-  chunked-prefill scratch buffers, also undispatched (the tile kernel is
-  descoped). The `sample` kernel (no CPU reference exists to verify a port
-  against) and fused lm_head are not yet vendored or dispatched.
-- `crates/runtime`: the raw-completion prefill+decode loop
-  (`run_raw_completion`), wiring a `LogitProducer`, the tokenizer's
-  streaming detokenizer and stop matcher, and `selection::select` into one
-  token generation loop. `ScriptedLogitProducer` is what every test outside
-  `real_forward.rs` drives the loop with (see Gotcha 10). `RealForwardRunner`
-  (macOS/GPU only, `src/real_forward.rs`) is a real `LogitProducer`: a
-  genuine transformer forward pass through real GPU kernels (including
-  real GPU decode attention) and real quantized weights, supporting both
-  dense and MoE FFN layers. Dense bridges the gated FFN on the CPU via
-  `mrefrust_compute::run_ffn` (no GPU FFN kernel exists yet); MoE runs a
-  real GPU router GEMV plus real GPU GEMVs for each selected expert, with
-  host-side top-k selection and the same CPU-bridged gated activation.
-  See Gotcha 12.
-- `crates/cli`: the `mference-check` binary: the resolved process entry
-  point (see Gotcha 7). Parses `argv`, applies `invocation`'s exit-status
-  and stream-routing decisions, prints the resolved request for a
-  validated invocation, and (macOS, `--prompt` mode only,
-  `src/generate.rs`) attempts real generation against `--model` via
-  `RealForwardRunner` (see Gotcha 12).
-- `crates/repack`: safetensors header parsing (pure, tested against
-  synthetic fixtures, no network needed), a `RangeSource` trait for ranged
-  reads (HTTP-backed for real installs, in-memory for tests) with the
-  two-step header-fetch plan, per-row int4/int8 quantization repack
-  (reusing `mrefrust_compute`'s quantizer), byte-exact `.gturbo` directory
-  assembly (`write_gturbo_install`, round-trip tested through every
-  `mrefrust_model_io` loader), a real named resident-tensor index writer
-  (`write_gturbo_install_with_resident_index`, unlike `write_gturbo_install`
-  which only ever writes an empty index), and full-SHA256 install
-  verification. `synthetic_model.rs`'s `build_synthetic_gemma4_install`
-  (dense) and `build_synthetic_gemma4_moe_install` (routed-expert FFN) use
-  the resident writer to build full, real, small "tiny Gemma 4" `.gturbo`
-  installs with deterministic (not trained) INT4-affine weights: what
-  `crates/runtime`'s `RealForwardRunner` runs against, since no trained
-  checkpoint exists in this environment (see Gotcha 12).
-  `hf_checkpoint.rs`'s `orchestrate_llama_checkpoint` walks a real
-  *downloaded* HF checkpoint's Llama-family-named tensors through the
-  quantizer and writer end to end: proven against a real ~269MB
-  Hugging Face Hub download in a network-gated, `#[ignore]`d test
-  (`tests/hf_checkpoint_network.rs`; run explicitly, not part of the
-  default suite). Not proven to also run through `RealForwardRunner`
-  (separate V projection, scaled RMSNorm: that runner doesn't support
-  either yet); see `DEVIATIONS.md`. `gemma4_checkpoint.rs` is the real
-  Gemma 4 mapping: `config.json`/quantization parsing, mlx-community
-  tensor-name classification and Swift slot ordering, pre-quantized
-  INT4/INT8 pass-through (no re-quantization), per-expert blob slicing
-  with one 16 KiB-rounded stride, `write_gemma4_install`, and the
-  multi-shard + streaming pair (`Gemma4Shards` merges N shard headers
-  into one name registry; `write_gemma4_install_streamed` computes the
-  expert stride from headers alone and writes one layer at a time, so
-  peak memory is one layer's blobs). `synthetic_real.rs`'s
-  `build_synthetic_gemma4_real_install` pushes a deterministic
-  real-naming safetensors blob through that exact pipeline (what the
-  runner's learned-weight flow and the CLI test open).
-  `tests/gemma4_checkpoint_network.rs` is the network-gated (`#[ignore]`d)
-  proof against the real pinned
-  `mlx-community/gemma-4-26b-a4b-it-4bit` checkpoint (~14.6 GB; same
-  commit + index SHA-256 pins as Swift's `SupportedModelSource.gemma4`).
-- `crates/server`: OpenAI-compatible `/v1/chat/completions` on loopback
-  (axum), both the full-response and SSE-streaming shapes, wired to
-  `mrefrust-runtime`. `ScriptedChatModel` is the only backend (see
-  Gotcha 10); real weights are future work.
-- `crates/bench`: the `mference-bench` binary: three fixed prompts, a
-  fixed seed, a discarded warmup run per prompt, driven through the real
-  `run_raw_completion` loop and timed. Measures this port's loop overhead
-  via a `ScriptedLogitProducer`, not real inference throughput (no real
-  weights exist to measure); see `DEVIATIONS.md`.
+- `crates/core`: shared primitives (`TokenId`, `LogitValue`, `LogitsView`), error types (`CoreError`), runtime configuration (`RuntimeConfig`, `RuntimeConfigBuilder`), allowed value sets (`ALLOWED_CACHE_SLOTS`, `ALLOWED_CHUNK_SIZES`), automatic chunk-size resolution (`chunk_sizing.rs`), and prefill chunking primitives (`prefill.rs`).
+- `crates/compute`: CPU reference kernels (RmsNorm, WHT, RoPE, causal attention, int4/int8 affine quant + GEMV, embedding lookup, MoE FFN, logit softcap-softmax, RelError/tolerance table, sampling helpers) plus destination compute strategy marker type (`ComputeStrategy`). These are the numerical ground truth `crates/gpu`'s Metal kernels are validated against.
+- `crates/invocation`: pure translation of command-line argument tokens into a validated invocation request (`InvocationRequest`), options definition (`OPTIONS`), diagnostics (`diagnostics.rs`), typed failures (`InvocationFailure`), usage rendering (`render_usage`), and pure outcome-to-exit-status and outcome-to-stream routing decisions. Performs no filesystem, environment, or process I/O.
+- `crates/selection`: candidate selection (`select`, `select_from_logits`) from a per-candidate score vector under a validated shaping configuration (temperature, top-k, top-p, repetition penalty, seed), accumulated history, step position, determinism, and distribution guards. Numeric parity with any upstream implementation is out of scope; only the observable contract is exercised.
+- `crates/window-fit`: pure, deterministic conversation-window fitting (`fit_conversation_window`). Drops the oldest eligible turns from a conversation (`FitOutcome`, `DroppedTurn`), using a caller-supplied whole-conversation length measurement, until the measured length is under a caller-supplied bound or nothing eligible remains. An optional leading instruction turn and the newest turn are never removed. Performs no input or output and holds no state between calls.
+- `crates/tokenizer`: wraps HF `tokenizers` crate (`MfTokenizer`); resolves Gemma 4 / ChatML (Qwen) / DeepSeek-V4 chat dialect from special tokens; renders text-only chat templates plus DeepSeek's native tool chat; generic Jinja-templated tool chat for Gemma/ChatML (`minijinja` + `pycompat`, rendering `chat_template.jinja`); streaming detokenizer (`StreamingDetokenizer`) and stop matcher (`StopMatcher`) (stop set unions dialect stops with `generation_config.json` `eos_token_id` list); Gemma/Qwen/DeepSeek tool-call DSL parsers and streaming structured assistant-output decoder (`StructuredDecoder`).
+- `crates/model-io`: `manifest.json` decode and field-by-field validation against a resolved `ArchConfig` (with canonical Gemma 4, Qwen 3.6, and DeepSeek-V4-Flash baselines), `packed_experts/layout.json` decode (`PackedExpertsLayout`), `model_weights.bin` resident tensor index reader (`ResidentIndex`), `mmap`'d resident-buffer view (`ResidentBuffer`), streaming SHA-256 verification (`sha256.rs`), and trusted install receipt (`InstallReceipt`). Allowed a narrow amount of `unsafe` (the `mmap` call).
+- `crates/streaming`: routed-expert `pread` streamer (`PreadExpertStreamer`) with a fixed per-layer slot cache. The LFU/LRU eviction policy (`ExpertCache`) is pure logic, separated from file I/O so it can be tested against access traces without a model install. `rdadvice` is the other `unsafe`-carrying module (macOS `F_RDADVISE`; a documented no-op elsewhere).
+- `crates/gpu`: Metal device/pipeline-cache context (`MetalContext`, `PassEncoder`, `CommittedPass`) and per-kernel dispatch. macOS-only; compiles to nothing elsewhere. Dispatched, parity-tested kernels (`rmsnorm_no_scale`, `rms_norm_bf16w`, both `_perhead` norm variants, `rope_proportional_neox`, `logit_softcap_softmax`, `dequant_int4_gemv_simd`, `dequant_int8_gemv_simd` with resident variants, `router_gemv_gemma4_r4`, two-pass split-KV `attention_decode`, `moe_decode` decode pair, and `utility` elementwise kernels) are compiled from vendored MSL source at runtime. `KvCacheManager` allocates and manages real per-layer Metal KV buffers used by `RealForwardRunner`. `ResidentGpuWeights` wraps resident mmap in zero-copy MTLBuffer. `GdnStateManager` and `Dsv4StateManager` allocate real per-layer Metal buffers (unwired kernels); `PrefillChunkScratchLayout`/`PrefillChunkScratchBuffers` size scratch buffers (undispatched tile kernel). The `sample` kernel and fused lm_head are not yet vendored or dispatched.
+- `crates/runtime`: raw-completion prefill+decode loop (`run_raw_completion`, `run_raw_completion_chunked`), wiring a `LogitProducer`, the tokenizer's streaming detokenizer and stop matcher, and `selection::select` into one token generation loop. `ScriptedLogitProducer` is what unit tests and `crates/server`'s `ScriptedChatModel` drive the loop with (see Gotcha 10). `RealForwardRunner` (macOS/GPU only, `src/real_forward.rs` and `src/real_forward_gemma4.rs`) is a real `LogitProducer`: a genuine transformer forward pass through real GPU kernels (including real GPU decode attention) and real quantized weights, supporting dense and MoE FFN layers. Dense bridges gated FFN on CPU via `mrefrust_compute::run_ffn`; MoE runs real GPU router GEMV plus real GPU GEMVs for each selected expert, host-side top-k selection, and CPU-bridged gated activation. Supports synthetic short names and verbatim real Gemma 4 checkpoint names (learned-weight flow). See Gotcha 12.
+- `crates/cli`: the `mference-check` binary process entry point (see Gotcha 7). Parses `argv`, applies `invocation`'s exit-status and stream-routing decisions, prints the resolved request for a validated invocation, and (macOS, `src/generate.rs`) attempts real generation against `--model` via `RealForwardRunner` (see Gotcha 12) in all three modes: `--prompt` (raw text), `--messages-file` (rendered through chat template), and `--chat` (interactive REPL in `src/chat.rs`, trimming turns with `mrefrust-window-fit`).
+- `crates/repack`: safetensors header parsing (pure, tested against synthetic fixtures), `RangeSource` trait for ranged reads (HTTP-backed for real installs, in-memory for tests) with two-step header-fetch plan, per-row int4/int8 quantization repack (reusing `mrefrust_compute`'s quantizer), byte-exact `.gturbo` directory assembly (`write_gturbo_install`), real named resident-tensor index writer (`write_gturbo_install_with_resident_index`), synthetic install builders (`synthetic_model.rs`, `synthetic_real.rs`), Hugging Face Llama checkpoint repacker (`hf_checkpoint.rs`), Gemma 4 mlx-community checkpoint repacker & streamed pipeline (`gemma4_checkpoint.rs`), install verifier (`install_verifier.rs`), and manifest peeker (`manifest_peek.rs`).
+- `crates/server`: OpenAI-compatible `/v1/chat/completions` HTTP server on loopback (`mference-server` binary, axum framework), supporting both full-response (non-streaming) and SSE-streaming responses, powered by `ScriptedChatModel` wired to `mrefrust-runtime`. `ScriptedChatModel` is the only backend (see Gotcha 10); real weights are future work.
+- `crates/bench`: the `mference-bench` binary plus benchmark library (`mrefrust_bench`). The scripted default (three fixed prompts, fixed seed, discarded warmup) measures loop overhead via `ScriptedLogitProducer`. `--model <install-dir>` (macOS) is the real Swift-comparison mode: frozen community protocol (`protocol.rs`) driven through `RealForwardRunner`, reporting split prefill/decode tok/s and peak `phys_footprint` from the mach sampler (`memory.rs`). `tests/memory_oracle.rs` (`#[ignore]`d, gated on `MREFRUST_GEMMA4_INSTALL_DIR`) asserts peak footprint against Swift baselines. Full details in `docs/BENCHMARKING.md`.
+- `docs/`: repository documentation directory. `docs/BENCHMARKING.md` details benchmark harness modes, mach memory sampling, and the memory oracle baseline assertions; `docs/TESTING.md` documents test suite organization, macOS and environment-variable gating conventions, and test writing rules.
 
 ## Verification policy
 
@@ -469,14 +452,23 @@ smoke" above, all three of them:
 
 1. greedy generation stays coherent (catches broken math),
 2. SAMPLED generation stays coherent (catches distribution bugs that greedy
-   cannot see -- Gotcha 13),
+   cannot see -- Gotcha 16),
 3. the memory oracle passes (catches allocation and retain bugs that
-   correctness cannot see -- Gotchas 14 to 16).
+   correctness cannot see -- Gotchas 17 to 19).
 
 Numerics parity with any upstream implementation is explicitly out of scope;
 only the structural and configuration contracts are exercised by the tests,
 except where a real CPU-vs-GPU parity test exists (`crates/gpu`'s
 `rms_norm_parity.rs`).
+
+The four commands above cover everything except the three `#[ignore]`d
+tests (two checkpoint downloads and the memory oracle), which are opt-in
+and not part of the handoff gate. Run the oracle when a change could move
+memory or decode throughput. `docs/TESTING.md` documents the gating
+conventions and the test-writing rules (never hardcode a fixture token
+id, never assert generated text, prefer exact assertions over
+thresholds); `docs/BENCHMARKING.md` documents the benchmark modes and
+baselines.
 
 See `DEVIATIONS.md` for the full list of what this port scaffolds versus
 fully implements, `ROADMAP.md` for phase-by-phase scope, and

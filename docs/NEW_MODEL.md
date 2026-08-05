@@ -5,7 +5,7 @@ to "generates coherent text at a defensible memory footprint". Written from
 what actually went wrong bringing up Gemma 4 26B-A4B; every "why" below is a
 bug that shipped, not a hypothetical.
 
-Read `AGENTS.md` Gotchas 13 to 16 first. They are the four traps that cost
+Read `AGENTS.md` Gotchas 16 to 19 first. They are the four traps that cost
 the most time, and three of them are invisible to a greedy smoke test.
 
 The ordering matters. Each phase has a gate that must pass before the next
@@ -66,9 +66,9 @@ looking anything up.
       `build_synthetic_gemma4_real_install`: deterministic untrained
       weights, the real naming, the real quantization tags, small enough to
       run in CI. This is what every later test drives.
-- [ ] Add `arch_from_manifest_dir` coverage if the family needs new fields.
-      Resolve arch in ONE place - `model_io::manifest` - so the CLI, the
-      bench harness, and tests cannot drift.
+- [ ] Extend `repack::manifest_peek::peek_arch` if the family needs new
+      fields. Resolve arch in ONE place so the CLI, the bench harness, and
+      the tests cannot drift apart on a fallback default.
 
 Gate: `cargo test -p mrefrust-repack` passes, and the synthetic install
 opens through `RealForwardRunner::open` without touching decode.
@@ -106,12 +106,15 @@ Gate: `cargo test -p mrefrust-gpu` passes on the Metal device.
       pseudocode in the module header and keep it accurate.
 - [ ] Size the KV cache from the layer mask. **Enable the SWA ring**
       (`KvCacheManager::new`'s `fp16_ring_enabled`) whenever the mask has
-      sliding-window layers, and pass `ring_capacity(layer)` into
-      `encode_attention_decode`. A comment claiming "all-full-attention, no
-      ring needed" is how 640 MiB of KV got allocated for nothing; derive
-      the flag from the mask, not from prose.
+      sliding-window layers, size them
+      `min(max_context, sliding_window + prefill_chunk)`, and pass
+      `ring_capacity(layer)` into `encode_attention_decode`. A comment
+      claiming "all-full-attention, no ring needed" is how 600 MiB of KV
+      got allocated for nothing; derive the flag from the mask, not from
+      prose. The capacity must also reach the pipeline-cache constants
+      key, or ring dispatches reuse the linear pipeline.
 - [ ] Wrap the per-token entry point in `gpu::autorelease_pool`. Not
-      optional - see Gotcha 14.
+      optional - see Gotcha 17.
 - [ ] Preallocate all activation scratch at open. Assert the hot path
       allocates no Metal buffers (`gpu_buffer_allocations()` flat across
       tokens); copy the existing test.
@@ -195,11 +198,11 @@ reference implementation's published number for the same workload.
 
 | Symptom | Look here first |
 |---|---|
-| Greedy fine, sampled degenerates | Double softmax in the head (Gotcha 13) |
+| Greedy fine, sampled degenerates | Double softmax in the head (Gotcha 16) |
 | Babble from token 1 on any prompt | Chat template not applied |
 | Coherent then collapses at a fixed position | KV ring capacity vs window |
 | Never emits EOS | EOS set not resolved from `generation_config.json` |
-| Memory grows linearly with tokens | Missing autorelease pool (Gotcha 14) |
+| Memory grows linearly with tokens | Missing autorelease pool (Gotcha 17) |
 | Memory 3-4x the reference at open | SWA layers sized at `max_context` |
 | Output changed after a kernel tweak | Function constant missing from the pipeline cache key |
 | "No output" from `mference-check` | `--messages-file` is not wired; use `--prompt` |

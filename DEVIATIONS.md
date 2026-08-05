@@ -170,16 +170,16 @@ live network).
   is GPU-dispatched too (`embed_lookup_int4`, parity-tested in
   `crates/gpu/tests/scaled_norm_and_embed.rs`, bound as offsets into the
   resident buffer). Sliding-window decode attention works through the
-  full `attention_decode_partial` kernel's `kv_start` argument over the
-  linear KV layout (parity-tested against the CPU `window` reference in
-  `crates/gpu/tests/attention_swa.rs`). KV ring addressing
-  (`FC_ATTN_RING_CAP`) is dispatched too: `encode_attention_decode` takes a
-  `ring_capacity` and specializes it into the pipeline, and
-  `RealForwardRunner` fills it from `KvCacheManager::ring_capacity`, so
-  sliding-window layers allocate `sliding_window + 1` rows instead of
-  `max_context` (at Gemma 4's 1024 window over a 4096 context, 280 MiB of
-  KV instead of 922 MiB). Parity-tested against the same CPU window
-  reference with K/V folded into a ring, in the same file. The
+  full `attention_decode_partial` kernel's `kv_start` argument
+  (parity-tested against the CPU `window` reference in
+  `crates/gpu/tests/attention_swa.rs`), and the KV ring addressing
+  (`FC_ATTN_RING_CAP`) IS dispatched: SWA layers allocate
+  `min(max_context, sliding_window + 128)` KV rows (1152 for real Gemma 4
+  at 4K, the Swift budget) and switch to the ring-specialized pipeline
+  once `seq_len` exceeds the ring, the Swift activation rule
+  (ring-layout parity in `attention_swa.rs`, wrap-vs-linear token
+  equivalence in `crates/runtime/tests/real_forward.rs`, byte accounting
+  in `crates/gpu/tests/kv_cache.rs`). Only the
   `attention_decode_gqa_swa_partial` performance variant remains
   undispatched. `rmsnorm_bf16w`
   (learned norm weights) and its per-head siblings are dispatched,
@@ -215,6 +215,16 @@ live network).
   after a few dozen tokens. The bound is guarded in
   `crates/runtime/tests/real_forward_gemma4.rs` and the cap-without-
   normalization in `crates/gpu/tests/utility_and_pass.rs`.
+- **Command buffers are pooled per token, not per process.**
+  `MTLCommandQueue.commandBuffer` and
+  `MTLCommandBuffer.computeCommandEncoder` return autoreleased objects,
+  and a plain Rust binary has one autorelease pool, around `main`. Swift
+  drains one per run-loop turn and so never had to think about it; this
+  port wraps `RealForwardRunner::produce` in `gpu::autorelease_pool`.
+  Without it every command buffer stayed alive to process exit: ~6 KiB
+  each, 31 per token, ~180 KiB per decoded token, which reads as
+  footprint growing with prompt length. Guarded by the steady-state
+  replay test in `crates/bench/tests/memory_oracle.rs`.
 - **KV cache, GDN recurrent-state, and DSV4 state managers: all
   implemented and tested against real Metal hardware.** `KvCacheManager`
   (`crates/gpu/src/kv_cache.rs`) allocates real per-layer `metal::Buffer`s
@@ -314,10 +324,55 @@ live network).
     parity-tested in `crates/gpu/tests/moe_decode.rs`) reading the
     expert blobs IN PLACE from the slots' zero-copy Metal buffers via a
     `RoutedBlobs` argument buffer — no expert byte reaches the host.
-    The router readback is a full command-buffer wait, not yet the
-    Swift `MTLSharedEvent` passive wait with the phase1-hit-CB-before-
-    pread and one-layer-pipelined routed CB overlap (a throughput
-    refinement, not a memory/capability gap). Resident-expert MoE
+    The router readback is a full command-buffer wait rather than the
+    Swift `MTLSharedEvent` passive wait: metal-rs 0.33 binds
+    `signaledValue`/`setSignaledValue`/`notify` but not
+    `waitUntilSignaledValue:timeoutMS:`, and spinning on `signaledValue`
+    would steal the SoC power budget the GPU needs (the Swift original
+    says so explicitly). The overlap that wait exists to buy is instead
+    bought with a second command buffer: the shared-expert branch reads
+    only `dense_x`, so it is committed on its own, queued behind the
+    router's buffer, before the host waits — commit order on one queue
+    is execution order, so it runs on the GPU through the router
+    readback and the blocking `pread`. `MFERENCE_SHARED_CB=0` disables
+    it (the A/B seam Swift keeps as `MFERENCE_ROUTER_EVENT=0`; same
+    kernels, same order, identical output). Measured on the real 26B
+    checkpoint (M4 Max, 32 slots, 5 interleaved pairs, overlap winning
+    every pair): +4.0% decode throughput, 33.4 -> 34.8 tok/s. A separate
+    fix to `MetalContext`'s pipeline cache (it keyed on the shader
+    source's TEXT, so every one of the ~900 dispatches a token encodes
+    rehashed tens of kilobytes of MSL; it now keys on the source's
+    address) took the CPU encode bucket from 5.24 to 0.94 ms/token and
+    decode from 34.8 to 42.6 tok/s.
+    Swift's phase-1-hit CB is now ported too, on the same second-command-
+    buffer principle: the layer's slot order is cache MISSES first then
+    hits, so the hits (already in slot memory when the plan is built) get
+    their phase-1 GEMV dispatched on its own command buffer before the
+    `pread`, and the misses run in the main pass at `acts` offset zero.
+    It takes a SECOND `RoutedBlobsBuffer`, since the host rebinds the
+    main one for the full slot list while that dispatch may still be
+    reading it; slot memory itself is safe because `ExpertCache::plan`
+    reserves hit slots before choosing eviction victims, so the parallel
+    miss reads never write a slot the dispatch reads.
+    `MFERENCE_HIT_CB=0` is the A/B seam. Measured on the real 26B
+    checkpoint (M4 Max, 32 slots, 5 interleaved pairs): +0.42 tok/s mean,
+    winning 4 of 5 pairs, ~+1%; generated text md5-identical in all ten
+    runs. The phase counters explain the small size and show the trick is
+    at its ceiling rather than misfiring: GPU wait falls 17.2 -> 16.1
+    ms/token (it hides ALL the phase-1 work the hits have to offer) and
+    the new `hit_cb` bucket costs 0.76 ms/token of host bind-plus-commit,
+    so about two thirds of the win is eaten by the extra command buffer
+    per layer. The remaining exposed `pread` cannot be hidden this way:
+    everything left depends on the bytes being read.
+    Still unported: the one-layer-pipelined routed CB.
+    `MFERENCE_PHASES=1` prints where the time goes and is what that
+    should be judged against: GPU wait ~54%, expert `pread` ~36% (still
+    largely exposed), CPU dispatch encoding ~4% (so `fused.metal`, which
+    only cuts dispatch count, has little left to win here), routed bind
+    ~2%, hit-expert phase 1 ~2%, router readback+top-k ~0.5%. (That split
+    is from a longer, less cache-friendly prompt than the ~72/21 one
+    quoted above; the buckets move with the hit rate, so re-measure
+    rather than reusing either.) Resident-expert MoE
     installs (a synthetic-only shape) still use the CPU
     `run_ffn` bridge (`moe_ffn_host`). The old bridge description: not
     `mrefrust_compute::apply_streamed_routed`'s residual-fused form (that
@@ -358,23 +413,39 @@ live network).
   still needs a `ContinuableLogitProducer`-capable producer and is
   unstarted. Off-mode (`run_raw_completion`) still feeds every prefill
   token to the producer one at a time, unchanged.
-- **Throughput benchmark harness: implemented, still against the scripted
-  producer, not `RealForwardRunner`.** `crates/bench`'s `mference-bench`
-  runs the real `run_raw_completion` loop, not a simulation of it, against
-  a `ScriptedLogitProducer` for three fixed prompts with a fixed seed and
+- **Throughput benchmark harness: implemented, in three modes.** The
+  scripted default: `crates/bench`'s `mference-bench` runs the real
+  `run_raw_completion` loop, not a simulation of it, against a
+  `ScriptedLogitProducer` for three fixed prompts with a fixed seed and
   a discarded warmup run per prompt (the frozen benchmark protocol's
   structure). The printed tokens/sec figure is this port's prefill+decode
   *loop* overhead (tokenizer, sampler, detokenizer, stop matcher) —
   explicitly not a Rust-vs-Swift inference throughput comparison, and the
-  crate's own module doc says so. Pointing it at `RealForwardRunner`
-  instead would measure real (if tiny, synthetic-weight) GPU kernel
-  throughput rather than pure loop overhead; that wiring is not done this
-  round. "Fresh processes" (the protocol's third leg) is left to the
-  caller (e.g. a shell loop invoking the binary repeatedly); the binary
-  does not orchestrate that itself.
+  crate's own module doc says so. `--real` drives the same prompts
+  through `RealForwardRunner` over a tiny synthetic install (real GPU
+  dispatch path, still not a comparison number). `--model <install-dir>`
+  (macOS) IS the Swift-comparison mode: the frozen community protocol
+  (prompts vendored byte-exact from the Swift repo's
+  `docs/benchmark-prompts/real-generation-v1`, seeds 20260721-23, temp
+  0.2, top-k 64, top-p 0.95, max-new 1024, 4K context, chat-templated
+  like the CLI) against a real repacked install, reporting split
+  prefill/decode tok/s plus peak `phys_footprint` from a mach
+  `task_info(TASK_VM_INFO)` sampler that matches the Swift
+  `AppMemorySampler` counter and its every-8th-token cadence, and the
+  Swift-spelling `[stop=...]` footer on stderr for the protocol's grep.
+  On top of that, `crates/bench/tests/memory_oracle.rs` (`#[ignore]`d,
+  needs `MREFRUST_GEMMA4_INSTALL_DIR`) is the memory oracle: it asserts
+  the session peak footprint at or under the published Swift ceiling
+  plus ~5 percent headroom (the Swift docs' own repeat-run variance),
+  requires every measured case to stop `endOfTurn`, and on chips with a
+  published Swift row (M5 Pro, M2) also asserts decode tok/s at or above
+  the Swift floor; other chips get the memory assert plus reported-only
+  throughput. "Fresh processes" (the protocol's third leg) is left to
+  the caller (e.g. a shell loop invoking the binary repeatedly); the
+  binary does not orchestrate that itself.
 - **The CLI now loads a model and generates tokens, for the same
   restricted scope `RealForwardRunner` supports.** `crates/cli/src/
-  generate.rs`'s `try_generate` (macOS only, `--prompt` mode only) peeks
+  generate.rs`'s `try_generate` (macOS only, all three modes) peeks
   `--model`'s `manifest.json` for `vocabSize`/`numLayers`, builds the
   matching `repack::tiny_gemma4_arch`, opens the install with
   `RealForwardRunner`, loads a tokenizer expected to live in the same
@@ -383,14 +454,26 @@ live network).
   one), and streams real generated text to stdout through
   `run_raw_completion`. Any failure (no manifest.json, arch mismatch, no
   tokenizer, generation error) prints a note to stderr and falls back to
-  the validate-only printout rather than crashing the process. Proven end
-  to end (real compiled-binary invocation, real `.gturbo` install, real
-  generated output) by `crates/cli/tests/real_generation.rs`. What's still
-  not wired: `MessagesFile`/`Chat` modes (need chat-template rendering
-  through the CLI, which this integration does not do), and — since it
-  inherits `RealForwardRunner`'s own scope — anything beyond a small dense
-  synthetic architecture; a production checkpoint would need the MoE/
-  hybrid-attention forward-pass support that doesn't exist yet.
+  the validate-only printout rather than crashing the process. All three
+  invocation modes generate: `--prompt` encodes its text verbatim (no
+  templating, matching the Swift original), `--messages-file` decodes a
+  JSON `[{"role", "content"}]` conversation and renders it through the
+  tokenizer's own dialect chat template (`add_bos` false, since the Gemma
+  template emits the `<bos>` mark itself), and `--chat`
+  (`crates/cli/src/chat.rs`) is the interactive REPL ported from
+  `MferenceCLI/Run.swift`'s `runChat`: `/clear`, `/history`, `/quit`,
+  `/exit`, `--system` seeding the opening turn, per-turn window fitting
+  through `mrefrust-window-fit` (the Swift `trimChatHistory` contract), and
+  the assistant reply appended to the history. Both chat modes print the
+  Swift original's `[stop=... prefill=... tok/s=...]` footer to stderr,
+  silenced by `--quiet`. Proven end to end (real compiled-binary
+  invocation, real `.gturbo` install, real generated output) for every mode
+  by `crates/cli/tests/real_generation.rs`. What's still not wired: KV
+  reuse across chat turns (each turn re-prefills from a reset cache, as in
+  Swift, since `ContinuableLogitProducer` is unported), chunked prefill
+  (`--prefill-chunk` stays parsed-and-printed-only), the tool-calling/Jinja
+  template path, and — since it inherits `RealForwardRunner`'s own scope —
+  the layer kinds that runner rejects.
 - `RawDecodeResult` drops the Swift original's cached-prompt-continuation
   bookkeeping fields (`cachedPromptTokens`, `computedPrefillTokens`,
   `uncommittedBoundaryTokenIDs`) since continuation is unimplemented; the

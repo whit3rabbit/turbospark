@@ -63,10 +63,39 @@ pub fn autorelease_pool<R>(f: impl FnOnce() -> R) -> R {
 pub struct MetalContext {
     device: Device,
     queue: CommandQueue,
-    libraries: HashMap<&'static str, Library>,
-    functions: HashMap<(&'static str, &'static str, Vec<u8>), metal::Function>,
-    pipelines: HashMap<(&'static str, &'static str, Vec<u8>), ComputePipelineState>,
+    libraries: HashMap<usize, Library>,
+    functions: HashMap<CacheKey, SpecializationBucket<metal::Function>>,
+    pipelines: HashMap<CacheKey, SpecializationBucket<ComputePipelineState>>,
     buffer_allocations: std::sync::atomic::AtomicU64,
+}
+
+/// Every specialization of one cached function, keyed by its caller-supplied
+/// constants fingerprint (see [`find`] for why this is a Vec, not a map).
+type SpecializationBucket<T> = Vec<(Box<[u8]>, T)>;
+
+/// A shader source plus a function name, keyed by the source's ADDRESS,
+/// not its text.
+///
+/// Every caller passes the same `&'static str` from `include_str!` for a
+/// given shader file (the documented contract on
+/// [`MetalContext::pipeline`]), so the pointer identifies the file. Hashing
+/// the text instead would rehash tens of kilobytes of MSL on every one of
+/// the ~900 dispatches a single decoded token encodes.
+type CacheKey = (usize, &'static str);
+
+fn cache_key(source: &'static str, function_name: &'static str) -> CacheKey {
+    (source.as_ptr() as usize, function_name)
+}
+
+/// Looks a specialization up by its constant fingerprint. The bucket holds
+/// one entry per distinct fingerprint for that function, which is a handful
+/// at most, so a linear scan beats hashing the bytes and never allocates on
+/// the hit path.
+fn find<'a, T>(bucket: Option<&'a SpecializationBucket<T>>, constants_key: &[u8]) -> Option<&'a T> {
+    bucket?
+        .iter()
+        .find(|(key, _)| &**key == constants_key)
+        .map(|(_, value)| value)
 }
 
 impl MetalContext {
@@ -90,15 +119,19 @@ impl MetalContext {
         constants: &FunctionConstantValues,
         constants_key: &[u8],
     ) -> Result<metal::Function, GpuError> {
-        let key = (source, function_name, constants_key.to_vec());
-        if !self.functions.contains_key(&key) {
-            let library = self.library(source)?;
-            let function = library
-                .get_function(function_name, Some(constants.clone()))
-                .map_err(|_| GpuError::FunctionNotFound(function_name.to_string()))?;
-            self.functions.insert(key.clone(), function);
+        let key = cache_key(source, function_name);
+        if let Some(function) = find(self.functions.get(&key), constants_key) {
+            return Ok(function.clone());
         }
-        Ok(self.functions[&key].clone())
+        let library = self.library(source)?;
+        let function = library
+            .get_function(function_name, Some(constants.clone()))
+            .map_err(|_| GpuError::FunctionNotFound(function_name.to_string()))?;
+        self.functions
+            .entry(key)
+            .or_default()
+            .push((constants_key.into(), function.clone()));
+        Ok(function)
     }
 
     /// Builds (cached per function) an argument encoder for the argument
@@ -157,20 +190,24 @@ impl MetalContext {
         constants: &FunctionConstantValues,
         constants_key: &[u8],
     ) -> Result<ComputePipelineState, GpuError> {
-        let key = (source, function_name, constants_key.to_vec());
-        if !self.pipelines.contains_key(&key) {
-            let function = self.function(source, function_name, constants, constants_key)?;
-            let pipeline = self
-                .device
-                .new_compute_pipeline_state_with_function(&function)
-                .map_err(GpuError::PipelineCreate)?;
-            self.pipelines.insert(key.clone(), pipeline);
+        let key = cache_key(source, function_name);
+        if let Some(pipeline) = find(self.pipelines.get(&key), constants_key) {
+            return Ok(pipeline.clone());
         }
-        Ok(self.pipelines[&key].clone())
+        let function = self.function(source, function_name, constants, constants_key)?;
+        let pipeline = self
+            .device
+            .new_compute_pipeline_state_with_function(&function)
+            .map_err(GpuError::PipelineCreate)?;
+        self.pipelines
+            .entry(key)
+            .or_default()
+            .push((constants_key.into(), pipeline.clone()));
+        Ok(pipeline)
     }
 
     fn library(&mut self, source: &'static str) -> Result<Library, GpuError> {
-        if let Some(lib) = self.libraries.get(source) {
+        if let Some(lib) = self.libraries.get(&(source.as_ptr() as usize)) {
             return Ok(lib.clone());
         }
         let options = metal::CompileOptions::new();
@@ -178,7 +215,8 @@ impl MetalContext {
             .device
             .new_library_with_source(source, &options)
             .map_err(GpuError::LibraryCompile)?;
-        self.libraries.insert(source, library.clone());
+        self.libraries
+            .insert(source.as_ptr() as usize, library.clone());
         Ok(library)
     }
 
@@ -293,12 +331,32 @@ impl PassEncoder {
         self.command_buffer.wait_until_completed();
     }
 
-    /// Ends encoding and commits without waiting (for callers that overlap
-    /// CPU work with the GPU and synchronize later themselves).
-    pub fn commit(self) -> metal::CommandBuffer {
+    /// Ends encoding and commits without waiting, handing back something
+    /// the caller can wait on later. Buffers committed to one queue execute
+    /// in commit order, so a caller can queue follow-on GPU work and then
+    /// wait on an earlier buffer to be woken as soon as *its* results are
+    /// ready, with the later work still running.
+    pub fn commit(self) -> CommittedPass {
         self.encoder.end_encoding();
         self.command_buffer.commit();
-        self.command_buffer
+        CommittedPass {
+            command_buffer: self.command_buffer,
+        }
+    }
+}
+
+/// A committed, not-yet-waited-on command buffer. Dropping it without
+/// waiting is fine: the queue keeps the buffer alive until it completes.
+pub struct CommittedPass {
+    command_buffer: metal::CommandBuffer,
+}
+
+impl CommittedPass {
+    /// Blocks until this buffer finishes. Its shared-storage outputs are
+    /// CPU-readable after this returns; buffers committed after it may
+    /// still be running.
+    pub fn wait(self) {
+        self.command_buffer.wait_until_completed();
     }
 }
 

@@ -219,6 +219,67 @@ fn mixed_swa_and_full_attention_layers_generate_deterministically() {
     assert_eq!(first_tokens, second_tokens);
 }
 
+/// The fp16 SWA KV ring produces the same tokens as a linear layout: the
+/// same SWA install opened with a small ring override (wraps during
+/// prefill and every decode step) and with a max_context-sized override
+/// (identity slot mapping, linear pipeline) must generate identical
+/// streams, since the window (4) always fits inside the ring (16).
+#[test]
+fn swa_kv_ring_wrap_matches_linear_layout() {
+    let tokenizer = load_tokenizer();
+    let vocab_size = tokenizer.vocab_size;
+    let dir = temp_dir();
+    let arch = build_synthetic_gemma4_swa_install(&dir, vocab_size as i64, 4, 4, "swa-ring-test")
+        .expect("SWA install should write");
+
+    let prompt_ids = tokenizer
+        .encode("a much longer prompt that must overflow a sixteen slot kv ring buffer during prefill so the wrapped path really runs", false);
+    assert!(
+        prompt_ids.len() > 16,
+        "prompt ({} tokens) must exceed the 16-slot ring so the wrap happens",
+        prompt_ids.len()
+    );
+    let config = greedy_config(8);
+
+    let run = |ring_override: Option<usize>| -> Vec<i32> {
+        let mut runner = RealForwardRunner::open_with_kv_ring_override(
+            &dir,
+            arch.clone(),
+            4096,
+            16,
+            ring_override,
+        )
+        .expect("SWA install should open");
+        let mut tokens = Vec::new();
+        run_raw_completion(
+            &mut runner,
+            &tokenizer,
+            &prompt_ids,
+            &config,
+            4096,
+            vocab_size,
+            |e| {
+                if let RawDecodeProgress::Token { id, .. } = e {
+                    tokens.push(id);
+                }
+            },
+        )
+        .expect("SWA generation should run to a stop condition");
+        tokens
+    };
+
+    // Some(4096) caps the ring at max_context: identity slot mapping and
+    // the linear pipeline (seq_len never exceeds the ring), i.e. the old
+    // linear layout. Some(16) wraps from the 17th position on.
+    let linear_tokens = run(Some(4096));
+    let ring_tokens = run(Some(16));
+    assert!(!linear_tokens.is_empty());
+    assert_eq!(
+        linear_tokens, ring_tokens,
+        "ring KV layout must not change generated tokens"
+    );
+}
+
 /// The dense decode hot path must allocate ZERO Metal buffers: weights
 /// are the one zero-copy resident buffer, KV and activation scratch are
 /// preallocated at open. This is the steady-state memory guarantee the

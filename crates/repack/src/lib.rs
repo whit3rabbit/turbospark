@@ -9,6 +9,7 @@ mod gemma4_checkpoint;
 mod gturbo_writer;
 mod hf_checkpoint;
 mod install_verifier;
+mod manifest_peek;
 mod ranged_download;
 mod repack;
 mod resident_writer;
@@ -29,6 +30,7 @@ pub use gturbo_writer::{
 };
 pub use hf_checkpoint::{orchestrate_llama_checkpoint, LlamaCheckpointDims, OrchestrateError};
 pub use install_verifier::verify_install_full_sha256;
+pub use manifest_peek::peek_manifest_arch;
 pub use ranged_download::{
     fetch_safetensors_header, DownloadError, HttpRangeSource, MemoryRangeSource, RangeSource,
 };

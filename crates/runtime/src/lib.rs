@@ -15,17 +15,12 @@ mod real_forward_gemma4;
 
 pub use config::GenerationConfig;
 pub use error::RuntimeError;
-/// Resolve an install's `ArchConfig` from its `manifest.json` -- what
-/// `RealForwardRunner::open` needs, re-exported so callers don't need a
-/// direct `model_io` dependency just to open an install.
-#[cfg(target_os = "macos")]
-pub use model_io::arch_from_manifest_dir;
 pub use producer::{ChunkedPrefillRunner, LogitProducer, ScriptedLogitProducer};
 pub use raw_completion::{
     run_raw_completion, run_raw_completion_chunked, RawDecodeProgress, RawDecodeResult, StopReason,
 };
 #[cfg(target_os = "macos")]
-pub use real_forward::{RealForwardError, RealForwardRunner};
+pub use real_forward::{PhaseCounters, RealForwardError, RealForwardRunner};
 
 // Token id width consumed from the core primitives, keeping the dependency
 // edge live and documenting the interchange type this crate uses throughout.

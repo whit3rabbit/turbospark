@@ -17,4 +17,5 @@ selection = { package = "mrefrust-selection", path = "../selection" }
 tokenizer = { package = "mrefrust-tokenizer", path = "../tokenizer" }
 repack = { package = "mrefrust-repack", path = "../repack" }
 model_io = { package = "mrefrust-model-io", path = "../model-io" }
+window_fit = { package = "mrefrust-window-fit", path = "../window-fit" }
 serde_json = "1"

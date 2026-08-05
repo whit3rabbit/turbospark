@@ -171,15 +171,6 @@ pub fn known_flags() -> HashSet<&'static str> {
 pub const REQUIRED_FILES: [&str; 2] = ["model_weights.bin", "packed_experts/layout.json"];
 
 pub fn load(dir: &Path, expecting: &ArchConfig, max_bytes: u64) -> Result<Manifest, ModelError> {
-    let manifest = decode_manifest(dir, max_bytes)?;
-    validate(&manifest, expecting)?;
-    Ok(manifest)
-}
-
-/// Read and parse `manifest.json` without validating it against an
-/// expected [`ArchConfig`] -- the step [`load`] and
-/// [`arch_from_manifest_dir`] share.
-fn decode_manifest(dir: &Path, max_bytes: u64) -> Result<Manifest, ModelError> {
     let manifest_path = dir.join("manifest.json");
     if !manifest_path.exists() {
         return Err(ModelError::PartialInstall {
@@ -200,6 +191,7 @@ fn decode_manifest(dir: &Path, max_bytes: u64) -> Result<Manifest, ModelError> {
         serde_json::from_slice(&data).map_err(|e| ModelError::IndexCorrupt {
             detail: format!("manifest.json: {e}"),
         })?;
+    validate(&manifest, expecting)?;
     Ok(manifest)
 }
 
@@ -335,55 +327,4 @@ pub fn peek_family(dir: &Path, max_bytes: u64) -> Result<ModelFamily, ModelError
     ModelFamily::parse(&raw).ok_or_else(|| ModelError::IndexCorrupt {
         detail: format!("unknown arch.family \"{raw}\""),
     })
-}
-
-/// Reconstruct a full [`ArchConfig`] from an install's `manifest.json`.
-///
-/// Starts from the family baseline (the same fallback rule
-/// [`crate::validate`] applies to omitted family-extension fields) and
-/// overwrites every shape field with what the manifest actually says. Only
-/// Gemma 4 installs are resolved; anything else is rejected here rather
-/// than failing later inside the runner.
-pub fn arch_from_manifest_dir(dir: &Path) -> Result<ArchConfig, ModelError> {
-    let manifest = decode_manifest(dir, DEFAULT_MAX_BYTES)?;
-    let m = &manifest.arch;
-    if m.family.as_deref().is_some_and(|f| f != "gemma4") {
-        return Err(ModelError::IndexCorrupt {
-            detail: format!(
-                "manifest family {:?} is not supported by real generation yet",
-                m.family
-            ),
-        });
-    }
-
-    let mut arch = crate::arch_baselines::gemma4_26b_a4b();
-    arch.hidden_size = m.hidden_size;
-    arch.intermediate_size = m.ffn_intermediate;
-    arch.moe_intermediate_size = m.moe_intermediate_size;
-    arch.num_heads = m.num_heads;
-    arch.num_kv_heads = m.num_kv_heads;
-    arch.num_full_kv_heads = m.num_full_kv_heads;
-    arch.head_dim = m.head_dim;
-    arch.full_head_dim = m.full_head_dim;
-    arch.vocab_size = m.vocab_size;
-    arch.num_layers = m.num_layers;
-    arch.sliding_window = m.sliding_window;
-    arch.final_logit_softcap = m.final_logit_softcap;
-    arch.rope_theta = m.rope_theta;
-    arch.full_rope_theta = m.full_rope_theta;
-    arch.partial_rotary_factor = m.partial_rotary_factor;
-    arch.num_experts = m.num_experts;
-    arch.top_k_experts = m.top_k_experts;
-    arch.tie_word_embeddings = m.tie_word_embeddings;
-    arch.attention_k_eq_v = m.attention_k_eq_v;
-    arch.hidden_activation = m.hidden_activation.clone();
-    arch.full_attention_layer_mask = m
-        .full_attention_layer_mask
-        .iter()
-        .map(|&v| v as u8)
-        .collect();
-    if let Some(scale) = m.attention_scale {
-        arch.attention_scale = scale;
-    }
-    Ok(arch)
 }

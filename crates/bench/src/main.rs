@@ -16,7 +16,8 @@
 //! once per fresh process externally (e.g. a shell loop) if that isolation
 //! matters for a given measurement.
 //!
-//! Usage: `mference-bench <tokenizer-dir> [--real]`.
+//! Usage: `mference-bench <tokenizer-dir> [--real]`
+//!    or: `mference-bench --model <install-dir>`.
 //!
 //! `--real` (macOS only): instead of the scripted producer, builds a
 //! small synthetic dense `.gturbo` install (deterministic INT4 weights,
@@ -25,6 +26,18 @@
 //! (zero-copy resident weights, persistent KV, one command buffer per
 //! token). Still not a Swift-comparison number (the synthetic model is
 //! tiny), but it measures the real dispatch path, not just loop overhead.
+//!
+//! `--model <install-dir>` (macOS only): THE Swift-comparison mode. Opens
+//! a real `.gturbo` install (tokenizer bundled in the same directory) and
+//! runs the frozen community-protocol cases (real-generation-v1: frozen
+//! prompts, seeds 20260721-23, temp 0.2, top-k 64, top-p 0.95, max-new
+//! 1024, 4K context), one discarded warmup then one measured run per
+//! case. Prints per case the split prefill/decode seconds (from
+//! `RawDecodeResult`, unlike the scripted mode's wall-clock lump), tok/s,
+//! and the peak `phys_footprint` in MiB — the exact counter and cadence
+//! the published Swift baselines were measured with — plus the
+//! Swift-format `[stop=...]` footer on stderr for `grep -h '^\[stop='`
+//! parity with `docs/COMMUNITY_BENCHMARKS.md`.
 
 use std::path::PathBuf;
 use std::time::Instant;
@@ -62,10 +75,18 @@ impl RunStats {
 
 fn main() -> std::process::ExitCode {
     let mut args = std::env::args().skip(1);
-    let Some(tokenizer_dir) = args.next() else {
-        eprintln!("usage: mference-bench <tokenizer-dir> [--real]");
+    let Some(first) = args.next() else {
+        eprintln!("usage: mference-bench <tokenizer-dir> [--real] | --model <install-dir>");
         return std::process::ExitCode::from(2);
     };
+    if first == "--model" {
+        let Some(install_dir) = args.next() else {
+            eprintln!("usage: mference-bench --model <install-dir>");
+            return std::process::ExitCode::from(2);
+        };
+        return run_model_mode(&install_dir);
+    }
+    let tokenizer_dir = first;
     let real_mode = args.next().as_deref() == Some("--real");
 
     let tok = match MfTokenizer::load_from_dir(&PathBuf::from(tokenizer_dir)) {
@@ -267,6 +288,87 @@ fn run_once_real(
 #[cfg(not(target_os = "macos"))]
 fn run_real_mode(_tok: &MfTokenizer) -> std::process::ExitCode {
     eprintln!("--real requires macOS (Metal)");
+    std::process::ExitCode::from(2)
+}
+
+/// The real-install protocol run (see module docs). One shared footprint
+/// sampler across warmups and measured runs: the number that matters is
+/// the process peak under the whole workload, which is what the Swift
+/// baselines report.
+#[cfg(target_os = "macos")]
+fn run_model_mode(install_dir: &str) -> std::process::ExitCode {
+    use mrefrust_bench::memory::AppMemorySampler;
+    use mrefrust_bench::protocol::{swift_footer, PROTOCOL_CASES};
+    use mrefrust_bench::real_model::{open_model_runner, run_protocol_case};
+
+    let (mut runner, tok) = match open_model_runner(std::path::Path::new(install_dir)) {
+        Ok(pair) => pair,
+        Err(e) => {
+            eprintln!("failed to open {install_dir}: {e}");
+            return std::process::ExitCode::from(1);
+        }
+    };
+    if let Some(brand) = mrefrust_bench::memory::chip_brand_string() {
+        println!("mference-bench: real install {install_dir} on {brand}, frozen protocol real-generation-v1");
+    } else {
+        println!("mference-bench: real install {install_dir}, frozen protocol real-generation-v1");
+    }
+    println!(
+        "{:<18} {:>10} {:>10} {:>8} {:>9} {:>8} {:>9}",
+        "case", "prompt_tok", "prefill_s", "new_tok", "decode_s", "tok_s", "peak_mib"
+    );
+
+    let mut sampler = AppMemorySampler::new();
+    for case in &PROTOCOL_CASES {
+        // Discarded warmup, then the measured run (frozen protocol).
+        if let Err(e) = run_protocol_case(&mut runner, &tok, case, &mut sampler) {
+            eprintln!("{} warmup failed: {e}", case.id);
+            return std::process::ExitCode::from(1);
+        }
+        match run_protocol_case(&mut runner, &tok, case, &mut sampler) {
+            Ok(r) => {
+                let peak_mib = r
+                    .peak_footprint_bytes
+                    .map_or(f64::NAN, |b| b as f64 / 1_048_576.0);
+                println!(
+                    "{:<18} {:>10} {:>10.2} {:>8} {:>9.2} {:>8.3} {:>9.1}",
+                    r.case_id,
+                    r.prompt_tokens,
+                    r.prefill_seconds,
+                    r.new_tokens,
+                    r.decode_seconds,
+                    r.tokens_per_second(),
+                    peak_mib
+                );
+                eprintln!(
+                    "{}",
+                    swift_footer(
+                        r.reason,
+                        r.prompt_tokens,
+                        r.prefill_seconds,
+                        r.new_tokens,
+                        r.decode_seconds
+                    )
+                );
+            }
+            Err(e) => {
+                eprintln!("{} failed: {e}", case.id);
+                return std::process::ExitCode::from(1);
+            }
+        }
+    }
+    if let Some(peak) = sampler.peak_bytes() {
+        println!(
+            "session peak phys_footprint: {:.1} MiB",
+            peak as f64 / 1_048_576.0
+        );
+    }
+    std::process::ExitCode::SUCCESS
+}
+
+#[cfg(not(target_os = "macos"))]
+fn run_model_mode(_install_dir: &str) -> std::process::ExitCode {
+    eprintln!("--model requires macOS (Metal)");
     std::process::ExitCode::from(2)
 }
 
