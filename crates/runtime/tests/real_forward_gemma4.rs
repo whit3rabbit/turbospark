@@ -74,6 +74,66 @@ fn greedy_decode(runner: &mut RealForwardRunner, steps: usize) -> Vec<i32> {
     out
 }
 
+/// An install with more experts per layer than the runner will be given
+/// cache slots, so every token after the first mixes cache hits and
+/// misses: what the hit-expert phase-1 command buffer splits.
+fn build_contended_install(dir: &std::path::Path) -> model_io::ArchConfig {
+    build_synthetic_gemma4_real_install(dir, VOCAB, 2, 8, 4, 8, "tiny-gemma4-real")
+        .expect("real-naming install builds")
+}
+
+/// Decodes a fixed token sequence (not argmax-fed, so two runners cannot
+/// diverge through their own inputs) and returns every step's
+/// probabilities.
+fn decode_probs(runner: &mut RealForwardRunner, tokens: &[i32]) -> Vec<Vec<f32>> {
+    runner.reset();
+    tokens
+        .iter()
+        .enumerate()
+        .map(|(position, &token)| {
+            let mut probs = vec![f16::from_f32(0.0); VOCAB as usize];
+            runner
+                .produce(token, position, &mut probs)
+                .expect("produce succeeds");
+            probs.iter().map(|p| p.to_f32()).collect()
+        })
+        .collect()
+}
+
+const PROBE_TOKENS: [i32; 8] = [5, 9, 2, 7, 1, 3, 8, 4];
+
+#[test]
+fn hit_expert_command_buffer_does_not_change_output() {
+    // Two fresh runners over one install, so both walk the same expert
+    // cache history and differ only in whether the resident share of each
+    // layer's experts is dispatched ahead of the pread.
+    let dir = temp_dir();
+    let arch = build_contended_install(&dir);
+    let mut overlapped = RealForwardRunner::open_with_options(&dir, arch.clone(), 4096, 4)
+        .expect("real-naming install opens");
+    let mut serial = RealForwardRunner::open_with_options(&dir, arch, 4096, 4)
+        .expect("real-naming install opens");
+    overlapped.set_hit_cb_overlap(true);
+    serial.set_hit_cb_overlap(false);
+
+    let with = decode_probs(&mut overlapped, &PROBE_TOKENS);
+    let without = decode_probs(&mut serial, &PROBE_TOKENS);
+
+    let p = overlapped.phase_counters();
+    assert!(
+        p.expert_hits > 0 && p.expert_hits < p.expert_requests,
+        "fixture must mix cache hits and misses to exercise the split: \
+         {} hits of {} requests",
+        p.expert_hits,
+        p.expert_requests
+    );
+    assert_eq!(
+        with, without,
+        "the hit-expert command buffer runs the same kernels over the same \
+         slots, so its output must be bit-identical"
+    );
+}
+
 #[test]
 fn real_naming_install_decodes_deterministically() {
     let dir = temp_dir();

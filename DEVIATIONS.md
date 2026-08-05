@@ -317,15 +317,35 @@ live network).
     rehashed tens of kilobytes of MSL; it now keys on the source's
     address) took the CPU encode bucket from 5.24 to 0.94 ms/token and
     decode from 34.8 to 42.6 tok/s.
-    Still unported: Swift's phase-1-hit CB (running the resident
-    experts' phase 1 before the pread, which puts far more GPU work in
-    flight than the shared branch alone) and the one-layer-pipelined
-    routed CB. `MFERENCE_PHASES=1` prints where the time goes and is
-    what those should be judged against: after both fixes above, GPU
-    wait ~72%, expert `pread` ~21% (still largely exposed), CPU dispatch
-    encoding ~4% (so `fused.metal`, which only cuts dispatch count, has
-    little left to win here), routed bind ~2%, router readback+top-k
-    ~0.6%. Resident-expert MoE
+    Swift's phase-1-hit CB is now ported too, on the same second-command-
+    buffer principle: the layer's slot order is cache MISSES first then
+    hits, so the hits (already in slot memory when the plan is built) get
+    their phase-1 GEMV dispatched on its own command buffer before the
+    `pread`, and the misses run in the main pass at `acts` offset zero.
+    It takes a SECOND `RoutedBlobsBuffer`, since the host rebinds the
+    main one for the full slot list while that dispatch may still be
+    reading it; slot memory itself is safe because `ExpertCache::plan`
+    reserves hit slots before choosing eviction victims, so the parallel
+    miss reads never write a slot the dispatch reads.
+    `MFERENCE_HIT_CB=0` is the A/B seam. Measured on the real 26B
+    checkpoint (M4 Max, 32 slots, 5 interleaved pairs): +0.42 tok/s mean,
+    winning 4 of 5 pairs, ~+1%; generated text md5-identical in all ten
+    runs. The phase counters explain the small size and show the trick is
+    at its ceiling rather than misfiring: GPU wait falls 17.2 -> 16.1
+    ms/token (it hides ALL the phase-1 work the hits have to offer) and
+    the new `hit_cb` bucket costs 0.76 ms/token of host bind-plus-commit,
+    so about two thirds of the win is eaten by the extra command buffer
+    per layer. The remaining exposed `pread` cannot be hidden this way:
+    everything left depends on the bytes being read.
+    Still unported: the one-layer-pipelined routed CB.
+    `MFERENCE_PHASES=1` prints where the time goes and is what that
+    should be judged against: GPU wait ~54%, expert `pread` ~36% (still
+    largely exposed), CPU dispatch encoding ~4% (so `fused.metal`, which
+    only cuts dispatch count, has little left to win here), routed bind
+    ~2%, hit-expert phase 1 ~2%, router readback+top-k ~0.5%. (That split
+    is from a longer, less cache-friendly prompt than the ~72/21 one
+    quoted above; the buckets move with the hit rate, so re-measure
+    rather than reusing either.) Resident-expert MoE
     installs (a synthetic-only shape) still use the CPU
     `run_ffn` bridge (`moe_ffn_host`). The old bridge description: not
     `mrefrust_compute::apply_streamed_routed`'s residual-fused form (that

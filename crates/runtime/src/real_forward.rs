@@ -113,6 +113,12 @@ pub struct RealForwardRunner {
     /// buffer, present when the install packs experts.
     pub(crate) moe_offsets: Option<gpu::MoeExpertOffsets>,
     pub(crate) routed_blobs: Option<gpu::RoutedBlobsBuffer>,
+    /// A SECOND argument buffer, for the cache-hit phase-1 dispatch that
+    /// rides its own command buffer across the expert `pread` (see
+    /// `real_forward_gemma4.rs`). It exists only so that dispatch's
+    /// pointer array is not the one the host rebinds for the misses while
+    /// the GPU may still be reading it; 64 bytes, allocated once at open.
+    pub(crate) routed_blobs_hits: Option<gpu::RoutedBlobsBuffer>,
     /// Real-checkpoint (verbatim `language_model.` tensor naming) decode
     /// state: learned norms, INT8 router effective scales, per-expert
     /// scales, layer scalars. `None` for synthetic short-name installs,
@@ -125,6 +131,12 @@ pub struct RealForwardRunner {
     /// A/B seam the Swift original keeps as `MFERENCE_ROUTER_EVENT=0`:
     /// same kernels, same order, identical output, different overlap.
     pub(crate) shared_cb_overlap: bool,
+    /// Whether the cache-hit share of the routed experts gets its phase-1
+    /// GEMV dispatched on its own command buffer BEFORE the blocking
+    /// expert `pread`, so it runs while the host is in the read. The other
+    /// A/B seam, `MFERENCE_HIT_CB=0`: same kernels, same slot order,
+    /// identical output, different overlap.
+    pub(crate) hit_cb_overlap: bool,
 }
 
 /// Cumulative per-phase decode accounting, the port's answer to the Swift
@@ -135,7 +147,8 @@ pub struct RealForwardRunner {
 ///
 /// The buckets are disjoint and all lie on the critical path of one token:
 /// `gpu_wait` is time blocked in `wait_until_completed`, `router` is the
-/// logit readback plus host top-k plus slot planning, `expert_io` is the
+/// logit readback plus host top-k plus slot planning, `hit_cb` is binding
+/// and encoding the cache-hit phase-1 command buffer, `expert_io` is the
 /// blocking `pread` of missing expert blobs, and `bind` is the routing
 /// weight upload plus argument-buffer rebind. What `total` minus those
 /// leaves is CPU dispatch encoding plus the final logits readback.
@@ -145,6 +158,7 @@ pub struct PhaseCounters {
     pub total_nanos: u64,
     pub gpu_wait_nanos: u64,
     pub router_nanos: u64,
+    pub hit_cb_nanos: u64,
     pub expert_io_nanos: u64,
     pub bind_nanos: u64,
     /// Expert slots asked for across every layer (`top_k` per layer per
@@ -277,6 +291,16 @@ impl RealForwardRunner {
     /// [`PhaseCounters`] for what each bucket covers.
     pub fn phase_counters(&self) -> PhaseCounters {
         self.phases
+    }
+
+    /// Flips the cache-hit phase-1 command buffer (`MFERENCE_HIT_CB`) after
+    /// open, so a test can A/B both states in one process. Setting the
+    /// environment variable instead would race the other test threads.
+    /// Both states must produce identical output; that is the whole
+    /// correctness claim of the overlap.
+    #[doc(hidden)]
+    pub fn set_hit_cb_overlap(&mut self, on: bool) {
+        self.hit_cb_overlap = on;
     }
 
     /// [`RealForwardRunner::open`] with an explicit KV capacity: the
@@ -447,14 +471,16 @@ impl RealForwardRunner {
             }
         }
         let use_silu = expecting.hidden_activation.contains("silu");
-        let (moe_offsets, routed_blobs) = match &experts_layout {
+        let (moe_offsets, routed_blobs, routed_blobs_hits) = match &experts_layout {
             Some(layout) => {
                 let offsets = moe_offsets_from_layout(layout)?;
                 let routed = gpu::RoutedBlobsBuffer::new(&mut context, use_silu)
                     .map_err(RealForwardError::Gpu)?;
-                (Some(offsets), Some(routed))
+                let hits = gpu::RoutedBlobsBuffer::new(&mut context, use_silu)
+                    .map_err(RealForwardError::Gpu)?;
+                (Some(offsets), Some(routed), Some(hits))
             }
-            None => (None, None),
+            None => (None, None, None),
         };
         drop(experts_layout);
 
@@ -469,9 +495,11 @@ impl RealForwardRunner {
             streamers,
             moe_offsets,
             routed_blobs,
+            routed_blobs_hits,
             real: None,
             phases: PhaseCounters::default(),
             shared_cb_overlap: std::env::var("MFERENCE_SHARED_CB").as_deref() != Ok("0"),
+            hit_cb_overlap: std::env::var("MFERENCE_HIT_CB").as_deref() != Ok("0"),
         };
         // Real-checkpoint installs keep the source's verbatim tensor
         // naming; their presence selects the learned-weight decode flow.

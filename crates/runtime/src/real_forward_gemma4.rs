@@ -770,17 +770,88 @@ impl RealForwardRunner {
             })?;
             let plan = streamer.plan_experts_cached(&selected, &std::collections::HashSet::new());
             let (requests, hits) = (plan.experts.len() as u64, plan.hits as u64);
+            self.phases.expert_requests += requests;
+            self.phases.expert_hits += hits;
+            // The router bucket is the readback, the top-k and the slot
+            // plan; the hit dispatch and the pread have their own.
+            self.phases.router_nanos += t_router.elapsed().as_nanos() as u64;
+
+            // Slot order for this layer's MoE dispatches: cache MISSES
+            // first, then cache hits. Both phase-1 kernels read
+            // `blob[slot]` for `slot < top_k` and write `acts[slot * F]`,
+            // so a misses-first order lets the miss dispatch keep the full
+            // argument buffer and offset 0, while the hit dispatch takes
+            // its own argument buffer and an `acts` offset. Nothing else in
+            // the layer depends on the router's own ranking, as long as
+            // `routing_w` is permuted to match.
+            let mut is_miss = vec![false; selected.len()];
+            for &index in &plan.misses {
+                is_miss[index] = true;
+            }
+            let mut order: Vec<usize> = plan.misses.clone();
+            let miss_count = order.len();
+            order.extend((0..selected.len()).filter(|&i| !is_miss[i]));
+            let hit_count = order.len() - miss_count;
+
+            // The hit experts are already in slot memory, so their phase-1
+            // GEMV can run on the GPU through the blocking pread below.
+            // It needs its OWN argument buffer: the host rebinds the main
+            // one for the full slot list after the pread, which would race
+            // a dispatch still reading it. Slot memory itself is safe --
+            // `plan` reserves hit slots before picking eviction victims, so
+            // the parallel miss reads never write a slot this reads.
+            let t_hit = Instant::now();
+            let dispatched_hits = self.hit_cb_overlap && hit_count > 0;
+            if dispatched_hits {
+                let layer_slots = &self.slot_buffers[layer];
+                let hit_refs: Vec<(&gpu::MetalBuffer, u64)> = order[miss_count..]
+                    .iter()
+                    .map(|&i| (&layer_slots[plan.assigned_slots[i]], 0u64))
+                    .collect();
+                let routed_hits = self
+                    .routed_blobs_hits
+                    .as_ref()
+                    .expect("layout implies blobs");
+                routed_hits
+                    .bind(&mut self.context, use_silu, &hit_refs)
+                    .map_err(gpu_err)?;
+                let hit_pass = self.context.begin_pass();
+                for &(buffer, _) in &hit_refs {
+                    hit_pass.use_read_buffer(buffer);
+                }
+                let real = self.real.as_ref().expect("real state present");
+                let offsets = self.moe_offsets.as_ref().expect("layout implies offsets");
+                gpu::encode_moe_phase1(
+                    &mut self.context,
+                    &hit_pass,
+                    routed_hits,
+                    offsets,
+                    (&real.routed_x, 0),
+                    (
+                        &self.scratch.moe_acts,
+                        miss_count as u64 * moe_inter as u64 * 2,
+                    ),
+                    hidden as u32,
+                    moe_inter,
+                    hit_count as u32,
+                    use_silu,
+                )
+                .map_err(gpu_err)?;
+                // Committed, never waited on: buffers execute in commit
+                // order, so these `acts` rows land before the phase 2
+                // encoded below reads them.
+                hit_pass.commit();
+            }
+            self.phases.hit_cb_nanos += t_hit.elapsed().as_nanos() as u64;
+
+            let streamer = self.streamers[layer]
+                .as_mut()
+                .expect("streamer presence checked above");
             let t_io = Instant::now();
             let slots = streamer
                 .execute_expert_cache_plan(&plan)
                 .map_err(|e| RealForwardError::Unsupported(format!("expert stream: {e}")))?;
-            let io_nanos = t_io.elapsed().as_nanos() as u64;
-            self.phases.expert_io_nanos += io_nanos;
-            self.phases.expert_requests += requests;
-            self.phases.expert_hits += hits;
-            // The router bucket is everything on the host between the wait
-            // and the pread; the pread has its own bucket.
-            self.phases.router_nanos += t_router.elapsed().as_nanos() as u64 - io_nanos;
+            self.phases.expert_io_nanos += t_io.elapsed().as_nanos() as u64;
 
             if !self.shared_cb_overlap {
                 self.encode_shared_expert_branch(layer, hidden, inter, use_silu)?;
@@ -789,9 +860,17 @@ impl RealForwardRunner {
             let real = self.real.as_ref().expect("real state present");
 
             let t_bind = Instant::now();
+            // One list in the misses-first slot order, holding each slot's
+            // blob AND its routing weight together: the kernel pairs
+            // `blob[slot]` with `routing_w[slot]`, and pairing them here
+            // too is what keeps the permutation from drifting apart.
+            let ordered: Vec<(usize, f32)> = order
+                .iter()
+                .map(|&i| (slots[i], route_weights[i]))
+                .collect();
             let mut routing16 = vec![f16::from_f32(0.0); gpu::MAX_STREAMED_EXPERTS];
-            for (i, &w) in route_weights.iter().enumerate() {
-                routing16[i] = f16::from_f32(w);
+            for (slot, &(_, weight)) in ordered.iter().enumerate() {
+                routing16[slot] = f16::from_f32(weight);
             }
             gpu::write_buffer_bytes(
                 &self.scratch.routing_w,
@@ -800,8 +879,10 @@ impl RealForwardRunner {
             );
 
             let layer_slots = &self.slot_buffers[layer];
-            let blob_refs: Vec<(&gpu::MetalBuffer, u64)> =
-                slots.iter().map(|&s| (&layer_slots[s], 0u64)).collect();
+            let blob_refs: Vec<(&gpu::MetalBuffer, u64)> = ordered
+                .iter()
+                .map(|&(slot, _)| (&layer_slots[slot], 0u64))
+                .collect();
             let routed = self.routed_blobs.as_ref().ok_or_else(|| {
                 RealForwardError::Unsupported("install has no routed-blob buffer".to_string())
             })?;
@@ -817,20 +898,29 @@ impl RealForwardRunner {
             }
 
             // Routed branch on routed_x -> h2 (zero residual: the sandwich
-            // combine needs the raw routed output), then post_ffn_2.
-            gpu::encode_moe_phase1(
-                &mut self.context,
-                &pass,
-                routed,
-                offsets,
-                (&real.routed_x, 0),
-                (&self.scratch.moe_acts, 0),
-                hidden as u32,
-                moe_inter,
-                top_k as u32,
-                use_silu,
-            )
-            .map_err(gpu_err)?;
+            // combine needs the raw routed output), then post_ffn_2. Phase
+            // 1 here covers only the slots the hit command buffer did not
+            // already take, which are the low ones by construction.
+            let main_phase1_k = if dispatched_hits {
+                miss_count
+            } else {
+                order.len()
+            };
+            if main_phase1_k > 0 {
+                gpu::encode_moe_phase1(
+                    &mut self.context,
+                    &pass,
+                    routed,
+                    offsets,
+                    (&real.routed_x, 0),
+                    (&self.scratch.moe_acts, 0),
+                    hidden as u32,
+                    moe_inter,
+                    main_phase1_k as u32,
+                    use_silu,
+                )
+                .map_err(gpu_err)?;
+            }
             gpu::encode_moe_phase2(
                 &mut self.context,
                 &pass,
