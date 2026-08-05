@@ -808,6 +808,32 @@ fn plan_one_expert_layer(
     }
 }
 
+/// The `manifest.json -> quant` object for a Gemma 4 install, derived
+/// from the checkpoint's own per-tensor bits (slot bits are read from the
+/// layer-0 base names; every slot is affine/BF16/group-64 in this format).
+/// Production-shape manifests are rejected by `mrefrust_model_io` without
+/// this object.
+pub fn gemma4_manifest_quant(quant: &Gemma4Quant) -> serde_json::Value {
+    let slot = |bits: u32| {
+        serde_json::json!({
+            "weightBits": bits,
+            "scheme": "affine",
+            "scaleType": "bf16",
+            "biasType": "bf16",
+            "groupSize": 64,
+        })
+    };
+    serde_json::json!({
+        "embedding": slot(quant.bits_for("language_model.model.embed_tokens")),
+        "attention": slot(quant.bits_for("language_model.model.layers.0.self_attn.q_proj")),
+        "router": slot(quant.bits_for("language_model.model.layers.0.router.proj")),
+        "sharedExpert": slot(quant.bits_for("language_model.model.layers.0.mlp.gate_proj")),
+        "routedExpert": slot(
+            quant.bits_for("language_model.model.layers.0.experts.switch_glu.gate_proj")
+        ),
+    })
+}
+
 /// Streamed install write for real (multi-GB) checkpoints: the expert
 /// stride comes from shard headers alone, the resident set is read and
 /// written first, then each layer's expert blobs download, hit disk, and
@@ -853,6 +879,7 @@ pub fn write_gemma4_install_streamed(
         expert_stride,
         arch.num_experts as usize,
     )?;
+    writer.set_quant(gemma4_manifest_quant(quant));
     for layer in 0..arch.num_layers as usize {
         let (blobs, used) = plan_one_expert_layer(shards, arch, quant, &plan.routed, layer)?;
         writer.write_layer(&blobs)?;
@@ -886,15 +913,19 @@ pub fn write_gemma4_install(
             &resident_bytes,
         )?;
     } else {
-        crate::gturbo_writer::write_gturbo_install_with_resident_index_and_experts(
+        // Through the same streaming writer the real-checkpoint path uses,
+        // so the two stay byte-identical (including the manifest's quant
+        // object, which production-shape loads require).
+        let mut writer = crate::gturbo_writer::StreamingGturboWriter::new(
             dir,
-            arch,
-            model_id,
-            &resident_bytes,
             out.expert_stride,
             arch.num_experts as usize,
-            &out.layers,
         )?;
+        writer.set_quant(gemma4_manifest_quant(quant));
+        for layer in &out.layers {
+            writer.write_layer(layer)?;
+        }
+        writer.finish(arch, model_id, &resident_bytes)?;
     }
     Ok(out)
 }

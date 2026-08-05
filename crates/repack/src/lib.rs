@@ -17,10 +17,10 @@ mod synthetic_model;
 mod synthetic_real;
 
 pub use gemma4_checkpoint::{
-    classify_gemma4, orchestrate_gemma4_checkpoint, orchestrate_gemma4_checkpoint_sharded,
-    parse_gemma4_config, parse_gemma4_quantization, write_gemma4_install,
-    write_gemma4_install_streamed, Gemma4Bucket, Gemma4Error, Gemma4Quant, Gemma4RepackOutput,
-    Gemma4Shards, GTURBO_PAGE_BYTES,
+    classify_gemma4, gemma4_manifest_quant, orchestrate_gemma4_checkpoint,
+    orchestrate_gemma4_checkpoint_sharded, parse_gemma4_config, parse_gemma4_quantization,
+    write_gemma4_install, write_gemma4_install_streamed, Gemma4Bucket, Gemma4Error, Gemma4Quant,
+    Gemma4RepackOutput, Gemma4Shards, GTURBO_PAGE_BYTES,
 };
 pub use gturbo_writer::{
     write_gturbo_install, write_gturbo_install_with_resident_index,

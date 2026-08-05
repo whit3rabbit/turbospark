@@ -447,10 +447,26 @@ live network).
   `crates/runtime`'s `RealForwardRunner` (see Phase 7 above). No packed
   experts (empty `packed_experts/layout.json`, since the synthetic model
   is dense, `num_experts == 0`).
-- **Real Gemma 4 checkpoint pipeline: repack mapping, learned-weight
-  decode flow, and CLI all wired; the only missing piece is running the
-  real ~13-15 GB `mlx-community/gemma-4-26b-a4b-it-4bit` download through
-  it (network-gated, not yet exercised).**
+- **Real Gemma 4 checkpoint pipeline: PROVEN against the real
+  production checkpoint (2026-08-05).** The pinned
+  `mlx-community/gemma-4-26b-a4b-it-4bit` (~14.6 GB, same commit +
+  index-SHA-256 pins as Swift's `SupportedModelSource.gemma4`) was
+  downloaded, streamed through `write_gemma4_install_streamed` (~16
+  minutes end to end), validated by every `mrefrust_model_io` loader,
+  and generates REAL COHERENT TEXT through `mference-check`: a
+  chat-formatted `What is the capital of France?` answers
+  `The capital of France is **Paris**.` and stops on EndOfTurn. Two
+  verification notes from that run: (a) numerics were cross-checked
+  against an independent NumPy replica built from the mlx-lm
+  `gemma4_text.py` reference — per-layer residual-stream stats match
+  the GPU runner to FP16 precision at multiple positions, and the MLX
+  `mx.dequantize` oracle confirms the pass-through byte layout exactly;
+  (b) the checkpoint is instruction-tuned with Gemma 4's turn markup
+  (`<|turn>user ... <turn|>` and a `<|channel>` structured-output
+  vocabulary), so RAW text prompts produce out-of-distribution babble
+  while chat-formatted prompts produce real answers — `--prompt` mode
+  does no templating, so pass the markup yourself or wait for the chat
+  modes.
   `crates/repack/src/gemma4_checkpoint.rs` parses a Gemma 4 `config.json`
   (`text_config`, `layer_types` -> mask, dual `rope_parameters`) and its
   MLX `quantization` object (per-tensor bits overrides; group size other

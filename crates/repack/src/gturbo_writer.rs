@@ -207,6 +207,7 @@ pub struct StreamingGturboWriter {
     expert_stride: u64,
     experts_per_layer: usize,
     layout_layers: Vec<serde_json::Value>,
+    quant: Option<serde_json::Value>,
 }
 
 impl StreamingGturboWriter {
@@ -221,7 +222,15 @@ impl StreamingGturboWriter {
             expert_stride,
             experts_per_layer,
             layout_layers: Vec::new(),
+            quant: None,
         })
+    }
+
+    /// Quantization metadata for `manifest.json -> quant` (camelCase slot
+    /// objects, see `mrefrust_model_io::ManifestQuant`). Production-shape
+    /// manifests are rejected by the loader without it.
+    pub fn set_quant(&mut self, quant: serde_json::Value) {
+        self.quant = Some(quant);
     }
 
     pub fn write_layer(&mut self, layer: &LayerBlobs) -> Result<(), WriterError> {
@@ -259,7 +268,7 @@ impl StreamingGturboWriter {
             .map_err(|e| io_err(&weights_path, e))?;
 
         let manifest_path = self.dir.join("manifest.json");
-        let manifest_json = build_manifest_json(
+        let mut manifest_json = build_manifest_json(
             arch,
             model_id,
             self.expert_stride,
@@ -267,6 +276,9 @@ impl StreamingGturboWriter {
             self.experts_per_layer,
             &self.dir,
         )?;
+        if let Some(quant) = self.quant {
+            manifest_json["quant"] = quant;
+        }
         std::fs::write(
             &manifest_path,
             serde_json::to_vec_pretty(&manifest_json).unwrap(),

@@ -117,7 +117,15 @@ fn repacks_the_real_gemma4_checkpoint() {
     .expect("streamed install");
 
     // Tokenizer sidecars so mference-check can open the dir directly.
-    for name in ["tokenizer.json", "tokenizer_config.json"] {
+    // NOTE: this checkpoint is instruction-tuned with the Gemma 4 turn
+    // markup (`<|turn>user\n...<turn|>\n<|turn>model\n`); raw text
+    // prompts produce out-of-distribution babble, chat-formatted prompts
+    // produce real answers.
+    for name in [
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "chat_template.jinja",
+    ] {
         std::fs::write(dir.join(name), get(name)).expect("tokenizer sidecar");
     }
 

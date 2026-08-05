@@ -195,10 +195,13 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     `mrefrust_repack::write_gemma4_install` writes) get the full Gemma 4
     learned-weight flow in `real_forward_gemma4.rs` (BF16 norms, per-head
     q/k/v norms, INT8 router + effective scale, kernel-semantics top-k,
-    INT8 shared-expert branch, sandwich tail, `layer_scalar`). Gemma 4 is
-    now blocked ONLY on running the real network download through the
-    pipeline (see ROADMAP); Qwen 3.6 and DeepSeek-V4-Flash remain blocked
-    on GDN/DSV4. Build a test/demo install with
+    INT8 shared-expert branch, sandwich tail, `layer_scalar`). Real
+    Gemma 4 26B-A4B is PROVEN end to end: the pinned checkpoint repacks
+    through the streamed pipeline and generates coherent chat-formatted
+    answers via `mference-check` (see DEVIATIONS.md — raw prompts babble,
+    the IT model needs its `<|turn>` markup). Qwen 3.6 and
+    DeepSeek-V4-Flash remain blocked on GDN/DSV4. Build a test/demo
+    install with
     `mrefrust_repack::build_synthetic_gemma4_install` (dense) or its
     `_swa`/`_moe`/`_moe_streamed` variants, or
     `build_synthetic_gemma4_real_install` (real naming, exercises the
@@ -339,10 +342,18 @@ crates
   Gemma 4 mapping: `config.json`/quantization parsing, mlx-community
   tensor-name classification and Swift slot ordering, pre-quantized
   INT4/INT8 pass-through (no re-quantization), per-expert blob slicing
-  with one 16 KiB-rounded stride, and `write_gemma4_install`;
-  `synthetic_real.rs`'s `build_synthetic_gemma4_real_install` pushes a
-  deterministic real-naming safetensors blob through that exact pipeline
-  (what the runner's learned-weight flow and the CLI test open).
+  with one 16 KiB-rounded stride, `write_gemma4_install`, and the
+  multi-shard + streaming pair (`Gemma4Shards` merges N shard headers
+  into one name registry; `write_gemma4_install_streamed` computes the
+  expert stride from headers alone and writes one layer at a time, so
+  peak memory is one layer's blobs). `synthetic_real.rs`'s
+  `build_synthetic_gemma4_real_install` pushes a deterministic
+  real-naming safetensors blob through that exact pipeline (what the
+  runner's learned-weight flow and the CLI test open).
+  `tests/gemma4_checkpoint_network.rs` is the network-gated (`#[ignore]`d)
+  proof against the real pinned
+  `mlx-community/gemma-4-26b-a4b-it-4bit` checkpoint (~14.6 GB; same
+  commit + index SHA-256 pins as Swift's `SupportedModelSource.gemma4`).
 - `crates/server`: OpenAI-compatible `/v1/chat/completions` on loopback
   (axum), both the full-response and SSE-streaming shapes, wired to
   `mrefrust-runtime`. `ScriptedChatModel` is the only backend (see
