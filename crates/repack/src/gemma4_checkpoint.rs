@@ -363,22 +363,65 @@ pub struct Gemma4RepackOutput {
     pub excluded_multimodal: Vec<String>,
 }
 
-fn read_tensor(
-    header: &SafetensorsHeader,
-    source: &dyn RangeSource,
-    name: &str,
-) -> Result<Vec<u8>, Gemma4Error> {
-    let (start, end) = header
-        .absolute_range(name)
-        .ok_or_else(|| Gemma4Error::MissingTensor(name.to_string()))?;
-    Ok(source.read_range(start, end)?)
+/// A multi-shard checkpoint view: real HF checkpoints split their tensors
+/// across several `model-NNNNN-of-NNNNN.safetensors` files (the
+/// `model.safetensors.index.json` weight map), and companion tensors may
+/// live in a different shard than their weight — so lookups go through one
+/// merged name registry, exactly like the Swift planner's `registry`.
+pub struct Gemma4Shards<'a> {
+    shards: Vec<(&'a SafetensorsHeader, &'a dyn RangeSource)>,
+    by_name: std::collections::HashMap<&'a str, usize>,
 }
 
-fn info<'a>(header: &'a SafetensorsHeader, name: &str) -> Result<&'a TensorInfo, Gemma4Error> {
-    header
-        .tensors
-        .get(name)
-        .ok_or_else(|| Gemma4Error::MissingTensor(name.to_string()))
+impl<'a> Gemma4Shards<'a> {
+    pub fn new(shards: Vec<(&'a SafetensorsHeader, &'a dyn RangeSource)>) -> Self {
+        let mut by_name = std::collections::HashMap::new();
+        for (i, (header, _)) in shards.iter().enumerate() {
+            for name in header.tensors.keys() {
+                by_name.insert(name.as_str(), i);
+            }
+        }
+        Self { shards, by_name }
+    }
+
+    pub fn single(header: &'a SafetensorsHeader, source: &'a dyn RangeSource) -> Self {
+        Self::new(vec![(header, source)])
+    }
+
+    fn shard_of(
+        &self,
+        name: &str,
+    ) -> Result<&(&'a SafetensorsHeader, &'a dyn RangeSource), Gemma4Error> {
+        let i = *self
+            .by_name
+            .get(name)
+            .ok_or_else(|| Gemma4Error::MissingTensor(name.to_string()))?;
+        Ok(&self.shards[i])
+    }
+
+    fn info(&self, name: &str) -> Result<&'a TensorInfo, Gemma4Error> {
+        let (header, _) = self.shard_of(name)?;
+        header
+            .tensors
+            .get(name)
+            .ok_or_else(|| Gemma4Error::MissingTensor(name.to_string()))
+    }
+
+    fn contains(&self, name: &str) -> bool {
+        self.by_name.contains_key(name)
+    }
+
+    fn read(&self, name: &str) -> Result<Vec<u8>, Gemma4Error> {
+        let (header, source) = self.shard_of(name)?;
+        let (start, end) = header
+            .absolute_range(name)
+            .ok_or_else(|| Gemma4Error::MissingTensor(name.to_string()))?;
+        Ok(source.read_range(start, end)?)
+    }
+
+    fn names(&self) -> impl Iterator<Item = &'a String> + '_ {
+        self.shards.iter().flat_map(|(h, _)| h.tensors.keys())
+    }
 }
 
 fn raw_dtype_tag(tensor: &str, dtype: &str) -> Result<u8, Gemma4Error> {
@@ -406,12 +449,11 @@ fn shape4(shape: &[u64]) -> (u32, u32, u32, u32) {
 /// (high nibble); for 8-bit, byte `k` is value `k`. Scale/bias sizes are
 /// validated against the 64-element group the GPU kernels assume.
 fn pass_through_packed(
-    header: &SafetensorsHeader,
-    source: &dyn RangeSource,
+    shards: &Gemma4Shards<'_>,
     name: &str,
     quant: &Gemma4Quant,
 ) -> Result<ResidentEntrySpec, Gemma4Error> {
-    let w = info(header, name)?;
+    let w = shards.info(name)?;
     if w.shape.len() != 2 {
         return Err(Gemma4Error::ShapeMismatch {
             tensor: name.to_string(),
@@ -432,10 +474,10 @@ fn pass_through_packed(
     let scales_name = format!("{base}.scales");
     let biases_name = format!("{base}.biases");
     for companion in [&scales_name, &biases_name] {
-        let c = header
-            .tensors
-            .get(companion.as_str())
-            .ok_or_else(|| Gemma4Error::MissingCompanion(name.to_string()))?;
+        if !shards.contains(companion) {
+            return Err(Gemma4Error::MissingCompanion(name.to_string()));
+        }
+        let c = shards.info(companion)?;
         if c.dtype != "BF16" {
             return Err(Gemma4Error::UnsupportedDtype {
                 tensor: companion.to_string(),
@@ -445,9 +487,9 @@ fn pass_through_packed(
     }
     let rows = w.shape[0];
     let cols = w.shape[1] * factor;
-    let packed = read_tensor(header, source, name)?;
-    let scales = le_u16(&read_tensor(header, source, &scales_name)?);
-    let biases = le_u16(&read_tensor(header, source, &biases_name)?);
+    let packed = shards.read(name)?;
+    let scales = le_u16(&shards.read(&scales_name)?);
+    let biases = le_u16(&shards.read(&biases_name)?);
     let expected_groups = (rows * cols / 64) as usize;
     if cols % 64 != 0 || scales.len() != expected_groups || biases.len() != expected_groups {
         return Err(Gemma4Error::ShapeMismatch {
@@ -491,13 +533,50 @@ pub fn orchestrate_gemma4_checkpoint(
     arch: &ArchConfig,
     quant: &Gemma4Quant,
 ) -> Result<Gemma4RepackOutput, Gemma4Error> {
+    orchestrate_gemma4_checkpoint_sharded(&Gemma4Shards::single(header, source), arch, quant)
+}
+
+/// Multi-shard variant of [`orchestrate_gemma4_checkpoint`] — what a real
+/// (three-shard) checkpoint goes through.
+pub fn orchestrate_gemma4_checkpoint_sharded(
+    shards: &Gemma4Shards<'_>,
+    arch: &ArchConfig,
+    quant: &Gemma4Quant,
+) -> Result<Gemma4RepackOutput, Gemma4Error> {
+    let plan = classify_all(shards, arch)?;
+    let resident = read_resident_entries(shards, &plan.resident_bases, quant)?;
+    let expert_stride = expert_stride_from_headers(shards, arch, quant, &plan.routed)?;
+    let mut layers = Vec::new();
+    if !plan.routed.is_empty() {
+        for layer in 0..arch.num_layers as usize {
+            let (blobs, _used) = plan_one_expert_layer(shards, arch, quant, &plan.routed, layer)?;
+            layers.push(blobs);
+        }
+    }
+    Ok(Gemma4RepackOutput {
+        resident,
+        layers,
+        expert_stride,
+        excluded_multimodal: plan.excluded,
+    })
+}
+
+struct ClassifiedNames<'a> {
+    resident_bases: Vec<&'a str>,
+    routed: BTreeMap<usize, BTreeMap<&'static str, &'a str>>,
+    excluded: Vec<String>,
+}
+
+fn classify_all<'a>(
+    shards: &Gemma4Shards<'a>,
+    arch: &ArchConfig,
+) -> Result<ClassifiedNames<'a>, Gemma4Error> {
     let num_layers = arch.num_layers as usize;
     let mut resident_bases: Vec<&str> = Vec::new();
     let mut excluded: Vec<String> = Vec::new();
-    // layer -> role -> name
     let mut routed: BTreeMap<usize, BTreeMap<&'static str, &str>> = BTreeMap::new();
 
-    for name in header.tensors.keys() {
+    for name in shards.names() {
         if name.ends_with(".scales") || name.ends_with(".biases") {
             continue;
         }
@@ -507,7 +586,7 @@ pub fn orchestrate_gemma4_checkpoint(
                 if routed
                     .entry(layer)
                     .or_default()
-                    .insert(role, name)
+                    .insert(role, name.as_str())
                     .is_some()
                 {
                     return Err(Gemma4Error::ShapeMismatch {
@@ -522,53 +601,106 @@ pub fn orchestrate_gemma4_checkpoint(
     }
     resident_bases.sort_by(|a, b| lm_order_key(a).cmp(&lm_order_key(b)));
     excluded.sort();
+    Ok(ClassifiedNames {
+        resident_bases,
+        routed,
+        excluded,
+    })
+}
 
+fn read_resident_entries(
+    shards: &Gemma4Shards<'_>,
+    resident_bases: &[&str],
+    quant: &Gemma4Quant,
+) -> Result<Vec<ResidentEntrySpec>, Gemma4Error> {
     let mut resident = Vec::with_capacity(resident_bases.len());
-    for name in resident_bases {
-        let t = info(header, name)?;
+    for &name in resident_bases {
+        let t = shards.info(name)?;
         if t.dtype == "U32" && name.ends_with(".weight") {
-            resident.push(pass_through_packed(header, source, name, quant)?);
+            resident.push(pass_through_packed(shards, name, quant)?);
         } else {
             resident.push(ResidentEntrySpec::Raw(RawTensorSpec {
                 name: name.to_string(),
                 dtype: raw_dtype_tag(name, &t.dtype)?,
-                bytes: read_tensor(header, source, name)?,
+                bytes: shards.read(name)?,
                 shape: shape4(&t.shape),
             }));
         }
     }
-
-    let (layers, expert_stride) = plan_expert_layers(header, source, arch, quant, &routed)?;
-    Ok(Gemma4RepackOutput {
-        resident,
-        layers,
-        expert_stride,
-        excluded_multimodal: excluded,
-    })
+    Ok(resident)
 }
 
-/// Builds per-expert blobs for every routed layer. Blob layout matches the
+/// The one model-wide expert stride, computed from shard HEADERS alone
+/// (per-expert weight+scales+biases byte totals, max across layers,
+/// rounded to 16 KiB) — so a streaming writer knows the stride before any
+/// expert byte downloads.
+fn expert_stride_from_headers(
+    shards: &Gemma4Shards<'_>,
+    arch: &ArchConfig,
+    quant: &Gemma4Quant,
+    routed: &BTreeMap<usize, BTreeMap<&'static str, &str>>,
+) -> Result<u64, Gemma4Error> {
+    if routed.is_empty() {
+        return Ok(0);
+    }
+    let expert_count = arch.num_experts as u64;
+    let mut max_blob = 0u64;
+    for layer in 0..arch.num_layers as usize {
+        let bundle = routed.get(&layer).ok_or_else(|| {
+            Gemma4Error::MissingTensor(format!("layer {layer} routed-expert bundle"))
+        })?;
+        let mut blob = 0u64;
+        for role in ["gate", "up", "down"] {
+            let name = *bundle
+                .get(role)
+                .ok_or_else(|| Gemma4Error::MissingTensor(format!("layer {layer} {role}_proj")))?;
+            let base = name.strip_suffix(".weight").unwrap_or(name);
+            let bits = quant.bits_for(base);
+            if bits != 4 {
+                return Err(Gemma4Error::UnsupportedDtype {
+                    tensor: name.to_string(),
+                    dtype: format!("{bits}-bit routed expert (kernels are int4-only)"),
+                });
+            }
+            for suffix in ["", ".scales", ".biases"] {
+                let full = if suffix.is_empty() {
+                    name.to_string()
+                } else {
+                    format!("{base}{suffix}")
+                };
+                let t = shards.info(&full)?;
+                let bytes = t.data_offsets.1 - t.data_offsets.0;
+                if bytes % expert_count != 0 {
+                    return Err(Gemma4Error::ShapeMismatch {
+                        tensor: full,
+                        detail: format!("bytes not divisible by {expert_count} experts"),
+                    });
+                }
+                blob += bytes / expert_count;
+            }
+        }
+        max_blob = max_blob.max(blob);
+    }
+    Ok(max_blob.div_ceil(GTURBO_PAGE_BYTES) * GTURBO_PAGE_BYTES)
+}
+
+/// Builds one routed layer's per-expert blobs. Blob layout matches the
 /// synthetic MoE installs (and `RealForwardRunner`'s `MoeExpertOffsets`):
 /// `gate, gate_scales, gate_biases, up, ..., down, ...` back to back. The
 /// down projection's blob offset must land 4-byte aligned (the phase-2
 /// kernel reads its weights with `uint` loads); u32 weights and even-sized
 /// BF16 companions keep that true for any real shape, and we verify it.
-fn plan_expert_layers(
-    header: &SafetensorsHeader,
-    source: &dyn RangeSource,
+/// Returns the blobs plus the per-expert bytes used (callers pad to the
+/// model-wide stride).
+fn plan_one_expert_layer(
+    shards: &Gemma4Shards<'_>,
     arch: &ArchConfig,
     quant: &Gemma4Quant,
     routed: &BTreeMap<usize, BTreeMap<&'static str, &str>>,
-) -> Result<(Vec<LayerBlobs>, u64), Gemma4Error> {
-    if routed.is_empty() {
-        return Ok((Vec::new(), 0));
-    }
-    let num_layers = arch.num_layers as usize;
+    layer: usize,
+) -> Result<(LayerBlobs, u64), Gemma4Error> {
     let expert_count = arch.num_experts as usize;
-    let mut layers = Vec::with_capacity(num_layers);
-    let mut max_blob = 0u64;
-
-    for layer in 0..num_layers {
+    {
         let bundle = routed.get(&layer).ok_or_else(|| {
             Gemma4Error::MissingTensor(format!("layer {layer} routed-expert bundle"))
         })?;
@@ -584,7 +716,7 @@ fn plan_expert_layers(
             let name = *bundle
                 .get(role)
                 .ok_or_else(|| Gemma4Error::MissingTensor(format!("layer {layer} {role}_proj")))?;
-            let w = info(header, name)?;
+            let w = shards.info(name)?;
             if w.dtype != "U32" || w.shape.len() != 3 || w.shape[0] as usize != expert_count {
                 return Err(Gemma4Error::ShapeMismatch {
                     tensor: name.to_string(),
@@ -595,8 +727,8 @@ fn plan_expert_layers(
                 });
             }
             let base = name.strip_suffix(".weight").unwrap_or(name);
-            // The vendored moe.metal decode kernels dequantize 4-bit
-            // weights only; an 8-bit expert override has no kernel.
+            // Bits already validated by expert_stride_from_headers, but
+            // this function is also reachable on its own.
             let bits = quant.bits_for(base);
             if bits != 4 {
                 return Err(Gemma4Error::UnsupportedDtype {
@@ -606,8 +738,8 @@ fn plan_expert_layers(
             }
             let s_name = format!("{base}.scales");
             let b_name = format!("{base}.biases");
-            let s = info(header, &s_name)?;
-            let b = info(header, &b_name)?;
+            let s = shards.info(&s_name)?;
+            let b = shards.info(&b_name)?;
             if s.dtype != "BF16" || b.dtype != "BF16" {
                 return Err(Gemma4Error::UnsupportedDtype {
                     tensor: name.to_string(),
@@ -615,9 +747,9 @@ fn plan_expert_layers(
                 });
             }
 
-            let w_bytes = read_tensor(header, source, name)?;
-            let s_bytes = read_tensor(header, source, &s_name)?;
-            let b_bytes = read_tensor(header, source, &b_name)?;
+            let w_bytes = shards.read(name)?;
+            let s_bytes = shards.read(&s_name)?;
+            let b_bytes = shards.read(&b_name)?;
             let per = |total: usize, what: &str| -> Result<usize, Gemma4Error> {
                 if total % expert_count != 0 {
                     return Err(Gemma4Error::ShapeMismatch {
@@ -672,12 +804,66 @@ fn plan_expert_layers(
             }
             blob_used += (w_per + s_per + b_per) as u64;
         }
-        max_blob = max_blob.max(blob_used);
-        layers.push(LayerBlobs { layer, experts });
+        Ok((LayerBlobs { layer, experts }, blob_used))
+    }
+}
+
+/// Streamed install write for real (multi-GB) checkpoints: the expert
+/// stride comes from shard headers alone, the resident set is read and
+/// written first, then each layer's expert blobs download, hit disk, and
+/// drop before the next layer starts — peak memory is one layer's blobs,
+/// not thirty. `progress` gets one call per completed stage.
+pub fn write_gemma4_install_streamed(
+    dir: &std::path::Path,
+    arch: &ArchConfig,
+    model_id: &str,
+    shards: &Gemma4Shards<'_>,
+    quant: &Gemma4Quant,
+    mut progress: impl FnMut(&str),
+) -> Result<(), Box<dyn std::error::Error>> {
+    let plan = classify_all(shards, arch)?;
+    let expert_stride = expert_stride_from_headers(shards, arch, quant, &plan.routed)?;
+    progress(&format!(
+        "classified {} resident tensors, {} routed layers, expert stride {expert_stride}",
+        plan.resident_bases.len(),
+        plan.routed.len(),
+    ));
+
+    let resident = read_resident_entries(shards, &plan.resident_bases, quant)?;
+    let resident_bytes = crate::resident_writer::build_resident_weights_bin_mixed(&resident);
+    drop(resident);
+    progress(&format!(
+        "resident region built ({} bytes)",
+        resident_bytes.len()
+    ));
+
+    if plan.routed.is_empty() {
+        crate::gturbo_writer::write_gturbo_install_with_resident_index(
+            dir,
+            arch,
+            model_id,
+            &resident_bytes,
+        )?;
+        progress("install written (no routed experts)");
+        return Ok(());
     }
 
-    let expert_stride = max_blob.div_ceil(GTURBO_PAGE_BYTES) * GTURBO_PAGE_BYTES;
-    Ok((layers, expert_stride))
+    let mut writer = crate::gturbo_writer::StreamingGturboWriter::new(
+        dir,
+        expert_stride,
+        arch.num_experts as usize,
+    )?;
+    for layer in 0..arch.num_layers as usize {
+        let (blobs, used) = plan_one_expert_layer(shards, arch, quant, &plan.routed, layer)?;
+        writer.write_layer(&blobs)?;
+        progress(&format!(
+            "layer {layer} written ({} experts, {used} bytes/expert)",
+            blobs.experts.len()
+        ));
+    }
+    writer.finish(arch, model_id, &resident_bytes)?;
+    progress("manifest written");
+    Ok(())
 }
 
 /// Convenience: orchestrate + build the resident index + write the full

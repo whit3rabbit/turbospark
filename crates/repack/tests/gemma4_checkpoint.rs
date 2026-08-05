@@ -435,3 +435,93 @@ fn written_install_round_trips_through_model_io() {
     let down = &layout.layers[0].experts[0].sub_tensors["down"];
     assert_eq!(down.offset % 4, 0);
 }
+
+#[test]
+fn sharded_orchestration_matches_single_source() {
+    use mrefrust_repack::{orchestrate_gemma4_checkpoint_sharded, Gemma4Shards};
+
+    let tensors = fixture();
+    // Split the fixture across two shards: layer 0 (plus top-level) in one,
+    // layer 1 in the other, with companions following their weights.
+    let (a, b): (Vec<_>, Vec<_>) = tensors.iter().partition(|t| t.name.contains(".layers.1."));
+    let to_owned = |v: Vec<&FixtureTensor>| -> Vec<FixtureTensor> {
+        v.into_iter()
+            .map(|t| FixtureTensor {
+                name: t.name.clone(),
+                dtype: t.dtype,
+                shape: t.shape.clone(),
+                bytes: t.bytes.clone(),
+            })
+            .collect()
+    };
+    let shard_b = assemble(&to_owned(a));
+    let shard_a = assemble(&to_owned(b));
+
+    let full = assemble(&tensors);
+    let arch = parse_gemma4_config(&config_json()).expect("config");
+    let quant = parse_gemma4_quantization(&config_json()).expect("quant");
+
+    let src_a = MemoryRangeSource::new(&shard_a);
+    let src_b = MemoryRangeSource::new(&shard_b);
+    let hdr_a = mrefrust_repack::fetch_safetensors_header(&src_a).expect("header a");
+    let hdr_b = mrefrust_repack::fetch_safetensors_header(&src_b).expect("header b");
+    let shards = Gemma4Shards::new(vec![(&hdr_a, &src_a), (&hdr_b, &src_b)]);
+    let sharded = orchestrate_gemma4_checkpoint_sharded(&shards, &arch, &quant).expect("sharded");
+
+    let src_full = MemoryRangeSource::new(&full);
+    let hdr_full = mrefrust_repack::fetch_safetensors_header(&src_full).expect("header full");
+    let single =
+        orchestrate_gemma4_checkpoint(&hdr_full, &src_full, &arch, &quant).expect("single");
+
+    let names = |out: &mrefrust_repack::Gemma4RepackOutput| -> Vec<String> {
+        out.resident
+            .iter()
+            .map(|e| match e {
+                ResidentEntrySpec::Int4(t) | ResidentEntrySpec::Int8(t) => t.name.clone(),
+                ResidentEntrySpec::Raw(r) => r.name.clone(),
+            })
+            .collect()
+    };
+    assert_eq!(names(&sharded), names(&single));
+    assert_eq!(sharded.expert_stride, single.expert_stride);
+    assert_eq!(sharded.layers.len(), single.layers.len());
+    for (ls, lf) in sharded.layers.iter().zip(single.layers.iter()) {
+        for (es, ef) in ls.experts.iter().zip(lf.experts.iter()) {
+            for (ss, sf) in es.sub_tensors.iter().zip(ef.sub_tensors.iter()) {
+                assert_eq!(ss.bytes, sf.bytes, "layer {} sub {}", ls.layer, ss.role);
+            }
+        }
+    }
+}
+
+#[test]
+fn streamed_install_matches_in_memory_install() {
+    use mrefrust_repack::{write_gemma4_install_streamed, Gemma4Shards};
+
+    let tensors = fixture();
+    let blob = assemble(&tensors);
+    let source = MemoryRangeSource::new(&blob);
+    let header = mrefrust_repack::fetch_safetensors_header(&source).expect("header");
+    let arch = parse_gemma4_config(&config_json()).expect("config");
+    let quant = parse_gemma4_quantization(&config_json()).expect("quant");
+
+    let dir_mem = temp_dir();
+    write_gemma4_install(&dir_mem, &arch, "streamed-vs-mem", &header, &source, &quant)
+        .expect("in-memory install");
+    let dir_str = temp_dir();
+    let shards = Gemma4Shards::single(&header, &source);
+    write_gemma4_install_streamed(&dir_str, &arch, "streamed-vs-mem", &shards, &quant, |_| {})
+        .expect("streamed install");
+
+    for file in [
+        "model_weights.bin",
+        "packed_experts/layout.json",
+        "packed_experts/layer_00.bin",
+        "packed_experts/layer_01.bin",
+        "manifest.json",
+    ] {
+        let a = std::fs::read(dir_mem.join(file)).expect(file);
+        let b = std::fs::read(dir_str.join(file)).expect(file);
+        assert_eq!(a, b, "{file} differs between streamed and in-memory paths");
+    }
+}

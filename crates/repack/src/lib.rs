@@ -17,14 +17,15 @@ mod synthetic_model;
 mod synthetic_real;
 
 pub use gemma4_checkpoint::{
-    classify_gemma4, orchestrate_gemma4_checkpoint, parse_gemma4_config, parse_gemma4_quantization,
-    write_gemma4_install, Gemma4Bucket, Gemma4Error, Gemma4Quant, Gemma4RepackOutput,
-    GTURBO_PAGE_BYTES,
+    classify_gemma4, orchestrate_gemma4_checkpoint, orchestrate_gemma4_checkpoint_sharded,
+    parse_gemma4_config, parse_gemma4_quantization, write_gemma4_install,
+    write_gemma4_install_streamed, Gemma4Bucket, Gemma4Error, Gemma4Quant, Gemma4RepackOutput,
+    Gemma4Shards, GTURBO_PAGE_BYTES,
 };
 pub use gturbo_writer::{
     write_gturbo_install, write_gturbo_install_with_resident_index,
-    write_gturbo_install_with_resident_index_and_experts, ExpertBlob, LayerBlobs, SubTensor,
-    WriterError,
+    write_gturbo_install_with_resident_index_and_experts, ExpertBlob, LayerBlobs,
+    StreamingGturboWriter, SubTensor, WriterError,
 };
 pub use hf_checkpoint::{orchestrate_llama_checkpoint, LlamaCheckpointDims, OrchestrateError};
 pub use install_verifier::verify_install_full_sha256;

@@ -138,6 +138,144 @@ pub fn write_gturbo_install_with_resident_index_and_experts(
     )
 }
 
+/// Builds one `layer_NN.bin` file's bytes plus its `layout.json` entry.
+fn build_layer_file(
+    layer: &LayerBlobs,
+    expert_stride: u64,
+    experts_per_layer: usize,
+) -> Result<(Vec<u8>, serde_json::Value), WriterError> {
+    if layer.experts.len() != experts_per_layer {
+        return Err(WriterError::WrongExpertCount {
+            layer: layer.layer,
+            expected: experts_per_layer,
+            actual: layer.experts.len(),
+        });
+    }
+    let file_name = format!("layer_{:02}.bin", layer.layer);
+    let mut file_bytes = Vec::with_capacity(layer.experts.len() * expert_stride as usize);
+    let mut expert_entries = Vec::with_capacity(layer.experts.len());
+
+    for expert in &layer.experts {
+        let expert_offset = file_bytes.len() as u64;
+        let mut cursor = 0u64;
+        let mut tensor_entries = BTreeMap::new();
+        for sub in &expert.sub_tensors {
+            let sub_offset = cursor;
+            file_bytes.extend_from_slice(&sub.bytes);
+            cursor += sub.bytes.len() as u64;
+            tensor_entries.insert(
+                sub.role.clone(),
+                serde_json::json!({
+                    "offset": sub_offset,
+                    "size": sub.bytes.len() as u64,
+                    "dtype": sub.dtype,
+                    "shape": sub.shape,
+                }),
+            );
+        }
+        if cursor > expert_stride {
+            return Err(WriterError::ExpertOversized {
+                layer: layer.layer,
+                expert: expert.expert,
+                used: cursor,
+                stride: expert_stride,
+            });
+        }
+        file_bytes.resize(expert_offset as usize + expert_stride as usize, 0u8);
+        expert_entries.push(serde_json::json!({
+            "expert": expert.expert,
+            "offset": expert_offset,
+            "size": expert_stride,
+            "tensors": tensor_entries,
+        }));
+    }
+    let entry = serde_json::json!({
+        "layer": layer.layer,
+        "file": file_name,
+        "experts": expert_entries,
+    });
+    Ok((file_bytes, entry))
+}
+
+/// Incremental install assembly for checkpoints too large to hold every
+/// layer's expert blobs in memory at once: create the writer, feed it one
+/// [`LayerBlobs`] at a time (each layer file hits disk immediately and its
+/// bytes can be dropped), then `finish` with the resident index to write
+/// `layout.json`, `model_weights.bin`, and `manifest.json`.
+pub struct StreamingGturboWriter {
+    dir: std::path::PathBuf,
+    expert_stride: u64,
+    experts_per_layer: usize,
+    layout_layers: Vec<serde_json::Value>,
+}
+
+impl StreamingGturboWriter {
+    pub fn new(
+        dir: &Path,
+        expert_stride: u64,
+        experts_per_layer: usize,
+    ) -> Result<Self, WriterError> {
+        std::fs::create_dir_all(dir.join("packed_experts")).map_err(|e| io_err(dir, e))?;
+        Ok(Self {
+            dir: dir.to_path_buf(),
+            expert_stride,
+            experts_per_layer,
+            layout_layers: Vec::new(),
+        })
+    }
+
+    pub fn write_layer(&mut self, layer: &LayerBlobs) -> Result<(), WriterError> {
+        let (file_bytes, entry) =
+            build_layer_file(layer, self.expert_stride, self.experts_per_layer)?;
+        let file_name = format!("layer_{:02}.bin", layer.layer);
+        let layer_path = self.dir.join("packed_experts").join(&file_name);
+        std::fs::write(&layer_path, &file_bytes).map_err(|e| io_err(&layer_path, e))?;
+        self.layout_layers.push(entry);
+        Ok(())
+    }
+
+    pub fn finish(
+        self,
+        arch: &ArchConfig,
+        model_id: &str,
+        resident_weights_bin: &[u8],
+    ) -> Result<(), WriterError> {
+        let num_layers = self.layout_layers.len();
+        let layout_json = serde_json::json!({
+            "expertStride": self.expert_stride,
+            "numLayers": num_layers,
+            "expertsPerLayer": self.experts_per_layer,
+            "layers": self.layout_layers,
+        });
+        let layout_path = self.dir.join("packed_experts").join("layout.json");
+        std::fs::write(
+            &layout_path,
+            serde_json::to_vec_pretty(&layout_json).unwrap(),
+        )
+        .map_err(|e| io_err(&layout_path, e))?;
+
+        let weights_path = self.dir.join("model_weights.bin");
+        std::fs::write(&weights_path, resident_weights_bin)
+            .map_err(|e| io_err(&weights_path, e))?;
+
+        let manifest_path = self.dir.join("manifest.json");
+        let manifest_json = build_manifest_json(
+            arch,
+            model_id,
+            self.expert_stride,
+            num_layers,
+            self.experts_per_layer,
+            &self.dir,
+        )?;
+        std::fs::write(
+            &manifest_path,
+            serde_json::to_vec_pretty(&manifest_json).unwrap(),
+        )
+        .map_err(|e| io_err(&manifest_path, e))?;
+        Ok(())
+    }
+}
+
 fn write_gturbo_install_impl(
     dir: &Path,
     arch: &ArchConfig,
@@ -151,59 +289,11 @@ fn write_gturbo_install_impl(
 
     let mut layout_layers = Vec::with_capacity(layers.len());
     for layer in layers {
-        if layer.experts.len() != experts_per_layer {
-            return Err(WriterError::WrongExpertCount {
-                layer: layer.layer,
-                expected: experts_per_layer,
-                actual: layer.experts.len(),
-            });
-        }
+        let (file_bytes, entry) = build_layer_file(layer, expert_stride, experts_per_layer)?;
         let file_name = format!("layer_{:02}.bin", layer.layer);
-        let mut file_bytes = Vec::with_capacity(layer.experts.len() * expert_stride as usize);
-        let mut expert_entries = Vec::with_capacity(layer.experts.len());
-
-        for expert in &layer.experts {
-            let expert_offset = file_bytes.len() as u64;
-            let mut cursor = 0u64;
-            let mut tensor_entries = BTreeMap::new();
-            for sub in &expert.sub_tensors {
-                let sub_offset = cursor;
-                file_bytes.extend_from_slice(&sub.bytes);
-                cursor += sub.bytes.len() as u64;
-                tensor_entries.insert(
-                    sub.role.clone(),
-                    serde_json::json!({
-                        "offset": sub_offset,
-                        "size": sub.bytes.len() as u64,
-                        "dtype": sub.dtype,
-                        "shape": sub.shape,
-                    }),
-                );
-            }
-            if cursor > expert_stride {
-                return Err(WriterError::ExpertOversized {
-                    layer: layer.layer,
-                    expert: expert.expert,
-                    used: cursor,
-                    stride: expert_stride,
-                });
-            }
-            file_bytes.resize(expert_offset as usize + expert_stride as usize, 0u8);
-            expert_entries.push(serde_json::json!({
-                "expert": expert.expert,
-                "offset": expert_offset,
-                "size": expert_stride,
-                "tensors": tensor_entries,
-            }));
-        }
-
         let layer_path = dir.join("packed_experts").join(&file_name);
         std::fs::write(&layer_path, &file_bytes).map_err(|e| io_err(&layer_path, e))?;
-        layout_layers.push(serde_json::json!({
-            "layer": layer.layer,
-            "file": file_name,
-            "experts": expert_entries,
-        }));
+        layout_layers.push(entry);
     }
 
     let layout_json = serde_json::json!({
