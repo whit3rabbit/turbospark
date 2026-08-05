@@ -50,3 +50,11 @@ pub fn read_half_buffer(buffer: &metal::Buffer, len: usize) -> Vec<f16> {
     let bits = unsafe { std::slice::from_raw_parts(ptr, len) };
     bits.iter().map(|&b| f16::from_bits(b)).collect()
 }
+
+pub fn read_f32_buffer(buffer: &metal::Buffer, len: usize) -> Vec<f32> {
+    let ptr = buffer.contents() as *const f32;
+    // SAFETY: same contract as `read_half_buffer`, with 4-byte elements.
+    #[allow(unsafe_code)]
+    let values = unsafe { std::slice::from_raw_parts(ptr, len) };
+    values.to_vec()
+}

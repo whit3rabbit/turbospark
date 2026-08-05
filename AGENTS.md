@@ -126,10 +126,14 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
    `src/` is `#[cfg(target_os = "macos")]`, so `cargo build --workspace` /
    `cargo test --workspace` succeed on Linux with the crate compiling to
    (effectively) nothing. Dispatched, parity-tested Metal pipelines
-   (`rmsnorm_no_scale`, `rms_norm_bf16w`, `rope_proportional_neox`,
-   `logit_softcap_softmax`, `dequant_int4_gemv_simd`, `dequant_int8_gemv_simd`,
+   (`rmsnorm_no_scale`, `rms_norm_bf16w`, both `_perhead` norm variants,
+   `rope_proportional_neox` (which with `rotated_pairs = head_dim/2` IS
+   default full-head NeoX -- no separate default-rope wrapper exists),
+   `logit_softcap_softmax`, `dequant_int4_gemv_simd`, `dequant_int8_gemv_simd`
+   (both with offset-bound resident variants), `router_gemv_gemma4_r4`,
    two-pass split-KV `attention_decode`, `moe_decode` decode pair, and
-   `utility` elementwise kernels) are compiled from vendored MSL source at
+   `utility` elementwise kernels including the port-local `scalar_mul_fp16`)
+   are compiled from vendored MSL source at
    runtime, matching how Mference itself builds pipelines. `MetalContext::pipeline`
    takes caller-supplied `FunctionConstantValues`, so a new kernel module owns
    its own specialization rather than sharing one hardcoded set.
@@ -144,7 +148,11 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
    mmap in ONE `newBufferWithBytesNoCopy` MTLBuffer, `PassEncoder` batches
    a whole token into one command buffer, and the vendored `moe.metal` decode
    kernels read streamed expert blobs in place through a `RoutedBlobs` argument
-   buffer. See `DEVIATIONS.md` for the full wired/unwired list, and why `sample`
+   buffer. `moe_phase2_down_reduce_k8` reduces ALL EIGHT slots
+   unconditionally: unused slots need a zero routing weight, a valid blob
+   pointer (bind() duplicates blobs[0]), AND a finite acts row -- the acts
+   buffer must be sized for 8 slots and zero-filled, not sized top_k
+   (garbage in a padded row times a zero weight is still NaN). See `DEVIATIONS.md` for the full wired/unwired list, and why `sample`
    (`logit.metal`) was deliberately left unported rather than shipped without a
    way to verify it.
 
@@ -180,13 +188,21 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     `crates/gpu` is) supports dense and MoE FFN (resident or streamed
     experts) and both full-attention (mask 1) and sliding-window (mask 0)
     layers; `open()` rejects only linear (2) and compressed (3/4) layers,
-    whose kernels are unported. Gemma 4's mask shape now passes; it is
-    blocked instead on a real-checkpoint repack mapping and the
-    learned-weight runner features (see ROADMAP's production-parity
-    section). Qwen 3.6 and DeepSeek-V4-Flash remain blocked on GDN/DSV4.
-    Build a test/demo install with
+    whose kernels are unported. It has TWO decode flows, selected by the
+    resident index's naming: synthetic short names (`layer0.q_proj`) get
+    the plain no-scale flow in `real_forward.rs`; verbatim
+    real-checkpoint names (`language_model.model.layers.0...`, what
+    `mrefrust_repack::write_gemma4_install` writes) get the full Gemma 4
+    learned-weight flow in `real_forward_gemma4.rs` (BF16 norms, per-head
+    q/k/v norms, INT8 router + effective scale, kernel-semantics top-k,
+    INT8 shared-expert branch, sandwich tail, `layer_scalar`). Gemma 4 is
+    now blocked ONLY on running the real network download through the
+    pipeline (see ROADMAP); Qwen 3.6 and DeepSeek-V4-Flash remain blocked
+    on GDN/DSV4. Build a test/demo install with
     `mrefrust_repack::build_synthetic_gemma4_install` (dense) or its
-    `_swa`/`_moe`/`_moe_streamed` variants instead of hand-writing an
+    `_swa`/`_moe`/`_moe_streamed` variants, or
+    `build_synthetic_gemma4_real_install` (real naming, exercises the
+    real checkpoint repack pipeline), instead of hand-writing an
     `ArchConfig`; their non-shape fields are pinned to match
     `gemma4_26b_a4b()`'s own values on purpose (see their module docs for
     why: `manifest.json`'s optional fields fall back to the Gemma 4
@@ -319,7 +335,14 @@ crates
   (`tests/hf_checkpoint_network.rs`; run explicitly, not part of the
   default suite). Not proven to also run through `RealForwardRunner`
   (separate V projection, scaled RMSNorm: that runner doesn't support
-  either yet); see `DEVIATIONS.md`.
+  either yet); see `DEVIATIONS.md`. `gemma4_checkpoint.rs` is the real
+  Gemma 4 mapping: `config.json`/quantization parsing, mlx-community
+  tensor-name classification and Swift slot ordering, pre-quantized
+  INT4/INT8 pass-through (no re-quantization), per-expert blob slicing
+  with one 16 KiB-rounded stride, and `write_gemma4_install`;
+  `synthetic_real.rs`'s `build_synthetic_gemma4_real_install` pushes a
+  deterministic real-naming safetensors blob through that exact pipeline
+  (what the runner's learned-weight flow and the CLI test open).
 - `crates/server`: OpenAI-compatible `/v1/chat/completions` on loopback
   (axum), both the full-response and SSE-streaming shapes, wired to
   `mrefrust-runtime`. `ScriptedChatModel` is the only backend (see

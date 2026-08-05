@@ -54,3 +54,45 @@ fn real_prompt_mode_generates_real_tokens() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.is_empty(), "unexpected stderr: {stderr}");
 }
+
+#[test]
+fn real_naming_gemma4_install_generates() {
+    let dir = temp_dir();
+    for name in [
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "chat_template.jinja",
+    ] {
+        std::fs::copy(tokenizer_fixture_dir().join(name), dir.join(name)).unwrap();
+    }
+    let tok = tokenizer::MfTokenizer::load_from_dir(&dir).expect("tokenizer loads");
+    repack::build_synthetic_gemma4_real_install(
+        &dir,
+        tok.vocab_size as i64,
+        2,
+        2,
+        2,
+        8,
+        "cli-real-naming",
+    )
+    .expect("real-naming install writes");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_mference-check"))
+        .args([
+            "--model",
+            dir.to_str().unwrap(),
+            "--prompt",
+            "hi",
+            "--max-new",
+            "3",
+        ])
+        .output()
+        .expect("binary should run");
+
+    assert_eq!(output.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("generating (real forward pass"));
+    assert!(stdout.contains("generated, stop reason"));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.is_empty(), "unexpected stderr: {stderr}");
+}

@@ -66,6 +66,8 @@ pub use attention_decode::{
     attention_decode, attention_decode_buffers, encode_attention_decode, AttentionScratch,
 };
 #[cfg(target_os = "macos")]
+pub use bytes::read_f32_buffer;
+#[cfg(target_os = "macos")]
 pub use context::{
     dispatch_one_threadgroup_per_row, dispatch_one_threadgroup_per_row_offsets,
     dispatch_threads_3d, read_buffer_f16, write_buffer_bytes, GpuError, MetalContext, PassEncoder,
@@ -76,7 +78,10 @@ pub use dequant_int4_gemv::{
     encode_embed_lookup_int4, Int4AffineRowGpu, Int4ResidentMatrix,
 };
 #[cfg(target_os = "macos")]
-pub use dequant_int8_gemv::{dequant_int8_gemv, Int8AffineRowGpu};
+pub use dequant_int8_gemv::{
+    dequant_int8_gemv, dequant_int8_gemv_resident, encode_dequant_int8_gemv_resident,
+    Int8AffineRowGpu, Int8ResidentMatrix,
+};
 #[cfg(target_os = "macos")]
 pub use dsv4_state::{Dsv4StateManager, LayerCounters};
 #[cfg(target_os = "macos")]
@@ -87,18 +92,23 @@ pub use kv_cache::{KvCacheManager, KvView, LayerKind};
 pub use logit_softmax::{encode_logit_softcap_softmax, logit_softcap_softmax};
 #[cfg(target_os = "macos")]
 pub use moe_decode::{
-    encode_moe_phase1, encode_moe_phase2, MoeExpertOffsets, RoutedBlobsBuffer, MAX_STREAMED_EXPERTS,
+    encode_moe_phase1, encode_moe_phase2, encode_router_gemv_gemma4, router_gemv_gemma4,
+    MoeExpertOffsets, RoutedBlobsBuffer, MAX_STREAMED_EXPERTS,
 };
 #[cfg(target_os = "macos")]
 pub use prefill_scratch::{PrefillChunkScratchBuffers, PrefillChunkScratchLayout};
 #[cfg(target_os = "macos")]
 pub use resident_metal::{wrap_page_aligned_no_copy, ResidentGpuWeights};
 #[cfg(target_os = "macos")]
-pub use rms_norm::{encode_rms_norm_bf16w, encode_rms_norm_no_scale, rms_norm_no_scale};
+pub use rms_norm::{
+    encode_rms_norm_bf16w, encode_rms_norm_bf16w_perhead, encode_rms_norm_no_scale,
+    encode_rms_norm_no_scale_perhead, rms_norm_bf16w_perhead, rms_norm_no_scale,
+    rms_norm_no_scale_perhead,
+};
 #[cfg(target_os = "macos")]
 pub use rope::{encode_rope_proportional_neox, rope_proportional_neox};
 #[cfg(target_os = "macos")]
-pub use utility::{encode_gelu_mul, encode_residual_add, encode_silu_mul};
+pub use utility::{encode_gelu_mul, encode_residual_add, encode_scalar_mul, encode_silu_mul};
 
 /// The Metal buffer handle, re-exported so downstream crates (e.g.
 /// `crates/runtime`) can hold scratch buffers without their own `metal`

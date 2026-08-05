@@ -87,6 +87,121 @@ pub fn encode_rms_norm_bf16w(
     Ok(())
 }
 
+/// Encoder-level per-head scaled RMSNorm (`rmsnorm_bf16w_perhead`): `x`
+/// holds `num_heads * head_dim` halfs; each head is normalized
+/// independently and multiplied by the shared `[head_dim]` BF16 weight
+/// (Gemma 4's q_norm/k_norm). One threadgroup per head.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_rms_norm_bf16w_perhead(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    x: (&metal::Buffer, u64),
+    weight: (&metal::Buffer, u64),
+    out: (&metal::Buffer, u64),
+    num_heads: u32,
+    head_dim: u32,
+    eps: f32,
+) -> Result<(), GpuError> {
+    let pipeline = context.pipeline(
+        SOURCE,
+        "rmsnorm_bf16w_perhead",
+        &unused_function_constants(),
+        b"",
+    )?;
+    pass.encode_threadgroups(
+        &pipeline,
+        &[(x.0, 0, x.1), (weight.0, 1, weight.1), (out.0, 2, out.1)],
+        &[(u32_bytes(&head_dim), 3), (f32_bytes(&eps), 4)],
+        num_heads as u64,
+        THREADS_PER_GROUP.min(head_dim.max(1) as u64),
+    );
+    Ok(())
+}
+
+/// Encoder-level per-head no-scale RMSNorm (`rmsnorm_no_scale_perhead`):
+/// Gemma 4's v_norm. One threadgroup per head.
+pub fn encode_rms_norm_no_scale_perhead(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    x: (&metal::Buffer, u64),
+    out: (&metal::Buffer, u64),
+    num_heads: u32,
+    head_dim: u32,
+    eps: f32,
+) -> Result<(), GpuError> {
+    let pipeline = context.pipeline(
+        SOURCE,
+        "rmsnorm_no_scale_perhead",
+        &unused_function_constants(),
+        b"",
+    )?;
+    pass.encode_threadgroups(
+        &pipeline,
+        &[(x.0, 0, x.1), (out.0, 1, out.1)],
+        &[(u32_bytes(&head_dim), 2), (f32_bytes(&eps), 3)],
+        num_heads as u64,
+        THREADS_PER_GROUP.min(head_dim.max(1) as u64),
+    );
+    Ok(())
+}
+
+/// One-shot [`encode_rms_norm_bf16w_perhead`] over host slices, for the
+/// parity tests: `x` is `[num_heads * head_dim]`, `weight_bits` is the
+/// shared `[head_dim]` BF16 weight as raw bit patterns.
+pub fn rms_norm_bf16w_perhead(
+    context: &mut MetalContext,
+    x: &[f16],
+    weight_bits: &[u16],
+    num_heads: u32,
+    eps: f32,
+) -> Result<Vec<f16>, GpuError> {
+    let head_dim = weight_bits.len() as u32;
+    assert_eq!(x.len(), (num_heads * head_dim) as usize);
+    let x_buffer = context.new_buffer_with_data(&half_slice_to_le_bytes(x));
+    let w_buffer = context.new_buffer_with_data(&crate::bytes::u16_slice_to_le_bytes(weight_bits));
+    let out_buffer = context.new_output_buffer((x.len() * 2) as u64);
+
+    let pass = context.begin_pass();
+    encode_rms_norm_bf16w_perhead(
+        context,
+        &pass,
+        (&x_buffer, 0),
+        (&w_buffer, 0),
+        (&out_buffer, 0),
+        num_heads,
+        head_dim,
+        eps,
+    )?;
+    pass.commit_and_wait();
+    Ok(read_half_buffer(&out_buffer, x.len()))
+}
+
+/// One-shot [`encode_rms_norm_no_scale_perhead`] over host slices.
+pub fn rms_norm_no_scale_perhead(
+    context: &mut MetalContext,
+    x: &[f16],
+    num_heads: u32,
+    head_dim: u32,
+    eps: f32,
+) -> Result<Vec<f16>, GpuError> {
+    assert_eq!(x.len(), (num_heads * head_dim) as usize);
+    let x_buffer = context.new_buffer_with_data(&half_slice_to_le_bytes(x));
+    let out_buffer = context.new_output_buffer((x.len() * 2) as u64);
+
+    let pass = context.begin_pass();
+    encode_rms_norm_no_scale_perhead(
+        context,
+        &pass,
+        (&x_buffer, 0),
+        (&out_buffer, 0),
+        num_heads,
+        head_dim,
+        eps,
+    )?;
+    pass.commit_and_wait();
+    Ok(read_half_buffer(&out_buffer, x.len()))
+}
+
 /// `y[i] = x[i] * rsqrt(mean(x^2) + eps)`, dispatched on the GPU via
 /// `rmsnorm_no_scale`. `x.len()` is the row width `D`.
 pub fn rms_norm_no_scale(

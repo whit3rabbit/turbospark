@@ -88,31 +88,36 @@ impl std::error::Error for RealForwardError {}
 const RMS_EPS: f32 = 1e-6;
 
 pub struct RealForwardRunner {
-    context: gpu::MetalContext,
+    pub(crate) context: gpu::MetalContext,
     /// The whole resident region as one zero-copy `MTLBuffer` over the
     /// mmap (see `gpu::ResidentGpuWeights`); every GPU projection binds
     /// weights/scales/biases as offsets into it, Swift-style. No weight
     /// bytes are staged or copied per dispatch.
-    weights: gpu::ResidentGpuWeights,
-    index: ResidentIndex,
-    arch: ArchConfig,
+    pub(crate) weights: gpu::ResidentGpuWeights,
+    pub(crate) index: ResidentIndex,
+    pub(crate) arch: ArchConfig,
     /// Persistent per-layer GPU K/V buffers (allocated once, written one
     /// token-stride per step, reset via `MADV_DONTNEED`) — the Swift
     /// original's `KVCacheManager` shape, replacing the old host
     /// `Vec<f16>` history that was re-uploaded whole every token.
-    kv: gpu::KvCacheManager,
-    scratch: DecodeScratch,
+    pub(crate) kv: gpu::KvCacheManager,
+    pub(crate) scratch: DecodeScratch,
     /// One zero-copy `MTLBuffer` per streamer slot, wrapped once at open
     /// over the slot's page-aligned allocation — the GPU MoE kernels read
     /// expert weights straight out of these through the `RoutedBlobs`
     /// argument buffer. Declared BEFORE `streamers` so the buffers drop
     /// before the allocations they alias.
-    slot_buffers: Vec<Vec<gpu::MetalBuffer>>,
-    streamers: Vec<Option<streaming::PreadExpertStreamer>>,
+    pub(crate) slot_buffers: Vec<Vec<gpu::MetalBuffer>>,
+    pub(crate) streamers: Vec<Option<streaming::PreadExpertStreamer>>,
     /// Uniform blob-relative sub-tensor offsets + the reusable argument
     /// buffer, present when the install packs experts.
-    moe_offsets: Option<gpu::MoeExpertOffsets>,
-    routed_blobs: Option<gpu::RoutedBlobsBuffer>,
+    pub(crate) moe_offsets: Option<gpu::MoeExpertOffsets>,
+    pub(crate) routed_blobs: Option<gpu::RoutedBlobsBuffer>,
+    /// Real-checkpoint (verbatim `language_model.` tensor naming) decode
+    /// state: learned norms, INT8 router effective scales, per-expert
+    /// scales, layer scalars. `None` for synthetic short-name installs,
+    /// which keep the plain no-scale flow. See `real_forward_gemma4.rs`.
+    pub(crate) real: Option<crate::real_forward_gemma4::RealGemmaState>,
 }
 
 /// Matches `RuntimeConfig`'s default `expert_cache_slots`.
@@ -124,36 +129,40 @@ const PACKED_LAYOUT_MAX_BYTES: u64 = 64 * 1024 * 1024;
 /// projection / FFN intermediates, the attention partials, and the final
 /// logits+probs. The whole token chains through these on the GPU inside
 /// one (dense) or a few (MoE) command buffers.
-struct DecodeScratch {
-    x: gpu::MetalBuffer,
-    normed: gpu::MetalBuffer,
-    q: gpu::MetalBuffer,
-    attn_out: gpu::MetalBuffer,
-    o: gpu::MetalBuffer,
-    o_normed: gpu::MetalBuffer,
-    ffn_gate: gpu::MetalBuffer,
-    ffn_up: gpu::MetalBuffer,
-    ffn_act: gpu::MetalBuffer,
-    ffn_out: gpu::MetalBuffer,
-    ffn_normed: gpu::MetalBuffer,
-    logits: gpu::MetalBuffer,
-    probs: gpu::MetalBuffer,
+pub(crate) struct DecodeScratch {
+    pub(crate) x: gpu::MetalBuffer,
+    pub(crate) normed: gpu::MetalBuffer,
+    pub(crate) q: gpu::MetalBuffer,
+    pub(crate) attn_out: gpu::MetalBuffer,
+    pub(crate) o: gpu::MetalBuffer,
+    pub(crate) o_normed: gpu::MetalBuffer,
+    pub(crate) ffn_gate: gpu::MetalBuffer,
+    pub(crate) ffn_up: gpu::MetalBuffer,
+    pub(crate) ffn_act: gpu::MetalBuffer,
+    pub(crate) ffn_out: gpu::MetalBuffer,
+    pub(crate) ffn_normed: gpu::MetalBuffer,
+    pub(crate) logits: gpu::MetalBuffer,
+    pub(crate) probs: gpu::MetalBuffer,
     /// Router logits (`num_experts` halfs), the per-slot activation rows
     /// (`top_k * moe_inter` halfs), the 8-slot routing-weight vector, and
     /// an all-zero residual (the phase-2 kernel fuses a residual add; the
     /// sandwich-norm path needs the raw combined output, so it feeds
     /// zeros) — MoE-only, allocated tiny for dense architectures.
-    router_logits: gpu::MetalBuffer,
-    moe_acts: gpu::MetalBuffer,
-    routing_w: gpu::MetalBuffer,
-    zero_hidden: gpu::MetalBuffer,
-    attn: gpu::AttentionScratch,
+    pub(crate) router_logits: gpu::MetalBuffer,
+    pub(crate) moe_acts: gpu::MetalBuffer,
+    pub(crate) routing_w: gpu::MetalBuffer,
+    pub(crate) zero_hidden: gpu::MetalBuffer,
+    pub(crate) attn: gpu::AttentionScratch,
 }
 
 impl DecodeScratch {
     fn new(context: &gpu::MetalContext, arch: &ArchConfig) -> Self {
         let hidden = arch.hidden_size as u64;
-        let qk_dim = (arch.num_heads * arch.full_head_dim) as u64;
+        // Mixed-attention architectures (real Gemma 4) project different
+        // head dims on SWA vs full layers; size Q/attention scratch for
+        // the widest.
+        let max_head_dim = arch.head_dim.max(arch.full_head_dim);
+        let qk_dim = (arch.num_heads * max_head_dim) as u64;
         let inter = arch.intermediate_size.max(arch.moe_intermediate_size) as u64;
         let vocab = arch.vocab_size as u64;
         let halfs = |n: u64| context.new_output_buffer(n.max(1) * 2);
@@ -172,7 +181,18 @@ impl DecodeScratch {
             logits: halfs(vocab),
             probs: halfs(vocab),
             router_logits: halfs(arch.num_experts.max(1) as u64),
-            moe_acts: halfs((arch.top_k_experts.max(1) * arch.moe_intermediate_size.max(1)) as u64),
+            // Sized for ALL EIGHT kernel slots, not just top_k, and
+            // zero-filled once: moe_phase2_down_reduce_k8 unconditionally
+            // reads acts[slot * F] for slots 0..7, so padded slots must
+            // read finite (zero) activations — a recycled-heap garbage row
+            // can be NaN, and 0 * NaN = NaN would poison the whole reduce.
+            moe_acts: {
+                let n =
+                    (gpu::MAX_STREAMED_EXPERTS as u64) * arch.moe_intermediate_size.max(1) as u64;
+                let buffer = context.new_output_buffer(n * 2);
+                gpu::write_buffer_bytes(&buffer, 0, &vec![0u8; (n * 2) as usize]);
+                buffer
+            },
             routing_w: {
                 let buffer = context.new_output_buffer(gpu::MAX_STREAMED_EXPERTS as u64 * 2);
                 gpu::write_buffer_bytes(&buffer, 0, &[0u8; gpu::MAX_STREAMED_EXPERTS * 2]);
@@ -183,11 +203,7 @@ impl DecodeScratch {
                 gpu::write_buffer_bytes(&buffer, 0, &vec![0u8; hidden.max(1) as usize * 2]);
                 buffer
             },
-            attn: gpu::AttentionScratch::new(
-                context,
-                arch.num_heads as u32,
-                arch.full_head_dim as u32,
-            ),
+            attn: gpu::AttentionScratch::new(context, arch.num_heads as u32, max_head_dim as u32),
         }
     }
 }
@@ -340,7 +356,7 @@ impl RealForwardRunner {
         };
         drop(experts_layout);
 
-        Ok(Self {
+        let mut runner = Self {
             context,
             weights,
             index,
@@ -351,7 +367,23 @@ impl RealForwardRunner {
             streamers,
             moe_offsets,
             routed_blobs,
-        })
+            real: None,
+        };
+        // Real-checkpoint installs keep the source's verbatim tensor
+        // naming; their presence selects the learned-weight decode flow.
+        if runner
+            .index
+            .entries
+            .contains_key("language_model.model.embed_tokens.weight")
+        {
+            runner.real = Some(crate::real_forward_gemma4::RealGemmaState::build(
+                &mut runner.context,
+                &runner.weights,
+                &runner.index,
+                &runner.arch,
+            )?);
+        }
+        Ok(runner)
     }
 }
 
@@ -407,11 +439,11 @@ fn f32_to_f16(v: &[f32]) -> Vec<f16> {
     v.iter().map(|&x| f16::from_f32(x)).collect()
 }
 
-fn f16_to_f32(v: &[f16]) -> Vec<f32> {
+pub(crate) fn f16_to_f32(v: &[f16]) -> Vec<f32> {
     v.iter().map(|x| x.to_f32()).collect()
 }
 
-fn f16_slice_to_le_bytes(v: &[f16]) -> Vec<u8> {
+pub(crate) fn f16_slice_to_le_bytes(v: &[f16]) -> Vec<u8> {
     let mut out = Vec::with_capacity(v.len() * 2);
     for x in v {
         out.extend_from_slice(&x.to_bits().to_le_bytes());
@@ -437,7 +469,7 @@ fn tensor_bytes<'a>(
 /// dispatches against. Validates the entry's packed size against the
 /// caller's expected shape (the offsets are trusted after that; the index
 /// was already bounds-validated at load).
-fn resident_matrix<'a>(
+pub(crate) fn resident_matrix<'a>(
     weights: &'a gpu::ResidentGpuWeights,
     index: &ResidentIndex,
     name: &str,
@@ -614,6 +646,9 @@ impl RealForwardRunner {
         position: usize,
         logits: &mut [LogitValue],
     ) -> Result<(), RealForwardError> {
+        if self.real.is_some() {
+            return self.produce_real_gemma4(token, position, logits);
+        }
         let hidden = self.arch.hidden_size as usize;
         let inter = self.arch.intermediate_size as usize;
         let num_heads = self.arch.num_heads as u32;

@@ -10,6 +10,8 @@ mod producer;
 mod raw_completion;
 #[cfg(target_os = "macos")]
 mod real_forward;
+#[cfg(target_os = "macos")]
+mod real_forward_gemma4;
 
 pub use config::GenerationConfig;
 pub use error::RuntimeError;

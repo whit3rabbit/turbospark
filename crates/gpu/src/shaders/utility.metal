@@ -109,3 +109,19 @@ void residual_add_fp16(
     if (tid >= count) return;
     hidden[tid] = half(float(hidden[tid]) + float(delta[tid]));
 }
+
+// Port-local addition (not in the Swift utility.metal): x[i] *= scalar in
+// half precision. The Swift original folds this multiply into
+// fused_layer_tail's final loop (`hidden4[i] * hScale`, fused.metal),
+// which this port does not vendor; the standalone kernel reproduces that
+// exact half-precision multiply for the layer_scalar step.
+[[kernel, max_total_threads_per_threadgroup(256)]]
+void scalar_mul_fp16(
+    device half*    x      [[buffer(0)]],
+    constant float& scalar [[buffer(1)]],
+    constant uint&  count  [[buffer(2)]],
+    uint            tid    [[thread_position_in_grid]]
+) {
+    if (tid >= count) return;
+    x[tid] = x[tid] * half(scalar);
+}

@@ -13,7 +13,10 @@ use half::f16;
 use metal::{FunctionConstantValues, MTLDataType};
 
 use crate::bytes::{half_slice_to_le_bytes, read_half_buffer, u16_slice_to_le_bytes, u32_bytes};
-use crate::context::{dispatch_one_threadgroup_per_row, GpuError, MetalContext};
+use crate::context::{
+    dispatch_one_threadgroup_per_row, dispatch_one_threadgroup_per_row_offsets, GpuError,
+    MetalContext, PassEncoder,
+};
 
 const SOURCE: &str = include_str!("shaders/dequant_int8.metal");
 const THREADS_PER_GROUP: u64 = 256; // 8 rows/threadgroup * 32 lanes/SIMD group.
@@ -100,4 +103,92 @@ pub fn dequant_int8_gemv(
     );
 
     Ok(read_half_buffer(&y_buffer, m))
+}
+
+/// A whole INT8-affine weight matrix addressed IN PLACE inside one shared
+/// `MTLBuffer` (normally `ResidentGpuWeights::buffer`): `rows * cols`
+/// weight bytes at `weights_offset`, `rows * cols/64` BF16 scale bit
+/// patterns at `scales_offset`, same-shaped biases at `biases_offset` —
+/// the INT8 sibling of `Int4ResidentMatrix`, for real Gemma 4's INT8
+/// shared-expert projections.
+pub struct Int8ResidentMatrix<'a> {
+    pub buffer: &'a metal::Buffer,
+    pub weights_offset: u64,
+    pub scales_offset: u64,
+    pub biases_offset: u64,
+    pub rows: usize,
+    pub cols: usize,
+}
+
+/// Encoder-level offset-bound INT8 GEMV: same kernel and math as
+/// [`dequant_int8_gemv`], weights bound as offsets into `w.buffer`.
+pub fn encode_dequant_int8_gemv_resident(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    w: &Int8ResidentMatrix<'_>,
+    x: (&metal::Buffer, u64),
+    y: (&metal::Buffer, u64),
+) -> Result<(), GpuError> {
+    assert_eq!(w.cols % 64, 0, "N must be a multiple of 64");
+    assert!(w.rows > 0);
+    let m_u32 = w.rows as u32;
+    let n_u32 = w.cols as u32;
+    let pipeline = context.pipeline(
+        SOURCE,
+        "dequant_int8_gemv_simd",
+        &unused_function_constants(),
+        b"",
+    )?;
+    let threadgroups = w.rows.div_ceil(ROWS_PER_THREADGROUP as usize) as u64;
+    pass.encode_threadgroups(
+        &pipeline,
+        &[
+            (w.buffer, 0, w.weights_offset),
+            (w.buffer, 1, w.scales_offset),
+            (w.buffer, 2, w.biases_offset),
+            (x.0, 3, x.1),
+            (y.0, 4, y.1),
+        ],
+        &[(u32_bytes(&m_u32), 5), (u32_bytes(&n_u32), 6)],
+        threadgroups,
+        THREADS_PER_GROUP,
+    );
+    Ok(())
+}
+
+/// One-shot [`encode_dequant_int8_gemv_resident`] for the parity tests.
+pub fn dequant_int8_gemv_resident(
+    context: &mut MetalContext,
+    w: &Int8ResidentMatrix<'_>,
+    x: &[f16],
+) -> Result<Vec<f16>, GpuError> {
+    assert_eq!(x.len(), w.cols);
+    let x_buffer = context.new_buffer_with_data(&half_slice_to_le_bytes(x));
+    let y_buffer = context.new_output_buffer((w.rows * std::mem::size_of::<u16>()) as u64);
+
+    let m_u32 = w.rows as u32;
+    let n_u32 = w.cols as u32;
+    let pipeline = context.pipeline(
+        SOURCE,
+        "dequant_int8_gemv_simd",
+        &unused_function_constants(),
+        b"",
+    )?;
+    let threadgroups = w.rows.div_ceil(ROWS_PER_THREADGROUP as usize) as u64;
+    dispatch_one_threadgroup_per_row_offsets(
+        context,
+        &pipeline,
+        &[
+            (w.buffer, 0, w.weights_offset),
+            (w.buffer, 1, w.scales_offset),
+            (w.buffer, 2, w.biases_offset),
+            (&x_buffer, 3, 0),
+            (&y_buffer, 4, 0),
+        ],
+        &[(u32_bytes(&m_u32), 5), (u32_bytes(&n_u32), 6)],
+        threadgroups,
+        THREADS_PER_GROUP,
+    );
+
+    Ok(read_half_buffer(&y_buffer, w.rows))
 }

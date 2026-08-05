@@ -95,3 +95,31 @@ pub fn encode_residual_add(
         2,
     )
 }
+
+/// `x[i] *= half(scalar)`, in place — Gemma 4's per-layer `layer_scalar`
+/// multiply on the residual stream (see the shader's port-local note).
+pub fn encode_scalar_mul(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    x: (&metal::Buffer, u64),
+    scalar: f32,
+    count: u32,
+) -> Result<(), GpuError> {
+    let pipeline = context.pipeline(
+        SOURCE,
+        "scalar_mul_fp16",
+        &FunctionConstantValues::new(),
+        b"",
+    )?;
+    pass.encode_threads_3d(
+        &pipeline,
+        &[(x.0, 0, x.1)],
+        &[
+            (crate::bytes::f32_bytes(&scalar), 1),
+            (u32_bytes(&count), 2),
+        ],
+        (grid_for(count), 1, 1),
+        (THREADS_PER_GROUP, 1, 1),
+    );
+    Ok(())
+}

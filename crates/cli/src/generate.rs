@@ -1,18 +1,18 @@
 //! Real generation, wired to `RealForwardRunner` (macOS/GPU only). Loads a
-//! `.gturbo` install from `request.model`, peeks its `manifest.json` for
-//! `vocabSize`/`numLayers` (the only two dimensions
-//! `repack::tiny_gemma4_arch` needs — every other field is pinned to
-//! Gemma 4's own baseline values, see that function's docs), and opens it
-//! with `RealForwardRunner`. Only works for installs shaped like
-//! `repack::build_synthetic_gemma4_install`'s output (dense, all-full-
-//! attention, Gemma-4-baseline non-shape fields) — the same scope
-//! restriction `RealForwardRunner::open` itself enforces; a production
-//! checkpoint (MoE and/or hybrid-attention) is rejected with a clear
-//! error, not a crash. The tokenizer is expected to live alongside the
-//! `.gturbo` files in the same directory (the usual HF checkpoint
-//! bundling convention). Only `Mode::Prompt` is supported; `MessagesFile`
-//! and `Chat` need chat-template rendering this integration does not do
-//! yet.
+//! `.gturbo` install from `request.model`, reconstructs its full
+//! `ArchConfig` from `manifest.json`'s own `arch` object (shape fields
+//! read as written; family-extension fields fall back to Gemma 4's
+//! baseline values, the same fallback rule `arch_validation` applies to
+//! omitted manifest fields), and opens it with `RealForwardRunner`. This
+//! covers both the synthetic short-name installs and real Gemma 4
+//! installs repacked by `repack::write_gemma4_install` (verbatim
+//! checkpoint tensor naming, MoE, mixed SWA/full attention); anything the
+//! runner does not support (linear/compressed layers, non-Gemma families)
+//! is rejected with a clear error, not a crash. The tokenizer is expected
+//! to live alongside the `.gturbo` files in the same directory (the usual
+//! HF checkpoint bundling convention). Only `Mode::Prompt` is supported;
+//! `MessagesFile` and `Chat` need chat-template rendering this
+//! integration does not do yet.
 
 use std::io::Write;
 use std::path::Path;
@@ -120,11 +120,44 @@ fn peek_arch(model_dir: &Path) -> Result<model_io::ArchConfig, String> {
         .map_err(|e| format!("no manifest.json at {}: {e}", manifest_path.display()))?;
     let value: serde_json::Value =
         serde_json::from_slice(&bytes).map_err(|e| format!("manifest.json: {e}"))?;
-    let vocab_size = value["arch"]["vocabSize"]
-        .as_i64()
-        .ok_or("manifest.json: arch.vocabSize missing or not an integer")?;
-    let num_layers = value["arch"]["numLayers"]
-        .as_i64()
-        .ok_or("manifest.json: arch.numLayers missing or not an integer")?;
-    Ok(repack::tiny_gemma4_arch(vocab_size, num_layers))
+    let m: model_io::ManifestArch = serde_json::from_value(value["arch"].clone())
+        .map_err(|e| format!("manifest.json arch: {e}"))?;
+
+    // Start from the Gemma 4 baseline (the manifest's own fallback rule
+    // for omitted family-extension fields) and overwrite every shape
+    // field with what the manifest actually says.
+    let mut arch = repack::tiny_gemma4_arch(m.vocab_size, m.num_layers);
+    arch.hidden_size = m.hidden_size;
+    arch.intermediate_size = m.ffn_intermediate;
+    arch.moe_intermediate_size = m.moe_intermediate_size;
+    arch.num_heads = m.num_heads;
+    arch.num_kv_heads = m.num_kv_heads;
+    arch.num_full_kv_heads = m.num_full_kv_heads;
+    arch.head_dim = m.head_dim;
+    arch.full_head_dim = m.full_head_dim;
+    arch.sliding_window = m.sliding_window;
+    arch.final_logit_softcap = m.final_logit_softcap;
+    arch.rope_theta = m.rope_theta;
+    arch.full_rope_theta = m.full_rope_theta;
+    arch.partial_rotary_factor = m.partial_rotary_factor;
+    arch.num_experts = m.num_experts;
+    arch.top_k_experts = m.top_k_experts;
+    arch.tie_word_embeddings = m.tie_word_embeddings;
+    arch.attention_k_eq_v = m.attention_k_eq_v;
+    arch.hidden_activation = m.hidden_activation.clone();
+    arch.full_attention_layer_mask = m
+        .full_attention_layer_mask
+        .iter()
+        .map(|&v| v as u8)
+        .collect();
+    if let Some(scale) = m.attention_scale {
+        arch.attention_scale = scale;
+    }
+    if m.family.as_deref().is_some_and(|f| f != "gemma4") {
+        return Err(format!(
+            "manifest family {:?} is not supported by real generation yet",
+            m.family
+        ));
+    }
+    Ok(arch)
 }

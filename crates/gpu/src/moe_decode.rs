@@ -235,3 +235,92 @@ pub fn encode_moe_phase2(
     );
     Ok(())
 }
+
+/// Encoder-level Gemma 4 INT8 router GEMV (`router_gemv_gemma4_r4`):
+/// `logits[e] = sum_n dequant_int8(W[e, n]) * x[n] * effective_scale[n]`,
+/// with `effective_scale` a BF16 `[D]` vector (the checkpoint's
+/// `router.scale` with `1/sqrt(D)` pre-folded in — see the Swift
+/// `RealForwardRunner`'s effective-scale buffers). Weights, scales, and
+/// biases are `(buffer, byte offset)` views, normally into the resident
+/// buffer; `out_logits` receives `num_experts` FP32 values.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_router_gemv_gemma4(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    weights: (&metal::Buffer, u64),
+    scales: (&metal::Buffer, u64),
+    biases: (&metal::Buffer, u64),
+    hidden: (&metal::Buffer, u64),
+    effective_scale: (&metal::Buffer, u64),
+    out_logits: (&metal::Buffer, u64),
+    num_experts: u32,
+    d_dim: u32,
+) -> Result<(), GpuError> {
+    assert_eq!(d_dim % 64, 0);
+    let pipeline = context.pipeline(
+        SOURCE,
+        "router_gemv_gemma4_r4",
+        &moe_function_constants(false),
+        &constants_key(false),
+    )?;
+    // 4 expert rows per threadgroup, one SIMD group (32 lanes) per row.
+    let rows_per_tg = 4u64;
+    pass.encode_threadgroups(
+        &pipeline,
+        &[
+            (weights.0, 0, weights.1),
+            (scales.0, 1, scales.1),
+            (biases.0, 2, biases.1),
+            (hidden.0, 3, hidden.1),
+            (effective_scale.0, 4, effective_scale.1),
+            (out_logits.0, 5, out_logits.1),
+        ],
+        &[(u32_bytes(&num_experts), 6), (u32_bytes(&d_dim), 7)],
+        (num_experts as u64).div_ceil(rows_per_tg),
+        rows_per_tg * 32,
+    );
+    Ok(())
+}
+
+/// One-shot [`encode_router_gemv_gemma4`] over host slices, for the parity
+/// tests: `w_bytes` is `[num_experts, d]` INT8 weight bytes,
+/// `scale_bits`/`bias_bits` are `[num_experts, d/64]` BF16 bit patterns,
+/// `eff_bits` is the `[d]` BF16 effective scale.
+pub fn router_gemv_gemma4(
+    context: &mut MetalContext,
+    w_bytes: &[u8],
+    scale_bits: &[u16],
+    bias_bits: &[u16],
+    x: &[half::f16],
+    eff_bits: &[u16],
+    num_experts: u32,
+) -> Result<Vec<f32>, GpuError> {
+    let d = x.len() as u32;
+    assert_eq!(w_bytes.len(), (num_experts * d) as usize);
+    assert_eq!(eff_bits.len(), d as usize);
+    let w_buffer = context.new_buffer_with_data(w_bytes);
+    let s_buffer = context.new_buffer_with_data(&crate::bytes::u16_slice_to_le_bytes(scale_bits));
+    let b_buffer = context.new_buffer_with_data(&crate::bytes::u16_slice_to_le_bytes(bias_bits));
+    let x_buffer = context.new_buffer_with_data(&crate::bytes::half_slice_to_le_bytes(x));
+    let e_buffer = context.new_buffer_with_data(&crate::bytes::u16_slice_to_le_bytes(eff_bits));
+    let out_buffer = context.new_output_buffer(num_experts as u64 * 4);
+
+    let pass = context.begin_pass();
+    encode_router_gemv_gemma4(
+        context,
+        &pass,
+        (&w_buffer, 0),
+        (&s_buffer, 0),
+        (&b_buffer, 0),
+        (&x_buffer, 0),
+        (&e_buffer, 0),
+        (&out_buffer, 0),
+        num_experts,
+        d,
+    )?;
+    pass.commit_and_wait();
+    Ok(crate::bytes::read_f32_buffer(
+        &out_buffer,
+        num_experts as usize,
+    ))
+}

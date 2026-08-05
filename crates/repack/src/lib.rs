@@ -14,6 +14,7 @@ mod repack;
 mod resident_writer;
 mod safetensors_header;
 mod synthetic_model;
+mod synthetic_real;
 
 pub use gemma4_checkpoint::{
     classify_gemma4, orchestrate_gemma4_checkpoint, parse_gemma4_config, parse_gemma4_quantization,
@@ -48,6 +49,7 @@ pub use synthetic_model::{
     expert_up_proj_name, gate_proj_name, k_proj_name, o_proj_name, q_proj_name, router_name,
     tiny_gemma4_arch, up_proj_name,
 };
+pub use synthetic_real::build_synthetic_gemma4_real_install;
 
 // Token id width consumed from the core primitives, keeping the dependency
 // edge live and documenting the interchange type this crate uses throughout.

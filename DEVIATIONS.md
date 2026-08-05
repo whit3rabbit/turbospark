@@ -176,9 +176,9 @@ live network).
   performance variant and the KV ring addressing (`FC_ATTN_RING_CAP`)
   remain undispatched — with linear layouts sized at `max_context`, the
   ring is a memory optimization, not a correctness need. `rmsnorm_bf16w`
-  (learned norm weights) is dispatched and parity-tested but not yet fed
-  by any tensor mapping (no real-checkpoint install exists to carry norm
-  weights).
+  (learned norm weights) and its per-head siblings are dispatched,
+  parity-tested, and fed by the real-checkpoint tensor mapping (see the
+  real Gemma 4 pipeline entry below).
 - **`logit.metal`'s `sample` kernel: formally descoped, not ported.**
   Unlike every other kernel this port has vendored, `sample` has no CPU
   reference in `mrefrust_compute` to verify a port against — it is a
@@ -302,9 +302,10 @@ live network).
     adds the residual itself afterward, through the same sandwich-norm
     step the dense path uses, so the two FFN branches share that
     structure) — a deliberate simplification, not a missed reuse
-    opportunity. Also simplified: no separate dense/shared FFN branch
-    summed in alongside the routed one (real Gemma 4 computes both and
-    adds them; this runner's MoE layers are routed-only).
+    opportunity. Also simplified: the SYNTHETIC short-name MoE flow has
+    no separate dense/shared FFN branch summed in alongside the routed
+    one; the real-checkpoint flow (see the real Gemma 4 pipeline entry
+    below) does compute both and add them.
   The weights come from a real `.gturbo` install
   (`mrefrust_repack`'s `build_synthetic_gemma4_install` for dense,
   `build_synthetic_gemma4_moe_install` for MoE — both using the named
@@ -314,12 +315,11 @@ live network).
   weights themselves are deterministic but NOT trained (no trained
   `.gturbo` checkpoint is available in this environment) — so the
   generated *text* is not semantically meaningful; what's real is the
-  pipeline that produces it. `RealForwardRunner::open` still rejects any
-  `full_attention_layer_mask` entry other than `1` (full attention), so
-  none of the three production baselines (Gemma 4, Qwen 3.6, DeepSeek-V4-
-  Flash — all mix full attention with sliding-window/linear/compressed
-  layers) can run through this runner, even if a real trained checkpoint
-  of one existed. Proven end to end by
+  pipeline that produces it. `RealForwardRunner::open` accepts full
+  attention (mask 1) and sliding-window (mask 0) layers and rejects
+  linear (2) and compressed (3/4) layers, whose kernels are unported —
+  so Gemma 4's mask shape passes while Qwen 3.6 and DeepSeek-V4-Flash
+  remain blocked on GDN/DSV4. Proven end to end by
   `crates/runtime/tests/real_forward.rs` for both shapes:
   `run_raw_completion` runs to a real stop condition, and a second run
   over the same runner (which resets internally) reaches an identical
@@ -447,6 +447,53 @@ live network).
   `crates/runtime`'s `RealForwardRunner` (see Phase 7 above). No packed
   experts (empty `packed_experts/layout.json`, since the synthetic model
   is dense, `num_experts == 0`).
+- **Real Gemma 4 checkpoint pipeline: repack mapping, learned-weight
+  decode flow, and CLI all wired; the only missing piece is running the
+  real ~13-15 GB `mlx-community/gemma-4-26b-a4b-it-4bit` download through
+  it (network-gated, not yet exercised).**
+  `crates/repack/src/gemma4_checkpoint.rs` parses a Gemma 4 `config.json`
+  (`text_config`, `layer_types` -> mask, dual `rope_parameters`) and its
+  MLX `quantization` object (per-tensor bits overrides; group size other
+  than 64 is rejected — the GPU kernels assume 64), classifies the
+  mlx-community naming exactly as the Swift `RepackPlanner` does, orders
+  residents with the Gemma slot ranking, passes pre-quantized u32
+  weights + BF16 companions through byte-for-byte (the MLX affine
+  packing viewed as LE bytes IS this port's packed layout — no
+  re-quantization), and slices `.experts.switch_glu.` bundles into
+  per-expert blobs with one model-wide 16 KiB-rounded stride. Tensor
+  names stay VERBATIM from the checkpoint. On the runner side,
+  `crates/runtime/src/real_forward_gemma4.rs` (selected by `open()` when
+  the index carries `language_model.` names) implements the full Swift
+  decode flow: learned BF16 norms everywhere (NO extra `(1+w)` fold —
+  the Swift kernel applies `w` directly to the checkpoint's own bytes,
+  so this port does too), per-head q/k norms + per-head no-scale v norm,
+  separate per-kind attention dims (SWA `head_dim`/`num_kv_heads` vs
+  full `full_head_dim`/`num_full_kv_heads`), full layers writing V
+  through the K projection into its own slot (the K=V quirk projects V
+  separately and norms it without RoPE), full-rotation NeoX for SWA
+  layers vs proportional for full layers, the INT8 router GEMV
+  (`router_gemv_gemma4_r4`, parity-tested) with per-layer effective
+  scale buffers (`router.scale * 1/sqrt(D)` pre-folded at open), the
+  `router_topk_select_k8` kernel's semantics computed on the host
+  (softmax over the top-k only, times `per_expert_scale`; the logits
+  readback already exists for the expert `pread`, so a GPU select would
+  buy nothing), the INT8 shared-expert branch (three parity-tested INT8
+  GEMV dispatches + the activation multiply, NOT the fused
+  `shared_int8_gate_up_act_simd` kernel — same math, one more dispatch),
+  the FFN sandwich tail (`h += rmsnorm(h1 + h2, post_ffn)`), and the
+  per-layer `layer_scalar` multiply (a port-local `scalar_mul_fp16`
+  kernel in `utility.metal` — Swift folds this into its unvendored
+  `fused_layer_tail`). Proven end to end WITHOUT a network by
+  `build_synthetic_gemma4_real_install` (`crates/repack`), which pushes
+  a deterministic in-memory safetensors blob with the real naming, INT8
+  router/MLP, and BF16 norms through the REAL
+  `write_gemma4_install` pipeline; `crates/runtime/tests/
+  real_forward_gemma4.rs` decodes it deterministically with a flat GPU
+  allocation count, and `crates/cli/tests/real_generation.rs` drives
+  `mference-check --prompt` over it. The `Gemma4Quant` bits-override map
+  must come from the checkpoint's own config (`parse_gemma4_quantization`);
+  8-bit routed experts are rejected (the MoE decode kernels are
+  int4-only).
 - **The server has no real model backend.** `ScriptedChatModel` always
   replays a fixed logit sequence regardless of the prompt. The HTTP
   request/response envelopes, chat templating, and SSE streaming framing
