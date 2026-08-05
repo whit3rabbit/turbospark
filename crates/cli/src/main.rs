@@ -15,19 +15,23 @@
 //!
 //! Running the actual generation loop (`mrefrust-runtime`) needs a loaded
 //! model's tokenizer and forward-pass weights. `RealForwardRunner` (macOS/
-//! GPU only) now exists, so this binary attempts real generation when
-//! `--prompt` mode is used and `--model` points at a `.gturbo` install
-//! shaped like `repack::build_synthetic_gemma4_install`'s output (dense,
-//! all-full-attention) with a tokenizer bundled in the same directory —
-//! see `generate.rs`. Any other model shape, or a missing tokenizer,
-//! prints a clear note and falls back to the resolved-request printout
-//! only; on non-macOS this generation attempt is skipped entirely.
+//! GPU only) now exists, so this binary attempts real generation in all
+//! three modes — `--prompt` (raw text, no templating), `--messages-file`
+//! (a JSON conversation rendered through the tokenizer's chat template),
+//! and `--chat` (the interactive REPL in `chat.rs`) — when `--model`
+//! points at a `.gturbo` install `RealForwardRunner` supports with a
+//! tokenizer bundled in the same directory; see `generate.rs`. Any
+//! unsupported model shape, or a missing tokenizer, prints a clear note
+//! and falls back to the resolved-request printout only; on non-macOS this
+//! generation attempt is skipped entirely.
 
 use std::io::Write;
 use std::process::ExitCode;
 
 use invocation::{exit_status, parse, stream_routing, ExitStatus, InvocationRequest, ParseOutcome};
 
+#[cfg(target_os = "macos")]
+mod chat;
 #[cfg(target_os = "macos")]
 mod generate;
 
@@ -74,8 +78,8 @@ fn print_resolved_request(request: &InvocationRequest) {
     let _ = writeln!(out, "  quiet: {}", request.quiet);
     let _ = writeln!(
         out,
-        "note: on macOS with --prompt mode, real generation is attempted next against \
-         a dense .gturbo install at --model (see DEVIATIONS.md for scope); other modes \
-         and platforms only validate and print the resolved request above."
+        "note: on macOS, real generation is attempted next against the .gturbo install \
+         at --model (see DEVIATIONS.md for scope); on other platforms this only \
+         validates and prints the resolved request above."
     );
 }

@@ -146,3 +146,31 @@ fn key_view_reports_valid_token_count_and_ring_start_slot() {
     assert_eq!(view.valid_token_count, 10);
     assert_eq!(view.start_slot, 10 % 8);
 }
+
+/// Static KV accounting for the real Gemma 4 shape at the CLI's 4K
+/// default: the fp16 ring caps the 25 SWA layers at 1024 + 128 = 1152
+/// rows while the 5 full layers stay linear at 4096. Total KV bytes are
+/// 319,815,680 (~305 MiB), versus 922,746,880 (~880 MiB) if every layer
+/// were linear -- the ~575 MiB the ring reclaims, matching the Swift
+/// runner's budget (docs/SYSTEM_DESIGN.md's "FP16 KV at 4K" line).
+#[test]
+fn real_gemma4_shape_kv_bytes_match_swift_budget() {
+    let context = MetalContext::new().unwrap();
+    let arch = model_io::gemma4_26b_a4b();
+    let cache = KvCacheManager::new(context.device(), &arch, 4096, true, None, 128, None).unwrap();
+
+    let mut total = 0usize;
+    for layer in 0..30 {
+        if arch.full_attention_layer_mask[layer] == 0 {
+            assert_eq!(cache.ring_capacity(layer), 1152);
+            assert_eq!(cache.stride(layer), 8 * 256 * 2);
+        } else {
+            assert_eq!(cache.ring_capacity(layer), 0);
+            assert_eq!(cache.capacity(layer), 4096);
+            assert_eq!(cache.stride(layer), 2 * 512 * 2);
+        }
+        // K and V buffers per layer.
+        total += 2 * cache.buffer_length(layer);
+    }
+    assert_eq!(total, 319_815_680);
+}

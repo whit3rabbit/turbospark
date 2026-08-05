@@ -118,10 +118,52 @@ pub struct RealForwardRunner {
     /// scales, layer scalars. `None` for synthetic short-name installs,
     /// which keep the plain no-scale flow. See `real_forward_gemma4.rs`.
     pub(crate) real: Option<crate::real_forward_gemma4::RealGemmaState>,
+    pub(crate) phases: PhaseCounters,
+    /// Whether the shared-expert branch rides its own command buffer so it
+    /// overlaps the host's expert `pread` (see `real_forward_gemma4.rs`).
+    /// `MFERENCE_SHARED_CB=0` reverts to encoding it after the pread, the
+    /// A/B seam the Swift original keeps as `MFERENCE_ROUTER_EVENT=0`:
+    /// same kernels, same order, identical output, different overlap.
+    pub(crate) shared_cb_overlap: bool,
 }
 
-/// Matches `RuntimeConfig`'s default `expert_cache_slots`.
+/// Cumulative per-phase decode accounting, the port's answer to the Swift
+/// original's `MFERENCE_PHASES=1` breakdown. Every field is summed over
+/// every `produce` call this runner has served, prefill included, so a
+/// caller reporting decode cost should generate enough tokens for decode
+/// to dominate the prompt.
+///
+/// The buckets are disjoint and all lie on the critical path of one token:
+/// `gpu_wait` is time blocked in `wait_until_completed`, `router` is the
+/// logit readback plus host top-k plus slot planning, `expert_io` is the
+/// blocking `pread` of missing expert blobs, and `bind` is the routing
+/// weight upload plus argument-buffer rebind. What `total` minus those
+/// leaves is CPU dispatch encoding plus the final logits readback.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PhaseCounters {
+    pub calls: u64,
+    pub total_nanos: u64,
+    pub gpu_wait_nanos: u64,
+    pub router_nanos: u64,
+    pub expert_io_nanos: u64,
+    pub bind_nanos: u64,
+    /// Expert slots asked for across every layer (`top_k` per layer per
+    /// call) and how many were already resident. The miss rate is what
+    /// `--expert-cache-slots` buys.
+    pub expert_requests: u64,
+    pub expert_hits: u64,
+}
+
+/// Matches `RuntimeConfig`'s default `expert_cache_slots`; callers that
+/// want another allowed value pass it to `open_with_options`.
 const EXPERT_CACHE_SLOTS: usize = 16;
+/// Mirrors the Swift RuntimeConfiguration default `prefillChunkTokens`
+/// (128). Ring capacity per SWA layer is `min(max_context, sliding_window
+/// plus this)`, i.e. 1152 for real Gemma 4 at the 4096 default -- the
+/// same KV sizing as the Swift runner even though this port's prefill is
+/// still token-at-a-time (see `raw_completion.rs`); the chunk headroom is
+/// reserved for the future chunked-prefill port.
+const MAX_PREFILL_CHUNK_TOKENS: usize = 128;
 const PACKED_LAYOUT_MAX_BYTES: u64 = 64 * 1024 * 1024;
 
 /// Activation scratch, allocated once at open (the decode hot path never
@@ -231,6 +273,12 @@ impl RealForwardRunner {
         self.context.buffer_allocation_count()
     }
 
+    /// Cumulative phase timings across every `produce` call so far. See
+    /// [`PhaseCounters`] for what each bucket covers.
+    pub fn phase_counters(&self) -> PhaseCounters {
+        self.phases
+    }
+
     /// [`RealForwardRunner::open`] with an explicit KV capacity: the
     /// per-layer K/V buffers are sized `max_context * kv_stride` up front
     /// (the decode hot path never allocates), so generation past
@@ -241,6 +289,56 @@ impl RealForwardRunner {
         expecting: ArchConfig,
         max_context: usize,
     ) -> Result<Self, RealForwardError> {
+        Self::open_with_options(dir, expecting, max_context, EXPERT_CACHE_SLOTS)
+    }
+
+    /// [`RealForwardRunner::open_with_max_context`] with the per-layer
+    /// streamed-expert slot count too (`--expert-cache-slots`). More slots
+    /// means a higher expert residency rate and fewer blocking `pread`s per
+    /// token, paid for in pinned host memory: one `expert_stride` buffer
+    /// per slot per layer.
+    pub fn open_with_options(
+        dir: &Path,
+        expecting: ArchConfig,
+        max_context: usize,
+        expert_cache_slots: usize,
+    ) -> Result<Self, RealForwardError> {
+        Self::open_inner(dir, expecting, max_context, expert_cache_slots, None)
+    }
+
+    /// [`RealForwardRunner::open_with_options`] with an explicit SWA ring
+    /// capacity override, for tests that need the ring to wrap after a
+    /// handful of tokens instead of `sliding_window + 128`. Not part of
+    /// the supported surface.
+    #[doc(hidden)]
+    pub fn open_with_kv_ring_override(
+        dir: &Path,
+        expecting: ArchConfig,
+        max_context: usize,
+        expert_cache_slots: usize,
+        fp16_ring_capacity_override: Option<usize>,
+    ) -> Result<Self, RealForwardError> {
+        Self::open_inner(
+            dir,
+            expecting,
+            max_context,
+            expert_cache_slots,
+            fp16_ring_capacity_override,
+        )
+    }
+
+    fn open_inner(
+        dir: &Path,
+        expecting: ArchConfig,
+        max_context: usize,
+        expert_cache_slots: usize,
+        fp16_ring_capacity_override: Option<usize>,
+    ) -> Result<Self, RealForwardError> {
+        if expert_cache_slots == 0 {
+            return Err(RealForwardError::Unsupported(
+                "expert_cache_slots must be positive".to_string(),
+            ));
+        }
         // Full attention (1) and sliding-window (0) layers are supported;
         // linear (2, Qwen GDN) and compressed (3/4, DeepSeek DSV4) layers
         // still are not (their compute kernels are unported).
@@ -273,16 +371,20 @@ impl RealForwardRunner {
         let weights = gpu::ResidentGpuWeights::wrap(context.device(), buffer)
             .map_err(RealForwardError::Gpu)?;
 
-        // All-full-attention only (checked above), so no SWA ring is in
-        // play: every layer gets a linear max_context-capacity buffer.
+        // Full layers get a linear max_context-capacity buffer; SWA layers
+        // get the fp16 ring, `min(max_context, sliding_window + 128)` rows
+        // (1152 for real Gemma 4 at 4K), matching the Swift runner's KV
+        // sizing. Writes go through `k_slot`/`v_slot` (mod capacity from
+        // token 0); reads switch to the ring pipeline only once `seq_len`
+        // exceeds the ring (see the dispatch site below).
         let kv = gpu::KvCacheManager::new(
             context.device(),
             &expecting,
             max_context,
-            false,
+            true,
             None,
-            1,
-            None,
+            MAX_PREFILL_CHUNK_TOKENS,
+            fp16_ring_capacity_override,
         )
         .map_err(RealForwardError::Gpu)?;
 
@@ -312,7 +414,7 @@ impl RealForwardRunner {
                 );
                 let streamer = streaming::PreadExpertStreamer::open(
                     stream_layout,
-                    EXPERT_CACHE_SLOTS,
+                    expert_cache_slots,
                     streaming::ExpertCachePolicy::DEFAULT,
                 )
                 .map_err(|e| RealForwardError::Unsupported(format!("expert streamer: {e}")))?;
@@ -331,8 +433,8 @@ impl RealForwardRunner {
         for streamer in &streamers {
             match streamer {
                 Some(s) => {
-                    let mut wrapped = Vec::with_capacity(EXPERT_CACHE_SLOTS);
-                    for slot in 0..EXPERT_CACHE_SLOTS {
+                    let mut wrapped = Vec::with_capacity(expert_cache_slots);
+                    for slot in 0..expert_cache_slots {
                         let (ptr, len) = s.slot_allocation(slot);
                         wrapped.push(
                             gpu::wrap_page_aligned_no_copy(context.device(), ptr, len)
@@ -368,6 +470,8 @@ impl RealForwardRunner {
             moe_offsets,
             routed_blobs,
             real: None,
+            phases: PhaseCounters::default(),
+            shared_cb_overlap: std::env::var("MFERENCE_SHARED_CB").as_deref() != Ok("0"),
         };
         // Real-checkpoint installs keep the source's verbatim tensor
         // naming; their presence selects the learned-weight decode flow.
@@ -799,12 +903,18 @@ impl RealForwardRunner {
             // would write and bind `v_slot` here instead.
             //
             // Sliding-window layers (mask 0) attend only the trailing
-            // `sliding_window` positions of the linear KV layout via
-            // kv_start; full-attention layers (mask 1) start at 0.
-            let kv_start = if self.arch.full_attention_layer_mask[layer] == 0 {
-                seq_len.saturating_sub(self.arch.sliding_window as u32)
+            // `sliding_window` positions via kv_start, and switch to the
+            // ring pipeline once seq_len outgrows the ring (the Swift
+            // activation rule; below capacity the slot mapping is the
+            // identity, so the linear pipeline is byte-identical).
+            let (kv_start, active_ring) = if self.arch.full_attention_layer_mask[layer] == 0 {
+                let ring = self.kv.ring_capacity(layer) as u32;
+                (
+                    seq_len.saturating_sub(self.arch.sliding_window as u32),
+                    if ring > 0 && seq_len > ring { ring } else { 0 },
+                )
             } else {
-                0
+                (0, 0)
             };
             gpu::encode_attention_decode(
                 &mut self.context,
@@ -819,6 +929,7 @@ impl RealForwardRunner {
                 num_kv_heads,
                 seq_len,
                 kv_start,
+                active_ring,
                 attn_scale,
             )
             .map_err(gpu_err)?;

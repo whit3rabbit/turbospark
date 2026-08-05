@@ -969,6 +969,7 @@ dependencies = [
  "mrefrust-runtime",
  "mrefrust-selection",
  "mrefrust-tokenizer",
+ "mrefrust-window-fit",
  "serde_json",
 ]
 

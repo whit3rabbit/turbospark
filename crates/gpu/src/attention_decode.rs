@@ -18,10 +18,13 @@
 //! path (`attention_prefill_causal_tiled`,
 //! `attention_prefill_full_tensorops_2d_validity_v2`); neither is
 //! dispatched here. Multi-chunk split-KV (`num_chunks > 1`, for very long
-//! contexts) and the ring-buffer KV addressing (`FC_ATTN_RING_CAP`) are
-//! also not exercised — this dispatch always uses one chunk over a plain
-//! (non-ring) KV layout, matching how `crates/runtime`'s
-//! `RealForwardRunner` keeps KV history today.
+//! contexts) is not exercised — this dispatch always uses one chunk. The
+//! ring-buffer KV addressing (`FC_ATTN_RING_CAP`) IS wired:
+//! [`encode_attention_decode`] takes a `ring_capacity` (0 = linear layout)
+//! that `crates/runtime`'s `RealForwardRunner` activates for
+//! sliding-window layers once `seq_len` exceeds the ring, matching the
+//! Swift runner's rule (identity slot mapping below capacity, so the
+//! non-ring pipeline stays byte-identical until the first wrap).
 
 use half::f16;
 use metal::{FunctionConstantValues, MTLDataType};
@@ -45,10 +48,15 @@ const THREADS_PER_GROUP: u64 = 256; // kAttnThreads.
 /// instead of the runtime buffer argument — a dummy `0` for
 /// `FC_ATTN_NUM_CHUNKS` previously caused a `% 0` inside the kernel. Both
 /// must be set to this dispatch's real, fixed values: `num_chunks` is
-/// always `1` (see module docs), and `scale` is whatever the caller passes
-/// (its bytes go into the pipeline-cache constants key, so different
-/// scales cache as distinct pipelines).
-fn unused_function_constants(scale: f32) -> FunctionConstantValues {
+/// always `1` (see module docs), `scale` is whatever the caller passes,
+/// and `FC_ATTN_RING_CAP` is the caller's `ring_capacity` (0 = linear
+/// layout; nonzero makes every K/V row read go through
+/// `attn_ring_slot(p) = p % cap`). Both variable constants' bytes go into
+/// the pipeline-cache constants key ([`attention_constants_key`]) so each
+/// (scale, ring) pair caches as a distinct pipeline — omitting the ring
+/// from the key would silently reuse the linear pipeline for ring
+/// dispatches.
+fn attention_function_constants(scale: f32, ring_capacity: u32) -> FunctionConstantValues {
     let values = FunctionConstantValues::new();
     let zero_u32: u32 = 0;
     let one_u32: u32 = 1;
@@ -59,8 +67,19 @@ fn unused_function_constants(scale: f32) -> FunctionConstantValues {
     values.set_constant_value_at_index((&use_fc as *const bool).cast(), MTLDataType::Bool, 63);
     values.set_constant_value_at_index((&scale as *const f32).cast(), MTLDataType::Float, 64);
     values.set_constant_value_at_index((&one_u32 as *const u32).cast(), MTLDataType::UInt, 65);
-    values.set_constant_value_at_index((&zero_u32 as *const u32).cast(), MTLDataType::UInt, 69);
+    values.set_constant_value_at_index(
+        (&ring_capacity as *const u32).cast(),
+        MTLDataType::UInt,
+        69,
+    );
     values
+}
+
+fn attention_constants_key(scale: f32, ring_capacity: u32) -> [u8; 8] {
+    let mut key = [0u8; 8];
+    key[..4].copy_from_slice(&scale.to_le_bytes());
+    key[4..].copy_from_slice(&ring_capacity.to_le_bytes());
+    key
 }
 
 /// `Q: [num_q_heads, head_dim]`, `K`/`V: [seq_len, num_kv_heads, head_dim]`
@@ -124,9 +143,14 @@ impl AttentionScratch {
 /// buffers, output written to `out`, both passes appended to `pass`.
 ///
 /// `kv_start` restricts attention to `[kv_start, seq_len)` — pass
-/// `seq_len - window` (clamped at 0) for a sliding-window layer over a
-/// linear (non-ring) KV layout, `0` for full attention; the kernel's
-/// chunk arithmetic handles both identically.
+/// `seq_len - window` (clamped at 0) for a sliding-window layer, `0` for
+/// full attention; the kernel's chunk arithmetic handles both identically.
+///
+/// `ring_capacity` selects the KV addressing: `0` = linear layout (K/V row
+/// for logical position `p` lives at row `p`); nonzero = ring layout (row
+/// `p % ring_capacity`). The read range stays logical (`[kv_start,
+/// seq_len)`), so callers using the ring must guarantee
+/// `seq_len - kv_start <= ring_capacity` or older rows alias newer ones.
 #[allow(clippy::too_many_arguments)]
 pub fn encode_attention_decode(
     context: &mut MetalContext,
@@ -141,19 +165,29 @@ pub fn encode_attention_decode(
     num_kv_heads: u32,
     seq_len: u32,
     kv_start: u32,
+    ring_capacity: u32,
     scale: f32,
 ) -> Result<(), GpuError> {
     assert_eq!(num_q_heads % num_kv_heads, 0);
     assert!(kv_start < seq_len);
-    let kv_bytes = (seq_len * num_kv_heads * head_dim) as u64 * 2;
+    assert!(
+        ring_capacity == 0 || seq_len - kv_start <= ring_capacity,
+        "attention window larger than ring capacity: rows would alias"
+    );
+    let stored_tokens = if ring_capacity > 0 {
+        ring_capacity
+    } else {
+        seq_len
+    };
+    let kv_bytes = (stored_tokens * num_kv_heads * head_dim) as u64 * 2;
     assert!(k_buffer.length() >= kv_bytes, "K buffer too small");
     assert!(v_buffer.length() >= kv_bytes, "V buffer too small");
 
     let chunk_len = seq_len - kv_start;
     let num_chunks: u32 = 1;
 
-    let constants = unused_function_constants(scale);
-    let constants_key = scale.to_le_bytes();
+    let constants = attention_function_constants(scale, ring_capacity);
+    let constants_key = attention_constants_key(scale, ring_capacity);
     let partial_pipeline = context.pipeline(
         SOURCE,
         "attention_decode_partial",
@@ -238,8 +272,8 @@ pub fn attention_decode_buffers(
     let chunk_len = seq_len;
     let num_chunks: u32 = 1;
 
-    let constants = unused_function_constants(scale);
-    let constants_key = scale.to_le_bytes();
+    let constants = attention_function_constants(scale, 0);
+    let constants_key = attention_constants_key(scale, 0);
     let partial_pipeline = context.pipeline(
         SOURCE,
         "attention_decode_partial",
