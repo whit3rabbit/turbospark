@@ -21,7 +21,11 @@ live network).
   Gotcha 7: `crates/cli`, matching the ROADMAP's own Phase 7 crate list.
 - **Three items formally descoped, by explicit user decision, rather than
   left open indefinitely:** `moe.metal`'s and `prefill.metal`'s GPU tile
-  kernels, and `logit.metal`'s `sample` kernel. See ROADMAP.md's
+  kernels, and `logit.metal`'s `sample` kernel. (`moe.metal`'s descope was
+  later PARTIALLY REVERSED, also by explicit user decision: its decode
+  pair is now vendored, dispatched, and production-wired — see Phase 6/7
+  below; the routers, parallel top-k selectors, and DeepSeek INT2/hash
+  family remain descoped.) See ROADMAP.md's
   Cross-cutting rules for the "what" and the Phase 6 section below for the
   "why" in full. In short: the first two are throughput-only optimizations
   over capabilities that already work correctly through real, parity-tested
@@ -81,9 +85,11 @@ live network).
   streamed-expert install is proven to generate the exact token sequence
   the resident-expert install with identical weights generates
   (`crates/runtime/tests/real_forward.rs`,
-  `streamed_expert_install_matches_resident_expert_install`). The GPU
-  still reads expert weights via the CPU `run_ffn` bridge, not the slot
-  buffers directly — that lands with the Phase B MoE kernels.
+  `streamed_expert_install_matches_resident_expert_install`). On streamed
+  installs the GPU now reads expert weights IN PLACE from the slots'
+  zero-copy Metal buffers via the `moe.metal` decode pair (see Phase 7);
+  only resident-expert MoE (a synthetic-only shape) keeps the CPU
+  `run_ffn` bridge.
 - Page size: RESOLVED — now queried via `sysconf(_SC_PAGESIZE)` (16 KiB
   on Apple Silicon), no longer hardcoded to 4 KiB, and the repack
   resident-index writer 16 KiB-aligns the resident region (matching the
@@ -92,17 +98,23 @@ live network).
 
 ## Phase 6 (GPU)
 
-- **Six kernels, from six of fourteen `.metal` shader files, are vendored
-  and dispatched:** `rmsnorm.metal`'s `rmsnorm_no_scale`, `rope.metal`'s
-  `rope_proportional_neox` (Gemma 4's proportional NeoX RoPE),
-  `utility.metal`'s port-local `logit_softcap_fp16`, `dequant_int4.metal`'s
-  `dequant_int4_gemv_simd`, `dequant_int8.metal`'s
-  `dequant_int8_gemv_simd`, and `attention.metal`'s two-pass split-KV
-  decode attention (`attention_decode_partial` + `attention_decode_combine`,
-  `crates/gpu/src/attention_decode.rs`). Each is parity-tested against the
-  matching `mrefrust_compute` reference on real Metal 4 hardware (an Apple
-  M4 Max in this environment), and the attention dispatch is wired
-  directly into `RealForwardRunner`'s decode loop (see Phase 7), not just
+- **The dispatched kernel set (grown well past the original six):**
+  `rmsnorm.metal`'s `rmsnorm_no_scale`, `rms_norm_bf16w`, and both
+  `_perhead` norm variants; `rope.metal`'s `rope_proportional_neox`
+  (which with `rotated_pairs = head_dim/2` IS default full-head NeoX);
+  `utility.metal`'s port-local `logit_softcap_fp16`, elementwise
+  activation/residual kernels, and port-local `scalar_mul_fp16`;
+  `embed_lookup_int4`; `dequant_int4.metal`'s `dequant_int4_gemv_simd`
+  and `dequant_int8.metal`'s `dequant_int8_gemv_simd` (both with
+  offset-bound resident variants); `router_gemv_gemma4_r4`;
+  `attention.metal`'s two-pass split-KV decode attention
+  (`attention_decode_partial` + `attention_decode_combine`,
+  `crates/gpu/src/attention_decode.rs`, incl. SWA `kv_start` and the
+  `FC_ATTN_RING_CAP` KV ring); and `moe.metal`'s decode pair
+  (`moe_phase1_gate_up_act_u16load` + `moe_phase2_down_reduce_k8`). Each
+  is parity-tested against the matching `mrefrust_compute` reference on
+  real Metal 4 hardware (an Apple M4 Max in this environment) and wired
+  into `RealForwardRunner`'s decode loop (see Phase 7), not just
   parity-tested in isolation. `MetalContext::pipeline` takes
   caller-supplied `FunctionConstantValues` (no longer hardcoded to one
   shader's indices), so each dispatch module owns its own specialization
@@ -118,22 +130,26 @@ live network).
   the parity test, not by inspection, which is the whole point of parity
   tests existing.
 - **Not vendored as GPU kernels, and not going to be (minor sibling
-  variants):** `rmsnorm.metal`'s per-head variants, `rope.metal`'s
-  `rope_default_neox`/`rope_neox_subdim` (the latter has no matching
-  `mrefrust_compute` reference — its frequency divisor is `rotary_dim`,
-  not `head_dim`, unlike anything in `compute::rope`),
+  variants):** `rope.metal`'s
+  `rope_default_neox`/`rope_neox_subdim` (the former is subsumed by
+  `rope_proportional_neox` at `rotated_pairs = head_dim/2`; the latter
+  has no matching `mrefrust_compute` reference — its frequency divisor is
+  `rotary_dim`, not `head_dim`, unlike anything in `compute::rope`),
   `dequant_int4.metal`'s `dequant_int4_qkv_gemv_simd`, `dequant_int8.metal`'s
-  `shared_int8_gate_up_act_simd`, `attention.metal`'s
-  `attention_decode_gqa_swa_partial` (a performance variant, not needed
-  for correctness — `attention_decode_partial` already handles GQA). These
-  are small, optional fused/specialized siblings of kernels already
-  vendored; none blocks anything.
+  `shared_int8_gate_up_act_simd` (the real-checkpoint shared-expert
+  branch runs the same math as three separate INT8 GEMV dispatches),
+  `attention.metal`'s `attention_decode_gqa_swa_partial` (a performance
+  variant, not needed for correctness — `attention_decode_partial`
+  already handles GQA). These are small, optional fused/specialized
+  siblings of kernels already vendored; none blocks anything.
 - **Formally descoped, not vendored, and not planned — a deliberate scope
   decision, not an oversight (see the Cross-cutting section above for the
   authorization trail):** `attention.metal`'s whole MPP prefill path
   (`attention_prefill_causal_tiled`/
-  `attention_prefill_full_tensorops_2d_validity_v2`), all of `moe.metal`
-  (1246 lines: top-k routing, hash routing, DSV4-specific phases), and
+  `attention_prefill_full_tensorops_2d_validity_v2`), `moe.metal`'s
+  non-decode remainder (top-k routing selectors, hash routing,
+  DSV4-specific phases — the decode pair itself IS vendored and
+  production-wired, the partial reversal noted in Cross-cutting), and
   `prefill.metal`'s 16-kernel chunked-prefill tile pipeline (1202 lines:
   embed/norm/rope/attention/router/MoE phases for a whole chunk at once).
   These three are genuinely throughput optimizations over capabilities
@@ -243,9 +259,11 @@ live network).
   indexer buffers (`POSIX_MADV_DONTNEED`, same pattern as
   `KvCacheManager::reset`) and zeroes the small pending/prior buffers, and
   `window_slot`/`window_count`/`window_start_position` port the Swift
-  original's ring position math. None of the three is wired to a real
-  forward pass (`RealForwardRunner` only supports dense, all-full-attention
-  architectures — see Phase 7 below); each is exercised directly against
+  original's ring position math. `KvCacheManager` IS production-wired: it
+  is `RealForwardRunner`'s persistent KV cache (K written in place by the
+  GEMV, SWA ring addressing dispatched). The GDN and DSV4 managers stay
+  unwired (their compute kernels are unported — see below); each of the
+  three is also exercised directly against
   real Metal buffers: `crates/gpu/tests/kv_cache.rs` (9 tests),
   `crates/gpu/tests/gdn_state.rs` (3 tests), and
   `crates/gpu/tests/dsv4_state.rs` (6 tests). What's still missing for
@@ -286,7 +304,8 @@ live network).
   hardware — with real but scope-limited weights, now including MoE.**
   `crates/runtime/src/real_forward.rs` is a real (not scripted)
   `LogitProducer`. Per token, it runs an actual transformer forward pass:
-  embedding lookup (CPU reference, see Phase 6 above), then per layer, a
+  a real GPU `embed_lookup_int4` dispatch (bound as offsets into the
+  resident buffer), then per layer, a
   real GPU `rmsnorm_no_scale` dispatch, real GPU `dequant_int4_gemv_simd`
   dispatches for the Q/K/O projections, real GPU `rope_proportional_neox`
   dispatches on Q and K, real GPU `attention_decode` (the two-pass
@@ -397,13 +416,23 @@ live network).
     and `04-rdadvise.md`). `crates/streaming`'s speculative APIs exist for
     parity and stay uncalled by the runtime on purpose.
     `MFERENCE_PHASES=1` prints where the time goes and is what that
-    should be judged against: GPU wait ~54%, expert `pread` ~36% (still
-    largely exposed), CPU dispatch encoding ~4% (so `fused.metal`, which
-    only cuts dispatch count, has little left to win here), routed bind
-    ~2%, hit-expert phase 1 ~2%, router readback+top-k ~0.5%. (That split
-    is from a longer, less cache-friendly prompt than the ~72/21 one
-    quoted above; the buckets move with the hit rate, so re-measure
-    rather than reusing either.) Resident-expert MoE
+    should be judged against. A representative post-pipeline split
+    (~200-token context, 32 slots, 83.9% hit rate, ~26 tok/s): GPU wait
+    ~59%, expert `pread` ~33% (still largely exposed), CPU dispatch
+    encoding ~4% (so `fused.metal`, which only cuts dispatch count, has
+    little left to win here), hit-expert phase 1 ~2%, routed bind ~1%,
+    routed cb retire ~1%, router readback+top-k ~0.5%. (The buckets move
+    with the hit rate and cache state between runs, so re-measure per
+    prompt rather than reusing a past split.) The same printout carries
+    the per-command-buffer GPU BUSY attribution
+    (`GPUStartTime`/`GPUEndTime`, a separate axis from the wall-clock
+    buckets): on that run, cb1 (attention+router) 8.1 ms/token, routed
+    FFN cb 2.8, final head 1.25, against 18.1 ms/token of wall-clock GPU
+    wait — so ~5 ms/token is scheduling gap across the ~190 command
+    buffers a token commits, and the attention decode path is both the
+    largest GPU consumer and all of the context-length growth (cb1 busy
+    grows ~2.3 ms/token per ~100 tokens of context; routed and final
+    stay flat). Resident-expert MoE
     installs (a synthetic-only shape) still use the CPU
     `run_ffn` bridge (`moe_ffn_host`). The old bridge description: not
     `mrefrust_compute::apply_streamed_routed`'s residual-fused form (that
