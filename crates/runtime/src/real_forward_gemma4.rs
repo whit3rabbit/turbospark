@@ -445,6 +445,15 @@ impl RealForwardRunner {
         )
         .map_err(gpu_err)?;
 
+        // Swift's one-layer-pipelined routed command buffer: a layer's
+        // routed-expert work commits at the END of that layer (so the GPU
+        // starts it during the host's next-layer attention encode) and is
+        // retired after the next layer's router wait, where it has
+        // provably completed (committed earlier on the same queue). Local
+        // on purpose: `CommittedPass` is not Send, and a local guarantees
+        // the pipeline drains within this call. Depth is exactly one.
+        let mut pending_routed: Option<gpu::CommittedPass> = None;
+
         for layer in 0..arch.num_layers as usize {
             let is_full = arch.full_attention_layer_mask[layer] == 1;
             let head_dim_l = if is_full {
@@ -763,6 +772,16 @@ impl RealForwardRunner {
             cb1.wait();
             self.phases.gpu_wait_nanos += t_wait.elapsed().as_nanos() as u64;
 
+            // Retire the previous layer's pipelined routed buffer. It was
+            // committed before `cb1`, so it has already completed and this
+            // wait is ~free; being explicit makes every host buffer write
+            // below safe without completion-order reasoning.
+            if let Some(pending) = pending_routed.take() {
+                let t_retire = Instant::now();
+                pending.wait();
+                self.phases.pipeline_wait_nanos += t_retire.elapsed().as_nanos() as u64;
+            }
+
             // Host: kernel-semantics top-k + expert streaming.
             let t_router = Instant::now();
             let real = self.real.as_ref().expect("real state present");
@@ -1001,6 +1020,23 @@ impl RealForwardRunner {
                 hidden as u32,
             )
             .map_err(gpu_err)?;
+
+            // The one seam branch: commit this layer's routed work as its
+            // own command buffer now (pipelined arm) instead of letting it
+            // roll uncommitted into the next layer's first buffer.
+            if self.routed_pipeline {
+                debug_assert!(pending_routed.is_none(), "routed pipeline depth is 1");
+                pending_routed = Some(pass.commit());
+                pass = self.context.begin_pass();
+            }
+        }
+
+        // Drain the last layer's routed buffer; nothing is left to hide it
+        // behind, so this is the one retire that costs real wait time.
+        if let Some(pending) = pending_routed.take() {
+            let t_retire = Instant::now();
+            pending.wait();
+            self.phases.pipeline_wait_nanos += t_retire.elapsed().as_nanos() as u64;
         }
 
         // Final norm + tied LM head + softcap softmax.

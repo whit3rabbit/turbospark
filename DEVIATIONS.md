@@ -364,7 +364,38 @@ live network).
     so about two thirds of the win is eaten by the extra command buffer
     per layer. The remaining exposed `pread` cannot be hidden this way:
     everything left depends on the bytes being read.
-    Still unported: the one-layer-pipelined routed CB.
+    Swift's one-layer-pipelined routed CB is ported too: a layer's routed
+    phase-1/phase-2/sandwich tail commits as its OWN command buffer at the
+    end of the layer (instead of rolling uncommitted into the next layer's
+    first buffer), so the GPU starts it during the host's next-layer
+    attention encode. It is retired right after the next layer's router
+    wait, where it has provably completed (committed earlier on the same
+    queue), so every later host buffer write (`routing_w` upload, the
+    argument-buffer rebinds, the slot preads) stays race-free without any
+    double buffering; the retire is an explicit timed wait
+    (`pipeline_wait_nanos`, printed as `routed cb retire`) so correctness
+    never rests on completion-order reasoning. Depth is pinned at one, as
+    in Swift. Note what it does NOT buy: the pread cannot overlap the
+    previous layer's routed work in either codebase (the pread needs the
+    router output, which needs the attention that reads the routed tail's
+    residual), so the win is the host encode window, not the I/O.
+    `MFERENCE_ROUTED_PIPELINE=0` is the A/B seam. Measured on the real 26B
+    checkpoint (M4 Max, 32 slots, 5 interleaved pairs, pipeline winning
+    every pair): +0.63 tok/s mean (+2.5%), GPU wait 17.20 -> 16.07
+    ms/token against 0.24 ms/token of retire cost, generated text
+    md5-identical across all ten runs, across the full
+    {ROUTED_PIPELINE, SHARED_CB, HIT_CB} seam grid, and across pipeline
+    states at 16 slots.
+    Expert prefetch/speculation stays deliberately unwired: the Swift
+    original benched every shape to a dead end (cross-layer predictor
+    Jaccard 0.039 with 7% copied-prediction hits, rejected before
+    implementation; the previous-token predictor can never issue a read
+    because per-layer private caches keep last token's experts resident;
+    `MFERENCE_SPEC_PREFETCH=prefetch` measured as a no-op; RDADVISE "no
+    stable production policy", off by default -- see Mference
+    `docs/experiments/summaries/03-expert-cache-prediction-and-layout.md`
+    and `04-rdadvise.md`). `crates/streaming`'s speculative APIs exist for
+    parity and stay uncalled by the runtime on purpose.
     `MFERENCE_PHASES=1` prints where the time goes and is what that
     should be judged against: GPU wait ~54%, expert `pread` ~36% (still
     largely exposed), CPU dispatch encoding ~4% (so `fused.metal`, which

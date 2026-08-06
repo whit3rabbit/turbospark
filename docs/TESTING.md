@@ -94,6 +94,8 @@ but note the first two download many gigabytes.
 | `MREFRUST_GEMMA4_INSTALL_DIR` | `gemma4_checkpoint_network`, `memory_oracle` | Where the real `.gturbo` install lives. The oracle skips (with a note) when unset; the repack test falls back to a temp dir. |
 | `MFERENCE_PHASES=1` | `mference-check` | Prints the per-phase decode breakdown (GPU wait, router readback, expert pread, routed bind, cache hit rate). |
 | `MFERENCE_SHARED_CB=0` | `RealForwardRunner` | Reverts the shared-expert branch to encoding after the expert pread instead of on its own overlapping command buffer. The A/B seam for any throughput claim. |
+| `MFERENCE_HIT_CB=0` | `RealForwardRunner` | Reverts the cache-hit experts' phase-1 GEMV to the main pass instead of its own command buffer dispatched before the pread. |
+| `MFERENCE_ROUTED_PIPELINE=0` | `RealForwardRunner` | Reverts a layer's routed-expert command buffer to rolling uncommitted into the next layer's first buffer instead of committing at the end of the layer (the one-layer pipeline). |
 
 ## Test-writing notes
 

@@ -222,8 +222,12 @@ pub(crate) fn print_phases(session: &Session) {
     let per_call = |nanos: u64| nanos as f64 / 1e6 / p.calls as f64;
     // Everything not in a named bucket: CPU dispatch encoding plus the
     // final full-vocab logits readback.
-    let accounted =
-        p.gpu_wait_nanos + p.router_nanos + p.hit_cb_nanos + p.expert_io_nanos + p.bind_nanos;
+    let accounted = p.gpu_wait_nanos
+        + p.router_nanos
+        + p.hit_cb_nanos
+        + p.expert_io_nanos
+        + p.bind_nanos
+        + p.pipeline_wait_nanos;
     let other = p.total_nanos.saturating_sub(accounted);
     eprintln!(
         "[phases over {} forward passes, {:.0} ms total]",
@@ -236,6 +240,7 @@ pub(crate) fn print_phases(session: &Session) {
         ("hit-expert phase1 cb  ", p.hit_cb_nanos),
         ("expert io (pread)     ", p.expert_io_nanos),
         ("routed bind+upload    ", p.bind_nanos),
+        ("routed cb retire      ", p.pipeline_wait_nanos),
         ("encode + logit readbk ", other),
     ] {
         eprintln!(

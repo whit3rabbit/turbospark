@@ -280,7 +280,18 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     drift apart. It buys less than it looks: it already hides ALL the
     phase-1 work the hits can offer, but that is only ~1.15 ms/token of
     GPU wait against ~0.76 ms/token of extra host bind+commit, ~+1%
-    net.
+    net. `MFERENCE_ROUTED_PIPELINE=0` is the third seam: by default a
+    layer's routed work commits as its own command buffer at the END of
+    the layer (Swift's one-layer-pipelined routed CB) and is retired
+    after the next layer's router wait, where it has provably completed;
+    `=0` reverts to rolling it uncommitted into the next layer's first
+    buffer. Worth ~+2.5% (the GPU starts routed work during the host's
+    next-layer attention encode); it cannot hide the pread, which
+    depends on the router output downstream of the routed tail. Expert
+    prefetch/speculation is deliberately NOT wired up: Swift benched
+    every shape to a dead end (7% cross-layer predictor hits, prefetch a
+    measured no-op, RDADVISE unstable -- see DEVIATIONS.md's MoE entry
+    for the pointers), so do not re-derive it.
     Slot count comes from `open_with_options`
     (`--expert-cache-slots`, allowed 8/16/24/32, default 16, ~3.2 MB of
     pinned host memory per slot per layer on the 26B); it was hardcoded

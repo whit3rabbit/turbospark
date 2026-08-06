@@ -140,6 +140,64 @@ fn hit_expert_command_buffer_does_not_change_output() {
 }
 
 #[test]
+fn routed_pipeline_seam_states_are_identical() {
+    // Every combination of the three overlap seams must be bit-identical
+    // to a fully-serial baseline: same kernels, same commit-relative order
+    // of every host buffer write, only the overlap differs. Output
+    // equality alone is weak teeth on this fixture (near-uniform synthetic
+    // routers, AGENTS.md Gotcha 12), so the pipeline is also asserted
+    // structurally through its phase bucket: the post-loop drain always
+    // accrues wait time when the routed commit is hoisted, and never when
+    // it is not.
+    let dir = temp_dir();
+    let arch = build_contended_install(&dir);
+    let mut baseline = RealForwardRunner::open_with_options(&dir, arch.clone(), 4096, 4)
+        .expect("real-naming install opens");
+    baseline.set_routed_pipeline(false);
+    baseline.set_shared_cb_overlap(false);
+    baseline.set_hit_cb_overlap(false);
+    let expected = decode_probs(&mut baseline, &PROBE_TOKENS);
+    let p = baseline.phase_counters();
+    assert!(
+        p.expert_hits > 0 && p.expert_hits < p.expert_requests,
+        "fixture must mix cache hits and misses: {} hits of {} requests",
+        p.expert_hits,
+        p.expert_requests
+    );
+    assert_eq!(
+        p.pipeline_wait_nanos, 0,
+        "the non-pipelined arm must never retire a pending routed buffer"
+    );
+
+    for combo in 0u8..8 {
+        let (pipeline, shared, hit) = (combo & 1 != 0, combo & 2 != 0, combo & 4 != 0);
+        let mut runner = RealForwardRunner::open_with_options(&dir, arch.clone(), 4096, 4)
+            .expect("real-naming install opens");
+        runner.set_routed_pipeline(pipeline);
+        runner.set_shared_cb_overlap(shared);
+        runner.set_hit_cb_overlap(hit);
+        let probs = decode_probs(&mut runner, &PROBE_TOKENS);
+        assert_eq!(
+            probs, expected,
+            "seam combo (pipeline={pipeline}, shared={shared}, hit={hit}) \
+             must match the serial baseline bit for bit"
+        );
+        let p = runner.phase_counters();
+        if pipeline {
+            assert!(
+                p.pipeline_wait_nanos > 0,
+                "pipelined runner must have drained a pending routed buffer"
+            );
+        } else {
+            assert_eq!(
+                p.pipeline_wait_nanos, 0,
+                "non-pipelined runner must never commit the routed work early"
+            );
+        }
+    }
+}
+
+#[test]
 fn real_naming_install_decodes_deterministically() {
     let dir = temp_dir();
     let mut runner = open_runner(&dir);

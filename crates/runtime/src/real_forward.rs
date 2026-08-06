@@ -137,6 +137,14 @@ pub struct RealForwardRunner {
     /// A/B seam, `MFERENCE_HIT_CB=0`: same kernels, same slot order,
     /// identical output, different overlap.
     pub(crate) hit_cb_overlap: bool,
+    /// Whether a layer's routed-expert command buffer is committed at the
+    /// END of that layer and retired one layer later (after the next
+    /// layer's router wait), Swift's one-layer-pipelined routed CB.
+    /// `MFERENCE_ROUTED_PIPELINE=0` reverts to folding the routed work
+    /// uncommitted into the next layer's first command buffer: same
+    /// kernels, same commit-relative order of every host buffer write,
+    /// identical output, different overlap.
+    pub(crate) routed_pipeline: bool,
 }
 
 /// Cumulative per-phase decode accounting, the port's answer to the Swift
@@ -149,9 +157,13 @@ pub struct RealForwardRunner {
 /// `gpu_wait` is time blocked in `wait_until_completed`, `router` is the
 /// logit readback plus host top-k plus slot planning, `hit_cb` is binding
 /// and encoding the cache-hit phase-1 command buffer, `expert_io` is the
-/// blocking `pread` of missing expert blobs, and `bind` is the routing
-/// weight upload plus argument-buffer rebind. What `total` minus those
-/// leaves is CPU dispatch encoding plus the final logits readback.
+/// blocking `pread` of missing expert blobs, `bind` is the routing
+/// weight upload plus argument-buffer rebind, and `pipeline_wait` is time
+/// blocked retiring the previous layer's pipelined routed command buffer
+/// (expected ~0 per layer: it was committed before the buffer just
+/// waited on, so it has already completed; the post-loop drain of the
+/// LAST layer's routed work is the one real payer). What `total` minus
+/// those leaves is CPU dispatch encoding plus the final logits readback.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PhaseCounters {
     pub calls: u64,
@@ -161,6 +173,7 @@ pub struct PhaseCounters {
     pub hit_cb_nanos: u64,
     pub expert_io_nanos: u64,
     pub bind_nanos: u64,
+    pub pipeline_wait_nanos: u64,
     /// Expert slots asked for across every layer (`top_k` per layer per
     /// call) and how many were already resident. The miss rate is what
     /// `--expert-cache-slots` buys.
@@ -299,6 +312,19 @@ impl RealForwardRunner {
     #[doc(hidden)]
     pub fn set_hit_cb_overlap(&mut self, on: bool) {
         self.hit_cb_overlap = on;
+    }
+
+    /// Sibling of [`Self::set_hit_cb_overlap`] for `MFERENCE_SHARED_CB`.
+    #[doc(hidden)]
+    pub fn set_shared_cb_overlap(&mut self, on: bool) {
+        self.shared_cb_overlap = on;
+    }
+
+    /// Sibling of [`Self::set_hit_cb_overlap`] for
+    /// `MFERENCE_ROUTED_PIPELINE`.
+    #[doc(hidden)]
+    pub fn set_routed_pipeline(&mut self, on: bool) {
+        self.routed_pipeline = on;
     }
 
     /// [`RealForwardRunner::open`] with an explicit KV capacity: the
@@ -498,6 +524,7 @@ impl RealForwardRunner {
             phases: PhaseCounters::default(),
             shared_cb_overlap: std::env::var("MFERENCE_SHARED_CB").as_deref() != Ok("0"),
             hit_cb_overlap: std::env::var("MFERENCE_HIT_CB").as_deref() != Ok("0"),
+            routed_pipeline: std::env::var("MFERENCE_ROUTED_PIPELINE").as_deref() != Ok("0"),
         };
         // Real-checkpoint installs keep the source's verbatim tensor
         // naming; their presence selects the learned-weight decode flow.
