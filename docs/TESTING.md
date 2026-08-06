@@ -8,7 +8,7 @@ What the suite covers, how it is gated, and how to run each part.
 cargo test --workspace
 ```
 
-316 tests as of 2026-08-05, all passing, plus 3 that are `#[ignore]`d (see
+326 tests as of 2026-08-06, all passing, plus 4 that are `#[ignore]`d (see
 below). On macOS this includes every Metal test, which needs a real
 Metal-capable device and Xcode's `metal` toolchain
 (`xcrun -sdk macosx metal`). On Linux `crates/gpu` compiles to nothing and
@@ -69,7 +69,7 @@ idiom (real implementation plus a stub that exits 2).
 
 ### Ignored (expensive or needs external data)
 
-Three tests, each with a reason string and a module doc giving the exact
+Four tests, each with a reason string and a module doc giving the exact
 command:
 
 ```sh
@@ -82,10 +82,22 @@ cargo test -p mrefrust-repack --test hf_checkpoint_network --release -- --ignore
 # The memory oracle (see docs/BENCHMARKING.md).
 MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
   cargo test -p mrefrust-bench --test memory_oracle --release -- --ignored --nocapture
+
+# Split-KV chunk-count sweep on the decode attention kernel. Needs no
+# model install: it is the kernel alone at the real Gemma 4 shapes, and
+# it reports speedup ratios rather than absolute times so it stays
+# readable on a throttled machine. Takes seconds.
+cargo test -p mrefrust-gpu --test attention_chunk_bench --release -- --ignored --nocapture
 ```
 
 Run all ignored tests at once with `cargo test --workspace -- --ignored`,
 but note the first two download many gigabytes.
+
+A performance measurement is `#[ignore]`d rather than left out because it
+is the evidence behind a constant in `src/` (`MAX_CHUNKS`), and a constant
+whose justification cannot be re-run is a constant nobody will ever dare
+change. It asserts correctness (every chunk count computes the same
+attention) so it cannot rot silently; only the timings are advisory.
 
 ### Environment variables
 

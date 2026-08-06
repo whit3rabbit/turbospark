@@ -135,7 +135,7 @@ most specific row first (so `Apple M4 Max` must precede any future bare
 | Chip | Source peak footprint | Ceiling used | Source decode | Floor used | Source |
 | --- | --- | --- | --- | --- | --- |
 | Apple M5 Pro (24 GB) | 2,126-2,142 MiB | 2,250 MiB | 31.01-35.17 tok/s | 31.0 | Swift docs |
-| Apple M4 Max (36 GB) | 2,120-2,197 MiB | 2,300 MiB | 11.60-20.40 tok/s | 10.0 | THIS PORT |
+| Apple M4 Max (36 GB) | 2,120-2,197 MiB | 2,300 MiB | 19.98-23.52 tok/s | 15.0 | THIS PORT |
 | Apple M2 (8 GB) | 1,776-1,971 MiB | 2,070 MiB | 5.10-6.30 tok/s | 5.1 | Swift docs |
 | Anything else | - | 2,250 MiB | - | reported, not asserted | - |
 
@@ -150,10 +150,14 @@ ever happens; a real parity number would very likely be tighter.
 Its ceiling (2,300 MiB) lands ABOVE the generic 2,250 default rather than
 below it, because the measured peak spread on that machine is 77 MiB of
 expert-slot warming and a 2,250 ceiling would flake on the spread alone.
-Its floor sits about 14 percent under the slowest measured case, covering
-the ~1.5 tok/s run-to-run spread this port shows (wider than the ~1
-percent Swift reports, so a Swift-style verbatim-minimum floor would be
-too tight here).
+Its floor sits about 25 percent under the slowest measured case, covering
+the run-to-run spread this port shows (wider than the ~1 percent Swift
+reports, so a Swift-style verbatim-minimum floor would be too tight here).
+The floor was 10.0 until 2026-08-06, when wiring split-KV took the slowest
+case from 11.6 to about 20 tok/s and left the old floor unable to catch
+losing the whole change. A floor set generously below a number that later
+doubles stops being a gate; re-check it whenever a change moves the
+slowest case.
 
 Swift-sourced ceilings are the documented peak plus about 5 percent. That
 is Swift's own cross-run variance (its repeat table spans 1,388-1,464 MiB
@@ -175,19 +179,29 @@ everywhere would be 922,746,880 bytes. This runs in the normal suite, so a
 regression in KV sizing fails in milliseconds instead of waiting on a
 multi-minute oracle run.
 
-## Current measured state (2026-08-05)
+## Current measured state (2026-08-06)
 
-Apple M4 Max 36 GB, real `gemma4.gturbo` install, three clean oracle runs
-at merge a772b67. All cases stop `endOfTurn`; the oracle passes.
+Apple M4 Max 36 GB, real `gemma4.gturbo` install. All cases stop
+`endOfTurn`; the oracle passes. The `after` columns are two runs taken
+once split-KV was wired (`chunks_for` in
+`crates/gpu/src/attention_decode.rs`); the `before` columns are the three
+runs at merge a772b67 that the baseline row was originally derived from.
 
-| case | prompt tok | tok/s (runs 1 / 2 / 3) |
-| --- | ---: | ---: |
-| short-explanation | 61 | 20.35 / 20.27 / 20.40 |
-| medium-review | 430 | 15.97 / 15.77 / 15.78 |
-| long-synthesis | 3,015 | 11.71 / 11.60 / 11.62 |
+| case | prompt tok | before (3 runs) | after (2 runs) |
+| --- | ---: | ---: | ---: |
+| short-explanation | 61 | 20.35 / 20.27 / 20.40 | 22.73 / 23.52 |
+| medium-review | 430 | 15.97 / 15.77 / 15.78 | 21.13 / 19.98 |
+| long-synthesis | 3,015 | 11.71 / 11.60 / 11.62 | 20.71 / 21.48 |
 
-Peak footprint 2,120 / 2,197 / 2,197 MiB, around the band Swift publishes
-for the M5 Pro (2,126-2,142 MiB) despite this being a different chip.
+The gain scales with context because attention was the only per-token cost
+growing with it, and at one chunk the decode attention kernel ran on
+`num_q_heads` (16) threadgroups regardless of how much KV it had to read.
+See `DEVIATIONS.md`'s split-KV entry.
+
+Peak footprint 2,120 / 2,197 / 2,197 MiB before and 2,126 / 2,125 after,
+around the band Swift publishes for the M5 Pro (2,126-2,142 MiB) despite
+this being a different chip. Split-KV costs 512 KiB of extra attention
+scratch, which is inside the measurement noise.
 
 Two problems this document previously tracked as open are closed, and
 neither was what the numbers suggested:

@@ -80,19 +80,30 @@ const BASELINES: &[ChipBaseline] = &[
     //   medium-review      15.972 / 15.773 / 15.783 tok/s
     //   long-synthesis     11.710 / 11.601 / 11.623 tok/s
     //
+    // Two more after split-KV was wired (2026-08-06, on battery):
+    //   peak footprint     2,126 / 2,125 MiB
+    //   short-explanation  22.726 / 23.524 tok/s
+    //   medium-review      21.126 / 19.978 tok/s
+    //   long-synthesis     20.712 / 21.477 tok/s
+    //
     // The 77 MiB peak spread is expert-slot warming, which depends on
     // which experts the sampled route actually touches, so the ceiling is
     // the high end + ~5% and lands ABOVE the generic 2,250 default rather
     // than below it. That is the honest number for this machine; a 2,250
-    // ceiling here would flake on the spread alone. The floor sits ~14%
-    // under the slowest observed case, covering the ~1.5 tok/s run-to-run
-    // spread CLAUDE.local.md documents. Those three runs agree to within
-    // 0.15 tok/s, but they went back to back on a warm machine, which is
-    // not the condition the floor has to survive.
+    // ceiling here would flake on the spread alone. Split-KV did not move
+    // the peak, as expected: it adds 512 KiB of attention scratch.
+    //
+    // The floor was 10.0 when the slowest case ran at 11.6. Split-KV took
+    // that case to ~21, which left the old floor unable to catch losing
+    // the entire change -- a regression to 11.6 would still have passed.
+    // 15.0 sits ~25% under the slowest post-change case, which is wider
+    // than any run-to-run spread observed here (the worst pair differs by
+    // 1.1 tok/s) and still fails loudly if the split is lost. Raise this
+    // again if another change moves the slowest case up.
     ChipBaseline {
         brand_substr: "Apple M4 Max",
         footprint_ceiling_mib: 2300,
-        tok_s_floor: 10.0,
+        tok_s_floor: 15.0,
         source: "this port, measured locally -- NOT a Swift baseline",
     },
     // M2 8GB: peak footprint 1,776-1,971 MiB, decode 5.10-6.30 tok/s.

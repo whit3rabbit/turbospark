@@ -142,23 +142,10 @@ live network).
   variant, not needed for correctness — `attention_decode_partial`
   already handles GQA). These are small, optional fused/specialized
   siblings of kernels already vendored; none blocks anything.
-  `attention_decode_gqa_swa_partial` and multi-chunk split-KV
-  (`num_chunks > 1`) stay unwired after being **built, measured and
-  reverted** on 2026-08-05; do not re-derive. Both were wired exactly as
-  Swift ships them (16-way split, KV-head-indexed grid for `q_per_kv <=
-  2`, `num_chunks` specialized into the pipeline-cache key) and measured
-  on a warm M4 Max against the real 26B install in interleaved A/B pairs:
-  cb1 GPU busy was UNCHANGED at every context reached — 5.20/5.36 vs
-  5.12/5.34 ms/token at ~220 context, 5.98/6.00 vs 5.92/5.98 at ~700,
-  6.87/6.88 vs 6.87/6.85 at ~2300. Swift's 3.3-4.1x (its KV-01/KV-02) is
-  a real isolated-kernel number that does not reach end to end here,
-  because the two attention dispatches are a low-single-digit share of
-  cb1's 25; a 16x wider grid and halved sliding-window K/V traffic both
-  moved nothing, which points at a memory-bound kernel whose GQA reuse
-  the SLC already absorbs. Rewiring is a ~100-line change to
-  `crates/gpu/src/attention_decode.rs` if a future model or narrower
-  memory system changes that arithmetic — the kernels are already
-  vendored and the parity tests already cover the wide-GQA path.
+  `attention_decode_gqa_swa_partial` remains unwired. Multi-chunk
+  split-KV (`num_chunks > 1`) is now **wired and on by default** — see
+  the split-KV entry below for the numbers and for why an earlier session
+  concluded the opposite.
 - **Formally descoped, not vendored, and not planned — a deliberate scope
   decision, not an oversight (see the Cross-cutting section above for the
   authorization trail):** `attention.metal`'s whole MPP prefill path
@@ -218,6 +205,59 @@ live network).
   (learned norm weights) and its per-head siblings are dispatched,
   parity-tested, and fed by the real-checkpoint tensor mapping (see the
   real Gemma 4 pipeline entry below).
+- **Split-KV (`num_chunks > 1`) IS wired, and it is the single largest
+  decode win this port has landed.** `attention_decode_partial`
+  dispatches `num_q_heads * num_chunks` threadgroups. Gemma 4 26B has 16
+  Q heads, so at one chunk a decode attention occupied 16 threadgroups on
+  a 40-core M4 Max, each walking its whole KV range serially with two
+  threadgroup-wide reductions per position. `chunks_for` in
+  `crates/gpu/src/attention_decode.rs` now splits the range up to 16 ways
+  (at least 16 positions per chunk, so short ranges stay at one chunk and
+  therefore bit-identical to the unsplit path).
+
+  Measured on the real 26B install, greedy, 32 expert slots, warm, short
+  prompt (so the phase divisor is decode, per Gotcha 21):
+
+  | forward passes | cb1 before | cb1 after | tok/s before | tok/s after |
+  | --- | --- | --- | --- | --- |
+  | 220 | 8.11 ms/token | 5.66 | 25.3 | 28.6 |
+  | 620 | 13.09 | 5.71 | 22.3 | 28.6 |
+  | ~810 | 15.63 | 5.98 | 20.9 | 27.8 |
+
+  The memory oracle's three protocol cases, against the baseline rows
+  recorded at merge a772b67, all still stopping `endOfTurn`:
+
+  | case | before | after |
+  | --- | --- | --- |
+  | short-explanation | 20.27-20.40 tok/s | 22.73 |
+  | medium-review | 15.77-15.97 | 21.13 |
+  | long-synthesis | 11.60-11.71 | 20.71 |
+
+  Peak footprint is unchanged (2,126 MiB against a 2,300 MiB ceiling,
+  inside the run-to-run band), and the replayed warm case still grows
+  +0.03 MiB, so this buys throughput without buying memory.
+
+  cb1 goes from growing linearly in context to essentially flat. The
+  isolated kernel bench (`crates/gpu/tests/attention_chunk_bench.rs`,
+  `#[ignore]`d) measures 6x at 256 KV positions rising to 12-16x at 4096,
+  across both the SWA and full-attention shapes, with 16 chunks at or
+  near optimal everywhere and 32 already regressing.
+
+  **An earlier session (2026-08-05) wired this, measured "no change", and
+  reverted it.** That conclusion was wrong, and the reason is worth
+  keeping: `MFERENCE_PHASES=1` divides every counter by ALL forward
+  passes, prefill included. Its "~2300 context" row was a 2252-token
+  prompt with `--max-new 150`, so 96% of the divisor was prefill calls
+  running at short context, which flattened exactly the signal the A/B
+  was looking for. Read any phase number as an average over the whole
+  run's context range, not as a number at the final context.
+
+  Because chunking reassociates the online-softmax partial sums, decode
+  output is NOT bit-identical to the unsplit path at contexts past
+  `16 * 16` positions. The parity tests
+  (`split_kv_linear_layout_matches_cpu_window_reference` and its ring
+  sibling in `crates/gpu/tests/attention_swa.rs`) hold it to the CPU
+  reference instead.
 - **`logit.metal`'s `sample` kernel: formally descoped, not ported.**
   Unlike every other kernel this port has vendored, `sample` has no CPU
   reference in `mrefrust_compute` to verify a port against — it is a

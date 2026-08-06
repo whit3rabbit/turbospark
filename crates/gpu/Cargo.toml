@@ -24,4 +24,7 @@ libc = "0.2"
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 half = "2"
+# Already a dependency above; repeated here so tests that build their own
+# FunctionConstantValues (the split-KV chunk bench) can name the types.
+metal = "0.33"
 mrefrust-repack = { path = "../repack" }

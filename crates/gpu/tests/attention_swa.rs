@@ -138,3 +138,18 @@ fn swa_ring_layout_matches_cpu_window_reference() {
 fn wide_gqa_ratio_ring_layout_matches_cpu_window_reference() {
     assert_windowed_attention_matches_cpu(8, 2, 32, 40, 20, 24);
 }
+
+/// The cases above all have windows short enough that `chunks_for` keeps
+/// the dispatch at one chunk. These two clear `MAX_CHUNKS *
+/// MIN_POSITIONS_PER_CHUNK` positions, so they run the split-KV path:
+/// 16 chunks across the window, the partials merged by the combine pass.
+/// Without them nothing in the suite would dispatch more than one chunk.
+#[test]
+fn split_kv_linear_layout_matches_cpu_window_reference() {
+    assert_windowed_attention_matches_cpu(4, 2, 32, 400, 400, 0);
+}
+
+#[test]
+fn split_kv_ring_layout_matches_cpu_window_reference() {
+    assert_windowed_attention_matches_cpu(8, 2, 32, 400, 300, 512);
+}
