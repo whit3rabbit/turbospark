@@ -769,7 +769,7 @@ impl RealForwardRunner {
             }
 
             let t_wait = Instant::now();
-            cb1.wait();
+            self.phases.cb1_gpu_nanos += (cb1.wait_with_gpu_time() * 1e9) as u64;
             self.phases.gpu_wait_nanos += t_wait.elapsed().as_nanos() as u64;
 
             // Retire the previous layer's pipelined routed buffer. It was
@@ -778,7 +778,7 @@ impl RealForwardRunner {
             // below safe without completion-order reasoning.
             if let Some(pending) = pending_routed.take() {
                 let t_retire = Instant::now();
-                pending.wait();
+                self.phases.routed_cb_gpu_nanos += (pending.wait_with_gpu_time() * 1e9) as u64;
                 self.phases.pipeline_wait_nanos += t_retire.elapsed().as_nanos() as u64;
             }
 
@@ -1035,7 +1035,7 @@ impl RealForwardRunner {
         // behind, so this is the one retire that costs real wait time.
         if let Some(pending) = pending_routed.take() {
             let t_retire = Instant::now();
-            pending.wait();
+            self.phases.routed_cb_gpu_nanos += (pending.wait_with_gpu_time() * 1e9) as u64;
             self.phases.pipeline_wait_nanos += t_retire.elapsed().as_nanos() as u64;
         }
 
@@ -1083,7 +1083,7 @@ impl RealForwardRunner {
             .map_err(gpu_err)?;
         }
         let t_wait = Instant::now();
-        pass.commit_and_wait();
+        self.phases.final_cb_gpu_nanos += (pass.commit_and_wait_with_gpu_time() * 1e9) as u64;
         self.phases.gpu_wait_nanos += t_wait.elapsed().as_nanos() as u64;
         self.kv.advance();
 

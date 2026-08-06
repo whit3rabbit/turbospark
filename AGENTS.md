@@ -262,7 +262,10 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     the IT model needs its `<|turn>` markup, which `--messages-file` and
     `--chat` now render for you). `RealForwardRunner::phase_counters`
     accumulates per-phase decode timings (GPU wait, router readback,
-    expert `pread`, routed bind) plus expert-cache hit counts; run
+    expert `pread`, routed bind) plus expert-cache hit counts and
+    per-command-buffer GPU busy attribution (`GPUStartTime`/`GPUEndTime`,
+    a separate axis from the wall-clock buckets: cb1 = attention+router,
+    routed cb, final head; shared/hit buffers stay unattributed); run
     `mference-check` with `MFERENCE_PHASES=1` to print the breakdown.
     The shared-expert branch rides its own command buffer, committed
     before the router wait so it overlaps the host's expert `pread`

@@ -174,6 +174,18 @@ pub struct PhaseCounters {
     pub expert_io_nanos: u64,
     pub bind_nanos: u64,
     pub pipeline_wait_nanos: u64,
+    /// GPU-side busy time (`GPUEndTime - GPUStartTime`) per command-buffer
+    /// class: a SEPARATE axis from the wall-clock buckets above, never part
+    /// of their sum (a wall-clock wait on one buffer pays for everything
+    /// queued before it; these attribute the GPU's own time). `cb1` is the
+    /// per-layer attention+router buffer (in the non-pipelined arm it also
+    /// carries the previous layer's routed tail), `routed_cb` is the
+    /// pipelined routed buffer (zero when `MFERENCE_ROUTED_PIPELINE=0`),
+    /// `final_cb` is the end-of-token norm+head buffer. The shared-expert
+    /// and hit-phase-1 buffers are dropped unwaited and stay unattributed.
+    pub cb1_gpu_nanos: u64,
+    pub routed_cb_gpu_nanos: u64,
+    pub final_cb_gpu_nanos: u64,
     /// Expert slots asked for across every layer (`top_k` per layer per
     /// call) and how many were already resident. The miss rate is what
     /// `--expert-cache-slots` buys.

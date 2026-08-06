@@ -331,6 +331,12 @@ impl PassEncoder {
         self.command_buffer.wait_until_completed();
     }
 
+    /// [`Self::commit_and_wait`] that also reports the buffer's GPU-side
+    /// busy interval in seconds. See [`CommittedPass::wait_with_gpu_time`].
+    pub fn commit_and_wait_with_gpu_time(self) -> f64 {
+        self.commit().wait_with_gpu_time()
+    }
+
     /// Ends encoding and commits without waiting, handing back something
     /// the caller can wait on later. Buffers committed to one queue execute
     /// in commit order, so a caller can queue follow-on GPU work and then
@@ -357,6 +363,30 @@ impl CommittedPass {
     /// still be running.
     pub fn wait(self) {
         self.command_buffer.wait_until_completed();
+    }
+
+    /// [`Self::wait`] that also reports the buffer's GPU-side busy
+    /// interval (`GPUEndTime - GPUStartTime`) in seconds, the per-buffer
+    /// attribution the wall-clock wait cannot give (a wait on a buffer
+    /// queued behind others pays for all of them). The accessors are only
+    /// valid after completion, hence wait-then-read; metal-rs 0.33 does
+    /// not bind them, hence the raw `msg_send`. Returns 0.0 if the device
+    /// reports nothing.
+    // The allow is for objc's `sel_impl!`, whose expansion carries a
+    // `cfg(feature = "cargo-clippy")` this crate does not declare.
+    #[allow(unexpected_cfgs)]
+    pub fn wait_with_gpu_time(self) -> f64 {
+        use metal::objc::{msg_send, sel, sel_impl};
+        self.command_buffer.wait_until_completed();
+        // SAFETY: `GPUStartTime`/`GPUEndTime` are documented
+        // `CFTimeInterval` (f64) accessors on `MTLCommandBuffer`, called
+        // on a live, completed buffer.
+        #[allow(unsafe_code)]
+        let (start, end): (f64, f64) = unsafe {
+            let cb: &metal::CommandBufferRef = &self.command_buffer;
+            (msg_send![cb, GPUStartTime], msg_send![cb, GPUEndTime])
+        };
+        (end - start).max(0.0)
     }
 }
 

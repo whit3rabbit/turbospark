@@ -250,6 +250,22 @@ pub(crate) fn print_phases(session: &Session) {
             per_call(nanos)
         );
     }
+    // GPU-side busy time per command-buffer class: a separate axis from
+    // the wall-clock buckets above (never part of their sum). Shared and
+    // hit buffers are dropped unwaited and stay unattributed.
+    if p.cb1_gpu_nanos > 0 {
+        eprintln!(
+            "  gpu busy: cb1 (attn+router{}) {:.2} ms/token, routed cb {:.2}, final {:.2}",
+            if p.routed_cb_gpu_nanos > 0 {
+                ""
+            } else {
+                "+routed"
+            },
+            per_call(p.cb1_gpu_nanos),
+            per_call(p.routed_cb_gpu_nanos),
+            per_call(p.final_cb_gpu_nanos)
+        );
+    }
     if p.expert_requests > 0 {
         eprintln!(
             "  expert cache: {} requests, {} hits ({:.1}%), {} misses",
