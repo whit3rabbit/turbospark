@@ -135,7 +135,7 @@ most specific row first (so `Apple M4 Max` must precede any future bare
 | Chip | Source peak footprint | Ceiling used | Source decode | Floor used | Source |
 | --- | --- | --- | --- | --- | --- |
 | Apple M5 Pro (24 GB) | 2,126-2,142 MiB | 2,250 MiB | 31.01-35.17 tok/s | 31.0 | Swift docs |
-| Apple M4 Max (36 GB) | 2,120-2,197 MiB | 2,300 MiB | 19.98-23.52 tok/s | 15.0 | THIS PORT |
+| Apple M4 Max (36 GB) | 2,100-2,197 MiB | 2,300 MiB | 23.07-25.06 tok/s | 15.0 | THIS PORT |
 | Apple M2 (8 GB) | 1,776-1,971 MiB | 2,070 MiB | 5.10-6.30 tok/s | 5.1 | Swift docs |
 | Anything else | - | 2,250 MiB | - | reported, not asserted | - |
 
@@ -187,11 +187,16 @@ once split-KV was wired (`chunks_for` in
 `crates/gpu/src/attention_decode.rs`); the `before` columns are the three
 runs at merge a772b67 that the baseline row was originally derived from.
 
-| case | prompt tok | before (3 runs) | after (2 runs) |
-| --- | ---: | ---: | ---: |
-| short-explanation | 61 | 20.35 / 20.27 / 20.40 | 22.73 / 23.52 |
-| medium-review | 430 | 15.97 / 15.77 / 15.78 | 21.13 / 19.98 |
-| long-synthesis | 3,015 | 11.71 / 11.60 / 11.62 | 20.71 / 21.48 |
+| case | prompt tok | before (3 runs) | + split-KV (2 runs) | + read pool (1 run) |
+| --- | ---: | ---: | ---: | ---: |
+| short-explanation | 61 | 20.35 / 20.27 / 20.40 | 22.73 / 23.52 | 25.06 |
+| medium-review | 430 | 15.97 / 15.77 / 15.78 | 21.13 / 19.98 | 23.69 |
+| long-synthesis | 3,015 | 11.71 / 11.60 / 11.62 | 20.71 / 21.48 | 23.07 |
+
+The last column adds the expert-read chunking and persistent read pool
+(`crates/streaming/src/read_pool.rs`): the routed-expert `pread` is a
+page-cache memcpy, and reading one miss on one thread left roughly half
+the achievable bandwidth unused. See `DEVIATIONS.md`'s MoE entry.
 
 The gain scales with context because attention was the only per-token cost
 growing with it, and at one chunk the decode attention kernel ran on

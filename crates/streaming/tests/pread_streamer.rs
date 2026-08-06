@@ -94,3 +94,59 @@ fn advise_experts_reports_one_coalesced_call_for_adjacent_experts() {
     assert_eq!(result.requested, 2);
     assert_eq!(result.calls, 1);
 }
+
+/// A stride large enough that one expert's blob splits into several
+/// parallel read chunks, which the 64-byte fixtures above never do.
+///
+/// The blob is a byte pattern with period 251 (coprime with any power of
+/// two, so it cannot align with a chunk boundary): a chunk read at the
+/// wrong offset, dropped, or written to the wrong place shows up as a
+/// mismatched byte rather than an accidentally-identical one. Two misses
+/// are requested at once so both the multi-chunk and multi-slot
+/// disjointness paths run together.
+#[test]
+fn multi_chunk_reads_reassemble_each_blob_exactly() {
+    const BIG_STRIDE: u64 = 3 * 1024 * 1024;
+    const EXPERTS: usize = 3;
+
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!(
+        "mrefrust-streaming-big-{}-{unique}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("layer_00.bin");
+
+    let blob = |e: usize| -> Vec<u8> {
+        (0..BIG_STRIDE as usize)
+            .map(|i| ((i % 251) as u8).wrapping_add(e as u8 * 7))
+            .collect()
+    };
+    let mut file = std::fs::File::create(&path).unwrap();
+    for e in 0..EXPERTS {
+        file.write_all(&blob(e)).unwrap();
+    }
+    drop(file);
+
+    let layout = StreamLayout {
+        path: path.display().to_string(),
+        stream_offset: 0,
+        stream_size: BIG_STRIDE * EXPERTS as u64,
+        experts_per_layer: EXPERTS,
+        expert_stride: BIG_STRIDE,
+        expert_offsets: None,
+    };
+    let mut streamer = PreadExpertStreamer::open(layout, EXPERTS, ExpertCachePolicy::Lfu).unwrap();
+
+    let slots = streamer.load_experts_cached(&[2, 0]).unwrap();
+    assert_eq!(streamer.slot_data(slots[0]), blob(2).as_slice());
+    assert_eq!(streamer.slot_data(slots[1]), blob(0).as_slice());
+
+    // Single miss: the case that used to run fully single-threaded, and
+    // the one the chunk split exists for.
+    let solo = streamer.load_experts_cached(&[1]).unwrap();
+    assert_eq!(streamer.slot_data(solo[0]), blob(1).as_slice());
+
+    std::fs::remove_dir_all(&dir).ok();
+}

@@ -4,9 +4,14 @@
 //! page-rounded allocation per slot, made once at open and reused forever
 //! (the decode hot path never allocates), so a GPU backend can wrap each
 //! slot zero-copy with `newBufferWithBytesNoCopy` (the `MTLBuffer`
-//! wrapping itself stays in the `gpu` crate). Cache-plan misses are read
-//! in parallel, one thread per miss into its own disjoint slot — the
-//! `DispatchQueue.concurrentPerform` equivalent.
+//! wrapping itself stays in the `gpu` crate).
+//!
+//! Cache-plan misses are read in parallel. The Swift original's shape was
+//! `DispatchQueue.concurrentPerform` over the misses, one task per miss;
+//! this port splits each miss into chunks and runs them on the shared
+//! `read_pool`, because one thread per miss collapses to a single-threaded
+//! copy on the common warm-cache layer that misses exactly once. See
+//! [`PreadExpertStreamer::execute_expert_cache_plan`] for the measurement.
 
 use std::collections::HashSet;
 use std::fs::File;
@@ -19,11 +24,23 @@ use crate::expert_cache::{
     ExpertIoAdviceResult,
 };
 use crate::rdadvice;
+use crate::read_pool::{self, ReadChunk};
 use crate::stream_layout::StreamLayout;
 
 /// The Swift original's `scratchAlignment`: slot bases are 2 MiB-aligned
 /// (comfortably page-aligned on any page size), sized up to whole pages.
 const SLOT_ALIGNMENT: usize = 2 * 1024 * 1024;
+
+/// Bytes of one expert's blob read per parallel chunk. At the real Gemma 4
+/// stride (3,358,720 B) this is a 4-way split of a single miss, which is
+/// where the bandwidth curve flattened when measured: the 8-slot runs that
+/// happened to average ~5 concurrent reads hit 44.8 GiB/s, and 4 ways gets
+/// a lone miss into that range without spawning threads that would sit on
+/// a saturated memory system.
+const MISS_READ_CHUNK_BYTES: usize = 840 * 1024;
+
+/// Upper bound on chunks per miss, used only to size the chunk vector.
+const MISS_READ_SPLIT: usize = 4;
 
 /// One expert slot's backing memory: page-aligned, page-rounded, allocated
 /// once. Exposes its base pointer so a GPU backend can wrap it no-copy.
@@ -224,85 +241,77 @@ impl PreadExpertStreamer {
 
     /// Loads every miss in `plan` (layer 0, matching the Swift original's
     /// cache which is scoped to one layer at a time) and commits the plan.
-    /// Misses are read in parallel — one thread per miss, each writing its
-    /// own disjoint slot, matching the Swift original's
-    /// `DispatchQueue.concurrentPerform` shape. Returns the assigned slot
-    /// for each requested expert, in request order.
+    /// Returns the assigned slot for each requested expert, in request
+    /// order.
+    ///
+    /// Misses are read in parallel, but the unit of parallelism is a
+    /// CHUNK of one expert's blob, not a whole expert. The Swift original
+    /// (and this port until 2026-08-06) ran one thread per miss, which
+    /// silently degrades to a single-threaded copy whenever a layer has
+    /// only one miss -- the common case once the cache is warm. On the
+    /// real 26B install at 32 slots the average is 1.3 misses per layer,
+    /// and the measured read rate was 23.8 GiB/s against 44.8 GiB/s on the
+    /// same machine and code path when 8-slot runs forced ~5 misses per
+    /// layer. Splitting each miss decouples thread count from miss count,
+    /// so a lone miss gets the same width as a busy layer.
+    ///
+    /// Note what this is really optimizing: with the install's expert
+    /// files in page cache, `pread` here is a memcpy, not disk I/O
+    /// (125 MiB per token in 5.26 ms is far past any SSD). On a cold or
+    /// memory-tight machine this path is disk-bound instead and the
+    /// chunking buys much less.
     pub fn execute_expert_cache_plan(
         &mut self,
         plan: &ExpertCachePlan,
     ) -> Result<Vec<usize>, StreamerError> {
-        if plan.misses.len() <= 1 {
-            for &index in &plan.misses {
-                self.load_expert_into_slot(0, plan.experts[index], plan.assigned_slots[index])?;
-            }
-        } else {
-            // Distinct-slot guarantee backs the disjoint parallel writes.
-            let mut seen = HashSet::new();
-            for &index in &plan.misses {
-                assert!(
-                    seen.insert(plan.assigned_slots[index]),
-                    "cache plan assigned one slot to two misses"
-                );
-            }
+        if plan.misses.is_empty() {
+            self.cache.commit_plan(plan);
+            return Ok(plan.assigned_slots.clone());
+        }
 
-            struct MissRead {
-                expert: usize,
-                slot: usize,
+        // Distinct-slot guarantee backs the disjoint parallel writes.
+        let mut seen = HashSet::new();
+        for &index in &plan.misses {
+            assert!(
+                seen.insert(plan.assigned_slots[index]),
+                "cache plan assigned one slot to two misses"
+            );
+        }
+        for &index in &plan.misses {
+            let slot = plan.assigned_slots[index];
+            if slot >= self.slot_count {
+                return Err(StreamerError::SlotOutOfRange { slot });
             }
-            let reads: Vec<MissRead> = plan
-                .misses
-                .iter()
-                .map(|&index| MissRead {
-                    expert: plan.experts[index],
-                    slot: plan.assigned_slots[index],
-                })
-                .collect();
-            for read in &reads {
-                if read.slot >= self.slot_count {
-                    return Err(StreamerError::SlotOutOfRange { slot: read.slot });
-                }
-                let region_offset = self.layout.expert_offset(0, read.expert);
-                if region_offset + self.layout.expert_stride > self.layout.stream_size {
-                    return Err(StreamerError::OffsetOutOfRange {
-                        offset: region_offset,
-                    });
-                }
-            }
-
-            let file = &self.file;
-            let layout = &self.layout;
-            let stride = layout.expert_stride as usize;
-            let slots = &self.slots;
-            let first_error = std::sync::Mutex::new(None::<StreamerError>);
-            std::thread::scope(|scope| {
-                for read in &reads {
-                    let first_error = &first_error;
-                    scope.spawn(move || {
-                        let region_offset = layout.expert_offset(0, read.expert);
-                        let file_offset = layout.stream_offset + region_offset;
-                        let slot = &slots[read.slot];
-                        // SAFETY: each spawned read owns a distinct slot
-                        // (asserted above), so these mutable views never
-                        // alias; the underlying allocations outlive the
-                        // scope (owned by self).
-                        #[allow(unsafe_code)]
-                        let dest = unsafe {
-                            std::slice::from_raw_parts_mut(slot.as_ptr() as *mut u8, stride)
-                        };
-                        if let Err(e) = read_full(file, dest, file_offset) {
-                            let mut guard = first_error.lock().unwrap();
-                            if guard.is_none() {
-                                *guard = Some(e);
-                            }
-                        }
-                    });
-                }
-            });
-            if let Some(e) = first_error.into_inner().unwrap() {
-                return Err(e);
+            let region_offset = self.layout.expert_offset(0, plan.experts[index]);
+            if region_offset + self.layout.expert_stride > self.layout.stream_size {
+                return Err(StreamerError::OffsetOutOfRange {
+                    offset: region_offset,
+                });
             }
         }
+
+        let stride = self.layout.expert_stride as usize;
+        let mut chunks: Vec<ReadChunk> = Vec::with_capacity(plan.misses.len() * MISS_READ_SPLIT);
+        for &index in &plan.misses {
+            let file_offset =
+                self.layout.stream_offset + self.layout.expert_offset(0, plan.experts[index]);
+            let base = self.slots[plan.assigned_slots[index]].as_ptr() as *mut u8;
+            let mut start = 0usize;
+            while start < stride {
+                let len = MISS_READ_CHUNK_BYTES.min(stride - start);
+                chunks.push(ReadChunk {
+                    // SAFETY: `start` stays below `stride`, which is
+                    // within the slot's page-rounded allocation.
+                    #[allow(unsafe_code)]
+                    dest: unsafe { base.add(start) },
+                    len,
+                    file_offset: file_offset + start as u64,
+                });
+                start += len;
+            }
+        }
+
+        read_pool::run_batch(&self.file, &chunks)?;
         self.cache.commit_plan(plan);
         Ok(plan.assigned_slots.clone())
     }
@@ -398,7 +407,11 @@ impl PreadExpertStreamer {
     }
 }
 
-fn read_full(file: &File, destination: &mut [u8], file_offset: u64) -> Result<(), StreamerError> {
+pub(crate) fn read_full(
+    file: &File,
+    destination: &mut [u8],
+    file_offset: u64,
+) -> Result<(), StreamerError> {
     let mut filled = 0usize;
     while filled < destination.len() {
         let got = file

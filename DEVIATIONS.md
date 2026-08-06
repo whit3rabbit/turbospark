@@ -394,7 +394,10 @@ live network).
     differ from this port's softmax-over-all-then-renormalize; a
     documented deviation until the kernel selector is adopted
     wholesale); the selected experts are `pread` in parallel into the
-    streamer's aligned slots; then a second command buffer runs the
+    streamer's aligned slots (parallel per CHUNK of an expert blob, on
+    the persistent `streaming::read_pool`, rather than Swift's one task
+    per miss -- see the split-KV-adjacent measurement below); then a
+    second command buffer runs the
     vendored `moe.metal` decode kernels
     (`moe_phase1_gate_up_act_u16load` + `moe_phase2_down_reduce_k8`,
     parity-tested in `crates/gpu/tests/moe_decode.rs`) reading the
@@ -472,6 +475,24 @@ live network).
     `docs/experiments/summaries/03-expert-cache-prediction-and-layout.md`
     and `04-rdadvise.md`). `crates/streaming`'s speculative APIs exist for
     parity and stay uncalled by the runtime on purpose.
+
+    What IS possible, and landed on 2026-08-06, is making the exposed
+    read SHORTER rather than hiding it. With the install's expert files
+    in page cache the `pread` is a memcpy, not disk I/O (125 MiB per
+    token in 5.26 ms, far past any SSD), so it is a bandwidth problem.
+    Swift's one-task-per-miss shape collapses to a SINGLE-THREADED copy
+    on the common warm-cache layer that misses exactly once (1.3 misses
+    per layer at 32 slots), which measured 23.8 GiB/s against the 44.8
+    GiB/s the same code reached when 8-slot runs forced ~5 concurrent
+    misses. Splitting each miss into chunks took the bucket to 4.16
+    ms/token, and moving those chunks onto a persistent pool
+    (`streaming::read_pool`, needed because chunking multiplies the
+    threads a layer wants and there are 30 layers per token) to 3.86 --
+    27% off, measured in interleaved pairs as -1.93 ms/token. End to end
+    that is ~8% off prefill (48-50s to 44-46s on a 2252-token prompt)
+    and +6.5% decode (paired deltas +1.52/+2.55/+1.21 tok/s). Output
+    stays md5-identical: the same bytes arrive, by a different route.
+
     `MFERENCE_PHASES=1` prints where the time goes and is what that
     should be judged against. A representative post-pipeline split
     (~200-token context, 32 slots, 83.9% hit rate, ~26 tok/s): GPU wait

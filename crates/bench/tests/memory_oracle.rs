@@ -93,13 +93,23 @@ const BASELINES: &[ChipBaseline] = &[
     // ceiling here would flake on the spread alone. Split-KV did not move
     // the peak, as expected: it adds 512 KiB of attention scratch.
     //
+    // One more after the expert-read chunking and read pool, same day:
+    //   peak footprint     2,100 MiB
+    //   short-explanation  25.060 tok/s
+    //   medium-review      23.694 tok/s
+    //   long-synthesis     23.068 tok/s
+    //
     // The floor was 10.0 when the slowest case ran at 11.6. Split-KV took
     // that case to ~21, which left the old floor unable to catch losing
     // the entire change -- a regression to 11.6 would still have passed.
-    // 15.0 sits ~25% under the slowest post-change case, which is wider
+    // 15.0 sits ~25% under the slowest case at the time, which is wider
     // than any run-to-run spread observed here (the worst pair differs by
-    // 1.1 tok/s) and still fails loudly if the split is lost. Raise this
-    // again if another change moves the slowest case up.
+    // 1.1 tok/s) and still fails loudly if the split is lost.
+    //
+    // The read-pool run above would justify roughly 18.0, but it is a
+    // SINGLE run and the 15.0 raise was made on two. Leaving it until a
+    // second run confirms, on the rule that a floor should never be set
+    // from one sample.
     ChipBaseline {
         brand_substr: "Apple M4 Max",
         footprint_ceiling_mib: 2300,

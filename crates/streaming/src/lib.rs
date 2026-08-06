@@ -10,6 +10,7 @@ mod error;
 mod expert_cache;
 mod pread_streamer;
 mod rdadvice;
+mod read_pool;
 mod stream_layout;
 
 pub use error::StreamerError;
