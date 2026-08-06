@@ -18,12 +18,14 @@ garbage, you will not know which of five layers to look at.
 
 Before touching code, answer these from the checkpoint's `config.json` and
 the reference implementation. Every answer becomes a field in `ArchConfig`
-or a reason to stop.
+(`crates/model-io/src/arch_config.rs`; family baselines in
+`crates/model-io/src/arch_baselines.rs`) or a reason to stop.
 
 - [ ] **Layer kinds.** Which layers are full attention, sliding-window,
       linear (GDN), compressed (MLA/DSV4)? This becomes
       `full_attention_layer_mask` (1 / 0 / 2 / 3-4). If any kind's kernels
-      are unported, `RealForwardRunner::open` must reject the install with
+      are unported, `RealForwardRunner::open`
+      (`crates/runtime/src/real_forward.rs`) must reject the install with
       a clear error, not produce wrong numbers.
 - [ ] **Per-layer shape divergence.** Gemma 4 uses `head_dim` 256 on SWA
       layers and `full_head_dim` 512 on full ones, with different KV head
@@ -35,8 +37,9 @@ or a reason to stop.
       not from the formula you remember.
 - [ ] **Normalization inventory.** Learned vs no-scale, per-head vs
       per-tensor, pre- vs post- vs sandwich. Write the layer flow out as
-      pseudocode before implementing it; `real_forward_gemma4.rs`'s module
-      header is the format to copy.
+      pseudocode before implementing it;
+      `crates/runtime/src/real_forward_gemma4.rs`'s module header is the
+      format to copy.
 - [ ] **Output head.** Tied embeddings? Logit softcap? What does the
       reference's `forward()` RETURN - raw logits, capped logits, or
       probabilities? (See Phase 4; this is the single highest-risk line.)
@@ -45,7 +48,9 @@ or a reason to stop.
       top-k vs softmax over all then renormalize - these differ and both
       exist in the wild).
 - [ ] **Chat template and EOS set.** From `chat_template.jinja` and
-      `generation_config.json`. `eos_token_id` is often a LIST.
+      `generation_config.json`. `eos_token_id` is often a LIST. Dialect
+      resolution and the stop set live in `crates/tokenizer`
+      (`MfTokenizer`, `StopMatcher`).
 
 Gate: you can describe one decoder layer as ten lines of pseudocode without
 looking anything up.
@@ -54,19 +59,22 @@ looking anything up.
 
 ## Phase 1 - Repack, and prove the repack alone
 
-- [ ] Map every checkpoint tensor name to a resident-index entry. Keep the
-      source's verbatim naming if the runner selects its decode flow by
-      naming (`real_forward.rs` vs `real_forward_gemma4.rs` do exactly
-      this).
+- [ ] Map every checkpoint tensor name to a resident-index entry (the
+      Gemma 4 mapping to copy: `crates/repack/src/gemma4_checkpoint.rs`).
+      Keep the source's verbatim naming if the runner selects its decode
+      flow by naming (`crates/runtime/src/real_forward.rs` vs
+      `crates/runtime/src/real_forward_gemma4.rs` do exactly this).
 - [ ] Write the manifest's `arch` object with every shape field explicit.
       Optional family-extension fields fall back to the family baseline in
-      `model_io::arch_baselines`, so anything that differs from the
-      baseline MUST be written out.
+      `crates/model-io/src/arch_baselines.rs`, so anything that differs
+      from the baseline MUST be written out.
 - [ ] Add a synthetic install builder next to
-      `build_synthetic_gemma4_real_install`: deterministic untrained
+      `build_synthetic_gemma4_real_install`
+      (`crates/repack/src/synthetic_real.rs`): deterministic untrained
       weights, the real naming, the real quantization tags, small enough to
       run in CI. This is what every later test drives.
-- [ ] Extend `repack::manifest_peek::peek_arch` if the family needs new
+- [ ] Extend `peek_manifest_arch` (`crates/repack/src/manifest_peek.rs`)
+      if the family needs new
       fields. Resolve arch in ONE place so the CLI, the bench harness, and
       the tests cannot drift apart on a fallback default.
 
@@ -77,7 +85,8 @@ opens through `RealForwardRunner::open` without touching decode.
 
 ## Phase 2 - Kernels, each parity-tested in isolation
 
-- [ ] For each new kernel, vendor the MSL and write a CPU reference in
+- [ ] For each new kernel, vendor the MSL under `crates/gpu/src/shaders/`
+      and write a CPU reference in
       `crates/compute` if one does not exist. A kernel with no reference is
       a kernel you cannot verify; `logit.metal`'s `sample` was descoped for
       exactly this reason.
@@ -85,12 +94,15 @@ opens through `RealForwardRunner::open` without touching decode.
       real hardware. Cover the saturating / wrapping / edge inputs, not
       just the middle of the range.
 - [ ] Port-local kernels (no Swift original) are allowed - `scalar_mul_fp16`
-      and `logit_softcap_fp16` are two - but the shader comment must say
+      and `logit_softcap_fp16` (both in `crates/gpu/src/shaders/utility.metal`)
+      are two - but the shader comment must say
       so and say why the fused upstream form does not fit.
-- [ ] **Function constants are part of the pipeline cache key.** If you
+- [ ] **Function constants are part of the pipeline cache key**
+      (`MetalContext::pipeline`, `crates/gpu/src/context.rs`). If you
       specialize a value into a pipeline, its bytes must go into
       `constants_key`, or the first dispatch's specialization gets reused
-      for every later one. `encode_attention_decode` keys on both `scale`
+      for every later one. `encode_attention_decode`
+      (`crates/gpu/src/attention_decode.rs`) keys on both `scale`
       and `ring_capacity`.
 - [ ] Watch for constants the shader checks UNCONDITIONALLY (no
       `is_function_constant_defined` gate). Specializing those with a dummy
@@ -105,19 +117,24 @@ Gate: `cargo test -p mrefrust-gpu` passes on the Metal device.
 - [ ] Implement the layer loop against the Phase 0 pseudocode. Keep the
       pseudocode in the module header and keep it accurate.
 - [ ] Size the KV cache from the layer mask. **Enable the SWA ring**
-      (`KvCacheManager::new`'s `fp16_ring_enabled`) whenever the mask has
+      (`KvCacheManager::new`'s `fp16_ring_enabled`,
+      `crates/gpu/src/kv_cache.rs`) whenever the mask has
       sliding-window layers, size them
-      `min(max_context, sliding_window + prefill_chunk)`, and pass
+      `min(max_context, sliding_window + prefill_chunk)` (the chunk
+      headroom constant is `MAX_PREFILL_CHUNK_TOKENS` in
+      `crates/runtime/src/real_forward.rs`), and pass
       `ring_capacity(layer)` into `encode_attention_decode`. A comment
       claiming "all-full-attention, no ring needed" is how 600 MiB of KV
       got allocated for nothing; derive the flag from the mask, not from
       prose. The capacity must also reach the pipeline-cache constants
       key, or ring dispatches reuse the linear pipeline.
-- [ ] Wrap the per-token entry point in `gpu::autorelease_pool`. Not
+- [ ] Wrap the per-token entry point in `gpu::autorelease_pool`
+      (`crates/gpu/src/context.rs`). Not
       optional - see Gotcha 17.
 - [ ] Preallocate all activation scratch at open. Assert the hot path
       allocates no Metal buffers (`gpu_buffer_allocations()` flat across
-      tokens); copy the existing test.
+      tokens); copy `decode_hot_path_allocates_no_gpu_buffers` in
+      `crates/runtime/tests/real_forward_gemma4.rs`.
 
 Gate: greedy generation on the real checkpoint, with the chat template
 applied, produces coherent text for 400 tokens. If it does not, the bug is
@@ -131,12 +148,16 @@ This phase gets its own section because it is where a model that looks
 perfect under greedy decoding is quietly broken.
 
 - [ ] **`produce` writes logits. The sampler softmaxes. Once.**
-      `selection::select` normalizes whatever it receives. A head that also
+      `selection::select` (`crates/selection/src/choose.rs`) normalizes
+      whatever it receives. A head that also
       normalizes yields `softmax(softmax(z))`, which over a large vocab is
       nearly uniform - and because softmax is monotone, ranking survives,
       so greedy output is *byte-identical to correct*. Only sampling
       exposes it, as fluent text that derails into word salad after a few
       dozen tokens, with stray unused/foreign tokens sprinkled early.
+      Guards to copy: the softcap-bound assertion in
+      `crates/runtime/tests/real_forward_gemma4.rs` and the
+      does-not-normalize assertion in `crates/gpu/tests/utility_and_pass.rs`.
 - [ ] Apply the logit softcap in the head if the family has one (that is
       what HF's `*ForCausalLM.forward` returns), and stop there. If you
       need a fused cap+softmax kernel for a GPU sampler later, add it then.
@@ -162,10 +183,16 @@ already looks perfect - especially then.
       not from a measurement.
 - [ ] The resident weight mapping COUNTS in `phys_footprint`. A plain
       read-only `mmap` would not, but `newBufferWithBytesNoCopy` pins it.
-- [ ] Run `crates/bench/tests/memory_oracle.rs` against the install. It
-      asserts two things:
-      - peak <= accounting, with no slack (catches an allocation the
-        design does not describe);
+- [ ] Run `crates/bench/tests/memory_oracle.rs` against the install
+      (`#[ignore]`d, gated on `MREFRUST_GEMMA4_INSTALL_DIR`; the mach
+      sampler is `crates/bench/src/memory.rs`). What it asserts, per its
+      per-chip baseline rows (each labelled with a `source`: a published
+      Swift number or this port's own past measurement):
+      - session peak `phys_footprint` <= the row's ceiling (~5% headroom
+        already baked into Swift-derived rows). Add a row for the new
+        model/chip and sanity-check it against your written accounting;
+      - every protocol case stops `endOfTurn`;
+      - decode tok/s >= the row's floor, where a row exists;
       - replaying one already-warm case stops growing (catches anything
         that accumulates per token, which the ceiling would hide under
         unused expert slot capacity until it exceeded ~500 MiB).
@@ -205,4 +232,5 @@ reference implementation's published number for the same workload.
 | Memory grows linearly with tokens | Missing autorelease pool (Gotcha 17) |
 | Memory 3-4x the reference at open | SWA layers sized at `max_context` |
 | Output changed after a kernel tweak | Function constant missing from the pipeline cache key |
-| "No output" from `mference-check` | `--messages-file` is not wired; use `--prompt` |
+| Babble on an instruction-tuned model with `--prompt` | Not a decode bug: `--prompt` does no templating; use `--messages-file` or `--chat` |
+| Throughput moved after a decode change | `MFERENCE_PHASES=1` buckets + GPU busy line, interleaved A/B pairs (`AGENTS.md` Gotcha 12); run-to-run spread is wider than most single effects |
