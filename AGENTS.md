@@ -401,6 +401,25 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     peak against the published Swift ceiling, and separately that a
     replayed warm case stops growing (Gotcha 17).
 
+20. **The FIRST timed run after a build is a cold GPU, and it is not a
+    baseline.** `MFERENCE_PHASES=1`'s `gpu busy` buckets come from
+    `GPUStartTime`/`GPUEndTime`, so they look like pure device time and
+    invite being trusted as-is. They are not clock-invariant: the first
+    run on an idle GPU executes at low DVFS clocks. Measured on the real
+    26B install, identical settings, same prompt: cb1 read 7.98 ms/token
+    cold and 5.20 ms/token on every warm run after it. That is a 53%
+    error, far larger than any single change this port has landed, and it
+    silently inflates whatever you measure first -- which, in an A/B, is
+    usually the baseline. Always discard at least one warmup run, then
+    interleave the variants pair by pair (the existing rule for tok/s in
+    CLAUDE.local.md; it applies to the GPU-busy buckets too, for a
+    different reason). A corollary for reading old notes: a phase number
+    with no warmup discipline recorded against it may be a thermal
+    artifact, so re-measure before building on it. This is exactly how
+    the 2026-08-05 attention work targeted the wrong kernel -- see
+    DEVIATIONS.md's split-KV entry for the full measurement and why the
+    attention decode kernels were reverted rather than kept.
+
 ## Layout
 
 Workspace directory structure and crate layout:

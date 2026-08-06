@@ -142,6 +142,23 @@ live network).
   variant, not needed for correctness — `attention_decode_partial`
   already handles GQA). These are small, optional fused/specialized
   siblings of kernels already vendored; none blocks anything.
+  `attention_decode_gqa_swa_partial` and multi-chunk split-KV
+  (`num_chunks > 1`) stay unwired after being **built, measured and
+  reverted** on 2026-08-05; do not re-derive. Both were wired exactly as
+  Swift ships them (16-way split, KV-head-indexed grid for `q_per_kv <=
+  2`, `num_chunks` specialized into the pipeline-cache key) and measured
+  on a warm M4 Max against the real 26B install in interleaved A/B pairs:
+  cb1 GPU busy was UNCHANGED at every context reached — 5.20/5.36 vs
+  5.12/5.34 ms/token at ~220 context, 5.98/6.00 vs 5.92/5.98 at ~700,
+  6.87/6.88 vs 6.87/6.85 at ~2300. Swift's 3.3-4.1x (its KV-01/KV-02) is
+  a real isolated-kernel number that does not reach end to end here,
+  because the two attention dispatches are a low-single-digit share of
+  cb1's 25; a 16x wider grid and halved sliding-window K/V traffic both
+  moved nothing, which points at a memory-bound kernel whose GQA reuse
+  the SLC already absorbs. Rewiring is a ~100-line change to
+  `crates/gpu/src/attention_decode.rs` if a future model or narrower
+  memory system changes that arithmetic — the kernels are already
+  vendored and the parity tests already cover the wide-GQA path.
 - **Formally descoped, not vendored, and not planned — a deliberate scope
   decision, not an oversight (see the Cross-cutting section above for the
   authorization trail):** `attention.metal`'s whole MPP prefill path
