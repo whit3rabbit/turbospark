@@ -147,6 +147,17 @@ pub struct RealForwardRunner {
     pub(crate) routed_pipeline: bool,
 }
 
+/// The per-dispatch ranking inside each command buffer, or `None` unless
+/// `MFERENCE_DISPATCH_PROFILE=1`. One level below [`PhaseCounters`]'s
+/// per-buffer GPU busy numbers; `calls` is the forward-pass count those
+/// counters cover, so every row reads per token. Re-exported here so
+/// callers that already hold a runner do not need their own `gpu`
+/// dependency. Read `gpu::dispatch_profile`'s module doc first: profiling
+/// serializes the decode it measures.
+pub fn dispatch_profile_report(calls: u64) -> Option<String> {
+    gpu::dispatch_profile_report(calls)
+}
+
 /// Cumulative per-phase decode accounting, the port's answer to the Swift
 /// original's `MFERENCE_PHASES=1` breakdown. Every field is summed over
 /// every `produce` call this runner has served, prefill included, so a

@@ -275,6 +275,13 @@ pub(crate) fn print_phases(session: &Session) {
             p.expert_requests - p.expert_hits
         );
     }
+    // One level below the buffer buckets above: which dispatch inside a
+    // buffer owns its time. Off unless MFERENCE_DISPATCH_PROFILE=1, which
+    // perturbs the run it measures -- read the module doc before quoting
+    // a number from it.
+    if let Some(report) = runtime::dispatch_profile_report(p.calls) {
+        eprint!("{report}");
+    }
 }
 
 /// The Swift original's one-line run summary, on stderr, silenced by

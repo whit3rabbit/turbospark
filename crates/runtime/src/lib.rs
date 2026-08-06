@@ -20,7 +20,9 @@ pub use raw_completion::{
     run_raw_completion, run_raw_completion_chunked, RawDecodeProgress, RawDecodeResult, StopReason,
 };
 #[cfg(target_os = "macos")]
-pub use real_forward::{PhaseCounters, RealForwardError, RealForwardRunner};
+pub use real_forward::{
+    dispatch_profile_report, PhaseCounters, RealForwardError, RealForwardRunner,
+};
 
 // Token id width consumed from the core primitives, keeping the dependency
 // edge live and documenting the interchange type this crate uses throughout.

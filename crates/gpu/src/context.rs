@@ -4,12 +4,15 @@
 //! Mference itself builds its pipelines, and compute pipeline states are
 //! cached by function name so a kernel used every decode step compiles once.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 
 use metal::{
     CommandQueue, ComputePipelineState, Device, FunctionConstantValues, Library,
     MTLResourceOptions, MTLSize,
 };
+
+use crate::dispatch_profile::{self, PassProfile};
 
 #[derive(Debug)]
 pub enum GpuError {
@@ -199,6 +202,7 @@ impl MetalContext {
             .device
             .new_compute_pipeline_state_with_function(&function)
             .map_err(GpuError::PipelineCreate)?;
+        dispatch_profile::register_pipeline(&pipeline, function_name);
         self.pipelines
             .entry(key)
             .or_default()
@@ -231,11 +235,24 @@ impl MetalContext {
     /// order within the encoder guarantees each dispatch sees the previous
     /// one's writes.
     pub fn begin_pass(&self) -> PassEncoder {
+        self.begin_pass_labeled("pass")
+    }
+
+    /// [`Self::begin_pass`] with a name for this command buffer's role in
+    /// the decode step (`cb1`, `routed`, ...). The label goes onto the
+    /// `MTLCommandBuffer` (so a GPU capture or Instruments trace shows it
+    /// instead of an anonymous buffer) and groups the rows of
+    /// `MFERENCE_DISPATCH_PROFILE=1`'s per-dispatch report.
+    pub fn begin_pass_labeled(&self, label: &'static str) -> PassEncoder {
         let command_buffer = self.queue.new_command_buffer().to_owned();
+        command_buffer.set_label(label);
         let encoder = command_buffer.new_compute_command_encoder().to_owned();
         PassEncoder {
             command_buffer,
-            encoder,
+            encoder: RefCell::new(encoder),
+            profile: dispatch_profile::enabled()
+                .then(|| PassProfile::new(&self.device, label).map(RefCell::new))
+                .flatten(),
         }
     }
 
@@ -264,10 +281,38 @@ impl MetalContext {
 /// [`PassEncoder::commit`]).
 pub struct PassEncoder {
     command_buffer: metal::CommandBuffer,
-    encoder: metal::ComputeCommandEncoder,
+    /// Rebound per dispatch under `MFERENCE_DISPATCH_PROFILE=1` (this
+    /// device can only sample counters at encoder boundaries), hence the
+    /// cell; exactly one encoder for the whole pass otherwise.
+    encoder: RefCell<metal::ComputeCommandEncoder>,
+    profile: Option<RefCell<PassProfile>>,
 }
 
 impl PassEncoder {
+    /// Renames this command buffer mid-pass, for the case where one
+    /// buffer's role changes partway (the final head rides whatever
+    /// buffer the last layer left open). Affects labelling only.
+    pub fn relabel(&self, label: &'static str) {
+        self.command_buffer.set_label(label);
+        if let Some(profile) = &self.profile {
+            profile.borrow_mut().relabel(label);
+        }
+    }
+
+    /// Under profiling, closes the running encoder and opens a fresh
+    /// timestamped one for the dispatch about to be encoded. A no-op
+    /// otherwise, which is the production path.
+    fn begin_dispatch(&self, pipeline: &ComputePipelineState) {
+        let Some(profile) = &self.profile else {
+            return;
+        };
+        profile.borrow_mut().begin_dispatch(
+            &self.command_buffer,
+            &mut self.encoder.borrow_mut(),
+            pipeline,
+        );
+    }
+
     /// Appends one `dispatchThreadgroups` call. Buffer bindings are
     /// `(buffer, argument index, byte offset)`.
     pub fn encode_threadgroups(
@@ -278,15 +323,16 @@ impl PassEncoder {
         threadgroups: u64,
         threads_per_group: u64,
     ) {
-        self.encoder.set_compute_pipeline_state(pipeline);
+        self.begin_dispatch(pipeline);
+        let encoder = self.encoder.borrow();
+        encoder.set_compute_pipeline_state(pipeline);
         for &(buffer, index, offset) in buffers {
-            self.encoder.set_buffer(index, Some(buffer), offset);
+            encoder.set_buffer(index, Some(buffer), offset);
         }
         for &(data, index) in bytes {
-            self.encoder
-                .set_bytes(index, data.len() as u64, data.as_ptr().cast());
+            encoder.set_bytes(index, data.len() as u64, data.as_ptr().cast());
         }
-        self.encoder.dispatch_thread_groups(
+        encoder.dispatch_thread_groups(
             MTLSize::new(threadgroups, 1, 1),
             MTLSize::new(threads_per_group, 1, 1),
         );
@@ -301,15 +347,16 @@ impl PassEncoder {
         grid: (u64, u64, u64),
         threadgroup: (u64, u64, u64),
     ) {
-        self.encoder.set_compute_pipeline_state(pipeline);
+        self.begin_dispatch(pipeline);
+        let encoder = self.encoder.borrow();
+        encoder.set_compute_pipeline_state(pipeline);
         for &(buffer, index, offset) in buffers {
-            self.encoder.set_buffer(index, Some(buffer), offset);
+            encoder.set_buffer(index, Some(buffer), offset);
         }
         for &(data, index) in bytes {
-            self.encoder
-                .set_bytes(index, data.len() as u64, data.as_ptr().cast());
+            encoder.set_bytes(index, data.len() as u64, data.as_ptr().cast());
         }
-        self.encoder.dispatch_threads(
+        encoder.dispatch_threads(
             MTLSize::new(grid.0, grid.1, grid.2),
             MTLSize::new(threadgroup.0, threadgroup.1, threadgroup.2),
         );
@@ -320,15 +367,19 @@ impl PassEncoder {
     /// `useResource(_:usage:.read)`, required for the MoE expert blobs.
     pub fn use_read_buffer(&self, buffer: &metal::Buffer) {
         self.encoder
+            .borrow()
             .use_resource(buffer, metal::MTLResourceUsage::Read);
+        // Resource state is per encoder, and profiling opens one per
+        // dispatch, so it has to re-declare this on each of them.
+        if let Some(profile) = &self.profile {
+            profile.borrow_mut().note_used_read(buffer);
+        }
     }
 
     /// Ends encoding, commits, and blocks until the GPU finishes. Shared-
     /// storage outputs are CPU-readable after this returns.
     pub fn commit_and_wait(self) {
-        self.encoder.end_encoding();
-        self.command_buffer.commit();
-        self.command_buffer.wait_until_completed();
+        self.commit().wait();
     }
 
     /// [`Self::commit_and_wait`] that also reports the buffer's GPU-side
@@ -343,8 +394,17 @@ impl PassEncoder {
     /// wait on an earlier buffer to be woken as soon as *its* results are
     /// ready, with the later work still running.
     pub fn commit(self) -> CommittedPass {
-        self.encoder.end_encoding();
+        self.encoder.borrow().end_encoding();
         self.command_buffer.commit();
+        // Timestamps can only be resolved once the buffer has completed,
+        // and a pass may be committed and never waited on (the shared and
+        // hit-expert buffers are), so profiling waits here rather than
+        // losing those dispatches. This is the serialization the module
+        // doc warns about: profiled runs are not throughput runs.
+        if let Some(profile) = self.profile {
+            self.command_buffer.wait_until_completed();
+            profile.into_inner().resolve();
+        }
         CommittedPass {
             command_buffer: self.command_buffer,
         }

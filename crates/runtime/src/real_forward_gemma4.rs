@@ -296,7 +296,7 @@ impl RealForwardRunner {
         use_silu: bool,
     ) -> Result<(), RealForwardError> {
         let gpu_err = RealForwardError::Gpu;
-        let shared_pass = self.context.begin_pass();
+        let shared_pass = self.context.begin_pass_labeled("shared-expert cb");
         // Shared INT8 branch on dense_x -> h1, then post_ffn_1.
         let real = self.real.as_ref().expect("real state present");
         for (name, rows, cols, x_buf, y_buf) in [
@@ -431,7 +431,7 @@ impl RealForwardRunner {
         let embed_scales = self.weights.gpu_offset(embed.scale_offset - base);
         let embed_biases = self.weights.gpu_offset(embed.bias_offset - base);
 
-        let mut pass = self.context.begin_pass();
+        let mut pass = self.context.begin_pass_labeled("cb1 (attn+router)");
         gpu::encode_embed_lookup_int4(
             &mut self.context,
             &pass,
@@ -842,7 +842,7 @@ impl RealForwardRunner {
                 routed_hits
                     .bind(&mut self.context, use_silu, &hit_refs)
                     .map_err(gpu_err)?;
-                let hit_pass = self.context.begin_pass();
+                let hit_pass = self.context.begin_pass_labeled("hit-expert cb");
                 for &(buffer, _) in &hit_refs {
                     hit_pass.use_read_buffer(buffer);
                 }
@@ -919,7 +919,7 @@ impl RealForwardRunner {
                 .map_err(gpu_err)?;
             self.phases.bind_nanos += t_bind.elapsed().as_nanos() as u64;
 
-            pass = self.context.begin_pass();
+            pass = self.context.begin_pass_labeled("routed cb");
             for &(buffer, _) in &blob_refs {
                 pass.use_read_buffer(buffer);
             }
@@ -1027,7 +1027,7 @@ impl RealForwardRunner {
             if self.routed_pipeline {
                 debug_assert!(pending_routed.is_none(), "routed pipeline depth is 1");
                 pending_routed = Some(pass.commit());
-                pass = self.context.begin_pass();
+                pass = self.context.begin_pass_labeled("cb1 (attn+router)");
             }
         }
 
@@ -1039,7 +1039,10 @@ impl RealForwardRunner {
             self.phases.pipeline_wait_nanos += t_retire.elapsed().as_nanos() as u64;
         }
 
-        // Final norm + tied LM head + softcap softmax.
+        // Final norm + tied LM head + softcap softmax. This rides whatever
+        // buffer the last layer left open, which the phase counters bill
+        // as the final CB; say so for the dispatch profile too.
+        pass.relabel("final cb (head)");
         let final_norm = norm_view(
             &self.weights,
             &self.index,

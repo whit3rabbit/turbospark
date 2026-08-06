@@ -267,6 +267,15 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     a separate axis from the wall-clock buckets: cb1 = attention+router,
     routed cb, final head; shared/hit buffers stay unattributed); run
     `mference-check` with `MFERENCE_PHASES=1` to print the breakdown.
+    One level below that, `MFERENCE_DISPATCH_PROFILE=1` ranks the
+    individual dispatches INSIDE each command buffer
+    (`crates/gpu/src/dispatch_profile.rs`), which is what a per-buffer
+    number cannot tell you (Gotcha 20's whole failure mode). Apple GPUs
+    sample counters only at encoder boundaries, so the mode encodes one
+    compute encoder per dispatch and waits on every buffer to resolve its
+    timestamps: read the module doc before quoting an absolute number
+    from it. It is a debugging aid, never on by default, and never a
+    throughput measurement.
     The shared-expert branch rides its own command buffer, committed
     before the router wait so it overlaps the host's expert `pread`
     (`PassEncoder::commit` -> `CommittedPass::wait`); `MFERENCE_SHARED_CB=0`
