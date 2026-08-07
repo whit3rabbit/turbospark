@@ -171,7 +171,10 @@ pub fn dispatch_profile_report(calls: u64) -> Option<String> {
 /// to dominate the prompt.
 ///
 /// The buckets are disjoint and all lie on the critical path of one token:
-/// `gpu_wait` is time blocked in `wait_until_completed`, `router` is the
+/// `gpu_wait` is time blocked in `wait_until_completed` on a LAYER's
+/// attention+router buffer (once per layer, ~30 times per token on real
+/// Gemma 4), `final_wait` is the single end-of-token wait split out from
+/// it so the two can be told apart, `router` is the
 /// logit readback plus host top-k plus slot planning, `hit_cb` is binding
 /// and encoding the cache-hit phase-1 command buffer, `expert_io` is the
 /// blocking `pread` of missing expert blobs, `bind` is the routing
@@ -186,6 +189,14 @@ pub struct PhaseCounters {
     pub calls: u64,
     pub total_nanos: u64,
     pub gpu_wait_nanos: u64,
+    /// The end-of-token commit+wait only, disjoint from `gpu_wait_nanos`
+    /// (which is the per-layer waits). Split out because the two answer
+    /// different questions: this one is the entire ceiling on deferring
+    /// the last wait, and under `skip_head` with the routed pipeline on
+    /// it is a wait on an EMPTY command buffer (the last layer commits
+    /// its routed pass and opens a fresh one it never encodes into), so
+    /// what is left is commit plus completion latency, not device time.
+    pub final_wait_nanos: u64,
     pub router_nanos: u64,
     pub hit_cb_nanos: u64,
     pub expert_io_nanos: u64,

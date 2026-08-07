@@ -223,6 +223,7 @@ pub(crate) fn print_phases(session: &Session) {
     // Everything not in a named bucket: CPU dispatch encoding plus the
     // final full-vocab logits readback.
     let accounted = p.gpu_wait_nanos
+        + p.final_wait_nanos
         + p.router_nanos
         + p.hit_cb_nanos
         + p.expert_io_nanos
@@ -235,7 +236,8 @@ pub(crate) fn print_phases(session: &Session) {
         ms(p.total_nanos)
     );
     for (label, nanos) in [
-        ("gpu wait (commit+wait)", p.gpu_wait_nanos),
+        ("gpu wait (layer cb1)  ", p.gpu_wait_nanos),
+        ("final wait (end token)", p.final_wait_nanos),
         ("router readback+topk  ", p.router_nanos),
         ("hit-expert phase1 cb  ", p.hit_cb_nanos),
         ("expert io (pread)     ", p.expert_io_nanos),

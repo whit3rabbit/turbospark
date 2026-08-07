@@ -1094,7 +1094,7 @@ impl RealForwardRunner {
         }
         let t_wait = Instant::now();
         self.phases.final_cb_gpu_nanos += (pass.commit_and_wait_with_gpu_time() * 1e9) as u64;
-        self.phases.gpu_wait_nanos += t_wait.elapsed().as_nanos() as u64;
+        self.phases.final_wait_nanos += t_wait.elapsed().as_nanos() as u64;
         self.kv.advance();
 
         if self.skip_head {
