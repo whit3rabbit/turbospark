@@ -357,6 +357,34 @@ live network).
 
 ## Phase 7 (runtime, CLI)
 
+- **The output head is skipped on non-final prompt tokens; Swift runs it
+  on every one.** Swift's `RawCompletion.swift` off-mode prefill loop
+  (`case .off:`) calls `producer.produce(token:position:into:)` per
+  prompt token and, like this port's loop did, reads only the last
+  result: `LogitProducer` has no way to say "these logits are going in
+  the bin". This port adds one, a defaulted `produce_prefill` on the
+  trait (`crates/runtime/src/producer.rs`) that `run_raw_completion`
+  calls for every prompt token but the last. The default delegates
+  straight to `produce`, so `ScriptedLogitProducer`, `ChunkedPrefillRunner`,
+  and `crates/server`'s `Box<dyn LogitProducer + Send>` are all unchanged
+  and unaffected. `RealForwardRunner` overrides it to set a `skip_head`
+  flag that both of its head blocks (`real_forward.rs`'s short-name flow
+  and `real_forward_gemma4.rs`'s learned-weight flow) honour, dropping
+  the final norm, the full-vocab GEMV, the softcap, and the vocab-sized
+  host readback. Everything else still runs: the open command buffer is
+  committed AND waited on (the next token overwrites this one's scratch),
+  and `kv.advance()` is unconditional.
+
+  Generated output is unaffected by construction, since the last prompt
+  token and every decode token still run the head; verified as
+  md5-identical greedy output on the real 26B install before and after.
+  Worth 6-7% of prefill wall clock on a 2252-token prompt (see ROADMAP.md
+  item 4 for the measured pairs). Swift's chunked prefill avoids the same
+  waste structurally instead, by running one head per chunk rather than
+  per token; that path's GPU tile kernels are descoped here (see
+  Cross-cutting rules in ROADMAP.md), which is why this port needed the
+  off-mode fix.
+
 - **`RealForwardRunner`: implemented, real, and tested on real Metal
   hardware — with real but scope-limited weights, now including MoE.**
   `crates/runtime/src/real_forward.rs` is a real (not scripted)

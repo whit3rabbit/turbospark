@@ -145,6 +145,12 @@ pub struct RealForwardRunner {
     /// kernels, same commit-relative order of every host buffer write,
     /// identical output, different overlap.
     pub(crate) routed_pipeline: bool,
+    /// Set for the duration of one [`LogitProducer::produce_prefill`] call:
+    /// the caller is discarding this token's logits, so the output head
+    /// (final norm, full-vocab GEMV, softcap, host readback) is skipped.
+    /// Everything else, including committing and waiting on the open command
+    /// buffer and advancing the KV cache, still runs.
+    pub(crate) skip_head: bool,
 }
 
 /// The per-dispatch ranking inside each command buffer, or `None` unless
@@ -548,6 +554,7 @@ impl RealForwardRunner {
             shared_cb_overlap: std::env::var("MFERENCE_SHARED_CB").as_deref() != Ok("0"),
             hit_cb_overlap: std::env::var("MFERENCE_HIT_CB").as_deref() != Ok("0"),
             routed_pipeline: std::env::var("MFERENCE_ROUTED_PIPELINE").as_deref() != Ok("0"),
+            skip_head: false,
         };
         // Real-checkpoint installs keep the source's verbatim tensor
         // naming; their presence selects the learned-weight decode flow.
@@ -763,6 +770,22 @@ impl LogitProducer for RealForwardRunner {
     ) -> Result<(), String> {
         gpu::autorelease_pool(|| self.produce_inner(token, position, logits))
             .map_err(|e| e.to_string())
+    }
+
+    /// Same forward pass as [`Self::produce`] minus the output head, whose
+    /// logits the caller has told us it will discard. On a long prompt this
+    /// is the whole prefill but its last token, and the head is one
+    /// full-vocab GEMV plus a vocab-sized host readback per token.
+    fn produce_prefill(
+        &mut self,
+        token: i32,
+        position: usize,
+        scratch: &mut [LogitValue],
+    ) -> Result<(), String> {
+        self.skip_head = true;
+        let result = self.produce(token, position, scratch);
+        self.skip_head = false;
+        result
     }
 }
 
@@ -1241,39 +1264,48 @@ impl RealForwardRunner {
             .map_err(gpu_err)?;
         }
 
-        let lm_head = resident_matrix(&self.weights, &self.index, "embed_lm_head", vocab, hidden)?;
-        gpu::encode_rms_norm_no_scale(
-            &mut self.context,
-            &pass,
-            (&self.scratch.x, 0),
-            (&self.scratch.normed, 0),
-            hidden as u32,
-            RMS_EPS,
-        )
-        .map_err(gpu_err)?;
-        gpu::encode_dequant_int4_gemv_resident(
-            &mut self.context,
-            &pass,
-            &lm_head,
-            (&self.scratch.normed, 0),
-            (&self.scratch.logits, 0),
-        )
-        .map_err(gpu_err)?;
-        // Stop at the softcapped logits, not at probabilities: the softmax
-        // is `selection::select`'s job (see real_forward_gemma4.rs's header).
-        if softcap > 0.0 {
-            gpu::encode_logit_softcap(
+        // The head is pure waste on a prefill token whose logits the caller
+        // discards; the commit and the KV advance below are not, so they stay
+        // outside this guard.
+        if !self.skip_head {
+            let lm_head =
+                resident_matrix(&self.weights, &self.index, "embed_lm_head", vocab, hidden)?;
+            gpu::encode_rms_norm_no_scale(
                 &mut self.context,
                 &pass,
-                (&self.scratch.logits, 0),
-                softcap,
-                vocab as u32,
+                (&self.scratch.x, 0),
+                (&self.scratch.normed, 0),
+                hidden as u32,
+                RMS_EPS,
             )
             .map_err(gpu_err)?;
+            gpu::encode_dequant_int4_gemv_resident(
+                &mut self.context,
+                &pass,
+                &lm_head,
+                (&self.scratch.normed, 0),
+                (&self.scratch.logits, 0),
+            )
+            .map_err(gpu_err)?;
+            // Stop at the softcapped logits, not at probabilities: the softmax
+            // is `selection::select`'s job (see real_forward_gemma4.rs's header).
+            if softcap > 0.0 {
+                gpu::encode_logit_softcap(
+                    &mut self.context,
+                    &pass,
+                    (&self.scratch.logits, 0),
+                    softcap,
+                    vocab as u32,
+                )
+                .map_err(gpu_err)?;
+            }
         }
         pass.commit_and_wait();
         self.kv.advance();
 
+        if self.skip_head {
+            return Ok(());
+        }
         let head = gpu::read_buffer_f16(&self.scratch.logits, 0, vocab);
         if head.len() != logits.len() {
             return Err(RealForwardError::Unsupported(format!(

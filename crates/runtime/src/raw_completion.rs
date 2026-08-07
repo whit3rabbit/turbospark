@@ -92,10 +92,18 @@ pub fn run_raw_completion(
 
     let prefill_start = Instant::now();
     let mut position = 0usize;
-    for &token in prompt_ids {
-        producer
-            .produce(token, position, &mut logits)
-            .map_err(RuntimeError::Producer)?;
+    // Only the last prompt token's logits are ever read (`decode` starts by
+    // sampling from `logits`), so every earlier one goes through
+    // `produce_prefill` and lets the producer skip its output head.
+    // `check_admission` rejected an empty prompt, so this cannot underflow.
+    let last = prompt_ids.len() - 1;
+    for (i, &token) in prompt_ids.iter().enumerate() {
+        if i == last {
+            producer.produce(token, position, &mut logits)
+        } else {
+            producer.produce_prefill(token, position, &mut logits)
+        }
+        .map_err(RuntimeError::Producer)?;
         position += 1;
         history.push(token);
         on_progress(RawDecodeProgress::Prefill {

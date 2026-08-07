@@ -1039,57 +1039,67 @@ impl RealForwardRunner {
             self.phases.pipeline_wait_nanos += t_retire.elapsed().as_nanos() as u64;
         }
 
-        // Final norm + tied LM head + softcap softmax. This rides whatever
-        // buffer the last layer left open, which the phase counters bill
-        // as the final CB; say so for the dispatch profile too.
-        pass.relabel("final cb (head)");
-        let final_norm = norm_view(
-            &self.weights,
-            &self.index,
-            "language_model.model.norm.weight",
-            hidden,
-        )?;
-        gpu::encode_rms_norm_bf16w(
-            &mut self.context,
-            &pass,
-            (&self.scratch.x, 0),
-            final_norm,
-            (&self.scratch.normed, 0),
-            hidden as u32,
-            RMS_EPS,
-        )
-        .map_err(gpu_err)?;
-        let head_name = if arch.tie_word_embeddings {
-            embed_name.to_string()
-        } else {
-            "language_model.lm_head.weight".to_string()
-        };
-        encode_gemv_any(
-            &mut self.context,
-            &pass,
-            &self.weights,
-            &self.index,
-            &head_name,
-            vocab,
-            hidden,
-            (&self.scratch.normed, 0),
-            (&self.scratch.logits, 0),
-        )?;
-        if arch.final_logit_softcap > 0.0 {
-            gpu::encode_logit_softcap(
+        // Final norm + tied LM head + softcap. This rides whatever buffer the
+        // last layer left open, which the phase counters bill as the final
+        // CB; say so for the dispatch profile too. On a prefill token whose
+        // logits the caller discards the whole head is skipped, but the open
+        // buffer still has to be committed and waited on (the next token
+        // overwrites this one's scratch) and the KV still has to advance.
+        if !self.skip_head {
+            pass.relabel("final cb (head)");
+            let final_norm = norm_view(
+                &self.weights,
+                &self.index,
+                "language_model.model.norm.weight",
+                hidden,
+            )?;
+            gpu::encode_rms_norm_bf16w(
                 &mut self.context,
                 &pass,
-                (&self.scratch.logits, 0),
-                arch.final_logit_softcap as f32,
-                vocab as u32,
+                (&self.scratch.x, 0),
+                final_norm,
+                (&self.scratch.normed, 0),
+                hidden as u32,
+                RMS_EPS,
             )
             .map_err(gpu_err)?;
+            let head_name = if arch.tie_word_embeddings {
+                embed_name.to_string()
+            } else {
+                "language_model.lm_head.weight".to_string()
+            };
+            encode_gemv_any(
+                &mut self.context,
+                &pass,
+                &self.weights,
+                &self.index,
+                &head_name,
+                vocab,
+                hidden,
+                (&self.scratch.normed, 0),
+                (&self.scratch.logits, 0),
+            )?;
+            if arch.final_logit_softcap > 0.0 {
+                gpu::encode_logit_softcap(
+                    &mut self.context,
+                    &pass,
+                    (&self.scratch.logits, 0),
+                    arch.final_logit_softcap as f32,
+                    vocab as u32,
+                )
+                .map_err(gpu_err)?;
+            }
+        } else {
+            pass.relabel("final cb (prefill, no head)");
         }
         let t_wait = Instant::now();
         self.phases.final_cb_gpu_nanos += (pass.commit_and_wait_with_gpu_time() * 1e9) as u64;
         self.phases.gpu_wait_nanos += t_wait.elapsed().as_nanos() as u64;
         self.kv.advance();
 
+        if self.skip_head {
+            return Ok(());
+        }
         let head = gpu::read_buffer_f16(&self.scratch.logits, 0, vocab);
         if head.len() != logits.len() {
             return Err(RealForwardError::Unsupported(format!(

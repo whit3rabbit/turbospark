@@ -26,6 +26,22 @@ pub trait LogitProducer {
         position: usize,
         logits: &mut [LogitValue],
     ) -> Result<(), String>;
+
+    /// Run one token whose logits the caller will discard: every prompt
+    /// token but the last. `scratch` is the caller's logits buffer and its
+    /// contents after the call are unspecified. A producer with an output
+    /// head may skip that head here, but must still advance every other
+    /// per-token side effect (KV cache, position) exactly as [`Self::produce`]
+    /// does. Unrelated to [`ChunkedPrefillRunner::prefill_chunk`], which
+    /// runs a whole chunk and does produce usable logits.
+    fn produce_prefill(
+        &mut self,
+        token: i32,
+        position: usize,
+        scratch: &mut [LogitValue],
+    ) -> Result<(), String> {
+        self.produce(token, position, scratch)
+    }
 }
 
 /// A [`LogitProducer`] that can also process a whole prefill chunk in one
