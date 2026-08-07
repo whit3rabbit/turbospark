@@ -1,8 +1,8 @@
 # Benchmarks: this port against the Swift original
 
-One machine, one model install, one session, both engines. This is the
-first parity number in this repo; every other figure here and in
-`docs/BENCHMARKING.md` is this port measured against its own past self.
+One machine, one model install, one session, both engines. Every other
+figure in this repo and in `docs/BENCHMARKING.md` is this port measured
+against its own past self; this is the parity number.
 
 Reproduce with `scripts/parity.sh`. Read `docs/BENCHMARKING.md` for the
 harness itself (the three `mference-bench` modes, the memory oracle, and
@@ -16,7 +16,7 @@ how memory is sampled).
 | Chip | Apple M4 Max, 36 GB |
 | macOS | 26.5.2 (25F84) |
 | Power | AC |
-| This port | `98e9cf2` plus the `--case` flag this run added |
+| This port | `ef4e953` plus the partial-ranking sampler change |
 | Swift (`../Mference`) | `1bb585c`, Swift 6.3.3, release build |
 | Install | `~/models/gemma4.gturbo`, Gemma 4 26B-A4B, written by this port's repack |
 | `manifest.json` sha256 | `d4eb5607509240363c126e743abf7b2f6040c7f3e92347044e8b2f7df878ce9f` |
@@ -41,23 +41,59 @@ same definition both engines' footers use.
 
 | Case | Prompt tok | Swift tok/s | This port tok/s | Ratio |
 | --- | ---: | ---: | ---: | ---: |
-| short-explanation | 61 | 39.213 / 40.160 | 25.594 / 25.535 | 0.64 |
-| medium-review | 430 | 38.182 / 38.447 | 24.635 / 24.630 | 0.64 |
-| long-synthesis | 3,015 | 34.485 / 34.396 | 23.150 / 23.125 | 0.67 |
+| short-explanation | 61 | 41.241 / 40.885 | 40.763 / 40.668 | 0.99 |
+| medium-review | 430 | 38.565 / 38.639 | 38.417 / 38.468 | 1.00 |
+| long-synthesis | 3,015 | 34.315 / 34.360 | 34.556 / 34.637 | 1.01 |
 
-**This port decodes at 64 to 67 percent of Swift on the same hardware and
-the same install.** The ratio is flat across a 50x span of prompt length,
-so the gap is per-token decode work, not a context-scaling problem. The
-two runs within each arm agree to 0.06 tok/s or better, far tighter than
-the ~1.5 tok/s run-to-run spread this port shows across sessions, so the
-gap is not measurement noise.
+**This port decodes at Swift's rate, within 1 percent, on the same
+hardware and the same install.** The two runs within each arm agree to
+0.1 tok/s or better, and the spread between engines is smaller than that
+band on two of the three cases, so neither engine is measurably ahead.
 
 Generated token counts differ between engines (516/780/617 for Swift
 against 510/691/565 here) because the two samplers walk different RNG
 streams. Both stop at `endOfTurn` on coherent text, and tok/s is a rate,
-so this does not bias the comparison. It does mean the routing workload is
-not token-for-token identical; Swift generated MORE tokens per case and
-was still faster.
+so this does not bias the comparison.
+
+### What this replaces, and why the first number was so wrong
+
+The first parity run on this hardware (same script, same install, six
+days' worth of the same code) measured **0.64 to 0.67 of Swift**, and
+recorded the cause as unattributed. It has since been attributed and
+fixed, and the finding is worth keeping because of what hid it:
+
+`selection::select` full-sorted the entire candidate domain to rank it.
+At Gemma 4's vocabulary of 262,144 that sort cost **~18.9 ms per token**,
+measured directly (`cargo test -p mrefrust-selection --release --test
+rank_top_k -- --ignored --nocapture`), against a whole forward pass of
+roughly 25 ms. Both truncation steps only ever keep a PREFIX of the ranked
+order, so with `top_k` enabled everything past rank 64 was sorted and
+thrown away. Replacing the sort with a partial selection
+(`truncation::rank_top_k`, `select_nth_unstable_by` + a sort of the
+surviving 64) took that to 2.05 ms and decode from 25.5 to 39.6 tok/s on
+a fixed prompt, with byte-identical output.
+
+Three things made this expensive to find, all of them general:
+
+- **It is not in the engine.** Every phase bucket
+  (`MFERENCE_PHASES=1`), every GPU-busy attribution, and every dispatch
+  ranking this port has ever printed measures the inside of
+  `LogitProducer::produce`. The sampler runs in the decode loop AFTER
+  `produce` returns, so it appeared in NONE of them. The tell was
+  arithmetic, not instrumentation: the phase report's own total came to
+  26.1 s against a 41.3 s decode wall clock, and nobody had subtracted
+  those two numbers before.
+- **Greedy could not see it.** The repo's greedy smoke test passes
+  `--temperature 0.0001`, which is not exactly zero, so it took the
+  sampled path and paid the same sort. The argmax fast path (exactly
+  `--temperature 0`) ran at 45.2 tok/s the whole time.
+- **The suspects were all GPU-side.** `DEVIATIONS.md` named the
+  `MTLSharedEvent` overlap and GPU-side sampling (`logit.metal`'s
+  `sample`) as the unported decode items. The first was already bought
+  another way and measured; the second was the right neighbourhood for
+  the wrong reason. Swift samples on the GPU, so it never pays a host
+  sort -- but the fix here was not to port that kernel, it was to stop
+  sorting 262,080 candidates nobody would look at.
 
 ## Prefill
 
@@ -68,15 +104,16 @@ kernels are descoped (`DEVIATIONS.md`).
 
 | Case | Prompt tok | Swift prefill | This port prefill |
 | --- | ---: | ---: | ---: |
-| short-explanation | 61 | 5.59 / 5.67 s | 1.27 / 1.26 s |
-| medium-review | 430 | 7.43 / 7.37 s | 8.04 / 8.15 s |
-| long-synthesis | 3,015 | 27.62 / 27.72 s | 63.83 / 64.49 s |
+| short-explanation | 61 | 5.27 / 5.55 s | 1.23 / 1.24 s |
+| medium-review | 430 | 7.41 / 7.36 s | 8.13 / 8.13 s |
+| long-synthesis | 3,015 | 27.51 / 27.48 s | 64.59 / 64.62 s |
 
 Fitting the two endpoints:
 
 - Swift: about 5.1 s fixed plus 7.5 ms per prompt token.
-- This port: no measurable fixed cost, 21.2 ms per prompt token.
+- This port: no measurable fixed cost, 21.4 ms per prompt token.
 
+Unchanged by the sampler fix, as it must be: prefill selects no tokens.
 That per-token figure independently reproduces the 21 ms this port
 measured for itself on 2026-08-06 (CLAUDE.local.md's prefill attribution
 table), from a completely different measurement path.
@@ -85,6 +122,8 @@ The crossover is near 350 prompt tokens. Below it this port is faster to
 first token, because Swift pays a fixed startup this port does not; above
 it Swift pulls ahead and keeps going, because a chunk of 128 amortizes
 weight reads across 128 tokens where this port re-reads per token.
+**Prefill is now the only measured gap against Swift**, and it is a known
+scope decision rather than an open question.
 
 ## Memory
 
@@ -97,11 +136,11 @@ engines even though the Swift CLI prints no memory line of its own.
 
 | Case | Swift footprint | This port footprint | Delta |
 | --- | ---: | ---: | ---: |
-| short-explanation | 2,235 / 2,219 MiB | 2,189 / 2,168 MiB | -46 / -51 MiB |
-| medium-review | 2,235 / 2,216 MiB | 2,195 / 2,191 MiB | -40 / -25 MiB |
-| long-synthesis | 2,235 / 2,235 MiB | 2,167 / 2,187 MiB | -68 / -48 MiB |
+| short-explanation | 2,218 / 2,217 MiB | 2,182 / 2,181 MiB | -36 / -36 MiB |
+| medium-review | 2,235 / 2,219 MiB | 2,180 / 2,108 MiB | -55 / -111 MiB |
+| long-synthesis | 2,235 / 2,218 MiB | 2,180 / 2,180 MiB | -55 / -38 MiB |
 
-**This port holds the ~2 GB working set, and does it in about 1 to 3
+**This port holds the ~2 GB working set, and does it in about 2 to 5
 percent less peak footprint than Swift on the same machine and install.**
 Both engines land in the 2.1 to 2.2 GiB band on a 26B model with a 14 GB
 install, which is the property the design exists to deliver.
@@ -110,9 +149,9 @@ The harness asymmetry works AGAINST this port here, so the delta is if
 anything understated: one `mference-bench --case` launch runs the
 protocol's discarded warmup AND the measured run in the same process, so
 its figure is a peak over two generations, while each Swift figure covers
-one. Swift's number is also notably flat at 2,235 MiB across five of six
-runs, which reads like a ceiling its allocator reaches and holds rather
-than a workload-driven peak.
+one. Swift's number is also notably flat near 2,235 MiB, which reads like
+a ceiling its allocator reaches and holds rather than a workload-driven
+peak.
 
 Two secondary observations:
 
@@ -121,7 +160,7 @@ Two secondary observations:
   `/usr/bin/time -l` to 0.1 MiB on all six runs. Sampling every 8th token
   is not missing a transient peak on this workload.
 - **RSS goes the other way and is the less useful counter.** Peak RSS was
-  1,576 to 1,830 MiB for Swift against 1,977 to 2,004 MiB here. RSS counts
+  1,682 to 1,831 MiB for Swift against 1,991 to 1,993 MiB here. RSS counts
   resident pages including clean file-backed ones, so it moves with how
   much of the 14 GB mapped install each engine happens to be touching;
   footprint is the counter that tracks what the process actually costs the
@@ -129,23 +168,43 @@ Two secondary observations:
 
 Published Swift rows for other hardware, for context: 2,126 to 2,142 MiB
 on a 24 GB M5 Pro, 1,776 to 1,971 MiB on an 8 GB M2. Swift reads slightly
-higher here (2,216 to 2,235) than its own published M5 Pro band, on a
+higher here (2,217 to 2,235) than its own published M5 Pro band, on a
 different chip and OS build, so do not treat the M4 Max numbers above as
 transferable to those rows.
 
-## What this does not change
+## Expert-cache slots: the one runtime control that moves this
 
-`crates/bench/tests/memory_oracle.rs` keeps its `Apple M4 Max` row
-self-measured: ceiling 2,300 MiB, floor 15.0 tok/s, source "this port,
-measured locally". The floor stays a regression guard against this port's
-own past behaviour. Turning it into a Swift parity gate would make the
-oracle fail by design until the 0.64 gap closes, which is a separate
-decision from measuring the gap.
+Both engines default to 16 slots and the table above is measured there.
+`mference-bench --model` can now vary it (`--expert-cache-slots`, allowed
+8/16/24/32, matching `MferenceCLI`'s flag), which is what the comparison
+needed to be honest about the default. Same case, same session,
+interleaved pairs:
+
+| Slots | Decode tok/s | Peak `phys_footprint` |
+| ---: | ---: | ---: |
+| 16 | 40.988 / 40.381 | 2,180 / 2,109 MiB |
+| 32 | 47.051 / 46.827 | 3,728 / 3,654 MiB |
+
+32 slots buys about 15 percent decode and costs about 1.5 GB, which
+leaves the ~2 GB working-set claim behind entirely. That is why 16 is
+both engines' default, why every published number here is measured at 16,
+and why the memory oracle's ceiling only means anything at 16
+(`protocol::PROTOCOL_EXPERT_CACHE_SLOTS`). Output is NOT identical across
+slot counts: the hit/miss split permutes the phase-2 reduce order and FP
+addition is not associative. Compare within one slot count.
+
+This also reconciles a discrepancy that stood open in `DEVIATIONS.md`:
+42.6 tok/s recorded on this checkpoint against the 25.6 the first parity
+run measured. The two are separated by both axes above -- the sampler
+(worth ~15 tok/s at this vocabulary) and the slot count (worth ~6) -- and
+the 42.6 sits inside the range they span. The settings behind the 42.6
+were not recorded, so it is retired rather than re-explained.
 
 ## Caveats worth repeating
 
-- Two measured runs per arm. Enough to show a 1.5x gap; not enough to
-  claim a 2 percent one.
+- Two measured runs per arm. Enough to show the 1.5x gap that used to be
+  here, and enough to show it is gone; not enough to claim a 2 percent
+  difference in either direction.
 - One machine, one chip, one session, on AC. Absolute numbers here have
   repeatedly failed to transfer across sessions in this repo; the ratio is
   what to carry forward.

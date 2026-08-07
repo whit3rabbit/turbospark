@@ -48,9 +48,22 @@ cargo run --release -p mrefrust-bench --bin mference-bench -- --model ~/models/g
 cargo run --release -p mrefrust-bench --bin mference-bench -- \
   --model ~/models/gemma4.gturbo --case short-explanation
 
+# Vary the routed-expert cache size (allowed 8/16/24/32, default 16, the
+# same set and default MferenceCLI takes). 32 buys ~15% decode and ~1.5 GB
+# of footprint, so it leaves the ~2 GB working-set claim behind; every
+# published number is measured at the default.
+cargo run --release -p mrefrust-bench --bin mference-bench -- \
+  --model ~/models/gemma4.gturbo --case short-explanation --expert-cache-slots 32
+
 # Head-to-head against ../Mference's MferenceCLI, same install, interleaved
 # arms, one fresh process per run. Results: docs/BENCHMARKS.md
 scripts/parity.sh
+
+# Bucket-level decode phase diff against the Swift engine (both print a
+# split under MFERENCE_PHASES=1, but Swift's is decode-only and this
+# port's divides by all forward passes -- hence the short-prompt rule
+# baked into the script). Not a benchmark; an attribution aid.
+scripts/phasediff.sh [pairs] [slots]
 
 # Run memory oracle test (macOS, takes ~10 mins, requires model env var)
 MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
@@ -62,3 +75,5 @@ MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
 1. **Footprint Accounting**: `phys_footprint` includes resident weight mapping (`mmap` pinned by Metal `newBufferWithBytesNoCopy`) + KV cache + expert slot capacity + process baseline.
 2. **Cold GPU Benchmark Artifacts**: The first run after a build executes on a cold GPU at low DVFS clock states (up to 53% slower). Always discard at least one warmup run.
 3. **Power Source & Cross-Session Ratios**: Thermal throttling and battery state (`pmset -g ps`) alter absolute tok/s. Always measure ratios back-to-back in the same session.
+4. **Slot count is pinned, not defaulted-into**: `protocol::PROTOCOL_EXPERT_CACHE_SLOTS` (16) is what `docs/BENCHMARKS.md`, the memory oracle's per-chip rows, and Swift's own default all sit at. `--expert-cache-slots` exists so a Swift comparison can match a non-default setting, not so the protocol can drift; the oracle passes the constant explicitly for that reason. Output is not identical across slot counts (the hit/miss split permutes the phase-2 reduce order, FP addition is not associative), so compare within one count.
+5. **The phase report does not account for a decode run**: `MFERENCE_PHASES=1` covers the inside of `produce` only; the sampler and detokenizer are outside it (AGENTS.md Gotcha 23). Subtract the phase total from the footer's `decode=` seconds before trusting a phase table as a full attribution.

@@ -47,7 +47,9 @@
 use std::path::PathBuf;
 use std::time::Instant;
 
+use foundation::runtime_config::ALLOWED_CACHE_SLOTS;
 use foundation::LogitValue;
+use mrefrust_bench::protocol::PROTOCOL_EXPERT_CACHE_SLOTS;
 use runtime::{run_raw_completion, GenerationConfig, RawDecodeProgress, ScriptedLogitProducer};
 use selection::ShapingConfig;
 use tokenizer::MfTokenizer;
@@ -87,25 +89,39 @@ fn main() -> std::process::ExitCode {
         return std::process::ExitCode::from(2);
     };
     if first == "--model" {
+        const USAGE: &str =
+            "usage: mference-bench --model <install-dir> [--case <id>] [--expert-cache-slots N]";
         let Some(install_dir) = args.next() else {
-            eprintln!("usage: mference-bench --model <install-dir> [--case <id>]");
+            eprintln!("{USAGE}");
             return std::process::ExitCode::from(2);
         };
-        let case_filter = match args.next().as_deref() {
-            None => None,
-            Some("--case") => match args.next() {
-                Some(id) => Some(id),
-                None => {
-                    eprintln!("--case needs a case id");
+        let mut case_filter: Option<String> = None;
+        let mut slots = PROTOCOL_EXPERT_CACHE_SLOTS;
+        while let Some(flag) = args.next() {
+            match flag.as_str() {
+                "--case" => match args.next() {
+                    Some(id) => case_filter = Some(id),
+                    None => {
+                        eprintln!("--case needs a case id");
+                        return std::process::ExitCode::from(2);
+                    }
+                },
+                // Slot count is the one runtime control a Swift comparison
+                // has to be able to match; MferenceCLI takes the same set.
+                "--expert-cache-slots" => match args.next().map(|v| v.parse::<u32>()) {
+                    Some(Ok(n)) if ALLOWED_CACHE_SLOTS.contains(&n) => slots = n as usize,
+                    _ => {
+                        eprintln!("--expert-cache-slots needs one of {ALLOWED_CACHE_SLOTS:?}");
+                        return std::process::ExitCode::from(2);
+                    }
+                },
+                other => {
+                    eprintln!("unexpected argument {other:?}; {USAGE}");
                     return std::process::ExitCode::from(2);
                 }
-            },
-            Some(other) => {
-                eprintln!("unexpected argument {other:?}; usage: mference-bench --model <install-dir> [--case <id>]");
-                return std::process::ExitCode::from(2);
             }
-        };
-        return run_model_mode(&install_dir, case_filter.as_deref());
+        }
+        return run_model_mode(&install_dir, case_filter.as_deref(), slots);
     }
     let tokenizer_dir = first;
     let real_mode = args.next().as_deref() == Some("--real");
@@ -317,7 +333,11 @@ fn run_real_mode(_tok: &MfTokenizer) -> std::process::ExitCode {
 /// the process peak under the whole workload, which is what the Swift
 /// baselines report.
 #[cfg(target_os = "macos")]
-fn run_model_mode(install_dir: &str, case_filter: Option<&str>) -> std::process::ExitCode {
+fn run_model_mode(
+    install_dir: &str,
+    case_filter: Option<&str>,
+    slots: usize,
+) -> std::process::ExitCode {
     use mrefrust_bench::memory::AppMemorySampler;
     use mrefrust_bench::protocol::{swift_footer, PROTOCOL_CASES};
     use mrefrust_bench::real_model::{open_model_runner, run_protocol_case};
@@ -341,7 +361,7 @@ fn run_model_mode(install_dir: &str, case_filter: Option<&str>) -> std::process:
         }
     };
 
-    let (mut runner, tok) = match open_model_runner(std::path::Path::new(install_dir)) {
+    let (mut runner, tok) = match open_model_runner(std::path::Path::new(install_dir), slots) {
         Ok(pair) => pair,
         Err(e) => {
             eprintln!("failed to open {install_dir}: {e}");
@@ -407,7 +427,11 @@ fn run_model_mode(install_dir: &str, case_filter: Option<&str>) -> std::process:
 }
 
 #[cfg(not(target_os = "macos"))]
-fn run_model_mode(_install_dir: &str, _case_filter: Option<&str>) -> std::process::ExitCode {
+fn run_model_mode(
+    _install_dir: &str,
+    _case_filter: Option<&str>,
+    _slots: usize,
+) -> std::process::ExitCode {
     eprintln!("--model requires macOS (Metal)");
     std::process::ExitCode::from(2)
 }

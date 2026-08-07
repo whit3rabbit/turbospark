@@ -14,11 +14,12 @@
 //!   sampled at the same cadence) <= the documented Swift ceiling + ~5%
 //!   headroom (the Swift docs' own repeat-run variance). Asserted always;
 //!   memory sizing does not depend on the chip.
-//! - Decode tok/s >= the documented Swift floor, per case, ONLY when the
-//!   chip brand matches a baseline row. A tok/s failure here means "the
-//!   port decodes slower than the Swift baseline on this hardware" (a
-//!   true finding -- e.g. the missing MTLSharedEvent CB overlap, see
-//!   DEVIATIONS.md), not a broken test.
+//! - Decode tok/s >= the documented floor, per case, ONLY when the chip
+//!   brand matches a baseline row. A tok/s failure here means "the port
+//!   decodes slower than its baseline on this hardware", which is a true
+//!   finding rather than a broken test. Note the floors are not all the
+//!   same kind of number: each row's `source` says whether it came from
+//!   the Swift docs or from this port measuring itself.
 //! - Every measured case must stop with `endOfTurn`, the frozen
 //!   protocol's validity gate.
 //! - Replaying an already-warm case stops growing the footprint. The
@@ -31,7 +32,7 @@
 //!   footprint and fails the ceiling for no real reason.
 
 use mrefrust_bench::memory::{chip_brand_string, AppMemorySampler};
-use mrefrust_bench::protocol::{swift_footer, PROTOCOL_CASES};
+use mrefrust_bench::protocol::{swift_footer, PROTOCOL_CASES, PROTOCOL_EXPERT_CACHE_SLOTS};
 use mrefrust_bench::real_model::{open_model_runner, run_protocol_case};
 use runtime::StopReason;
 
@@ -106,23 +107,35 @@ const BASELINES: &[ChipBaseline] = &[
     // than any run-to-run spread observed here (the worst pair differs by
     // 1.1 tok/s) and still fails loudly if the split is lost.
     //
-    // The read-pool run above would justify roughly 18.0, but it is a
-    // SINGLE run and the 15.0 raise was made on two. Leaving it until a
-    // second run confirms, on the rule that a floor should never be set
-    // from one sample.
+    // Then the sampler fix (2026-08-07): `selection::select` had been
+    // full-sorting all 262144 candidates per token, ~18.9 ms against a
+    // ~25 ms forward pass. Two oracle runs after it, on AC:
+    //   peak footprint     2,107 / 2,183 MiB
+    //   short-explanation  40.687 / 41.268 tok/s
+    //   medium-review      37.745 / 37.708 tok/s
+    //   long-synthesis     34.674 / 34.720 tok/s
     //
-    // A REAL Swift comparison now exists for this chip (2026-08-07,
+    // Floor raised 15.0 -> 25.0. Unlike the read-pool raise this is NOT
+    // one sample: `scripts/parity.sh` measured the same three cases twice
+    // more in the same session (40.763/40.668, 38.417/38.468,
+    // 34.556/34.637), so the slowest case has three independent readings
+    // inside 0.12 tok/s. 25.0 sits ~28% under it, wider than any spread
+    // seen here, and would fail loudly if the whole sampler fix were lost
+    // (which would land the slowest case back near 23).
+    //
+    // A REAL Swift comparison exists for this chip (2026-08-07,
     // `docs/BENCHMARKS.md`, reproduce with `scripts/parity.sh`): the same
-    // install through `../Mference`'s MferenceCLI decodes at 39.7 /
-    // 38.3 / 34.4 tok/s where this port does 25.6 / 24.6 / 23.1, i.e.
-    // 0.64 to 0.67 of Swift. That number is deliberately NOT the floor
-    // here: making it one would fail this test by design until the gap
-    // closes, and this row's job is to catch regressions against this
-    // port's own past. `source` below stays honest about that.
+    // install through `../Mference`'s MferenceCLI decodes at 41.1 / 38.6
+    // / 34.3 tok/s where this port now does 40.7 / 38.4 / 34.6 -- parity
+    // within 1%. Those numbers are still deliberately NOT the floor here.
+    // This row's job is to catch regressions against this port's own
+    // past; a floor set at a competitor's measured rate would flake on
+    // the difference between two machine states rather than on a real
+    // change. `source` below stays honest about that.
     ChipBaseline {
         brand_substr: "Apple M4 Max",
         footprint_ceiling_mib: 2300,
-        tok_s_floor: 15.0,
+        tok_s_floor: 25.0,
         source: "this port, measured locally -- NOT a Swift baseline",
     },
     // M2 8GB: peak footprint 1,776-1,971 MiB, decode 5.10-6.30 tok/s.
@@ -168,7 +181,8 @@ fn real_install_peak_footprint_and_throughput_meet_swift_baselines() {
         ),
     }
 
-    let (mut runner, tokenizer) = open_model_runner(&dir).expect("real install should open");
+    let (mut runner, tokenizer) =
+        open_model_runner(&dir, PROTOCOL_EXPERT_CACHE_SLOTS).expect("real install should open");
     let mut sampler = AppMemorySampler::new();
 
     let mut measured = Vec::new();

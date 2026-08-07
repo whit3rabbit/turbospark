@@ -43,6 +43,13 @@ pub const PROTOCOL_TOP_P: f64 = 0.95;
 pub const PROTOCOL_MAX_NEW: u32 = 1024;
 pub const PROTOCOL_MAX_CONTEXT: u32 = 4096;
 
+/// The routed-expert cache size both engines default to, and the one every
+/// published number in `docs/BENCHMARKS.md` and the memory oracle's
+/// per-chip rows was measured at. A Swift comparison has to match it, and
+/// the oracle ceiling only means anything against it (a slot costs ~3.2 MB
+/// of pinned host memory per layer on the 26B).
+pub const PROTOCOL_EXPERT_CACHE_SLOTS: usize = 16;
+
 /// The Swift `String(describing:)` spellings of the stop reasons, for
 /// byte-parity with the community protocol's grep.
 pub fn swift_reason_name(reason: StopReason) -> &'static str {

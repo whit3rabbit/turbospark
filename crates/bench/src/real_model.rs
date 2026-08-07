@@ -44,7 +44,16 @@ impl CaseResult {
 /// Open a real `.gturbo` install for the protocol: arch reconstructed from
 /// its own `manifest.json`, tokenizer loaded from the same directory (the
 /// usual checkpoint bundling convention), KV sized to the protocol's 4K.
-pub fn open_model_runner(model_dir: &Path) -> Result<(RealForwardRunner, MfTokenizer), String> {
+///
+/// `slots` is the per-layer routed-expert cache size (allowed 8/16/24/32,
+/// same set the CLI's `--expert-cache-slots` takes). Output is NOT
+/// md5-identical across slot counts: the hit/miss split permutes the
+/// phase-2 reduce order and FP addition is not associative. Compare
+/// within one slot count.
+pub fn open_model_runner(
+    model_dir: &Path,
+    slots: usize,
+) -> Result<(RealForwardRunner, MfTokenizer), String> {
     let arch = repack::peek_manifest_arch(model_dir)?;
     let tokenizer = MfTokenizer::load_from_dir(model_dir).map_err(|e| {
         format!(
@@ -53,7 +62,7 @@ pub fn open_model_runner(model_dir: &Path) -> Result<(RealForwardRunner, MfToken
         )
     })?;
     let runner =
-        RealForwardRunner::open_with_max_context(model_dir, arch, PROTOCOL_MAX_CONTEXT as usize)
+        RealForwardRunner::open_with_options(model_dir, arch, PROTOCOL_MAX_CONTEXT as usize, slots)
             .map_err(|e| e.to_string())?;
     Ok((runner, tokenizer))
 }

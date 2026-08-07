@@ -41,31 +41,74 @@ live network).
   was asked explicitly (rather than the assistant deciding unilaterally)
   and chose to descope rather than continue unbounded or hand-pick a
   narrower target.
-- **MEASURED against Swift, 2026-08-07: this port decodes at 0.64 to 0.67
-  of Swift's rate on the same machine and the same install.** Full numbers,
+- **MEASURED against Swift, 2026-08-07: decode is at parity, within 1
+  percent, on the same machine and the same install.** Full numbers,
   provenance, and caveats in `docs/BENCHMARKS.md`; reproduce with
   `scripts/parity.sh`. Apple M4 Max 36 GB, AC power, frozen
-  `real-generation-v1` protocol, Swift `1bb585c` against this port at
-  `98e9cf2`, both opening `~/models/gemma4.gturbo` (written by THIS port's
-  repack, which the Swift CLI accepts unmodified under its default
-  `.fullSha256` policy). Swift 39.7 / 38.3 / 34.4 tok/s against this port's
-  25.6 / 24.6 / 23.1 on short / medium / long. The ratio is flat across a
-  50x span of prompt length, so the gap is per-token decode work, not
-  context scaling. Two runs per arm agreed to within 0.06 tok/s, so it is
-  not measurement noise. Prefill is a separate, already-documented scope
-  difference: Swift chunks at 128 and costs about 5.1 s fixed plus 7.5 ms
-  per prompt token; this port has no fixed cost and 21.2 ms per token
+  `real-generation-v1` protocol, 16 expert-cache slots (both engines'
+  default), Swift `1bb585c` against this port at `ef4e953` plus the
+  partial-ranking sampler change, both opening `~/models/gemma4.gturbo`
+  (written by THIS port's repack, which the Swift CLI accepts unmodified
+  under its default `.fullSha256` policy). Swift 41.1 / 38.6 / 34.3 tok/s
+  against this port's 40.7 / 38.4 / 34.6 on short / medium / long, ratios
+  0.99 / 1.00 / 1.01.
+  An EARLIER run of the same script measured 0.64 to 0.67 and recorded the
+  cause as unattributed. The cause was `selection::select` full-sorting
+  the whole candidate domain to rank it: ~18.9 ms per token at Gemma 4's
+  V=262144, against a ~25 ms forward pass. Both truncation steps only ever
+  keep a PREFIX of the ranked order, so with `top_k` on, everything past
+  rank 64 was sorted and discarded. `truncation::rank_top_k` replaces the
+  sort with `select_nth_unstable_by` plus a sort of the surviving 64:
+  2.05 ms, output byte-identical, decode 25.5 -> 39.6 tok/s on a fixed
+  prompt. A follow-up (same day) moved the hot path onto thread-local
+  scratch buffers and ranks unnormalized `exp(s - max)` values with `u32`
+  indices instead of materializing the full probability vector (division
+  by the positive normalizer is monotone, so the order is identical;
+  normalized probabilities are computed on the fly only for the ranked
+  prefix and the survivors, bit-identical divisions). Ranking 2.41 ->
+  1.98 ms/call in isolation, +0.24 tok/s mean over three interleaved
+  sampled pairs (+0.6%), output md5-identical on both the greedy and
+  sampled smokes. The dominant remaining sampler cost is the full-vocab
+  f64 exp pass for the top-p normalizer, kept deliberately: an f32 exp
+  would change the sampled stream. The reason it survived so long is that it is NOT INSIDE
+  `produce`, so no phase bucket, GPU-busy attribution, or dispatch ranking
+  in this repo could see it (see `crates/selection/CLAUDE.md` and
+  AGENTS.md Gotcha 23), and the greedy smoke passes `--temperature
+  0.0001`, which is not exactly zero and so paid the same sort. The
+  `MTLSharedEvent` overlap named here as a suspect was never the cause; it
+  is already bought another way (below) and measured at +4.0%.
+  Prefill is now the only measured gap and is a scope difference, not a
+  regression: Swift chunks at 128 and costs about 5.1 s fixed plus 7.5 ms
+  per prompt token; this port has no fixed cost and 21.4 ms per token
   (independently reproducing its own 2026-08-06 attribution), so this port
   is faster to first token under roughly 350 prompt tokens and slower above
-  it. The decode gap is NOT yet attributed to a specific cause; the known
-  unported decode-side items are the `MTLSharedEvent` command-buffer
-  overlap and GPU-side sampling (`logit.metal`'s `sample`, below), neither
-  of which has been measured against this 1.5x. MEMORY, the other half of
-  the design's premise, is AT OR BETTER THAN parity in the same session:
-  peak `phys_footprint` 2,167-2,195 MiB here against Swift's 2,216-2,235 on
-  the same install, so this port holds the same ~2 GB working set on a 26B
-  model with a 14 GB install and does it in 1 to 3 percent less. The
-  throughput gap is therefore not being bought with memory.
+  it. MEMORY, the other half of the design's premise, is AT OR BETTER THAN
+  parity in the same session: peak `phys_footprint` 2,108-2,182 MiB here
+  against Swift's 2,217-2,235 on the same install, so this port holds the
+  same ~2 GB working set on a 26B model with a 14 GB install and does it
+  in 2 to 5 percent less.
+- **Upstream experiment inventory cross-reference.** The Swift original is
+  public at <https://github.com/drumih/turbo-fieldfare>; its
+  `docs/experiments/EXPERIMENT_INVENTORY.md` catalogs the 103 experiments
+  behind the design this port inherits. Checked against that inventory on
+  2026-08-07, this port's own measurements corroborate every upstream
+  finding it touches. Upstream absolute numbers are from 8 GB M2-class
+  hardware and do not transfer to the M4 Max rows measured here; the
+  directions and ratios do.
+
+  | Upstream experiment | Upstream result | This port | Status |
+  |---|---|---|---|
+  | Bounded `pread` beats `mmap` for cold experts (2.79 vs 9.88 ms) | production | `PreadExpertStreamer` is the production path | ported |
+  | LFU expert cache (io 72.6 -> 64.8 ms) | production | LFU/LRU policy in `crates/streaming` | ported |
+  | Split attention (4.1x end to end at 4K) | production | `chunks_for` split-KV: 11.7-15.8x kernel-isolated at 4096, +25% decode at 800 context (Phase 6 below) | ported, confirmed |
+  | FP16 SWA ring buffer (saved 575-591 MiB) | production | static KV accounting: 922.7 - 319.8 MB = 575.0 MiB saved (`docs/BENCHMARKING.md`) | ported, exact match |
+  | Expert prefetch / RDADVISE policies | rejected | deliberately unwired, citing upstream's own dead end (Phase 7 below) | scope-consistent |
+  | OUT-01 one-pass sampling + Top-64 (0.377 -> 5.86-5.89 tok/s) | production | same bug class found independently 2026-08-07: host full sort 18.9 ms -> `rank_top_k` 2.05 ms, decode 25.5 -> 39.6 tok/s. Host-side; the GPU `sample` kernel stays descoped | parallel finding |
+  | PF-02 chunk-128 prefill (121 tok: 15.80 -> 9.34 s) | production | descoped with the tile kernels; the one measured gap (21.4 vs 7.5 ms per prompt token) | descoped |
+  | PF-12 staged affine MPP, PF-17 Apple10 TensorOps | production | descoped with the same tile pipeline | descoped |
+  | 24/32 expert-cache slots | conditional (memory cost) | 32 slots: +15% decode for +1.5 GB (`docs/BENCHMARKS.md`) | matches |
+  | Quantized KV K4/V4 (delta-NLL +0.015197) | rejected (quality) | never attempted; KV stays FP16 | consistent |
+  | DEC-03 persistent multi-threadgroup MoE (cb2 239 -> 60 ms) | production | inherited: the vendored `moe.metal` decode pair IS that kernel family | ported |
 
 ## Phase 4 (tokenizer)
 
@@ -475,7 +518,11 @@ live network).
     source's TEXT, so every one of the ~900 dispatches a token encodes
     rehashed tens of kilobytes of MSL; it now keys on the source's
     address) took the CPU encode bucket from 5.24 to 0.94 ms/token and
-    decode from 34.8 to 42.6 tok/s.
+    decode from 34.8 to 42.6 tok/s. Those two absolute numbers are 32-slot
+    figures on an unrecorded prompt and sampling setting, so they are the
+    A/B deltas only; the 42.6 is NOT comparable to the 16-slot protocol
+    numbers in `docs/BENCHMARKS.md`, which explains the slot and sampler
+    axes that separate them.
     Swift's phase-1-hit CB is now ported too, on the same second-command-
     buffer principle: the layer's slot order is cache MISSES first then
     hits, so the hits (already in slot memory when the plan is built) get
@@ -524,9 +571,11 @@ live network).
     implementation; the previous-token predictor can never issue a read
     because per-layer private caches keep last token's experts resident;
     `MFERENCE_SPEC_PREFETCH=prefetch` measured as a no-op; RDADVISE "no
-    stable production policy", off by default -- see Mference
+    stable production policy", off by default -- see upstream's
     `docs/experiments/summaries/03-expert-cache-prediction-and-layout.md`
-    and `04-rdadvise.md`). `crates/streaming`'s speculative APIs exist for
+    and `04-rdadvise.md` at
+    <https://github.com/drumih/turbo-fieldfare/tree/main/docs/experiments>).
+    `crates/streaming`'s speculative APIs exist for
     parity and stay uncalled by the runtime on purpose.
 
     What IS possible, and landed on 2026-08-06, is making the exposed
@@ -836,6 +885,37 @@ live network).
   `repetition_penalty` (fixed at its identity value). That matches plain
   OpenAI Chat Completions' request shape rather than
   `mrefrust-invocation`'s fuller option set.
+- **Anthropic `POST /v1/messages`: implemented, TEXT ONLY, and an addition
+  rather than a port.** Swift's server has no such endpoint. It exists here
+  because `mrefrust-server` took a dependency on `anyllm_translate`
+  (crates.io 0.16, default features: pure, IO-free, no axum, no reqwest),
+  which also supplies the OpenAI wire types `/v1/chat/completions` now uses
+  in place of hand-rolled structs. An Anthropic request is translated into
+  the OpenAI request the existing path already understands, run through the
+  shared generation core, and translated back. Net effect: Anthropic-native
+  clients (Claude Code, the Anthropic SDKs) need no proxy in front.
+
+  What is dropped: `tools` and `tool_choice` (nothing here can emit a tool
+  call -- see `ROADMAP.md` item 5 for the wiring that would be needed),
+  image and document content blocks, and `thinking`. These are reported on
+  an `x-anyllm-degradation` response header rather than silently discarded,
+  and never faked. A message whose content has no text at all is dropped
+  rather than rendered as an empty turn.
+
+  The crate's own `middleware` feature is deliberately NOT enabled: it
+  forwards over `reqwest` to a `backend_url` (this server's backend is
+  in-process, so that would be a loopback hop to itself) and it depends on
+  axum 0.8 against this crate's 0.7.
+- **`GET /v1/models`: implemented, one entry.** There is one backend per
+  process, so the list has exactly one model and requests are never routed
+  on the `model` field -- whatever name a request carries is echoed back.
+  The advertised id is the install directory's name (`gemma4.gturbo`) for
+  `RealChatModel` and `scripted` for `ScriptedChatModel`; `manifest.json`
+  has no model-name field to read instead. Swift's server has no such
+  endpoint either.
+- **Neither new endpoint adds authentication.** Same posture as
+  `/v1/chat/completions`: loopback by default, and under `--bind tailnet`
+  the Tailnet ACL remains the only access control.
 
 ## Not ported at all
 

@@ -1,12 +1,16 @@
 # Benchmarking
 
 How to measure this port's throughput and memory, and how the numbers
-compare to the Swift original (`../Mference`, `docs/BENCHMARKS.md` there).
+compare to the Swift original (`../Mference`, public at
+<https://github.com/drumih/turbo-fieldfare>; `docs/BENCHMARKS.md` there).
 
 For the measured head-to-head against Swift on one machine, see
-[`BENCHMARKS.md`](BENCHMARKS.md) (2026-08-07: this port decodes at 0.64 to
-0.67 of Swift on an M4 Max, same install). `scripts/parity.sh` reproduces
-it. Everything else in this file is this port measuring itself.
+[`BENCHMARKS.md`](BENCHMARKS.md) (2026-08-07: decode at parity within 1
+percent on an M4 Max, same install; peak footprint 2 to 5 percent lower;
+prefill the one remaining gap, and a known scope difference).
+`scripts/parity.sh` reproduces it, and `scripts/phasediff.sh` diffs the
+two engines' decode phase splits bucket by bucket. Everything else in this
+file is this port measuring itself.
 
 Everything here lives in `crates/bench`: the `mference-bench` binary, a
 small library the binary and the oracle test share, and
