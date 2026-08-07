@@ -450,6 +450,24 @@ fn build_manifest_json(
             "attentionKEqV": arch.attention_k_eq_v,
             "hiddenActivation": arch.hidden_activation,
             "fullAttentionLayerMask": arch.full_attention_layer_mask,
+            // Family-extension fields, written UNCONDITIONALLY. `arch_validation`
+            // falls back to the Gemma 4 baseline for anything omitted, so a
+            // non-Gemma install that leaves them out can never validate (it was
+            // compared against Gemma's values). Gemma installs are unaffected:
+            // these are exactly the fallbacks for that family.
+            "family": arch.family.as_str(),
+            "attnOutputGate": arch.attn_output_gate,
+            "attentionScale": arch.attention_scale,
+            "embeddingScaledBySqrtHidden": arch.embedding_scaled_by_sqrt_hidden,
+            "routerScaled": arch.router_scaled,
+            "ffnSandwichNorms": arch.ffn_sandwich_norms,
+            "sharedExpertGated": arch.shared_expert_gated,
+            "ropeNeoxSubdim": arch.rope_neox_subdim,
+            "linearNumKHeads": arch.linear_attention.num_k_heads,
+            "linearNumVHeads": arch.linear_attention.num_v_heads,
+            "linearKeyHeadDim": arch.linear_attention.key_head_dim,
+            "linearValueHeadDim": arch.linear_attention.value_head_dim,
+            "linearConvKernelSize": arch.linear_attention.conv_kernel_size,
         },
         "quant": null,
         "files": files,

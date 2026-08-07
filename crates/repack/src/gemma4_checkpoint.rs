@@ -262,12 +262,28 @@ fn layer_index(name: &str) -> Option<usize> {
     tail[..tail.find('.')?].parse().ok()
 }
 
-/// Classify a source tensor name (Gemma 4 family contract: the text tower
-/// lives under `language_model.`, routed experts under
-/// `.experts.switch_glu.`, and the vision/audio towers are excluded).
-pub fn classify_gemma4(name: &str, num_layers: usize) -> Gemma4Bucket {
+/// The container path a family's routed (per-expert) weights live under.
+/// Everything else about the walk is family-agnostic, so this substring
+/// plus `ArchConfig.family` is the whole of the Qwen 3.6 delta here.
+///
+/// Getting this wrong is silent and expensive: an unrecognized routed
+/// marker makes every expert a RESIDENT tensor, which loads and runs but
+/// blows the footprint up by the entire expert table. `tests/synthetic_qwen.rs`
+/// pins both families' markers for that reason.
+fn routed_marker(family: ModelFamily) -> &'static str {
+    match family {
+        ModelFamily::Qwen36 => ".mlp.switch_mlp.",
+        // DeepSeek V4 has no repack path yet; Gemma's marker is the default.
+        ModelFamily::Gemma4 | ModelFamily::DeepseekV4Flash => ".experts.switch_glu.",
+    }
+}
+
+/// [`classify_gemma4`] for any family: same `language_model.` text-tower
+/// contract and the same multimodal exclusions, with the routed-expert
+/// container taken from [`routed_marker`].
+pub fn classify_for_family(name: &str, num_layers: usize, family: ModelFamily) -> Gemma4Bucket {
     if name.starts_with("language_model.") {
-        if name.contains(".experts.switch_glu.") {
+        if name.contains(routed_marker(family)) {
             let role = if name.contains(".gate_proj.") {
                 Some("gate")
             } else if name.contains(".up_proj.") {
@@ -292,6 +308,13 @@ pub fn classify_gemma4(name: &str, num_layers: usize) -> Gemma4Bucket {
         return Gemma4Bucket::ExcludedMultimodal;
     }
     Gemma4Bucket::Unknown
+}
+
+/// Classify a source tensor name under the Gemma 4 family contract: the
+/// text tower lives under `language_model.`, routed experts under
+/// `.experts.switch_glu.`, and the vision/audio towers are excluded.
+pub fn classify_gemma4(name: &str, num_layers: usize) -> Gemma4Bucket {
+    classify_for_family(name, num_layers, ModelFamily::Gemma4)
 }
 
 /// Within-layer slot order, mirroring `RepackPlanner.swift`'s Gemma table.
@@ -330,6 +353,11 @@ fn slot_rank(n: &str) -> usize {
             return CONTAINS.len() + j;
         }
     }
+    // Names from other families (Qwen's `linear_attn.*`, `mlp.shared_expert.*`)
+    // land here and tie at 100, broken by name in `lm_order_key`. Resident
+    // order is locality only -- the index is name-keyed and every entry is
+    // independently 4-byte aligned -- so a family-specific table buys nothing
+    // that is worth another 20 lines of string matching.
     100
 }
 
@@ -580,7 +608,7 @@ fn classify_all<'a>(
         if name.ends_with(".scales") || name.ends_with(".biases") {
             continue;
         }
-        match classify_gemma4(name, num_layers) {
+        match classify_for_family(name, num_layers, arch.family) {
             Gemma4Bucket::LmResident => resident_bases.push(name),
             Gemma4Bucket::RoutedExpert { role, layer } => {
                 if routed
@@ -814,6 +842,14 @@ fn plan_one_expert_layer(
 /// Production-shape manifests are rejected by `mrefrust_model_io` without
 /// this object.
 pub fn gemma4_manifest_quant(quant: &Gemma4Quant) -> serde_json::Value {
+    manifest_quant(quant, ModelFamily::Gemma4)
+}
+
+/// [`gemma4_manifest_quant`] for any family. The probe names are the only
+/// difference: Qwen 3.6's layer 0 is a LINEAR layer, so its "attention"
+/// slot has to be probed at `linear_attn.in_proj_qkv` -- there is no
+/// `self_attn.q_proj` under layer 0 at all.
+pub fn manifest_quant(quant: &Gemma4Quant, family: ModelFamily) -> serde_json::Value {
     let slot = |bits: u32| {
         serde_json::json!({
             "weightBits": bits,
@@ -823,14 +859,27 @@ pub fn gemma4_manifest_quant(quant: &Gemma4Quant) -> serde_json::Value {
             "groupSize": 64,
         })
     };
+    let l0 = "language_model.model.layers.0";
+    let (attention, router, shared, routed) = match family {
+        ModelFamily::Qwen36 => (
+            format!("{l0}.linear_attn.in_proj_qkv"),
+            format!("{l0}.mlp.gate"),
+            format!("{l0}.mlp.shared_expert.gate_proj"),
+            format!("{l0}.mlp.switch_mlp.gate_proj"),
+        ),
+        ModelFamily::Gemma4 | ModelFamily::DeepseekV4Flash => (
+            format!("{l0}.self_attn.q_proj"),
+            format!("{l0}.router.proj"),
+            format!("{l0}.mlp.gate_proj"),
+            format!("{l0}.experts.switch_glu.gate_proj"),
+        ),
+    };
     serde_json::json!({
         "embedding": slot(quant.bits_for("language_model.model.embed_tokens")),
-        "attention": slot(quant.bits_for("language_model.model.layers.0.self_attn.q_proj")),
-        "router": slot(quant.bits_for("language_model.model.layers.0.router.proj")),
-        "sharedExpert": slot(quant.bits_for("language_model.model.layers.0.mlp.gate_proj")),
-        "routedExpert": slot(
-            quant.bits_for("language_model.model.layers.0.experts.switch_glu.gate_proj")
-        ),
+        "attention": slot(quant.bits_for(&attention)),
+        "router": slot(quant.bits_for(&router)),
+        "sharedExpert": slot(quant.bits_for(&shared)),
+        "routedExpert": slot(quant.bits_for(&routed)),
     })
 }
 
@@ -879,7 +928,7 @@ pub fn write_gemma4_install_streamed(
         expert_stride,
         arch.num_experts as usize,
     )?;
-    writer.set_quant(gemma4_manifest_quant(quant));
+    writer.set_quant(manifest_quant(quant, arch.family));
     for layer in 0..arch.num_layers as usize {
         let (blobs, used) = plan_one_expert_layer(shards, arch, quant, &plan.routed, layer)?;
         writer.write_layer(&blobs)?;
@@ -921,11 +970,57 @@ pub fn write_gemma4_install(
             out.expert_stride,
             arch.num_experts as usize,
         )?;
-        writer.set_quant(gemma4_manifest_quant(quant));
+        writer.set_quant(manifest_quant(quant, arch.family));
         for layer in &out.layers {
             writer.write_layer(layer)?;
         }
         writer.finish(arch, model_id, &resident_bytes)?;
     }
     Ok(out)
+}
+
+/// Qwen 3.6 install write. The walk itself is family-agnostic (see
+/// [`classify_for_family`] and [`manifest_quant`]), so this is
+/// [`write_gemma4_install`] plus the guard that `arch.family` actually says
+/// Qwen -- passing a Gemma arch here would silently classify
+/// `.mlp.switch_mlp.` tensors as resident.
+pub fn write_qwen36_install(
+    dir: &std::path::Path,
+    arch: &ArchConfig,
+    model_id: &str,
+    header: &SafetensorsHeader,
+    source: &dyn RangeSource,
+    quant: &Gemma4Quant,
+) -> Result<Gemma4RepackOutput, Box<dyn std::error::Error>> {
+    if arch.family != ModelFamily::Qwen36 {
+        return Err(Box::new(Gemma4Error::Config(format!(
+            "write_qwen36_install needs arch.family = qwen36, got {}",
+            arch.family.as_str()
+        ))));
+    }
+    write_gemma4_install(dir, arch, model_id, header, source, quant)
+}
+
+/// [`write_qwen36_install`] for a real multi-GB checkpoint: the same family
+/// guard in front of [`write_gemma4_install_streamed`].
+///
+/// The guard matters more here than on the in-memory path, because this is
+/// the one the ~20 GB repack actually runs: a Gemma `arch.family` would
+/// classify every `.mlp.switch_mlp.` tensor as RESIDENT, and the failure
+/// is a footprint blowup at load time, not an error here.
+pub fn write_qwen36_install_streamed(
+    dir: &std::path::Path,
+    arch: &ArchConfig,
+    model_id: &str,
+    shards: &Gemma4Shards<'_>,
+    quant: &Gemma4Quant,
+    progress: impl FnMut(&str),
+) -> Result<(), Box<dyn std::error::Error>> {
+    if arch.family != ModelFamily::Qwen36 {
+        return Err(Box::new(Gemma4Error::Config(format!(
+            "write_qwen36_install_streamed needs arch.family = qwen36, got {}",
+            arch.family.as_str()
+        ))));
+    }
+    write_gemma4_install_streamed(dir, arch, model_id, shards, quant, progress)
 }

@@ -21,14 +21,14 @@ const NUM_HEADS: usize = 2;
 const HEAD_DIM: usize = 32;
 const INTER: usize = 64;
 
-struct Tensor {
-    name: String,
-    dtype: &'static str,
-    shape: Vec<u64>,
-    bytes: Vec<u8>,
+pub(crate) struct Tensor {
+    pub(crate) name: String,
+    pub(crate) dtype: &'static str,
+    pub(crate) shape: Vec<u64>,
+    pub(crate) bytes: Vec<u8>,
 }
 
-fn assemble_safetensors(tensors: &[Tensor]) -> Vec<u8> {
+pub(crate) fn assemble_safetensors(tensors: &[Tensor]) -> Vec<u8> {
     let mut header = serde_json::Map::new();
     let mut cursor = 0u64;
     for t in tensors {
@@ -53,7 +53,7 @@ fn assemble_safetensors(tensors: &[Tensor]) -> Vec<u8> {
     out
 }
 
-fn deterministic_row(seed: u64, n: usize) -> Vec<f32> {
+pub(crate) fn deterministic_row(seed: u64, n: usize) -> Vec<f32> {
     let mut state = seed.wrapping_mul(2_654_435_761).wrapping_add(0x9E37_79B9);
     (0..n)
         .map(|i| {
@@ -66,7 +66,7 @@ fn deterministic_row(seed: u64, n: usize) -> Vec<f32> {
         .collect()
 }
 
-fn u16_le(values: &[u16]) -> Vec<u8> {
+pub(crate) fn u16_le(values: &[u16]) -> Vec<u8> {
     let mut out = Vec::with_capacity(values.len() * 2);
     for v in values {
         out.extend_from_slice(&v.to_le_bytes());
@@ -78,7 +78,7 @@ fn u16_le(values: &[u16]) -> Vec<u8> {
 /// MLX safetensors shape: `U32 [rows, cols/8]` plus `BF16 [rows, cols/64]`
 /// companions. The packed bytes are this port's own nibble layout (the two
 /// layouts are LE-byte identical).
-fn int4_triple(name: &str, rows: usize, cols: usize, seed: u64) -> Vec<Tensor> {
+pub(crate) fn int4_triple(name: &str, rows: usize, cols: usize, seed: u64) -> Vec<Tensor> {
     let base = name.strip_suffix(".weight").unwrap();
     let mut packed = Vec::new();
     let mut scales = Vec::new();
@@ -115,7 +115,7 @@ fn int4_triple(name: &str, rows: usize, cols: usize, seed: u64) -> Vec<Tensor> {
 }
 
 /// INT8 sibling of [`int4_triple`]: `U32 [rows, cols/4]` packed bytes.
-fn int8_triple(name: &str, rows: usize, cols: usize, seed: u64) -> Vec<Tensor> {
+pub(crate) fn int8_triple(name: &str, rows: usize, cols: usize, seed: u64) -> Vec<Tensor> {
     let base = name.strip_suffix(".weight").unwrap();
     let mut packed = Vec::new();
     let mut scales = Vec::new();
@@ -152,7 +152,7 @@ fn int8_triple(name: &str, rows: usize, cols: usize, seed: u64) -> Vec<Tensor> {
 }
 
 /// Rank-3 expert-major INT4 triple: `U32 [experts, rows, cols/8]`.
-fn expert_int4_triple(
+pub(crate) fn expert_int4_triple(
     name: &str,
     experts: usize,
     rows: usize,
@@ -195,7 +195,7 @@ fn expert_int4_triple(
 }
 
 /// A BF16 vector near `center` with small deterministic jitter.
-fn bf16_vector(name: &str, n: usize, center: f32, seed: u64) -> Tensor {
+pub(crate) fn bf16_vector(name: &str, n: usize, center: f32, seed: u64) -> Tensor {
     let jitter = deterministic_row(seed, n);
     let bits: Vec<u16> = jitter
         .iter()
