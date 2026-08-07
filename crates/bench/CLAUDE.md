@@ -43,6 +43,15 @@ cargo run -p mrefrust-bench --bin mference-bench -- <tokenizer-dir>
 # Run real install benchmark (macOS, release mode required)
 cargo run --release -p mrefrust-bench --bin mference-bench -- --model ~/models/gemma4.gturbo
 
+# One protocol case per process (the protocol's fresh-process leg, and what
+# a cross-engine comparison needs since Swift's CLI launches once per case)
+cargo run --release -p mrefrust-bench --bin mference-bench -- \
+  --model ~/models/gemma4.gturbo --case short-explanation
+
+# Head-to-head against ../Mference's MferenceCLI, same install, interleaved
+# arms, one fresh process per run. Results: docs/BENCHMARKS.md
+scripts/parity.sh
+
 # Run memory oracle test (macOS, takes ~10 mins, requires model env var)
 MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
   cargo test -p mrefrust-bench --test memory_oracle --release -- --ignored --nocapture

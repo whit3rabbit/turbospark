@@ -110,6 +110,15 @@ const BASELINES: &[ChipBaseline] = &[
     // SINGLE run and the 15.0 raise was made on two. Leaving it until a
     // second run confirms, on the rule that a floor should never be set
     // from one sample.
+    //
+    // A REAL Swift comparison now exists for this chip (2026-08-07,
+    // `docs/BENCHMARKS.md`, reproduce with `scripts/parity.sh`): the same
+    // install through `../Mference`'s MferenceCLI decodes at 39.7 /
+    // 38.3 / 34.4 tok/s where this port does 25.6 / 24.6 / 23.1, i.e.
+    // 0.64 to 0.67 of Swift. That number is deliberately NOT the floor
+    // here: making it one would fail this test by design until the gap
+    // closes, and this row's job is to catch regressions against this
+    // port's own past. `source` below stays honest about that.
     ChipBaseline {
         brand_substr: "Apple M4 Max",
         footprint_ceiling_mib: 2300,

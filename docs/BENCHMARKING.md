@@ -3,6 +3,11 @@
 How to measure this port's throughput and memory, and how the numbers
 compare to the Swift original (`../Mference`, `docs/BENCHMARKS.md` there).
 
+For the measured head-to-head against Swift on one machine, see
+[`BENCHMARKS.md`](BENCHMARKS.md) (2026-08-07: this port decodes at 0.64 to
+0.67 of Swift on an M4 Max, same install). `scripts/parity.sh` reproduces
+it. Everything else in this file is this port measuring itself.
+
 Everything here lives in `crates/bench`: the `mference-bench` binary, a
 small library the binary and the oracle test share, and
 `tests/memory_oracle.rs`.
@@ -13,7 +18,7 @@ small library the binary and the oracle test share, and
 | --- | --- | --- |
 | Scripted (default) | `mference-bench <tokenizer-dir>` | This port's prefill+decode *loop* overhead. No model. |
 | Synthetic real | `mference-bench <tokenizer-dir> --real` | The real GPU dispatch path over a tiny synthetic install. |
-| Real install | `mference-bench --model <install-dir>` | Real Gemma 4 throughput and peak memory. The Swift-comparison number. |
+| Real install | `mference-bench --model <install-dir> [--case <id>]` | Real Gemma 4 throughput and peak memory. The Swift-comparison number. |
 
 Only the third mode is comparable to anything published. The first two
 exist so the loop and the dispatch path can be timed without a
@@ -83,6 +88,39 @@ parity with the Swift protocol:
 `prefill_s` and `decode_s` come from `RawDecodeResult`'s separate fields,
 not wall clock. `tok_s` is decode-only (`new_tokens / decode_seconds`),
 the same definition Swift's footer uses.
+
+`--case <id>` restricts the run to one protocol case. That is the
+protocol's fresh-process leg: Swift's CLI launches once per case, so any
+cross-engine comparison has to match that shape. Without it all three
+cases share one process and one sampler, which is what the memory oracle
+wants (its steady-state guard needs the same runner).
+
+## Comparing against Swift
+
+```bash
+cargo build --release -p mrefrust-bench
+scripts/parity.sh [pairs]        # default 2 measured pairs per case
+```
+
+Runs the protocol through `../Mference/.build/release/MferenceCLI` and
+this port's `mference-bench --case`, against the SAME install directory,
+one fresh process per run, arms interleaved pair by pair. Discards a
+warmup per engine per case, rejects any run that does not stop
+`endOfTurn`, refuses to start if another model process is up, and records
+chip, macOS, power source, and both git revisions at the top of its
+output. Results land in `/tmp/mference-parity` (override with `OUT=`).
+
+Memory comes from `/usr/bin/time -l` around each launch. Its `peak memory
+footprint` line IS `phys_footprint`, the counter both engines' published
+numbers use, and the kernel reports it for any process, so it covers the
+Swift side too even though the Swift CLI prints no memory line. Peak RSS
+is captured alongside it as a secondary column.
+
+That also gives a free check on `crates/bench/src/memory.rs`: this port's
+in-process `AppMemorySampler` peak matched the kernel's high-water mark to
+0.1 MiB on all six runs of the 2026-08-07 session.
+
+Published results: [`BENCHMARKS.md`](BENCHMARKS.md).
 
 ## How memory is measured
 

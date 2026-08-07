@@ -17,7 +17,7 @@
 //! matters for a given measurement.
 //!
 //! Usage: `mference-bench <tokenizer-dir> [--real]`
-//!    or: `mference-bench --model <install-dir>`.
+//!    or: `mference-bench --model <install-dir> [--case <id>]`.
 //!
 //! `--real` (macOS only): instead of the scripted producer, builds a
 //! small synthetic dense `.gturbo` install (deterministic INT4 weights,
@@ -38,6 +38,11 @@
 //! the published Swift baselines were measured with — plus the
 //! Swift-format `[stop=...]` footer on stderr for `grep -h '^\[stop='`
 //! parity with `docs/COMMUNITY_BENCHMARKS.md`.
+//!
+//! `--case <id>` restricts that mode to one protocol case, which is how
+//! the protocol's fresh-process leg is run (Swift's CLI launches once per
+//! case, so a cross-engine comparison has to match that). `scripts/parity.sh`
+//! drives both engines this way.
 
 use std::path::PathBuf;
 use std::time::Instant;
@@ -76,15 +81,31 @@ impl RunStats {
 fn main() -> std::process::ExitCode {
     let mut args = std::env::args().skip(1);
     let Some(first) = args.next() else {
-        eprintln!("usage: mference-bench <tokenizer-dir> [--real] | --model <install-dir>");
+        eprintln!(
+            "usage: mference-bench <tokenizer-dir> [--real] | --model <install-dir> [--case <id>]"
+        );
         return std::process::ExitCode::from(2);
     };
     if first == "--model" {
         let Some(install_dir) = args.next() else {
-            eprintln!("usage: mference-bench --model <install-dir>");
+            eprintln!("usage: mference-bench --model <install-dir> [--case <id>]");
             return std::process::ExitCode::from(2);
         };
-        return run_model_mode(&install_dir);
+        let case_filter = match args.next().as_deref() {
+            None => None,
+            Some("--case") => match args.next() {
+                Some(id) => Some(id),
+                None => {
+                    eprintln!("--case needs a case id");
+                    return std::process::ExitCode::from(2);
+                }
+            },
+            Some(other) => {
+                eprintln!("unexpected argument {other:?}; usage: mference-bench --model <install-dir> [--case <id>]");
+                return std::process::ExitCode::from(2);
+            }
+        };
+        return run_model_mode(&install_dir, case_filter.as_deref());
     }
     let tokenizer_dir = first;
     let real_mode = args.next().as_deref() == Some("--real");
@@ -296,10 +317,29 @@ fn run_real_mode(_tok: &MfTokenizer) -> std::process::ExitCode {
 /// the process peak under the whole workload, which is what the Swift
 /// baselines report.
 #[cfg(target_os = "macos")]
-fn run_model_mode(install_dir: &str) -> std::process::ExitCode {
+fn run_model_mode(install_dir: &str, case_filter: Option<&str>) -> std::process::ExitCode {
     use mrefrust_bench::memory::AppMemorySampler;
     use mrefrust_bench::protocol::{swift_footer, PROTOCOL_CASES};
     use mrefrust_bench::real_model::{open_model_runner, run_protocol_case};
+
+    // `--case` runs exactly one case in this process, which is the frozen
+    // protocol's fresh-process leg (Swift launches its CLI once per case).
+    // The default stays all three in one process: the memory oracle wants
+    // the whole session's peak on one runner.
+    let cases: Vec<_> = match case_filter {
+        None => PROTOCOL_CASES.iter().collect(),
+        Some(id) => {
+            let selected: Vec<_> = PROTOCOL_CASES.iter().filter(|c| c.id == id).collect();
+            if selected.is_empty() {
+                eprintln!("unknown case {id:?}; valid ids:");
+                for case in &PROTOCOL_CASES {
+                    eprintln!("  {}", case.id);
+                }
+                return std::process::ExitCode::from(2);
+            }
+            selected
+        }
+    };
 
     let (mut runner, tok) = match open_model_runner(std::path::Path::new(install_dir)) {
         Ok(pair) => pair,
@@ -319,7 +359,7 @@ fn run_model_mode(install_dir: &str) -> std::process::ExitCode {
     );
 
     let mut sampler = AppMemorySampler::new();
-    for case in &PROTOCOL_CASES {
+    for case in cases {
         // Discarded warmup, then the measured run (frozen protocol).
         if let Err(e) = run_protocol_case(&mut runner, &tok, case, &mut sampler) {
             eprintln!("{} warmup failed: {e}", case.id);
@@ -367,7 +407,7 @@ fn run_model_mode(install_dir: &str) -> std::process::ExitCode {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn run_model_mode(_install_dir: &str) -> std::process::ExitCode {
+fn run_model_mode(_install_dir: &str, _case_filter: Option<&str>) -> std::process::ExitCode {
     eprintln!("--model requires macOS (Metal)");
     std::process::ExitCode::from(2)
 }

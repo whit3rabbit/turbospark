@@ -41,6 +41,31 @@ live network).
   was asked explicitly (rather than the assistant deciding unilaterally)
   and chose to descope rather than continue unbounded or hand-pick a
   narrower target.
+- **MEASURED against Swift, 2026-08-07: this port decodes at 0.64 to 0.67
+  of Swift's rate on the same machine and the same install.** Full numbers,
+  provenance, and caveats in `docs/BENCHMARKS.md`; reproduce with
+  `scripts/parity.sh`. Apple M4 Max 36 GB, AC power, frozen
+  `real-generation-v1` protocol, Swift `1bb585c` against this port at
+  `98e9cf2`, both opening `~/models/gemma4.gturbo` (written by THIS port's
+  repack, which the Swift CLI accepts unmodified under its default
+  `.fullSha256` policy). Swift 39.7 / 38.3 / 34.4 tok/s against this port's
+  25.6 / 24.6 / 23.1 on short / medium / long. The ratio is flat across a
+  50x span of prompt length, so the gap is per-token decode work, not
+  context scaling. Two runs per arm agreed to within 0.06 tok/s, so it is
+  not measurement noise. Prefill is a separate, already-documented scope
+  difference: Swift chunks at 128 and costs about 5.1 s fixed plus 7.5 ms
+  per prompt token; this port has no fixed cost and 21.2 ms per token
+  (independently reproducing its own 2026-08-06 attribution), so this port
+  is faster to first token under roughly 350 prompt tokens and slower above
+  it. The decode gap is NOT yet attributed to a specific cause; the known
+  unported decode-side items are the `MTLSharedEvent` command-buffer
+  overlap and GPU-side sampling (`logit.metal`'s `sample`, below), neither
+  of which has been measured against this 1.5x. MEMORY, the other half of
+  the design's premise, is AT OR BETTER THAN parity in the same session:
+  peak `phys_footprint` 2,167-2,195 MiB here against Swift's 2,216-2,235 on
+  the same install, so this port holds the same ~2 GB working set on a 26B
+  model with a 14 GB install and does it in 1 to 3 percent less. The
+  throughput gap is therefore not being bought with memory.
 
 ## Phase 4 (tokenizer)
 
