@@ -449,6 +449,46 @@ live network).
 
 ## Phase 7 (runtime, CLI)
 
+- **Qwen 3.6: PROVEN on the real 35B-A3B checkpoint (2026-08-07).**
+  `mlx-community/Qwen3.6-35B-A3B-4bit` repacks through
+  `write_qwen36_install_streamed` in 19 minutes into an 18 GB install and
+  generates coherent chat-formatted answers via `mference-check`: greedy
+  and sampled both stay coherent for 400 tokens, and a short question
+  stops on `EndOfTurn` with a correct answer, so the ChatML stop set
+  resolves. The whole frozen bench protocol reaches `endOfTurn` on all
+  three cases. Everything below that predates this and describes the
+  synthetic milestone; the two gaps that remain are throughput tuning and
+  a memory-oracle row, not correctness.
+
+  Peak `phys_footprint` is **1,617 MiB**, well under Gemma 4 26B-A4B's
+  2,100-2,200 on the same machine despite the larger install. That is the
+  hybrid paying off: 30 of 40 layers are linear and carry no KV at all,
+  only ~2 MiB of fixed GDN state each, so context growth touches 10
+  layers instead of 30.
+
+  Decode throughput is NOT yet a usable number and no oracle row has been
+  added. Measured 20.0-23.1 tok/s (M4 Max, AC, 32 slots, warm, warmup
+  discarded), but `MFERENCE_PHASES=1` accounts for only ~29 ms of a
+  ~45 ms token: the ~15.5 ms/token residual is `selection`'s full
+  `rank_indices` sort over V=248320, which is a HOST cost no GPU bucket
+  can see. Re-measure once that sort is a partial select; the GPU-side
+  buckets below are the ones that transfer:
+
+  | bucket | ms/token |
+  |---|---|
+  | gpu wait (layer cb1) | 18.8-20.8 |
+  | expert io (pread) | 5.7-5.8 |
+  | encode + logit readback | 1.1 |
+  | final wait (end of token) | 1.0-1.1 |
+  | routed bind+upload | 0.8 |
+  | router readback+topk | 0.34 |
+  | hit-expert phase1 cb | 0.00 |
+  | routed cb retire | 0.00 |
+
+  The two zeros are BY CONSTRUCTION, not a measurement failure: the Qwen
+  flow has none of the three overlap seams, so there is no hit-CB and no
+  pipelined routed CB to charge time to. Expert cache hit rate is 73.9%
+  at 32 slots against 256 experts per layer.
 - **Qwen 3.6: wired end to end against a SYNTHETIC install only.** The
   decode flow (`crates/runtime/src/real_forward_qwen.rs` plus
   `real_forward_qwen_attn.rs`) runs both Qwen layer kinds -- gated
