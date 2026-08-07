@@ -1061,6 +1061,7 @@ dependencies = [
  "axum",
  "futures",
  "mrefrust-core",
+ "mrefrust-repack",
  "mrefrust-runtime",
  "mrefrust-selection",
  "mrefrust-tokenizer",

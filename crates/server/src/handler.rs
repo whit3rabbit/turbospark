@@ -42,9 +42,12 @@ fn role_from_str(role: &str) -> Role {
 }
 
 fn build_config(request: &ChatCompletionRequest) -> Result<GenerationConfig, String> {
+    // top_k defaults to the CLI's 64 rather than 0 (unbounded): `ShapingConfig`
+    // rejects a top_p below 1.0 when top_k is 0, so a plain OpenAI request
+    // carrying only top_p would otherwise be a 400.
     let shaping = ShapingConfig::new(
         request.temperature.unwrap_or(1.0),
-        0,
+        64,
         request.top_p,
         1.0,
         request.seed,
@@ -80,7 +83,10 @@ pub async fn chat_completions(
         Ok(p) => p,
         Err(e) => return error_response(axum::http::StatusCode::BAD_REQUEST, e.to_string()),
     };
-    let prompt_ids = model.tokenizer().encode(&prompt, true);
+    // `add_bos` is false on purpose: the Gemma template emits the literal
+    // `<bos>` mark itself, so encoding with a BOS prefix would double it
+    // (the CLI's proven path does the same).
+    let prompt_ids = model.tokenizer().encode(&prompt, false);
 
     let config = match build_config(&request) {
         Ok(c) => c,
@@ -92,23 +98,24 @@ pub async fn chat_completions(
     }
 
     let result = tokio::task::spawn_blocking(move || {
-        let mut producer = model.new_producer();
         let mut text = String::new();
-        let result = run_raw_completion(
-            producer.as_mut(),
-            model.tokenizer(),
-            &prompt_ids,
-            &config,
-            model.max_context(),
-            model.vocab_size(),
-            |e| {
-                if let RawDecodeProgress::Token { delta, .. } = e {
-                    text.push_str(&delta);
-                } else if let RawDecodeProgress::Tail(tail) = e {
-                    text.push_str(&tail);
-                }
-            },
-        );
+        let result = model.with_producer(&mut |producer| {
+            run_raw_completion(
+                producer,
+                model.tokenizer(),
+                &prompt_ids,
+                &config,
+                model.max_context(),
+                model.vocab_size(),
+                |e| {
+                    if let RawDecodeProgress::Token { delta, .. } = e {
+                        text.push_str(&delta);
+                    } else if let RawDecodeProgress::Tail(tail) = e {
+                        text.push_str(&tail);
+                    }
+                },
+            )
+        });
         (result, text)
     })
     .await;
@@ -165,7 +172,6 @@ async fn stream_response(
     let created = now_unix();
 
     tokio::task::spawn_blocking(move || {
-        let mut producer = model.new_producer();
         let send_chunk = |delta: DeltaMessage, finish: Option<String>| {
             let chunk = ChatCompletionChunk {
                 id: id.clone(),
@@ -189,46 +195,54 @@ async fn stream_response(
             None,
         );
 
-        let result = run_raw_completion(
-            producer.as_mut(),
-            model.tokenizer(),
-            &prompt_ids,
-            &config,
-            model.max_context(),
-            model.vocab_size(),
-            |e| match e {
-                RawDecodeProgress::Token { delta, .. } if !delta.is_empty() => {
-                    send_chunk(
-                        DeltaMessage {
-                            role: None,
-                            content: Some(delta),
-                        },
-                        None,
-                    );
-                }
-                RawDecodeProgress::Tail(tail) if !tail.is_empty() => {
-                    send_chunk(
-                        DeltaMessage {
-                            role: None,
-                            content: Some(tail),
-                        },
-                        None,
-                    );
-                }
-                _ => {}
-            },
-        );
-        let reason = result
-            .map(|r| finish_reason(r.reason))
-            .unwrap_or("stop")
-            .to_string();
-        send_chunk(
-            DeltaMessage {
-                role: None,
-                content: None,
-            },
-            Some(reason),
-        );
+        let result = model.with_producer(&mut |producer| {
+            run_raw_completion(
+                producer,
+                model.tokenizer(),
+                &prompt_ids,
+                &config,
+                model.max_context(),
+                model.vocab_size(),
+                |e| match e {
+                    RawDecodeProgress::Token { delta, .. } if !delta.is_empty() => {
+                        send_chunk(
+                            DeltaMessage {
+                                role: None,
+                                content: Some(delta),
+                            },
+                            None,
+                        );
+                    }
+                    RawDecodeProgress::Tail(tail) if !tail.is_empty() => {
+                        send_chunk(
+                            DeltaMessage {
+                                role: None,
+                                content: Some(tail),
+                            },
+                            None,
+                        );
+                    }
+                    _ => {}
+                },
+            )
+        });
+        match result {
+            Ok(r) => send_chunk(
+                DeltaMessage {
+                    role: None,
+                    content: None,
+                },
+                Some(finish_reason(r.reason).to_string()),
+            ),
+            // A failed run is not a completed one: report it as an error
+            // event rather than a fabricated `stop` finish reason.
+            Err(e) => {
+                let body = serde_json::json!({
+                    "error": {"message": e.to_string(), "type": "server_error"}
+                });
+                let _ = tx.send(Event::default().data(body.to_string()));
+            }
+        }
         let _ = tx.send(Event::default().data("[DONE]"));
     });
 

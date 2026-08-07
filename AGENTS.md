@@ -68,7 +68,11 @@ cargo clippy --workspace --tests
 # (interactive REPL). See DEVIATIONS.md for scope.
 cargo run -p mrefrust-cli --bin mference-check -- --model /path/to/model --prompt "hi"
 
-# Run the OpenAI-compatible server (scripted responses; see DEVIATIONS.md).
+# Run the OpenAI-compatible server against a real install (macOS; one
+# runner per process, so requests are served one at a time).
+cargo run --release -p mrefrust-server --bin mference-server -- --model ~/models/gemma4.gturbo
+
+# Same server, portable scripted backend (canned responses; DEVIATIONS.md).
 cargo run -p mrefrust-server --bin mference-server -- <tokenizer-dir> [port]
 
 # Run the throughput benchmark harness (scripted producer; see DEVIATIONS.md).
@@ -232,7 +236,8 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     only) as its real GPU-forward-pass-backed implementation, while
     `ScriptedLogitProducer` (a fixed replayed logit sequence) is what unit
     tests and `crates/server`'s `ScriptedChatModel` drive the raw-completion
-    loop with (since no trained `.gturbo` weights exist to validate against).
+    loop with on any platform. `crates/server`'s `RealChatModel` drives it
+    with `RealForwardRunner` on macOS (`mference-server --model`).
     Chunked prefill is wired regardless (`ChunkedPrefillRunner`,
     `run_raw_completion_chunked`) -- `ScriptedLogitProducer` implements it
     by consuming one scripted step per chunk; see `DEVIATIONS.md`.
@@ -523,7 +528,7 @@ Workspace directory structure and crate layout:
 - `crates/runtime`: raw-completion prefill+decode loop (`run_raw_completion`, `run_raw_completion_chunked`), wiring a `LogitProducer`, the tokenizer's streaming detokenizer and stop matcher, and `selection::select` into one token generation loop. `ScriptedLogitProducer` is what unit tests and `crates/server`'s `ScriptedChatModel` drive the loop with (see Gotcha 10). `RealForwardRunner` (macOS/GPU only, `src/real_forward.rs` and `src/real_forward_gemma4.rs`) is a real `LogitProducer`: a genuine transformer forward pass through real GPU kernels (including real GPU decode attention) and real quantized weights, supporting dense and MoE FFN layers. Dense bridges gated FFN on CPU via `mrefrust_compute::run_ffn`; MoE runs real GPU router GEMV plus real GPU GEMVs for each selected expert, host-side top-k selection, and CPU-bridged gated activation. Supports synthetic short names and verbatim real Gemma 4 checkpoint names (learned-weight flow). See Gotcha 12. Details in [`crates/runtime/CLAUDE.md`](crates/runtime/CLAUDE.md).
 - `crates/cli`: the `mference-check` binary process entry point (see Gotcha 7). Parses `argv`, applies `invocation`'s exit-status and stream-routing decisions, prints the resolved request for a validated invocation, and (macOS, `src/generate.rs`) attempts real generation against `--model` via `RealForwardRunner` (see Gotcha 12) in all three modes: `--prompt` (raw text), `--messages-file` (rendered through chat template), and `--chat` (interactive REPL in `src/chat.rs`, trimming turns with `mrefrust-window-fit`). Details in [`crates/cli/CLAUDE.md`](crates/cli/CLAUDE.md).
 - `crates/repack`: safetensors header parsing (pure, tested against synthetic fixtures), `RangeSource` trait for ranged reads (HTTP-backed for real installs, in-memory for tests) with two-step header-fetch plan, per-row int4/int8 quantization repack (reusing `mrefrust_compute`'s quantizer), byte-exact `.gturbo` directory assembly (`write_gturbo_install`), real named resident-tensor index writer (`write_gturbo_install_with_resident_index`), synthetic install builders (`synthetic_model.rs`, `synthetic_real.rs`), Hugging Face Llama checkpoint repacker (`hf_checkpoint.rs`), Gemma 4 mlx-community checkpoint repacker & streamed pipeline (`gemma4_checkpoint.rs`), install verifier (`install_verifier.rs`), and manifest peeker (`manifest_peek.rs`). Details in [`crates/repack/CLAUDE.md`](crates/repack/CLAUDE.md).
-- `crates/server`: OpenAI-compatible `/v1/chat/completions` HTTP server on loopback (`mference-server` binary, axum framework), supporting both full-response (non-streaming) and SSE-streaming responses, powered by `ScriptedChatModel` wired to `mrefrust-runtime`. `ScriptedChatModel` is the only backend (see Gotcha 10); real weights are future work. Details in [`crates/server/CLAUDE.md`](crates/server/CLAUDE.md).
+- `crates/server`: OpenAI-compatible `/v1/chat/completions` HTTP server on loopback (`mference-server` binary, axum framework), supporting both full-response (non-streaming) and SSE-streaming responses. Two backends behind the `ChatModel` trait: `RealChatModel` (macOS, `--model <install-dir>`, one mutex-serialized `RealForwardRunner` per process) and `ScriptedChatModel` (portable, canned completions, what the integration tests drive). Details in [`crates/server/CLAUDE.md`](crates/server/CLAUDE.md).
 - `crates/bench`: the `mference-bench` binary plus benchmark library (`mrefrust_bench`). The scripted default (three fixed prompts, fixed seed, discarded warmup) measures loop overhead via `ScriptedLogitProducer`. `--model <install-dir>` (macOS) is the real Swift-comparison mode: frozen community protocol (`protocol.rs`) driven through `RealForwardRunner`, reporting split prefill/decode tok/s and peak `phys_footprint` from the mach sampler (`memory.rs`). `tests/memory_oracle.rs` (`#[ignore]`d, gated on `MREFRUST_GEMMA4_INSTALL_DIR`) asserts peak footprint against per-chip baseline rows, plus a steady-state replay guard; each row carries a `source` recording whether it is a Swift parity number or this port's own measurement. Full details in [`crates/bench/CLAUDE.md`](crates/bench/CLAUDE.md) and `docs/BENCHMARKING.md`.
 - `docs/`: repository documentation directory. `docs/BENCHMARKING.md` details benchmark harness modes, mach memory sampling, and the memory oracle baseline assertions; `docs/TESTING.md` documents test suite organization, macOS and environment-variable gating conventions, and test writing rules.
 

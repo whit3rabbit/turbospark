@@ -1,0 +1,87 @@
+//! The real generation backend: a live `RealForwardRunner` behind the
+//! [`ChatModel`] trait. macOS only, for the same reason `crates/gpu` is.
+//!
+//! Concurrency contract: ONE runner per process. It owns a multi-gigabyte
+//! resident mapping, the Metal pipelines, and a KV cache, so it is neither
+//! cheap to open nor safe to share; a mutex serializes generation and
+//! concurrent requests queue on it (each waiter holding a tokio blocking
+//! thread). That is the right shape for a loopback single-user server, not
+//! for a fleet one. Two known limitations follow from it: throughput is one
+//! request at a time, and a client that disconnects mid-stream does not
+//! abort generation -- the run finishes and only then releases the lock.
+
+use std::path::Path;
+use std::sync::Mutex;
+
+use runtime::{LogitProducer, RawDecodeResult, RealForwardRunner, RuntimeError};
+use tokenizer::MfTokenizer;
+
+use crate::model::ChatModel;
+
+pub struct RealChatModel {
+    tokenizer: MfTokenizer,
+    runner: Mutex<RealForwardRunner>,
+    max_context: u32,
+    vocab_size: usize,
+}
+
+impl RealChatModel {
+    /// Opens a `.gturbo` install, mirroring the CLI's `open_session`: the
+    /// architecture comes from the install's own `manifest.json` and the
+    /// tokenizer is expected to be bundled in the same directory.
+    pub fn open(
+        model_dir: &Path,
+        max_context: u32,
+        expert_cache_slots: u32,
+    ) -> Result<Self, String> {
+        let arch = repack::peek_manifest_arch(model_dir)?;
+        let tokenizer = MfTokenizer::load_from_dir(model_dir).map_err(|e| {
+            format!(
+                "failed to load a tokenizer from {}: {e}",
+                model_dir.display()
+            )
+        })?;
+        let vocab_size = tokenizer.vocab_size;
+        let runner = RealForwardRunner::open_with_options(
+            model_dir,
+            arch,
+            max_context as usize,
+            expert_cache_slots as usize,
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(Self {
+            tokenizer,
+            runner: Mutex::new(runner),
+            max_context,
+            vocab_size,
+        })
+    }
+}
+
+impl ChatModel for RealChatModel {
+    fn tokenizer(&self) -> &MfTokenizer {
+        &self.tokenizer
+    }
+
+    fn vocab_size(&self) -> usize {
+        self.vocab_size
+    }
+
+    fn max_context(&self) -> u32 {
+        self.max_context
+    }
+
+    fn with_producer(
+        &self,
+        f: &mut dyn FnMut(&mut dyn LogitProducer) -> Result<RawDecodeResult, RuntimeError>,
+    ) -> Result<RawDecodeResult, RuntimeError> {
+        // Poison is recoverable here: a panicking request leaves the runner
+        // with a stale KV cache at worst, and `run_raw_completion` resets the
+        // producer before its first token, so the next request starts clean.
+        let mut runner = self
+            .runner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        f(&mut *runner)
+    }
+}

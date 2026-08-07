@@ -366,7 +366,7 @@ live network).
   trait (`crates/runtime/src/producer.rs`) that `run_raw_completion`
   calls for every prompt token but the last. The default delegates
   straight to `produce`, so `ScriptedLogitProducer`, `ChunkedPrefillRunner`,
-  and `crates/server`'s `Box<dyn LogitProducer + Send>` are all unchanged
+  and `crates/server`'s `ChatModel::with_producer` are all unchanged
   and unaffected. `RealForwardRunner` overrides it to set a `skip_head`
   flag that both of its head blocks (`real_forward.rs`'s short-name flow
   and `real_forward_gemma4.rs`'s learned-weight flow) honour, dropping
@@ -782,16 +782,24 @@ live network).
   must come from the checkpoint's own config (`parse_gemma4_quantization`);
   8-bit routed experts are rejected (the MoE decode kernels are
   int4-only).
-- **The server has no real model backend.** `ScriptedChatModel` always
-  replays a fixed logit sequence regardless of the prompt. The HTTP
-  request/response envelopes, chat templating, and SSE streaming framing
-  are real and tested end to end (a bound loopback server, hit with a real
-  HTTP client) — only the "model" behind them is a stand-in.
+- **The server's real backend is macOS-only and serves one request at a
+  time.** `RealChatModel` (`crates/server/src/real_model.rs`, gated the
+  same way `crates/gpu` is) drives a real `RealForwardRunner` against a
+  `.gturbo` install: `mference-server --model <install-dir>`. A runner
+  costs a multi-gigabyte mapping plus a Metal pipeline compile to open and
+  takes `&mut self`, so there is one per process behind a `Mutex` and
+  concurrent requests queue on it (each waiter pinning a tokio blocking
+  thread). A client that disconnects mid-stream does not abort generation.
+  `ScriptedChatModel` remains the portable backend the integration tests
+  drive; on non-macOS it is the only one.
 - **No tailnet bind.** The server binds `127.0.0.1` only; the ROADMAP's
   "optional tailnet bind" is not implemented.
 - The server's sampling knob surface is narrower than the CLI's: no
-  `top_k`, no `repetition_penalty` (both fixed at their identity values),
-  matching plain OpenAI Chat Completions' request shape rather than
+  request-settable `top_k` (it defaults to 64, the CLI's default, because
+  `ShapingConfig` rejects a `top_p` below 1.0 when `top_k` is 0, which
+  would 400 every plain OpenAI request carrying only `top_p`) and no
+  `repetition_penalty` (fixed at its identity value). That matches plain
+  OpenAI Chat Completions' request shape rather than
   `mrefrust-invocation`'s fuller option set.
 
 ## Not ported at all

@@ -2,17 +2,23 @@
 //! envelopes, SSE streaming framing, and the axum router, wired to
 //! `mrefrust-runtime`'s raw-completion loop. Ported from the intent of
 //! `Sources/MferenceServer` (an OpenAI-compatible `/v1/chat/completions`
-//! endpoint); the concrete Swift server also wires model dialect
-//! auto-selection and a real forward pass, neither of which this port has
-//! the weights to back yet (see `mrefrust-runtime`'s module docs).
+//! endpoint). Two backends implement [`ChatModel`]: [`ScriptedChatModel`]
+//! (portable, fixed logit sequence, what the tests drive) and
+//! [`RealChatModel`] (macOS only, a real `RealForwardRunner` forward pass
+//! against a `.gturbo` install). Model dialect auto-selection is the
+//! tokenizer's job here, not the server's.
 
 mod handler;
 mod model;
+#[cfg(target_os = "macos")]
+mod real_model;
 mod request;
 mod response;
 
 pub use handler::AppState;
 pub use model::{ChatModel, ScriptedChatModel};
+#[cfg(target_os = "macos")]
+pub use real_model::RealChatModel;
 pub use request::{ChatCompletionRequest, ChatMessage};
 pub use response::{ChatCompletionChunk, ChatCompletionResponse, Choice, Usage};
 

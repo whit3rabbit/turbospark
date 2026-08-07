@@ -1,22 +1,32 @@
 //! The pluggable generation backend a request is served from.
 //!
-//! No trained `.gturbo` weights are available to this port (see
-//! `mrefrust-runtime`'s module docs), so [`ScriptedChatModel`] is the only
-//! implementation today: it always drives the raw-completion loop with a
-//! fixed, pre-scripted logit sequence. It exists to prove the HTTP
-//! request/response envelopes, chat templating, and SSE streaming framing
-//! all work end to end against a real (if not real-weights-backed) server.
-//! A real backend implements the same [`ChatModel`] trait once a forward
-//! pass exists to back it.
+//! Two implementations: [`ScriptedChatModel`], which drives the
+//! raw-completion loop with a fixed, pre-scripted logit sequence (portable,
+//! and what the integration tests use to prove the HTTP envelopes, chat
+//! templating, and SSE framing), and [`crate::RealChatModel`] (macOS only),
+//! which drives a real `RealForwardRunner` forward pass.
+//!
+//! [`ChatModel::with_producer`] is a pass-through rather than a
+//! `new_producer() -> Box<dyn LogitProducer>` factory on purpose: a real
+//! runner costs a multi-gigabyte mmap plus a full Metal pipeline compile to
+//! open, so there is exactly one per process and it is borrowed mutably for
+//! the duration of a request, not handed out by value.
 
-use runtime::LogitProducer;
+use runtime::{LogitProducer, RawDecodeResult, RuntimeError};
 use tokenizer::MfTokenizer;
 
 pub trait ChatModel: Send + Sync {
     fn tokenizer(&self) -> &MfTokenizer;
     fn vocab_size(&self) -> usize;
     fn max_context(&self) -> u32;
-    fn new_producer(&self) -> Box<dyn LogitProducer + Send>;
+
+    /// Lends a producer to `f` for one generation. Implementations may
+    /// serialize concurrent calls; `run_raw_completion` resets the producer
+    /// on entry, so a producer reused across calls carries no state over.
+    fn with_producer(
+        &self,
+        f: &mut dyn FnMut(&mut dyn LogitProducer) -> Result<RawDecodeResult, RuntimeError>,
+    ) -> Result<RawDecodeResult, RuntimeError>;
 }
 
 /// Always replays the same scripted logit sequence, regardless of the
@@ -58,7 +68,11 @@ impl ChatModel for ScriptedChatModel {
         self.max_context
     }
 
-    fn new_producer(&self) -> Box<dyn LogitProducer + Send> {
-        Box::new(runtime::ScriptedLogitProducer::new(self.steps.clone()))
+    fn with_producer(
+        &self,
+        f: &mut dyn FnMut(&mut dyn LogitProducer) -> Result<RawDecodeResult, RuntimeError>,
+    ) -> Result<RawDecodeResult, RuntimeError> {
+        let mut producer = runtime::ScriptedLogitProducer::new(self.steps.clone());
+        f(&mut producer)
     }
 }

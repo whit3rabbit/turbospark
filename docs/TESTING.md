@@ -42,7 +42,7 @@ cargo clippy --workspace --tests
 | `runtime` | The raw-completion loop against `ScriptedLogitProducer`, plus real end-to-end forward passes over synthetic installs. |
 | `cli` | Black-box binary invocation, including real generation in all three modes. |
 | `repack` | Safetensors parsing, quantization, `.gturbo` assembly round-tripped through every `model-io` loader, install verification. |
-| `server` | OpenAI-compatible endpoint shapes, full-response and SSE. |
+| `server` | OpenAI-compatible endpoint shapes, full-response and SSE, the `--model` argument parser, and (gated) the real `RealForwardRunner` backend end to end. |
 | `bench` | Protocol constants and footer format, the memory sampler, and the binary's black-box output. |
 
 ## Gating conventions
@@ -88,6 +88,11 @@ MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
 # it reports speedup ratios rather than absolute times so it stays
 # readable on a throttled machine. Takes seconds.
 cargo test -p mrefrust-gpu --test attention_chunk_bench --release -- --ignored --nocapture
+
+# The server's real backend end to end: one model open, one non-streaming
+# and one streaming request through the bound loopback server.
+MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
+  cargo test -p mrefrust-server --test real_backend --release -- --ignored --nocapture
 ```
 
 Run all ignored tests at once with `cargo test --workspace -- --ignored`,
@@ -103,7 +108,7 @@ attention) so it cannot rot silently; only the timings are advisory.
 
 | Variable | Read by | Effect |
 | --- | --- | --- |
-| `MREFRUST_GEMMA4_INSTALL_DIR` | `gemma4_checkpoint_network`, `memory_oracle` | Where the real `.gturbo` install lives. The oracle skips (with a note) when unset; the repack test falls back to a temp dir. |
+| `MREFRUST_GEMMA4_INSTALL_DIR` | `gemma4_checkpoint_network`, `memory_oracle`, `real_backend` | Where the real `.gturbo` install lives. The oracle and the server test skip (with a note) when unset; the repack test falls back to a temp dir. |
 | `MFERENCE_PHASES=1` | `mference-check` | Prints the per-phase decode breakdown (GPU wait, router readback, expert pread, routed bind, cache hit rate). |
 | `MFERENCE_DISPATCH_PROFILE=1` | `mference-check`, `gpu::PassEncoder` | Ranks the individual dispatches inside each command buffer. Encodes one compute encoder per dispatch (Apple GPUs sample counters only at encoder boundaries) and waits on every buffer, so it perturbs the run it measures: a ranking aid, not a throughput number. Covered by `crates/gpu/tests/dispatch_profile.rs`. |
 | `MFERENCE_SHARED_CB=0` | `RealForwardRunner` | Reverts the shared-expert branch to encoding after the expert pread instead of on its own overlapping command buffer. The A/B seam for any throughput claim. |
