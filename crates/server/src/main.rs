@@ -1,4 +1,5 @@
-//! `mference-server`: binds the OpenAI-compatible Chat Completions router to
+//! `mference-server`: binds the generation router (OpenAI
+//! `/v1/chat/completions`, Anthropic `/v1/messages`, and `/v1/models`) to
 //! loopback, or to this machine's Tailscale IPv4 address. Two modes:
 //!
 //!   mference-server --model <install-dir> [--port N] [--max-context N]
@@ -251,7 +252,10 @@ async fn main() -> std::process::ExitCode {
             return std::process::ExitCode::from(1);
         }
     };
-    eprintln!("mference-server listening on http://{addr}/v1/chat/completions");
+    eprintln!("mference-server listening on http://{addr}");
+    eprintln!("  POST /v1/chat/completions   (OpenAI)");
+    eprintln!("  POST /v1/messages           (Anthropic)");
+    eprintln!("  GET  /v1/models");
     if let Err(e) = axum::serve(listener, router).await {
         eprintln!("server error: {e}");
         return std::process::ExitCode::from(1);

@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "OpenAI-compatible Chat Completions server on loopback: request/response envelopes, SSE streaming framing, and the axum router, wired to the raw-completion loop."
+description = "OpenAI Chat Completions and Anthropic Messages server on loopback: request/response envelopes, SSE streaming framing, and the axum router, wired to the raw-completion loop."
 
 [lib]
 name = "mrefrust_server"
@@ -19,6 +19,12 @@ foundation = { package = "mrefrust-core", path = "../core" }
 runtime = { package = "mrefrust-runtime", path = "../runtime" }
 selection = { package = "mrefrust-selection", path = "../selection" }
 tokenizer = { package = "mrefrust-tokenizer", path = "../tokenizer" }
+# Anthropic <-> OpenAI translation, and the OpenAI wire types this server's
+# envelopes are built from. Default features only: that is the pure, IO-free
+# core (serde/thiserror/tracing/uuid). The `middleware` feature is deliberately
+# NOT enabled -- it forwards over reqwest to a `backend_url` (this server's
+# backend is in-process) and pulls axum 0.8 against our 0.7.
+anyllm_translate = "0.16"
 axum = { version = "0.7", features = ["json"] }
 tokio = { version = "1", features = ["rt-multi-thread", "net", "macros", "sync"] }
 tokio-stream = "0.1"

@@ -23,6 +23,7 @@ pub struct RealChatModel {
     runner: Mutex<RealForwardRunner>,
     max_context: u32,
     vocab_size: usize,
+    model_id: String,
 }
 
 impl RealChatModel {
@@ -42,6 +43,13 @@ impl RealChatModel {
             )
         })?;
         let vocab_size = tokenizer.vocab_size;
+        // The install directory's own name is the advertised model id (e.g.
+        // `gemma4.gturbo`). `manifest.json` carries no model name field to
+        // read instead, and the full path is not something to publish.
+        let model_id = model_dir
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "model".to_string());
         let runner = RealForwardRunner::open_with_options(
             model_dir,
             arch,
@@ -54,6 +62,7 @@ impl RealChatModel {
             runner: Mutex::new(runner),
             max_context,
             vocab_size,
+            model_id,
         })
     }
 }
@@ -69,6 +78,10 @@ impl ChatModel for RealChatModel {
 
     fn max_context(&self) -> u32 {
         self.max_context
+    }
+
+    fn model_id(&self) -> &str {
+        &self.model_id
     }
 
     fn with_producer(

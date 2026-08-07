@@ -20,6 +20,11 @@ pub trait ChatModel: Send + Sync {
     fn vocab_size(&self) -> usize;
     fn max_context(&self) -> u32;
 
+    /// The id `GET /v1/models` advertises. Requests do not have to match it:
+    /// there is one backend per process, so whatever `model` a request names
+    /// is echoed back rather than routed on.
+    fn model_id(&self) -> &str;
+
     /// Lends a producer to `f` for one generation. Implementations may
     /// serialize concurrent calls; `run_raw_completion` resets the producer
     /// on entry, so a producer reused across calls carries no state over.
@@ -66,6 +71,10 @@ impl ChatModel for ScriptedChatModel {
 
     fn max_context(&self) -> u32 {
         self.max_context
+    }
+
+    fn model_id(&self) -> &str {
+        "scripted"
     }
 
     fn with_producer(
