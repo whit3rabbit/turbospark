@@ -49,6 +49,8 @@ mod dispatch_profile;
 #[cfg(target_os = "macos")]
 mod dsv4_state;
 #[cfg(target_os = "macos")]
+mod gdn;
+#[cfg(target_os = "macos")]
 mod gdn_state;
 #[cfg(target_os = "macos")]
 mod kv_cache;
@@ -94,6 +96,12 @@ pub use dispatch_profile::{report as dispatch_profile_report, reset as dispatch_
 #[cfg(target_os = "macos")]
 pub use dsv4_state::{Dsv4StateManager, LayerCounters};
 #[cfg(target_os = "macos")]
+pub use gdn::{
+    encode_gdn_conv_decode, encode_gdn_conv_prefill, encode_gdn_conv_tail_update,
+    encode_gdn_delta_decode, encode_gdn_delta_prefill, encode_gdn_gated_norm, encode_gdn_in_proj,
+    encode_gdn_qk_norm, GdnShape,
+};
+#[cfg(target_os = "macos")]
 pub use gdn_state::GdnStateManager;
 #[cfg(target_os = "macos")]
 pub use kv_cache::{KvCacheManager, KvView, LayerKind};
@@ -115,10 +123,11 @@ pub use rms_norm::{
     rms_norm_no_scale_perhead,
 };
 #[cfg(target_os = "macos")]
-pub use rope::{encode_rope_proportional_neox, rope_proportional_neox};
+pub use rope::{encode_rope_neox_subdim, encode_rope_proportional_neox, rope_proportional_neox};
 #[cfg(target_os = "macos")]
 pub use utility::{
-    encode_gelu_mul, encode_logit_softcap, encode_residual_add, encode_scalar_mul, encode_silu_mul,
+    encode_gelu_mul, encode_logit_softcap, encode_residual_add, encode_scalar_mul,
+    encode_sigmoid_gate_mul, encode_sigmoid_scalar_mul, encode_silu_mul, encode_split_q_gate,
 };
 
 /// The Metal buffer handle, re-exported so downstream crates (e.g.

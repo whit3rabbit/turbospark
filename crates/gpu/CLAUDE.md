@@ -27,13 +27,15 @@ crates/gpu/
 |   +-- utility.rs                  # Elementwise helper dispatches (scalar mul, softcap)
 |   +-- logit_softmax.rs            # Softcap and logit softmax helpers
 |   +-- bytes.rs                    # Metal buffer byte alignment utilities
-|   +-- gdn_state.rs                # GDN Metal buffer allocation (unwired)
+|   +-- gdn.rs                      # Gated-DeltaNet kernel dispatches (8 kernels)
+|   +-- gdn_state.rs                # GDN recurrent state buffers (Qwen flow's)
 |   +-- dsv4_state.rs               # DSV4 Metal buffer allocation (unwired)
 |   +-- prefill_scratch.rs          # Chunked prefill scratch buffer layout (undispatched)
 |   \-- shaders/                    # Vendored Metal Shading Language (MSL) source files
 |       +-- attention.metal         # Decode attention Metal shader source
 |       +-- dequant_int4.metal      # INT4 dequantization GEMV shader source
 |       +-- dequant_int8.metal      # INT8 dequantization GEMV shader source
+|       +-- gdn.metal               # Gated-DeltaNet (Qwen 3.6 linear attention) shader source
 |       +-- logit.metal             # Logit softcap and softmax shader source
 |       +-- moe.metal               # MoE router GEMV and phase 1/2 shader source
 |       +-- rmsnorm.metal           # RMSNorm shader source
@@ -47,6 +49,7 @@ crates/gpu/
     +-- dequant_int8_gemv_parity.rs
     +-- dispatch_profile.rs
     +-- dsv4_state.rs
+    +-- gdn_parity.rs
     +-- gdn_state.rs
     +-- gemma4_real_kernels_parity.rs
     +-- kv_cache.rs
@@ -67,7 +70,8 @@ crates/gpu/
 - `attention_decode.rs`: Split-KV decode attention dispatch (`chunks_for`, up to 16 splits).
 - `moe_decode.rs`: Dispatches MoE router GEMV, phase-1 GEMVs, host router wait, and phase-2 down reduction.
 - `rms_norm.rs`: RMSNorm dispatches (`rmsnorm_no_scale`, `rms_norm_bf16w`, per-head norm variants).
-- `rope.rs`: Rotary positional embedding dispatch (`rope_proportional_neox`).
+- `rope.rs`: Rotary positional embedding dispatches (`rope_proportional_neox`, `rope_neox_subdim`).
+- `gdn.rs`: The eight gated-DeltaNet dispatches plus `GdnShape` and its structural preconditions.
 - `dequant_int4_gemv.rs` & `dequant_int8_gemv.rs`: INT4/INT8 GEMV SIMD dispatches.
 - `resident_metal.rs`: `ResidentGpuWeights` zero-copy `MTLBuffer` wrapping around `mmap` slices.
 
@@ -83,4 +87,6 @@ cargo test -p mrefrust-gpu
 1. **Pipeline Cache Keying on Address**: `MetalContext::pipeline` keys its function and pipeline caches on shader string memory ADDRESS (`&'static str`), NOT string contents. Callers MUST pass identical `include_str!` static constants.
 2. **Autorelease Pool Wrapping**: Metal command buffer and compute encoder creations return autoreleased objects. Repeated encode loops MUST be wrapped in `gpu::autorelease_pool`.
 3. **MoE Phase 2 Down Reduction**: `moe_phase2_down_reduce_k8` reduces all 8 slots unconditionally. Unused slots must have a 0.0 routing weight, a valid blob pointer, and a finite activation row.
-4. **KV Cache Ring Specialization**: `KvCacheManager`'s `fp16_ring_enabled` mode specializes `FC_ATTN_RING_CAP` into Metal pipelines. Ring capacity values MUST be included in the pipeline cache constants key.
+4. **`gdn.rs`'s shader source is a CONCATENATION** of `dequant_int4.metal` and `gdn.metal`, in that order: the fused input projection calls `dequant_int4_gemv_simd_body`, a `static inline` in the former, which resolves because the Swift build concatenates every module into one library. `concat!` of two `include_str!`s is one `&'static str` with one stable address, which is what Gotcha 1's address-keyed cache needs. Never pass `dequant_int4.metal`'s own constant to a GDN dispatch (it would miss the cache, not misbehave), and expect the INT4 kernels to be compiled twice in this process.
+5. **`gdn_qk_norm` / `gdn_gated_norm` need EXACTLY 128 threads per threadgroup** -- both reduce four SIMD partials with a hardcoded loop. Fewer sums uninitialized slots, more drops work. `NORM_THREADS` pins it. The delta kernels are likewise fixed at `(32, 4)` threads, which is where `GdnShape::validate`'s `Dk % 32 == 0` and `Dk / 32 <= 8` come from.
+6. **KV Cache Ring Specialization**: `KvCacheManager`'s `fp16_ring_enabled` mode specializes `FC_ATTN_RING_CAP` into Metal pipelines. Ring capacity values MUST be included in the pipeline cache constants key.

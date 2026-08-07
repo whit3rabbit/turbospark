@@ -124,6 +124,75 @@ pub fn encode_scalar_mul(
     Ok(())
 }
 
+/// `out[i] *= sigmoid(gate[i])`, in place -- Qwen 3.6's full-attention
+/// output gate (the second half of its packed `q_proj`).
+pub fn encode_sigmoid_gate_mul(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    out: (&metal::Buffer, u64),
+    gate: (&metal::Buffer, u64),
+    count: u32,
+) -> Result<(), GpuError> {
+    encode_elementwise(
+        context,
+        pass,
+        "sigmoid_gate_mul_fp16",
+        &[(out.0, 0, out.1), (gate.0, 1, gate.1)],
+        count,
+        2,
+    )
+}
+
+/// `y[i] *= sigmoid(gate[0])`, in place -- Qwen 3.6's shared-expert scalar
+/// gate. `gate` is a one-element buffer, the `shared_expert_gate` GEMV's
+/// output; the kernel reads element 0 for every `i`.
+pub fn encode_sigmoid_scalar_mul(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    y: (&metal::Buffer, u64),
+    gate: (&metal::Buffer, u64),
+    count: u32,
+) -> Result<(), GpuError> {
+    encode_elementwise(
+        context,
+        pass,
+        "sigmoid_scalar_mul_fp16",
+        &[(y.0, 0, y.1), (gate.0, 1, gate.1)],
+        count,
+        2,
+    )
+}
+
+/// Splits a `[heads, 2 * dim]` packed projection into contiguous
+/// `[heads, dim]` `q` and `gate` buffers. Qwen 3.6's `q_proj` emits per-head
+/// `[query; gate]` pairs, which the per-head norm, RoPE, and attention
+/// kernels cannot consume interleaved.
+pub fn encode_split_q_gate(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    packed: (&metal::Buffer, u64),
+    q: (&metal::Buffer, u64),
+    gate: (&metal::Buffer, u64),
+    heads: u32,
+    dim: u32,
+) -> Result<(), GpuError> {
+    let pipeline = context.pipeline(
+        SOURCE,
+        "split_q_gate_fp16",
+        &FunctionConstantValues::new(),
+        b"",
+    )?;
+    let count = heads * dim;
+    pass.encode_threads_3d(
+        &pipeline,
+        &[(packed.0, 0, packed.1), (q.0, 1, q.1), (gate.0, 2, gate.1)],
+        &[(u32_bytes(&heads), 3), (u32_bytes(&dim), 4)],
+        (grid_for(count), 1, 1),
+        (THREADS_PER_GROUP, 1, 1),
+    );
+    Ok(())
+}
+
 /// `logits[i] = softcap * tanh(logits[i] / softcap)`, in place -- the output
 /// head's final step for architectures with a logit softcap (see the
 /// shader's port-local note on why the cap is dispatched without the

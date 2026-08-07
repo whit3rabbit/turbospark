@@ -1,7 +1,7 @@
 //! Destination-selected compute strategy plus CPU reference kernels.
 //!
 //! The kernel modules (`rms_norm`, `wht`, `rope`, `attention`, `quant`,
-//! `moe`, `sampling`, `tolerance`) are the numerical ground truth later GPU
+//! `moe`, `gdn`, `gating`, `sampling`, `tolerance`) are the numerical ground truth later GPU
 //! kernels are validated against. Numerics parity with any upstream
 //! implementation is out of scope for `ComputeStrategy` itself; only the
 //! structural contracts of the decode and prefill areas are exercised there.
@@ -11,6 +11,8 @@
 #![forbid(unsafe_code)]
 
 pub mod attention;
+pub mod gating;
+pub mod gdn;
 pub mod moe;
 pub mod quant;
 pub mod rms_norm;
@@ -20,6 +22,8 @@ pub mod tolerance;
 pub mod wht;
 
 pub use attention::causal_attention;
+pub use gating::{sigmoid_gate_mul, sigmoid_scalar_mul, split_q_gate};
+pub use gdn::{sigmoid, silu, softplus, GdnDims, GdnReference, GDN_RMS_EPS};
 pub use moe::{apply_streamed_routed, gelu_tanh, run_ffn};
 pub use quant::{
     bf16_to_f32, dequant_int4_gemv, dequant_int8_gemv, dequantize_int4_affine,
@@ -27,7 +31,7 @@ pub use quant::{
     quantize_int4_affine, quantize_int8_affine, Int4AffineRow, Int8AffineRow,
 };
 pub use rms_norm::rms_norm;
-pub use rope::{rope_neox, rope_paired};
+pub use rope::{rope_neox, rope_neox_subdim, rope_paired};
 pub use sampling::logit_softcap_softmax;
 pub use tolerance::{bounded_rel_error, max_abs_diff, rel_error, Tolerance};
 pub use wht::wht;

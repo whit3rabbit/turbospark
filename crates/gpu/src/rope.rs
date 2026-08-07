@@ -71,6 +71,47 @@ pub fn encode_rope_proportional_neox(
     Ok(())
 }
 
+/// Encoder-level `rope_neox_subdim`: Qwen 3.6's partial RoPE. Rotates only
+/// the first `rotary_dim` elements of each head, pairing
+/// `(i, rotary_dim/2 + i)` inside that window with frequency divisor
+/// `rotary_dim`. Elements at or past `rotary_dim` are untouched -- which is
+/// the whole difference from `rope_proportional_neox`, whose pair partner
+/// is `head_dim/2` away and whose divisor is `head_dim`.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_rope_neox_subdim(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    data: (&metal::Buffer, u64),
+    position: u32,
+    num_heads: u32,
+    head_dim: u32,
+    rotary_dim: u32,
+    theta: f32,
+) -> Result<(), GpuError> {
+    assert!(rotary_dim % 2 == 0, "rotary_dim must be even");
+    assert!(rotary_dim <= head_dim, "rotary_dim cannot exceed head_dim");
+    let pipeline = context.pipeline(
+        SOURCE,
+        "rope_neox_subdim",
+        &unused_function_constants(),
+        b"",
+    )?;
+    pass.encode_threads_3d(
+        &pipeline,
+        &[(data.0, 0, data.1)],
+        &[
+            (u32_bytes(&position), 1),
+            (u32_bytes(&head_dim), 2),
+            (u32_bytes(&num_heads), 3),
+            (f32_bytes(&theta), 4),
+            (u32_bytes(&rotary_dim), 5),
+        ],
+        ((rotary_dim / 2).max(1) as u64, num_heads.max(1) as u64, 1),
+        (1, 1, 1),
+    );
+    Ok(())
+}
+
 /// Applies Gemma 4's proportional NeoX RoPE in place, dispatched on the
 /// GPU via `rope_proportional_neox`. `data` is `[num_tokens, num_heads,
 /// head_dim]`; every token uses the same `position` (matching the single-

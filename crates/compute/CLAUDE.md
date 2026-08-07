@@ -14,6 +14,8 @@ crates/compute/
 +-- src/
 |   +-- lib.rs          # Library root and ComputeStrategy marker declaration
 |   +-- attention.rs    # CPU causal attention reference implementation
+|   +-- gdn.rs          # Gated-DeltaNet (Qwen 3.6 linear attention) reference chain
+|   +-- gating.rs       # Qwen 3.6 gating references (sigmoid gate/scalar, q/gate split)
 |   +-- moe.rs          # CPU MoE FFN reference and gated activation bridge
 |   +-- quant.rs        # INT4 and INT8 affine quantization and GEMV reference
 |   +-- rms_norm.rs     # CPU RMSNorm reference calculation
@@ -29,6 +31,8 @@ crates/compute/
 ## Key Modules
 
 - `attention.rs`: Reference CPU causal attention.
+- `gdn.rs`: `GdnReference`, the straight-line model of Qwen 3.6's gated-DeltaNet chain (conv + SiLU, per-head q/k norm with folded delta scales, the FP32 delta recurrence, the gated output norm) that `crates/gpu/tests/gdn_parity.rs` checks the eight `gdn.metal` kernels against.
+- `gating.rs`: `sigmoid_gate_mul`, `sigmoid_scalar_mul`, `split_q_gate`.
 - `moe.rs`: CPU reference MoE FFN logic (`run_ffn`) used to bridge gated FFN activations.
 - `quant.rs`: INT4 and INT8 quantization/dequantization and GEMV math used by repackers and CPU fallbacks.
 - `rms_norm.rs`: Reference RMSNorm implementation.
@@ -45,4 +49,5 @@ cargo test -p mrefrust-compute
 ## Crate Gotchas
 
 1. **BF16 vs FP16**: `crates/compute` contains hand-rolled bit-shift helpers for BF16 (`bf16_to_f32`/`f32_to_bf16`), exploiting the fact that BF16 is the upper 16 bits of an FP32 word. FP16 (binary16) storage elsewhere in the workspace uses the `half` crate. Do not mix up the two or hand-roll FP16 logic.
-2. **Ground Truth Baseline**: Kernels in this crate are designed for exactness and reference correctness rather than maximum CPU throughput. Metal kernels in `crates/gpu` validate parity against these routines.
+2. **`gdn.rs`'s FP16 rounding points are part of the contract.** The GPU kernels store `conv_out`, the normed q/k slices, the raw conv tail rows, and `y` as `half`; the reference rounds at exactly those four places and nowhere else (the recurrence and the gated norm stay FP32). Moving one makes the parity test's tolerance meaningless. It rounds through `foundation::LogitValue` (`half::f16` by its public path) rather than adding a `half` dependency to this crate -- Gotcha 3 in AGENTS.md forbids hand-rolling binary16.
+3. **Ground Truth Baseline**: Kernels in this crate are designed for exactness and reference correctness rather than maximum CPU throughput. Metal kernels in `crates/gpu` validate parity against these routines.

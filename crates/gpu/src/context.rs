@@ -338,6 +338,37 @@ impl PassEncoder {
         );
     }
 
+    /// [`Self::encode_threadgroups`] with 3D threadgroup and threadgroup-size
+    /// counts. The GDN kernels need it: their grids are `(head, row)` and
+    /// their threadgroups `(32, 4)` or `(128, 1)`, which the 1D form cannot
+    /// express.
+    pub fn encode_threadgroups_3d(
+        &self,
+        pipeline: &ComputePipelineState,
+        buffers: &[(&metal::Buffer, u64, u64)],
+        bytes: &[(&[u8], u64)],
+        threadgroups: (u64, u64, u64),
+        threads_per_group: (u64, u64, u64),
+    ) {
+        self.begin_dispatch(pipeline);
+        let encoder = self.encoder.borrow();
+        encoder.set_compute_pipeline_state(pipeline);
+        for &(buffer, index, offset) in buffers {
+            encoder.set_buffer(index, Some(buffer), offset);
+        }
+        for &(data, index) in bytes {
+            encoder.set_bytes(index, data.len() as u64, data.as_ptr().cast());
+        }
+        encoder.dispatch_thread_groups(
+            MTLSize::new(threadgroups.0, threadgroups.1, threadgroups.2),
+            MTLSize::new(
+                threads_per_group.0,
+                threads_per_group.1,
+                threads_per_group.2,
+            ),
+        );
+    }
+
     /// Appends one `dispatchThreads` call (non-threadgroup-quantized grid).
     pub fn encode_threads_3d(
         &self,

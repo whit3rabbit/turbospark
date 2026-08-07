@@ -207,3 +207,102 @@ fn logit_softcap_matches_the_fused_kernel_cap() {
         "the softcap kernel must not softmax; got sum {sum}"
     );
 }
+
+/// Qwen 3.6's three gating kernels, against `mrefrust_compute::gating`.
+#[test]
+fn sigmoid_gate_mul_matches_compute_reference() {
+    let mut context = MetalContext::new().expect("Metal device");
+    let n = 256usize;
+    let out = test_vec(n, 0.17);
+    let gate = test_vec(n, 0.41);
+
+    let out_buf = context.new_buffer_with_data(&to_le(&out));
+    let gate_buf = context.new_buffer_with_data(&to_le(&gate));
+    let pass = context.begin_pass();
+    mrefrust_gpu::encode_sigmoid_gate_mul(
+        &mut context,
+        &pass,
+        (&out_buf, 0),
+        (&gate_buf, 0),
+        n as u32,
+    )
+    .expect("dispatch");
+    pass.commit_and_wait();
+
+    let got: Vec<f32> = read_halfs(&out_buf, n).iter().map(|h| h.to_f32()).collect();
+    let want = mrefrust_compute::sigmoid_gate_mul(
+        &out.iter().map(|h| h.to_f32()).collect::<Vec<_>>(),
+        &gate.iter().map(|h| h.to_f32()).collect::<Vec<_>>(),
+    );
+    let err = mrefrust_compute::max_abs_diff(&got, &want);
+    assert!(err < 1e-2, "err = {err}");
+}
+
+#[test]
+fn sigmoid_scalar_mul_applies_one_gate_to_every_element() {
+    let mut context = MetalContext::new().expect("Metal device");
+    let n = 128usize;
+    let y = test_vec(n, 0.23);
+    let gate = vec![f16::from_f32(-0.75)];
+
+    let y_buf = context.new_buffer_with_data(&to_le(&y));
+    let gate_buf = context.new_buffer_with_data(&to_le(&gate));
+    let pass = context.begin_pass();
+    mrefrust_gpu::encode_sigmoid_scalar_mul(
+        &mut context,
+        &pass,
+        (&y_buf, 0),
+        (&gate_buf, 0),
+        n as u32,
+    )
+    .expect("dispatch");
+    pass.commit_and_wait();
+
+    let got: Vec<f32> = read_halfs(&y_buf, n).iter().map(|h| h.to_f32()).collect();
+    let want = mrefrust_compute::sigmoid_scalar_mul(
+        &y.iter().map(|h| h.to_f32()).collect::<Vec<_>>(),
+        gate[0].to_f32(),
+    );
+    let err = mrefrust_compute::max_abs_diff(&got, &want);
+    assert!(err < 1e-2, "err = {err}");
+}
+
+#[test]
+fn split_q_gate_deinterleaves_per_head_pairs() {
+    let mut context = MetalContext::new().expect("Metal device");
+    let (heads, dim) = (4usize, 32usize);
+    let packed = test_vec(heads * 2 * dim, 0.11);
+
+    let packed_buf = context.new_buffer_with_data(&to_le(&packed));
+    let q_buf = context.new_output_buffer((heads * dim * 2) as u64);
+    let gate_buf = context.new_output_buffer((heads * dim * 2) as u64);
+    let pass = context.begin_pass();
+    mrefrust_gpu::encode_split_q_gate(
+        &mut context,
+        &pass,
+        (&packed_buf, 0),
+        (&q_buf, 0),
+        (&gate_buf, 0),
+        heads as u32,
+        dim as u32,
+    )
+    .expect("dispatch");
+    pass.commit_and_wait();
+
+    // A pure permutation: assert the exact bits, not a tolerance.
+    let (want_q, want_gate) = mrefrust_compute::split_q_gate(
+        &packed.iter().map(|h| h.to_f32()).collect::<Vec<_>>(),
+        heads,
+        dim,
+    );
+    let got_q: Vec<f32> = read_halfs(&q_buf, heads * dim)
+        .iter()
+        .map(|h| h.to_f32())
+        .collect();
+    let got_gate: Vec<f32> = read_halfs(&gate_buf, heads * dim)
+        .iter()
+        .map(|h| h.to_f32())
+        .collect();
+    assert_eq!(got_q, want_q);
+    assert_eq!(got_gate, want_gate);
+}
