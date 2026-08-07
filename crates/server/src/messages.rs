@@ -9,10 +9,16 @@
 //! deltas into Anthropic's `message_start` / `content_block_*` /
 //! `message_stop` event structure.
 //!
-//! Scope: text only. Tools, images, and `thinking` have no backend here, so
-//! they are dropped in translation and reported on the
-//! `x-anyllm-degradation` response header rather than silently discarded.
-//! See `DEVIATIONS.md`.
+//! Scope: text and tool calling. `tools` and `tool_choice` come across as
+//! OpenAI tools, which `handler::plan` renders through the checkpoint's own
+//! Jinja chat template, and a parsed call comes back as an Anthropic
+//! `tool_use` block. Images and `thinking` have no backend here and are
+//! dropped in translation. `x-anyllm-degradation` reports only what
+//! `compute_request_warnings` knows about (`top_k`, `thinking`,
+//! `cache_control`, document blocks, truncated stop sequences); dropped
+//! images are NOT among them. See `DEVIATIONS.md`.
+
+use std::collections::HashSet;
 
 use anyllm_translate::anthropic::streaming::{StreamError, StreamEvent};
 use anyllm_translate::anthropic::{ErrorType, MessageCreateRequest};
@@ -31,9 +37,11 @@ use axum::Json;
 use futures::stream::{Stream, StreamExt};
 use runtime::GenerationConfig;
 
-use crate::handler::{now_unix, plan, run_full, status_for, stream_blocking, AppState, GenError};
+use crate::handler::{
+    now_unix, plan, run_full, status_for, stream_blocking, tool_names, AppState, GenError, Piece,
+};
 use crate::response::{
-    completion_chunk, completion_response, finish_reason, role_delta, text_delta,
+    completion_chunk, completion_response, finish_reason, role_delta, text_delta, tool_call_delta,
 };
 
 const DEGRADATION_HEADER: &str = "x-anyllm-degradation";
@@ -98,11 +106,27 @@ pub async fn messages(
         Err(e) => return error_body(StatusCode::BAD_REQUEST, ErrorType::InvalidRequestError, e),
     };
 
+    let tools = tool_names(&openai);
     let streaming = request.stream.unwrap_or(false);
     let mut response = if streaming {
-        stream_response(model, prompt_ids, config, openai.model, request.model)
+        stream_response(
+            model,
+            prompt_ids,
+            config,
+            tools,
+            openai.model,
+            request.model,
+        )
     } else {
-        full_response(model, prompt_ids, config, openai.model, request.model).await
+        full_response(
+            model,
+            prompt_ids,
+            config,
+            tools,
+            openai.model,
+            request.model,
+        )
+        .await
     };
 
     if let Some(value) = degraded.and_then(|v| v.parse().ok()) {
@@ -115,6 +139,7 @@ async fn full_response(
     model: AppState,
     prompt_ids: Vec<foundation::TokenId>,
     config: GenerationConfig,
+    tools: HashSet<String>,
     backend_model: String,
     // The model name the client asked for, echoed into the Anthropic
     // response. Translation maps it to `backend_model` on the way in, and
@@ -122,7 +147,7 @@ async fn full_response(
     // rather than derived.
     client_model: String,
 ) -> Response {
-    let (text, decode) = match run_full(model, prompt_ids, config).await {
+    let (text, calls, decode) = match run_full(model, prompt_ids, config, tools).await {
         Ok(r) => r,
         Err(e) => return gen_error_body(e),
     };
@@ -132,6 +157,7 @@ async fn full_response(
         now_unix(),
         backend_model,
         text,
+        calls,
         decode.reason,
         decode.prompt_tokens as u32,
         decode.new_tokens as u32,
@@ -143,6 +169,7 @@ fn stream_response(
     model: AppState,
     prompt_ids: Vec<foundation::TokenId>,
     config: GenerationConfig,
+    tools: HashSet<String>,
     backend_model: String,
     client_model: String,
 ) -> Response {
@@ -176,15 +203,17 @@ fn stream_response(
             &mut translator,
         );
 
-        let result = stream_blocking(&model, &prompt_ids, &config, &mut |delta| {
+        let mut call_index = 0u32;
+        let result = stream_blocking(&model, &prompt_ids, &config, &tools, &mut |piece| {
+            let delta = match piece {
+                Piece::Text(text) => text_delta(text),
+                Piece::Tool(call) => {
+                    call_index += 1;
+                    tool_call_delta(call_index - 1, call)
+                }
+            };
             send(
-                completion_chunk(
-                    id.clone(),
-                    created,
-                    backend_model.clone(),
-                    text_delta(delta.to_string()),
-                    None,
-                ),
+                completion_chunk(id.clone(), created, backend_model.clone(), delta, None),
                 &mut translator,
             );
         });

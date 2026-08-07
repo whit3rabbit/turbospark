@@ -65,6 +65,9 @@ pub fn assistant_message(text: String, calls: Vec<ParsedToolCall>) -> ChatMessag
 }
 
 /// The full (non-streaming) completion object.
+// Every argument is one wire field with no natural grouping; bundling them
+// into a struct would only move the same list one line up.
+#[allow(clippy::too_many_arguments)]
 pub fn completion_response(
     id: String,
     created: u64,
@@ -158,5 +161,104 @@ pub fn tool_call_delta(index: u32, call: ParsedToolCall) -> ChunkDelta {
             }),
         }]),
         ..Default::default()
+    }
+}
+
+/// The half of tool calling that is testable without a model: a parsed call
+/// put through these constructors has to survive translation into an
+/// Anthropic `tool_use` block, in both the full and the streaming shape.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokenizer::JsonValue;
+
+    fn call() -> ParsedToolCall {
+        ParsedToolCall {
+            id: "toolu_0".to_string(),
+            name: "get_weather".to_string(),
+            arguments: JsonValue::parse(r#"{"city":"Oslo"}"#).unwrap(),
+            arguments_json: r#"{"city":"Oslo"}"#.to_string(),
+        }
+    }
+
+    #[test]
+    fn a_call_becomes_an_anthropic_tool_use_block() {
+        let response = completion_response(
+            "chatcmpl-1".to_string(),
+            0,
+            "m".to_string(),
+            String::new(),
+            vec![call()],
+            runtime::StopReason::ToolCalls,
+            3,
+            7,
+        );
+        let anthropic = anyllm_translate::translate_response(&response, "claude-sonnet-4-6");
+        let body = serde_json::to_value(&anthropic).unwrap();
+
+        let block = body["content"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|b| b["type"] == "tool_use")
+            .expect("a tool_use block");
+        assert_eq!(block["id"], "toolu_0");
+        assert_eq!(block["name"], "get_weather");
+        assert_eq!(block["input"]["city"], "Oslo");
+        assert_eq!(body["stop_reason"], "tool_use");
+    }
+
+    #[test]
+    fn a_streamed_call_becomes_a_tool_use_content_block() {
+        let mut translator =
+            anyllm_translate::new_stream_translator("claude-sonnet-4-6".to_string());
+        let mut names = Vec::new();
+        let mut record = |chunk| {
+            for event in translator.process_chunk(&chunk) {
+                names.push(serde_json::to_value(&event).unwrap());
+            }
+        };
+
+        record(completion_chunk(
+            "chatcmpl-1".to_string(),
+            0,
+            "m".to_string(),
+            role_delta(),
+            None,
+        ));
+        record(completion_chunk(
+            "chatcmpl-1".to_string(),
+            0,
+            "m".to_string(),
+            tool_call_delta(0, call()),
+            None,
+        ));
+        record(completion_chunk(
+            "chatcmpl-1".to_string(),
+            0,
+            "m".to_string(),
+            ChunkDelta::default(),
+            Some(FinishReason::ToolCalls),
+        ));
+        for event in translator.finish() {
+            names.push(serde_json::to_value(&event).unwrap());
+        }
+
+        // One complete chunk still opens a tool_use block and carries its
+        // arguments as an input_json delta.
+        let start = names
+            .iter()
+            .find(|e| e["type"] == "content_block_start")
+            .expect("a content_block_start");
+        assert_eq!(start["content_block"]["type"], "tool_use");
+        assert_eq!(start["content_block"]["name"], "get_weather");
+        assert!(
+            names
+                .iter()
+                .any(|e| e["delta"]["type"] == "input_json_delta"
+                    && e["delta"]["partial_json"] == r#"{"city":"Oslo"}"#),
+            "{names:?}"
+        );
+        assert!(names.iter().any(|e| e["type"] == "content_block_stop"));
     }
 }

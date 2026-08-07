@@ -885,8 +885,8 @@ live network).
   `repetition_penalty` (fixed at its identity value). That matches plain
   OpenAI Chat Completions' request shape rather than
   `mrefrust-invocation`'s fuller option set.
-- **Anthropic `POST /v1/messages`: implemented, TEXT ONLY, and an addition
-  rather than a port.** Swift's server has no such endpoint. It exists here
+- **Anthropic `POST /v1/messages`: implemented, text and tool calling, and
+  an addition rather than a port.** Swift's server has no such endpoint. It exists here
   because `mrefrust-server` took a dependency on `anyllm_translate`
   (crates.io 0.16, default features: pure, IO-free, no axum, no reqwest),
   which also supplies the OpenAI wire types `/v1/chat/completions` now uses
@@ -895,12 +895,39 @@ live network).
   shared generation core, and translated back. Net effect: Anthropic-native
   clients (Claude Code, the Anthropic SDKs) need no proxy in front.
 
-  What is dropped: `tools` and `tool_choice` (nothing here can emit a tool
-  call -- see `ROADMAP.md` item 5 for the wiring that would be needed),
-  image and document content blocks, and `thinking`. These are reported on
-  an `x-anyllm-degradation` response header rather than silently discarded,
-  and never faked. A message whose content has no text at all is dropped
-  rather than rendered as an empty turn.
+  **Tool calling works, both endpoints, streaming and not.** A request's
+  `tools` are rendered into the prompt through the checkpoint's own
+  `chat_template.jinja` (`encode_generic_tool_chat`), the generated tokens
+  go through `StructuredAssistantDecoder`, and a parsed call comes back as
+  OpenAI `tool_calls` / Anthropic `tool_use`. Verified end to end against
+  the real Gemma 4 install: a call, a `tool_result` round trip, and the
+  streamed `content_block_start` / `input_json_delta` / `content_block_stop`
+  sequence. Three limits worth stating:
+
+  - `tool_choice` is accepted and IGNORED. Nothing forces or forbids a call.
+  - A streamed call arrives as ONE chunk carrying id, name, and the whole
+    argument string, not as the argument fragments a remote OpenAI backend
+    emits. The decoder only yields a call once its closing marker arrives,
+    so there are no fragments to stream; `StreamingTranslator` handles the
+    single-chunk shape and the Anthropic event structure is unaffected.
+  - Tool-call ids are a per-response counter (`toolu_0`, `toolu_1`), unique
+    within an assistant turn but not across a conversation. Both templates
+    match a `tool` turn against the tool calls of the message immediately
+    before it, so that is enough.
+
+  If the dialect parser rejects what the model wrote (prose that merely
+  looks like a call), the request does NOT fail: the decoder is abandoned
+  and the rest of the run is emitted as plain text.
+
+  What is still dropped: image and document content blocks, and `thinking`.
+  A replayed `thinking` block is dropped from the prompt rather than
+  rendered as assistant prose (`ChatMessage::effective_text` would fall
+  back to `reasoning_content`; `handler::visible_text` does not). Of these,
+  only `thinking` and document blocks appear on the
+  `x-anyllm-degradation` response header -- `compute_request_warnings` has
+  no notion of a dropped image, so that one is silent. A message with
+  neither text nor tool calls is dropped rather than rendered as an empty
+  turn; one with tool calls and no text is kept.
 
   The crate's own `middleware` feature is deliberately NOT enabled: it
   forwards over `reqwest` to a `backend_url` (this server's backend is
