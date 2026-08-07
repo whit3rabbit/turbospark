@@ -25,6 +25,12 @@ use crate::error::StreamerError;
 /// Parked reader threads. Sized for memory bandwidth, not core count:
 /// these jobs are `pread` out of page cache, which saturates well before
 /// it runs out of cores.
+///
+/// SWEPT 2026-08-06 on the real 26B install (2252-token prompt, 32 slots,
+/// three interleaved rounds after a discarded warmup), `expert io`
+/// ms/token: 4 threads 3.97-4.03, **8 threads 3.65-3.74**, 16 threads
+/// 3.70-3.76. 8 beat 4 in every round; 8 against 16 is a wash, so the
+/// smaller pool wins on parked-thread cost. Do not re-derive it.
 const POOL_THREADS: usize = 8;
 
 /// One unit of parallel read work: a byte range of the stream copied into

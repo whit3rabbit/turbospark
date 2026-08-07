@@ -32,11 +32,25 @@ use crate::stream_layout::StreamLayout;
 const SLOT_ALIGNMENT: usize = 2 * 1024 * 1024;
 
 /// Bytes of one expert's blob read per parallel chunk. At the real Gemma 4
-/// stride (3,358,720 B) this is a 4-way split of a single miss, which is
-/// where the bandwidth curve flattened when measured: the 8-slot runs that
-/// happened to average ~5 concurrent reads hit 44.8 GiB/s, and 4 ways gets
-/// a lone miss into that range without spawning threads that would sit on
-/// a saturated memory system.
+/// stride (3,358,720 B) this is a 4-way split of a single miss.
+///
+/// SWEPT 2026-08-06, so do not re-derive it. Real 26B install, 2252-token
+/// prompt, 32 slots, three interleaved rounds after a discarded warmup;
+/// `expert io` ms/token, spread within an arm was 0.04 or less:
+///
+/// | chunk | chunks/miss | ms/token |
+/// | --- | ---: | ---: |
+/// | 3359 KiB (no split) | 1 | 5.49-5.55 |
+/// | 1680 KiB | 2 | 4.09-4.17 |
+/// | **840 KiB** | **4** | **3.65-3.74** |
+/// | 420 KiB | 8 | 4.24 |
+/// | 105 KiB | 32 | 5.29 |
+///
+/// The curve has a real minimum here, not a plateau: both directions cost
+/// double-digit percent. Going finer does not buy width, because
+/// `read_pool` caps concurrency at its thread count anyway, so the extra
+/// chunks are pure per-chunk syscall and claim overhead on a memory system
+/// that already saturates around ~5 concurrent copies.
 const MISS_READ_CHUNK_BYTES: usize = 840 * 1024;
 
 /// Upper bound on chunks per miss, used only to size the chunk vector.
