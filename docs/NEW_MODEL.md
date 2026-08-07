@@ -422,7 +422,48 @@ reference implementation's published number for the same workload.
 
 ---
 
-## Phase 6 - Write it down
+## Phase 6 - Quality
+
+Coherence judged by eye is the gate through Phase 3, and it stops being
+enough here: it cannot see a few percent of drift, which is exactly what a
+quantization change looks like when it is subtly wrong rather than broken.
+
+- [ ] Give the family its own quality-gate target next to
+      `crates/bench/tests/quality_gate.rs`, sharing `quality_common`.
+      Separate target, same one-model-per-process rule as the oracle.
+- [ ] **Score only ASSISTANT-position tokens.** An instruction-tuned
+      checkpoint is never trained to predict the prompt, so teacher-forcing
+      prompt text measures nothing: on Gemma 4 it read 15.3 nats against a
+      uniform-distribution bound of 12.5, worse than guessing, while
+      assistant-side tokens in the same sequence scored 0.000. The corpus is
+      a fixed reference ANSWER placed in the assistant slot.
+- [ ] Expect the perplexity to be NOT COMPARABLE to the other families'.
+      Gemma's template opens a `<|channel>thought` block before the
+      assistant slot and Qwen's does not, which is most of 37.31 against
+      6.25 on the same passage. Each row is a sentinel against its own past.
+- [ ] Freeze a greedy and a sampled digest, both from a WARM expert cache
+      (slots are ordered misses-first on some flows, which permutes phase
+      2's reduce, and FP addition is not associative, so a cold-cache
+      generation does not reproduce a warm one).
+- [ ] **Decide whether the family's flow reorders routed slots, and record
+      the answer.** It determines whether output is byte-identical across
+      expert-cache sizes: `real_forward_gemma4.rs` orders misses-first and
+      is NOT identical at 8 vs 16 slots; `real_forward_qwen.rs` does not
+      reorder and IS. Freeze a second digest for the constrained arm either
+      way rather than asserting the two equal, which on a reordering flow
+      is asserting FP associativity.
+- [ ] Do NOT reach for `MFERENCE_HIT_CB=0` to explain a difference here.
+      It toggles the separate command buffer, not the slot ORDER, and
+      measured directly it moves no digest.
+
+Gate: the gate passes twice from two fresh processes, agreeing on every
+digit and every hex character. If it does not, generation is not
+deterministic and no golden digest can hold, which is a bigger problem
+than whatever you were about to freeze.
+
+---
+
+## Phase 7 - Write it down
 
 - [ ] `AGENTS.md`: a Gotcha for anything a reader would get wrong twice.
 - [ ] `DEVIATIONS.md`: every deliberate divergence from the reference, with
@@ -459,5 +500,7 @@ reference implementation's published number for the same workload.
 | Footprint explodes, output correct | Routed-expert marker unrecognized: every expert became a resident tensor (Gotcha 26) |
 | Manifest never validates, several extension fields mismatch at once | They were omitted and resolved against the GEMMA baseline (Gotcha 24); or a float field is not a binary fraction |
 | Second generation differs from the first | `reset()` rewound the KV cache but not the recurrent state |
+| Output differs between two `--expert-cache-slots` values | Expected on a flow that orders routed slots misses-first (Gemma does, Qwen does not): the hit/miss split permutes phase 2's reduce and FP addition is not associative. Compare within one slot count |
+| Perplexity worse than a uniform distribution | Scoring prompt-position tokens on an instruction-tuned checkpoint (Phase 6) |
 | A whole layer kind seems to contribute nothing | Untrained fixture: assert on the block's state, not its output |
 | Throughput moved after a decode change | `MFERENCE_PHASES=1` buckets + GPU busy line, interleaved A/B pairs (`AGENTS.md` Gotcha 12); run-to-run spread is wider than most single effects |

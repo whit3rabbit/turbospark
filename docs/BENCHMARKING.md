@@ -273,6 +273,42 @@ Metal buffer allocation is already asserted flat" was right about the
 location and wrong about the owner: the allocations were Metal's, just
 not ours to count.
 
+## The quality gates
+
+A sibling of the memory oracle, same shape and same gating: `#[ignore]`d,
+one target per family, keyed on `MREFRUST_<FAMILY>_INSTALL_DIR`, asserting
+per-chip rows that record their own provenance. What it measures is
+quality rather than memory or speed, which is the one axis with no Swift
+column at all (the original publishes no perplexity, no KLD, no golden
+output).
+
+```sh
+MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
+  cargo test -p mrefrust-bench --test quality_gate --release -- --ignored --nocapture
+MREFRUST_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
+  cargo test -p mrefrust-bench --test qwen36_quality_gate --release -- --ignored --nocapture
+
+# Proof the gate above can see quantization damage, rather than assuming it.
+MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
+  cargo test -p mrefrust-bench --test quality_sensitivity --release -- --ignored --nocapture
+```
+
+Four arms per install, about 80 seconds: teacher-forced perplexity of a
+fixed reference answer, a greedy digest, a sampled digest at the protocol
+seed, and the greedy digest repeated with the expert cache halved to 8
+slots. Three traps that shaped it, all measured rather than reasoned:
+
+- **Score only assistant-position tokens.** SFT masks the loss on the
+  prompt, so teacher-forcing prompt text scores worse than a uniform
+  distribution.
+- **A golden digest needs a warm expert cache**, so the run order (warmup,
+  measure, measure, warmup, measure) is part of the protocol.
+- **Byte identity across slot counts is family-dependent**, so each slot
+  count gets its own frozen digest rather than being asserted equal.
+
+Numbers, provenance, and the damage-response curve live in
+`docs/BENCHMARKS.md`, not here.
+
 ## Measurement hygiene
 
 Carried over from the Swift protocol, worth repeating:

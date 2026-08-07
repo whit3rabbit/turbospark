@@ -16,6 +16,21 @@ live network).
   (e.g. `RuntimeConfig`'s numeric setters), this port kept the fatal-panic
   contract; see `AGENTS.md` Gotcha 2. This is the one place the two
   strategies coexist, and it predates this session's work.
+- **This port has a quality harness; the Swift original has none.** Not a
+  deviation from a behavior, an addition on an axis Swift publishes
+  nothing for: no perplexity, no KL divergence, no golden output. Every
+  number in `docs/BENCHMARKS.md`'s Quality section is therefore this port
+  measured against its own past, and no row there is or can be a parity
+  claim. Two consequences worth recording next to the parity tables.
+  Upstream's memory-pressure acceptance proof, byte-identical output at
+  unchanged throughput under a constrained working set, HOLDS ON QWEN AND
+  NOT ON GEMMA here: the Gemma flow's misses-first routed-slot ordering
+  (a port-local overlap optimization) feeds phase 2's reduce, and FP
+  addition is not associative, so halving the expert cache changes bytes
+  while throughput only degrades 0.86x. And the gate's sensitivity is
+  measured rather than assumed: `quality_sensitivity.rs` shifts one
+  quantization level in a strided subset of routed experts and puts the
+  detection floor between 0.0015% and 0.0122% of expert bytes.
 - **Process-entry-point ownership resolved as `crates/cli`.** An earlier
   note reserved the name `mrefrust-entrypoint` and left it unbuilt pending
   a decision. That decision is now made and documented in `AGENTS.md`

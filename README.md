@@ -79,7 +79,8 @@ port tracks itself over time: [`docs/BENCHMARKING.md`](docs/BENCHMARKING.md).
 - `crates/repack`: safetensors header parsing, ranged-download planning,
   and quantization repack.
 - `crates/server`: OpenAI Chat Completions and Anthropic Messages server on loopback.
-- `crates/bench`: throughput benchmark harness and the memory oracle tests.
+- `crates/bench`: throughput benchmark harness, the memory oracle tests, and
+  the per-install quality gates (perplexity plus frozen output digests).
 
 ## Build and test
 
