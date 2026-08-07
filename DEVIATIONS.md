@@ -1,8 +1,9 @@
 # Deviations
 
 Every place this port's behavior deliberately differs from, or falls short
-of, the Swift Mference original or the full scope described in
-`ROADMAP.md`. Organized by phase. "Scaffolded" means the pure/testable
+of, the Swift Mference original or the full scope of the original port
+roadmap (now condensed into `ROADMAP.md`'s Port record section; that file
+carries the forward roadmap). Organized by the port roadmap's phases. "Scaffolded" means the pure/testable
 logic is implemented and tested; the missing part is wiring to something
 this port has no access to (trained model weights, a real HF checkpoint, a
 live network).
@@ -18,7 +19,7 @@ live network).
 - **Process-entry-point ownership resolved as `crates/cli`.** An earlier
   note reserved the name `mrefrust-entrypoint` and left it unbuilt pending
   a decision. That decision is now made and documented in `AGENTS.md`
-  Gotcha 7: `crates/cli`, matching the ROADMAP's own Phase 7 crate list.
+  Gotcha 7: `crates/cli`.
 - **Three items formally descoped, by explicit user decision, rather than
   left open indefinitely:** `moe.metal`'s and `prefill.metal`'s GPU tile
   kernels, and `logit.metal`'s `sample` kernel. (`moe.metal`'s descope was
@@ -587,8 +588,9 @@ live network).
   Generated output is unaffected by construction, since the last prompt
   token and every decode token still run the head; verified as
   md5-identical greedy output on the real 26B install before and after.
-  Worth 6-7% of prefill wall clock on a 2252-token prompt (see ROADMAP.md
-  item 4 for the measured pairs). Swift's chunked prefill avoids the same
+  Worth 6-7% of prefill wall clock on a 2252-token prompt (paired deltas
+  -6.0 / -6.7 / -10.4%, interleaved against a stashed pre-change binary,
+  the third pair's before-arm a high outlier). Swift's chunked prefill avoids the same
   waste structurally instead, by running one head per chunk rather than
   per token; that path's GPU tile kernels are descoped here (see
   Cross-cutting rules in ROADMAP.md), which is why this port needed the
@@ -897,7 +899,7 @@ live network).
   install, and read every part of it back through the real, unmodified
   `mrefrust_model_io::load_manifest`/`load_resident_index` loaders —
   finished in under 100 seconds end to end. This is the piece the
-  `repack`'s own module docs and ROADMAP.md Phase 8 previously called
+  `repack`'s own module docs and the old port roadmap's Phase 8 called
   "NOT implemented" for exactly this reason; it is now implemented, for
   the Llama-family naming convention.
   `crates/repack/tests/hf_checkpoint_network.rs` carries this test,

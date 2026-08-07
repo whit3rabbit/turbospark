@@ -4,8 +4,8 @@ CLAUDE.md is a symlink to this file.
 
 Conventions, gotchas, and commands for working in this Rust workspace,
 a behavior-compatible port of the Mference Swift inference engine (see
-`ROADMAP.md` for phase-by-phase scope and `DEVIATIONS.md` for what is
-scaffolded rather than fully wired). Keep all code, comments, and docs
+`ROADMAP.md` for the forward roadmap and descope record, and
+`DEVIATIONS.md` for what is scaffolded rather than fully wired). Keep all code, comments, and docs
 ASCII: no emojis and no em dashes (project rule).
 
 `docs/TESTING.md` covers what the suite proves and how tests are gated
@@ -584,7 +584,7 @@ Workspace directory structure and crate layout:
 +-- LICENSE            # MIT license
 +-- Makefile           # build, test, fmt, clippy wrapper targets
 +-- README.md          # repository overview and quickstart
-+-- ROADMAP.md         # phase-by-phase scope tracking (gitignored)
++-- ROADMAP.md         # forward roadmap + descope record (gitignored)
 +-- rust-toolchain.toml # toolchain pin (stable Rust 1.82+)
 +-- crates
 |   +-- bench          # mference-bench binary & harness (throughput benchmark)
@@ -658,6 +658,7 @@ thresholds); `docs/BENCHMARKING.md` documents the benchmark modes and
 baselines.
 
 See `DEVIATIONS.md` for the full list of what this port scaffolds versus
-fully implements, `ROADMAP.md` for phase-by-phase scope, and
+fully implements, `ROADMAP.md` for the forward roadmap and descope
+record, and
 `docs/NEW_MODEL.md` for the end-to-end checklist for wiring a new model
 family (what to map, what to specialize, what to measure, in order).

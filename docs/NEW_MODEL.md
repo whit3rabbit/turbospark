@@ -393,10 +393,14 @@ already looks perfect - especially then.
       with context. Layers that carry it carry NO KV rows in exchange.
 - [ ] The resident weight mapping COUNTS in `phys_footprint`. A plain
       read-only `mmap` would not, but `newBufferWithBytesNoCopy` pins it.
-- [ ] Run `crates/bench/tests/memory_oracle.rs` against the install
-      (`#[ignore]`d, gated on `MREFRUST_GEMMA4_INSTALL_DIR`; the mach
-      sampler is `crates/bench/src/memory.rs`). What it asserts, per its
-      per-chip baseline rows (each labelled with a `source`: a published
+- [ ] Give the family its OWN oracle target next to
+      `crates/bench/tests/memory_oracle.rs` and `qwen36_memory_oracle.rs`
+      (`#[ignore]`d, gated on its own `MREFRUST_<FAMILY>_INSTALL_DIR` env
+      var; the mach sampler is `crates/bench/src/memory.rs`). A separate
+      test TARGET, not a second `#[test]` in an existing one: the
+      footprint assertion is a whole-session peak, and two families with
+      different ceilings cannot share one process. What it asserts, per
+      its per-chip baseline rows (each labelled with a `source`: a published
       Swift number or this port's own past measurement):
       - session peak `phys_footprint` <= the row's ceiling (~5% headroom
         already baked into Swift-derived rows). Add a row for the new

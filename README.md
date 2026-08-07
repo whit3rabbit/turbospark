@@ -5,16 +5,17 @@ its command-line/server surface. The Swift original is public at
 <https://github.com/drumih/turbo-fieldfare>; its experiment inventory
 (`docs/experiments/EXPERIMENT_INVENTORY.md` there) is cross-referenced
 against this port's own measurements in `DEVIATIONS.md`. See `ROADMAP.md`
-for phase-by-phase scope and `DEVIATIONS.md` for what is fully wired
-versus scaffolded.
+(gitignored, local) for the forward roadmap and descope record, and
+`DEVIATIONS.md` for what is fully wired versus scaffolded.
 
 This workspace is built and tested with cargo.
 
 ## Where it stands
 
-Gemma 4 26B-A4B runs end to end: a real Metal forward pass per token, with
-each layer's routed experts streamed from SSD instead of held in RAM. The
-model does not have to fit in memory, only its working set does.
+Two model families run end to end, Gemma 4 26B-A4B and Qwen 3.6 35B-A3B:
+a real Metal forward pass per token, with each layer's routed experts
+streamed from SSD instead of held in RAM. The model does not have to fit
+in memory, only its working set does.
 
 On 2026-08-07 the port and the Swift original were measured back to back
 on one machine, reading the same model directory, through the same frozen
@@ -44,6 +45,14 @@ tokens (no fixed startup cost) and slower above it (the original batches
 prompt tokens in chunks of 128; this port runs one forward pass per token,
 because those tile kernels are out of scope).
 
+Qwen 3.6 35B-A3B, proven the same day on the real checkpoint: 32.6 to
+38.0 tok/s decode on the same frozen protocol, peak footprint 1,587 to
+1,610 MiB on an 18 GB install. That is roughly 500 MiB under Gemma
+despite the larger model, because 30 of its 40 layers are gated-DeltaNet
+linear attention carrying ~2 MiB of fixed recurrent state each instead
+of a KV cache, so context growth touches 10 layers instead of 30. No
+Swift side-by-side has been run for this family yet.
+
 Full numbers, provenance, and caveats: [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md).
 Reproduce with `scripts/parity.sh`. How the harness works, and how this
 port tracks itself over time: [`docs/BENCHMARKING.md`](docs/BENCHMARKING.md).
@@ -70,6 +79,7 @@ port tracks itself over time: [`docs/BENCHMARKING.md`](docs/BENCHMARKING.md).
 - `crates/repack`: safetensors header parsing, ranged-download planning,
   and quantization repack.
 - `crates/server`: OpenAI Chat Completions and Anthropic Messages server on loopback.
+- `crates/bench`: throughput benchmark harness and the memory oracle tests.
 
 ## Build and test
 
