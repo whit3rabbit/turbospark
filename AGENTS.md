@@ -69,7 +69,9 @@ cargo clippy --workspace --tests
 cargo run -p mrefrust-cli --bin mference-check -- --model /path/to/model --prompt "hi"
 
 # Run the OpenAI-compatible server against a real install (macOS; one
-# runner per process, so requests are served one at a time).
+# runner per process, so requests are served one at a time). Add
+# `--bind tailnet` to bind this machine's Tailscale IPv4 address instead of
+# loopback (no auth, no TLS: the Tailnet ACL is the only access control).
 cargo run --release -p mrefrust-server --bin mference-server -- --model ~/models/gemma4.gturbo
 
 # Same server, portable scripted backend (canned responses; DEVIATIONS.md).

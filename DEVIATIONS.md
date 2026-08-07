@@ -792,8 +792,18 @@ live network).
   thread). A client that disconnects mid-stream does not abort generation.
   `ScriptedChatModel` remains the portable backend the integration tests
   drive; on non-macOS it is the only one.
-- **No tailnet bind.** The server binds `127.0.0.1` only; the ROADMAP's
-  "optional tailnet bind" is not implemented.
+- **Tailnet bind: implemented, `--model` mode only.** `--bind
+  loopback|tailnet` (default loopback) ports Swift's `ServerBindMode`:
+  `tailnet` runs `tailscale ip -4` (spawned directly, no shell) and binds
+  the single reported address, requiring it to be a dotted-quad inside
+  100.64.0.0/10. Zero, several, out-of-range, IPv6, or malformed output all
+  fail rather than falling back, so there is no path from `tailnet` to a
+  wildcard or LAN bind. Resolution runs BEFORE the model is opened, so a
+  missing Tailscale does not first cost a multi-gigabyte map and a pipeline
+  compile. Deviation from Swift: the flag is absent from the portable
+  `<tokenizer-dir>` scripted mode (which Swift does not have), which always
+  binds loopback. Like Swift's, it is not authentication: the server has no
+  auth and no TLS, so access is governed entirely by the Tailnet ACL.
 - The server's sampling knob surface is narrower than the CLI's: no
   request-settable `top_k` (it defaults to 64, the CLI's default, because
   `ShapingConfig` rejects a `top_p` below 1.0 when `top_k` is 0, which

@@ -1,31 +1,114 @@
 //! `mference-server`: binds the OpenAI-compatible Chat Completions router to
-//! loopback. Two modes:
+//! loopback, or to this machine's Tailscale IPv4 address. Two modes:
 //!
 //!   mference-server --model <install-dir> [--port N] [--max-context N]
-//!                   [--expert-cache-slots N]
+//!                   [--expert-cache-slots N] [--bind loopback|tailnet]
 //!   mference-server <tokenizer-dir> [port]
 //!
 //! The first serves real generation from a `.gturbo` install through
 //! `RealForwardRunner` (macOS only; one runner per process, requests
 //! serialized). The second is the portable scripted mode: it takes only a
 //! tokenizer and every response comes from `ScriptedChatModel`, a fixed
-//! placeholder sequence, not a forward pass.
+//! placeholder sequence, not a forward pass; it always binds loopback.
 //!
-//! Default port 8080. Optional tailnet bind (vs. loopback-only) is not
-//! implemented.
+//! Default port 8080, default bind loopback. `--bind tailnet` is NOT
+//! authentication: the server has no auth and no TLS, so access is governed
+//! entirely by the Tailnet ACL.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use tokenizer::MfTokenizer;
 
-const USAGE: &str = "usage: mference-server --model <install-dir> [--port N] [--max-context N] [--expert-cache-slots N]\n       mference-server <tokenizer-dir> [port]";
+const USAGE: &str = "usage: mference-server --model <install-dir> [--port N] [--max-context N] [--expert-cache-slots N] [--bind loopback|tailnet]\n       mference-server <tokenizer-dir> [port]";
+
+/// Interface the server listens on. Resolution fails rather than widening:
+/// there is no path from `Tailnet` to a wildcard or LAN address.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum BindMode {
+    Loopback,
+    Tailnet,
+}
+
+impl BindMode {
+    fn host(self) -> Result<String, String> {
+        match self {
+            BindMode::Loopback => Ok("127.0.0.1".to_string()),
+            BindMode::Tailnet => tailnet_host(&tailscale_ipv4_output()?),
+        }
+    }
+}
+
+/// Accepts exactly one Tailscale IPv4 address. Empty, ambiguous, IPv6-only,
+/// malformed, and off-range output all fail; none of them fall back.
+fn tailnet_host(output: &str) -> Result<String, String> {
+    let fields: Vec<&str> = output.split_whitespace().collect();
+    match fields.as_slice() {
+        [] => Err(
+            "tailscale reported no IPv4 address; ensure Tailscale is running and connected"
+                .to_string(),
+        ),
+        [only] if is_tailscale_ipv4(only) => Ok((*only).to_string()),
+        [only] => Err(format!(
+            "tailscale reported \"{}\", which is not a Tailnet IPv4 address",
+            &only[..only.len().min(64)]
+        )),
+        many => Err(format!(
+            "tailscale reported {} IPv4 addresses; refusing to guess which to bind",
+            many.len()
+        )),
+    }
+}
+
+/// True for a dotted-quad IPv4 inside 100.64.0.0/10, the range Tailscale
+/// allocates from. Restricting to that range keeps a wildcard, loopback, or
+/// LAN address from ever being bound.
+fn is_tailscale_ipv4(text: &str) -> bool {
+    let parts: Vec<&str> = text.split('.').collect();
+    if parts.len() != 4 {
+        return false;
+    }
+    let mut octets = [0u8; 4];
+    for (slot, part) in octets.iter_mut().zip(parts) {
+        // Reject leading zeros: "100.064.0.1" would otherwise pass here and
+        // then be read as octal by some resolvers.
+        if part.len() > 1 && part.starts_with('0') {
+            return false;
+        }
+        match part.parse::<u8>() {
+            Ok(octet) => *slot = octet,
+            Err(_) => return false,
+        }
+    }
+    octets[0] == 100 && (64..=127).contains(&octets[1])
+}
+
+/// Raw stdout of `tailscale ip -4`. Spawned directly with no shell, so
+/// nothing is interpolated into a command line.
+fn tailscale_ipv4_output() -> Result<String, String> {
+    let out = std::process::Command::new("tailscale")
+        .args(["ip", "-4"])
+        .stderr(std::process::Stdio::null())
+        .output()
+        .map_err(|e| {
+            format!("could not run tailscale ({e}); install its CLI and keep it on PATH")
+        })?;
+    if !out.status.success() {
+        return Err(format!(
+            "tailscale ip -4 exited with {}; ensure Tailscale is running and connected",
+            out.status
+        ));
+    }
+    String::from_utf8(out.stdout)
+        .map_err(|_| "tailscale ip -4 returned non-UTF-8 output".to_string())
+}
 
 struct ModelArgs {
     model: String,
     port: u16,
     max_context: u32,
     expert_cache_slots: u32,
+    bind: BindMode,
 }
 
 /// Parses the `--model` mode's flags. Returns `Ok(None)` when the first
@@ -40,6 +123,7 @@ fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
         port: 8080,
         max_context: 4096,
         expert_cache_slots: 16,
+        bind: BindMode::Loopback,
     };
     let mut i = 0;
     while i < args.len() {
@@ -53,6 +137,15 @@ fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
             "--port" => parsed.port = value.parse::<u16>().map_err(|e| format!("--port: {e}"))?,
             "--max-context" => parsed.max_context = number()?,
             "--expert-cache-slots" => parsed.expert_cache_slots = number()?,
+            "--bind" => {
+                parsed.bind = match value.as_str() {
+                    "loopback" => BindMode::Loopback,
+                    "tailnet" => BindMode::Tailnet,
+                    other => {
+                        return Err(format!("--bind must be loopback or tailnet, not {other}"))
+                    }
+                }
+            }
             other => return Err(format!("unknown option {other}\n{USAGE}")),
         }
         i += 2;
@@ -113,22 +206,34 @@ async fn main() -> std::process::ExitCode {
         return std::process::ExitCode::from(2);
     }
 
-    let (model, port) = match parse_model_args(&args) {
+    let (model, port, bind) = match parse_model_args(&args) {
         Err(e) => {
             eprintln!("{e}");
             return std::process::ExitCode::from(2);
         }
-        Ok(Some(parsed)) => match open_real_model(&parsed) {
-            Ok(m) => (m, parsed.port),
-            Err(e) => {
-                eprintln!("{e}");
-                return std::process::ExitCode::from(2);
+        Ok(Some(parsed)) => {
+            // Resolve the host BEFORE opening the model: a missing Tailscale
+            // should not cost a multi-gigabyte map and a pipeline compile
+            // first.
+            let host = match parsed.bind.host() {
+                Ok(h) => h,
+                Err(e) => {
+                    eprintln!("{e}");
+                    return std::process::ExitCode::from(2);
+                }
+            };
+            match open_real_model(&parsed) {
+                Ok(m) => (m, parsed.port, host),
+                Err(e) => {
+                    eprintln!("{e}");
+                    return std::process::ExitCode::from(2);
+                }
             }
-        },
+        }
         Ok(None) => {
             let port: u16 = args.get(1).and_then(|p| p.parse().ok()).unwrap_or(8080);
             match open_scripted(&args[0]) {
-                Ok(m) => (m, port),
+                Ok(m) => (m, port, "127.0.0.1".to_string()),
                 Err(e) => {
                     eprintln!("{e}");
                     return std::process::ExitCode::from(1);
@@ -138,7 +243,7 @@ async fn main() -> std::process::ExitCode {
     };
 
     let router = mrefrust_server::build_router(model);
-    let addr = format!("127.0.0.1:{port}");
+    let addr = format!("{bind}:{port}");
     let listener = match tokio::net::TcpListener::bind(&addr).await {
         Ok(l) => l,
         Err(e) => {
@@ -198,5 +303,47 @@ mod tests {
         assert!(parse(&["--model", "/tmp/m", "--port", "70000"]).is_err());
         assert!(parse(&["--model"]).is_err());
         assert!(parse(&["--model", "/tmp/m", "--nope", "1"]).is_err());
+        assert!(parse(&["--model", "/tmp/m", "--bind", "lan"]).is_err());
+    }
+
+    #[test]
+    fn bind_mode_defaults_to_loopback() {
+        assert_eq!(
+            parse(&["--model", "/tmp/m"]).unwrap().unwrap().bind,
+            BindMode::Loopback
+        );
+        let t = parse(&["--model", "/tmp/m", "--bind", "tailnet"])
+            .unwrap()
+            .unwrap();
+        assert_eq!(t.bind, BindMode::Tailnet);
+        assert_eq!(BindMode::Loopback.host().unwrap(), "127.0.0.1");
+    }
+
+    #[test]
+    fn tailnet_host_accepts_exactly_one_in_range_address() {
+        assert_eq!(tailnet_host("100.64.0.1\n").unwrap(), "100.64.0.1");
+        assert_eq!(
+            tailnet_host("100.127.255.254\n").unwrap(),
+            "100.127.255.254"
+        );
+    }
+
+    #[test]
+    fn tailnet_host_never_falls_back() {
+        // Empty, ambiguous, out-of-range, IPv6, and malformed all fail rather
+        // than widening to a loopback/LAN/wildcard bind.
+        assert!(tailnet_host("").is_err());
+        assert!(tailnet_host("  \n").is_err());
+        assert!(tailnet_host("100.64.0.1 100.64.0.2\n").is_err());
+        assert!(tailnet_host("100.63.0.1").is_err());
+        assert!(tailnet_host("100.128.0.1").is_err());
+        assert!(tailnet_host("192.168.1.5").is_err());
+        assert!(tailnet_host("127.0.0.1").is_err());
+        assert!(tailnet_host("0.0.0.0").is_err());
+        assert!(tailnet_host("fd7a:115c:a1e0::1").is_err());
+        assert!(tailnet_host("100.64.0").is_err());
+        assert!(tailnet_host("100.64.0.256").is_err());
+        assert!(tailnet_host("100.064.0.1").is_err());
+        assert!(tailnet_host("100.64.0.1;rm -rf /").is_err());
     }
 }
