@@ -124,6 +124,11 @@ pub struct RealForwardRunner {
     /// scales, layer scalars. `None` for synthetic short-name installs,
     /// which keep the plain no-scale flow. See `real_forward_gemma4.rs`.
     pub(crate) real: Option<crate::real_forward_gemma4::RealGemmaState>,
+    /// Real-checkpoint Qwen 3.6 decode state: the GDN recurrent buffers and
+    /// the Qwen-only scratch. Mutually exclusive with `real`; kept as its
+    /// own `Option` rather than folded into an enum so the Gemma path's
+    /// borrow shape is untouched. See `real_forward_qwen.rs`.
+    pub(crate) real_qwen: Option<crate::real_forward_qwen::RealQwenState>,
     pub(crate) phases: PhaseCounters,
     /// Whether the shared-expert branch rides its own command buffer so it
     /// overlaps the host's expert `pread` (see `real_forward_gemma4.rs`).
@@ -427,17 +432,26 @@ impl RealForwardRunner {
                 "expert_cache_slots must be positive".to_string(),
             ));
         }
-        // Full attention (1) and sliding-window (0) layers are supported;
-        // linear (2, Qwen GDN) and compressed (3/4, DeepSeek DSV4) layers
-        // still are not (their compute kernels are unported).
-        if expecting
+        // Full attention (1) and sliding-window (0) layers are supported
+        // everywhere; linear (2, Qwen GDN) only under the Qwen 3.6 family,
+        // whose flow is the only one that dispatches the GDN kernels.
+        // Compressed (3/4, DeepSeek DSV4) is still unported outright.
+        let max_kind = expecting
             .full_attention_layer_mask
             .iter()
-            .any(|&kind| kind > 1)
-        {
+            .copied()
+            .max()
+            .unwrap_or(0);
+        if max_kind > 2 {
             return Err(RealForwardError::Unsupported(
-                "linear/compressed attention layers are not supported yet".to_string(),
+                "compressed (DeepSeek CSA/HCA) attention layers are not supported yet".to_string(),
             ));
+        }
+        if max_kind == 2 && expecting.family != model_io::ModelFamily::Qwen36 {
+            return Err(RealForwardError::Unsupported(format!(
+                "linear-attention layers need the qwen36 family, not {}",
+                expecting.family.as_str()
+            )));
         }
         if expecting.full_attention_layer_mask.contains(&0) && expecting.sliding_window <= 0 {
             return Err(RealForwardError::Unsupported(
@@ -561,25 +575,45 @@ impl RealForwardRunner {
             routed_blobs,
             routed_blobs_hits,
             real: None,
+            real_qwen: None,
             phases: PhaseCounters::default(),
             shared_cb_overlap: std::env::var("MFERENCE_SHARED_CB").as_deref() != Ok("0"),
             hit_cb_overlap: std::env::var("MFERENCE_HIT_CB").as_deref() != Ok("0"),
             routed_pipeline: std::env::var("MFERENCE_ROUTED_PIPELINE").as_deref() != Ok("0"),
             skip_head: false,
         };
-        // Real-checkpoint installs keep the source's verbatim tensor
-        // naming; their presence selects the learned-weight decode flow.
-        if runner
-            .index
-            .entries
-            .contains_key("language_model.model.embed_tokens.weight")
-        {
-            runner.real = Some(crate::real_forward_gemma4::RealGemmaState::build(
-                &mut runner.context,
-                &runner.weights,
-                &runner.index,
-                &runner.arch,
-            )?);
+        // Flow selection keys on the FAMILY, not on tensor naming: both
+        // real families carry `language_model.model.embed_tokens.weight`,
+        // so the naming probe can only tell a real Gemma install from a
+        // synthetic short-name one, never Gemma from Qwen.
+        match runner.arch.family {
+            model_io::ModelFamily::Gemma4 => {
+                if runner
+                    .index
+                    .entries
+                    .contains_key("language_model.model.embed_tokens.weight")
+                {
+                    runner.real = Some(crate::real_forward_gemma4::RealGemmaState::build(
+                        &mut runner.context,
+                        &runner.weights,
+                        &runner.index,
+                        &runner.arch,
+                    )?);
+                }
+            }
+            model_io::ModelFamily::Qwen36 => {
+                runner.real_qwen = Some(crate::real_forward_qwen::RealQwenState::build(
+                    &mut runner.context,
+                    &runner.weights,
+                    &runner.index,
+                    &runner.arch,
+                )?);
+            }
+            model_io::ModelFamily::DeepseekV4Flash => {
+                return Err(RealForwardError::Unsupported(
+                    "the DeepSeek-V4-Flash family has no decode flow yet".to_string(),
+                ));
+            }
         }
         Ok(runner)
     }
@@ -767,6 +801,13 @@ fn topk_softmax(logits: &[f32], k: usize) -> (Vec<usize>, Vec<f32>) {
 impl LogitProducer for RealForwardRunner {
     fn reset(&mut self) {
         self.kv.reset();
+        // Linear-attention layers keep their whole history in the GDN
+        // recurrent state and conv tail, NOT in the KV cache, so rewinding
+        // the KV alone would leave the previous generation's context in
+        // every mask-2 layer.
+        if let Some(qwen) = self.real_qwen.as_mut() {
+            qwen.reset();
+        }
     }
 
     /// One pool per token, not per process. Every command buffer and
@@ -864,6 +905,9 @@ impl RealForwardRunner {
         position: usize,
         logits: &mut [LogitValue],
     ) -> Result<(), RealForwardError> {
+        if self.real_qwen.is_some() {
+            return self.produce_real_qwen36(token, position, logits);
+        }
         if self.real.is_some() {
             return self.produce_real_gemma4(token, position, logits);
         }

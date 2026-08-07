@@ -70,11 +70,11 @@ pub(crate) struct RealGemmaState {
     h2: gpu::MetalBuffer,
 }
 
-fn layer_tensor(layer: usize, suffix: &str) -> String {
+pub(crate) fn layer_tensor(layer: usize, suffix: &str) -> String {
     format!("language_model.model.layers.{layer}.{suffix}")
 }
 
-fn entry<'a>(
+pub(crate) fn entry<'a>(
     index: &'a ResidentIndex,
     name: &str,
 ) -> Result<&'a model_io::ResidentIndexEntry, RealForwardError> {
@@ -85,7 +85,7 @@ fn entry<'a>(
 }
 
 /// Decodes a resident BF16 tensor to `f32` host values.
-fn read_bf16_host(
+pub(crate) fn read_bf16_host(
     weights: &gpu::ResidentGpuWeights,
     index: &ResidentIndex,
     name: &str,
@@ -102,7 +102,7 @@ fn read_bf16_host(
 
 /// Resolves a raw (norm) tensor to a `(buffer, gpu offset)` view, checking
 /// its byte size against the expected element count.
-fn norm_view<'a>(
+pub(crate) fn norm_view<'a>(
     weights: &'a gpu::ResidentGpuWeights,
     index: &ResidentIndex,
     name: &str,
@@ -123,7 +123,7 @@ fn norm_view<'a>(
 /// 5 = INT8-affine (the resident writer's tags), and encodes the matching
 /// offset-bound GEMV.
 #[allow(clippy::too_many_arguments)]
-fn encode_gemv_any(
+pub(crate) fn encode_gemv_any(
     context: &mut gpu::MetalContext,
     pass: &gpu::PassEncoder,
     weights: &gpu::ResidentGpuWeights,
@@ -168,7 +168,7 @@ fn encode_gemv_any(
 /// selected scores only, each weight multiplied by that expert's
 /// `per_expert_scale`. (Distinct from the synthetic path's
 /// softmax-over-all-then-renormalize `topk_softmax`.)
-fn router_topk_gemma4(
+pub(crate) fn router_topk_gemma4(
     logits: &[f32],
     k: usize,
     per_expert_scale: &[f32],

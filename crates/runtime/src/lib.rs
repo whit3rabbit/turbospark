@@ -12,6 +12,12 @@ mod raw_completion;
 mod real_forward;
 #[cfg(target_os = "macos")]
 mod real_forward_gemma4;
+#[cfg(target_os = "macos")]
+mod real_forward_qwen;
+#[cfg(target_os = "macos")]
+mod real_forward_qwen_attn;
+#[cfg(target_os = "macos")]
+mod real_forward_qwen_state;
 
 pub use config::GenerationConfig;
 pub use error::RuntimeError;
