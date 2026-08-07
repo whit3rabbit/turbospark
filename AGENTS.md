@@ -99,6 +99,12 @@ cargo run --release -p mrefrust-bench --bin mference-bench -- --model ~/models/g
 MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
   cargo test -p mrefrust-bench --test memory_oracle --release -- --ignored --nocapture
 
+# Same oracle for Qwen 3.6. A SEPARATE target, not a second #[test]: the
+# footprint assertion is a whole-session peak and the two families have
+# different ceilings (~2,200 vs ~1,600 MiB), so they need one process each.
+MREFRUST_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
+  cargo test -p mrefrust-bench --test qwen36_memory_oracle --release -- --ignored --nocapture
+
 # The other #[ignore]d tests: real checkpoint downloads (many GB).
 cargo test -p mrefrust-repack --test gemma4_checkpoint_network --release -- --ignored --nocapture
 cargo test -p mrefrust-repack --test hf_checkpoint_network --release -- --ignored --nocapture

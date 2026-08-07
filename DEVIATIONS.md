@@ -460,35 +460,45 @@ live network).
   synthetic milestone; the two gaps that remain are throughput tuning and
   a memory-oracle row, not correctness.
 
-  Peak `phys_footprint` is **1,617 MiB**, well under Gemma 4 26B-A4B's
-  2,100-2,200 on the same machine despite the larger install. That is the
-  hybrid paying off: 30 of 40 layers are linear and carry no KV at all,
-  only ~2 MiB of fixed GDN state each, so context growth touches 10
-  layers instead of 30.
+  Peak `phys_footprint` is **1,587-1,610 MiB**, roughly 500 MiB UNDER
+  Gemma 4 26B-A4B on the same machine despite the larger install. That is
+  the hybrid paying off: 30 of 40 layers are linear and carry no KV at
+  all, only ~2 MiB of fixed GDN state each, so context growth touches 10
+  layers instead of 30. `crates/bench/tests/qwen36_memory_oracle.rs`
+  holds the row (ceiling 1,700, floor 25.0) and the reasoning behind
+  both; it is a separate target from `memory_oracle.rs` because the
+  footprint assertion is against a whole-session peak and two families
+  cannot share one.
 
-  Decode throughput is NOT yet a usable number and no oracle row has been
-  added. Measured 20.0-23.1 tok/s (M4 Max, AC, 32 slots, warm, warmup
-  discarded), but `MFERENCE_PHASES=1` accounts for only ~29 ms of a
-  ~45 ms token: the ~15.5 ms/token residual is `selection`'s full
-  `rank_indices` sort over V=248320, which is a HOST cost no GPU bucket
-  can see. Re-measure once that sort is a partial select; the GPU-side
-  buckets below are the ones that transfer:
+  Decode is **32.6-38.0 tok/s** on the frozen protocol (M4 Max, AC, 16
+  slots, warmup discarded, two independent readings agreeing to 0.13
+  tok/s on the slowest case). Prefill is ~37 tok/s.
 
-  | bucket | ms/token |
-  |---|---|
-  | gpu wait (layer cb1) | 18.8-20.8 |
-  | expert io (pread) | 5.7-5.8 |
-  | encode + logit readback | 1.1 |
-  | final wait (end of token) | 1.0-1.1 |
-  | routed bind+upload | 0.8 |
-  | router readback+topk | 0.34 |
-  | hit-expert phase1 cb | 0.00 |
-  | routed cb retire | 0.00 |
+  That is up from 20.0-23.1 measured on the same install hours earlier,
+  and the difference is entirely `selection`'s full `rank_indices` sort
+  over V=248320 (AGENTS.md Gotcha 23). The tell was arithmetic:
+  `MFERENCE_PHASES=1` accounted for only ~29 ms of a ~45 ms token. After
+  the fix the same report accounts for 23.7 ms of a 23.3 ms token, i.e.
+  all of it. Buckets, warm, 32 slots, before and after:
 
-  The two zeros are BY CONSTRUCTION, not a measurement failure: the Qwen
-  flow has none of the three overlap seams, so there is no hit-CB and no
-  pipelined routed CB to charge time to. Expert cache hit rate is 73.9%
-  at 32 slots against 256 experts per layer.
+  | bucket | before | after |
+  |---|---|---|
+  | gpu wait (layer cb1) | 18.8-20.8 | 14.0-14.5 |
+  | expert io (pread) | 5.7-5.8 | 5.0-6.2 |
+  | encode + logit readback | 1.1 | 1.0 |
+  | final wait (end of token) | 1.0-1.1 | 1.0 |
+  | routed bind+upload | 0.8 | 0.66 |
+  | router readback+topk | 0.34 | 0.25 |
+  | hit-expert phase1 cb | 0.00 | 0.00 |
+  | routed cb retire | 0.00 | 0.00 |
+  | **unaccounted (host sampler)** | **~15.5** | **~0** |
+
+  `gpu wait` fell without any GPU-side change because the host used to
+  spend 15 ms sorting while the GPU idled; removing that exposes less
+  waiting, not less work. The two zeros are BY CONSTRUCTION, not a
+  measurement failure: the Qwen flow has none of the three overlap seams,
+  so there is no hit-CB and no pipelined routed CB to charge time to.
+  Expert cache hit rate is 73.9% at 32 slots against 256 experts.
 - **Qwen 3.6: wired end to end against a SYNTHETIC install only.** The
   decode flow (`crates/runtime/src/real_forward_qwen.rs` plus
   `real_forward_qwen_attn.rs`) runs both Qwen layer kinds -- gated
