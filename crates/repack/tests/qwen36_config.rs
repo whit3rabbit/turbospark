@@ -95,7 +95,7 @@ fn attention_scale_is_the_reference_head_dim_power() {
     let arch = parse_qwen36_config(&config_json()).expect("config parses");
     // mlx-lm `Qwen3NextAttention.__init__`: `self.scale = head_dim**-0.5`.
     // Exactly 1/16 at head_dim 256, so `==` is safe here (AGENTS.md
-    // Gotcha 23 is about scales that are NOT binary fractions).
+    // Gotcha 24 is about scales that are NOT binary fractions).
     assert_eq!(arch.attention_scale, 0.0625);
     assert_eq!(arch.attention_scale, 1.0 / 16.0);
 }

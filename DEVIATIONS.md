@@ -166,6 +166,24 @@ live network).
 
 ## Phase 6 (GPU)
 
+- **`gdn.metal` is compiled from a CONCATENATED source string, and its
+  input-projection specialization is unused.** The fused four-way input
+  projection calls `dequant_int4_gemv_simd_body`, a `static inline` in
+  `dequant_int4.metal`; the Swift build concatenates every shader module
+  into one library, so the call resolves there. This port compiles one
+  library per file, so `crates/gpu/src/gdn.rs`'s `SOURCE` is
+  `concat!(include_str!("shaders/dequant_int4.metal"), "\n",
+  include_str!("shaders/gdn.metal"))` — one `&'static str` with one stable
+  address, which is what the address-keyed pipeline cache needs (AGENTS.md
+  Gotcha 8), at the cost of compiling the INT4 kernels a second time in
+  this library. `gdn_parity.rs`'s fused-vs-four-separate-GEMVs test asserts
+  the result is BIT-identical, which is the check that makes the trick
+  safe. Separately, the kernel's function constants 90-94 (constant-folded
+  row counts for the decode shape) are declared but never specialized:
+  every dispatch takes its shape at runtime. Swift measured ~102 GB/s
+  unspecialized against ~141 GB/s specialized for a plain INT4 GEMV, so
+  this is a real throughput item, deliberately left for the session that
+  measures the real checkpoint.
 - **The dispatched kernel set (grown well past the original six):**
   `rmsnorm.metal`'s `rmsnorm_no_scale`, `rms_norm_bf16w`, and both
   `_perhead` norm variants; `rope.metal`'s `rope_proportional_neox`
@@ -234,21 +252,24 @@ live network).
   vendored, and porting any of them well would mean reimplementing a
   substantial fraction of a production tiled-inference pipeline, not a
   self-contained kernel.
-  **The GDN/DSV4 *compute* kernels (`gdn.metal`, `dsv4.metal`) that would
-  read and write through the state managers this port already built are
-  also unvendored, but are NOT a throughput tradeoff like the three
-  above** — there is no working fallback path for them. The state
-  managers (`GdnStateManager`, `Dsv4StateManager`) allocate real buffers,
-  but nothing computes a delta-rule update or a compressed-attention
-  read into or out of them, on GPU or CPU (`mrefrust_compute` has no
-  delta-rule/CSA/HCA reference either). This is why `RealForwardRunner`
-  rejects any layer whose `full_attention_layer_mask` entry isn't `1`
-  (see Phase 7 below) rather than merely running those layers slower:
-  Qwen 3.6 (`full_attention_layer_mask` mostly `2`, gated-DeltaNet linear
-  attention on 30 of 40 layers) and DeepSeek-V4-Flash
+  **`gdn.metal` is now vendored, dispatched, and parity-tested; only
+  `dsv4.metal` is still missing, and it is NOT a throughput tradeoff like
+  the three above** — there is no working fallback path for it. All eight
+  GDN kernels (fused four-way input projection, causal depthwise conv in
+  decode/prefill/tail-update form, per-head q/k norm, the gated delta
+  recurrence in decode and prefill form, and the gated output norm) are
+  vendored verbatim into `crates/gpu/src/shaders/gdn.metal`, dispatched
+  from `crates/gpu/src/gdn.rs`, and checked against the FP32 reference
+  `mrefrust_compute::GdnReference` in `crates/gpu/tests/gdn_parity.rs`.
+  `Dsv4StateManager` still allocates real buffers with nothing computing
+  a compressed-attention read into or out of them, on GPU or CPU
+  (`mrefrust_compute` has no CSA/HCA reference either), so
+  `RealForwardRunner` still rejects mask 3/4 outright: DeepSeek-V4-Flash
   (`full_attention_layer_mask` values `{0,3,4}` — zero full-attention
-  layers at all) cannot run through this port at any speed until these
+  layers at all) cannot run through this port at any speed until those
   kernels exist, unlike the three descoped-for-throughput items above.
+  Qwen 3.6 (`full_attention_layer_mask` mostly `2`) is no longer in that
+  category: its decode flow is wired (see Phase 7 below).
   The dense gated FFN is NOT affected by this: it now runs fully on the
   GPU (gate/up/down GEMVs plus `utility.metal`'s
   `gelu_mul_fp16`/`silu_mul_fp16` activation — vendored and parity-tested
@@ -386,14 +407,17 @@ live network).
   `window_slot`/`window_count`/`window_start_position` port the Swift
   original's ring position math. `KvCacheManager` IS production-wired: it
   is `RealForwardRunner`'s persistent KV cache (K written in place by the
-  GEMV, SWA ring addressing dispatched). The GDN and DSV4 managers stay
-  unwired (their compute kernels are unported — see below); each of the
-  three is also exercised directly against
+  GEMV, SWA ring addressing dispatched). `GdnStateManager` is now
+  production-wired too — the Qwen 3.6 decode flow owns one per open and
+  advances both its delta-rule state and its conv tail in place every
+  token (`RealQwenState`, `real_forward_qwen.rs`). Only `Dsv4StateManager`
+  stays unwired (its compute kernels are unported — see below); each of
+  the three is also exercised directly against
   real Metal buffers: `crates/gpu/tests/kv_cache.rs` (9 tests),
   `crates/gpu/tests/gdn_state.rs` (3 tests), and
   `crates/gpu/tests/dsv4_state.rs` (6 tests). What's still missing for
-  DSV4/GDN specifically is the compute *kernels* that would read and write
-  through these managers (`gdn.metal`, `dsv4.metal`) — the managers are
+  DSV4 specifically is the compute *kernels* that would read and write
+  through its manager (`dsv4.metal`) — the managers are
   buffer lifecycle only, matching the Swift originals' own scope (the
   Swift `DSV4StateManager`/`GDNStateManager` are likewise pure buffer
   managers; the kernels live in separate `.metal` files).
@@ -425,6 +449,73 @@ live network).
 
 ## Phase 7 (runtime, CLI)
 
+- **Qwen 3.6: wired end to end against a SYNTHETIC install only.** The
+  decode flow (`crates/runtime/src/real_forward_qwen.rs` plus
+  `real_forward_qwen_attn.rs`) runs both Qwen layer kinds -- gated
+  DeltaNet (mask 2) through the eight `gdn.metal` kernels, and gated full
+  attention (mask 1) through `split_q_gate_fp16` + per-head q/k norms +
+  `rope_neox_subdim` + `sigmoid_gate_mul_fp16` -- with a sigmoid-gated
+  shared expert and streamed INT4 routed experts on every layer.
+  `RealForwardRunner::open` selects it from `ArchConfig.family`, not from
+  tensor naming (both real families carry
+  `language_model.model.embed_tokens.weight`). Proven by
+  `crates/runtime/tests/real_forward_qwen.rs` (8 tests) against
+  `mrefrust_repack::build_synthetic_qwen36_real_install`, and end to end
+  through `mference-check`. What is NOT done: no real ~20 GB Qwen
+  checkpoint has been downloaded or repacked, so there is no throughput
+  number and no memory-oracle row. Weights in the fixture are
+  deterministic but untrained, so no test asserts on generated text
+  (AGENTS.md Gotcha 12).
+- **The synthetic Qwen fixture quantizes the shared expert INT8; the real
+  checkpoint quantizes it INT4.** `mlx-community/Qwen3.6-35B-A3B-4bit`
+  puts only `mlp.gate` (the router) and `mlp.shared_expert_gate` at 8
+  bits; `mlp.shared_expert.{gate,up,down}_proj` take the global 4-bit
+  default, so `manifest_quant`'s `sharedExpert` slot reads 4 there and 8
+  on the fixture. Nothing needs changing -- `encode_gemv_any` picks the
+  INT8 or INT4 resident GEMV from the resident index's dtype tag, not
+  from the family -- but it does mean the fixture never exercises the
+  INT4 shared-expert dispatch that the real install will take on every
+  layer. `validate_quant` accepts both widths for that slot.
+- **`parse_qwen36_config` exists and is proven against the production
+  field values, but nothing has been repacked with it.**
+  `crates/repack/src/qwen36_config.rs` parses
+  `mlx-community/Qwen3.6-35B-A3B-4bit`'s `config.json` into an
+  `ArchConfig` equal to `model_io::qwen36_35b_a3b()` field for field
+  (`crates/repack/tests/qwen36_config.rs`, offline, real values inline).
+  `write_qwen36_install_streamed` is the guarded streamed writer for it.
+  The multi-shard walk itself is still UNPROVEN on this family: the only
+  test that covers it is `tests/qwen36_checkpoint_network.rs`, which is
+  `#[ignore]`d behind a ~20.4 GB download and has not been run. The
+  synthetic fixture is one in-memory shard, so a companion tensor living
+  in a different shard than its weight is not exercised by the default
+  suite.
+- **The Qwen path's router top-k runs on the host with UNIT scales.** It
+  reuses `router_topk_gemma4` -- top-k by score, softmax over the selected
+  scores only -- passing an all-ones `per_expert_scale`, because Qwen has
+  neither `router.scale` nor `router.per_expert_scale` and
+  `arch.router_scaled` is false. The INT8 router GEMV kernel takes an
+  effective-scale vector regardless, so the flow binds a BF16 `[hidden]`
+  buffer of ones built once at open. Same kernel, same semantics, no
+  Qwen-specific router kernel.
+- **The Qwen path has NONE of the three command-buffer overlap seams the
+  Gemma path carries.** `MFERENCE_SHARED_CB`, `MFERENCE_HIT_CB`, and
+  `MFERENCE_ROUTED_PIPELINE` are throughput-only (measured at roughly
+  +1%, +2.5%, and the shared-expert overlap respectively on Gemma), and
+  each one is a correctness-sensitive reordering that needs its own
+  identical-output A/B to land. The Qwen flow is the plain shape: one
+  command buffer per layer up to the router, host readback plus expert
+  `pread`, one buffer for the MoE tail. `PhaseCounters` still fills in, so
+  `MFERENCE_PHASES=1` works; `pipeline_wait_nanos` and `hit_cb_nanos` stay
+  zero by construction.
+- **GDN chunked prefill is parity-tested but unwired.** `gdn.metal`'s
+  `gdn_conv_mix_prefill`, `gdn_conv_tail_update`, and
+  `gdn_delta_step_prefill` are dispatched and checked against a
+  seven-row-chunk-equals-seven-decode-steps test
+  (`crates/gpu/tests/gdn_parity.rs`), including the `T < K-1`
+  ordered-shift tail path. Nothing in `crates/runtime` calls them: this
+  port's prefill is token-at-a-time everywhere (see the chunked-prefill
+  entry in Phase 6), and wiring GDN's chunked form alone would not change
+  that. The kernels are there so the next session can.
 - **The output head is skipped on non-final prompt tokens; Swift runs it
   on every one.** Swift's `RawCompletion.swift` off-mode prefill loop
   (`case .off:`) calls `producer.produce(token:position:into:)` per
@@ -634,10 +725,11 @@ live network).
   `.gturbo` checkpoint is available in this environment) — so the
   generated *text* is not semantically meaningful; what's real is the
   pipeline that produces it. `RealForwardRunner::open` accepts full
-  attention (mask 1) and sliding-window (mask 0) layers and rejects
-  linear (2) and compressed (3/4) layers, whose kernels are unported —
-  so Gemma 4's mask shape passes while Qwen 3.6 and DeepSeek-V4-Flash
-  remain blocked on GDN/DSV4. Proven end to end by
+  attention (mask 1) and sliding-window (mask 0) layers everywhere,
+  linear (2) layers under the `qwen36` family only, and rejects
+  compressed (3/4) layers outright, whose kernels are unported — so
+  Gemma 4 and Qwen 3.6 both pass while DeepSeek-V4-Flash remains blocked
+  on DSV4. Proven end to end by
   `crates/runtime/tests/real_forward.rs` for both shapes:
   `run_raw_completion` runs to a real stop condition, and a second run
   over the same runner (which resets internally) reaches an identical

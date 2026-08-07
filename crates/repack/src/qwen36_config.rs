@@ -24,7 +24,7 @@
 //! `self.scale = self.head_dim**-0.5`), not assumed from the formula --
 //! `docs/NEW_MODEL.md` Phase 0 explains why that distinction matters. At
 //! `head_dim = 256` it is exactly 1/16, a binary fraction, so it survives
-//! the serde_json round trip AGENTS.md Gotcha 23 warns about.
+//! the serde_json round trip AGENTS.md Gotcha 24 warns about.
 //!
 //! Fields with no config key (`router_scaled`, `ffn_sandwich_norms`,
 //! `rope_neox_subdim`, ...) are family constants, written out the same way

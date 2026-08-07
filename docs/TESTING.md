@@ -58,7 +58,7 @@ Metal-dependent test files carry a crate-level attribute as line 1:
 ```
 
 All of `crates/gpu/tests/*`, `crates/runtime/tests/{real_forward,
-real_forward_gemma4,golden_tokens}.rs`, `crates/cli/tests/real_generation.rs`,
+real_forward_gemma4,real_forward_qwen,golden_tokens}.rs`, `crates/cli/tests/real_generation.rs`,
 and `crates/bench/tests/memory_oracle.rs` do this. Inside an otherwise
 portable file, gate the single item instead
 (`crates/cli/tests/mference_check.rs`).
@@ -69,12 +69,19 @@ idiom (real implementation plus a stub that exits 2).
 
 ### Ignored (expensive or needs external data)
 
-Four tests, each with a reason string and a module doc giving the exact
+Six tests, each with a reason string and a module doc giving the exact
 command:
 
 ```sh
 # Real ~14.6 GB Gemma 4 checkpoint download plus full repack.
 cargo test -p mrefrust-repack --test gemma4_checkpoint_network --release -- --ignored --nocapture
+
+# Real ~20.4 GB Qwen 3.6 checkpoint download plus full repack. The only
+# test that covers the multi-shard walk on that family: its synthetic
+# fixture is a single in-memory shard, so a companion tensor living in a
+# different shard than its weight is unexercised in the default suite.
+MREFRUST_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
+  cargo test -p mrefrust-repack --test qwen36_checkpoint_network --release -- --ignored --nocapture
 
 # Real ~270 MB HF checkpoint download through the Llama-family mapping.
 cargo test -p mrefrust-repack --test hf_checkpoint_network --release -- --ignored --nocapture
@@ -96,7 +103,7 @@ MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
 ```
 
 Run all ignored tests at once with `cargo test --workspace -- --ignored`,
-but note the first two download many gigabytes.
+but note that three of them download many gigabytes.
 
 A performance measurement is `#[ignore]`d rather than left out because it
 is the evidence behind a constant in `src/` (`MAX_CHUNKS`), and a constant
@@ -109,6 +116,7 @@ attention) so it cannot rot silently; only the timings are advisory.
 | Variable | Read by | Effect |
 | --- | --- | --- |
 | `MREFRUST_GEMMA4_INSTALL_DIR` | `gemma4_checkpoint_network`, `memory_oracle`, `real_backend` | Where the real `.gturbo` install lives. The oracle and the server test skip (with a note) when unset; the repack test falls back to a temp dir. |
+| `MREFRUST_QWEN36_INSTALL_DIR` | `qwen36_checkpoint_network` | Where to keep the repacked Qwen 3.6 install. Falls back to a temp dir when unset. Deliberately a second variable rather than a generalized one: the two installs coexist, and the oracle's protocol is still Gemma-shaped. |
 | `MFERENCE_PHASES=1` | `mference-check` | Prints the per-phase decode breakdown (GPU wait, router readback, expert pread, routed bind, cache hit rate). |
 | `MFERENCE_DISPATCH_PROFILE=1` | `mference-check`, `gpu::PassEncoder` | Ranks the individual dispatches inside each command buffer. Encodes one compute encoder per dispatch (Apple GPUs sample counters only at encoder boundaries) and waits on every buffer, so it perturbs the run it measures: a ranking aid, not a throughput number. Covered by `crates/gpu/tests/dispatch_profile.rs`. |
 | `MFERENCE_SHARED_CB=0` | `RealForwardRunner` | Reverts the shared-expert branch to encoding after the expert pread instead of on its own overlapping command buffer. The A/B seam for any throughput claim. |

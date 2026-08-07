@@ -7,10 +7,17 @@ bug that shipped, not a hypothetical.
 
 Read `AGENTS.md` Gotchas 16 to 19 first. They are the four traps that cost
 the most time, and three of them are invisible to a greedy smoke test.
+Gotchas 24 to 26 are the family-specific ones: the manifest's
+family-extension fields, fixed threadgroup contracts, and tensor names that
+break the `.weight` convention. 24 blocks Phase 1 outright.
 
 The ordering matters. Each phase has a gate that must pass before the next
 phase's failures are interpretable: if you skip ahead and the output is
 garbage, you will not know which of five layers to look at.
+
+Every command a gate below names in prose is spelled out in `AGENTS.md`:
+"Build, test, dev commands" for the per-crate tests and the memory oracle,
+"Real-model smoke" for the two 400-token runs Phase 3 and Phase 4 gate on.
 
 ---
 
@@ -31,14 +38,50 @@ the reference implementation. Every answer becomes a field in `ArchConfig`
       layers and `full_head_dim` 512 on full ones, with different KV head
       counts and different RoPE thetas. Assume divergence until you have
       checked; a single `head_dim` is the exception, not the rule.
+- [ ] **Three one-line flags that each change the layer graph**, all
+      manifest fields with a Gemma fallback, so all three must be answered
+      even when the answer is "same as Gemma". `attention_k_eq_v`: Gemma's
+      full layers take V from the K PROJECTION (`real_forward_gemma4.rs`
+      still writes and per-head-norms a separate V row from those weights;
+      the short-name flow in `real_forward.rs` goes further and binds the
+      K buffer directly as V, so its V buffers are never written and its
+      pages never become resident, and it rejects `attention_k_eq_v ==
+      false` outright). Qwen has a real, separate `v_proj`.
+      `embedding_scaled_by_sqrt_hidden`: Gemma yes, Qwen no.
+      `ffn_sandwich_norms`: Gemma normalizes the attention and FFN outputs
+      before adding them back, Qwen adds them raw.
 - [ ] **Attention scale.** Do NOT assume `1/sqrt(head_dim)`. Gemma 4's is
-      `1.0` (the query norm absorbs it). It is a manifest field with a
-      family baseline fallback; get it from the reference implementation,
+      `1.0` (the query norm absorbs it); Qwen 3.6's IS `256^-0.5`. Both
+      exist, so the formula is never evidence. It is a manifest field with
+      a family baseline fallback; get it from the reference implementation,
       not from the formula you remember.
+- [ ] **RoPE convention, both halves of it.** "Partial rotary" names at
+      least two different transforms and this port ships both. Gemma's
+      `rope_proportional_neox` rotates a PREFIX OF THE PAIRS across the
+      full head, pairing `(i, head_dim/2 + i)`, dividing frequencies by
+      `head_dim`. Qwen's `rope_neox_subdim` rotates ALL the pairs of a
+      PREFIX OF THE HEAD, pairing `(i, rotary_dim/2 + i)`, dividing by
+      `rotary_dim`. Same `partial_rotary_factor`, different element sets
+      AND different angles. Pin the pair partner and the divisor from the
+      reference implementation, separately, and parity-test that elements
+      past `rotary_dim` come back untouched.
+- [ ] **Packed projections.** Does any projection emit more rows than its
+      name implies? Qwen's `q_proj` emits `2 * num_heads * head_dim`:
+      per-head `[query; gate]` pairs that must be split
+      (`split_q_gate_fp16`) before the per-head norm, RoPE, or attention
+      sees them. `attn_output_gate` is the manifest flag. Sizing the GEMV
+      at `num_heads * head_dim` reads half the rows and silently drops the
+      gate.
 - [ ] **Normalization inventory.** Learned vs no-scale, per-head vs
-      per-tensor, pre- vs post- vs sandwich. Write the layer flow out as
-      pseudocode before implementing it;
-      `crates/runtime/src/real_forward_gemma4.rs`'s module header is the
+      per-tensor, pre- vs post- vs sandwich. Count how many DISTINCT norms
+      feed the FFN branches: Gemma 4 splits three ways (no-scale for the
+      router, `pre_feedforward_layernorm` for the shared expert,
+      `pre_feedforward_layernorm_2` for the routed ones), Qwen 3.6 feeds
+      all three from one `post_attention_layernorm`. Also count what the
+      attention side normalizes: Gemma norms q, k AND v per head; Qwen
+      norms q and k only. Adding a v norm "by analogy" is silent. Write
+      the layer flow out as pseudocode before implementing it;
+      `crates/runtime/src/real_forward_qwen.rs`'s module header is the
       format to copy.
 - [ ] **Output head.** Tied embeddings? Logit softcap? What does the
       reference's `forward()` RETURN - raw logits, capped logits, or
@@ -46,11 +89,29 @@ the reference implementation. Every answer becomes a field in `ArchConfig`
 - [ ] **MoE shape.** Expert count, top-k, router quantization, per-expert
       scales, shared expert, routed-weight normalization (softmax over
       top-k vs softmax over all then renormalize - these differ and both
-      exist in the wild).
+      exist in the wild). Two absences count as answers: Qwen has NEITHER
+      `router.scale` NOR `router.per_expert_scale`, so the INT8 router
+      kernel (which takes an effective-scale vector regardless) gets a
+      buffer of ones and the top-k reduces to softmax-over-the-selected.
+      And is the shared expert GATED? Qwen's output is scaled by
+      `sigmoid(shared_expert_gate(x))`, one scalar logit from its own
+      1-row GEMV.
+- [ ] **Recurrent per-layer state.** Anything that is not KV: a linear
+      layer's delta-rule `S`, a causal-conv tail, an SSM hidden state. For
+      each, its shape, whether it grows with context (GDN's does not, which
+      is the point), and its zero/empty-context value. This becomes a
+      `LinearAttentionConfig`-shaped block in `ArchConfig`, a state manager
+      in `crates/gpu`, and a `reset()` obligation in Phase 3.
 - [ ] **Chat template and EOS set.** From `chat_template.jinja` and
       `generation_config.json`. `eos_token_id` is often a LIST. Dialect
       resolution and the stop set live in `crates/tokenizer`
-      (`MfTokenizer`, `StopMatcher`).
+      (`MfTokenizer`, `StopMatcher`), and the dialect is resolved from the
+      checkpoint's SPECIAL TOKENS, not from the family name. The tokenizer
+      files ship INSIDE the install directory: `open_session`
+      (`crates/cli/src/generate.rs`) calls
+      `MfTokenizer::load_from_dir(model_dir)` on the same path it peeks the
+      manifest from, so the repack has to copy them across (or the caller
+      does) or every CLI/server run fails at load with no decode attempted.
 
 Gate: you can describe one decoder layer as ten lines of pseudocode without
 looking anything up.
@@ -60,23 +121,115 @@ looking anything up.
 ## Phase 1 - Repack, and prove the repack alone
 
 - [ ] Map every checkpoint tensor name to a resident-index entry (the
-      Gemma 4 mapping to copy: `crates/repack/src/gemma4_checkpoint.rs`).
-      Keep the source's verbatim naming if the runner selects its decode
-      flow by naming (`crates/runtime/src/real_forward.rs` vs
-      `crates/runtime/src/real_forward_gemma4.rs` do exactly this).
-- [ ] Write the manifest's `arch` object with every shape field explicit.
-      Optional family-extension fields fall back to the family baseline in
-      `crates/model-io/src/arch_baselines.rs`, so anything that differs
-      from the baseline MUST be written out.
+      mapping to copy: `crates/repack/src/gemma4_checkpoint.rs`, which is
+      family-parameterized -- `classify_for_family` and `manifest_quant`
+      take a `ModelFamily`, so a new family is usually a routed-expert
+      marker plus four quant probe names, not a new file). Keep the
+      source's verbatim naming. Two traps that cost real time on Qwen 3.6:
+      a routed-expert marker the classifier does not recognize makes every
+      expert a RESIDENT tensor (loads fine, generates fine, footprint
+      explodes -- test it explicitly), and some parameters carry no
+      `.weight` suffix at all (`linear_attn.A_log`, `linear_attn.dt_bias`).
+- [ ] Write the manifest's `arch` object with every shape field explicit
+      AND every family-extension field explicit.
+      `crates/model-io/src/arch_validation.rs` resolves omitted optional
+      fields against the GEMMA baseline whatever family the manifest
+      claims, so an install that omits them can never validate. That is
+      why `gturbo_writer.rs::build_manifest_json` writes all of them
+      unconditionally; do not make any conditional.
+      Float fields are compared with `!=` on `f64`, and serde_json's
+      default parser is accurate only to ~1 ULP, so a value that is not a
+      binary fraction cannot survive the round trip. Pick powers of two
+      for anything you invent for a synthetic fixture.
 - [ ] Add a synthetic install builder next to
-      `build_synthetic_gemma4_real_install`
-      (`crates/repack/src/synthetic_real.rs`): deterministic untrained
+      `build_synthetic_gemma4_real_install` / `build_synthetic_qwen36_real_install`
+      (`crates/repack/src/synthetic_real.rs`, `synthetic_qwen.rs` -- the
+      latter reuses the former's `pub(crate)` tensor helpers, so a third
+      family should too): deterministic untrained
       weights, the real naming, the real quantization tags, small enough to
       run in CI. This is what every later test drives.
 - [ ] Extend `peek_manifest_arch` (`crates/repack/src/manifest_peek.rs`)
       if the family needs new
       fields. Resolve arch in ONE place so the CLI, the bench harness, and
       the tests cannot drift apart on a fallback default.
+
+There are TWO places an `ArchConfig` comes from and both need writing: the
+checkpoint's own `config.json` at repack time and the written install's
+`manifest.json` at load time (`peek_manifest_arch`). A synthetic fixture
+only needs the second. Skipping the first is a legitimate way to split the
+work across sessions, as Qwen 3.6 did, but say so explicitly: until it
+exists nobody can repack the real checkpoint.
+
+For the first, there are two models to copy and they differ in almost every
+key name, which is the point: `parse_gemma4_config`
+(`crates/repack/src/gemma4_checkpoint.rs`) and `parse_qwen36_config`
+(`crates/repack/src/qwen36_config.rs`). Read BOTH before assuming a key
+generalizes. Only one thing was common to them: the `text_config` wrapper,
+and that is a multimodal-checkpoint convention, not a universal one.
+Everything else moved -- `hidden_act` vs `hidden_activation`,
+`num_experts_per_tok` vs `top_k_experts`, a flat `rope_parameters` vs one
+sub-object per attention kind, `shared_expert_intermediate_size` standing in
+for an `intermediate_size` the text config does not carry at all, and a
+`layer_types` vocabulary whose mask codes are 2/1 rather than 1/0.
+
+Write the parser's headline test as ONE equality against the family's
+`arch_baselines.rs` entry, with the real production values inline
+(`crates/repack/tests/qwen36_config.rs`). A tiny synthetic fixture cannot
+catch a key wired to the wrong field, because every dimension in it is a
+made-up number either way; the baseline comparison catches it immediately,
+and it runs without the network.
+
+Two fields have no config key at all and have to come from the reference
+implementation rather than a formula: `attention_scale` (mlx-lm's
+`Qwen3NextAttention.__init__` sets `head_dim ** -0.5`; see Phase 0) and
+the family-constant booleans (`router_scaled`, `ffn_sandwich_norms`,
+`rope_neox_subdim`, ...). Validate the derived rotary dimension while you
+are there: `partial_rotary_factor * head_dim` must be a positive EVEN
+integer, since the NeoX sub-dimension RoPE rotates half that many pairs and
+an odd value silently drops a channel.
+
+The rest of this phase only bites on a real download:
+
+- [ ] **Quantization widths are validated per SLOT and the allowed sets
+      are narrow.** `validate_quant` (`crates/model-io/src/manifest.rs`)
+      accepts embedding 4, attention 4, router 8, sharedExpert 4 or 8,
+      routedExpert 2 or 4, and demands `affine` / bf16 scales / bf16
+      biases / group size exactly 64 on every one. A family whose router
+      ships INT4, or whose checkpoint uses a group size other than 64, is
+      rejected at load, not at repack. Read the checkpoint's
+      `config.json -> quantization` first (`parse_gemma4_quantization`,
+      which also refuses a per-tensor group size that differs from the
+      global one) and pick the `manifest_quant` probe names to match:
+      the probes read layer 0, so a family whose layer 0 is not a plain
+      attention layer needs a different probe (Qwen's is
+      `linear_attn.in_proj_qkv`, because its layer 0 is linear and has no
+      `self_attn.q_proj` at all).
+- [ ] **Real checkpoints are multi-shard, and a companion tensor can live
+      in a different shard than its weight.** Go through `Gemma4Shards`,
+      which merges every shard's names into one registry, rather than
+      resolving `.scales` / `.biases` inside the shard that held the
+      weight. The `model.safetensors.index.json` weight map is the shard
+      list.
+- [ ] **Use the streaming writer for anything multi-GB.**
+      `write_gemma4_install_streamed` computes the expert stride from
+      shard HEADERS alone, writes the resident region once, then downloads
+      / writes / drops one layer's expert blobs at a time, so peak memory
+      is one layer rather than the whole model. The in-memory
+      `write_gemma4_install` goes through the same `StreamingGturboWriter`
+      on purpose, so the two stay byte-identical; a test asserts that
+      (`streamed_install_matches_in_memory_install`).
+- [ ] **The routed-expert blob layout is a contract shared with the MoE
+      kernels.** Nine sub-tensors per expert, `gate, gate_scales,
+      gate_biases, up, ..., down, ...` back to back; one page-rounded
+      (16 KiB) `expert_stride` for the WHOLE model, computed as the max
+      across layers; and `down`'s blob offset MUST be 4-byte aligned
+      because the phase-2 row helper reads its weights with `uint` loads
+      (the writer checks and errors). The manifest's `expertStride` is
+      separately validated as 4 KiB-aligned at load.
+- [ ] Add the network repack test next to
+      `crates/repack/tests/gemma4_checkpoint_network.rs`: `#[ignore]`d,
+      `--release`, downloads the real checkpoint. It is not part of the
+      handoff gate, but it is the only thing that proves the shard walk.
 
 Gate: `cargo test -p mrefrust-repack` passes, and the synthetic install
 opens through `RealForwardRunner::open` without touching decode.
@@ -86,7 +239,9 @@ opens through `RealForwardRunner::open` without touching decode.
 ## Phase 2 - Kernels, each parity-tested in isolation
 
 - [ ] For each new kernel, vendor the MSL under `crates/gpu/src/shaders/`
-      and write a CPU reference in
+      BYTE-FOR-BYTE (`diff` it against the Swift original and keep the
+      diff empty; a port-local edit belongs in a separate, commented
+      kernel) and write a CPU reference in
       `crates/compute` if one does not exist. A kernel with no reference is
       a kernel you cannot verify; `logit.metal`'s `sample` was descoped for
       exactly this reason.
@@ -107,6 +262,28 @@ opens through `RealForwardRunner::open` without touching decode.
 - [ ] Watch for constants the shader checks UNCONDITIONALLY (no
       `is_function_constant_defined` gate). Specializing those with a dummy
       value silently overrides the runtime buffer argument.
+- [ ] **A kernel that calls a helper defined in ANOTHER shader file needs
+      the two concatenated.** The Swift build links every module into one
+      library; this port compiles one library per file. The fix is a single
+      `concat!(include_str!(a), "\n", include_str!(b))` constant --
+      `crates/gpu/src/gdn.rs`'s `SOURCE` is the example -- which keeps one
+      stable address for the address-keyed pipeline cache. Cost: the
+      helper's own kernels compile twice. Prove the fused path is
+      BIT-identical to the separate one before relying on it.
+- [ ] **A fixed threadgroup size can be a correctness contract, not a
+      tuning knob.** `gdn_qk_norm` and `gdn_gated_norm` reduce their SIMD
+      partials with a hardcoded `for (i = 0; i < 4; ++i)`: at anything but
+      128 threads they sum uninitialized slots or drop work, with no crash
+      and no compile error. Grep a new kernel for hardcoded partial-array
+      bounds and register tiles (`float s[8]`) before choosing a dispatch
+      shape, and turn what you find into `validate()` preconditions.
+- [ ] Two test shapes beyond CPU parity, both of which caught real classes
+      of bug in this port: **fused-equals-separate** (a fused multi-way
+      GEMV must be byte-identical to the dispatches it replaces, since
+      greedy output depends on it) and **chunk-equals-N-steps** (a prefill
+      kernel over `T` rows must match `T` sequential decode steps,
+      INCLUDING the carried state and the `T < history` tail path). See
+      `crates/gpu/tests/gdn_parity.rs`.
 
 Gate: `cargo test -p mrefrust-gpu` passes on the Metal device.
 
@@ -116,6 +293,16 @@ Gate: `cargo test -p mrefrust-gpu` passes on the Metal device.
 
 - [ ] Implement the layer loop against the Phase 0 pseudocode. Keep the
       pseudocode in the module header and keep it accurate.
+- [ ] Select the flow from `ArchConfig.family`, NOT from tensor naming.
+      Every real family so far carries
+      `language_model.model.embed_tokens.weight`, so a naming probe can
+      only tell a real install from a synthetic short-name one. See
+      `open_inner` in `crates/runtime/src/real_forward.rs`.
+- [ ] If the family has recurrent per-layer state (a linear-attention
+      layer's delta-rule `S` and conv tail), `reset()` has to rewind it
+      too. Rewinding only the KV cache leaks the previous generation's
+      context into every such layer, and the symptom is invisible: output
+      stays finite and deterministic, just wrong.
 - [ ] Size the KV cache from the layer mask. **Enable the SWA ring**
       (`KvCacheManager::new`'s `fp16_ring_enabled`,
       `crates/gpu/src/kv_cache.rs`) whenever the mask has
@@ -135,10 +322,26 @@ Gate: `cargo test -p mrefrust-gpu` passes on the Metal device.
       allocates no Metal buffers (`gpu_buffer_allocations()` flat across
       tokens); copy `decode_hot_path_allocates_no_gpu_buffers` in
       `crates/runtime/tests/real_forward_gemma4.rs`.
+- [ ] `produce_prefill` skips the head but must advance every other
+      side effect, recurrent state included. Guard it by asserting that
+      prefill-then-decode lands on the same logits as all-`produce`
+      (`prefill_then_decode_matches_all_produce`).
+- [ ] **On a synthetic fixture, output-only assertions have no teeth.**
+      Untrained weights make "it decoded finite deterministic tokens" true
+      of a block that silently produced zeros. Assert on the block's own
+      state instead: `gdn_state_abs_max` exists purely so a test can say
+      the recurrence ran. Same reasoning as Gotcha 12's near-uniform
+      routers.
 
 Gate: greedy generation on the real checkpoint, with the chat template
 applied, produces coherent text for 400 tokens. If it does not, the bug is
 in the math, and nothing after this phase is worth debugging.
+
+A synthetic install does NOT clear this gate. It proves the plumbing
+(shapes, bindings, state carry, stop handling) and nothing about the math,
+because there is no correct output to compare against. Landing the flow
+against a synthetic fixture first is fine and is what Qwen 3.6 did; just
+record that the real-checkpoint gate is still owed.
 
 ---
 
@@ -158,6 +361,9 @@ perfect under greedy decoding is quietly broken.
       Guards to copy: the softcap-bound assertion in
       `crates/runtime/tests/real_forward_gemma4.rs` and the
       does-not-normalize assertion in `crates/gpu/tests/utility_and_pass.rs`.
+      A family with NO softcap has no bound to assert, so use the shape of
+      the distribution instead: real logits are not all non-negative and do
+      not sum to 1 (`crates/runtime/tests/real_forward_qwen.rs`).
 - [ ] Apply the logit softcap in the head if the family has one (that is
       what HF's `*ForCausalLM.forward` returns), and stop there. If you
       need a fused cap+softmax kernel for a GPU sampler later, add it then.
@@ -179,8 +385,12 @@ already looks perfect - especially then.
 ## Phase 5 - Memory
 
 - [ ] Write the static accounting down first: resident weights + KV +
-      expert slot capacity + process baseline. Compute each from shapes,
-      not from a measurement.
+      recurrent per-layer state + expert slot capacity + process baseline.
+      Compute each from shapes, not from a measurement. The state term is
+      easy to forget because it is invisible at small shapes and fixed at
+      large ones: Qwen 3.6 35B is 2 MiB of delta-rule state x 30 linear
+      layers = 60 MiB, plus 48 KiB of conv tail each, none of it growing
+      with context. Layers that carry it carry NO KV rows in exchange.
 - [ ] The resident weight mapping COUNTS in `phys_footprint`. A plain
       read-only `mmap` would not, but `newBufferWithBytesNoCopy` pins it.
 - [ ] Run `crates/bench/tests/memory_oracle.rs` against the install
@@ -218,6 +428,15 @@ reference implementation's published number for the same workload.
 - [ ] Module headers: the layer-flow pseudocode, the memory model, and the
       output contract. Anyone debugging at 3am reads these first.
 - [ ] Update this file if a new trap cost you more than an hour.
+- [ ] **Record what you deliberately did NOT do, with the ceiling.** Land
+      the smallest thing that clears each gate and write the rest down;
+      half-wiring a throughput optimization is worse than not having it,
+      because the next reader cannot tell whether it is finished. Qwen 3.6
+      shipped with none of the three command-buffer overlap seams the Gemma
+      path carries, its GDN prefill kernels parity-tested but unwired, and
+      its input-projection function constants unspecialized -- each one a
+      DEVIATIONS.md entry naming the measured or estimated ceiling, so the
+      next session can rank them instead of rediscovering them.
 
 ---
 
@@ -233,4 +452,8 @@ reference implementation's published number for the same workload.
 | Memory 3-4x the reference at open | SWA layers sized at `max_context` |
 | Output changed after a kernel tweak | Function constant missing from the pipeline cache key |
 | Babble on an instruction-tuned model with `--prompt` | Not a decode bug: `--prompt` does no templating; use `--messages-file` or `--chat` |
+| Footprint explodes, output correct | Routed-expert marker unrecognized: every expert became a resident tensor (Gotcha 26) |
+| Manifest never validates, several extension fields mismatch at once | They were omitted and resolved against the GEMMA baseline (Gotcha 24); or a float field is not a binary fraction |
+| Second generation differs from the first | `reset()` rewound the KV cache but not the recurrent state |
+| A whole layer kind seems to contribute nothing | Untrained fixture: assert on the block's state, not its output |
 | Throughput moved after a decode change | `MFERENCE_PHASES=1` buckets + GPU busy line, interleaved A/B pairs (`AGENTS.md` Gotcha 12); run-to-run spread is wider than most single effects |
