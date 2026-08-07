@@ -8,7 +8,7 @@ What the suite covers, how it is gated, and how to run each part.
 cargo test --workspace
 ```
 
-326 tests as of 2026-08-06, all passing, plus 4 that are `#[ignore]`d (see
+326 tests as of 2026-08-06, all passing, plus 10 that are `#[ignore]`d (see
 below). On macOS this includes every Metal test, which needs a real
 Metal-capable device and Xcode's `metal` toolchain
 (`xcrun -sdk macosx metal`). On Linux `crates/gpu` compiles to nothing and
@@ -69,8 +69,9 @@ idiom (real implementation plus a stub that exits 2).
 
 ### Ignored (expensive or needs external data)
 
-Seven tests, each with a reason string and a module doc giving the exact
-command:
+Nine of them, each with a reason string and a module doc giving the exact
+command (the tenth, `crates/selection`'s `rank_top_k`, is a sampler
+microbenchmark documented in `docs/BENCHMARKS.md`):
 
 ```sh
 # Real ~14.6 GB Gemma 4 checkpoint download plus full repack.
@@ -93,6 +94,15 @@ MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
   cargo test -p mrefrust-bench --test memory_oracle --release -- --ignored --nocapture
 MREFRUST_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
   cargo test -p mrefrust-bench --test qwen36_memory_oracle --release -- --ignored --nocapture
+
+# The quality gate (ROADMAP Phase Q; numbers in docs/BENCHMARKS.md). Split
+# per family for the same one-model-per-process reason as the oracle.
+# Takes about 80 seconds each (four arms: perplexity, greedy, sampled, and
+# a constrained-working-set repeat at 8 expert-cache slots).
+MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
+  cargo test -p mrefrust-bench --test quality_gate --release -- --ignored --nocapture
+MREFRUST_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
+  cargo test -p mrefrust-bench --test qwen36_quality_gate --release -- --ignored --nocapture
 
 # Split-KV chunk-count sweep on the decode attention kernel. Needs no
 # model install: it is the kernel alone at the real Gemma 4 shapes, and
@@ -119,8 +129,8 @@ attention) so it cannot rot silently; only the timings are advisory.
 
 | Variable | Read by | Effect |
 | --- | --- | --- |
-| `MREFRUST_GEMMA4_INSTALL_DIR` | `gemma4_checkpoint_network`, `memory_oracle`, `real_backend` | Where the real `.gturbo` install lives. The oracle and the server test skip (with a note) when unset; the repack test falls back to a temp dir. |
-| `MREFRUST_QWEN36_INSTALL_DIR` | `qwen36_checkpoint_network`, `qwen36_memory_oracle` | Where the repacked Qwen 3.6 install lives. The oracle skips (with a note) when unset; the repack test falls back to a temp dir. Deliberately a second variable rather than a generalized one, so both installs can coexist and each oracle target asserts its own family's ceiling. |
+| `MREFRUST_GEMMA4_INSTALL_DIR` | `gemma4_checkpoint_network`, `memory_oracle`, `quality_gate`, `real_backend` | Where the real `.gturbo` install lives. The oracle, the quality gate, and the server test skip (with a note) when unset; the repack test falls back to a temp dir. |
+| `MREFRUST_QWEN36_INSTALL_DIR` | `qwen36_checkpoint_network`, `qwen36_memory_oracle`, `qwen36_quality_gate` | Where the repacked Qwen 3.6 install lives. The oracle and the quality gate skip (with a note) when unset; the repack test falls back to a temp dir. Deliberately a second variable rather than a generalized one, so both installs can coexist and each target asserts its own family's row. |
 | `MFERENCE_PHASES=1` | `mference-check` | Prints the per-phase decode breakdown (GPU wait, router readback, expert pread, routed bind, cache hit rate). |
 | `MFERENCE_DISPATCH_PROFILE=1` | `mference-check`, `gpu::PassEncoder` | Ranks the individual dispatches inside each command buffer. Encodes one compute encoder per dispatch (Apple GPUs sample counters only at encoder boundaries) and waits on every buffer, so it perturbs the run it measures: a ranking aid, not a throughput number. Covered by `crates/gpu/tests/dispatch_profile.rs`. |
 | `MFERENCE_SHARED_CB=0` | `RealForwardRunner` | Reverts the shared-expert branch to encoding after the expert pread instead of on its own overlapping command buffer. The A/B seam for any throughput claim. |

@@ -22,3 +22,7 @@ repack = { package = "mrefrust-repack", path = "../repack" }
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 # phys_footprint sampling for tests/memory_oracle.rs (proc_pid_rusage).
 libc = "0.2"
+# hash_data, for tests/quality_common's golden output digests. The
+# workspace's one hex-SHA-256 helper; adds no external crate (`sha2`
+# already ships inside model-io).
+model_io = { package = "mrefrust-model-io", path = "../model-io" }

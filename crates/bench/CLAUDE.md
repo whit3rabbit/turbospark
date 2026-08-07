@@ -14,9 +14,16 @@ crates/bench/
 |   +-- protocol.rs         # Frozen community benchmark protocol definitions
 |   \-- real_model.rs       # Real model benchmark runner driving RealForwardRunner
 +-- tests/
-|   +-- memory_oracle.rs    # Memory oracle asserting peak footprint ceiling & steady state
-|   \-- mference_bench.rs   # Benchmark harness integration smoke test
+|   +-- memory_oracle.rs    # Memory oracle asserting peak footprint ceiling & steady state (Gemma 4)
+|   +-- mference_bench.rs   # Benchmark harness integration smoke test
+|   +-- oracle_common/      # Shared memory oracle assertion helpers (mod.rs)
+|   +-- quality_common/     # Shared quality gate evaluation helpers (mod.rs)
+|   +-- quality_gate.rs     # Quality gate integration test (Gemma 4)
+|   +-- qwen36_memory_oracle.rs # Memory oracle for Qwen 3.6 family
+|   \-- qwen36_quality_gate.rs  # Quality gate for Qwen 3.6 family
 \-- prompts/
+    +-- quality-v1/         # Quality gate reference prompt fixtures
+    |   \-- assistant-reference.txt
     \-- real-generation-v1/ # Standardized benchmark protocol prompt fixtures
         +-- short-explanation.txt
         +-- medium-review.txt
@@ -29,7 +36,9 @@ crates/bench/
 - `memory.rs`: Mach kernel task info sampler for tracking peak physical memory footprint (`phys_footprint`).
 - `protocol.rs`: Frozen benchmark protocol case definitions and step evaluators.
 - `real_model.rs`: Runs protocol cases against real `.gturbo` installs using `RealForwardRunner`.
-- `tests/memory_oracle.rs`: Ignored test gated on `MREFRUST_GEMMA4_INSTALL_DIR` asserting per-chip memory ceilings and zero leak growth.
+- `tests/memory_oracle.rs`: Ignored test gated on `MREFRUST_GEMMA4_INSTALL_DIR` asserting per-chip memory ceilings and zero leak growth for Gemma 4.
+- `tests/qwen36_memory_oracle.rs`: Ignored test gated on `MREFRUST_QWEN36_INSTALL_DIR` asserting per-chip memory ceilings and steady state for Qwen 3.6.
+- `tests/quality_gate.rs` & `tests/qwen36_quality_gate.rs`: Quality gate evaluation verifying generated output metrics against reference fixtures.
 
 ## Development & Test Commands
 
@@ -65,9 +74,20 @@ scripts/parity.sh
 # baked into the script). Not a benchmark; an attribution aid.
 scripts/phasediff.sh [pairs] [slots]
 
-# Run memory oracle test (macOS, takes ~10 mins, requires model env var)
+# Run memory oracle test for Gemma 4 (macOS, takes ~10 mins, requires model env var)
 MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
   cargo test -p mrefrust-bench --test memory_oracle --release -- --ignored --nocapture
+
+# Run memory oracle test for Qwen 3.6 (macOS, separate process target)
+MREFRUST_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
+  cargo test -p mrefrust-bench --test qwen36_memory_oracle --release -- --ignored --nocapture
+
+# Quality gate: reference-answer perplexity + frozen output digests
+# (ROADMAP Phase Q). One target per family, ~1 min each.
+MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
+  cargo test -p mrefrust-bench --test quality_gate --release -- --ignored --nocapture
+MREFRUST_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
+  cargo test -p mrefrust-bench --test qwen36_quality_gate --release -- --ignored --nocapture
 ```
 
 ## Crate Gotchas
@@ -77,3 +97,5 @@ MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
 3. **Power Source & Cross-Session Ratios**: Thermal throttling and battery state (`pmset -g ps`) alter absolute tok/s. Always measure ratios back-to-back in the same session.
 4. **Slot count is pinned, not defaulted-into**: `protocol::PROTOCOL_EXPERT_CACHE_SLOTS` (16) is what `docs/BENCHMARKS.md`, the memory oracle's per-chip rows, and Swift's own default all sit at. `--expert-cache-slots` exists so a Swift comparison can match a non-default setting, not so the protocol can drift; the oracle passes the constant explicitly for that reason. Output is not identical across slot counts (the hit/miss split permutes the phase-2 reduce order, FP addition is not associative), so compare within one count.
 5. **The phase report does not account for a decode run**: `MFERENCE_PHASES=1` covers the inside of `produce` only; the sampler and detokenizer are outside it (AGENTS.md Gotcha 23). Subtract the phase total from the footer's `decode=` seconds before trusting a phase table as a full attribution.
+6. **Perplexity is only meaningful on ASSISTANT-position tokens**: both supported checkpoints are instruction-tuned, and instruction tuning masks the loss on the prompt, so the model was never trained to predict user-turn text or the markup closing it. Measured on the real Gemma 4 install, teacher-forcing the PROMPT gave a mean NLL of 15.3 nats against a uniform bound of 12.5 (worse than guessing) while assistant-side tokens in the same sequence scored 0.000; a replay of the model's own greedy output agreed 39/40, so the measurement was sound and the corpus was not. `quality_common` therefore teacher-forces a fixed reference answer into the assistant slot and scores only that. Sibling trap: a golden digest is NOT reproducible from a cold expert cache (slots are ordered misses-first, permuting the phase-2 reduce order), so every digest is taken after a discarded warmup of the same generation.
+7. **Byte-identity under a constrained expert cache holds on Qwen and not on Gemma**: the gate's fourth arm reopens the install at 8 slots and repeats the greedy digest. `real_forward_gemma4.rs:818` orders a layer's routed slots misses-first (so the hits' phase-1 GEMV can ride its own command buffer), that order feeds phase 2's reduce, and FP addition is not associative, so Gemma's bytes move with the hit/miss split; `real_forward_qwen.rs` does no reordering and comes out identical. Two consequences. The Gemma row carries a SECOND golden digest rather than asserting identity across slot counts, and `MFERENCE_HIT_CB=0` is not the explanation to reach for: it toggles the separate command buffer, not the order, and measured directly it moves no digest at all.

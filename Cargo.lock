@@ -967,6 +967,7 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "mrefrust-core",
+ "mrefrust-model-io",
  "mrefrust-repack",
  "mrefrust-runtime",
  "mrefrust-selection",

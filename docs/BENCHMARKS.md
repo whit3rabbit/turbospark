@@ -200,6 +200,94 @@ run measured. The two are separated by both axes above -- the sampler
 the 42.6 sits inside the range they span. The settings behind the 42.6
 were not recorded, so it is retired rather than re-explained.
 
+## Quality
+
+The one axis with no Swift column. The Swift original publishes no
+perplexity, no KL divergence, and no golden output, so there is nothing to
+compare against; these are this port measured against its own past, which
+is what ROADMAP Phase Q exists to make possible before Phase S touches
+quantization.
+
+Reproduce with the two gates (about a minute each), which assert these
+values on this chip and print them on any other:
+
+```sh
+MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
+  cargo test -p mrefrust-bench --test quality_gate --release -- --ignored --nocapture
+```
+
+| Install | Reference perplexity | Greedy digest | Sampled digest | Greedy at 8 slots |
+| --- | ---: | --- | --- | --- |
+| Gemma 4 26B-A4B | 37.3105 | `4f5cba92` | `cde6012a` | `a50ed69d` |
+| Qwen 3.6 35B-A3B | 6.2536 | `c5b52f77` | `525cadbc` | `c5b52f77` |
+
+Digests are the leading 8 hex characters of the SHA-256 of the generated
+text; the full values live in each gate's `BASELINES` row. Measured
+2026-08-07 on the machine in the provenance table above, on AC, at 16
+expert-cache slots. Two runs per install in separate processes agreed on
+every digit and every hex character.
+
+Four things to know before reading those numbers:
+
+- **Only assistant-position tokens are scored.** Both checkpoints are
+  instruction-tuned, and instruction tuning masks the loss on the prompt.
+  Teacher-forcing the Gemma install over PROMPT text measured a mean NLL of
+  15.3 nats against a uniform-distribution bound of 12.5, which is worse
+  than guessing, while assistant-side tokens in the same sequence scored
+  0.000. The measurement was not at fault: replaying the model's own greedy
+  output reproduced 39 of 40 tokens, the one miss a genuine near-tie at
+  0.96 nats. So the corpus is a fixed reference ANSWER
+  (`crates/bench/prompts/quality-v1/assistant-reference.txt`, original
+  prose) placed in the assistant slot after the frozen protocol's first
+  prompt.
+- **The two perplexities are not comparable to each other.** Gemma 4's chat
+  template opens a `<|channel>thought` block before the assistant slot, so
+  its number scores the reference answer as internal reasoning; Qwen 3.6's
+  template opens no channel, so its number scores the same passage as a
+  reply. That, not model quality, is most of the 37.31 against 6.25. Each
+  number is only comparable to its own past.
+- **Neither is comparable to a published perplexity.** One install, one
+  passage, this port's tokenizer and template. It is a regression sentinel.
+- **Digests depend on expert-cache state**, so the gate's run order is part
+  of the protocol: warmup, measure, measure, warmup, measure. Each layer's
+  routed slots are ordered cache misses first then hits, which permutes the
+  phase-2 reduce order, and FP addition is not associative. A cold-cache
+  generation does not match a warm one, measured directly here. Everything
+  is pinned to 16 slots for the same reason the tok/s rows are.
+
+### Constrained working set
+
+The last column halves the routed-expert cache to 8 slots, which is this
+port's memory knob (16 -> 32 slots cost 1.5 GiB; see the sweep above), and
+repeats the greedy generation. Upstream's acceptance proof for that case is
+"byte-identical output at unchanged throughput under a constrained working
+set". Measured here, on the same day and machine as the rows above:
+
+| Install | tok/s at 16 slots | tok/s at 8 slots | Ratio | Bytes identical |
+| --- | ---: | ---: | ---: | --- |
+| Gemma 4 26B-A4B | 47.620 | 41.120 | 0.86x | no |
+| Qwen 3.6 35B-A3B | 43.966 | 40.174 | 0.91x | yes |
+
+Throughput degrades rather than collapsing, on both. Byte identity splits
+by family, and the reason is mechanical: `real_forward_gemma4.rs` orders a
+layer's routed slots misses first then hits (so the hits' phase-1 GEMV can
+ride its own command buffer), that order feeds phase 2's reduce, and FP
+addition is not associative, so changing the hit/miss split changes Gemma's
+bytes. `real_forward_qwen.rs` does no such reordering and comes out
+identical. The ordering is unconditional, so `MFERENCE_HIT_CB=0` does not
+explain or remove the difference: run that way, all four Gemma values above
+are unchanged.
+
+The gate therefore freezes a second Gemma digest rather than asserting
+identity across slot counts, which would be asserting FP associativity.
+
+What is still missing from Phase Q, and deliberately: token-level KL
+divergence against mlx-lm (needs an external reference and a logit-dump
+path this port does not have). The sensitivity of the perplexity number to
+real quantization damage is therefore asserted by construction, not
+demonstrated: nothing here has yet been run against a deliberately degraded
+model.
+
 ## Caveats worth repeating
 
 - Two measured runs per arm. Enough to show the 1.5x gap that used to be

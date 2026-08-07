@@ -105,6 +105,19 @@ MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
 MREFRUST_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
   cargo test -p mrefrust-bench --test qwen36_memory_oracle --release -- --ignored --nocapture
 
+# The quality gate (ROADMAP Phase Q): teacher-forced perplexity of a fixed
+# reference answer in the ASSISTANT slot (an instruction-tuned checkpoint
+# is never trained to predict prompt tokens, so scoring those measures
+# nothing), plus frozen greedy and sampled output digests, plus a
+# constrained-working-set repeat at 8 expert-cache slots (digest frozen,
+# throughput floored). Split per family for the same one-model-per-process
+# reason as the oracle. About 80 seconds each. Numbers and caveats:
+# docs/BENCHMARKS.md.
+MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
+  cargo test -p mrefrust-bench --test quality_gate --release -- --ignored --nocapture
+MREFRUST_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
+  cargo test -p mrefrust-bench --test qwen36_quality_gate --release -- --ignored --nocapture
+
 # The other #[ignore]d tests: real checkpoint downloads (many GB).
 cargo test -p mrefrust-repack --test gemma4_checkpoint_network --release -- --ignored --nocapture
 cargo test -p mrefrust-repack --test hf_checkpoint_network --release -- --ignored --nocapture
@@ -643,15 +656,25 @@ smoke" above, all three of them:
 3. the memory oracle passes (catches allocation and retain bugs that
    correctness cannot see -- Gotchas 17 to 19).
 
+A change that could move NUMERICS (a kernel, the head, quantization, the
+sampler) also runs the quality gate, which ADDS to the three above rather
+than replacing any of them: coherence is judged by eye and cannot see a
+few percent of drift, which is exactly what a quantization change does
+when it is subtly wrong rather than broken. A digest mismatch there is not
+automatically a failure -- reduce order legitimately changes bytes -- but
+it is never allowed to pass unexplained, and the perplexity number is the
+tiebreak.
+
 Numerics parity with any upstream implementation is explicitly out of scope;
 only the structural and configuration contracts are exercised by the tests,
 except where a real CPU-vs-GPU parity test exists (`crates/gpu`'s
 `rms_norm_parity.rs`).
 
-The four commands above cover everything except the three `#[ignore]`d
-tests (two checkpoint downloads and the memory oracle), which are opt-in
-and not part of the handoff gate. Run the oracle when a change could move
-memory or decode throughput. `docs/TESTING.md` documents the gating
+The four commands above cover everything except the `#[ignore]`d tests
+(the checkpoint downloads, the two memory oracles, and the two quality
+gates), which are opt-in and not part of the handoff gate. Run an oracle
+when a change could move memory or decode throughput, and a quality gate
+when it could move numerics. `docs/TESTING.md` documents the gating
 conventions and the test-writing rules (never hardcode a fixture token
 id, never assert generated text, prefer exact assertions over
 thresholds); `docs/BENCHMARKING.md` documents the benchmark modes and

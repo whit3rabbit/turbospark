@@ -1,0 +1,42 @@
+Coastal wetlands reduce flood damage through several mechanisms that work
+together rather than in isolation.
+
+The first is friction. Salt marsh grasses, mangrove roots, and seagrass
+beds present an enormous amount of surface area to moving water. Each
+stem and root extracts a small amount of energy from a passing wave, and
+across a few hundred meters of vegetated shoreline those small losses
+compound. Field measurements consistently show wave height falling by
+half or more over that distance, which lowers the force arriving at any
+seawall, road, or building behind the marsh.
+
+The second is storage. A wetland is a shallow basin with a rough floor
+and a high capacity to hold water temporarily. During a storm surge it
+fills, and it drains slowly afterward through tidal creeks. That delay
+matters more than the total volume: it spreads the arrival of water over
+hours instead of minutes, so downstream channels carry a lower peak
+discharge and are less likely to overtop their banks.
+
+The third is elevation. Marshes trap sediment carried in by the tide,
+and the accumulated organic matter from dead plant material adds to it.
+A healthy marsh therefore builds upward over time, and in many places it
+can keep pace with moderate rates of sea level rise. This is the
+property that distinguishes a living shoreline from a fixed structure. A
+concrete seawall built to a design height is at its most protective on
+the day it is finished and becomes less adequate every year afterward. A
+marsh maintained with adequate sediment supply does the opposite.
+
+There are limits worth stating plainly. Wetlands attenuate waves and
+surge, but they do not stop a surge whose depth greatly exceeds the
+vegetation height, because the water above the canopy passes over it
+with little resistance. Their protective value also depends on width,
+and narrow fringing marshes squeezed between development and the water
+provide much less benefit than the numbers from wide systems suggest.
+Where subsidence is rapid or sediment has been cut off by upstream dams,
+a marsh can drown in place and convert to open water, at which point the
+protection disappears entirely.
+
+The practical conclusion is that wetland conservation belongs in flood
+risk planning as infrastructure, not as amenity. The relevant comparison
+is not marsh against nothing, but marsh plus a smaller engineered
+structure against a larger engineered structure alone, evaluated over
+the decades during which both must keep working.
