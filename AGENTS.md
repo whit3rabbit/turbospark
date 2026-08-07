@@ -118,6 +118,14 @@ MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
 MREFRUST_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
   cargo test -p mrefrust-bench --test qwen36_quality_gate --release -- --ignored --nocapture
 
+# Proof that the gate above can SEE quantization damage, rather than just
+# asserting it could. Clones the install (APFS clonefile, so the original
+# is untouched and only written pages cost disk), shifts one quantization
+# level in a strided subset of the routed experts, and re-measures. About
+# 30 seconds. Curve and floor: docs/BENCHMARKS.md.
+MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
+  cargo test -p mrefrust-bench --test quality_sensitivity --release -- --ignored --nocapture
+
 # The other #[ignore]d tests: real checkpoint downloads (many GB).
 cargo test -p mrefrust-repack --test gemma4_checkpoint_network --release -- --ignored --nocapture
 cargo test -p mrefrust-repack --test hf_checkpoint_network --release -- --ignored --nocapture

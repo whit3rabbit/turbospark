@@ -1,4 +1,8 @@
 #![cfg(target_os = "macos")]
+// This module is compiled into three separate test binaries and each uses
+// a different part of it (`quality_sensitivity` wants only
+// `measure_perplexity`), so per-binary dead code here means nothing.
+#![allow(dead_code)]
 //! The quality gate's body, shared by the per-family targets
 //! (`quality_gate.rs`, `qwen36_quality_gate.rs`). ROADMAP Phase Q's first
 //! two deliverables: a perplexity number and frozen golden digests per
@@ -127,7 +131,7 @@ pub struct ChipQuality {
 /// quality regression. 2% is far under the smallest degradation worth
 /// acting on (routed experts at 3-bit are expected to move this by whole
 /// percent) and far over the run-to-run noise of one binary.
-const PERPLEXITY_REL_TOLERANCE: f64 = 0.02;
+pub const PERPLEXITY_REL_TOLERANCE: f64 = 0.02;
 
 /// Digest generation length. Long enough that a distribution bug diverges
 /// the continuation, short enough that five generations plus the
@@ -150,6 +154,21 @@ const PRESSURE_EXPERT_CACHE_SLOTS: usize = 8;
 /// slots moved wall clock by 33%, so 2x is several times the observed
 /// effect.
 const PRESSURE_THROUGHPUT_FLOOR_RATIO: f64 = 0.5;
+
+/// The gate's first arm on its own: open the install at `dir` and return
+/// the teacher-forced perplexity of the frozen corpus.
+///
+/// Split out for `quality_sensitivity.rs`, which needs the same number from
+/// a deliberately damaged copy of an install. The runner is dropped before
+/// returning so a caller can measure two installs in one process without
+/// holding both resident.
+///
+pub fn measure_perplexity(dir: &Path) -> f64 {
+    let (mut runner, tokenizer) =
+        open_model_runner(dir, PROTOCOL_EXPERT_CACHE_SLOTS).expect("install should open");
+    let prompt_ids = user_turn_ids(&tokenizer);
+    reference_perplexity(&mut runner, &tokenizer, &prompt_ids)
+}
 
 /// Run Phase Q's in-repo half against `dir` and assert what `rows` records
 /// for this chip.

@@ -281,12 +281,39 @@ are unchanged.
 The gate therefore freezes a second Gemma digest rather than asserting
 identity across slot counts, which would be asserting FP associativity.
 
+### Sensitivity: what the perplexity number can actually see
+
+A frozen number with a 2% band is only worth its band if real damage lands
+outside it. `crates/bench/tests/quality_sensitivity.rs` measures that
+directly: it APFS-clones the install (`clonefile`, 13 GB in ~8 ms, so only
+written pages cost disk), flips ONE quantization level in a strided subset
+of the routed-expert blobs, and re-measures. XOR `0x01` into an int4 byte
+moves that weight by one of its sixteen levels and cannot make a NaN or an
+infinity even if it lands on an FP16 scale, so what is being measured is
+degradation, not breakage. Nothing outside `packed_experts/` is touched, so
+the move is attributable to routed-expert weights alone.
+
+Gemma 4, clean perplexity 37.3105, 2026-08-07:
+
+| Expert bytes touched | Damaged perplexity | Drift | Verdict |
+| ---: | ---: | ---: | --- |
+| 12.5% | 12,249,392 | +3e7% | model destroyed |
+| 0.195% | 51.3597 | +37.7% | detected, 19x the band |
+| 0.0122% | 41.2186 | +10.5% | detected, 5x the band |
+| 0.0015% | 37.5118 | +0.54% | NOT detected, inside the band |
+
+So the gate's floor sits between 0.0015% and 0.0122% of expert bytes at one
+quantization level, and Phase S's expected damage (whole percent) is orders
+of magnitude above it. The test asserts the 0.195% row, chosen for margin
+rather than for being the smallest detectable damage, so it cannot flake.
+Every number here reproduced exactly across runs.
+
 What is still missing from Phase Q, and deliberately: token-level KL
-divergence against mlx-lm (needs an external reference and a logit-dump
-path this port does not have). The sensitivity of the perplexity number to
-real quantization damage is therefore asserted by construction, not
-demonstrated: nothing here has yet been run against a deliberately degraded
-model.
+divergence against mlx-lm (needs the 14.6 GB reference checkpoint, an
+external Python dependency, and a logit-dump path this port does not have).
+That would compare this port against another engine on the same quantized
+bytes; the table above only establishes that the metric responds to damage,
+which is what Phase S needs from it first.
 
 ## Caveats worth repeating
 

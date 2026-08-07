@@ -19,6 +19,7 @@ crates/bench/
 |   +-- oracle_common/      # Shared memory oracle assertion helpers (mod.rs)
 |   +-- quality_common/     # Shared quality gate evaluation helpers (mod.rs)
 |   +-- quality_gate.rs     # Quality gate integration test (Gemma 4)
+|   +-- quality_sensitivity.rs # Proof the gate sees quantization damage (Gemma 4)
 |   +-- qwen36_memory_oracle.rs # Memory oracle for Qwen 3.6 family
 |   \-- qwen36_quality_gate.rs  # Quality gate for Qwen 3.6 family
 \-- prompts/
@@ -88,6 +89,12 @@ MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
   cargo test -p mrefrust-bench --test quality_gate --release -- --ignored --nocapture
 MREFRUST_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
   cargo test -p mrefrust-bench --test qwen36_quality_gate --release -- --ignored --nocapture
+
+# Sensitivity proof for the gate above: APFS-clone the install, shift one
+# quantization level in a strided subset of the routed experts, re-measure.
+# ~30 s. Response curve and detection floor in docs/BENCHMARKS.md.
+MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
+  cargo test -p mrefrust-bench --test quality_sensitivity --release -- --ignored --nocapture
 ```
 
 ## Crate Gotchas

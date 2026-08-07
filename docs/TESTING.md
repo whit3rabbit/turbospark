@@ -69,8 +69,8 @@ idiom (real implementation plus a stub that exits 2).
 
 ### Ignored (expensive or needs external data)
 
-Nine of them, each with a reason string and a module doc giving the exact
-command (the tenth, `crates/selection`'s `rank_top_k`, is a sampler
+Ten of them, each with a reason string and a module doc giving the exact
+command (the eleventh, `crates/selection`'s `rank_top_k`, is a sampler
 microbenchmark documented in `docs/BENCHMARKS.md`):
 
 ```sh
@@ -103,6 +103,12 @@ MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
   cargo test -p mrefrust-bench --test quality_gate --release -- --ignored --nocapture
 MREFRUST_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
   cargo test -p mrefrust-bench --test qwen36_quality_gate --release -- --ignored --nocapture
+
+# Proof the gate above can see quantization damage: clone the install
+# (APFS clonefile, original untouched), shift one quantization level in a
+# strided subset of the routed experts, re-measure. About 30 seconds.
+MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
+  cargo test -p mrefrust-bench --test quality_sensitivity --release -- --ignored --nocapture
 
 # Split-KV chunk-count sweep on the decode attention kernel. Needs no
 # model install: it is the kernel alone at the real Gemma 4 shapes, and
