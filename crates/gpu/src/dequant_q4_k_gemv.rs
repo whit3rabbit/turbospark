@@ -139,6 +139,38 @@ pub fn encode_dequant_q4_k_gemv_resident(
     Ok(())
 }
 
+/// Encoder-level `embed_lookup_q4_k`: dequantizes one row of a Q4_K
+/// embedding table (bound in place, normally an offset into the resident
+/// buffer) into `out` (`d` halfs), scaled by `out_scale`.
+///
+/// Qwen 3.6's Q4_K_M keeps `token_embd.weight` at Q4_K, which is why this
+/// exists; the Q8_0 sibling covers Gemma's file. One binding rather than the
+/// affine lookup's three, for the usual block-quant reason.
+pub fn encode_embed_lookup_q4_k(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    table: (&metal::Buffer, u64),
+    out: (&metal::Buffer, u64),
+    token_id: u32,
+    d: u32,
+    out_scale: f32,
+) -> Result<(), GpuError> {
+    assert_eq!(d as usize % Q4_K_BLOCK_ELEMS, 0);
+    let pipeline = context.pipeline(SOURCE, "embed_lookup_q4_k", &no_function_constants(), b"")?;
+    pass.encode_threads_3d(
+        &pipeline,
+        &[(table.0, 0, table.1), (out.0, 1, out.1)],
+        &[
+            (u32_bytes(&token_id), 2),
+            (u32_bytes(&d), 3),
+            (crate::bytes::f32_bytes(&out_scale), 4),
+        ],
+        (d as u64, 1, 1),
+        (64, 1, 1),
+    );
+    Ok(())
+}
+
 /// One-shot [`encode_dequant_q4_k_gemv_resident`] for the parity tests.
 pub fn dequant_q4_k_gemv_resident(
     context: &mut MetalContext,

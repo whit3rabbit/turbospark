@@ -57,27 +57,27 @@ static inline void q4_k_scale_min(
     }
 }
 
-// y[m] = sum_n W[m, n] * x[n]. One SIMD group per output row: 32 lanes over a
-// 32-byte nibble group, so each lane owns exactly one byte and therefore two
-// elements 32 apart, in two different sub-blocks. Four such groups tile a
-// superblock. Dispatch:
-// threadgroupsPerGrid = (ceil(M / 8), 1, 1), threadsPerThreadgroup = (256,1,1).
-[[kernel, max_total_threads_per_threadgroup(256)]]
-kernel void dequant_q4_k_gemv_simd(
-    device const uint8_t* W      [[buffer(0)]],
-    device const half*    x      [[buffer(1)]],
-    device half*          y      [[buffer(2)]],
-    constant uint&        M      [[buffer(3)]],
-    constant uint&        N      [[buffer(4)]],
-    uint                  tg_idx [[threadgroup_position_in_grid]],
-    uint                  sg_idx [[simdgroup_index_in_threadgroup]],
-    uint                  lane   [[thread_index_in_simdgroup]]
-) {
-    const uint row = tg_idx * kRowsPerTGQ4_K + sg_idx;
-    if (row >= M) return;
+// Bytes one Q4_K row of `n` elements occupies. Shared with `moe_gguf.metal`,
+// which is compiled with this file concatenated ahead of it.
+static inline uint q4_k_row_bytes(uint n) {
+    return n / kQ4_KBlockElems * kQ4_KBlockBytes;
+}
 
+// One Q4_K output row dotted against `x`, over 32 lanes: each lane owns
+// exactly one nibble byte and therefore two elements 32 apart, in two
+// different sub-blocks. Four such groups tile a superblock.
+//
+// Factored out rather than inlined into the kernel below because the routed
+// expert pair in `moe_gguf.metal` needs the identical unpack, and a second
+// hand-written copy of the 6-bit scale split is exactly the duplication that
+// would let the two disagree.
+static inline float dequant_q4_k_row_simd(
+    device const uint8_t* W_row,
+    device const half* x,
+    uint N,
+    uint lane
+) {
     const uint n_blocks = N / kQ4_KBlockElems;
-    device const uint8_t* W_row = W + uint(row) * n_blocks * kQ4_KBlockBytes;
 
     float acc = 0.0f;
     for (uint b = 0; b < n_blocks; ++b) {
@@ -103,8 +103,67 @@ kernel void dequant_q4_k_gemv_simd(
             acc = fma(w_hi, float(x[at + kQ4_KSubElems]), acc);
         }
     }
-    acc = simd_sum(acc);
+    return simd_sum(acc);
+}
+
+// y[m] = sum_n W[m, n] * x[n]. One SIMD group per output row. Dispatch:
+// threadgroupsPerGrid = (ceil(M / 8), 1, 1), threadsPerThreadgroup = (256,1,1).
+[[kernel, max_total_threads_per_threadgroup(256)]]
+kernel void dequant_q4_k_gemv_simd(
+    device const uint8_t* W      [[buffer(0)]],
+    device const half*    x      [[buffer(1)]],
+    device half*          y      [[buffer(2)]],
+    constant uint&        M      [[buffer(3)]],
+    constant uint&        N      [[buffer(4)]],
+    uint                  tg_idx [[threadgroup_position_in_grid]],
+    uint                  sg_idx [[simdgroup_index_in_threadgroup]],
+    uint                  lane   [[thread_index_in_simdgroup]]
+) {
+    const uint row = tg_idx * kRowsPerTGQ4_K + sg_idx;
+    if (row >= M) return;
+
+    device const uint8_t* W_row = W + uint(row) * q4_k_row_bytes(N);
+    const float acc = dequant_q4_k_row_simd(W_row, x, N, lane);
     if (lane == 0) {
         y[row] = half(acc);
     }
+}
+
+// One row of a Q4_K embedding table, dequantized into `out` and scaled.
+// Sibling of `embed_lookup_q8_0`, and one thread per element rather than one
+// SIMD group per row, matching the affine and Q8_0 lookups.
+//
+// The element-to-nibble mapping is the trap, and it is the same one the GEMV
+// above navigates from the other direction: within a superblock, element `e`
+// sits in group `g = e / 64`, takes the LOW nibble of byte `g * 32 + e % 32`
+// when `(e % 64) < 32` and the HIGH nibble otherwise, and belongs to
+// sub-block `2g` or `2g + 1` accordingly. Treating a byte's two nibbles as
+// adjacent elements reads a plausible, wrong row.
+kernel void embed_lookup_q4_k(
+    device const uint8_t* table     [[buffer(0)]],   // [V, D/256 * 144] blocks
+    device half*          out       [[buffer(1)]],   // [D] FP16
+    constant uint&        token_id  [[buffer(2)]],
+    constant uint&        D         [[buffer(3)]],
+    constant float&       out_scale [[buffer(4)]],
+    uint                  gid       [[thread_position_in_grid]]
+) {
+    if (gid >= D) return;
+    device const uint8_t* blk = table + uint(token_id) * q4_k_row_bytes(D)
+        + (gid / kQ4_KBlockElems) * kQ4_KBlockBytes;
+
+    const ushort d_raw = ushort(blk[0]) | (ushort(blk[1]) << 8);
+    const ushort dmin_raw = ushort(blk[2]) | (ushort(blk[3]) << 8);
+    const float d = float(as_type<half>(d_raw));
+    const float dmin = float(as_type<half>(dmin_raw));
+
+    const uint e = gid % kQ4_KBlockElems;
+    const uint g = e / (2 * kQ4_KSubElems);
+    const uint upper = (e % (2 * kQ4_KSubElems)) / kQ4_KSubElems;
+    const uint l = e % kQ4_KSubElems;
+
+    float sc, m;
+    q4_k_scale_min(2 * g + upper, blk + kQ4_KScalesAt, sc, m);
+    const uint8_t byte = blk[kQ4_KQuantsAt + g * kQ4_KSubElems + l];
+    const float q = float(upper == 0 ? (byte & 0xF) : (byte >> 4));
+    out[gid] = half((d * sc * q - dmin * m) * out_scale);
 }

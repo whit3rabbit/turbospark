@@ -209,3 +209,73 @@ fn the_resident_form_matches_the_copying_form() {
     assert_eq!(row_bytes * m + pad, blob.len());
     assert_matches("resident at offset 4096", &gpu, &cpu, n);
 }
+
+/// `embed_lookup_q4_k` against the CPU dequant of the same row. Qwen 3.6's
+/// Q4_K_M keeps `token_embd.weight` at Q4_K, so this is the lookup a Qwen
+/// GGUF install runs on every token.
+///
+/// Two bugs are in scope and neither faults. The row stride is
+/// `D / 256 * 144` bytes rather than `D`, so using the element count reads a
+/// neighbouring token. And the lookup walks elements where the GEMV walks
+/// bytes, so it has to undo the nibble interleave itself: element `e` takes
+/// the LOW nibble of byte `g * 32 + e % 32` for `(e % 64) < 32` and the HIGH
+/// nibble otherwise, under sub-block `2g` or `2g + 1`. Treating a byte's two
+/// nibbles as adjacent elements returns a shuffled row of the right values,
+/// which is why the token looked up is deliberately not row 0 and the
+/// comparison is element by element.
+#[test]
+fn embed_lookup_reads_the_right_row_and_scales_it() {
+    let mut context = MetalContext::new().expect("Metal device available on this machine");
+
+    let (vocab, d) = (7usize, 2 * SUPERBLOCK);
+    let rows: Vec<Vec<f32>> = (0..vocab).map(|t| weights(d, 300 + t as u32)).collect();
+    let mut table = Vec::new();
+    for r in &rows {
+        table.extend_from_slice(&mrefrust_compute::quantize_q4_k(r));
+    }
+    let table_buffer = context.new_buffer_with_data(&table);
+    let out = context.new_output_buffer((d * std::mem::size_of::<u16>()) as u64);
+
+    let token = 5u32;
+    let out_scale = 4.0f32;
+    let pass = context.begin_pass();
+    mrefrust_gpu::encode_embed_lookup_q4_k(
+        &mut context,
+        &pass,
+        (&table_buffer, 0),
+        (&out, 0),
+        token,
+        d as u32,
+        out_scale,
+    )
+    .expect("GPU dispatch succeeds");
+    pass.commit_and_wait();
+
+    let row_bytes = q4_k_row_bytes(d);
+    let want: Vec<f32> = mrefrust_compute::dequantize_q4_k(
+        &table[token as usize * row_bytes..(token as usize + 1) * row_bytes],
+        d,
+    )
+    .iter()
+    .map(|v| v * out_scale)
+    .collect();
+
+    let got: Vec<f32> = {
+        let ptr = out.contents() as *const u16;
+        let bits = unsafe { std::slice::from_raw_parts(ptr, d) };
+        bits.iter().map(|&b| f16::from_bits(b).to_f32()).collect()
+    };
+    assert_matches(
+        "embed row 5, scale 4",
+        &got.iter().map(|&v| f16::from_f32(v)).collect::<Vec<_>>(),
+        &want,
+        d,
+    );
+    // The scale is not cosmetic: without it every value is 4x too small,
+    // which the tolerance above would tolerate on a near-zero row.
+    let peak = want.iter().fold(0f32, |m, &v| m.max(v.abs()));
+    assert!(
+        peak > 1.0,
+        "the test row is too small to prove the scale: {peak}"
+    );
+}

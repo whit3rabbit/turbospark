@@ -102,7 +102,8 @@ pub use dequant_int8_gemv::{
 #[cfg(target_os = "macos")]
 pub use dequant_q4_k_gemv::{
     dequant_q4_k_gemv, dequant_q4_k_gemv_resident, encode_dequant_q4_k_gemv_resident,
-    q4_k_row_bytes, Q4KResidentMatrix, Q4_K_BLOCK_BYTES, Q4_K_BLOCK_ELEMS,
+    encode_embed_lookup_q4_k, q4_k_row_bytes, Q4KResidentMatrix, Q4_K_BLOCK_BYTES,
+    Q4_K_BLOCK_ELEMS,
 };
 #[cfg(target_os = "macos")]
 pub use dequant_q6_k_gemv::{
@@ -137,7 +138,9 @@ pub use moe_decode::{
     MoeExpertOffsets, RoutedBlobsBuffer, MAX_STREAMED_EXPERTS,
 };
 #[cfg(target_os = "macos")]
-pub use moe_gguf::{encode_moe_phase1_q8_0, encode_moe_phase2_q8_0};
+pub use moe_gguf::{
+    encode_moe_phase1_q4_k, encode_moe_phase1_q8_0, encode_moe_phase2_q4_k, encode_moe_phase2_q8_0,
+};
 #[cfg(target_os = "macos")]
 pub use prefill_scratch::{PrefillChunkScratchBuffers, PrefillChunkScratchLayout};
 #[cfg(target_os = "macos")]
