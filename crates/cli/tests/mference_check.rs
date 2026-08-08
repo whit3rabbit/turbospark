@@ -1,10 +1,10 @@
-//! Black-box tests of the `mference-check` binary: exit codes and stream
+//! Black-box tests of the `turbospark-check` binary: exit codes and stream
 //! routing for a help request, a validated invocation, and a parse failure.
 
 use std::process::Command;
 
 fn run(args: &[&str]) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_mference-check"))
+    Command::new(env!("CARGO_BIN_EXE_turbospark-check"))
         .args(args)
         .output()
         .expect("binary should run")

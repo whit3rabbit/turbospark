@@ -2,7 +2,7 @@
 # Swift-vs-Rust decode parity on one machine, one install, one session.
 #
 # Runs the frozen community protocol (real-generation-v1) through both
-# engines: ../Mference's MferenceCLI and this port's mference-bench. Same
+# engines: ../Mference's MferenceCLI and this port's turbospark-bench. Same
 # prompts, seeds, sampling, budget, and expert-cache slots; one fresh
 # process per measured run, arms interleaved pair by pair because
 # consecutive batches carry thermal drift (CLAUDE.local.md).
@@ -20,7 +20,7 @@ PAIRS="${1:-2}"
 MODEL="${MODEL:-$HOME/models/gemma4.gturbo}"
 SWIFT_CLI="${SWIFT_CLI:-../Mference/.build/release/MferenceCLI}"
 SWIFT_PROMPTS="${SWIFT_PROMPTS:-../Mference/docs/benchmark-prompts/real-generation-v1}"
-RUST_BENCH="${RUST_BENCH:-./target/release/mference-bench}"
+RUST_BENCH="${RUST_BENCH:-./target/release/turbospark-bench}"
 OUT="${OUT:-/tmp/mference-parity}"
 
 CASES=(short-explanation:20260721 medium-review:20260722 long-synthesis:20260723)
@@ -75,7 +75,7 @@ run_arm() {
         > "$stem.stdout" 2> "$stem.stderr"
       ;;
     rust)
-      # mference-bench does the protocol's discarded warmup inside the
+      # turbospark-bench does the protocol's discarded warmup inside the
       # process, so one launch is warmup + measured for this case.
       /usr/bin/time -l "$RUST_BENCH" --model "$MODEL" --case "$case_id" \
         > "$stem.stdout" 2> "$stem.stderr"

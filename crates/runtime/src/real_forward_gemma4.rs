@@ -36,7 +36,7 @@
 //!
 //! Selected by `open()` when the resident index carries the source
 //! checkpoint's verbatim `language_model.` tensor names (what
-//! `mrefrust_repack::write_gemma4_install` writes). The synthetic
+//! `turbospark_repack::write_gemma4_install` writes). The synthetic
 //! short-name installs keep the plain flow in `real_forward.rs`.
 
 use std::time::Instant;

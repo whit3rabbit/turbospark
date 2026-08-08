@@ -21,14 +21,14 @@
 //! two small ranged reads.
 //!
 //! ```sh
-//! MREFRUST_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
-//!   cargo test -p mrefrust-repack --test gguf_q4_k_network --release -- --ignored --nocapture
+//! TURBOSPARK_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
+//!   cargo test -p turbospark-repack --test gguf_q4_k_network --release -- --ignored --nocapture
 //! ```
 
 use std::io::{Read, Seek, SeekFrom};
 
 use compute::{dequantize_int4_affine, dequantize_q4_k, pearson, Int4AffineRow, Q4_K_BLOCK_BYTES};
-use mrefrust_repack::{fetch_gguf_header, HttpRangeSource, RangeSource};
+use turbospark_repack::{fetch_gguf_header, HttpRangeSource, RangeSource};
 
 const QWEN36_Q4_K_M: &str =
     "https://huggingface.co/ggml-org/Qwen3.6-35B-A3B-GGUF/resolve/main/Qwen3.6-35B-A3B-Q4_K_M.gguf";
@@ -145,8 +145,8 @@ fn is_constant(row: &[f32]) -> bool {
 #[test]
 #[ignore = "network: reads a few KB off a 20 GB remote checkpoint, plus the local install"]
 fn a_real_q4_k_expert_dequantizes_to_the_installed_one() {
-    let Ok(dir) = std::env::var("MREFRUST_QWEN36_INSTALL_DIR") else {
-        println!("(skipped: MREFRUST_QWEN36_INSTALL_DIR is unset)");
+    let Ok(dir) = std::env::var("TURBOSPARK_QWEN36_INSTALL_DIR") else {
+        println!("(skipped: TURBOSPARK_QWEN36_INSTALL_DIR is unset)");
         return;
     };
     let dir = std::path::PathBuf::from(shellexpand_home(&dir));
@@ -242,7 +242,7 @@ fn a_real_q4_k_expert_dequantizes_to_the_installed_one() {
     );
 }
 
-fn sample(header: &mrefrust_repack::GgufHeader) -> Vec<&String> {
+fn sample(header: &turbospark_repack::GgufHeader) -> Vec<&String> {
     header
         .tensors
         .keys()

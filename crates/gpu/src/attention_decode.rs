@@ -7,7 +7,7 @@
 //! needed (a single chunk's `m_glob` equals its own `m`, so the combine
 //! pass reduces to `out = o / d`, byte-identical to a fused single-pass
 //! kernel — the doc comment in the vendored shader spells this out).
-//! Matches `mrefrust_compute::causal_attention`'s layout and (`window:
+//! Matches `turbospark_compute::causal_attention`'s layout and (`window:
 //! None`) semantics exactly.
 //!
 //! `attention.metal` also ships `attention_decode_gqa_swa_partial` (a
@@ -128,7 +128,7 @@ fn attention_constants_key(scale: f32, ring_capacity: u32, num_chunks: u32) -> [
 }
 
 /// `Q: [num_q_heads, head_dim]`, `K`/`V: [seq_len, num_kv_heads, head_dim]`
-/// (same layout `mrefrust_compute::causal_attention` uses). Returns
+/// (same layout `turbospark_compute::causal_attention` uses). Returns
 /// `[num_q_heads, head_dim]`. `num_q_heads` must be a multiple of
 /// `num_kv_heads` (GQA). No sliding-window support (always attends over
 /// the full `[0, seq_len)` range) — see module docs.

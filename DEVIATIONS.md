@@ -47,7 +47,7 @@ live network).
   quantization level in a strided subset of routed experts and puts the
   detection floor between 0.0015% and 0.0122% of expert bytes.
 - **Process-entry-point ownership resolved as `crates/cli`.** An earlier
-  note reserved the name `mrefrust-entrypoint` and left it unbuilt pending
+  note reserved the name `turbospark-entrypoint` and left it unbuilt pending
   a decision. That decision is now made and documented in `AGENTS.md`
   Gotcha 7: `crates/cli`.
 - **Three items formally descoped, by explicit user decision, rather than
@@ -234,7 +234,7 @@ live network).
   `crates/gpu/src/attention_decode.rs`, incl. SWA `kv_start` and the
   `FC_ATTN_RING_CAP` KV ring); and `moe.metal`'s decode pair
   (`moe_phase1_gate_up_act_u16load` + `moe_phase2_down_reduce_k8`). Each
-  is parity-tested against the matching `mrefrust_compute` reference on
+  is parity-tested against the matching `turbospark_compute` reference on
   real Metal 4 hardware (an Apple M4 Max in this environment) and wired
   into `RealForwardRunner`'s decode loop (see Phase 7), not just
   parity-tested in isolation. `MetalContext::pipeline` takes
@@ -255,7 +255,7 @@ live network).
   variants):** `rope.metal`'s
   `rope_default_neox`/`rope_neox_subdim` (the former is subsumed by
   `rope_proportional_neox` at `rotated_pairs = head_dim/2`; the latter
-  has no matching `mrefrust_compute` reference — its frequency divisor is
+  has no matching `turbospark_compute` reference — its frequency divisor is
   `rotary_dim`, not `head_dim`, unlike anything in `compute::rope`),
   `dequant_int4.metal`'s `dequant_int4_qkv_gemv_simd`, `dequant_int8.metal`'s
   `shared_int8_gate_up_act_simd` (the real-checkpoint shared-expert
@@ -296,10 +296,10 @@ live network).
   recurrence in decode and prefill form, and the gated output norm) are
   vendored verbatim into `crates/gpu/src/shaders/gdn.metal`, dispatched
   from `crates/gpu/src/gdn.rs`, and checked against the FP32 reference
-  `mrefrust_compute::GdnReference` in `crates/gpu/tests/gdn_parity.rs`.
+  `turbospark_compute::GdnReference` in `crates/gpu/tests/gdn_parity.rs`.
   `Dsv4StateManager` still allocates real buffers with nothing computing
   a compressed-attention read into or out of them, on GPU or CPU
-  (`mrefrust_compute` has no CSA/HCA reference either), so
+  (`turbospark_compute` has no CSA/HCA reference either), so
   `RealForwardRunner` still rejects mask 3/4 outright: DeepSeek-V4-Flash
   (`full_attention_layer_mask` values `{0,3,4}` — zero full-attention
   layers at all) cannot run through this port at any speed until those
@@ -385,7 +385,7 @@ live network).
   reference instead.
 - **`logit.metal`'s `sample` kernel: formally descoped, not ported.**
   Unlike every other kernel this port has vendored, `sample` has no CPU
-  reference in `mrefrust_compute` to verify a port against — it is a
+  reference in `turbospark_compute` to verify a port against — it is a
   self-contained GPU-native sampler with its own xorshift64*/SplitMix64
   RNG and its own greedy / Gumbel-fast-path / truncating-top-k-top-p
   branches, algorithmically independent of `crates/selection`'s CPU
@@ -488,7 +488,7 @@ live network).
 - **Qwen 3.6: PROVEN on the real 35B-A3B checkpoint (2026-08-07).**
   `mlx-community/Qwen3.6-35B-A3B-4bit` repacks through
   `write_qwen36_install_streamed` in 19 minutes into an 18 GB install and
-  generates coherent chat-formatted answers via `mference-check`: greedy
+  generates coherent chat-formatted answers via `turbospark-check`: greedy
   and sampled both stay coherent for 400 tokens, and a short question
   stops on `EndOfTurn` with a correct answer, so the ChatML stop set
   resolves. The whole frozen bench protocol reaches `endOfTurn` on all
@@ -545,8 +545,8 @@ live network).
   tensor naming (both real families carry
   `language_model.model.embed_tokens.weight`). Proven by
   `crates/runtime/tests/real_forward_qwen.rs` (8 tests) against
-  `mrefrust_repack::build_synthetic_qwen36_real_install`, and end to end
-  through `mference-check`. What is NOT done: no real ~20 GB Qwen
+  `turbospark_repack::build_synthetic_qwen36_real_install`, and end to end
+  through `turbospark-check`. What is NOT done: no real ~20 GB Qwen
   checkpoint has been downloaded or repacked, so there is no throughput
   number and no memory-oracle row. Weights in the fixture are
   deterministic but untrained, so no test asserts on generated text
@@ -784,7 +784,7 @@ live network).
     stay flat). Resident-expert MoE
     installs (a synthetic-only shape) still use the CPU
     `run_ffn` bridge (`moe_ffn_host`). The old bridge description: not
-    `mrefrust_compute::apply_streamed_routed`'s residual-fused form (that
+    `turbospark_compute::apply_streamed_routed`'s residual-fused form (that
     function bakes the residual add into the combine step; this runner
     adds the residual itself afterward, through the same sandwich-norm
     step the dense path uses, so the two FFN branches share that
@@ -794,10 +794,10 @@ live network).
     one; the real-checkpoint flow (see the real Gemma 4 pipeline entry
     below) does compute both and add them.
   The weights come from a real `.gturbo` install
-  (`mrefrust_repack`'s `build_synthetic_gemma4_install` for dense,
+  (`turbospark_repack`'s `build_synthetic_gemma4_install` for dense,
   `build_synthetic_gemma4_moe_install` for MoE — both using the named
   resident-tensor writer, `write_gturbo_install_with_resident_index` — see
-  Phase 8 below) loaded through the real `mrefrust_model_io`
+  Phase 8 below) loaded through the real `turbospark_model_io`
   manifest/resident-index/`ResidentBuffer` loaders, unmodified. The
   weights themselves are deterministic but NOT trained (no trained
   `.gturbo` checkpoint is available in this environment) — so the
@@ -824,7 +824,7 @@ live network).
   unstarted. Off-mode (`run_raw_completion`) still feeds every prefill
   token to the producer one at a time, unchanged.
 - **Throughput benchmark harness: implemented, in three modes.** The
-  scripted default: `crates/bench`'s `mference-bench` runs the real
+  scripted default: `crates/bench`'s `turbospark-bench` runs the real
   `run_raw_completion` loop, not a simulation of it, against a
   `ScriptedLogitProducer` for three fixed prompts with a fixed seed and
   a discarded warmup run per prompt (the frozen benchmark protocol's
@@ -844,7 +844,7 @@ live network).
   `AppMemorySampler` counter and its every-8th-token cadence, and the
   Swift-spelling `[stop=...]` footer on stderr for the protocol's grep.
   On top of that, `crates/bench/tests/memory_oracle.rs` (`#[ignore]`d,
-  needs `MREFRUST_GEMMA4_INSTALL_DIR`) is the memory oracle: it asserts
+  needs `TURBOSPARK_GEMMA4_INSTALL_DIR`) is the memory oracle: it asserts
   the session peak footprint at or under the published Swift ceiling
   plus ~5 percent headroom (the Swift docs' own repeat-run variance),
   requires every measured case to stop `endOfTurn`, and on chips with a
@@ -873,7 +873,7 @@ live network).
   (`crates/cli/src/chat.rs`) is the interactive REPL ported from
   `MferenceCLI/Run.swift`'s `runChat`: `/clear`, `/history`, `/quit`,
   `/exit`, `--system` seeding the opening turn, per-turn window fitting
-  through `mrefrust-window-fit` (the Swift `trimChatHistory` contract), and
+  through `turbospark-window-fit` (the Swift `trimChatHistory` contract), and
   the assistant reply appended to the history. Both chat modes print the
   Swift original's `[stop=... prefill=... tok/s=...]` footer to stderr,
   silenced by `--quiet`. Proven end to end (real compiled-binary
@@ -910,7 +910,7 @@ live network).
   interleaved (the scale lives inside the block) where this port's affine
   kernels read three separate planes at group 64, so a block type needs its
   own kernels rather than a flag. Q8_0 and Q4_K each have all three, every
-  one with a `mrefrust_compute` reference and a parity test: a resident
+  one with a `turbospark_compute` reference and a parity test: a resident
   GEMV (`dequant_q8_0_gemv_simd`, `dequant_q4_k_gemv_simd`), an embedding
   lookup (`embed_lookup_q8_0`, `embed_lookup_q4_k`), and one of
   `moe_gguf.metal`'s two decode pairs for the streamed routed experts.
@@ -1032,15 +1032,15 @@ live network).
 - **Byte-exact `.gturbo` directory assembly: implemented**
   (`gturbo_writer.rs`'s `write_gturbo_install`): given already-quantized
   tensor bytes, writes `packed_experts/layer_NN.bin` blobs (matching
-  `mrefrust_model_io::PackedExpertsLayout`'s exact per-expert sub-tensor
+  `turbospark_model_io::PackedExpertsLayout`'s exact per-expert sub-tensor
   layout, zero-padded to `expert_stride`), `packed_experts/layout.json`, a
   minimal valid `model_weights.bin` (a real `ResidentIndexHeader` plus a
   raw tensor region), and `manifest.json` with computed per-file SHA-256.
   Round-trip tested: write an install, then read every part of it back
-  through `mrefrust_model_io::load_manifest`/`load_packed_experts_layout`/
+  through `turbospark_model_io::load_manifest`/`load_packed_experts_layout`/
   `load_resident_index` and `verify_install_full_sha256`, all of which
   pass. Ranged-read planning (`RangeSource`, HTTP-backed for real use) and
-  per-row int4/int8 quantization (reusing `mrefrust_compute`'s quantizer)
+  per-row int4/int8 quantization (reusing `turbospark_compute`'s quantizer)
   are the pieces this writer builds on.
 - **Real downloaded HF checkpoint orchestration: implemented and proven
   against a real download, not a synthetic fixture.**
@@ -1059,7 +1059,7 @@ live network).
   (272 real tensors), decoded and INT4-quantized all 272 (embedding +
   30 layers × 9 tensors/layer + final norm), wrote a real `.gturbo`
   install, and read every part of it back through the real, unmodified
-  `mrefrust_model_io::load_manifest`/`load_resident_index` loaders —
+  `turbospark_model_io::load_manifest`/`load_resident_index` loaders —
   finished in under 100 seconds end to end. This is the piece the
   `repack`'s own module docs and the old port roadmap's Phase 8 called
   "NOT implemented" for exactly this reason; it is now implemented, for
@@ -1067,7 +1067,7 @@ live network).
   `crates/repack/tests/hf_checkpoint_network.rs` carries this test,
   `#[ignore]`d (a real, unpredictable-duration network download has no
   place in the default `cargo test --workspace` suite); run it explicitly
-  with `cargo test -p mrefrust-repack --test hf_checkpoint_network --
+  with `cargo test -p turbospark-repack --test hf_checkpoint_network --
   --ignored --nocapture`. A hermetic, no-network version of the same
   orchestration logic against a hand-built (but real-format) safetensors
   blob is `crates/repack/tests/hf_checkpoint.rs`, which IS part of the
@@ -1090,7 +1090,7 @@ live network).
   (`entry_count == 0`) — fine for its own round-trip test, but unusable by
   anything that needs to address weights by name. The new writer builds a
   real 24-byte header + 72-byte-per-entry table + string table + tensor
-  data region matching `mrefrust_model_io::resident_index`'s exact reader
+  data region matching `turbospark_model_io::resident_index`'s exact reader
   contract, with real named entries (packed INT4 bytes plus BF16 scale/bias
   arrays). `crates/repack`'s new `synthetic_model.rs` uses it to build a
   full small "tiny Gemma 4" `.gturbo` install with real (deterministic,
@@ -1104,8 +1104,8 @@ live network).
   `mlx-community/gemma-4-26b-a4b-it-4bit` (~14.6 GB, same commit +
   index-SHA-256 pins as Swift's `SupportedModelSource.gemma4`) was
   downloaded, streamed through `write_gemma4_install_streamed` (~16
-  minutes end to end), validated by every `mrefrust_model_io` loader,
-  and generates REAL COHERENT TEXT through `mference-check`: a
+  minutes end to end), validated by every `turbospark_model_io` loader,
+  and generates REAL COHERENT TEXT through `turbospark-check`: a
   chat-formatted `What is the capital of France?` answers
   `The capital of France is **Paris**.` and stops on EndOfTurn. Two
   verification notes from that run: (a) numerics were cross-checked
@@ -1158,14 +1158,14 @@ live network).
   `write_gemma4_install` pipeline; `crates/runtime/tests/
   real_forward_gemma4.rs` decodes it deterministically with a flat GPU
   allocation count, and `crates/cli/tests/real_generation.rs` drives
-  `mference-check --prompt` over it. The `Gemma4Quant` bits-override map
+  `turbospark-check --prompt` over it. The `Gemma4Quant` bits-override map
   must come from the checkpoint's own config (`parse_gemma4_quantization`);
   8-bit routed experts are rejected (the MoE decode kernels are
   int4-only).
 - **The server's real backend is macOS-only and serves one request at a
   time.** `RealChatModel` (`crates/server/src/real_model.rs`, gated the
   same way `crates/gpu` is) drives a real `RealForwardRunner` against a
-  `.gturbo` install: `mference-server --model <install-dir>`. A runner
+  `.gturbo` install: `turbospark-server --model <install-dir>`. A runner
   costs a multi-gigabyte mapping plus a Metal pipeline compile to open and
   takes `&mut self`, so there is one per process behind a `Mutex` and
   concurrent requests queue on it (each waiter pinning a tokio blocking
@@ -1190,10 +1190,10 @@ live network).
   would 400 every plain OpenAI request carrying only `top_p`) and no
   `repetition_penalty` (fixed at its identity value). That matches plain
   OpenAI Chat Completions' request shape rather than
-  `mrefrust-invocation`'s fuller option set.
+  `turbospark-invocation`'s fuller option set.
 - **Anthropic `POST /v1/messages`: implemented, text and tool calling, and
   an addition rather than a port.** Swift's server has no such endpoint. It exists here
-  because `mrefrust-server` took a dependency on `anyllm_translate`
+  because `turbospark-server` took a dependency on `anyllm_translate`
   (crates.io 0.16, default features: pure, IO-free, no axum, no reqwest),
   which also supplies the OpenAI wire types `/v1/chat/completions` now uses
   in place of hand-rolled structs. An Anthropic request is translated into

@@ -81,17 +81,17 @@
 use std::path::Path;
 
 use foundation::LogitValue;
-use mrefrust_bench::memory::chip_brand_string;
-use mrefrust_bench::protocol::{
-    PROTOCOL_CASES, PROTOCOL_EXPERT_CACHE_SLOTS, PROTOCOL_MAX_CONTEXT, PROTOCOL_TEMPERATURE,
-    PROTOCOL_TOP_K, PROTOCOL_TOP_P,
-};
-use mrefrust_bench::real_model::open_model_runner;
 use runtime::{
     run_raw_completion, GenerationConfig, LogitProducer, RawDecodeProgress, RealForwardRunner,
 };
 use selection::ShapingConfig;
 use tokenizer::{Message, MfTokenizer, Role};
+use turbospark_bench::memory::chip_brand_string;
+use turbospark_bench::protocol::{
+    PROTOCOL_CASES, PROTOCOL_EXPERT_CACHE_SLOTS, PROTOCOL_MAX_CONTEXT, PROTOCOL_TEMPERATURE,
+    PROTOCOL_TOP_K, PROTOCOL_TOP_P,
+};
+use turbospark_bench::real_model::open_model_runner;
 
 /// The reference answer, teacher-forced into the assistant slot. Original
 /// prose written for this repo, so it is not in any training set verbatim

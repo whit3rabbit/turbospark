@@ -1,4 +1,4 @@
-//! Black-box test of the `mference-bench` binary: runs against the real
+//! Black-box test of the `turbospark-bench` binary: runs against the real
 //! vendored ChatML tokenizer fixture and checks the report shape.
 
 use std::process::Command;
@@ -10,7 +10,7 @@ fn fixture_dir() -> std::path::PathBuf {
 
 #[test]
 fn reports_three_prompts_and_an_aggregate_line() {
-    let output = Command::new(env!("CARGO_BIN_EXE_mference-bench"))
+    let output = Command::new(env!("CARGO_BIN_EXE_turbospark-bench"))
         .arg(fixture_dir())
         .output()
         .expect("binary should run");
@@ -32,7 +32,7 @@ fn reports_three_prompts_and_an_aggregate_line() {
 
 #[test]
 fn missing_argument_exits_with_usage_error() {
-    let output = Command::new(env!("CARGO_BIN_EXE_mference-bench"))
+    let output = Command::new(env!("CARGO_BIN_EXE_turbospark-bench"))
         .output()
         .expect("binary should run");
     assert_eq!(output.status.code(), Some(2));

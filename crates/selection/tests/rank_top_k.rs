@@ -8,7 +8,7 @@
 //! sampled output while every throughput number improved -- exactly the
 //! class of bug the repo's greedy-only smoke tests cannot see.
 
-use mrefrust_selection::truncation::{
+use turbospark_selection::truncation::{
     rank_indices, rank_indices_u32_into, rank_top_k, rank_top_k_u32_into,
 };
 
@@ -91,7 +91,7 @@ fn keeps_no_more_than_the_domain() {
 
 /// Timing, not correctness: prints the per-call cost at the real Gemma 4
 /// vocabulary so the reason this function exists stays checkable.
-/// `cargo test -p mrefrust-selection --release --test rank_top_k -- --ignored --nocapture`
+/// `cargo test -p turbospark-selection --release --test rank_top_k -- --ignored --nocapture`
 #[test]
 #[ignore = "timing aid, not an assertion; needs --release to mean anything"]
 fn cost_at_the_real_vocabulary() {

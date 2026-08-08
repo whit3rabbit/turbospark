@@ -2,13 +2,13 @@
 //! THROWAWAY diagnostic probe for the Q8_0 GGUF non-determinism found in
 //! ROADMAP Phase G Stage 2 item 8. Delete once the cause is fixed.
 //!
-//!   MREFRUST_PROBE_INSTALL_DIR=~/models/gemma4-gguf.gturbo \
-//!     cargo test -p mrefrust-bench --test gguf_nondeterminism_probe --release -- --ignored --nocapture
+//!   TURBOSPARK_PROBE_INSTALL_DIR=~/models/gemma4-gguf.gturbo \
+//!     cargo test -p turbospark-bench --test gguf_nondeterminism_probe --release -- --ignored --nocapture
 
-use mrefrust_bench::real_model::open_model_runner;
 use runtime::{run_raw_completion, GenerationConfig, RawDecodeProgress, RealForwardRunner};
 use selection::ShapingConfig;
 use tokenizer::{Message, MfTokenizer, Role};
+use turbospark_bench::real_model::open_model_runner;
 
 const RUNS: usize = 6;
 const MAX_NEW: u32 = 48;
@@ -50,12 +50,12 @@ fn first_diff(a: &str, b: &str) -> Option<usize> {
 }
 
 #[test]
-#[ignore = "diagnostic probe; needs a real install via MREFRUST_PROBE_INSTALL_DIR"]
+#[ignore = "diagnostic probe; needs a real install via TURBOSPARK_PROBE_INSTALL_DIR"]
 fn greedy_repeats_identically() {
     let dir = std::path::PathBuf::from(
-        std::env::var_os("MREFRUST_PROBE_INSTALL_DIR").expect("MREFRUST_PROBE_INSTALL_DIR"),
+        std::env::var_os("TURBOSPARK_PROBE_INSTALL_DIR").expect("TURBOSPARK_PROBE_INSTALL_DIR"),
     );
-    let slots: usize = std::env::var("MREFRUST_PROBE_SLOTS")
+    let slots: usize = std::env::var("TURBOSPARK_PROBE_SLOTS")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(16);

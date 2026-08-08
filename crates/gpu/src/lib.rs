@@ -1,5 +1,5 @@
 //! Metal GPU backend: device/pipeline-cache context and per-kernel
-//! dispatch, validated against `mrefrust-compute`'s CPU reference kernels.
+//! dispatch, validated against `turbospark-compute`'s CPU reference kernels.
 //! Ported from `Infrastructure/Metal` and the `.metal` shader sources under
 //! `Metal/*`.
 //!
@@ -9,7 +9,7 @@
 //! exposes nothing, so `cargo build --workspace` / `cargo test --workspace`
 //! still succeed on Linux CI; only macOS gets the real implementation.
 //!
-//! Status: parity-tested dispatches (each against a `mrefrust_compute`
+//! Status: parity-tested dispatches (each against a `turbospark_compute`
 //! CPU reference on real hardware): `rmsnorm_no_scale`,
 //! `rope_proportional_neox`, `logit_softcap_fp16` (the port-local
 //! cap-without-softmax head; `logit_softcap_softmax` stays vendored and

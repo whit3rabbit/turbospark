@@ -1,18 +1,18 @@
-# mrefrust-cli
+# turbospark-cli
 
-Command-line entry point binary (`mference-check`). Parses command-line arguments using `mrefrust-invocation`, applies exit status and output stream routing decisions, and drives GPU generation via `RealForwardRunner` on macOS.
+Command-line entry point binary (`turbospark-check`). Parses command-line arguments using `turbospark-invocation`, applies exit status and output stream routing decisions, and drives GPU generation via `RealForwardRunner` on macOS.
 
 ## Binary Execution
 
 ```sh
 # Run CLI against a model with a prompt string
-cargo run -p mrefrust-cli --bin mference-check -- --model /path/to/model.gturbo --prompt "Hello"
+cargo run -p turbospark-cli --bin turbospark-check -- --model /path/to/model.gturbo --prompt "Hello"
 
 # Run non-interactive generation using a JSON conversation messages file
-cargo run -p mrefrust-cli --bin mference-check -- --model /path/to/model.gturbo --messages-file /path/to/messages.json
+cargo run -p turbospark-cli --bin turbospark-check -- --model /path/to/model.gturbo --messages-file /path/to/messages.json
 
 # Launch interactive chat REPL mode
-cargo run -p mrefrust-cli --bin mference-check -- --model /path/to/model.gturbo --chat
+cargo run -p turbospark-cli --bin turbospark-check -- --model /path/to/model.gturbo --chat
 ```
 
 ## Key Modules
@@ -24,8 +24,8 @@ cargo run -p mrefrust-cli --bin mference-check -- --model /path/to/model.gturbo 
 ## Development & Test Commands
 
 ```sh
-# Run integration tests for mrefrust-cli
-cargo test -p mrefrust-cli
+# Run integration tests for turbospark-cli
+cargo test -p turbospark-cli
 ```
 
 ## Real-Model Smoke Verification
@@ -33,15 +33,15 @@ cargo test -p mrefrust-cli
 When making changes to decode, KV cache, output head, or Metal encode logic, run both greedy and sampled smoke tests:
 
 ```sh
-cargo build --release -p mrefrust-cli
+cargo build --release -p turbospark-cli
 printf '[{"role":"user","content":"Explain how coastal wetlands reduce flood damage."}]' > /tmp/p.json
 
 # 1. Greedy generation (verifies numerical correctness)
-./target/release/mference-check --model ~/models/gemma4.gturbo \
+./target/release/turbospark-check --model ~/models/gemma4.gturbo \
   --messages-file /tmp/p.json --max-new 400 --seed 1 --temperature 0.0001 --top-k 1
 
 # 2. Sampled generation (verifies distribution coherence)
-./target/release/mference-check --model ~/models/gemma4.gturbo \
+./target/release/turbospark-check --model ~/models/gemma4.gturbo \
   --messages-file /tmp/p.json --max-new 400 --seed 20260721
 ```
 

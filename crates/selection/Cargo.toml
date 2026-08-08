@@ -1,5 +1,5 @@
 [package]
-name = "mrefrust-selection"
+name = "turbospark-selection"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,9 +8,9 @@ publish.workspace = true
 description = "Candidate selection: shaping configuration and the deterministic-or-randomized draw."
 
 [lib]
-name = "mrefrust_selection"
+name = "turbospark_selection"
 path = "src/lib.rs"
 
 [dependencies]
 # Aliased so references are not confused with the standard library `core`.
-foundation = { package = "mrefrust-core", path = "../core" }
+foundation = { package = "turbospark-core", path = "../core" }

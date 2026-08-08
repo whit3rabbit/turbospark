@@ -1,12 +1,12 @@
 //! Assembles a byte-exact `.gturbo` install directory: `packed_experts/
-//! layer_NN.bin` blobs (matching `mrefrust_model_io::PackedExpertsLayout`'s
+//! layer_NN.bin` blobs (matching `turbospark_model_io::PackedExpertsLayout`'s
 //! per-expert sub-tensor byte layout), `packed_experts/layout.json`, a
 //! minimal `model_weights.bin` (a valid, empty `ResidentIndex` header
 //! followed by a raw tensor-data region), and `manifest.json` with computed
 //! per-file SHA-256 checksums. This is the piece Phase 8's "streaming
 //! installer" work item was missing: given already-quantized tensor bytes
 //! (from `repack::quantize_matrix_int4`/`_int8` or any other source), it
-//! writes an install that `mrefrust_model_io::load_manifest`/
+//! writes an install that `turbospark_model_io::load_manifest`/
 //! `load_packed_experts_layout`/`load_resident_index` can read back.
 //!
 //! Building the tensors themselves from a downloaded HF checkpoint (walking
@@ -117,7 +117,7 @@ pub fn write_gturbo_install(
 /// (real resident index included) PLUS packed-expert layer files. This is
 /// what a streamed-MoE install needs: attention/router weights resident,
 /// routed experts in `packed_experts/layer_NN.bin` files read at decode
-/// time by `mrefrust-streaming`'s `PreadExpertStreamer`.
+/// time by `turbospark-streaming`'s `PreadExpertStreamer`.
 pub fn write_gturbo_install_with_resident_index_and_experts(
     dir: &Path,
     arch: &ArchConfig,
@@ -227,7 +227,7 @@ impl StreamingGturboWriter {
     }
 
     /// Quantization metadata for `manifest.json -> quant` (camelCase slot
-    /// objects, see `mrefrust_model_io::ManifestQuant`). Production-shape
+    /// objects, see `turbospark_model_io::ManifestQuant`). Production-shape
     /// manifests are rejected by the loader without it.
     pub fn set_quant(&mut self, quant: serde_json::Value) {
         self.quant = Some(quant);

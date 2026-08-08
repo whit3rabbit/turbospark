@@ -5,7 +5,7 @@ figure in this repo and in `docs/BENCHMARKING.md` is this port measured
 against its own past self; this is the parity number.
 
 Reproduce with `scripts/parity.sh`. Read `docs/BENCHMARKING.md` for the
-harness itself (the three `mference-bench` modes, the memory oracle, and
+harness itself (the three `turbospark-bench` modes, the memory oracle, and
 how memory is sampled).
 
 ## Run provenance
@@ -64,7 +64,7 @@ fixed, and the finding is worth keeping because of what hid it:
 
 `selection::select` full-sorted the entire candidate domain to rank it.
 At Gemma 4's vocabulary of 262,144 that sort cost **~18.9 ms per token**,
-measured directly (`cargo test -p mrefrust-selection --release --test
+measured directly (`cargo test -p turbospark-selection --release --test
 rank_top_k -- --ignored --nocapture`), against a whole forward pass of
 roughly 25 ms. Both truncation steps only ever keep a PREFIX of the ranked
 order, so with `top_k` enabled everything past rank 64 was sorted and
@@ -146,7 +146,7 @@ Both engines land in the 2.1 to 2.2 GiB band on a 26B model with a 14 GB
 install, which is the property the design exists to deliver.
 
 The harness asymmetry works AGAINST this port here, so the delta is if
-anything understated: one `mference-bench --case` launch runs the
+anything understated: one `turbospark-bench --case` launch runs the
 protocol's discarded warmup AND the measured run in the same process, so
 its figure is a peak over two generations, while each Swift figure covers
 one. Swift's number is also notably flat near 2,235 MiB, which reads like
@@ -175,7 +175,7 @@ transferable to those rows.
 ## Expert-cache slots: the one runtime control that moves this
 
 Both engines default to 16 slots and the table above is measured there.
-`mference-bench --model` can now vary it (`--expert-cache-slots`, allowed
+`turbospark-bench --model` can now vary it (`--expert-cache-slots`, allowed
 8/16/24/32, matching `MferenceCLI`'s flag), which is what the comparison
 needed to be honest about the default. Same case, same session,
 interleaved pairs:
@@ -218,8 +218,8 @@ Reproduce with the two gates (about a minute each), which assert these
 values on this chip and print them on any other:
 
 ```sh
-MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
-  cargo test -p mrefrust-bench --test quality_gate --release -- --ignored --nocapture
+TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
+  cargo test -p turbospark-bench --test quality_gate --release -- --ignored --nocapture
 ```
 
 | Install | Reference perplexity | Greedy digest | Sampled digest | Greedy at 8 slots |
@@ -374,7 +374,7 @@ A 0.6% spread across two engines and two cache states. The cold reading
 reproduces `quality_gate`'s frozen row **to the last digit**, which is what
 proves the dump is measuring the same thing the gate is: the gate takes its
 perplexity first thing in the process, so its number is a cold one, and
-`MREFRUST_LOGIT_DUMP_COLD=1` reproduces that condition. This port's own two
+`TURBOSPARK_LOGIT_DUMP_COLD=1` reproduces that condition. This port's own two
 cache states are 0.52% apart, essentially the +0.54% of the 0.0015% damage
 row above that the gate does NOT detect: cache state alone sits at the
 gate's detection floor, which is a second and independent bound on it.
@@ -388,7 +388,7 @@ whose 8 mantissa bits are strictly coarser than this port's f16 storage at
 these softcapped magnitudes, so there is no f16 storage floor to subtract
 (measured: 3.5e-22 nats) and mlx is the lower-precision side, not this
 port. Qwen 3.6 has no cross-engine number: `logit_dump.rs` accepts
-`MREFRUST_QWEN36_INSTALL_DIR` and would produce one, but `kld.py`'s
+`TURBOSPARK_QWEN36_INSTALL_DIR` and would produce one, but `kld.py`'s
 reference is pinned to the Gemma repo.
 
 ### Cross-engine: llama.cpp on the same GGUF
@@ -493,7 +493,7 @@ Reproduce with `scripts/power.sh`. ROADMAP Phase P1.
 Measured 2026-08-07 across two sessions, AC and battery, one binary. 16
 expert-cache slots, frozen protocol, `powermetrics` at 200 ms windowed to
 the measured run alone by the `[power-window ...]` markers
-`mference-bench` emits. Watts are CPU+GPU+ANE, not wall. The AC rows below
+`turbospark-bench` emits. Watts are CPU+GPU+ANE, not wall. The AC rows below
 are the baseline: every run of both installs held Nominal thermal
 pressure, so all are n=2 and none is filtered.
 

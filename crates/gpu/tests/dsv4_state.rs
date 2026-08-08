@@ -3,7 +3,7 @@
 //! counters reset.
 #![cfg(target_os = "macos")]
 
-use mrefrust_gpu::{Dsv4StateManager, MetalContext};
+use turbospark_gpu::{Dsv4StateManager, MetalContext};
 
 fn toy_dsv4_arch() -> model_io::ArchConfig {
     model_io::ArchConfig {

@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 
-use mrefrust_streaming::{coalesced_adjacent_advice_ranges, ExpertCache, ExpertCachePolicy};
+use turbospark_streaming::{coalesced_adjacent_advice_ranges, ExpertCache, ExpertCachePolicy};
 
 #[test]
 fn cold_cache_all_misses() {

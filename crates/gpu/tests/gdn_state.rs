@@ -2,7 +2,7 @@
 //! sizing, per-layer linear-vs-not classification, and zero-reset.
 #![cfg(target_os = "macos")]
 
-use mrefrust_gpu::{GdnStateManager, MetalContext};
+use turbospark_gpu::{GdnStateManager, MetalContext};
 
 fn qwen_style_arch() -> model_io::ArchConfig {
     model_io::ArchConfig {

@@ -4,21 +4,21 @@
 //! header or two cannot stand in for.
 //!
 //! ```sh
-//! MREFRUST_GEMMA4_GGUF_INSTALL_DIR=~/models/gemma4-gguf.gturbo \
-//!   cargo test -p mrefrust-repack --test gguf_install_network --release -- --ignored --nocapture
+//! TURBOSPARK_GEMMA4_GGUF_INSTALL_DIR=~/models/gemma4-gguf.gturbo \
+//!   cargo test -p turbospark-repack --test gguf_install_network --release -- --ignored --nocapture
 //! ```
 //!
 //! Two things about the cost, both deliberate. The 26.9 GB checkpoint is
 //! NEVER materialized locally: `write_gguf_install_streamed` reads it a
 //! layer at a time through `HttpRangeSource`, so the only disk this needs is
 //! the install itself. And the destination must NOT be
-//! `MREFRUST_GEMMA4_INSTALL_DIR`: that is the MLX-derived artifact every
+//! `TURBOSPARK_GEMMA4_INSTALL_DIR`: that is the MLX-derived artifact every
 //! existing gate, oracle row and quality number is measured against, and a
 //! GGUF-derived install of the same model is a different artifact.
 
 use std::path::PathBuf;
 
-use mrefrust_repack::{fetch_gguf_header, write_gguf_install_streamed, HttpRangeSource};
+use turbospark_repack::{fetch_gguf_header, write_gguf_install_streamed, HttpRangeSource};
 
 const GEMMA4_Q8_0: &str = "https://huggingface.co/ggml-org/gemma-4-26B-A4B-it-GGUF/resolve/main/gemma-4-26B-A4B-it-Q8_0.gguf";
 const MODEL_ID: &str = "ggml-org/gemma-4-26B-A4B-it-GGUF";
@@ -46,12 +46,12 @@ fn get(url: &str) -> Vec<u8> {
 }
 
 fn install_dir() -> PathBuf {
-    let dir = match std::env::var_os("MREFRUST_GEMMA4_GGUF_INSTALL_DIR") {
+    let dir = match std::env::var_os("TURBOSPARK_GEMMA4_GGUF_INSTALL_DIR") {
         Some(dir) => PathBuf::from(dir),
-        None => std::env::temp_dir().join(format!("mrefrust-gemma4-gguf-{}", std::process::id())),
+        None => std::env::temp_dir().join(format!("turbospark-gemma4-gguf-{}", std::process::id())),
     };
     assert_ne!(
-        std::env::var_os("MREFRUST_GEMMA4_INSTALL_DIR").map(PathBuf::from),
+        std::env::var_os("TURBOSPARK_GEMMA4_INSTALL_DIR").map(PathBuf::from),
         Some(dir.clone()),
         "refusing to overwrite the MLX-derived install every gate is measured against"
     );
@@ -100,7 +100,7 @@ fn repacks_the_real_gemma4_q8_0_gguf() {
     let embed = &resident.entries["language_model.model.embed_tokens.weight"];
     assert_eq!(
         embed.dtype,
-        mrefrust_repack::dtype_tag_for_ggml_type(8).expect("q8_0 tag"),
+        turbospark_repack::dtype_tag_for_ggml_type(8).expect("q8_0 tag"),
         "the embedding table should carry the Q8_0 tag, verbatim from the file"
     );
     // The F32 core is transcoded rather than carried (Gotcha 29): the router

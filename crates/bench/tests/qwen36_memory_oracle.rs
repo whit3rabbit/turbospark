@@ -13,11 +13,11 @@
 //! Not run by default (needs an ~18 GB install; use --release or the
 //! tok/s numbers are meaningless):
 //!
-//!   MREFRUST_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
-//!     cargo test -p mrefrust-bench --test qwen36_memory_oracle --release -- --ignored --nocapture
+//!   TURBOSPARK_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
+//!     cargo test -p turbospark-bench --test qwen36_memory_oracle --release -- --ignored --nocapture
 //!
 //! Build the install with `tests/qwen36_checkpoint_network.rs` in
-//! `mrefrust-repack`, which repacks `mlx-community/Qwen3.6-35B-A3B-4bit`
+//! `turbospark-repack`, which repacks `mlx-community/Qwen3.6-35B-A3B-4bit`
 //! and drops the tokenizer sidecars in beside it.
 //!
 //! NOTE the protocol's prompts were chosen for Gemma 4 and are reused
@@ -38,7 +38,7 @@ const BASELINES: &[oracle_common::ChipBaseline] = &[
     //
     // Frozen protocol, release, on AC, 16 expert-cache slots, warmup
     // discarded, first session after the real checkpoint was repacked
-    // (2026-08-07). Two independent readings, `mference-bench --model`
+    // (2026-08-07). Two independent readings, `turbospark-bench --model`
     // and this oracle:
     //   peak footprint     1,610 / 1,587 MiB
     //   short-explanation  37.355 / 37.993 tok/s
@@ -82,15 +82,15 @@ const BASELINES: &[oracle_common::ChipBaseline] = &[
 const UNKNOWN_CHIP_FOOTPRINT_CEILING_MIB: u64 = 1700;
 
 fn install_dir() -> Option<std::path::PathBuf> {
-    std::env::var_os("MREFRUST_QWEN36_INSTALL_DIR").map(std::path::PathBuf::from)
+    std::env::var_os("TURBOSPARK_QWEN36_INSTALL_DIR").map(std::path::PathBuf::from)
 }
 
 #[test]
-#[ignore = "needs a real ~18 GB Qwen 3.6 .gturbo install (MREFRUST_QWEN36_INSTALL_DIR)"]
+#[ignore = "needs a real ~18 GB Qwen 3.6 .gturbo install (TURBOSPARK_QWEN36_INSTALL_DIR)"]
 fn real_qwen36_install_peak_footprint_and_throughput_hold() {
     let Some(dir) = install_dir() else {
         eprintln!(
-            "qwen36_memory_oracle: MREFRUST_QWEN36_INSTALL_DIR is not set; skipping. \
+            "qwen36_memory_oracle: TURBOSPARK_QWEN36_INSTALL_DIR is not set; skipping. \
              Point it at a repacked Qwen 3.6 .gturbo install to run the oracle."
         );
         return;

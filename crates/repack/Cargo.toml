@@ -1,5 +1,5 @@
 [package]
-name = "mrefrust-repack"
+name = "turbospark-repack"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,13 +8,13 @@ publish.workspace = true
 description = "Safetensors header parsing, ranged-download planning, and int4/int8 repack into the .gturbo packed-expert layout."
 
 [lib]
-name = "mrefrust_repack"
+name = "turbospark_repack"
 path = "src/lib.rs"
 
 [dependencies]
-foundation = { package = "mrefrust-core", path = "../core" }
-compute = { package = "mrefrust-compute", path = "../compute" }
-model_io = { package = "mrefrust-model-io", path = "../model-io" }
+foundation = { package = "turbospark-core", path = "../core" }
+compute = { package = "turbospark-compute", path = "../compute" }
+model_io = { package = "turbospark-model-io", path = "../model-io" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }

@@ -4,7 +4,7 @@
 //! GGUF block-quantized expert blobs.
 //!
 //! PORT-LOCAL, not vendored: the Swift engine has no GGUF intake. The
-//! contract is `mrefrust_compute::dequant_q8_0_gemv` plus the same gated
+//! contract is `turbospark_compute::dequant_q8_0_gemv` plus the same gated
 //! activation the vendored pair uses, held by
 //! `crates/gpu/tests/moe_gguf_parity.rs`.
 //!

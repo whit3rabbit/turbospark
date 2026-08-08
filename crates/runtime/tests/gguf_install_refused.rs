@@ -21,17 +21,17 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use mrefrust_repack::{
+use turbospark_repack::{
     build_synthetic_gemma4_gguf, parse_gguf_header, write_gguf_install_streamed, MemoryRangeSource,
     SyntheticGgufShape, GGUF_DEFAULT_MAX_HEADER_BYTES,
 };
-use mrefrust_runtime::RealForwardRunner;
+use turbospark_runtime::RealForwardRunner;
 
 fn tempdir() -> std::path::PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
     let path = std::env::temp_dir().join(format!(
-        "mrefrust-gguf-refused-{}-{unique}",
+        "turbospark-gguf-refused-{}-{unique}",
         std::process::id()
     ));
     std::fs::create_dir_all(&path).unwrap();
@@ -195,7 +195,7 @@ fn a_mixed_k_quant_gguf_install_decodes() {
 
 fn decodes(shape: SyntheticGgufShape) {
     use half::f16;
-    use mrefrust_runtime::LogitProducer;
+    use turbospark_runtime::LogitProducer;
 
     let vocab = shape.vocab as usize;
     let (dir, arch) = gguf_install(shape);

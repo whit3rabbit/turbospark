@@ -1,4 +1,4 @@
-# mrefrust-invocation
+# turbospark-invocation
 
 Pure CLI argument parsing, command-line request assembly (`InvocationRequest`), options definition (`OPTIONS`), diagnostics, typed failures (`InvocationFailure`), usage rendering, and outcome routing decisions.
 
@@ -37,8 +37,8 @@ crates/invocation/
 ## Development & Test Commands
 
 ```sh
-# Run unit and integration tests for mrefrust-invocation
-cargo test -p mrefrust-invocation
+# Run unit and integration tests for turbospark-invocation
+cargo test -p turbospark-invocation
 ```
 
 ## Crate Gotchas

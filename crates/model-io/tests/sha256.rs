@@ -2,7 +2,7 @@
 
 use std::io::Write;
 
-use mrefrust_model_io::{hash_data, hash_file, verify_file, ModelError};
+use turbospark_model_io::{hash_data, hash_file, verify_file, ModelError};
 
 #[test]
 fn hash_data_matches_known_vector() {
@@ -15,7 +15,7 @@ fn hash_data_matches_known_vector() {
 
 #[test]
 fn hash_file_matches_hash_data_and_is_chunk_size_independent() {
-    let dir = std::env::temp_dir().join(format!("mrefrust-sha256-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("turbospark-sha256-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("data.bin");
     let content = vec![0x5au8; 10_000];
@@ -33,7 +33,7 @@ fn hash_file_matches_hash_data_and_is_chunk_size_independent() {
 
 #[test]
 fn verify_file_rejects_checksum_mismatch() {
-    let dir = std::env::temp_dir().join(format!("mrefrust-sha256-verify-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("turbospark-sha256-verify-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("data.bin");
     std::fs::File::create(&path)

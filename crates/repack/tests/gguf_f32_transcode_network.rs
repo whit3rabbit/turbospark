@@ -21,11 +21,11 @@
 //! Costs a few KB of ranged reads, not a download.
 //!
 //! ```sh
-//! cargo test -p mrefrust-repack --test gguf_f32_transcode_network --release -- --ignored --nocapture
+//! cargo test -p turbospark-repack --test gguf_f32_transcode_network --release -- --ignored --nocapture
 //! ```
 
 use compute::{bf16_to_f32, f32_to_bf16};
-use mrefrust_repack::{fetch_gguf_header, GgufHeader, HttpRangeSource, RangeSource};
+use turbospark_repack::{fetch_gguf_header, GgufHeader, HttpRangeSource, RangeSource};
 
 const GEMMA4_Q8_0: &str = "https://huggingface.co/ggml-org/gemma-4-26B-A4B-it-GGUF/resolve/main/gemma-4-26B-A4B-it-Q8_0.gguf";
 

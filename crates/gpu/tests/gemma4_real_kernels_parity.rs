@@ -2,12 +2,12 @@
 //! learned-weight decode path adds: per-head scaled/no-scale RMSNorm, the
 //! offset-bound INT8 GEMV, the INT8 router GEMV with its BF16 effective
 //! scale, and the port-local `scalar_mul_fp16`. Each is checked against
-//! the matching `mrefrust_compute` reference math.
+//! the matching `turbospark_compute` reference math.
 #![cfg(target_os = "macos")]
 
 use half::f16;
-use mrefrust_compute::{bf16_to_f32, f32_to_bf16, quantize_int8_affine, Tolerance};
-use mrefrust_gpu::{
+use turbospark_compute::{bf16_to_f32, f32_to_bf16, quantize_int8_affine, Tolerance};
+use turbospark_gpu::{
     dequant_int8_gemv_resident, encode_scalar_mul, read_buffer_f16, rms_norm_bf16w_perhead,
     rms_norm_no_scale_perhead, router_gemv_gemma4, Int8ResidentMatrix, MetalContext,
 };
@@ -51,9 +51,9 @@ fn perhead_bf16w_norm_matches_cpu_reference() {
     let mut cpu = Vec::new();
     for h in 0..num_heads as usize {
         let head = &x[h * head_dim..(h + 1) * head_dim];
-        cpu.extend(mrefrust_compute::rms_norm(head, &weight_bf16, 1e-6));
+        cpu.extend(turbospark_compute::rms_norm(head, &weight_bf16, 1e-6));
     }
-    let err = mrefrust_compute::max_abs_diff(&to_f32(&gpu), &cpu);
+    let err = turbospark_compute::max_abs_diff(&to_f32(&gpu), &cpu);
     assert!(err < Tolerance::FP16_REDUCTION, "err = {err}");
 }
 
@@ -72,9 +72,9 @@ fn perhead_no_scale_norm_matches_cpu_reference() {
     let mut cpu = Vec::new();
     for h in 0..num_heads as usize {
         let head = &x[h * head_dim..(h + 1) * head_dim];
-        cpu.extend(mrefrust_compute::rms_norm(head, &ones, 1e-6));
+        cpu.extend(turbospark_compute::rms_norm(head, &ones, 1e-6));
     }
-    let err = mrefrust_compute::max_abs_diff(&to_f32(&gpu), &cpu);
+    let err = turbospark_compute::max_abs_diff(&to_f32(&gpu), &cpu);
     assert!(err < Tolerance::FP16_REDUCTION, "err = {err}");
 }
 
@@ -122,8 +122,8 @@ fn int8_resident_gemv_matches_cpu_reference() {
     };
 
     let gpu = dequant_int8_gemv_resident(&mut context, &w, &x16).expect("dispatch");
-    let cpu = mrefrust_compute::dequant_int8_gemv(&cpu_rows, &x_for_cpu, cols);
-    let err = mrefrust_compute::bounded_rel_error(&to_f32(&gpu), &cpu, 0.5);
+    let cpu = turbospark_compute::dequant_int8_gemv(&cpu_rows, &x_for_cpu, cols);
+    let err = turbospark_compute::bounded_rel_error(&to_f32(&gpu), &cpu, 0.5);
     assert!(err < Tolerance::FP16_REDUCTION, "err = {err}");
 }
 
@@ -169,8 +169,8 @@ fn router_gemv_gemma4_matches_cpu_reference() {
         .zip(eff_bits.iter())
         .map(|(x, &e)| x.to_f32() * bf16_to_f32(e))
         .collect();
-    let cpu = mrefrust_compute::dequant_int8_gemv(&cpu_rows, &scaled_x, d);
-    let err = mrefrust_compute::bounded_rel_error(&gpu, &cpu, 0.5);
+    let cpu = turbospark_compute::dequant_int8_gemv(&cpu_rows, &scaled_x, d);
+    let err = turbospark_compute::bounded_rel_error(&gpu, &cpu, 0.5);
     assert!(err < Tolerance::FP16_REDUCTION, "err = {err}");
 }
 
@@ -196,6 +196,6 @@ fn scalar_mul_matches_cpu_reference() {
         .iter()
         .map(|v| (*v * f16::from_f32(scalar)).to_f32())
         .collect();
-    let err = mrefrust_compute::max_abs_diff(&to_f32(&gpu), &cpu);
+    let err = turbospark_compute::max_abs_diff(&to_f32(&gpu), &cpu);
     assert!(err == 0.0, "err = {err}");
 }

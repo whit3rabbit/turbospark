@@ -8,7 +8,7 @@ This document provides a comprehensive specification of the `.gturbo` model inst
 
 Traditional LLM file formats (such as monolithic `.gguf` files or `.safetensors` weight shards) pack all model parameters into single large binary files. To run inference, frameworks typically mmap or load the entire 20 GB to 35 GB parameter set into unified host/GPU RAM. On Apple Silicon systems with limited memory (8 GB, 16 GB, 24 GB, or 36 GB), this leads to excessive memory pressure or out-of-memory (OOM) failures.
 
-`mrefrust` adopts the **`.gturbo`** installation format specified in upstream [`SYSTEM_DESIGN.md`](https://github.com/drumih/turbo-fieldfare/blob/main/docs/SYSTEM_DESIGN.md).
+`turbospark` adopts the **`.gturbo`** installation format specified in upstream [`SYSTEM_DESIGN.md`](https://github.com/drumih/turbo-fieldfare/blob/main/docs/SYSTEM_DESIGN.md).
 
 ### Key Design Principle: Decoupled Working Set
 The `.gturbo` format decouples a Mixture-of-Experts (MoE) model into two distinct layers:
@@ -38,8 +38,8 @@ A `.gturbo` model installation is a directory structured as follows:
 
 ### Upstream Parity & Interoperability
 - **Magic Signature**: `manifest.json` specifies `"magic": "GTURBO"` and `"versionMajor": 1`.
-- **100% Binary Compatible**: Both `mrefrust` (Rust) and `turbo-fieldfare` (Swift) load, validate, and execute the exact same `.gturbo` directory format.
-- **Verification**: In cross-engine benchmarks, both `mrefrust-cli` and Swift's `MferenceCLI` run against identical `.gturbo` model directories under strict `.fullSha256` integrity verification.
+- **100% Binary Compatible**: Both `turbospark` (Rust) and `turbo-fieldfare` (Swift) load, validate, and execute the exact same `.gturbo` directory format.
+- **Verification**: In cross-engine benchmarks, both `turbospark-cli` and Swift's `MferenceCLI` run against identical `.gturbo` model directories under strict `.fullSha256` integrity verification.
 
 ---
 
@@ -122,7 +122,7 @@ The root `manifest.json` contains metadata for model architecture validation, qu
 +-------------------------------------------------------------+
 ```
 
-During startup, `mrefrust-model-io` reads the leading index region (`indexSize` bytes), constructs the `ResidentIndex`, and mmaps the resident tensor data payload starting at offset `indexSize`.
+During startup, `turbospark-model-io` reads the leading index region (`indexSize` bytes), constructs the `ResidentIndex`, and mmaps the resident tensor data payload starting at offset `indexSize`.
 
 ---
 
@@ -178,7 +178,7 @@ layer_00.bin:
 
 ## 4. Ingestion & Streaming Pipeline
 
-### 4.1 Repack Pipeline (`mrefrust-repack`)
+### 4.1 Repack Pipeline (`turbospark-repack`)
 The `repack` module converts upstream Safetensors or published GGUF checkpoints into `.gturbo` format:
 
 1. **Header Parsing & Manifest Peek**: Reads model headers (HF `config.json` or GGUF metadata header) to derive `ArchConfig`.
@@ -191,10 +191,10 @@ The `repack` module converts upstream Safetensors or published GGUF checkpoints 
 
 ---
 
-### 4.2 Runtime Streaming & Execution (`mrefrust-streaming`)
+### 4.2 Runtime Streaming & Execution (`turbospark-streaming`)
 
 During model execution:
-1. **Resident Core Load**: `mrefrust-model-io` maps `model_weights.bin` using zero-copy `MTLBuffer` (`newBufferWithBytesNoCopy`).
+1. **Resident Core Load**: `turbospark-model-io` maps `model_weights.bin` using zero-copy `MTLBuffer` (`newBufferWithBytesNoCopy`).
 2. **Router Evaluation**: For each token and layer, GPU router GEMV kernels evaluate top-$K$ expert selections (e.g. top-8 experts out of 128).
 3. **Expert Streaming & Cache**:
    - `PreadExpertStreamer` checks the in-memory LFU/LRU expert cache.
@@ -208,7 +208,7 @@ During model execution:
 
 Every `.gturbo` installation enforces strict integrity checking:
 - **Checksum Manifest**: Every file inside `.gturbo` (including each `layer_NN.bin`) has its SHA-256 hash recorded in `manifest.json`.
-- **Startup Integrity**: `mrefrust-model-io::load_manifest` verifies file sizes and checksums against `manifest.json` before execution.
+- **Startup Integrity**: `turbospark-model-io::load_manifest` verifies file sizes and checksums against `manifest.json` before execution.
 - **Quality Verification**: Perplexity, greedy digests, and cross-engine KL divergence tests confirm that GGUF and Safetensors repacks produce byte-identical or numerically equivalent outputs compared to reference baselines.
 
 ---

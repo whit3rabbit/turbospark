@@ -1,12 +1,12 @@
-# mrefrust-core
+# turbospark-core
 
-Shared primitives, error types, runtime configuration, allowed numeric parameter sets, automatic chunk-size resolution, and prefill chunking primitives for the mrefrust workspace.
+Shared primitives, error types, runtime configuration, allowed numeric parameter sets, automatic chunk-size resolution, and prefill chunking primitives for the turbospark workspace.
 
 Downstream workspace crates import this package via the `foundation` alias:
 
 ```toml
 [dependencies]
-foundation = { package = "mrefrust-core", path = "../core" }
+foundation = { package = "turbospark-core", path = "../core" }
 ```
 
 ## Safety
@@ -24,12 +24,12 @@ foundation = { package = "mrefrust-core", path = "../core" }
 ## Development & Test Commands
 
 ```sh
-# Run unit tests for mrefrust-core
-cargo test -p mrefrust-core
+# Run unit tests for turbospark-core
+cargo test -p turbospark-core
 ```
 
 ## Crate Gotchas
 
 1. **Numeric Setters Panic on Invalid Inputs**: Runtime configuration setters panic when values are outside their allowed constant sets (`ALLOWED_CACHE_SLOTS`, `ALLOWED_CHUNK_SIZES`). Callers taking unvalidated input must validate first or catch panics with `std::panic::catch_unwind`.
 2. **Token Interchange Width**: Token IDs cross crate boundaries as signed 32-bit integers (`pub type TokenId = i32`).
-3. **Workspace Import Alias**: Downstream crates import `mrefrust-core` using the `foundation` alias (`foundation::...`).
+3. **Workspace Import Alias**: Downstream crates import `turbospark-core` using the `foundation` alias (`foundation::...`).

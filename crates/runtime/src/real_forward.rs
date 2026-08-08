@@ -1,10 +1,10 @@
 //! A real (not scripted) [`LogitProducer`]: runs an actual dense
 //! transformer forward pass through the real GPU kernels
-//! `mrefrust_gpu` wires (`rmsnorm_no_scale`, `rope_proportional_neox`,
+//! `turbospark_gpu` wires (`rmsnorm_no_scale`, `rope_proportional_neox`,
 //! `dequant_int4_gemv_simd`, `logit_softcap_softmax`, and the two-pass
 //! split-KV decode `attention_decode`) against real, resident,
-//! INT4-affine-quantized weights loaded through `mrefrust_model_io`.
-//! macOS/Metal only, matching `mrefrust_gpu`'s own platform gate.
+//! INT4-affine-quantized weights loaded through `turbospark_model_io`.
+//! macOS/Metal only, matching `turbospark_gpu`'s own platform gate.
 //!
 //! Memory model (matching the Swift original):
 //! - Weights: ONE zero-copy `MTLBuffer` over the mmap of
@@ -48,7 +48,7 @@
 //! `kv_start` over the linear KV layout) layers are supported; linear
 //! (Qwen GDN) and compressed (DeepSeek DSV4) layers are not (their
 //! kernels are unported). FFN may be dense, routed-resident, or
-//! routed-streamed. The synthetic installs in `mrefrust_repack`
+//! routed-streamed. The synthetic installs in `turbospark_repack`
 //! (`build_synthetic_gemma4_install` and its `_swa`/`_moe`/
 //! `_moe_streamed` variants) are the shapes this runner is exercised
 //! against, since no trained `.gturbo` checkpoint exists in this
@@ -643,7 +643,7 @@ impl RealForwardRunner {
 }
 
 /// Every GGUF block dtype tag the resident index can carry. Mirrors
-/// `mrefrust_repack::resident_writer`'s list, which is the writer-side home;
+/// `turbospark_repack::resident_writer`'s list, which is the writer-side home;
 /// this crate must not depend on repack, so the two are held equal by
 /// `crates/runtime/tests/gguf_install_refused.rs` exercising a real written
 /// install rather than by an import.

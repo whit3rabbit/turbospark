@@ -1,7 +1,7 @@
 //! Host-side dispatch for the `dequant_int4_gemv_simd` kernel in
 //! `shaders/dequant_int4.metal` (vendored verbatim from
 //! `Metal/Quant/dequant_int4.metal`). Matches
-//! `mrefrust_compute::dequant_int4_gemv` exactly: `y[m] = sum_n W[m,n] *
+//! `turbospark_compute::dequant_int4_gemv` exactly: `y[m] = sum_n W[m,n] *
 //! x[n]` over affine-INT4-packed rows with a group size of 64.
 //!
 //! `dequant_int4.metal` also ships `embed_lookup_int4` and
@@ -36,7 +36,7 @@ fn unused_function_constants() -> FunctionConstantValues {
 }
 
 /// One row of affine-INT4-packed weights, laid out exactly as
-/// `mrefrust_compute::Int4AffineRow`: `N/2` packed-nibble bytes, `N/64` BF16
+/// `turbospark_compute::Int4AffineRow`: `N/2` packed-nibble bytes, `N/64` BF16
 /// scale bit patterns, `N/64` BF16 bias bit patterns.
 pub struct Int4AffineRowGpu<'a> {
     pub packed: &'a [u8],

@@ -1,10 +1,10 @@
-//! `mference-server`: binds the generation router (OpenAI
+//! `turbospark-server`: binds the generation router (OpenAI
 //! `/v1/chat/completions`, Anthropic `/v1/messages`, and `/v1/models`) to
 //! loopback, or to this machine's Tailscale IPv4 address. Two modes:
 //!
-//!   mference-server --model <install-dir> [--port N] [--max-context N]
+//!   turbospark-server --model <install-dir> [--port N] [--max-context N]
 //!                   [--expert-cache-slots N] [--bind loopback|tailnet]
-//!   mference-server <tokenizer-dir> [port]
+//!   turbospark-server <tokenizer-dir> [port]
 //!
 //! The first serves real generation from a `.gturbo` install through
 //! `RealForwardRunner` (macOS only; one runner per process, requests
@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use tokenizer::MfTokenizer;
 
-const USAGE: &str = "usage: mference-server --model <install-dir> [--port N] [--max-context N] [--expert-cache-slots N] [--bind loopback|tailnet]\n       mference-server <tokenizer-dir> [port]";
+const USAGE: &str = "usage: turbospark-server --model <install-dir> [--port N] [--max-context N] [--expert-cache-slots N] [--bind loopback|tailnet]\n       turbospark-server <tokenizer-dir> [port]";
 
 /// Interface the server listens on. Resolution fails rather than widening:
 /// there is no path from `Tailnet` to a wildcard or LAN address.
@@ -166,11 +166,11 @@ fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
 }
 
 #[cfg(target_os = "macos")]
-fn open_real_model(args: &ModelArgs) -> Result<Arc<dyn mrefrust_server::ChatModel>, String> {
+fn open_real_model(args: &ModelArgs) -> Result<Arc<dyn turbospark_server::ChatModel>, String> {
     // A 13 GB install takes a noticeable while to map and compile pipelines
     // for; without this line the startup reads as hung.
     eprintln!("opening {} ...", args.model);
-    let model = mrefrust_server::RealChatModel::open(
+    let model = turbospark_server::RealChatModel::open(
         &PathBuf::from(&args.model),
         args.max_context,
         args.expert_cache_slots,
@@ -183,16 +183,16 @@ fn open_real_model(args: &ModelArgs) -> Result<Arc<dyn mrefrust_server::ChatMode
 }
 
 #[cfg(not(target_os = "macos"))]
-fn open_real_model(_args: &ModelArgs) -> Result<Arc<dyn mrefrust_server::ChatModel>, String> {
+fn open_real_model(_args: &ModelArgs) -> Result<Arc<dyn turbospark_server::ChatModel>, String> {
     Err("--model needs macOS and a Metal device; only the scripted \
          <tokenizer-dir> mode is available on this platform"
         .to_string())
 }
 
-fn open_scripted(tokenizer_dir: &str) -> Result<Arc<dyn mrefrust_server::ChatModel>, String> {
+fn open_scripted(tokenizer_dir: &str) -> Result<Arc<dyn turbospark_server::ChatModel>, String> {
     let tok = MfTokenizer::load_from_dir(&PathBuf::from(tokenizer_dir))
         .map_err(|e| format!("failed to load tokenizer: {e}"))?;
-    Ok(Arc::new(mrefrust_server::ScriptedChatModel::new(
+    Ok(Arc::new(turbospark_server::ScriptedChatModel::new(
         tok,
         4096,
         Vec::new(),
@@ -243,7 +243,7 @@ async fn main() -> std::process::ExitCode {
         }
     };
 
-    let router = mrefrust_server::build_router(model);
+    let router = turbospark_server::build_router(model);
     let addr = format!("{bind}:{port}");
     let listener = match tokio::net::TcpListener::bind(&addr).await {
         Ok(l) => l,
@@ -252,7 +252,7 @@ async fn main() -> std::process::ExitCode {
             return std::process::ExitCode::from(1);
         }
     };
-    eprintln!("mference-server listening on http://{addr}");
+    eprintln!("turbospark-server listening on http://{addr}");
     eprintln!("  POST /v1/chat/completions   (OpenAI)");
     eprintln!("  POST /v1/messages           (Anthropic)");
     eprintln!("  GET  /v1/models");

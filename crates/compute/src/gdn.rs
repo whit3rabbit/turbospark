@@ -23,7 +23,7 @@
 //! y    = S @ q
 //! ```
 
-// `half::f16` by its public path: `mrefrust-core` owns the FP16 element
+// `half::f16` by its public path: `turbospark-core` owns the FP16 element
 // type for the whole workspace (see AGENTS.md Gotcha 3 -- never hand-roll
 // binary16), and this crate already depends on core, so nothing new is
 // pulled in to round at the kernels' storage points.

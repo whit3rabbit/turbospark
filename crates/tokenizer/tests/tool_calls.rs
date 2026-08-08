@@ -3,7 +3,7 @@
 
 use std::collections::HashSet;
 
-use mrefrust_tokenizer::{
+use turbospark_tokenizer::{
     DeepseekToolCallParser, GemmaToolCallParser, JsonValue, QwenToolCallParser, ToolCallParserError,
 };
 

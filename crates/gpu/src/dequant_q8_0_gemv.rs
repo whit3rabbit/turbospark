@@ -4,7 +4,7 @@
 //! Unlike its INT4/INT8 siblings this shader is PORT-LOCAL rather than
 //! vendored: the Swift engine has no GGUF intake, so there is no upstream
 //! kernel it mirrors. Its only contract is
-//! `mrefrust_compute::dequant_q8_0_gemv`, which is what
+//! `turbospark_compute::dequant_q8_0_gemv`, which is what
 //! `crates/gpu/tests/dequant_q8_0_gemv_parity.rs` holds it to.
 //!
 //! A Q8_0 row is ONE byte run, not three planes: the scale lives inside each
@@ -25,7 +25,7 @@ const SOURCE: &str = include_str!("shaders/dequant_q8_0.metal");
 const THREADS_PER_GROUP: u64 = 256; // 8 rows/threadgroup * 32 lanes/SIMD group.
 const ROWS_PER_THREADGROUP: u64 = 8;
 
-/// Elements per Q8_0 block. Mirrors `mrefrust_compute::Q8_0_BLOCK_ELEMS`;
+/// Elements per Q8_0 block. Mirrors `turbospark_compute::Q8_0_BLOCK_ELEMS`;
 /// the two are held equal by `crates/repack`'s block-table test.
 pub const Q8_0_BLOCK_ELEMS: usize = 32;
 /// Bytes per Q8_0 block: an f16 scale then 32 signed weights.

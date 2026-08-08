@@ -1,4 +1,4 @@
-# mrefrust-streaming
+# turbospark-streaming
 
 Routed-expert streamer (`PreadExpertStreamer`) for loading MoE expert weights on demand via `pread`, coupled with a per-layer slot cache (`ExpertCache`).
 
@@ -35,8 +35,8 @@ crates/streaming/
 ## Development & Test Commands
 
 ```sh
-# Run tests for mrefrust-streaming
-cargo test -p mrefrust-streaming
+# Run tests for turbospark-streaming
+cargo test -p turbospark-streaming
 ```
 
 ## Crate Gotchas

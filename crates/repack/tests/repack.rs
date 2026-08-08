@@ -1,6 +1,6 @@
 //! Tests for the row-major matrix quantization repack.
 
-use mrefrust_repack::{
+use turbospark_repack::{
     int4_packed_bytes, int8_packed_bytes, quantize_matrix_int4, quantize_matrix_int8, RepackError,
 };
 

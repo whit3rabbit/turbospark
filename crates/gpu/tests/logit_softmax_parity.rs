@@ -1,9 +1,9 @@
 //! Runs `logit_softcap_softmax` on real Metal hardware and checks it
-//! against the CPU reference in `mrefrust_compute::logit_softcap_softmax`.
+//! against the CPU reference in `turbospark_compute::logit_softcap_softmax`.
 #![cfg(target_os = "macos")]
 
 use half::f16;
-use mrefrust_gpu::{logit_softcap_softmax, MetalContext};
+use turbospark_gpu::{logit_softcap_softmax, MetalContext};
 
 #[test]
 fn matches_cpu_reference_within_fp16_tolerance() {
@@ -13,15 +13,17 @@ fn matches_cpu_reference_within_fp16_tolerance() {
     let logits_f16: Vec<f16> = logits_f32.iter().map(|&v| f16::from_f32(v)).collect();
     let softcap = 30.0f32;
 
-    let cpu = mrefrust_compute::logit_softcap_softmax(&logits_f32, softcap);
+    let cpu = turbospark_compute::logit_softcap_softmax(&logits_f32, softcap);
     let gpu =
         logit_softcap_softmax(&mut context, &logits_f16, softcap).expect("GPU dispatch succeeds");
 
     assert_eq!(gpu.len(), cpu.len());
-    let err =
-        mrefrust_compute::max_abs_diff(&gpu.iter().map(|v| v.to_f32()).collect::<Vec<f32>>(), &cpu);
+    let err = turbospark_compute::max_abs_diff(
+        &gpu.iter().map(|v| v.to_f32()).collect::<Vec<f32>>(),
+        &cpu,
+    );
     assert!(
-        err < mrefrust_compute::Tolerance::FP16_REDUCTION,
+        err < turbospark_compute::Tolerance::FP16_REDUCTION,
         "err = {err}"
     );
 

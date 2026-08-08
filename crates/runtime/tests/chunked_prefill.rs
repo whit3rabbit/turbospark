@@ -6,12 +6,12 @@
 use std::path::PathBuf;
 
 use foundation::LogitValue;
-use mrefrust_runtime::{
+use selection::ShapingConfig;
+use tokenizer::MfTokenizer;
+use turbospark_runtime::{
     run_raw_completion_chunked, GenerationConfig, RawDecodeProgress, ScriptedLogitProducer,
     StopReason,
 };
-use selection::ShapingConfig;
-use tokenizer::MfTokenizer;
 
 fn load_tokenizer() -> MfTokenizer {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ChatMLTokenizer");
@@ -102,5 +102,5 @@ fn chunked_prefill_rejects_empty_prompt() {
         |_| {},
     )
     .unwrap_err();
-    assert_eq!(err, mrefrust_runtime::RuntimeError::EmptyPrompt);
+    assert_eq!(err, turbospark_runtime::RuntimeError::EmptyPrompt);
 }

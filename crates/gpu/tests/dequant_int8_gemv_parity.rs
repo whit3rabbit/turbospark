@@ -1,9 +1,9 @@
 //! Runs `dequant_int8_gemv_simd` on real Metal hardware and checks it
-//! against the CPU reference in `mrefrust_compute::dequant_int8_gemv`.
+//! against the CPU reference in `turbospark_compute::dequant_int8_gemv`.
 #![cfg(target_os = "macos")]
 
 use half::f16;
-use mrefrust_gpu::{dequant_int8_gemv, Int8AffineRowGpu, MetalContext};
+use turbospark_gpu::{dequant_int8_gemv, Int8AffineRowGpu, MetalContext};
 
 #[test]
 fn matches_cpu_reference_within_quant_tolerance() {
@@ -20,7 +20,7 @@ fn matches_cpu_reference_within_quant_tolerance() {
         .collect();
     let quantized: Vec<_> = rows_f32
         .iter()
-        .map(|row| mrefrust_compute::quantize_int8_affine(row))
+        .map(|row| turbospark_compute::quantize_int8_affine(row))
         .collect();
     let gpu_rows: Vec<Int8AffineRowGpu> = quantized
         .iter()
@@ -36,12 +36,14 @@ fn matches_cpu_reference_within_quant_tolerance() {
         .collect();
     let x_f16: Vec<f16> = x_f32.iter().map(|&v| f16::from_f32(v)).collect();
 
-    let cpu = mrefrust_compute::dequant_int8_gemv(&quantized, &x_f32, n);
+    let cpu = turbospark_compute::dequant_int8_gemv(&quantized, &x_f32, n);
     let gpu = dequant_int8_gemv(&mut context, &gpu_rows, &x_f16, n).expect("GPU dispatch succeeds");
 
     assert_eq!(gpu.len(), cpu.len());
-    let err =
-        mrefrust_compute::max_abs_diff(&gpu.iter().map(|v| v.to_f32()).collect::<Vec<f32>>(), &cpu);
+    let err = turbospark_compute::max_abs_diff(
+        &gpu.iter().map(|v| v.to_f32()).collect::<Vec<f32>>(),
+        &cpu,
+    );
     // FP16 accumulation plus int8-affine quantization noise, over 128
     // elements; both this test and the CPU reference use the same
     // quantized (already lossy) rows, so the remaining error is FP16

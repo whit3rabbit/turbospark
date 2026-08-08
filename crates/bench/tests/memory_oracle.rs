@@ -6,8 +6,8 @@
 //! Not run by default (needs a ~14.6 GB install and takes minutes; use
 //! --release or the tok/s numbers are meaningless):
 //!
-//!   MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
-//!     cargo test -p mrefrust-bench --test memory_oracle --release -- --ignored --nocapture
+//!   TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
+//!     cargo test -p turbospark-bench --test memory_oracle --release -- --ignored --nocapture
 //!
 //! What is asserted:
 //! - Peak `phys_footprint` (the exact counter the Swift baselines report,
@@ -139,15 +139,15 @@ const BASELINES: &[oracle_common::ChipBaseline] = &[
 const UNKNOWN_CHIP_FOOTPRINT_CEILING_MIB: u64 = 2250;
 
 fn install_dir() -> Option<std::path::PathBuf> {
-    std::env::var_os("MREFRUST_GEMMA4_INSTALL_DIR").map(std::path::PathBuf::from)
+    std::env::var_os("TURBOSPARK_GEMMA4_INSTALL_DIR").map(std::path::PathBuf::from)
 }
 
 #[test]
-#[ignore = "needs a real ~14.6 GB Gemma 4 .gturbo install (MREFRUST_GEMMA4_INSTALL_DIR)"]
+#[ignore = "needs a real ~14.6 GB Gemma 4 .gturbo install (TURBOSPARK_GEMMA4_INSTALL_DIR)"]
 fn real_install_peak_footprint_and_throughput_meet_swift_baselines() {
     let Some(dir) = install_dir() else {
         eprintln!(
-            "memory_oracle: MREFRUST_GEMMA4_INSTALL_DIR is not set; skipping. \
+            "memory_oracle: TURBOSPARK_GEMMA4_INSTALL_DIR is not set; skipping. \
              Point it at a repacked Gemma 4 .gturbo install to run the oracle."
         );
         return;

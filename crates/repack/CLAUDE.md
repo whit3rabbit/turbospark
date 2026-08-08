@@ -1,4 +1,4 @@
-# mrefrust-repack
+# turbospark-repack
 
 Safetensors and GGUF header parsing, ranged HTTP/in-memory downloads (`RangeSource`), INT4/INT8 quantization repack, `.gturbo` directory installation assembly (`gturbo_writer.rs`), synthetic install generation (`synthetic_model.rs`, `synthetic_real.rs`, `synthetic_gguf.rs`), Hugging Face Llama repacker (`hf_checkpoint.rs`), Gemma 4 checkpoint repacker (`gemma4_checkpoint.rs`), and the GGUF intake (`gguf_*.rs`, ROADMAP Phase G: Stage 1 landed, Stage 2 in progress).
 
@@ -83,39 +83,39 @@ crates/repack/
 ## Development & Test Commands
 
 ```sh
-# Run fast unit tests for mrefrust-repack
-cargo test -p mrefrust-repack
+# Run fast unit tests for turbospark-repack
+cargo test -p turbospark-repack
 
 # Run network checkpoint integration tests (ignored by default, downloads large files)
-cargo test -p mrefrust-repack --test gemma4_checkpoint_network --release -- --ignored --nocapture
-cargo test -p mrefrust-repack --test hf_checkpoint_network --release -- --ignored --nocapture
+cargo test -p turbospark-repack --test gemma4_checkpoint_network --release -- --ignored --nocapture
+cargo test -p turbospark-repack --test hf_checkpoint_network --release -- --ignored --nocapture
 
 # Qwen 3.6: ~20.4 GB across four shards. The ONLY test that covers the
 # multi-shard walk on this family (the synthetic fixture is one shard).
-MREFRUST_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
-  cargo test -p mrefrust-repack --test qwen36_checkpoint_network --release -- --ignored --nocapture
+TURBOSPARK_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
+  cargo test -p turbospark-repack --test qwen36_checkpoint_network --release -- --ignored --nocapture
 
 # GGUF intake: reads only the HEADER of the real published GGUFs (a few MB
 # off a 20-27 GB file, ~4 s each). With the install vars set it also asserts
 # every tensor name maps and that the ArchConfig derived from GGUF metadata
 # equals the one the .gturbo install declares.
-MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
-MREFRUST_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
-  cargo test -p mrefrust-repack --test gguf_checkpoint_network --release -- --ignored --nocapture
+TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
+TURBOSPARK_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
+  cargo test -p turbospark-repack --test gguf_checkpoint_network --release -- --ignored --nocapture
 
 # Which half of Gemma's fused ffn_gate_up_exps is the gate, by correlating a
 # dequantized layer 0 expert 0 against the MLX install. Few KB, ~5 s.
-MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
-  cargo test -p mrefrust-repack --test gguf_fused_gate_network --release -- --ignored --nocapture
+TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
+  cargo test -p turbospark-repack --test gguf_fused_gate_network --release -- --ignored --nocapture
 
 # The evidence behind Gotcha 6's transcode decision. Needs no install.
-cargo test -p mrefrust-repack --test gguf_f32_transcode_network --release -- --ignored --nocapture
+cargo test -p turbospark-repack --test gguf_f32_transcode_network --release -- --ignored --nocapture
 
 # The Q4_K reference against real published bytes: a dequantized layer 0
 # expert 0 gate row of the real Qwen 3.6 Q4_K_M against the same row in the
 # install. Few KB, ~5 s. AGENTS.md Gotcha 30 before reading a low number.
-MREFRUST_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
-  cargo test -p mrefrust-repack --test gguf_q4_k_network --release -- --ignored --nocapture
+TURBOSPARK_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
+  cargo test -p turbospark-repack --test gguf_q4_k_network --release -- --ignored --nocapture
 ```
 
 ## Crate Gotchas

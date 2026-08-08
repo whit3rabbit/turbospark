@@ -22,9 +22,9 @@
 //! quantizations of the same trained weights, so this is a correlation and
 //! never an equality (the discipline `gguf_q4_k_network.rs` established).
 //!
-//!   MREFRUST_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
-//!   MREFRUST_QWEN36_GGUF_INSTALL_DIR=~/models/qwen36-gguf.gturbo \
-//!     cargo test -p mrefrust-repack --test gguf_qwen_quant_probe --release -- --ignored --nocapture
+//!   TURBOSPARK_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
+//!   TURBOSPARK_QWEN36_GGUF_INSTALL_DIR=~/models/qwen36-gguf.gturbo \
+//!     cargo test -p turbospark-repack --test gguf_qwen_quant_probe --release -- --ignored --nocapture
 
 use std::path::{Path, PathBuf};
 
@@ -145,8 +145,8 @@ fn expected(h: usize, heads: usize) -> usize {
 #[test]
 #[ignore = "needs both Qwen installs"]
 fn which_quantized_gdn_tensors_carry_the_v_head_permutation() {
-    let mlx = Weights::open(&install("MREFRUST_QWEN36_INSTALL_DIR"));
-    let gguf = Weights::open(&install("MREFRUST_QWEN36_GGUF_INSTALL_DIR"));
+    let mlx = Weights::open(&install("TURBOSPARK_QWEN36_INSTALL_DIR"));
+    let gguf = Weights::open(&install("TURBOSPARK_QWEN36_GGUF_INSTALL_DIR"));
     let arch = model_io::known_architecture(model_io::ModelFamily::Qwen36);
     let la = &arch.linear_attention;
     let heads = la.num_v_heads as usize;

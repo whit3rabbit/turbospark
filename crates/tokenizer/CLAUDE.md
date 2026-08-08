@@ -1,4 +1,4 @@
-# mrefrust-tokenizer
+# turbospark-tokenizer
 
 Tokenizer wrapper around HF `tokenizers` (`MfTokenizer`), chat dialect resolution (Gemma 4, ChatML/Qwen, DeepSeek-V4), chat template rendering (text-only and `minijinja` + `pycompat`), streaming detokenization (`StreamingDetokenizer`), stop condition matching (`StopMatcher`), tool call DSL parsers, and streaming structured decoder (`StructuredDecoder`).
 
@@ -51,8 +51,8 @@ crates/tokenizer/
 ## Development & Test Commands
 
 ```sh
-# Run tests for mrefrust-tokenizer
-cargo test -p mrefrust-tokenizer
+# Run tests for turbospark-tokenizer
+cargo test -p turbospark-tokenizer
 ```
 
 ## Crate Gotchas

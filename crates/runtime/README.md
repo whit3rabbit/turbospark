@@ -1,4 +1,4 @@
-# mrefrust-runtime
+# turbospark-runtime
 
 Raw-completion prefill and decode generation loops (`run_raw_completion`, `run_raw_completion_chunked`), `LogitProducer` trait definition, `ScriptedLogitProducer` test mock, and `RealForwardRunner` GPU forward-pass engine (macOS).
 
@@ -6,7 +6,7 @@ Downstream workspace crates import this package via the `runtime` alias:
 
 ```toml
 [dependencies]
-runtime = { package = "mrefrust-runtime", path = "../runtime" }
+runtime = { package = "turbospark-runtime", path = "../runtime" }
 ```
 
 ## Safety
@@ -25,8 +25,8 @@ runtime = { package = "mrefrust-runtime", path = "../runtime" }
 ## Development & Test Commands
 
 ```sh
-# Run unit and integration tests for mrefrust-runtime
-cargo test -p mrefrust-runtime
+# Run unit and integration tests for turbospark-runtime
+cargo test -p turbospark-runtime
 ```
 
 ## Crate Gotchas

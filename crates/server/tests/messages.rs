@@ -10,8 +10,8 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use mrefrust_server::{build_router, ScriptedChatModel};
 use tokenizer::MfTokenizer;
+use turbospark_server::{build_router, ScriptedChatModel};
 
 fn load_tokenizer() -> MfTokenizer {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ChatMLTokenizer");
@@ -26,7 +26,7 @@ fn one_hot(vocab_size: usize, index: usize) -> Vec<foundation::LogitValue> {
 
 async fn spawn_server(steps: Vec<Vec<foundation::LogitValue>>) -> String {
     let tok = load_tokenizer();
-    let model: Arc<dyn mrefrust_server::ChatModel> =
+    let model: Arc<dyn turbospark_server::ChatModel> =
         Arc::new(ScriptedChatModel::new(tok, 4096, steps));
     let router = build_router(model);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

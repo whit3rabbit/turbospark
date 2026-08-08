@@ -1,9 +1,9 @@
 //! THROWAWAY probe: does the GGUF-derived install's norm convention match
 //! the MLX-derived install's? Delete once settled.
 //!
-//!   MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
-//!   MREFRUST_GEMMA4_GGUF_INSTALL_DIR=~/models/gemma4-gguf.gturbo \
-//!     cargo test -p mrefrust-repack --test gguf_norm_convention_probe --release -- --ignored --nocapture
+//!   TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
+//!   TURBOSPARK_GEMMA4_GGUF_INSTALL_DIR=~/models/gemma4-gguf.gturbo \
+//!     cargo test -p turbospark-repack --test gguf_norm_convention_probe --release -- --ignored --nocapture
 
 use std::path::Path;
 
@@ -29,9 +29,9 @@ fn bf16_tensor(dir: &Path, name: &str) -> Vec<f32> {
 #[test]
 #[ignore = "needs both installs"]
 fn norms_agree_between_the_two_installs() {
-    let mlx = std::path::PathBuf::from(std::env::var_os("MREFRUST_GEMMA4_INSTALL_DIR").unwrap());
+    let mlx = std::path::PathBuf::from(std::env::var_os("TURBOSPARK_GEMMA4_INSTALL_DIR").unwrap());
     let gguf =
-        std::path::PathBuf::from(std::env::var_os("MREFRUST_GEMMA4_GGUF_INSTALL_DIR").unwrap());
+        std::path::PathBuf::from(std::env::var_os("TURBOSPARK_GEMMA4_GGUF_INSTALL_DIR").unwrap());
 
     for name in [
         "language_model.model.layers.0.input_layernorm.weight",

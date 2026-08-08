@@ -5,13 +5,13 @@
 //! download); run explicitly:
 //!
 //! ```sh
-//! cargo test -p mrefrust-repack --test hf_checkpoint_network -- --ignored --nocapture
+//! cargo test -p turbospark-repack --test hf_checkpoint_network -- --ignored --nocapture
 //! ```
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use mrefrust_repack::{
+use turbospark_repack::{
     build_resident_weights_bin, fetch_safetensors_header, orchestrate_llama_checkpoint,
     tiny_gemma4_arch, write_gturbo_install_with_resident_index, HttpRangeSource,
     LlamaCheckpointDims,
@@ -21,7 +21,7 @@ static COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn temp_dir() -> PathBuf {
     let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-    let dir = std::env::temp_dir().join(format!("mrefrust-hf-real-{}-{n}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("turbospark-hf-real-{}-{n}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }

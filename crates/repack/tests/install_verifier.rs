@@ -1,10 +1,10 @@
 //! Tests for full-SHA256 install verification, using a synthetic toy
-//! manifest (same shape as `mrefrust-model-io`'s own manifest tests) plus
+//! manifest (same shape as `turbospark-model-io`'s own manifest tests) plus
 //! real on-disk files so the hasher has actual bytes to read.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use mrefrust_repack::verify_install_full_sha256;
+use turbospark_repack::verify_install_full_sha256;
 
 fn toy_arch() -> model_io::ArchConfig {
     model_io::ArchConfig {
@@ -51,7 +51,7 @@ fn tempdir() -> std::path::PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
     let path = std::env::temp_dir().join(format!(
-        "mrefrust-repack-verify-{}-{unique}",
+        "turbospark-repack-verify-{}-{unique}",
         std::process::id()
     ));
     std::fs::create_dir_all(&path).unwrap();

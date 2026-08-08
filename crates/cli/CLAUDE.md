@@ -1,6 +1,6 @@
-# mrefrust-cli
+# turbospark-cli
 
-Process entry point binary (`mference-check`). Parses `argv` using `mrefrust-invocation`, applies exit status and output stream routing, and drives GPU token generation (`RealForwardRunner`) on macOS.
+Process entry point binary (`turbospark-check`). Parses `argv` using `turbospark-invocation`, applies exit status and output stream routing, and drives GPU token generation (`RealForwardRunner`) on macOS.
 
 ## Directory & File Structure
 
@@ -18,21 +18,21 @@ crates/cli/
 
 ## Key Modules
 
-- `main.rs`: Reads command-line arguments, delegates parsing to `mrefrust-invocation`, prints resolved requests, and routes execution to generation routines.
+- `main.rs`: Reads command-line arguments, delegates parsing to `turbospark-invocation`, prints resolved requests, and routes execution to generation routines.
 - `generate.rs`: Coordinates tokenizer loading, chat template rendering, prefill chunking, and GPU decode generation loops.
 - `chat.rs`: Interactive REPL loop maintaining user/assistant turn history and applying `fit_conversation_window` to manage context window bounds.
 
 ## Development & Test Commands
 
 ```sh
-# Run tests for mrefrust-cli
-cargo test -p mrefrust-cli
+# Run tests for turbospark-cli
+cargo test -p turbospark-cli
 
 # Run CLI against a model with prompt string
-cargo run -p mrefrust-cli --bin mference-check -- --model /path/to/model --prompt "Hello"
+cargo run -p turbospark-cli --bin turbospark-check -- --model /path/to/model --prompt "Hello"
 
 # Interactive chat mode
-cargo run -p mrefrust-cli --bin mference-check -- --model /path/to/model --chat
+cargo run -p turbospark-cli --bin turbospark-check -- --model /path/to/model --chat
 ```
 
 ## Real-Model Smoke Tests (Run Before Handoff)
@@ -40,15 +40,15 @@ cargo run -p mrefrust-cli --bin mference-check -- --model /path/to/model --chat
 Always run BOTH greedy and sampled smoke commands whenever altering decode, KV cache, output head, or Metal encode logic:
 
 ```sh
-cargo build --release -p mrefrust-cli
+cargo build --release -p turbospark-cli
 printf '[{"role":"user","content":"Explain how coastal wetlands reduce flood damage."}]' > /tmp/p.json
 
 # 1. Greedy generation (catches math bugs)
-./target/release/mference-check --model ~/models/gemma4.gturbo \
+./target/release/turbospark-check --model ~/models/gemma4.gturbo \
   --messages-file /tmp/p.json --max-new 400 --seed 1 --temperature 0.0001 --top-k 1
 
 # 2. Sampled generation (catches distribution bugs greedy cannot see)
-./target/release/mference-check --model ~/models/gemma4.gturbo \
+./target/release/turbospark-check --model ~/models/gemma4.gturbo \
   --messages-file /tmp/p.json --max-new 400 --seed 20260721
 ```
 

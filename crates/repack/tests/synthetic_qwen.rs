@@ -2,7 +2,7 @@
 //! arch peeked back out of its own manifest, and the family-specific
 //! classification actually fires.
 
-use mrefrust_repack::{
+use turbospark_repack::{
     build_synthetic_qwen36_real_install, classify_for_family, peek_manifest_arch, Gemma4Bucket,
 };
 
@@ -18,7 +18,7 @@ fn build(dir: &std::path::Path) -> model_io::ArchConfig {
 }
 
 fn temp_dir(name: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("mrefrust-qwen-{name}-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("turbospark-qwen-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir
@@ -134,7 +134,7 @@ fn resident_index_has_linear_tensors_and_no_experts() {
     // conv1d is BF16 [C, K, 1] -- rank 3, dtype tag 1 (BF16), and sized
     // for the whole 256-channel x 4-tap kernel.
     let conv = &index.entries["language_model.model.layers.0.linear_attn.conv1d.weight"];
-    assert_eq!(conv.dtype, mrefrust_repack::DTYPE_BF16);
+    assert_eq!(conv.dtype, turbospark_repack::DTYPE_BF16);
     assert_eq!(conv.size_bytes, 256 * 4 * 2);
     assert_eq!((conv.shape.0, conv.shape.1, conv.shape.2), (256, 4, 1));
 

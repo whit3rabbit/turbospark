@@ -1,4 +1,4 @@
-# mrefrust-window-fit
+# turbospark-window-fit
 
 Pure, deterministic conversation-window fitting (`fit_conversation_window`). Drops the oldest eligible turns from a conversation until the measured length fits within caller-supplied bounds.
 
@@ -24,8 +24,8 @@ crates/window-fit/
 ## Development & Test Commands
 
 ```sh
-# Run tests for mrefrust-window-fit
-cargo test -p mrefrust-window-fit
+# Run tests for turbospark-window-fit
+cargo test -p turbospark-window-fit
 ```
 
 ## Crate Gotchas

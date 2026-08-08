@@ -10,7 +10,7 @@ use crate::arch_baselines::all_known_architectures;
 use crate::arch_config::{ArchConfig, ModelFamily};
 use crate::error::ModelError;
 
-/// Affine-quant group size (matches `mrefrust_compute::quant::GROUP_SIZE`;
+/// Affine-quant group size (matches `turbospark_compute::quant::GROUP_SIZE`;
 /// duplicated here rather than adding a compute dependency to this crate).
 const QUANT_GROUP_SIZE: i64 = 64;
 

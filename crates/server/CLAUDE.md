@@ -1,6 +1,6 @@
-# mrefrust-server
+# turbospark-server
 
-HTTP server (`mference-server`) on Axum, speaking two wire formats against one
+HTTP server (`turbospark-server`) on Axum, speaking two wire formats against one
 local backend: OpenAI `/v1/chat/completions`, Anthropic `/v1/messages`, and
 `/v1/models`. Both generation endpoints support non-streaming and Server-Sent
 Events (SSE) streaming output.
@@ -16,7 +16,7 @@ generation core in `handler.rs`, and translated back.
 crates/server/
 +-- Cargo.toml                  # Crate manifest
 +-- src/
-|   +-- main.rs                 # Binary entry point for mference-server
+|   +-- main.rs                 # Binary entry point for turbospark-server
 |   +-- lib.rs                  # Library root: router, re-exported wire types
 |   +-- handler.rs              # /v1/chat/completions + /v1/models, and the shared generation core
 |   +-- messages.rs             # Anthropic /v1/messages: translate in, generate, translate out
@@ -35,15 +35,15 @@ crates/server/
 - `main.rs`: Server binary entry point and CLI option handling (`--model` real mode, legacy positional scripted mode, port, `--bind loopback|tailnet`).
 - `handler.rs`: the `/v1/chat/completions` and `/v1/models` handlers, plus the generation core both endpoints share -- `plan` (chat template, encode, shaping config), `run_full`, and `stream_blocking` (which owns the `StructuredAssistantDecoder` when a request carries tools).
 - `messages.rs`: the Anthropic `/v1/messages` handler, wrapping the same core in `translate_request` / `translate_response` / `new_stream_translator`.
-- `model.rs`: the `ChatModel` trait and `ScriptedChatModel`, bridging Axum handlers to `mrefrust-runtime`.
+- `model.rs`: the `ChatModel` trait and `ScriptedChatModel`, bridging Axum handlers to `turbospark-runtime`.
 - `real_model.rs`: `RealChatModel`, a `RealForwardRunner` behind the same trait (macOS only).
 - `response.rs`: constructors for `anyllm_translate::openai`'s response and SSE chunk envelopes, filling the many fields this server never populates in one place.
 
 ## Development & Test Commands
 
 ```sh
-# Run tests for mrefrust-server
-cargo test -p mrefrust-server
+# Run tests for turbospark-server
+cargo test -p turbospark-server
 
 # Smoke the two generation endpoints against a running --model server.
 curl -s localhost:8080/v1/models
@@ -58,16 +58,16 @@ ANTHROPIC_BASE_URL=http://127.0.0.1:8080 ANTHROPIC_API_KEY=unused \
 
 # Launch against a real .gturbo install (macOS; use --release, a debug
 # build decodes far too slowly to be usable).
-cargo run --release -p mrefrust-server --bin mference-server -- \
+cargo run --release -p turbospark-server --bin turbospark-server -- \
   --model ~/models/gemma4.gturbo [--port N] [--max-context N] [--expert-cache-slots N] \
   [--bind loopback|tailnet]
 
 # Launch the portable scripted server (tokenizer only, canned completions).
-cargo run -p mrefrust-server --bin mference-server -- <tokenizer-dir> [port]
+cargo run -p turbospark-server --bin turbospark-server -- <tokenizer-dir> [port]
 
 # The gated real-model end-to-end test.
-MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
-  cargo test -p mrefrust-server --test real_backend --release -- --ignored --nocapture
+TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
+  cargo test -p turbospark-server --test real_backend --release -- --ignored --nocapture
 ```
 
 ## Crate Gotchas

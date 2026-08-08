@@ -13,22 +13,24 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use mrefrust_repack::{
+use selection::ShapingConfig;
+use tokenizer::MfTokenizer;
+use turbospark_repack::{
     build_synthetic_gemma4_install, build_synthetic_gemma4_moe_install,
     build_synthetic_gemma4_moe_streamed_install, build_synthetic_gemma4_swa_install,
 };
-use mrefrust_runtime::{
+use turbospark_runtime::{
     run_raw_completion, GenerationConfig, RawDecodeProgress, RealForwardRunner,
 };
-use selection::ShapingConfig;
-use tokenizer::MfTokenizer;
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn temp_dir() -> PathBuf {
     let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-    let dir =
-        std::env::temp_dir().join(format!("mrefrust-real-forward-{}-{n}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!(
+        "turbospark-real-forward-{}-{n}",
+        std::process::id()
+    ));
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }

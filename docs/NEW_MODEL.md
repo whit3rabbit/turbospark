@@ -282,7 +282,7 @@ The rest of this phase only bites on a real download:
       `--release`, downloads the real checkpoint. It is not part of the
       handoff gate, but it is the only thing that proves the shard walk.
 
-Gate: `cargo test -p mrefrust-repack` passes, and the synthetic install
+Gate: `cargo test -p turbospark-repack` passes, and the synthetic install
 opens through `RealForwardRunner::open` without touching decode.
 
 ---
@@ -348,7 +348,7 @@ opens through `RealForwardRunner::open` without touching decode.
       INCLUDING the carried state and the `T < history` tail path). See
       `crates/gpu/tests/gdn_parity.rs`.
 
-Gate: `cargo test -p mrefrust-gpu` passes on the Metal device.
+Gate: `cargo test -p turbospark-gpu` passes on the Metal device.
 
 ---
 
@@ -458,7 +458,7 @@ already looks perfect - especially then.
       read-only `mmap` would not, but `newBufferWithBytesNoCopy` pins it.
 - [ ] Give the family its OWN oracle target next to
       `crates/bench/tests/memory_oracle.rs` and `qwen36_memory_oracle.rs`
-      (`#[ignore]`d, gated on its own `MREFRUST_<FAMILY>_INSTALL_DIR` env
+      (`#[ignore]`d, gated on its own `TURBOSPARK_<FAMILY>_INSTALL_DIR` env
       var; the mach sampler is `crates/bench/src/memory.rs`). A separate
       test TARGET, not a second `#[test]` in an existing one: the
       footprint assertion is a whole-session peak, and two families with

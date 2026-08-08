@@ -39,7 +39,7 @@ use foundation::LogitValue as F16;
 pub const Q8_0_BLOCK_ELEMS: usize = 32;
 
 /// Bytes in one Q8_0 block: an f16 scale (little-endian) then 32 signed
-/// weights. Matches `ggml_type_block(8)` in `mrefrust_repack::gguf_header`;
+/// weights. Matches `ggml_type_block(8)` in `turbospark_repack::gguf_header`;
 /// the two are checked against each other in `crates/repack`'s tests rather
 /// than one importing the other, since this crate must not depend on repack.
 pub const Q8_0_BLOCK_BYTES: usize = 34;
@@ -136,7 +136,7 @@ pub const Q4_K_SUB_ELEMS: usize = 32;
 
 /// Bytes in one Q4_K superblock: f16 `d`, f16 `dmin`, 12 bytes of packed
 /// 6-bit sub-scales and sub-mins, then 128 bytes of nibble-packed quants.
-/// Matches `ggml_type_block(12)` in `mrefrust_repack::gguf_header`, which is
+/// Matches `ggml_type_block(12)` in `turbospark_repack::gguf_header`, which is
 /// held to this constant in `crates/repack`'s tests rather than by an import
 /// (this crate must not depend on repack).
 pub const Q4_K_BLOCK_BYTES: usize = 144;
@@ -355,7 +355,7 @@ pub const Q6_K_SUB_ELEMS: usize = 16;
 
 /// Bytes in one Q6_K superblock: 128 bytes of low nibbles, 64 bytes of high
 /// bit-pairs, 16 SIGNED sub-block scales, then the f16 super-scale. Matches
-/// `ggml_type_block(14)` in `mrefrust_repack::gguf_header`, held to it by
+/// `ggml_type_block(14)` in `turbospark_repack::gguf_header`, held to it by
 /// `crates/repack`'s tests rather than by an import.
 pub const Q6_K_BLOCK_BYTES: usize = 210;
 

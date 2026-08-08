@@ -3,7 +3,7 @@
 //!
 //! PORT-LOCAL rather than vendored, like its Q8_0 and Q4_K siblings: the Swift
 //! engine has no GGUF intake, so there is no upstream kernel this mirrors. Its
-//! only contract is `mrefrust_compute::dequant_q6_k_gemv`, which is what
+//! only contract is `turbospark_compute::dequant_q6_k_gemv`, which is what
 //! `crates/gpu/tests/dequant_q6_k_gemv_parity.rs` holds it to.
 //!
 //! Q6_K exists here for exactly one tensor: Qwen 3.6's Q4_K_M carries a single
@@ -28,7 +28,7 @@ const SOURCE: &str = include_str!("shaders/dequant_q6_k.metal");
 const THREADS_PER_GROUP: u64 = 256; // 8 rows/threadgroup * 32 lanes/SIMD group.
 const ROWS_PER_THREADGROUP: u64 = 8;
 
-/// Elements per Q6_K superblock. Mirrors `mrefrust_compute::Q6_K_BLOCK_ELEMS`;
+/// Elements per Q6_K superblock. Mirrors `turbospark_compute::Q6_K_BLOCK_ELEMS`;
 /// the two are held equal by `crates/repack`'s block-table test.
 pub const Q6_K_BLOCK_ELEMS: usize = 256;
 /// Bytes per Q6_K superblock: 128 low-nibble bytes, 64 high-bit bytes, 16

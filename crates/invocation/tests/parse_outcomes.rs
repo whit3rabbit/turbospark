@@ -4,7 +4,7 @@
 //! test-012, test-014, test-016, and test-017.
 
 use foundation::runtime_config::ALLOWED_CHUNK_SIZES;
-use mrefrust_invocation::{parse, InvocationRequest, Mode, ParseOutcome, PrefillChunk};
+use turbospark_invocation::{parse, InvocationRequest, Mode, ParseOutcome, PrefillChunk};
 
 fn tok(items: &[&str]) -> Vec<String> {
     items.iter().map(|s| s.to_string()).collect()

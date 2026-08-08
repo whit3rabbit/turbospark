@@ -5,7 +5,7 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-use mrefrust_tokenizer::{MfTokenizer, StructuredAssistantDecoder, StructuredAssistantEvent};
+use turbospark_tokenizer::{MfTokenizer, StructuredAssistantDecoder, StructuredAssistantEvent};
 
 fn load() -> MfTokenizer {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ChatMLTokenizer");

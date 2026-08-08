@@ -1,6 +1,6 @@
 //! OpenAI- and Anthropic-compatible generation server on loopback:
 //! request/response envelopes, SSE streaming framing, and the axum router,
-//! wired to `mrefrust-runtime`'s raw-completion loop. Ported from the intent
+//! wired to `turbospark-runtime`'s raw-completion loop. Ported from the intent
 //! of `Sources/MferenceServer` (an OpenAI-compatible
 //! `/v1/chat/completions` endpoint), plus an Anthropic `/v1/messages`
 //! endpoint that renders the same generation through `anyllm_translate` so

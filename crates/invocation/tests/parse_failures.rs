@@ -3,7 +3,7 @@
 //! Corresponds to behavior-spec test-003, test-005, test-007, test-008,
 //! test-009, test-011, test-013, test-015, test-018, and test-019.
 
-use mrefrust_invocation::{parse, ParseFailure, ParseOutcome};
+use turbospark_invocation::{parse, ParseFailure, ParseOutcome};
 
 fn tok(items: &[&str]) -> Vec<String> {
     items.iter().map(|s| s.to_string()).collect()

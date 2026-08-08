@@ -1,5 +1,5 @@
 #![cfg(target_os = "macos")]
-//! Black-box tests proving `mference-check` performs real generation: build
+//! Black-box tests proving `turbospark-check` performs real generation: build
 //! a `.gturbo` install with a bundled tokenizer, point `--model` at it, and
 //! check real generated text/token-count lines appear. Covers all three
 //! invocation modes (`--prompt`, `--messages-file`, `--chat`).
@@ -13,8 +13,10 @@ static COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn temp_dir() -> PathBuf {
     let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-    let dir =
-        std::env::temp_dir().join(format!("mrefrust-cli-real-gen-{}-{n}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!(
+        "turbospark-cli-real-gen-{}-{n}",
+        std::process::id()
+    ));
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }
@@ -55,7 +57,7 @@ fn real_prompt_mode_generates_real_tokens() {
     repack::build_synthetic_gemma4_install(&dir, tok.vocab_size as i64, 2, "cli-real-gen")
         .expect("synthetic install writes");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_mference-check"))
+    let output = Command::new(env!("CARGO_BIN_EXE_turbospark-check"))
         .args([
             "--model",
             dir.to_str().unwrap(),
@@ -97,7 +99,7 @@ fn real_naming_gemma4_install_generates() {
     )
     .expect("real-naming install writes");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_mference-check"))
+    let output = Command::new(env!("CARGO_BIN_EXE_turbospark-check"))
         .args([
             "--model",
             dir.to_str().unwrap(),
@@ -127,7 +129,7 @@ fn messages_file_mode_generates_through_the_chat_template() {
     )
     .unwrap();
 
-    let output = Command::new(env!("CARGO_BIN_EXE_mference-check"))
+    let output = Command::new(env!("CARGO_BIN_EXE_turbospark-check"))
         .args([
             "--model",
             dir.to_str().unwrap(),
@@ -155,7 +157,7 @@ fn messages_file_mode_rejects_an_unknown_role() {
     let messages = dir.join("messages.json");
     std::fs::write(&messages, r#"[{"role":"wizard","content":"hi"}]"#).unwrap();
 
-    let output = Command::new(env!("CARGO_BIN_EXE_mference-check"))
+    let output = Command::new(env!("CARGO_BIN_EXE_turbospark-check"))
         .args([
             "--model",
             dir.to_str().unwrap(),
@@ -179,7 +181,7 @@ fn messages_file_mode_rejects_an_unknown_role() {
 fn chat_mode_runs_a_turn_and_quits() {
     let dir = install_with_tokenizer("cli-chat");
 
-    let mut child = Command::new(env!("CARGO_BIN_EXE_mference-check"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_turbospark-check"))
         .args([
             "--model",
             dir.to_str().unwrap(),

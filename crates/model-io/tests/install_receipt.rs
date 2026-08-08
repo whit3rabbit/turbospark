@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use mrefrust_model_io::{
+use turbospark_model_io::{
     validate_install_receipt_manifest_binding, InstallReceiptFileEntry, ModelError,
     VerifiedInstallReceipt,
 };
@@ -30,7 +30,7 @@ fn receipt(manifest_sha256: &str, dir_path: &str) -> VerifiedInstallReceipt {
 
 #[test]
 fn binding_accepts_matching_sha_and_canonical_directory() {
-    let dir = std::env::temp_dir().join(format!("mrefrust-receipt-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("turbospark-receipt-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let canonical = dir.canonicalize().unwrap();
     let r = receipt("abc123", &canonical.display().to_string());
@@ -40,8 +40,10 @@ fn binding_accepts_matching_sha_and_canonical_directory() {
 
 #[test]
 fn binding_rejects_manifest_sha_mismatch() {
-    let dir =
-        std::env::temp_dir().join(format!("mrefrust-receipt-mismatch-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!(
+        "turbospark-receipt-mismatch-{}",
+        std::process::id()
+    ));
     std::fs::create_dir_all(&dir).unwrap();
     let canonical = dir.canonicalize().unwrap();
     let r = receipt("abc123", &canonical.display().to_string());
@@ -52,7 +54,8 @@ fn binding_rejects_manifest_sha_mismatch() {
 
 #[test]
 fn binding_rejects_unsupported_schema_version() {
-    let dir = std::env::temp_dir().join(format!("mrefrust-receipt-schema-{}", std::process::id()));
+    let dir =
+        std::env::temp_dir().join(format!("turbospark-receipt-schema-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let canonical = dir.canonicalize().unwrap();
     let mut r = receipt("abc123", &canonical.display().to_string());

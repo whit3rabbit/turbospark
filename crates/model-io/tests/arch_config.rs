@@ -1,7 +1,7 @@
 //! Tests for the architecture baselines and their derived layer/shape
 //! helpers.
 
-use mrefrust_model_io::{
+use turbospark_model_io::{
     deepseek_v4_flash_284b_a13b, gemma4_26b_a4b, known_architecture, qwen36_35b_a3b, ModelFamily,
 };
 

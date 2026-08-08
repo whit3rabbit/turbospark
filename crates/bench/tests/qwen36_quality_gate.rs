@@ -8,8 +8,8 @@
 //!
 //! Not run by default (needs an ~18 GB install; use --release):
 //!
-//!   MREFRUST_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
-//!     cargo test -p mrefrust-bench --test qwen36_quality_gate --release -- --ignored --nocapture
+//!   TURBOSPARK_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
+//!     cargo test -p turbospark-bench --test qwen36_quality_gate --release -- --ignored --nocapture
 //!
 //! NOTE the corpus and the digest prompt are the frozen protocol's, which
 //! was chosen for Gemma 4 and is reused verbatim here -- deliberately, so
@@ -43,15 +43,15 @@ const BASELINES: &[quality_common::ChipQuality] = &[
 ];
 
 fn install_dir() -> Option<std::path::PathBuf> {
-    std::env::var_os("MREFRUST_QWEN36_INSTALL_DIR").map(std::path::PathBuf::from)
+    std::env::var_os("TURBOSPARK_QWEN36_INSTALL_DIR").map(std::path::PathBuf::from)
 }
 
 #[test]
-#[ignore = "needs a real ~18 GB Qwen 3.6 .gturbo install (MREFRUST_QWEN36_INSTALL_DIR)"]
+#[ignore = "needs a real ~18 GB Qwen 3.6 .gturbo install (TURBOSPARK_QWEN36_INSTALL_DIR)"]
 fn real_qwen36_install_quality_holds() {
     let Some(dir) = install_dir() else {
         eprintln!(
-            "qwen36_quality_gate: MREFRUST_QWEN36_INSTALL_DIR is not set; skipping. \
+            "qwen36_quality_gate: TURBOSPARK_QWEN36_INSTALL_DIR is not set; skipping. \
              Point it at a repacked Qwen 3.6 .gturbo install to run the gate."
         );
         return;

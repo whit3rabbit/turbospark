@@ -4,7 +4,7 @@
 
 use std::path::PathBuf;
 
-use mrefrust_tokenizer::{render_generic_chat_template, Message, MfTokenizer, Role};
+use turbospark_tokenizer::{render_generic_chat_template, Message, MfTokenizer, Role};
 
 fn load() -> MfTokenizer {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ChatMLTokenizer");
@@ -59,10 +59,10 @@ fn encode_generic_tool_chat_tokenizes_the_rendered_text() {
 fn tools_branch_renders_the_tools_system_preamble() {
     let tok = load();
     let messages = vec![Message::new(Role::User, "what's the weather")];
-    let tools = vec![mrefrust_tokenizer::FunctionDefinition {
+    let tools = vec![turbospark_tokenizer::FunctionDefinition {
         name: "get_weather".to_string(),
         description: "Get the weather".to_string(),
-        parameters: mrefrust_tokenizer::JsonValue::Object(std::collections::BTreeMap::new()),
+        parameters: turbospark_tokenizer::JsonValue::Object(std::collections::BTreeMap::new()),
     }];
     let rendered = render_generic_chat_template(&tok, &messages, &tools, true, false).unwrap();
     assert!(rendered.contains("# Tools"));

@@ -21,14 +21,14 @@
 //! file to answer this question.
 //!
 //! ```sh
-//! MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
-//!   cargo test -p mrefrust-repack --test gguf_fused_gate_network --release -- --ignored --nocapture
+//! TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
+//!   cargo test -p turbospark-repack --test gguf_fused_gate_network --release -- --ignored --nocapture
 //! ```
 
 use std::io::{Read, Seek, SeekFrom};
 
 use compute::{dequantize_int4_affine, dequantize_q8_0, pearson, Int4AffineRow, Q8_0_BLOCK_BYTES};
-use mrefrust_repack::{fetch_gguf_header, HttpRangeSource, RangeSource, FUSED_GATE_FIRST};
+use turbospark_repack::{fetch_gguf_header, HttpRangeSource, RangeSource, FUSED_GATE_FIRST};
 
 const GEMMA4_Q8_0: &str = "https://huggingface.co/ggml-org/gemma-4-26B-A4B-it-GGUF/resolve/main/gemma-4-26B-A4B-it-Q8_0.gguf";
 
@@ -129,8 +129,8 @@ fn mean_corr(a: &[Vec<f32>], b: &[Vec<f32>]) -> f32 {
 #[test]
 #[ignore = "network: reads a few KB off a 27 GB remote checkpoint, plus the local install"]
 fn the_first_half_of_the_fused_tensor_is_the_gate() {
-    let Ok(dir) = std::env::var("MREFRUST_GEMMA4_INSTALL_DIR") else {
-        println!("(skipped: MREFRUST_GEMMA4_INSTALL_DIR is unset)");
+    let Ok(dir) = std::env::var("TURBOSPARK_GEMMA4_INSTALL_DIR") else {
+        println!("(skipped: TURBOSPARK_GEMMA4_INSTALL_DIR is unset)");
         return;
     };
     let dir = std::path::PathBuf::from(shellexpand_home(&dir));
@@ -203,7 +203,7 @@ fn the_first_half_of_the_fused_tensor_is_the_gate() {
 }
 
 /// The tensor table's key, whichever of the two spellings the converter used.
-fn info_name(header: &mrefrust_repack::GgufHeader, preferred: &str) -> String {
+fn info_name(header: &turbospark_repack::GgufHeader, preferred: &str) -> String {
     if header.tensors.contains_key(preferred) {
         preferred.to_string()
     } else {
@@ -211,7 +211,7 @@ fn info_name(header: &mrefrust_repack::GgufHeader, preferred: &str) -> String {
     }
 }
 
-fn sample(header: &mrefrust_repack::GgufHeader) -> Vec<&String> {
+fn sample(header: &turbospark_repack::GgufHeader) -> Vec<&String> {
     header
         .tensors
         .keys()

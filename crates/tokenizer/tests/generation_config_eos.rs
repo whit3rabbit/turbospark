@@ -8,7 +8,7 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use mrefrust_tokenizer::MfTokenizer;
+use turbospark_tokenizer::MfTokenizer;
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -18,8 +18,10 @@ fn fixture_dir() -> PathBuf {
 
 fn temp_fixture_copy() -> PathBuf {
     let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-    let dir =
-        std::env::temp_dir().join(format!("mrefrust-genconfig-eos-{}-{n}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!(
+        "turbospark-genconfig-eos-{}-{n}",
+        std::process::id()
+    ));
     std::fs::create_dir_all(&dir).unwrap();
     for name in ["tokenizer.json", "tokenizer_config.json"] {
         std::fs::copy(fixture_dir().join(name), dir.join(name)).unwrap();

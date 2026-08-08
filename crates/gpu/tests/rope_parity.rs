@@ -1,9 +1,9 @@
 //! Runs `rope_proportional_neox` on real Metal hardware and checks it
-//! against the CPU reference in `mrefrust_compute::rope_neox`.
+//! against the CPU reference in `turbospark_compute::rope_neox`.
 #![cfg(target_os = "macos")]
 
 use half::f16;
-use mrefrust_gpu::{rope_proportional_neox, MetalContext};
+use turbospark_gpu::{rope_proportional_neox, MetalContext};
 
 #[test]
 fn matches_cpu_reference_within_fp16_tolerance() {
@@ -22,7 +22,7 @@ fn matches_cpu_reference_within_fp16_tolerance() {
         .collect();
     let input_f16: Vec<f16> = input_f32.iter().map(|&v| f16::from_f32(v)).collect();
 
-    let cpu = mrefrust_compute::rope_neox(
+    let cpu = turbospark_compute::rope_neox(
         &input_f32,
         num_tokens as usize,
         num_heads as usize,
@@ -44,10 +44,12 @@ fn matches_cpu_reference_within_fp16_tolerance() {
     .expect("GPU dispatch succeeds");
 
     assert_eq!(gpu.len(), cpu.len());
-    let err =
-        mrefrust_compute::max_abs_diff(&gpu.iter().map(|v| v.to_f32()).collect::<Vec<f32>>(), &cpu);
+    let err = turbospark_compute::max_abs_diff(
+        &gpu.iter().map(|v| v.to_f32()).collect::<Vec<f32>>(),
+        &cpu,
+    );
     assert!(
-        err < mrefrust_compute::Tolerance::FP16_REDUCTION,
+        err < turbospark_compute::Tolerance::FP16_REDUCTION,
         "err = {err}"
     );
 }
@@ -62,7 +64,7 @@ fn zero_position_is_identity() {
     }
 }
 
-/// Qwen's `rope_neox_subdim` against `mrefrust_compute::rope_neox_subdim`.
+/// Qwen's `rope_neox_subdim` against `turbospark_compute::rope_neox_subdim`.
 /// The two things that separate it from the proportional variant -- the
 /// pair partner at `rotary_dim/2` and the `rotary_dim` frequency divisor --
 /// are exactly what a wrong reference would paper over, so the test also
@@ -83,7 +85,7 @@ fn subdim_matches_cpu_reference_and_leaves_the_tail_alone() {
         .collect();
     let input_f16: Vec<f16> = input_f32.iter().map(|&v| f16::from_f32(v)).collect();
 
-    let cpu = mrefrust_compute::rope_neox_subdim(
+    let cpu = turbospark_compute::rope_neox_subdim(
         &input_f32,
         1,
         num_heads as usize,
@@ -99,7 +101,7 @@ fn subdim_matches_cpu_reference_and_leaves_the_tail_alone() {
         .collect();
     let buffer = context.new_buffer_with_data(&bytes);
     let pass = context.begin_pass();
-    mrefrust_gpu::encode_rope_neox_subdim(
+    turbospark_gpu::encode_rope_neox_subdim(
         &mut context,
         &pass,
         (&buffer, 0),
@@ -111,12 +113,12 @@ fn subdim_matches_cpu_reference_and_leaves_the_tail_alone() {
     )
     .expect("dispatch");
     pass.commit_and_wait();
-    let gpu: Vec<f32> = mrefrust_gpu::read_buffer_f16(&buffer, 0, len)
+    let gpu: Vec<f32> = turbospark_gpu::read_buffer_f16(&buffer, 0, len)
         .iter()
         .map(|h| h.to_f32())
         .collect();
 
-    let err = mrefrust_compute::max_abs_diff(&gpu, &cpu);
+    let err = turbospark_compute::max_abs_diff(&gpu, &cpu);
     assert!(err < 1e-2, "err = {err}");
 
     for head in 0..num_heads as usize {

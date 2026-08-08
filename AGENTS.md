@@ -12,7 +12,7 @@ ASCII: no emojis and no em dashes (project rule).
 (macOS, `#[ignore]`d, env-var). `docs/POWER_BASELINE.md` covers watts and
 joules-per-token and is the only page here measured on battery.
 `docs/BENCHMARKING.md` covers the three
-`mference-bench` modes, how peak memory is measured, and the memory
+`turbospark-bench` modes, how peak memory is measured, and the memory
 oracle that asserts this port against per-chip baseline rows (mostly the
 published Swift numbers; see `docs/BENCHMARKING.md` for which rows are
 Swift parity claims and which are this port measuring itself).
@@ -40,20 +40,20 @@ cargo build --workspace
 cargo test --workspace
 
 # Run one crate only.
-cargo test -p mrefrust-core
-cargo test -p mrefrust-compute
-cargo test -p mrefrust-invocation
-cargo test -p mrefrust-selection
-cargo test -p mrefrust-window-fit
-cargo test -p mrefrust-tokenizer
-cargo test -p mrefrust-model-io
-cargo test -p mrefrust-streaming
-cargo test -p mrefrust-gpu       # macOS only; needs a real Metal device
-cargo test -p mrefrust-runtime
-cargo test -p mrefrust-cli
-cargo test -p mrefrust-repack
-cargo test -p mrefrust-server
-cargo test -p mrefrust-bench
+cargo test -p turbospark-core
+cargo test -p turbospark-compute
+cargo test -p turbospark-invocation
+cargo test -p turbospark-selection
+cargo test -p turbospark-window-fit
+cargo test -p turbospark-tokenizer
+cargo test -p turbospark-model-io
+cargo test -p turbospark-streaming
+cargo test -p turbospark-gpu       # macOS only; needs a real Metal device
+cargo test -p turbospark-runtime
+cargo test -p turbospark-cli
+cargo test -p turbospark-repack
+cargo test -p turbospark-server
+cargo test -p turbospark-bench
 
 # Formatting check (must stay clean; enforced in verification).
 cargo fmt --check
@@ -68,29 +68,29 @@ cargo clippy --workspace --tests
 # generation against --model in all three modes: --prompt (raw text),
 # --messages-file (JSON conversation, chat template applied), and --chat
 # (interactive REPL). See DEVIATIONS.md for scope.
-cargo run -p mrefrust-cli --bin mference-check -- --model /path/to/model --prompt "hi"
+cargo run -p turbospark-cli --bin turbospark-check -- --model /path/to/model --prompt "hi"
 
 # Run the server against a real install (macOS; one runner per process, so
 # requests are served one at a time). It serves OpenAI
 # `/v1/chat/completions`, Anthropic `/v1/messages`, and `/v1/models`. Add
 # `--bind tailnet` to bind this machine's Tailscale IPv4 address instead of
 # loopback (no auth, no TLS: the Tailnet ACL is the only access control).
-cargo run --release -p mrefrust-server --bin mference-server -- --model ~/models/gemma4.gturbo
+cargo run --release -p turbospark-server --bin turbospark-server -- --model ~/models/gemma4.gturbo
 
 # Point an Anthropic-native client straight at it, no proxy in between.
 ANTHROPIC_BASE_URL=http://127.0.0.1:8080 ANTHROPIC_API_KEY=unused \
   CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=true claude
 
 # Same server, portable scripted backend (canned responses; DEVIATIONS.md).
-cargo run -p mrefrust-server --bin mference-server -- <tokenizer-dir> [port]
+cargo run -p turbospark-server --bin turbospark-server -- <tokenizer-dir> [port]
 
 # Run the throughput benchmark harness (scripted producer; see DEVIATIONS.md).
-cargo run -p mrefrust-bench --bin mference-bench -- <tokenizer-dir>
+cargo run -p turbospark-bench --bin turbospark-bench -- <tokenizer-dir>
 
 # Real-install benchmark (macOS): frozen community protocol against a real
 # .gturbo install, reporting split prefill/decode tok/s and peak
 # phys_footprint (the Swift-parity memory counter). Use --release.
-cargo run --release -p mrefrust-bench --bin mference-bench -- --model ~/models/gemma4.gturbo
+cargo run --release -p turbospark-bench --bin turbospark-bench -- --model ~/models/gemma4.gturbo
 
 # The memory oracle: asserts endOfTurn on every protocol case, peak
 # footprint under the ceiling, no growth on a replayed warm case, and
@@ -98,14 +98,14 @@ cargo run --release -p mrefrust-bench --bin mference-bench -- --model ~/models/g
 # came from Swift's docs/BENCHMARKS.md or from this port measuring itself
 # -- printed every run. Skips with a note if the env var is unset. Takes
 # ~10 minutes. See docs/BENCHMARKING.md.
-MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
-  cargo test -p mrefrust-bench --test memory_oracle --release -- --ignored --nocapture
+TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
+  cargo test -p turbospark-bench --test memory_oracle --release -- --ignored --nocapture
 
 # Same oracle for Qwen 3.6. A SEPARATE target, not a second #[test]: the
 # footprint assertion is a whole-session peak and the two families have
 # different ceilings (~2,200 vs ~1,600 MiB), so they need one process each.
-MREFRUST_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
-  cargo test -p mrefrust-bench --test qwen36_memory_oracle --release -- --ignored --nocapture
+TURBOSPARK_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
+  cargo test -p turbospark-bench --test qwen36_memory_oracle --release -- --ignored --nocapture
 
 # The quality gate (ROADMAP Phase Q): teacher-forced perplexity of a fixed
 # reference answer in the ASSISTANT slot (an instruction-tuned checkpoint
@@ -115,10 +115,10 @@ MREFRUST_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
 # throughput floored). Split per family for the same one-model-per-process
 # reason as the oracle. About 80 seconds each. Numbers and caveats:
 # docs/BENCHMARKS.md.
-MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
-  cargo test -p mrefrust-bench --test quality_gate --release -- --ignored --nocapture
-MREFRUST_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
-  cargo test -p mrefrust-bench --test qwen36_quality_gate --release -- --ignored --nocapture
+TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
+  cargo test -p turbospark-bench --test quality_gate --release -- --ignored --nocapture
+TURBOSPARK_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
+  cargo test -p turbospark-bench --test qwen36_quality_gate --release -- --ignored --nocapture
 
 # Cross-engine check (ROADMAP Phase Q, last item): does this port agree
 # with mlx-lm on the SAME quantized bytes? Two steps. The first dumps this
@@ -130,17 +130,17 @@ MREFRUST_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
 # `hf download mlx-community/gemma-4-26b-a4b-it-4bit --revision
 # 0d77464eeb233a2da68ebf9d7dc4edaac7db956d` first (14.6 GB). Read the
 # floor, not just the number: docs/BENCHMARKS.md.
-MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
-MREFRUST_LOGIT_DUMP_DIR=/tmp/kld/mrefrust \
-  cargo test -p mrefrust-bench --test logit_dump --release -- --ignored --nocapture
-uv run --python 3.12 --with mlx-lm --with numpy scripts/kld.py /tmp/kld/mrefrust
+TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
+TURBOSPARK_LOGIT_DUMP_DIR=/tmp/kld/turbospark \
+  cargo test -p turbospark-bench --test logit_dump --release -- --ignored --nocapture
+uv run --python 3.12 --with mlx-lm --with numpy scripts/kld.py /tmp/kld/turbospark
 
 # Same dump with NO warmup walk, which is the condition quality_gate takes
 # its perplexity under. Reproduces the frozen row exactly; that is the
 # cross-check that the dump measures what the gate measures.
-MREFRUST_LOGIT_DUMP_COLD=1 MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
-MREFRUST_LOGIT_DUMP_DIR=/tmp/kld/cold \
-  cargo test -p mrefrust-bench --test logit_dump --release -- --ignored --nocapture
+TURBOSPARK_LOGIT_DUMP_COLD=1 TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
+TURBOSPARK_LOGIT_DUMP_DIR=/tmp/kld/cold \
+  cargo test -p turbospark-bench --test logit_dump --release -- --ignored --nocapture
 
 # The same question one layer down, for the GGUF path: does this port agree
 # with llama.cpp on the SAME GGUF bytes? Closes Phase G's last gate clause
@@ -150,26 +150,26 @@ MREFRUST_LOGIT_DUMP_DIR=/tmp/kld/cold \
 # binary teacher-forces an id list). Needs the 26.9 GB GGUF locally --
 # llama.cpp cannot stream it the way the repack walk does. Metal by
 # default, and that is not cosmetic: see Gotcha 34 before running it on CPU.
-MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4-gguf.gturbo \
-MREFRUST_LOGIT_DUMP_DIR=/tmp/kld/gguf-warm \
-  cargo test -p mrefrust-bench --test logit_dump --release -- --ignored --nocapture
+TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4-gguf.gturbo \
+TURBOSPARK_LOGIT_DUMP_DIR=/tmp/kld/gguf-warm \
+  cargo test -p turbospark-bench --test logit_dump --release -- --ignored --nocapture
 hf download ggml-org/gemma-4-26B-A4B-it-GGUF gemma-4-26B-A4B-it-Q8_0.gguf \
   --local-dir ~/models/gguf-ref
 uv run --python 3.12 --with numpy scripts/kld_llamacpp.py \
-  ~/models/gguf-ref/gemma-4-26B-A4B-it-Q8_0.gguf /tmp/kld/gguf-warm /tmp/kld/mrefrust
+  ~/models/gguf-ref/gemma-4-26B-A4B-it-Q8_0.gguf /tmp/kld/gguf-warm /tmp/kld/turbospark
 
 # Proof that the gate above can SEE quantization damage, rather than just
 # asserting it could. Clones the install (APFS clonefile, so the original
 # is untouched and only written pages cost disk), shifts one quantization
 # level in a strided subset of the routed experts, and re-measures. About
 # 30 seconds. Curve and floor: docs/BENCHMARKS.md.
-MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
-  cargo test -p mrefrust-bench --test quality_sensitivity --release -- --ignored --nocapture
+TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
+  cargo test -p turbospark-bench --test quality_sensitivity --release -- --ignored --nocapture
 
 # Power baseline over the frozen protocol (ROADMAP Phase P1): watts and
 # joules-per-token, split prefill/decode. NEEDS SUDO (powermetrics is
 # root-only) and so cannot be run non-interactively. ~12 min per install.
-# Windows the capture with the `[power-window ...]` markers mference-bench
+# Windows the capture with the `[power-window ...]` markers turbospark-bench
 # emits, so the model open and the discarded warmup stay out of the total.
 # Numbers and caveats: docs/BENCHMARKS.md.
 LABEL=battery OUT=/tmp/power-gemma MODEL=~/models/gemma4.gturbo scripts/power.sh 2
@@ -187,22 +187,22 @@ LABEL=battery MODEL=~/models/gemma4.gturbo CASES=short-explanation \
 # tensor name maps, and the ArchConfig derived from GGUF metadata equals the
 # one the corresponding .gturbo install declares. Set the install vars to get
 # the last two cross-checks; without them it still parses and reports.
-MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
-MREFRUST_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
-  cargo test -p mrefrust-repack --test gguf_checkpoint_network --release -- --ignored --nocapture
+TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
+TURBOSPARK_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
+  cargo test -p turbospark-repack --test gguf_checkpoint_network --release -- --ignored --nocapture
 
 # Settles which half of Gemma's fused ffn_gate_up_exps is the gate (Stage 2's
 # first use of the Q8_0 reference). Correlates a dequantized layer 0 expert 0
 # against the same expert in the MLX install. Also a real-data check on the
 # Q8_0 dequant itself: a sign, scale or block-layout error cannot correlate
 # at +0.9957 with an independently-produced INT4 install. Few KB, ~5 s.
-MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
-  cargo test -p mrefrust-repack --test gguf_fused_gate_network --release -- --ignored --nocapture
+TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
+  cargo test -p turbospark-repack --test gguf_fused_gate_network --release -- --ignored --nocapture
 
 # The evidence behind the transcode decision (Gotcha 29): GGUF's F32 norms
 # are upcast BF16 and narrow back bit-exactly, and INT8-transcoding its F32
 # router does not move the routing decision. No install needed, few KB, ~6 s.
-cargo test -p mrefrust-repack --test gguf_f32_transcode_network --release -- --ignored --nocapture
+cargo test -p turbospark-repack --test gguf_f32_transcode_network --release -- --ignored --nocapture
 
 # The same real-data check for Q4_K, against the real Qwen 3.6 Q4_K_M: a
 # dequantized layer 0 expert 0 gate row correlates +0.9930 with the same row
@@ -210,61 +210,61 @@ cargo test -p mrefrust-repack --test gguf_f32_transcode_network --release -- --i
 # one check that can catch a decoder and its fixture quantizer being wrong
 # TOGETHER, which nothing in crates/compute can. Few KB, ~5 s. Read Gotcha 30
 # before believing a low number out of it.
-MREFRUST_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
-  cargo test -p mrefrust-repack --test gguf_q4_k_network --release -- --ignored --nocapture
+TURBOSPARK_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
+  cargo test -p turbospark-repack --test gguf_q4_k_network --release -- --ignored --nocapture
 
 # ROADMAP Phase G Stage 2 item 8: install the REAL published Gemma 4 Q8_0
 # GGUF. Streams the 26.9 GB file from HF a layer at a time (it is never
 # written to disk) and produces a ~25 GB install. ~24 min. Must NOT point at
 # the MLX-derived ~/models/gemma4.gturbo; the test asserts it does not.
-MREFRUST_GEMMA4_GGUF_INSTALL_DIR=~/models/gemma4-gguf.gturbo \
-  cargo test -p mrefrust-repack --test gguf_install_network --release -- --ignored --nocapture
+TURBOSPARK_GEMMA4_GGUF_INSTALL_DIR=~/models/gemma4-gguf.gturbo \
+  cargo test -p turbospark-repack --test gguf_install_network --release -- --ignored --nocapture
 
 # ROADMAP Phase G Stage 2 item 9: the same, for the K-quants. Streams the real
 # published Qwen 3.6 Q4_K_M (~20 GB, never written to disk) into a ~20 GB
 # install. This is the MIXED case: Q4_K experts and embedding, Q8_0 attention,
 # one Q6_K tensor. Must NOT point at ~/models/qwen36.gturbo; asserted.
-MREFRUST_QWEN36_GGUF_INSTALL_DIR=~/models/qwen36-gguf.gturbo \
-  cargo test -p mrefrust-repack --test gguf_qwen_install_network --release -- --ignored --nocapture
+TURBOSPARK_QWEN36_GGUF_INSTALL_DIR=~/models/qwen36-gguf.gturbo \
+  cargo test -p turbospark-repack --test gguf_qwen_install_network --release -- --ignored --nocapture
 
 # ROADMAP Phase G Stage 2 item 10: Qwen's V-head convention (Gotcha 33), on
 # EVERY layer rather than the layer 0 the transforms were characterized on.
 # Reports per tensor how well the bytes on disk and the de-interleaved
-# candidate agree with the MLX install. Read-only; MREFRUST_QWEN_PATCH=1
+# candidate agree with the MLX install. Read-only; TURBOSPARK_QWEN_PATCH=1
 # rewrites the install in place, which is how a coherence test costs seconds
 # instead of a 23-minute repack. Idempotent: it patches only what improves.
 # ~40 s, no network, needs both Qwen installs.
-MREFRUST_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
-MREFRUST_QWEN36_GGUF_INSTALL_DIR=~/models/qwen36-gguf.gturbo \
-  cargo test -p mrefrust-repack --test gguf_qwen_convention_patch --release -- --ignored --nocapture
+TURBOSPARK_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
+TURBOSPARK_QWEN36_GGUF_INSTALL_DIR=~/models/qwen36-gguf.gturbo \
+  cargo test -p turbospark-repack --test gguf_qwen_convention_patch --release -- --ignored --nocapture
 
 # The diagnostic that found the five QUANTIZED tensors on that axis, which a
 # BF16 probe structurally cannot see. Recovers the permutation outright where
 # a tensor has one row per head. ~1 s, needs both Qwen installs.
-MREFRUST_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
-MREFRUST_QWEN36_GGUF_INSTALL_DIR=~/models/qwen36-gguf.gturbo \
-  cargo test -p mrefrust-repack --test gguf_qwen_quant_probe --release -- --ignored --nocapture
+TURBOSPARK_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
+TURBOSPARK_QWEN36_GGUF_INSTALL_DIR=~/models/qwen36-gguf.gturbo \
+  cargo test -p turbospark-repack --test gguf_qwen_quant_probe --release -- --ignored --nocapture
 
 # The GGUF install's resident BF16 core must be BIT-IDENTICAL to the MLX
 # install's: norms, router.scale, per_expert_scale, layer_scalar. Settles
 # the Gemma norm "+1" convention and the shape-matched name mappings.
 # ~1 s, no network, needs both installs.
-MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
-MREFRUST_GEMMA4_GGUF_INSTALL_DIR=~/models/gemma4-gguf.gturbo \
-  cargo test -p mrefrust-repack --test gguf_norm_convention_probe --release -- --ignored --nocapture
+TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
+TURBOSPARK_GEMMA4_GGUF_INSTALL_DIR=~/models/gemma4-gguf.gturbo \
+  cargo test -p turbospark-repack --test gguf_norm_convention_probe --release -- --ignored --nocapture
 
 # The determinism check nothing else makes: one runner, the same greedy
 # generation six times, asserting ONE distinct output. This is what caught
 # Gotcha 27's cache-state-dependent reduce order; run it at 8/16/32 slots
 # after any change to the routed-expert path. ~15 s per slot count.
-MREFRUST_PROBE_SLOTS=32 MREFRUST_PROBE_INSTALL_DIR=~/models/gemma4.gturbo \
-  cargo test -p mrefrust-bench --test gguf_nondeterminism_probe --release -- --ignored --nocapture
+TURBOSPARK_PROBE_SLOTS=32 TURBOSPARK_PROBE_INSTALL_DIR=~/models/gemma4.gturbo \
+  cargo test -p turbospark-bench --test gguf_nondeterminism_probe --release -- --ignored --nocapture
 
 # The other #[ignore]d tests: real checkpoint downloads (many GB).
-cargo test -p mrefrust-repack --test gemma4_checkpoint_network --release -- --ignored --nocapture
-cargo test -p mrefrust-repack --test hf_checkpoint_network --release -- --ignored --nocapture
-MREFRUST_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
-  cargo test -p mrefrust-repack --test qwen36_checkpoint_network --release -- --ignored --nocapture
+cargo test -p turbospark-repack --test gemma4_checkpoint_network --release -- --ignored --nocapture
+cargo test -p turbospark-repack --test hf_checkpoint_network --release -- --ignored --nocapture
+TURBOSPARK_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
+  cargo test -p turbospark-repack --test qwen36_checkpoint_network --release -- --ignored --nocapture
 ```
 
 ### Real-model smoke (needs the pinned install)
@@ -276,17 +276,17 @@ distribution, so it stays byte-identical to correct through bugs that
 destroy sampling entirely (Gotcha 16).
 
 ```sh
-cargo build --release -p mrefrust-cli
+cargo build --release -p turbospark-cli
 printf '[{"role":"user","content":"Explain how coastal wetlands reduce flood damage."}]' > /tmp/p.json
 
 # 1. Greedy. Catches broken math.
-./target/release/mference-check --model ~/models/gemma4.gturbo \
+./target/release/turbospark-check --model ~/models/gemma4.gturbo \
   --messages-file /tmp/p.json --max-new 400 --seed 1 --temperature 0.0001 --top-k 1
 
 # 2. SAMPLED, at the CLI defaults (T=0.2, top-k 64, top-p 0.95). Catches
 #    distribution bugs greedy cannot see. Must stay coherent for the whole
 #    run and reach EndOfTurn on a short question.
-./target/release/mference-check --model ~/models/gemma4.gturbo \
+./target/release/turbospark-check --model ~/models/gemma4.gturbo \
   --messages-file /tmp/p.json --max-new 400 --seed 20260721
 ```
 
@@ -304,8 +304,8 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
 
 ## Gotchas
 
-1. Downstream crates depend on `mrefrust-core` under an alias, for example
-   `foundation = { package = "mrefrust-core", path = "../core" }`, and refer to it as
+1. Downstream crates depend on `turbospark-core` under an alias, for example
+   `foundation = { package = "turbospark-core", path = "../core" }`, and refer to it as
    `foundation`. The same aliasing pattern is used for every intra-workspace
    dependency (`compute`, `selection`, `tokenizer`, `model_io`, `runtime`,
    `invocation`) so the alias, not the crate's real package name, is what
@@ -342,10 +342,10 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
    never commit it.
 
 7. **Process-entry-point decision (resolved):** `crates/cli` (binary name
-   `mference-check`) is the process entry point that reads `argv`, calls
-   `mrefrust-invocation::parse`, and applies its pure exit-status/stream-routing
+   `turbospark-check`) is the process entry point that reads `argv`, calls
+   `turbospark-invocation::parse`, and applies its pure exit-status/stream-routing
    decisions. This resolves what an earlier note here called the reserved,
-   not-yet-created `mrefrust-entrypoint` name; that name is not used. On macOS
+   not-yet-created `turbospark-entrypoint` name; that name is not used. On macOS
    it also attempts real generation against `--model` via `RealForwardRunner`,
    in all three modes (`--prompt`, `--messages-file`, `--chat`) (see
    `DEVIATIONS.md`).
@@ -420,7 +420,7 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     `ScriptedLogitProducer` (a fixed replayed logit sequence) is what unit
     tests and `crates/server`'s `ScriptedChatModel` drive the raw-completion
     loop with on any platform. `crates/server`'s `RealChatModel` drives it
-    with `RealForwardRunner` on macOS (`mference-server --model`).
+    with `RealForwardRunner` on macOS (`turbospark-server --model`).
     Chunked prefill is wired regardless (`ChunkedPrefillRunner`,
     `run_raw_completion_chunked`) -- `ScriptedLogitProducer` implements it
     by consuming one scripted step per chunk; see `DEVIATIONS.md`.
@@ -451,13 +451,13 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     short names (`layer0.q_proj`) get
     the plain no-scale flow in `real_forward.rs`; verbatim
     real-checkpoint names (`language_model.model.layers.0...`, what
-    `mrefrust_repack::write_gemma4_install` writes) get the full Gemma 4
+    `turbospark_repack::write_gemma4_install` writes) get the full Gemma 4
     learned-weight flow in `real_forward_gemma4.rs` (BF16 norms, per-head
     q/k/v norms, INT8 router + effective scale, kernel-semantics top-k,
     INT8 shared-expert branch, sandwich tail, `layer_scalar`). Real
     Gemma 4 26B-A4B is PROVEN end to end: the pinned checkpoint repacks
     through the streamed pipeline and generates coherent chat-formatted
-    answers via `mference-check` (see DEVIATIONS.md -- raw prompts babble,
+    answers via `turbospark-check` (see DEVIATIONS.md -- raw prompts babble,
     the IT model needs its `<|turn>` markup, which `--messages-file` and
     `--chat` now render for you). `RealForwardRunner::phase_counters`
     accumulates per-phase decode timings (GPU wait, router readback,
@@ -465,7 +465,7 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     per-command-buffer GPU busy attribution (`GPUStartTime`/`GPUEndTime`,
     a separate axis from the wall-clock buckets: cb1 = attention+router,
     routed cb, final head; shared/hit buffers stay unattributed); run
-    `mference-check` with `MFERENCE_PHASES=1` to print the breakdown.
+    `turbospark-check` with `MFERENCE_PHASES=1` to print the breakdown.
     One level below that, `MFERENCE_DISPATCH_PROFILE=1` ranks the
     individual dispatches INSIDE each command buffer
     (`crates/gpu/src/dispatch_profile.rs`), which is what a per-buffer
@@ -511,7 +511,7 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     SYNTHETIC install (`build_synthetic_qwen36_real_install`); no real
     checkpoint has been repacked. DeepSeek-V4-Flash remains blocked on
     DSV4. Build a test/demo install with
-    `mrefrust_repack::build_synthetic_gemma4_install` (dense) or its
+    `turbospark_repack::build_synthetic_gemma4_install` (dense) or its
     `_swa`/`_moe`/`_moe_streamed` variants,
     `build_synthetic_gemma4_real_install` (real naming, exercises the
     real checkpoint repack pipeline), or
@@ -965,7 +965,7 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
 When working on code inside a specific crate, refer to that crate's `CLAUDE.md` file for crate-specific architecture, key modules, dev commands, and localized gotchas:
 
 - [`crates/bench/CLAUDE.md`](crates/bench/CLAUDE.md): Throughput benchmark harness, mach memory sampler, frozen protocol, memory oracle test rules.
-- [`crates/cli/CLAUDE.md`](crates/cli/CLAUDE.md): CLI binary (`mference-check`), process entry point, real model smoke tests, interactive chat REPL.
+- [`crates/cli/CLAUDE.md`](crates/cli/CLAUDE.md): CLI binary (`turbospark-check`), process entry point, real model smoke tests, interactive chat REPL.
 - [`crates/compute/CLAUDE.md`](crates/compute/CLAUDE.md): CPU reference kernels (RmsNorm, RoPE, Attention, Quant), numerical ground truth for GPU tests.
 - [`crates/core/CLAUDE.md`](crates/core/CLAUDE.md): Shared primitives (`TokenId`, `LogitValue`), runtime configuration, allowed sets, chunk sizing.
 - [`crates/gpu/CLAUDE.md`](crates/gpu/CLAUDE.md): macOS Metal context, pipeline caches, MSL shaders, KV cache, zero-copy weights, profiling flags.
@@ -974,7 +974,7 @@ When working on code inside a specific crate, refer to that crate's `CLAUDE.md` 
 - [`crates/repack/CLAUDE.md`](crates/repack/CLAUDE.md): Safetensors header parsing, ranged HTTP downloads, `.gturbo` writer, synthetic model builders.
 - [`crates/runtime/CLAUDE.md`](crates/runtime/CLAUDE.md): Raw completion generation loop, `LogitProducer` contract, `RealForwardRunner` decode engine.
 - [`crates/selection/CLAUDE.md`](crates/selection/CLAUDE.md): Candidate token selection, temperature/top-k/top-p shaping, repetition penalty, logits contract.
-- [`crates/server/CLAUDE.md`](crates/server/CLAUDE.md): the `mference-server` HTTP server (OpenAI `/v1/chat/completions`, Anthropic `/v1/messages`, `/v1/models`), Axum handlers, SSE streaming, `anyllm_translate` wire types.
+- [`crates/server/CLAUDE.md`](crates/server/CLAUDE.md): the `turbospark-server` HTTP server (OpenAI `/v1/chat/completions`, Anthropic `/v1/messages`, `/v1/models`), Axum handlers, SSE streaming, `anyllm_translate` wire types.
 - [`crates/streaming/CLAUDE.md`](crates/streaming/CLAUDE.md): Routed expert `pread` streamer, LFU/LRU slot cache policy, chunked reads on a persistent `read_pool`, macOS `F_RDADVISE` hints.
 - [`crates/tokenizer/CLAUDE.md`](crates/tokenizer/CLAUDE.md): Tokenizer wrapper (`MfTokenizer`), chat dialects, Jinja template rendering, stop matcher, fixture token IDs.
 - [`crates/window-fit/CLAUDE.md`](crates/window-fit/CLAUDE.md): Pure conversation window fitting (`fit_conversation_window`), turn dropping logic.
@@ -996,8 +996,8 @@ Workspace directory structure and crate layout:
 +-- ROADMAP.md         # forward roadmap + descope record (gitignored)
 +-- rust-toolchain.toml # toolchain pin (stable Rust 1.82+)
 +-- crates
-|   +-- bench          # mference-bench binary & harness (throughput benchmark)
-|   +-- cli            # mference-check binary (process entry point & CLI runner)
+|   +-- bench          # turbospark-bench binary & harness (throughput benchmark)
+|   +-- cli            # turbospark-check binary (process entry point & CLI runner)
 |   +-- compute        # CPU reference kernels & compute strategy marker
 |   +-- core           # shared primitives (TokenId, LogitValue), RuntimeConfig, chunking
 |   +-- gpu            # Metal pipeline cache & GPU kernel dispatches (macOS only)
@@ -1042,11 +1042,11 @@ divergence and perplexity functions rather than restating them.
 - `crates/model-io`: `manifest.json` decode and field-by-field validation against a resolved `ArchConfig` (with canonical Gemma 4, Qwen 3.6, and DeepSeek-V4-Flash baselines), `packed_experts/layout.json` decode (`PackedExpertsLayout`), `model_weights.bin` resident tensor index reader (`ResidentIndex`), `mmap`'d resident-buffer view (`ResidentBuffer`), streaming SHA-256 verification (`sha256.rs`), and trusted install receipt (`InstallReceipt`). Allowed a narrow amount of `unsafe` (the `mmap` call). Details in [`crates/model-io/CLAUDE.md`](crates/model-io/CLAUDE.md).
 - `crates/streaming`: routed-expert `pread` streamer (`PreadExpertStreamer`) with a fixed per-layer slot cache. The LFU/LRU eviction policy (`ExpertCache`) is pure logic, separated from file I/O so it can be tested against access traces without a model install. Cache misses are split into chunks and read on `read_pool`, a process-wide set of parked worker threads, so a layer that misses once still reads at full width (the `pread` is a page-cache memcpy, not disk I/O). `rdadvice` and `read_pool` are the other `unsafe`-carrying modules (macOS `F_RDADVISE`, a documented no-op elsewhere; raw destination pointers across worker threads). Details in [`crates/streaming/CLAUDE.md`](crates/streaming/CLAUDE.md).
 - `crates/gpu`: Metal device/pipeline-cache context (`MetalContext`, `PassEncoder`, `CommittedPass`) and per-kernel dispatch. macOS-only; compiles to nothing elsewhere. Dispatched, parity-tested kernels (`rmsnorm_no_scale`, `rms_norm_bf16w`, both `_perhead` norm variants, `rope_proportional_neox`, `rope_neox_subdim`, `logit_softcap_softmax`, `dequant_int4_gemv_simd`, `dequant_int8_gemv_simd` with resident variants, the port-local GGUF set (`dequant_q8_0_gemv_simd`, `dequant_q4_k_gemv_simd`, `dequant_q6_k_gemv_simd`, `embed_lookup_q8_0`, `embed_lookup_q4_k`, and `moe_gguf.metal`'s two decode pairs -- ROADMAP Phase G), `router_gemv_gemma4_r4`, two-pass split-KV `attention_decode` (multi-chunk, split up to 16 ways by `chunks_for`), `moe_decode` decode pair, `gdn.metal`'s eight gated-DeltaNet kernels, and `utility` elementwise kernels incl. Qwen's three gating kernels) are compiled from MSL source at runtime, vendored from Swift except where marked port-local. `KvCacheManager` allocates and manages real per-layer Metal KV buffers used by `RealForwardRunner`. `ResidentGpuWeights` wraps resident mmap in zero-copy MTLBuffer. `GdnStateManager` is the Qwen flow's recurrent state; `Dsv4StateManager` allocates real per-layer Metal buffers (unwired kernels); `PrefillChunkScratchLayout`/`PrefillChunkScratchBuffers` size scratch buffers (undispatched tile kernel). The `sample` kernel and fused lm_head are not yet vendored or dispatched. Details in [`crates/gpu/CLAUDE.md`](crates/gpu/CLAUDE.md).
-- `crates/runtime`: raw-completion prefill+decode loop (`run_raw_completion`, `run_raw_completion_chunked`), wiring a `LogitProducer`, the tokenizer's streaming detokenizer and stop matcher, and `selection::select` into one token generation loop. `ScriptedLogitProducer` is what unit tests and `crates/server`'s `ScriptedChatModel` drive the loop with (see Gotcha 10). `RealForwardRunner` (macOS/GPU only, `src/real_forward.rs`, `src/real_forward_gemma4.rs`, and `src/real_forward_qwen{,_attn}.rs`) is a real `LogitProducer`: a genuine transformer forward pass through real GPU kernels (including real GPU decode attention) and real quantized weights, supporting dense and MoE FFN layers. Dense bridges gated FFN on CPU via `mrefrust_compute::run_ffn`; MoE runs real GPU router GEMV plus real GPU GEMVs for each selected expert, host-side top-k selection, and CPU-bridged gated activation. Supports synthetic short names, verbatim real Gemma 4 checkpoint names (learned-weight flow), and the Qwen 3.6 hybrid linear/full-attention flow. See Gotcha 12. Details in [`crates/runtime/CLAUDE.md`](crates/runtime/CLAUDE.md).
-- `crates/cli`: the `mference-check` binary process entry point (see Gotcha 7). Parses `argv`, applies `invocation`'s exit-status and stream-routing decisions, prints the resolved request for a validated invocation, and (macOS, `src/generate.rs`) attempts real generation against `--model` via `RealForwardRunner` (see Gotcha 12) in all three modes: `--prompt` (raw text), `--messages-file` (rendered through chat template), and `--chat` (interactive REPL in `src/chat.rs`, trimming turns with `mrefrust-window-fit`). Details in [`crates/cli/CLAUDE.md`](crates/cli/CLAUDE.md).
-- `crates/repack`: safetensors header parsing (pure, tested against synthetic fixtures), `RangeSource` trait for ranged reads (HTTP-backed for real installs, in-memory for tests) with two-step header-fetch plan, per-row int4/int8 quantization repack (reusing `mrefrust_compute`'s quantizer), byte-exact `.gturbo` directory assembly (`write_gturbo_install`), real named resident-tensor index writer (`write_gturbo_install_with_resident_index`), synthetic install builders (`synthetic_model.rs`, `synthetic_real.rs`, `synthetic_qwen.rs`), Hugging Face Llama checkpoint repacker (`hf_checkpoint.rs`), Gemma 4 mlx-community checkpoint repacker & streamed pipeline (`gemma4_checkpoint.rs`, family-parameterized so Qwen 3.6 goes through the same walk), Qwen 3.6 `config.json` parser (`qwen36_config.rs`, the one family-specific piece of that walk), install verifier (`install_verifier.rs`), manifest peeker (`manifest_peek.rs`), and the GGUF intake (`gguf_header.rs` parser, `gguf_names.rs` name mapping, `gguf_config.rs` metadata-to-`ArchConfig`, `gguf_checkpoint.rs` repack walk (expert bytes verbatim, resident F32 core transcoded to BF16/INT8, Qwen's V-head source convention undone at `v_head_axis`), `synthetic_gguf.rs` fixture writer -- ROADMAP Phase G; Q8_0, Q4_K and Q6_K installs are executable and Q4_0 is refused, see Gotchas 29 and 33). Details in [`crates/repack/CLAUDE.md`](crates/repack/CLAUDE.md).
-- `crates/server`: HTTP server on loopback (`mference-server` binary, axum framework) serving OpenAI `/v1/chat/completions`, Anthropic `/v1/messages`, and `/v1/models`, both generation endpoints supporting full-response (non-streaming) and SSE-streaming responses. The wire types come from `anyllm_translate` (crates.io, default features: pure and IO-free), which also translates an Anthropic request into the OpenAI request the existing path understands and translates the result back, so Anthropic-native clients need no proxy. Tool calling is wired on both endpoints (request `tools` render through the checkpoint's `chat_template.jinja`, generated calls come back through `StructuredAssistantDecoder`); images and `thinking` are dropped, some of it reported on an `x-anyllm-degradation` header. Two backends behind the `ChatModel` trait: `RealChatModel` (macOS, `--model <install-dir>`, one mutex-serialized `RealForwardRunner` per process) and `ScriptedChatModel` (portable, canned completions, what the integration tests drive). Details in [`crates/server/CLAUDE.md`](crates/server/CLAUDE.md).
-- `crates/bench`: the `mference-bench` binary plus benchmark library (`mrefrust_bench`). The scripted default (three fixed prompts, fixed seed, discarded warmup) measures loop overhead via `ScriptedLogitProducer`. `--model <install-dir>` (macOS) is the real Swift-comparison mode: frozen community protocol (`protocol.rs`) driven through `RealForwardRunner`, reporting split prefill/decode tok/s and peak `phys_footprint` from the mach sampler (`memory.rs`). `tests/memory_oracle.rs` (`#[ignore]`d, gated on `MREFRUST_GEMMA4_INSTALL_DIR`) asserts peak footprint against per-chip baseline rows, plus a steady-state replay guard; each row carries a `source` recording whether it is a Swift parity number or this port's own measurement. The quality axis lives here too, all `#[ignore]`d: `tests/quality_gate.rs` and its Qwen sibling (per-install perplexity plus golden digests), `tests/quality_sensitivity.rs` (proof the perplexity responds to quantization damage), and `tests/logit_dump.rs` (full-vocab logits plus the exact token ids, feeding `scripts/kld.py`'s cross-engine KL against mlx-lm -- the one external reference in the whole quality section). Full details in [`crates/bench/CLAUDE.md`](crates/bench/CLAUDE.md) and `docs/BENCHMARKING.md`.
+- `crates/runtime`: raw-completion prefill+decode loop (`run_raw_completion`, `run_raw_completion_chunked`), wiring a `LogitProducer`, the tokenizer's streaming detokenizer and stop matcher, and `selection::select` into one token generation loop. `ScriptedLogitProducer` is what unit tests and `crates/server`'s `ScriptedChatModel` drive the loop with (see Gotcha 10). `RealForwardRunner` (macOS/GPU only, `src/real_forward.rs`, `src/real_forward_gemma4.rs`, and `src/real_forward_qwen{,_attn}.rs`) is a real `LogitProducer`: a genuine transformer forward pass through real GPU kernels (including real GPU decode attention) and real quantized weights, supporting dense and MoE FFN layers. Dense bridges gated FFN on CPU via `turbospark_compute::run_ffn`; MoE runs real GPU router GEMV plus real GPU GEMVs for each selected expert, host-side top-k selection, and CPU-bridged gated activation. Supports synthetic short names, verbatim real Gemma 4 checkpoint names (learned-weight flow), and the Qwen 3.6 hybrid linear/full-attention flow. See Gotcha 12. Details in [`crates/runtime/CLAUDE.md`](crates/runtime/CLAUDE.md).
+- `crates/cli`: the `turbospark-check` binary process entry point (see Gotcha 7). Parses `argv`, applies `invocation`'s exit-status and stream-routing decisions, prints the resolved request for a validated invocation, and (macOS, `src/generate.rs`) attempts real generation against `--model` via `RealForwardRunner` (see Gotcha 12) in all three modes: `--prompt` (raw text), `--messages-file` (rendered through chat template), and `--chat` (interactive REPL in `src/chat.rs`, trimming turns with `turbospark-window-fit`). Details in [`crates/cli/CLAUDE.md`](crates/cli/CLAUDE.md).
+- `crates/repack`: safetensors header parsing (pure, tested against synthetic fixtures), `RangeSource` trait for ranged reads (HTTP-backed for real installs, in-memory for tests) with two-step header-fetch plan, per-row int4/int8 quantization repack (reusing `turbospark_compute`'s quantizer), byte-exact `.gturbo` directory assembly (`write_gturbo_install`), real named resident-tensor index writer (`write_gturbo_install_with_resident_index`), synthetic install builders (`synthetic_model.rs`, `synthetic_real.rs`, `synthetic_qwen.rs`), Hugging Face Llama checkpoint repacker (`hf_checkpoint.rs`), Gemma 4 mlx-community checkpoint repacker & streamed pipeline (`gemma4_checkpoint.rs`, family-parameterized so Qwen 3.6 goes through the same walk), Qwen 3.6 `config.json` parser (`qwen36_config.rs`, the one family-specific piece of that walk), install verifier (`install_verifier.rs`), manifest peeker (`manifest_peek.rs`), and the GGUF intake (`gguf_header.rs` parser, `gguf_names.rs` name mapping, `gguf_config.rs` metadata-to-`ArchConfig`, `gguf_checkpoint.rs` repack walk (expert bytes verbatim, resident F32 core transcoded to BF16/INT8, Qwen's V-head source convention undone at `v_head_axis`), `synthetic_gguf.rs` fixture writer -- ROADMAP Phase G; Q8_0, Q4_K and Q6_K installs are executable and Q4_0 is refused, see Gotchas 29 and 33). Details in [`crates/repack/CLAUDE.md`](crates/repack/CLAUDE.md).
+- `crates/server`: HTTP server on loopback (`turbospark-server` binary, axum framework) serving OpenAI `/v1/chat/completions`, Anthropic `/v1/messages`, and `/v1/models`, both generation endpoints supporting full-response (non-streaming) and SSE-streaming responses. The wire types come from `anyllm_translate` (crates.io, default features: pure and IO-free), which also translates an Anthropic request into the OpenAI request the existing path understands and translates the result back, so Anthropic-native clients need no proxy. Tool calling is wired on both endpoints (request `tools` render through the checkpoint's `chat_template.jinja`, generated calls come back through `StructuredAssistantDecoder`); images and `thinking` are dropped, some of it reported on an `x-anyllm-degradation` header. Two backends behind the `ChatModel` trait: `RealChatModel` (macOS, `--model <install-dir>`, one mutex-serialized `RealForwardRunner` per process) and `ScriptedChatModel` (portable, canned completions, what the integration tests drive). Details in [`crates/server/CLAUDE.md`](crates/server/CLAUDE.md).
+- `crates/bench`: the `turbospark-bench` binary plus benchmark library (`turbospark_bench`). The scripted default (three fixed prompts, fixed seed, discarded warmup) measures loop overhead via `ScriptedLogitProducer`. `--model <install-dir>` (macOS) is the real Swift-comparison mode: frozen community protocol (`protocol.rs`) driven through `RealForwardRunner`, reporting split prefill/decode tok/s and peak `phys_footprint` from the mach sampler (`memory.rs`). `tests/memory_oracle.rs` (`#[ignore]`d, gated on `TURBOSPARK_GEMMA4_INSTALL_DIR`) asserts peak footprint against per-chip baseline rows, plus a steady-state replay guard; each row carries a `source` recording whether it is a Swift parity number or this port's own measurement. The quality axis lives here too, all `#[ignore]`d: `tests/quality_gate.rs` and its Qwen sibling (per-install perplexity plus golden digests), `tests/quality_sensitivity.rs` (proof the perplexity responds to quantization damage), and `tests/logit_dump.rs` (full-vocab logits plus the exact token ids, feeding `scripts/kld.py`'s cross-engine KL against mlx-lm -- the one external reference in the whole quality section). Full details in [`crates/bench/CLAUDE.md`](crates/bench/CLAUDE.md) and `docs/BENCHMARKING.md`.
 - `docs/`: repository documentation directory. `docs/BENCHMARKING.md` details benchmark harness modes, mach memory sampling, and the memory oracle baseline assertions; `docs/POWER_BASELINE.md` records watts and joules-per-token per install plus the power-hygiene audit (ROADMAP Phase P1), and is the one page here measured on BATTERY rather than AC; `docs/TESTING.md` documents test suite organization, macOS and environment-variable gating conventions, and test writing rules.
 
 ## Verification policy

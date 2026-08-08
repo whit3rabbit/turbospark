@@ -3,8 +3,8 @@
 //! Needs a real `.gturbo` install and a Metal device, so it is `#[ignore]`d
 //! and gated on the same env var the memory oracle uses:
 //!
-//!   MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
-//!     cargo test -p mrefrust-server --test real_backend --release -- --ignored --nocapture
+//!   TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
+//!     cargo test -p turbospark-server --test real_backend --release -- --ignored --nocapture
 //!
 //! One model open serves both requests, in sequence: that is the point, it
 //! proves a second request through the same mutex-held runner still works
@@ -15,25 +15,25 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use mrefrust_server::{build_router, RealChatModel};
+use turbospark_server::{build_router, RealChatModel};
 
 fn install_dir() -> Option<PathBuf> {
-    std::env::var_os("MREFRUST_GEMMA4_INSTALL_DIR").map(PathBuf::from)
+    std::env::var_os("TURBOSPARK_GEMMA4_INSTALL_DIR").map(PathBuf::from)
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "needs a real Gemma 4 .gturbo install (MREFRUST_GEMMA4_INSTALL_DIR)"]
+#[ignore = "needs a real Gemma 4 .gturbo install (TURBOSPARK_GEMMA4_INSTALL_DIR)"]
 async fn real_backend_serves_streaming_and_non_streaming_requests() {
     let Some(dir) = install_dir() else {
         eprintln!(
-            "real_backend: MREFRUST_GEMMA4_INSTALL_DIR is not set; skipping. \
+            "real_backend: TURBOSPARK_GEMMA4_INSTALL_DIR is not set; skipping. \
              Point it at a repacked Gemma 4 .gturbo install to run this test."
         );
         return;
     };
 
     let model = RealChatModel::open(&dir, 1024, 16).expect("real install should open");
-    let model: Arc<dyn mrefrust_server::ChatModel> = Arc::new(model);
+    let model: Arc<dyn turbospark_server::ChatModel> = Arc::new(model);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {

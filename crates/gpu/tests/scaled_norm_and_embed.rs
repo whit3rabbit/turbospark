@@ -1,10 +1,10 @@
 #![cfg(target_os = "macos")]
 //! Parity tests for `rmsnorm_bf16w` (scaled RMSNorm, the learned-weight
 //! form real checkpoints need) and `embed_lookup_int4` (GPU embedding
-//! row dequant) against their `mrefrust_compute` references.
+//! row dequant) against their `turbospark_compute` references.
 
 use half::f16;
-use mrefrust_gpu::MetalContext;
+use turbospark_gpu::MetalContext;
 
 fn to_le(v: &[f16]) -> Vec<u8> {
     let mut out = Vec::with_capacity(v.len() * 2);
@@ -42,7 +42,7 @@ fn rmsnorm_bf16w_matches_cpu_reference() {
         .map(|&b| f32::from_bits((b as u32) << 16))
         .collect();
     let x32: Vec<f32> = x16.iter().map(|v| v.to_f32()).collect();
-    let expected = mrefrust_compute::rms_norm(&x32, &w_rounded, eps);
+    let expected = turbospark_compute::rms_norm(&x32, &w_rounded, eps);
 
     let x_buf = context.new_buffer_with_data(&to_le(&x16));
     let w_bytes: Vec<u8> = w_bits.iter().flat_map(|b| b.to_le_bytes()).collect();
@@ -50,7 +50,7 @@ fn rmsnorm_bf16w_matches_cpu_reference() {
     let out_buf = context.new_output_buffer((d * 2) as u64);
 
     let pass = context.begin_pass();
-    mrefrust_gpu::encode_rms_norm_bf16w(
+    turbospark_gpu::encode_rms_norm_bf16w(
         &mut context,
         &pass,
         (&x_buf, 0),
@@ -90,14 +90,15 @@ fn embed_lookup_int4_matches_cpu_reference() {
         let row: Vec<f32> = (0..d)
             .map(|i| (((r * 131 + i) as f32) * 0.13).sin())
             .collect();
-        let q = mrefrust_compute::quantize_int4_affine(&row);
+        let q = turbospark_compute::quantize_int4_affine(&row);
         packed.extend_from_slice(&q.packed);
         scales.extend_from_slice(&q.scales);
         biases.extend_from_slice(&q.biases);
     }
 
-    let expected =
-        mrefrust_compute::quant::embed_lookup_int4(&packed, &scales, &biases, token, d, out_scale);
+    let expected = turbospark_compute::quant::embed_lookup_int4(
+        &packed, &scales, &biases, token, d, out_scale,
+    );
 
     let u16_le = |v: &[u16]| -> Vec<u8> { v.iter().flat_map(|b| b.to_le_bytes()).collect() };
     let table_buf = context.new_buffer_with_data(&packed);
@@ -106,7 +107,7 @@ fn embed_lookup_int4_matches_cpu_reference() {
     let out_buf = context.new_output_buffer((d * 2) as u64);
 
     let pass = context.begin_pass();
-    mrefrust_gpu::encode_embed_lookup_int4(
+    turbospark_gpu::encode_embed_lookup_int4(
         &mut context,
         &pass,
         (&table_buf, 0),

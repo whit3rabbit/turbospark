@@ -10,11 +10,11 @@
 use std::path::PathBuf;
 
 use foundation::LogitValue;
-use mrefrust_runtime::{
-    run_raw_completion, GenerationConfig, RawDecodeProgress, ScriptedLogitProducer, StopReason,
-};
 use selection::ShapingConfig;
 use tokenizer::MfTokenizer;
+use turbospark_runtime::{
+    run_raw_completion, GenerationConfig, RawDecodeProgress, ScriptedLogitProducer, StopReason,
+};
 
 fn load_tokenizer() -> MfTokenizer {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ChatMLTokenizer");
@@ -129,7 +129,7 @@ fn rejects_empty_prompt() {
         |_| {},
     )
     .unwrap_err();
-    assert_eq!(err, mrefrust_runtime::RuntimeError::EmptyPrompt);
+    assert_eq!(err, turbospark_runtime::RuntimeError::EmptyPrompt);
 }
 
 #[test]
@@ -151,7 +151,7 @@ fn rejects_context_overflow() {
     .unwrap_err();
     assert!(matches!(
         err,
-        mrefrust_runtime::RuntimeError::ContextOverflow { .. }
+        turbospark_runtime::RuntimeError::ContextOverflow { .. }
     ));
 }
 

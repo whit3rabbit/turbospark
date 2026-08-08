@@ -1,6 +1,6 @@
-# mrefrust-server
+# turbospark-server
 
-HTTP server (`mference-server`) built on Axum, implementing OpenAI `/v1/chat/completions`, Anthropic `/v1/messages`, and `/v1/models` API endpoints. Both generation endpoints support non-streaming JSON and Server-Sent Events (SSE) streaming formats.
+HTTP server (`turbospark-server`) built on Axum, implementing OpenAI `/v1/chat/completions`, Anthropic `/v1/messages`, and `/v1/models` API endpoints. Both generation endpoints support non-streaming JSON and Server-Sent Events (SSE) streaming formats.
 
 The server uses `anyllm_translate` wire types for IO-free translation between Anthropic and OpenAI request and response formats.
 
@@ -8,11 +8,11 @@ The server uses `anyllm_translate` wire types for IO-free translation between An
 
 ```sh
 # Launch server against a real .gturbo model install (macOS, release mode required)
-cargo run --release -p mrefrust-server --bin mference-server -- \
+cargo run --release -p turbospark-server --bin turbospark-server -- \
   --model ~/models/gemma4.gturbo [--port 8080] [--bind loopback|tailnet]
 
 # Launch scripted server (canned completions, for integration testing)
-cargo run -p mrefrust-server --bin mference-server -- <tokenizer-dir> [port]
+cargo run -p turbospark-server --bin turbospark-server -- <tokenizer-dir> [port]
 ```
 
 ## Key Modules
@@ -27,8 +27,8 @@ cargo run -p mrefrust-server --bin mference-server -- <tokenizer-dir> [port]
 ## Development & Test Commands
 
 ```sh
-# Run integration tests for mrefrust-server
-cargo test -p mrefrust-server
+# Run integration tests for turbospark-server
+cargo test -p turbospark-server
 
 # Test endpoint accessibility against a running server
 curl -s http://127.0.0.1:8080/v1/models

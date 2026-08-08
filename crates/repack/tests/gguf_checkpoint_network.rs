@@ -9,11 +9,11 @@
 //! repack walk knows how to place.
 //!
 //! ```sh
-//! cargo test -p mrefrust-repack --test gguf_checkpoint_network --release -- --ignored --nocapture
+//! cargo test -p turbospark-repack --test gguf_checkpoint_network --release -- --ignored --nocapture
 //! ```
 
 use model_io::ModelFamily;
-use mrefrust_repack::{
+use turbospark_repack::{
     arch_from_gguf, fetch_gguf_header, ggml_type_name, map_gguf_name, peek_manifest_arch,
     GgufHeader, GgufMapping, HttpRangeSource,
 };
@@ -194,8 +194,8 @@ fn reads_the_real_gemma4_q8_0_header() {
     assert_eq!(h.architecture(), Some("gemma4"));
     assert!(h.tensors.len() > 100);
     assert_every_name_maps(&h, ModelFamily::Gemma4);
-    assert_mapped_names_exist_in_install(&h, ModelFamily::Gemma4, "MREFRUST_GEMMA4_INSTALL_DIR");
-    assert_arch_matches_install(&h, "MREFRUST_GEMMA4_INSTALL_DIR");
+    assert_mapped_names_exist_in_install(&h, ModelFamily::Gemma4, "TURBOSPARK_GEMMA4_INSTALL_DIR");
+    assert_arch_matches_install(&h, "TURBOSPARK_GEMMA4_INSTALL_DIR");
 }
 
 #[test]
@@ -207,6 +207,6 @@ fn reads_the_real_qwen36_q4_k_m_header() {
     assert_eq!(h.architecture(), Some("qwen35moe"));
     assert!(h.tensors.len() > 100);
     assert_every_name_maps(&h, ModelFamily::Qwen36);
-    assert_mapped_names_exist_in_install(&h, ModelFamily::Qwen36, "MREFRUST_QWEN36_INSTALL_DIR");
-    assert_arch_matches_install(&h, "MREFRUST_QWEN36_INSTALL_DIR");
+    assert_mapped_names_exist_in_install(&h, ModelFamily::Qwen36, "TURBOSPARK_QWEN36_INSTALL_DIR");
+    assert_arch_matches_install(&h, "TURBOSPARK_QWEN36_INSTALL_DIR");
 }

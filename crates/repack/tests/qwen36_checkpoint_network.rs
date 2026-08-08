@@ -4,23 +4,23 @@
 //! SHA-256). Sibling of `gemma4_checkpoint_network.rs`; not run by default:
 //!
 //! ```sh
-//! MREFRUST_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
-//!   cargo test -p mrefrust-repack --test qwen36_checkpoint_network --release -- --ignored --nocapture
+//! TURBOSPARK_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
+//!   cargo test -p turbospark-repack --test qwen36_checkpoint_network --release -- --ignored --nocapture
 //! ```
 //!
 //! This is the ONLY thing that proves the multi-shard walk on this family:
 //! the synthetic fixture is a single in-memory shard, so a companion tensor
 //! living in a different shard than its weight is unexercised there.
 //!
-//! Set `MREFRUST_QWEN36_INSTALL_DIR` to keep the install for manual
-//! `mference-check` runs (the test downloads the tokenizer sidecars into it
+//! Set `TURBOSPARK_QWEN36_INSTALL_DIR` to keep the install for manual
+//! `turbospark-check` runs (the test downloads the tokenizer sidecars into it
 //! so the CLI can open the directory directly); otherwise a temp directory
 //! is used.
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
-use mrefrust_repack::{
+use turbospark_repack::{
     fetch_safetensors_header, parse_gemma4_quantization, parse_qwen36_config,
     write_qwen36_install_streamed, Gemma4Shards, HttpRangeSource,
 };
@@ -50,7 +50,7 @@ fn get(path: &str) -> Vec<u8> {
 }
 
 fn install_dir() -> PathBuf {
-    match std::env::var_os("MREFRUST_QWEN36_INSTALL_DIR") {
+    match std::env::var_os("TURBOSPARK_QWEN36_INSTALL_DIR") {
         Some(dir) => {
             let dir = PathBuf::from(dir);
             std::fs::create_dir_all(&dir).expect("create install dir");
@@ -58,7 +58,7 @@ fn install_dir() -> PathBuf {
         }
         None => {
             let dir =
-                std::env::temp_dir().join(format!("mrefrust-qwen36-real-{}", std::process::id()));
+                std::env::temp_dir().join(format!("turbospark-qwen36-real-{}", std::process::id()));
             std::fs::create_dir_all(&dir).unwrap();
             dir
         }
@@ -100,7 +100,7 @@ fn repacks_the_real_qwen36_checkpoint() {
     assert_eq!(quant.default_bits, 4);
     // `validate_quant` accepts router 8 ONLY, so an upstream change here
     // would fail much later, at load, with a far less obvious message.
-    let manifest_quant = mrefrust_repack::manifest_quant(&quant, model_io::ModelFamily::Qwen36);
+    let manifest_quant = turbospark_repack::manifest_quant(&quant, model_io::ModelFamily::Qwen36);
     assert_eq!(
         manifest_quant["router"]["weightBits"], 8,
         "router must be INT8"
@@ -119,7 +119,7 @@ fn repacks_the_real_qwen36_checkpoint() {
         headers
             .iter()
             .zip(sources.iter())
-            .map(|(h, s)| (h, s as &dyn mrefrust_repack::RangeSource))
+            .map(|(h, s)| (h, s as &dyn turbospark_repack::RangeSource))
             .collect(),
     );
 
@@ -130,7 +130,7 @@ fn repacks_the_real_qwen36_checkpoint() {
     })
     .expect("streamed install");
 
-    // Tokenizer sidecars so mference-check can open the dir directly. This
+    // Tokenizer sidecars so turbospark-check can open the dir directly. This
     // checkpoint is ChatML-dialect, so raw `--prompt` text babbles the same
     // way Gemma's does; use `--messages-file` or `--chat`.
     for name in [
@@ -203,7 +203,7 @@ fn repacks_the_real_qwen36_checkpoint() {
 
     eprintln!(
         "SUCCESS: real Qwen3.6-35B-A3B repacked into {}, run \
-         `cargo run -p mrefrust-cli --bin mference-check --release -- --model {} --messages-file /tmp/p.json`",
+         `cargo run -p turbospark-cli --bin turbospark-check --release -- --model {} --messages-file /tmp/p.json`",
         dir.display(),
         dir.display()
     );

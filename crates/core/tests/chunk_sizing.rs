@@ -1,9 +1,9 @@
 //! Integration tests for automatic chunk-size resolution.
 //!
-//! The core crate is referenced by its package name `mrefrust-core` (`mrefrust_core`).
+//! The core crate is referenced by its package name `turbospark-core` (`turbospark_core`).
 
-use mrefrust_core::chunk_sizing::{resolve_automatic_chunk_size, InputLength};
-use mrefrust_core::runtime_config::{ALLOWED_CHUNK_SIZES, DEFAULT_CHUNK_SIZE};
+use turbospark_core::chunk_sizing::{resolve_automatic_chunk_size, InputLength};
+use turbospark_core::runtime_config::{ALLOWED_CHUNK_SIZES, DEFAULT_CHUNK_SIZE};
 
 #[test]
 fn a_request_made_before_the_length_is_known_uses_the_fixed_default() {

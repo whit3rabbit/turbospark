@@ -4,7 +4,7 @@
 //! (obl-select-003).
 
 use foundation::{LogitValue, LogitsView, TokenId};
-use mrefrust_selection::{select, ShapingConfig};
+use turbospark_selection::{select, ShapingConfig};
 
 fn logits(values: &[f32]) -> Vec<LogitValue> {
     values.iter().map(|&v| LogitValue::from_f32(v)).collect()

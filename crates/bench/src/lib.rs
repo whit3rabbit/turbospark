@@ -1,5 +1,5 @@
 //! Library surface of the bench harness, so the memory-oracle integration
-//! test can drive the exact same real-install flow the `mference-bench`
+//! test can drive the exact same real-install flow the `turbospark-bench`
 //! binary runs (`--model` mode): frozen community-protocol prompts, the
 //! Swift-parity `phys_footprint` sampler, and per-case results.
 

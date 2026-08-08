@@ -3,7 +3,7 @@
 //! `Runtime/Generation/LogitProducer.swift`.
 //!
 //! The production implementation (`RealForwardRunner`, wiring the GPU
-//! kernel stack in `mrefrust_gpu` to real model weights) is out of scope
+//! kernel stack in `turbospark_gpu` to real model weights) is out of scope
 //! for this port: no trained `.gturbo` weights or full kernel set are
 //! available to validate one against. [`ScriptedLogitProducer`] plays the
 //! same role Swift's `ScriptedLogitProducer` test fixture does — it lets

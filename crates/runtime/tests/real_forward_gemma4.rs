@@ -12,15 +12,15 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use half::f16;
-use mrefrust_repack::build_synthetic_gemma4_real_install;
-use mrefrust_runtime::{LogitProducer, RealForwardRunner};
+use turbospark_repack::build_synthetic_gemma4_real_install;
+use turbospark_runtime::{LogitProducer, RealForwardRunner};
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn temp_dir() -> PathBuf {
     let n = COUNTER.fetch_add(1, Ordering::SeqCst);
     let dir = std::env::temp_dir().join(format!(
-        "mrefrust-real-forward-gemma4-{}-{n}",
+        "turbospark-real-forward-gemma4-{}-{n}",
         std::process::id()
     ));
     std::fs::create_dir_all(&dir).unwrap();

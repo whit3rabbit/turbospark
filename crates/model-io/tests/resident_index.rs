@@ -4,7 +4,7 @@
 
 use std::io::Write;
 
-use mrefrust_model_io::{load_resident_index, ModelError, ENTRY_BYTES, HEADER_BYTES};
+use turbospark_model_io::{load_resident_index, ModelError, ENTRY_BYTES, HEADER_BYTES};
 
 fn build_index_bytes(name: &str) -> Vec<u8> {
     let name_bytes = name.as_bytes();
@@ -50,7 +50,7 @@ fn write_file(bytes: &[u8]) -> std::path::PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
     let dir = std::env::temp_dir().join(format!(
-        "mrefrust-resident-index-{}-{unique}",
+        "turbospark-resident-index-{}-{unique}",
         std::process::id()
     ));
     std::fs::create_dir_all(&dir).unwrap();

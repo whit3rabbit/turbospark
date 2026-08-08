@@ -5,7 +5,7 @@
 //! quietly rename a tensor the runtime looks up by string.
 
 use model_io::ModelFamily;
-use mrefrust_repack::{
+use turbospark_repack::{
     family_for_architecture, gguf_architecture, map_gguf_name, GgufMapping, GgufNameError,
 };
 

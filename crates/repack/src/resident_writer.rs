@@ -1,5 +1,5 @@
 //! Builds a `model_weights.bin` resident-tensor index with real, named
-//! entries, matching the on-disk format `mrefrust_model_io::resident_index`
+//! entries, matching the on-disk format `turbospark_model_io::resident_index`
 //! reads (24-byte header, 72-byte fixed entry table, then a string table,
 //! then the raw tensor data region). `gturbo_writer::write_gturbo_install`
 //! only ever writes an *empty* index (`entry_count == 0`); this module is
@@ -10,7 +10,7 @@ const HEADER_BYTES: usize = 24;
 const ENTRY_BYTES: usize = 72;
 
 /// One named resident tensor: INT4-affine packed weight rows (see
-/// `mrefrust_compute::quant::Int4AffineRow`), concatenated across `rows`
+/// `turbospark_compute::quant::Int4AffineRow`), concatenated across `rows`
 /// rows of `cols` elements each.
 #[derive(Debug, Clone)]
 pub struct ResidentTensorSpec {

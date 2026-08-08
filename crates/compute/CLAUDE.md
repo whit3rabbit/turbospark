@@ -1,4 +1,4 @@
-# mrefrust-compute
+# turbospark-compute
 
 CPU reference kernels and compute strategy marker type (`ComputeStrategy`). These reference implementations serve as numerical ground truth against which `crates/gpu` Metal kernels are validated.
 
@@ -45,8 +45,8 @@ crates/compute/
 ## Development & Test Commands
 
 ```sh
-# Run tests for mrefrust-compute
-cargo test -p mrefrust-compute
+# Run tests for turbospark-compute
+cargo test -p turbospark-compute
 ```
 
 ## Crate Gotchas

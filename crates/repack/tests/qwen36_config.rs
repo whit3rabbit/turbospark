@@ -11,7 +11,7 @@
 //! `tests/qwen36_checkpoint_network.rs` runs the same assertion against the
 //! config fetched over the network; this one runs in the default suite.
 
-use mrefrust_repack::parse_qwen36_config;
+use turbospark_repack::parse_qwen36_config;
 
 /// 40 layers, gated-DeltaNet everywhere except every 4th
 /// (`full_attention_interval = 4`).
@@ -162,8 +162,8 @@ fn rejects_an_odd_rotary_dim() {
 #[test]
 fn quantization_reads_the_router_and_shared_gate_as_int8() {
     let quant =
-        mrefrust_repack::parse_gemma4_quantization(&config_json()).expect("quantization parses");
-    let manifest = mrefrust_repack::manifest_quant(&quant, model_io::ModelFamily::Qwen36);
+        turbospark_repack::parse_gemma4_quantization(&config_json()).expect("quantization parses");
+    let manifest = turbospark_repack::manifest_quant(&quant, model_io::ModelFamily::Qwen36);
     // `validate_quant` accepts router 8 only; routedExpert 2 or 4.
     assert_eq!(manifest["router"]["weightBits"], 8);
     assert_eq!(manifest["routedExpert"]["weightBits"], 4);

@@ -11,7 +11,7 @@
 #
 # NEEDS SUDO: powermetrics is root-only. It prompts once, up front.
 #
-# THE NUMBER IS ONLY AS GOOD AS ITS WINDOW. `mference-bench --model` opens
+# THE NUMBER IS ONLY AS GOOD AS ITS WINDOW. `turbospark-bench --model` opens
 # a 13 GB mmap, compiles Metal pipelines, and runs a discarded 1024-token
 # warmup before the measured run. Wrapping the process would fold all of
 # that into the energy total, so the bench emits `[power-window ...]`
@@ -31,7 +31,7 @@ set -u
 
 PAIRS="${1:-2}"
 MODEL="${MODEL:-$HOME/models/gemma4.gturbo}"
-RUST_BENCH="${RUST_BENCH:-./target/release/mference-bench}"
+RUST_BENCH="${RUST_BENCH:-./target/release/turbospark-bench}"
 OUT="${OUT:-/tmp/mference-power}"
 LABEL="${LABEL:-unlabelled}"
 # The literal "default" means "set no QoS class", spelled as a token

@@ -1,12 +1,12 @@
 # Supported Model Families & Architecture Detection
 
-This document describes how `mrefrust` detects, registers, and executes supported large language model families, how automatic architecture detection works during GGUF and Hugging Face downloads, and provides a parity comparison against upstream engines like `llama.cpp`, `mlx-lm`, and `turbo-fieldfare`.
+This document describes how `turbospark` detects, registers, and executes supported large language model families, how automatic architecture detection works during GGUF and Hugging Face downloads, and provides a parity comparison against upstream engines like `llama.cpp`, `mlx-lm`, and `turbo-fieldfare`.
 
 ---
 
 ## 1. Automatic Architecture Detection
 
-When given a Hugging Face URL, local `.gturbo` directory, or GGUF checkpoint, `mrefrust` detects the model architecture automatically before fetching large weight payloads.
+When given a Hugging Face URL, local `.gturbo` directory, or GGUF checkpoint, `turbospark` detects the model architecture automatically before fetching large weight payloads.
 
 ```
                     +--------------------------------+
@@ -36,10 +36,10 @@ When given a Hugging Face URL, local `.gturbo` directory, or GGUF checkpoint, `m
 ```
 
 ### Detection Strategy (GGUF vs. Hugging Face)
-- **GGUF Checkpoints**: `mrefrust-repack` fetches the initial ~512 KB metadata header via `HttpRangeSource` and inspects `general.architecture`:
+- **GGUF Checkpoints**: `turbospark-repack` fetches the initial ~512 KB metadata header via `HttpRangeSource` and inspects `general.architecture`:
   - `"gemma4"` -> `ModelFamily::Gemma4`
   - `"qwen35moe"` -> `ModelFamily::Qwen36`
-- **Hugging Face Safetensors**: `mrefrust-repack` fetches `config.json` and parses `model_type` or `architectures`:
+- **Hugging Face Safetensors**: `turbospark-repack` fetches `config.json` and parses `model_type` or `architectures`:
   - `"gemma4"` -> `ModelFamily::Gemma4`
   - `"qwen2_moe"` / `"qwen3_5_moe"` -> `ModelFamily::Qwen36`
 
@@ -47,9 +47,9 @@ When given a Hugging Face URL, local `.gturbo` directory, or GGUF checkpoint, `m
 
 ## 2. Complete Model Family Parity Matrix
 
-The table below provides a comprehensive list of all major LLM architectures supported across `llama.cpp`, `mlx-lm`, `turbo-fieldfare`, and `mrefrust`.
+The table below provides a comprehensive list of all major LLM architectures supported across `llama.cpp`, `mlx-lm`, `turbo-fieldfare`, and `turbospark`.
 
-| Model Family / GGUF `general.architecture` | Key Architectural Features | `mrefrust` (Rust) | `turbo-fieldfare` (Swift) | `llama.cpp` | `mlx-lm` | Peak RAM Footprint in `mrefrust` |
+| Model Family / GGUF `general.architecture` | Key Architectural Features | `turbospark` (Rust) | `turbo-fieldfare` (Swift) | `llama.cpp` | `mlx-lm` | Peak RAM Footprint in `turbospark` |
 | --- | --- | :---: | :---: | :---: | :---: | ---: |
 | **Gemma 4 26B-A4B** (`gemma4`) | SWA/Full Attention, MoE (128 experts, top-8), Tied Embeddings | **Full Support** | **Full Support** | Full Support | Full Support | **~2.1 GiB RAM** |
 | **Qwen 3.6 35B-A3B** (`qwen35moe`) | Gated-DeltaNet Linear Attention + MoE (256 experts, top-8) | **Full Support** | **Full Support** | Full Support | Full Support | **~1.6 GiB RAM** |
@@ -72,7 +72,7 @@ The table below provides a comprehensive list of all major LLM architectures sup
 ---
 
 
-## 3. How `llama.cpp` Handles Architectures vs. `mrefrust`
+## 3. How `llama.cpp` Handles Architectures vs. `turbospark`
 
 `llama.cpp` handles architecture discovery using a centralized enum and dynamic graph construction:
 
@@ -81,8 +81,8 @@ The table below provides a comprehensive list of all major LLM architectures sup
 3. **Graph Builder**: `llama.cpp` constructs a C++ compute graph dynamically based on `llm_arch`.
 4. **Hardcoded Fallbacks**: Because GGUF metadata omits hyper-parameter behavioral flags (like sandwich norms or attention scaling formulas), `llama.cpp` hardcodes these in its internal graph builder per `llm_arch`.
 
-### How `mrefrust` Implements This Strategy
-`mrefrust` follows a clean, strongly-typed Rust implementation of the same pattern:
+### How `turbospark` Implements This Strategy
+`turbospark` follows a clean, strongly-typed Rust implementation of the same pattern:
 - **`ModelFamily` Enum** (`crates/model-io/src/arch_config.rs`): Defines supported discriminators (`Gemma4`, `Qwen36`, `DeepseekV4Flash`).
 - **Baseline Specifications** (`crates/model-io/src/arch_baselines.rs`): Provides compile-time defaults for behavioral architecture flags missing from GGUF metadata.
 - **Tensor Mapping Engine** (`crates/repack/src/gguf_names.rs`): Maps GGUF tensor naming conventions to canonical parameter names.
@@ -92,7 +92,7 @@ The table below provides a comprehensive list of all major LLM architectures sup
 
 ## 4. Extending Support to New Families
 
-To add a new model family to `mrefrust`:
+To add a new model family to `turbospark`:
 1. Register the new variant in `ModelFamily` (`crates/model-io/src/arch_config.rs`).
 2. Add baseline specs in `arch_baselines.rs`.
 3. Follow the 7-phase step-by-step checklist in [`docs/NEW_MODEL.md`](docs/NEW_MODEL.md).

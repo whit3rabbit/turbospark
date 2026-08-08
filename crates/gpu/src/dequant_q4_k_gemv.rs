@@ -3,7 +3,7 @@
 //!
 //! PORT-LOCAL rather than vendored, like its Q8_0 sibling: the Swift engine
 //! has no GGUF intake, so there is no upstream kernel this mirrors. Its only
-//! contract is `mrefrust_compute::dequant_q4_k_gemv`, which is what
+//! contract is `turbospark_compute::dequant_q4_k_gemv`, which is what
 //! `crates/gpu/tests/dequant_q4_k_gemv_parity.rs` holds it to.
 //!
 //! Like Q8_0 and unlike the affine siblings, a Q4_K row is ONE byte run: both
@@ -27,7 +27,7 @@ const SOURCE: &str = include_str!("shaders/dequant_q4_k.metal");
 const THREADS_PER_GROUP: u64 = 256; // 8 rows/threadgroup * 32 lanes/SIMD group.
 const ROWS_PER_THREADGROUP: u64 = 8;
 
-/// Elements per Q4_K superblock. Mirrors `mrefrust_compute::Q4_K_BLOCK_ELEMS`;
+/// Elements per Q4_K superblock. Mirrors `turbospark_compute::Q4_K_BLOCK_ELEMS`;
 /// the two are held equal by `crates/repack`'s block-table test.
 pub const Q4_K_BLOCK_ELEMS: usize = 256;
 /// Bytes per Q4_K superblock: two f16 super-scales, 12 packed bytes of 6-bit

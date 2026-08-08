@@ -1,5 +1,5 @@
 [package]
-name = "mrefrust-gpu"
+name = "turbospark-gpu"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,19 +8,19 @@ publish.workspace = true
 description = "Metal GPU backend: pipeline cache and kernel dispatch, validated against the compute crate's CPU reference kernels."
 
 [lib]
-name = "mrefrust_gpu"
+name = "turbospark_gpu"
 path = "src/lib.rs"
 
 [dependencies]
-foundation = { package = "mrefrust-core", path = "../core" }
+foundation = { package = "turbospark-core", path = "../core" }
 
 [dev-dependencies]
-mrefrust-compute = { path = "../compute" }
+turbospark-compute = { path = "../compute" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 metal = "0.33"
 half = "2"
-model_io = { package = "mrefrust-model-io", path = "../model-io" }
+model_io = { package = "turbospark-model-io", path = "../model-io" }
 libc = "0.2"
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
@@ -28,4 +28,4 @@ half = "2"
 # Already a dependency above; repeated here so tests that build their own
 # FunctionConstantValues (the split-KV chunk bench) can name the types.
 metal = "0.33"
-mrefrust-repack = { path = "../repack" }
+turbospark-repack = { path = "../repack" }

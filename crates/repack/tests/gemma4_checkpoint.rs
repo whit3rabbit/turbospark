@@ -2,12 +2,12 @@
 //! pre-quantized pass-through (INT4 + INT8 override), raw BF16 norms, and
 //! per-expert blob slicing — exercised against a tiny in-memory
 //! safetensors fixture with the real `mlx-community` tensor naming, then
-//! round-tripped through every `mrefrust_model_io` loader.
+//! round-tripped through every `turbospark_model_io` loader.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use mrefrust_repack::{
+use turbospark_repack::{
     classify_gemma4, orchestrate_gemma4_checkpoint, parse_gemma4_config, parse_gemma4_quantization,
     write_gemma4_install, Gemma4Bucket, MemoryRangeSource, ResidentEntrySpec,
 };
@@ -17,7 +17,7 @@ static COUNTER: AtomicU64 = AtomicU64::new(0);
 fn temp_dir() -> PathBuf {
     let n = COUNTER.fetch_add(1, Ordering::SeqCst);
     let dir = std::env::temp_dir().join(format!(
-        "mrefrust-gemma4-checkpoint-{}-{n}",
+        "turbospark-gemma4-checkpoint-{}-{n}",
         std::process::id()
     ));
     std::fs::create_dir_all(&dir).expect("create temp dir");
@@ -319,7 +319,7 @@ fn orchestrate_orders_passes_through_and_slices_experts() {
     let tensors = fixture();
     let blob = assemble(&tensors);
     let source = MemoryRangeSource::new(&blob);
-    let header = mrefrust_repack::fetch_safetensors_header(&source).expect("header");
+    let header = turbospark_repack::fetch_safetensors_header(&source).expect("header");
     let arch = parse_gemma4_config(&config_json()).expect("config");
     let quant = parse_gemma4_quantization(&config_json()).expect("quant");
 
@@ -396,7 +396,7 @@ fn written_install_round_trips_through_model_io() {
     let tensors = fixture();
     let blob = assemble(&tensors);
     let source = MemoryRangeSource::new(&blob);
-    let header = mrefrust_repack::fetch_safetensors_header(&source).expect("header");
+    let header = turbospark_repack::fetch_safetensors_header(&source).expect("header");
     let arch = parse_gemma4_config(&config_json()).expect("config");
     let quant = parse_gemma4_quantization(&config_json()).expect("quant");
 
@@ -438,7 +438,7 @@ fn written_install_round_trips_through_model_io() {
 
 #[test]
 fn sharded_orchestration_matches_single_source() {
-    use mrefrust_repack::{orchestrate_gemma4_checkpoint_sharded, Gemma4Shards};
+    use turbospark_repack::{orchestrate_gemma4_checkpoint_sharded, Gemma4Shards};
 
     let tensors = fixture();
     // Split the fixture across two shards: layer 0 (plus top-level) in one,
@@ -463,17 +463,17 @@ fn sharded_orchestration_matches_single_source() {
 
     let src_a = MemoryRangeSource::new(&shard_a);
     let src_b = MemoryRangeSource::new(&shard_b);
-    let hdr_a = mrefrust_repack::fetch_safetensors_header(&src_a).expect("header a");
-    let hdr_b = mrefrust_repack::fetch_safetensors_header(&src_b).expect("header b");
+    let hdr_a = turbospark_repack::fetch_safetensors_header(&src_a).expect("header a");
+    let hdr_b = turbospark_repack::fetch_safetensors_header(&src_b).expect("header b");
     let shards = Gemma4Shards::new(vec![(&hdr_a, &src_a), (&hdr_b, &src_b)]);
     let sharded = orchestrate_gemma4_checkpoint_sharded(&shards, &arch, &quant).expect("sharded");
 
     let src_full = MemoryRangeSource::new(&full);
-    let hdr_full = mrefrust_repack::fetch_safetensors_header(&src_full).expect("header full");
+    let hdr_full = turbospark_repack::fetch_safetensors_header(&src_full).expect("header full");
     let single =
         orchestrate_gemma4_checkpoint(&hdr_full, &src_full, &arch, &quant).expect("single");
 
-    let names = |out: &mrefrust_repack::Gemma4RepackOutput| -> Vec<String> {
+    let names = |out: &turbospark_repack::Gemma4RepackOutput| -> Vec<String> {
         out.resident
             .iter()
             .map(|e| match e {
@@ -496,12 +496,12 @@ fn sharded_orchestration_matches_single_source() {
 
 #[test]
 fn streamed_install_matches_in_memory_install() {
-    use mrefrust_repack::{write_gemma4_install_streamed, Gemma4Shards};
+    use turbospark_repack::{write_gemma4_install_streamed, Gemma4Shards};
 
     let tensors = fixture();
     let blob = assemble(&tensors);
     let source = MemoryRangeSource::new(&blob);
-    let header = mrefrust_repack::fetch_safetensors_header(&source).expect("header");
+    let header = turbospark_repack::fetch_safetensors_header(&source).expect("header");
     let arch = parse_gemma4_config(&config_json()).expect("config");
     let quant = parse_gemma4_quantization(&config_json()).expect("quant");
 

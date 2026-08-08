@@ -1,6 +1,6 @@
 //! Quantization repack: turns a row-major FP32 weight matrix into the
 //! affine int4/int8 groupwise rows the `.gturbo` format stores, reusing
-//! `mrefrust_compute`'s quantizer (the same math the runtime's dequant
+//! `turbospark_compute`'s quantizer (the same math the runtime's dequant
 //! GEMV kernels expect) rather than re-deriving it here.
 //!
 //! This module is the per-matrix quantization step; `gturbo_writer.rs`

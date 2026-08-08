@@ -2,11 +2,11 @@
 //! Sliding-window decode-attention parity: the vendored
 //! `attention_decode_partial` dispatched with a nonzero `kv_start`
 //! (attending `[seq_len - window, seq_len)`) must match
-//! `mrefrust_compute::causal_attention`'s `window: Some(w)` reference on
+//! `turbospark_compute::causal_attention`'s `window: Some(w)` reference on
 //! real hardware, in both linear and ring KV layout.
 
 use half::f16;
-use mrefrust_gpu::{AttentionScratch, MetalContext};
+use turbospark_gpu::{AttentionScratch, MetalContext};
 
 fn to_le(v: &[f16]) -> Vec<u8> {
     let mut out = Vec::with_capacity(v.len() * 2);
@@ -45,7 +45,7 @@ fn assert_windowed_attention_matches_cpu(
         .map(|i| f16::from_f32(((i as f32) * 0.11).sin()))
         .collect();
 
-    let expected = mrefrust_compute::causal_attention(
+    let expected = turbospark_compute::causal_attention(
         &q16.iter().map(|x| x.to_f32()).collect::<Vec<_>>(),
         &k16.iter().map(|x| x.to_f32()).collect::<Vec<_>>(),
         &v16.iter().map(|x| x.to_f32()).collect::<Vec<_>>(),
@@ -81,7 +81,7 @@ fn assert_windowed_attention_matches_cpu(
     let scratch = AttentionScratch::new(&context, num_q_heads, head_dim);
 
     let pass = context.begin_pass();
-    mrefrust_gpu::encode_attention_decode(
+    turbospark_gpu::encode_attention_decode(
         &mut context,
         &pass,
         (&q_buf, 0),

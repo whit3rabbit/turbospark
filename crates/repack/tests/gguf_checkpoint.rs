@@ -10,7 +10,7 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use mrefrust_repack::{
+use turbospark_repack::{
     build_synthetic_gemma4_gguf, orchestrate_gguf_checkpoint, parse_gguf_header,
     write_gguf_install_streamed, GgufBuilder, GgufRepackError, GgufValue, MemoryRangeSource,
     ResidentEntrySpec, SyntheticGgufShape, DTYPE_BF16, DTYPE_FP32, DTYPE_GGUF_Q8_0,
@@ -21,7 +21,7 @@ fn tempdir() -> std::path::PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
     let path = std::env::temp_dir().join(format!(
-        "mrefrust-gguf-repack-{}-{unique}",
+        "turbospark-gguf-repack-{}-{unique}",
         std::process::id()
     ));
     std::fs::create_dir_all(&path).unwrap();
@@ -31,7 +31,7 @@ fn tempdir() -> std::path::PathBuf {
 struct Fixture {
     bytes: Vec<u8>,
     shape: SyntheticGgufShape,
-    header: mrefrust_repack::GgufHeader,
+    header: turbospark_repack::GgufHeader,
 }
 
 impl Fixture {
@@ -613,7 +613,7 @@ fn expert_stride_covers_the_largest_blob_and_is_page_rounded() {
         .max()
         .unwrap_or(0);
     assert!(out.expert_stride >= largest);
-    assert_eq!(out.expert_stride % mrefrust_repack::GTURBO_PAGE_BYTES, 0);
+    assert_eq!(out.expert_stride % turbospark_repack::GTURBO_PAGE_BYTES, 0);
 }
 
 #[test]
@@ -625,7 +625,7 @@ fn reports_ignored_tensors_rather_than_dropping_them_silently() {
     // exists so that when a real file does, the drop is visible.
     assert!(out.ignored.is_empty());
 
-    let (bytes, _) = mrefrust_repack::GgufBuilder::new()
+    let (bytes, _) = turbospark_repack::GgufBuilder::new()
         .metadata_str("general.architecture", "gemma4")
         .metadata_u32("gemma4.block_count", 0)
         .metadata_u32("gemma4.embedding_length", 64)
@@ -636,7 +636,7 @@ fn reports_ignored_tensors_rather_than_dropping_them_silently() {
         .metadata_u32("gemma4.expert_feed_forward_length", 16)
         .metadata(
             "gemma4.attention.sliding_window_pattern",
-            mrefrust_repack::GgufValue::Array(vec![]),
+            turbospark_repack::GgufValue::Array(vec![]),
         )
         .q8_0_tensor("token_embd.weight", &[64, 128], 1)
         .tensor("rope_freqs.weight", 0, &[16], vec![0u8; 64])

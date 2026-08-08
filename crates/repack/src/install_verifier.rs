@@ -1,4 +1,4 @@
-//! Full-SHA256 install verification: composes `mrefrust_model_io`'s
+//! Full-SHA256 install verification: composes `turbospark_model_io`'s
 //! manifest loader, resident-index reader, and SHA-256 hasher into the
 //! `ModelIntegrityPolicy::FullSha256` path from
 //! `Infrastructure/ModelIO/VerifiedInstallReceipt.swift` — re-hashing

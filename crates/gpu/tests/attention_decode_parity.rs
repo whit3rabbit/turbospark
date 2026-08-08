@@ -1,11 +1,11 @@
 //! Runs the two-pass split-KV decode attention kernels
 //! (`attention_decode_partial` + `attention_decode_combine`, `num_chunks
 //! == 1`) on real Metal hardware and checks them against the CPU
-//! reference in `mrefrust_compute::causal_attention`.
+//! reference in `turbospark_compute::causal_attention`.
 #![cfg(target_os = "macos")]
 
 use half::f16;
-use mrefrust_gpu::{attention_decode, MetalContext};
+use turbospark_gpu::{attention_decode, MetalContext};
 
 fn to_f16(v: &[f32]) -> Vec<f16> {
     v.iter().map(|&x| f16::from_f32(x)).collect()
@@ -35,7 +35,7 @@ fn matches_cpu_reference_for_grouped_query_attention() {
         .map(|i| ((i as f32 * 0.7).cos()) * 0.3)
         .collect();
 
-    let cpu = mrefrust_compute::causal_attention(
+    let cpu = turbospark_compute::causal_attention(
         &q_f32,
         &k_f32,
         &v_f32,
@@ -61,7 +61,7 @@ fn matches_cpu_reference_for_grouped_query_attention() {
     .expect("GPU dispatch succeeds");
 
     assert_eq!(gpu.len(), cpu.len());
-    let err = mrefrust_compute::max_abs_diff(&to_f32(&gpu), &cpu);
+    let err = turbospark_compute::max_abs_diff(&to_f32(&gpu), &cpu);
     // FP16 accumulation noise only (both sides use the same FP32 online-
     // softmax algorithm); this is a small, non-quantized problem.
     assert!(err < 0.02, "err = {err}");
@@ -97,7 +97,7 @@ fn matches_cpu_reference_for_wide_gqa_ratio() {
         .map(|i| 0.8 + ((i as f32 * 0.7).cos()) * 0.3)
         .collect();
 
-    let cpu = mrefrust_compute::causal_attention(
+    let cpu = turbospark_compute::causal_attention(
         &q_f32,
         &k_f32,
         &v_f32,
@@ -122,7 +122,7 @@ fn matches_cpu_reference_for_wide_gqa_ratio() {
     .expect("GPU dispatch succeeds");
 
     assert_eq!(gpu.len(), cpu.len());
-    let err = mrefrust_compute::max_abs_diff(&to_f32(&gpu), &cpu);
+    let err = turbospark_compute::max_abs_diff(&to_f32(&gpu), &cpu);
     assert!(err < 0.02, "err = {err}");
 }
 
@@ -139,7 +139,7 @@ fn matches_cpu_reference_for_a_single_kv_head_at_position_zero() {
     let k_f32 = vec![0.05f32, 0.1, -0.1, 0.2];
     let v_f32 = vec![1.0f32, 2.0, 3.0, 4.0];
 
-    let cpu = mrefrust_compute::causal_attention(
+    let cpu = turbospark_compute::causal_attention(
         &q_f32,
         &k_f32,
         &v_f32,
@@ -164,7 +164,7 @@ fn matches_cpu_reference_for_a_single_kv_head_at_position_zero() {
     .unwrap();
 
     // Single KV position: attention collapses to exactly V (weight 1.0).
-    let err = mrefrust_compute::max_abs_diff(&to_f32(&gpu), &cpu);
+    let err = turbospark_compute::max_abs_diff(&to_f32(&gpu), &cpu);
     assert!(err < 0.01, "err = {err}");
     assert_eq!(gpu.len(), 4);
 }

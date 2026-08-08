@@ -18,14 +18,14 @@
 //! ms/token numbers do not.
 //!
 //! ```sh
-//! cargo test -p mrefrust-gpu --test attention_chunk_bench --release -- --ignored --nocapture
+//! cargo test -p turbospark-gpu --test attention_chunk_bench --release -- --ignored --nocapture
 //! ```
 
 #![cfg(target_os = "macos")]
 
 use half::f16;
 use metal::{FunctionConstantValues, MTLDataType};
-use mrefrust_gpu::MetalContext;
+use turbospark_gpu::MetalContext;
 
 const SOURCE: &str = include_str!("../src/shaders/attention.metal");
 const THREADS_PER_GROUP: u64 = 256;

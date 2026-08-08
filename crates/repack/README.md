@@ -1,4 +1,4 @@
-# mrefrust-repack
+# turbospark-repack
 
 Safetensors header parsing, ranged HTTP downloads (`RangeSource`), INT4/INT8 quantization repack pipelines, `.gturbo` directory installation builder (`gturbo_writer.rs`), synthetic model generators (`synthetic_model.rs`), Hugging Face Llama repacker (`hf_checkpoint.rs`), and Gemma 4 / Qwen 3.6 checkpoint repackers (`gemma4_checkpoint.rs`).
 
@@ -6,7 +6,7 @@ Downstream workspace crates import this package via the `repack` alias:
 
 ```toml
 [dependencies]
-repack = { package = "mrefrust-repack", path = "../repack" }
+repack = { package = "turbospark-repack", path = "../repack" }
 ```
 
 ## Safety
@@ -28,12 +28,12 @@ repack = { package = "mrefrust-repack", path = "../repack" }
 ## Development & Test Commands
 
 ```sh
-# Run fast unit tests for mrefrust-repack
-cargo test -p mrefrust-repack
+# Run fast unit tests for turbospark-repack
+cargo test -p turbospark-repack
 
 # Run network checkpoint integration tests (ignored by default, downloads large files)
-cargo test -p mrefrust-repack --test gemma4_checkpoint_network --release -- --ignored --nocapture
-cargo test -p mrefrust-repack --test hf_checkpoint_network --release -- --ignored --nocapture
+cargo test -p turbospark-repack --test gemma4_checkpoint_network --release -- --ignored --nocapture
+cargo test -p turbospark-repack --test hf_checkpoint_network --release -- --ignored --nocapture
 ```
 
 ## Crate Gotchas

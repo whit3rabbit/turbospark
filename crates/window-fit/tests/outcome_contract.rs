@@ -1,6 +1,6 @@
 //! Integration tests for the window-fit outcome data contract.
 
-use mrefrust_window_fit::fit_conversation_window;
+use turbospark_window_fit::fit_conversation_window;
 
 #[test]
 fn outcome_reports_retained_turns_in_original_conversation_order() {

@@ -1,5 +1,5 @@
 //! Parity tests, on real Metal hardware, for `gdn.metal`'s eight kernels
-//! against `mrefrust_compute::GdnReference`. Mirrors Swift's
+//! against `turbospark_compute::GdnReference`. Mirrors Swift's
 //! `GDNKernelTests`: a six-step decode chain versus the CPU model, a
 //! seven-row prefill chunk versus seven sequential decode steps (state and
 //! conv-tail carry), the fused input projection versus the four separate
@@ -8,8 +8,8 @@
 #![cfg(target_os = "macos")]
 
 use half::f16;
-use mrefrust_compute::{bf16_to_f32, f32_to_bf16, quantize_int4_affine, GdnDims, GdnReference};
-use mrefrust_gpu::{
+use turbospark_compute::{bf16_to_f32, f32_to_bf16, quantize_int4_affine, GdnDims, GdnReference};
+use turbospark_gpu::{
     encode_dequant_int4_gemv_resident, encode_gdn_conv_decode, encode_gdn_conv_prefill,
     encode_gdn_conv_tail_update, encode_gdn_delta_decode, encode_gdn_delta_prefill,
     encode_gdn_gated_norm, encode_gdn_in_proj, encode_gdn_qk_norm, read_buffer_f16,

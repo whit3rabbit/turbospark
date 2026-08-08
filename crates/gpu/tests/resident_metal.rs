@@ -8,15 +8,15 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use mrefrust_gpu::{MetalContext, ResidentGpuWeights};
-use mrefrust_repack::build_synthetic_gemma4_install;
+use turbospark_gpu::{MetalContext, ResidentGpuWeights};
+use turbospark_repack::build_synthetic_gemma4_install;
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn temp_dir() -> PathBuf {
     let n = COUNTER.fetch_add(1, Ordering::SeqCst);
     let dir = std::env::temp_dir().join(format!(
-        "mrefrust-resident-metal-{}-{n}",
+        "turbospark-resident-metal-{}-{n}",
         std::process::id()
     ));
     std::fs::create_dir_all(&dir).unwrap();
@@ -108,8 +108,8 @@ fn resident_bound_gemv_matches_staged_gemv() {
     let biases = to_u16(&data[bias_local..bias_local + entry.bias_size as usize]);
     let row_bytes = cols / 2;
     let groups = cols / 64;
-    let staged_rows: Vec<mrefrust_gpu::Int4AffineRowGpu> = (0..rows)
-        .map(|r| mrefrust_gpu::Int4AffineRowGpu {
+    let staged_rows: Vec<turbospark_gpu::Int4AffineRowGpu> = (0..rows)
+        .map(|r| turbospark_gpu::Int4AffineRowGpu {
             packed: &packed[r * row_bytes..(r + 1) * row_bytes],
             scales: &scales[r * groups..(r + 1) * groups],
             biases: &biases[r * groups..(r + 1) * groups],
@@ -120,12 +120,12 @@ fn resident_bound_gemv_matches_staged_gemv() {
         .map(|i| half::f16::from_f32((i as f32 * 0.37).sin()))
         .collect();
 
-    let staged =
-        mrefrust_gpu::dequant_int4_gemv(&mut context, &staged_rows, &x, cols).expect("staged gemv");
+    let staged = turbospark_gpu::dequant_int4_gemv(&mut context, &staged_rows, &x, cols)
+        .expect("staged gemv");
 
     let weights =
         ResidentGpuWeights::wrap(context.device(), resident).expect("wrap should succeed");
-    let matrix = mrefrust_gpu::Int4ResidentMatrix {
+    let matrix = turbospark_gpu::Int4ResidentMatrix {
         buffer: weights.buffer(),
         weights_offset: weights.gpu_offset(entry.file_offset - index_size),
         scales_offset: weights.gpu_offset(entry.scale_offset - index_size),
@@ -133,8 +133,8 @@ fn resident_bound_gemv_matches_staged_gemv() {
         rows,
         cols,
     };
-    let bound =
-        mrefrust_gpu::dequant_int4_gemv_resident(&mut context, &matrix, &x).expect("resident gemv");
+    let bound = turbospark_gpu::dequant_int4_gemv_resident(&mut context, &matrix, &x)
+        .expect("resident gemv");
 
     assert_eq!(staged.len(), bound.len());
     for (a, b) in staged.iter().zip(bound.iter()) {

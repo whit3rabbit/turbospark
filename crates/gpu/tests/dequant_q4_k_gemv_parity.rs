@@ -1,5 +1,5 @@
 //! Runs `dequant_q4_k_gemv_simd` on real Metal hardware against the CPU
-//! reference in `mrefrust_compute::dequant_q4_k_gemv` (ROADMAP Phase G
+//! reference in `turbospark_compute::dequant_q4_k_gemv` (ROADMAP Phase G
 //! Stage 2). The kernel rule: no quant kernel is trusted before this file
 //! exists and passes.
 //!
@@ -12,7 +12,7 @@
 #![cfg(target_os = "macos")]
 
 use half::f16;
-use mrefrust_gpu::{
+use turbospark_gpu::{
     dequant_q4_k_gemv, dequant_q4_k_gemv_resident, q4_k_row_bytes, MetalContext, Q4KResidentMatrix,
 };
 
@@ -35,7 +35,7 @@ fn weights(n: usize, seed: u32) -> Vec<f32> {
 fn assert_matches(label: &str, gpu: &[f16], cpu: &[f32], n: usize) {
     assert_eq!(gpu.len(), cpu.len());
     let gpu_f32: Vec<f32> = gpu.iter().map(|v| v.to_f32()).collect();
-    let err = mrefrust_compute::max_abs_diff(&gpu_f32, cpu);
+    let err = turbospark_compute::max_abs_diff(&gpu_f32, cpu);
     let scale = cpu.iter().fold(0f32, |m, &v| m.max(v.abs())).max(1.0);
     // FP16 has 10 mantissa bits, and the kernel rounds once at the end while
     // accumulating in FP32, so the bound scales with the result magnitude
@@ -51,14 +51,14 @@ fn matches_cpu_reference() {
     let n = 2 * SUPERBLOCK;
     let m = 5usize; // not a multiple of 8: exercises the early-return guard
     let rows: Vec<Vec<u8>> = (0..m)
-        .map(|r| mrefrust_compute::quantize_q4_k(&weights(n, 7 + r as u32)))
+        .map(|r| turbospark_compute::quantize_q4_k(&weights(n, 7 + r as u32)))
         .collect();
     let refs: Vec<&[u8]> = rows.iter().map(|r| r.as_slice()).collect();
 
     let x_f32 = weights(n, 99);
     let x_f16: Vec<f16> = x_f32.iter().map(|&v| f16::from_f32(v)).collect();
 
-    let cpu = mrefrust_compute::dequant_q4_k_gemv(&refs, &x_f32, n);
+    let cpu = turbospark_compute::dequant_q4_k_gemv(&refs, &x_f32, n);
     let gpu = dequant_q4_k_gemv(&mut context, &refs, &x_f16, n).expect("GPU dispatch succeeds");
     assert_matches("m=5,n=512", &gpu, &cpu, n);
 }
@@ -84,7 +84,7 @@ fn six_bit_sub_scales_are_unpacked_across_both_bytes() {
                 .enumerate()
                 .map(|(e, &v)| v * FACTORS[(e / SUB) % 8])
                 .collect();
-            mrefrust_compute::quantize_q4_k(&scaled)
+            turbospark_compute::quantize_q4_k(&scaled)
         })
         .collect();
     let refs: Vec<&[u8]> = rows.iter().map(|r| r.as_slice()).collect();
@@ -92,7 +92,7 @@ fn six_bit_sub_scales_are_unpacked_across_both_bytes() {
     let x_f32 = weights(n, 5);
     let x_f16: Vec<f16> = x_f32.iter().map(|&v| f16::from_f32(v)).collect();
 
-    let cpu = mrefrust_compute::dequant_q4_k_gemv(&refs, &x_f32, n);
+    let cpu = turbospark_compute::dequant_q4_k_gemv(&refs, &x_f32, n);
     let gpu = dequant_q4_k_gemv(&mut context, &refs, &x_f16, n).expect("GPU dispatch succeeds");
     assert_matches("8 sub-blocks, 16x spread", &gpu, &cpu, n);
 }
@@ -110,12 +110,12 @@ fn the_subtracted_min_is_what_carries_the_sign() {
     // Not a constant row: a flat one has zero range, hence a zero sub-scale,
     // and would be carried entirely by the min term rather than testing both.
     let w: Vec<f32> = (0..n).map(|e| -1.0 + (e % SUB) as f32 / 128.0).collect();
-    let row = mrefrust_compute::quantize_q4_k(&w);
+    let row = turbospark_compute::quantize_q4_k(&w);
     let refs: Vec<&[u8]> = vec![&row];
     let x_f32 = vec![1.0f32; n];
     let x_f16: Vec<f16> = x_f32.iter().map(|&v| f16::from_f32(v)).collect();
 
-    let cpu = mrefrust_compute::dequant_q4_k_gemv(&refs, &x_f32, n);
+    let cpu = turbospark_compute::dequant_q4_k_gemv(&refs, &x_f32, n);
     let gpu = dequant_q4_k_gemv(&mut context, &refs, &x_f16, n).expect("GPU dispatch succeeds");
 
     assert!(
@@ -152,7 +152,7 @@ fn per_superblock_scales_are_not_hoisted() {
                 .enumerate()
                 .map(|(e, &w)| w * 10f32.powi((e / SUPERBLOCK) as i32 % 5 - 2))
                 .collect();
-            mrefrust_compute::quantize_q4_k(&scaled)
+            turbospark_compute::quantize_q4_k(&scaled)
         })
         .collect();
     let refs: Vec<&[u8]> = rows.iter().map(|r| r.as_slice()).collect();
@@ -160,7 +160,7 @@ fn per_superblock_scales_are_not_hoisted() {
     let x_f32 = weights(n, 17);
     let x_f16: Vec<f16> = x_f32.iter().map(|&v| f16::from_f32(v)).collect();
 
-    let cpu = mrefrust_compute::dequant_q4_k_gemv(&refs, &x_f32, n);
+    let cpu = turbospark_compute::dequant_q4_k_gemv(&refs, &x_f32, n);
     let gpu = dequant_q4_k_gemv(&mut context, &refs, &x_f16, n).expect("GPU dispatch succeeds");
     assert_matches("16 superblocks, varying scales", &gpu, &cpu, n);
 }
@@ -176,7 +176,7 @@ fn the_resident_form_matches_the_copying_form() {
     let n = SUPERBLOCK;
     let m = 4usize;
     let rows: Vec<Vec<u8>> = (0..m)
-        .map(|r| mrefrust_compute::quantize_q4_k(&weights(n, 13 + r as u32)))
+        .map(|r| turbospark_compute::quantize_q4_k(&weights(n, 13 + r as u32)))
         .collect();
     let refs: Vec<&[u8]> = rows.iter().map(|r| r.as_slice()).collect();
 
@@ -193,7 +193,7 @@ fn the_resident_form_matches_the_copying_form() {
     let x_f32 = weights(n, 77);
     let x_f16: Vec<f16> = x_f32.iter().map(|&v| f16::from_f32(v)).collect();
 
-    let cpu = mrefrust_compute::dequant_q4_k_gemv(&refs, &x_f32, n);
+    let cpu = turbospark_compute::dequant_q4_k_gemv(&refs, &x_f32, n);
     let gpu = dequant_q4_k_gemv_resident(
         &mut context,
         &Q4KResidentMatrix {
@@ -231,7 +231,7 @@ fn embed_lookup_reads_the_right_row_and_scales_it() {
     let rows: Vec<Vec<f32>> = (0..vocab).map(|t| weights(d, 300 + t as u32)).collect();
     let mut table = Vec::new();
     for r in &rows {
-        table.extend_from_slice(&mrefrust_compute::quantize_q4_k(r));
+        table.extend_from_slice(&turbospark_compute::quantize_q4_k(r));
     }
     let table_buffer = context.new_buffer_with_data(&table);
     let out = context.new_output_buffer((d * std::mem::size_of::<u16>()) as u64);
@@ -239,7 +239,7 @@ fn embed_lookup_reads_the_right_row_and_scales_it() {
     let token = 5u32;
     let out_scale = 4.0f32;
     let pass = context.begin_pass();
-    mrefrust_gpu::encode_embed_lookup_q4_k(
+    turbospark_gpu::encode_embed_lookup_q4_k(
         &mut context,
         &pass,
         (&table_buffer, 0),
@@ -252,7 +252,7 @@ fn embed_lookup_reads_the_right_row_and_scales_it() {
     pass.commit_and_wait();
 
     let row_bytes = q4_k_row_bytes(d);
-    let want: Vec<f32> = mrefrust_compute::dequantize_q4_k(
+    let want: Vec<f32> = turbospark_compute::dequantize_q4_k(
         &table[token as usize * row_bytes..(token as usize + 1) * row_bytes],
         d,
     )

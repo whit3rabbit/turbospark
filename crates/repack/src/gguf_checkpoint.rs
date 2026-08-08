@@ -30,7 +30,7 @@
 //!
 //! **The install this produces does not load yet, on purpose.** Its manifest
 //! declares `scheme: "gguf"` on every slot but the transcoded router, and
-//! `mrefrust_model_io::validate_quant` accepts only `"affine"`, so
+//! `turbospark_model_io::validate_quant` accepts only `"affine"`, so
 //! `load_manifest` rejects it by name. That rejection IS
 //! the Stage 1 boundary: the on-disk shape is settled and verifiable here,
 //! while the kernels that could read these blocks are Stage 2 work. Flipping
@@ -841,7 +841,7 @@ fn resident_entries(
 /// The `manifest.json -> quant` object for a GGUF-sourced install.
 ///
 /// Deliberately NOT `"affine"` for the block-quantized slots.
-/// `mrefrust_model_io::validate_quant` accepts only that scheme, so those
+/// `turbospark_model_io::validate_quant` accepts only that scheme, so those
 /// values are what make `load_manifest` refuse a Stage 1 install by name
 /// instead of loading one whose expert bytes no kernel can read.
 ///

@@ -1,9 +1,9 @@
-//! `mference-bench`: throughput benchmark harness, replicating the frozen
+//! `turbospark-bench`: throughput benchmark harness, replicating the frozen
 //! community benchmark protocol's structure — three fixed prompts, a fixed
 //! seed, and a discarded warmup run per prompt before the measured run.
 //!
 //! No real model weights exist for this port to load (see
-//! `mrefrust-runtime`'s and this crate's own module docs), so every
+//! `turbospark-runtime`'s and this crate's own module docs), so every
 //! generation here runs through a scripted producer that always emits the
 //! same fixed token, at a fixed token count, rather than real inference.
 //! The numbers this prints are therefore a measurement of this port's
@@ -16,8 +16,8 @@
 //! once per fresh process externally (e.g. a shell loop) if that isolation
 //! matters for a given measurement.
 //!
-//! Usage: `mference-bench <tokenizer-dir> [--real]`
-//!    or: `mference-bench --model <install-dir> [--case <id>]`.
+//! Usage: `turbospark-bench <tokenizer-dir> [--real]`
+//!    or: `turbospark-bench --model <install-dir> [--case <id>]`.
 //!
 //! `--real` (macOS only): instead of the scripted producer, builds a
 //! small synthetic dense `.gturbo` install (deterministic INT4 weights,
@@ -49,10 +49,10 @@ use std::time::Instant;
 
 use foundation::runtime_config::ALLOWED_CACHE_SLOTS;
 use foundation::LogitValue;
-use mrefrust_bench::protocol::PROTOCOL_EXPERT_CACHE_SLOTS;
 use runtime::{run_raw_completion, GenerationConfig, RawDecodeProgress, ScriptedLogitProducer};
 use selection::ShapingConfig;
 use tokenizer::MfTokenizer;
+use turbospark_bench::protocol::PROTOCOL_EXPERT_CACHE_SLOTS;
 
 /// Three fixed prompts and a fixed seed, matching the frozen protocol's
 /// shape. Content is arbitrary (no real model is being measured); only the
@@ -94,13 +94,13 @@ fn main() -> std::process::ExitCode {
     let mut args = std::env::args().skip(1);
     let Some(first) = args.next() else {
         eprintln!(
-            "usage: mference-bench <tokenizer-dir> [--real] | --model <install-dir> [--case <id>]"
+            "usage: turbospark-bench <tokenizer-dir> [--real] | --model <install-dir> [--case <id>]"
         );
         return std::process::ExitCode::from(2);
     };
     if first == "--model" {
         const USAGE: &str =
-            "usage: mference-bench --model <install-dir> [--case <id>] [--expert-cache-slots N]";
+            "usage: turbospark-bench --model <install-dir> [--case <id>] [--expert-cache-slots N]";
         let Some(install_dir) = args.next() else {
             eprintln!("{USAGE}");
             return std::process::ExitCode::from(2);
@@ -149,7 +149,7 @@ fn main() -> std::process::ExitCode {
     }
 
     println!(
-        "mference-bench: {} fixed prompts, seed {FIXED_SEED}, scripted producer (see module docs)",
+        "turbospark-bench: {} fixed prompts, seed {FIXED_SEED}, scripted producer (see module docs)",
         FIXED_PROMPTS.len()
     );
     println!(
@@ -235,7 +235,7 @@ fn run_once(tok: &MfTokenizer, prompt: &str) -> Result<RunStats, String> {
 
 #[cfg(target_os = "macos")]
 fn run_real_mode(tok: &MfTokenizer) -> std::process::ExitCode {
-    let dir = std::env::temp_dir().join(format!("mference-bench-real-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("turbospark-bench-real-{}", std::process::id()));
     if let Err(e) = std::fs::create_dir_all(&dir) {
         eprintln!("failed to create temp install dir: {e}");
         return std::process::ExitCode::from(1);
@@ -257,7 +257,7 @@ fn run_real_mode(tok: &MfTokenizer) -> std::process::ExitCode {
     };
 
     println!(
-        "mference-bench: {} fixed prompts, seed {FIXED_SEED}, REAL forward pass \
+        "turbospark-bench: {} fixed prompts, seed {FIXED_SEED}, REAL forward pass \
          (synthetic tiny dense model; measures the real GPU dispatch path, \
          not production throughput)",
         FIXED_PROMPTS.len()
@@ -348,9 +348,9 @@ fn run_model_mode(
     case_filter: Option<&str>,
     slots: usize,
 ) -> std::process::ExitCode {
-    use mrefrust_bench::memory::AppMemorySampler;
-    use mrefrust_bench::protocol::{swift_footer, PROTOCOL_CASES};
-    use mrefrust_bench::real_model::{open_model_runner, run_protocol_case};
+    use turbospark_bench::memory::AppMemorySampler;
+    use turbospark_bench::protocol::{swift_footer, PROTOCOL_CASES};
+    use turbospark_bench::real_model::{open_model_runner, run_protocol_case};
 
     // `--case` runs exactly one case in this process, which is the frozen
     // protocol's fresh-process leg (Swift launches its CLI once per case).
@@ -378,10 +378,12 @@ fn run_model_mode(
             return std::process::ExitCode::from(1);
         }
     };
-    if let Some(brand) = mrefrust_bench::memory::chip_brand_string() {
-        println!("mference-bench: real install {install_dir} on {brand}, frozen protocol real-generation-v1");
+    if let Some(brand) = turbospark_bench::memory::chip_brand_string() {
+        println!("turbospark-bench: real install {install_dir} on {brand}, frozen protocol real-generation-v1");
     } else {
-        println!("mference-bench: real install {install_dir}, frozen protocol real-generation-v1");
+        println!(
+            "turbospark-bench: real install {install_dir}, frozen protocol real-generation-v1"
+        );
     }
     println!(
         "{:<18} {:>10} {:>10} {:>8} {:>9} {:>8} {:>9}",

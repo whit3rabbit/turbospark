@@ -5,19 +5,19 @@
 //! explicitly:
 //!
 //! ```sh
-//! MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
-//!   cargo test -p mrefrust-repack --test gemma4_checkpoint_network --release -- --ignored --nocapture
+//! TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
+//!   cargo test -p turbospark-repack --test gemma4_checkpoint_network --release -- --ignored --nocapture
 //! ```
 //!
-//! Set `MREFRUST_GEMMA4_INSTALL_DIR` to keep the ~14 GB install for manual
-//! `mference-check` runs (the test also downloads the tokenizer sidecars
+//! Set `TURBOSPARK_GEMMA4_INSTALL_DIR` to keep the ~14 GB install for manual
+//! `turbospark-check` runs (the test also downloads the tokenizer sidecars
 //! into the install dir so the CLI can load it directly); otherwise a temp
 //! directory is used.
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
-use mrefrust_repack::{
+use turbospark_repack::{
     fetch_safetensors_header, parse_gemma4_config, parse_gemma4_quantization,
     write_gemma4_install_streamed, Gemma4Shards, HttpRangeSource,
 };
@@ -46,7 +46,7 @@ fn get(path: &str) -> Vec<u8> {
 }
 
 fn install_dir() -> PathBuf {
-    match std::env::var_os("MREFRUST_GEMMA4_INSTALL_DIR") {
+    match std::env::var_os("TURBOSPARK_GEMMA4_INSTALL_DIR") {
         Some(dir) => {
             let dir = PathBuf::from(dir);
             std::fs::create_dir_all(&dir).expect("create install dir");
@@ -54,7 +54,7 @@ fn install_dir() -> PathBuf {
         }
         None => {
             let dir =
-                std::env::temp_dir().join(format!("mrefrust-gemma4-real-{}", std::process::id()));
+                std::env::temp_dir().join(format!("turbospark-gemma4-real-{}", std::process::id()));
             std::fs::create_dir_all(&dir).unwrap();
             dir
         }
@@ -105,7 +105,7 @@ fn repacks_the_real_gemma4_checkpoint() {
         headers
             .iter()
             .zip(sources.iter())
-            .map(|(h, s)| (h, s as &dyn mrefrust_repack::RangeSource))
+            .map(|(h, s)| (h, s as &dyn turbospark_repack::RangeSource))
             .collect(),
     );
 
@@ -116,7 +116,7 @@ fn repacks_the_real_gemma4_checkpoint() {
     })
     .expect("streamed install");
 
-    // Tokenizer sidecars so mference-check can open the dir directly.
+    // Tokenizer sidecars so turbospark-check can open the dir directly.
     // NOTE: this checkpoint is instruction-tuned with the Gemma 4 turn
     // markup (`<|turn>user\n...<turn|>\n<|turn>model\n`); raw text
     // prompts produce out-of-distribution babble, chat-formatted prompts
@@ -153,7 +153,7 @@ fn repacks_the_real_gemma4_checkpoint() {
 
     eprintln!(
         "SUCCESS: real Gemma 4 26B-A4B repacked into {} — run \
-         `cargo run -p mrefrust-cli --bin mference-check --release -- --model {} --prompt \"...\"`",
+         `cargo run -p turbospark-cli --bin turbospark-check --release -- --model {} --prompt \"...\"`",
         dir.display(),
         dir.display()
     );

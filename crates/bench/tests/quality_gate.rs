@@ -10,8 +10,8 @@
 //! Not run by default (needs a ~14.6 GB install; use --release or the
 //! perplexity pass takes ten times as long as it needs to):
 //!
-//!   MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
-//!     cargo test -p mrefrust-bench --test quality_gate --release -- --ignored --nocapture
+//!   TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
+//!     cargo test -p turbospark-bench --test quality_gate --release -- --ignored --nocapture
 
 mod quality_common;
 
@@ -55,15 +55,15 @@ const BASELINES: &[quality_common::ChipQuality] = &[
 ];
 
 fn install_dir() -> Option<std::path::PathBuf> {
-    std::env::var_os("MREFRUST_GEMMA4_INSTALL_DIR").map(std::path::PathBuf::from)
+    std::env::var_os("TURBOSPARK_GEMMA4_INSTALL_DIR").map(std::path::PathBuf::from)
 }
 
 #[test]
-#[ignore = "needs a real ~14.6 GB Gemma 4 .gturbo install (MREFRUST_GEMMA4_INSTALL_DIR)"]
+#[ignore = "needs a real ~14.6 GB Gemma 4 .gturbo install (TURBOSPARK_GEMMA4_INSTALL_DIR)"]
 fn real_gemma4_install_quality_holds() {
     let Some(dir) = install_dir() else {
         eprintln!(
-            "quality_gate: MREFRUST_GEMMA4_INSTALL_DIR is not set; skipping. \
+            "quality_gate: TURBOSPARK_GEMMA4_INSTALL_DIR is not set; skipping. \
              Point it at a repacked Gemma 4 .gturbo install to run the gate."
         );
         return;

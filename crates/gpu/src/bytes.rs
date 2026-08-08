@@ -31,7 +31,7 @@ pub fn half_slice_to_le_bytes(values: &[f16]) -> Vec<u8> {
 
 /// Byte-encodes a slice of raw 16-bit values (e.g. BF16 bit patterns, which
 /// have no dedicated Rust storage type in this workspace — see
-/// `mrefrust_compute::quant`) as little-endian bytes for a Metal buffer.
+/// `turbospark_compute::quant`) as little-endian bytes for a Metal buffer.
 pub fn u16_slice_to_le_bytes(values: &[u16]) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(values.len() * 2);
     for v in values {

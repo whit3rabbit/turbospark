@@ -1,4 +1,4 @@
-# mrefrust-invocation
+# turbospark-invocation
 
 Pure CLI argument parsing, command-line request assembly (`InvocationRequest`), option definitions (`OPTIONS`), diagnostic error formatting, typed failures (`InvocationFailure`), and usage rendering.
 
@@ -8,7 +8,7 @@ Downstream workspace crates import this package via the `invocation` alias:
 
 ```toml
 [dependencies]
-invocation = { package = "mrefrust-invocation", path = "../invocation" }
+invocation = { package = "turbospark-invocation", path = "../invocation" }
 ```
 
 ## Key Modules
@@ -23,8 +23,8 @@ invocation = { package = "mrefrust-invocation", path = "../invocation" }
 ## Development & Test Commands
 
 ```sh
-# Run unit and integration tests for mrefrust-invocation
-cargo test -p mrefrust-invocation
+# Run unit and integration tests for turbospark-invocation
+cargo test -p turbospark-invocation
 ```
 
 ## Crate Gotchas

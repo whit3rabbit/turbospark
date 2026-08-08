@@ -7,7 +7,7 @@
 
 use std::collections::BTreeMap;
 
-use mrefrust_repack::{
+use turbospark_repack::{
     fetch_safetensors_header, orchestrate_llama_checkpoint, LlamaCheckpointDims, MemoryRangeSource,
 };
 

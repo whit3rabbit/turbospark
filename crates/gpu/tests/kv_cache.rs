@@ -3,7 +3,7 @@
 //! wraparound for sliding-window layers, and reset.
 #![cfg(target_os = "macos")]
 
-use mrefrust_gpu::{KvCacheManager, LayerKind, MetalContext};
+use turbospark_gpu::{KvCacheManager, LayerKind, MetalContext};
 
 fn toy_arch(mask: Vec<u8>) -> model_io::ArchConfig {
     model_io::ArchConfig {

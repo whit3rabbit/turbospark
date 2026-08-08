@@ -1,4 +1,4 @@
-# mrefrust-window-fit
+# turbospark-window-fit
 
 Pure, deterministic conversation-window fitting (`fit_conversation_window`). Drops the oldest eligible turns from a conversation history until the measured length satisfies caller-supplied token bounds.
 
@@ -6,7 +6,7 @@ Downstream workspace crates import this package via the `window_fit` alias:
 
 ```toml
 [dependencies]
-window_fit = { package = "mrefrust-window-fit", path = "../window-fit" }
+window_fit = { package = "turbospark-window-fit", path = "../window-fit" }
 ```
 
 ## Key Modules
@@ -17,8 +17,8 @@ window_fit = { package = "mrefrust-window-fit", path = "../window-fit" }
 ## Development & Test Commands
 
 ```sh
-# Run unit tests for mrefrust-window-fit
-cargo test -p mrefrust-window-fit
+# Run unit tests for turbospark-window-fit
+cargo test -p turbospark-window-fit
 ```
 
 ## Crate Gotchas

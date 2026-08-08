@@ -4,7 +4,7 @@
 
 use std::cell::Cell;
 
-use mrefrust_repack::{
+use turbospark_repack::{
     fetch_gguf_header, ggml_type_block, ggml_type_name, parse_gguf_header, DownloadError,
     GgufBuilder, GgufHeaderError, GgufValue, RangeSource, GGUF_DEFAULT_MAX_HEADER_BYTES,
     GGUF_INITIAL_FETCH_BYTES,
@@ -12,7 +12,7 @@ use mrefrust_repack::{
 
 /// A fixture exercising every value kind the reader implements, plus three
 /// tensors of two different element types.
-fn fixture() -> mrefrust_repack::GgufFileAndRanges {
+fn fixture() -> turbospark_repack::GgufFileAndRanges {
     GgufBuilder::new()
         .metadata_str("general.architecture", "gemma4")
         .metadata_u32("gemma4.block_count", 2)
@@ -357,7 +357,7 @@ fn block_table_matches_the_spec_where_it_answers() {
 }
 
 /// The parser's idea of a Q8_0 block and the CPU reference's must not drift
-/// apart. `mrefrust_compute` cannot depend on this crate (the dependency runs
+/// apart. `turbospark_compute` cannot depend on this crate (the dependency runs
 /// the other way), so the two declare the constants independently and this is
 /// where they are held to each other. A disagreement would show up as every
 /// tensor after the first being read from the wrong offset.

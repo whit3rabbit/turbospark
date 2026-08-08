@@ -1,18 +1,18 @@
-# mrefrust-bench
+# turbospark-bench
 
-Throughput benchmark harness (`mference-bench`), Mach physical memory footprint sampler (`memory.rs`), frozen community benchmark protocol (`protocol.rs`), real model runner (`real_model.rs`), and memory oracle tests.
+Throughput benchmark harness (`turbospark-bench`), Mach physical memory footprint sampler (`memory.rs`), frozen community benchmark protocol (`protocol.rs`), real model runner (`real_model.rs`), and memory oracle tests.
 
 ## Binary Execution
 
 ```sh
 # Run scripted producer throughput benchmark
-cargo run -p mrefrust-bench --bin mference-bench -- <tokenizer-dir>
+cargo run -p turbospark-bench --bin turbospark-bench -- <tokenizer-dir>
 
 # Run real model protocol benchmark (macOS, release mode required)
-cargo run --release -p mrefrust-bench --bin mference-bench -- --model ~/models/gemma4.gturbo
+cargo run --release -p turbospark-bench --bin turbospark-bench -- --model ~/models/gemma4.gturbo
 
 # Run single protocol case per process
-cargo run --release -p mrefrust-bench --bin mference-bench -- \
+cargo run --release -p turbospark-bench --bin turbospark-bench -- \
   --model ~/models/gemma4.gturbo --case short-explanation
 ```
 
@@ -29,12 +29,12 @@ cargo run --release -p mrefrust-bench --bin mference-bench -- \
 ## Development & Test Commands
 
 ```sh
-# Run unit and integration tests for mrefrust-bench
-cargo test -p mrefrust-bench
+# Run unit and integration tests for turbospark-bench
+cargo test -p turbospark-bench
 
 # Run memory oracle test (macOS, requires model environment variable)
-MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
-  cargo test -p mrefrust-bench --test memory_oracle --release -- --ignored --nocapture
+TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
+  cargo test -p turbospark-bench --test memory_oracle --release -- --ignored --nocapture
 ```
 
 ## Crate Gotchas

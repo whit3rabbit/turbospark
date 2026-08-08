@@ -1,4 +1,4 @@
-//! Real-install benchmark flow (`mference-bench --model <dir>`): opens a
+//! Real-install benchmark flow (`turbospark-bench --model <dir>`): opens a
 //! `.gturbo` install with `RealForwardRunner` and drives the frozen
 //! community-protocol cases through the real prefill+decode loop,
 //! chat-formatted exactly as the CLI formats them (the IT checkpoint needs

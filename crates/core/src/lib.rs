@@ -1,7 +1,7 @@
 //! Core leaf crate: shared primitives and the public runtime configuration.
 //!
 //! Downstream crates should depend on this crate under an alias, for example
-//! `foundation = { package = "mrefrust-core", path = "../core" }`, so that references
+//! `foundation = { package = "turbospark-core", path = "../core" }`, so that references
 //! to it are not confused with the standard library `core` crate in the
 //! extern prelude.
 

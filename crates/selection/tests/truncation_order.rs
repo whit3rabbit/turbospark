@@ -5,7 +5,7 @@
 //! cumulative-probability truncation first, over the full distribution,
 //! then the rank-based cap over that surviving set.
 
-use mrefrust_selection::truncation::{
+use turbospark_selection::truncation::{
     rank_indices, softmax, truncate_by_probability_mass, truncate_by_rank,
 };
 

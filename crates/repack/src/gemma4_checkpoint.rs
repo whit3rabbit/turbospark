@@ -839,7 +839,7 @@ fn plan_one_expert_layer(
 /// The `manifest.json -> quant` object for a Gemma 4 install, derived
 /// from the checkpoint's own per-tensor bits (slot bits are read from the
 /// layer-0 base names; every slot is affine/BF16/group-64 in this format).
-/// Production-shape manifests are rejected by `mrefrust_model_io` without
+/// Production-shape manifests are rejected by `turbospark_model_io` without
 /// this object.
 pub fn gemma4_manifest_quant(quant: &Gemma4Quant) -> serde_json::Value {
     manifest_quant(quant, ModelFamily::Gemma4)

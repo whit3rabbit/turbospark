@@ -54,7 +54,7 @@ fn linear_attention() -> LinearAttentionConfig {
 }
 
 /// A tiny Qwen-3.6-shaped architecture. Every non-shape field takes
-/// `mrefrust_model_io::qwen36_35b_a3b()`'s own value, for the same reason
+/// `turbospark_model_io::qwen36_35b_a3b()`'s own value, for the same reason
 /// `tiny_gemma4_arch` pins Gemma's: the manifest's optional family
 /// extensions fall back to a baseline, so anything else has to be written
 /// explicitly and matched explicitly.

@@ -1,13 +1,13 @@
 //! Builds a small, fully in-memory-generated "tiny Gemma 4" `.gturbo`
 //! install: real INT4-affine-quantized weights (deterministic, not
 //! trained), written through the real resident-tensor writer and readable
-//! back through every `mrefrust_model_io` loader. This is what
+//! back through every `turbospark_model_io` loader. This is what
 //! `crates/runtime`'s `RealForwardRunner` (macOS/GPU only) drives for its
 //! end-to-end real-forward-pass test, since no trained `.gturbo` checkpoint
 //! is available in this environment.
 //!
 //! Every non-shape architecture field is set to Gemma 4's own real
-//! canonical baseline value (`mrefrust_model_io::gemma4_26b_a4b`): this is
+//! canonical baseline value (`turbospark_model_io::gemma4_26b_a4b`): this is
 //! honestly a tiny Gemma-4-architecture model, not an invented one.
 
 use compute::quantize_int4_affine;
@@ -20,7 +20,7 @@ use crate::gturbo_writer::{write_gturbo_install_with_resident_index, WriterError
 use crate::resident_writer::{build_resident_weights_bin, ResidentTensorSpec};
 
 /// Hidden size, per-head dim, and dense FFN width are all fixed at 64: the
-/// smallest value satisfying `mrefrust_compute::quant::GROUP_SIZE`'s
+/// smallest value satisfying `turbospark_compute::quant::GROUP_SIZE`'s
 /// multiple-of-64 requirement on every GEMV's contraction dimension.
 const HIDDEN_SIZE: i64 = 64;
 const NUM_HEADS: i64 = 2;
@@ -30,7 +30,7 @@ const INTERMEDIATE_SIZE: i64 = 64;
 /// A tiny, dense (no MoE, no sliding-window/linear/compressed layers)
 /// Gemma-4-shaped architecture. `vocab_size` and `num_layers` are the only
 /// caller-chosen dimensions; everything else matches
-/// `mrefrust_model_io::gemma4_26b_a4b()`'s non-shape fields exactly, since
+/// `turbospark_model_io::gemma4_26b_a4b()`'s non-shape fields exactly, since
 /// `manifest.json`'s optional family-extension fields fall back to the
 /// Gemma 4 baseline's values when omitted (see `arch_validation.rs`).
 pub fn tiny_gemma4_arch(vocab_size: i64, num_layers: i64) -> ArchConfig {
@@ -136,7 +136,7 @@ pub fn down_proj_name(layer: i64) -> String {
 
 /// Writes a full tiny-Gemma4 `.gturbo` install to `dir` and returns the
 /// `ArchConfig` it was built against (the caller needs this to open the
-/// install back up, since `mrefrust_model_io::load_manifest` validates
+/// install back up, since `turbospark_model_io::load_manifest` validates
 /// against a caller-supplied expected architecture rather than inferring
 /// one for non-canonical shapes).
 pub fn build_synthetic_gemma4_install(
@@ -229,7 +229,7 @@ pub fn build_synthetic_gemma4_swa_install(
 /// Like [`build_synthetic_gemma4_moe_install`], with IDENTICAL weights
 /// (same deterministic seeds), but the routed experts live in
 /// `packed_experts/layer_NN.bin` blob files instead of the resident
-/// region — the streamed layout `mrefrust-streaming`'s
+/// region — the streamed layout `turbospark-streaming`'s
 /// `PreadExpertStreamer` reads at decode time. A runner over this install
 /// must produce exactly the tokens the resident-expert variant produces.
 pub fn build_synthetic_gemma4_moe_streamed_install(

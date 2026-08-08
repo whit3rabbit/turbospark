@@ -1,16 +1,16 @@
 """Token-level KL divergence between this port and mlx-lm (ROADMAP Phase Q).
 
-Run `cargo test -p mrefrust-bench --test logit_dump` first; it writes the
+Run `cargo test -p turbospark-bench --test logit_dump` first; it writes the
 id sequence and this port's full-vocabulary logits. This script replays the
 SAME IDS through mlx-lm, on the same quantized checkpoint the install was
 repacked from, and reports how far apart the two distributions are.
 
-    MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
-    MREFRUST_LOGIT_DUMP_DIR=/tmp/kld/mrefrust \
-      cargo test -p mrefrust-bench --test logit_dump --release -- --ignored --nocapture
+    TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
+    TURBOSPARK_LOGIT_DUMP_DIR=/tmp/kld/turbospark \
+      cargo test -p turbospark-bench --test logit_dump --release -- --ignored --nocapture
 
     uv run --python 3.12 --with mlx-lm --with numpy \
-      scripts/kld.py /tmp/kld/mrefrust
+      scripts/kld.py /tmp/kld/turbospark
 
 WHY IDS AND NOT PROSE. A tokenizer or chat-template difference between the
 two engines would show up as a divergence and read as a numerics gap. The
@@ -167,7 +167,7 @@ def perplexity(logits: np.ndarray, token_ids: list[int], first: int) -> float:
 
 
 def main() -> None:
-    dump = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "/tmp/kld/mrefrust")
+    dump = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "/tmp/kld/turbospark")
     meta = json.loads((dump / "meta.json").read_text())
     rows, vocab, ids = meta["rows"], meta["vocab_size"], meta["token_ids"]
 
@@ -191,7 +191,7 @@ def main() -> None:
         # whether the line above is small (see the module doc).
         "kl_mlx_self": divergences(batched, cached),
         "perplexity": {
-            "mrefrust": perplexity(port, ids, first),
+            "turbospark": perplexity(port, ids, first),
             "mlx_cached": perplexity(cached, ids, first),
             "mlx_batched": perplexity(batched, ids, first),
         },

@@ -19,14 +19,14 @@
 //! repack is the LAST step, proving the walk writes what this wrote, not the
 //! search loop.
 //!
-//! Read-only by default. `MREFRUST_QWEN_PATCH=1` is what writes, and it is
+//! Read-only by default. `TURBOSPARK_QWEN_PATCH=1` is what writes, and it is
 //! IDEMPOTENT: a tensor is patched only if the transform agrees with the MLX
 //! install better than the bytes already on disk do, so a second run is a
 //! no-op rather than a double permutation.
 //!
-//!   MREFRUST_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
-//!   MREFRUST_QWEN36_GGUF_INSTALL_DIR=~/models/qwen36-gguf.gturbo \
-//!     cargo test -p mrefrust-repack --test gguf_qwen_convention_patch --release -- --ignored --nocapture
+//!   TURBOSPARK_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
+//!   TURBOSPARK_QWEN36_GGUF_INSTALL_DIR=~/models/qwen36-gguf.gturbo \
+//!     cargo test -p turbospark-repack --test gguf_qwen_convention_patch --release -- --ignored --nocapture
 
 use std::io::{Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -273,14 +273,14 @@ fn agreement(
 #[test]
 #[ignore = "needs both Qwen installs"]
 fn the_convention_holds_on_every_layer_and_optionally_patches_the_install() {
-    let mlx_dir = install("MREFRUST_QWEN36_INSTALL_DIR");
-    let gguf_dir = install("MREFRUST_QWEN36_GGUF_INSTALL_DIR");
+    let mlx_dir = install("TURBOSPARK_QWEN36_INSTALL_DIR");
+    let gguf_dir = install("TURBOSPARK_QWEN36_GGUF_INSTALL_DIR");
     let (mlx, gguf) = (Weights::open(&mlx_dir), Weights::open(&gguf_dir));
     let arch = model_io::known_architecture(model_io::ModelFamily::Qwen36);
     let heads = arch.linear_attention.num_v_heads as usize;
     let table = axes(&arch);
 
-    let patch = std::env::var_os("MREFRUST_QWEN_PATCH").is_some();
+    let patch = std::env::var_os("TURBOSPARK_QWEN_PATCH").is_some();
     println!(
         "{} layers, {heads} V heads, {} tensors on the axis; mode: {}",
         arch.num_layers,
@@ -370,7 +370,7 @@ fn the_convention_holds_on_every_layer_and_optionally_patches_the_install() {
     assert_eq!(norms_worst, 0.0, "the norms must stay bit-identical");
 
     if !patch {
-        println!("verify only; set MREFRUST_QWEN_PATCH=1 to write these back");
+        println!("verify only; set TURBOSPARK_QWEN_PATCH=1 to write these back");
         return;
     }
     let path = gguf_dir.join("model_weights.bin");

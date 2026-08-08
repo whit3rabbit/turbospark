@@ -12,7 +12,7 @@ prefill the one remaining gap, and a known scope difference).
 two engines' decode phase splits bucket by bucket. Everything else in this
 file is this port measuring itself.
 
-Everything here lives in `crates/bench`: the `mference-bench` binary, a
+Everything here lives in `crates/bench`: the `turbospark-bench` binary, a
 small library the binary and the oracle test share, and
 `tests/memory_oracle.rs`.
 
@@ -20,9 +20,9 @@ small library the binary and the oracle test share, and
 
 | Mode | Command | What it measures |
 | --- | --- | --- |
-| Scripted (default) | `mference-bench <tokenizer-dir>` | This port's prefill+decode *loop* overhead. No model. |
-| Synthetic real | `mference-bench <tokenizer-dir> --real` | The real GPU dispatch path over a tiny synthetic install. |
-| Real install | `mference-bench --model <install-dir> [--case <id>]` | Real Gemma 4 throughput and peak memory. The Swift-comparison number. |
+| Scripted (default) | `turbospark-bench <tokenizer-dir>` | This port's prefill+decode *loop* overhead. No model. |
+| Synthetic real | `turbospark-bench <tokenizer-dir> --real` | The real GPU dispatch path over a tiny synthetic install. |
+| Real install | `turbospark-bench --model <install-dir> [--case <id>]` | Real Gemma 4 throughput and peak memory. The Swift-comparison number. |
 
 Only the third mode is comparable to anything published. The first two
 exist so the loop and the dispatch path can be timed without a
@@ -31,7 +31,7 @@ multi-gigabyte checkout.
 ### Scripted
 
 ```bash
-cargo run -p mrefrust-bench --bin mference-bench -- crates/tokenizer/tests/fixtures/ChatMLTokenizer
+cargo run -p turbospark-bench --bin turbospark-bench -- crates/tokenizer/tests/fixtures/ChatMLTokenizer
 ```
 
 Three fixed prompts, fixed seed 42, one discarded warmup per prompt, all
@@ -43,7 +43,7 @@ inference. Portable; runs on Linux.
 ### Synthetic real (macOS)
 
 ```bash
-cargo run -p mrefrust-bench --bin mference-bench -- <tokenizer-dir> --real
+cargo run -p turbospark-bench --bin turbospark-bench -- <tokenizer-dir> --real
 ```
 
 Builds a tiny dense `.gturbo` install (deterministic INT4 weights, vocab
@@ -55,7 +55,7 @@ mean anything as throughput; it measures the dispatch path.
 ### Real install (macOS)
 
 ```bash
-cargo run --release -p mrefrust-bench --bin mference-bench -- --model ~/models/gemma4.gturbo
+cargo run --release -p turbospark-bench --bin turbospark-bench -- --model ~/models/gemma4.gturbo
 ```
 
 This is the frozen community protocol, vendored from the Swift repo so
@@ -102,12 +102,12 @@ wants (its steady-state guard needs the same runner).
 ## Comparing against Swift
 
 ```bash
-cargo build --release -p mrefrust-bench
+cargo build --release -p turbospark-bench
 scripts/parity.sh [pairs]        # default 2 measured pairs per case
 ```
 
 Runs the protocol through `../Mference/.build/release/MferenceCLI` and
-this port's `mference-bench --case`, against the SAME install directory,
+this port's `turbospark-bench --case`, against the SAME install directory,
 one fresh process per run, arms interleaved pair by pair. Discards a
 warmup per engine per case, rejects any run that does not stop
 `endOfTurn`, refuses to start if another model process is up, and records
@@ -150,14 +150,14 @@ processes" is left to the caller (a shell loop around the binary).
 ## The memory oracle
 
 ```bash
-MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
-  cargo test -p mrefrust-bench --test memory_oracle --release -- --ignored --nocapture
+TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
+  cargo test -p turbospark-bench --test memory_oracle --release -- --ignored --nocapture
 ```
 
 `crates/bench/tests/memory_oracle.rs` runs the same protocol in-process
 and turns it into assertions. `#[ignore]`d (it needs a real ~14.6 GB
 install and takes several minutes); skips with a printed note if
-`MREFRUST_GEMMA4_INSTALL_DIR` is unset.
+`TURBOSPARK_GEMMA4_INSTALL_DIR` is unset.
 
 What it asserts, in order:
 
@@ -276,21 +276,21 @@ not ours to count.
 ## The quality gates
 
 A sibling of the memory oracle, same shape and same gating: `#[ignore]`d,
-one target per family, keyed on `MREFRUST_<FAMILY>_INSTALL_DIR`, asserting
+one target per family, keyed on `TURBOSPARK_<FAMILY>_INSTALL_DIR`, asserting
 per-chip rows that record their own provenance. What it measures is
 quality rather than memory or speed, which is the one axis with no Swift
 column at all (the original publishes no perplexity, no KLD, no golden
 output).
 
 ```sh
-MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
-  cargo test -p mrefrust-bench --test quality_gate --release -- --ignored --nocapture
-MREFRUST_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
-  cargo test -p mrefrust-bench --test qwen36_quality_gate --release -- --ignored --nocapture
+TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
+  cargo test -p turbospark-bench --test quality_gate --release -- --ignored --nocapture
+TURBOSPARK_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
+  cargo test -p turbospark-bench --test qwen36_quality_gate --release -- --ignored --nocapture
 
 # Proof the gate above can see quantization damage, rather than assuming it.
-MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
-  cargo test -p mrefrust-bench --test quality_sensitivity --release -- --ignored --nocapture
+TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
+  cargo test -p turbospark-bench --test quality_sensitivity --release -- --ignored --nocapture
 ```
 
 Four arms per install, about 80 seconds: teacher-forced perplexity of a
@@ -339,7 +339,7 @@ whole script and every arm is windowed out of that single log.
 Four things about it are load-bearing:
 
 - **The window is marker-driven, and without the markers the number is
-  meaningless.** `mference-bench --model` opens a 13 GB mmap, compiles
+  meaningless.** `turbospark-bench --model` opens a 13 GB mmap, compiles
   Metal pipelines, and runs a discarded 1024-token warmup before the
   measured run. Wrapping the process would fold all of that into the
   energy total. `run_model_mode` therefore emits

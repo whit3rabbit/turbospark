@@ -1,4 +1,4 @@
-# mrefrust-tokenizer
+# turbospark-tokenizer
 
 Tokenizer wrapper around Hugging Face `tokenizers` (`MfTokenizer`), chat dialect resolution (Gemma 4, ChatML/Qwen, DeepSeek-V4), chat template rendering (text-only and `minijinja` + `pycompat`), streaming detokenization (`StreamingDetokenizer`), stop condition matching (`StopMatcher`), tool call DSL parsers, and streaming structured decoder (`StructuredDecoder`).
 
@@ -6,7 +6,7 @@ Downstream workspace crates import this package via the `tokenizer` alias:
 
 ```toml
 [dependencies]
-tokenizer = { package = "mrefrust-tokenizer", path = "../tokenizer" }
+tokenizer = { package = "turbospark-tokenizer", path = "../tokenizer" }
 ```
 
 ## Safety
@@ -26,8 +26,8 @@ tokenizer = { package = "mrefrust-tokenizer", path = "../tokenizer" }
 ## Development & Test Commands
 
 ```sh
-# Run unit and integration tests for mrefrust-tokenizer
-cargo test -p mrefrust-tokenizer
+# Run unit and integration tests for turbospark-tokenizer
+cargo test -p turbospark-tokenizer
 ```
 
 ## Crate Gotchas

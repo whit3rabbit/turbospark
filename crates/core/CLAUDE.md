@@ -1,8 +1,8 @@
-# mrefrust-core
+# turbospark-core
 
 Shared primitives, error types, runtime configuration, allowed numeric sets, automatic chunk-size resolution, and prefill chunking logic.
 
-Downstream workspace crates import this package via the `foundation` alias (`foundation = { package = "mrefrust-core", path = "../core" }`).
+Downstream workspace crates import this package via the `foundation` alias (`foundation = { package = "turbospark-core", path = "../core" }`).
 
 ## Safety
 
@@ -12,7 +12,7 @@ Downstream workspace crates import this package via the `foundation` alias (`fou
 
 ```
 crates/core/
-+-- Cargo.toml              # Crate manifest declaring package mrefrust-core
++-- Cargo.toml              # Crate manifest declaring package turbospark-core
 +-- src/
 |   +-- lib.rs              # Library root re-exporting core modules
 |   +-- primitives.rs       # Shared primitive types (TokenId = i32, LogitValue, LogitsView)
@@ -36,12 +36,12 @@ crates/core/
 ## Development & Test Commands
 
 ```sh
-# Run unit and integration tests for mrefrust-core
-cargo test -p mrefrust-core
+# Run unit and integration tests for turbospark-core
+cargo test -p turbospark-core
 ```
 
 ## Crate Gotchas
 
 1. **Numeric Setters Panic on Invalid Inputs**: Runtime configuration numeric setters abort construction by panicking when a value is outside its allowed set (`ALLOWED_CACHE_SLOTS`, `ALLOWED_CHUNK_SIZES`). Callers accepting unvalidated input must validate first or wrap with `std::panic::catch_unwind`.
 2. **Token Interchange Width**: Token IDs cross crate boundaries as signed 32-bit integers (`pub type TokenId = i32`). Keep this interchange width when wiring downstream crates.
-3. **Workspace Import Alias**: Downstream crates import `mrefrust-core` as `foundation`. Always use `foundation::...` when importing from core in other crates.
+3. **Workspace Import Alias**: Downstream crates import `turbospark-core` as `foundation`. Always use `foundation::...` when importing from core in other crates.

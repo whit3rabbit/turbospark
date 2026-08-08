@@ -1,7 +1,7 @@
 //! Host-side dispatch for the `dequant_int8_gemv_simd` kernel in
 //! `shaders/dequant_int8.metal` (vendored verbatim from
 //! `Metal/Quant/dequant_int8.metal`). Matches
-//! `mrefrust_compute::dequant_int8_gemv` exactly: `y[m] = sum_n W[m,n] *
+//! `turbospark_compute::dequant_int8_gemv` exactly: `y[m] = sum_n W[m,n] *
 //! x[n]` over affine-INT8-packed rows with a group size of 64. Mirrors
 //! `dequant_int4_gemv_simd`'s dispatch shape (8 rows/threadgroup, 32
 //! lanes/row) with one byte per element instead of a packed nibble.
@@ -38,7 +38,7 @@ fn unused_function_constants() -> FunctionConstantValues {
 }
 
 /// One row of affine-INT8-packed weights, laid out exactly as
-/// `mrefrust_compute::Int8AffineRow`: `N` unsigned bytes, `N/64` BF16 scale
+/// `turbospark_compute::Int8AffineRow`: `N` unsigned bytes, `N/64` BF16 scale
 /// bit patterns, `N/64` BF16 bias bit patterns.
 pub struct Int8AffineRowGpu<'a> {
     pub packed: &'a [u8],

@@ -1,18 +1,18 @@
 //! Round-trip test: assemble a synthetic `.gturbo` install with
 //! `write_gturbo_install`, then read it back through every
-//! `mrefrust_model_io` loader (manifest, packed-expert layout, resident
+//! `turbospark_model_io` loader (manifest, packed-expert layout, resident
 //! index) and the full-SHA256 verifier, confirming the writer's output
 //! matches what those readers expect byte-for-byte.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use mrefrust_repack::{verify_install_full_sha256, ExpertBlob, LayerBlobs, SubTensor};
+use turbospark_repack::{verify_install_full_sha256, ExpertBlob, LayerBlobs, SubTensor};
 
 fn tempdir() -> std::path::PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
     let path = std::env::temp_dir().join(format!(
-        "mrefrust-gturbo-writer-{}-{unique}",
+        "turbospark-gturbo-writer-{}-{unique}",
         std::process::id()
     ));
     std::fs::create_dir_all(&path).unwrap();
@@ -95,7 +95,7 @@ fn synthetic_layers() -> Vec<LayerBlobs> {
 fn writer_output_round_trips_through_every_model_io_loader() {
     let dir = tempdir();
     let arch = toy_arch();
-    mrefrust_repack::write_gturbo_install(
+    turbospark_repack::write_gturbo_install(
         &dir,
         &arch,
         "toy-model",
@@ -133,7 +133,7 @@ fn writer_output_round_trips_through_every_model_io_loader() {
 fn tampered_layer_file_fails_full_sha256_verification() {
     let dir = tempdir();
     let arch = toy_arch();
-    mrefrust_repack::write_gturbo_install(
+    turbospark_repack::write_gturbo_install(
         &dir,
         &arch,
         "toy-model",
@@ -164,7 +164,7 @@ fn rejects_expert_blob_that_overflows_the_stride() {
         dtype: "int4".to_string(),
         shape: vec![1],
     });
-    let err = mrefrust_repack::write_gturbo_install(
+    let err = turbospark_repack::write_gturbo_install(
         &dir,
         &arch,
         "toy-model",
@@ -176,6 +176,6 @@ fn rejects_expert_blob_that_overflows_the_stride() {
     .unwrap_err();
     assert!(matches!(
         err,
-        mrefrust_repack::WriterError::ExpertOversized { .. }
+        turbospark_repack::WriterError::ExpertOversized { .. }
     ));
 }

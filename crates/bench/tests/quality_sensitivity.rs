@@ -33,8 +33,8 @@
 //!
 //! Not run by default:
 //!
-//!   MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
-//!     cargo test -p mrefrust-bench --test quality_sensitivity --release -- --ignored --nocapture
+//!   TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
+//!     cargo test -p turbospark-bench --test quality_sensitivity --release -- --ignored --nocapture
 
 mod quality_common;
 
@@ -77,15 +77,15 @@ const PAGE_BYTES: usize = 4096;
 const MIN_DRIFT_MULTIPLE: f64 = 5.0;
 
 fn install_dir() -> Option<PathBuf> {
-    std::env::var_os("MREFRUST_GEMMA4_INSTALL_DIR").map(PathBuf::from)
+    std::env::var_os("TURBOSPARK_GEMMA4_INSTALL_DIR").map(PathBuf::from)
 }
 
 #[test]
-#[ignore = "needs a real ~14.6 GB Gemma 4 .gturbo install (MREFRUST_GEMMA4_INSTALL_DIR)"]
+#[ignore = "needs a real ~14.6 GB Gemma 4 .gturbo install (TURBOSPARK_GEMMA4_INSTALL_DIR)"]
 fn perplexity_moves_when_routed_experts_are_degraded() {
     let Some(dir) = install_dir() else {
         eprintln!(
-            "quality_sensitivity: MREFRUST_GEMMA4_INSTALL_DIR is not set; skipping. \
+            "quality_sensitivity: TURBOSPARK_GEMMA4_INSTALL_DIR is not set; skipping. \
              Point it at a repacked Gemma 4 .gturbo install to run the test."
         );
         return;
@@ -136,7 +136,7 @@ fn perplexity_moves_when_routed_experts_are_degraded() {
 /// `clonefile` flag, std has no binding for it, and copying 13 GB for real
 /// would dominate this test's runtime and its disk use.
 fn clone_install(dir: &Path) -> PathBuf {
-    let target = std::env::temp_dir().join("mrefrust-quality-sensitivity-clone");
+    let target = std::env::temp_dir().join("turbospark-quality-sensitivity-clone");
     if target.exists() {
         std::fs::remove_dir_all(&target).expect("a leftover clone should be removable");
     }

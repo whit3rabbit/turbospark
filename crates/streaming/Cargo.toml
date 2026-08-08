@@ -1,5 +1,5 @@
 [package]
-name = "mrefrust-streaming"
+name = "turbospark-streaming"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,12 +8,12 @@ publish.workspace = true
 description = "Routed-expert streaming: pread-based cache streamer, LFU/LRU eviction policy, and readahead advice."
 
 [lib]
-name = "mrefrust_streaming"
+name = "turbospark_streaming"
 path = "src/lib.rs"
 
 [dependencies]
-foundation = { package = "mrefrust-core", path = "../core" }
-model_io = { package = "mrefrust-model-io", path = "../model-io" }
+foundation = { package = "turbospark-core", path = "../core" }
+model_io = { package = "turbospark-model-io", path = "../model-io" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 libc = "0.2"

@@ -7,7 +7,7 @@
 //! implementation is out of scope for `ComputeStrategy` itself; only the
 //! structural contracts of the decode and prefill areas are exercised there.
 //!
-//! The `mrefrust-core` dependency is brought in under the alias `foundation` to avoid
+//! The `turbospark-core` dependency is brought in under the alias `foundation` to avoid
 //! colliding with the standard library `core` crate in the extern prelude.
 #![forbid(unsafe_code)]
 

@@ -8,9 +8,9 @@
 //! the norm "+1" hypothesis); the repack ALSO reported 131 Qwen tensors
 //! losing bits on the way to BF16, so this file cannot assume the same.
 //!
-//!   MREFRUST_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
-//!   MREFRUST_QWEN36_GGUF_INSTALL_DIR=~/models/qwen36-gguf.gturbo \
-//!     cargo test -p mrefrust-repack --test gguf_qwen_core_probe --release -- --ignored --nocapture
+//!   TURBOSPARK_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
+//!   TURBOSPARK_QWEN36_GGUF_INSTALL_DIR=~/models/qwen36-gguf.gturbo \
+//!     cargo test -p turbospark-repack --test gguf_qwen_core_probe --release -- --ignored --nocapture
 
 use std::path::Path;
 
@@ -35,9 +35,9 @@ fn bf16_tensor(dir: &Path, name: &str) -> Option<Vec<f32>> {
 #[test]
 #[ignore = "needs both Qwen installs"]
 fn the_resident_core_agrees_between_the_two_qwen_installs() {
-    let mlx = std::path::PathBuf::from(std::env::var_os("MREFRUST_QWEN36_INSTALL_DIR").unwrap());
+    let mlx = std::path::PathBuf::from(std::env::var_os("TURBOSPARK_QWEN36_INSTALL_DIR").unwrap());
     let gguf =
-        std::path::PathBuf::from(std::env::var_os("MREFRUST_QWEN36_GGUF_INSTALL_DIR").unwrap());
+        std::path::PathBuf::from(std::env::var_os("TURBOSPARK_QWEN36_GGUF_INSTALL_DIR").unwrap());
 
     for name in [
         "language_model.model.layers.0.input_layernorm.weight",
@@ -97,9 +97,9 @@ fn worst_rel(label: &str, want: &[f32], got: &[f32]) {
 #[test]
 #[ignore = "needs both Qwen installs"]
 fn candidate_transforms_against_the_mlx_install() {
-    let mlx = std::path::PathBuf::from(std::env::var_os("MREFRUST_QWEN36_INSTALL_DIR").unwrap());
+    let mlx = std::path::PathBuf::from(std::env::var_os("TURBOSPARK_QWEN36_INSTALL_DIR").unwrap());
     let gguf =
-        std::path::PathBuf::from(std::env::var_os("MREFRUST_QWEN36_GGUF_INSTALL_DIR").unwrap());
+        std::path::PathBuf::from(std::env::var_os("TURBOSPARK_QWEN36_GGUF_INSTALL_DIR").unwrap());
     let pair = |name: &str| {
         (
             bf16_tensor(&mlx, name).expect("mlx tensor"),

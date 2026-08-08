@@ -16,7 +16,7 @@ pub struct StreamLayout {
 
 impl StreamLayout {
     /// Builds the streaming layout for one packed-expert layer file from the
-    /// decoded `packed_experts/layout.json` (`mrefrust-model-io`'s
+    /// decoded `packed_experts/layout.json` (`turbospark-model-io`'s
     /// `PackedExpertsLayout`). Per-expert offsets are carried explicitly
     /// (rather than relying on the uniform `expert * expert_stride`
     /// formula) since the writer may pack experts out of stride order.

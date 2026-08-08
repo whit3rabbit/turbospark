@@ -1,11 +1,11 @@
 #![cfg(target_os = "macos")]
 //! Parity tests for the `utility.metal` elementwise kernels (against the
-//! `mrefrust_compute` reference math) and for the `PassEncoder` batching
+//! `turbospark_compute` reference math) and for the `PassEncoder` batching
 //! path (an encoded chain must be bit-identical to the one-shot dispatch
 //! wrappers it replaces).
 
 use half::f16;
-use mrefrust_gpu::MetalContext;
+use turbospark_gpu::MetalContext;
 
 fn to_le(v: &[f16]) -> Vec<u8> {
     let mut out = Vec::with_capacity(v.len() * 2);
@@ -39,7 +39,7 @@ fn gelu_mul_matches_compute_reference() {
     let out_buf = context.new_output_buffer((n * 2) as u64);
 
     let pass = context.begin_pass();
-    mrefrust_gpu::encode_gelu_mul(
+    turbospark_gpu::encode_gelu_mul(
         &mut context,
         &pass,
         (&gate_buf, 0),
@@ -52,7 +52,7 @@ fn gelu_mul_matches_compute_reference() {
     let got = read_halfs(&out_buf, n);
 
     let gate32: Vec<f32> = gate.iter().map(|x| x.to_f32()).collect();
-    let expected32 = mrefrust_compute::moe::gelu_tanh(&gate32);
+    let expected32 = turbospark_compute::moe::gelu_tanh(&gate32);
     for i in 0..n {
         let want = expected32[i] * up[i].to_f32();
         let diff = (got[i].to_f32() - want).abs();
@@ -78,7 +78,7 @@ fn silu_mul_matches_reference_formula() {
     let out_buf = context.new_output_buffer((n * 2) as u64);
 
     let pass = context.begin_pass();
-    mrefrust_gpu::encode_silu_mul(
+    turbospark_gpu::encode_silu_mul(
         &mut context,
         &pass,
         (&gate_buf, 0),
@@ -113,7 +113,7 @@ fn residual_add_matches_host_fp16_add() {
     let delta_buf = context.new_buffer_with_data(&to_le(&delta));
 
     let pass = context.begin_pass();
-    mrefrust_gpu::encode_residual_add(
+    turbospark_gpu::encode_residual_add(
         &mut context,
         &pass,
         (&hidden_buf, 0),
@@ -142,15 +142,15 @@ fn encoded_chain_matches_one_shot_dispatches() {
 
     // One-shot: rmsnorm, then rmsnorm of the result again (any chain works
     // for the equivalence check; two steps prove ordering).
-    let step1 = mrefrust_gpu::rms_norm_no_scale(&mut context, &x, eps).expect("one-shot 1");
-    let step2 = mrefrust_gpu::rms_norm_no_scale(&mut context, &step1, eps).expect("one-shot 2");
+    let step1 = turbospark_gpu::rms_norm_no_scale(&mut context, &x, eps).expect("one-shot 1");
+    let step2 = turbospark_gpu::rms_norm_no_scale(&mut context, &step1, eps).expect("one-shot 2");
 
     // Batched: both dispatches in one command buffer, chained on GPU.
     let x_buf = context.new_buffer_with_data(&to_le(&x));
     let mid_buf = context.new_output_buffer((n * 2) as u64);
     let out_buf = context.new_output_buffer((n * 2) as u64);
     let pass = context.begin_pass();
-    mrefrust_gpu::encode_rms_norm_no_scale(
+    turbospark_gpu::encode_rms_norm_no_scale(
         &mut context,
         &pass,
         (&x_buf, 0),
@@ -159,7 +159,7 @@ fn encoded_chain_matches_one_shot_dispatches() {
         eps,
     )
     .expect("encode 1");
-    mrefrust_gpu::encode_rms_norm_no_scale(
+    turbospark_gpu::encode_rms_norm_no_scale(
         &mut context,
         &pass,
         (&mid_buf, 0),
@@ -188,7 +188,7 @@ fn logit_softcap_matches_the_fused_kernel_cap() {
 
     let buf = context.new_buffer_with_data(&to_le(&logits));
     let pass = context.begin_pass();
-    mrefrust_gpu::encode_logit_softcap(&mut context, &pass, (&buf, 0), softcap, n as u32)
+    turbospark_gpu::encode_logit_softcap(&mut context, &pass, (&buf, 0), softcap, n as u32)
         .expect("encode");
     pass.commit_and_wait();
     let got = read_halfs(&buf, n);
@@ -208,7 +208,7 @@ fn logit_softcap_matches_the_fused_kernel_cap() {
     );
 }
 
-/// Qwen 3.6's three gating kernels, against `mrefrust_compute::gating`.
+/// Qwen 3.6's three gating kernels, against `turbospark_compute::gating`.
 #[test]
 fn sigmoid_gate_mul_matches_compute_reference() {
     let mut context = MetalContext::new().expect("Metal device");
@@ -219,7 +219,7 @@ fn sigmoid_gate_mul_matches_compute_reference() {
     let out_buf = context.new_buffer_with_data(&to_le(&out));
     let gate_buf = context.new_buffer_with_data(&to_le(&gate));
     let pass = context.begin_pass();
-    mrefrust_gpu::encode_sigmoid_gate_mul(
+    turbospark_gpu::encode_sigmoid_gate_mul(
         &mut context,
         &pass,
         (&out_buf, 0),
@@ -230,11 +230,11 @@ fn sigmoid_gate_mul_matches_compute_reference() {
     pass.commit_and_wait();
 
     let got: Vec<f32> = read_halfs(&out_buf, n).iter().map(|h| h.to_f32()).collect();
-    let want = mrefrust_compute::sigmoid_gate_mul(
+    let want = turbospark_compute::sigmoid_gate_mul(
         &out.iter().map(|h| h.to_f32()).collect::<Vec<_>>(),
         &gate.iter().map(|h| h.to_f32()).collect::<Vec<_>>(),
     );
-    let err = mrefrust_compute::max_abs_diff(&got, &want);
+    let err = turbospark_compute::max_abs_diff(&got, &want);
     assert!(err < 1e-2, "err = {err}");
 }
 
@@ -248,7 +248,7 @@ fn sigmoid_scalar_mul_applies_one_gate_to_every_element() {
     let y_buf = context.new_buffer_with_data(&to_le(&y));
     let gate_buf = context.new_buffer_with_data(&to_le(&gate));
     let pass = context.begin_pass();
-    mrefrust_gpu::encode_sigmoid_scalar_mul(
+    turbospark_gpu::encode_sigmoid_scalar_mul(
         &mut context,
         &pass,
         (&y_buf, 0),
@@ -259,11 +259,11 @@ fn sigmoid_scalar_mul_applies_one_gate_to_every_element() {
     pass.commit_and_wait();
 
     let got: Vec<f32> = read_halfs(&y_buf, n).iter().map(|h| h.to_f32()).collect();
-    let want = mrefrust_compute::sigmoid_scalar_mul(
+    let want = turbospark_compute::sigmoid_scalar_mul(
         &y.iter().map(|h| h.to_f32()).collect::<Vec<_>>(),
         gate[0].to_f32(),
     );
-    let err = mrefrust_compute::max_abs_diff(&got, &want);
+    let err = turbospark_compute::max_abs_diff(&got, &want);
     assert!(err < 1e-2, "err = {err}");
 }
 
@@ -277,7 +277,7 @@ fn split_q_gate_deinterleaves_per_head_pairs() {
     let q_buf = context.new_output_buffer((heads * dim * 2) as u64);
     let gate_buf = context.new_output_buffer((heads * dim * 2) as u64);
     let pass = context.begin_pass();
-    mrefrust_gpu::encode_split_q_gate(
+    turbospark_gpu::encode_split_q_gate(
         &mut context,
         &pass,
         (&packed_buf, 0),
@@ -290,7 +290,7 @@ fn split_q_gate_deinterleaves_per_head_pairs() {
     pass.commit_and_wait();
 
     // A pure permutation: assert the exact bits, not a tolerance.
-    let (want_q, want_gate) = mrefrust_compute::split_q_gate(
+    let (want_q, want_gate) = turbospark_compute::split_q_gate(
         &packed.iter().map(|h| h.to_f32()).collect::<Vec<_>>(),
         heads,
         dim,

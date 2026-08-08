@@ -42,9 +42,9 @@
 //!
 //! Not run by default (needs a real install, and writes a few hundred MB):
 //!
-//!   MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
-//!   MREFRUST_LOGIT_DUMP_DIR=/tmp/kld/mrefrust \
-//!     cargo test -p mrefrust-bench --test logit_dump --release -- --ignored --nocapture
+//!   TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
+//!   TURBOSPARK_LOGIT_DUMP_DIR=/tmp/kld/turbospark \
+//!     cargo test -p turbospark-bench --test logit_dump --release -- --ignored --nocapture
 
 mod quality_common;
 
@@ -52,9 +52,9 @@ use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 use foundation::LogitValue;
-use mrefrust_bench::protocol::{PROTOCOL_EXPERT_CACHE_SLOTS, PROTOCOL_MAX_CONTEXT};
-use mrefrust_bench::real_model::open_model_runner;
 use runtime::LogitProducer;
+use turbospark_bench::protocol::{PROTOCOL_EXPERT_CACHE_SLOTS, PROTOCOL_MAX_CONTEXT};
+use turbospark_bench::real_model::open_model_runner;
 
 /// Logits are dumped in the width the runner produced them in.
 /// `LogitValue` is IEEE-754 binary16, so writing f16 bits is lossless AND
@@ -68,15 +68,16 @@ fn env_dir(key: &str) -> Option<PathBuf> {
 }
 
 #[test]
-#[ignore = "needs a real .gturbo install (MREFRUST_GEMMA4_INSTALL_DIR) and an output dir (MREFRUST_LOGIT_DUMP_DIR)"]
+#[ignore = "needs a real .gturbo install (TURBOSPARK_GEMMA4_INSTALL_DIR) and an output dir (TURBOSPARK_LOGIT_DUMP_DIR)"]
 fn dump_reference_logits() {
     let (Some(install), Some(out)) = (
-        env_dir("MREFRUST_GEMMA4_INSTALL_DIR").or_else(|| env_dir("MREFRUST_QWEN36_INSTALL_DIR")),
-        env_dir("MREFRUST_LOGIT_DUMP_DIR"),
+        env_dir("TURBOSPARK_GEMMA4_INSTALL_DIR")
+            .or_else(|| env_dir("TURBOSPARK_QWEN36_INSTALL_DIR")),
+        env_dir("TURBOSPARK_LOGIT_DUMP_DIR"),
     ) else {
         eprintln!(
-            "logit_dump: needs MREFRUST_GEMMA4_INSTALL_DIR (or \
-             MREFRUST_QWEN36_INSTALL_DIR) and MREFRUST_LOGIT_DUMP_DIR; skipping."
+            "logit_dump: needs TURBOSPARK_GEMMA4_INSTALL_DIR (or \
+             TURBOSPARK_QWEN36_INSTALL_DIR) and TURBOSPARK_LOGIT_DUMP_DIR; skipping."
         );
         return;
     };
@@ -116,14 +117,14 @@ fn dump(install: &Path, out: &Path) {
     // Walk once and throw it away: this warms the expert cache, which moves
     // the low bits of every logit (see the module doc).
     //
-    // `MREFRUST_LOGIT_DUMP_COLD=1` skips it, which is how the warm/cold
+    // `TURBOSPARK_LOGIT_DUMP_COLD=1` skips it, which is how the warm/cold
     // difference gets MEASURED rather than assumed. `quality_gate` takes
     // its perplexity first thing in the process, so its frozen row is a
     // COLD number and a warm dump will not reproduce it; running this
     // target both ways is what tells you the gap is cache state and not a
     // bug in one of them.
     let mut logits = vec![LogitValue::from_f32(0.0); vocab];
-    let cold = std::env::var_os("MREFRUST_LOGIT_DUMP_COLD").is_some();
+    let cold = std::env::var_os("TURBOSPARK_LOGIT_DUMP_COLD").is_some();
     if !cold {
         walk(&mut runner, &ids, &mut logits, |_, _| {});
     }
@@ -192,7 +193,7 @@ fn meta_json(install: &Path, ids: &[i32], prompt_len: usize, vocab: usize, cold:
     };
     format!(
         "{{\n  \
-         \"engine\": \"mrefrust\",\n  \
+         \"engine\": \"turbospark\",\n  \
          \"install\": {:?},\n  \
          \"expert_cache_slots\": {PROTOCOL_EXPERT_CACHE_SLOTS},\n  \
          \"cache_state\": \"{cache_state}\",\n  \

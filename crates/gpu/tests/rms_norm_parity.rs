@@ -1,10 +1,10 @@
 //! Runs `rmsnorm_no_scale` on real Metal hardware and checks it against the
-//! CPU reference in `mrefrust_compute::rms_norm`, proving the shader
+//! CPU reference in `turbospark_compute::rms_norm`, proving the shader
 //! compile -> dispatch -> readback path end to end.
 #![cfg(target_os = "macos")]
 
 use half::f16;
-use mrefrust_gpu::{rms_norm_no_scale, MetalContext};
+use turbospark_gpu::{rms_norm_no_scale, MetalContext};
 
 #[test]
 fn matches_cpu_reference_within_fp16_tolerance() {
@@ -15,14 +15,16 @@ fn matches_cpu_reference_within_fp16_tolerance() {
     let weight = vec![1.0f32; x_f32.len()];
     let eps = 1e-6f32;
 
-    let cpu = mrefrust_compute::rms_norm(&x_f32, &weight, eps);
+    let cpu = turbospark_compute::rms_norm(&x_f32, &weight, eps);
     let gpu = rms_norm_no_scale(&mut context, &x_f16, eps).expect("GPU dispatch succeeds");
 
     assert_eq!(gpu.len(), cpu.len());
-    let err =
-        mrefrust_compute::max_abs_diff(&gpu.iter().map(|v| v.to_f32()).collect::<Vec<f32>>(), &cpu);
+    let err = turbospark_compute::max_abs_diff(
+        &gpu.iter().map(|v| v.to_f32()).collect::<Vec<f32>>(),
+        &cpu,
+    );
     assert!(
-        err < mrefrust_compute::Tolerance::FP16_REDUCTION,
+        err < turbospark_compute::Tolerance::FP16_REDUCTION,
         "err = {err}"
     );
 }

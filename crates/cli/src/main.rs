@@ -1,19 +1,19 @@
-//! `mference-check`: the process entry point for the deterministic front
+//! `turbospark-check`: the process entry point for the deterministic front
 //! half of the port (Phases 1-3). Reads `argv`, hands the tokens to
-//! `mrefrust-invocation`, applies its pure exit-status/stream-routing
+//! `turbospark-invocation`, applies its pure exit-status/stream-routing
 //! decisions, and — for a validated invocation — prints the resolved
-//! request. Matches the ROADMAP's Milestone M1: "a mference-check binary
+//! request. Matches the ROADMAP's Milestone M1: "a turbospark-check binary
 //! that parses real CLI invocations, validates them, and prints the
 //! resolved request — no model needed."
 //!
 //! Resolves the `AGENTS.md`-documented "process surface ownership" question
-//! left open for the reserved `mrefrust-entrypoint` name: this crate (named
+//! left open for the reserved `turbospark-entrypoint` name: this crate (named
 //! `cli`, matching the ROADMAP's own Phase 7 crate list) is that owner. It
 //! is intentionally thin — every decision it applies (exit code, which
 //! stream gets which text) is computed by `invocation`; this binary only
 //! performs the I/O `invocation` is barred from doing itself.
 //!
-//! Running the actual generation loop (`mrefrust-runtime`) needs a loaded
+//! Running the actual generation loop (`turbospark-runtime`) needs a loaded
 //! model's tokenizer and forward-pass weights. `RealForwardRunner` (macOS/
 //! GPU only) now exists, so this binary attempts real generation in all
 //! three modes — `--prompt` (raw text, no templating), `--messages-file`

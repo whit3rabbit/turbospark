@@ -2,13 +2,13 @@
 //! `shaders/rope.metal` (vendored verbatim from `Metal/Primitives/rope.metal`).
 //! This is Gemma 4's proportional-RoPE convention: NeoX pairing `(i,
 //! head_dim/2 + i)` across the full head, frequency divisor `head_dim` —
-//! the same convention `mrefrust_compute::rope_neox` implements, so this
+//! the same convention `turbospark_compute::rope_neox` implements, so this
 //! dispatch is parity-tested directly against it.
 //!
 //! `rope.metal` also ships `rope_default_neox` (full-head NeoX, no partial
 //! rotation) and `rope_neox_subdim` (Qwen's rotary-dim-windowed variant,
 //! frequency divisor = rotary_dim rather than head_dim); neither has a
-//! matching `mrefrust_compute` reference yet, so only the kernel that does
+//! matching `turbospark_compute` reference yet, so only the kernel that does
 //! is wired here.
 
 use half::f16;

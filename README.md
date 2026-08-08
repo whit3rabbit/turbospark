@@ -1,8 +1,8 @@
-# mrefrust: High-Efficiency Apple Silicon Inference in Rust
+# turbospark: High-Efficiency Apple Silicon Inference in Rust
 
-`mrefrust` is a high-performance, behavior-compatible Rust port of the [Mference](https://github.com/drumih/turbo-fieldfare) local LLM inference engine.
+`turbospark` is a high-performance, behavior-compatible Rust port of the [Mference](https://github.com/drumih/turbo-fieldfare) local LLM inference engine.
 
-It is specifically designed for **Apple Silicon (macOS Metal)** to execute large language models (LLMs) with **extremely low memory overhead**. Instead of holding full model parameters in unified RAM/VRAM, `mrefrust` streams routed expert weights directly from high-speed SSD storage into a lean working memory footprint.
+It is specifically designed for **Apple Silicon (macOS Metal)** to execute large language models (LLMs) with **extremely low memory overhead**. Instead of holding full model parameters in unified RAM/VRAM, `turbospark` streams routed expert weights directly from high-speed SSD storage into a lean working memory footprint.
 
 This enables Mac users with limited memory (8 GB, 16 GB, 24 GB, or 36 GB) to run large models like **Gemma 4 26B-A4B** and **Qwen 3.6 35B-A3B** locally without exhausting system memory.
 
@@ -13,7 +13,7 @@ This enables Mac users with limited memory (8 GB, 16 GB, 24 GB, or 36 GB) to run
 - **Extreme Memory Efficiency**: Runs large 26B-35B parameter Mixture-of-Experts (MoE) models using only **~1.6 GiB to 2.2 GiB of peak RAM/VRAM**. Users with 16 GB or 36 GB Macs no longer need 64 GB+ memory configurations to run 26B-35B models.
 - **Direct GGUF Streaming Intake (New / WIP)**: Native intake for published GGUF formats (such as Gemma 4 Q8_0 and Qwen 3.6 mixed Q4_K_M). Streams directly from Hugging Face or parses local GGUFs into optimized `.gturbo` format without requiring the 20-27 GB raw model payload to be loaded in RAM.
 - **Zero-Copy Metal Execution**: Utilizes zero-copy `MTLBuffer` memory mappings (`newBufferWithBytesNoCopy`) and native Metal compute shaders for high-throughput generation.
-- **Low Memory Overhead vs standard MLX / LLM tools**: Standard MLX or llama.cpp setups load full weights into system memory (requiring 16 to 32+ GB RAM). `mrefrust` streams expert layers on demand and caps physical memory usage tightly under ~2.2 GB for Gemma 4 and ~1.6 GB for Qwen 3.6.
+- **Low Memory Overhead vs standard MLX / LLM tools**: Standard MLX or llama.cpp setups load full weights into system memory (requiring 16 to 32+ GB RAM). `turbospark` streams expert layers on demand and caps physical memory usage tightly under ~2.2 GB for Gemma 4 and ~1.6 GB for Qwen 3.6.
 - **Built-in OpenAI & Anthropic API Server**: Includes a local server providing OpenAI (`/v1/chat/completions`) and Anthropic (`/v1/messages`) endpoints for drop-in integration with CLI tools (e.g., `claude-code`), Web UIs, and applications.
 
 ---
@@ -35,10 +35,10 @@ Measured on Apple Silicon (M4 Max, 36 GB Unified Memory) running Gemma 4 26B-A4B
 
 ### Parity with Swift Original (Gemma 4 26B-A4B)
 
-| Metric | `mrefrust` (Rust) | Swift Original | Notes |
+| Metric | `turbospark` (Rust) | Swift Original | Notes |
 | --- | ---: | ---: | --- |
 | **Decode Speed** | 34.6 to 40.7 tok/s | 34.3 to 41.1 tok/s | Decode throughput within 1% parity |
-| **Peak RAM Footprint** | **2,108 to 2,182 MiB** | 2,217 to 2,235 MiB | `mrefrust` uses **2-5% less memory** |
+| **Peak RAM Footprint** | **2,108 to 2,182 MiB** | 2,217 to 2,235 MiB | `turbospark` uses **2-5% less memory** |
 | **Install Disk Size** | 14 GB | 14 GB | Identical disk model layout read by both |
 
 Full benchmarks, quality verification, KL divergence vs `mlx-lm`, and power consumption measurements are available in [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) and [`docs/POWER_BASELINE.md`](docs/POWER_BASELINE.md).
@@ -50,19 +50,19 @@ Full benchmarks, quality verification, KL divergence vs `mlx-lm`, and power cons
 ### Why the Custom `.gturbo` Format?
 Standard GGUF files store all tensors inside a single monolithic binary file (often 20 GB to 27 GB). Loading large GGUFs in traditional tools requires reading or mapping the entire multi-gigabyte file into system RAM.
 
-`mrefrust` uses the **`.gturbo`** model install directory format specified in upstream [`SYSTEM_DESIGN.md`](https://github.com/drumih/turbo-fieldfare/blob/main/docs/SYSTEM_DESIGN.md):
+`turbospark` uses the **`.gturbo`** model install directory format specified in upstream [`SYSTEM_DESIGN.md`](https://github.com/drumih/turbo-fieldfare/blob/main/docs/SYSTEM_DESIGN.md):
 - **`resident_core.bin`**: Non-expert resident tensors (norms, linear attention states, router projections, embeddings) loaded once via zero-copy `MTLBuffer` memory mappings.
 - **`packed_experts/`**: Transcoded MoE expert blobs organized for fast sequential `pread` streaming and LFU/LRU caching during token generation.
 
-This separation is what enables `mrefrust` to execute 26B-35B models in **~1.6 GiB to 2.2 GiB of peak physical memory** instead of 20+ GB.
+This separation is what enables `turbospark` to execute 26B-35B models in **~1.6 GiB to 2.2 GiB of peak physical memory** instead of 20+ GB.
 
 For full binary layouts, header byte specifications, and streaming mechanics, see [`docs/GTURBO.md`](docs/GTURBO.md).
 
 ### Compatibility with Upstream `turbo-fieldfare`
-`mrefrust` is a 100% behavior-compatible Rust port of upstream [turbo-fieldfare](https://github.com/drumih/turbo-fieldfare) (Mference). `.gturbo` model directories produced by `mrefrust-repack` can be executed interchangeably by both Swift `MferenceCLI` and Rust `mference-check`.
+`turbospark` is a 100% behavior-compatible Rust port of upstream [turbo-fieldfare](https://github.com/drumih/turbo-fieldfare) (Mference). `.gturbo` model directories produced by `turbospark-repack` can be executed interchangeably by both Swift `MferenceCLI` and Rust `turbospark-check`.
 
 ### Streaming GGUF Intake Without Large RAM Allocation
-`mrefrust` includes a native GGUF intake engine in `crates/repack`:
+`turbospark` includes a native GGUF intake engine in `crates/repack`:
 1. **HTTP Range Streaming**: Streams raw GGUF files directly from Hugging Face layer-by-layer using HTTP range requests (`HttpRangeSource`).
 2. **Zero Large Memory Allocation**: The 20-27 GB GGUF checkpoint is **never** fully downloaded to disk or loaded into RAM. `repack` reads header ranges, extracts layer tensors, transcodes resident core norms to BF16 and routers to INT8, and writes out the `.gturbo` directory.
 3. **Execution Memory Stats**: Once repacked into `.gturbo`, inference runs under the exact same tight memory ceiling (**~1.6 GiB for Qwen 3.6 GGUF, ~2.2 GiB for Gemma 4 GGUF**).
@@ -89,8 +89,8 @@ For full binary layouts, header byte specifications, and streaming mechanics, se
 - **GGUF Block Quantizations**: Native GPU GEMV kernels for Q8_0, Q4_K, Q6_K, plus INT8/FP16 execution paths.
 
 ### Server & Interfaces
-- **Interactive REPL & CLI**: `mference-check` binary for interactive chat (`--chat`), raw prompt (`--prompt`), or JSON message history (`--messages-file`).
-- **HTTP Server**: `mference-server` serving OpenAI Chat Completions (`/v1/chat/completions`), Anthropic Messages (`/v1/messages`), and `/v1/models`.
+- **Interactive REPL & CLI**: `turbospark-check` binary for interactive chat (`--chat`), raw prompt (`--prompt`), or JSON message history (`--messages-file`).
+- **HTTP Server**: `turbospark-server` serving OpenAI Chat Completions (`/v1/chat/completions`), Anthropic Messages (`/v1/messages`), and `/v1/models`.
 - **Configurable Expert Cache**: Adjust expert cache slot counts (8, 16, 24, 32) to tune performance vs memory footprint.
 
 ### Limitations & Out of Scope
@@ -113,8 +113,8 @@ The workspace is organized into modular Rust crates:
 - **`crates/repack`**: GGUF/Safetensors intake and transcode pipeline into `.gturbo`.
 - **`crates/tokenizer`**: Fast tokenization, chat template application, streaming detokenizer, and tool-call parsing.
 - **`crates/runtime`**: Core execution engine for prefill and decode loops.
-- **`crates/server`**: Local OpenAI and Anthropic compatible HTTP server (`mference-server`).
-- **`crates/cli`**: Command-line application binary (`mference-check`).
+- **`crates/server`**: Local OpenAI and Anthropic compatible HTTP server (`turbospark-server`).
+- **`crates/cli`**: Command-line application binary (`turbospark-check`).
 - **`crates/selection`**, **`crates/window-fit`**, **`crates/invocation`**: Context window management and candidate sampling.
 - **`crates/bench`**: Throughput benchmark harness, memory oracle tests, and quality gate suite.
 
@@ -140,12 +140,12 @@ cargo clippy --workspace --tests
 
 ```sh
 # Run interactive chat against a model install
-cargo run --release -p mrefrust-cli --bin mference-check -- \
+cargo run --release -p turbospark-cli --bin turbospark-check -- \
   --model ~/models/gemma4.gturbo \
   --chat
 
 # Run prompt via JSON messages file
-cargo run --release -p mrefrust-cli --bin mference-check -- \
+cargo run --release -p turbospark-cli --bin turbospark-check -- \
   --model ~/models/gemma4.gturbo \
   --messages-file prompt.json
 ```
@@ -154,7 +154,7 @@ cargo run --release -p mrefrust-cli --bin mference-check -- \
 
 ```sh
 # Start local OpenAI / Anthropic compatible HTTP server
-cargo run --release -p mrefrust-server --bin mference-server -- \
+cargo run --release -p turbospark-server --bin turbospark-server -- \
   --model ~/models/gemma4.gturbo
 ```
 

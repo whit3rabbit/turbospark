@@ -1,14 +1,14 @@
 #![cfg(target_os = "macos")]
 //! Parity test for the vendored `moe.metal` decode pair
 //! (`moe_phase1_gate_up_act_u16load` + `moe_phase2_down_reduce_k8`)
-//! against the `mrefrust_compute` CPU MoE reference: same INT4-affine
+//! against the `turbospark_compute` CPU MoE reference: same INT4-affine
 //! expert weights, same gated activation, same weighted combine, on real
 //! Metal hardware, reading the expert blobs through a real argument
 //! buffer exactly as the runtime does.
 
 use half::f16;
-use mrefrust_compute::quant::Int4AffineRow;
-use mrefrust_gpu::{MetalContext, MoeExpertOffsets, RoutedBlobsBuffer};
+use turbospark_compute::quant::Int4AffineRow;
+use turbospark_gpu::{MetalContext, MoeExpertOffsets, RoutedBlobsBuffer};
 
 const D: usize = 64;
 const F: usize = 64;
@@ -30,7 +30,7 @@ fn quantized_rows(rows: usize, cols: usize, seed: u64) -> Vec<Int4AffineRow> {
     (0..rows)
         .map(|r| {
             let row = deterministic_row(seed.wrapping_add(r as u64 * 97 + 1), cols);
-            mrefrust_compute::quantize_int4_affine(&row)
+            turbospark_compute::quantize_int4_affine(&row)
         })
         .collect()
 }
@@ -105,7 +105,7 @@ fn moe_phase1_phase2_match_cpu_reference() {
     let x32_rounded: Vec<f32> = x16.iter().map(|v| v.to_f32()).collect();
     let mut expected: Vec<f32> = residual16.iter().map(|v| v.to_f32()).collect();
     for (e, (gate, up, down)) in expert_rows.iter().enumerate() {
-        let out = mrefrust_compute::run_ffn(gate, up, down, &x32_rounded, D, F);
+        let out = turbospark_compute::run_ffn(gate, up, down, &x32_rounded, D, F);
         for (dst, o) in expected.iter_mut().zip(out.iter()) {
             *dst += weights[e] * o;
         }
@@ -132,7 +132,7 @@ fn moe_phase1_phase2_match_cpu_reference() {
     let residual_buf = context.new_buffer_with_data(&to_le(&residual16));
     let acts_buf = context.new_output_buffer((top_k * F * 2) as u64);
     let y_buf = context.new_output_buffer((D * 2) as u64);
-    let mut routing = vec![f16::from_f32(0.0); mrefrust_gpu::MAX_STREAMED_EXPERTS];
+    let mut routing = vec![f16::from_f32(0.0); turbospark_gpu::MAX_STREAMED_EXPERTS];
     routing[0] = f16::from_f32(weights[0]);
     routing[1] = f16::from_f32(weights[1]);
     let routing_buf = context.new_buffer_with_data(&to_le(&routing));
@@ -147,7 +147,7 @@ fn moe_phase1_phase2_match_cpu_reference() {
     for blob in &blobs {
         pass.use_read_buffer(blob);
     }
-    mrefrust_gpu::encode_moe_phase1(
+    turbospark_gpu::encode_moe_phase1(
         &mut context,
         &pass,
         &routed,
@@ -160,7 +160,7 @@ fn moe_phase1_phase2_match_cpu_reference() {
         false,
     )
     .expect("phase1");
-    mrefrust_gpu::encode_moe_phase2(
+    turbospark_gpu::encode_moe_phase2(
         &mut context,
         &pass,
         &routed,

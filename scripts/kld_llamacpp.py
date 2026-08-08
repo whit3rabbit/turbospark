@@ -1,15 +1,15 @@
 """Token-level KL divergence between this port and llama.cpp, ON THE SAME
 GGUF BYTES (ROADMAP Phase G's last open gate clause).
 
-Run `cargo test -p mrefrust-bench --test logit_dump` first, pointed at a
+Run `cargo test -p turbospark-bench --test logit_dump` first, pointed at a
 GGUF-derived install; it writes the id sequence and this port's full-vocab
 logits. This script replays the SAME IDS through llama.cpp, on the
 published GGUF the install was streamed from, and reports how far apart the
 two distributions are.
 
-    MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4-gguf.gturbo \
-    MREFRUST_LOGIT_DUMP_DIR=/tmp/kld/gguf-warm \
-      cargo test -p mrefrust-bench --test logit_dump --release -- --ignored --nocapture
+    TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4-gguf.gturbo \
+    TURBOSPARK_LOGIT_DUMP_DIR=/tmp/kld/gguf-warm \
+      cargo test -p turbospark-bench --test logit_dump --release -- --ignored --nocapture
 
     uv run --python 3.12 --with numpy scripts/kld_llamacpp.py \
       ~/models/gguf-ref/gemma-4-26B-A4B-it-Q8_0.gguf /tmp/kld/gguf-warm /tmp/kld/mlx-warm
@@ -147,14 +147,14 @@ def main() -> None:
     # Metal by default: this port is a Metal engine, and the backend has to
     # match or the headline measures ggml's CPU/Metal gap (see the module
     # doc). 0 is the other arm, kept as the backend floor.
-    n_gpu_layers = int(os.environ.get("MREFRUST_LLAMACPP_NGL", "99"))
+    n_gpu_layers = int(os.environ.get("TURBOSPARK_LLAMACPP_NGL", "99"))
     other_ngl = 0 if n_gpu_layers else 99
 
     primary, meta = load_port_dump(dumps[0])
     rows, vocab, ids = meta["rows"], meta["vocab_size"], meta["token_ids"]
     first = meta["first_scored_position"]
 
-    work = pathlib.Path(os.environ.get("MREFRUST_LLAMACPP_DIR", "/tmp/kld/llamacpp"))
+    work = pathlib.Path(os.environ.get("TURBOSPARK_LLAMACPP_DIR", "/tmp/kld/llamacpp"))
     work.mkdir(parents=True, exist_ok=True)
     ids_path = work / "ids.i32"
     np.asarray(ids, dtype=np.int32).tofile(ids_path)

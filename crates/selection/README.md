@@ -1,4 +1,4 @@
-# mrefrust-selection
+# turbospark-selection
 
 Candidate token selection (`select`, `select_from_logits`) from candidate logit vectors under shaping configuration (temperature, top-k, top-p, repetition penalty, seed determinism, step position, and distribution guards).
 
@@ -6,7 +6,7 @@ Downstream workspace crates import this package via the `selection` alias:
 
 ```toml
 [dependencies]
-selection = { package = "mrefrust-selection", path = "../selection" }
+selection = { package = "turbospark-selection", path = "../selection" }
 ```
 
 ## Key Modules
@@ -20,8 +20,8 @@ selection = { package = "mrefrust-selection", path = "../selection" }
 ## Development & Test Commands
 
 ```sh
-# Run unit and integration tests for mrefrust-selection
-cargo test -p mrefrust-selection
+# Run unit and integration tests for turbospark-selection
+cargo test -p turbospark-selection
 ```
 
 ## Crate Gotchas

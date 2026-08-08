@@ -1,6 +1,6 @@
-# mrefrust-bench
+# turbospark-bench
 
-Throughput benchmark harness (`mference-bench`), mach memory sampler (`memory.rs`), frozen community benchmark protocol (`protocol.rs`), real model benchmark runner (`real_model.rs`), and memory oracle integration test (`tests/memory_oracle.rs`).
+Throughput benchmark harness (`turbospark-bench`), mach memory sampler (`memory.rs`), frozen community benchmark protocol (`protocol.rs`), real model benchmark runner (`real_model.rs`), and memory oracle integration test (`tests/memory_oracle.rs`).
 
 ## Directory & File Structure
 
@@ -8,8 +8,8 @@ Throughput benchmark harness (`mference-bench`), mach memory sampler (`memory.rs
 crates/bench/
 +-- Cargo.toml              # Crate manifest
 +-- src/
-|   +-- lib.rs              # Library entry point (mrefrust_bench)
-|   +-- main.rs             # Binary entry point (mference-bench)
+|   +-- lib.rs              # Library entry point (turbospark_bench)
+|   +-- main.rs             # Binary entry point (turbospark-bench)
 |   +-- memory.rs           # Mach memory sampler for physical footprint tracking
 |   +-- protocol.rs         # Frozen community benchmark protocol definitions
 |   \-- real_model.rs       # Real model benchmark runner driving RealForwardRunner
@@ -39,32 +39,32 @@ crates/bench/
 - `memory.rs`: Mach kernel task info sampler for tracking peak physical memory footprint (`phys_footprint`).
 - `protocol.rs`: Frozen benchmark protocol case definitions and step evaluators.
 - `real_model.rs`: Runs protocol cases against real `.gturbo` installs using `RealForwardRunner`.
-- `tests/memory_oracle.rs`: Ignored test gated on `MREFRUST_GEMMA4_INSTALL_DIR` asserting per-chip memory ceilings and zero leak growth for Gemma 4.
-- `tests/qwen36_memory_oracle.rs`: Ignored test gated on `MREFRUST_QWEN36_INSTALL_DIR` asserting per-chip memory ceilings and steady state for Qwen 3.6.
+- `tests/memory_oracle.rs`: Ignored test gated on `TURBOSPARK_GEMMA4_INSTALL_DIR` asserting per-chip memory ceilings and zero leak growth for Gemma 4.
+- `tests/qwen36_memory_oracle.rs`: Ignored test gated on `TURBOSPARK_QWEN36_INSTALL_DIR` asserting per-chip memory ceilings and steady state for Qwen 3.6.
 - `tests/quality_gate.rs` & `tests/qwen36_quality_gate.rs`: Quality gate evaluation verifying generated output metrics against reference fixtures.
 
 ## Development & Test Commands
 
 ```sh
-# Run fast unit and integration tests for mrefrust-bench
-cargo test -p mrefrust-bench
+# Run fast unit and integration tests for turbospark-bench
+cargo test -p turbospark-bench
 
 # Run scripted producer throughput benchmark
-cargo run -p mrefrust-bench --bin mference-bench -- <tokenizer-dir>
+cargo run -p turbospark-bench --bin turbospark-bench -- <tokenizer-dir>
 
 # Run real install benchmark (macOS, release mode required)
-cargo run --release -p mrefrust-bench --bin mference-bench -- --model ~/models/gemma4.gturbo
+cargo run --release -p turbospark-bench --bin turbospark-bench -- --model ~/models/gemma4.gturbo
 
 # One protocol case per process (the protocol's fresh-process leg, and what
 # a cross-engine comparison needs since Swift's CLI launches once per case)
-cargo run --release -p mrefrust-bench --bin mference-bench -- \
+cargo run --release -p turbospark-bench --bin turbospark-bench -- \
   --model ~/models/gemma4.gturbo --case short-explanation
 
 # Vary the routed-expert cache size (allowed 8/16/24/32, default 16, the
 # same set and default MferenceCLI takes). 32 buys ~15% decode and ~1.5 GB
 # of footprint, so it leaves the ~2 GB working-set claim behind; every
 # published number is measured at the default.
-cargo run --release -p mrefrust-bench --bin mference-bench -- \
+cargo run --release -p turbospark-bench --bin turbospark-bench -- \
   --model ~/models/gemma4.gturbo --case short-explanation --expert-cache-slots 32
 
 # Head-to-head against ../Mference's MferenceCLI, same install, interleaved
@@ -78,35 +78,35 @@ scripts/parity.sh
 scripts/phasediff.sh [pairs] [slots]
 
 # Run memory oracle test for Gemma 4 (macOS, takes ~10 mins, requires model env var)
-MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
-  cargo test -p mrefrust-bench --test memory_oracle --release -- --ignored --nocapture
+TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
+  cargo test -p turbospark-bench --test memory_oracle --release -- --ignored --nocapture
 
 # Run memory oracle test for Qwen 3.6 (macOS, separate process target)
-MREFRUST_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
-  cargo test -p mrefrust-bench --test qwen36_memory_oracle --release -- --ignored --nocapture
+TURBOSPARK_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
+  cargo test -p turbospark-bench --test qwen36_memory_oracle --release -- --ignored --nocapture
 
 # Quality gate: reference-answer perplexity + frozen output digests
 # (ROADMAP Phase Q). One target per family, ~1 min each.
-MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
-  cargo test -p mrefrust-bench --test quality_gate --release -- --ignored --nocapture
-MREFRUST_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
-  cargo test -p mrefrust-bench --test qwen36_quality_gate --release -- --ignored --nocapture
+TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
+  cargo test -p turbospark-bench --test quality_gate --release -- --ignored --nocapture
+TURBOSPARK_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
+  cargo test -p turbospark-bench --test qwen36_quality_gate --release -- --ignored --nocapture
 
 # Cross-engine KLD against mlx-lm (Phase Q's last item). Step 1 dumps this
 # port's full-vocab logits plus the token ids; step 2 replays those IDS
 # through mlx-lm in a uv ephemeral env. Needs the 14.6 GB reference
-# checkpoint. MREFRUST_LOGIT_DUMP_COLD=1 skips the warmup walk and
+# checkpoint. TURBOSPARK_LOGIT_DUMP_COLD=1 skips the warmup walk and
 # reproduces quality_gate's frozen perplexity exactly.
-MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
-MREFRUST_LOGIT_DUMP_DIR=/tmp/kld/mrefrust \
-  cargo test -p mrefrust-bench --test logit_dump --release -- --ignored --nocapture
-uv run --python 3.12 --with mlx-lm --with numpy scripts/kld.py /tmp/kld/mrefrust
+TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
+TURBOSPARK_LOGIT_DUMP_DIR=/tmp/kld/turbospark \
+  cargo test -p turbospark-bench --test logit_dump --release -- --ignored --nocapture
+uv run --python 3.12 --with mlx-lm --with numpy scripts/kld.py /tmp/kld/turbospark
 
 # Sensitivity proof for the gate above: APFS-clone the install, shift one
 # quantization level in a strided subset of the routed experts, re-measure.
 # ~30 s. Response curve and detection floor in docs/BENCHMARKS.md.
-MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
-  cargo test -p mrefrust-bench --test quality_sensitivity --release -- --ignored --nocapture
+TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
+  cargo test -p turbospark-bench --test quality_sensitivity --release -- --ignored --nocapture
 ```
 
 ## Crate Gotchas

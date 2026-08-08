@@ -1,6 +1,6 @@
 //! Smoke test: the compute skeleton constructs and the core primitives flow
 //! across the dependency edge.
-use mrefrust_compute::{ComputeStrategy, TokenId};
+use turbospark_compute::{ComputeStrategy, TokenId};
 
 #[test]
 fn strategy_constructs() {

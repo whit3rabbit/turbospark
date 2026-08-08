@@ -1,4 +1,4 @@
-# mrefrust-model-io
+# turbospark-model-io
 
 Model installation layout, `manifest.json` parsing and architecture validation (`ArchConfig`), packed expert layout metadata (`PackedExpertsLayout`), resident tensor index reader (`ResidentIndex`), memory-mapped resident weight buffer (`ResidentBuffer`), SHA-256 verification (`sha256.rs`), and install receipt validation (`InstallReceipt`).
 
@@ -6,7 +6,7 @@ Downstream workspace crates import this package via the `model_io` alias:
 
 ```toml
 [dependencies]
-model_io = { package = "mrefrust-model-io", path = "../model-io" }
+model_io = { package = "turbospark-model-io", path = "../model-io" }
 ```
 
 ## Safety
@@ -28,8 +28,8 @@ model_io = { package = "mrefrust-model-io", path = "../model-io" }
 ## Development & Test Commands
 
 ```sh
-# Run tests for mrefrust-model-io
-cargo test -p mrefrust-model-io
+# Run tests for turbospark-model-io
+cargo test -p turbospark-model-io
 ```
 
 ## Crate Gotchas

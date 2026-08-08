@@ -1,4 +1,4 @@
-# mrefrust-compute
+# turbospark-compute
 
 CPU reference kernels and compute strategy marker type (`ComputeStrategy`). These reference implementations serve as the numerical ground truth against which `crates/gpu` Metal kernels are validated.
 
@@ -6,7 +6,7 @@ Downstream workspace crates import this package via the `compute` alias:
 
 ```toml
 [dependencies]
-compute = { package = "mrefrust-compute", path = "../compute" }
+compute = { package = "turbospark-compute", path = "../compute" }
 ```
 
 ## Safety
@@ -28,8 +28,8 @@ compute = { package = "mrefrust-compute", path = "../compute" }
 ## Development & Test Commands
 
 ```sh
-# Run tests for mrefrust-compute
-cargo test -p mrefrust-compute
+# Run tests for turbospark-compute
+cargo test -p turbospark-compute
 ```
 
 ## Crate Gotchas

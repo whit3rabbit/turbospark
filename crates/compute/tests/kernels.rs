@@ -1,8 +1,8 @@
 //! Kernel-level tests for the CPU reference implementations in
-//! `mrefrust_compute`. Numerics parity with the Swift/Metal implementation is
+//! `turbospark_compute`. Numerics parity with the Swift/Metal implementation is
 //! out of scope; these tests check the documented math contracts.
 
-use mrefrust_compute::{
+use turbospark_compute::{
     apply_streamed_routed, bf16_to_f32, causal_attention, dequant_int4_gemv, dequant_int8_gemv,
     dequantize_int4_affine, dequantize_int8_affine, embed_lookup_int4, embed_lookup_int8,
     f32_to_bf16, gelu_tanh, logit_softcap_softmax, max_abs_diff, quantize_int4_affine,

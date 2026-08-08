@@ -1,4 +1,4 @@
-# mrefrust-gpu
+# turbospark-gpu
 
 Metal device context (`MetalContext`), MSL pipeline cache, command pass encoders (`PassEncoder`, `CommittedPass`), per-kernel dispatches, KV cache manager (`KvCacheManager`), and resident weight Metal buffer wrappers (`ResidentGpuWeights`).
 
@@ -6,7 +6,7 @@ Downstream workspace crates import this package via the `gpu` alias:
 
 ```toml
 [dependencies]
-gpu = { package = "mrefrust-gpu", path = "../gpu" }
+gpu = { package = "turbospark-gpu", path = "../gpu" }
 ```
 
 ## Platform Requirements
@@ -30,8 +30,8 @@ gpu = { package = "mrefrust-gpu", path = "../gpu" }
 ## Development & Test Commands
 
 ```sh
-# Run tests for mrefrust-gpu (macOS only)
-cargo test -p mrefrust-gpu
+# Run tests for turbospark-gpu (macOS only)
+cargo test -p turbospark-gpu
 ```
 
 ## Crate Gotchas

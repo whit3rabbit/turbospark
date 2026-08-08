@@ -5,7 +5,7 @@
 //! distinguishable without inspecting any message string.
 
 use foundation::runtime_config::{DEFAULT_CACHE_SLOTS, DEFAULT_CHUNK_SIZE};
-use mrefrust_invocation::{parse, Mode, ParseFailure, ParseOutcome, PrefillChunk, ReadAheadMode};
+use turbospark_invocation::{parse, Mode, ParseFailure, ParseOutcome, PrefillChunk, ReadAheadMode};
 
 fn tok(items: &[&str]) -> Vec<String> {
     items.iter().map(|s| s.to_string()).collect()

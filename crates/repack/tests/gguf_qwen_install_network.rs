@@ -5,14 +5,14 @@
 //! port's own quantizers, so it can agree with a wrong decoder.
 //!
 //! ```sh
-//! MREFRUST_QWEN36_GGUF_INSTALL_DIR=~/models/qwen36-gguf.gturbo \
-//!   cargo test -p mrefrust-repack --test gguf_qwen_install_network --release -- --ignored --nocapture
+//! TURBOSPARK_QWEN36_GGUF_INSTALL_DIR=~/models/qwen36-gguf.gturbo \
+//!   cargo test -p turbospark-repack --test gguf_qwen_install_network --release -- --ignored --nocapture
 //! ```
 //!
 //! Same two cost properties as the Gemma sibling. The checkpoint is NEVER
 //! materialized locally: `write_gguf_install_streamed` reads it a layer at a
 //! time through `HttpRangeSource`, so the only disk this needs is the
-//! install. And the destination must NOT be `MREFRUST_QWEN36_INSTALL_DIR`:
+//! install. And the destination must NOT be `TURBOSPARK_QWEN36_INSTALL_DIR`:
 //! that is the MLX-derived artifact the Qwen oracle row and quality numbers
 //! are measured against, and this is a different artifact of the same model.
 //!
@@ -24,7 +24,7 @@
 
 use std::path::PathBuf;
 
-use mrefrust_repack::{fetch_gguf_header, write_gguf_install_streamed, HttpRangeSource};
+use turbospark_repack::{fetch_gguf_header, write_gguf_install_streamed, HttpRangeSource};
 
 const QWEN36_Q4_K_M: &str =
     "https://huggingface.co/ggml-org/Qwen3.6-35B-A3B-GGUF/resolve/main/Qwen3.6-35B-A3B-Q4_K_M.gguf";
@@ -52,12 +52,12 @@ fn get(url: &str) -> Vec<u8> {
 }
 
 fn install_dir() -> PathBuf {
-    let dir = match std::env::var_os("MREFRUST_QWEN36_GGUF_INSTALL_DIR") {
+    let dir = match std::env::var_os("TURBOSPARK_QWEN36_GGUF_INSTALL_DIR") {
         Some(dir) => PathBuf::from(dir),
-        None => std::env::temp_dir().join(format!("mrefrust-qwen36-gguf-{}", std::process::id())),
+        None => std::env::temp_dir().join(format!("turbospark-qwen36-gguf-{}", std::process::id())),
     };
     assert_ne!(
-        std::env::var_os("MREFRUST_QWEN36_INSTALL_DIR").map(PathBuf::from),
+        std::env::var_os("TURBOSPARK_QWEN36_INSTALL_DIR").map(PathBuf::from),
         Some(dir.clone()),
         "refusing to overwrite the MLX-derived install every gate is measured against"
     );
@@ -105,7 +105,7 @@ fn repacks_the_real_qwen36_q4_k_m_gguf() {
     // The three block types, each where the real file puts it. This is the
     // assertion the Gemma install cannot make: that file is Q8_0 throughout,
     // so nothing in it proves the dtype is read per tensor.
-    let tag = |ggml: u32| mrefrust_repack::dtype_tag_for_ggml_type(ggml).expect("tag");
+    let tag = |ggml: u32| turbospark_repack::dtype_tag_for_ggml_type(ggml).expect("tag");
     assert_eq!(
         resident.entries["language_model.model.embed_tokens.weight"].dtype,
         tag(12),

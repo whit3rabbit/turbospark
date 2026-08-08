@@ -2,7 +2,7 @@
 
 use std::io::Write;
 
-use mrefrust_model_io::{load_packed_experts_layout, ModelError};
+use turbospark_model_io::{load_packed_experts_layout, ModelError};
 
 fn write_layout(dir: &std::path::Path, json: &str) {
     let sub = dir.join("packed_experts");
@@ -90,7 +90,7 @@ fn tempdir() -> std::path::PathBuf {
     let unique_counter = COUNTER.fetch_add(1, Ordering::Relaxed);
     let mut path = std::env::temp_dir();
     path.push(format!(
-        "mrefrust-model-io-layout-{}-{}-{unique_counter}",
+        "turbospark-model-io-layout-{}-{}-{unique_counter}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

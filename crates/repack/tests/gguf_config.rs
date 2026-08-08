@@ -7,7 +7,7 @@
 //! plausible-looking but wrong config.
 
 use model_io::ModelFamily;
-use mrefrust_repack::{
+use turbospark_repack::{
     arch_from_gguf, build_synthetic_gemma4_gguf, parse_gguf_header, GgufBuilder, GgufConfigError,
     SyntheticGgufShape, GGUF_DEFAULT_MAX_HEADER_BYTES,
 };
@@ -145,7 +145,7 @@ fn rejects_a_layer_pattern_of_the_wrong_length() {
     // Claim four layers while the pattern still describes two.
     h.metadata.insert(
         "gemma4.block_count".to_string(),
-        mrefrust_repack::GgufValue::U32(4),
+        turbospark_repack::GgufValue::U32(4),
     );
     match arch_from_gguf(&h) {
         Err(GgufConfigError::BadValue { key, .. }) => {

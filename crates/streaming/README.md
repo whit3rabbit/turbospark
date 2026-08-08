@@ -1,4 +1,4 @@
-# mrefrust-streaming
+# turbospark-streaming
 
 Routed-expert streamer (`PreadExpertStreamer`) for loading MoE expert weights on demand via `pread`, coupled with a per-layer slot cache (`ExpertCache`), a process-wide worker pool for parallel chunk reading (`read_pool.rs`), and kernel readahead advice (`rdadvice.rs`).
 
@@ -6,7 +6,7 @@ Downstream workspace crates import this package via the `streaming` alias:
 
 ```toml
 [dependencies]
-streaming = { package = "mrefrust-streaming", path = "../streaming" }
+streaming = { package = "turbospark-streaming", path = "../streaming" }
 ```
 
 ## Safety
@@ -24,8 +24,8 @@ streaming = { package = "mrefrust-streaming", path = "../streaming" }
 ## Development & Test Commands
 
 ```sh
-# Run tests for mrefrust-streaming
-cargo test -p mrefrust-streaming
+# Run tests for turbospark-streaming
+cargo test -p turbospark-streaming
 ```
 
 ## Crate Gotchas

@@ -4,7 +4,7 @@
 use std::io::Write;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use mrefrust_streaming::{ExpertCachePolicy, PreadExpertStreamer, StreamLayout};
+use turbospark_streaming::{ExpertCachePolicy, PreadExpertStreamer, StreamLayout};
 
 const EXPERT_STRIDE: u64 = 64;
 const EXPERTS_PER_LAYER: usize = 4;
@@ -13,7 +13,7 @@ fn write_layer_file() -> std::path::PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
     let dir = std::env::temp_dir().join(format!(
-        "mrefrust-streaming-{}-{unique}",
+        "turbospark-streaming-{}-{unique}",
         std::process::id()
     ));
     std::fs::create_dir_all(&dir).unwrap();
@@ -68,7 +68,7 @@ fn offset_beyond_stream_size_is_rejected() {
     let err = streamer.load_expert(0, EXPERTS_PER_LAYER + 10).unwrap_err();
     assert!(matches!(
         err,
-        mrefrust_streaming::StreamerError::OffsetOutOfRange { .. }
+        turbospark_streaming::StreamerError::OffsetOutOfRange { .. }
     ));
 }
 
@@ -112,7 +112,7 @@ fn multi_chunk_reads_reassemble_each_blob_exactly() {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
     let dir = std::env::temp_dir().join(format!(
-        "mrefrust-streaming-big-{}-{unique}",
+        "turbospark-streaming-big-{}-{unique}",
         std::process::id()
     ));
     std::fs::create_dir_all(&dir).unwrap();

@@ -1,6 +1,6 @@
 #![cfg(target_os = "macos")]
 //! Parity test for the port-local `moe_gguf.metal` decode pairs against
-//! `mrefrust_compute`'s block-quant GEMVs and gated activation, on real Metal
+//! `turbospark_compute`'s block-quant GEMVs and gated activation, on real Metal
 //! hardware, reading expert blobs through a real argument buffer exactly as
 //! the runtime does (ROADMAP Phase G Stage 2).
 //!
@@ -17,7 +17,7 @@
 //! type's fixture exercises is exactly what a shared body catches.
 
 use half::f16;
-use mrefrust_gpu::{MetalContext, MoeExpertOffsets, RoutedBlobsBuffer, MAX_STREAMED_EXPERTS};
+use turbospark_gpu::{MetalContext, MoeExpertOffsets, RoutedBlobsBuffer, MAX_STREAMED_EXPERTS};
 
 /// The two GGUF block types with a routed-expert pair. Q6_K is deliberately
 /// absent: no real checkpoint puts it in an expert (Qwen 3.6's Q4_K_M carries
@@ -42,15 +42,15 @@ impl Block {
 
     fn quantize(self, row: &[f32]) -> Vec<u8> {
         match self {
-            Block::Q8_0 => mrefrust_compute::quantize_q8_0(row),
-            Block::Q4K => mrefrust_compute::quantize_q4_k(row),
+            Block::Q8_0 => turbospark_compute::quantize_q8_0(row),
+            Block::Q4K => turbospark_compute::quantize_q4_k(row),
         }
     }
 
     fn gemv(self, rows: &[&[u8]], x: &[f32], n: usize) -> Vec<f32> {
         match self {
-            Block::Q8_0 => mrefrust_compute::dequant_q8_0_gemv(rows, x, n),
-            Block::Q4K => mrefrust_compute::dequant_q4_k_gemv(rows, x, n),
+            Block::Q8_0 => turbospark_compute::dequant_q8_0_gemv(rows, x, n),
+            Block::Q4K => turbospark_compute::dequant_q4_k_gemv(rows, x, n),
         }
     }
 }
@@ -139,7 +139,7 @@ fn expert_reference(
     let activated = if use_silu {
         gate_out.iter().map(|&v| v / (1.0 + (-v).exp())).collect()
     } else {
-        mrefrust_compute::gelu_tanh(&gate_out)
+        turbospark_compute::gelu_tanh(&gate_out)
     };
     let acts: Vec<f32> = activated
         .iter()
@@ -225,7 +225,7 @@ fn run_case(block: Block, use_silu: bool, top_k: usize) {
     // them out keeps the argument order visible at each call site.
     match block {
         Block::Q8_0 => {
-            mrefrust_gpu::encode_moe_phase1_q8_0(
+            turbospark_gpu::encode_moe_phase1_q8_0(
                 &mut context,
                 &pass,
                 &routed,
@@ -238,7 +238,7 @@ fn run_case(block: Block, use_silu: bool, top_k: usize) {
                 use_silu,
             )
             .expect("phase1");
-            mrefrust_gpu::encode_moe_phase2_q8_0(
+            turbospark_gpu::encode_moe_phase2_q8_0(
                 &mut context,
                 &pass,
                 &routed,
@@ -254,7 +254,7 @@ fn run_case(block: Block, use_silu: bool, top_k: usize) {
             .expect("phase2");
         }
         Block::Q4K => {
-            mrefrust_gpu::encode_moe_phase1_q4_k(
+            turbospark_gpu::encode_moe_phase1_q4_k(
                 &mut context,
                 &pass,
                 &routed,
@@ -267,7 +267,7 @@ fn run_case(block: Block, use_silu: bool, top_k: usize) {
                 use_silu,
             )
             .expect("phase1");
-            mrefrust_gpu::encode_moe_phase2_q4_k(
+            turbospark_gpu::encode_moe_phase2_q4_k(
                 &mut context,
                 &pass,
                 &routed,

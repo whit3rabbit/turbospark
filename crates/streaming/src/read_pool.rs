@@ -166,7 +166,7 @@ fn pool() -> &'static Pool {
         for _ in 0..POOL_THREADS {
             let receiver = std::sync::Arc::clone(&receiver);
             std::thread::Builder::new()
-                .name("mrefrust-expert-read".to_string())
+                .name("turbospark-expert-read".to_string())
                 .spawn(move || {
                     // A thread's QoS class is set from inside that thread,
                     // so this cannot move up to the spawn site.

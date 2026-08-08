@@ -1,6 +1,6 @@
 //! Integration tests for the conversation-window fitting rules.
 
-use mrefrust_window_fit::fit_conversation_window;
+use turbospark_window_fit::fit_conversation_window;
 
 fn char_count_measure(turns: &[&str]) -> u64 {
     turns.iter().map(|t| t.len() as u64).sum()

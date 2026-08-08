@@ -4,7 +4,7 @@
 
 use std::path::PathBuf;
 
-use mrefrust_tokenizer::{
+use turbospark_tokenizer::{
     ChatDialect, Message, MfDetokenizer, MfTokenizer, Role, StreamingStopMatcher,
 };
 

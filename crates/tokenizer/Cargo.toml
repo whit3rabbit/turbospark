@@ -1,5 +1,5 @@
 [package]
-name = "mrefrust-tokenizer"
+name = "turbospark-tokenizer"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,11 +8,11 @@ publish.workspace = true
 description = "Tokenizer wrapper, chat-template rendering, streaming detokenizer, and tool-call parsing for the supported model dialects."
 
 [lib]
-name = "mrefrust_tokenizer"
+name = "turbospark_tokenizer"
 path = "src/lib.rs"
 
 [dependencies]
-foundation = { package = "mrefrust-core", path = "../core" }
+foundation = { package = "turbospark-core", path = "../core" }
 tokenizers = { version = "0.20", default-features = false, features = ["onig"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

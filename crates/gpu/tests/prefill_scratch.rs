@@ -2,7 +2,7 @@
 //! `PrefillChunkScratchBuffers`'s real Metal buffer allocation.
 #![cfg(target_os = "macos")]
 
-use mrefrust_gpu::{MetalContext, PrefillChunkScratchBuffers, PrefillChunkScratchLayout};
+use turbospark_gpu::{MetalContext, PrefillChunkScratchBuffers, PrefillChunkScratchLayout};
 
 fn dense_arch() -> model_io::ArchConfig {
     model_io::ArchConfig {

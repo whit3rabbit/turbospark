@@ -16,10 +16,10 @@
 
 use std::path::Path;
 
-use mrefrust_bench::memory::{chip_brand_string, AppMemorySampler};
-use mrefrust_bench::protocol::{swift_footer, PROTOCOL_CASES, PROTOCOL_EXPERT_CACHE_SLOTS};
-use mrefrust_bench::real_model::{open_model_runner, run_protocol_case};
 use runtime::StopReason;
+use turbospark_bench::memory::{chip_brand_string, AppMemorySampler};
+use turbospark_bench::protocol::{swift_footer, PROTOCOL_CASES, PROTOCOL_EXPERT_CACHE_SLOTS};
+use turbospark_bench::real_model::{open_model_runner, run_protocol_case};
 
 pub struct ChipBaseline {
     pub brand_substr: &'static str,

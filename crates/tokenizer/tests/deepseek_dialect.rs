@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use mrefrust_tokenizer::{ChatDialect, Message, MfTokenizer, Role};
+use turbospark_tokenizer::{ChatDialect, Message, MfTokenizer, Role};
 
 fn fixture_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/DeepseekTokenizer")

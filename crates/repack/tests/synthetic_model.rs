@@ -1,12 +1,12 @@
 //! Round-trip test for the tiny synthetic Gemma-4 `.gturbo` install:
 //! write it, then read every part back through the real
-//! `mrefrust_model_io` loaders and check the resident tensors' shapes and
+//! `turbospark_model_io` loaders and check the resident tensors' shapes and
 //! byte contents match what was written.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use mrefrust_repack::{
+use turbospark_repack::{
     build_synthetic_gemma4_install, build_synthetic_gemma4_moe_install, expert_gate_proj_name,
     q_proj_name, router_name,
 };
@@ -16,7 +16,7 @@ static COUNTER: AtomicU64 = AtomicU64::new(0);
 fn temp_dir() -> PathBuf {
     let n = COUNTER.fetch_add(1, Ordering::SeqCst);
     let dir = std::env::temp_dir().join(format!(
-        "mrefrust-synthetic-model-{}-{n}",
+        "turbospark-synthetic-model-{}-{n}",
         std::process::id()
     ));
     std::fs::create_dir_all(&dir).unwrap();

@@ -11,7 +11,7 @@
 //! setting it per test would race inside a shared test binary.
 
 use half::f16;
-use mrefrust_gpu::MetalContext;
+use turbospark_gpu::MetalContext;
 
 fn to_le(v: &[f16]) -> Vec<u8> {
     let mut out = Vec::with_capacity(v.len() * 2);
@@ -38,9 +38,15 @@ fn chained_pass(context: &mut MetalContext, label: &'static str) -> Vec<f16> {
     let delta_buf = context.new_buffer_with_data(&to_le(&delta));
 
     let pass = context.begin_pass_labeled(label);
-    mrefrust_gpu::encode_residual_add(context, &pass, (&hidden_buf, 0), (&delta_buf, 0), n as u32)
-        .expect("encode residual_add");
-    mrefrust_gpu::encode_scalar_mul(context, &pass, (&hidden_buf, 0), 2.0, n as u32)
+    turbospark_gpu::encode_residual_add(
+        context,
+        &pass,
+        (&hidden_buf, 0),
+        (&delta_buf, 0),
+        n as u32,
+    )
+    .expect("encode residual_add");
+    turbospark_gpu::encode_scalar_mul(context, &pass, (&hidden_buf, 0), 2.0, n as u32)
         .expect("encode scalar_mul");
     pass.commit_and_wait();
     read_halfs(&hidden_buf, n)
@@ -64,7 +70,7 @@ fn profiles_each_dispatch_without_changing_results() {
         );
     }
 
-    let report = mrefrust_gpu::dispatch_profile_report(1).expect("report");
+    let report = turbospark_gpu::dispatch_profile_report(1).expect("report");
     for expected in [
         "probe",
         "residual_add_fp16",

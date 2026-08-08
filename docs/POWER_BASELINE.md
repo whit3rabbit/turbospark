@@ -34,7 +34,7 @@ LABEL=ac MODEL=~/models/gemma4.gturbo CASES=short-explanation \
 | Sampler | `powermetrics -s cpu_power,gpu_power,thermal -i 200` |
 | Runs per case | 1 discarded warmup process, then 2 measured (3 pairs for the QoS A/B) |
 
-**One binary across both sessions.** `target/release/mference-bench` was
+**One binary across both sessions.** `target/release/turbospark-bench` was
 built once before the battery session and never rebuilt, so the AC/battery
 comparison varies only the power source. The recorded git rev moves from
 `bcaa62f` to `705bf37` because unrelated work committed to the branch

@@ -1,7 +1,7 @@
 //! Tests for safetensors header parsing and ranged-download planning,
 //! using synthetic byte fixtures (no network needed).
 
-use mrefrust_repack::{
+use turbospark_repack::{
     fetch_safetensors_header, parse_header, required_prefix_len, MemoryRangeSource,
     SafetensorsHeaderError,
 };
@@ -90,6 +90,6 @@ fn fetch_safetensors_header_over_memory_source_matches_direct_parse() {
     let file = build_file(sample_header_json(), 1024);
     let source = MemoryRangeSource::new(&file);
     let via_fetch = fetch_safetensors_header(&source).unwrap();
-    let via_parse = parse_header(&file, mrefrust_repack::DEFAULT_MAX_HEADER_BYTES).unwrap();
+    let via_parse = parse_header(&file, turbospark_repack::DEFAULT_MAX_HEADER_BYTES).unwrap();
     assert_eq!(via_fetch, via_parse);
 }

@@ -4,12 +4,12 @@
 
 use std::io::Write;
 
-use mrefrust_model_io::{
+use turbospark_model_io::{
     load_manifest, peek_family, LinearAttentionConfig, ModelError, ModelFamily,
 };
 
-fn toy_arch() -> mrefrust_model_io::ArchConfig {
-    mrefrust_model_io::ArchConfig {
+fn toy_arch() -> turbospark_model_io::ArchConfig {
+    turbospark_model_io::ArchConfig {
         hidden_size: 64,
         intermediate_size: 128,
         moe_intermediate_size: 64,
@@ -40,8 +40,8 @@ fn toy_arch() -> mrefrust_model_io::ArchConfig {
         shared_expert_gated: false,
         rope_neox_subdim: false,
         linear_attention: LinearAttentionConfig::NONE,
-        compressed_attention: mrefrust_model_io::CompressedAttentionConfig::NONE,
-        hyper_connections: mrefrust_model_io::HyperConnectionConfig::NONE,
+        compressed_attention: turbospark_model_io::CompressedAttentionConfig::NONE,
+        hyper_connections: turbospark_model_io::HyperConnectionConfig::NONE,
         num_hash_routed_layers: 0,
         router_scoring_func: "softmax".to_string(),
         routed_scaling_factor: 1.0,
@@ -174,7 +174,7 @@ impl TempDir {
         let unique_counter = COUNTER.fetch_add(1, Ordering::Relaxed);
         let mut path = std::env::temp_dir();
         let unique = format!(
-            "mrefrust-model-io-test-{}-{}-{unique_counter}",
+            "turbospark-model-io-test-{}-{}-{unique_counter}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
