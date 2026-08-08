@@ -69,3 +69,125 @@ fn the_resident_core_agrees_between_the_two_qwen_installs() {
         );
     }
 }
+
+/// Reports the worst relative error between two vectors, which is the metric
+/// a CANDIDATE TRANSFORM is judged by: correlation says "related", this says
+/// "the same numbers".
+fn worst_rel(label: &str, want: &[f32], got: &[f32]) {
+    assert_eq!(want.len(), got.len(), "{label}: length");
+    let worst = want
+        .iter()
+        .zip(got)
+        .map(|(w, g)| (w - g).abs() / w.abs().max(1e-6))
+        .fold(0.0f32, f32::max);
+    println!(
+        "  {label}: worst relative error {worst:.6}  pearson {:+.5}",
+        compute::pearson(want, got)
+    );
+}
+
+/// The candidate transforms, measured rather than argued.
+///
+/// llama.cpp's converter is documented to apply `A = -exp(A_log)` for the
+/// qwen3next family and to squeeze conv1d's HF `[channels, 1, kernel]` down
+/// to two dims, whose GGUF storage order is then the reverse of what this
+/// port's flat read expects. Both are hypotheses until they land on the
+/// bytes, which is the discipline `FUSED_GATE_FIRST` established: correlate
+/// the transform, do not reason about the converter.
+#[test]
+#[ignore = "needs both Qwen installs"]
+fn candidate_transforms_against_the_mlx_install() {
+    let mlx = std::path::PathBuf::from(std::env::var_os("MREFRUST_QWEN36_INSTALL_DIR").unwrap());
+    let gguf =
+        std::path::PathBuf::from(std::env::var_os("MREFRUST_QWEN36_GGUF_INSTALL_DIR").unwrap());
+    let pair = |name: &str| {
+        (
+            bf16_tensor(&mlx, name).expect("mlx tensor"),
+            bf16_tensor(&gguf, name).expect("gguf tensor"),
+        )
+    };
+
+    println!("A_log: is the GGUF side -exp(A_log)?");
+    let (a_log_mlx, a_gguf) = pair("language_model.model.layers.0.linear_attn.A_log");
+    let neg_exp: Vec<f32> = a_log_mlx.iter().map(|v| -v.exp()).collect();
+    worst_rel("-exp(mlx A_log) vs gguf", &neg_exp, &a_gguf);
+    // The inverse direction, in case the file stores the log and the install
+    // stores the value rather than the other way round.
+    let log_neg: Vec<f32> = a_gguf.iter().map(|v| (-v).max(1e-30).ln()).collect();
+    worst_rel("log(-gguf) vs mlx A_log", &a_log_mlx, &log_neg);
+
+    println!("dt_bias: same multiset, different order?");
+    let (dt_mlx, dt_gguf) = pair("language_model.model.layers.0.linear_attn.dt_bias");
+    let mut sorted_mlx = dt_mlx.clone();
+    let mut sorted_gguf = dt_gguf.clone();
+    sorted_mlx.sort_by(f32::total_cmp);
+    sorted_gguf.sort_by(f32::total_cmp);
+    worst_rel("sorted(mlx) vs sorted(gguf)", &sorted_mlx, &sorted_gguf);
+
+    // dt_bias being a pure permutation changes the question for every other
+    // per-head vector: an ELEMENT-WISE test of a candidate transform fails on
+    // the ordering alone, whatever the transform. So each candidate is also
+    // tried against sorted sides, which is invariant to the permutation and
+    // still rejects a wrong transform.
+    println!("A_log again, invariant to the ordering:");
+    let mut s_gguf = a_gguf.clone();
+    s_gguf.sort_by(f32::total_cmp);
+    for (label, values) in [
+        ("sorted(mlx A_log)", a_log_mlx.clone()),
+        ("sorted(-exp(mlx A_log))", neg_exp.clone()),
+    ] {
+        let mut sorted = values;
+        sorted.sort_by(f32::total_cmp);
+        worst_rel(&format!("{label} vs sorted(gguf)"), &sorted, &s_gguf);
+    }
+
+    println!("conv1d: is it a permutation too?");
+    let (conv_mlx, conv_gguf) = pair("language_model.model.layers.0.linear_attn.conv1d.weight");
+    let mut s_conv_mlx = conv_mlx.clone();
+    let mut s_conv_gguf = conv_gguf.clone();
+    s_conv_mlx.sort_by(f32::total_cmp);
+    s_conv_gguf.sort_by(f32::total_cmp);
+    worst_rel("sorted(mlx) vs sorted(gguf)", &s_conv_mlx, &s_conv_gguf);
+
+    // Both are permutations of the same values, so the remaining question is
+    // WHICH permutation. Printed as an index map rather than guessed at: with
+    // 32 distinct values the pattern is readable by eye, and whatever
+    // structure it has (a head-group reorder, an interleave) shows up as
+    // arithmetic in the indices.
+    println!("dt_bias: the permutation, gguf index -> mlx index");
+    println!("  {:?}", permutation(&dt_gguf, &dt_mlx));
+
+    // Does the SAME map explain A_log, once its transform is undone?
+    println!("A_log: does the dt_bias permutation carry over?");
+    let dt_map = permutation(&dt_gguf, &dt_mlx);
+    let deinterleaved: Vec<f32> = dt_map.iter().map(|&i| neg_exp[i.min(31)]).collect();
+    worst_rel(
+        "dt_bias's map applied to -exp(mlx) vs gguf",
+        &deinterleaved,
+        &a_gguf,
+    );
+
+    // conv1d is identity at the start, so the reorder is confined to a
+    // region. Report where it begins and how wide the strides are: the
+    // channel run covers q, k and v, and only one of those need move.
+    println!("conv1d: where the identity stops");
+    let conv_map = permutation(&conv_gguf, &conv_mlx);
+    let first_moved = conv_map.iter().enumerate().find(|(i, &m)| m != *i);
+    match first_moved {
+        Some((i, &m)) => println!(
+            "  first non-identity at channel {i} -> {m}, of {} (map around it: {:?})",
+            conv_map.len(),
+            &conv_map[i.saturating_sub(2)..(i + 6).min(conv_map.len())]
+        ),
+        None => println!("  identity throughout"),
+    }
+}
+
+/// For each position in `from`, the position of the same value in `to`.
+/// `usize::MAX` where the value is not found, which is what a near-miss
+/// (a transform, not a permutation) looks like.
+fn permutation(from: &[f32], to: &[f32]) -> Vec<usize> {
+    from.iter()
+        .map(|v| to.iter().position(|w| w == v).unwrap_or(usize::MAX))
+        .collect()
+}
