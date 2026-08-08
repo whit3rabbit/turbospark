@@ -606,11 +606,19 @@ fn resident_entries(
 /// companions, so saying anything else would be a lie about the bytes on
 /// disk. The install stays refused on the other four slots.
 fn gguf_manifest_quant(header: &GgufHeader, plan: &Plan<'_>) -> serde_json::Value {
-    let type_of = |name: &str| {
+    // Searched by SUFFIX across every tensor, not read off `blk.0.`, because
+    // a hybrid model's layer 0 need not carry the tensor a slot is named for.
+    // Qwen 3.6 puts linear attention on layer 0, so it has no `attn_q` there
+    // (and no `ffn_gate` anywhere -- its shared expert is `ffn_gate_shexp`),
+    // and both slots came out "absent", which `validate_quant` then refused
+    // as a block type with no kernel. Found on the real Q4_K_M install, after
+    // the walk had written 19 GB of correct bytes.
+    let type_of = |suffixes: &[&str]| {
         header
             .tensors
-            .get(name)
-            .map(|i| ggml_scheme_name(i.ggml_type))
+            .iter()
+            .find(|(name, _)| suffixes.iter().any(|s| name.ends_with(s)))
+            .map(|(_, i)| ggml_scheme_name(i.ggml_type))
             .unwrap_or("absent")
     };
     let routed = plan
@@ -618,7 +626,7 @@ fn gguf_manifest_quant(header: &GgufHeader, plan: &Plan<'_>) -> serde_json::Valu
         .values()
         .next()
         .and_then(|s| s.first())
-        .map(|s| type_of(s.name))
+        .map(|s| type_of(&[s.name]))
         .unwrap_or("absent");
     let slot = |ggml: &str| {
         serde_json::json!({
@@ -631,7 +639,7 @@ fn gguf_manifest_quant(header: &GgufHeader, plan: &Plan<'_>) -> serde_json::Valu
         })
     };
     // What the router slot says has to match what the transcode wrote.
-    let router_source = type_of("blk.0.ffn_gate_inp.weight");
+    let router_source = type_of(&["ffn_gate_inp.weight"]);
     let router = if router_source == "F32" {
         serde_json::json!({
             "weightBits": 8,
@@ -644,10 +652,13 @@ fn gguf_manifest_quant(header: &GgufHeader, plan: &Plan<'_>) -> serde_json::Valu
         slot(router_source)
     };
     serde_json::json!({
-        "embedding": slot(type_of("token_embd.weight")),
-        "attention": slot(type_of("blk.0.attn_q.weight")),
+        "embedding": slot(type_of(&["token_embd.weight"])),
+        // Qwen's hybrid layers fuse Q/K/V into `attn_qkv`; Gemma has only
+        // `attn_q`. Either answers "what block type is the attention core".
+        "attention": slot(type_of(&["attn_q.weight", "attn_qkv.weight"])),
         "router": router,
-        "sharedExpert": slot(type_of("blk.0.ffn_gate.weight")),
+        // Gemma's shared expert is `ffn_gate`, Qwen's is `ffn_gate_shexp`.
+        "sharedExpert": slot(type_of(&["ffn_gate.weight", "ffn_gate_shexp.weight"])),
         "routedExpert": slot(routed),
     })
 }

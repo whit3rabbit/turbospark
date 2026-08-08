@@ -11,7 +11,7 @@
 use model_io::{ArchConfig, ResidentIndex};
 
 use crate::real_forward::{resident_matrix, DecodeScratch, RealForwardError};
-use crate::real_forward_gemma4::{encode_gemv_any, norm_view};
+use crate::real_forward_gemma4::{encode_gemv_any, entry, norm_view};
 use crate::real_forward_qwen::{layer_tensor, RealQwenState, RMS_EPS};
 
 /// Mask-2 layer: gated DeltaNet. No position, no RoPE, no KV -- the whole
@@ -36,28 +36,64 @@ pub(crate) fn encode_linear_block(
     let v_heads = shape.num_v_heads as usize;
 
     let name = |suffix: &str| layer_tensor(layer, &format!("linear_attn.{suffix}"));
-    let projection =
-        |suffix: &str, rows: usize| resident_matrix(weights, index, &name(suffix), rows, hidden);
-    let (qkv_w, z_w, a_w, b_w) = (
-        projection("in_proj_qkv.weight", qkv_dim)?,
-        projection("in_proj_z.weight", value_dim)?,
-        projection("in_proj_a.weight", v_heads)?,
-        projection("in_proj_b.weight", v_heads)?,
-    );
-    gpu::encode_gdn_in_proj(
-        context,
-        pass,
-        &qkv_w,
-        &z_w,
-        &a_w,
-        &b_w,
-        (&scratch.normed, 0),
-        (&qwen.gdn_qkv_raw, 0),
-        (&qwen.gdn_z, 0),
-        (&qwen.gdn_a, 0),
-        (&qwen.gdn_b, 0),
-    )
-    .map_err(gpu_err)?;
+    let in_proj = [
+        ("in_proj_qkv.weight", qkv_dim, &qwen.gdn_qkv_raw),
+        ("in_proj_z.weight", value_dim, &qwen.gdn_z),
+        ("in_proj_a.weight", v_heads, &qwen.gdn_a),
+        ("in_proj_b.weight", v_heads, &qwen.gdn_b),
+    ];
+    // `gdn_in_proj_gemv_simd` fuses these four into ONE dispatch over their
+    // concatenated rows, and it reads INT4-affine planes: packed nibbles plus
+    // BF16 scales and biases. It is a batching optimization over four plain
+    // GEMVs and nothing else -- the kernel routes each global row to one of
+    // the four matrices and dots it against the same `x`.
+    //
+    // A GGUF install has no planes to give it (Qwen's Q4_K_M carries these
+    // four at Q8_0), so it takes the four GEMVs instead, through the same
+    // dtype-dispatched `encode_gemv_any` every other projection uses. The
+    // cost is three extra dispatches per linear layer; the alternative is a
+    // block-quant copy of the fused kernel, which is a kernel plus a parity
+    // test to buy back an encode-side batching win on a path that has never
+    // been measured as hot.
+    if entry(index, &name(in_proj[0].0))?.dtype == 4 {
+        let projection = |suffix: &str, rows: usize| {
+            resident_matrix(weights, index, &name(suffix), rows, hidden)
+        };
+        let (qkv_w, z_w, a_w, b_w) = (
+            projection(in_proj[0].0, qkv_dim)?,
+            projection(in_proj[1].0, value_dim)?,
+            projection(in_proj[2].0, v_heads)?,
+            projection(in_proj[3].0, v_heads)?,
+        );
+        gpu::encode_gdn_in_proj(
+            context,
+            pass,
+            &qkv_w,
+            &z_w,
+            &a_w,
+            &b_w,
+            (&scratch.normed, 0),
+            (&qwen.gdn_qkv_raw, 0),
+            (&qwen.gdn_z, 0),
+            (&qwen.gdn_a, 0),
+            (&qwen.gdn_b, 0),
+        )
+        .map_err(gpu_err)?;
+    } else {
+        for (suffix, rows, out) in in_proj {
+            encode_gemv_any(
+                context,
+                pass,
+                weights,
+                index,
+                &name(suffix),
+                rows,
+                hidden,
+                (&scratch.normed, 0),
+                (out, 0),
+            )?;
+        }
+    }
 
     let conv_w = norm_view(
         weights,

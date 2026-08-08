@@ -253,6 +253,7 @@ impl MetalContext {
             profile: dispatch_profile::enabled()
                 .then(|| PassProfile::new(&self.device, label).map(RefCell::new))
                 .flatten(),
+            ended: std::cell::Cell::new(false),
         }
     }
 
@@ -286,6 +287,9 @@ pub struct PassEncoder {
     /// cell; exactly one encoder for the whole pass otherwise.
     encoder: RefCell<metal::ComputeCommandEncoder>,
     profile: Option<RefCell<PassProfile>>,
+    /// Whether `endEncoding` has been sent. Read by the `Drop` impl below,
+    /// which is what stops an error path aborting the process.
+    ended: std::cell::Cell<bool>,
 }
 
 impl PassEncoder {
@@ -424,20 +428,39 @@ impl PassEncoder {
     /// in commit order, so a caller can queue follow-on GPU work and then
     /// wait on an earlier buffer to be woken as soon as *its* results are
     /// ready, with the later work still running.
-    pub fn commit(self) -> CommittedPass {
+    pub fn commit(mut self) -> CommittedPass {
         self.encoder.borrow().end_encoding();
+        self.ended.set(true);
         self.command_buffer.commit();
         // Timestamps can only be resolved once the buffer has completed,
         // and a pass may be committed and never waited on (the shared and
         // hit-expert buffers are), so profiling waits here rather than
         // losing those dispatches. This is the serialization the module
         // doc warns about: profiled runs are not throughput runs.
-        if let Some(profile) = self.profile {
+        if let Some(profile) = self.profile.take() {
             self.command_buffer.wait_until_completed();
             profile.into_inner().resolve();
         }
         CommittedPass {
-            command_buffer: self.command_buffer,
+            command_buffer: self.command_buffer.clone(),
+        }
+    }
+}
+
+/// Ends encoding on a pass that is dropped without being committed, which
+/// is what every `?` inside an encode sequence does.
+///
+/// Without this, Metal aborts the process from `-[_MTLCommandEncoder
+/// dealloc]` with "Command encoder released without endEncoding", and that
+/// assertion is all anyone sees: the real error is still travelling up the
+/// stack when the encoder is deallocated, so it never reaches a caller that
+/// could print it. Found while opening the first mixed-block-type GGUF
+/// install, where a one-line dispatch refusal presented as a Metal crash.
+impl Drop for PassEncoder {
+    fn drop(&mut self) {
+        if !self.ended.get() {
+            self.encoder.borrow().end_encoding();
+            self.ended.set(true);
         }
     }
 }
