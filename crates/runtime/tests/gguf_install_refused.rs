@@ -1,20 +1,21 @@
-//! ROADMAP Phase G Stage 1 boundary, enforced rather than documented.
+//! ROADMAP Phase G Stage 2's boundary, enforced rather than documented.
 //!
-//! The GGUF repack walk produces a real, well-formed `.gturbo` install whose
-//! expert bytes are block-quantized (Q8_0 / Q4_K). No kernel in this port
-//! reads a block layout yet, so opening one must FAIL, by name, rather than
-//! produce plausible-looking garbage.
+//! Stage 1 refused every GGUF install, because no kernel in this port read a
+//! block layout. Stage 2 moved that line rather than erasing it: Q8_0 has a
+//! resident GEMV, an embedding lookup and the routed-expert decode pair
+//! behind it, all parity-tested, so a Q8_0 install OPENS. Q4_K, Q6_K and
+//! Q4_0 do not have the MoE and embedding halves yet, so they still refuse.
 //!
-//! Two independent refusals are checked, because a single one is a single
-//! point of failure for a whole class of silently-wrong numbers:
+//! Both directions are asserted here, and the refusal is checked twice over,
+//! because a single gate is a single point of failure for a whole class of
+//! silently-wrong numbers:
 //!
-//! 1. `load_manifest` rejects `quant.scheme: "gguf"`.
-//! 2. `RealForwardRunner::open` rejects the GGUF dtype tags in the resident
-//!    index, which is the backstop for an install whose manifest was edited
-//!    to get past (1) -- exactly what someone trying to force one open would
-//!    do.
-//!
-//! Stage 2 flips these deliberately, once there are kernels behind them.
+//! 1. `load_manifest` refuses a `scheme: "gguf"` slot whose `ggmlType` is
+//!    outside `model_io::EXECUTABLE_GGUF_TYPES`.
+//! 2. `RealForwardRunner::open` refuses a resident-index dtype tag outside
+//!    the same set, which is the backstop for an install whose manifest was
+//!    edited to get past (1) -- exactly what someone trying to force one open
+//!    would do. It reads the bytes rather than a claim about them.
 
 #![cfg(target_os = "macos")]
 
@@ -37,66 +38,108 @@ fn tempdir() -> std::path::PathBuf {
     path
 }
 
+/// A shape whose every quantized row is a whole number of 32-element Q8_0
+/// blocks, which is what real ggml files always are: the routed
+/// `moe_intermediate` rows and the `hidden`-length rows both have to tile.
+/// The default fixture shape does NOT (its `moe_intermediate` is 16), and it
+/// stays that way because the repack-side tests want the smallest file.
+fn executable_shape() -> SyntheticGgufShape {
+    SyntheticGgufShape {
+        moe_intermediate: 32,
+        ..SyntheticGgufShape::default()
+    }
+}
+
 /// Writes a GGUF-sourced install and returns its directory plus the arch it
 /// declares.
-fn gguf_install() -> (std::path::PathBuf, model_io::ArchConfig) {
-    let (bytes, _) = build_synthetic_gemma4_gguf(SyntheticGgufShape::default());
+fn gguf_install(shape: SyntheticGgufShape) -> (std::path::PathBuf, model_io::ArchConfig) {
+    let (bytes, _) = build_synthetic_gemma4_gguf(shape);
     let header = parse_gguf_header(&bytes, GGUF_DEFAULT_MAX_HEADER_BYTES).expect("parse");
     let dir = tempdir();
     let arch = write_gguf_install_streamed(
         &dir,
         &header,
         &MemoryRangeSource::new(&bytes),
-        "gguf-stage1",
+        "gguf-stage2",
         |_| {},
     )
     .expect("write install");
     (dir, arch)
 }
 
+/// Rewrites every resident-index entry carrying `from` to carry `to`, in
+/// place, leaving the bytes those entries point at untouched. That is exactly
+/// the state a hand-forged install would be in: a block type this port cannot
+/// execute, claiming to be one it can, or the reverse.
+fn retag_dtypes(dir: &std::path::Path, from: u8, to: u8) -> usize {
+    let path = dir.join("model_weights.bin");
+    let mut bytes = std::fs::read(&path).unwrap();
+    let index = model_io::load_resident_index(&path).expect("index");
+    let mut changed = 0;
+    for i in 0..index.header.entry_count as usize {
+        let at = model_io::HEADER_BYTES + i * model_io::ENTRY_BYTES + 6;
+        if bytes[at] == from {
+            bytes[at] = to;
+            changed += 1;
+        }
+    }
+    std::fs::write(&path, &bytes).unwrap();
+    changed
+}
+
+/// The Stage 2 deliverable: a Q8_0 GGUF install opens, and the kernels behind
+/// it are the ones this test is really about (the embedding lookup, the
+/// resident GEMV, and the routed-expert decode pair).
 #[test]
-fn opening_a_gguf_install_fails_and_says_why() {
-    let (dir, arch) = gguf_install();
+fn a_q8_0_gguf_install_opens() {
+    let (dir, arch) = gguf_install(executable_shape());
+
+    match RealForwardRunner::open(&dir, arch) {
+        Ok(_) => {}
+        Err(e) => panic!("a Q8_0 GGUF install must open now that its kernels exist: {e}"),
+    }
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// The manifest gate, on a block type with no kernel. Q4_K has a CPU
+/// reference and a resident GEMV but no MoE or embedding kernel, so an
+/// install of one must not open, and the refusal must say which type.
+#[test]
+fn a_block_type_without_kernels_is_refused_by_the_manifest() {
+    let (dir, arch) = gguf_install(executable_shape());
+
+    let path = dir.join("manifest.json");
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    for slot in ["embedding", "attention", "sharedExpert", "routedExpert"] {
+        manifest["quant"][slot]["ggmlType"] = serde_json::json!("Q4_K");
+    }
+    std::fs::write(&path, serde_json::to_vec_pretty(&manifest).unwrap()).unwrap();
 
     let text = match RealForwardRunner::open(&dir, arch) {
-        Ok(_) => panic!("a GGUF install must not open"),
+        Ok(_) => panic!("a Q4_K install must not open"),
         Err(e) => e.to_string(),
     };
     assert!(
-        text.contains("quantization") || text.contains("GGUF"),
-        "the refusal must name the cause, got: {text}"
+        text.contains("Q4_K") || text.contains("q4_k"),
+        "the refusal must name the block type, got: {text}"
     );
 
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// The dtype backstop on its own, reached by rewriting the manifest's quant
-/// object to the affine one `load_manifest` accepts. The bytes on disk are
-/// still Q8_0 blocks, so the second refusal is the one that has to fire.
+/// The dtype backstop on its own: the manifest still says Q8_0, but the
+/// bytes on disk are tagged Q4_K. `open` has to believe the index.
 #[test]
 fn the_dtype_backstop_fires_even_if_the_manifest_is_forged() {
-    let (dir, arch) = gguf_install();
+    let (dir, arch) = gguf_install(executable_shape());
 
-    let path = dir.join("manifest.json");
-    let mut manifest: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    let affine = serde_json::json!({
-        "weightBits": 4,
-        "scheme": "affine",
-        "scaleType": "bf16",
-        "biasType": "bf16",
-        "groupSize": 64,
-    });
-    for slot in ["embedding", "attention", "sharedExpert", "routedExpert"] {
-        manifest["quant"][slot] = affine.clone();
-    }
-    let mut router = affine.clone();
-    router["weightBits"] = serde_json::json!(8);
-    manifest["quant"]["router"] = router;
-    std::fs::write(&path, serde_json::to_vec_pretty(&manifest).unwrap()).unwrap();
+    let changed = retag_dtypes(&dir, 6, 7);
+    assert!(changed > 0, "the fixture carries no Q8_0 resident tensors");
 
     let text = match RealForwardRunner::open(&dir, arch) {
-        Ok(_) => panic!("forging the manifest must not make a GGUF install openable"),
+        Ok(_) => panic!("forging the manifest must not make a Q4_K install openable"),
         Err(e) => e.to_string(),
     };
     assert!(
@@ -107,6 +150,61 @@ fn the_dtype_backstop_fires_even_if_the_manifest_is_forged() {
         text.contains("Phase G"),
         "the refusal should point at the work that lifts it, got: {text}"
     );
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Opening is not running. This drives real decode steps through the whole
+/// Q8_0 path on real Metal hardware: the embedding lookup, the attention and
+/// shared-expert GEMVs, the routed-expert decode pair reading streamed
+/// blobs, and the output head. The fixture's weights are deterministic
+/// patterns rather than trained ones, so nothing about the TOKENS means
+/// anything; what is asserted is that every logit is finite and that the
+/// distribution is not degenerate, which a kernel reading a block layout
+/// wrongly does not satisfy for long.
+#[test]
+fn a_q8_0_gguf_install_decodes() {
+    use half::f16;
+    use mrefrust_runtime::LogitProducer;
+
+    let shape = executable_shape();
+    let vocab = shape.vocab as usize;
+    let (dir, arch) = gguf_install(shape);
+    let mut runner = RealForwardRunner::open(&dir, arch).expect("opens");
+
+    runner.reset();
+    let mut token = 5i32;
+    for position in 0..4usize {
+        let mut logits = vec![f16::from_f32(0.0); vocab];
+        runner
+            .produce(token, position, &mut logits)
+            .expect("produce succeeds");
+
+        let bad: Vec<usize> = logits
+            .iter()
+            .enumerate()
+            .filter(|(_, v)| !v.to_f32().is_finite())
+            .map(|(i, _)| i)
+            .collect();
+        assert!(
+            bad.is_empty(),
+            "non-finite logit at position {position}: {} of {vocab}, first {:?}",
+            bad.len(),
+            &bad[..bad.len().min(8)]
+        );
+        let first = logits[0].to_f32();
+        assert!(
+            logits.iter().any(|v| v.to_f32() != first),
+            "every logit is {first} at position {position}: the head produced nothing"
+        );
+
+        token = logits
+            .iter()
+            .enumerate()
+            .max_by(|a, b| a.1.to_f32().total_cmp(&b.1.to_f32()))
+            .map(|(i, _)| i as i32)
+            .unwrap();
+    }
 
     std::fs::remove_dir_all(&dir).ok();
 }

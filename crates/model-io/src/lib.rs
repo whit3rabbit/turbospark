@@ -37,7 +37,7 @@ pub use install_receipt::{
 pub use manifest::{
     known_flags, load as load_manifest, peek_family, validate as validate_manifest, Manifest,
     ManifestArch, ManifestFileEntry, ManifestQuant, ManifestQuantSlot, DEFAULT_MAX_BYTES,
-    REQUIRED_FILES,
+    EXECUTABLE_GGUF_TYPES, REQUIRED_FILES,
 };
 pub use packed_experts_layout::{
     load as load_packed_experts_layout, ExpertEntry, LayerLayout, PackedExpertsLayout,

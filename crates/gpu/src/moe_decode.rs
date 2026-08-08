@@ -50,7 +50,7 @@ pub struct MoeExpertOffsets {
 }
 
 impl MoeExpertOffsets {
-    fn bytes(&self) -> [u8; 36] {
+    pub(crate) fn bytes(&self) -> [u8; 36] {
         let mut out = [0u8; 36];
         for (i, v) in [
             self.gate_w,
@@ -75,7 +75,7 @@ impl MoeExpertOffsets {
 /// The shader's function constants: `FC_MOE_D`(0)/`F`(1)/`TOP_K`(2)/
 /// `USE_FC`(3, false = runtime arguments)/`ACT_SILU`(4)/`SWIGLU_LIMIT`(5)
 /// plus the router constants (40-43) other kernels in the file declare.
-fn moe_function_constants(use_silu: bool) -> FunctionConstantValues {
+pub(crate) fn moe_function_constants(use_silu: bool) -> FunctionConstantValues {
     let values = FunctionConstantValues::new();
     let zero: u32 = 0;
     let use_fc = false;
@@ -93,7 +93,7 @@ fn moe_function_constants(use_silu: bool) -> FunctionConstantValues {
     values
 }
 
-fn constants_key(use_silu: bool) -> [u8; 1] {
+pub(crate) fn constants_key(use_silu: bool) -> [u8; 1] {
     [use_silu as u8]
 }
 

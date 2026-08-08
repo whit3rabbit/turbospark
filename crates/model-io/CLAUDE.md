@@ -34,7 +34,7 @@ crates/model-io/
 
 ## Key Modules
 
-- `manifest.rs`: Decodes and validates `manifest.json`.
+- `manifest.rs`: Decodes and validates `manifest.json`. Its `validate_quant` accepts two shapes: the INT4/INT8 affine one at group 64 with BF16 companions, and (ROADMAP Phase G) a `scheme: "gguf"` slot whose `ggmlType` is in `EXECUTABLE_GGUF_TYPES` -- the block types this port has kernels for, which is deliberately narrower than the set the repack walk can WRITE. Widening it means landing kernels; `crates/runtime` applies the same rule again to the resident index's dtype tags.
 - `arch_config.rs`: Architecture configuration structs and field resolution.
 - `arch_baselines.rs`: Baseline specifications for Gemma 4, Qwen 3.6, and DeepSeek-V4-Flash.
 - `arch_validation.rs`: Structural validation of architecture configs.

@@ -173,3 +173,34 @@ pub fn dequant_q8_0_gemv_resident(
 
     Ok(read_half_buffer(&y_buffer, w.rows))
 }
+
+/// Encoder-level `embed_lookup_q8_0`: dequantizes one row of a Q8_0
+/// embedding table (bound in place, normally an offset into the resident
+/// buffer) into `out` (`d` halfs), scaled by `out_scale`.
+///
+/// The Q8_0 sibling of [`crate::encode_embed_lookup_int4`], with one binding
+/// instead of three: a Q8_0 row carries its scales inline.
+pub fn encode_embed_lookup_q8_0(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    table: (&metal::Buffer, u64),
+    out: (&metal::Buffer, u64),
+    token_id: u32,
+    d: u32,
+    out_scale: f32,
+) -> Result<(), GpuError> {
+    assert_eq!(d as usize % Q8_0_BLOCK_ELEMS, 0);
+    let pipeline = context.pipeline(SOURCE, "embed_lookup_q8_0", &no_function_constants(), b"")?;
+    pass.encode_threads_3d(
+        &pipeline,
+        &[(table.0, 0, table.1), (out.0, 1, out.1)],
+        &[
+            (u32_bytes(&token_id), 2),
+            (u32_bytes(&d), 3),
+            (crate::bytes::f32_bytes(&out_scale), 4),
+        ],
+        (d as u64, 1, 1),
+        (64, 1, 1),
+    );
+    Ok(())
+}

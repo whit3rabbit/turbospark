@@ -8,7 +8,7 @@ What the suite covers, how it is gated, and how to run each part.
 cargo test --workspace
 ```
 
-452 tests as of 2026-08-08, all passing, plus 18 that are `#[ignore]`d (see
+458 tests as of 2026-08-08, all passing, plus 18 that are `#[ignore]`d (see
 below). On macOS this includes every Metal test, which needs a real
 Metal-capable device and Xcode's `metal` toolchain
 (`xcrun -sdk macosx metal`). On Linux `crates/gpu` compiles to nothing and

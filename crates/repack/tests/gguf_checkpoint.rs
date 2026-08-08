@@ -490,12 +490,14 @@ fn streamed_install_writes_expert_bytes_unchanged_to_disk() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// The Stage 1 boundary, enforced rather than documented: the manifest
-/// declares `scheme: "gguf"`, no kernel reads those blocks, and
-/// `load_manifest` refuses it. Promoting the artifact in Stage 2 is a
-/// validation change, not a byte change.
+/// The manifest describes the bytes, and validation decides what runs. Both
+/// halves are asserted here, because the promotion Stage 2 performed was
+/// exactly a validation change and NOT a byte change: the walk writes the
+/// same install it always did, and `load_manifest` now accepts the Q8_0 one
+/// because kernels exist for it while still refusing a block type that has
+/// none.
 #[test]
-fn the_written_manifest_is_refused_until_kernels_exist() {
+fn the_written_manifest_describes_the_bytes_and_gates_on_the_kernels() {
     let f = Fixture::new();
     let h = &f.header;
     let dir = tempdir();
@@ -520,12 +522,26 @@ fn the_written_manifest_is_refused_until_kernels_exist() {
     assert_eq!(manifest["quant"]["router"]["weightBits"], 8);
     assert_eq!(manifest["quant"]["router"]["groupSize"], 64);
 
+    model_io::load_manifest(&dir, &arch, model_io::DEFAULT_MAX_BYTES)
+        .expect("a Q8_0 GGUF install loads: its kernels landed in Stage 2");
+
+    // The same install, claiming a block type with no kernel behind it, is
+    // still refused, and the refusal names the type rather than saying
+    // "unsupported". Editing the manifest is how this is reached because the
+    // fixture is Q8_0 throughout; `crates/runtime` covers the resident-index
+    // backstop that catches the reverse forgery.
+    let path = dir.join("manifest.json");
+    let mut edited: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    edited["quant"]["routedExpert"]["ggmlType"] = serde_json::json!("Q4_K");
+    std::fs::write(&path, serde_json::to_vec_pretty(&edited).unwrap()).unwrap();
+
     let err = model_io::load_manifest(&dir, &arch, model_io::DEFAULT_MAX_BYTES)
-        .expect_err("a GGUF install must not load in Stage 1");
+        .expect_err("a block type with no kernel must not load");
     let text = err.to_string();
     assert!(
-        text.contains("quantization"),
-        "the refusal should name the quantization, got: {text}"
+        text.contains("Q4_K"),
+        "the refusal should name the block type, got: {text}"
     );
 
     std::fs::remove_dir_all(&dir).ok();

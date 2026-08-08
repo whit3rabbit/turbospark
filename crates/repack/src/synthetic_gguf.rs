@@ -119,15 +119,27 @@ impl GgufBuilder {
         let blocks = elements / 32;
         let mut data = Vec::with_capacity((blocks * 34) as usize);
         for b in 0..blocks {
-            // f16 scale, then 32 int8 weights. The scale is a valid small
-            // positive f16 rather than a random bit pattern, so a future
-            // dequant reference can consume these fixtures unchanged.
-            data.extend_from_slice(&0x3400u16.to_le_bytes());
+            // f16 scale, then 32 int8 weights. Two properties matter beyond
+            // being deterministic, and both are about what a caller does with
+            // the fixture rather than about the format:
+            //
+            // - the scale is a valid small positive f16 (0.0625) rather than
+            //   a random bit pattern, so a dequant reference can consume
+            //   these bytes unchanged;
+            // - the quants span [-8, 7] rather than the whole byte range, so
+            //   the resulting weights are near +/-0.5 and a forward pass
+            //   through a fixture install stays inside FP16. At full range
+            //   the weights reach +/-32, every sublayer multiplies the
+            //   residual by ~250, and a two-layer model overflows to
+            //   infinity before it reaches the head -- which is a property of
+            //   the fixture, not a kernel bug, and cost a debugging round
+            //   once already.
+            data.extend_from_slice(&0x2C00u16.to_le_bytes());
             for k in 0..32u64 {
-                data.push(
-                    seed.wrapping_add((b as u8).wrapping_mul(31))
-                        .wrapping_add(k as u8),
-                );
+                let n = seed
+                    .wrapping_add((b as u8).wrapping_mul(31))
+                    .wrapping_add(k as u8);
+                data.push((((n % 16) as i8) - 8) as u8);
             }
         }
         self.tensor(name, 8, dims, data)

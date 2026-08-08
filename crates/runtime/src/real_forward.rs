@@ -150,6 +150,12 @@ pub struct RealForwardRunner {
     /// kernels, same commit-relative order of every host buffer write,
     /// identical output, different overlap.
     pub(crate) routed_pipeline: bool,
+    /// Whether this install's routed expert blobs are GGUF Q8_0 blocks
+    /// rather than the INT4-affine planes the vendored `moe.metal` pair
+    /// reads. Decided once at open from the manifest, because the blob
+    /// layout is uniform across the install and nothing on the token path
+    /// should be re-deriving it (ROADMAP Phase G Stage 2).
+    pub(crate) routed_gguf_q8_0: bool,
     /// Set for the duration of one [`LogitProducer::produce_prefill`] call:
     /// the caller is discarding this token's logits, so the output head
     /// (final norm, full-vocab GEMV, softcap, host readback) is skipped.
@@ -459,31 +465,39 @@ impl RealForwardRunner {
             ));
         }
 
-        model_io::load_manifest(dir, &expecting, model_io::DEFAULT_MAX_BYTES)
+        let manifest = model_io::load_manifest(dir, &expecting, model_io::DEFAULT_MAX_BYTES)
             .map_err(RealForwardError::Model)?;
+        // `load_manifest` has already refused any block type without a
+        // kernel, so this only has to say WHICH of the accepted layouts the
+        // routed blobs use.
+        let routed_gguf_q8_0 = manifest.quant.as_ref().is_some_and(|q| {
+            q.routed_expert.scheme.eq_ignore_ascii_case("gguf")
+                && q.routed_expert
+                    .ggml_type
+                    .as_deref()
+                    .is_some_and(|t| t.eq_ignore_ascii_case("q8_0"))
+        });
         let index = model_io::load_resident_index(&dir.join("model_weights.bin"))
             .map_err(RealForwardError::Model)?;
 
-        // GGUF block-quantized tensors (ROADMAP Phase G Stage 1) can be
-        // INSTALLED but not executed: the repack walk writes their bytes
-        // through verbatim, and the kernels that could read a block layout
-        // are Stage 2. Refuse here, once, by name and with the offending
-        // tensor, rather than letting a per-dispatch check decide it
-        // several hundred kernel launches into a forward pass.
+        // GGUF block-quantized tensors (ROADMAP Phase G): a block type is
+        // executable only once a kernel plus its parity test exist for it.
+        // Refuse the rest here, once, by name and with the offending tensor,
+        // rather than letting a per-dispatch check decide it several hundred
+        // kernel launches into a forward pass.
         //
-        // The manifest's `scheme: "gguf"` normally trips `load_manifest`
-        // above first. This is the backstop for an install whose manifest
-        // was hand-edited to get past that, which is exactly what someone
-        // trying to run one would do.
-        const GGUF_BLOCK_DTYPES: [u8; 4] = [6, 7, 8, 9];
-        if let Some(entry) = index
-            .entries
-            .values()
-            .find(|e| GGUF_BLOCK_DTYPES.contains(&e.dtype))
-        {
+        // The manifest's `quant` object normally trips `load_manifest` above
+        // first, on the same rule (`model_io::EXECUTABLE_GGUF_TYPES`). This
+        // is the backstop for an install whose manifest was hand-edited to
+        // get past that, which is exactly what someone trying to force one
+        // open would do, and it reads the bytes rather than a claim about
+        // them.
+        if let Some(entry) = index.entries.values().find(|e| {
+            GGUF_BLOCK_DTYPES.contains(&e.dtype) && !EXECUTABLE_GGUF_DTYPES.contains(&e.dtype)
+        }) {
             return Err(RealForwardError::Unsupported(format!(
-                "tensor {} carries GGUF block dtype {}; GGUF installs are not executable yet \
-                 (ROADMAP Phase G Stage 2 wires the Q8_0/Q4_K kernels)",
+                "tensor {} carries GGUF block dtype {}, which has no kernel in this port \
+                 (ROADMAP Phase G Stage 2; executable so far: Q8_0)",
                 entry.name, entry.dtype
             )));
         }
@@ -605,6 +619,7 @@ impl RealForwardRunner {
             shared_cb_overlap: std::env::var("MFERENCE_SHARED_CB").as_deref() != Ok("0"),
             hit_cb_overlap: std::env::var("MFERENCE_HIT_CB").as_deref() != Ok("0"),
             routed_pipeline: std::env::var("MFERENCE_ROUTED_PIPELINE").as_deref() != Ok("0"),
+            routed_gguf_q8_0,
             skip_head: false,
         };
         // Flow selection keys on the FAMILY, not on tensor naming: both
@@ -644,10 +659,30 @@ impl RealForwardRunner {
     }
 }
 
+/// Every GGUF block dtype tag the resident index can carry. Mirrors
+/// `mrefrust_repack::resident_writer`'s list, which is the writer-side home;
+/// this crate must not depend on repack, so the two are held equal by
+/// `crates/runtime/tests/gguf_install_refused.rs` exercising a real written
+/// install rather than by an import.
+const GGUF_BLOCK_DTYPES: [u8; 4] = [6, 7, 8, 9];
+/// GGUF Q8_0. The one block dtype with kernels behind it today: a resident
+/// GEMV, an embedding lookup, and the routed-expert decode pair.
+pub(crate) const DTYPE_GGUF_Q8_0: u8 = 6;
+/// The executable subset of [`GGUF_BLOCK_DTYPES`], and the resident-index
+/// twin of `model_io::EXECUTABLE_GGUF_TYPES`. Grows only when a kernel plus
+/// its parity test land.
+const EXECUTABLE_GGUF_DTYPES: [u8; 1] = [DTYPE_GGUF_Q8_0];
+
 /// Resolves the shader's uniform `ExpertOffsets` from the decoded blob
 /// layout (first expert of the first layer; the writer packs every blob
-/// identically). The phase-2 down projection reads its weight bytes with
-/// 4-byte loads, so `down`'s offset must be 4-byte aligned.
+/// identically).
+///
+/// Two blob shapes reach this. An INT4-affine blob has all nine sub-tensors,
+/// and its phase-2 down projection reads weight bytes with 4-byte loads, so
+/// `down`'s offset must be 4-byte aligned. A GGUF blob has only the three
+/// weight runs -- its scales live inside the blocks -- so the six companion
+/// offsets resolve to zero and the GGUF kernels never read them. The GGUF
+/// pair reads bytes one at a time, so no alignment applies to it.
 fn moe_offsets_from_layout(
     layout: &model_io::PackedExpertsLayout,
 ) -> Result<gpu::MoeExpertOffsets, RealForwardError> {
@@ -665,18 +700,21 @@ fn moe_offsets_from_layout(
             .map(|s| s.offset as u32)
             .ok_or_else(|| RealForwardError::MissingTensor(format!("expert blob {name}")))
     };
+    // Absent companions mean a block-quantized blob, not a broken one.
+    let companion = |name: &str| -> u32 { entry.get(name).map(|s| s.offset as u32).unwrap_or(0) };
+    let planar = entry.contains_key("gate_scales");
     let offsets = gpu::MoeExpertOffsets {
         gate_w: get("gate")?,
-        gate_s: get("gate_scales")?,
-        gate_b: get("gate_biases")?,
+        gate_s: companion("gate_scales"),
+        gate_b: companion("gate_biases"),
         up_w: get("up")?,
-        up_s: get("up_scales")?,
-        up_b: get("up_biases")?,
+        up_s: companion("up_scales"),
+        up_b: companion("up_biases"),
         down_w: get("down")?,
-        down_s: get("down_scales")?,
-        down_b: get("down_biases")?,
+        down_s: companion("down_scales"),
+        down_b: companion("down_biases"),
     };
-    if offsets.down_w % 4 != 0 {
+    if planar && offsets.down_w % 4 != 0 {
         return Err(RealForwardError::Unsupported(format!(
             "down projection offset {} is not 4-byte aligned",
             offsets.down_w

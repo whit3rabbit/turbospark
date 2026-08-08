@@ -128,6 +128,11 @@ pub struct ManifestQuantSlot {
     pub scale_type: String,
     pub bias_type: String,
     pub group_size: i64,
+    /// The ggml block type, present only on `scheme: "gguf"` slots (ROADMAP
+    /// Phase G). Optional because every affine install predates it and none
+    /// writes it.
+    #[serde(default)]
+    pub ggml_type: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -273,6 +278,18 @@ fn is_production_arch(expected: &ArchConfig) -> bool {
         .any(|b| b.num_layers == expected.num_layers && b.hidden_size == expected.hidden_size)
 }
 
+/// The GGUF block types this port can EXECUTE, as they are spelled in a
+/// manifest's `ggmlType` (ROADMAP Phase G Stage 2).
+///
+/// A GGUF-sourced install is written for every block type the parser knows,
+/// which is deliberately more than the set with kernels behind it: the repack
+/// walk's job is to carry bytes, and refusing to install would lose the
+/// artifact. This list is what decides whether one can be OPENED, and it
+/// grows only when a kernel plus its parity test land. `crates/runtime`
+/// applies the same rule again to the resident index's dtype tags, which is
+/// the backstop for a hand-edited manifest.
+pub const EXECUTABLE_GGUF_TYPES: [&str; 1] = ["q8_0"];
+
 fn validate_quant(quant: &ManifestQuant) -> Result<(), ModelError> {
     let slots: [(&str, &ManifestQuantSlot, &[i64]); 5] = [
         ("embedding", &quant.embedding, &[4]),
@@ -284,15 +301,31 @@ fn validate_quant(quant: &ManifestQuant) -> Result<(), ModelError> {
         ("routedExpert", &quant.routed_expert, &[2, 4]),
     ];
     for (name, slot, allowed_bits) in slots {
-        let ok = allowed_bits.contains(&slot.weight_bits)
+        let affine = allowed_bits.contains(&slot.weight_bits)
             && slot.scheme.to_lowercase() == "affine"
             && slot.scale_type.to_lowercase() == "bf16"
             && slot.bias_type.to_lowercase() == "bf16"
             && slot.group_size == QUANT_GROUP_SIZE;
-        if !ok {
-            return Err(ModelError::IndexCorrupt {
-                detail: format!("unsupported quantization for {name}"),
-            });
+        // A GGUF slot carries no bits, no group size and no companion types:
+        // the scale lives inside each block. What it does carry is the block
+        // type, and that is the whole question -- a Q4_K install and a Q8_0
+        // one are equally well-formed here and only one of them has kernels.
+        let gguf = slot.scheme.to_lowercase() == "gguf"
+            && slot
+                .ggml_type
+                .as_deref()
+                .is_some_and(|t| EXECUTABLE_GGUF_TYPES.contains(&t.to_lowercase().as_str()));
+        if !(affine || gguf) {
+            let detail = match slot.scheme.to_lowercase().as_str() {
+                "gguf" => format!(
+                    "unsupported quantization for {name}: GGUF block type {} has no kernel in \
+                     this port (executable types: {})",
+                    slot.ggml_type.as_deref().unwrap_or("unspecified"),
+                    EXECUTABLE_GGUF_TYPES.join(", ")
+                ),
+                _ => format!("unsupported quantization for {name}"),
+            };
+            return Err(ModelError::IndexCorrupt { detail });
         }
     }
     Ok(())

@@ -63,6 +63,8 @@ mod logit_softmax;
 #[cfg(target_os = "macos")]
 mod moe_decode;
 #[cfg(target_os = "macos")]
+mod moe_gguf;
+#[cfg(target_os = "macos")]
 mod prefill_scratch;
 #[cfg(target_os = "macos")]
 mod resident_metal;
@@ -103,7 +105,8 @@ pub use dequant_q4_k_gemv::{
 #[cfg(target_os = "macos")]
 pub use dequant_q8_0_gemv::{
     dequant_q8_0_gemv, dequant_q8_0_gemv_resident, encode_dequant_q8_0_gemv_resident,
-    q8_0_row_bytes, Q8_0ResidentMatrix, Q8_0_BLOCK_BYTES, Q8_0_BLOCK_ELEMS,
+    encode_embed_lookup_q8_0, q8_0_row_bytes, Q8_0ResidentMatrix, Q8_0_BLOCK_BYTES,
+    Q8_0_BLOCK_ELEMS,
 };
 #[cfg(target_os = "macos")]
 pub use dispatch_profile::{report as dispatch_profile_report, reset as dispatch_profile_reset};
@@ -126,6 +129,8 @@ pub use moe_decode::{
     encode_moe_phase1, encode_moe_phase2, encode_router_gemv_gemma4, router_gemv_gemma4,
     MoeExpertOffsets, RoutedBlobsBuffer, MAX_STREAMED_EXPERTS,
 };
+#[cfg(target_os = "macos")]
+pub use moe_gguf::{encode_moe_phase1_q8_0, encode_moe_phase2_q8_0};
 #[cfg(target_os = "macos")]
 pub use prefill_scratch::{PrefillChunkScratchBuffers, PrefillChunkScratchLayout};
 #[cfg(target_os = "macos")]

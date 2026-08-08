@@ -169,3 +169,65 @@ fn the_resident_form_matches_the_copying_form() {
     assert_eq!(row_bytes * m + pad, blob.len());
     assert_matches("resident at offset 4096", &gpu, &cpu, n);
 }
+
+/// `embed_lookup_q8_0` against the CPU dequant of the same row. The bug this
+/// is written for is the row stride: a Q8_0 embedding row is
+/// `D / 32 * 34` bytes, not `D`, and using the element count reads a
+/// neighbouring token's weights, which is finite and plausible. So the token
+/// looked up is deliberately not row 0.
+#[test]
+fn embed_lookup_reads_the_right_row_and_scales_it() {
+    let mut context = MetalContext::new().expect("Metal device available on this machine");
+
+    let (vocab, d) = (7usize, 128usize);
+    let rows: Vec<Vec<f32>> = (0..vocab).map(|t| weights(d, 300 + t as u32)).collect();
+    let mut table = Vec::new();
+    for r in &rows {
+        table.extend_from_slice(&mrefrust_compute::quantize_q8_0(r));
+    }
+    let table_buffer = context.new_buffer_with_data(&table);
+    let out = context.new_output_buffer((d * std::mem::size_of::<u16>()) as u64);
+
+    let token = 5u32;
+    let out_scale = 4.0f32;
+    let pass = context.begin_pass();
+    mrefrust_gpu::encode_embed_lookup_q8_0(
+        &mut context,
+        &pass,
+        (&table_buffer, 0),
+        (&out, 0),
+        token,
+        d as u32,
+        out_scale,
+    )
+    .expect("GPU dispatch succeeds");
+    pass.commit_and_wait();
+
+    let row_bytes = q8_0_row_bytes(d);
+    let want: Vec<f32> = mrefrust_compute::dequantize_q8_0(
+        &table[token as usize * row_bytes..(token as usize + 1) * row_bytes],
+        d,
+    )
+    .iter()
+    .map(|v| v * out_scale)
+    .collect();
+
+    let got: Vec<f32> = {
+        let ptr = out.contents() as *const u16;
+        let bits = unsafe { std::slice::from_raw_parts(ptr, d) };
+        bits.iter().map(|&b| f16::from_bits(b).to_f32()).collect()
+    };
+    assert_matches(
+        "embed row 5, scale 4",
+        &got.iter().map(|&v| f16::from_f32(v)).collect::<Vec<_>>(),
+        &want,
+        d,
+    );
+    // The scale is not cosmetic: without it every value is 4x too small,
+    // which the tolerance above would tolerate on a near-zero row.
+    let peak = want.iter().fold(0f32, |m, &v| m.max(v.abs()));
+    assert!(
+        peak > 1.0,
+        "the test row is too small to prove the scale: {peak}"
+    );
+}

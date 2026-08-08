@@ -46,8 +46,67 @@ use half::f16;
 use model_io::{ArchConfig, ResidentIndex};
 
 use crate::real_forward::{
-    f16_slice_to_le_bytes, resident_matrix, RealForwardError, RealForwardRunner,
+    f16_slice_to_le_bytes, resident_matrix, RealForwardError, RealForwardRunner, DTYPE_GGUF_Q8_0,
 };
+
+/// The routed-expert decode pair, dispatched for whichever blob layout this
+/// install carries: the vendored INT4-affine `moe.metal` kernels or the
+/// port-local Q8_0 pair in `moe_gguf.metal` (ROADMAP Phase G Stage 2).
+///
+/// A pair of forwarders rather than a branch at each of the three call sites,
+/// because phase 1 is dispatched from three places (the cache-hit command
+/// buffer, the main pass, and the shared path) and a layout that disagreed
+/// between them would read one blob two ways.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn encode_moe_phase1_any(
+    q8_0: bool,
+    context: &mut gpu::MetalContext,
+    pass: &gpu::PassEncoder,
+    routed: &gpu::RoutedBlobsBuffer,
+    offsets: &gpu::MoeExpertOffsets,
+    x: (&gpu::MetalBuffer, u64),
+    acts: (&gpu::MetalBuffer, u64),
+    d_dim: u32,
+    f_dim: u32,
+    top_k: u32,
+    use_silu: bool,
+) -> Result<(), gpu::GpuError> {
+    if q8_0 {
+        gpu::encode_moe_phase1_q8_0(
+            context, pass, routed, offsets, x, acts, d_dim, f_dim, top_k, use_silu,
+        )
+    } else {
+        gpu::encode_moe_phase1(
+            context, pass, routed, offsets, x, acts, d_dim, f_dim, top_k, use_silu,
+        )
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn encode_moe_phase2_any(
+    q8_0: bool,
+    context: &mut gpu::MetalContext,
+    pass: &gpu::PassEncoder,
+    routed: &gpu::RoutedBlobsBuffer,
+    offsets: &gpu::MoeExpertOffsets,
+    acts: (&gpu::MetalBuffer, u64),
+    routing_w: (&gpu::MetalBuffer, u64),
+    residual: (&gpu::MetalBuffer, u64),
+    y: (&gpu::MetalBuffer, u64),
+    d_dim: u32,
+    f_dim: u32,
+    use_silu: bool,
+) -> Result<(), gpu::GpuError> {
+    if q8_0 {
+        gpu::encode_moe_phase2_q8_0(
+            context, pass, routed, offsets, acts, routing_w, residual, y, d_dim, f_dim, use_silu,
+        )
+    } else {
+        gpu::encode_moe_phase2(
+            context, pass, routed, offsets, acts, routing_w, residual, y, d_dim, f_dim, use_silu,
+        )
+    }
+}
 
 const RMS_EPS: f32 = 1e-6;
 
@@ -158,6 +217,25 @@ pub(crate) fn encode_gemv_any(
         4 => {
             let w = resident_matrix(weights, index, name, rows, cols)?;
             gpu::encode_dequant_int4_gemv_resident(context, pass, &w, x, y)
+                .map_err(RealForwardError::Gpu)
+        }
+        // GGUF Q8_0 (ROADMAP Phase G Stage 2). One byte run, no companions:
+        // the entry's scale/bias offsets are zero and are not read.
+        DTYPE_GGUF_Q8_0 => {
+            let expected = gpu::q8_0_row_bytes(cols) * rows;
+            if e.size_bytes as usize != expected {
+                return Err(RealForwardError::Unsupported(format!(
+                    "tensor {name}: Q8_0 packed size {} does not match {rows}x{cols} ({expected})",
+                    e.size_bytes
+                )));
+            }
+            let w = gpu::Q8_0ResidentMatrix {
+                buffer: weights.buffer(),
+                weights_offset: weights.gpu_offset(e.file_offset - base),
+                rows,
+                cols,
+            };
+            gpu::encode_dequant_q8_0_gemv_resident(context, pass, &w, x, y)
                 .map_err(RealForwardError::Gpu)
         }
         // Named rather than defaulted. This arm used to be `_ => int4`,
@@ -412,6 +490,11 @@ impl RealForwardRunner {
         let top_k = arch.top_k_experts as usize;
         let attn_scale = arch.attention_scale as f32;
         let use_silu = arch.hidden_activation.contains("silu");
+        // Bound once here rather than read at each dispatch: the reads below
+        // interleave with `&mut self` calls, and a `Copy` local keeps the
+        // borrow checker out of it (see the re-binding note in this file's
+        // header).
+        let routed_gguf_q8_0 = self.routed_gguf_q8_0;
         let embed_scale = if arch.embedding_scaled_by_sqrt_hidden {
             (hidden as f32).sqrt()
         } else {
@@ -436,22 +519,41 @@ impl RealForwardRunner {
         let embed = entry(&self.index, embed_name)?;
         let base = self.index.header.index_size;
         let embed_table = self.weights.gpu_offset(embed.file_offset - base);
-        let embed_scales = self.weights.gpu_offset(embed.scale_offset - base);
-        let embed_biases = self.weights.gpu_offset(embed.bias_offset - base);
 
         let mut pass = self.context.begin_pass_labeled("cb1 (attn+router)");
-        gpu::encode_embed_lookup_int4(
-            &mut self.context,
-            &pass,
-            (self.weights.buffer(), embed_table),
-            (self.weights.buffer(), embed_scales),
-            (self.weights.buffer(), embed_biases),
-            (&self.scratch.x, 0),
-            token as u32,
-            hidden as u32,
-            embed_scale,
-        )
-        .map_err(gpu_err)?;
+        // A GGUF embedding table is one contiguous byte run per row with its
+        // scales inline, so it takes a different kernel rather than the same
+        // one with the companion offsets zeroed (ROADMAP Phase G Stage 2).
+        if embed.dtype == DTYPE_GGUF_Q8_0 {
+            gpu::encode_embed_lookup_q8_0(
+                &mut self.context,
+                &pass,
+                (self.weights.buffer(), embed_table),
+                (&self.scratch.x, 0),
+                token as u32,
+                hidden as u32,
+                embed_scale,
+            )
+            .map_err(gpu_err)?;
+        } else {
+            // Resolved inside this arm on purpose: a GGUF entry carries no
+            // companions, so its `scale_offset` is 0 and subtracting the
+            // index size underflows.
+            let embed_scales = self.weights.gpu_offset(embed.scale_offset - base);
+            let embed_biases = self.weights.gpu_offset(embed.bias_offset - base);
+            gpu::encode_embed_lookup_int4(
+                &mut self.context,
+                &pass,
+                (self.weights.buffer(), embed_table),
+                (self.weights.buffer(), embed_scales),
+                (self.weights.buffer(), embed_biases),
+                (&self.scratch.x, 0),
+                token as u32,
+                hidden as u32,
+                embed_scale,
+            )
+            .map_err(gpu_err)?;
+        }
 
         // Swift's one-layer-pipelined routed command buffer: a layer's
         // routed-expert work commits at the END of that layer (so the GPU
@@ -856,7 +958,8 @@ impl RealForwardRunner {
                 }
                 let real = self.real.as_ref().expect("real state present");
                 let offsets = self.moe_offsets.as_ref().expect("layout implies offsets");
-                gpu::encode_moe_phase1(
+                encode_moe_phase1_any(
+                    routed_gguf_q8_0,
                     &mut self.context,
                     &hit_pass,
                     routed_hits,
@@ -942,7 +1045,8 @@ impl RealForwardRunner {
                 order.len()
             };
             if main_phase1_k > 0 {
-                gpu::encode_moe_phase1(
+                encode_moe_phase1_any(
+                    routed_gguf_q8_0,
                     &mut self.context,
                     &pass,
                     routed,
@@ -956,7 +1060,8 @@ impl RealForwardRunner {
                 )
                 .map_err(gpu_err)?;
             }
-            gpu::encode_moe_phase2(
+            encode_moe_phase2_any(
+                routed_gguf_q8_0,
                 &mut self.context,
                 &pass,
                 routed,
