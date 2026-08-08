@@ -221,6 +221,11 @@ live network).
   `embed_lookup_int4`; `dequant_int4.metal`'s `dequant_int4_gemv_simd`
   and `dequant_int8.metal`'s `dequant_int8_gemv_simd` (both with
   offset-bound resident variants); `router_gemv_gemma4_r4`;
+  the port-local GGUF set (`dequant_q8_0.metal`'s `dequant_q8_0_gemv_simd`
+  and `embed_lookup_q8_0`, `dequant_q4_k.metal`'s
+  `dequant_q4_k_gemv_simd`, and `moe_gguf.metal`'s Q8_0 routed-expert
+  decode pair -- port-local because the Swift engine has no GGUF intake,
+  so there is no upstream kernel to mirror);
   `attention.metal`'s two-pass split-KV decode attention
   (`attention_decode_partial` + `attention_decode_combine`,
   `crates/gpu/src/attention_decode.rs`, incl. SWA `kv_start` and the
@@ -894,8 +899,8 @@ live network).
 
 ## Phase 8 (repack, server)
 
-- **GGUF ingestion: INSTALLABLE, NOT EXECUTABLE (ROADMAP Phase G; Stage 1
-  landed, Stage 2 in progress).**
+- **GGUF ingestion: Q8_0 EXECUTABLE, OTHER BLOCK TYPES INSTALLABLE ONLY
+  (ROADMAP Phase G; Stage 1 landed, Stage 2 items 1-7 landed).**
   A GGUF file now walks all the way to a `.gturbo` install
   (`gguf_header.rs` parses the v3 header, `gguf_names.rs` maps tensor names
   onto the canonical HF-style ones the rest of the pipeline speaks,
@@ -905,21 +910,35 @@ live network).
   blocks arrive already quantized, which is the lossless-repack rule taken
   literally. The one exception is the resident F32 core, which is
   transcoded rather than carried; see below.
-  **The kernels are landing but nothing is WIRED yet.** Q8_0 and Q4_K are
-  block-interleaved (the scale lives inside the block) where this port's
-  affine kernels read three separate planes at group 64, so nothing in
-  `dequant_int4.metal`, `dequant_int8.metal`, or `moe.metal` can read the
-  bytes an install like this contains. As of 2026-08-07 there IS a Q8_0
-  path -- a CPU reference (`compute/src/quant_gguf.rs`) and a parity-tested
-  Metal GEMV (`dequant_q8_0.metal`, port-local since Swift has no GGUF
-  intake) -- but `RealForwardRunner` does not call it, Q4_K does not exist,
-  and the MoE decode pair still reads affine only. Two independent refusals
-  stop an install being run: `manifest.json` declares `scheme: "gguf"` and
-  `model_io::validate_quant` accepts only `"affine"`, and
-  `RealForwardRunner::open` separately rejects the new GGUF dtype tags
-  (6 = Q8_0, 7 = Q4_K, 8 = Q6_K, 9 = Q4_0) in the resident index. Both are
-  asserted in `crates/runtime/tests/gguf_install_refused.rs`, the second
-  after deliberately forging the manifest past the first.
+  **WHAT RUNS IS DECIDED PER BLOCK TYPE, NOT PER FORMAT (2026-08-08).** A
+  Q8_0 install opens and decodes on real Metal hardware; Q4_K, Q6_K and
+  Q4_0 installs are written and then refused, by name. GGUF blocks are
+  interleaved (the scale lives inside the block) where this port's affine
+  kernels read three separate planes at group 64, so a block type needs its
+  own kernels rather than a flag. Q8_0 has all three it needs, each with a
+  `mrefrust_compute` reference and a parity test: `dequant_q8_0_gemv_simd`
+  and `embed_lookup_q8_0` for resident tensors and the embedding table, and
+  `moe_gguf.metal`'s decode pair for the streamed routed experts. Q4_K has
+  a CPU reference and a resident GEMV but neither of the other two, which
+  is why it does not run: routed experts are where a GGUF's bytes are.
+  Q6_K (one tensor in Qwen's Q4_K_M, `output.weight`) and Q4_0 have
+  nothing.
+  **The scoping lesson, since the roadmap got it wrong:** a resident GEMV
+  is the small half of the job. Routed experts and the embedding table go
+  through their own kernels (`moe_phase1_gate_up_act_u16load` /
+  `moe_phase2_down_reduce_k8` and `embed_lookup_int4`), all three affine,
+  so lifting the refusals cost three more kernels rather than a validation
+  edit.
+  The two refusals remain independent and asserted, but they now gate on a
+  set rather than on the format: `model_io::validate_quant` compares the
+  manifest's `ggmlType` against `model_io::EXECUTABLE_GGUF_TYPES`, and
+  `RealForwardRunner::open` compares the resident index's dtype tags
+  (6 = Q8_0, 7 = Q4_K, 8 = Q6_K, 9 = Q4_0) against the runtime's own copy
+  of that set, which believes the bytes rather than a claim about them.
+  Both directions are asserted in
+  `crates/runtime/tests/gguf_install_refused.rs` -- the backstop after
+  deliberately forging the manifest past the first -- and the same file
+  decodes a Q8_0 install rather than only opening one.
   **Verified against the real published files, not just fixtures.**
   `crates/repack/tests/gguf_checkpoint_network.rs` reads the header of
   `ggml-org`'s Gemma 4 26B-A4B Q8_0 and Qwen 3.6 35B-A3B Q4_K_M (a few MB
@@ -946,11 +965,20 @@ live network).
   settled rather than outstanding: Gemma's routed
   gate/up arrive FUSED in one tensor, and gate is the FIRST half, measured
   against the real file rather than assumed (`FUSED_GATE_FIRST`,
-  `crates/repack/tests/gguf_fused_gate_network.rs`). Not
+  `crates/repack/tests/gguf_fused_gate_network.rs`). A
+  fourth is settled the same way: Q4_K's reference is held against the real
+  `Qwen3.6-35B-A3B-Q4_K_M` by correlation
+  (`crates/repack/tests/gguf_q4_k_network.rs`), because a decoder and the
+  fixture quantizer feeding it come from one mental model and can agree
+  while both are wrong. Not
   scaffolded, not attempted: a local-file `RangeSource` (the walk streams
-  over HTTP like the safetensors one), and any Q5_K/Q3_K/Q2_K/i-quant
-  block sizes (`ggml_type_block` answers only for types whose size was read
-  off the spec, and names the rest in its error rather than guessing).
+  over HTTP like the safetensors one), Q4_K/Q6_K in the MoE and embedding
+  kernels (which is what a Qwen Q4_K_M install would need), and any
+  Q5_K/Q3_K/Q2_K/i-quant block sizes (`ggml_type_block` answers only for
+  types whose size was read off the spec, and names the rest in its error
+  rather than guessing). NOT DONE, and the only thing between here and the
+  Phase G gate: running a REAL published GGUF end to end, which needs the
+  27 GB file on disk.
 - **Byte-exact `.gturbo` directory assembly: implemented**
   (`gturbo_writer.rs`'s `write_gturbo_install`): given already-quantized
   tensor bytes, writes `packed_experts/layer_NN.bin` blobs (matching

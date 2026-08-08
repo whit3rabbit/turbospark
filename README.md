@@ -61,7 +61,8 @@ port tracks itself over time: [`docs/BENCHMARKING.md`](docs/BENCHMARKING.md).
 
 - `crates/core`: shared primitives and the public runtime configuration.
 - `crates/compute`: CPU reference kernels (RmsNorm, RoPE, attention,
-  int4/int8 affine quant, GGUF Q8_0 block quant, MoE, sampling) and the
+  int4/int8 affine quant, GGUF Q8_0 and Q4_K block quant, MoE, sampling)
+  and the
   destination compute strategy. Every GPU kernel is parity-tested against
   one of these before it is trusted.
 - `crates/invocation`: command-line argument translation, usage text, and
@@ -79,12 +80,14 @@ port tracks itself over time: [`docs/BENCHMARKING.md`](docs/BENCHMARKING.md).
 - `crates/runtime`: the raw-completion prefill+decode loop.
 - `crates/cli`: the `mference-check` process entry point.
 - `crates/repack`: safetensors and GGUF header parsing, ranged-download
-  planning, and quantization repack. GGUF intake installs but does not yet
-  run: its expert bytes are block-quantized and are refused at open on
-  purpose, twice, until the kernels behind them land (ROADMAP Phase G). The
-  resident core is already there, transcoded at repack time from the F32
-  llama.cpp writes into the BF16 and INT8 the existing kernels read, which
-  was measured to be lossless for norms rather than assumed to be.
+  planning, and quantization repack. GGUF intake runs a Q8_0 install and
+  refuses the other block types at open, on purpose and twice over, until
+  their kernels land (ROADMAP Phase G): a block type needs a resident GEMV,
+  an embedding lookup and a routed-expert decode pair before it executes,
+  and only Q8_0 has all three. The resident core is transcoded at repack
+  time from the F32 llama.cpp writes into the BF16 and INT8 the existing
+  kernels read, which was measured to be lossless for norms rather than
+  assumed to be.
 - `crates/server`: OpenAI Chat Completions and Anthropic Messages server on loopback.
 - `crates/bench`: throughput benchmark harness, the memory oracle tests, and
   the per-install quality gates (perplexity plus frozen output digests, a

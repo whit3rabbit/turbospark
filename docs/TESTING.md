@@ -69,9 +69,13 @@ idiom (real implementation plus a stub that exits 2).
 
 ### Ignored (expensive or needs external data)
 
-Ten of them, each with a reason string and a module doc giving the exact
-command (the eleventh, `crates/selection`'s `rank_top_k`, is a sampler
-microbenchmark documented in `docs/BENCHMARKS.md`):
+Sixteen targets carry `#[ignore]`d tests, 18 functions between them
+(`cargo test --workspace` prints the count; two GGUF network targets carry
+more than one). Each has a reason string and a module doc with the exact
+command. The commands below are the ones that are GATES. The two that are
+not are documented in `docs/BENCHMARKS.md` instead: `crates/selection`'s
+`rank_top_k` (a sampler microbenchmark) and `crates/gpu`'s
+`attention_chunk_bench` (the split-KV chunk sweep).
 
 ```sh
 # Real ~14.6 GB Gemma 4 checkpoint download plus full repack.
