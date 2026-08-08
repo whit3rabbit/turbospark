@@ -155,11 +155,19 @@ pub(crate) fn encode_gemv_any(
             gpu::encode_dequant_int8_gemv_resident(context, pass, &w, x, y)
                 .map_err(RealForwardError::Gpu)
         }
-        _ => {
+        4 => {
             let w = resident_matrix(weights, index, name, rows, cols)?;
             gpu::encode_dequant_int4_gemv_resident(context, pass, &w, x, y)
                 .map_err(RealForwardError::Gpu)
         }
+        // Named rather than defaulted. This arm used to be `_ => int4`,
+        // which meant any future dtype tag was read as INT4-affine: no
+        // error, just wrong numbers, since the three planar regions an
+        // INT4 tensor expects do not exist in a block-quantized one. The
+        // GGUF tags (ROADMAP Phase G) are the first tags able to reach it.
+        other => Err(RealForwardError::Unsupported(format!(
+            "tensor {name}: dtype {other} has no dispatched GEMV kernel"
+        ))),
     }
 }
 

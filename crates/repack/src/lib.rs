@@ -6,6 +6,10 @@
 #![forbid(unsafe_code)]
 
 mod gemma4_checkpoint;
+mod gguf_checkpoint;
+mod gguf_config;
+mod gguf_header;
+mod gguf_names;
 mod gturbo_writer;
 mod hf_checkpoint;
 mod install_verifier;
@@ -15,6 +19,7 @@ mod ranged_download;
 mod repack;
 mod resident_writer;
 mod safetensors_header;
+mod synthetic_gguf;
 mod synthetic_model;
 mod synthetic_qwen;
 mod synthetic_real;
@@ -26,6 +31,19 @@ pub use gemma4_checkpoint::{
     write_qwen36_install, write_qwen36_install_streamed, Gemma4Bucket, Gemma4Error, Gemma4Quant,
     Gemma4RepackOutput, Gemma4Shards, GTURBO_PAGE_BYTES,
 };
+pub use gguf_checkpoint::{
+    dtype_tag_for_ggml_type, orchestrate_gguf_checkpoint, write_gguf_install_streamed,
+    GgufRepackError, GgufRepackOutput, FUSED_GATE_FIRST,
+};
+pub use gguf_config::{arch_from_gguf, GgufConfigError};
+pub use gguf_header::{
+    ggml_type_block, ggml_type_name, parse_header as parse_gguf_header, GgufHeader,
+    GgufHeaderError, GgufTensorInfo, GgufValue, DEFAULT_ALIGNMENT,
+    DEFAULT_MAX_HEADER_BYTES as GGUF_DEFAULT_MAX_HEADER_BYTES, SUPPORTED_VERSION as GGUF_VERSION,
+};
+pub use gguf_names::{
+    family_for_architecture, gguf_architecture, map_gguf_name, GgufMapping, GgufNameError,
+};
 pub use gturbo_writer::{
     write_gturbo_install, write_gturbo_install_with_resident_index,
     write_gturbo_install_with_resident_index_and_experts, ExpertBlob, LayerBlobs,
@@ -36,18 +54,23 @@ pub use install_verifier::verify_install_full_sha256;
 pub use manifest_peek::peek_manifest_arch;
 pub use qwen36_config::parse_qwen36_config;
 pub use ranged_download::{
-    fetch_safetensors_header, DownloadError, HttpRangeSource, MemoryRangeSource, RangeSource,
+    fetch_gguf_header, fetch_safetensors_header, DownloadError, HttpRangeSource, MemoryRangeSource,
+    RangeSource, GGUF_INITIAL_FETCH_BYTES,
 };
 pub use repack::{
     int4_packed_bytes, int8_packed_bytes, quantize_matrix_int4, quantize_matrix_int8, RepackError,
 };
 pub use resident_writer::{
     build_resident_weights_bin, build_resident_weights_bin_mixed, RawTensorSpec, ResidentEntrySpec,
-    ResidentTensorSpec, DTYPE_BF16, DTYPE_FP16, DTYPE_FP32, DTYPE_INT8_AFFINE,
+    ResidentTensorSpec, DTYPE_BF16, DTYPE_FP16, DTYPE_FP32, DTYPE_GGUF_Q4_0, DTYPE_GGUF_Q4_K,
+    DTYPE_GGUF_Q6_K, DTYPE_GGUF_Q8_0, DTYPE_INT8_AFFINE, GGUF_BLOCK_DTYPES,
 };
 pub use safetensors_header::{
     parse_header, required_prefix_len, SafetensorsHeader, SafetensorsHeaderError, TensorInfo,
     DEFAULT_MAX_HEADER_BYTES,
+};
+pub use synthetic_gguf::{
+    build_synthetic_gemma4_gguf, GgufBuilder, GgufFileAndRanges, SyntheticGgufShape,
 };
 pub use synthetic_model::{
     build_synthetic_gemma4_install, build_synthetic_gemma4_moe_install,

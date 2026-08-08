@@ -3,14 +3,28 @@
 //! header) that lets the repacker read a safetensors header without
 //! downloading the file it's attached to.
 
+use crate::gguf_header::{
+    parse_header as parse_gguf, GgufHeader, GgufHeaderError, DEFAULT_MAX_HEADER_BYTES as GGUF_CAP,
+};
 use crate::safetensors_header::{parse_header, SafetensorsHeader, SafetensorsHeaderError};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum DownloadError {
     Request(String),
-    UnexpectedStatus { status: u16 },
-    ShortRead { expected: u64, actual: u64 },
+    UnexpectedStatus {
+        status: u16,
+    },
+    ShortRead {
+        expected: u64,
+        actual: u64,
+    },
     Header(SafetensorsHeaderError),
+    GgufHeader(GgufHeaderError),
+    /// The file ended before its own header did.
+    TruncatedGguf {
+        have: u64,
+        needed: u64,
+    },
 }
 
 impl std::fmt::Display for DownloadError {
@@ -24,7 +38,18 @@ impl std::fmt::Display for DownloadError {
                 write!(f, "short read: expected {expected} bytes, got {actual}")
             }
             DownloadError::Header(e) => write!(f, "{e}"),
+            DownloadError::GgufHeader(e) => write!(f, "{e}"),
+            DownloadError::TruncatedGguf { have, needed } => write!(
+                f,
+                "file is {have} bytes but its GGUF header runs to at least {needed}"
+            ),
         }
+    }
+}
+
+impl From<GgufHeaderError> for DownloadError {
+    fn from(e: GgufHeaderError) -> Self {
+        DownloadError::GgufHeader(e)
     }
 }
 
@@ -63,6 +88,50 @@ pub fn fetch_safetensors_header(
         &full,
         crate::safetensors_header::DEFAULT_MAX_HEADER_BYTES,
     )?)
+}
+
+/// First speculative read for [`fetch_gguf_header`]. A real header is
+/// dominated by `tokenizer.ggml.tokens` and runs to a few MB, so this is
+/// sized to usually take two or three requests rather than one: asking for
+/// the whole cap up front would pull 64 MB off every checkpoint.
+pub const GGUF_INITIAL_FETCH_BYTES: u64 = 1 << 20;
+
+/// Fetches a GGUF header from `source` without downloading the tensor data
+/// that follows it.
+///
+/// GGUF has no length prefix, so unlike [`fetch_safetensors_header`] this
+/// cannot be a two-step plan: the header's length is only known once the
+/// variable-length metadata section has been walked. The parser reports the
+/// offset it wanted, but that offset advances one FIELD at a time, so
+/// following it literally would be one HTTP round trip per metadata value.
+/// This grows geometrically instead and uses `needed` only as a floor.
+pub fn fetch_gguf_header(source: &dyn RangeSource) -> Result<GgufHeader, DownloadError> {
+    let mut want = GGUF_INITIAL_FETCH_BYTES;
+    loop {
+        // A range past EOF is a short read, not a failure: small files are
+        // legitimate, and the actual length is what bounds the retry.
+        let (buf, at_eof) = match source.read_range(0, want) {
+            Ok(b) => (b, false),
+            Err(DownloadError::ShortRead { actual, .. }) if actual > 0 => {
+                (source.read_range(0, actual)?, true)
+            }
+            Err(e) => return Err(e),
+        };
+        let have = buf.len() as u64;
+        match parse_gguf(&buf, GGUF_CAP) {
+            Ok(header) => return Ok(header),
+            Err(GgufHeaderError::TooShort { needed }) => {
+                if at_eof {
+                    return Err(DownloadError::TruncatedGguf { have, needed });
+                }
+                want = needed.max(want.saturating_mul(2)).min(GGUF_CAP);
+                if have >= want {
+                    return Err(DownloadError::TruncatedGguf { have, needed });
+                }
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
 }
 
 /// HTTP-backed [`RangeSource`] using the `blocking` `reqwest` client. Issues

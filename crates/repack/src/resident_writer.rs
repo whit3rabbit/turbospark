@@ -37,6 +37,35 @@ pub const DTYPE_BF16: u8 = 1;
 pub const DTYPE_FP16: u8 = 2;
 pub const DTYPE_FP32: u8 = 3;
 
+/// GGUF block-quantized dtype tags, added by ROADMAP Phase G.
+///
+/// These get their own numbers rather than reusing [`DTYPE_INT8_AFFINE`]
+/// and friends because the layouts are not interchangeable: an affine
+/// tensor is three separate regions (packed weights, BF16 scales, BF16
+/// biases) at group 64, while a GGUF block is self-contained, carrying its
+/// own scale inline ahead of its weights. A reader that mistook a Q8_0
+/// block for an INT8-affine row would decode the f16 scale as two weights
+/// and be silently, plausibly wrong.
+///
+/// Entries carrying these tags have NO scale/bias companions: their
+/// `scale_offset`/`scale_size`/`bias_offset`/`bias_size` are all zero.
+///
+/// No kernel reads any of these yet. `RealForwardRunner::open` rejects an
+/// install that carries one, by name (Phase G Stage 2 wires the kernels).
+pub const DTYPE_GGUF_Q8_0: u8 = 6;
+pub const DTYPE_GGUF_Q4_K: u8 = 7;
+pub const DTYPE_GGUF_Q6_K: u8 = 8;
+pub const DTYPE_GGUF_Q4_0: u8 = 9;
+
+/// Every GGUF block dtype tag, for consumers that need to reject the whole
+/// family in one check rather than enumerate it and drift.
+pub const GGUF_BLOCK_DTYPES: [u8; 4] = [
+    DTYPE_GGUF_Q8_0,
+    DTYPE_GGUF_Q4_K,
+    DTYPE_GGUF_Q6_K,
+    DTYPE_GGUF_Q4_0,
+];
+
 /// One named raw tensor (a norm vector, a scalar like `router.scale`):
 /// bytes stored verbatim, no scale/bias companions, `dtype` one of
 /// [`DTYPE_BF16`]/[`DTYPE_FP16`]/[`DTYPE_FP32`].

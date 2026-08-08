@@ -1059,6 +1059,7 @@ dependencies = [
  "mrefrust-selection",
  "mrefrust-streaming",
  "mrefrust-tokenizer",
+ "serde_json",
 ]
 
 [[package]]

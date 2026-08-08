@@ -894,6 +894,44 @@ live network).
 
 ## Phase 8 (repack, server)
 
+- **GGUF ingestion: INSTALLABLE, NOT EXECUTABLE (ROADMAP Phase G Stage 1).**
+  A GGUF file now walks all the way to a `.gturbo` install
+  (`gguf_header.rs` parses the v3 header, `gguf_names.rs` maps tensor names
+  onto the canonical HF-style ones the rest of the pipeline speaks,
+  `gguf_config.rs` rebuilds an `ArchConfig` from the metadata, and
+  `gguf_checkpoint.rs` walks and writes). Quantized bytes are carried
+  through VERBATIM -- there is no quantization step, because GGUF blocks
+  arrive already quantized, which is the lossless-repack rule taken
+  literally.
+  **What is deliberately missing is every kernel.** Q8_0 and Q4_K are
+  block-interleaved (the scale lives inside the block) where this port's
+  kernels read MLX affine's three separate planes at group 64, so nothing
+  in `dequant_int4.metal`, `dequant_int8.metal`, or `moe.metal` can read
+  the bytes an install like this contains. Two independent refusals stop
+  one being run: `manifest.json` declares `scheme: "gguf"` and
+  `model_io::validate_quant` accepts only `"affine"`, and
+  `RealForwardRunner::open` separately rejects the new GGUF dtype tags
+  (6 = Q8_0, 7 = Q4_K, 8 = Q6_K, 9 = Q4_0) in the resident index. Both are
+  asserted in `crates/runtime/tests/gguf_install_refused.rs`, the second
+  after deliberately forging the manifest past the first.
+  **Verified against the real published files, not just fixtures.**
+  `crates/repack/tests/gguf_checkpoint_network.rs` reads the header of
+  `ggml-org`'s Gemma 4 26B-A4B Q8_0 and Qwen 3.6 35B-A3B Q4_K_M (a few MB
+  off a 20-27 GB file, about 4 seconds each) and checks three things: the
+  parser agrees with what llama.cpp's converter writes, every tensor name
+  in both files maps, and the `ArchConfig` derived from GGUF metadata is
+  EQUAL to the one this port's own MLX-derived install declares. That last
+  one is the strongest check available, because the two sides share no
+  code and no input.
+  Beyond kernels, three things a GGUF install would still need before it
+  could run, all discovered by the above rather than assumed: its norms are
+  F32 where the runtime wants BF16, its router is F32 where the runtime
+  wants INT8, and Gemma's routed gate/up arrive FUSED in one tensor whose
+  half-ordering this stage cannot verify (`FUSED_GATE_FIRST`). Not
+  scaffolded, not attempted: a local-file `RangeSource` (the walk streams
+  over HTTP like the safetensors one), and any Q5_K/Q3_K/Q2_K/i-quant
+  block sizes (`ggml_type_block` answers only for types whose size was read
+  off the spec, and names the rest in its error rather than guessing).
 - **Byte-exact `.gturbo` directory assembly: implemented**
   (`gturbo_writer.rs`'s `write_gturbo_install`): given already-quantized
   tensor bytes, writes `packed_experts/layer_NN.bin` blobs (matching

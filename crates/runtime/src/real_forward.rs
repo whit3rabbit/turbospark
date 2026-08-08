@@ -463,6 +463,31 @@ impl RealForwardRunner {
             .map_err(RealForwardError::Model)?;
         let index = model_io::load_resident_index(&dir.join("model_weights.bin"))
             .map_err(RealForwardError::Model)?;
+
+        // GGUF block-quantized tensors (ROADMAP Phase G Stage 1) can be
+        // INSTALLED but not executed: the repack walk writes their bytes
+        // through verbatim, and the kernels that could read a block layout
+        // are Stage 2. Refuse here, once, by name and with the offending
+        // tensor, rather than letting a per-dispatch check decide it
+        // several hundred kernel launches into a forward pass.
+        //
+        // The manifest's `scheme: "gguf"` normally trips `load_manifest`
+        // above first. This is the backstop for an install whose manifest
+        // was hand-edited to get past that, which is exactly what someone
+        // trying to run one would do.
+        const GGUF_BLOCK_DTYPES: [u8; 4] = [6, 7, 8, 9];
+        if let Some(entry) = index
+            .entries
+            .values()
+            .find(|e| GGUF_BLOCK_DTYPES.contains(&e.dtype))
+        {
+            return Err(RealForwardError::Unsupported(format!(
+                "tensor {} carries GGUF block dtype {}; GGUF installs are not executable yet \
+                 (ROADMAP Phase G Stage 2 wires the Q8_0/Q4_K kernels)",
+                entry.name, entry.dtype
+            )));
+        }
+
         let buffer = ResidentBuffer::map(
             &dir.join("model_weights.bin"),
             index.header.index_size,

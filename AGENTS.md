@@ -165,6 +165,16 @@ LABEL=battery OUT=/tmp/power-gemma MODEL=~/models/gemma4.gturbo scripts/power.sh
 LABEL=battery MODEL=~/models/gemma4.gturbo CASES=short-explanation \
   QOS=default,utility scripts/power.sh 3
 
+# GGUF intake (ROADMAP Phase G Stage 1). Reads only the HEADER of the real
+# published GGUFs -- a few MB off a 20-27 GB file, ~4 s each -- and checks it
+# three ways: the parser agrees with what llama.cpp's converter writes, every
+# tensor name maps, and the ArchConfig derived from GGUF metadata equals the
+# one the corresponding .gturbo install declares. Set the install vars to get
+# the last two cross-checks; without them it still parses and reports.
+MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
+MREFRUST_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
+  cargo test -p mrefrust-repack --test gguf_checkpoint_network --release -- --ignored --nocapture
+
 # The other #[ignore]d tests: real checkpoint downloads (many GB).
 cargo test -p mrefrust-repack --test gemma4_checkpoint_network --release -- --ignored --nocapture
 cargo test -p mrefrust-repack --test hf_checkpoint_network --release -- --ignored --nocapture
@@ -666,6 +676,41 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     energy) and as a null result on AC, and the AC reading is the correct
     one (`docs/POWER_BASELINE.md`).
 
+29. **A GGUF is not a safetensors checkpoint with different names, and the
+    four differences that bite are all silent.** ROADMAP Phase G Stage 1
+    ingests GGUF (`crates/repack/src/gguf_*.rs`); every item below was read
+    off the real published files rather than off the format docs, and each
+    one produces a plausible, non-crashing wrong answer if assumed.
+    - **The data region is ALIGNED, not adjacent.** Tensor offsets are
+      relative to the end of the tensor table rounded UP to
+      `general.alignment` (default 32). Skip the rounding and every tensor
+      in the file shifts by up to 31 bytes.
+    - **Dims are stored fastest-varying first.** A logical `[out, in]`
+      matrix is stored `[in, out]`, so the resident index's shape is the
+      REVERSE of what the file says. Getting this wrong transposes every
+      shape while leaving every byte correct, which no byte-level
+      assertion catches.
+    - **Gemma 4 fuses gate and up into one routed tensor**
+      (`ffn_gate_up_exps`, `[in, 2 * ffn, experts]`) where MLX keeps them
+      apart; Qwen 3.6 does not fuse. Which half is the gate is an
+      ASSUMPTION this port has not yet verified -- see `FUSED_GATE_FIRST`
+      in `gguf_checkpoint.rs` for how Stage 2 settles it.
+    - **`general.architecture` is the converter's name, not the family's.**
+      Qwen 3.6 GGUFs say `qwen35moe`. Deriving it from
+      `ModelFamily::as_str()` recognizes no real Qwen GGUF.
+    Two more that are merely surprising rather than dangerous: Gemma 4's
+    GLOBAL layers carry no `attn_v` at all (true of the MLX install too, so
+    a missing per-layer tensor is not an error), and GGUF ships F32 norms
+    and an F32 router where an MLX install carries BF16 and INT8. Those
+    bytes are carried through verbatim rather than transcoded, which is why
+    a GGUF install needs more than expert kernels to run.
+    **A Stage 1 GGUF install deliberately does not load.** Its manifest
+    says `scheme: "gguf"` and `validate_quant` accepts only `"affine"`, and
+    `RealForwardRunner::open` independently rejects the GGUF dtype tags
+    (6/7/8/9) in the resident index. Both refusals are asserted
+    (`crates/runtime/tests/gguf_install_refused.rs`); Stage 2 lifts them
+    once the kernels exist.
+
 ## Per-Crate Documentation
 
 When working on code inside a specific crate, refer to that crate's `CLAUDE.md` file for crate-specific architecture, key modules, dev commands, and localized gotchas:
@@ -709,7 +754,7 @@ Workspace directory structure and crate layout:
 |   +-- gpu            # Metal pipeline cache & GPU kernel dispatches (macOS only)
 |   +-- invocation     # CLI argument parsing, request assembly & exit status routing
 |   +-- model-io       # manifest validation, packed-expert layout, resident index & mmap
-|   +-- repack         # safetensors header parsing, ranged downloads, int4/8 repack, gturbo writer
+|   +-- repack         # safetensors + GGUF header parsing, ranged downloads, int4/8 repack, gturbo writer
 |   +-- runtime        # raw-completion prefill+decode loop & RealForwardRunner (macOS)
 |   +-- selection      # token sampling (temperature, top-k, top-p, repetition penalty, choose)
 |   +-- server         # OpenAI-compatible Chat Completions HTTP server (axum)
@@ -744,7 +789,7 @@ installed globally or enters this workspace.
 - `crates/gpu`: Metal device/pipeline-cache context (`MetalContext`, `PassEncoder`, `CommittedPass`) and per-kernel dispatch. macOS-only; compiles to nothing elsewhere. Dispatched, parity-tested kernels (`rmsnorm_no_scale`, `rms_norm_bf16w`, both `_perhead` norm variants, `rope_proportional_neox`, `rope_neox_subdim`, `logit_softcap_softmax`, `dequant_int4_gemv_simd`, `dequant_int8_gemv_simd` with resident variants, `router_gemv_gemma4_r4`, two-pass split-KV `attention_decode` (multi-chunk, split up to 16 ways by `chunks_for`), `moe_decode` decode pair, `gdn.metal`'s eight gated-DeltaNet kernels, and `utility` elementwise kernels incl. Qwen's three gating kernels) are compiled from vendored MSL source at runtime. `KvCacheManager` allocates and manages real per-layer Metal KV buffers used by `RealForwardRunner`. `ResidentGpuWeights` wraps resident mmap in zero-copy MTLBuffer. `GdnStateManager` is the Qwen flow's recurrent state; `Dsv4StateManager` allocates real per-layer Metal buffers (unwired kernels); `PrefillChunkScratchLayout`/`PrefillChunkScratchBuffers` size scratch buffers (undispatched tile kernel). The `sample` kernel and fused lm_head are not yet vendored or dispatched. Details in [`crates/gpu/CLAUDE.md`](crates/gpu/CLAUDE.md).
 - `crates/runtime`: raw-completion prefill+decode loop (`run_raw_completion`, `run_raw_completion_chunked`), wiring a `LogitProducer`, the tokenizer's streaming detokenizer and stop matcher, and `selection::select` into one token generation loop. `ScriptedLogitProducer` is what unit tests and `crates/server`'s `ScriptedChatModel` drive the loop with (see Gotcha 10). `RealForwardRunner` (macOS/GPU only, `src/real_forward.rs`, `src/real_forward_gemma4.rs`, and `src/real_forward_qwen{,_attn}.rs`) is a real `LogitProducer`: a genuine transformer forward pass through real GPU kernels (including real GPU decode attention) and real quantized weights, supporting dense and MoE FFN layers. Dense bridges gated FFN on CPU via `mrefrust_compute::run_ffn`; MoE runs real GPU router GEMV plus real GPU GEMVs for each selected expert, host-side top-k selection, and CPU-bridged gated activation. Supports synthetic short names, verbatim real Gemma 4 checkpoint names (learned-weight flow), and the Qwen 3.6 hybrid linear/full-attention flow. See Gotcha 12. Details in [`crates/runtime/CLAUDE.md`](crates/runtime/CLAUDE.md).
 - `crates/cli`: the `mference-check` binary process entry point (see Gotcha 7). Parses `argv`, applies `invocation`'s exit-status and stream-routing decisions, prints the resolved request for a validated invocation, and (macOS, `src/generate.rs`) attempts real generation against `--model` via `RealForwardRunner` (see Gotcha 12) in all three modes: `--prompt` (raw text), `--messages-file` (rendered through chat template), and `--chat` (interactive REPL in `src/chat.rs`, trimming turns with `mrefrust-window-fit`). Details in [`crates/cli/CLAUDE.md`](crates/cli/CLAUDE.md).
-- `crates/repack`: safetensors header parsing (pure, tested against synthetic fixtures), `RangeSource` trait for ranged reads (HTTP-backed for real installs, in-memory for tests) with two-step header-fetch plan, per-row int4/int8 quantization repack (reusing `mrefrust_compute`'s quantizer), byte-exact `.gturbo` directory assembly (`write_gturbo_install`), real named resident-tensor index writer (`write_gturbo_install_with_resident_index`), synthetic install builders (`synthetic_model.rs`, `synthetic_real.rs`, `synthetic_qwen.rs`), Hugging Face Llama checkpoint repacker (`hf_checkpoint.rs`), Gemma 4 mlx-community checkpoint repacker & streamed pipeline (`gemma4_checkpoint.rs`, family-parameterized so Qwen 3.6 goes through the same walk), Qwen 3.6 `config.json` parser (`qwen36_config.rs`, the one family-specific piece of that walk), install verifier (`install_verifier.rs`), and manifest peeker (`manifest_peek.rs`). Details in [`crates/repack/CLAUDE.md`](crates/repack/CLAUDE.md).
+- `crates/repack`: safetensors header parsing (pure, tested against synthetic fixtures), `RangeSource` trait for ranged reads (HTTP-backed for real installs, in-memory for tests) with two-step header-fetch plan, per-row int4/int8 quantization repack (reusing `mrefrust_compute`'s quantizer), byte-exact `.gturbo` directory assembly (`write_gturbo_install`), real named resident-tensor index writer (`write_gturbo_install_with_resident_index`), synthetic install builders (`synthetic_model.rs`, `synthetic_real.rs`, `synthetic_qwen.rs`), Hugging Face Llama checkpoint repacker (`hf_checkpoint.rs`), Gemma 4 mlx-community checkpoint repacker & streamed pipeline (`gemma4_checkpoint.rs`, family-parameterized so Qwen 3.6 goes through the same walk), Qwen 3.6 `config.json` parser (`qwen36_config.rs`, the one family-specific piece of that walk), install verifier (`install_verifier.rs`), manifest peeker (`manifest_peek.rs`), and the GGUF intake (`gguf_header.rs` parser, `gguf_names.rs` name mapping, `gguf_config.rs` metadata-to-`ArchConfig`, `gguf_checkpoint.rs` verbatim repack walk, `synthetic_gguf.rs` fixture writer -- ROADMAP Phase G Stage 1, installable but not yet executable; see Gotcha 29). Details in [`crates/repack/CLAUDE.md`](crates/repack/CLAUDE.md).
 - `crates/server`: HTTP server on loopback (`mference-server` binary, axum framework) serving OpenAI `/v1/chat/completions`, Anthropic `/v1/messages`, and `/v1/models`, both generation endpoints supporting full-response (non-streaming) and SSE-streaming responses. The wire types come from `anyllm_translate` (crates.io, default features: pure and IO-free), which also translates an Anthropic request into the OpenAI request the existing path understands and translates the result back, so Anthropic-native clients need no proxy. Tool calling is wired on both endpoints (request `tools` render through the checkpoint's `chat_template.jinja`, generated calls come back through `StructuredAssistantDecoder`); images and `thinking` are dropped, some of it reported on an `x-anyllm-degradation` header. Two backends behind the `ChatModel` trait: `RealChatModel` (macOS, `--model <install-dir>`, one mutex-serialized `RealForwardRunner` per process) and `ScriptedChatModel` (portable, canned completions, what the integration tests drive). Details in [`crates/server/CLAUDE.md`](crates/server/CLAUDE.md).
 - `crates/bench`: the `mference-bench` binary plus benchmark library (`mrefrust_bench`). The scripted default (three fixed prompts, fixed seed, discarded warmup) measures loop overhead via `ScriptedLogitProducer`. `--model <install-dir>` (macOS) is the real Swift-comparison mode: frozen community protocol (`protocol.rs`) driven through `RealForwardRunner`, reporting split prefill/decode tok/s and peak `phys_footprint` from the mach sampler (`memory.rs`). `tests/memory_oracle.rs` (`#[ignore]`d, gated on `MREFRUST_GEMMA4_INSTALL_DIR`) asserts peak footprint against per-chip baseline rows, plus a steady-state replay guard; each row carries a `source` recording whether it is a Swift parity number or this port's own measurement. The quality axis lives here too, all `#[ignore]`d: `tests/quality_gate.rs` and its Qwen sibling (per-install perplexity plus golden digests), `tests/quality_sensitivity.rs` (proof the perplexity responds to quantization damage), and `tests/logit_dump.rs` (full-vocab logits plus the exact token ids, feeding `scripts/kld.py`'s cross-engine KL against mlx-lm -- the one external reference in the whole quality section). Full details in [`crates/bench/CLAUDE.md`](crates/bench/CLAUDE.md) and `docs/BENCHMARKING.md`.
 - `docs/`: repository documentation directory. `docs/BENCHMARKING.md` details benchmark harness modes, mach memory sampling, and the memory oracle baseline assertions; `docs/POWER_BASELINE.md` records watts and joules-per-token per install plus the power-hygiene audit (ROADMAP Phase P1), and is the one page here measured on BATTERY rather than AC; `docs/TESTING.md` documents test suite organization, macOS and environment-variable gating conventions, and test writing rules.
