@@ -142,6 +142,22 @@ MREFRUST_LOGIT_DUMP_COLD=1 MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
 MREFRUST_LOGIT_DUMP_DIR=/tmp/kld/cold \
   cargo test -p mrefrust-bench --test logit_dump --release -- --ignored --nocapture
 
+# The same question one layer down, for the GGUF path: does this port agree
+# with llama.cpp on the SAME GGUF bytes? Closes Phase G's last gate clause
+# and is the same-precision reference Phase S needs. Dump from a
+# GGUF-derived install, then replay the ids through llama.cpp (brew's
+# `llama.cpp`; a small harness against its own header, since no shipped
+# binary teacher-forces an id list). Needs the 26.9 GB GGUF locally --
+# llama.cpp cannot stream it the way the repack walk does. Metal by
+# default, and that is not cosmetic: see Gotcha 34 before running it on CPU.
+MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4-gguf.gturbo \
+MREFRUST_LOGIT_DUMP_DIR=/tmp/kld/gguf-warm \
+  cargo test -p mrefrust-bench --test logit_dump --release -- --ignored --nocapture
+hf download ggml-org/gemma-4-26B-A4B-it-GGUF gemma-4-26B-A4B-it-Q8_0.gguf \
+  --local-dir ~/models/gguf-ref
+uv run --python 3.12 --with numpy scripts/kld_llamacpp.py \
+  ~/models/gguf-ref/gemma-4-26B-A4B-it-Q8_0.gguf /tmp/kld/gguf-warm /tmp/kld/mrefrust
+
 # Proof that the gate above can SEE quantization damage, rather than just
 # asserting it could. Clones the install (APFS clonefile, so the original
 # is untouched and only written pages cost disk), shifts one quantization
@@ -921,6 +937,29 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     loop into a seconds-long one
     (`crates/repack/tests/gguf_qwen_convention_patch.rs`).
 
+34. **A cross-engine comparison needs the BACKEND matched, not just the
+    bytes, and getting it wrong reads as a defect in your own engine.**
+    ROADMAP Phase G's last gate clause was closed by running llama.cpp on
+    the exact GGUF this port installed (`scripts/kld_llamacpp.py`). The
+    first reading, against llama.cpp on CPU, was 0.05838 mean nats at 95.1%
+    top-1 -- 40x the shape floor measured beside it, which is what a real
+    kernel bug looks like. It was not one. ggml's own CPU and Metal paths
+    disagree with EACH OTHER by 0.05510 nats and 4.9% of the argmaxes on
+    this model, and re-running the reference on Metal (which a 26.9 GB model
+    does fit under, contrary to the wired-limit guess that put it on CPU)
+    collapsed the number to 0.00845 at 98.2%. The whole apparent gap was in
+    the reference. So a cross-engine KL needs TWO floors, not one: the shape
+    floor `kld.py` established (batched vs cached, 0.00144 here) and a
+    backend floor, which was 38x larger. The generalisation past ggml: any
+    reference engine with more than one arithmetic backend has this axis,
+    and it is invisible unless measured, because both arms are "the same
+    engine on the same file".
+    Two things it settled on the way, worth not re-deriving. llama.cpp DOES
+    apply Gemma's `final_logit_softcapping` (max |logit| 29.9993, so the
+    heads are the same function and comparable), and its CPU and Metal
+    perplexities differ by 1.8% on identical bytes, which is a real
+    calibration for `quality_common`'s 2% `PERPLEXITY_REL_TOLERANCE`.
+
 ## Per-Crate Documentation
 
 When working on code inside a specific crate, refer to that crate's `CLAUDE.md` file for crate-specific architecture, key modules, dev commands, and localized gotchas:
@@ -973,6 +1012,8 @@ Workspace directory structure and crate layout:
 |   \-- window-fit     # deterministic conversation-window fitting & turn dropping
 +-- scripts
 |   +-- kld.py         # cross-engine KL vs mlx-lm (reads tests/logit_dump.rs's output)
+|   +-- kld_llamacpp.py# the same, vs llama.cpp on the same GGUF bytes (Gotcha 34)
+|   +-- llamacpp_logits.c # its harness: ids in, full-vocab logits out, via libllama
 |   +-- parity.sh      # head-to-head protocol run against the Swift MferenceCLI
 |   +-- phasediff.sh   # bucket-level decode phase diff against the Swift engine
 |   \-- power.sh       # watts & joules-per-token over the protocol (needs sudo)
@@ -983,10 +1024,14 @@ Workspace directory structure and crate layout:
 ```
 
 `scripts/` holds the measurement surfaces that cannot be a `cargo test`:
-two need the Swift engine built next door, and `kld.py` needs a 14.6 GB
-reference checkpoint plus a Python environment. `kld.py` runs mlx-lm under
-`uv run --with mlx-lm`, an ephemeral env, so no Python dependency is
-installed globally or enters this workspace.
+two need the Swift engine built next door, `kld.py` needs a 14.6 GB
+reference checkpoint plus a Python environment, and `kld_llamacpp.py` needs
+a 26.9 GB GGUF plus a llama.cpp install (brew's; it compiles
+`llamacpp_logits.c` against that header on first run and caches the binary
+in `/tmp`). `kld.py` runs mlx-lm under `uv run --with mlx-lm`, an ephemeral
+env, so no Python dependency is installed globally or enters this
+workspace; `kld_llamacpp.py` needs only numpy and reuses `kld.py`'s
+divergence and perplexity functions rather than restating them.
 
 - `crates/core`: shared primitives (`TokenId`, `LogitValue`, `LogitsView`), error types (`CoreError`), runtime configuration (`RuntimeConfig`, `RuntimeConfigBuilder`), allowed value sets (`ALLOWED_CACHE_SLOTS`, `ALLOWED_CHUNK_SIZES`), automatic chunk-size resolution (`chunk_sizing.rs`), and prefill chunking primitives (`prefill.rs`). Details in [`crates/core/CLAUDE.md`](crates/core/CLAUDE.md).
 - `crates/compute`: CPU reference kernels (RmsNorm, WHT, RoPE incl. Qwen's `rope_neox_subdim`, causal attention, int4/int8 affine quant + GEMV, the GGUF block-quant reference (`quant_gguf.rs`: Q8_0 and Q4_K dequant/quant/GEMV plus `pearson`), embedding lookup, MoE FFN, the gated-DeltaNet chain (`gdn.rs`) and Qwen's gating kernels (`gating.rs`), logit softcap-softmax, RelError/tolerance table, sampling helpers) plus destination compute strategy marker type (`ComputeStrategy`). These are the numerical ground truth `crates/gpu`'s Metal kernels are validated against. Details in [`crates/compute/CLAUDE.md`](crates/compute/CLAUDE.md).

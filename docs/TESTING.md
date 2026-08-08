@@ -187,6 +187,21 @@ MREFRUST_LOGIT_DUMP_DIR=/tmp/kld/mrefrust \
   cargo test -p mrefrust-bench --test logit_dump --release -- --ignored --nocapture
 uv run --python 3.12 --with mlx-lm --with numpy scripts/kld.py /tmp/kld/mrefrust
 
+# The same shape against llama.cpp, on a GGUF-derived install and the GGUF
+# bytes it was streamed from. This is what closed Phase G's last gate
+# clause. Needs brew's llama.cpp (the driver compiles
+# scripts/llamacpp_logits.c against its header) and a LOCAL copy of the
+# 26.9 GB GGUF: llama.cpp cannot stream it the way the repack walk can, so
+# unlike every other target here it is gated on disk rather than on time.
+# Runs llama.cpp three times, and all three are needed to read the result:
+# two shapes for the shape floor, two backends for the backend floor
+# (AGENTS.md Gotcha 34 -- CPU is NOT interchangeable with Metal here).
+MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4-gguf.gturbo \
+MREFRUST_LOGIT_DUMP_DIR=/tmp/kld/gguf-warm \
+  cargo test -p mrefrust-bench --test logit_dump --release -- --ignored --nocapture
+uv run --python 3.12 --with numpy scripts/kld_llamacpp.py \
+  ~/models/gguf-ref/gemma-4-26B-A4B-it-Q8_0.gguf /tmp/kld/gguf-warm
+
 # Split-KV chunk-count sweep on the decode attention kernel. Needs no
 # model install: it is the kernel alone at the real Gemma 4 shapes, and
 # it reports speedup ratios rather than absolute times so it stays

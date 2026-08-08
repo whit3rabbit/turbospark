@@ -8,3 +8,6 @@
 CLAUDE.local.md
 ROADMAP.md
 .syntext/
+# scripts/kld_llamacpp.py imports scripts/kld.py, so running it byte-compiles
+# a sibling module here.
+__pycache__/

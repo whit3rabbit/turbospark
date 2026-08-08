@@ -991,8 +991,8 @@ live network).
   `crates/repack/CLAUDE.md` Gotcha 7 for the measurements and the trap (the
   convention belongs to an AXIS, so it reaches eight tensors and not the
   three a BF16 probe could compare).
-  **THE PHASE G GATE IS MET FOR BOTH FAMILIES (2026-08-08), except its last
-  clause.** The real published `ggml-org/gemma-4-26B-A4B-it-GGUF` Q8_0 and
+  **THE PHASE G GATE IS MET FOR BOTH FAMILIES (2026-08-08).** The real
+  published `ggml-org/gemma-4-26B-A4B-it-GGUF` Q8_0 and
   `ggml-org/Qwen3.6-35B-A3B-GGUF` Q4_K_M checkpoints each install and
   decode coherent text, greedy and sampled
   (`crates/repack/tests/gguf_install_network.rs`,
@@ -1005,12 +1005,20 @@ live network).
   its gated-DeltaNet tensors are the convention gap above
   (`gguf_qwen_core_probe.rs`, `gguf_qwen_quant_probe.rs`,
   `gguf_qwen_convention_patch.rs`).
-  **The clause NOT met is "within its quant's expected degradation", and it
-  is left open deliberately.** Gemma's GGUF perplexity is 39.8808 against
-  the MLX install's 37.4176, but that is INT4 against Q8_0, two different
-  quantizations; deciding which is closer to the truth needs a
-  same-precision reference (llama.cpp on the same GGUF) this port does not
-  have. Coherence is the bar actually cleared. Not
+  **The last clause, "within its quant's expected degradation", was closed
+  2026-08-08 by measuring it** (`scripts/kld_llamacpp.py`,
+  `scripts/llamacpp_logits.c`; numbers and method in `docs/BENCHMARKS.md`).
+  It read as a defect first: Gemma's GGUF install scores 39.8808 perplexity
+  against the MLX install's 37.4176, i.e. the higher-precision side 6.6%
+  WORSE. llama.cpp b10310 on the same GGUF bytes reads 39.8541, 0.067% from
+  this port, at 0.00845 mean nats and 98.2% top-1 agreement -- against
+  0.57748 nats and 78.0% for a real weight difference (this port's INT4
+  install against the same reference). So Q8_0 genuinely loses on this
+  corpus and the GGUF path is faithful. The trap that cost the most is
+  recorded in `docs/BENCHMARKS.md` and AGENTS.md Gotcha 34: the same
+  measurement against llama.cpp on CPU reads 0.05838 and looks like a real
+  gap, because ggml's own CPU and Metal paths disagree by 0.05510 on this
+  model. Match the backend, not just the bytes. Not
   scaffolded, not attempted: a local-file `RangeSource` (the walk streams
   over HTTP like the safetensors one), Q4_K or Q6_K routed experts beyond
   what the real files use, and any

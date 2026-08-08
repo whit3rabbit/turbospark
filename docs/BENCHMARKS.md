@@ -391,6 +391,79 @@ port. Qwen 3.6 has no cross-engine number: `logit_dump.rs` accepts
 `MREFRUST_QWEN36_INSTALL_DIR` and would produce one, but `kld.py`'s
 reference is pinned to the Gemma repo.
 
+### Cross-engine: llama.cpp on the same GGUF
+
+The section above audits the INT4 path, against the checkpoint
+`~/models/gemma4.gturbo` was repacked from. Nothing audited the GGUF path,
+and it had one number that read as a defect: the Q8_0 install scores
+39.8808 perplexity against the INT4 install's 37.4176. The
+higher-precision side scoring 6.6% WORSE is backwards, and 6.6% sits inside
+the band the sensitivity table above proves the metric can see. Two
+readings fit: Q8_0 genuinely loses on this corpus, or the GGUF repack
+carries residual error. A second engine on the same GGUF separates them.
+
+`scripts/kld_llamacpp.py` replays the same ids through llama.cpp b10310 on
+`ggml-org/gemma-4-26B-A4B-it-GGUF`'s `Q8_0` file, the exact bytes
+`~/models/gemma4-gguf.gturbo` was streamed from, via a small harness
+(`scripts/llamacpp_logits.c`) built against llama.cpp's own header. Ids in,
+full-vocabulary logits out; llama.cpp's tokenizer is never asked to encode
+anything. Both heads softcap at 30 and neither normalizes, verified rather
+than assumed: llama.cpp's max |logit| reads 29.9993.
+
+Gemma 4, 550 positions, 16 expert-cache slots, 2026-08-08, on AC:
+
+| Comparison | Mean KL | Median | p99 | Top-1 agree |
+| --- | ---: | ---: | ---: | ---: |
+| llama.cpp batched vs cached, both Metal (shape floor) | 0.00144 | 0.00002 | 0.012 | 99.5% |
+| **this port vs llama.cpp, same bytes, both Metal, both cached** | **0.00845** | **0.00034** | **0.153** | **98.2%** |
+| llama.cpp Metal vs llama.cpp CPU, both cached (backend floor) | 0.05510 | 0.0018 | 0.636 | 95.1% |
+| this port on INT4 vs llama.cpp on Q8_0 (different weights) | 0.57748 | 0.0922 | 7.874 | 78.0% |
+
+| Reading | Perplexity |
+| --- | ---: |
+| this port, GGUF Q8_0 install | 39.8808 |
+| **llama.cpp, same GGUF, Metal, cached** | **39.8541** |
+| llama.cpp, same GGUF, Metal, batched | 40.0673 |
+| llama.cpp, same GGUF, CPU, cached | 39.1419 |
+| this port, MLX INT4 install | 37.4176 |
+
+**Q8_0 really is worse than the MLX INT4 checkpoint on this corpus, and
+this port's GGUF path is not the reason.** An independent engine on the
+same bytes reads 39.8541 against this port's 39.8808, 0.067% apart, while
+the INT4 install sits 6.2% away from both. The distribution says the same
+thing an order of magnitude more sharply: 0.00845 nats between the two
+engines against 0.57748 for a genuine weight difference, 68x.
+
+**MATCH THE BACKEND, NOT JUST THE BYTES.** This was first measured against
+llama.cpp on CPU, because a 26.9 GB model looks like it will not fit under
+a 36 GB machine's Metal wired limit (it does, and runs 5x faster there).
+That reading was **0.05838** nats at 95.1% top-1, which is 40x the shape
+floor and reads as a real defect in this port. It is not: ggml's own CPU
+and Metal paths disagree with each other by 0.05510 nats and 4.9% of the
+argmaxes on this model, and matching the backend collapses the headline to
+0.00845 at 98.2%. The whole apparent gap was in the reference. Feeding two
+engines the same bytes is not enough when one is running different
+arithmetic; a cross-engine comparison needs a backend floor beside its
+shape floor, and this one is 38x the larger of the two.
+
+Everything here is deterministic: llama.cpp's Metal cached pass is
+byte-identical across processes (SHA-256 `2e5b3f47...`), as is this port's
+dump. Treat any movement as a real change, not noise.
+
+Two sibling facts fall out. This port's cold and warm dumps of the GGUF
+install are now byte-identical, where the mlx-lm section above measured
+0.0019 nats between them; that is AGENTS.md Gotcha 27's fix, and it holds
+on the MLX install too (warm now reads 37.4176, which used to be the cold
+number). And llama.cpp's own CPU and Metal perplexities differ by 1.8% on
+identical bytes, which is a useful calibration for `PERPLEXITY_REL_TOLERANCE`
+at 2%.
+
+Caveats. One corpus, one family, one machine, one llama.cpp build. This
+says the two engines agree on these bytes; it does not say either is close
+to the unquantized model, which would need a bf16 reference nobody has run
+here. And nothing in the standing gate runs this: it is a script, and the
+26.9 GB GGUF it needs is not kept on disk.
+
 ## Power
 
 NOT A PARITY CLAIM. Swift was never measured for power, here or upstream;
