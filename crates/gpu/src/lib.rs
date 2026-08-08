@@ -45,6 +45,8 @@ mod dequant_int4_gemv;
 #[cfg(target_os = "macos")]
 mod dequant_int8_gemv;
 #[cfg(target_os = "macos")]
+mod dequant_q8_0_gemv;
+#[cfg(target_os = "macos")]
 mod dispatch_profile;
 #[cfg(target_os = "macos")]
 mod dsv4_state;
@@ -90,6 +92,11 @@ pub use dequant_int4_gemv::{
 pub use dequant_int8_gemv::{
     dequant_int8_gemv, dequant_int8_gemv_resident, encode_dequant_int8_gemv_resident,
     Int8AffineRowGpu, Int8ResidentMatrix,
+};
+#[cfg(target_os = "macos")]
+pub use dequant_q8_0_gemv::{
+    dequant_q8_0_gemv, dequant_q8_0_gemv_resident, encode_dequant_q8_0_gemv_resident,
+    q8_0_row_bytes, Q8_0ResidentMatrix, Q8_0_BLOCK_BYTES, Q8_0_BLOCK_ELEMS,
 };
 #[cfg(target_os = "macos")]
 pub use dispatch_profile::{report as dispatch_profile_report, reset as dispatch_profile_reset};

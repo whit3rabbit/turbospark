@@ -22,6 +22,7 @@ crates/gpu/
 |   +-- rope.rs                     # RoPE positional embedding dispatch
 |   +-- dequant_int4_gemv.rs        # INT4 SIMD GEMV dispatches (resident & streamed)
 |   +-- dequant_int8_gemv.rs        # INT8 SIMD GEMV dispatches (resident & streamed)
+|   +-- dequant_q8_0_gemv.rs        # GGUF Q8_0 SIMD GEMV dispatch (port-local, Phase G)
 |   +-- resident_metal.rs           # ResidentGpuWeights mmap zero-copy MTLBuffer wrapper
 |   +-- dispatch_profile.rs         # Intra-command-buffer dispatch profiler
 |   +-- utility.rs                  # Elementwise helper dispatches (scalar mul, softcap)
@@ -31,10 +32,11 @@ crates/gpu/
 |   +-- gdn_state.rs                # GDN recurrent state buffers (Qwen flow's)
 |   +-- dsv4_state.rs               # DSV4 Metal buffer allocation (unwired)
 |   +-- prefill_scratch.rs          # Chunked prefill scratch buffer layout (undispatched)
-|   \-- shaders/                    # Vendored Metal Shading Language (MSL) source files
+|   \-- shaders/                    # MSL source, vendored from Swift except where marked port-local
 |       +-- attention.metal         # Decode attention Metal shader source
 |       +-- dequant_int4.metal      # INT4 dequantization GEMV shader source
 |       +-- dequant_int8.metal      # INT8 dequantization GEMV shader source
+|       +-- dequant_q8_0.metal      # GGUF Q8_0 dequantization GEMV shader source
 |       +-- gdn.metal               # Gated-DeltaNet (Qwen 3.6 linear attention) shader source
 |       +-- logit.metal             # Logit softcap and softmax shader source
 |       +-- moe.metal               # MoE router GEMV and phase 1/2 shader source
@@ -47,6 +49,7 @@ crates/gpu/
     +-- attention_swa.rs
     +-- dequant_int4_gemv_parity.rs
     +-- dequant_int8_gemv_parity.rs
+    +-- dequant_q8_0_gemv_parity.rs
     +-- dispatch_profile.rs
     +-- dsv4_state.rs
     +-- gdn_parity.rs
@@ -73,6 +76,7 @@ crates/gpu/
 - `rope.rs`: Rotary positional embedding dispatches (`rope_proportional_neox`, `rope_neox_subdim`).
 - `gdn.rs`: The eight gated-DeltaNet dispatches plus `GdnShape` and its structural preconditions.
 - `dequant_int4_gemv.rs` & `dequant_int8_gemv.rs`: INT4/INT8 GEMV SIMD dispatches.
+- `dequant_q8_0_gemv.rs`: the GGUF Q8_0 GEMV dispatch (ROADMAP Phase G Stage 2). PORT-LOCAL, not vendored -- the Swift engine has no GGUF intake, so its only contract is `mrefrust_compute::dequant_q8_0_gemv`. Shorter than the INT8 sibling because a Q8_0 row is ONE byte run: the scale lives inside each 34-byte block, so there are no scale or bias planes to bind and no group size to agree on. 32 lanes over a 32-element block, one weight per lane.
 - `resident_metal.rs`: `ResidentGpuWeights` zero-copy `MTLBuffer` wrapping around `mmap` slices.
 
 ## Development & Test Commands
