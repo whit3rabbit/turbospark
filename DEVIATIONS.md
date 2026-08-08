@@ -894,7 +894,8 @@ live network).
 
 ## Phase 8 (repack, server)
 
-- **GGUF ingestion: INSTALLABLE, NOT EXECUTABLE (ROADMAP Phase G Stage 1).**
+- **GGUF ingestion: INSTALLABLE, NOT EXECUTABLE (ROADMAP Phase G; Stage 1
+  landed, Stage 2 in progress).**
   A GGUF file now walks all the way to a `.gturbo` install
   (`gguf_header.rs` parses the v3 header, `gguf_names.rs` maps tensor names
   onto the canonical HF-style ones the rest of the pipeline speaks,
@@ -903,12 +904,16 @@ live network).
   through VERBATIM -- there is no quantization step, because GGUF blocks
   arrive already quantized, which is the lossless-repack rule taken
   literally.
-  **What is deliberately missing is every kernel.** Q8_0 and Q4_K are
+  **The kernels are landing but nothing is WIRED yet.** Q8_0 and Q4_K are
   block-interleaved (the scale lives inside the block) where this port's
-  kernels read MLX affine's three separate planes at group 64, so nothing
-  in `dequant_int4.metal`, `dequant_int8.metal`, or `moe.metal` can read
-  the bytes an install like this contains. Two independent refusals stop
-  one being run: `manifest.json` declares `scheme: "gguf"` and
+  affine kernels read three separate planes at group 64, so nothing in
+  `dequant_int4.metal`, `dequant_int8.metal`, or `moe.metal` can read the
+  bytes an install like this contains. As of 2026-08-07 there IS a Q8_0
+  path -- a CPU reference (`compute/src/quant_gguf.rs`) and a parity-tested
+  Metal GEMV (`dequant_q8_0.metal`, port-local since Swift has no GGUF
+  intake) -- but `RealForwardRunner` does not call it, Q4_K does not exist,
+  and the MoE decode pair still reads affine only. Two independent refusals
+  stop an install being run: `manifest.json` declares `scheme: "gguf"` and
   `model_io::validate_quant` accepts only `"affine"`, and
   `RealForwardRunner::open` separately rejects the new GGUF dtype tags
   (6 = Q8_0, 7 = Q4_K, 8 = Q6_K, 9 = Q4_0) in the resident index. Both are

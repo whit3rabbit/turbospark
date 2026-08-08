@@ -61,7 +61,9 @@ port tracks itself over time: [`docs/BENCHMARKING.md`](docs/BENCHMARKING.md).
 
 - `crates/core`: shared primitives and the public runtime configuration.
 - `crates/compute`: CPU reference kernels (RmsNorm, RoPE, attention,
-  int4/int8 quant, MoE, sampling) and the destination compute strategy.
+  int4/int8 affine quant, GGUF Q8_0 block quant, MoE, sampling) and the
+  destination compute strategy. Every GPU kernel is parity-tested against
+  one of these before it is trusted.
 - `crates/invocation`: command-line argument translation, usage text, and
   process-status/stream routing decisions (pure data, no I/O).
 - `crates/selection`: candidate selection under a validated shaping
@@ -76,8 +78,10 @@ port tracks itself over time: [`docs/BENCHMARKING.md`](docs/BENCHMARKING.md).
 - `crates/gpu`: Metal pipeline cache and kernel dispatch (macOS only).
 - `crates/runtime`: the raw-completion prefill+decode loop.
 - `crates/cli`: the `mference-check` process entry point.
-- `crates/repack`: safetensors header parsing, ranged-download planning,
-  and quantization repack.
+- `crates/repack`: safetensors and GGUF header parsing, ranged-download
+  planning, and quantization repack. GGUF intake installs but does not yet
+  run: its block-quantized bytes are refused at open on purpose, twice, until
+  the kernels behind them land (ROADMAP Phase G).
 - `crates/server`: OpenAI Chat Completions and Anthropic Messages server on loopback.
 - `crates/bench`: throughput benchmark harness, the memory oracle tests, and
   the per-install quality gates (perplexity plus frozen output digests, a

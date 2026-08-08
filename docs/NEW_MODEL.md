@@ -248,10 +248,22 @@ opens through `RealForwardRunner::open` without touching decode.
 - [ ] Add a parity test in `crates/gpu/tests/` against that reference on
       real hardware. Cover the saturating / wrapping / edge inputs, not
       just the middle of the range.
+- [ ] **MUTATION-CHECK the parity test before trusting it.** Break the
+      kernel in the way you most fear (a sign, a stride, a hoisted scale)
+      and confirm the suite goes red, then restore. A parity test written
+      from the same mental model as the kernel can agree with it while
+      both are wrong, and a passing test that cannot fail is worse than
+      no test because it is believed. Done for
+      `dequant_q8_0_gemv_simd`: flipping its signed read to unsigned fails
+      all four cases.
 - [ ] Port-local kernels (no Swift original) are allowed - `scalar_mul_fp16`
       and `logit_softcap_fp16` (both in `crates/gpu/src/shaders/utility.metal`)
       are two - but the shader comment must say
-      so and say why the fused upstream form does not fit.
+      so and say why the fused upstream form does not fit. A whole
+      port-local FILE is also fine when there is no upstream at all to
+      diff against: `shaders/dequant_q8_0.metal` is the precedent, since
+      Swift has no GGUF intake. Say that in the header, and name the CPU
+      reference that is then the kernel's only contract.
 - [ ] **Function constants are part of the pipeline cache key**
       (`MetalContext::pipeline`, `crates/gpu/src/context.rs`). If you
       specialize a value into a pipeline, its bytes must go into

@@ -1,6 +1,6 @@
 # mrefrust-repack
 
-Safetensors and GGUF header parsing, ranged HTTP/in-memory downloads (`RangeSource`), INT4/INT8 quantization repack, `.gturbo` directory installation assembly (`gturbo_writer.rs`), synthetic install generation (`synthetic_model.rs`, `synthetic_real.rs`, `synthetic_gguf.rs`), Hugging Face Llama repacker (`hf_checkpoint.rs`), Gemma 4 checkpoint repacker (`gemma4_checkpoint.rs`), and the GGUF intake (`gguf_*.rs`, ROADMAP Phase G Stage 1).
+Safetensors and GGUF header parsing, ranged HTTP/in-memory downloads (`RangeSource`), INT4/INT8 quantization repack, `.gturbo` directory installation assembly (`gturbo_writer.rs`), synthetic install generation (`synthetic_model.rs`, `synthetic_real.rs`, `synthetic_gguf.rs`), Hugging Face Llama repacker (`hf_checkpoint.rs`), Gemma 4 checkpoint repacker (`gemma4_checkpoint.rs`), and the GGUF intake (`gguf_*.rs`, ROADMAP Phase G: Stage 1 landed, Stage 2 in progress).
 
 ## Safety
 
@@ -38,6 +38,8 @@ crates/repack/
     +-- gguf_config.rs              # GGUF metadata -> ArchConfig
     +-- gguf_checkpoint.rs          # GGUF walk: byte identity of every expert slice
     +-- gguf_checkpoint_network.rs  # Real GGUF header fetch + cross-checks (ignored)
+    +-- gguf_fused_gate_network.rs  # Settles FUSED_GATE_FIRST by correlation (ignored)
+    +-- gguf_f32_transcode_network.rs # Evidence for the transcode decision (ignored)
     +-- gemma4_checkpoint_network.rs# Real Gemma 4 checkpoint download integration test (ignored)
     +-- qwen36_config.rs            # parse_qwen36_config vs the pinned Qwen 3.6 baseline
     +-- qwen36_checkpoint_network.rs# Real Qwen 3.6 checkpoint download integration test (ignored)
@@ -68,7 +70,7 @@ crates/repack/
 - `gguf_header.rs`: Pure GGUF v3 parser. Unlike safetensors there is no length prefix, so `TooShort` carries the offset the walk wanted and `ranged_download::fetch_gguf_header` grows geometrically toward it (following `needed` literally would be one HTTP round trip per metadata field). `ggml_type_block` is DELIBERATELY PARTIAL: only types whose block size was read off the ggml spec are listed, and everything else is named in the error rather than guessed at.
 - `gguf_names.rs`: GGUF-to-canonical name tables, one per family, every row read off a real published file and cross-checked against the corresponding real install's resident index.
 - `gguf_config.rs`: `arch_from_gguf`. Starts from `known_architecture(family)` and overrides ONLY the fields GGUF actually determines, because behavioral fields are hardcoded in llama.cpp's graph builder and absent from the metadata.
-- `gguf_checkpoint.rs`: the GGUF repack walk. No quantization step: bytes are sliced per expert and copied through. Splits Gemma's fused `ffn_gate_up_exps`; see `FUSED_GATE_FIRST` for the one assumption it makes.
+- `gguf_checkpoint.rs`: the GGUF repack walk. No quantization step: bytes are sliced per expert and copied through. Splits Gemma's fused `ffn_gate_up_exps` at `FUSED_GATE_FIRST`, which is now MEASURED against the real file rather than assumed (gate is the first half; `tests/gguf_fused_gate_network.rs`). Still carries GGUF's F32 norms and F32 router through verbatim: transcoding them to BF16/INT8 is decided but not yet implemented (Gotcha 6).
 - `synthetic_gguf.rs`: `GgufBuilder` plus `build_synthetic_gemma4_gguf`, a tiny file carrying every name and metadata key the real Gemma 4 GGUF has.
 
 ## Development & Test Commands
@@ -93,6 +95,14 @@ MREFRUST_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
 MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
 MREFRUST_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
   cargo test -p mrefrust-repack --test gguf_checkpoint_network --release -- --ignored --nocapture
+
+# Which half of Gemma's fused ffn_gate_up_exps is the gate, by correlating a
+# dequantized layer 0 expert 0 against the MLX install. Few KB, ~5 s.
+MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
+  cargo test -p mrefrust-repack --test gguf_fused_gate_network --release -- --ignored --nocapture
+
+# The evidence behind Gotcha 6's transcode decision. Needs no install.
+cargo test -p mrefrust-repack --test gguf_f32_transcode_network --release -- --ignored --nocapture
 ```
 
 ## Crate Gotchas
@@ -101,4 +111,6 @@ MREFRUST_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
 2. **`build_manifest_json` writes every family-extension field unconditionally.** `arch_validation` resolves omitted ones against the GEMMA baseline whatever family the manifest claims, so a Qwen install that leaves them out can never load. Gemma installs are unaffected (those are its own fallbacks). Do not make any of them conditional. Float fields additionally have to be binary fractions to survive serde_json's ~1-ULP default parser -- see AGENTS.md Gotcha 24.
 3. **Synthetic Model Uniform Routing**: Synthetic MoE routers feature near-uniform routing logits. Expert slot permutation bugs cannot be caught by testing synthetic models alone; routing assignments must be validated structurally.
 4. **A GGUF install is written but cannot be opened, on purpose.** The walk produces a real `.gturbo` whose expert bytes are Q8_0/Q4_K blocks, and no kernel in this port reads a block layout yet. `manifest.json` says `scheme: "gguf"` (which `model_io::validate_quant` refuses) and `RealForwardRunner::open` independently refuses dtype tags 6/7/8/9. Do not "fix" either refusal without landing the kernels behind it; both are asserted in `crates/runtime/tests/gguf_install_refused.rs`. AGENTS.md Gotcha 29 lists the four silent traps in the format itself.
-5. **The GGUF network test costs a few MB, not a few GB.** `gguf_checkpoint_network.rs` reads only the header of a 20-27 GB remote file. It is the only place a name-mapping hole or a converter disagreement can surface, because a synthetic fixture only ever contains names its author already knew. Run it after touching `gguf_names.rs` or `gguf_config.rs`.
+5. **All three GGUF `*_network` tests cost KB or MB, not GB, and none downloads a checkpoint.** They read ranges off a 20-27 GB remote file and finish in seconds. `gguf_checkpoint_network.rs` reads the header and is the only place a name-mapping hole or a converter disagreement can surface, because a synthetic fixture only ever contains names its author already knew: run it after touching `gguf_names.rs` or `gguf_config.rs`. `gguf_fused_gate_network.rs` reads two output rows (a Q8_0 row of `hidden` elements is `hidden / 32 * 34` CONTIGUOUS bytes) and `gguf_f32_transcode_network.rs` reads whole norm and router tensors, which are vectors and a small matrix. Before budgeting a download for the next GGUF question, check whether the answer is a contiguous byte range; the block layout makes more of them so than the planar affine layout would.
+
+6. **GGUF's F32 norms and F32 router are DECIDED as a repack-time transcode, and not yet implemented.** The walk still writes them through verbatim, so a Stage 1 install carries F32 where the runtime's kernels want BF16 and INT8. The decision rests on measurement, not preference (`tests/gguf_f32_transcode_network.rs`): llama.cpp UPCAST norms that are BF16 in the original checkpoint, so narrowing them back is bit-exact and costs nothing, and the router transcode applies the same INT8 affine the MLX path already applies to the same tensor without moving the routing decision. Do not re-open this as a tradeoff; it was measured to a conclusion. See AGENTS.md Gotcha 29.
