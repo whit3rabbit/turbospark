@@ -141,8 +141,66 @@ fn candidate_transforms_against_the_mlx_install() {
         worst_rel(&format!("{label} vs sorted(gguf)"), &sorted, &s_gguf);
     }
 
-    println!("conv1d: is it a permutation too?");
+    // The LEAD hypothesis, and it needs no matcher: Gotcha 29 says GGUF
+    // stores dims fastest-varying first, so a logical `[channels, kernel]`
+    // lands as `[kernel, channels]` and the walk copies it verbatim. A flat
+    // read is then a strided permutation of the same multiset, which is
+    // exactly what a sorted match reports. Exact, and immune to the
+    // duplicate-value problem the index map has.
+    println!("conv1d: is the GGUF side simply the transpose?");
     let (conv_mlx, conv_gguf) = pair("language_model.model.layers.0.linear_attn.conv1d.weight");
+    const CONV_K: usize = 4;
+    let channels = conv_mlx.len() / CONV_K;
+    let transposed: Vec<f32> = (0..CONV_K)
+        .flat_map(|k| (0..channels).map(move |c| (c, k)))
+        .map(|(c, k)| conv_mlx[c * CONV_K + k])
+        .collect();
+    worst_rel("transpose(mlx) vs gguf", &transposed, &conv_gguf);
+
+    // Transpose is refuted (see the run above), and element-wise the two
+    // flat vectors correlate +0.82, which a full transpose could not do. So
+    // most channels agree and a REGION moved. Located by per-channel
+    // equality, which duplicate values cannot confuse the way the index map
+    // can: a channel is 4 consecutive values and either matches or does not.
+    println!("conv1d: which channels differ?");
+    let differing: Vec<usize> = (0..channels)
+        .filter(|&c| {
+            let at = c * CONV_K;
+            conv_mlx[at..at + CONV_K] != conv_gguf[at..at + CONV_K]
+        })
+        .collect();
+    match (differing.first(), differing.last()) {
+        (Some(&first), Some(&last)) => println!(
+            "  {} of {channels} channels differ, from {first} to {last}; first few {:?}",
+            differing.len(),
+            &differing[..differing.len().min(8)]
+        ),
+        _ => println!("  every channel matches"),
+    }
+
+    // 3840 differing channels from 4224 to 8063 is 30 x 128, and with the
+    // channel run laid out `[q 2048 | k 2048 | v 4096]` at a 128-wide head,
+    // that is exactly the 30 V heads the dt_bias de-interleave MOVES: under
+    // `2h` / `2(h - 16) + 1`, heads 0 and 31 are fixed points and the other
+    // 30 are not. So the candidate is the same one convention, applied to
+    // the V region of the channel run.
+    println!("conv1d: the V-head de-interleave, applied to the v region only?");
+    const V_AT: usize = 4096;
+    const HEAD: usize = 128;
+    let v_heads = (channels - V_AT) / HEAD;
+    let mut candidate = conv_mlx.clone();
+    for h in 0..v_heads {
+        let from = if h < v_heads / 2 {
+            2 * h
+        } else {
+            2 * (h - v_heads / 2) + 1
+        };
+        let (dst, src) = ((V_AT + h * HEAD) * CONV_K, (V_AT + from * HEAD) * CONV_K);
+        candidate[dst..dst + HEAD * CONV_K].copy_from_slice(&conv_mlx[src..src + HEAD * CONV_K]);
+    }
+    worst_rel("v-head de-interleave(mlx) vs gguf", &candidate, &conv_gguf);
+
+    println!("conv1d: is it a permutation too?");
     let mut s_conv_mlx = conv_mlx.clone();
     let mut s_conv_gguf = conv_gguf.clone();
     s_conv_mlx.sort_by(f32::total_cmp);

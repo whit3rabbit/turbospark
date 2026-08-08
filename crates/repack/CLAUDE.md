@@ -42,6 +42,8 @@ crates/repack/
     +-- gguf_f32_transcode_network.rs # Evidence for the transcode decision (ignored)
     +-- gguf_q4_k_network.rs        # Q4_K dequant vs the real Qwen Q4_K_M, by correlation (ignored)
     +-- gguf_install_network.rs     # Streams the real Q8_0 GGUF into a full install (ignored)
+    +-- gguf_qwen_install_network.rs# Same for the real Qwen Q4_K_M, the mixed-block-type case (ignored)
+    +-- gguf_qwen_core_probe.rs     # A GGUF install's resident core vs the MLX one, tensor by tensor (ignored)
     +-- gguf_norm_convention_probe.rs # GGUF install's resident BF16 core vs the MLX install's (ignored)
     +-- gemma4_checkpoint_network.rs# Real Gemma 4 checkpoint download integration test (ignored)
     +-- qwen36_config.rs            # parse_qwen36_config vs the pinned Qwen 3.6 baseline
