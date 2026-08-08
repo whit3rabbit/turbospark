@@ -840,6 +840,34 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     on a constant input so a caller's threshold behaves; that is correct and
     is what made the failure look like disagreement instead of NaN.
 
+31. **A candidate transform must be tested INVARIANT TO ORDERING, or a
+    correct one reads as a decisive rejection.** Measured 2026-08-08 while
+    settling Qwen's GGUF conventions: `-exp(A_log)` is exactly what
+    llama.cpp stores, and the first two element-wise checks of it scored a
+    worst relative error of 2081 and 2.44, which look like proof it is
+    wrong. The tensor was ALSO permuted, and a permutation defeats an
+    element-wise comparison whatever the transform. Sorting both sides first
+    reduced the same data to 0.003088 at correlation +1.00000 (0.003 being
+    BF16 rounding). So when comparing a candidate against a reference:
+    compare sorted, decide the transform, THEN recover the permutation.
+    The permutation is recovered by printing an index map, but note its one
+    failure mode -- matching by VALUE finds the first equal element, so on a
+    tensor with repeats (Qwen's `conv1d.weight` has 32,768 values and many
+    duplicates) the map reports an identity prefix and then noise. That is
+    the matcher, not the data. Compare per row or per channel there.
+
+32. **Every error raised inside an encode sequence used to abort the
+    process, and the abort said nothing.** A `PassEncoder` dropped on a `?`
+    path never sent `endEncoding`, so Metal killed the process from
+    `-[_MTLCommandEncoder dealloc]` with "Command encoder released without
+    endEncoding" while the real error was still travelling up the stack.
+    Fixed by a `Drop` impl (`crates/gpu/src/context.rs`), and the cost of
+    having one is that `commit` takes its profile with `Option::take` and
+    clones the command buffer rather than moving fields out. Two corollaries:
+    any older note describing a Metal crash on this path may be describing an
+    ordinary error message, and a new pass-like wrapper needs the same
+    treatment or it reintroduces the blindfold.
+
 ## Per-Crate Documentation
 
 When working on code inside a specific crate, refer to that crate's `CLAUDE.md` file for crate-specific architecture, key modules, dev commands, and localized gotchas:
