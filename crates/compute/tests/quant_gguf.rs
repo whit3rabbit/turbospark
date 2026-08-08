@@ -12,9 +12,10 @@
 //! merely too small.
 
 use mrefrust_compute::{
-    dequant_q4_k_gemv, dequant_q8_0_gemv, dequantize_q4_k, dequantize_q8_0, pearson, quantize_q4_k,
-    quantize_q8_0, Q4_K_BLOCK_BYTES, Q4_K_BLOCK_ELEMS, Q4_K_SUB_ELEMS, Q8_0_BLOCK_BYTES,
-    Q8_0_BLOCK_ELEMS,
+    dequant_q4_k_gemv, dequant_q6_k_gemv, dequant_q8_0_gemv, dequantize_q4_k, dequantize_q6_k,
+    dequantize_q8_0, pearson, quantize_q4_k, quantize_q6_k, quantize_q8_0, Q4_K_BLOCK_BYTES,
+    Q4_K_BLOCK_ELEMS, Q4_K_SUB_ELEMS, Q6_K_BLOCK_BYTES, Q6_K_BLOCK_ELEMS, Q6_K_SUB_ELEMS,
+    Q8_0_BLOCK_BYTES, Q8_0_BLOCK_ELEMS,
 };
 
 /// Deterministic weights spanning both signs and several magnitudes, so a
@@ -310,6 +311,163 @@ fn q4_k_gemv_matches_a_dequantize_then_multiply() {
     let got = dequant_q4_k_gemv(&refs, &x, n);
     for (i, row) in rows.iter().enumerate() {
         let want: f32 = dequantize_q4_k(row, n)
+            .iter()
+            .zip(x.iter())
+            .map(|(w, xv)| w * xv)
+            .sum();
+        assert!((got[i] - want).abs() <= want.abs() * 1e-6 + 1e-6);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Q6_K. A third layout rather than a wider Q4_K: six bits per element split
+// across two runs, a fixed bias of 32 instead of a per-sub-block min, and
+// sixteen SIGNED int8 sub-block scales stored as plain bytes.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_q6_k_superblock_is_two_quant_runs_sixteen_scales_and_a_super_scale() {
+    assert_eq!(Q6_K_BLOCK_ELEMS, 256);
+    assert_eq!(Q6_K_SUB_ELEMS, 16);
+    // 128 low-nibble bytes + 64 high-bit bytes + 16 scales + one f16.
+    assert_eq!(Q6_K_BLOCK_BYTES, 128 + 64 + 16 + 2);
+    let bytes = quantize_q6_k(&weights(2 * Q6_K_BLOCK_ELEMS, 31));
+    assert_eq!(bytes.len(), 2 * Q6_K_BLOCK_BYTES);
+}
+
+/// The load-bearing Q6_K test, and the sibling of the hand-packed Q4_K one: a
+/// superblock assembled from LITERAL bytes, decoded against the documented
+/// formula `w = d * sc[is + 2k] * (level - 32)` with every level worked out by
+/// hand rather than by calling the code under test.
+///
+/// Every byte is one of two values, which is what makes the expectations
+/// hand-checkable: `ql = 0x93` gives low nibble 3 and high nibble 9, and
+/// `qh = 0xB1` gives the four bit-pairs 1, 0, 3, 2 from low to high. So the
+/// four levels a lane serves are 3|16 = 19, 3|0 = 3, 9|48 = 57 and 9|32 = 41,
+/// i.e. quants -13, -29, 25 and 9 after the bias.
+///
+/// That pins five things at once, each of which is finite and plausible when
+/// got wrong:
+///
+/// - the six bits SPLIT across `ql` and `qh` (dropping `qh` turns 57 into 9),
+/// - the fixed bias of 32 (dropping it makes every value non-negative),
+/// - the SIGNED scales (half of the sixteen below are negative),
+/// - the scale index striding by 2 per quarter, not by 1,
+/// - the 32-element spacing between the four values one `qh` byte serves.
+///
+/// `d` is 0.5 and every scale and quant is a small integer, so each expected
+/// value is exact in FP32 and this compares with `==`.
+#[test]
+fn a_hand_packed_q6_k_superblock_decodes_to_the_documented_formula() {
+    const SCALES: [i8; 16] = [
+        1, -2, 3, -4, 5, -6, 7, -8, 9, -10, 11, -12, 13, -14, 15, -16,
+    ];
+    const QUANTS: [f32; 4] = [-13.0, -29.0, 25.0, 9.0];
+    const D: f32 = 0.5;
+
+    let mut block = Vec::with_capacity(Q6_K_BLOCK_BYTES);
+    block.extend_from_slice(&[0x93u8; 128]);
+    block.extend_from_slice(&[0xB1u8; 64]);
+    block.extend(SCALES.iter().map(|&s| s as u8));
+    // f16 0.5 is sign 0, exponent field 14, zero mantissa.
+    block.extend_from_slice(&0x3800u16.to_le_bytes());
+    assert_eq!(block.len(), Q6_K_BLOCK_BYTES);
+
+    let out = dequantize_q6_k(&block, Q6_K_BLOCK_ELEMS);
+    for h in 0..2 {
+        for k in 0..4 {
+            for l in 0..32 {
+                let is = l / Q6_K_SUB_ELEMS;
+                let want = D * SCALES[h * 8 + is + 2 * k] as f32 * QUANTS[k];
+                let at = h * 128 + k * 32 + l;
+                assert_eq!(out[at], want, "half {h} quarter {k} lane {l}");
+            }
+        }
+    }
+    // Spot-check two of them against numbers written out longhand, so the
+    // loop above cannot be satisfied by an index scheme that is wrong in the
+    // same way on both sides.
+    assert_eq!(out[0], -6.5); // 0.5 * 1 * -13
+    assert_eq!(out[128 + 32 + 16], 174.0); // 0.5 * -12 * -29
+}
+
+#[test]
+fn q6_k_round_trip_stays_inside_one_quantization_step() {
+    let w = weights(2 * Q6_K_BLOCK_ELEMS, 41);
+    let out = dequantize_q6_k(&quantize_q6_k(&w), w.len());
+
+    for (j, sub) in w.chunks_exact(Q6_K_SUB_ELEMS).enumerate() {
+        let amax = sub.iter().fold(0f32, |acc, &v| acc.max(v.abs()));
+        // A sub-block keeps 32 levels of its own extreme, and its scale is
+        // reached through an int8 quantized against the superblock maximum,
+        // so allow that second rounding on top of the half-step.
+        let bound = amax / 32.0 * 0.5 + amax * 2e-2;
+        for (ii, &orig) in sub.iter().enumerate() {
+            let got = out[j * Q6_K_SUB_ELEMS + ii];
+            assert!(
+                (got - orig).abs() <= bound,
+                "sub-block {j} element {ii}: {got} vs {orig}, bound {bound}"
+            );
+        }
+    }
+}
+
+/// ggml derives the sub-block scales through a NEGATIVE `iscale`, so a real
+/// file carries negative scale bytes wherever a sub-block's extreme is
+/// positive. Reading them as `u8` mirrors whole 16-element runs and stays
+/// finite, so the sign is asserted on both the stored bytes and the decode.
+#[test]
+fn sub_block_scales_are_signed_and_both_signs_occur() {
+    // Alternating sub-blocks whose extreme is positive then negative.
+    let w: Vec<f32> = (0..Q6_K_BLOCK_ELEMS)
+        .map(|e| {
+            let sign = if (e / Q6_K_SUB_ELEMS) % 2 == 0 {
+                1.0
+            } else {
+                -1.0
+            };
+            sign * (1.0 + (e % Q6_K_SUB_ELEMS) as f32 / 16.0)
+        })
+        .collect();
+    let bytes = quantize_q6_k(&w);
+    let scales: Vec<i8> = bytes[192..208].iter().map(|&b| b as i8).collect();
+    assert!(
+        scales.iter().any(|&s| s < 0) && scales.iter().any(|&s| s > 0),
+        "expected both signs among {scales:?}"
+    );
+
+    let out = dequantize_q6_k(&bytes, w.len());
+    for (e, (&got, &orig)) in out.iter().zip(w.iter()).enumerate() {
+        assert!(
+            got.signum() == orig.signum(),
+            "element {e} flipped sign: {got} vs {orig}"
+        );
+        assert!((got - orig).abs() < 0.1, "element {e}: {got} vs {orig}");
+    }
+}
+
+/// An all-zero superblock has no extreme, so `iscale` would divide by zero.
+/// Real routed experts and vocab rows do contain all-zero runs (AGENTS.md
+/// Gotcha 30), so this is the shape a padded or dead row takes.
+#[test]
+fn an_all_zero_q6_k_superblock_dequantizes_to_zeros() {
+    let out = dequantize_q6_k(
+        &quantize_q6_k(&vec![0.0; Q6_K_BLOCK_ELEMS]),
+        Q6_K_BLOCK_ELEMS,
+    );
+    assert!(out.iter().all(|&v| v == 0.0), "got {out:?}");
+}
+
+#[test]
+fn q6_k_gemv_matches_a_dequantize_then_multiply() {
+    let n = 2 * Q6_K_BLOCK_ELEMS;
+    let x = weights(n, 13);
+    let rows: Vec<Vec<u8>> = (0..4).map(|r| quantize_q6_k(&weights(n, 50 + r))).collect();
+    let refs: Vec<&[u8]> = rows.iter().map(|r| r.as_slice()).collect();
+
+    let got = dequant_q6_k_gemv(&refs, &x, n);
+    for (i, row) in rows.iter().enumerate() {
+        let want: f32 = dequantize_q6_k(row, n)
             .iter()
             .zip(x.iter())
             .map(|(w, xv)| w * xv)
