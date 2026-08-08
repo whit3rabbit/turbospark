@@ -1,6 +1,6 @@
 # turbospark: High-Efficiency Apple Silicon Inference in Rust
 
-`turbospark` is a high-performance, behavior-compatible Rust port of the [Mference](https://github.com/drumih/turbo-fieldfare) local LLM inference engine.
+`turbospark` is a high-performance, behavior-compatible Rust inspired port of the [turbo-fieldfare](https://github.com/drumih/turbo-fieldfare) local LLM inference engine.
 
 It is specifically designed for **Apple Silicon (macOS Metal)** to execute large language models (LLMs) with **extremely low memory overhead**. Instead of holding full model parameters in unified RAM/VRAM, `turbospark` streams routed expert weights directly from high-speed SSD storage into a lean working memory footprint.
 
