@@ -133,6 +133,41 @@ impl GgufBuilder {
         self.tensor(name, 8, dims, data)
     }
 
+    /// Push an F32 tensor whose every value is EXACTLY representable in
+    /// BF16, which is what llama.cpp actually writes for norms: it upcasts
+    /// tensors that were BF16 in the original checkpoint, so the low sixteen
+    /// mantissa bits are all zero (measured, `gguf_f32_transcode_network.rs`).
+    ///
+    /// Zeros would satisfy that too, and used to be what this fixture wrote,
+    /// but a zero tensor also narrows exactly under a BROKEN transcode. These
+    /// values do not.
+    pub fn f32_upcast_bf16_tensor(self, name: &str, dims: &[u64], seed: u8) -> Self {
+        let elements: u64 = dims.iter().product();
+        let mut data = Vec::with_capacity((elements * 4) as usize);
+        for i in 0..elements {
+            // Sign and exponent fixed around 1.0, mantissa varying, so every
+            // value is an ordinary positive number a norm could hold.
+            let bf16 = 0x3F00u16 | ((i as u16).wrapping_add(seed as u16) & 0x00FF);
+            data.extend_from_slice(&((bf16 as u32) << 16).to_le_bytes());
+        }
+        self.tensor(name, 0, dims, data)
+    }
+
+    /// Push an F32 tensor of ordinary values, low mantissa bits included, so
+    /// a quantizing transcode has real rounding to do. What the router is:
+    /// GGUF ships it F32 and this port stores it INT8-affine.
+    pub fn f32_tensor(self, name: &str, dims: &[u64], seed: u8) -> Self {
+        let elements: u64 = dims.iter().product();
+        let mut data = Vec::with_capacity((elements * 4) as usize);
+        let mut s = (seed as u32).wrapping_mul(2_654_435_761).wrapping_add(17);
+        for _ in 0..elements {
+            s = s.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let v = ((s >> 8) as f32 / (1u32 << 23) as f32) - 1.0;
+            data.extend_from_slice(&v.to_bits().to_le_bytes());
+        }
+        self.tensor(name, 0, dims, data)
+    }
+
     /// Serialize. Returns the file bytes and, alongside them, the absolute
     /// `[start, end)` range of each tensor's data in push order, so a test
     /// can assert byte identity without re-deriving the layout it is trying
@@ -294,14 +329,7 @@ pub fn build_synthetic_gemma4_gguf(shape: SyntheticGgufShape) -> GgufFileAndRang
             ),
         )
         .q8_0_tensor("token_embd.weight", &[s.hidden, s.vocab], 1)
-        .tensor(
-            "output_norm.weight",
-            0,
-            &[s.hidden],
-            vec![0u8; (s.hidden * 4) as usize],
-        );
-
-    let f32_vec = |n: u64| vec![0u8; (n * 4) as usize];
+        .f32_upcast_bf16_tensor("output_norm.weight", &[s.hidden], 2);
 
     for l in 0..s.num_layers {
         let sliding = s.slides(l);
@@ -326,17 +354,11 @@ pub fn build_synthetic_gemma4_gguf(shape: SyntheticGgufShape) -> GgufFileAndRang
                 &[q_dim, s.hidden],
                 seed.wrapping_add(2),
             )
-            .tensor(
-                &format!("blk.{l}.attn_q_norm.weight"),
-                0,
-                &[hd],
-                f32_vec(hd),
-            )
-            .tensor(
+            .f32_upcast_bf16_tensor(&format!("blk.{l}.attn_q_norm.weight"), &[hd], seed)
+            .f32_upcast_bf16_tensor(
                 &format!("blk.{l}.attn_k_norm.weight"),
-                0,
                 &[hd],
-                f32_vec(hd),
+                seed.wrapping_add(1),
             );
 
         // Global layers carry no V projection at all -- a property of the
@@ -349,7 +371,7 @@ pub fn build_synthetic_gemma4_gguf(shape: SyntheticGgufShape) -> GgufFileAndRang
             );
         }
 
-        for norm in [
+        for (n, norm) in [
             "attn_norm",
             "post_attention_norm",
             "ffn_norm",
@@ -357,12 +379,14 @@ pub fn build_synthetic_gemma4_gguf(shape: SyntheticGgufShape) -> GgufFileAndRang
             "post_ffw_norm",
             "post_ffw_norm_1",
             "post_ffw_norm_2",
-        ] {
-            b = b.tensor(
+        ]
+        .iter()
+        .enumerate()
+        {
+            b = b.f32_upcast_bf16_tensor(
                 &format!("blk.{l}.{norm}.weight"),
-                0,
                 &[s.hidden],
-                f32_vec(s.hidden),
+                seed.wrapping_add(10 + n as u8),
             );
         }
 
@@ -382,30 +406,28 @@ pub fn build_synthetic_gemma4_gguf(shape: SyntheticGgufShape) -> GgufFileAndRang
                 &[s.intermediate, s.hidden],
                 seed.wrapping_add(6),
             )
-            // Router: F32 in GGUF, where an MLX install carries INT8.
-            .tensor(
+            // Router: F32 in GGUF, where an MLX install carries INT8. Real
+            // values rather than upcast BF16, because the repack quantizes
+            // this one instead of narrowing it.
+            .f32_tensor(
                 &format!("blk.{l}.ffn_gate_inp.weight"),
-                0,
                 &[s.hidden, s.num_experts],
-                f32_vec(s.hidden * s.num_experts),
+                seed.wrapping_add(20),
             )
-            .tensor(
+            .f32_upcast_bf16_tensor(
                 &format!("blk.{l}.ffn_gate_inp.scale"),
-                0,
                 &[s.hidden],
-                f32_vec(s.hidden),
+                seed.wrapping_add(21),
             )
-            .tensor(
+            .f32_upcast_bf16_tensor(
                 &format!("blk.{l}.ffn_down_exps.scale"),
-                0,
                 &[s.num_experts],
-                f32_vec(s.num_experts),
+                seed.wrapping_add(22),
             )
-            .tensor(
+            .f32_upcast_bf16_tensor(
                 &format!("blk.{l}.layer_output_scale.weight"),
-                0,
                 &[1],
-                f32_vec(1),
+                seed.wrapping_add(23),
             )
             // Gate and up fused along the output dim.
             .q8_0_tensor(

@@ -901,9 +901,10 @@ live network).
   onto the canonical HF-style ones the rest of the pipeline speaks,
   `gguf_config.rs` rebuilds an `ArchConfig` from the metadata, and
   `gguf_checkpoint.rs` walks and writes). Quantized bytes are carried
-  through VERBATIM -- there is no quantization step, because GGUF blocks
-  arrive already quantized, which is the lossless-repack rule taken
-  literally.
+  through VERBATIM -- there is no quantization step on them, because GGUF
+  blocks arrive already quantized, which is the lossless-repack rule taken
+  literally. The one exception is the resident F32 core, which is
+  transcoded rather than carried; see below.
   **The kernels are landing but nothing is WIRED yet.** Q8_0 and Q4_K are
   block-interleaved (the scale lives inside the block) where this port's
   affine kernels read three separate planes at group 64, so nothing in
@@ -928,15 +929,20 @@ live network).
   EQUAL to the one this port's own MLX-derived install declares. That last
   one is the strongest check available, because the two sides share no
   code and no input.
-  Beyond kernels, two things a GGUF install would still need before it
-  could run, both discovered by the above rather than assumed: its norms are
-  F32 where the runtime wants BF16, and its router is F32 where the runtime
-  wants INT8. Both are now DECIDED (repack-time transcode, not an F32 path)
-  though not yet implemented, and the decision rests on a measurement rather
-  than on the tradeoff the roadmap anticipated: the norms are upcast BF16 and
-  narrow back with zero bit loss, and INT8-transcoding the router leaves
-  top-1 routing unchanged with every top-8 flip inside quantization noise
-  (`crates/repack/tests/gguf_f32_transcode_network.rs`). A third is now
+  Beyond kernels, two things a GGUF install needed before it could run,
+  both discovered by the above rather than assumed, are now DONE rather
+  than outstanding: its norms are F32 where the runtime wants BF16, and its
+  router is F32 where the runtime wants INT8. Both are transcoded at repack
+  time (`gguf_checkpoint.rs::transcode_f32`), which was chosen over an F32
+  path on a measurement rather than on the tradeoff the roadmap
+  anticipated: the norms are upcast BF16 and narrow back with zero bit
+  loss, and INT8-transcoding the router leaves top-1 routing unchanged with
+  every top-8 flip inside quantization noise
+  (`crates/repack/tests/gguf_f32_transcode_network.rs`). An F32 path would
+  have cost two more kernels, each needing its own CPU reference and parity
+  test, to buy nothing. A converter that did not upcast is not rejected --
+  BF16 is where the values have to go regardless -- but every value that
+  loses bits is counted and reported. A third is now
   settled rather than outstanding: Gemma's routed
   gate/up arrive FUSED in one tensor, and gate is the FIRST half, measured
   against the real file rather than assumed (`FUSED_GATE_FIRST`,

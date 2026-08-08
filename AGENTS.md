@@ -733,9 +733,18 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     the routing decision survives it: top-1 unchanged on 32 of 32 random
     activations, and every top-8 membership flip sat 0.148 quantization
     noise-widths from the cut, i.e. a tie the quantizer could not see
-    rather than a reordering of a decided pair.
+    rather than a reordering of a decided pair. LANDED, so nothing F32
+    reaches an install any more: `gguf_checkpoint.rs::transcode_f32`
+    narrows to BF16 by default and INT8s the router. The INT8 set is keyed
+    by CANONICAL NAME per family, not by rank -- Qwen's
+    `linear_attn.conv1d.weight` is rank-2 F32 that the runtime reads as
+    BF16, while `mlp.gate.weight` is rank-2 and must be dtype 5 -- and the
+    BF16 default is safe because a mis-targeted tensor fails loudly at
+    `open()` rather than quietly.
     **A Stage 1 GGUF install deliberately does not load.** Its manifest
-    says `scheme: "gguf"` and `validate_quant` accepts only `"affine"`, and
+    says `scheme: "gguf"` on every slot but the transcoded router (which
+    truthfully says affine/8/group-64), `validate_quant` accepts only
+    `"affine"` and so refuses on the other four, and
     `RealForwardRunner::open` independently rejects the GGUF dtype tags
     (6/7/8/9) in the resident index. Both refusals are asserted
     (`crates/runtime/tests/gguf_install_refused.rs`); Stage 2 lifts them

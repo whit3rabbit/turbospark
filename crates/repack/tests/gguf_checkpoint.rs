@@ -12,8 +12,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use mrefrust_repack::{
     build_synthetic_gemma4_gguf, orchestrate_gguf_checkpoint, parse_gguf_header,
-    write_gguf_install_streamed, MemoryRangeSource, ResidentEntrySpec, SyntheticGgufShape,
-    DTYPE_FP32, DTYPE_GGUF_Q8_0, GGUF_DEFAULT_MAX_HEADER_BYTES,
+    write_gguf_install_streamed, GgufBuilder, GgufRepackError, GgufValue, MemoryRangeSource,
+    ResidentEntrySpec, SyntheticGgufShape, DTYPE_BF16, DTYPE_FP32, DTYPE_GGUF_Q8_0,
+    GGUF_DEFAULT_MAX_HEADER_BYTES,
 };
 
 fn tempdir() -> std::path::PathBuf {
@@ -69,7 +70,10 @@ fn resident_tensors_keep_their_bytes_names_and_logical_shapes() {
         .iter()
         .map(|e| match e {
             ResidentEntrySpec::Raw(r) => (r.name.as_str(), e),
-            _ => panic!("GGUF tensors must be carried raw, never re-quantized"),
+            ResidentEntrySpec::Int8(t) => (t.name.as_str(), e),
+            ResidentEntrySpec::Int4(_) => {
+                panic!("nothing in a GGUF becomes INT4; the transcode targets are INT8 only")
+            }
         })
         .collect();
 
@@ -95,15 +99,236 @@ fn resident_tensors_keep_their_bytes_names_and_logical_shapes() {
     );
     assert_eq!(embed.bytes, f.tensor("token_embd.weight"));
 
-    // The router is F32 in GGUF where an MLX install carries INT8. Carried
-    // through as F32 rather than transcoded.
-    let ResidentEntrySpec::Raw(router) =
+    // The router is F32 in GGUF where this port's kernels want INT8, so it
+    // is the one resident tensor that is quantized rather than carried.
+    // Nothing F32 survives into the install: no F32 kernel exists.
+    let ResidentEntrySpec::Int8(router) =
         by_name["language_model.model.layers.0.router.proj.weight"]
     else {
-        unreachable!()
+        panic!("the router must arrive INT8-affine, which is the dtype the GEMV reads")
     };
-    assert_eq!(router.dtype, DTYPE_FP32);
-    assert_eq!(router.bytes, f.tensor("blk.0.ffn_gate_inp.weight"));
+    assert_eq!(router.rows, f.shape.num_experts as u32);
+    assert_eq!(router.cols, f.shape.hidden as u32);
+    assert!(!out
+        .resident
+        .iter()
+        .any(|e| matches!(e, ResidentEntrySpec::Raw(r) if r.dtype == DTYPE_FP32)));
+}
+
+// ---------------------------------------------------------------------------
+// The F32 transcode (ROADMAP Phase G Stage 2, item 5)
+// ---------------------------------------------------------------------------
+//
+// GGUF ships norms and the router as F32; this port has kernels for BF16 and
+// INT8-affine and none for F32. The decision to transcode at repack time
+// rather than build two more kernels was measured, not preferred:
+// `gguf_f32_transcode_network.rs` on the real file. What is checked HERE is
+// that the walk does what that measurement licensed.
+//
+// The fixture matters as much as the assertions. Its norms are upcast BF16
+// patterns (what llama.cpp really writes) rather than the zeros this file
+// used to carry, because zeros narrow exactly under a broken transcode too.
+
+/// Every value of every F32 norm survives the narrowing, bit for bit. The
+/// fixture is built from BF16 patterns precisely so this can be an EXACT
+/// assertion rather than a tolerance.
+#[test]
+fn f32_norms_narrow_to_bf16_bit_exactly() {
+    let f = Fixture::new();
+    let out =
+        orchestrate_gguf_checkpoint(&f.header, &MemoryRangeSource::new(&f.bytes)).expect("walk");
+
+    let entry = |name: &str| {
+        out.resident
+            .iter()
+            .find_map(|e| match e {
+                ResidentEntrySpec::Raw(r) if r.name == name => Some(r),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no resident entry {name}"))
+    };
+
+    let mut checked = 0usize;
+    for (gguf, canonical) in [
+        ("output_norm.weight", "language_model.model.norm.weight"),
+        (
+            "blk.0.attn_norm.weight",
+            "language_model.model.layers.0.input_layernorm.weight",
+        ),
+        (
+            "blk.0.post_ffw_norm.weight",
+            "language_model.model.layers.0.post_feedforward_layernorm.weight",
+        ),
+        (
+            "blk.1.attn_q_norm.weight",
+            "language_model.model.layers.1.self_attn.q_norm.weight",
+        ),
+        // Not a norm, but read by `read_bf16_host` and so on the same path.
+        (
+            "blk.0.ffn_gate_inp.scale",
+            "language_model.model.layers.0.router.scale",
+        ),
+        (
+            "blk.0.layer_output_scale.weight",
+            "language_model.model.layers.0.layer_scalar",
+        ),
+    ] {
+        let source: Vec<f32> = f
+            .tensor(gguf)
+            .chunks_exact(4)
+            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .collect();
+        let e = entry(canonical);
+        assert_eq!(e.dtype, DTYPE_BF16, "{canonical}");
+        assert_eq!(e.bytes.len(), source.len() * 2, "{canonical}");
+        for (i, &v) in source.iter().enumerate() {
+            let stored = u16::from_le_bytes([e.bytes[i * 2], e.bytes[i * 2 + 1]]);
+            assert_eq!(stored, compute::f32_to_bf16(v), "{canonical} element {i}");
+            assert_eq!(
+                compute::bf16_to_f32(stored),
+                v,
+                "{canonical} element {i} lost bits"
+            );
+        }
+        checked += 1;
+    }
+    assert_eq!(checked, 6);
+    assert!(
+        out.lossy_narrowing.is_empty(),
+        "nothing in this fixture should lose bits: {:?}",
+        out.lossy_narrowing
+    );
+}
+
+/// The router is the one resident tensor that is genuinely quantized. Shape
+/// first (rows and cols are reversed out of GGUF's dim order, and getting
+/// that backwards leaves the byte count identical), then a dequantize round
+/// trip against the source, which is what actually fails if the row stride
+/// or the group stride is wrong.
+#[test]
+fn the_router_becomes_an_int8_affine_entry_that_dequantizes_back() {
+    let f = Fixture::new();
+    let out =
+        orchestrate_gguf_checkpoint(&f.header, &MemoryRangeSource::new(&f.bytes)).expect("walk");
+
+    let router = out
+        .resident
+        .iter()
+        .find_map(|e| match e {
+            ResidentEntrySpec::Int8(t)
+                if t.name == "language_model.model.layers.0.router.proj.weight" =>
+            {
+                Some(t)
+            }
+            _ => None,
+        })
+        .expect("an INT8 router entry");
+
+    let experts = f.shape.num_experts as usize;
+    let hidden = f.shape.hidden as usize;
+    // GGUF stores [hidden, experts]; the logical matrix is [experts, hidden].
+    assert_eq!(router.rows as usize, experts);
+    assert_eq!(router.cols as usize, hidden);
+    assert_eq!(router.packed.len(), experts * hidden);
+    assert_eq!(router.scales.len(), experts * hidden / 64);
+    assert_eq!(router.biases.len(), experts * hidden / 64);
+
+    let source: Vec<f32> = f
+        .tensor("blk.0.ffn_gate_inp.weight")
+        .chunks_exact(4)
+        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect();
+    assert_eq!(source.len(), experts * hidden);
+
+    for r in 0..experts {
+        let groups = hidden / 64;
+        let row = compute::Int8AffineRow {
+            packed: router.packed[r * hidden..(r + 1) * hidden].to_vec(),
+            scales: router.scales[r * groups..(r + 1) * groups].to_vec(),
+            biases: router.biases[r * groups..(r + 1) * groups].to_vec(),
+        };
+        let back = compute::dequantize_int8_affine(&row, hidden);
+        for g in 0..groups {
+            // One INT8 level of that group, which is the most an affine
+            // quantizer may move a value. A transposed row or a misaligned
+            // group lands orders of magnitude outside this.
+            let step = compute::bf16_to_f32(row.scales[g]);
+            for k in 0..64 {
+                let i = r * hidden + g * 64 + k;
+                let err = (back[g * 64 + k] - source[i]).abs();
+                assert!(
+                    err <= step,
+                    "row {r} group {g} element {k}: error {err} exceeds one step {step}"
+                );
+            }
+        }
+    }
+}
+
+/// A GGUF whose router row is not a whole number of 64-element groups must
+/// come back as an error. `quantize_int8_affine` ASSERTS on that shape, and
+/// this crate forbids handing a caller's file straight to a panic.
+#[test]
+fn a_router_row_that_is_not_a_whole_group_is_rejected_rather_than_panicking() {
+    // 100 is deliberately not a multiple of 64.
+    let (bytes, _) = minimal_gemma_gguf(100)
+        .f32_tensor("blk.0.ffn_gate_inp.weight", &[100, 4], 7)
+        .build();
+    let header = parse_gguf_header(&bytes, GGUF_DEFAULT_MAX_HEADER_BYTES).unwrap();
+    let err = match orchestrate_gguf_checkpoint(&header, &MemoryRangeSource::new(&bytes)) {
+        Ok(_) => panic!("a 100-wide router row cannot be INT8-quantized at group 64"),
+        Err(e) => e,
+    };
+    assert!(
+        matches!(err, GgufRepackError::ShapeMismatch { .. }),
+        "expected a shape error, got {err}"
+    );
+    assert!(err.to_string().contains("64"), "{err}");
+}
+
+/// A converter that did NOT upcast from BF16 still produces an install (the
+/// runtime has no F32 kernel, so BF16 is the only destination), but the loss
+/// is reported rather than swallowed.
+#[test]
+fn a_genuinely_f32_norm_is_narrowed_and_counted() {
+    let (bytes, _) = minimal_gemma_gguf(64)
+        // Ordinary F32 values, low mantissa bits and all.
+        .f32_tensor("output_norm.weight", &[64], 9)
+        .build();
+    let header = parse_gguf_header(&bytes, GGUF_DEFAULT_MAX_HEADER_BYTES).unwrap();
+    let out = orchestrate_gguf_checkpoint(&header, &MemoryRangeSource::new(&bytes)).expect("walk");
+
+    assert_eq!(out.lossy_narrowing.len(), 1);
+    assert_eq!(out.lossy_narrowing[0].0, "output_norm.weight");
+    assert!(
+        out.lossy_narrowing[0].1 > 0,
+        "an F32 tensor with real mantissa bits must report some loss"
+    );
+    // It is still carried, as BF16, because there is nowhere else to put it.
+    assert!(out.resident.iter().any(
+        |e| matches!(e, ResidentEntrySpec::Raw(r) if r.name == "language_model.model.norm.weight" && r.dtype == DTYPE_BF16)
+    ));
+}
+
+/// The smallest GGUF `arch_from_gguf` accepts: one layer, no routed experts,
+/// so a test can add exactly the one tensor it wants to say something about.
+fn minimal_gemma_gguf(hidden: u32) -> GgufBuilder {
+    GgufBuilder::new()
+        .metadata_str("general.architecture", "gemma4")
+        .metadata_u32("gemma4.block_count", 1)
+        .metadata_u32("gemma4.embedding_length", hidden)
+        .metadata_u32("gemma4.attention.head_count", 4)
+        .metadata_u32("gemma4.attention.head_count_kv", 2)
+        .metadata_u32("gemma4.expert_count", 4)
+        .metadata_u32("gemma4.expert_used_count", 2)
+        .metadata_u32("gemma4.expert_feed_forward_length", 16)
+        .metadata(
+            "gemma4.attention.sliding_window_pattern",
+            GgufValue::Array(vec![GgufValue::Bool(true)]),
+        )
+        // `arch_from_gguf` reads the vocabulary off the embedding, so even
+        // the minimal file carries one.
+        .q8_0_tensor("token_embd.weight", &[hidden as u64, 128], 1)
 }
 
 /// THE property. Every expert's bytes on the way out must be exactly the
@@ -287,8 +512,13 @@ fn the_written_manifest_is_refused_until_kernels_exist() {
         serde_json::from_slice(&std::fs::read(dir.join("manifest.json")).unwrap()).unwrap();
     assert_eq!(manifest["quant"]["routedExpert"]["scheme"], "gguf");
     assert_eq!(manifest["quant"]["routedExpert"]["ggmlType"], "Q8_0");
-    // The router really is F32 in a GGUF, and the manifest says so.
-    assert_eq!(manifest["quant"]["router"]["ggmlType"], "F32");
+    // The router is the one slot that is NOT "gguf", because the transcode
+    // really did make it INT8 affine at group 64. Saying "F32" here would
+    // describe the source file rather than the bytes on disk. The refusal
+    // below therefore has to come from the other four slots.
+    assert_eq!(manifest["quant"]["router"]["scheme"], "affine");
+    assert_eq!(manifest["quant"]["router"]["weightBits"], 8);
+    assert_eq!(manifest["quant"]["router"]["groupSize"], 64);
 
     let err = model_io::load_manifest(&dir, &arch, model_io::DEFAULT_MAX_BYTES)
         .expect_err("a GGUF install must not load in Stage 1");
