@@ -211,6 +211,24 @@ MREFRUST_GEMMA4_GGUF_INSTALL_DIR=~/models/gemma4-gguf.gturbo \
 MREFRUST_QWEN36_GGUF_INSTALL_DIR=~/models/qwen36-gguf.gturbo \
   cargo test -p mrefrust-repack --test gguf_qwen_install_network --release -- --ignored --nocapture
 
+# ROADMAP Phase G Stage 2 item 10: Qwen's V-head convention (Gotcha 33), on
+# EVERY layer rather than the layer 0 the transforms were characterized on.
+# Reports per tensor how well the bytes on disk and the de-interleaved
+# candidate agree with the MLX install. Read-only; MREFRUST_QWEN_PATCH=1
+# rewrites the install in place, which is how a coherence test costs seconds
+# instead of a 23-minute repack. Idempotent: it patches only what improves.
+# ~40 s, no network, needs both Qwen installs.
+MREFRUST_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
+MREFRUST_QWEN36_GGUF_INSTALL_DIR=~/models/qwen36-gguf.gturbo \
+  cargo test -p mrefrust-repack --test gguf_qwen_convention_patch --release -- --ignored --nocapture
+
+# The diagnostic that found the five QUANTIZED tensors on that axis, which a
+# BF16 probe structurally cannot see. Recovers the permutation outright where
+# a tensor has one row per head. ~1 s, needs both Qwen installs.
+MREFRUST_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
+MREFRUST_QWEN36_GGUF_INSTALL_DIR=~/models/qwen36-gguf.gturbo \
+  cargo test -p mrefrust-repack --test gguf_qwen_quant_probe --release -- --ignored --nocapture
+
 # The GGUF install's resident BF16 core must be BIT-IDENTICAL to the MLX
 # install's: norms, router.scale, per_expert_scale, layer_scalar. Settles
 # the Gemma norm "+1" convention and the shape-matched name mappings.
@@ -867,6 +885,37 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     any older note describing a Metal crash on this path may be describing an
     ordinary error message, and a new pass-like wrapper needs the same
     treatment or it reintroduces the blindfold.
+
+33. **A source-convention difference belongs to an AXIS, not to the tensors
+    you happened to be able to compare.** Qwen's GGUF orders V heads
+    interleaved where the MLX checkpoint keeps them contiguous. Three
+    tensors were characterized first (`A_log`, `dt_bias`, `conv1d.weight`)
+    and all three transforms were correct, verified on every layer of the
+    real install at worst relative error 0.000000. **The model still
+    generated gibberish**, because five more tensors index the same axis
+    (`in_proj_qkv`, `in_proj_z`, `in_proj_a`, `in_proj_b`, `out_proj`) and
+    the only thing that had made the first three visible was that they are
+    the ones GGUF ships as F32, so a BF16-only probe could compare them
+    directly. The selection criterion was the INSTRUMENT'S REACH, and it
+    read as a finding. When a convention gap is found, enumerate by the
+    dimension it indexes and check every tensor carrying that dimension
+    before believing a list. The instrument for the rest was
+    `gguf_qwen_quant_probe.rs`: dequantize one representative row per head
+    and correlate same-index against the candidate (0.08-0.24 versus
+    0.993-0.995 here), because two installs hold different quantizations and
+    equality is unavailable. Where a tensor has one row per head the
+    permutation is RECOVERABLE outright by argmax over a row-by-row
+    correlation matrix, which is stronger than confirming a guess.
+    Two corollaries. Permuting a quantized tensor needs no dequantization:
+    block layouts tile along the fastest-varying dim, so a row is a
+    contiguous byte run and a head-wide column group is a whole number of
+    blocks (checked, not assumed -- a Q4_K superblock is wider than a
+    128-element head and must be refused rather than split). And verifying
+    this class of fix does not need a repack: the tensors sit at fixed
+    offsets, every transform preserves length, and `open()` runs no receipt
+    or SHA-256 check, so patching the install in place turns a 23-minute
+    loop into a seconds-long one
+    (`crates/repack/tests/gguf_qwen_convention_patch.rs`).
 
 ## Per-Crate Documentation
 

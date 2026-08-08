@@ -310,6 +310,222 @@ fn a_genuinely_f32_norm_is_narrowed_and_counted() {
     ));
 }
 
+/// GGML's F32 type id, for the tensors below that carry chosen values rather
+/// than the builder's seeded ones.
+const GGML_F32: u32 = 0;
+
+fn f32_bytes(values: &[f32]) -> Vec<u8> {
+    values.iter().flat_map(|v| v.to_le_bytes()).collect()
+}
+
+/// The Qwen sibling of [`minimal_gemma_gguf`], sized so the V-head
+/// de-interleave has something to say: 4 V heads (so the map is
+/// `0 -> 0, 1 -> 2, 2 -> 1, 3 -> 3`, not the identity and not a reversal),
+/// 1 K head, 32-wide heads, kernel 2. That makes `conv1d`'s channel run
+/// `[q 32 | k 32 | v 128]` and the value stream 128 wide.
+///
+/// The 32-wide head is not arbitrary: it is exactly one Q8_0 block, which is
+/// what lets `out_proj`'s COLUMN permutation stay a byte move. The real model
+/// is 128-wide, i.e. four blocks per head. A head narrower than a block is
+/// refused rather than shuffled, and the fixture would hide that if its head
+/// were 8 wide.
+fn minimal_qwen_gguf() -> GgufBuilder {
+    GgufBuilder::new()
+        .metadata_str("general.architecture", "qwen35moe")
+        .metadata_u32("qwen35moe.block_count", 1)
+        .metadata_u32("qwen35moe.embedding_length", 64)
+        .metadata_u32("qwen35moe.attention.head_count", 4)
+        .metadata_u32("qwen35moe.attention.head_count_kv", 2)
+        .metadata_u32("qwen35moe.expert_count", 4)
+        .metadata_u32("qwen35moe.expert_used_count", 2)
+        .metadata_u32("qwen35moe.expert_feed_forward_length", 16)
+        .metadata_u32("qwen35moe.full_attention_interval", 4)
+        // The gated-DeltaNet dimensions, under the `ssm.` keys GGUF borrows.
+        .metadata_u32("qwen35moe.ssm.group_count", 1)
+        .metadata_u32("qwen35moe.ssm.time_step_rank", 4)
+        .metadata_u32("qwen35moe.ssm.state_size", 32)
+        .metadata_u32("qwen35moe.ssm.inner_size", 128)
+        .metadata_u32("qwen35moe.ssm.conv_kernel", 2)
+        .q8_0_tensor("token_embd.weight", &[64, 128], 1)
+}
+
+/// The V-head map the whole convention rests on, as this test reads it:
+/// GGUF head `h` holds what MLX head `MAP[h]` holds, so the walk writes
+/// source head `h` out at `MAP[h]`.
+const V_HEAD_MAP: [usize; 4] = [0, 2, 1, 3];
+
+/// Qwen's gated-DeltaNet parameters arrive under llama.cpp's convention and
+/// the walk owes the MLX one. ONE convention over the V-head axis, but a
+/// different stride per tensor -- which is the part a single shared helper
+/// call gets wrong (see `v_head_axis`). Settled against the real files by
+/// `tests/gguf_qwen_core_probe.rs` and `tests/gguf_qwen_quant_probe.rs`; this
+/// test pins the arithmetic.
+#[test]
+fn qwens_gated_deltanet_parameters_are_rewritten_into_the_mlx_convention() {
+    // Distinct, exactly BF16-representable, and NEGATIVE: `ssm_a` holds
+    // `-exp(A_log)`.
+    let ssm_a = [-1.0f32, -2.0, -4.0, -8.0];
+    let dt = [1.0f32, 2.0, 4.0, 8.0];
+    // Channel `c` is filled with the value `c`, so a moved channel is
+    // readable straight off the output.
+    let conv: Vec<f32> = (0..192).flat_map(|c| [c as f32, c as f32]).collect();
+
+    let (bytes, _) = minimal_qwen_gguf()
+        .tensor("blk.0.ssm_a", GGML_F32, &[4], f32_bytes(&ssm_a))
+        .tensor("blk.0.ssm_dt.bias", GGML_F32, &[4], f32_bytes(&dt))
+        // Dims are fastest-varying first, so this is logically [192, 2].
+        .tensor(
+            "blk.0.ssm_conv1d.weight",
+            GGML_F32,
+            &[2, 192],
+            f32_bytes(&conv),
+        )
+        // The quantized siblings, carried VERBATIM and permuted as bytes.
+        // `ssm_beta` is one output row per V head; `ssm_out` takes the V axis
+        // on its columns, one Q8_0 block per head.
+        .q8_0_tensor("blk.0.ssm_beta.weight", &[64, 4], 3)
+        .q8_0_tensor("blk.0.ssm_out.weight", &[128, 64], 5)
+        .build();
+    let header = parse_gguf_header(&bytes, GGUF_DEFAULT_MAX_HEADER_BYTES).unwrap();
+    let out = orchestrate_gguf_checkpoint(&header, &MemoryRangeSource::new(&bytes)).expect("walk");
+
+    let stored = |name: &str| -> Vec<f32> {
+        out.resident
+            .iter()
+            .find_map(|e| match e {
+                ResidentEntrySpec::Raw(r) if r.name == name => Some(r),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no resident entry {name}"))
+            .bytes
+            .chunks_exact(2)
+            .map(|c| compute::bf16_to_f32(u16::from_le_bytes([c[0], c[1]])))
+            .collect()
+    };
+    let at = |suffix: &str| format!("language_model.model.layers.0.{suffix}");
+
+    // `dt_bias` is the clean case: a pure de-interleave, no value change, so
+    // the expectation is the input read in a different order.
+    let dt_out = stored(&at("linear_attn.dt_bias"));
+    for (h, &to) in V_HEAD_MAP.iter().enumerate() {
+        assert_eq!(dt_out[to], dt[h], "dt_bias head {h} belongs at {to}");
+    }
+
+    // `A_log` takes the same map AND `A_log = ln(-ssm_a)`. Asserted through
+    // the inverse so the test does not simply restate the implementation:
+    // exponentiating the stored value must give back the source.
+    let a_out = stored(&at("linear_attn.A_log"));
+    for (h, &to) in V_HEAD_MAP.iter().enumerate() {
+        let round_trip = -a_out[to].exp();
+        assert!(
+            (round_trip - ssm_a[h]).abs() <= 1e-2 * ssm_a[h].abs(),
+            "A_log head {h} at {to}: -exp({}) = {round_trip}, want {}",
+            a_out[to],
+            ssm_a[h]
+        );
+    }
+
+    // `conv1d` is the one with a stride: `[q 32 | k 32 | v 128]` channels of
+    // 2 elements each. The q and k halves must NOT move, and the v half moves
+    // a whole 32-channel head at a time.
+    let conv_out = stored(&at("linear_attn.conv1d.weight"));
+    assert_eq!(conv_out.len(), 384);
+    for c in 0..64 {
+        assert_eq!(conv_out[c * 2], c as f32, "q/k channel {c} must not move");
+    }
+    for (h, &to) in V_HEAD_MAP.iter().enumerate() {
+        for i in 0..32 {
+            let want = (64 + h * 32 + i) as f32;
+            let got = conv_out[(64 + to * 32 + i) * 2];
+            assert_eq!(got, want, "v head {h} element {i} belongs at head {to}");
+        }
+    }
+
+    // The quantized pair, asserted on RAW BYTES. That is the whole point of
+    // doing this as a byte move: no dequantization happens, so the output has
+    // to be the input's byte ranges in a different order, exactly.
+    let raw = |name: &str| -> Vec<u8> {
+        out.resident
+            .iter()
+            .find_map(|e| match e {
+                ResidentEntrySpec::Raw(r) if r.name == name => Some(r.bytes.clone()),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no resident entry {name}"))
+    };
+    let source = |gguf: &str| -> Vec<u8> {
+        let (s, e) = header.absolute_range(gguf).unwrap().unwrap();
+        bytes[s as usize..e as usize].to_vec()
+    };
+
+    // `in_proj_b`: 4 rows of 64 columns, so a row is 2 Q8_0 blocks = 68 bytes.
+    let (beta_in, beta_out) = (
+        source("blk.0.ssm_beta.weight"),
+        raw(&at("linear_attn.in_proj_b.weight")),
+    );
+    assert_eq!(beta_out.len(), beta_in.len());
+    for (h, &to) in V_HEAD_MAP.iter().enumerate() {
+        assert_eq!(
+            beta_out[to * 68..(to + 1) * 68],
+            beta_in[h * 68..(h + 1) * 68],
+            "in_proj_b row {h} belongs at {to}"
+        );
+    }
+
+    // `out_proj`: 64 rows of 128 columns, and the V axis is the COLUMNS, so
+    // the move happens inside every row over 32-column (one-block, 34-byte)
+    // groups.
+    let (out_in, out_out) = (
+        source("blk.0.ssm_out.weight"),
+        raw(&at("linear_attn.out_proj.weight")),
+    );
+    assert_eq!(out_out.len(), out_in.len());
+    let row_bytes = 4 * 34;
+    for r in [0usize, 1, 63] {
+        for (h, &to) in V_HEAD_MAP.iter().enumerate() {
+            let dst = r * row_bytes + to * 34;
+            let src = r * row_bytes + h * 34;
+            assert_eq!(
+                out_out[dst..dst + 34],
+                out_in[src..src + 34],
+                "out_proj row {r} head {h} belongs at {to}"
+            );
+        }
+    }
+
+    // `A_log` is the one tensor here that reports a lossy narrowing, and it
+    // is the TRANSFORM's doing rather than the converter's: `ln(1) = 0`
+    // survives BF16 and `ln(2)`, `ln(4)`, `ln(8)` do not. The real Qwen
+    // repack reports exactly this for all 30 of its `ssm_a` tensors, which is
+    // why that count is accounted for rather than a lead (ROADMAP item 10).
+    assert_eq!(out.lossy_narrowing, vec![("blk.0.ssm_a".to_string(), 3)]);
+}
+
+/// `ssm_a` is `-exp(A_log)`, so a non-negative value means the tensor is not
+/// what this walk thinks it is. Loud beats a NaN reaching the install: a
+/// silent `ln` of a negative number would decode as gibberish 19 GB later.
+#[test]
+fn a_positive_ssm_a_is_refused_rather_than_producing_a_nan() {
+    let (bytes, _) = minimal_qwen_gguf()
+        .tensor(
+            "blk.0.ssm_a",
+            GGML_F32,
+            &[4],
+            f32_bytes(&[-1.0, -2.0, 0.5, -8.0]),
+        )
+        .build();
+    let header = parse_gguf_header(&bytes, GGUF_DEFAULT_MAX_HEADER_BYTES).unwrap();
+    let err = match orchestrate_gguf_checkpoint(&header, &MemoryRangeSource::new(&bytes)) {
+        Ok(_) => panic!("a positive ssm_a cannot be -exp(anything)"),
+        Err(e) => e,
+    };
+    assert!(
+        matches!(err, GgufRepackError::ShapeMismatch { .. }),
+        "expected a shape error, got {err}"
+    );
+    assert!(err.to_string().contains("negative"), "{err}");
+}
+
 /// The smallest GGUF `arch_from_gguf` accepts: one layer, no routed experts,
 /// so a test can add exactly the one tensor it wants to say something about.
 fn minimal_gemma_gguf(hidden: u32) -> GgufBuilder {

@@ -426,6 +426,240 @@ fn int8_transcode_targets(family: ModelFamily) -> &'static [&'static str] {
     }
 }
 
+/// `(rows, cols)` as the V-head helpers below read a shape. A rank-1 tensor
+/// is a column of single-element rows, because that is what its V-head axis
+/// is; note this is NOT how [`transcode_f32`]'s INT8 branch reads rank 1,
+/// where a `[hidden]` tensor is one ROW of a `1 x hidden` projection. The two
+/// readings answer different questions about the same dims.
+fn row_and_col(dims: &[u64]) -> (usize, usize) {
+    let (r, c, _, _) = logical_shape(dims);
+    if dims.len() == 1 {
+        (r as usize, 1)
+    } else {
+        (r as usize, c as usize)
+    }
+}
+
+/// Where a tensor's V-HEAD AXIS sits, in rows or in columns of its logical
+/// shape. `base` and `span` count along that axis: the first V head and how
+/// wide one head is.
+struct VHeadAxis {
+    /// The axis is COLUMNS (`out_proj` alone), so the permutation happens
+    /// inside every row instead of across whole rows.
+    columns: bool,
+    base: usize,
+    span: usize,
+}
+
+/// Every Qwen tensor carrying llama.cpp's V-head ordering, keyed by
+/// canonical-name suffix.
+///
+/// **THE CONVENTION IS A PROPERTY OF THE AXIS, NOT OF A TENSOR LIST**, which
+/// is the finding that cost this item its second session. The three tensors
+/// GGUF ships as F32 (`A_log`, `dt_bias`, `conv1d.weight`) were characterized
+/// first only because a BF16 probe can compare them directly; fixing just
+/// those three left the model generating gibberish, because five more tensors
+/// index the same axis and are quantized
+/// (`tests/gguf_qwen_quant_probe.rs`: `in_proj_b`'s map recovers exactly, and
+/// `in_proj_qkv` / `in_proj_z` / `out_proj` read 0.996 de-interleaved against
+/// 0.17 / 0.09 / 0.13 at the same index). If a new tensor has a V-head
+/// dimension, it belongs in this table; asking whether it is F32 is asking
+/// the wrong question.
+///
+/// llama.cpp orders V heads interleaved where MLX orders them contiguously:
+/// GGUF head `h` is MLX head `2h` for the first half and `2(h - heads/2) + 1`
+/// for the second, which is Qwen's two-V-heads-per-K-head grouping written
+/// one way by each side. Measured, not read off the converter
+/// (`tests/gguf_qwen_core_probe.rs`, worst relative error 0.000000).
+///
+/// The SPANS differ per tensor and that is the trap in one shared helper
+/// call: a head is one element of `A_log`, `value_head_dim` rows of
+/// `in_proj_z`, and `value_head_dim` COLUMNS of `out_proj`. An element-stride
+/// pass over the wrong one still correlates high and is still wrong.
+fn v_head_axis(canonical: &str, arch: &ArchConfig) -> Option<VHeadAxis> {
+    if arch.family != ModelFamily::Qwen36 {
+        return None;
+    }
+    let la = &arch.linear_attention;
+    let rows = |base: usize, span: usize| {
+        Some(VHeadAxis {
+            columns: false,
+            base,
+            span,
+        })
+    };
+    // Where the V region starts inside the fused `[q | k | v]` run.
+    let v_at = 2 * la.num_k_heads as usize * la.key_head_dim as usize;
+    let width = la.value_head_dim as usize;
+    match canonical.rsplit_once("linear_attn.")?.1 {
+        // One value, or one output row, per V head.
+        "A_log" | "dt_bias" | "in_proj_a.weight" | "in_proj_b.weight" => rows(0, 1),
+        // A `[q | k | v]` channel run; q and k do not move.
+        "conv1d.weight" | "in_proj_qkv.weight" => rows(v_at, width),
+        // The value stream alone.
+        "in_proj_z.weight" => rows(0, width),
+        // The only one whose V axis is its INPUT dimension.
+        "out_proj.weight" => Some(VHeadAxis {
+            columns: true,
+            base: 0,
+            span: width,
+        }),
+        _ => None,
+    }
+}
+
+/// De-interleave one V-head axis in place, over units of whatever `data`
+/// holds: f32 values for a transcoded tensor, raw bytes for a quantized one.
+///
+/// Direction: the probe measured `gguf[h] == mlx[from(h)]`, and this walk
+/// writes the MLX convention, so source head `h` lands at `from(h)`.
+fn permute_v_heads<T: Copy>(data: &mut [T], base: usize, span: usize, heads: usize) {
+    let source = data.to_owned();
+    for h in 0..heads {
+        let to = if h < heads / 2 {
+            2 * h
+        } else {
+            2 * (h - heads / 2) + 1
+        };
+        data[base + to * span..base + (to + 1) * span]
+            .copy_from_slice(&source[base + h * span..base + (h + 1) * span]);
+    }
+}
+
+fn even_v_heads(name: &str, arch: &ArchConfig) -> Result<usize, GgufRepackError> {
+    let heads = arch.linear_attention.num_v_heads as usize;
+    if heads < 2 || heads % 2 != 0 {
+        return Err(GgufRepackError::ShapeMismatch {
+            tensor: name.to_string(),
+            detail: format!("the V-head de-interleave needs an even num_v_heads, got {heads}"),
+        });
+    }
+    Ok(heads)
+}
+
+/// The convention applied to a tensor this walk transcodes to BF16, where the
+/// unit is one f32 value. Also the one place `A_log`'s value transform lives.
+///
+/// Applied at REPACK time, exactly like [`transcode_f32`] and
+/// [`int8_transcode_targets`]: a per-tensor decision made once against a
+/// canonical name, never a runtime branch and never a kernel.
+fn apply_source_convention(
+    name: &str,
+    canonical: &str,
+    arch: &ArchConfig,
+    cols: usize,
+    values: &mut [f32],
+) -> Result<(), GgufRepackError> {
+    let Some(axis) = v_head_axis(canonical, arch) else {
+        return Ok(());
+    };
+    let heads = even_v_heads(name, arch)?;
+    let shape_err = |detail: String| GgufRepackError::ShapeMismatch {
+        tensor: name.to_string(),
+        detail,
+    };
+    if axis.columns {
+        // No F32 tensor takes the column axis today, and handling one would
+        // need the row stride threaded in; refuse rather than half-do it.
+        return Err(shape_err(
+            "a column-axis V-head tensor is not expected to arrive as F32".to_string(),
+        ));
+    }
+    // The axis counts ROWS, so scale into elements by the row width.
+    let (base, span) = (axis.base * cols, axis.span * cols);
+    if base + heads * span != values.len() {
+        return Err(shape_err(format!(
+            "{} values do not fill {base} + {heads} x {span}",
+            values.len()
+        )));
+    }
+
+    // `ssm_a` holds `-exp(A_log)`; the install carries `A_log` itself. Done
+    // before the permutation only because it reads better; it is element-wise
+    // and the two commute.
+    if canonical.ends_with("linear_attn.A_log") {
+        for v in values.iter_mut() {
+            if !v.is_finite() || *v >= 0.0 {
+                return Err(shape_err(format!(
+                    "ssm_a holds -exp(A_log) and must be finite and negative, found {v}"
+                )));
+            }
+            *v = (-*v).ln();
+        }
+    }
+    permute_v_heads(values, base, span, heads);
+    Ok(())
+}
+
+/// The same convention applied to a tensor carried through VERBATIM, where
+/// the unit is one byte.
+///
+/// This stays inside the lossless-repack rule and does not dequantize
+/// anything: every block layout here tiles along the fastest-varying dim, so
+/// a logical row is a contiguous byte run and a V head is a whole number of
+/// blocks. That is checked rather than assumed -- a head narrower than a
+/// block (Q4_K's 256-element superblock against a 128-wide head, say) cannot
+/// be permuted byte-wise, and this refuses by name instead of shuffling
+/// half-blocks.
+fn apply_source_convention_bytes(
+    name: &str,
+    canonical: &str,
+    arch: &ArchConfig,
+    (rows, cols): (usize, usize),
+    bytes: &mut [u8],
+) -> Result<(), GgufRepackError> {
+    let Some(axis) = v_head_axis(canonical, arch) else {
+        return Ok(());
+    };
+    let heads = even_v_heads(name, arch)?;
+    let shape_err = |detail: String| GgufRepackError::ShapeMismatch {
+        tensor: name.to_string(),
+        detail,
+    };
+    let along = if axis.columns { cols } else { rows };
+    if axis.base + heads * axis.span != along {
+        return Err(shape_err(format!(
+            "a {rows}x{cols} tensor's V axis does not fill {} + {heads} x {}",
+            axis.base, axis.span
+        )));
+    }
+    if rows == 0 || bytes.len() % rows != 0 {
+        return Err(shape_err(format!(
+            "{} bytes is not a whole number of {rows} rows",
+            bytes.len()
+        )));
+    }
+    let row_bytes = bytes.len() / rows;
+
+    if !axis.columns {
+        permute_v_heads(bytes, axis.base * row_bytes, axis.span * row_bytes, heads);
+        return Ok(());
+    }
+    // The V axis is this tensor's INPUT dimension, so the permutation happens
+    // inside every row. A head is only addressable byte-wise if it is a whole
+    // number of blocks: Q8_0 tiles 32 elements to 34 bytes, so a 128-wide head
+    // is 4 blocks and lands exactly, while a Q4_K superblock spans 256
+    // elements and would put two heads in one block.
+    if row_bytes * axis.span % cols != 0 {
+        return Err(shape_err(format!(
+            "a {row_bytes}-byte row of {cols} columns has no whole-byte \
+             {}-column V head: the block is wider than one head",
+            axis.span
+        )));
+    }
+    let head_bytes = row_bytes * axis.span / cols;
+    let base_bytes = row_bytes * axis.base / cols;
+    for r in 0..rows {
+        permute_v_heads(
+            &mut bytes[r * row_bytes..(r + 1) * row_bytes],
+            base_bytes,
+            head_bytes,
+            heads,
+        );
+    }
+    Ok(())
+}
+
 /// One transcoded F32 tensor, plus how many of its values a BF16 could not
 /// hold exactly.
 struct Transcoded {
@@ -459,15 +693,19 @@ fn transcode_f32(
     canonical: String,
     bytes: &[u8],
     dims: &[u64],
-    family: ModelFamily,
+    arch: &ArchConfig,
 ) -> Result<Transcoded, GgufRepackError> {
-    let values = f32_values(bytes);
+    let family = arch.family;
+    let mut values = f32_values(bytes);
     if values.len() * 4 != bytes.len() {
         return Err(GgufRepackError::ShapeMismatch {
             tensor: name.to_string(),
             detail: format!("{} bytes is not a whole number of F32 values", bytes.len()),
         });
     }
+    // Before either dtype branch: the convention is about what the values
+    // MEAN, and both branches would otherwise carry the wrong ones faithfully.
+    apply_source_convention(name, &canonical, arch, row_and_col(dims).1, &mut values)?;
 
     let wants_int8 = int8_transcode_targets(family)
         .iter()
@@ -559,9 +797,10 @@ type ResidentSet = (Vec<ResidentEntrySpec>, Vec<(String, usize)>);
 fn resident_entries(
     header: &GgufHeader,
     source: &dyn RangeSource,
-    family: ModelFamily,
+    arch: &ArchConfig,
     names: &[&str],
 ) -> Result<ResidentSet, GgufRepackError> {
+    let family = arch.family;
     let mut out = Vec::with_capacity(names.len());
     let mut lossy = Vec::new();
     for name in names {
@@ -577,13 +816,18 @@ fn resident_entries(
         };
         let bytes = read_tensor(header, source, name)?;
         if info.ggml_type == GGML_TYPE_F32 {
-            let t = transcode_f32(name, canonical, &bytes, &info.dims, family)?;
+            let t = transcode_f32(name, canonical, &bytes, &info.dims, arch)?;
             if t.lossy > 0 {
                 lossy.push(((*name).to_string(), t.lossy));
             }
             out.push(t.spec);
             continue;
         }
+        // The one thing done to a verbatim tensor's bytes, and it moves them
+        // rather than changing them: Qwen's V-head order. A no-op for every
+        // other family and every tensor with no V-head axis.
+        let mut bytes = bytes;
+        apply_source_convention_bytes(name, &canonical, arch, row_and_col(&info.dims), &mut bytes)?;
         out.push(ResidentEntrySpec::Raw(RawTensorSpec {
             name: canonical,
             dtype,
@@ -673,11 +917,20 @@ pub struct GgufRepackOutput {
     /// Tensors recognized and deliberately not carried, with the reason.
     pub ignored: Vec<String>,
     /// `(GGUF tensor name, value count)` for every F32 tensor whose BF16
-    /// narrowing lost bits. EMPTY on every real file measured so far,
-    /// because llama.cpp upcasts norms that were BF16 upstream
-    /// (`tests/gguf_f32_transcode_network.rs`). A non-empty row means this
-    /// converter did not, and the install carries less precision than the
-    /// source did.
+    /// narrowing lost bits. Empty for Gemma, because llama.cpp upcasts norms
+    /// that were BF16 upstream (`tests/gguf_f32_transcode_network.rs`); a row
+    /// there means this converter did not, and the install carries less
+    /// precision than the source did.
+    ///
+    /// QWEN'S `ssm_a` ROWS ARE THE EXCEPTION AND ARE EXPECTED, roughly one
+    /// per GDN layer: [`apply_source_convention`] rewrites that tensor as
+    /// `ln(-ssm_a)`, and a logarithm's output is not generally BF16-exact
+    /// whatever the source was. Those rows are about the TRANSFORM, not about
+    /// the converter, so they are a different population from the raw
+    /// narrowing this field was written for. The real Q4_K_M reports 130: 101
+    /// norms plus 29 of its 30 `ssm_a` (layer 0's 32 values happen to land on
+    /// the BF16 grid; the rest lose 3 to 14 each). The norms are proven
+    /// bit-identical to the MLX install (ROADMAP item 10).
     pub lossy_narrowing: Vec<(String, usize)>,
 }
 
@@ -695,8 +948,7 @@ pub fn orchestrate_gguf_checkpoint(
     }
     let plan = classify(header, arch.family)?;
     let stride = expert_stride(header, &arch, &plan)?;
-    let (resident, lossy_narrowing) =
-        resident_entries(header, source, arch.family, &plan.resident)?;
+    let (resident, lossy_narrowing) = resident_entries(header, source, &arch, &plan.resident)?;
 
     let mut layers = Vec::with_capacity(plan.routed.len());
     for layer in plan.routed.keys().copied() {
@@ -740,7 +992,7 @@ pub fn write_gguf_install_streamed(
         progress(&format!("ignored {note}"));
     }
 
-    let (resident, lossy) = resident_entries(header, source, arch.family, &plan.resident)?;
+    let (resident, lossy) = resident_entries(header, source, &arch, &plan.resident)?;
     let resident_bytes = crate::resident_writer::build_resident_weights_bin_mixed(&resident);
     drop(resident);
     for (name, count) in &lossy {
