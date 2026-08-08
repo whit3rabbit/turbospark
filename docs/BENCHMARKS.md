@@ -482,6 +482,65 @@ to the unquantized model, which would need a bf16 reference nobody has run
 here. And nothing in the standing gate runs this: it is a script, and the
 26.9 GB GGUF it needs is not kept on disk.
 
+### Sub-4-bit candidate survey (ROADMAP Phase S)
+
+NOT A MEASUREMENT OF THIS PORT. This port cannot ingest IQ3_XXS, so there
+is no arm for it here; llama.cpp runs the candidate and this port's frozen
+dumps stand in for the two quantizations it does run. What the section
+answers is whether a 3-bit checkpoint is worth building kernels FOR, which
+is a question about the checkpoint, not about a kernel that does not exist.
+
+The candidate is `unsloth/gemma-4-26B-A4B-it-GGUF`'s `UD-Q3_K_M`, whose
+routed experts are IQ3_XXS (`ffn_gate_up_exps`) and IQ4_NL
+(`ffn_down_exps`). Despite the name it contains no Q3_K; see ROADMAP Phase
+S for the per-tensor table and for why the static build of the same recipe
+is a different file entirely. Same harness, same 550 ids, same machine and
+day as the section above.
+
+| Comparison | Mean KL | Top-1 agree |
+| --- | ---: | ---: |
+| candidate batched vs cached, both Metal (shape floor) | 0.00051 | 100.0% |
+| candidate Metal vs CPU, both cached (backend floor) | 0.03741 | 94.7% |
+| candidate vs this port's Q8_0 install | 0.15275 | 90.5% |
+| candidate vs this port's MLX INT4 install | 0.68365 | 77.1% |
+| *[frozen above]* INT4 vs llama.cpp Q8_0 | 0.57748 | 78.0% |
+
+| Reading | Perplexity | vs MLX INT4 |
+| --- | ---: | ---: |
+| this port, MLX INT4 install | 37.4176 | -- |
+| **llama.cpp, candidate IQ3_XXS, Metal, cached** | **38.0997** | **+1.82%** |
+| llama.cpp, candidate IQ3_XXS, Metal, batched | 37.9122 | +1.32% |
+| llama.cpp, candidate IQ3_XXS, CPU, cached | 37.6485 | +0.62% |
+| llama.cpp, Q8_0, Metal, cached | 39.8541 | +6.51% |
+| this port, GGUF Q8_0 install | 39.8808 | +6.58% |
+
+**The 3-bit checkpoint beats the 8-bit one and ties the 4-bit one.** Its
++1.82% against the incumbent INT4 install is inside
+`PERPLEXITY_REL_TOLERANCE`, which is itself calibrated on llama.cpp's own
+1.8% CPU/Metal spread, so on this corpus the two are not distinguishable.
+Against Q8_0 it is 4.4% BETTER. The imatrix calibration is doing real work,
+and the ordering is not an artifact of one arm: the candidate wins on all
+three of its own arms.
+
+The distribution says the same thing and sharpens it. Among the three
+quantizations the INT4 install is the OUTLIER, not the 3-bit one: the
+candidate sits 0.15275 nats from Q8_0 while INT4 sits 0.57748 from the same
+reference, 3.8x further. A 3-bit imatrix build tracks the 8-bit reference
+more closely than the 4-bit MLX one does.
+
+Read with the same two floors as above, which were re-measured on this file
+rather than carried over: 0.00051 shape and 0.03741 backend. The headline
+0.15275 is 4x the larger of them, as a genuine weight difference should be.
+
+Caveats, and they matter more here than above because this is a decision
+input rather than a parity claim. One corpus of 550 positions, perplexity
+and KL only, no generation judged. It measures llama.cpp's IQ3_XXS decode,
+so it says the CHECKPOINT is sound and says nothing about a kernel this
+port has yet to write. And the win is a mixture, not "3-bit experts":
+`ffn_down_exps` stays at IQ4_NL and one layer of each expert tensor sits a
+level higher, which is exactly why the file is 9.10 GiB of experts rather
+than a true 3-bit 7 GiB.
+
 ## Power
 
 NOT A PARITY CLAIM. Swift was never measured for power, here or upstream;

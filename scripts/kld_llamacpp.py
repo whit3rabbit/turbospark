@@ -161,9 +161,16 @@ def main() -> None:
 
     build_harness()
 
+    # The cache filename MUST carry the model stem. Every arm of every model
+    # is the same `rows * vocab * 4` bytes, and the reuse check is a size
+    # check, so a name keyed only on (mode, ngl) makes a second model
+    # silently load the first one's logits and report itself as identical to
+    # it. That is a wrong ANSWER, not a stale file, and it costs nothing to
+    # rule out. Pre-existing arms written before this fix keep their old
+    # names and are simply re-run once under the new ones.
     def arm(mode: str, ngl: int) -> np.ndarray:
         return llamacpp_logits(
-            model, ids_path, work / f"{mode}-ngl{ngl}.f32", mode, rows, vocab, ngl
+            model, ids_path, work / f"{model.stem}-{mode}-ngl{ngl}.f32", mode, rows, vocab, ngl
         )
 
     def backend(ngl: int) -> str:
@@ -202,7 +209,7 @@ def main() -> None:
         report["perplexity"][dump.name] = perplexity(port, ids, first)
 
     print(json.dumps(report, indent=2))
-    (work / "kld_llamacpp.json").write_text(json.dumps(report, indent=2) + "\n")
+    (work / f"kld_llamacpp-{model.stem}.json").write_text(json.dumps(report, indent=2) + "\n")
 
 
 if __name__ == "__main__":
