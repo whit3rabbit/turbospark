@@ -8,7 +8,7 @@ What the suite covers, how it is gated, and how to run each part.
 cargo test --workspace
 ```
 
-326 tests as of 2026-08-06, all passing, plus 10 that are `#[ignore]`d (see
+435 tests as of 2026-08-07, all passing, plus 17 that are `#[ignore]`d (see
 below). On macOS this includes every Metal test, which needs a real
 Metal-capable device and Xcode's `metal` toolchain
 (`xcrun -sdk macosx metal`). On Linux `crates/gpu` compiles to nothing and
@@ -87,6 +87,30 @@ MREFRUST_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
 # Real ~270 MB HF checkpoint download through the Llama-family mapping.
 cargo test -p mrefrust-repack --test hf_checkpoint_network --release -- --ignored --nocapture
 
+# The three GGUF checks (ROADMAP Phase G). All are `*_network` but NONE of
+# them downloads a checkpoint: each reads a few KB to a few MB off a
+# 20-27 GB remote file over range requests, in seconds. They are grouped
+# here rather than above for that reason -- do not budget a download for
+# them, and prefer a ranged read when adding the next one.
+#
+# 1. The header, three ways: this port's parser against llama.cpp's
+#    converter, every tensor name maps, and the ArchConfig derived from
+#    GGUF metadata equals the one the .gturbo install declares.
+MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
+MREFRUST_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
+  cargo test -p mrefrust-repack --test gguf_checkpoint_network --release -- --ignored --nocapture
+
+# 2. Which half of Gemma's fused ffn_gate_up_exps is the gate. Correlates a
+#    dequantized layer 0 expert 0 against the MLX install; doubles as a
+#    real-data check on the Q8_0 dequant reference.
+MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
+  cargo test -p mrefrust-repack --test gguf_fused_gate_network --release -- --ignored --nocapture
+
+# 3. The evidence behind the repack-time transcode decision: GGUF's F32
+#    norms are upcast BF16 and narrow back bit-exactly, and INT8-transcoding
+#    its F32 router does not move the routing decision. Needs no install.
+cargo test -p mrefrust-repack --test gguf_f32_transcode_network --release -- --ignored --nocapture
+
 # The memory oracle (see docs/BENCHMARKING.md). One target per model
 # family: the footprint assertion is a whole-session peak, so two
 # families in one process cannot each have a ceiling.
@@ -150,7 +174,7 @@ attention) so it cannot rot silently; only the timings are advisory.
 
 | Variable | Read by | Effect |
 | --- | --- | --- |
-| `MREFRUST_GEMMA4_INSTALL_DIR` | `gemma4_checkpoint_network`, `memory_oracle`, `quality_gate`, `quality_sensitivity`, `logit_dump`, `real_backend` | Where the real `.gturbo` install lives. The oracle, the quality gate, the logit dump, and the server test skip (with a note) when unset; the repack test falls back to a temp dir. |
+| `MREFRUST_GEMMA4_INSTALL_DIR` | `gemma4_checkpoint_network`, `memory_oracle`, `quality_gate`, `quality_sensitivity`, `logit_dump`, `real_backend`, `gguf_checkpoint_network`, `gguf_fused_gate_network` | Where the real `.gturbo` install lives. The oracle, the quality gate, the logit dump, and the server test skip (with a note) when unset; the repack test falls back to a temp dir. The two GGUF tests use the install as an independent REFERENCE rather than as a subject: `gguf_checkpoint_network` cross-checks names and `ArchConfig` against it and skips those two checks when unset, and `gguf_fused_gate_network` correlates against its expert weights and skips entirely. Both accept a leading `~/`. |
 | `MREFRUST_QWEN36_INSTALL_DIR` | `qwen36_checkpoint_network`, `qwen36_memory_oracle`, `qwen36_quality_gate`, `logit_dump` | Where the repacked Qwen 3.6 install lives. The oracle and the quality gate skip (with a note) when unset; the repack test falls back to a temp dir. Deliberately a second variable rather than a generalized one, so both installs can coexist and each target asserts its own family's row. `logit_dump` takes it as a fallback when the Gemma variable is unset, though `scripts/kld.py`'s reference is pinned to the Gemma repo. |
 | `MREFRUST_LOGIT_DUMP_DIR` | `logit_dump` | Where to write `logits.f16` and `meta.json` (~275 MiB on either family). Required: the target skips when unset, since a few hundred MB is not something to write to a default path. |
 | `MREFRUST_LOGIT_DUMP_COLD=1` | `logit_dump` | Skips the warmup walk, so the dump comes off a COLD expert cache. That is the condition `quality_gate` takes its perplexity under, so this reproduces the frozen row exactly; without it the dump is warm and reads about 0.5% higher. How the warm/cold difference gets measured rather than assumed. |
