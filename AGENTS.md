@@ -204,6 +204,13 @@ MREFRUST_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
 MREFRUST_GEMMA4_GGUF_INSTALL_DIR=~/models/gemma4-gguf.gturbo \
   cargo test -p mrefrust-repack --test gguf_install_network --release -- --ignored --nocapture
 
+# ROADMAP Phase G Stage 2 item 9: the same, for the K-quants. Streams the real
+# published Qwen 3.6 Q4_K_M (~20 GB, never written to disk) into a ~20 GB
+# install. This is the MIXED case: Q4_K experts and embedding, Q8_0 attention,
+# one Q6_K tensor. Must NOT point at ~/models/qwen36.gturbo; asserted.
+MREFRUST_QWEN36_GGUF_INSTALL_DIR=~/models/qwen36-gguf.gturbo \
+  cargo test -p mrefrust-repack --test gguf_qwen_install_network --release -- --ignored --nocapture
+
 # The GGUF install's resident BF16 core must be BIT-IDENTICAL to the MLX
 # install's: norms, router.scale, per_expert_scale, layer_scalar. Settles
 # the Gemma norm "+1" convention and the shape-matched name mappings.
@@ -318,11 +325,15 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
    default full-head NeoX -- no separate default-rope wrapper exists),
    the port-local `logit_softcap_fp16`, `dequant_int4_gemv_simd`, `dequant_int8_gemv_simd`
    (both with offset-bound resident variants), the port-local
-   `dequant_q8_0_gemv_simd` and `dequant_q4_k_gemv_simd` (GGUF Q8_0 and
-   Q4_K, each also with a resident variant), `embed_lookup_q8_0`, and
-   `moe_gguf.metal`'s Q8_0 routed-expert decode pair
-   (`moe_phase1_gate_up_act_q8_0` + `moe_phase2_down_reduce_k8_q8_0`),
-   all port-local because Swift has no GGUF intake, `router_gemv_gemma4_r4`,
+   `dequant_q8_0_gemv_simd`, `dequant_q4_k_gemv_simd` and
+   `dequant_q6_k_gemv_simd` (GGUF Q8_0, Q4_K and Q6_K, each also with a
+   resident variant), `embed_lookup_q8_0` and `embed_lookup_q4_k`, and
+   `moe_gguf.metal`'s two routed-expert decode pairs
+   (`moe_phase1_gate_up_act_{q8_0,q4_k}` +
+   `moe_phase2_down_reduce_k8_{q8_0,q4_k}`), all port-local because Swift
+   has no GGUF intake. Q6_K has a GEMV and no siblings on purpose: the only
+   real file using it puts it in `output.weight`. Then
+   `router_gemv_gemma4_r4`,
    two-pass split-KV `attention_decode` (multi-chunk, split up to 16 ways by
    `chunks_for`), `moe_decode` decode pair, all eight of `gdn.metal`'s
    gated-DeltaNet kernels, and
@@ -785,9 +796,13 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     BF16 default is safe because a mis-targeted tensor fails loudly at
     `open()` rather than quietly.
     **WHETHER A GGUF INSTALL LOADS IS DECIDED PER BLOCK TYPE, NOT PER
-    FORMAT** (Stage 2, 2026-08-08). Q8_0 runs: it has a resident GEMV, an
-    embedding lookup, and a routed-expert decode pair, all parity-tested.
-    Q4_K, Q6_K and Q4_0 do not, and are refused. The two gates are
+    FORMAT** (Stage 2, 2026-08-08). Q8_0 and Q4_K run: each has a resident
+    GEMV, an embedding lookup, and a routed-expert decode pair, all
+    parity-tested. Q6_K runs too, on a resident GEMV alone, which is all any
+    real file asks of it (Qwen 3.6's Q4_K_M carries exactly one Q6_K tensor
+    and it is `output.weight`); an install that put Q6_K in an expert would
+    pass the manifest gate and fail at the routed dispatch, by name. Q4_0 has
+    nothing and is refused. The two gates are
     independent on purpose, and each reads a different thing.
     `model_io::validate_quant` reads the manifest's `ggmlType` against
     `model_io::EXECUTABLE_GGUF_TYPES`; `RealForwardRunner::open` reads the
@@ -797,9 +812,14 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     (`crates/runtime/tests/gguf_install_refused.rs`, which also decodes),
     so widening the set means landing kernels, not editing a list: the two
     lists have to move together or one of those tests reddens.
-    A Q4_K install therefore still installs and still refuses -- it has a
-    CPU reference and a resident GEMV, but no MoE or embedding kernel, and
-    routed experts are where a GGUF's bytes actually are.
+    A MIXED file is the case a Gemma GGUF cannot exercise, and it is the
+    normal one: `Q4_K_M` means Q4_K experts and embedding, Q8_0 attention and
+    shared experts, one Q6_K tensor. So the block type has to be read PER
+    TENSOR at each dispatch site, not decided once at open, and the only
+    thing decided once is the routed blobs' layout (`RoutedBlobLayout`, which
+    is uniform across an install). `SyntheticGgufShape::k_quant()` builds
+    that mixture as a fixture; every K-quant row in it is 256 elements
+    because a superblock cannot be partial.
 
 30. **A routed expert row can be ALL ZEROS in a real checkpoint, and
     `pearson` returns 0.0 on a constant input by design.** Measured
@@ -895,7 +915,7 @@ installed globally or enters this workspace.
 - `crates/tokenizer`: wraps HF `tokenizers` crate (`MfTokenizer`); resolves Gemma 4 / ChatML (Qwen) / DeepSeek-V4 chat dialect from special tokens; renders text-only chat templates plus DeepSeek's native tool chat; generic Jinja-templated tool chat for Gemma/ChatML (`minijinja` + `pycompat`, rendering `chat_template.jinja`); streaming detokenizer (`StreamingDetokenizer`) and stop matcher (`StopMatcher`) (stop set unions dialect stops with `generation_config.json` `eos_token_id` list); Gemma/Qwen/DeepSeek tool-call DSL parsers and streaming structured assistant-output decoder (`StructuredDecoder`). Details in [`crates/tokenizer/CLAUDE.md`](crates/tokenizer/CLAUDE.md).
 - `crates/model-io`: `manifest.json` decode and field-by-field validation against a resolved `ArchConfig` (with canonical Gemma 4, Qwen 3.6, and DeepSeek-V4-Flash baselines), `packed_experts/layout.json` decode (`PackedExpertsLayout`), `model_weights.bin` resident tensor index reader (`ResidentIndex`), `mmap`'d resident-buffer view (`ResidentBuffer`), streaming SHA-256 verification (`sha256.rs`), and trusted install receipt (`InstallReceipt`). Allowed a narrow amount of `unsafe` (the `mmap` call). Details in [`crates/model-io/CLAUDE.md`](crates/model-io/CLAUDE.md).
 - `crates/streaming`: routed-expert `pread` streamer (`PreadExpertStreamer`) with a fixed per-layer slot cache. The LFU/LRU eviction policy (`ExpertCache`) is pure logic, separated from file I/O so it can be tested against access traces without a model install. Cache misses are split into chunks and read on `read_pool`, a process-wide set of parked worker threads, so a layer that misses once still reads at full width (the `pread` is a page-cache memcpy, not disk I/O). `rdadvice` and `read_pool` are the other `unsafe`-carrying modules (macOS `F_RDADVISE`, a documented no-op elsewhere; raw destination pointers across worker threads). Details in [`crates/streaming/CLAUDE.md`](crates/streaming/CLAUDE.md).
-- `crates/gpu`: Metal device/pipeline-cache context (`MetalContext`, `PassEncoder`, `CommittedPass`) and per-kernel dispatch. macOS-only; compiles to nothing elsewhere. Dispatched, parity-tested kernels (`rmsnorm_no_scale`, `rms_norm_bf16w`, both `_perhead` norm variants, `rope_proportional_neox`, `rope_neox_subdim`, `logit_softcap_softmax`, `dequant_int4_gemv_simd`, `dequant_int8_gemv_simd` with resident variants, the port-local GGUF set (`dequant_q8_0_gemv_simd`, `dequant_q4_k_gemv_simd`, `embed_lookup_q8_0`, and `moe_gguf.metal`'s Q8_0 decode pair -- ROADMAP Phase G), `router_gemv_gemma4_r4`, two-pass split-KV `attention_decode` (multi-chunk, split up to 16 ways by `chunks_for`), `moe_decode` decode pair, `gdn.metal`'s eight gated-DeltaNet kernels, and `utility` elementwise kernels incl. Qwen's three gating kernels) are compiled from MSL source at runtime, vendored from Swift except where marked port-local. `KvCacheManager` allocates and manages real per-layer Metal KV buffers used by `RealForwardRunner`. `ResidentGpuWeights` wraps resident mmap in zero-copy MTLBuffer. `GdnStateManager` is the Qwen flow's recurrent state; `Dsv4StateManager` allocates real per-layer Metal buffers (unwired kernels); `PrefillChunkScratchLayout`/`PrefillChunkScratchBuffers` size scratch buffers (undispatched tile kernel). The `sample` kernel and fused lm_head are not yet vendored or dispatched. Details in [`crates/gpu/CLAUDE.md`](crates/gpu/CLAUDE.md).
+- `crates/gpu`: Metal device/pipeline-cache context (`MetalContext`, `PassEncoder`, `CommittedPass`) and per-kernel dispatch. macOS-only; compiles to nothing elsewhere. Dispatched, parity-tested kernels (`rmsnorm_no_scale`, `rms_norm_bf16w`, both `_perhead` norm variants, `rope_proportional_neox`, `rope_neox_subdim`, `logit_softcap_softmax`, `dequant_int4_gemv_simd`, `dequant_int8_gemv_simd` with resident variants, the port-local GGUF set (`dequant_q8_0_gemv_simd`, `dequant_q4_k_gemv_simd`, `dequant_q6_k_gemv_simd`, `embed_lookup_q8_0`, `embed_lookup_q4_k`, and `moe_gguf.metal`'s two decode pairs -- ROADMAP Phase G), `router_gemv_gemma4_r4`, two-pass split-KV `attention_decode` (multi-chunk, split up to 16 ways by `chunks_for`), `moe_decode` decode pair, `gdn.metal`'s eight gated-DeltaNet kernels, and `utility` elementwise kernels incl. Qwen's three gating kernels) are compiled from MSL source at runtime, vendored from Swift except where marked port-local. `KvCacheManager` allocates and manages real per-layer Metal KV buffers used by `RealForwardRunner`. `ResidentGpuWeights` wraps resident mmap in zero-copy MTLBuffer. `GdnStateManager` is the Qwen flow's recurrent state; `Dsv4StateManager` allocates real per-layer Metal buffers (unwired kernels); `PrefillChunkScratchLayout`/`PrefillChunkScratchBuffers` size scratch buffers (undispatched tile kernel). The `sample` kernel and fused lm_head are not yet vendored or dispatched. Details in [`crates/gpu/CLAUDE.md`](crates/gpu/CLAUDE.md).
 - `crates/runtime`: raw-completion prefill+decode loop (`run_raw_completion`, `run_raw_completion_chunked`), wiring a `LogitProducer`, the tokenizer's streaming detokenizer and stop matcher, and `selection::select` into one token generation loop. `ScriptedLogitProducer` is what unit tests and `crates/server`'s `ScriptedChatModel` drive the loop with (see Gotcha 10). `RealForwardRunner` (macOS/GPU only, `src/real_forward.rs`, `src/real_forward_gemma4.rs`, and `src/real_forward_qwen{,_attn}.rs`) is a real `LogitProducer`: a genuine transformer forward pass through real GPU kernels (including real GPU decode attention) and real quantized weights, supporting dense and MoE FFN layers. Dense bridges gated FFN on CPU via `mrefrust_compute::run_ffn`; MoE runs real GPU router GEMV plus real GPU GEMVs for each selected expert, host-side top-k selection, and CPU-bridged gated activation. Supports synthetic short names, verbatim real Gemma 4 checkpoint names (learned-weight flow), and the Qwen 3.6 hybrid linear/full-attention flow. See Gotcha 12. Details in [`crates/runtime/CLAUDE.md`](crates/runtime/CLAUDE.md).
 - `crates/cli`: the `mference-check` binary process entry point (see Gotcha 7). Parses `argv`, applies `invocation`'s exit-status and stream-routing decisions, prints the resolved request for a validated invocation, and (macOS, `src/generate.rs`) attempts real generation against `--model` via `RealForwardRunner` (see Gotcha 12) in all three modes: `--prompt` (raw text), `--messages-file` (rendered through chat template), and `--chat` (interactive REPL in `src/chat.rs`, trimming turns with `mrefrust-window-fit`). Details in [`crates/cli/CLAUDE.md`](crates/cli/CLAUDE.md).
 - `crates/repack`: safetensors header parsing (pure, tested against synthetic fixtures), `RangeSource` trait for ranged reads (HTTP-backed for real installs, in-memory for tests) with two-step header-fetch plan, per-row int4/int8 quantization repack (reusing `mrefrust_compute`'s quantizer), byte-exact `.gturbo` directory assembly (`write_gturbo_install`), real named resident-tensor index writer (`write_gturbo_install_with_resident_index`), synthetic install builders (`synthetic_model.rs`, `synthetic_real.rs`, `synthetic_qwen.rs`), Hugging Face Llama checkpoint repacker (`hf_checkpoint.rs`), Gemma 4 mlx-community checkpoint repacker & streamed pipeline (`gemma4_checkpoint.rs`, family-parameterized so Qwen 3.6 goes through the same walk), Qwen 3.6 `config.json` parser (`qwen36_config.rs`, the one family-specific piece of that walk), install verifier (`install_verifier.rs`), manifest peeker (`manifest_peek.rs`), and the GGUF intake (`gguf_header.rs` parser, `gguf_names.rs` name mapping, `gguf_config.rs` metadata-to-`ArchConfig`, `gguf_checkpoint.rs` repack walk (expert bytes verbatim, resident F32 core transcoded to BF16/INT8), `synthetic_gguf.rs` fixture writer -- ROADMAP Phase G; a Q8_0 install is executable, other block types install and are refused, see Gotcha 29). Details in [`crates/repack/CLAUDE.md`](crates/repack/CLAUDE.md).

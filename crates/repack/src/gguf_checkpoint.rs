@@ -495,14 +495,27 @@ fn transcode_f32(
 
     // INT8 affine, per logical row, at the 64-element group every GEMV
     // kernel here assumes.
-    if dims.len() != 2 {
-        return Err(GgufRepackError::ShapeMismatch {
-            tensor: name.to_string(),
-            detail: format!("INT8 transcode needs a rank-2 tensor, got {dims:?}"),
-        });
-    }
-    let (rows, cols, _, _) = logical_shape(dims);
-    let (rows, cols) = (rows as usize, cols as usize);
+    //
+    // Rank 1 is a SINGLE-ROW matrix, not an error: llama.cpp drops the
+    // degenerate output dimension, so Qwen's `ffn_gate_inp_shexp.weight`
+    // arrives as `[hidden]` where the runtime reads it as a `1 x hidden`
+    // projection through `encode_gemv_any`. Rejecting it here was the first
+    // thing the real Q4_K_M install hit, and a rank-1 tensor sent to the BF16
+    // default instead would have failed at `open()` rather than silently, so
+    // this arm is about accepting the file rather than about safety.
+    let (rows, cols) = match dims.len() {
+        1 => (1usize, dims[0] as usize),
+        2 => {
+            let (r, c, _, _) = logical_shape(dims);
+            (r as usize, c as usize)
+        }
+        _ => {
+            return Err(GgufRepackError::ShapeMismatch {
+                tensor: name.to_string(),
+                detail: format!("INT8 transcode needs a rank-1 or rank-2 tensor, got {dims:?}"),
+            })
+        }
+    };
     if rows * cols != values.len() {
         return Err(GgufRepackError::ShapeMismatch {
             tensor: name.to_string(),
