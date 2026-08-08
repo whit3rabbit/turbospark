@@ -254,12 +254,15 @@ Four things to know before reading those numbers:
   number is only comparable to its own past.
 - **Neither is comparable to a published perplexity.** One install, one
   passage, this port's tokenizer and template. It is a regression sentinel.
-- **Digests depend on expert-cache state**, so the gate's run order is part
-  of the protocol: warmup, measure, measure, warmup, measure. Each layer's
-  routed slots are ordered cache misses first then hits, which permutes the
-  phase-2 reduce order, and FP addition is not associative. A cold-cache
-  generation does not match a warm one, measured directly here. Everything
-  is pinned to 16 slots for the same reason the tok/s rows are.
+- **Digests no longer depend on expert-cache state.** They did until
+  2026-08-08, when a layer's routed slots were dispatched cache misses
+  first then hits: that permuted the phase-2 reduce order, FP addition is
+  not associative, and so a cold-cache generation did not match a warm one
+  (and, worse, two warm runs need not match each other -- AGENTS.md Gotcha
+  27). Slots are now dispatched in the router's own ranking. The gate keeps
+  its warmup-then-measure run order anyway, because throughput still wants
+  a warm cache. Everything is pinned to 16 slots for the same reason the
+  tok/s rows are.
 
 ### Constrained working set
 
@@ -271,21 +274,22 @@ set". Measured here, on the same day and machine as the rows above:
 
 | Install | tok/s at 16 slots | tok/s at 8 slots | Ratio | Bytes identical |
 | --- | ---: | ---: | ---: | --- |
-| Gemma 4 26B-A4B | 47.620 | 41.120 | 0.86x | no |
-| Qwen 3.6 35B-A3B | 43.966 | 40.174 | 0.91x | yes |
+| Gemma 4 26B-A4B | 44.602 | 39.985 | 0.90x | yes |
+| Qwen 3.6 35B-A3B | 40.163 | 29.696 | 0.74x | yes |
 
-Throughput degrades rather than collapsing, on both. Byte identity splits
-by family, and the reason is mechanical: `real_forward_gemma4.rs` orders a
-layer's routed slots misses first then hits (so the hits' phase-1 GEMV can
-ride its own command buffer), that order feeds phase 2's reduce, and FP
-addition is not associative, so changing the hit/miss split changes Gemma's
-bytes. `real_forward_qwen.rs` does no such reordering and comes out
-identical. The ordering is unconditional, so `MFERENCE_HIT_CB=0` does not
-explain or remove the difference: run that way, all four Gemma values above
-are unchanged.
+Throughput degrades rather than collapsing, and byte identity now holds on
+BOTH families, so the gate asserts the 8-slot digest EQUALS the 16-slot one
+rather than freezing a second golden.
 
-The gate therefore freezes a second Gemma digest rather than asserting
-identity across slot counts, which would be asserting FP associativity.
+It did not hold on Gemma until 2026-08-08. `real_forward_gemma4.rs` used to
+order a layer's routed slots misses first then hits (so the resident hits'
+phase-1 GEMV could ride its own command buffer); that order fed phase 2's
+reduce, and FP addition is not associative, so Gemma's bytes moved with the
+hit/miss split. The deeper problem was that the hit/miss split is a
+function of cache state rather than of the prompt, which made repeated warm
+runs of one prompt non-reproducible (AGENTS.md Gotcha 27). Slots are now
+dispatched in the router's own ranking. The rows above are re-measured
+after that change and are not comparable to the pre-2026-08-08 ones.
 
 ### Sensitivity: what the perplexity number can actually see
 
@@ -350,9 +354,9 @@ lands under it. There is no kernel gap detectable at this resolution, so a
 Phase S quality delta is attributable to the quantization.
 
 The first row is the matching floor from this port's side, and it is
-independently useful: cache state alone (Gemma's misses-first slot order
-permuting phase 2's reduce, AGENTS.md Gotcha 27) moves the distribution by
-0.0019 mean nats. The KL is reported both ways; the forward and reverse
+independently useful: cache state alone moved the distribution by 0.0019
+mean nats, under the misses-first slot order that AGENTS.md Gotcha 27
+records and that has since been removed. The KL is reported both ways; the forward and reverse
 means agree to within 5% on every row above, so none of this is an artifact
 of which distribution is treated as the reference.
 

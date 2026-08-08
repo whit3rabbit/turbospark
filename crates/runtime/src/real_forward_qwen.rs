@@ -36,7 +36,7 @@
 //! **Command-buffer shape is deliberately plain**: one buffer per layer up
 //! to the router (`cb1`), a host readback for top-k plus the expert
 //! `pread`, then one buffer for the MoE tail. The three overlap seams the
-//! Gemma path carries (`MFERENCE_SHARED_CB`, `MFERENCE_HIT_CB`,
+//! Gemma path carries (`MFERENCE_SHARED_CB`,
 //! `MFERENCE_ROUTED_PIPELINE`) are throughput-only and are not wired here;
 //! see DEVIATIONS.md.
 //!

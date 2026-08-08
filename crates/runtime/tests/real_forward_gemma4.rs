@@ -108,40 +108,8 @@ fn decode_probs(runner: &mut RealForwardRunner, tokens: &[i32]) -> Vec<Vec<f32>>
 const PROBE_TOKENS: [i32; 8] = [5, 9, 2, 7, 1, 3, 8, 4];
 
 #[test]
-fn hit_expert_command_buffer_does_not_change_output() {
-    // Two fresh runners over one install, so both walk the same expert
-    // cache history and differ only in whether the resident share of each
-    // layer's experts is dispatched ahead of the pread.
-    let dir = temp_dir();
-    let arch = build_contended_install(&dir);
-    let mut overlapped = RealForwardRunner::open_with_options(&dir, arch.clone(), 4096, 4)
-        .expect("real-naming install opens");
-    let mut serial = RealForwardRunner::open_with_options(&dir, arch, 4096, 4)
-        .expect("real-naming install opens");
-    overlapped.set_hit_cb_overlap(true);
-    serial.set_hit_cb_overlap(false);
-
-    let with = decode_probs(&mut overlapped, &PROBE_TOKENS);
-    let without = decode_probs(&mut serial, &PROBE_TOKENS);
-
-    let p = overlapped.phase_counters();
-    assert!(
-        p.expert_hits > 0 && p.expert_hits < p.expert_requests,
-        "fixture must mix cache hits and misses to exercise the split: \
-         {} hits of {} requests",
-        p.expert_hits,
-        p.expert_requests
-    );
-    assert_eq!(
-        with, without,
-        "the hit-expert command buffer runs the same kernels over the same \
-         slots, so its output must be bit-identical"
-    );
-}
-
-#[test]
 fn routed_pipeline_seam_states_are_identical() {
-    // Every combination of the three overlap seams must be bit-identical
+    // Every combination of the two overlap seams must be bit-identical
     // to a fully-serial baseline: same kernels, same commit-relative order
     // of every host buffer write, only the overlap differs. Output
     // equality alone is weak teeth on this fixture (near-uniform synthetic
@@ -155,7 +123,6 @@ fn routed_pipeline_seam_states_are_identical() {
         .expect("real-naming install opens");
     baseline.set_routed_pipeline(false);
     baseline.set_shared_cb_overlap(false);
-    baseline.set_hit_cb_overlap(false);
     let expected = decode_probs(&mut baseline, &PROBE_TOKENS);
     let p = baseline.phase_counters();
     assert!(
@@ -169,17 +136,16 @@ fn routed_pipeline_seam_states_are_identical() {
         "the non-pipelined arm must never retire a pending routed buffer"
     );
 
-    for combo in 0u8..8 {
-        let (pipeline, shared, hit) = (combo & 1 != 0, combo & 2 != 0, combo & 4 != 0);
+    for combo in 0u8..4 {
+        let (pipeline, shared) = (combo & 1 != 0, combo & 2 != 0);
         let mut runner = RealForwardRunner::open_with_options(&dir, arch.clone(), 4096, 4)
             .expect("real-naming install opens");
         runner.set_routed_pipeline(pipeline);
         runner.set_shared_cb_overlap(shared);
-        runner.set_hit_cb_overlap(hit);
         let probs = decode_probs(&mut runner, &PROBE_TOKENS);
         assert_eq!(
             probs, expected,
-            "seam combo (pipeline={pipeline}, shared={shared}, hit={hit}) \
+            "seam combo (pipeline={pipeline}, shared={shared}) \
              must match the serial baseline bit for bit"
         );
         let p = runner.phase_counters();

@@ -122,7 +122,7 @@ struct Pool {
 }
 
 /// A/B seam for ROADMAP Phase P1, in the shape of the decode path's other
-/// seams (`MFERENCE_SHARED_CB`, `MFERENCE_HIT_CB`,
+/// seams (`MFERENCE_SHARED_CB`,
 /// `MFERENCE_ROUTED_PIPELINE`): `MFERENCE_READ_QOS=utility` runs the
 /// workers at `QOS_CLASS_UTILITY`, which is the class Swift's I/O pool
 /// uses and which asks the scheduler for E-cores.

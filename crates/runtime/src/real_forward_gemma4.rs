@@ -53,10 +53,8 @@ use crate::real_forward::{
 /// install carries: the vendored INT4-affine `moe.metal` kernels or the
 /// port-local Q8_0 pair in `moe_gguf.metal` (ROADMAP Phase G Stage 2).
 ///
-/// A pair of forwarders rather than a branch at each of the three call sites,
-/// because phase 1 is dispatched from three places (the cache-hit command
-/// buffer, the main pass, and the shared path) and a layout that disagreed
-/// between them would read one blob two ways.
+/// A pair of forwarders rather than a branch at each call site, so a layout
+/// cannot disagree between two of them and read one blob two ways.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn encode_moe_phase1_any(
     q8_0: bool,
@@ -913,74 +911,27 @@ impl RealForwardRunner {
             // plan; the hit dispatch and the pread have their own.
             self.phases.router_nanos += t_router.elapsed().as_nanos() as u64;
 
-            // Slot order for this layer's MoE dispatches: cache MISSES
-            // first, then cache hits. Both phase-1 kernels read
-            // `blob[slot]` for `slot < top_k` and write `acts[slot * F]`,
-            // so a misses-first order lets the miss dispatch keep the full
-            // argument buffer and offset 0, while the hit dispatch takes
-            // its own argument buffer and an `acts` offset. Nothing else in
-            // the layer depends on the router's own ranking, as long as
-            // `routing_w` is permuted to match.
-            let mut is_miss = vec![false; selected.len()];
-            for &index in &plan.misses {
-                is_miss[index] = true;
-            }
-            let mut order: Vec<usize> = plan.misses.clone();
-            let miss_count = order.len();
-            order.extend((0..selected.len()).filter(|&i| !is_miss[i]));
-            let hit_count = order.len() - miss_count;
-
-            // The hit experts are already in slot memory, so their phase-1
-            // GEMV can run on the GPU through the blocking pread below.
-            // It needs its OWN argument buffer: the host rebinds the main
-            // one for the full slot list after the pread, which would race
-            // a dispatch still reading it. Slot memory itself is safe --
-            // `plan` reserves hit slots before picking eviction victims, so
-            // the parallel miss reads never write a slot this reads.
-            let t_hit = Instant::now();
-            let dispatched_hits = self.hit_cb_overlap && hit_count > 0;
-            if dispatched_hits {
-                let layer_slots = &self.slot_buffers[layer];
-                let hit_refs: Vec<(&gpu::MetalBuffer, u64)> = order[miss_count..]
-                    .iter()
-                    .map(|&i| (&layer_slots[plan.assigned_slots[i]], 0u64))
-                    .collect();
-                let routed_hits = self
-                    .routed_blobs_hits
-                    .as_ref()
-                    .expect("layout implies blobs");
-                routed_hits
-                    .bind(&mut self.context, use_silu, &hit_refs)
-                    .map_err(gpu_err)?;
-                let hit_pass = self.context.begin_pass_labeled("hit-expert cb");
-                for &(buffer, _) in &hit_refs {
-                    hit_pass.use_read_buffer(buffer);
-                }
-                let real = self.real.as_ref().expect("real state present");
-                let offsets = self.moe_offsets.as_ref().expect("layout implies offsets");
-                encode_moe_phase1_any(
-                    routed_gguf_q8_0,
-                    &mut self.context,
-                    &hit_pass,
-                    routed_hits,
-                    offsets,
-                    (&real.routed_x, 0),
-                    (
-                        &self.scratch.moe_acts,
-                        miss_count as u64 * moe_inter as u64 * 2,
-                    ),
-                    hidden as u32,
-                    moe_inter,
-                    hit_count as u32,
-                    use_silu,
-                )
-                .map_err(gpu_err)?;
-                // Committed, never waited on: buffers execute in commit
-                // order, so these `acts` rows land before the phase 2
-                // encoded below reads them.
-                hit_pass.commit();
-            }
-            self.phases.hit_cb_nanos += t_hit.elapsed().as_nanos() as u64;
+            // Slot order for this layer's MoE dispatches: the ROUTER'S OWN
+            // RANKING, always. Phase 2 reduces `blob[slot] * routing_w[slot]`
+            // over slots in index order and FP addition is not associative,
+            // so the slot order IS the summation order and anything it
+            // depends on, the output depends on.
+            //
+            // This used to be cache MISSES first then hits, so the resident
+            // hits' phase-1 GEMV could ride its own command buffer. That made
+            // the summation order a function of CACHE STATE, and cache state
+            // is not a function of the prompt: it carries over between
+            // generations. Two warm greedy runs of one prompt in one process
+            // could therefore produce different text (measured 2026-08-08:
+            // 4 distinct outputs in 6 runs on a Q8_0 GGUF install at 16
+            // slots, and 2 in 6 on the MLX install at 32 -- the gate never
+            // ran at 32, which is why this survived). Router rank depends on
+            // the route alone, so the reduce order does too.
+            //
+            // The cost is the ~1% that overlap bought: a scattered hit set
+            // cannot form one contiguous dispatch, so it goes away with the
+            // permutation rather than being kept alongside it.
+            let order: Vec<usize> = (0..selected.len()).collect();
 
             let streamer = self.streamers[layer]
                 .as_mut()
@@ -998,7 +949,7 @@ impl RealForwardRunner {
             let real = self.real.as_ref().expect("real state present");
 
             let t_bind = Instant::now();
-            // One list in the misses-first slot order, holding each slot's
+            // One list in router-rank slot order, holding each slot's
             // blob AND its routing weight together: the kernel pairs
             // `blob[slot]` with `routing_w[slot]`, and pairing them here
             // too is what keeps the permutation from drifting apart.
@@ -1036,14 +987,8 @@ impl RealForwardRunner {
             }
 
             // Routed branch on routed_x -> h2 (zero residual: the sandwich
-            // combine needs the raw routed output), then post_ffn_2. Phase
-            // 1 here covers only the slots the hit command buffer did not
-            // already take, which are the low ones by construction.
-            let main_phase1_k = if dispatched_hits {
-                miss_count
-            } else {
-                order.len()
-            };
+            // combine needs the raw routed output), then post_ffn_2.
+            let main_phase1_k = order.len();
             if main_phase1_k > 0 {
                 encode_moe_phase1_any(
                     routed_gguf_q8_0,

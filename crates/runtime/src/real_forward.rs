@@ -113,12 +113,6 @@ pub struct RealForwardRunner {
     /// buffer, present when the install packs experts.
     pub(crate) moe_offsets: Option<gpu::MoeExpertOffsets>,
     pub(crate) routed_blobs: Option<gpu::RoutedBlobsBuffer>,
-    /// A SECOND argument buffer, for the cache-hit phase-1 dispatch that
-    /// rides its own command buffer across the expert `pread` (see
-    /// `real_forward_gemma4.rs`). It exists only so that dispatch's
-    /// pointer array is not the one the host rebinds for the misses while
-    /// the GPU may still be reading it; 64 bytes, allocated once at open.
-    pub(crate) routed_blobs_hits: Option<gpu::RoutedBlobsBuffer>,
     /// Real-checkpoint (verbatim `language_model.` tensor naming) decode
     /// state: learned norms, INT8 router effective scales, per-expert
     /// scales, layer scalars. `None` for synthetic short-name installs,
@@ -136,12 +130,6 @@ pub struct RealForwardRunner {
     /// A/B seam the Swift original keeps as `MFERENCE_ROUTER_EVENT=0`:
     /// same kernels, same order, identical output, different overlap.
     pub(crate) shared_cb_overlap: bool,
-    /// Whether the cache-hit share of the routed experts gets its phase-1
-    /// GEMV dispatched on its own command buffer BEFORE the blocking
-    /// expert `pread`, so it runs while the host is in the read. The other
-    /// A/B seam, `MFERENCE_HIT_CB=0`: same kernels, same slot order,
-    /// identical output, different overlap.
-    pub(crate) hit_cb_overlap: bool,
     /// Whether a layer's routed-expert command buffer is committed at the
     /// END of that layer and retired one layer later (after the next
     /// layer's router wait), Swift's one-layer-pipelined routed CB.
@@ -186,8 +174,7 @@ pub fn dispatch_profile_report(calls: u64) -> Option<String> {
 /// attention+router buffer (once per layer, ~30 times per token on real
 /// Gemma 4), `final_wait` is the single end-of-token wait split out from
 /// it so the two can be told apart, `router` is the
-/// logit readback plus host top-k plus slot planning, `hit_cb` is binding
-/// and encoding the cache-hit phase-1 command buffer, `expert_io` is the
+/// logit readback plus host top-k plus slot planning, `expert_io` is the
 /// blocking `pread` of missing expert blobs, `bind` is the routing
 /// weight upload plus argument-buffer rebind, and `pipeline_wait` is time
 /// blocked retiring the previous layer's pipelined routed command buffer
@@ -209,7 +196,6 @@ pub struct PhaseCounters {
     /// what is left is commit plus completion latency, not device time.
     pub final_wait_nanos: u64,
     pub router_nanos: u64,
-    pub hit_cb_nanos: u64,
     pub expert_io_nanos: u64,
     pub bind_nanos: u64,
     pub pipeline_wait_nanos: u64,
@@ -355,23 +341,17 @@ impl RealForwardRunner {
         self.phases
     }
 
-    /// Flips the cache-hit phase-1 command buffer (`MFERENCE_HIT_CB`) after
+    /// Flips the shared-expert command buffer (`MFERENCE_SHARED_CB`) after
     /// open, so a test can A/B both states in one process. Setting the
     /// environment variable instead would race the other test threads.
     /// Both states must produce identical output; that is the whole
     /// correctness claim of the overlap.
     #[doc(hidden)]
-    pub fn set_hit_cb_overlap(&mut self, on: bool) {
-        self.hit_cb_overlap = on;
-    }
-
-    /// Sibling of [`Self::set_hit_cb_overlap`] for `MFERENCE_SHARED_CB`.
-    #[doc(hidden)]
     pub fn set_shared_cb_overlap(&mut self, on: bool) {
         self.shared_cb_overlap = on;
     }
 
-    /// Sibling of [`Self::set_hit_cb_overlap`] for
+    /// Sibling of [`Self::set_shared_cb_overlap`] for
     /// `MFERENCE_ROUTED_PIPELINE`.
     #[doc(hidden)]
     pub fn set_routed_pipeline(&mut self, on: bool) {
@@ -588,16 +568,14 @@ impl RealForwardRunner {
             }
         }
         let use_silu = expecting.hidden_activation.contains("silu");
-        let (moe_offsets, routed_blobs, routed_blobs_hits) = match &experts_layout {
+        let (moe_offsets, routed_blobs) = match &experts_layout {
             Some(layout) => {
                 let offsets = moe_offsets_from_layout(layout)?;
                 let routed = gpu::RoutedBlobsBuffer::new(&mut context, use_silu)
                     .map_err(RealForwardError::Gpu)?;
-                let hits = gpu::RoutedBlobsBuffer::new(&mut context, use_silu)
-                    .map_err(RealForwardError::Gpu)?;
-                (Some(offsets), Some(routed), Some(hits))
+                (Some(offsets), Some(routed))
             }
-            None => (None, None, None),
+            None => (None, None),
         };
         drop(experts_layout);
 
@@ -612,12 +590,10 @@ impl RealForwardRunner {
             streamers,
             moe_offsets,
             routed_blobs,
-            routed_blobs_hits,
             real: None,
             real_qwen: None,
             phases: PhaseCounters::default(),
             shared_cb_overlap: std::env::var("MFERENCE_SHARED_CB").as_deref() != Ok("0"),
-            hit_cb_overlap: std::env::var("MFERENCE_HIT_CB").as_deref() != Ok("0"),
             routed_pipeline: std::env::var("MFERENCE_ROUTED_PIPELINE").as_deref() != Ok("0"),
             routed_gguf_q8_0,
             skip_head: false,

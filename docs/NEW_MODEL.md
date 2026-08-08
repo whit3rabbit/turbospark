@@ -453,20 +453,14 @@ quantization change looks like when it is subtly wrong rather than broken.
       Gemma's template opens a `<|channel>thought` block before the
       assistant slot and Qwen's does not, which is most of 37.31 against
       6.25 on the same passage. Each row is a sentinel against its own past.
-- [ ] Freeze a greedy and a sampled digest, both from a WARM expert cache
-      (slots are ordered misses-first on some flows, which permutes phase
-      2's reduce, and FP addition is not associative, so a cold-cache
-      generation does not reproduce a warm one).
-- [ ] **Decide whether the family's flow reorders routed slots, and record
-      the answer.** It determines whether output is byte-identical across
-      expert-cache sizes: `real_forward_gemma4.rs` orders misses-first and
-      is NOT identical at 8 vs 16 slots; `real_forward_qwen.rs` does not
-      reorder and IS. Freeze a second digest for the constrained arm either
-      way rather than asserting the two equal, which on a reordering flow
-      is asserting FP associativity.
-- [ ] Do NOT reach for `MFERENCE_HIT_CB=0` to explain a difference here.
-      It toggles the separate command buffer, not the slot ORDER, and
-      measured directly it moves no digest.
+- [ ] Freeze a greedy and a sampled digest.
+- [ ] **Dispatch a layer's routed slots in the ROUTER'S RANKING, and assert
+      the 8-slot digest EQUALS the 16-slot one.** Phase 2 reduces in slot
+      order and FP addition is not associative, so the slot order is the
+      summation order: order it by anything the cache can reach and the
+      same prompt decodes to different text run to run (AGENTS.md Gotcha
+      27, which cost a Gemma-flow bug that survived two months because no
+      test ran one generation twice on one warm runner).
 
 Gate: the gate passes twice from two fresh processes, agreeing on every
 digit and every hex character. If it does not, generation is not
@@ -512,7 +506,8 @@ than whatever you were about to freeze.
 | Footprint explodes, output correct | Routed-expert marker unrecognized: every expert became a resident tensor (Gotcha 26) |
 | Manifest never validates, several extension fields mismatch at once | They were omitted and resolved against the GEMMA baseline (Gotcha 24); or a float field is not a binary fraction |
 | Second generation differs from the first | `reset()` rewound the KV cache but not the recurrent state |
-| Output differs between two `--expert-cache-slots` values | Expected on a flow that orders routed slots misses-first (Gemma does, Qwen does not): the hit/miss split permutes phase 2's reduce and FP addition is not associative. Compare within one slot count |
+| Output differs between two `--expert-cache-slots` values | A BUG since 2026-08-08: the flow is dispatching routed slots in an order the expert cache can reach, so phase 2's reduce order follows cache state (AGENTS.md Gotcha 27). Dispatch in router rank |
+| Same prompt decodes differently on a second warm run | Same cause as the row above, seen from the other side. `crates/bench/tests/gguf_nondeterminism_probe.rs` is the check |
 | Perplexity worse than a uniform distribution | Scoring prompt-position tokens on an instruction-tuned checkpoint (Phase 6) |
 | A whole layer kind seems to contribute nothing | Untrained fixture: assert on the block's state, not its output |
 | Throughput moved after a decode change | `MFERENCE_PHASES=1` buckets + GPU busy line, interleaved A/B pairs (`AGENTS.md` Gotcha 12); run-to-run spread is wider than most single effects |

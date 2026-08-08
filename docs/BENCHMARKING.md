@@ -303,38 +303,11 @@ slots. Three traps that shaped it, all measured rather than reasoned:
   distribution.
 - **A golden digest needs a warm expert cache**, so the run order (warmup,
   measure, measure, warmup, measure) is part of the protocol.
-- **Byte identity across slot counts is family-dependent**, so each slot
-  count gets its own frozen digest rather than being asserted equal.
-
-Numbers, provenance, and the damage-response curve live in
-`docs/BENCHMARKS.md`, not here.
-
-### The cross-engine arm
-
-The gates above all measure this port against ITSELF. The one that reaches
-outside is a two-step pair, deliberately not wired into `cargo test`
-because it needs a 14.6 GB reference checkpoint and a Python environment:
-
-```sh
-hf download mlx-community/gemma-4-26b-a4b-it-4bit \
-  --revision 0d77464eeb233a2da68ebf9d7dc4edaac7db956d
-
-MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
-MREFRUST_LOGIT_DUMP_DIR=/tmp/kld/mrefrust \
-  cargo test -p mrefrust-bench --test logit_dump --release -- --ignored --nocapture
-
-uv run --python 3.12 --with mlx-lm --with numpy scripts/kld.py /tmp/kld/mrefrust
-```
-
-That revision is the exact repo `~/models/gemma4.gturbo` was repacked from
-(pinned in `crates/repack/tests/gemma4_checkpoint_network.rs`), which is
-the point: same quantized bytes on both sides, so the comparison isolates
-kernels rather than quantization. `uv` builds an ephemeral environment, so
-mlx-lm is never installed globally and never enters this workspace's
-dependency graph.
-
-Three traps here, matching the three above:
-
+- **Byte identity across slot counts holds on both families** as of
+  2026-08-08, so the quality gate asserts the 8-slot digest equals the
+  16-slot one instead of freezing one per count. Before then the Gemma
+  flow dispatched routed slots misses-first, which made phase 2's reduce
+  order follow expert-cache state (AGENTS.md Gotcha 27).
 - **Hand the second engine TOKEN IDS, never prose.** A tokenizer or
   chat-template difference would surface as a divergence and read as a
   numerics gap. `meta.json` carries the exact sequence this port walked.

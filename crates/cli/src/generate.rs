@@ -225,7 +225,6 @@ pub(crate) fn print_phases(session: &Session) {
     let accounted = p.gpu_wait_nanos
         + p.final_wait_nanos
         + p.router_nanos
-        + p.hit_cb_nanos
         + p.expert_io_nanos
         + p.bind_nanos
         + p.pipeline_wait_nanos;
@@ -239,7 +238,6 @@ pub(crate) fn print_phases(session: &Session) {
         ("gpu wait (layer cb1)  ", p.gpu_wait_nanos),
         ("final wait (end token)", p.final_wait_nanos),
         ("router readback+topk  ", p.router_nanos),
-        ("hit-expert phase1 cb  ", p.hit_cb_nanos),
         ("expert io (pread)     ", p.expert_io_nanos),
         ("routed bind+upload    ", p.bind_nanos),
         ("routed cb retire      ", p.pipeline_wait_nanos),

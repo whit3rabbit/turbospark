@@ -35,11 +35,14 @@ live network).
   dependency graph. Three consequences worth recording next to the
   parity tables.
   Upstream's memory-pressure acceptance proof, byte-identical output at
-  unchanged throughput under a constrained working set, HOLDS ON QWEN AND
-  NOT ON GEMMA here: the Gemma flow's misses-first routed-slot ordering
-  (a port-local overlap optimization) feeds phase 2's reduce, and FP
-  addition is not associative, so halving the expert cache changes bytes
-  while throughput only degrades 0.86x. And the gate's sensitivity is
+  unchanged throughput under a constrained working set, HOLDS ON BOTH
+  FAMILIES as of 2026-08-08, and the gate asserts it rather than freezing
+  a digest per slot count. It did not hold on Gemma before then: that
+  flow's misses-first routed-slot ordering (a port-local overlap
+  optimization, now removed) fed phase 2's reduce, and FP addition is not
+  associative, so halving the expert cache changed bytes. The deeper
+  problem that ordering caused, and the reason it went rather than being
+  documented around, is AGENTS.md Gotcha 27. And the gate's sensitivity is
   measured rather than assumed: `quality_sensitivity.rs` shifts one
   quantization level in a strided subset of routed experts and puts the
   detection floor between 0.0015% and 0.0122% of expert bytes.
@@ -522,7 +525,6 @@ live network).
   | final wait (end of token) | 1.0-1.1 | 1.0 |
   | routed bind+upload | 0.8 | 0.66 |
   | router readback+topk | 0.34 | 0.25 |
-  | hit-expert phase1 cb | 0.00 | 0.00 |
   | routed cb retire | 0.00 | 0.00 |
   | **unaccounted (host sampler)** | **~15.5** | **~0** |
 
@@ -580,16 +582,17 @@ live network).
   effective-scale vector regardless, so the flow binds a BF16 `[hidden]`
   buffer of ones built once at open. Same kernel, same semantics, no
   Qwen-specific router kernel.
-- **The Qwen path has NONE of the three command-buffer overlap seams the
-  Gemma path carries.** `MFERENCE_SHARED_CB`, `MFERENCE_HIT_CB`, and
-  `MFERENCE_ROUTED_PIPELINE` are throughput-only (measured at roughly
-  +1%, +2.5%, and the shared-expert overlap respectively on Gemma), and
-  each one is a correctness-sensitive reordering that needs its own
-  identical-output A/B to land. The Qwen flow is the plain shape: one
+- **The Qwen path has NEITHER of the two command-buffer overlap seams the
+  Gemma path carries.** `MFERENCE_SHARED_CB` and
+  `MFERENCE_ROUTED_PIPELINE` are throughput-only (the latter measured at
+  ~+2.5% on Gemma), and each one is a correctness-sensitive reordering
+  that needs its own identical-output A/B to land. A third,
+  `MFERENCE_HIT_CB`, was removed on 2026-08-08: its reordering was not
+  output-neutral after all, which is AGENTS.md Gotcha 27. The Qwen flow is the plain shape: one
   command buffer per layer up to the router, host readback plus expert
   `pread`, one buffer for the MoE tail. `PhaseCounters` still fills in, so
-  `MFERENCE_PHASES=1` works; `pipeline_wait_nanos` and `hit_cb_nanos` stay
-  zero by construction.
+  `MFERENCE_PHASES=1` works; `pipeline_wait_nanos` stays zero by
+  construction.
 - **GDN chunked prefill is parity-tested but unwired.** `gdn.metal`'s
   `gdn_conv_mix_prefill`, `gdn_conv_tail_update`, and
   `gdn_delta_step_prefill` are dispatched and checked against a
@@ -698,26 +701,17 @@ live network).
     A/B deltas only; the 42.6 is NOT comparable to the 16-slot protocol
     numbers in `docs/BENCHMARKS.md`, which explains the slot and sampler
     axes that separate them.
-    Swift's phase-1-hit CB is now ported too, on the same second-command-
-    buffer principle: the layer's slot order is cache MISSES first then
-    hits, so the hits (already in slot memory when the plan is built) get
-    their phase-1 GEMV dispatched on its own command buffer before the
-    `pread`, and the misses run in the main pass at `acts` offset zero.
-    It takes a SECOND `RoutedBlobsBuffer`, since the host rebinds the
-    main one for the full slot list while that dispatch may still be
-    reading it; slot memory itself is safe because `ExpertCache::plan`
-    reserves hit slots before choosing eviction victims, so the parallel
-    miss reads never write a slot the dispatch reads.
-    `MFERENCE_HIT_CB=0` is the A/B seam. Measured on the real 26B
-    checkpoint (M4 Max, 32 slots, 5 interleaved pairs): +0.42 tok/s mean,
-    winning 4 of 5 pairs, ~+1%; generated text md5-identical in all ten
-    runs. The phase counters explain the small size and show the trick is
-    at its ceiling rather than misfiring: GPU wait falls 17.2 -> 16.1
-    ms/token (it hides ALL the phase-1 work the hits have to offer) and
-    the new `hit_cb` bucket costs 0.76 ms/token of host bind-plus-commit,
-    so about two thirds of the win is eaten by the extra command buffer
-    per layer. The remaining exposed `pread` cannot be hidden this way:
-    everything left depends on the bytes being read.
+    Swift's phase-1-hit CB WAS ported here and has been REMOVED
+    (2026-08-08). It ordered a layer's slots cache MISSES first then hits
+    so the resident hits' phase-1 GEMV could ride its own command buffer
+    before the `pread`. Measured on the real 26B checkpoint (M4 Max, 32
+    slots, 5 interleaved pairs) it was worth +0.42 tok/s, ~+1%, with
+    generated text md5-identical in all ten runs -- which is exactly why it
+    survived: the A/B that qualified it held the expert cache constant, and
+    the reordering's real dependency was on cache STATE. Two warm greedy
+    runs of one prompt in one process could differ. Slots are now
+    dispatched in the router's own ranking. See AGENTS.md Gotcha 27; the
+    standing check is `crates/bench/tests/gguf_nondeterminism_probe.rs`.
     Swift's one-layer-pipelined routed CB is ported too: a layer's routed
     phase-1/phase-2/sandwich tail commits as its OWN command buffer at the
     end of the layer (instead of rolling uncommitted into the next layer's
@@ -737,8 +731,8 @@ live network).
     checkpoint (M4 Max, 32 slots, 5 interleaved pairs, pipeline winning
     every pair): +0.63 tok/s mean (+2.5%), GPU wait 17.20 -> 16.07
     ms/token against 0.24 ms/token of retire cost, generated text
-    md5-identical across all ten runs, across the full
-    {ROUTED_PIPELINE, SHARED_CB, HIT_CB} seam grid, and across pipeline
+    md5-identical across all ten runs, across the seam grid as it stood
+    then ({ROUTED_PIPELINE, SHARED_CB, HIT_CB}), and across pipeline
     states at 16 slots.
     Expert prefetch/speculation stays deliberately unwired: the Swift
     original benched every shape to a dead end (cross-layer predictor
@@ -775,7 +769,7 @@ live network).
     (~200-token context, 32 slots, 83.9% hit rate, ~26 tok/s): GPU wait
     ~59%, expert `pread` ~33% (still largely exposed), CPU dispatch
     encoding ~4% (so `fused.metal`, which only cuts dispatch count, has
-    little left to win here), hit-expert phase 1 ~2%, routed bind ~1%,
+    little left to win here), routed bind ~1%,
     routed cb retire ~1%, router readback+top-k ~0.5%. (The buckets move
     with the hit rate and cache state between runs, so re-measure per
     prompt rather than reusing a past split.) The same printout carries
@@ -970,15 +964,26 @@ live network).
   `Qwen3.6-35B-A3B-Q4_K_M` by correlation
   (`crates/repack/tests/gguf_q4_k_network.rs`), because a decoder and the
   fixture quantizer feeding it come from one mental model and can agree
-  while both are wrong. Not
+  while both are wrong. THE PHASE G GATE IS MET (2026-08-08):
+  the real published `ggml-org/gemma-4-26B-A4B-it-GGUF` Q8_0 checkpoint
+  installs and decodes coherent text, greedy and sampled
+  (`crates/repack/tests/gguf_install_network.rs`). It needed no local copy
+  of the 27 GB file: the walk streams it over HTTP a layer at a time, so
+  only the ~25 GB install is written. Its resident BF16 core is
+  BIT-IDENTICAL to the MLX install's, which is the strongest statement
+  available that the name mapping and the F32 transcode are right
+  (`gguf_norm_convention_probe.rs`). Perplexity is 39.8808 against the MLX
+  install's 37.4176; that is INT4 against Q8_0, two different
+  quantizations, and deciding which is closer to the truth needs a
+  same-precision reference this port does not have. Not
   scaffolded, not attempted: a local-file `RangeSource` (the walk streams
   over HTTP like the safetensors one), Q4_K/Q6_K in the MoE and embedding
   kernels (which is what a Qwen Q4_K_M install would need), and any
   Q5_K/Q3_K/Q2_K/i-quant block sizes (`ggml_type_block` answers only for
   types whose size was read off the spec, and names the rest in its error
-  rather than guessing). NOT DONE, and the only thing between here and the
-  Phase G gate: running a REAL published GGUF end to end, which needs the
-  27 GB file on disk.
+  rather than guessing). Also not done: a memory-oracle or quality-gate
+  ROW for a Q8_0 install, since it is roughly twice the resident bytes and
+  the chip rows are keyed on the chip rather than the install.
 - **Byte-exact `.gturbo` directory assembly: implemented**
   (`gturbo_writer.rs`'s `write_gturbo_install`): given already-quantized
   tensor bytes, writes `packed_experts/layer_NN.bin` blobs (matching

@@ -38,13 +38,6 @@ const BASELINES: &[quality_common::ChipQuality] = &[
         perplexity: 6.2536,
         greedy_digest: "c5b52f776861277ae37c54b22978a771150bb60d8b4c354a783dfb9560d92c40",
         sampled_digest: "525cadbc918786b3b7f89f97361c1d350ed5ef71aa28d3636f8769c24fca8eff",
-        // IDENTICAL to greedy_digest above, and that is the finding, not a
-        // copy-paste slip: `real_forward_qwen.rs` does not reorder a
-        // layer's routed slots misses-first the way the Gemma flow does,
-        // so halving the expert cache leaves phase 2's reduce order alone
-        // and the bytes come out the same. Upstream's byte-identical
-        // acceptance proof holds on this family and not on Gemma.
-        constrained_digest: "c5b52f776861277ae37c54b22978a771150bb60d8b4c354a783dfb9560d92c40",
         source: "this port, 2026-08-07, Apple M4 Max, AC, 16 slots",
     },
 ];

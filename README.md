@@ -80,7 +80,8 @@ port tracks itself over time: [`docs/BENCHMARKING.md`](docs/BENCHMARKING.md).
 - `crates/runtime`: the raw-completion prefill+decode loop.
 - `crates/cli`: the `mference-check` process entry point.
 - `crates/repack`: safetensors and GGUF header parsing, ranged-download
-  planning, and quantization repack. GGUF intake runs a Q8_0 install and
+  planning, and quantization repack. GGUF intake runs a Q8_0 install,
+  proven end to end on the real published Gemma 4 Q8_0 checkpoint, and
   refuses the other block types at open, on purpose and twice over, until
   their kernels land (ROADMAP Phase G): a block type needs a resident GEMV,
   an embedding lookup and a routed-expert decode pair before it executes,

@@ -26,8 +26,12 @@ mod quality_common;
 const BASELINES: &[quality_common::ChipQuality] = &[
     // M4 Max 36GB (the development machine; see CLAUDE.local.md).
     //
-    // Two full runs in separate processes, 2026-08-07, on AC, release,
-    // 16 expert-cache slots, at the commit that introduced this gate.
+    // Re-frozen 2026-08-08 on AC when the routed-slot dispatch order
+    // became the router's ranking rather than misses-first (see
+    // `quality_common`'s module doc). The greedy digest did NOT move:
+    // argmax absorbs a last-ulp change. The sampled one did, and
+    // perplexity went 37.3105 -> 37.4176 (+0.29%), both of which is what
+    // a reduce-order change looks like when the model is unchanged.
     // Both agreed on ALL THREE values to the last digit and the last hex
     // character, which is the property being frozen: the run order in
     // `quality_common` (warmup, measure, measure, warmup, measure) makes
@@ -43,16 +47,10 @@ const BASELINES: &[quality_common::ChipQuality] = &[
     // comparable to its own past.
     quality_common::ChipQuality {
         brand_substr: "Apple M4 Max",
-        perplexity: 37.3105,
+        perplexity: 37.4176,
         greedy_digest: "4f5cba92159ca76006c39ed6aab76e15da862a36d34bae0f85a82d42690bc38e",
-        sampled_digest: "cde6012aae80021227ab3ff775b7517f9e6976df1ab031ba96559a22544c0027",
-        // DIFFERENT from greedy_digest above, and expected to be: Gemma's
-        // routed slots are ordered misses-first, so an 8-slot cache
-        // reduces phase 2 in a different order (quality_common's module
-        // doc). Qwen's row has the same value in both fields because its
-        // flow does not reorder.
-        constrained_digest: "a50ed69d05849d799870f82a44712bf0ea6fce8302cbd920b7c6432febb7f864",
-        source: "this port, 2026-08-07, Apple M4 Max, AC, 16 slots",
+        sampled_digest: "65f497eca37b95cf23c8658b1944d069e807da5d2bce64b806c794c4894fcdac",
+        source: "this port, 2026-08-08, Apple M4 Max, AC, 16 slots",
     },
 ];
 

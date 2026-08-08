@@ -62,22 +62,21 @@
 //! balloon process, and no OS memory-pressure simulation.
 //!
 //! Upstream states that proof as "byte-identical output at unchanged
-//! throughput under a constrained working set". THAT HOLDS ON ONE OF THE
-//! TWO FAMILIES HERE, and the split is mechanical rather than mysterious.
-//! `real_forward_gemma4.rs` orders a layer's routed slots misses first then
-//! hits, so the hits' phase-1 GEMV can ride its own command buffer; that
-//! order feeds phase 2's reduce, and FP addition is not associative, so
-//! Gemma's bytes change when the hit/miss split changes. `real_forward_qwen.rs`
-//! does no such reordering, and measured here its 8-slot digest is IDENTICAL
-//! to its 16-slot one. Note the ordering is UNCONDITIONAL: `MFERENCE_HIT_CB=0`
-//! turns off the separate command buffer but keeps the order, and measured
-//! here it moves no digest at all, so do not reach for that seam to explain
-//! a Gemma difference.
+//! throughput under a constrained working set", and BOTH FAMILIES NOW MEET
+//! IT LITERALLY: this arm asserts the 8-slot digest EQUALS the 16-slot one,
+//! not that it matches a second frozen golden.
 //!
-//! So this arm asserts the honest form -- output is deterministic and frozen
-//! WITHIN a slot count, and throughput does not COLLAPSE when the working
-//! set is halved. Asserting Gemma byte-identical ACROSS slot counts would be
-//! asserting FP associativity, which is false; the two counts get two rows.
+//! It did not always. Gemma used to order a layer's routed slots misses
+//! first then hits, so the resident hits' phase-1 GEMV could ride its own
+//! command buffer; that order fed phase 2's reduce, and FP addition is not
+//! associative, so Gemma's bytes moved with the hit/miss split and the two
+//! slot counts needed two rows. Worse, the hit/miss split is a function of
+//! CACHE STATE rather than of the prompt, so two warm greedy runs of one
+//! prompt in one process could differ (2026-08-08: 4 distinct outputs in 6
+//! runs on a Q8_0 GGUF install at 16 slots, 2 in 6 on the MLX install at
+//! 32 -- this gate had only ever run at 16 and 8). The slots are now
+//! dispatched in the router's own ranking, which depends on the route
+//! alone, and the whole class went away with it.
 
 use std::path::Path;
 
@@ -117,12 +116,6 @@ pub struct ChipQuality {
     pub perplexity: f64,
     pub greedy_digest: &'static str,
     pub sampled_digest: &'static str,
-    /// The same greedy generation with the expert cache halved to
-    /// `PRESSURE_EXPERT_CACHE_SLOTS`. A SECOND golden, not a copy of
-    /// `greedy_digest`: the two slot counts legitimately differ (see the
-    /// module doc), so this row freezes the constrained arm against its
-    /// own past.
-    pub constrained_digest: &'static str,
     /// Where the row came from: date, chip, power source. Printed every
     /// run and quoted in every failure. No row here is or can be a Swift
     /// parity claim -- the Swift original publishes no quality numbers at
@@ -261,6 +254,16 @@ pub fn run_quality_gate(dir: &Path, rows: &[ChipQuality]) {
          working set is not deterministic, which is a stronger failure than \
          any digest drift"
     );
+    // The slot order is the router's ranking, which the cache cannot reach,
+    // so halving the working set must not move a single byte. This is the
+    // assertion that fails if misses-first ordering ever comes back.
+    assert_eq!(
+        constrained_digest, greedy_digest,
+        "greedy output at {PRESSURE_EXPERT_CACHE_SLOTS} expert-cache slots \
+         differs from the same generation at {PROTOCOL_EXPERT_CACHE_SLOTS}: \
+         the routed-slot dispatch order has become a function of cache state \
+         again, so output depends on how many experts happened to be resident"
+    );
     assert!(
         throughput_ratio >= PRESSURE_THROUGHPUT_FLOOR_RATIO,
         "halving the expert cache to {PRESSURE_EXPERT_CACHE_SLOTS} slots cut \
@@ -300,14 +303,6 @@ pub fn run_quality_gate(dir: &Path, rows: &[ChipQuality]) {
         "sampled output changed against the recorded golden (source: {}). \
          The sampled arm sees distribution bugs greedy cannot (AGENTS.md \
          Gotcha 16); the greedy line above tells the two apart.",
-        row.source
-    );
-    assert_eq!(
-        constrained_digest, row.constrained_digest,
-        "greedy output at {PRESSURE_EXPERT_CACHE_SLOTS} expert-cache slots \
-         changed against the recorded golden (source: {}). If the line above \
-         passed, the model is unchanged and what moved is the streamed-expert \
-         path that only a constrained cache exercises.",
         row.source
     );
 }
