@@ -355,3 +355,19 @@ fn block_table_matches_the_spec_where_it_answers() {
     assert_eq!(ggml_type_name(5), None);
     assert_eq!(ggml_type_name(99), None);
 }
+
+/// The parser's idea of a Q8_0 block and the CPU reference's must not drift
+/// apart. `mrefrust_compute` cannot depend on this crate (the dependency runs
+/// the other way), so the two declare the constants independently and this is
+/// where they are held to each other. A disagreement would show up as every
+/// tensor after the first being read from the wrong offset.
+#[test]
+fn the_q8_0_block_matches_the_cpu_reference() {
+    assert_eq!(
+        ggml_type_block(8),
+        Some((
+            compute::Q8_0_BLOCK_ELEMS as u64,
+            compute::Q8_0_BLOCK_BYTES as u64
+        ))
+    );
+}

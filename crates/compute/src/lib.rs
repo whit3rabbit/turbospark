@@ -1,6 +1,7 @@
 //! Destination-selected compute strategy plus CPU reference kernels.
 //!
 //! The kernel modules (`rms_norm`, `wht`, `rope`, `attention`, `quant`,
+//! `quant_gguf`,
 //! `moe`, `gdn`, `gating`, `sampling`, `tolerance`) are the numerical ground truth later GPU
 //! kernels are validated against. Numerics parity with any upstream
 //! implementation is out of scope for `ComputeStrategy` itself; only the
@@ -15,6 +16,7 @@ pub mod gating;
 pub mod gdn;
 pub mod moe;
 pub mod quant;
+pub mod quant_gguf;
 pub mod rms_norm;
 pub mod rope;
 pub mod sampling;
@@ -29,6 +31,9 @@ pub use quant::{
     bf16_to_f32, dequant_int4_gemv, dequant_int8_gemv, dequantize_int4_affine,
     dequantize_int8_affine, embed_lookup_int4, embed_lookup_int8, f32_to_bf16,
     quantize_int4_affine, quantize_int8_affine, Int4AffineRow, Int8AffineRow,
+};
+pub use quant_gguf::{
+    dequant_q8_0_gemv, dequantize_q8_0, pearson, quantize_q8_0, Q8_0_BLOCK_BYTES, Q8_0_BLOCK_ELEMS,
 };
 pub use rms_norm::rms_norm;
 pub use rope::{rope_neox, rope_neox_subdim, rope_paired};

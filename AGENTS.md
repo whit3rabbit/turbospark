@@ -175,6 +175,14 @@ MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
 MREFRUST_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
   cargo test -p mrefrust-repack --test gguf_checkpoint_network --release -- --ignored --nocapture
 
+# Settles which half of Gemma's fused ffn_gate_up_exps is the gate (Stage 2's
+# first use of the Q8_0 reference). Correlates a dequantized layer 0 expert 0
+# against the same expert in the MLX install. Also a real-data check on the
+# Q8_0 dequant itself: a sign, scale or block-layout error cannot correlate
+# at +0.9957 with an independently-produced INT4 install. Few KB, ~5 s.
+MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
+  cargo test -p mrefrust-repack --test gguf_fused_gate_network --release -- --ignored --nocapture
+
 # The other #[ignore]d tests: real checkpoint downloads (many GB).
 cargo test -p mrefrust-repack --test gemma4_checkpoint_network --release -- --ignored --nocapture
 cargo test -p mrefrust-repack --test hf_checkpoint_network --release -- --ignored --nocapture
@@ -692,9 +700,13 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
       assertion catches.
     - **Gemma 4 fuses gate and up into one routed tensor**
       (`ffn_gate_up_exps`, `[in, 2 * ffn, experts]`) where MLX keeps them
-      apart; Qwen 3.6 does not fuse. Which half is the gate is an
-      ASSUMPTION this port has not yet verified -- see `FUSED_GATE_FIRST`
-      in `gguf_checkpoint.rs` for how Stage 2 settles it.
+      apart; Qwen 3.6 does not fuse. Gate is the FIRST half: measured
+      2026-08-07 by correlating a dequantized layer 0 expert 0 against the
+      MLX install (+0.9957 matched, -0.0084 crossed), not assumed. The
+      standing test is `gguf_fused_gate_network.rs` and it costs a few KB
+      of ranged reads. Getting this backwards is the format's nastiest
+      trap: two unrelated matrices swap inside every routed expert and the
+      model keeps generating fluent, wrong text.
     - **`general.architecture` is the converter's name, not the family's.**
       Qwen 3.6 GGUFs say `qwen35moe`. Deriving it from
       `ModelFamily::as_str()` recognizes no real Qwen GGUF.
@@ -779,7 +791,7 @@ reference checkpoint plus a Python environment. `kld.py` runs mlx-lm under
 installed globally or enters this workspace.
 
 - `crates/core`: shared primitives (`TokenId`, `LogitValue`, `LogitsView`), error types (`CoreError`), runtime configuration (`RuntimeConfig`, `RuntimeConfigBuilder`), allowed value sets (`ALLOWED_CACHE_SLOTS`, `ALLOWED_CHUNK_SIZES`), automatic chunk-size resolution (`chunk_sizing.rs`), and prefill chunking primitives (`prefill.rs`). Details in [`crates/core/CLAUDE.md`](crates/core/CLAUDE.md).
-- `crates/compute`: CPU reference kernels (RmsNorm, WHT, RoPE incl. Qwen's `rope_neox_subdim`, causal attention, int4/int8 affine quant + GEMV, embedding lookup, MoE FFN, the gated-DeltaNet chain (`gdn.rs`) and Qwen's gating kernels (`gating.rs`), logit softcap-softmax, RelError/tolerance table, sampling helpers) plus destination compute strategy marker type (`ComputeStrategy`). These are the numerical ground truth `crates/gpu`'s Metal kernels are validated against. Details in [`crates/compute/CLAUDE.md`](crates/compute/CLAUDE.md).
+- `crates/compute`: CPU reference kernels (RmsNorm, WHT, RoPE incl. Qwen's `rope_neox_subdim`, causal attention, int4/int8 affine quant + GEMV, the GGUF block-quant reference (`quant_gguf.rs`: Q8_0 dequant/quant/GEMV plus `pearson`), embedding lookup, MoE FFN, the gated-DeltaNet chain (`gdn.rs`) and Qwen's gating kernels (`gating.rs`), logit softcap-softmax, RelError/tolerance table, sampling helpers) plus destination compute strategy marker type (`ComputeStrategy`). These are the numerical ground truth `crates/gpu`'s Metal kernels are validated against. Details in [`crates/compute/CLAUDE.md`](crates/compute/CLAUDE.md).
 - `crates/invocation`: pure translation of command-line argument tokens into a validated invocation request (`InvocationRequest`), options definition (`OPTIONS`), diagnostics (`diagnostics.rs`), typed failures (`InvocationFailure`), usage rendering (`render_usage`), and pure outcome-to-exit-status and outcome-to-stream routing decisions. Performs no filesystem, environment, or process I/O. Details in [`crates/invocation/CLAUDE.md`](crates/invocation/CLAUDE.md).
 - `crates/selection`: candidate selection (`select`, `select_from_logits`) from a per-candidate score vector under a validated shaping configuration (temperature, top-k, top-p, repetition penalty, seed), accumulated history, step position, determinism, and distribution guards. Numeric parity with any upstream implementation is out of scope; only the observable contract is exercised. Details in [`crates/selection/CLAUDE.md`](crates/selection/CLAUDE.md).
 - `crates/window-fit`: pure, deterministic conversation-window fitting (`fit_conversation_window`). Drops the oldest eligible turns from a conversation (`FitOutcome`, `DroppedTurn`), using a caller-supplied whole-conversation length measurement, until the measured length is under a caller-supplied bound or nothing eligible remains. An optional leading instruction turn and the newest turn are never removed. Performs no input or output and holds no state between calls. Details in [`crates/window-fit/CLAUDE.md`](crates/window-fit/CLAUDE.md).

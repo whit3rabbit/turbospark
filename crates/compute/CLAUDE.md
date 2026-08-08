@@ -18,6 +18,7 @@ crates/compute/
 |   +-- gating.rs       # Qwen 3.6 gating references (sigmoid gate/scalar, q/gate split)
 |   +-- moe.rs          # CPU MoE FFN reference and gated activation bridge
 |   +-- quant.rs        # INT4 and INT8 affine quantization and GEMV reference
+|   +-- quant_gguf.rs   # GGUF block quant reference (Q8_0) + Pearson correlation
 |   +-- rms_norm.rs     # CPU RMSNorm reference calculation
 |   +-- rope.rs         # CPU rotary positional embedding calculation
 |   +-- sampling.rs     # Host-side sampling helper logic
@@ -25,6 +26,7 @@ crates/compute/
 |   \-- wht.rs          # Walsh-Hadamard Transform reference implementation
 \-- tests/
     +-- kernels.rs      # Kernel numerical validation unit tests
+    +-- quant_gguf.rs   # Q8_0 round trip, sign, zero block, GEMV, correlation
     \-- smoke.rs        # Basic compute smoke test
 ```
 
@@ -34,7 +36,8 @@ crates/compute/
 - `gdn.rs`: `GdnReference`, the straight-line model of Qwen 3.6's gated-DeltaNet chain (conv + SiLU, per-head q/k norm with folded delta scales, the FP32 delta recurrence, the gated output norm) that `crates/gpu/tests/gdn_parity.rs` checks the eight `gdn.metal` kernels against.
 - `gating.rs`: `sigmoid_gate_mul`, `sigmoid_scalar_mul`, `split_q_gate`.
 - `moe.rs`: CPU reference MoE FFN logic (`run_ffn`) used to bridge gated FFN activations.
-- `quant.rs`: INT4 and INT8 quantization/dequantization and GEMV math used by repackers and CPU fallbacks.
+- `quant.rs`: INT4 and INT8 affine (MLX-layout) quantization/dequantization and GEMV math used by repackers and CPU fallbacks.
+- `quant_gguf.rs`: the GGUF block-quant reference (Q8_0 today, Q4_K next). A separate module from `quant.rs` because the layout is not a variant of the affine one: interleaved rather than planar, signed quants, symmetric with no bias. Also carries `pearson`, which is what settles `FUSED_GATE_FIRST` over in `crates/repack`.
 - `rms_norm.rs`: Reference RMSNorm implementation.
 - `rope.rs`: Reference RoPE implementations.
 - `tolerance.rs`: Relative error metric (`RelError`) used in parity testing across CPU and GPU pipelines.

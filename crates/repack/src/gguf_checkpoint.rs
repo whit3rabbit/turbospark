@@ -46,17 +46,25 @@ use crate::resident_writer::{RawTensorSpec, ResidentEntrySpec};
 
 /// Which half of a fused `ffn_gate_up_exps` tensor is the gate.
 ///
-/// **This is an assumption, not a measurement.** Both halves have identical
-/// shapes, so nothing in the file distinguishes them, and Stage 1 has no
-/// dequantization reference to decode them with. `true` follows the
-/// prevailing convention (HF's own `gate_up_proj` fusion puts gate first),
-/// and it is a named constant so that flipping it is a one-line change.
+/// **MEASURED 2026-08-07, no longer an assumption.** Stage 1 could only guess
+/// (both halves have identical shapes and nothing in the file distinguishes
+/// them), and a wrong guess swaps two unrelated matrices inside every routed
+/// expert without crashing: the model keeps generating fluent, wrong text.
 ///
-/// How to settle it in Stage 2, once a Q8_0 CPU reference exists: dequantize
-/// expert 0 of layer 0 from the GGUF and compare against the same expert's
-/// `gate_proj` in the MLX-derived install. They are different quantizations
-/// of the same trained weights, so they will not match to the bit, but gate
-/// and up are unrelated matrices and the correlation will be unambiguous.
+/// Settled by dequantizing layer 0 expert 0 out of the real
+/// `gemma-4-26B-A4B-it-Q8_0.gguf` and correlating it against the same expert
+/// in the MLX-derived install. Different quantizations of the same trained
+/// weights, so the two agree in direction rather than to the bit, and gate
+/// and up are unrelated matrices, so the separation is not subtle:
+///
+/// ```text
+/// first half  vs install gate +0.9957   vs install up -0.0084
+/// second half vs install gate -0.0085   vs install up +0.9957
+/// ```
+///
+/// `crates/repack/tests/gguf_fused_gate_network.rs` is that measurement,
+/// kept as a standing test rather than a note. It costs a few KB of ranged
+/// reads, not a download.
 pub const FUSED_GATE_FIRST: bool = true;
 
 #[derive(Debug)]

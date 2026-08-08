@@ -923,11 +923,13 @@ live network).
   EQUAL to the one this port's own MLX-derived install declares. That last
   one is the strongest check available, because the two sides share no
   code and no input.
-  Beyond kernels, three things a GGUF install would still need before it
-  could run, all discovered by the above rather than assumed: its norms are
-  F32 where the runtime wants BF16, its router is F32 where the runtime
-  wants INT8, and Gemma's routed gate/up arrive FUSED in one tensor whose
-  half-ordering this stage cannot verify (`FUSED_GATE_FIRST`). Not
+  Beyond kernels, two things a GGUF install would still need before it
+  could run, both discovered by the above rather than assumed: its norms are
+  F32 where the runtime wants BF16, and its router is F32 where the runtime
+  wants INT8. A third is now settled rather than outstanding: Gemma's routed
+  gate/up arrive FUSED in one tensor, and gate is the FIRST half, measured
+  against the real file rather than assumed (`FUSED_GATE_FIRST`,
+  `crates/repack/tests/gguf_fused_gate_network.rs`). Not
   scaffolded, not attempted: a local-file `RangeSource` (the walk streams
   over HTTP like the safetensors one), and any Q5_K/Q3_K/Q2_K/i-quant
   block sizes (`ggml_type_block` answers only for types whose size was read
