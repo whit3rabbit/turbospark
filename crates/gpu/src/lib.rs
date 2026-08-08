@@ -47,6 +47,8 @@ mod dequant_int8_gemv;
 #[cfg(target_os = "macos")]
 mod dequant_q4_k_gemv;
 #[cfg(target_os = "macos")]
+mod dequant_q6_k_gemv;
+#[cfg(target_os = "macos")]
 mod dequant_q8_0_gemv;
 #[cfg(target_os = "macos")]
 mod dispatch_profile;
@@ -101,6 +103,11 @@ pub use dequant_int8_gemv::{
 pub use dequant_q4_k_gemv::{
     dequant_q4_k_gemv, dequant_q4_k_gemv_resident, encode_dequant_q4_k_gemv_resident,
     q4_k_row_bytes, Q4KResidentMatrix, Q4_K_BLOCK_BYTES, Q4_K_BLOCK_ELEMS,
+};
+#[cfg(target_os = "macos")]
+pub use dequant_q6_k_gemv::{
+    dequant_q6_k_gemv, dequant_q6_k_gemv_resident, encode_dequant_q6_k_gemv_resident,
+    q6_k_row_bytes, Q6KResidentMatrix, Q6_K_BLOCK_BYTES, Q6_K_BLOCK_ELEMS,
 };
 #[cfg(target_os = "macos")]
 pub use dequant_q8_0_gemv::{
