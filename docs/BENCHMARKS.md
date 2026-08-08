@@ -387,8 +387,71 @@ port. Qwen 3.6 has no cross-engine number: `logit_dump.rs` accepts
 `MREFRUST_QWEN36_INSTALL_DIR` and would produce one, but `kld.py`'s
 reference is pinned to the Gemma repo.
 
+## Power
+
+NOT A PARITY CLAIM. Swift was never measured for power, here or upstream;
+this is this port measuring itself, like the Quality section above.
+
+**Full write-up, method, hygiene audit and caveats: `docs/POWER_BASELINE.md`.**
+Reproduce with `scripts/power.sh`. ROADMAP Phase P1.
+
+Measured 2026-08-07 across two sessions, AC and battery, one binary. 16
+expert-cache slots, frozen protocol, `powermetrics` at 200 ms windowed to
+the measured run alone by the `[power-window ...]` markers
+`mference-bench` emits. Watts are CPU+GPU+ANE, not wall. The AC rows below
+are the baseline: every run of both installs held Nominal thermal
+pressure, so all are n=2 and none is filtered.
+
+| install | case | tok/s | watts | J/token |
+| --- | --- | ---: | ---: | ---: |
+| Gemma 4 26B-A4B | short-explanation | 40.70 | 16.66 | 0.3838 |
+| Gemma 4 26B-A4B | medium-review | 38.40 | 17.83 | 0.4465 |
+| Gemma 4 26B-A4B | long-synthesis | 34.75 | 17.77 | 0.4975 |
+| Qwen 3.6 35B-A3B | short-explanation | 38.83 | 14.30 | 0.3513 |
+| Qwen 3.6 35B-A3B | medium-review | 37.76 | 13.78 | 0.3517 |
+| Qwen 3.6 35B-A3B | long-synthesis | 33.78 | 14.88 | 0.4337 |
+
+Qwen is the more efficient engine here, 0.35 J/token against Gemma's
+0.38-0.45, almost entirely from GPU power (10.3 W against 12.3-13.6 W):
+the hybrid linear-attention design showing up on the power axis the way it
+already does on memory. Energy per token grows with context on both.
+
+Three results worth carrying, each detailed in `docs/POWER_BASELINE.md`:
+
+- **AC vs battery answers AGENTS.md Gotcha 22, which had stood unmeasured.**
+  Energy is NOT the axis that moves: watts and J/token differ by a few
+  percent with no consistent sign. THERMAL HEADROOM is: on AC 50 of 50
+  arms held Nominal, while on battery `long-synthesis` left Nominal on
+  every run of both installs and two further runs were lost the same way,
+  so the battery column has holes the AC column does not.
+- **Throttling BUYS efficiency, and so flatters a power table.** The same
+  Gemma case, clean against Heavy pressure: 39.34 tok/s at 0.4568 J/token
+  against 31.47 tok/s at 0.3169. Twenty percent less throughput for 31%
+  less energy per token. That is Phase P2's premise, measured by accident,
+  and AGENTS.md Gotcha 28.
+- **Nothing is spinning.** GPU power over a decode window swings from
+  64 mW to 15,893 mW (standard deviation 21-39% of mean, on both power
+  sources), which is the per-token phase structure rather than a
+  busy-wait. `MFERENCE_READ_QOS=utility` on the read pool measured as a
+  NULL result on AC (+1.0% / +0.9% / -0.8% energy, sign flipping) and is
+  NOT wired. The battery session read it as a clear loss; that reading was
+  thermal drift.
+
 ## Caveats worth repeating
 
+- **The power numbers are on BATTERY and every other number in this file
+  is on AC.** Do not mix them. Sampler overhead is real too:
+  `powermetrics` wakes 5x/s and its own CPU time lands in the counters it
+  reads, equally across arms, so paired ratios are clean and absolute
+  watts carry a small inflation.
+- **The wall-power column is directional only.** The battery gauge
+  (`ioreg` `InstantAmperage` x `Voltage`, no root) read a standard
+  deviation of 20-40% of its own mean across a run, and reported 48.8 W
+  against 64.0 W for two arms doing identical work. It is good enough to
+  say the machine draws roughly 50-70 W under load against ~20 W idle,
+  and not good enough to publish a wall joules-per-token. That gap
+  between ~17 W of CPU+GPU and ~60 W at the battery is mostly display and
+  rest-of-SoC, and remains unattributed.
 - Two measured runs per arm. Enough to show the 1.5x gap that used to be
   here, and enough to show it is gone; not enough to claim a 2 percent
   difference in either direction.

@@ -9,7 +9,9 @@ a behavior-compatible port of the Mference Swift inference engine (see
 ASCII: no emojis and no em dashes (project rule).
 
 `docs/TESTING.md` covers what the suite proves and how tests are gated
-(macOS, `#[ignore]`d, env-var). `docs/BENCHMARKING.md` covers the three
+(macOS, `#[ignore]`d, env-var). `docs/POWER_BASELINE.md` covers watts and
+joules-per-token and is the only page here measured on battery.
+`docs/BENCHMARKING.md` covers the three
 `mference-bench` modes, how peak memory is measured, and the memory
 oracle that asserts this port against per-chip baseline rows (mostly the
 published Swift numbers; see `docs/BENCHMARKING.md` for which rows are
@@ -147,6 +149,21 @@ MREFRUST_LOGIT_DUMP_DIR=/tmp/kld/cold \
 # 30 seconds. Curve and floor: docs/BENCHMARKS.md.
 MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
   cargo test -p mrefrust-bench --test quality_sensitivity --release -- --ignored --nocapture
+
+# Power baseline over the frozen protocol (ROADMAP Phase P1): watts and
+# joules-per-token, split prefill/decode. NEEDS SUDO (powermetrics is
+# root-only) and so cannot be run non-interactively. ~12 min per install.
+# Windows the capture with the `[power-window ...]` markers mference-bench
+# emits, so the model open and the discarded warmup stay out of the total.
+# Numbers and caveats: docs/BENCHMARKS.md.
+LABEL=battery OUT=/tmp/power-gemma MODEL=~/models/gemma4.gturbo scripts/power.sh 2
+
+# Same harness driving an interleaved A/B of the read-pool QoS seam. Arms
+# alternate WITHIN each pair, not as two consecutive batches. Measured and
+# rejected once already (it loses on both joules and tok/s); the seam is
+# kept as a documented dead end.
+LABEL=battery MODEL=~/models/gemma4.gturbo CASES=short-explanation \
+  QOS=default,utility scripts/power.sh 3
 
 # The other #[ignore]d tests: real checkpoint downloads (many GB).
 cargo test -p mrefrust-repack --test gemma4_checkpoint_network --release -- --ignored --nocapture
@@ -525,9 +542,19 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
 22. **Record the power source next to any absolute number, and never
     A/B across sessions.** `pmset -g ps` is the check; `pmset -g therm`
     does not flag battery operation, and `powermode` reads 0 either way.
-    This is a precaution, not a measured effect: no run in this repo has
-    yet compared the same binary on AC against battery, so the size of
-    any difference is unknown. What IS established is that cross-session
+    NOW MEASURED, 2026-08-07: one binary ran the whole protocol on both
+    power sources (`docs/POWER_BASELINE.md`), and the answer has two
+    halves. ENERGY is not the axis that moves -- watts and
+    joules-per-token differ by a few percent with no consistent sign
+    (Gemma `short-explanation` 3.7% worse on AC, Qwen `medium-review`
+    5.9% better), which is ordinary cross-session drift. THERMAL HEADROOM
+    is the axis that moves, and it is decisive: on AC 50 of 50 arms held
+    Nominal pressure, while on battery `long-synthesis` left Nominal on
+    every run of BOTH installs and two further runs were lost the same
+    way, so the battery run has holes the AC run does not (Gotcha 28).
+    Keep recording the source, but expect the difference to show up as
+    throttling, not as a power-source correction to the watts. What is
+    also established is that cross-session
     absolute numbers here have repeatedly failed to reproduce (see the
     2026-08-05 rows in CLAUDE.local.md) while ratios measured back to
     back within one session have held. Prefer the ratio. That is why
@@ -613,6 +640,32 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     constrained arm rather than asserting the two equal, which on the
     Gemma flow would be asserting FP associativity.
 
+28. **Thermal pressure silently rewrites BOTH throughput and energy, and
+    nothing in the standing gate looks at it.** Every existing harness
+    here records the power source (Gotcha 22) and none records
+    `Current pressure level`. Measured 2026-08-07 on battery, same binary
+    and prompt, Gemma `medium-review`: a Nominal run decoded 39.34 tok/s
+    at 18.58 W and 0.4568 J/token, while a Heavy-pressure run of the SAME
+    case decoded 31.47 tok/s at 10.21 W and 0.3169 J/token. Note the
+    direction, because it is a trap: throttling made the run SLOWER and
+    simultaneously more energy-efficient per token (voltage-frequency
+    scaling is superlinear), so a throttled arm does not look broken in a
+    power table, it looks GOOD. In a tok/s table it just looks like a bad
+    sample. THIS IS A BATTERY PHENOMENON on this machine, and the
+    contrast is sharp: the protocol's `long-synthesis` case left Nominal
+    on every run of both installs on battery (it prefills ~3,000 tokens
+    for 63-72 s before decoding anything), while the SAME binary running
+    the SAME protocol on AC held Nominal on 50 of 50 sampled arms.
+    `scripts/power.sh` flags any run whose pressure leaves Nominal and
+    excludes it; `scripts/parity.sh` and the oracles do NOT, so a
+    surprising throughput row from a long battery session is worth
+    checking against `pmset -g therm` before it is believed. The
+    corollary for A/B work is stronger than "prefer AC": an effect
+    smaller than a few percent CANNOT be measured on battery at all. The
+    read-pool QoS seam read as a clear loss on battery (one pair at +8.8%
+    energy) and as a null result on AC, and the AC reading is the correct
+    one (`docs/POWER_BASELINE.md`).
+
 ## Per-Crate Documentation
 
 When working on code inside a specific crate, refer to that crate's `CLAUDE.md` file for crate-specific architecture, key modules, dev commands, and localized gotchas:
@@ -666,9 +719,11 @@ Workspace directory structure and crate layout:
 +-- scripts
 |   +-- kld.py         # cross-engine KL vs mlx-lm (reads tests/logit_dump.rs's output)
 |   +-- parity.sh      # head-to-head protocol run against the Swift MferenceCLI
-|   \-- phasediff.sh   # bucket-level decode phase diff against the Swift engine
+|   +-- phasediff.sh   # bucket-level decode phase diff against the Swift engine
+|   \-- power.sh       # watts & joules-per-token over the protocol (needs sudo)
 \-- docs
     +-- BENCHMARKING.md# benchmark modes, mach memory sampling & memory oracle details
+    +-- POWER_BASELINE.md # watts, joules-per-token, hygiene audit (ROADMAP Phase P1)
     \-- TESTING.md     # test suite organization, platform gating & testing rules
 ```
 
@@ -692,7 +747,7 @@ installed globally or enters this workspace.
 - `crates/repack`: safetensors header parsing (pure, tested against synthetic fixtures), `RangeSource` trait for ranged reads (HTTP-backed for real installs, in-memory for tests) with two-step header-fetch plan, per-row int4/int8 quantization repack (reusing `mrefrust_compute`'s quantizer), byte-exact `.gturbo` directory assembly (`write_gturbo_install`), real named resident-tensor index writer (`write_gturbo_install_with_resident_index`), synthetic install builders (`synthetic_model.rs`, `synthetic_real.rs`, `synthetic_qwen.rs`), Hugging Face Llama checkpoint repacker (`hf_checkpoint.rs`), Gemma 4 mlx-community checkpoint repacker & streamed pipeline (`gemma4_checkpoint.rs`, family-parameterized so Qwen 3.6 goes through the same walk), Qwen 3.6 `config.json` parser (`qwen36_config.rs`, the one family-specific piece of that walk), install verifier (`install_verifier.rs`), and manifest peeker (`manifest_peek.rs`). Details in [`crates/repack/CLAUDE.md`](crates/repack/CLAUDE.md).
 - `crates/server`: HTTP server on loopback (`mference-server` binary, axum framework) serving OpenAI `/v1/chat/completions`, Anthropic `/v1/messages`, and `/v1/models`, both generation endpoints supporting full-response (non-streaming) and SSE-streaming responses. The wire types come from `anyllm_translate` (crates.io, default features: pure and IO-free), which also translates an Anthropic request into the OpenAI request the existing path understands and translates the result back, so Anthropic-native clients need no proxy. Tool calling is wired on both endpoints (request `tools` render through the checkpoint's `chat_template.jinja`, generated calls come back through `StructuredAssistantDecoder`); images and `thinking` are dropped, some of it reported on an `x-anyllm-degradation` header. Two backends behind the `ChatModel` trait: `RealChatModel` (macOS, `--model <install-dir>`, one mutex-serialized `RealForwardRunner` per process) and `ScriptedChatModel` (portable, canned completions, what the integration tests drive). Details in [`crates/server/CLAUDE.md`](crates/server/CLAUDE.md).
 - `crates/bench`: the `mference-bench` binary plus benchmark library (`mrefrust_bench`). The scripted default (three fixed prompts, fixed seed, discarded warmup) measures loop overhead via `ScriptedLogitProducer`. `--model <install-dir>` (macOS) is the real Swift-comparison mode: frozen community protocol (`protocol.rs`) driven through `RealForwardRunner`, reporting split prefill/decode tok/s and peak `phys_footprint` from the mach sampler (`memory.rs`). `tests/memory_oracle.rs` (`#[ignore]`d, gated on `MREFRUST_GEMMA4_INSTALL_DIR`) asserts peak footprint against per-chip baseline rows, plus a steady-state replay guard; each row carries a `source` recording whether it is a Swift parity number or this port's own measurement. The quality axis lives here too, all `#[ignore]`d: `tests/quality_gate.rs` and its Qwen sibling (per-install perplexity plus golden digests), `tests/quality_sensitivity.rs` (proof the perplexity responds to quantization damage), and `tests/logit_dump.rs` (full-vocab logits plus the exact token ids, feeding `scripts/kld.py`'s cross-engine KL against mlx-lm -- the one external reference in the whole quality section). Full details in [`crates/bench/CLAUDE.md`](crates/bench/CLAUDE.md) and `docs/BENCHMARKING.md`.
-- `docs/`: repository documentation directory. `docs/BENCHMARKING.md` details benchmark harness modes, mach memory sampling, and the memory oracle baseline assertions; `docs/TESTING.md` documents test suite organization, macOS and environment-variable gating conventions, and test writing rules.
+- `docs/`: repository documentation directory. `docs/BENCHMARKING.md` details benchmark harness modes, mach memory sampling, and the memory oracle baseline assertions; `docs/POWER_BASELINE.md` records watts and joules-per-token per install plus the power-hygiene audit (ROADMAP Phase P1), and is the one page here measured on BATTERY rather than AC; `docs/TESTING.md` documents test suite organization, macOS and environment-variable gating conventions, and test writing rules.
 
 ## Verification policy
 

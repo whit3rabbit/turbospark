@@ -346,6 +346,49 @@ Three traps here, matching the three above:
   masks prompt loss; a distribution comparison between two engines is
   valid at every position, and prompt positions are free.
 
+## The power harness
+
+`scripts/power.sh` reports average watts and joules-per-token over the
+frozen protocol, split prefill vs decode (ROADMAP Phase P1). Numbers,
+hygiene audit and caveats: `docs/POWER_BASELINE.md` (summary table also
+in `docs/BENCHMARKS.md`).
+
+```sh
+LABEL=battery OUT=/tmp/power-gemma MODEL=~/models/gemma4.gturbo scripts/power.sh 2
+# Interleaved A/B of the read-pool QoS seam, arms alternating within a pair:
+LABEL=battery MODEL=~/models/gemma4.gturbo CASES=short-explanation \
+  QOS=default,utility scripts/power.sh 3
+```
+
+It needs root, because `powermetrics` does. One sampler runs for the
+whole script and every arm is windowed out of that single log.
+
+Four things about it are load-bearing:
+
+- **The window is marker-driven, and without the markers the number is
+  meaningless.** `mference-bench --model` opens a 13 GB mmap, compiles
+  Metal pipelines, and runs a discarded 1024-token warmup before the
+  measured run. Wrapping the process would fold all of that into the
+  energy total. `run_model_mode` therefore emits
+  `[power-window case=... phase=start|end unix_ms=...]` on stderr around
+  the measured run alone. The prefill/decode split inside that window
+  needs no third marker: the `[stop=...]` footer already carries both
+  durations.
+- **The timeline is reconstructed, so its drift is measured, not
+  assumed.** `powermetrics` timestamps samples only to the second, so the
+  script rebuilds an absolute timeline by accumulating each sample's
+  reported elapsed figure from a wall-clock start. Drift against the wall
+  clock is printed every run and warned on past 2 s; it measured -0.7 s
+  over 742 s.
+- **Watts are CPU+GPU+ANE, not wall.** `Combined Power` excludes DRAM,
+  SSD, and display. The battery-gauge column (`ioreg`, no root) is the
+  wall figure, and it is too noisy to publish -- see the caveats in
+  `docs/BENCHMARKS.md`.
+- **Contaminated runs are flagged, never averaged in silently.** Any run
+  whose thermal pressure leaves Nominal, and any window integrated from
+  under 3 samples, prints a warning. On battery this fires often: the
+  long-context case saturates thermally on both installs.
+
 ## Measurement hygiene
 
 Carried over from the Swift protocol, worth repeating:

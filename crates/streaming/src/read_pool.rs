@@ -121,10 +121,44 @@ struct Pool {
     sender: std::sync::mpsc::Sender<Claim>,
 }
 
+/// A/B seam for ROADMAP Phase P1, in the shape of the decode path's other
+/// seams (`MFERENCE_SHARED_CB`, `MFERENCE_HIT_CB`,
+/// `MFERENCE_ROUTED_PIPELINE`): `MFERENCE_READ_QOS=utility` runs the
+/// workers at `QOS_CLASS_UTILITY`, which is the class Swift's I/O pool
+/// uses and which asks the scheduler for E-cores.
+///
+/// OFF by default, and the prior is that it loses: these threads are on
+/// the decode critical path (`run_batch` blocks until every claim drops)
+/// doing a page-cache memcpy that measured 32 GiB/s, so moving them to
+/// slower cores trades latency for whatever residency it buys. It is a
+/// seam rather than a default precisely so that trade can be measured
+/// end to end instead of assumed. Read ONCE here: setting the variable
+/// after the pool exists does nothing.
+fn read_qos_requested() -> bool {
+    std::env::var("MFERENCE_READ_QOS").as_deref() == Ok("utility")
+}
+
+/// Puts the calling worker on `QOS_CLASS_UTILITY`. Rust's std threads
+/// carry no QoS class at all, so without this they inherit the spawning
+/// thread's, which for the decode loop is the default user-initiated one.
+#[cfg(target_os = "macos")]
+fn apply_read_qos() {
+    // SAFETY: sets the CALLING thread's own QoS class. Takes no pointer,
+    // borrows nothing, and retains nothing past the call.
+    #[allow(unsafe_code)]
+    unsafe {
+        libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_UTILITY, 0);
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn apply_read_qos() {}
+
 fn pool() -> &'static Pool {
     static POOL: OnceLock<Pool> = OnceLock::new();
     POOL.get_or_init(|| {
         let (sender, receiver) = std::sync::mpsc::channel::<Claim>();
+        let qos = read_qos_requested();
         // std's receiver is single-consumer, so the workers share it under
         // a mutex. Contention is a handful of lock acquisitions per layer
         // against reads that copy hundreds of KiB each.
@@ -133,15 +167,22 @@ fn pool() -> &'static Pool {
             let receiver = std::sync::Arc::clone(&receiver);
             std::thread::Builder::new()
                 .name("mrefrust-expert-read".to_string())
-                .spawn(move || loop {
-                    let claim = {
-                        let guard = receiver.lock().unwrap();
-                        guard.recv()
-                    };
-                    // The channel only closes at process teardown.
-                    let Ok(claim) = claim else { return };
-                    claim.0.run();
-                    drop(claim);
+                .spawn(move || {
+                    // A thread's QoS class is set from inside that thread,
+                    // so this cannot move up to the spawn site.
+                    if qos {
+                        apply_read_qos();
+                    }
+                    loop {
+                        let claim = {
+                            let guard = receiver.lock().unwrap();
+                            guard.recv()
+                        };
+                        // The channel only closes at process teardown.
+                        let Ok(claim) = claim else { return };
+                        claim.0.run();
+                        drop(claim);
+                    }
                 })
                 .expect("spawn expert read worker");
         }

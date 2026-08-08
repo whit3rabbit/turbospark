@@ -65,6 +65,16 @@ const FIXED_PROMPTS: [&str; 3] = [
 const FIXED_SEED: u64 = 42;
 const FIXED_MAX_NEW_TOKENS: u32 = 64;
 
+/// Wall clock, for the `[power-window ...]` markers. `Instant` is
+/// deliberately not used: the marker has to be comparable against a
+/// timeline `powermetrics` builds in another process.
+#[cfg(target_os = "macos")]
+fn unix_millis() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis())
+}
+
 struct RunStats {
     tokens: usize,
     decode_seconds: f64,
@@ -385,7 +395,26 @@ fn run_model_mode(
             eprintln!("{} warmup failed: {e}", case.id);
             return std::process::ExitCode::from(1);
         }
-        match run_protocol_case(&mut runner, &tok, case, &mut sampler) {
+        // Wall-clock bounds of the MEASURED run, for `scripts/power.sh` to
+        // window a `powermetrics` capture with. Everything outside them is
+        // power this process burned but the protocol does not measure: the
+        // 13 GB mmap and Metal pipeline compilation at open, and the
+        // discarded warmup, which is itself a full 1024-token generation.
+        // Inferring the window from process start or exit instead would
+        // fold those in. The prefill/decode split INSIDE the window needs
+        // no further markers: the footer below already carries both.
+        eprintln!(
+            "[power-window case={} phase=start unix_ms={}]",
+            case.id,
+            unix_millis()
+        );
+        let measured = run_protocol_case(&mut runner, &tok, case, &mut sampler);
+        eprintln!(
+            "[power-window case={} phase=end unix_ms={}]",
+            case.id,
+            unix_millis()
+        );
+        match measured {
             Ok(r) => {
                 let peak_mib = r
                     .peak_footprint_bytes
