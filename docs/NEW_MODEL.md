@@ -19,6 +19,17 @@ Every command a gate below names in prose is spelled out in `AGENTS.md`:
 "Build, test, dev commands" for the per-crate tests and the memory oracle,
 "Real-model smoke" for the two 400-token runs Phase 3 and Phase 4 gate on.
 
+**A new SOURCE is a different axis from a new FAMILY, and this file is about
+the family axis.** Bringing GGUF in (ROADMAP Phase G) changed Phase 1 and
+Phase 2 and touched nothing in Phases 3 to 7: the decode flow, the head, the
+memory model and the quality gates do not know where the bytes came from.
+So if you are adding a source rather than an architecture, read Phase 1 and
+Phase 2 and skip the rest. The differences are marked "SOURCE:" below, and
+the record is `crates/repack/CLAUDE.md` Gotchas 4 to 7 plus `AGENTS.md`
+Gotchas 29, 30 and 33. The one thing that axis adds and this one does not
+have is that a source can be RIGHT about every name and still WRONG about
+what a tensor means (Gotcha 33).
+
 ---
 
 ## Phase 0 - Decide the scope, in writing
@@ -27,6 +38,21 @@ Before touching code, answer these from the checkpoint's `config.json` and
 the reference implementation. Every answer becomes a field in `ArchConfig`
 (`crates/model-io/src/arch_config.rs`; family baselines in
 `crates/model-io/src/arch_baselines.rs`) or a reason to stop.
+
+- [ ] **SOURCE: where does `ArchConfig` come from, and how is the family
+      identified?** A safetensors checkpoint answers both from
+      `config.json`. A GGUF has no `config.json`: the values come from
+      metadata keys under an architecture prefix (`gguf_config.rs`), and
+      several behavioural fields are simply ABSENT because llama.cpp
+      hardcodes them in its graph builder, so the derivation starts from
+      `known_architecture(family)` and overrides only what the file really
+      determines. Worse, `general.architecture` is the CONVERTER's name and
+      not the family's -- Qwen 3.6 GGUFs say `qwen35moe` -- so deriving it
+      from `ModelFamily::as_str()` recognizes no real file. Whatever the
+      source, the strongest available check is the same: assert the derived
+      `ArchConfig` EQUALS the one an independently produced install of the
+      same model declares (`gguf_checkpoint_network.rs`). The two sides
+      share no code and no input.
 
 - [ ] **Layer kinds.** Which layers are full attention, sliding-window,
       linear (GDN), compressed (MLA/DSV4)? This becomes
@@ -209,7 +235,19 @@ The rest of this phase only bites on a real download:
       routedExpert 2 or 4, and demands `affine` / bf16 scales / bf16
       biases / group size exactly 64 on every one. A family whose router
       ships INT4, or whose checkpoint uses a group size other than 64, is
-      rejected at load, not at repack. Read the checkpoint's
+      rejected at load, not at repack.
+      **SOURCE: a block-quantized slot is validated as a different SHAPE,
+      not by widening that table.** A GGUF slot carries no weight bits and
+      no group size (the scale lives inside the block), so it is accepted
+      as `scheme` plus `ggmlType` against `model_io::EXECUTABLE_GGUF_TYPES`.
+      Two independent gates gate it and they must move together or
+      `crates/runtime/tests/gguf_install_refused.rs` reddens: that one on
+      the manifest's CLAIM, and `RealForwardRunner::open` on the resident
+      index's dtype TAGS, which believes the bytes. And what is executable
+      is decided per BLOCK TYPE, not per format: a type needs a resident
+      GEMV, an embedding lookup AND a routed-expert decode pair before an
+      install runs, so widening the set means landing kernels rather than
+      editing a list. Read the checkpoint's
       `config.json -> quantization` first (`parse_gemma4_quantization`,
       which also refuses a per-tensor group size that differs from the
       global one) and pick the `manifest_quant` probe names to match:
