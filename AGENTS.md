@@ -949,8 +949,8 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     does fit under, contrary to the wired-limit guess that put it on CPU)
     collapsed the number to 0.00845 at 98.2%. The whole apparent gap was in
     the reference. So a cross-engine KL needs TWO floors, not one: the shape
-    floor `kld.py` established (batched vs cached, 0.00144 here) and a
-    backend floor, which was 38x larger. The generalisation past ggml: any
+    floor `kld.py` established (batched vs cached, 0.00134 here) and a
+    backend floor, which was 41x larger. The generalisation past ggml: any
     reference engine with more than one arithmetic backend has this axis,
     and it is invisible unless measured, because both arms are "the same
     engine on the same file".

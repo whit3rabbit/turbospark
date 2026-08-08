@@ -408,16 +408,21 @@ carries residual error. A second engine on the same GGUF separates them.
 (`scripts/llamacpp_logits.c`) built against llama.cpp's own header. Ids in,
 full-vocabulary logits out; llama.cpp's tokenizer is never asked to encode
 anything. Both heads softcap at 30 and neither normalizes, verified rather
-than assumed: llama.cpp's max |logit| reads 29.9993.
+than assumed: llama.cpp's max |logit| reads 29.9993. The vocabularies are
+checked to line up two ways, since a mismatch there would read as a
+numerics gap: `llama_vocab_n_tokens` must equal the dump's 262,144, and the
+harness detokenizes the first eight ids, which come back as
+`<bos>|<|turn>|user|\n|Explain| how| coastal| wetlands|` -- the frozen
+protocol's own `short-explanation` prompt under Gemma's turn markup.
 
 Gemma 4, 550 positions, 16 expert-cache slots, 2026-08-08, on AC:
 
-| Comparison | Mean KL | Median | p99 | Top-1 agree |
-| --- | ---: | ---: | ---: | ---: |
-| llama.cpp batched vs cached, both Metal (shape floor) | 0.00144 | 0.00002 | 0.012 | 99.5% |
-| **this port vs llama.cpp, same bytes, both Metal, both cached** | **0.00845** | **0.00034** | **0.153** | **98.2%** |
-| llama.cpp Metal vs llama.cpp CPU, both cached (backend floor) | 0.05510 | 0.0018 | 0.636 | 95.1% |
-| this port on INT4 vs llama.cpp on Q8_0 (different weights) | 0.57748 | 0.0922 | 7.874 | 78.0% |
+| Comparison | Mean KL | Median | p99 | Max | Top-1 agree |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| llama.cpp batched vs cached, both Metal (shape floor) | 0.00134 | 0.00001 | 0.012 | 0.330 | 99.5% |
+| **this port vs llama.cpp, same bytes, both Metal, both cached** | **0.00845** | **0.00034** | **0.153** | **1.839** | **98.2%** |
+| llama.cpp Metal vs llama.cpp CPU, both cached (backend floor) | 0.05510 | 0.00180 | 0.636 | 8.042 | 95.1% |
+| this port on INT4 vs llama.cpp on Q8_0 (different weights) | 0.57748 | 0.09218 | 7.874 | 24.174 | 78.0% |
 
 | Reading | Perplexity |
 | --- | ---: |
@@ -444,7 +449,20 @@ argmaxes on this model, and matching the backend collapses the headline to
 0.00845 at 98.2%. The whole apparent gap was in the reference. Feeding two
 engines the same bytes is not enough when one is running different
 arithmetic; a cross-engine comparison needs a backend floor beside its
-shape floor, and this one is 38x the larger of the two.
+shape floor, and this one is 41x the larger of the two.
+
+The KL is reported both ways, and unlike the mlx-lm section above the two
+directions do NOT agree to within 5% here: reverse means are 0.00144 /
+0.00706 / 0.04485 / 0.61091 against the forward 0.00134 / 0.00845 / 0.05510
+/ 0.57748, i.e. 16 to 19% apart on the two middle rows. The ordering of the
+four rows is identical either way and no conclusion above turns on the
+direction, but quote the direction with the number.
+
+Cost, for planning: the 550-position cached walk is **26 s on Metal**
+against **2m21 on CPU**, and the model loads in both cases. `-ngl 99` is
+the default in the driver for that reason as much as for the accuracy one.
+A batched pass is 26 s and 2m09 respectively. Add ~8 min for the one-time
+26.9 GB download.
 
 Everything here is deterministic: llama.cpp's Metal cached pass is
 byte-identical across processes (SHA-256 `2e5b3f47...`), as is this port's
