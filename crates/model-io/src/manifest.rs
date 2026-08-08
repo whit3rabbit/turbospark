@@ -288,7 +288,12 @@ fn is_production_arch(expected: &ArchConfig) -> bool {
 /// grows only when a kernel plus its parity test land. `crates/runtime`
 /// applies the same rule again to the resident index's dtype tags, which is
 /// the backstop for a hand-edited manifest.
-pub const EXECUTABLE_GGUF_TYPES: [&str; 1] = ["q8_0"];
+/// Q6_K is here on weaker grounds than the other two and the difference is
+/// worth knowing: it has a resident GEMV and nothing else, because the only
+/// real file that uses it puts it in `output.weight`. An install that carried
+/// Q6_K experts would pass this gate and fail at the routed dispatch instead,
+/// which is a worse error message but not a wrong answer.
+pub const EXECUTABLE_GGUF_TYPES: [&str; 3] = ["q8_0", "q4_k", "q6_k"];
 
 fn validate_quant(quant: &ManifestQuant) -> Result<(), ModelError> {
     let slots: [(&str, &ManifestQuantSlot, &[i64]); 5] = [

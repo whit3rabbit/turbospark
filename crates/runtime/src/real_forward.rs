@@ -138,12 +138,11 @@ pub struct RealForwardRunner {
     /// kernels, same commit-relative order of every host buffer write,
     /// identical output, different overlap.
     pub(crate) routed_pipeline: bool,
-    /// Whether this install's routed expert blobs are GGUF Q8_0 blocks
-    /// rather than the INT4-affine planes the vendored `moe.metal` pair
-    /// reads. Decided once at open from the manifest, because the blob
-    /// layout is uniform across the install and nothing on the token path
-    /// should be re-deriving it (ROADMAP Phase G Stage 2).
-    pub(crate) routed_gguf_q8_0: bool,
+    /// Which layout this install's routed expert blobs use. Decided once at
+    /// open from the manifest, because it is uniform across the install and
+    /// nothing on the token path should be re-deriving it (ROADMAP Phase G
+    /// Stage 2).
+    pub(crate) routed_layout: RoutedBlobLayout,
     /// Set for the duration of one [`LogitProducer::produce_prefill`] call:
     /// the caller is discarding this token's logits, so the output head
     /// (final norm, full-vocab GEMV, softcap, host readback) is skipped.
@@ -450,13 +449,21 @@ impl RealForwardRunner {
         // `load_manifest` has already refused any block type without a
         // kernel, so this only has to say WHICH of the accepted layouts the
         // routed blobs use.
-        let routed_gguf_q8_0 = manifest.quant.as_ref().is_some_and(|q| {
-            q.routed_expert.scheme.eq_ignore_ascii_case("gguf")
-                && q.routed_expert
-                    .ggml_type
-                    .as_deref()
-                    .is_some_and(|t| t.eq_ignore_ascii_case("q8_0"))
-        });
+        let routed_layout = match manifest.quant.as_ref() {
+            Some(q) if q.routed_expert.scheme.eq_ignore_ascii_case("gguf") => {
+                match q.routed_expert.ggml_type.as_deref().unwrap_or_default() {
+                    t if t.eq_ignore_ascii_case("q8_0") => RoutedBlobLayout::GgufQ8_0,
+                    t if t.eq_ignore_ascii_case("q4_k") => RoutedBlobLayout::GgufQ4K,
+                    other => {
+                        return Err(RealForwardError::Unsupported(format!(
+                            "routed experts are GGUF {other}, which has no decode pair \
+                             in this port (ROADMAP Phase G Stage 2)"
+                        )))
+                    }
+                }
+            }
+            _ => RoutedBlobLayout::Affine,
+        };
         let index = model_io::load_resident_index(&dir.join("model_weights.bin"))
             .map_err(RealForwardError::Model)?;
 
@@ -477,7 +484,7 @@ impl RealForwardRunner {
         }) {
             return Err(RealForwardError::Unsupported(format!(
                 "tensor {} carries GGUF block dtype {}, which has no kernel in this port \
-                 (ROADMAP Phase G Stage 2; executable so far: Q8_0)",
+                 (ROADMAP Phase G Stage 2; executable so far: Q8_0, Q4_K, Q6_K)",
                 entry.name, entry.dtype
             )));
         }
@@ -595,7 +602,7 @@ impl RealForwardRunner {
             phases: PhaseCounters::default(),
             shared_cb_overlap: std::env::var("MFERENCE_SHARED_CB").as_deref() != Ok("0"),
             routed_pipeline: std::env::var("MFERENCE_ROUTED_PIPELINE").as_deref() != Ok("0"),
-            routed_gguf_q8_0,
+            routed_layout,
             skip_head: false,
         };
         // Flow selection keys on the FAMILY, not on tensor naming: both
@@ -641,13 +648,35 @@ impl RealForwardRunner {
 /// `crates/runtime/tests/gguf_install_refused.rs` exercising a real written
 /// install rather than by an import.
 const GGUF_BLOCK_DTYPES: [u8; 4] = [6, 7, 8, 9];
-/// GGUF Q8_0. The one block dtype with kernels behind it today: a resident
-/// GEMV, an embedding lookup, and the routed-expert decode pair.
+/// GGUF Q8_0: a resident GEMV, an embedding lookup, and a routed-expert
+/// decode pair.
 pub(crate) const DTYPE_GGUF_Q8_0: u8 = 6;
+/// GGUF Q4_K: the same three, landed for Qwen 3.6's Q4_K_M.
+pub(crate) const DTYPE_GGUF_Q4_K: u8 = 7;
+/// GGUF Q6_K: a resident GEMV and nothing else, which is all any real file
+/// asks for -- Qwen's Q4_K_M carries exactly one Q6_K tensor and it is
+/// `output.weight`. An install that put Q6_K in an expert or the embedding
+/// table would pass this gate and then fail at the dispatch site, by name.
+pub(crate) const DTYPE_GGUF_Q6_K: u8 = 8;
 /// The executable subset of [`GGUF_BLOCK_DTYPES`], and the resident-index
 /// twin of `model_io::EXECUTABLE_GGUF_TYPES`. Grows only when a kernel plus
 /// its parity test land.
-const EXECUTABLE_GGUF_DTYPES: [u8; 1] = [DTYPE_GGUF_Q8_0];
+const EXECUTABLE_GGUF_DTYPES: [u8; 3] = [DTYPE_GGUF_Q8_0, DTYPE_GGUF_Q4_K, DTYPE_GGUF_Q6_K];
+
+/// Which layout an install's routed expert blobs use.
+///
+/// A pair of forwarders in `real_forward_gemma4.rs` turns this into the right
+/// kernel pair; no call site branches on it directly, so two of them cannot
+/// disagree and read one blob two ways.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum RoutedBlobLayout {
+    /// The INT4-affine planes the vendored `moe.metal` pair reads.
+    Affine,
+    /// GGUF Q8_0 blocks (Gemma 4's published GGUF is Q8_0 throughout).
+    GgufQ8_0,
+    /// GGUF Q4_K superblocks (Qwen 3.6's Q4_K_M puts its experts here).
+    GgufQ4K,
+}
 
 /// Resolves the shader's uniform `ExpertOffsets` from the decoded blob
 /// layout (first expert of the first layer; the writer packs every blob

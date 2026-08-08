@@ -533,14 +533,17 @@ fn the_written_manifest_describes_the_bytes_and_gates_on_the_kernels() {
     let path = dir.join("manifest.json");
     let mut edited: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    edited["quant"]["routedExpert"]["ggmlType"] = serde_json::json!("Q4_K");
+    // Q4_0, not Q4_K: Q4_K gained its routed pair and embedding lookup with
+    // Qwen 3.6's Q4_K_M, so the type this reaches for has to be one the
+    // parser knows and no kernel covers.
+    edited["quant"]["routedExpert"]["ggmlType"] = serde_json::json!("Q4_0");
     std::fs::write(&path, serde_json::to_vec_pretty(&edited).unwrap()).unwrap();
 
     let err = model_io::load_manifest(&dir, &arch, model_io::DEFAULT_MAX_BYTES)
         .expect_err("a block type with no kernel must not load");
     let text = err.to_string();
     assert!(
-        text.contains("Q4_K"),
+        text.contains("Q4_0"),
         "the refusal should name the block type, got: {text}"
     );
 

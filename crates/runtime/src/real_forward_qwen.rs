@@ -57,7 +57,10 @@ use foundation::LogitValue;
 use half::f16;
 
 use crate::real_forward::{f16_slice_to_le_bytes, RealForwardError, RealForwardRunner};
-use crate::real_forward_gemma4::{encode_gemv_any, entry, norm_view, router_topk_gemma4};
+use crate::real_forward_gemma4::{
+    encode_embed_any, encode_gemv_any, encode_moe_phase1_any, encode_moe_phase2_any, entry,
+    norm_view, router_topk_gemma4,
+};
 use crate::real_forward_qwen_attn::{encode_full_attention_block, encode_linear_block};
 pub(crate) use crate::real_forward_qwen_state::RealQwenState;
 
@@ -126,8 +129,10 @@ impl RealForwardRunner {
             real_qwen,
             phases,
             skip_head,
+            routed_layout,
             ..
         } = self;
+        let routed_layout = *routed_layout;
         let qwen = real_qwen.as_ref().expect("qwen state present");
         let gpu_err = RealForwardError::Gpu;
         let hidden = arch.hidden_size as usize;
@@ -153,30 +158,24 @@ impl RealForwardRunner {
         }
 
         let embed_name = "language_model.model.embed_tokens.weight";
-        let embed = entry(index, embed_name)?;
+        // Resident entry offsets are file-relative and the mapping starts
+        // after the index, so this is subtracted at each use below.
         let base = index.header.index_size;
         let mut pass = context.begin_pass_labeled("cb1 (attn+router)");
-        gpu::encode_embed_lookup_int4(
+        // Qwen has no embedding scale (Gemma's sqrt(H)), hence the 1.0. The
+        // table's dtype picks the kernel: a Q4_K_M GGUF keeps this tensor at
+        // Q4_K where an MLX install has it INT4-affine.
+        encode_embed_any(
             context,
             &pass,
-            (
-                weights.buffer(),
-                weights.gpu_offset(embed.file_offset - base),
-            ),
-            (
-                weights.buffer(),
-                weights.gpu_offset(embed.scale_offset - base),
-            ),
-            (
-                weights.buffer(),
-                weights.gpu_offset(embed.bias_offset - base),
-            ),
+            weights,
+            index,
+            embed_name,
             (&scratch.x, 0),
             token as u32,
             hidden as u32,
             1.0,
-        )
-        .map_err(gpu_err)?;
+        )?;
 
         for layer in 0..arch.num_layers as usize {
             let input_norm = norm_view(
@@ -375,7 +374,8 @@ impl RealForwardRunner {
             )
             .map_err(gpu_err)?;
 
-            gpu::encode_moe_phase1(
+            encode_moe_phase1_any(
+                routed_layout,
                 context,
                 &pass,
                 routed,
@@ -389,7 +389,8 @@ impl RealForwardRunner {
             )
             .map_err(gpu_err)?;
             // Phase 2 fuses the residual add: h2 = h1 + sum_slot w * down.
-            gpu::encode_moe_phase2(
+            encode_moe_phase2_any(
+                routed_layout,
                 context,
                 &pass,
                 routed,

@@ -145,6 +145,50 @@ impl GgufBuilder {
         self.tensor(name, 8, dims, data)
     }
 
+    /// Deterministic weights in `[-0.5, 0.5)` for the K-quant helpers below.
+    ///
+    /// The range is the point, and it is the same trap the Q8_0 helper's
+    /// comment records: at full quantizer range a fixture install's residual
+    /// grows by orders of magnitude per sublayer and overflows FP16 before
+    /// the head, which reads as a kernel bug and is not one.
+    fn small_weights(elements: u64, seed: u8) -> Vec<f32> {
+        let mut s = (seed as u32).wrapping_mul(2_654_435_761).wrapping_add(11);
+        (0..elements)
+            .map(|_| {
+                s = s.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                ((s >> 8) as f32 / (1u32 << 24) as f32) - 0.5
+            })
+            .collect()
+    }
+
+    /// Push a Q4_K tensor (256-element superblocks, 144 bytes each). Qwen
+    /// 3.6's Q4_K_M puts its routed experts and its embedding table here.
+    pub fn q4_k_tensor(self, name: &str, dims: &[u64], seed: u8) -> Self {
+        let elements: u64 = dims.iter().product();
+        assert!(
+            dims[0] % 256 == 0,
+            "{name}: rows of {} elements do not tile 256-element Q4_K superblocks",
+            dims[0]
+        );
+        let data = compute::quantize_q4_k(&Self::small_weights(elements, seed));
+        self.tensor(name, 12, dims, data)
+    }
+
+    /// Push a Q6_K tensor (256-element superblocks, 210 bytes each). The real
+    /// Qwen file uses this for exactly one tensor, `output.weight`; a Gemma
+    /// fixture has no such tensor because it ties its embeddings, so a
+    /// K-quant fixture puts it on the attention projections instead.
+    pub fn q6_k_tensor(self, name: &str, dims: &[u64], seed: u8) -> Self {
+        let elements: u64 = dims.iter().product();
+        assert!(
+            dims[0] % 256 == 0,
+            "{name}: rows of {} elements do not tile 256-element Q6_K superblocks",
+            dims[0]
+        );
+        let data = compute::quantize_q6_k(&Self::small_weights(elements, seed));
+        self.tensor(name, 14, dims, data)
+    }
+
     /// Push an F32 tensor whose every value is EXACTLY representable in
     /// BF16, which is what llama.cpp actually writes for norms: it upcasts
     /// tensors that were BF16 in the original checkpoint, so the low sixteen
@@ -256,6 +300,11 @@ pub struct SyntheticGgufShape {
     pub top_k: u64,
     pub vocab: u64,
     pub sliding_window: u64,
+    /// Mix K-quants in the way a real `Q4_K_M` does: routed experts and the
+    /// embedding table at Q4_K, the attention projections at Q6_K, everything
+    /// else Q8_0. Needs [`SyntheticGgufShape::k_quant`]'s dimensions, since
+    /// every K-quant row has to tile 256 elements where Q8_0 needs 32.
+    pub k_quants: bool,
 }
 
 impl Default for SyntheticGgufShape {
@@ -277,11 +326,32 @@ impl Default for SyntheticGgufShape {
             top_k: 2,
             vocab: 128,
             sliding_window: 8,
+            k_quants: false,
         }
     }
 }
 
 impl SyntheticGgufShape {
+    /// The smallest shape a K-quant fixture can take: every dimension that
+    /// becomes a Q4_K or Q6_K ROW is 256, because a superblock is 256
+    /// elements and ggml never emits a partial one. That is `hidden` (the
+    /// embedding, the experts' gate/up, and every attention projection),
+    /// `moe_intermediate` (the experts' down), and `num_heads * head_dim`
+    /// (attn_output). Shrinking any of them is what breaks first.
+    pub fn k_quant() -> Self {
+        Self {
+            hidden: 256,
+            num_heads: 8,
+            head_dim: 32,
+            full_head_dim: 32,
+            intermediate: 256,
+            moe_intermediate: 256,
+            vocab: 256,
+            k_quants: true,
+            ..Self::default()
+        }
+    }
+
     /// `true` where the layer slides, matching GGUF's own polarity.
     fn slides(&self, layer: usize) -> bool {
         // Last layer global, the rest sliding: enough to produce both kinds
@@ -340,8 +410,8 @@ pub fn build_synthetic_gemma4_gguf(shape: SyntheticGgufShape) -> GgufFileAndRang
                     .collect(),
             ),
         )
-        .q8_0_tensor("token_embd.weight", &[s.hidden, s.vocab], 1)
         .f32_upcast_bf16_tensor("output_norm.weight", &[s.hidden], 2);
+    b = embed_tensor(b, &s, "token_embd.weight", &[s.hidden, s.vocab], 1);
 
     for l in 0..s.num_layers {
         let sliding = s.slides(l);
@@ -354,18 +424,28 @@ pub fn build_synthetic_gemma4_gguf(shape: SyntheticGgufShape) -> GgufFileAndRang
         let q_dim = s.num_heads * hd;
         let seed = (l as u8).wrapping_mul(37).wrapping_add(3);
 
+        b = attn_tensor(
+            b,
+            &s,
+            &format!("blk.{l}.attn_q.weight"),
+            &[s.hidden, q_dim],
+            seed,
+        );
+        b = attn_tensor(
+            b,
+            &s,
+            &format!("blk.{l}.attn_k.weight"),
+            &[s.hidden, kv * hd],
+            seed.wrapping_add(1),
+        );
+        b = attn_tensor(
+            b,
+            &s,
+            &format!("blk.{l}.attn_output.weight"),
+            &[q_dim, s.hidden],
+            seed.wrapping_add(2),
+        );
         b = b
-            .q8_0_tensor(&format!("blk.{l}.attn_q.weight"), &[s.hidden, q_dim], seed)
-            .q8_0_tensor(
-                &format!("blk.{l}.attn_k.weight"),
-                &[s.hidden, kv * hd],
-                seed.wrapping_add(1),
-            )
-            .q8_0_tensor(
-                &format!("blk.{l}.attn_output.weight"),
-                &[q_dim, s.hidden],
-                seed.wrapping_add(2),
-            )
             .f32_upcast_bf16_tensor(&format!("blk.{l}.attn_q_norm.weight"), &[hd], seed)
             .f32_upcast_bf16_tensor(
                 &format!("blk.{l}.attn_k_norm.weight"),
@@ -376,7 +456,9 @@ pub fn build_synthetic_gemma4_gguf(shape: SyntheticGgufShape) -> GgufFileAndRang
         // Global layers carry no V projection at all -- a property of the
         // model, reproduced here so the walk is exercised against it.
         if sliding {
-            b = b.q8_0_tensor(
+            b = attn_tensor(
+                b,
+                &s,
                 &format!("blk.{l}.attn_v.weight"),
                 &[s.hidden, kv * hd],
                 seed.wrapping_add(3),
@@ -440,21 +522,75 @@ pub fn build_synthetic_gemma4_gguf(shape: SyntheticGgufShape) -> GgufFileAndRang
                 &format!("blk.{l}.layer_output_scale.weight"),
                 &[1],
                 seed.wrapping_add(23),
-            )
-            // Gate and up fused along the output dim.
-            .q8_0_tensor(
-                &format!("blk.{l}.ffn_gate_up_exps.weight"),
-                &[s.hidden, 2 * s.moe_intermediate, s.num_experts],
-                seed.wrapping_add(7),
-            )
-            .q8_0_tensor(
-                &format!("blk.{l}.ffn_down_exps.weight"),
-                &[s.moe_intermediate, s.hidden, s.num_experts],
-                seed.wrapping_add(8),
             );
+
+        // Gate and up fused along the output dim.
+        b = expert_tensor(
+            b,
+            &s,
+            &format!("blk.{l}.ffn_gate_up_exps.weight"),
+            &[s.hidden, 2 * s.moe_intermediate, s.num_experts],
+            seed.wrapping_add(7),
+        );
+        b = expert_tensor(
+            b,
+            &s,
+            &format!("blk.{l}.ffn_down_exps.weight"),
+            &[s.moe_intermediate, s.hidden, s.num_experts],
+            seed.wrapping_add(8),
+        );
     }
 
     b.build()
+}
+
+/// The three roles a K-quant fixture moves off Q8_0, each mirroring where the
+/// real `Qwen3.6-35B-A3B-Q4_K_M.gguf` puts that block type. Written as
+/// functions rather than a method on the builder because the choice belongs
+/// to the fixture's shape, not to GGUF.
+fn embed_tensor(
+    b: GgufBuilder,
+    s: &SyntheticGgufShape,
+    name: &str,
+    dims: &[u64],
+    seed: u8,
+) -> GgufBuilder {
+    if s.k_quants {
+        b.q4_k_tensor(name, dims, seed)
+    } else {
+        b.q8_0_tensor(name, dims, seed)
+    }
+}
+
+fn expert_tensor(
+    b: GgufBuilder,
+    s: &SyntheticGgufShape,
+    name: &str,
+    dims: &[u64],
+    seed: u8,
+) -> GgufBuilder {
+    if s.k_quants {
+        b.q4_k_tensor(name, dims, seed)
+    } else {
+        b.q8_0_tensor(name, dims, seed)
+    }
+}
+
+/// Q6_K, where a real file would carry it on `output.weight`. A Gemma
+/// fixture ties its embeddings and so has no such tensor, and the attention
+/// projections are the next place a resident GEMV reads every token.
+fn attn_tensor(
+    b: GgufBuilder,
+    s: &SyntheticGgufShape,
+    name: &str,
+    dims: &[u64],
+    seed: u8,
+) -> GgufBuilder {
+    if s.k_quants {
+        b.q6_k_tensor(name, dims, seed)
+    } else {
+        b.q8_0_tensor(name, dims, seed)
+    }
 }
 
 fn write_string(out: &mut Vec<u8>, s: &str) {

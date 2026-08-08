@@ -1,10 +1,10 @@
 //! ROADMAP Phase G Stage 2's boundary, enforced rather than documented.
 //!
 //! Stage 1 refused every GGUF install, because no kernel in this port read a
-//! block layout. Stage 2 moved that line rather than erasing it: Q8_0 has a
-//! resident GEMV, an embedding lookup and the routed-expert decode pair
-//! behind it, all parity-tested, so a Q8_0 install OPENS. Q4_K, Q6_K and
-//! Q4_0 do not have the MoE and embedding halves yet, so they still refuse.
+//! block layout. Stage 2 moved that line rather than erasing it. Q8_0 and
+//! Q4_K each have a resident GEMV, an embedding lookup and the routed-expert
+//! decode pair behind them, and Q6_K has a resident GEMV, which is all any
+//! real file asks of it; those three OPEN. Q4_0 has none and still refuses.
 //!
 //! Both directions are asserted here, and the refusal is checked twice over,
 //! because a single gate is a single point of failure for a whole class of
@@ -102,9 +102,27 @@ fn a_q8_0_gguf_install_opens() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// The manifest gate, on a block type with no kernel. Q4_K has a CPU
-/// reference and a resident GEMV but no MoE or embedding kernel, so an
-/// install of one must not open, and the refusal must say which type.
+/// The K-quant mixture a real `Q4_K_M` carries, end to end: routed experts
+/// and the embedding table at Q4_K, the attention projections at Q6_K, the
+/// rest Q8_0. Three block types in one install, which is the case a
+/// single-type fixture cannot make: every dispatch site has to pick from the
+/// TENSOR rather than from one decision made at open.
+#[test]
+fn a_mixed_k_quant_gguf_install_opens() {
+    let (dir, arch) = gguf_install(SyntheticGgufShape::k_quant());
+
+    match RealForwardRunner::open(&dir, arch) {
+        Ok(_) => {}
+        Err(e) => panic!("a Q4_K/Q6_K GGUF install must open now that its kernels exist: {e}"),
+    }
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// The manifest gate, on a block type with no kernel. Q4_0 is the one the
+/// parser knows and nothing decodes: it has no CPU reference, no GEMV and no
+/// expert pair, so an install of one must not open and the refusal must say
+/// which type.
 #[test]
 fn a_block_type_without_kernels_is_refused_by_the_manifest() {
     let (dir, arch) = gguf_install(executable_shape());
@@ -113,16 +131,16 @@ fn a_block_type_without_kernels_is_refused_by_the_manifest() {
     let mut manifest: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     for slot in ["embedding", "attention", "sharedExpert", "routedExpert"] {
-        manifest["quant"][slot]["ggmlType"] = serde_json::json!("Q4_K");
+        manifest["quant"][slot]["ggmlType"] = serde_json::json!("Q4_0");
     }
     std::fs::write(&path, serde_json::to_vec_pretty(&manifest).unwrap()).unwrap();
 
     let text = match RealForwardRunner::open(&dir, arch) {
-        Ok(_) => panic!("a Q4_K install must not open"),
+        Ok(_) => panic!("a Q4_0 install must not open"),
         Err(e) => e.to_string(),
     };
     assert!(
-        text.contains("Q4_K") || text.contains("q4_k"),
+        text.contains("Q4_0") || text.contains("q4_0"),
         "the refusal must name the block type, got: {text}"
     );
 
@@ -130,16 +148,16 @@ fn a_block_type_without_kernels_is_refused_by_the_manifest() {
 }
 
 /// The dtype backstop on its own: the manifest still says Q8_0, but the
-/// bytes on disk are tagged Q4_K. `open` has to believe the index.
+/// bytes on disk are tagged Q4_0. `open` has to believe the index.
 #[test]
 fn the_dtype_backstop_fires_even_if_the_manifest_is_forged() {
     let (dir, arch) = gguf_install(executable_shape());
 
-    let changed = retag_dtypes(&dir, 6, 7);
+    let changed = retag_dtypes(&dir, 6, 9);
     assert!(changed > 0, "the fixture carries no Q8_0 resident tensors");
 
     let text = match RealForwardRunner::open(&dir, arch) {
-        Ok(_) => panic!("forging the manifest must not make a Q4_K install openable"),
+        Ok(_) => panic!("forging the manifest must not make a Q4_0 install openable"),
         Err(e) => e.to_string(),
     };
     assert!(
@@ -164,10 +182,21 @@ fn the_dtype_backstop_fires_even_if_the_manifest_is_forged() {
 /// wrongly does not satisfy for long.
 #[test]
 fn a_q8_0_gguf_install_decodes() {
+    decodes(executable_shape());
+}
+
+/// The same drive through the mixed K-quant install, which is where the Q4_K
+/// routed pair, the Q4_K embedding lookup and the Q6_K resident GEMV all run
+/// on real hardware inside one forward pass.
+#[test]
+fn a_mixed_k_quant_gguf_install_decodes() {
+    decodes(SyntheticGgufShape::k_quant());
+}
+
+fn decodes(shape: SyntheticGgufShape) {
     use half::f16;
     use mrefrust_runtime::LogitProducer;
 
-    let shape = executable_shape();
     let vocab = shape.vocab as usize;
     let (dir, arch) = gguf_install(shape);
     let mut runner = RealForwardRunner::open(&dir, arch).expect("opens");
