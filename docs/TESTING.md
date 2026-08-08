@@ -131,6 +131,24 @@ cargo test -p mrefrust-repack --test gguf_f32_transcode_network --release -- --i
 MREFRUST_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
   cargo test -p mrefrust-repack --test gguf_q4_k_network --release -- --ignored --nocapture
 
+# 5. Qwen's SOURCE CONVENTIONS, which are not a format question: llama.cpp
+#    orders V heads differently and stores -exp(A_log). Checks every tensor
+#    on that axis on every layer, and with MREFRUST_QWEN_PATCH=1 rewrites
+#    them in place, which is how a whole-model coherence test costs seconds
+#    instead of a ~21-minute repack. Numbers in crates/repack/CLAUDE.md
+#    Gotcha 7; the trap that made this eight tensors rather than three is
+#    AGENTS.md Gotcha 33.
+MREFRUST_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
+MREFRUST_QWEN36_GGUF_INSTALL_DIR=~/models/qwen36-gguf.gturbo \
+  cargo test -p mrefrust-repack --test gguf_qwen_convention_patch --release -- --ignored --nocapture
+
+# 6. The diagnostic that found the five QUANTIZED tensors on that axis,
+#    which a BF16-only probe structurally cannot see. Recovers the
+#    permutation outright where a tensor has one row per head.
+MREFRUST_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
+MREFRUST_QWEN36_GGUF_INSTALL_DIR=~/models/qwen36-gguf.gturbo \
+  cargo test -p mrefrust-repack --test gguf_qwen_quant_probe --release -- --ignored --nocapture
+
 # The memory oracle (see docs/BENCHMARKING.md). One target per model
 # family: the footprint assertion is a whole-session peak, so two
 # families in one process cannot each have a ceiling.

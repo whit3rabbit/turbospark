@@ -893,8 +893,8 @@ live network).
 
 ## Phase 8 (repack, server)
 
-- **GGUF ingestion: Q8_0 EXECUTABLE, OTHER BLOCK TYPES INSTALLABLE ONLY
-  (ROADMAP Phase G; Stage 1 landed, Stage 2 items 1-7 landed).**
+- **GGUF ingestion: BOTH REAL PUBLISHED FILES RUN (ROADMAP Phase G, Stage 1
+  and Stage 2 complete; Q4_0 is the one block type still refused).**
   A GGUF file now walks all the way to a `.gturbo` install
   (`gguf_header.rs` parses the v3 header, `gguf_names.rs` maps tensor names
   onto the canonical HF-style ones the rest of the pipeline speaks,
@@ -904,19 +904,30 @@ live network).
   blocks arrive already quantized, which is the lossless-repack rule taken
   literally. The one exception is the resident F32 core, which is
   transcoded rather than carried; see below.
-  **WHAT RUNS IS DECIDED PER BLOCK TYPE, NOT PER FORMAT (2026-08-08).** A
-  Q8_0 install opens and decodes on real Metal hardware; Q4_K, Q6_K and
-  Q4_0 installs are written and then refused, by name. GGUF blocks are
+  **WHAT RUNS IS DECIDED PER BLOCK TYPE, NOT PER FORMAT (2026-08-08).**
+  Q8_0, Q4_K and Q6_K installs open and decode on real Metal hardware; a
+  Q4_0 install is written and then refused, by name. GGUF blocks are
   interleaved (the scale lives inside the block) where this port's affine
   kernels read three separate planes at group 64, so a block type needs its
-  own kernels rather than a flag. Q8_0 has all three it needs, each with a
-  `mrefrust_compute` reference and a parity test: `dequant_q8_0_gemv_simd`
-  and `embed_lookup_q8_0` for resident tensors and the embedding table, and
-  `moe_gguf.metal`'s decode pair for the streamed routed experts. Q4_K has
-  a CPU reference and a resident GEMV but neither of the other two, which
-  is why it does not run: routed experts are where a GGUF's bytes are.
-  Q6_K (one tensor in Qwen's Q4_K_M, `output.weight`) and Q4_0 have
+  own kernels rather than a flag. Q8_0 and Q4_K each have all three, every
+  one with a `mrefrust_compute` reference and a parity test: a resident
+  GEMV (`dequant_q8_0_gemv_simd`, `dequant_q4_k_gemv_simd`), an embedding
+  lookup (`embed_lookup_q8_0`, `embed_lookup_q4_k`), and one of
+  `moe_gguf.metal`'s two decode pairs for the streamed routed experts.
+  Q6_K has a resident GEMV and no siblings ON PURPOSE, which is all any
+  real file asks of it: Qwen's Q4_K_M carries exactly one Q6_K tensor and
+  it is `output.weight`. An install that put Q6_K in an expert would pass
+  the manifest gate and fail at the routed dispatch, by name. Q4_0 has
   nothing.
+  **A MIXED install is the normal case, not an edge one.** `Q4_K_M` means
+  Q4_K experts and embedding, Q8_0 attention and shared experts, one Q6_K
+  tensor, so the block type is read PER TENSOR at each dispatch site rather
+  than decided once at open (`RoutedBlobLayout`, `encode_embed_any`). The
+  Qwen decode flow called the affine MoE and embedding kernels directly and
+  so could only ever have run an MLX install; that was invisible while no
+  Qwen GGUF could open. `SyntheticGgufShape::k_quant()` builds the mixture
+  as a fixture and `crates/runtime/tests/gguf_install_refused.rs` decodes
+  it.
   **The scoping lesson, since the roadmap got it wrong:** a resident GEMV
   is the small half of the job. Routed experts and the embedding table go
   through their own kernels (`moe_phase1_gate_up_act_u16load` /
@@ -964,26 +975,52 @@ live network).
   `Qwen3.6-35B-A3B-Q4_K_M` by correlation
   (`crates/repack/tests/gguf_q4_k_network.rs`), because a decoder and the
   fixture quantizer feeding it come from one mental model and can agree
-  while both are wrong. THE PHASE G GATE IS MET (2026-08-08):
-  the real published `ggml-org/gemma-4-26B-A4B-it-GGUF` Q8_0 checkpoint
-  installs and decodes coherent text, greedy and sampled
-  (`crates/repack/tests/gguf_install_network.rs`). It needed no local copy
-  of the 27 GB file: the walk streams it over HTTP a layer at a time, so
-  only the ~25 GB install is written. Its resident BF16 core is
-  BIT-IDENTICAL to the MLX install's, which is the strongest statement
-  available that the name mapping and the F32 transcode are right
-  (`gguf_norm_convention_probe.rs`). Perplexity is 39.8808 against the MLX
-  install's 37.4176; that is INT4 against Q8_0, two different
-  quantizations, and deciding which is closer to the truth needs a
-  same-precision reference this port does not have. Not
+  while both are wrong.
+  **A fifth is not a format question at all, and it is the one that decided
+  whether Qwen runs: SOURCE CONVENTIONS.** llama.cpp interleaves Qwen's V
+  heads where the mlx-community checkpoint keeps them contiguous (GGUF head
+  `h` is MLX head `2h` for the first half and `2(h - heads/2) + 1` for the
+  second), and it stores `-exp(A_log)` in the `ssm_a` slot where the
+  install carries `A_log`. Both are undone at repack time by
+  `v_head_axis` + `apply_source_convention{,_bytes}` in
+  `gguf_checkpoint.rs`, never at runtime and never in a kernel, on the same
+  rule that settled the F32 transcode. The quantized tensors are permuted
+  AS BYTES, so the lossless-repack rule is untouched: a logical row is a
+  contiguous block run and a head-wide column group is a whole number of
+  blocks, checked rather than assumed. See AGENTS.md Gotcha 33 and
+  `crates/repack/CLAUDE.md` Gotcha 7 for the measurements and the trap (the
+  convention belongs to an AXIS, so it reaches eight tensors and not the
+  three a BF16 probe could compare).
+  **THE PHASE G GATE IS MET FOR BOTH FAMILIES (2026-08-08), except its last
+  clause.** The real published `ggml-org/gemma-4-26B-A4B-it-GGUF` Q8_0 and
+  `ggml-org/Qwen3.6-35B-A3B-GGUF` Q4_K_M checkpoints each install and
+  decode coherent text, greedy and sampled
+  (`crates/repack/tests/gguf_install_network.rs`,
+  `gguf_qwen_install_network.rs`). Neither needed a local copy of the 20-27
+  GB file: the walk streams over HTTP a layer at a time, so only the ~25 GB
+  and ~19 GB installs are written, in about 21-24 minutes each. Gemma's
+  resident BF16 core is BIT-IDENTICAL to the MLX install's, which is the
+  strongest statement available that the name mapping and the F32 transcode
+  are right (`gguf_norm_convention_probe.rs`); Qwen's norms are too, while
+  its gated-DeltaNet tensors are the convention gap above
+  (`gguf_qwen_core_probe.rs`, `gguf_qwen_quant_probe.rs`,
+  `gguf_qwen_convention_patch.rs`).
+  **The clause NOT met is "within its quant's expected degradation", and it
+  is left open deliberately.** Gemma's GGUF perplexity is 39.8808 against
+  the MLX install's 37.4176, but that is INT4 against Q8_0, two different
+  quantizations; deciding which is closer to the truth needs a
+  same-precision reference (llama.cpp on the same GGUF) this port does not
+  have. Coherence is the bar actually cleared. Not
   scaffolded, not attempted: a local-file `RangeSource` (the walk streams
-  over HTTP like the safetensors one), Q4_K/Q6_K in the MoE and embedding
-  kernels (which is what a Qwen Q4_K_M install would need), and any
+  over HTTP like the safetensors one), Q4_K or Q6_K routed experts beyond
+  what the real files use, and any
   Q5_K/Q3_K/Q2_K/i-quant block sizes (`ggml_type_block` answers only for
   types whose size was read off the spec, and names the rest in its error
   rather than guessing). Also not done: a memory-oracle or quality-gate
-  ROW for a Q8_0 install, since it is roughly twice the resident bytes and
-  the chip rows are keyed on the chip rather than the install.
+  ROW for either GGUF install, since they differ in resident bytes from the
+  MLX ones and the chip rows are keyed on the chip rather than the install,
+  so pointing an install var at a GGUF artifact asserts the MLX goldens
+  against it -- a diagnostic use, not a supported one.
 - **Byte-exact `.gturbo` directory assembly: implemented**
   (`gturbo_writer.rs`'s `write_gturbo_install`): given already-quantized
   tensor bytes, writes `packed_experts/layer_NN.bin` blobs (matching

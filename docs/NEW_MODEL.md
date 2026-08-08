@@ -130,6 +130,19 @@ looking anything up.
       expert a RESIDENT tensor (loads fine, generates fine, footprint
       explodes -- test it explicitly), and some parameters carry no
       `.weight` suffix at all (`linear_attn.A_log`, `linear_attn.dt_bias`).
+- [ ] If this checkpoint comes from a DIFFERENT PRODUCER than the one the
+      flow was written against (a GGUF where the port was built on
+      mlx-community, say), budget a pass for SOURCE CONVENTIONS before
+      trusting any output. A name mapping being right does not mean a
+      tensor MEANS the same thing: llama.cpp interleaves Qwen's V heads and
+      stores `-exp(A_log)` where the MLX checkpoint stores `A_log`. Undo it
+      at repack time, keyed by canonical name, never at runtime and never
+      in a kernel (`gguf_checkpoint.rs::v_head_axis`). Enumerate by the
+      DIMENSION the convention indexes, not by the tensors you can most
+      easily compare -- that mistake made this eight tensors instead of
+      three and cost a whole session (AGENTS.md Gotcha 33). Verify by
+      patching a built install IN PLACE rather than repacking per attempt;
+      `open()` runs no checksum, so it is seconds against ~21 minutes.
 - [ ] Write the manifest's `arch` object with every shape field explicit
       AND every family-extension field explicit.
       `crates/model-io/src/arch_validation.rs` resolves omitted optional
@@ -508,6 +521,8 @@ than whatever you were about to freeze.
 | Second generation differs from the first | `reset()` rewound the KV cache but not the recurrent state |
 | Output differs between two `--expert-cache-slots` values | A BUG since 2026-08-08: the flow is dispatching routed slots in an order the expert cache can reach, so phase 2's reduce order follows cache state (AGENTS.md Gotcha 27). Dispatch in router rank |
 | Same prompt decodes differently on a second warm run | Same cause as the row above, seen from the other side. `crates/bench/tests/gguf_nondeterminism_probe.rs` is the check |
+| Loads, decodes, never errors, and the text is gibberish | A SOURCE CONVENTION, not a kernel: some tensor means something else in this checkpoint's producer. Correlate every resident tensor against a known-good install of the same model, and enumerate by the DIMENSION the difference indexes rather than by the tensors easiest to compare (AGENTS.md Gotcha 33) |
+| Fixed the convention, still gibberish | The fix was scoped to the tensors your probe could reach. A BF16 probe cannot see quantized tensors on the same axis; dequantize a representative row per head and correlate (Gotcha 33) |
 | Perplexity worse than a uniform distribution | Scoring prompt-position tokens on an instruction-tuned checkpoint (Phase 6) |
 | A whole layer kind seems to contribute nothing | Untrained fixture: assert on the block's state, not its output |
 | Throughput moved after a decode change | `MFERENCE_PHASES=1` buckets + GPU busy line, interleaved A/B pairs (`AGENTS.md` Gotcha 12); run-to-run spread is wider than most single effects |

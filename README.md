@@ -80,15 +80,19 @@ port tracks itself over time: [`docs/BENCHMARKING.md`](docs/BENCHMARKING.md).
 - `crates/runtime`: the raw-completion prefill+decode loop.
 - `crates/cli`: the `mference-check` process entry point.
 - `crates/repack`: safetensors and GGUF header parsing, ranged-download
-  planning, and quantization repack. GGUF intake runs a Q8_0 install,
-  proven end to end on the real published Gemma 4 Q8_0 checkpoint, and
-  refuses the other block types at open, on purpose and twice over, until
-  their kernels land (ROADMAP Phase G): a block type needs a resident GEMV,
-  an embedding lookup and a routed-expert decode pair before it executes,
-  and only Q8_0 has all three. The resident core is transcoded at repack
+  planning, and quantization repack. GGUF intake runs both real published
+  files end to end -- Gemma 4's Q8_0 and Qwen 3.6's mixed Q4_K_M, each
+  streamed from Hugging Face without the 20-27 GB checkpoint ever landing
+  on disk -- and refuses Q4_0 at open, on purpose and twice over, until its
+  kernels land (ROADMAP Phase G): a block type needs a resident GEMV, an
+  embedding lookup and a routed-expert decode pair before it executes.
+  Q6_K is the exception with a GEMV alone, which is all any real file asks
+  of it. The resident core is transcoded at repack
   time from the F32 llama.cpp writes into the BF16 and INT8 the existing
   kernels read, which was measured to be lossless for norms rather than
-  assumed to be.
+  assumed to be. Qwen additionally needs its source CONVENTIONS undone
+  there (llama.cpp orders V heads differently and stores `-exp(A_log)`),
+  which is a repack-time byte permutation and not a kernel.
 - `crates/server`: OpenAI Chat Completions and Anthropic Messages server on loopback.
 - `crates/bench`: throughput benchmark harness, the memory oracle tests, and
   the per-install quality gates (perplexity plus frozen output digests, a
