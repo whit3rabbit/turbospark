@@ -80,7 +80,9 @@ port tracks itself over time: [`docs/BENCHMARKING.md`](docs/BENCHMARKING.md).
   and quantization repack.
 - `crates/server`: OpenAI Chat Completions and Anthropic Messages server on loopback.
 - `crates/bench`: throughput benchmark harness, the memory oracle tests, and
-  the per-install quality gates (perplexity plus frozen output digests).
+  the per-install quality gates (perplexity plus frozen output digests, a
+  proof that the perplexity responds to quantization damage, and a logit
+  dump feeding `scripts/kld.py`'s cross-engine KL against mlx-lm).
 
 ## Build and test
 

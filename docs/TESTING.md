@@ -43,7 +43,7 @@ cargo clippy --workspace --tests
 | `cli` | Black-box binary invocation, including real generation in all three modes. |
 | `repack` | Safetensors parsing, quantization, `.gturbo` assembly round-tripped through every `model-io` loader, install verification. |
 | `server` | OpenAI-compatible endpoint shapes, full-response and SSE, the `--model` argument parser, and (gated) the real `RealForwardRunner` backend end to end. |
-| `bench` | Protocol constants and footer format, the memory sampler, and the binary's black-box output. |
+| `bench` | Protocol constants and footer format, the memory sampler, and the binary's black-box output. Its gated targets carry the quality axis: per-install perplexity and golden digests, the damage-sensitivity proof, and the logit dump feeding the cross-engine KLD. |
 
 ## Gating conventions
 
@@ -110,6 +110,21 @@ MREFRUST_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
 MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
   cargo test -p mrefrust-bench --test quality_sensitivity --release -- --ignored --nocapture
 
+# The cross-engine half of Phase Q, and the one test here whose second
+# step is NOT cargo: it dumps this port's full-vocab logits plus the exact
+# token ids it walked (~275 MiB, ~30 s), then replays those IDS through
+# mlx-lm and prints the KL. Needs the 14.6 GB reference checkpoint
+# (`hf download mlx-community/gemma-4-26b-a4b-it-4bit --revision
+# 0d77464eeb233a2da68ebf9d7dc4edaac7db956d`). mlx-lm runs in a uv
+# ephemeral env, so it is never installed globally and never enters this
+# workspace's dependency graph. MREFRUST_LOGIT_DUMP_COLD=1 skips the
+# warmup walk and reproduces quality_gate's frozen perplexity exactly,
+# which is the cross-check that the dump measures what the gate measures.
+MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
+MREFRUST_LOGIT_DUMP_DIR=/tmp/kld/mrefrust \
+  cargo test -p mrefrust-bench --test logit_dump --release -- --ignored --nocapture
+uv run --python 3.12 --with mlx-lm --with numpy scripts/kld.py /tmp/kld/mrefrust
+
 # Split-KV chunk-count sweep on the decode attention kernel. Needs no
 # model install: it is the kernel alone at the real Gemma 4 shapes, and
 # it reports speedup ratios rather than absolute times so it stays
@@ -135,8 +150,10 @@ attention) so it cannot rot silently; only the timings are advisory.
 
 | Variable | Read by | Effect |
 | --- | --- | --- |
-| `MREFRUST_GEMMA4_INSTALL_DIR` | `gemma4_checkpoint_network`, `memory_oracle`, `quality_gate`, `real_backend` | Where the real `.gturbo` install lives. The oracle, the quality gate, and the server test skip (with a note) when unset; the repack test falls back to a temp dir. |
-| `MREFRUST_QWEN36_INSTALL_DIR` | `qwen36_checkpoint_network`, `qwen36_memory_oracle`, `qwen36_quality_gate` | Where the repacked Qwen 3.6 install lives. The oracle and the quality gate skip (with a note) when unset; the repack test falls back to a temp dir. Deliberately a second variable rather than a generalized one, so both installs can coexist and each target asserts its own family's row. |
+| `MREFRUST_GEMMA4_INSTALL_DIR` | `gemma4_checkpoint_network`, `memory_oracle`, `quality_gate`, `quality_sensitivity`, `logit_dump`, `real_backend` | Where the real `.gturbo` install lives. The oracle, the quality gate, the logit dump, and the server test skip (with a note) when unset; the repack test falls back to a temp dir. |
+| `MREFRUST_QWEN36_INSTALL_DIR` | `qwen36_checkpoint_network`, `qwen36_memory_oracle`, `qwen36_quality_gate`, `logit_dump` | Where the repacked Qwen 3.6 install lives. The oracle and the quality gate skip (with a note) when unset; the repack test falls back to a temp dir. Deliberately a second variable rather than a generalized one, so both installs can coexist and each target asserts its own family's row. `logit_dump` takes it as a fallback when the Gemma variable is unset, though `scripts/kld.py`'s reference is pinned to the Gemma repo. |
+| `MREFRUST_LOGIT_DUMP_DIR` | `logit_dump` | Where to write `logits.f16` and `meta.json` (~275 MiB on either family). Required: the target skips when unset, since a few hundred MB is not something to write to a default path. |
+| `MREFRUST_LOGIT_DUMP_COLD=1` | `logit_dump` | Skips the warmup walk, so the dump comes off a COLD expert cache. That is the condition `quality_gate` takes its perplexity under, so this reproduces the frozen row exactly; without it the dump is warm and reads about 0.5% higher. How the warm/cold difference gets measured rather than assumed. |
 | `MFERENCE_PHASES=1` | `mference-check` | Prints the per-phase decode breakdown (GPU wait, router readback, expert pread, routed bind, cache hit rate). |
 | `MFERENCE_DISPATCH_PROFILE=1` | `mference-check`, `gpu::PassEncoder` | Ranks the individual dispatches inside each command buffer. Encodes one compute encoder per dispatch (Apple GPUs sample counters only at encoder boundaries) and waits on every buffer, so it perturbs the run it measures: a ranking aid, not a throughput number. Covered by `crates/gpu/tests/dispatch_profile.rs`. |
 | `MFERENCE_SHARED_CB=0` | `RealForwardRunner` | Reverts the shared-expert branch to encoding after the expert pread instead of on its own overlapping command buffer. The A/B seam for any throughput claim. |

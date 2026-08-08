@@ -18,10 +18,22 @@ live network).
   strategies coexist, and it predates this session's work.
 - **This port has a quality harness; the Swift original has none.** Not a
   deviation from a behavior, an addition on an axis Swift publishes
-  nothing for: no perplexity, no KL divergence, no golden output. Every
-  number in `docs/BENCHMARKS.md`'s Quality section is therefore this port
-  measured against its own past, and no row there is or can be a parity
-  claim. Two consequences worth recording next to the parity tables.
+  nothing for: no perplexity, no KL divergence, no golden output. So no
+  row in `docs/BENCHMARKS.md`'s Quality section is or can be a SWIFT
+  parity claim, and most of them (perplexity, digests, constrained-cache
+  arm, sensitivity curve) are this port measured against its own past.
+  The exception is the cross-engine KLD, which does have an external
+  reference, just not Swift: `crates/bench/tests/logit_dump.rs` plus
+  `scripts/kld.py` run mlx-lm over the same corpus, the same token ids,
+  and the same quantized checkpoint the install was repacked from. It
+  reports 0.0264 mean nats at 95.6% top-1 agreement against an
+  intra-engine floor of 0.0352 (mlx-lm across its own two forward
+  shapes), so this port agrees with mlx-lm more closely than mlx-lm
+  agrees with itself. Deliberately not wired into `cargo test`: it needs
+  a 14.6 GB reference checkpoint and a Python environment, and mlx-lm
+  runs in a `uv` ephemeral env so it never enters this workspace's
+  dependency graph. Three consequences worth recording next to the
+  parity tables.
   Upstream's memory-pressure acceptance proof, byte-identical output at
   unchanged throughput under a constrained working set, HOLDS ON QWEN AND
   NOT ON GEMMA here: the Gemma flow's misses-first routed-slot ordering

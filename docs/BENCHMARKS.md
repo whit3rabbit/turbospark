@@ -204,9 +204,15 @@ were not recorded, so it is retired rather than re-explained.
 
 The one axis with no Swift column. The Swift original publishes no
 perplexity, no KL divergence, and no golden output, so there is nothing to
-compare against; these are this port measured against its own past, which
-is what ROADMAP Phase Q exists to make possible before Phase S touches
-quantization.
+compare against there; ROADMAP Phase Q exists to build the axis anyway,
+before Phase S touches quantization.
+
+Read the sections below in two groups. The perplexity, the digests, the
+constrained-cache arm, and the sensitivity curve are all this port measured
+against ITS OWN PAST -- regression sentinels, and no row in them is or can
+be a parity claim. The cross-engine section at the end is the exception and
+the only external reference in this document's Quality half: it compares
+this port against mlx-lm on the same quantized bytes.
 
 Reproduce with the two gates (about a minute each), which assert these
 values on this chip and print them on any other:
