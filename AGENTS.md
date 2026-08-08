@@ -183,6 +183,11 @@ MREFRUST_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
 MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
   cargo test -p mrefrust-repack --test gguf_fused_gate_network --release -- --ignored --nocapture
 
+# The evidence behind the transcode decision (Gotcha 29): GGUF's F32 norms
+# are upcast BF16 and narrow back bit-exactly, and INT8-transcoding its F32
+# router does not move the routing decision. No install needed, few KB, ~6 s.
+cargo test -p mrefrust-repack --test gguf_f32_transcode_network --release -- --ignored --nocapture
+
 # The other #[ignore]d tests: real checkpoint downloads (many GB).
 cargo test -p mrefrust-repack --test gemma4_checkpoint_network --release -- --ignored --nocapture
 cargo test -p mrefrust-repack --test hf_checkpoint_network --release -- --ignored --nocapture
@@ -713,9 +718,20 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     Two more that are merely surprising rather than dangerous: Gemma 4's
     GLOBAL layers carry no `attn_v` at all (true of the MLX install too, so
     a missing per-layer tensor is not an error), and GGUF ships F32 norms
-    and an F32 router where an MLX install carries BF16 and INT8. Those
-    bytes are carried through verbatim rather than transcoded, which is why
-    a GGUF install needs more than expert kernels to run.
+    and an F32 router where an MLX install carries BF16 and INT8, which is
+    why a GGUF install needs more than expert kernels to run.
+    **That last one is settled as a repack-time TRANSCODE, not an F32
+    path** (ROADMAP Phase G Stage 2), and the tradeoff the roadmap wrote it
+    up as turned out not to exist. Measured 2026-08-07 off the real file
+    (`gguf_f32_transcode_network.rs`): llama.cpp UPCAST norms that were
+    BF16 in the original checkpoint, so all 15,592 values across seven norm
+    tensors narrow back with zero bit loss, and the transcode is exactly
+    lossless. The router is lossy either way, but it is the SAME INT8
+    affine this port's MLX path already applies to the same tensor, and
+    the routing decision survives it: top-1 unchanged on 32 of 32 random
+    activations, and every top-8 membership flip sat 0.148 quantization
+    noise-widths from the cut, i.e. a tie the quantizer could not see
+    rather than a reordering of a decided pair.
     **A Stage 1 GGUF install deliberately does not load.** Its manifest
     says `scheme: "gguf"` and `validate_quant` accepts only `"affine"`, and
     `RealForwardRunner::open` independently rejects the GGUF dtype tags

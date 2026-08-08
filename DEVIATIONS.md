@@ -926,7 +926,13 @@ live network).
   Beyond kernels, two things a GGUF install would still need before it
   could run, both discovered by the above rather than assumed: its norms are
   F32 where the runtime wants BF16, and its router is F32 where the runtime
-  wants INT8. A third is now settled rather than outstanding: Gemma's routed
+  wants INT8. Both are now DECIDED (repack-time transcode, not an F32 path)
+  though not yet implemented, and the decision rests on a measurement rather
+  than on the tradeoff the roadmap anticipated: the norms are upcast BF16 and
+  narrow back with zero bit loss, and INT8-transcoding the router leaves
+  top-1 routing unchanged with every top-8 flip inside quantization noise
+  (`crates/repack/tests/gguf_f32_transcode_network.rs`). A third is now
+  settled rather than outstanding: Gemma's routed
   gate/up arrive FUSED in one tensor, and gate is the FIRST half, measured
   against the real file rather than assumed (`FUSED_GATE_FIRST`,
   `crates/repack/tests/gguf_fused_gate_network.rs`). Not
