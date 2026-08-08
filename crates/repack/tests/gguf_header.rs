@@ -218,17 +218,24 @@ fn rejects_a_duplicate_tensor_name() {
 }
 
 /// A type whose block size this port has not verified must be named, not
-/// guessed at. Q5_K is a real ggml type with a real id; what is missing is
-/// only its byte size.
+/// guessed at. IQ2_XXS is a real ggml type with a real id; what is missing
+/// is only its byte size.
+///
+/// THE EXEMPLAR HAS TO BE RE-PICKED whenever a type gains a
+/// `ggml_type_block` row, and the failure is this test rather than anything
+/// subtle: it read Q5_K until Phase S's header probes added that row. Pick a
+/// replacement that is real, unhandled, and unlikely to land soon -- IQ2_XXS
+/// qualifies twice over, since it decodes through a codebook and sits below
+/// the quality line Phase S warns about.
 #[test]
 fn names_an_unsupported_but_real_ggml_type() {
     let (bytes, _) = GgufBuilder::new()
-        .tensor("blk.0.attn_q.weight", 13, &[256], vec![0u8; 176])
+        .tensor("blk.0.attn_q.weight", 16, &[256], vec![0u8; 66])
         .build();
     let h = parse_gguf_header(&bytes, GGUF_DEFAULT_MAX_HEADER_BYTES).expect("header parses");
     match h.absolute_range("blk.0.attn_q.weight").unwrap() {
         Err(GgufHeaderError::UnsupportedType { name, id }) => {
-            assert_eq!((name.as_str(), id), ("Q5_K", 13));
+            assert_eq!((name.as_str(), id), ("IQ2_XXS", 16));
         }
         other => panic!("expected UnsupportedType, got {other:?}"),
     }

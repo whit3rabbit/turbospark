@@ -187,6 +187,12 @@ LABEL=battery MODEL=~/models/gemma4.gturbo CASES=short-explanation \
 # tensor name maps, and the ArchConfig derived from GGUF metadata equals the
 # one the corresponding .gturbo install declares. Set the install vars to get
 # the last two cross-checks; without them it still parses and reports.
+# The three `scopes_phase_s_*` cases in the same file are the ROADMAP Phase S
+# ingest survey: same cost, and their output is a ggml TYPE HISTOGRAM in
+# bytes. Read that histogram's UNSIZED rows before its percentages -- a type
+# with no `ggml_type_block` row is one this port cannot ingest, which on a
+# mixed file is usually the routed experts, and printing it as 0 bytes once
+# made an imatrix file look like it was 76% Q8_0.
 TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
 TURBOSPARK_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
   cargo test -p turbospark-repack --test gguf_checkpoint_network --release -- --ignored --nocapture

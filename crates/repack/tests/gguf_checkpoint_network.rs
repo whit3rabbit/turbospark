@@ -14,13 +14,29 @@
 
 use model_io::ModelFamily;
 use turbospark_repack::{
-    arch_from_gguf, fetch_gguf_header, ggml_type_name, map_gguf_name, peek_manifest_arch,
-    GgufHeader, GgufMapping, HttpRangeSource,
+    arch_from_gguf, fetch_gguf_header, ggml_type_block, ggml_type_name, map_gguf_name,
+    peek_manifest_arch, GgufHeader, GgufMapping, HttpRangeSource,
 };
 
 const GEMMA4_Q8_0: &str = "https://huggingface.co/ggml-org/gemma-4-26B-A4B-it-GGUF/resolve/main/gemma-4-26B-A4B-it-Q8_0.gguf";
 const QWEN36_Q4_K_M: &str =
     "https://huggingface.co/ggml-org/Qwen3.6-35B-A3B-GGUF/resolve/main/Qwen3.6-35B-A3B-Q4_K_M.gguf";
+
+// ROADMAP Phase S scoping. `ggml-org` publishes only BF16/Q4_0/Q8_0 for
+// these two models, so the sub-4-bit checkpoints Phase S would ingest come
+// from `unsloth`, whose "UD" (Unsloth Dynamic) builds mix block types per
+// tensor rather than applying one everywhere. WHICH types, and what share
+// of the bytes each carries, is the entire scoping question for Phase S,
+// and it is a header read rather than a 13 GB download.
+const GEMMA4_UD_Q3_K_M: &str = "https://huggingface.co/unsloth/gemma-4-26B-A4B-it-GGUF/resolve/main/gemma-4-26B-A4B-it-UD-Q3_K_M.gguf";
+const QWEN36_UD_Q3_K_M: &str =
+    "https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/main/Qwen3.6-35B-A3B-UD-Q3_K_M.gguf";
+
+// The other side of the Phase S fork: a STATIC (no imatrix) Q3_K_M of the
+// same base model. The name is the same and the block types are not, which
+// is the whole reason both are probed rather than one being assumed to
+// stand for "3-bit".
+const GEMMA4_STATIC_Q3_K_M: &str = "https://huggingface.co/mradermacher/gemma-4-26B-A4B-it-GGUF/resolve/main/gemma-4-26B-A4B-it.Q3_K_M.gguf";
 
 /// Collapses `blk.<N>.` to `blk.*.` so a 30-layer model prints 20 shapes
 /// rather than 600 names.
@@ -70,6 +86,60 @@ fn report(label: &str, h: &GgufHeader) {
             .entry((shape_key(name), info.ggml_type, info.dims.clone()))
             .or_insert(0) += 1;
     }
+    // The histogram, in BYTES rather than tensor count, is what scopes
+    // kernel work on a mixed file: a type carrying 0.1% of the weights and
+    // one carrying 80% cost the same single row above and are not the same
+    // decision. Routed experts are ~90% of an MoE's bytes, so the share
+    // column is effectively "is this the expert type or a bystander".
+    // A type with no `ggml_type_block` row must print as UNSIZED, never as
+    // zero bytes. Zero would rank it last in the share column, which is the
+    // exact opposite of the truth: an unlisted type is one this port has
+    // never handled, and on a mixed file the unhandled type is likely to be
+    // the routed experts, i.e. ~90% of the weights. This bit once already
+    // (the first run of this probe read "Q8_0 75.6%" on a file whose
+    // experts are IQ3_XXS and were being counted as 0.000 GiB).
+    let mut by_type: std::collections::BTreeMap<&str, (usize, Option<u64>)> =
+        std::collections::BTreeMap::new();
+    for info in h.tensors.values() {
+        let name = ggml_type_name(info.ggml_type).unwrap_or("?");
+        let elems: u64 = info.dims.iter().product();
+        let bytes = ggml_type_block(info.ggml_type).map(|(blk, sz)| elems / blk.max(1) * sz);
+        let e = by_type.entry(name).or_insert((0, Some(0)));
+        e.0 += 1;
+        e.1 = match (e.1, bytes) {
+            (Some(a), Some(b)) => Some(a + b),
+            _ => None,
+        };
+    }
+    let sized: u64 = by_type.values().filter_map(|(_, b)| *b).sum();
+    let unsized_types = by_type.values().filter(|(_, b)| b.is_none()).count();
+    let gib = |b: u64| b as f64 / (1024.0 * 1024.0 * 1024.0);
+    println!("-- ggml type histogram (tensors, bytes, share of SIZED bytes)");
+    for (name, (count, bytes)) in &by_type {
+        match bytes {
+            Some(b) => println!(
+                "   {name:<8} {count:>4} tensors  {:>9.3} GiB  {:>5.1}%",
+                gib(*b),
+                *b as f64 * 100.0 / sized.max(1) as f64
+            ),
+            None => println!(
+                "   {name:<8} {count:>4} tensors     UNSIZED  (no ggml_type_block row: \
+                 unhandled by this port, and NOT zero)"
+            ),
+        }
+    }
+    println!(
+        "   {:<8} {:>4} tensors  {:>9.3} GiB sized{}",
+        "TOTAL",
+        h.tensors.len(),
+        gib(sized),
+        if unsized_types > 0 {
+            format!(", {unsized_types} type(s) UNSIZED and excluded")
+        } else {
+            String::new()
+        }
+    );
+
     println!("-- tensor shapes (count, type, dims as stored)");
     for ((key, ty, dims), count) in &shapes {
         println!(
@@ -196,6 +266,50 @@ fn reads_the_real_gemma4_q8_0_header() {
     assert_every_name_maps(&h, ModelFamily::Gemma4);
     assert_mapped_names_exist_in_install(&h, ModelFamily::Gemma4, "TURBOSPARK_GEMMA4_INSTALL_DIR");
     assert_arch_matches_install(&h, "TURBOSPARK_GEMMA4_INSTALL_DIR");
+}
+
+/// ROADMAP Phase S, the scoping step. Deliberately asserts almost nothing:
+/// its output is the type histogram, which says which kernels a 3-bit
+/// install would need and how much of the model each one carries. The one
+/// thing it DOES assert is that the names still map, because an unsloth
+/// build is a different converter run from the `ggml-org` one and a
+/// name-table hole there would be found here or not at all.
+#[test]
+#[ignore = "network: reads a few MB off a 13 GB remote checkpoint"]
+fn scopes_phase_s_from_the_gemma4_ud_q3_k_m_header() {
+    let h = fetch(GEMMA4_UD_Q3_K_M);
+    report("gemma-4-26B-A4B-it-UD-Q3_K_M.gguf", &h);
+    assert_eq!(h.architecture(), Some("gemma4"));
+    assert_every_name_maps(&h, ModelFamily::Gemma4);
+    assert_arch_matches_install(&h, "TURBOSPARK_GEMMA4_INSTALL_DIR");
+}
+
+/// The static counterpart to the UD probe above, and the one that decides
+/// what Phase S costs. Two files both called "Q3_K_M" of the same base
+/// model do not carry the same block types: the imatrix build spends its
+/// expert bytes on codebook types, the static one on K-quants this port
+/// already has most of. Run both before scoping any kernel work.
+#[test]
+#[ignore = "network: reads a few MB off a 12 GB remote checkpoint"]
+fn scopes_phase_s_from_the_gemma4_static_q3_k_m_header() {
+    let h = fetch(GEMMA4_STATIC_Q3_K_M);
+    report("gemma-4-26B-A4B-it.Q3_K_M.gguf (static, mradermacher)", &h);
+    assert_eq!(h.architecture(), Some("gemma4"));
+    assert_every_name_maps(&h, ModelFamily::Gemma4);
+    assert_arch_matches_install(&h, "TURBOSPARK_GEMMA4_INSTALL_DIR");
+}
+
+/// The Qwen sibling. Worth probing separately rather than assuming it
+/// mirrors Gemma: the two families already differ in whether the routed
+/// experts are fused, and a UD mix is chosen per tensor.
+#[test]
+#[ignore = "network: reads a few MB off a 16 GB remote checkpoint"]
+fn scopes_phase_s_from_the_qwen36_ud_q3_k_m_header() {
+    let h = fetch(QWEN36_UD_Q3_K_M);
+    report("Qwen3.6-35B-A3B-UD-Q3_K_M.gguf", &h);
+    assert_eq!(h.architecture(), Some("qwen35moe"));
+    assert_every_name_maps(&h, ModelFamily::Qwen36);
+    assert_arch_matches_install(&h, "TURBOSPARK_QWEN36_INSTALL_DIR");
 }
 
 #[test]

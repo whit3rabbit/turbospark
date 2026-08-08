@@ -281,14 +281,41 @@ pub fn ggml_type_name(id: u32) -> Option<&'static str> {
 /// constant here would not fail loudly, it would silently misalign every
 /// tensor after the first one of that type. Adding a type is one row plus
 /// the source citation.
+///
+/// A row here buys PARSING, not execution: whether an install of that type
+/// runs is decided separately by [`model_io::EXECUTABLE_GGUF_TYPES`] and by
+/// `RealForwardRunner::open` (AGENTS.md Gotcha 29). Q2_K/Q3_K/Q5_K and the
+/// three IQ types are listed so a mixed sub-4-bit file can be HEADER-PROBED
+/// for scoping (ROADMAP Phase S); none of the six has a kernel. The IQ rows
+/// in particular size a tensor without being able to READ one: IQ3_XXS and
+/// IQ4_XS decode through codebooks, which is a different job from every
+/// affine and K-quant unpacker in this port.
+///
+/// The K-quant and IQ rows were read out of ggml itself rather than off a
+/// spec page, which is one command against brew's `llama.cpp` (b10310 here):
+///
+/// ```text
+/// // cc -I/opt/homebrew/include x.c -L/opt/homebrew/lib -lggml -lggml-base
+/// for (int i = 0; i < GGML_TYPE_COUNT; i++)
+///     printf("%s %lld %lld\n", ggml_type_name(i),
+///            (long long) ggml_blck_size(i), (long long) ggml_type_size(i));
+/// ```
 pub fn ggml_type_block(id: u32) -> Option<(u64, u64)> {
     Some(match id {
         0 => (1, 4),      // F32
         1 => (1, 2),      // F16
         2 => (32, 18),    // Q4_0
+        6 => (32, 22),    // Q5_0
+        7 => (32, 24),    // Q5_1
         8 => (32, 34),    // Q8_0
+        10 => (256, 84),  // Q2_K
+        11 => (256, 110), // Q3_K
         12 => (256, 144), // Q4_K
+        13 => (256, 176), // Q5_K
         14 => (256, 210), // Q6_K
+        18 => (256, 98),  // IQ3_XXS
+        20 => (32, 18),   // IQ4_NL
+        23 => (256, 136), // IQ4_XS
         24 => (1, 1),     // I8
         25 => (1, 2),     // I16
         26 => (1, 4),     // I32
