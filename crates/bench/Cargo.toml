@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+publish.workspace = true
 description = "Throughput benchmark harness: three fixed prompts, fixed seeds, a discarded warmup run per prompt, driven through the raw-completion loop."
 
 [[bin]]

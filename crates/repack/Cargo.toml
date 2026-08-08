@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+publish.workspace = true
 description = "Safetensors header parsing, ranged-download planning, and int4/int8 repack into the .gturbo packed-expert layout."
 
 [lib]

@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+publish.workspace = true
 description = "The mference-check process entry point: reads argv, calls the invocation crate, applies its exit-status/stream-routing decisions, and prints the resolved request. No model loading yet (see AGENTS.md)."
 
 [[bin]]

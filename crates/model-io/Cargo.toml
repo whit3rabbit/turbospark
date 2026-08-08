@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+publish.workspace = true
 description = "Model install layout: manifest/arch validation, packed-expert layout, resident tensor index, SHA-256 verification, and the trusted install receipt."
 
 [lib]

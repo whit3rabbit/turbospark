@@ -9,3 +9,4 @@ rust-version = "1.82"
 license = "MIT"
 authors = ["Clean-room implementation"]
 description = "Behavior-compatible Rust implementation of an approved local inference engine and its command-line surface."
+publish = false

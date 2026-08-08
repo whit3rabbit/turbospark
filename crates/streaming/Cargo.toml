@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+publish.workspace = true
 description = "Routed-expert streaming: pread-based cache streamer, LFU/LRU eviction policy, and readahead advice."
 
 [lib]
