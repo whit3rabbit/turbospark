@@ -134,11 +134,42 @@ pub fn fetch_gguf_header(source: &dyn RangeSource) -> Result<GgufHeader, Downloa
     }
 }
 
+/// The largest single `Range` GET this client will issue. A GGUF's resident
+/// core contains whole tensors far larger than this (Gemma 4's Q8_0
+/// embedding table is 785 MB in ONE tensor), and a single response body that
+/// long is where a CDN drops the connection: the first attempt at the real
+/// 26.9 GB Q8_0 checkpoint died with "error decoding response body" ~2.5 GB
+/// in. Splitting bounds what a retry has to re-fetch as well as making the
+/// drop less likely.
+const MAX_RANGE_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Attempts per chunk before giving up. Transport failures on a multi-GB
+/// walk are expected rather than exceptional; a format error is not retried
+/// because it will not change.
+const RANGE_ATTEMPTS: usize = 4;
+
+/// Splits `[start, end_exclusive)` into successive chunks of at most `cap`
+/// bytes. Pure, so the boundary arithmetic is testable without a network.
+fn chunk_ranges(start: u64, end_exclusive: u64, cap: u64) -> Vec<(u64, u64)> {
+    assert!(cap > 0, "chunk cap must be positive");
+    let mut out = Vec::new();
+    let mut at = start;
+    while at < end_exclusive {
+        let next = (at + cap).min(end_exclusive);
+        out.push((at, next));
+        at = next;
+    }
+    out
+}
+
 /// HTTP-backed [`RangeSource`] using the `blocking` `reqwest` client. Issues
-/// one `Range: bytes=start-(end-1)` GET per call and requires a `206
-/// Partial Content` response, so a server that silently ignores range
-/// requests (and would otherwise hand back the whole file) is caught rather
-/// than treated as success.
+/// `Range: bytes=start-(end-1)` GETs and requires a `206 Partial Content`
+/// response, so a server that silently ignores range requests (and would
+/// otherwise hand back the whole file) is caught rather than treated as
+/// success.
+///
+/// A call is split into [`MAX_RANGE_BYTES`] chunks, each retried up to
+/// [`RANGE_ATTEMPTS`] times. Callers see one contiguous `Vec` either way.
 pub struct HttpRangeSource {
     url: String,
     client: reqwest::blocking::Client,
@@ -151,10 +182,10 @@ impl HttpRangeSource {
             client: reqwest::blocking::Client::new(),
         }
     }
-}
 
-impl RangeSource for HttpRangeSource {
-    fn read_range(&self, start: u64, end_exclusive: u64) -> Result<Vec<u8>, DownloadError> {
+    /// One `Range` GET, no retry. Length is checked here so a truncated body
+    /// is a retryable error rather than silent corruption.
+    fn read_chunk(&self, start: u64, end_exclusive: u64) -> Result<Vec<u8>, DownloadError> {
         let end_inclusive = end_exclusive.saturating_sub(1);
         let response = self
             .client
@@ -184,6 +215,35 @@ impl RangeSource for HttpRangeSource {
     }
 }
 
+impl RangeSource for HttpRangeSource {
+    fn read_range(&self, start: u64, end_exclusive: u64) -> Result<Vec<u8>, DownloadError> {
+        let mut out = Vec::with_capacity((end_exclusive - start) as usize);
+        for (chunk_start, chunk_end) in chunk_ranges(start, end_exclusive, MAX_RANGE_BYTES) {
+            let mut last = None;
+            for attempt in 0..RANGE_ATTEMPTS {
+                match self.read_chunk(chunk_start, chunk_end) {
+                    Ok(bytes) => {
+                        out.extend_from_slice(&bytes);
+                        last = None;
+                        break;
+                    }
+                    // A range the server will not serve at all is not going
+                    // to start working; everything else is transport.
+                    Err(e @ DownloadError::UnexpectedStatus { .. }) => return Err(e),
+                    Err(e) => {
+                        std::thread::sleep(std::time::Duration::from_millis(250 << attempt.min(4)));
+                        last = Some(e);
+                    }
+                }
+            }
+            if let Some(e) = last {
+                return Err(e);
+            }
+        }
+        Ok(out)
+    }
+}
+
 /// In-memory [`RangeSource`] over a byte slice, for tests.
 pub struct MemoryRangeSource<'a> {
     data: &'a [u8],
@@ -206,5 +266,35 @@ impl RangeSource for MemoryRangeSource<'_> {
             });
         }
         Ok(self.data[start..end].to_vec())
+    }
+}
+
+#[cfg(test)]
+mod chunk_tests {
+    use super::chunk_ranges;
+
+    #[test]
+    fn chunks_cover_the_range_exactly_and_in_order() {
+        // The property that matters: concatenating the chunks reproduces the
+        // original range with no gap, no overlap, and none over the cap.
+        for (start, end, cap) in [(0, 0, 8), (0, 1, 8), (7, 8, 8), (0, 24, 8), (5, 23, 7)] {
+            let chunks = chunk_ranges(start, end, cap);
+            assert_eq!(
+                chunks.iter().map(|(a, b)| b - a).sum::<u64>(),
+                end - start,
+                "total length for {start}..{end} cap {cap}"
+            );
+            let mut at = start;
+            for (a, b) in &chunks {
+                assert_eq!(*a, at, "gap or overlap in {start}..{end} cap {cap}");
+                assert!(b - a <= cap && b > a);
+                at = *b;
+            }
+            assert_eq!(at, end);
+        }
+        assert!(
+            chunk_ranges(4, 4, 8).is_empty(),
+            "empty range yields no GET"
+        );
     }
 }

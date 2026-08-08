@@ -41,6 +41,8 @@ crates/repack/
     +-- gguf_fused_gate_network.rs  # Settles FUSED_GATE_FIRST by correlation (ignored)
     +-- gguf_f32_transcode_network.rs # Evidence for the transcode decision (ignored)
     +-- gguf_q4_k_network.rs        # Q4_K dequant vs the real Qwen Q4_K_M, by correlation (ignored)
+    +-- gguf_install_network.rs     # Streams the real Q8_0 GGUF into a full install (ignored)
+    +-- gguf_norm_convention_probe.rs # GGUF install's resident BF16 core vs the MLX install's (ignored)
     +-- gemma4_checkpoint_network.rs# Real Gemma 4 checkpoint download integration test (ignored)
     +-- qwen36_config.rs            # parse_qwen36_config vs the pinned Qwen 3.6 baseline
     +-- qwen36_checkpoint_network.rs# Real Qwen 3.6 checkpoint download integration test (ignored)
