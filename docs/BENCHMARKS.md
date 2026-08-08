@@ -308,12 +308,78 @@ of magnitude above it. The test asserts the 0.195% row, chosen for margin
 rather than for being the smallest detectable damage, so it cannot flake.
 Every number here reproduced exactly across runs.
 
-What is still missing from Phase Q, and deliberately: token-level KL
-divergence against mlx-lm (needs the 14.6 GB reference checkpoint, an
-external Python dependency, and a logit-dump path this port does not have).
-That would compare this port against another engine on the same quantized
-bytes; the table above only establishes that the metric responds to damage,
-which is what Phase S needs from it first.
+### Cross-engine: token-level KL divergence against mlx-lm
+
+The table above establishes that the metric responds to damage. It cannot
+say whether the undamaged starting point is RIGHT, because every number in
+it is this port measured against itself. That is what this section adds:
+the same corpus, the same token ids, and the same quantized checkpoint run
+through a second engine.
+
+`crates/bench/tests/logit_dump.rs` writes this port's full-vocabulary
+logits for the quality corpus plus the exact id sequence it walked;
+`scripts/kld.py` replays those IDS (never the prose, so no tokenizer or
+chat-template difference can masquerade as a numerics gap) through mlx-lm
+on `mlx-community/gemma-4-26b-a4b-it-4bit` at revision `0d77464e`, the
+exact repo `~/models/gemma4.gturbo` was repacked from. Both heads return
+`softcap * tanh(z / softcap)` at softcap 30 and neither normalizes, which
+was read out of `mlx_lm/models/gemma4_text.py` rather than assumed.
+
+Gemma 4, 550 positions, 16 expert-cache slots, 2026-08-07, on battery:
+
+| Comparison | Mean KL | Median | p99 | Top-1 agree |
+| --- | ---: | ---: | ---: | ---: |
+| this port cold vs this port warm | 0.0019 | 0.00007 | 0.026 | 99.1% |
+| **this port vs mlx-lm, both cached** | **0.0264** | **0.0022** | **0.640** | **95.6%** |
+| mlx-lm batched vs mlx-lm cached | 0.0352 | 0.0028 | 0.938 | 96.0% |
+
+**The cross-engine number is smaller than mlx-lm's disagreement with
+itself.** That third row is the whole reason the second one is readable: a
+KL between two engines has no natural scale, so mlx-lm is run against its
+own two forward shapes (one batched pass over the sequence, and the same
+sequence stepped token by token through a cache), which holds the weights,
+the kernels, and the engine fixed and varies only the reduce shape. At 4
+bits that alone costs 0.0352 mean nats and 4% of the argmaxes. This port
+lands under it. There is no kernel gap detectable at this resolution, so a
+Phase S quality delta is attributable to the quantization.
+
+The first row is the matching floor from this port's side, and it is
+independently useful: cache state alone (Gemma's misses-first slot order
+permuting phase 2's reduce, AGENTS.md Gotcha 27) moves the distribution by
+0.0019 mean nats. The KL is reported both ways; the forward and reverse
+means agree to within 5% on every row above, so none of this is an artifact
+of which distribution is treated as the reference.
+
+Perplexity on the same four passes, which cross-validates the whole
+pipeline end to end:
+
+| Reading | Perplexity |
+| --- | ---: |
+| this port, cold cache | 37.3105 |
+| this port, warm cache | 37.5059 |
+| mlx-lm, batched | 37.4479 |
+| mlx-lm, cached | 37.5301 |
+
+A 0.6% spread across two engines and two cache states. The cold reading
+reproduces `quality_gate`'s frozen row **to the last digit**, which is what
+proves the dump is measuring the same thing the gate is: the gate takes its
+perplexity first thing in the process, so its number is a cold one, and
+`MREFRUST_LOGIT_DUMP_COLD=1` reproduces that condition. This port's own two
+cache states are 0.52% apart, essentially the +0.54% of the 0.0015% damage
+row above that the gate does NOT detect: cache state alone sits at the
+gate's detection floor, which is a second and independent bound on it.
+
+Everything here reproduced exactly across separate processes: the port's
+logit dump is byte-identical run to run (SHA-256 `ee22f854...`), and
+`kld.py`'s output diffs clean.
+
+Caveats. One corpus, one family, one machine. mlx-lm returns bfloat16,
+whose 8 mantissa bits are strictly coarser than this port's f16 storage at
+these softcapped magnitudes, so there is no f16 storage floor to subtract
+(measured: 3.5e-22 nats) and mlx is the lower-precision side, not this
+port. Qwen 3.6 has no cross-engine number: `logit_dump.rs` accepts
+`MREFRUST_QWEN36_INSTALL_DIR` and would produce one, but `kld.py`'s
+reference is pinned to the Gemma repo.
 
 ## Caveats worth repeating
 

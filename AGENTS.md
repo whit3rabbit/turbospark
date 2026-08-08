@@ -118,6 +118,28 @@ MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
 MREFRUST_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
   cargo test -p mrefrust-bench --test qwen36_quality_gate --release -- --ignored --nocapture
 
+# Cross-engine check (ROADMAP Phase Q, last item): does this port agree
+# with mlx-lm on the SAME quantized bytes? Two steps. The first dumps this
+# port's full-vocab logits for the quality corpus plus the exact token ids
+# it walked (~275 MiB, ~30 s). The second replays those IDS -- never the
+# prose, or a tokenizer difference would read as a numerics gap -- through
+# mlx-lm and prints the KL. mlx-lm runs in a uv ephemeral env, so nothing
+# is installed globally and nothing is added to this workspace. Needs
+# `hf download mlx-community/gemma-4-26b-a4b-it-4bit --revision
+# 0d77464eeb233a2da68ebf9d7dc4edaac7db956d` first (14.6 GB). Read the
+# floor, not just the number: docs/BENCHMARKS.md.
+MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
+MREFRUST_LOGIT_DUMP_DIR=/tmp/kld/mrefrust \
+  cargo test -p mrefrust-bench --test logit_dump --release -- --ignored --nocapture
+uv run --python 3.12 --with mlx-lm --with numpy scripts/kld.py /tmp/kld/mrefrust
+
+# Same dump with NO warmup walk, which is the condition quality_gate takes
+# its perplexity under. Reproduces the frozen row exactly; that is the
+# cross-check that the dump measures what the gate measures.
+MREFRUST_LOGIT_DUMP_COLD=1 MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
+MREFRUST_LOGIT_DUMP_DIR=/tmp/kld/cold \
+  cargo test -p mrefrust-bench --test logit_dump --release -- --ignored --nocapture
+
 # Proof that the gate above can SEE quantization damage, rather than just
 # asserting it could. Clones the install (APFS clonefile, so the original
 # is untouched and only written pages cost disk), shifts one quantization

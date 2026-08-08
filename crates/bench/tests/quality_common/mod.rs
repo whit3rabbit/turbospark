@@ -99,7 +99,11 @@ use tokenizer::{Message, MfTokenizer, Role};
 /// and carries no licence question. It answers the frozen protocol's
 /// `short-explanation` prompt, which is what goes in the user slot, so the
 /// pair reads as a real turn rather than as text dropped into a template.
-const REFERENCE_ANSWER: &str = include_str!("../../prompts/quality-v1/assistant-reference.txt");
+/// `pub` for `logit_dump.rs`, which teacher-forces the same sequence and
+/// writes out the per-position logits instead of collapsing them to a
+/// perplexity. Same corpus on purpose: a cross-engine KLD and the
+/// perplexity number are then two readings of one forward pass.
+pub const REFERENCE_ANSWER: &str = include_str!("../../prompts/quality-v1/assistant-reference.txt");
 
 /// A recorded quality baseline for one chip and one install.
 ///
@@ -312,7 +316,7 @@ pub fn run_quality_gate(dir: &Path, rows: &[ChipQuality]) {
 /// CLI format it (the dialect template renders the turn markup and its own
 /// `<bos>`, hence `add_bos = false`). Its last token is the position the
 /// model would start answering from.
-fn user_turn_ids(tokenizer: &MfTokenizer) -> Vec<i32> {
+pub fn user_turn_ids(tokenizer: &MfTokenizer) -> Vec<i32> {
     let messages = [Message::new(Role::User, PROTOCOL_CASES[0].content)];
     let rendered = tokenizer
         .apply_chat_template(&messages)

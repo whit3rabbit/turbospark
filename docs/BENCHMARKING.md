@@ -309,6 +309,43 @@ slots. Three traps that shaped it, all measured rather than reasoned:
 Numbers, provenance, and the damage-response curve live in
 `docs/BENCHMARKS.md`, not here.
 
+### The cross-engine arm
+
+The gates above all measure this port against ITSELF. The one that reaches
+outside is a two-step pair, deliberately not wired into `cargo test`
+because it needs a 14.6 GB reference checkpoint and a Python environment:
+
+```sh
+hf download mlx-community/gemma-4-26b-a4b-it-4bit \
+  --revision 0d77464eeb233a2da68ebf9d7dc4edaac7db956d
+
+MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
+MREFRUST_LOGIT_DUMP_DIR=/tmp/kld/mrefrust \
+  cargo test -p mrefrust-bench --test logit_dump --release -- --ignored --nocapture
+
+uv run --python 3.12 --with mlx-lm --with numpy scripts/kld.py /tmp/kld/mrefrust
+```
+
+That revision is the exact repo `~/models/gemma4.gturbo` was repacked from
+(pinned in `crates/repack/tests/gemma4_checkpoint_network.rs`), which is
+the point: same quantized bytes on both sides, so the comparison isolates
+kernels rather than quantization. `uv` builds an ephemeral environment, so
+mlx-lm is never installed globally and never enters this workspace's
+dependency graph.
+
+Three traps here, matching the three above:
+
+- **Hand the second engine TOKEN IDS, never prose.** A tokenizer or
+  chat-template difference would surface as a divergence and read as a
+  numerics gap. `meta.json` carries the exact sequence this port walked.
+- **Measure a floor in the same run.** A cross-engine KL has no natural
+  scale, so `kld.py` also runs mlx-lm against itself in its two forward
+  shapes (batched vs token-by-token through a cache). Measured, that
+  intra-engine floor is LARGER than the cross-engine number.
+- **The assistant-slot rule does NOT carry over.** It exists because SFT
+  masks prompt loss; a distribution comparison between two engines is
+  valid at every position, and prompt positions are free.
+
 ## Measurement hygiene
 
 Carried over from the Swift protocol, worth repeating:

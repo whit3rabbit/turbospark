@@ -14,6 +14,7 @@ crates/bench/
 |   +-- protocol.rs         # Frozen community benchmark protocol definitions
 |   \-- real_model.rs       # Real model benchmark runner driving RealForwardRunner
 +-- tests/
+|   +-- logit_dump.rs       # Full-vocab logit dump for the cross-engine KLD (scripts/kld.py)
 |   +-- memory_oracle.rs    # Memory oracle asserting peak footprint ceiling & steady state (Gemma 4)
 |   +-- mference_bench.rs   # Benchmark harness integration smoke test
 |   +-- oracle_common/      # Shared memory oracle assertion helpers (mod.rs)
@@ -90,6 +91,16 @@ MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
 MREFRUST_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
   cargo test -p mrefrust-bench --test qwen36_quality_gate --release -- --ignored --nocapture
 
+# Cross-engine KLD against mlx-lm (Phase Q's last item). Step 1 dumps this
+# port's full-vocab logits plus the token ids; step 2 replays those IDS
+# through mlx-lm in a uv ephemeral env. Needs the 14.6 GB reference
+# checkpoint. MREFRUST_LOGIT_DUMP_COLD=1 skips the warmup walk and
+# reproduces quality_gate's frozen perplexity exactly.
+MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
+MREFRUST_LOGIT_DUMP_DIR=/tmp/kld/mrefrust \
+  cargo test -p mrefrust-bench --test logit_dump --release -- --ignored --nocapture
+uv run --python 3.12 --with mlx-lm --with numpy scripts/kld.py /tmp/kld/mrefrust
+
 # Sensitivity proof for the gate above: APFS-clone the install, shift one
 # quantization level in a strided subset of the routed experts, re-measure.
 # ~30 s. Response curve and detection floor in docs/BENCHMARKS.md.
@@ -105,4 +116,5 @@ MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
 4. **Slot count is pinned, not defaulted-into**: `protocol::PROTOCOL_EXPERT_CACHE_SLOTS` (16) is what `docs/BENCHMARKS.md`, the memory oracle's per-chip rows, and Swift's own default all sit at. `--expert-cache-slots` exists so a Swift comparison can match a non-default setting, not so the protocol can drift; the oracle passes the constant explicitly for that reason. Output is not identical across slot counts (the hit/miss split permutes the phase-2 reduce order, FP addition is not associative), so compare within one count.
 5. **The phase report does not account for a decode run**: `MFERENCE_PHASES=1` covers the inside of `produce` only; the sampler and detokenizer are outside it (AGENTS.md Gotcha 23). Subtract the phase total from the footer's `decode=` seconds before trusting a phase table as a full attribution.
 6. **Perplexity is only meaningful on ASSISTANT-position tokens**: both supported checkpoints are instruction-tuned, and instruction tuning masks the loss on the prompt, so the model was never trained to predict user-turn text or the markup closing it. Measured on the real Gemma 4 install, teacher-forcing the PROMPT gave a mean NLL of 15.3 nats against a uniform bound of 12.5 (worse than guessing) while assistant-side tokens in the same sequence scored 0.000; a replay of the model's own greedy output agreed 39/40, so the measurement was sound and the corpus was not. `quality_common` therefore teacher-forces a fixed reference answer into the assistant slot and scores only that. Sibling trap: a golden digest is NOT reproducible from a cold expert cache (slots are ordered misses-first, permuting the phase-2 reduce order), so every digest is taken after a discarded warmup of the same generation.
-7. **Byte-identity under a constrained expert cache holds on Qwen and not on Gemma**: the gate's fourth arm reopens the install at 8 slots and repeats the greedy digest. `real_forward_gemma4.rs:818` orders a layer's routed slots misses-first (so the hits' phase-1 GEMV can ride its own command buffer), that order feeds phase 2's reduce, and FP addition is not associative, so Gemma's bytes move with the hit/miss split; `real_forward_qwen.rs` does no reordering and comes out identical. Two consequences. The Gemma row carries a SECOND golden digest rather than asserting identity across slot counts, and `MFERENCE_HIT_CB=0` is not the explanation to reach for: it toggles the separate command buffer, not the order, and measured directly it moves no digest at all.
+7. **A cross-engine KL number is meaningless without a floor measured beside it.** `scripts/kld.py` runs mlx-lm TWICE on purpose: once token-by-token through a cache (the shape this port runs in, and the headline comparison) and once as a single batched pass. The divergence between those two holds the weights, the kernels, and the engine fixed and varies only the reduce shape, and at 4 bits it still costs 0.0352 mean nats and 4% of the argmaxes -- MORE than this port's 0.0264 against mlx-lm. Drop that second run and the headline has no scale to be read against. Two sibling traps. Do NOT carry `quality_common`'s assistant-slot-only rule over to the KL: that rule exists because SFT masks prompt loss, while a distribution comparison is valid at every position, so all 550 are used. And do NOT budget for an f16 storage floor: mlx-lm returns bfloat16, whose 8 mantissa bits are coarser than f16's 10 at these softcapped magnitudes, so the round trip through this port's dump width is lossless (measured 3.5e-22 nats) and mlx is the lower-precision side.
+8. **Byte-identity under a constrained expert cache holds on Qwen and not on Gemma**: the gate's fourth arm reopens the install at 8 slots and repeats the greedy digest. `real_forward_gemma4.rs:818` orders a layer's routed slots misses-first (so the hits' phase-1 GEMV can ride its own command buffer), that order feeds phase 2's reduce, and FP addition is not associative, so Gemma's bytes move with the hit/miss split; `real_forward_qwen.rs` does no reordering and comes out identical. Two consequences. The Gemma row carries a SECOND golden digest rather than asserting identity across slot counts, and `MFERENCE_HIT_CB=0` is not the explanation to reach for: it toggles the separate command buffer, not the order, and measured directly it moves no digest at all.
