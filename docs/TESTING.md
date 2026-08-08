@@ -8,7 +8,7 @@ What the suite covers, how it is gated, and how to run each part.
 cargo test --workspace
 ```
 
-439 tests as of 2026-08-07, all passing, plus 17 that are `#[ignore]`d (see
+452 tests as of 2026-08-08, all passing, plus 18 that are `#[ignore]`d (see
 below). On macOS this includes every Metal test, which needs a real
 Metal-capable device and Xcode's `metal` toolchain
 (`xcrun -sdk macosx metal`). On Linux `crates/gpu` compiles to nothing and
@@ -87,7 +87,7 @@ MREFRUST_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
 # Real ~270 MB HF checkpoint download through the Llama-family mapping.
 cargo test -p mrefrust-repack --test hf_checkpoint_network --release -- --ignored --nocapture
 
-# The three GGUF checks (ROADMAP Phase G). All are `*_network` but NONE of
+# The four GGUF checks (ROADMAP Phase G). All are `*_network` but NONE of
 # them downloads a checkpoint: each reads a few KB to a few MB off a
 # 20-27 GB remote file over range requests, in seconds. They are grouped
 # here rather than above for that reason -- do not budget a download for
@@ -114,6 +114,18 @@ MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
 #    `crates/repack/tests/gguf_checkpoint.rs`, on the synthetic fixture;
 #    this one is why those tests are allowed to assume what they assume.
 cargo test -p mrefrust-repack --test gguf_f32_transcode_network --release -- --ignored --nocapture
+
+# 4. The Q4_K reference against real published bytes. Correlates a
+#    dequantized layer 0 expert 0 gate row of the real Qwen 3.6 Q4_K_M
+#    against the same row in the install (+0.9930), with the unrelated `up`
+#    matrix as the control (+0.12). This is the only check that can catch a
+#    decoder and the fixture quantizer that feeds it being wrong TOGETHER,
+#    which is the failure mode `crates/compute`'s unit tests structurally
+#    cannot see. It skips all-zero rows and asserts the two sides agree on
+#    which those are: see AGENTS.md Gotcha 30 before reading a low number
+#    out of it.
+MREFRUST_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
+  cargo test -p mrefrust-repack --test gguf_q4_k_network --release -- --ignored --nocapture
 
 # The memory oracle (see docs/BENCHMARKING.md). One target per model
 # family: the footprint assertion is a whole-session peak, so two

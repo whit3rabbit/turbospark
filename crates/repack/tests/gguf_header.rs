@@ -371,3 +371,17 @@ fn the_q8_0_block_matches_the_cpu_reference() {
         ))
     );
 }
+
+/// Same standing agreement for Q4_K, and it matters more here: a superblock
+/// is 144 bytes over 256 elements, so a disagreement of one byte shifts every
+/// later tensor by thousands.
+#[test]
+fn the_q4_k_block_matches_the_cpu_reference() {
+    assert_eq!(
+        ggml_type_block(12),
+        Some((
+            compute::Q4_K_BLOCK_ELEMS as u64,
+            compute::Q4_K_BLOCK_BYTES as u64
+        ))
+    );
+}
