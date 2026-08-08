@@ -106,9 +106,13 @@ MREFRUST_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
 MREFRUST_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
   cargo test -p mrefrust-repack --test gguf_fused_gate_network --release -- --ignored --nocapture
 
-# 3. The evidence behind the repack-time transcode decision: GGUF's F32
-#    norms are upcast BF16 and narrow back bit-exactly, and INT8-transcoding
-#    its F32 router does not move the routing decision. Needs no install.
+# 3. The evidence behind the repack-time transcode, which is now LANDED
+#    (`gguf_checkpoint.rs::transcode_f32`): GGUF's F32 norms are upcast
+#    BF16 and narrow back bit-exactly, and INT8-transcoding its F32 router
+#    does not move the routing decision. Needs no install. The transcode's
+#    own behaviour is covered by the unit tests in
+#    `crates/repack/tests/gguf_checkpoint.rs`, on the synthetic fixture;
+#    this one is why those tests are allowed to assume what they assume.
 cargo test -p mrefrust-repack --test gguf_f32_transcode_network --release -- --ignored --nocapture
 
 # The memory oracle (see docs/BENCHMARKING.md). One target per model

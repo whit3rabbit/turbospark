@@ -80,8 +80,11 @@ port tracks itself over time: [`docs/BENCHMARKING.md`](docs/BENCHMARKING.md).
 - `crates/cli`: the `mference-check` process entry point.
 - `crates/repack`: safetensors and GGUF header parsing, ranged-download
   planning, and quantization repack. GGUF intake installs but does not yet
-  run: its block-quantized bytes are refused at open on purpose, twice, until
-  the kernels behind them land (ROADMAP Phase G).
+  run: its expert bytes are block-quantized and are refused at open on
+  purpose, twice, until the kernels behind them land (ROADMAP Phase G). The
+  resident core is already there, transcoded at repack time from the F32
+  llama.cpp writes into the BF16 and INT8 the existing kernels read, which
+  was measured to be lossless for norms rather than assumed to be.
 - `crates/server`: OpenAI Chat Completions and Anthropic Messages server on loopback.
 - `crates/bench`: throughput benchmark harness, the memory oracle tests, and
   the per-install quality gates (perplexity plus frozen output digests, a
