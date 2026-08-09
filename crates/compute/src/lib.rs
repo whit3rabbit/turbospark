@@ -1,7 +1,7 @@
 //! Destination-selected compute strategy plus CPU reference kernels.
 //!
 //! The kernel modules (`rms_norm`, `wht`, `rope`, `attention`, `quant`,
-//! `quant_gguf`,
+//! `quant_gguf`, `quant_gguf_iq`,
 //! `moe`, `gdn`, `gating`, `sampling`, `tolerance`) are the numerical ground truth later GPU
 //! kernels are validated against. Numerics parity with any upstream
 //! implementation is out of scope for `ComputeStrategy` itself; only the
@@ -17,6 +17,8 @@ pub mod gdn;
 pub mod moe;
 pub mod quant;
 pub mod quant_gguf;
+pub mod quant_gguf_iq;
+pub mod quant_gguf_iq_tables;
 pub mod rms_norm;
 pub mod rope;
 pub mod sampling;
@@ -38,6 +40,13 @@ pub use quant_gguf::{
     Q4_K_BLOCK_ELEMS, Q4_K_SUB_ELEMS, Q6_K_BLOCK_BYTES, Q6_K_BLOCK_ELEMS, Q6_K_SUB_ELEMS,
     Q8_0_BLOCK_BYTES, Q8_0_BLOCK_ELEMS,
 };
+pub use quant_gguf_iq::{
+    dequant_iq3_xxs_gemv, dequant_iq4_nl_gemv, dequant_iq4_xs_gemv, dequantize_iq3_xxs,
+    dequantize_iq4_nl, dequantize_iq4_xs, iq3xxs_signs, IQ3_XXS_BLOCK_BYTES, IQ3_XXS_BLOCK_ELEMS,
+    IQ3_XXS_SUB_ELEMS, IQ4_NL_BLOCK_BYTES, IQ4_NL_BLOCK_ELEMS, IQ4_XS_BLOCK_BYTES,
+    IQ4_XS_BLOCK_ELEMS, IQ4_XS_SUB_ELEMS,
+};
+pub use quant_gguf_iq_tables::{IQ3XXS_GRID, IQ4NL_VALUES};
 pub use rms_norm::rms_norm;
 pub use rope::{rope_neox, rope_neox_subdim, rope_paired};
 pub use sampling::logit_softcap_softmax;

@@ -392,3 +392,35 @@ fn the_q4_k_block_matches_the_cpu_reference() {
         ))
     );
 }
+
+/// The same agreement for the three IQ types (ROADMAP Phase S). These rows
+/// predate their CPU reference by a session -- they were added parse-only so
+/// candidate checkpoints could be header-probed -- so this is the first thing
+/// that holds the parser's numbers and the decoder's to each other.
+#[test]
+fn the_iq_blocks_match_the_cpu_reference() {
+    assert_eq!(
+        ggml_type_block(18),
+        Some((
+            compute::IQ3_XXS_BLOCK_ELEMS as u64,
+            compute::IQ3_XXS_BLOCK_BYTES as u64
+        )),
+        "IQ3_XXS"
+    );
+    assert_eq!(
+        ggml_type_block(20),
+        Some((
+            compute::IQ4_NL_BLOCK_ELEMS as u64,
+            compute::IQ4_NL_BLOCK_BYTES as u64
+        )),
+        "IQ4_NL"
+    );
+    assert_eq!(
+        ggml_type_block(23),
+        Some((
+            compute::IQ4_XS_BLOCK_ELEMS as u64,
+            compute::IQ4_XS_BLOCK_BYTES as u64
+        )),
+        "IQ4_XS"
+    );
+}
