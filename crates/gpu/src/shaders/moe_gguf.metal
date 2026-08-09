@@ -245,3 +245,133 @@ kernel void moe_phase2_down_reduce_k8_q4_k(
         y[d] = half(acc);
     }
 }
+
+// ---------------------------------------------------------------------------
+// The IQ pairs (ROADMAP Phase S). `dequant_iq.metal` joins the concatenation
+// ahead of this file, so the row unpacks below are ITS helpers rather than a
+// second copy: an IQ3_XXS codebook lookup written twice is exactly how two
+// call sites come to disagree, and unlike an arithmetic reconstruction there
+// is no formula a reader could check the second copy against.
+//
+// ONLY THREE KERNELS, not six, and the asymmetry is the real file rather than
+// an omission. The Phase S candidate
+// (unsloth/gemma-4-26B-A4B-it-UD-Q3_K_M) puts its types on FIXED SIDES of a
+// routed expert:
+//
+//   ffn_gate_up_exps  IQ3_XXS x29, IQ4_XS on layer 29   -> phase 1
+//   ffn_down_exps     IQ4_NL  x29, Q8_0   on layer 29   -> phase 2
+//
+// so phase 1 needs IQ3_XXS and IQ4_XS, phase 2 needs IQ4_NL, and Q8_0 already
+// has both. An IQ4_NL phase 1 or an IQ3_XXS phase 2 would be a kernel no real
+// file dispatches, which is the same call the Q6_K GEMV made when it shipped
+// without an embedding or MoE sibling. A checkpoint that needs one fails at
+// the dispatch site by name.
+//
+// The block-size preconditions differ and the host asserts them: an IQ4_NL
+// row must be a whole number of 32 elements, the other two of 256.
+// ---------------------------------------------------------------------------
+
+// Phase 1, IQ3_XXS. Same dispatch as every sibling: one SIMD group per
+// (slot, f) row, eight rows per threadgroup, 256 threads.
+[[kernel, max_total_threads_per_threadgroup(256)]]
+kernel void moe_phase1_gate_up_act_iq3_xxs(
+    device const RoutedBlobs& routed          [[buffer(0)]],
+    constant ExpertOffsets&   routed_offsets  [[buffer(1)]],
+    device const half*        x               [[buffer(2)]],
+    device half*              acts            [[buffer(3)]],
+    constant uint&            D               [[buffer(4)]],
+    constant uint&            F               [[buffer(5)]],
+    constant uint&            top_k           [[buffer(6)]],
+    uint                      tg_idx          [[threadgroup_position_in_grid]],
+    uint                      sg_idx          [[simdgroup_index_in_threadgroup]],
+    uint                      lane            [[thread_index_in_simdgroup]]
+) {
+    constexpr uint rows_per_tg = 8;
+    const uint DD = moe_fc_d(D);
+    const uint FF = moe_fc_f(F);
+    const uint rowg = tg_idx * rows_per_tg + sg_idx;
+    if (rowg >= moe_fc_top_k(top_k) * FF) return;
+    const uint slot = rowg / FF;
+    const uint f = rowg % FF;
+
+    device const uint8_t* base = routed.blob[slot];
+    const ExpertOffsets re = routed_offsets;
+    const uint row_bytes = iq3_xxs_row_bytes(DD);
+    const float gate = dequant_iq3_xxs_row_simd(
+        base + re.gate_W_off + f * row_bytes, x, DD, lane);
+    const float up = dequant_iq3_xxs_row_simd(
+        base + re.up_W_off + f * row_bytes, x, DD, lane);
+    if (lane == 0) acts[slot * FF + f] = half(moe_hidden_activation(gate) * up);
+}
+
+// Phase 1, IQ4_XS. One layer of the candidate uses this and twenty-nine use
+// the sibling above; see the header for why that is not an accident.
+[[kernel, max_total_threads_per_threadgroup(256)]]
+kernel void moe_phase1_gate_up_act_iq4_xs(
+    device const RoutedBlobs& routed          [[buffer(0)]],
+    constant ExpertOffsets&   routed_offsets  [[buffer(1)]],
+    device const half*        x               [[buffer(2)]],
+    device half*              acts            [[buffer(3)]],
+    constant uint&            D               [[buffer(4)]],
+    constant uint&            F               [[buffer(5)]],
+    constant uint&            top_k           [[buffer(6)]],
+    uint                      tg_idx          [[threadgroup_position_in_grid]],
+    uint                      sg_idx          [[simdgroup_index_in_threadgroup]],
+    uint                      lane            [[thread_index_in_simdgroup]]
+) {
+    constexpr uint rows_per_tg = 8;
+    const uint DD = moe_fc_d(D);
+    const uint FF = moe_fc_f(F);
+    const uint rowg = tg_idx * rows_per_tg + sg_idx;
+    if (rowg >= moe_fc_top_k(top_k) * FF) return;
+    const uint slot = rowg / FF;
+    const uint f = rowg % FF;
+
+    device const uint8_t* base = routed.blob[slot];
+    const ExpertOffsets re = routed_offsets;
+    const uint row_bytes = iq4_xs_row_bytes(DD);
+    const float gate = dequant_iq4_xs_row_simd(
+        base + re.gate_W_off + f * row_bytes, x, DD, lane);
+    const float up = dequant_iq4_xs_row_simd(
+        base + re.up_W_off + f * row_bytes, x, DD, lane);
+    if (lane == 0) acts[slot * FF + f] = half(moe_hidden_activation(gate) * up);
+}
+
+// Phase 2, IQ4_NL. Reduces ALL EIGHT slots unconditionally, exactly like every
+// sibling, so an unused slot needs a zero routing weight, a valid blob
+// pointer, and a finite acts row (AGENTS.md Gotcha 8).
+[[kernel, max_total_threads_per_threadgroup(256)]]
+kernel void moe_phase2_down_reduce_k8_iq4_nl(
+    device const RoutedBlobs& routed          [[buffer(0)]],
+    constant ExpertOffsets&   routed_offsets  [[buffer(1)]],
+    device const half*        acts            [[buffer(2)]],
+    device const half*        routing_w       [[buffer(3)]],
+    device const half*        residual        [[buffer(4)]],
+    device half*              y               [[buffer(5)]],
+    constant uint&            D               [[buffer(6)]],
+    constant uint&            F               [[buffer(7)]],
+    uint                      d               [[threadgroup_position_in_grid]],
+    uint                      sg_idx          [[simdgroup_index_in_threadgroup]],
+    uint                      lane            [[thread_index_in_simdgroup]]
+) {
+    threadgroup float partial[8];
+    const uint DD = moe_fc_d(D);
+    const uint FF = moe_fc_f(F);
+    if (d >= DD) return;
+
+    device const uint8_t* base = routed.blob[sg_idx];
+    const ExpertOffsets re = routed_offsets;
+    device const half* act_slot = acts + sg_idx * FF;
+
+    const float value = dequant_iq4_nl_row_simd(
+        base + re.down_W_off + d * iq4_nl_row_bytes(FF), act_slot, FF, lane);
+    if (lane == 0) partial[sg_idx] = float(routing_w[sg_idx]) * value;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    if (sg_idx == 0 && lane == 0) {
+        float acc = float(residual[d]);
+        acc += partial[0]; acc += partial[1]; acc += partial[2]; acc += partial[3];
+        acc += partial[4]; acc += partial[5]; acc += partial[6]; acc += partial[7];
+        y[d] = half(acc);
+    }
+}

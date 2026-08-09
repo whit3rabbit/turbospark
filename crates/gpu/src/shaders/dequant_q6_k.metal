@@ -110,3 +110,61 @@ kernel void dequant_q6_k_gemv_simd(
         y[row] = half(acc);
     }
 }
+
+// One row of a Q6_K embedding table, dequantized into `out` and scaled.
+// Sibling of `embed_lookup_q4_k` and `embed_lookup_q8_0`, one thread per
+// element rather than one SIMD group per row.
+//
+// It exists because ROADMAP Phase S's candidate checkpoint puts `token_embd`
+// in Q6_K and ties the LM head to it. When Q6_K first landed this kernel was
+// deliberately skipped -- the only real file using the type put it in
+// `output.weight`, which needs a GEMV and nothing else -- and that call was
+// right at the time; a second real file changed the answer.
+//
+// The element-to-byte mapping is the trap, and it is the GEMV's addressing
+// read from the other direction. Within a 256-element superblock, element `e`
+// sits in half `h = e / 128` and position `p = e % 128`. Inside that half:
+//   p <  32  -> low nibble of ql[p],       high bits qh[p]      >> 0, scale is
+//   p <  64  -> low nibble of ql[p],       qh[p - 32]   >> 2,    is + 2
+//   p <  96  -> high nibble of ql[p - 64], qh[p - 64]   >> 4,    is + 4
+//   p < 128  -> high nibble of ql[p - 64], qh[p - 96]   >> 6,    is + 6
+// where `ql` is offset 64 bytes per half, `qh` 32, `sc` 8, and the scale index
+// `is` is the LANE-equivalent `(p % 32) / 16`. Getting the scale stride wrong
+// (one instead of two) mixes scales between quarters and is invisible unless
+// the sub-blocks differ in magnitude.
+kernel void embed_lookup_q6_k(
+    device const uint8_t* table     [[buffer(0)]],   // [V, D/256 * 210] blocks
+    device half*          out       [[buffer(1)]],   // [D] FP16
+    constant uint&        token_id  [[buffer(2)]],
+    constant uint&        D         [[buffer(3)]],
+    constant float&       out_scale [[buffer(4)]],
+    uint                  gid       [[thread_position_in_grid]]
+) {
+    if (gid >= D) return;
+    const uint n_blocks = D / kQ6_KBlockElems;
+    device const uint8_t* blk = table + uint(token_id) * n_blocks * kQ6_KBlockBytes
+        + (gid / kQ6_KBlockElems) * kQ6_KBlockBytes;
+
+    const ushort d_raw = ushort(blk[kQ6_KDAt]) | (ushort(blk[kQ6_KDAt + 1]) << 8);
+    const float d = float(as_type<half>(d_raw));
+
+    const uint e = gid % kQ6_KBlockElems;
+    const uint h = e / kQ6_KHalfElems;
+    const uint p = e % kQ6_KHalfElems;
+    const uint quarter = p / 32;      // 0..4, selects the qh bit pair
+    const uint lane = p % 32;         // the GEMV's lane, i.e. the qh byte
+
+    device const uint8_t* ql = blk + h * 64;
+    device const uint8_t* qh = blk + kQ6_KQhAt + h * 32;
+    device const uint8_t* sc = blk + kQ6_KScalesAt + h * 8;
+
+    // Quarters 0 and 1 take the LOW nibble of ql[lane] and ql[lane + 32];
+    // quarters 2 and 3 take the HIGH nibble of the same two bytes.
+    const uint8_t byte = ql[lane + (quarter % 2) * 32];
+    const uint nib = (quarter < 2) ? uint(byte & 0xF) : uint(byte >> 4);
+    const uint bits = (uint(qh[lane]) >> (2 * quarter)) & 3u;
+    const float q = float(int(nib | (bits << 4)) - 32);
+
+    const uint is = lane / kQ6_KSubElems + 2 * quarter;
+    out[gid] = half(d * float(as_type<int8_t>(sc[is])) * q * out_scale);
+}

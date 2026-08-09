@@ -45,6 +45,8 @@ mod dequant_int4_gemv;
 #[cfg(target_os = "macos")]
 mod dequant_int8_gemv;
 #[cfg(target_os = "macos")]
+mod dequant_iq_gemv;
+#[cfg(target_os = "macos")]
 mod dequant_q4_k_gemv;
 #[cfg(target_os = "macos")]
 mod dequant_q6_k_gemv;
@@ -100,6 +102,11 @@ pub use dequant_int8_gemv::{
     Int8AffineRowGpu, Int8ResidentMatrix,
 };
 #[cfg(target_os = "macos")]
+pub use dequant_iq_gemv::{
+    dequant_iq_gemv, IqBlockType, IQ3_XXS_BLOCK_BYTES, IQ3_XXS_BLOCK_ELEMS, IQ4_NL_BLOCK_BYTES,
+    IQ4_NL_BLOCK_ELEMS, IQ4_XS_BLOCK_BYTES, IQ4_XS_BLOCK_ELEMS,
+};
+#[cfg(target_os = "macos")]
 pub use dequant_q4_k_gemv::{
     dequant_q4_k_gemv, dequant_q4_k_gemv_resident, encode_dequant_q4_k_gemv_resident,
     encode_embed_lookup_q4_k, q4_k_row_bytes, Q4KResidentMatrix, Q4_K_BLOCK_BYTES,
@@ -108,7 +115,8 @@ pub use dequant_q4_k_gemv::{
 #[cfg(target_os = "macos")]
 pub use dequant_q6_k_gemv::{
     dequant_q6_k_gemv, dequant_q6_k_gemv_resident, encode_dequant_q6_k_gemv_resident,
-    q6_k_row_bytes, Q6KResidentMatrix, Q6_K_BLOCK_BYTES, Q6_K_BLOCK_ELEMS,
+    encode_embed_lookup_q6_k, q6_k_row_bytes, Q6KResidentMatrix, Q6_K_BLOCK_BYTES,
+    Q6_K_BLOCK_ELEMS,
 };
 #[cfg(target_os = "macos")]
 pub use dequant_q8_0_gemv::{
@@ -139,7 +147,9 @@ pub use moe_decode::{
 };
 #[cfg(target_os = "macos")]
 pub use moe_gguf::{
-    encode_moe_phase1_q4_k, encode_moe_phase1_q8_0, encode_moe_phase2_q4_k, encode_moe_phase2_q8_0,
+    encode_moe_phase1_iq3_xxs, encode_moe_phase1_iq4_xs, encode_moe_phase1_q4_k,
+    encode_moe_phase1_q8_0, encode_moe_phase2_iq4_nl, encode_moe_phase2_q4_k,
+    encode_moe_phase2_q8_0,
 };
 #[cfg(target_os = "macos")]
 pub use prefill_scratch::{PrefillChunkScratchBuffers, PrefillChunkScratchLayout};

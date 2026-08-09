@@ -40,6 +40,7 @@ use crate::moe_decode::{
 const SOURCE: &str = concat!(
     include_str!("shaders/moe.metal"),
     include_str!("shaders/dequant_q4_k.metal"),
+    include_str!("shaders/dequant_iq.metal"),
     include_str!("shaders/moe_gguf.metal")
 );
 const ROWS_PER_THREADGROUP: u64 = 8;
@@ -150,10 +151,113 @@ pub fn encode_moe_phase1_q8_0(
     )
 }
 
-/// The dispatch both phase-1 kernels share. Only the kernel name and the
+/// Phase 1 over IQ3_XXS expert blobs (ROADMAP Phase S), the codebook type the
+/// candidate checkpoint puts in 29 of its 30 `ffn_gate_up_exps` tensors.
+///
+/// `d_dim` must be a whole number of 256-element superblocks, as for Q4_K.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_moe_phase1_iq3_xxs(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    routed: &RoutedBlobsBuffer,
+    offsets: &MoeExpertOffsets,
+    x: (&metal::Buffer, u64),
+    acts: (&metal::Buffer, u64),
+    d_dim: u32,
+    f_dim: u32,
+    top_k: u32,
+    use_silu: bool,
+) -> Result<(), GpuError> {
+    assert_eq!(d_dim as usize % crate::IQ3_XXS_BLOCK_ELEMS, 0);
+    assert!(top_k as usize <= crate::moe_decode::MAX_STREAMED_EXPERTS);
+    encode_phase1(
+        context,
+        pass,
+        "moe_phase1_gate_up_act_iq3_xxs",
+        routed,
+        offsets,
+        x,
+        acts,
+        d_dim,
+        f_dim,
+        top_k,
+        use_silu,
+    )
+}
+
+/// Phase 1 over IQ4_XS expert blobs. The candidate uses this on exactly one
+/// layer; see `moe_gguf.metal`'s IQ header for why that is the real file's
+/// shape rather than an omission here.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_moe_phase1_iq4_xs(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    routed: &RoutedBlobsBuffer,
+    offsets: &MoeExpertOffsets,
+    x: (&metal::Buffer, u64),
+    acts: (&metal::Buffer, u64),
+    d_dim: u32,
+    f_dim: u32,
+    top_k: u32,
+    use_silu: bool,
+) -> Result<(), GpuError> {
+    assert_eq!(d_dim as usize % crate::IQ4_XS_BLOCK_ELEMS, 0);
+    assert!(top_k as usize <= crate::moe_decode::MAX_STREAMED_EXPERTS);
+    encode_phase1(
+        context,
+        pass,
+        "moe_phase1_gate_up_act_iq4_xs",
+        routed,
+        offsets,
+        x,
+        acts,
+        d_dim,
+        f_dim,
+        top_k,
+        use_silu,
+    )
+}
+
+/// Phase 2 over IQ4_NL expert blobs, which is what the candidate's
+/// `ffn_down_exps` carries on 29 of 30 layers (the thirtieth is Q8_0, and uses
+/// the pair above).
+///
+/// `f_dim` must be a whole number of 32-element blocks, as for Q8_0.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_moe_phase2_iq4_nl(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    routed: &RoutedBlobsBuffer,
+    offsets: &MoeExpertOffsets,
+    acts: (&metal::Buffer, u64),
+    routing_w: (&metal::Buffer, u64),
+    residual: (&metal::Buffer, u64),
+    y: (&metal::Buffer, u64),
+    d_dim: u32,
+    f_dim: u32,
+    use_silu: bool,
+) -> Result<(), GpuError> {
+    assert_eq!(f_dim as usize % crate::IQ4_NL_BLOCK_ELEMS, 0);
+    encode_phase2(
+        context,
+        pass,
+        "moe_phase2_down_reduce_k8_iq4_nl",
+        routed,
+        offsets,
+        acts,
+        routing_w,
+        residual,
+        y,
+        d_dim,
+        f_dim,
+        use_silu,
+    )
+}
+
+/// The dispatch every phase-1 kernel shares. Only the kernel name and the
 /// block-size precondition differ between block types; the bindings, the
 /// function constants and the threadgroup shape are identical, and keeping
-/// one copy of them is what stops the two drifting apart.
+/// one copy of them is what stops them drifting apart.
 #[allow(clippy::too_many_arguments)]
 fn encode_phase1(
     context: &mut MetalContext,

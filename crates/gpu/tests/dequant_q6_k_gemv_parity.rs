@@ -269,3 +269,76 @@ fn the_resident_form_matches_the_copying_form() {
     assert_eq!(row_bytes * m + pad, blob.len());
     assert_matches("resident at offset 4098", &gpu, &cpu, n);
 }
+
+/// `embed_lookup_q6_k` against the CPU dequant of the same row (ROADMAP
+/// Phase S).
+///
+/// This kernel did not exist when Q6_K landed, deliberately: the only real
+/// file using the type put it in `output.weight`, which needs a GEMV and
+/// nothing else. Phase S's candidate puts `token_embd` in Q6_K and ties the
+/// head to it, so it is now the lookup that install runs on every token.
+///
+/// Three bugs are in scope and none faults. The row stride is `D / 256 * 210`
+/// bytes rather than `D`, so using the element count reads a neighbouring
+/// token. The lookup walks ELEMENTS where the GEMV walks lanes, so it has to
+/// rebuild the quarter/half addressing itself, and getting the scale stride
+/// wrong (one instead of two per quarter) mixes scales between quarters. And
+/// dropping the bias of 32 turns every value positive. The token looked up is
+/// deliberately not row 0, and the comparison is element by element, because
+/// each of those returns a plausible row.
+#[test]
+fn embed_lookup_q6_k_reads_the_right_row_and_scales_it() {
+    let mut context = MetalContext::new().expect("Metal device available on this machine");
+
+    let (vocab, d) = (7usize, 2 * SUPERBLOCK);
+    let rows: Vec<Vec<f32>> = (0..vocab).map(|t| weights(d, 400 + t as u32)).collect();
+    let mut table = Vec::new();
+    for r in &rows {
+        table.extend_from_slice(&turbospark_compute::quantize_q6_k(r));
+    }
+    let table_buffer = context.new_buffer_with_data(&table);
+    let out = context.new_output_buffer((d * std::mem::size_of::<u16>()) as u64);
+
+    let token = 5u32;
+    let out_scale = 4.0f32;
+    let pass = context.begin_pass();
+    turbospark_gpu::encode_embed_lookup_q6_k(
+        &mut context,
+        &pass,
+        (&table_buffer, 0),
+        (&out, 0),
+        token,
+        d as u32,
+        out_scale,
+    )
+    .expect("GPU dispatch succeeds");
+    pass.commit_and_wait();
+
+    let row_bytes = q6_k_row_bytes(d);
+    let want: Vec<f32> = turbospark_compute::dequantize_q6_k(
+        &table[token as usize * row_bytes..(token as usize + 1) * row_bytes],
+        d,
+    )
+    .iter()
+    .map(|v| v * out_scale)
+    .collect();
+
+    let got: Vec<f32> = {
+        let ptr = out.contents() as *const u16;
+        let bits = unsafe { std::slice::from_raw_parts(ptr, d) };
+        bits.iter().map(|&b| f16::from_bits(b).to_f32()).collect()
+    };
+    assert_matches(
+        "q6_k embed row 5, scale 4",
+        &got.iter().map(|&v| f16::from_f32(v)).collect::<Vec<_>>(),
+        &want,
+        d,
+    );
+    // The scale is not cosmetic: without it every value is 4x too small,
+    // which the tolerance above would tolerate on a near-zero row.
+    let peak = want.iter().fold(0f32, |m, &v| m.max(v.abs()));
+    assert!(
+        peak > 1.0,
+        "the test row is too small to prove the scale: {peak}"
+    );
+}

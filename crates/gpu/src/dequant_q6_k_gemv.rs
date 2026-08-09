@@ -96,6 +96,40 @@ pub fn dequant_q6_k_gemv(
     Ok(read_half_buffer(&y_buffer, m))
 }
 
+/// Encoder-level `embed_lookup_q6_k`: dequantizes one row of a Q6_K embedding
+/// table straight into `out`, scaled.
+///
+/// Added by ROADMAP Phase S rather than alongside the GEMV, and the reason is
+/// worth keeping: when Q6_K landed, the only real file using the type put it
+/// in `output.weight`, so a GEMV was all any checkpoint asked for and shipping
+/// more would have been speculative. Phase S's candidate puts `token_embd` in
+/// Q6_K and ties the head to it, which is a second real file giving a
+/// different answer.
+pub fn encode_embed_lookup_q6_k(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    table: (&metal::Buffer, u64),
+    out: (&metal::Buffer, u64),
+    token_id: u32,
+    d: u32,
+    out_scale: f32,
+) -> Result<(), GpuError> {
+    assert_eq!(d as usize % Q6_K_BLOCK_ELEMS, 0);
+    let pipeline = context.pipeline(SOURCE, "embed_lookup_q6_k", &no_function_constants(), b"")?;
+    pass.encode_threads_3d(
+        &pipeline,
+        &[(table.0, 0, table.1), (out.0, 1, out.1)],
+        &[
+            (u32_bytes(&token_id), 2),
+            (u32_bytes(&d), 3),
+            (crate::bytes::f32_bytes(&out_scale), 4),
+        ],
+        (d as u64, 1, 1),
+        (64, 1, 1),
+    );
+    Ok(())
+}
+
 /// A whole Q6_K weight matrix addressed IN PLACE inside one shared
 /// `MTLBuffer` (normally `ResidentGpuWeights::buffer`): `rows` consecutive
 /// byte runs of `q6_k_row_bytes(cols)` each, starting at `weights_offset`.
