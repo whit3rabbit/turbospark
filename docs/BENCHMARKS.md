@@ -614,9 +614,14 @@ character in a second process. Output is byte-identical across 8, 16 and 32
 expert-cache slots (`gguf_nondeterminism_probe`), so nothing here depends on
 cache state.
 
-NOT MEASURED: joules per token. `scripts/power.sh` needs sudo and cannot run
-non-interactively, and fewer expert bytes per miss is an energy claim, so the
-phase's motivating axis is still open.
+MEASURED 2026-08-09, and the phase's motivating axis is a LOSS: decode
+joules-per-token roughly doubles against the INT4 install (0.925-0.996
+against 0.384-0.498 on the AC protocol, 2.0-2.4x), because GPU watts
+nearly double (22.8-25.0 against 12.3-13.6) while decode runs 35% slower.
+The cost is entirely GPU-side codebook dequant: host cpu W falls. Fewer
+expert bytes per miss was an energy claim and the measurement refutes it
+at this size. Full rows and the cross-session caveat:
+`docs/POWER_BASELINE.md`, "The 3-bit install". ROADMAP dead end 12.
 
 ## Power
 

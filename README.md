@@ -111,7 +111,7 @@ For full binary layouts, header byte specifications, and streaming mechanics, se
 - **Apple Silicon Acceleration Only**: Metal GPU acceleration requires macOS (`xcrun -sdk macosx metal`). On non-macOS platforms, crates compile CPU stubs.
 - **Sequential Prompt Prefill**: Prompt tokens are processed sequentially per token (prefill tile kernels descoped; see [`DEVIATIONS.md`](DEVIATIONS.md)).
 - **Q4_0 GGUF Quantization**: Refused at open until dedicated Q4_0 resident GEMV and embedding kernels land.
-- **Sub-4-bit Energy Claim Unverified**: The IQ path is measured for size, quality and throughput but NOT for joules per token, which is the axis fewer expert bytes per miss is supposed to improve. `scripts/power.sh` needs `sudo` and has not been run against it.
+- **Sub-4-bit Costs Energy, Not Just Throughput**: The IQ path is a memory and disk win only (-15% peak footprint, -20% expert bytes). Measured on the power harness it draws roughly 2x the joules per decoded token of the INT4 install (codebook dequant nearly doubles GPU watts while running 35% slower). Use it when memory is the constraint; INT4 remains the default on every other axis. See [`docs/POWER_BASELINE.md`](docs/POWER_BASELINE.md).
 
 
 ---

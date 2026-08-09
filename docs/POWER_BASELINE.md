@@ -96,6 +96,50 @@ GPU power (10.3 W against 12.3-13.6 W). That is the hybrid
 linear-attention design showing up on the power axis the same way it
 already does on the memory axis.
 
+## The 3-bit install: the Phase S capture, and it is a loss
+
+Measured 2026-08-09 on AC, `~/models/gemma4-iq3.gturbo`, same protocol,
+same interval, 2 measured pairs per case after a discarded warmup, rev
+`d9a9e49`, all runs `stop=endOfTurn`, no thermal-pressure exclusions.
+Raw capture: `/tmp/power-iq3/`.
+
+Decode:
+
+| install | case | tok/s | watts | J/token | cpu W | gpu W |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Gemma 4 IQ3_XXS/IQ4_NL | short-explanation | 28.37 | 27.20 | 0.9247 | 2.65 | 24.55 |
+| Gemma 4 IQ3_XXS/IQ4_NL | medium-review | 27.26 | 27.71 | 0.9960 | 2.69 | 25.02 |
+| Gemma 4 IQ3_XXS/IQ4_NL | long-synthesis | 25.30 | 25.38 | 0.9890 | 2.59 | 22.80 |
+
+Prefill:
+
+| install | case | watts | J/prompt token |
+| --- | --- | ---: | ---: |
+| Gemma 4 IQ3_XXS/IQ4_NL | short-explanation | 28.96 | 0.8265 |
+| Gemma 4 IQ3_XXS/IQ4_NL | medium-review | 33.26 | 0.9667 |
+| Gemma 4 IQ3_XXS/IQ4_NL | long-synthesis | 30.15 | 0.9449 |
+
+**Against the incumbent INT4 install's AC rows above, decode
+joules-per-token roughly DOUBLES: 2.0x to 2.4x across the three cases**
+(0.925-0.996 against 0.384-0.498). Prefill is the same story at
+2.2-2.4x. The attribution is clean and entirely GPU-side: gpu W nearly
+doubles (22.8-25.0 against 12.3-13.6) while cpu W FALLS (2.6 against
+4.2-4.6), so the codebook dequant is burning the power, not the host.
+The install draws more watts AND runs 35% slower, and J/token compounds
+the two.
+
+This settles the phase's motivating axis, negatively. Fewer expert bytes
+per miss was a joules claim, and the measured answer is that codebook
+decode costs about twice the energy the smaller reads were supposed to
+save. The 3-bit path is a memory and disk win only (-15% footprint, -20%
+expert bytes); on every other axis it loses.
+
+One caveat, and why it does not change the reading: this is a
+cross-session comparison against the 2026-08-07 baseline, on a different
+binary. Cross-session energy drift measured here is a few percent with no
+consistent sign (Gotcha 22 in AGENTS.md); the effect is 100-140%. No
+interleaved same-binary A/B could plausibly close that gap.
+
 ## Battery, and what differs
 
 Battery rows are partial: they exclude runs whose thermal pressure left
