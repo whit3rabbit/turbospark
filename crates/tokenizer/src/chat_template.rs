@@ -13,12 +13,18 @@ use crate::error::TokenizerError;
 use crate::json_value::JsonValue;
 use crate::tool_call::DeepseekToolCallParser;
 
+/// Message sender role discriminator for chat templates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Role {
+    /// System instructions role.
     System,
+    /// Developer instructions role.
     Developer,
+    /// User input role.
     User,
+    /// Assistant response role.
     Assistant,
+    /// Tool execution result role.
     Tool,
 }
 
@@ -34,30 +40,45 @@ impl Role {
     }
 }
 
+/// Recorded historical tool call invocation in a chat turn.
 #[derive(Debug, Clone, PartialEq)]
 pub struct HistoricalToolCall {
+    /// Tool call ID string.
     pub id: String,
+    /// Called function name.
     pub name: String,
+    /// Function arguments JSON structure.
     pub arguments: JsonValue,
 }
 
+/// Function schema definition for tool use.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionDefinition {
+    /// Defined tool function name.
     pub name: String,
+    /// Description of tool function behavior.
     pub description: String,
+    /// JSON schema describing expected function parameters.
     pub parameters: JsonValue,
 }
 
+/// Single chat message in a conversation sequence.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Message {
+    /// Sender role.
     pub role: Role,
+    /// Text content string if present.
     pub content: Option<String>,
+    /// Tool calls invoked by assistant.
     pub tool_calls: Vec<HistoricalToolCall>,
+    /// Tool call ID if role is Tool.
     pub tool_call_id: Option<String>,
+    /// Optional name of function or tool sender.
     pub name: Option<String>,
 }
 
 impl Message {
+    /// Constructs a chat message with a role and text content string.
     pub fn new(role: Role, content: impl Into<String>) -> Self {
         Self {
             role,
@@ -79,6 +100,7 @@ const DEEPSEEK_GENERATION_SUFFIX: &str = "<\u{FF5C}Assistant\u{FF5C}></think>";
 const DEEPSEEK_THINK_CLOSE_MARK: &str = "</think>";
 
 impl MfTokenizer {
+    /// Formats a sequence of messages into a chat template string for the tokenizer's dialect.
     pub fn apply_chat_template(&self, messages: &[Message]) -> Result<String, TokenizerError> {
         match self.dialect {
             ChatDialect::Gemma => gemma_chat_template(messages),
@@ -87,6 +109,7 @@ impl MfTokenizer {
         }
     }
 
+    /// Formats user text continuation and returns encoded token IDs.
     pub fn encode_text_continuation(&self, user_content: &str) -> Vec<i32> {
         let content = user_content.trim();
         let suffix = match self.dialect {

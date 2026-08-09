@@ -13,12 +13,17 @@
 
 use runtime::StopReason;
 
+/// Test case specification for the community benchmark protocol.
 pub struct ProtocolCase {
+    /// Benchmark case identifier string.
     pub id: &'static str,
+    /// Random seed for generation sampling.
     pub seed: u64,
+    /// User prompt text content string.
     pub content: &'static str,
 }
 
+/// The three standard benchmark protocol cases (short-explanation, medium-review, long-synthesis).
 pub const PROTOCOL_CASES: [ProtocolCase; 3] = [
     ProtocolCase {
         id: "short-explanation",
@@ -37,10 +42,15 @@ pub const PROTOCOL_CASES: [ProtocolCase; 3] = [
     },
 ];
 
+/// Benchmark protocol sampling temperature setting.
 pub const PROTOCOL_TEMPERATURE: f64 = 0.2;
+/// Benchmark protocol top-k sampling limit.
 pub const PROTOCOL_TOP_K: u32 = 64;
+/// Benchmark protocol top-p nucleus sampling limit.
 pub const PROTOCOL_TOP_P: f64 = 0.95;
+/// Benchmark protocol maximum generated tokens cap.
 pub const PROTOCOL_MAX_NEW: u32 = 1024;
+/// Benchmark protocol maximum context window token capacity.
 pub const PROTOCOL_MAX_CONTEXT: u32 = 4096;
 
 /// The routed-expert cache size both engines default to, and the one every

@@ -10,31 +10,46 @@ use serde::{Deserialize, Serialize};
 use crate::error::ModelError;
 use crate::manifest::Manifest;
 
+/// Policy for verifying model installation file integrity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModelIntegrityPolicy {
+    /// Fully hash all model files using SHA-256 on load.
     FullSha256,
+    /// Fast validation checking file sizes against a trusted receipt.
     SizeCheckTrustedReceipt,
 }
 
+/// Recorded file size and SHA-256 digest entry.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FileEntry {
+    /// Expected file size in bytes.
     pub size: u64,
+    /// Expected SHA-256 hash string.
     pub sha256: String,
 }
 
+/// Trusted install receipt record saved in `verified-install.json`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VerifiedInstallReceipt {
+    /// Receipt schema version number.
     #[serde(default = "default_schema_version")]
     pub schema_version: i64,
+    /// SHA-256 digest of `manifest.json`.
     pub manifest_sha256: String,
+    /// Canonical model directory path.
     pub model_directory_path: String,
+    /// Hugging Face source repository ID if present.
     #[serde(default)]
     pub source_repo_id: Option<String>,
+    /// Git commit hash or revision string if present.
     #[serde(default)]
     pub source_revision: Option<String>,
+    /// Verification timestamp string.
     pub verification_timestamp: String,
+    /// Repack/verification tool version string.
     pub tool_version: String,
+    /// File size and hash map for installed files.
     pub files: BTreeMap<String, FileEntry>,
 }
 
@@ -42,7 +57,9 @@ fn default_schema_version() -> i64 {
     1
 }
 
+/// Default filename for trusted install receipt.
 pub const FILE_NAME: &str = "verified-install.json";
+/// Maximum allowed file size for trusted install receipt metadata.
 pub const DEFAULT_MAX_BYTES: u64 = 4 * 1024 * 1024;
 
 fn invalid(detail: impl Into<String>) -> ModelError {
@@ -51,6 +68,7 @@ fn invalid(detail: impl Into<String>) -> ModelError {
     }
 }
 
+/// Loads and parses trusted install receipt from `dir`.
 pub fn load(dir: &Path, max_bytes: u64) -> Result<VerifiedInstallReceipt, ModelError> {
     let path = dir.join(FILE_NAME);
     if !path.exists() {
@@ -68,6 +86,7 @@ pub fn load(dir: &Path, max_bytes: u64) -> Result<VerifiedInstallReceipt, ModelE
     serde_json::from_slice(&data).map_err(|e| invalid(format!("{FILE_NAME}: {e}")))
 }
 
+/// Validates receipt manifest SHA-256 binding and canonical directory path.
 pub fn validate_manifest_binding(
     receipt: &VerifiedInstallReceipt,
     dir: &Path,
@@ -90,6 +109,7 @@ pub fn validate_manifest_binding(
     Ok(())
 }
 
+/// Validates receipt contents against manifest and disk files.
 pub fn validate(
     receipt: &VerifiedInstallReceipt,
     dir: &Path,

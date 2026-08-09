@@ -10,9 +10,12 @@ use crate::tool_call::{
     DeepseekToolCallParser, GemmaToolCallParser, ParsedToolCall, QwenToolCallParser, DSML_MARK,
 };
 
+/// Decoded event emitted by the structured assistant output decoder.
 #[derive(Debug, Clone, PartialEq)]
 pub enum StructuredAssistantEvent {
+    /// Text content chunk for display.
     Content(String),
+    /// Parsed tool call invocation.
     ToolCall(ParsedToolCall),
 }
 
@@ -23,6 +26,7 @@ enum Channel {
     Label,
 }
 
+/// Streaming assistant output decoder splitting tokens into visible content and tool calls.
 pub struct StructuredAssistantDecoder<'a> {
     tokenizer: &'a MfTokenizer,
     allowed_tools: HashSet<String>,
@@ -37,6 +41,7 @@ pub struct StructuredAssistantDecoder<'a> {
 }
 
 impl<'a> StructuredAssistantDecoder<'a> {
+    /// Creates a structured assistant decoder.
     pub fn new(
         tokenizer: &'a MfTokenizer,
         allowed_tools: HashSet<String>,
@@ -56,10 +61,12 @@ impl<'a> StructuredAssistantDecoder<'a> {
         }
     }
 
+    /// Returns true if at least one tool call has been parsed and emitted.
     pub fn has_tool_calls(&self) -> bool {
         self.emitted_calls > 0
     }
 
+    /// Consumes flushed text snippet during stream decoding.
     pub fn consume_flushed_text(
         &mut self,
         text: &str,
@@ -70,6 +77,7 @@ impl<'a> StructuredAssistantDecoder<'a> {
         self.consume(-1, text)
     }
 
+    /// Consumes a token ID and text delta, returning any parsed events.
     pub fn consume(
         &mut self,
         token_id: i32,

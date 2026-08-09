@@ -95,14 +95,17 @@ impl AlignedSlot {
         })
     }
 
+    /// Returns a raw const pointer to the slot memory allocation base.
     pub fn as_ptr(&self) -> *const u8 {
         self.ptr
     }
 
+    /// Returns the length in bytes of the slot memory allocation.
     pub fn len(&self) -> usize {
         self.len
     }
 
+    /// Returns true if the slot allocation is 0 bytes.
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
@@ -155,6 +158,7 @@ pub struct PreadExpertStreamer {
 }
 
 impl PreadExpertStreamer {
+    /// Opens expert streamer with layout, pre-allocated slots, and cache policy.
     pub fn open(
         layout: StreamLayout,
         slot_count: usize,
@@ -194,6 +198,7 @@ impl PreadExpertStreamer {
         &self.layout
     }
 
+    /// Returns reference to slot bytes slice for a given slot index.
     pub fn slot_data(&self, slot: usize) -> &[u8] {
         &self.slots[slot].as_slice()[..self.layout.expert_stride as usize]
     }
@@ -206,6 +211,7 @@ impl PreadExpertStreamer {
         (self.slots[slot].as_ptr(), self.slots[slot].len())
     }
 
+    /// Loads an expert into the next slot index in round-robin fashion.
     pub fn load_expert(&mut self, layer: usize, expert: usize) -> Result<usize, StreamerError> {
         let slot = self.next_slot;
         self.next_slot = (self.next_slot + 1) % self.slot_count;
@@ -213,6 +219,7 @@ impl PreadExpertStreamer {
         Ok(slot)
     }
 
+    /// Loads an expert directly into a specific target slot index.
     pub fn load_expert_into_slot(
         &mut self,
         layer: usize,
@@ -237,6 +244,7 @@ impl PreadExpertStreamer {
         )
     }
 
+    /// Generates an expert cache plan for requested expert indices.
     pub fn plan_experts_cached(
         &mut self,
         experts: &[usize],
@@ -245,6 +253,7 @@ impl PreadExpertStreamer {
         self.cache.plan(experts, avoiding_slots)
     }
 
+    /// Generates cache plan if possible without evicting pinned slots.
     pub fn plan_experts_cached_if_possible(
         &mut self,
         experts: &[usize],
@@ -330,15 +339,18 @@ impl PreadExpertStreamer {
         Ok(plan.assigned_slots.clone())
     }
 
+    /// Plans and executes expert caching for requested expert indices.
     pub fn load_experts_cached(&mut self, experts: &[usize]) -> Result<Vec<usize>, StreamerError> {
         let plan = self.plan_experts_cached(experts, &HashSet::new());
         self.execute_expert_cache_plan(&plan)
     }
 
+    /// Identifies requested expert indices that are not currently resident in cache.
     pub fn non_resident_experts(&self, experts: &[usize]) -> Vec<usize> {
         self.cache.non_resident_experts(experts)
     }
 
+    /// Reserves slots for speculative expert loading.
     pub fn reserve_speculative_slots(
         &mut self,
         experts: &[usize],
@@ -362,19 +374,23 @@ impl PreadExpertStreamer {
         loaded.len() as u64 * self.layout.expert_stride
     }
 
+    /// Returns snapshot of expert index per slot.
     pub fn resident_experts_snapshot(&self) -> Vec<Option<usize>> {
         self.cache.resident_experts_snapshot()
     }
 
+    /// Issues OS I/O advice for misses in an expert cache plan.
     pub fn advise_expert_cache_plan_misses(&self, plan: &ExpertCachePlan) -> ExpertIoAdviceResult {
         let experts: Vec<usize> = plan.misses.iter().map(|&i| plan.experts[i]).collect();
         self.advise_ranges(&self.expert_advice_ranges(&experts), experts.len())
     }
 
+    /// Issues OS I/O advice for requested expert indices.
     pub fn advise_experts(&self, experts: &[usize]) -> ExpertIoAdviceResult {
         self.advise_ranges(&self.expert_advice_ranges(experts), experts.len())
     }
 
+    /// Issues OS I/O advice for non-resident expert indices.
     pub fn advise_expert_misses(&self, experts: &[usize]) -> ExpertIoAdviceResult {
         let misses = self.cache.non_resident_experts(experts);
         self.advise_ranges(&self.expert_advice_ranges(&misses), misses.len())

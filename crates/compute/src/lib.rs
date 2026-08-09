@@ -11,18 +11,31 @@
 //! colliding with the standard library `core` crate in the extern prelude.
 #![forbid(unsafe_code)]
 
+/// Causal multi-head and multi-query attention compute kernels.
 pub mod attention;
+/// Gating and activation function compute kernels.
 pub mod gating;
+/// Gated-DeltaNet (GDN) linear-attention compute kernels.
 pub mod gdn;
+/// Mixture-of-Experts (MoE) routing and FFN compute kernels.
 pub mod moe;
+/// Quantization and dequantization primitives for affine INT4 and INT8 formats.
 pub mod quant;
+/// Quantization and dequantization primitives for GGUF Q4_K, Q6_K, and Q8_0 formats.
 pub mod quant_gguf;
+/// Quantization and dequantization primitives for GGUF IQ3_XXS, IQ4_XS, and IQ4_NL formats.
 pub mod quant_gguf_iq;
+/// Look up tables for IQ3_XXS and IQ4_NL quantization formats.
 pub mod quant_gguf_iq_tables;
+/// Root-Mean-Square Normalization (RMSNorm) compute kernels.
 pub mod rms_norm;
+/// Rotary Position Embedding (RoPE) compute kernels.
 pub mod rope;
+/// Softmax sampling and logit soft-capping compute kernels.
 pub mod sampling;
+/// Numerical error measurement and tolerance checking utilities.
 pub mod tolerance;
+/// Walsh-Hadamard Transform (WHT) compute kernels.
 pub mod wht;
 
 pub use attention::causal_attention;

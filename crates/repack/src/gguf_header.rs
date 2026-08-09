@@ -199,6 +199,10 @@ impl GgufValue {
     /// a caller reading `rope.freq_base` wants to know if the file stored an
     /// int where a float belongs, because `arch_validation` compares these
     /// with `!=` on `f64` (AGENTS.md Gotcha 24).
+    /// Any float widened to `f64`. Integers are deliberately NOT accepted:
+    /// a caller reading `rope.freq_base` wants to know if the file stored an
+    /// int where a float belongs, because `arch_validation` compares these
+    /// with `!=` on `f64` (AGENTS.md Gotcha 24).
     pub fn as_f64(&self) -> Option<f64> {
         match self {
             GgufValue::F32(v) => Some(f64::from(*v)),
@@ -207,6 +211,7 @@ impl GgufValue {
         }
     }
 
+    /// Returns string slice if value is String variant.
     pub fn as_str(&self) -> Option<&str> {
         match self {
             GgufValue::String(s) => Some(s.as_str()),
@@ -214,6 +219,7 @@ impl GgufValue {
         }
     }
 
+    /// Returns bool value if value is Bool variant.
     pub fn as_bool(&self) -> Option<bool> {
         match self {
             GgufValue::Bool(b) => Some(*b),
@@ -221,6 +227,7 @@ impl GgufValue {
         }
     }
 
+    /// Returns array slice if value is Array variant.
     pub fn as_array(&self) -> Option<&[GgufValue]> {
         match self {
             GgufValue::Array(v) => Some(v.as_slice()),
@@ -326,8 +333,10 @@ pub fn ggml_type_block(id: u32) -> Option<(u64, u64)> {
     })
 }
 
+/// Metadata information for one tensor in a GGUF header.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GgufTensorInfo {
+    /// Type id of ggml tensor element type.
     pub ggml_type: u32,
     /// Dimensions AS STORED, which is ggml's fastest-varying-first order:
     /// a logical `[out_features, in_features]` matrix is stored here as
@@ -339,6 +348,7 @@ pub struct GgufTensorInfo {
 }
 
 impl GgufTensorInfo {
+    /// Calculates total element count across dimensions.
     pub fn element_count(&self) -> u64 {
         self.dims.iter().copied().product()
     }
@@ -366,10 +376,14 @@ impl GgufTensorInfo {
     }
 }
 
+/// Parsed GGUF header metadata and tensor table structure.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GgufHeader {
+    /// GGUF file format version number.
     pub version: u32,
+    /// Key-value metadata table.
     pub metadata: BTreeMap<String, GgufValue>,
+    /// Tensor metadata table mapping tensor name to layout information.
     pub tensors: BTreeMap<String, GgufTensorInfo>,
     /// Resolved `general.alignment`, or [`DEFAULT_ALIGNMENT`].
     pub alignment: u64,
@@ -389,14 +403,17 @@ impl GgufHeader {
         }))
     }
 
+    /// Looks up string metadata value for `key`.
     pub fn metadata_str(&self, key: &str) -> Option<&str> {
         self.metadata.get(key).and_then(GgufValue::as_str)
     }
 
+    /// Looks up u64 metadata value for `key`.
     pub fn metadata_u64(&self, key: &str) -> Option<u64> {
         self.metadata.get(key).and_then(GgufValue::as_u64)
     }
 
+    /// Looks up f64 metadata value for `key`.
     pub fn metadata_f64(&self, key: &str) -> Option<f64> {
         self.metadata.get(key).and_then(GgufValue::as_f64)
     }

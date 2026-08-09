@@ -56,6 +56,7 @@ typedef struct {
   uint8_t qs[QK_K / 2];
 } block_iq4_xs;
 
+// Dequantizes blocks of ggml quantization type into float output array.
 static void dequant(enum ggml_type t, const void *blocks, float *out,
                     int64_t n) {
   const struct ggml_type_traits *tr = ggml_get_type_traits(t);
@@ -66,6 +67,7 @@ static void dequant(enum ggml_type t, const void *blocks, float *out,
   tr->to_float(blocks, out, n);
 }
 
+// Asserts block type size in bytes matches expected structure definition size.
 static void check_size(enum ggml_type t, size_t expect, const char *name) {
   size_t got = ggml_type_size(t);
   if (got != expect) {
@@ -85,11 +87,7 @@ static void check_size(enum ggml_type t, size_t expect, const char *name) {
 
 // ---------------------------------------------------------------- IQ4_NL
 
-// One block, all 32 nibbles set to the same index, recovers one table entry.
-// Sweeping the index 0..15 recovers the table. The low nibbles land in
-// elements 0..15 and the high nibbles in 16..31, which the probe also
-// CHECKS rather than assumes: with both nibbles equal, every one of the 32
-// outputs must agree, so a wrong split shows up as a spread.
+// Dumps recovered 16 non-linear reconstruction levels for IQ4_NL quantization.
 static void dump_kvalues_iq4nl(void) {
   printf("/// The 16 non-linear reconstruction levels IQ4_NL and IQ4_XS share,\n");
   printf("/// recovered from ggml by `scripts/ggml_tables.c` rather than\n");
@@ -118,9 +116,7 @@ static void dump_kvalues_iq4nl(void) {
   printf("\n];\n\n");
 }
 
-// The nibble split, stated as data rather than as a comment: one block whose
-// low nibbles are all 0 and high nibbles all 15. Prints the index of the
-// first element that takes the high nibble.
+// Verifies low/high nibble split layout for IQ4_NL bytes.
 static void check_iq4nl_nibble_split(void) {
   block_iq4_nl b;
   memset(&b, 0, sizeof b);
@@ -144,18 +140,7 @@ static void check_iq4nl_nibble_split(void) {
 
 // --------------------------------------------------------------- IQ3_XXS
 
-// The grid. One superblock's first 32-element block reads 8 index bytes; set
-// them all to the same index and every one of those 32 outputs is a grid
-// entry, repeated. Sign bits are left at zero (all positive).
-//
-// `db` MUST come out exactly 1.0 or the dumped table is silently scaled, and
-// the arithmetic is easy to get wrong by one factor: the scale is
-// `db = d * (0.5 + (aux >> 28)) * 0.5`, so BOTH halves apply. Scale nibble 0
-// with d = 4.0 gives 4.0 * 0.5 * 0.5 = 1.0. An earlier version of this probe
-// used nibble 1 with d = 2.0, read that as 1.0, and dumped a table 1.5x too
-// large -- which decoded to plausible, correctly-signed, uniformly-wrong
-// weights. The `expect_unit_scale` check below is what would have caught it,
-// so it stays.
+// Probes and dumps the 256-entry IQ3_XXS codebook grid table.
 static void dump_iq3xxs_grid(void) {
   printf("/// The IQ3_XXS codebook: 256 entries of four 8-bit magnitudes.\n");
   printf("/// Recovered from ggml by `scripts/ggml_tables.c`. An IQ3_XXS block\n");
@@ -233,10 +218,7 @@ static void dump_iq3xxs_grid(void) {
   printf("];\n\n");
 }
 
-// The sign table needs no dumping: `ksigns_iq2xs[i]` is `i` with bit 7 set
-// iff `i` has an odd number of set bits, so the eighth sign is a parity bit
-// over the seven stored ones. Printed as a CHECK rather than a table, since
-// a computed byte cannot go stale but a claim about one can.
+// Verifies parity rule for the eighth sign bit across all 128 IQ3_XXS indices.
 static void check_iq3xxs_sign_parity(void) {
   for (int idx = 0; idx < 128; ++idx) {
     block_iq3_xxs b;
@@ -273,14 +255,13 @@ static void check_iq3xxs_sign_parity(void) {
 
 // ---------------------------------------------------------------- oracles
 
-// Prints one decoded block per type from a deterministic pseudo-random fill,
-// as the expected values for the Rust hand-packed tests. The generator is a
-// plain LCG so the Rust side can reproduce the same bytes without this file.
+// LCG producing deterministic pseudo-random bytes for oracle test patterns.
 static uint32_t lcg(uint32_t *s) {
   *s = *s * 1664525u + 1013904223u;
   return *s;
 }
 
+// Dumps oracle float vectors decoded by ggml for test validation.
 static void dump_oracles(void) {
   printf("/// Decoded by ggml (`scripts/ggml_tables.c`) from the byte pattern\n");
   printf("/// `oracle_bytes()` builds. The expected values come from ggml and\n");

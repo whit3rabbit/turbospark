@@ -17,16 +17,24 @@ use crate::context::GpuError;
 /// Which attention variant a layer runs, sourced from
 /// `ArchConfig.full_attention_layer_mask` (0 = swa, 1 = full, 2 = linear,
 /// 3/4 = DeepSeek V4 CSA/HCA, both `Compressed` here).
+/// Which attention variant a layer runs, sourced from
+/// `ArchConfig.full_attention_layer_mask` (0 = swa, 1 = full, 2 = linear,
+/// 3/4 = DeepSeek V4 CSA/HCA, both `Compressed` here).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LayerKind {
+    /// Sliding-window attention layer using ring buffer KV storage.
     Swa,
+    /// Full attention layer using full context length KV storage.
     Full,
+    /// Linear-attention layer (e.g., Qwen gated-DeltaNet) carrying no per-token KV storage.
     Linear,
+    /// Compressed attention layer carrying no per-token KV storage.
     Compressed,
 }
 
 /// A read view the attention kernels bind.
 pub struct KvView<'a> {
+    /// Reference to underlying Metal GPU buffer storing key or value states.
     pub buffer: &'a metal::Buffer,
     /// Byte offset of logical position 0. Always 0 under linear storage.
     pub offset: usize,
@@ -40,6 +48,7 @@ pub struct KvView<'a> {
 
 const FP16_SIZE: usize = 2;
 
+/// KV cache manager orchestrating per-layer Metal buffers for token generation.
 pub struct KvCacheManager {
     max_context: usize,
     fp16_ring_enabled: bool,
@@ -54,6 +63,7 @@ pub struct KvCacheManager {
 
 #[allow(clippy::too_many_arguments)]
 impl KvCacheManager {
+    /// Allocates KV cache buffers for all model layers based on architecture and context limits.
     pub fn new(
         device: &Device,
         config: &ArchConfig,
@@ -149,10 +159,12 @@ impl KvCacheManager {
         })
     }
 
+    /// Returns current position cursor index.
     pub fn position(&self) -> usize {
         self.position
     }
 
+    /// Returns attention layer kind for `layer`.
     pub fn layer_kind(&self, layer: usize) -> LayerKind {
         self.kinds[layer]
     }
@@ -167,6 +179,7 @@ impl KvCacheManager {
         self.capacity_tokens[layer]
     }
 
+    /// Returns ring buffer token capacity for SWA layer, or 0 for non-ring layers.
     pub fn ring_capacity(&self, layer: usize) -> usize {
         if self.fp16_ring_enabled && self.kinds[layer] == LayerKind::Swa {
             self.capacity_tokens[layer]
@@ -175,6 +188,7 @@ impl KvCacheManager {
         }
     }
 
+    /// Returns total buffer byte length for key or value buffer at `layer`.
     pub fn buffer_length(&self, layer: usize) -> usize {
         self.capacity_tokens[layer] * self.strides[layer]
     }
@@ -223,10 +237,12 @@ impl KvCacheManager {
         write_into(buffer, offset, bytes);
     }
 
+    /// Returns key buffer view bound at the current cursor position.
     pub fn key_view(&self, layer: usize) -> KvView<'_> {
         self.key_view_at(layer, self.position)
     }
 
+    /// Returns key buffer view for a given valid token count.
     pub fn key_view_at(&self, layer: usize, valid_token_count: usize) -> KvView<'_> {
         self.validate_valid_token_count(valid_token_count);
         KvView {
@@ -238,10 +254,12 @@ impl KvCacheManager {
         }
     }
 
+    /// Returns value buffer view bound at the current cursor position.
     pub fn value_view(&self, layer: usize) -> KvView<'_> {
         self.value_view_at(layer, self.position)
     }
 
+    /// Returns value buffer view for a given valid token count.
     pub fn value_view_at(&self, layer: usize, valid_token_count: usize) -> KvView<'_> {
         self.validate_valid_token_count(valid_token_count);
         KvView {
@@ -259,6 +277,7 @@ impl KvCacheManager {
         self.advance_by(1);
     }
 
+    /// Advances sequence position cursor by `count` tokens.
     pub fn advance_by(&mut self, count: usize) {
         assert!(
             self.position + count <= self.max_context,

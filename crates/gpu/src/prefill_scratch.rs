@@ -15,13 +15,21 @@ const U32_SIZE: usize = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PrefillChunkScratchLayout {
+    /// Number of tokens in a prefill chunk.
     pub chunk_tokens: usize,
+    /// Model hidden dimension size.
     pub hidden_size: usize,
+    /// Maximum query elements per token across attention modes.
     pub max_q_elements_per_token: usize,
+    /// Maximum key/value elements per token across attention modes.
     pub max_kv_elements_per_token: usize,
+    /// Intermediate size for shared expert projections.
     pub shared_intermediate: usize,
+    /// Intermediate size for routed expert projections.
     pub routed_intermediate: usize,
+    /// Number of routed experts selected per token.
     pub top_k: usize,
+    /// Microbatch row count for routed expert pair operations.
     pub routed_pair_microbatch_rows: usize,
     /// Rows of the widest per-token projection written into `q`: the packed
     /// `[query; gate]` q_proj when `attn_output_gate`, and the gated-
@@ -30,16 +38,21 @@ pub struct PrefillChunkScratchLayout {
     pub q_proj_elements_per_token: usize,
     /// Non-zero when the architecture gates attention output (Qwen).
     pub attn_gate_elements_per_token: usize,
+    /// Dimension of gated-DeltaNet QKV buffer.
     pub gdn_qkv_dim: usize,
+    /// Dimension of gated-DeltaNet value buffer.
     pub gdn_value_dim: usize,
+    /// Number of gated-DeltaNet value heads.
     pub gdn_v_heads: usize,
     /// Non-zero when the shared expert output is scalar-gated (Qwen).
     pub shared_scalar_gate_elements: usize,
 }
 
 impl PrefillChunkScratchLayout {
+    /// Maximum chunk token capacity defined by runtime configuration.
     pub const MAX_CHUNK_TOKENS: usize = foundation::PrefillRuntimeConfig::MAX_CHUNK_TOKENS;
 
+    /// Computes prefill scratch buffer layout requirements for given model config and chunk settings.
     pub fn new(
         config: &ArchConfig,
         chunk_tokens: usize,
@@ -81,85 +94,112 @@ impl PrefillChunkScratchLayout {
         }
     }
 
+    /// Total element count for hidden state buffer.
     pub fn hidden_elements(&self) -> usize {
         self.chunk_tokens * self.hidden_size
     }
+    /// Total element count for RMS-normalized hidden state buffer.
     pub fn normed_elements(&self) -> usize {
         self.hidden_elements()
     }
+    /// Total element count for query projection buffer.
     pub fn q_elements(&self) -> usize {
         self.chunk_tokens * self.q_proj_elements_per_token
     }
+    /// Total element count for attention buffer.
     pub fn attn_elements(&self) -> usize {
         self.chunk_tokens * self.max_q_elements_per_token
     }
+    /// Total element count for gated query buffer.
     pub fn attn_q_elements(&self) -> usize {
         self.chunk_tokens * self.attn_gate_elements_per_token
     }
+    /// Total element count for attention gate buffer.
     pub fn attn_gate_elements(&self) -> usize {
         self.attn_q_elements()
     }
+    /// Total element count for DeltaNet convolution output buffer.
     pub fn gdn_conv_out_elements(&self) -> usize {
         self.chunk_tokens * self.gdn_qkv_dim
     }
+    /// Total element count for DeltaNet Z buffer.
     pub fn gdn_z_elements(&self) -> usize {
         self.chunk_tokens * self.gdn_value_dim
     }
+    /// Total element count for DeltaNet alpha parameter buffer.
     pub fn gdn_a_elements(&self) -> usize {
         self.chunk_tokens * self.gdn_v_heads
     }
+    /// Total element count for DeltaNet beta parameter buffer.
     pub fn gdn_b_elements(&self) -> usize {
         self.gdn_a_elements()
     }
+    /// Total element count for DeltaNet Y buffer.
     pub fn gdn_y_elements(&self) -> usize {
         self.gdn_z_elements()
     }
+    /// Total element count for shared expert scalar gate buffer.
     pub fn shared_scalar_gate_buffer_elements(&self) -> usize {
         self.chunk_tokens * self.shared_scalar_gate_elements
     }
+    /// Total element count for key staging buffer.
     pub fn k_stage_elements(&self) -> usize {
         self.chunk_tokens * self.max_kv_elements_per_token
     }
+    /// Total element count for value staging buffer.
     pub fn v_stage_elements(&self) -> usize {
         self.k_stage_elements()
     }
+    /// Total element count for attention output buffer.
     pub fn attention_output_elements(&self) -> usize {
         self.attn_elements()
     }
+    /// Total element count for dense MLP input buffer.
     pub fn dense_x_elements(&self) -> usize {
         self.hidden_elements()
     }
+    /// Total element count for routed MoE input buffer.
     pub fn routed_x_elements(&self) -> usize {
         self.hidden_elements()
     }
+    /// Total element count for router input buffer.
     pub fn router_x_elements(&self) -> usize {
         self.hidden_elements()
     }
+    /// Total element count for intermediate state 1.
     pub fn h1_elements(&self) -> usize {
         self.hidden_elements()
     }
+    /// Total element count for intermediate state 2.
     pub fn h2_elements(&self) -> usize {
         self.hidden_elements()
     }
+    /// Total element count for route partial output accumulator buffer.
     pub fn route_partial_elements(&self) -> usize {
         self.chunk_tokens * self.top_k * self.hidden_size
     }
+    /// Total element count for routing expert index IDs buffer.
     pub fn route_id_elements(&self) -> usize {
         self.chunk_tokens * self.top_k
     }
+    /// Total element count for routing expert weights buffer.
     pub fn route_weight_elements(&self) -> usize {
         self.route_id_elements()
     }
+    /// Total element count for shared expert intermediate scratch space.
     pub fn shared_expert_scratch_elements(&self) -> usize {
         self.shared_intermediate
     }
+    /// Total element count for routed expert gate/up activation scratch space.
     pub fn routed_gate_up_act_elements(&self) -> usize {
         3 * self.routed_pair_microbatch_rows * self.routed_intermediate
     }
+    /// Total element count for routed expert down-projection output scratch space.
     pub fn routed_down_output_elements(&self) -> usize {
         self.routed_pair_microbatch_rows * self.hidden_size
     }
 
+    /// Calculates total device-private GPU memory allocation size in bytes.
     pub fn device_private_bytes(&self) -> usize {
         let fp16_elements = self.hidden_elements()
             + self.normed_elements()
@@ -187,10 +227,12 @@ impl PrefillChunkScratchLayout {
         fp16_elements * FP16_SIZE
     }
 
+    /// Calculates total host-shared GPU metadata allocation size in bytes.
     pub fn shared_metadata_bytes(&self) -> usize {
         self.route_id_elements() * U32_SIZE + self.route_weight_elements() * FP16_SIZE
     }
 
+    /// Calculates total persistent scratch memory requirement in bytes across private and shared buffers.
     pub fn total_persistent_bytes(&self) -> usize {
         self.device_private_bytes() + self.shared_metadata_bytes()
     }
@@ -202,33 +244,61 @@ impl PrefillChunkScratchLayout {
 /// floors that at one element) so the struct stays non-optional, matching
 /// the Swift original.
 pub struct PrefillChunkScratchBuffers {
+    /// Calculated buffer layout configuration.
     pub layout: PrefillChunkScratchLayout,
+    /// Hidden state scratch buffer.
     pub hidden: metal::Buffer,
+    /// Normalized hidden state buffer.
     pub normed: metal::Buffer,
+    /// Query projection buffer.
     pub q: metal::Buffer,
+    /// Key staging buffer.
     pub k_stage: metal::Buffer,
+    /// Value staging buffer.
     pub v_stage: metal::Buffer,
+    /// Attention output buffer.
     pub attention_output: metal::Buffer,
+    /// Dense feed-forward input scratch buffer.
     pub dense_x: metal::Buffer,
+    /// Routed expert input scratch buffer.
     pub routed_x: metal::Buffer,
+    /// Router input scratch buffer.
     pub router_x: metal::Buffer,
+    /// Intermediate hidden state buffer 1.
     pub h1: metal::Buffer,
+    /// Intermediate hidden state buffer 2.
     pub h2: metal::Buffer,
+    /// Route partial accumulation buffer.
     pub route_partials: metal::Buffer,
+    /// Selected routing expert IDs buffer.
     pub route_ids: metal::Buffer,
+    /// Selected routing expert weights buffer.
     pub route_weights: metal::Buffer,
+    /// Shared expert gate scratch buffer.
     pub shared_gate_scratch: metal::Buffer,
+    /// Shared expert up-projection scratch buffer.
     pub shared_up_scratch: metal::Buffer,
+    /// Shared expert activation scratch buffer.
     pub shared_act_scratch: metal::Buffer,
+    /// Routed expert gate/up activation scratch buffer.
     pub routed_gate_up_act_scratch: metal::Buffer,
+    /// Routed expert down-projection scratch buffer.
     pub routed_down_scratch: metal::Buffer,
+    /// Gated query output buffer.
     pub attn_q: metal::Buffer,
+    /// Attention output gate buffer.
     pub attn_gate: metal::Buffer,
+    /// DeltaNet convolution output scratch buffer.
     pub gdn_conv_out: metal::Buffer,
+    /// DeltaNet Z scratch buffer.
     pub gdn_z: metal::Buffer,
+    /// DeltaNet alpha parameter scratch buffer.
     pub gdn_a: metal::Buffer,
+    /// DeltaNet beta parameter scratch buffer.
     pub gdn_b: metal::Buffer,
+    /// DeltaNet Y scratch buffer.
     pub gdn_y: metal::Buffer,
+    /// Shared expert scalar gate scratch buffer.
     pub shared_scalar_gate: metal::Buffer,
 }
 

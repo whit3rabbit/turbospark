@@ -14,11 +14,17 @@ const ENTRY_BYTES: usize = 72;
 /// rows of `cols` elements each.
 #[derive(Debug, Clone)]
 pub struct ResidentTensorSpec {
+    /// Tensor lookup name string.
     pub name: String,
+    /// Raw packed weight byte payload.
     pub packed: Vec<u8>,
+    /// Scale values per group.
     pub scales: Vec<u16>,
+    /// Bias values per group.
     pub biases: Vec<u16>,
+    /// Matrix row count.
     pub rows: u32,
+    /// Matrix column count.
     pub cols: u32,
 }
 
@@ -84,8 +90,11 @@ pub const GGUF_BLOCK_DTYPES: [u8; 7] = [
 /// [`DTYPE_BF16`]/[`DTYPE_FP16`]/[`DTYPE_FP32`].
 #[derive(Debug, Clone)]
 pub struct RawTensorSpec {
+    /// Tensor lookup name string.
     pub name: String,
+    /// Raw data type byte tag (`DTYPE_BF16`, `DTYPE_FP16`, `DTYPE_FP32`).
     pub dtype: u8,
+    /// Unquantized raw byte payload.
     pub bytes: Vec<u8>,
     /// Logical shape, rank padded to 4 with trailing zeros.
     pub shape: (u32, u32, u32, u32),
@@ -95,8 +104,11 @@ pub struct RawTensorSpec {
 /// (weight bytes + BF16 scales + BF16 biases) or a raw tensor.
 #[derive(Debug, Clone)]
 pub enum ResidentEntrySpec {
+    /// INT4-affine quantized tensor spec.
     Int4(ResidentTensorSpec),
+    /// INT8-affine quantized tensor spec.
     Int8(ResidentTensorSpec),
+    /// Unquantized raw tensor spec.
     Raw(RawTensorSpec),
 }
 

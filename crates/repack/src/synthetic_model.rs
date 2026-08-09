@@ -115,21 +115,27 @@ fn quantized_tensor(name: &str, rows: usize, cols: usize, seed: u64) -> Resident
 pub fn embed_lm_head_name() -> String {
     "embed_lm_head".to_string()
 }
+/// Returns resident query projection tensor name for a given layer.
 pub fn q_proj_name(layer: i64) -> String {
     format!("layer{layer}.q_proj")
 }
+/// Returns resident key projection tensor name for a given layer.
 pub fn k_proj_name(layer: i64) -> String {
     format!("layer{layer}.k_proj")
 }
+/// Returns resident output projection tensor name for a given layer.
 pub fn o_proj_name(layer: i64) -> String {
     format!("layer{layer}.o_proj")
 }
+/// Returns resident gate projection tensor name for a given layer.
 pub fn gate_proj_name(layer: i64) -> String {
     format!("layer{layer}.gate_proj")
 }
+/// Returns resident up projection tensor name for a given layer.
 pub fn up_proj_name(layer: i64) -> String {
     format!("layer{layer}.up_proj")
 }
+/// Returns resident down projection tensor name for a given layer.
 pub fn down_proj_name(layer: i64) -> String {
     format!("layer{layer}.down_proj")
 }
@@ -330,15 +336,19 @@ pub fn build_synthetic_gemma4_moe_streamed_install(
     Ok(arch)
 }
 
+/// Returns resident router tensor name for a given layer.
 pub fn router_name(layer: i64) -> String {
     format!("layer{layer}.router")
 }
+/// Returns expert gate projection tensor name for a given layer and expert index.
 pub fn expert_gate_proj_name(layer: i64, expert: i64) -> String {
     format!("layer{layer}.expert{expert}.gate_proj")
 }
+/// Returns expert up projection tensor name for a given layer and expert index.
 pub fn expert_up_proj_name(layer: i64, expert: i64) -> String {
     format!("layer{layer}.expert{expert}.up_proj")
 }
+/// Returns expert down projection tensor name for a given layer and expert index.
 pub fn expert_down_proj_name(layer: i64, expert: i64) -> String {
     format!("layer{layer}.expert{expert}.down_proj")
 }

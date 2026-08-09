@@ -13,14 +13,25 @@ use crate::safetensors_header::{SafetensorsHeader, TensorInfo};
 /// `Layout.pageBytes`): fixed at 16 KiB regardless of host page size.
 pub const GTURBO_PAGE_BYTES: u64 = 16_384;
 
+/// Classification bucket for a Gemma 4 source checkpoint tensor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Gemma4Bucket {
+    /// Text model resident tensor loaded permanently into RAM/VRAM.
     LmResident,
-    RoutedExpert { role: &'static str, layer: usize },
+    /// Routed expert tensor with role ('gate', 'up', 'down') and layer index.
+    RoutedExpert {
+        /// Role of the expert tensor ('gate', 'up', or 'down').
+        role: &'static str,
+        /// Layer index containing the expert.
+        layer: usize,
+    },
+    /// Multimodal vision or audio tensor excluded from the text language model.
     ExcludedMultimodal,
+    /// Tensor not matching known language model or multimodal patterns.
     Unknown,
 }
 
+/// Extracts the layer index from a layer-scoped tensor name (e.g. `...layers.12...`).
 pub fn layer_index(name: &str) -> Option<usize> {
     let tail = &name[name.find(".layers.")? + ".layers.".len()..];
     tail[..tail.find('.')?].parse().ok()
@@ -35,9 +46,7 @@ fn routed_marker(family: ModelFamily) -> &'static str {
     }
 }
 
-/// [`classify_gemma4`] for any family: same `language_model.` text-tower
-/// contract and the same multimodal exclusions, with the routed-expert
-/// container taken from [`routed_marker`].
+/// Classifies source tensor name under specified model family contract.
 pub fn classify_for_family(name: &str, num_layers: usize, family: ModelFamily) -> Gemma4Bucket {
     if name.starts_with("language_model.") {
         if name.contains(routed_marker(family)) {
@@ -139,6 +148,7 @@ pub struct Gemma4Shards<'a> {
 }
 
 impl<'a> Gemma4Shards<'a> {
+    /// Creates multi-shard tensor registry mapping names to shard index.
     pub fn new(shards: Vec<(&'a SafetensorsHeader, &'a dyn RangeSource)>) -> Self {
         let mut by_name = std::collections::HashMap::new();
         for (i, (header, _)) in shards.iter().enumerate() {
@@ -149,10 +159,12 @@ impl<'a> Gemma4Shards<'a> {
         Self { shards, by_name }
     }
 
+    /// Creates single-shard tensor registry wrapper.
     pub fn single(header: &'a SafetensorsHeader, source: &'a dyn RangeSource) -> Self {
         Self::new(vec![(header, source)])
     }
 
+    /// Resolves the shard header and byte source for a given tensor name.
     pub fn shard_of(
         &self,
         name: &str,
@@ -164,6 +176,7 @@ impl<'a> Gemma4Shards<'a> {
         Ok(&self.shards[i])
     }
 
+    /// Looks up metadata information for a given tensor name across shards.
     pub fn info(&self, name: &str) -> Result<&'a TensorInfo, Gemma4Error> {
         let (header, _) = self.shard_of(name)?;
         header
@@ -172,10 +185,12 @@ impl<'a> Gemma4Shards<'a> {
             .ok_or_else(|| Gemma4Error::MissingTensor(name.to_string()))
     }
 
+    /// Returns true if a tensor with the given name exists in any shard.
     pub fn contains(&self, name: &str) -> bool {
         self.by_name.contains_key(name)
     }
 
+    /// Reads raw tensor byte payload from its hosting shard range source.
     pub fn read(&self, name: &str) -> Result<Vec<u8>, Gemma4Error> {
         let (header, source) = self.shard_of(name)?;
         let (start, end) = header
@@ -184,11 +199,13 @@ impl<'a> Gemma4Shards<'a> {
         Ok(source.read_range(start, end)?)
     }
 
+    /// Returns an iterator over all tensor names present across all shards.
     pub fn names(&self) -> impl Iterator<Item = &'a String> + '_ {
         self.shards.iter().flat_map(|(h, _)| h.tensors.keys())
     }
 }
 
+/// Converts string data type to raw byte dtype tag.
 pub fn raw_dtype_tag(tensor: &str, dtype: &str) -> Result<u8, Gemma4Error> {
     match dtype {
         "BF16" => Ok(DTYPE_BF16),
@@ -201,11 +218,13 @@ pub fn raw_dtype_tag(tensor: &str, dtype: &str) -> Result<u8, Gemma4Error> {
     }
 }
 
+/// Normalizes tensor shape slice to 4-tuple of u32 dimensions.
 pub fn shape4(shape: &[u64]) -> (u32, u32, u32, u32) {
     let get = |i: usize| shape.get(i).copied().unwrap_or(0) as u32;
     (get(0), get(1), get(2), get(3))
 }
 
+/// Packs quantized tensor weights and companion scale/bias arrays into resident entry spec.
 pub fn pass_through_packed(
     shards: &Gemma4Shards<'_>,
     name: &str,
@@ -274,6 +293,7 @@ pub fn pass_through_packed(
     })
 }
 
+/// Converts little-endian byte slice into u16 vector.
 pub fn le_u16(bytes: &[u8]) -> Vec<u16> {
     bytes
         .chunks_exact(2)

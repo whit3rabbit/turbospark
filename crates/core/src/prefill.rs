@@ -12,11 +12,16 @@ use std::fmt;
 
 use crate::runtime_config::ALLOWED_CHUNK_SIZES;
 
+/// Errors occurring during chunked-prefill configuration or execution.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PrefillError {
+    /// Chunked prefill is unsupported by the runner backend.
     ChunkedUnsupported(String),
+    /// Runner was left dirty after an uncommitted chunk failure.
     ChunkedRunnerDirty(String),
+    /// Prefill position mismatch between prompt cursor and KV cache.
     PrefillCursorMismatch(String),
+    /// Seed parameter not supported by prefill implementation.
     UnsupportedPrefillSeed(String),
 }
 
@@ -43,9 +48,13 @@ impl std::error::Error for PrefillError {}
 /// One chunk of a chunked prefill plan.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PrefillChunkSpan {
+    /// Offset within the prompt of this chunk's first token.
     pub token_offset: usize,
+    /// Number of tokens in this chunk span.
     pub token_count: usize,
+    /// Absolute KV cache sequence position for the chunk start.
     pub start_position: usize,
+    /// Cumulative token count completed after this chunk.
     pub completed_count: usize,
 }
 
@@ -89,18 +98,22 @@ pub struct PrefillChunkCommitState {
 }
 
 impl PrefillChunkCommitState {
+    /// Constructs a clean commit state instance.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Returns true if uncommitted KV rows exist from an in-flight chunk.
     pub fn is_dirty(&self) -> bool {
         self.is_dirty
     }
 
+    /// Calculates the end sequence position of the in-flight chunk if present.
     pub fn in_flight_end_position(&self) -> Option<usize> {
         Some(self.in_flight_start_position? + self.in_flight_token_count?)
     }
 
+    /// Marks the state as dirty with an in-flight chunk's start position and token count.
     pub fn mark_dirty(&mut self, start_position: usize, token_count: usize) {
         assert!(
             token_count > 0,
@@ -111,12 +124,14 @@ impl PrefillChunkCommitState {
         self.in_flight_token_count = Some(token_count);
     }
 
+    /// Marks the state clean after successfully committing KV rows.
     pub fn mark_committed(&mut self) {
         self.is_dirty = false;
         self.in_flight_start_position = None;
         self.in_flight_token_count = None;
     }
 
+    /// Resets commit state back to clean.
     pub fn reset(&mut self) {
         self.mark_committed();
     }
@@ -138,16 +153,21 @@ impl PrefillChunkCommitState {
     }
 }
 
+/// Mode selection for chunked prefill execution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PrefillMode {
+    /// Chunked prefill disabled.
     Off,
+    /// Chunked prefill enabled.
     Chunked,
 }
 
 /// The prompt-processing mode and chunk size a chunked prefill runner uses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PrefillRuntimeConfig {
+    /// Active prefill mode (Off or Chunked).
     pub mode: PrefillMode,
+    /// Token capacity limit per prefill chunk.
     pub chunk_tokens: usize,
 }
 
@@ -158,6 +178,7 @@ impl PrefillRuntimeConfig {
     /// that re-read cost dominates.
     pub const MAX_CHUNK_TOKENS: usize = 4096;
 
+    /// Constructs disabled prefill runtime configuration.
     pub fn off() -> Self {
         Self {
             mode: PrefillMode::Off,
@@ -165,6 +186,7 @@ impl PrefillRuntimeConfig {
         }
     }
 
+    /// Constructs default chunked prefill runtime configuration (128 tokens per chunk).
     pub fn default_chunked() -> Self {
         Self::production(128).expect("128 is in ALLOWED_CHUNK_SIZES")
     }
@@ -183,6 +205,7 @@ impl PrefillRuntimeConfig {
         })
     }
 
+    /// Returns true if chunked prefill mode is enabled.
     pub fn enabled(&self) -> bool {
         self.mode == PrefillMode::Chunked
     }

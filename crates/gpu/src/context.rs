@@ -14,12 +14,18 @@ use metal::{
 
 use crate::dispatch_profile::{self, PassProfile};
 
+/// Errors occurring during Metal device, pipeline, or buffer operations.
 #[derive(Debug)]
 pub enum GpuError {
+    /// Metal device is not available on this host.
     NoDevice,
+    /// MSL shader library compilation error with details.
     LibraryCompile(String),
+    /// Shader function name was not found in compiled MSL library.
     FunctionNotFound(String),
+    /// Compute pipeline state creation error with details.
     PipelineCreate(String),
+    /// Buffer allocation error with details.
     BufferCreate(String),
 }
 
@@ -162,6 +168,7 @@ impl MetalContext {
             .load(std::sync::atomic::Ordering::Relaxed)
     }
 
+    /// Returns reference to the active Metal device.
     pub fn device(&self) -> &Device {
         &self.device
     }
@@ -224,6 +231,7 @@ impl MetalContext {
         Ok(library)
     }
 
+    /// Returns reference to the command queue.
     pub fn queue(&self) -> &CommandQueue {
         &self.queue
     }
@@ -257,6 +265,7 @@ impl MetalContext {
         }
     }
 
+    /// Allocates a shared Metal GPU buffer initialized with `data` bytes.
     pub fn new_buffer_with_data<T>(&self, data: &[T]) -> metal::Buffer {
         self.buffer_allocations
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -268,6 +277,7 @@ impl MetalContext {
         )
     }
 
+    /// Allocates an uninitialized shared Metal GPU output buffer of `byte_len` bytes.
     pub fn new_output_buffer(&self, byte_len: u64) -> metal::Buffer {
         self.buffer_allocations
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);

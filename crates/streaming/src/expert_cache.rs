@@ -5,35 +5,52 @@
 
 use std::collections::HashSet;
 
+/// Cache eviction policy for routed experts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExpertCachePolicy {
+    /// Least Recently Used eviction.
     Lru,
+    /// Least Frequently Used eviction.
     Lfu,
 }
 
 impl ExpertCachePolicy {
+    /// Default cache policy (LFU).
     pub const DEFAULT: ExpertCachePolicy = ExpertCachePolicy::Lfu;
 }
 
+/// Execution plan generated for a set of requested expert indices.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExpertCachePlan {
+    /// Requested expert indices.
     pub experts: Vec<usize>,
+    /// Assigned slot index per requested expert.
     pub assigned_slots: Vec<usize>,
+    /// Indices into `experts` that missed cache and need loading.
     pub misses: Vec<usize>,
+    /// Total count of cache hits.
     pub hits: usize,
 }
 
+/// Results of OS kernel I/O advice operations (`madvise`/`fadvise`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ExpertIoAdviceResult {
+    /// Number of expert ranges requested for I/O advice.
     pub requested: usize,
+    /// Number of advice calls that failed.
     pub failed: usize,
+    /// Number of coalesced system calls made.
     pub calls: usize,
+    /// Total bytes included in I/O advice.
     pub bytes: u64,
+    /// Number of requested ranges skipped.
     pub skipped: usize,
+    /// Maximum latency of an advice call in nanoseconds.
     pub max_call_nanos: u64,
 }
 
 impl ExpertIoAdviceResult {
+    /// Constructs a skipped advice result.
     pub fn skipped(requested: usize, bytes: u64) -> Self {
         Self {
             requested,
@@ -58,6 +75,7 @@ pub struct ExpertCache {
 }
 
 impl ExpertCache {
+    /// Constructs an expert slot cache.
     pub fn new(
         slot_count: usize,
         cache_policy: ExpertCachePolicy,
@@ -75,6 +93,7 @@ impl ExpertCache {
         }
     }
 
+    /// Returns total number of expert slots.
     pub fn slot_count(&self) -> usize {
         self.slot_count
     }

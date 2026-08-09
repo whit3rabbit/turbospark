@@ -21,15 +21,23 @@ const FP16_SIZE: usize = 2;
 /// windows commit. Pure counters, not GPU state.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct LayerCounters {
+    /// Token count processed in layer.
     pub tokens: usize,
+    /// Compressed entries count in layer.
     pub compressed_entries: usize,
+    /// Pending uncompressed rows count.
     pub pending_rows: usize,
+    /// Indexer entries count.
     pub indexer_entries: usize,
+    /// Indexer pending rows count.
     pub indexer_pending_rows: usize,
+    /// True if prior compression block exists.
     pub has_prior: bool,
+    /// True if indexer prior block exists.
     pub indexer_has_prior: bool,
 }
 
+/// State manager for DeepSeek-V4 CSA and HCA compressed attention layers.
 pub struct Dsv4StateManager {
     window_kv: Vec<metal::Buffer>,
     compressed_kv: Vec<Option<metal::Buffer>>,
@@ -42,6 +50,7 @@ pub struct Dsv4StateManager {
     indexer_pending_gate: Vec<Option<metal::Buffer>>,
     indexer_prior_ca_kv: Vec<Option<metal::Buffer>>,
     indexer_prior_ca_gate: Vec<Option<metal::Buffer>>,
+    /// Per-layer event and counter bookkeeping tracking compressed attention windows.
     pub counters: Vec<LayerCounters>,
     ring_capacity: usize,
 }
@@ -148,20 +157,24 @@ impl Dsv4StateManager {
         manager
     }
 
+    /// Returns true if layer at index is a CSA or HCA compressed attention layer.
     pub fn is_csa_or_hca(&self, layer: usize) -> bool {
         self.compressed_kv[layer].is_some()
     }
 
+    /// Returns reference to sliding-window KV Metal buffer for `layer`.
     pub fn window_buffer(&self, layer: usize) -> &metal::Buffer {
         &self.window_kv[layer]
     }
 
+    /// Returns reference to compressed KV Metal buffer for `layer`.
     pub fn compressed_buffer(&self, layer: usize) -> &metal::Buffer {
         self.compressed_kv[layer]
             .as_ref()
             .expect("layer is not CSA/HCA")
     }
 
+    /// Returns reference to indexer keys Metal buffer for `layer`.
     pub fn indexer_keys_buffer(&self, layer: usize) -> &metal::Buffer {
         self.indexer_keys[layer].as_ref().expect("layer is not CSA")
     }
@@ -181,6 +194,7 @@ impl Dsv4StateManager {
         (position + 1).saturating_sub(self.ring_capacity)
     }
 
+    /// Resets all per-layer counters and unmaps/clears buffers for a new generation sequence.
     pub fn reset(&mut self) {
         self.counters.fill(LayerCounters::default());
         let page_size = page_size_bytes();

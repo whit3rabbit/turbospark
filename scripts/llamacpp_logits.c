@@ -32,6 +32,7 @@
 
 #include "llama.h"
 
+// Reads token ID list from binary int32 file into heap-allocated array.
 static int32_t *read_ids(const char *path, size_t *count) {
     FILE *f = fopen(path, "rb");
     if (!f) {
