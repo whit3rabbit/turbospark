@@ -8,6 +8,10 @@
 CLAUDE.local.md
 ROADMAP.md
 .syntext/
+.mcp.json
+.agent-config-mcp.json
+.claude/
+.synrepo/
 # scripts/kld_llamacpp.py imports scripts/kld.py, so running it byte-compiles
 # a sibling module here.
 __pycache__/
