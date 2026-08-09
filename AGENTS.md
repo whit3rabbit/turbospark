@@ -16,6 +16,10 @@ joules-per-token and is the only page here measured on battery.
 oracle that asserts this port against per-chip baseline rows (mostly the
 published Swift numbers; see `docs/BENCHMARKING.md` for which rows are
 Swift parity claims and which are this port measuring itself).
+`docs/EXPERT_ROUTING.md` records the measured-negative answer to
+domain-restricted expert sets (coding routes to ~67 of 128 experts per
+layer, not a prunable region) -- read it before proposing expert pruning
+or pinning.
 
 Do your best to keep code files under 400 lines but it's a suggestion not a hard rule. If over 400, decide if refactoring makes sense.
 
@@ -258,6 +262,33 @@ TURBOSPARK_QWEN36_GGUF_INSTALL_DIR=~/models/qwen36-gguf.gturbo \
 TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
 TURBOSPARK_GEMMA4_GGUF_INSTALL_DIR=~/models/gemma4-gguf.gturbo \
   cargo test -p turbospark-repack --test gguf_norm_convention_probe --release -- --ignored --nocapture
+
+# ROADMAP Phase S: install the real sub-4-bit candidate. Streams the 12 GB
+# `unsloth/gemma-4-26B-A4B-it-UD-Q3_K_M` from HF a layer at a time (never
+# written to disk) into a ~12 GB install whose experts are 9.6 GiB against the
+# MLX install's 12. ~18 min. MIXED ALONG TWO AXES, which is what it is for:
+# IQ3_XXS gate/up over an IQ4_NL down in one expert, and a layer 29 that is
+# IQ4_XS over Q8_0. Asserts the per-layer stride saved over 30% on disk.
+TURBOSPARK_GEMMA4_IQ_INSTALL_DIR=~/models/gemma4-iq3.gturbo \
+  cargo test -p turbospark-repack --test gguf_iq_install_network --release -- --ignored --nocapture
+
+# Its quality gate. A SEPARATE target with its own chip row, not the Gemma
+# gate with an env var moved: the existing rows are keyed on the chip and
+# freeze the MLX INT4 goldens, so pointing an install var at a different
+# artifact asserts the wrong digests. ~2 min.
+TURBOSPARK_GEMMA4_IQ_INSTALL_DIR=~/models/gemma4-iq3.gturbo \
+  cargo test -p turbospark-bench --test iq3_quality_gate --release -- --ignored --nocapture
+
+# The check that says the IQ kernels are faithful rather than merely
+# plausible: this port against llama.cpp on the IDENTICAL bytes. Needs the
+# 12 GB file locally (llama.cpp cannot stream it) and MUST run on Metal --
+# Gotcha 34. Reads 0.00440 mean nats at 97.5% top-1, against a 0.03741
+# backend floor.
+TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4-iq3.gturbo \
+TURBOSPARK_LOGIT_DUMP_DIR=/tmp/kld/iq3-warm \
+  cargo test -p turbospark-bench --test logit_dump --release -- --ignored --nocapture
+uv run --python 3.12 --with numpy scripts/kld_llamacpp.py \
+  ~/models/gguf-ref/gemma-4-26B-A4B-it-UD-Q3_K_M.gguf /tmp/kld/iq3-warm
 
 # The determinism check nothing else makes: one runner, the same greedy
 # generation six times, asserting ONE distinct output. This is what caught
@@ -838,11 +869,15 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     **WHETHER A GGUF INSTALL LOADS IS DECIDED PER BLOCK TYPE, NOT PER
     FORMAT** (Stage 2, 2026-08-08). Q8_0 and Q4_K run: each has a resident
     GEMV, an embedding lookup, and a routed-expert decode pair, all
-    parity-tested. Q6_K runs too, on a resident GEMV alone, which is all any
-    real file asks of it (Qwen 3.6's Q4_K_M carries exactly one Q6_K tensor
-    and it is `output.weight`); an install that put Q6_K in an expert would
-    pass the manifest gate and fail at the routed dispatch, by name. Q4_0 has
-    nothing and is refused. The two gates are
+    parity-tested. Q6_K runs on a resident GEMV plus an embedding lookup, the
+    second added by ROADMAP Phase S when a second real file finally put
+    `token_embd` there; it has no MoE pair, so an install with Q6_K experts
+    passes the manifest gate and fails at the routed dispatch, by name.
+    PHASE S ADDS IQ3_XXS, IQ4_NL AND IQ4_XS ON THE SAME PARTIAL FOOTING, and
+    the partition is its candidate's rather than a symmetry: IQ3_XXS and
+    IQ4_XS have a routed phase 1 (gate/up) and IQ4_NL a routed phase 2
+    (down), because that is where the real file puts each, and all three have
+    a resident GEMV. Q4_0 has nothing and is refused. The two gates are
     independent on purpose, and each reads a different thing.
     `model_io::validate_quant` reads the manifest's `ggmlType` against
     `model_io::EXECUTABLE_GGUF_TYPES`; `RealForwardRunner::open` reads the
@@ -855,9 +890,18 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     A MIXED file is the case a Gemma GGUF cannot exercise, and it is the
     normal one: `Q4_K_M` means Q4_K experts and embedding, Q8_0 attention and
     shared experts, one Q6_K tensor. So the block type has to be read PER
-    TENSOR at each dispatch site, not decided once at open, and the only
-    thing decided once is the routed blobs' layout (`RoutedBlobLayout`, which
-    is uniform across an install). `SyntheticGgufShape::k_quant()` builds
+    TENSOR at each dispatch site, not decided once at open. THE ROUTED BLOBS
+    USED TO BE THE ONE EXCEPTION and are not any more: Phase S's candidate
+    reads IQ3_XXS gate/up against an IQ4_NL down in the SAME expert, and its
+    layer 29 is IQ4_XS over Q8_0, so `RoutedBlobLayout` is per LAYER and per
+    PHASE now, resolved from `packed_experts/layout.json`'s per-sub-tensor
+    dtypes rather than from the manifest's one `ggmlType` (which stays as the
+    dominant type, beside an optional `ggmlTypes` array the gate checks member
+    by member). THE EXPERT STRIDE IS PER LAYER FOR THE SAME REASON, and that
+    one is not tidiness: layer 29's blob is 1.6x the others', so the old
+    model-wide maximum would pad a 10.33 GB expert table to 16.23 GB, turning
+    the phase's -20% into a +35% regression with NO visible symptom, since a
+    zero-padded blob decodes correctly. `SyntheticGgufShape::k_quant()` builds
     that mixture as a fixture; every K-quant row in it is 256 elements
     because a superblock cannot be partial.
     A FIFTH DIFFERENCE IS NOT ABOUT THE FORMAT AT ALL and is the one that
@@ -1025,6 +1069,7 @@ Workspace directory structure and crate layout:
 |   \-- power.sh       # watts & joules-per-token over the protocol (needs sudo)
 \-- docs
     +-- BENCHMARKING.md# benchmark modes, mach memory sampling & memory oracle details
+    +-- EXPERT_ROUTING.md # domain-restricted expert sets, measured negative
     +-- POWER_BASELINE.md # watts, joules-per-token, hygiene audit (ROADMAP Phase P1)
     \-- TESTING.md     # test suite organization, platform gating & testing rules
 ```

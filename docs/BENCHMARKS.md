@@ -541,6 +541,67 @@ port has yet to write. And the win is a mixture, not "3-bit experts":
 level higher, which is exactly why the file is 9.10 GiB of experts rather
 than a true 3-bit 7 GiB.
 
+### The 3-bit install, measured (ROADMAP Phase S)
+
+The section above measured llama.cpp on the candidate, because this port
+could not ingest it. It can now. Everything below is THIS PORT's own IQ3_XXS
+and IQ4_NL kernels, on an install streamed from the identical file, measured
+2026-08-08 on AC, same machine, same 550 ids, same corpus.
+
+**Is the decode faithful?** Against llama.cpp on the SAME BYTES, both Metal,
+both cached:
+
+| Comparison | Mean KL | Top-1 agree |
+| --- | ---: | ---: |
+| candidate batched vs cached, both Metal (shape floor) | 0.00051 | 100.0% |
+| **this port's IQ install vs llama.cpp** | **0.00440** | **97.5%** |
+| candidate Metal vs CPU, both cached (backend floor) | 0.03741 | 94.7% |
+
+Read it against the floors and not on its own, which is AGENTS.md Gotcha 34's
+whole point. The port's disagreement with llama.cpp is 8.5x SMALLER than
+ggml's own disagreement with itself across backends, and 8.6x larger than the
+shape floor: the same shape as the Q8_0 result above and tighter in absolute
+terms (0.00440 against that one's 0.00845).
+
+**What does it cost?**
+
+| Reading | Perplexity | vs MLX INT4 |
+| --- | ---: | ---: |
+| this port, MLX INT4 install (incumbent) | 37.4176 | -- |
+| llama.cpp, candidate, Metal, cached | 38.0997 | +1.82% |
+| **this port, IQ3_XXS/IQ4_NL install** | **38.3753** | **+2.56%** |
+| this port, GGUF Q8_0 install | 39.8808 | +6.58% |
+
+The port reads +0.72% against llama.cpp on the same bytes, inside
+`PERPLEXITY_REL_TOLERANCE` and inside llama.cpp's own 1.2% Metal/CPU spread
+on this file, so the gap to the incumbent is the QUANTIZATION rather than the
+kernels. The 3-bit install still beats the 8-bit one by 3.8%.
+
+**What does it buy?** `packed_experts/` is 9.6 GiB against the MLX install's
+12 GiB, **-20%**, and the whole install is 12 GB against 13 GB.
+
+That -20% is the phase's premise and it is not automatic. Layer 29's expert
+blob is 4,212,736 bytes against the other twenty-nine's 2,632,960, so padding
+every layer to the model-wide maximum -- which is what the writer did before
+this phase -- would have written **16.23 GB of experts instead of 10.33**, a
+35% REGRESSION against the install it exists to shrink. The per-layer stride
+is a prerequisite, not a tuning step. Both numbers are printed by
+`gguf_iq_install_network.rs` and asserted there.
+
+Decode is 25-27 tok/s against the MLX install's 35-40 on the same prompts:
+the codebook kernels cost throughput. That is measured, not tuned, and no
+attempt has been made to close it.
+
+Frozen and reproducible: `iq3_quality_gate.rs` carries the row, and its
+perplexity and both digests reproduced to the last digit and last hex
+character in a second process. Output is byte-identical across 8, 16 and 32
+expert-cache slots (`gguf_nondeterminism_probe`), so nothing here depends on
+cache state.
+
+NOT MEASURED: joules per token. `scripts/power.sh` needs sudo and cannot run
+non-interactively, and fewer expert bytes per miss is an energy claim, so the
+phase's motivating axis is still open.
+
 ## Power
 
 NOT A PARITY CLAIM. Swift was never measured for power, here or upstream;
