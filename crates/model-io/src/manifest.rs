@@ -133,6 +133,27 @@ pub struct ManifestQuantSlot {
     /// writes it.
     #[serde(default)]
     pub ggml_type: Option<String>,
+    /// Every ggml block type this slot carries, when it carries more than one
+    /// (ROADMAP Phase S). Optional, and absent means "exactly `ggml_type`".
+    ///
+    /// A mixed sub-4-bit checkpoint needs this: the Phase S candidate's routed
+    /// experts are IQ3_XXS gate/up over IQ4_NL down, with IQ4_XS and Q8_0 on
+    /// layer 29, so no single type describes the slot. `ggml_type` stays as
+    /// the DOMINANT one, which keeps a hand-read of the manifest informative;
+    /// this is what the gate actually checks, member by member.
+    #[serde(default)]
+    pub ggml_types: Option<Vec<String>>,
+}
+
+impl ManifestQuantSlot {
+    /// The block types this slot claims, dominant one first.
+    fn declared_types(&self) -> Vec<&str> {
+        match (&self.ggml_types, &self.ggml_type) {
+            (Some(all), _) if !all.is_empty() => all.iter().map(String::as_str).collect(),
+            (_, Some(one)) => vec![one.as_str()],
+            _ => Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -293,7 +314,14 @@ fn is_production_arch(expected: &ArchConfig) -> bool {
 /// real file that uses it puts it in `output.weight`. An install that carried
 /// Q6_K experts would pass this gate and fail at the routed dispatch instead,
 /// which is a worse error message but not a wrong answer.
-pub const EXECUTABLE_GGUF_TYPES: [&str; 3] = ["q8_0", "q4_k", "q6_k"];
+/// The three IQ types (ROADMAP Phase S) join on the same terms as the rest,
+/// and one of them is narrower than it looks: IQ3_XXS and IQ4_XS have a
+/// routed phase-1 kernel, IQ4_NL a routed phase-2 one, and all three a
+/// resident GEMV, but there is no IQ4_NL phase 1 and no IQ3_XXS phase 2
+/// because no real file asks for either. That is the same weaker footing
+/// Q6_K stands on, and it fails the same way: at the dispatch site, by name.
+pub const EXECUTABLE_GGUF_TYPES: [&str; 6] =
+    ["q8_0", "q4_k", "q6_k", "iq3_xxs", "iq4_nl", "iq4_xs"];
 
 fn validate_quant(quant: &ManifestQuant) -> Result<(), ModelError> {
     let slots: [(&str, &ManifestQuantSlot, &[i64]); 5] = [
@@ -313,21 +341,38 @@ fn validate_quant(quant: &ManifestQuant) -> Result<(), ModelError> {
             && slot.group_size == QUANT_GROUP_SIZE;
         // A GGUF slot carries no bits, no group size and no companion types:
         // the scale lives inside each block. What it does carry is the block
-        // type, and that is the whole question -- a Q4_K install and a Q8_0
-        // one are equally well-formed here and only one of them has kernels.
+        // type -- possibly SEVERAL, since ROADMAP Phase S -- and that is the
+        // whole question: a Q4_K install and a Q8_0 one are equally
+        // well-formed here and only one of them has kernels.
+        //
+        // Every declared type must be executable, not just the dominant one.
+        // Checking only `ggmlType` would let a mixed install through on the
+        // strength of its majority and fail at a dispatch thirty layers in.
+        let declared = slot.declared_types();
         let gguf = slot.scheme.to_lowercase() == "gguf"
-            && slot
-                .ggml_type
-                .as_deref()
-                .is_some_and(|t| EXECUTABLE_GGUF_TYPES.contains(&t.to_lowercase().as_str()));
+            && !declared.is_empty()
+            && declared
+                .iter()
+                .all(|t| EXECUTABLE_GGUF_TYPES.contains(&t.to_lowercase().as_str()));
         if !(affine || gguf) {
             let detail = match slot.scheme.to_lowercase().as_str() {
-                "gguf" => format!(
-                    "unsupported quantization for {name}: GGUF block type {} has no kernel in \
-                     this port (executable types: {})",
-                    slot.ggml_type.as_deref().unwrap_or("unspecified"),
-                    EXECUTABLE_GGUF_TYPES.join(", ")
-                ),
+                "gguf" => {
+                    let offending: Vec<&str> = declared
+                        .iter()
+                        .copied()
+                        .filter(|t| !EXECUTABLE_GGUF_TYPES.contains(&t.to_lowercase().as_str()))
+                        .collect();
+                    let named = if offending.is_empty() {
+                        "unspecified".to_string()
+                    } else {
+                        offending.join(", ")
+                    };
+                    format!(
+                        "unsupported quantization for {name}: GGUF block type {named} has no \
+                         kernel in this port (executable types: {})",
+                        EXECUTABLE_GGUF_TYPES.join(", ")
+                    )
+                }
                 _ => format!("unsupported quantization for {name}"),
             };
             return Err(ModelError::IndexCorrupt { detail });

@@ -129,10 +129,10 @@ impl RealForwardRunner {
             real_qwen,
             phases,
             skip_head,
-            routed_layout,
+            routed_layouts,
+            router_hist,
             ..
         } = self;
-        let routed_layout = *routed_layout;
         let qwen = real_qwen.as_ref().expect("qwen state present");
         let gpu_err = RealForwardError::Gpu;
         let hidden = arch.hidden_size as usize;
@@ -271,6 +271,9 @@ impl RealForwardRunner {
             let router_logits = gpu::read_f32_buffer(&qwen.router_logits_f32, num_experts);
             let (selected, route_weights) =
                 router_topk_gemma4(&router_logits, top_k, &qwen.per_expert_ones);
+            if let Some(hist) = router_hist.as_mut() {
+                hist.record(layer, &selected);
+            }
             let streamer = streamers[layer].as_mut().ok_or_else(|| {
                 RealForwardError::Unsupported(format!(
                     "Qwen 3.6 layer {layer} has no packed-expert streamer"
@@ -299,7 +302,7 @@ impl RealForwardRunner {
             let routed = routed_blobs.as_ref().ok_or_else(|| {
                 RealForwardError::Unsupported("install has no routed-blob buffer".to_string())
             })?;
-            let offsets = moe_offsets.as_ref().expect("layout implies offsets");
+            let offsets = &moe_offsets[layer];
             routed
                 .bind(context, use_silu, &blob_refs)
                 .map_err(gpu_err)?;
@@ -375,7 +378,7 @@ impl RealForwardRunner {
             .map_err(gpu_err)?;
 
             encode_moe_phase1_any(
-                routed_layout,
+                routed_layouts[layer].phase1,
                 context,
                 &pass,
                 routed,
@@ -390,7 +393,7 @@ impl RealForwardRunner {
             .map_err(gpu_err)?;
             // Phase 2 fuses the residual add: h2 = h1 + sum_slot w * down.
             encode_moe_phase2_any(
-                routed_layout,
+                routed_layouts[layer].phase2,
                 context,
                 &pass,
                 routed,

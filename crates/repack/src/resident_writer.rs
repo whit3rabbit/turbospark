@@ -50,20 +50,33 @@ pub const DTYPE_FP32: u8 = 3;
 /// Entries carrying these tags have NO scale/bias companions: their
 /// `scale_offset`/`scale_size`/`bias_offset`/`bias_size` are all zero.
 ///
-/// No kernel reads any of these yet. `RealForwardRunner::open` rejects an
-/// install that carries one, by name (Phase G Stage 2 wires the kernels).
+/// A TAG HERE IS NOT PERMISSION TO RUN. The walk writes an install for every
+/// block type it can parse, and whether that install opens is decided
+/// separately, per type, by `model_io::EXECUTABLE_GGUF_TYPES` and by
+/// `RealForwardRunner::open`'s copy of the same set. Q4_0 has a tag and no
+/// kernel, and is refused by name.
 pub const DTYPE_GGUF_Q8_0: u8 = 6;
 pub const DTYPE_GGUF_Q4_K: u8 = 7;
 pub const DTYPE_GGUF_Q6_K: u8 = 8;
 pub const DTYPE_GGUF_Q4_0: u8 = 9;
+/// The IQ-codebook tags (ROADMAP Phase S). Distinct from the K-quant ones
+/// above for a reason beyond bookkeeping: these decode through a table that
+/// ships with the format rather than through arithmetic, so a reader that
+/// guessed at one of them cannot approximate it.
+pub const DTYPE_GGUF_IQ3_XXS: u8 = 10;
+pub const DTYPE_GGUF_IQ4_NL: u8 = 11;
+pub const DTYPE_GGUF_IQ4_XS: u8 = 12;
 
 /// Every GGUF block dtype tag, for consumers that need to reject the whole
 /// family in one check rather than enumerate it and drift.
-pub const GGUF_BLOCK_DTYPES: [u8; 4] = [
+pub const GGUF_BLOCK_DTYPES: [u8; 7] = [
     DTYPE_GGUF_Q8_0,
     DTYPE_GGUF_Q4_K,
     DTYPE_GGUF_Q6_K,
     DTYPE_GGUF_Q4_0,
+    DTYPE_GGUF_IQ3_XXS,
+    DTYPE_GGUF_IQ4_NL,
+    DTYPE_GGUF_IQ4_XS,
 ];
 
 /// One named raw tensor (a norm vector, a scalar like `router.scale`):

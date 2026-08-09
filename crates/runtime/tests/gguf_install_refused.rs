@@ -1,10 +1,12 @@
 //! ROADMAP Phase G Stage 2's boundary, enforced rather than documented.
 //!
 //! Stage 1 refused every GGUF install, because no kernel in this port read a
-//! block layout. Stage 2 moved that line rather than erasing it. Q8_0 and
-//! Q4_K each have a resident GEMV, an embedding lookup and the routed-expert
-//! decode pair behind them, and Q6_K has a resident GEMV, which is all any
-//! real file asks of it; those three OPEN. Q4_0 has none and still refuses.
+//! block layout. Stage 2 moved that line rather than erasing it, and ROADMAP
+//! Phase S moved it again. Q8_0 and Q4_K each have a resident GEMV, an
+//! embedding lookup and the routed-expert decode pair behind them; Q6_K has a
+//! resident GEMV and an embedding lookup; IQ3_XXS, IQ4_XS and IQ4_NL have a
+//! resident GEMV each plus the half of the routed pair their real file asks
+//! for. Those six OPEN. Q4_0 has nothing and still refuses.
 //!
 //! Both directions are asserted here, and the refusal is checked twice over,
 //! because a single gate is a single point of failure for a whole class of
@@ -191,6 +193,81 @@ fn a_q8_0_gguf_install_decodes() {
 #[test]
 fn a_mixed_k_quant_gguf_install_decodes() {
     decodes(SyntheticGgufShape::k_quant());
+}
+
+/// ROADMAP Phase S's mixture, and the first install in this suite that is
+/// mixed along TWO axes at once: IQ3_XXS gate/up over IQ4_NL down (the two
+/// phases of one expert reading different layouts), with the LAST LAYER
+/// different again at IQ4_XS over Q8_0.
+///
+/// Both axes are new, and each defeats a different piece of the old
+/// plumbing. `RoutedBlobLayout` was one value for a whole install, read off
+/// the manifest's single `ggmlType`; `MoeExpertOffsets` was one struct read
+/// off layer 0 expert 0, on the reasoning that the writer packs every blob
+/// identically. Both were true of every install that existed and neither
+/// survives a mixture: the manifest cannot name one type, and the offsets
+/// follow the byte sizes, which differ per layer.
+///
+/// The odd layer is LAST rather than first on purpose. A bug that resolved
+/// everything from layer 0 would still produce a working install if layer 0
+/// were the odd one out -- it would just be wrong everywhere else, and this
+/// fixture's logits would still be finite. Putting the difference at the end
+/// means layer 0's answer is the majority answer, which is what a
+/// resolve-once bug would use.
+#[test]
+fn the_phase_s_iq_mixture_decodes() {
+    decodes(SyntheticGgufShape::iq_mixed());
+}
+
+/// The offsets really are per layer, checked on the fixture rather than
+/// through the decode above. A resolve-once bug is not guaranteed to produce
+/// a NaN -- it reads valid bytes at the wrong place -- so the structural
+/// claim is worth asserting directly.
+#[test]
+fn a_mixed_install_gives_its_layers_different_expert_layouts() {
+    let (dir, _) = gguf_install(SyntheticGgufShape::iq_mixed());
+    let layout = model_io::load_packed_experts_layout(
+        &dir,
+        model_io::PACKED_EXPERTS_LAYOUT_DEFAULT_MAX_BYTES,
+    )
+    .expect("layout.json");
+
+    let dtypes = |layer: usize| {
+        let subs = &layout.expert(layer, 0).sub_tensors;
+        (
+            subs["gate"].dtype.clone(),
+            subs["up"].dtype.clone(),
+            subs["down"].dtype.clone(),
+        )
+    };
+    assert_eq!(
+        dtypes(0),
+        ("iq3_xxs".into(), "iq3_xxs".into(), "iq4_nl".into())
+    );
+    let last = layout.layers.len() - 1;
+    assert_eq!(
+        dtypes(last),
+        ("iq4_xs".into(), "iq4_xs".into(), "q8_0".into())
+    );
+    // Different types mean different byte sizes mean different offsets, which
+    // is the concrete reason one struct read off layer 0 cannot serve.
+    assert_ne!(
+        layout.expert(0, 0).sub_tensors["down"].offset,
+        layout.expert(last, 0).sub_tensors["down"].offset
+    );
+    // And the manifest names every type it carries, not just the dominant one.
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.join("manifest.json")).unwrap()).unwrap();
+    let mut declared: Vec<String> = manifest["quant"]["routedExpert"]["ggmlTypes"]
+        .as_array()
+        .expect("a mixed routed slot declares ggmlTypes")
+        .iter()
+        .map(|v| v.as_str().unwrap().to_lowercase())
+        .collect();
+    declared.sort();
+    assert_eq!(declared, ["iq3_xxs", "iq4_nl", "iq4_xs", "q8_0"]);
+
+    std::fs::remove_dir_all(&dir).ok();
 }
 
 fn decodes(shape: SyntheticGgufShape) {

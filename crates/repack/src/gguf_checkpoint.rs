@@ -155,8 +155,8 @@ from_error! {
 /// row would read the f16 scale as two weights and be silently wrong.
 pub fn dtype_tag_for_ggml_type(ggml_type: u32) -> Option<u8> {
     use crate::resident_writer::{
-        DTYPE_BF16, DTYPE_FP16, DTYPE_FP32, DTYPE_GGUF_Q4_0, DTYPE_GGUF_Q4_K, DTYPE_GGUF_Q6_K,
-        DTYPE_GGUF_Q8_0,
+        DTYPE_BF16, DTYPE_FP16, DTYPE_FP32, DTYPE_GGUF_IQ3_XXS, DTYPE_GGUF_IQ4_NL,
+        DTYPE_GGUF_IQ4_XS, DTYPE_GGUF_Q4_0, DTYPE_GGUF_Q4_K, DTYPE_GGUF_Q6_K, DTYPE_GGUF_Q8_0,
     };
     Some(match ggml_type {
         0 => DTYPE_FP32,
@@ -166,6 +166,9 @@ pub fn dtype_tag_for_ggml_type(ggml_type: u32) -> Option<u8> {
         8 => DTYPE_GGUF_Q8_0,
         12 => DTYPE_GGUF_Q4_K,
         14 => DTYPE_GGUF_Q6_K,
+        18 => DTYPE_GGUF_IQ3_XXS,
+        20 => DTYPE_GGUF_IQ4_NL,
+        23 => DTYPE_GGUF_IQ4_XS,
         _ => return None,
     })
 }
@@ -865,13 +868,25 @@ fn gguf_manifest_quant(header: &GgufHeader, plan: &Plan<'_>) -> serde_json::Valu
             .map(|(_, i)| ggml_scheme_name(i.ggml_type))
             .unwrap_or("absent")
     };
-    let routed = plan
-        .routed
-        .values()
-        .next()
-        .and_then(|s| s.first())
-        .map(|s| type_of(&[s.name]))
-        .unwrap_or("absent");
+    // EVERY block type the routed experts carry, not just the first, because
+    // a mixed sub-4-bit file carries several (ROADMAP Phase S). The candidate
+    // is IQ3_XXS gate/up over IQ4_NL down with IQ4_XS and Q8_0 on layer 29, so
+    // reporting one would tell `validate_quant` about a quarter of the
+    // install. Sorted by descending tensor COUNT, so `ggmlType` -- which stays
+    // for readability and for pre-Phase-S consumers -- names the dominant one.
+    let mut routed_counts: BTreeMap<&str, usize> = BTreeMap::new();
+    for sources in plan.routed.values() {
+        for s in sources {
+            *routed_counts
+                .entry(ggml_scheme_name(header.tensors[s.name].ggml_type))
+                .or_default() += 1;
+        }
+    }
+    let mut routed_types: Vec<&str> = routed_counts.keys().copied().collect();
+    routed_types.sort_by_key(|t| std::cmp::Reverse(routed_counts[t]));
+    if routed_types.is_empty() {
+        routed_types.push("absent");
+    }
     let slot = |ggml: &str| {
         serde_json::json!({
             "weightBits": 0,
@@ -881,6 +896,15 @@ fn gguf_manifest_quant(header: &GgufHeader, plan: &Plan<'_>) -> serde_json::Valu
             "biasType": "inline",
             "groupSize": 0,
         })
+    };
+    let routed_slot = {
+        let mut v = slot(routed_types[0]);
+        // Written only when there IS more than one, so a uniform install's
+        // manifest is byte-identical to what it was before Phase S.
+        if routed_types.len() > 1 {
+            v["ggmlTypes"] = serde_json::json!(routed_types);
+        }
+        v
     };
     // What the router slot says has to match what the transcode wrote.
     let router_source = type_of(&["ffn_gate_inp.weight"]);
@@ -903,7 +927,7 @@ fn gguf_manifest_quant(header: &GgufHeader, plan: &Plan<'_>) -> serde_json::Valu
         "router": router,
         // Gemma's shared expert is `ffn_gate`, Qwen's is `ffn_gate_shexp`.
         "sharedExpert": slot(type_of(&["ffn_gate.weight", "ffn_gate_shexp.weight"])),
-        "routedExpert": slot(routed),
+        "routedExpert": routed_slot,
     })
 }
 

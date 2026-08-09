@@ -70,7 +70,7 @@ pub use safetensors_header::{
     DEFAULT_MAX_HEADER_BYTES,
 };
 pub use synthetic_gguf::{
-    build_synthetic_gemma4_gguf, GgufBuilder, GgufFileAndRanges, SyntheticGgufShape,
+    build_synthetic_gemma4_gguf, GgufBuilder, GgufFileAndRanges, QuantMix, SyntheticGgufShape,
 };
 pub use synthetic_model::{
     build_synthetic_gemma4_install, build_synthetic_gemma4_moe_install,

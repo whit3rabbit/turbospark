@@ -77,9 +77,22 @@ pub(crate) fn encode_moe_phase1_any(
         RoutedBlobLayout::GgufQ4K => gpu::encode_moe_phase1_q4_k(
             context, pass, routed, offsets, x, acts, d_dim, f_dim, top_k, use_silu,
         ),
+        RoutedBlobLayout::GgufIq3Xxs => gpu::encode_moe_phase1_iq3_xxs(
+            context, pass, routed, offsets, x, acts, d_dim, f_dim, top_k, use_silu,
+        ),
+        RoutedBlobLayout::GgufIq4Xs => gpu::encode_moe_phase1_iq4_xs(
+            context, pass, routed, offsets, x, acts, d_dim, f_dim, top_k, use_silu,
+        ),
         RoutedBlobLayout::Affine => gpu::encode_moe_phase1(
             context, pass, routed, offsets, x, acts, d_dim, f_dim, top_k, use_silu,
         ),
+        // No real file puts IQ4_NL in gate/up, so there is no such kernel.
+        // Reaching here means an install this port installed but cannot run;
+        // `open()`'s dtype gate lets it through because the TYPE is
+        // executable, just not in this position. Same shape as Q6_K.
+        other => Err(gpu::GpuError::FunctionNotFound(format!(
+            "routed phase 1 (gate/up) for {other:?}"
+        ))),
     }
 }
 
@@ -105,9 +118,17 @@ pub(crate) fn encode_moe_phase2_any(
         RoutedBlobLayout::GgufQ4K => gpu::encode_moe_phase2_q4_k(
             context, pass, routed, offsets, acts, routing_w, residual, y, d_dim, f_dim, use_silu,
         ),
+        RoutedBlobLayout::GgufIq4Nl => gpu::encode_moe_phase2_iq4_nl(
+            context, pass, routed, offsets, acts, routing_w, residual, y, d_dim, f_dim, use_silu,
+        ),
         RoutedBlobLayout::Affine => gpu::encode_moe_phase2(
             context, pass, routed, offsets, acts, routing_w, residual, y, d_dim, f_dim, use_silu,
         ),
+        // No real file puts IQ3_XXS or IQ4_XS in `down`; see the phase-1
+        // sibling's note.
+        other => Err(gpu::GpuError::FunctionNotFound(format!(
+            "routed phase 2 (down) for {other:?}"
+        ))),
     }
 }
 
@@ -144,6 +165,12 @@ pub(crate) fn encode_embed_any(
         }
         DTYPE_GGUF_Q4_K => {
             gpu::encode_embed_lookup_q4_k(context, pass, table, out, token, hidden, embed_scale)
+                .map_err(RealForwardError::Gpu)
+        }
+        // ROADMAP Phase S's candidate puts `token_embd` in Q6_K and ties the
+        // head to it, which is what made this kernel worth writing.
+        DTYPE_GGUF_Q6_K => {
+            gpu::encode_embed_lookup_q6_k(context, pass, table, out, token, hidden, embed_scale)
                 .map_err(RealForwardError::Gpu)
         }
         4 => {
@@ -595,7 +622,6 @@ impl RealForwardRunner {
         // interleave with `&mut self` calls, and a `Copy` local keeps the
         // borrow checker out of it (see the re-binding note in this file's
         // header).
-        let routed_layout = self.routed_layout;
         let embed_scale = if arch.embedding_scaled_by_sqrt_hidden {
             (hidden as f32).sqrt()
         } else {
@@ -977,6 +1003,9 @@ impl RealForwardRunner {
             let router_logits = gpu::read_f32_buffer(&real.router_logits_f32, num_experts);
             let (selected, route_weights) =
                 router_topk_gemma4(&router_logits, top_k, &real.per_expert_scale[layer]);
+            if let Some(hist) = self.router_hist.as_mut() {
+                hist.record(layer, &selected);
+            }
             let layer_scalar = real.layer_scalar[layer];
 
             let streamer = self.streamers[layer].as_mut().ok_or_else(|| {
@@ -1056,7 +1085,12 @@ impl RealForwardRunner {
             let routed = self.routed_blobs.as_ref().ok_or_else(|| {
                 RealForwardError::Unsupported("install has no routed-blob buffer".to_string())
             })?;
-            let offsets = self.moe_offsets.as_ref().expect("layout implies offsets");
+            let offsets = &self.moe_offsets[layer];
+            // Copied out per layer rather than bound once for the model: a
+            // mixed install's phases AND layers carry different block types
+            // (ROADMAP Phase S). Two `Copy` enums, and taken here rather than
+            // inline at the call because the calls also take `&mut self`.
+            let layer_layout = self.routed_layouts[layer];
             routed
                 .bind(&mut self.context, use_silu, &blob_refs)
                 .map_err(gpu_err)?;
@@ -1072,7 +1106,7 @@ impl RealForwardRunner {
             let main_phase1_k = order.len();
             if main_phase1_k > 0 {
                 encode_moe_phase1_any(
-                    routed_layout,
+                    layer_layout.phase1,
                     &mut self.context,
                     &pass,
                     routed,
@@ -1087,7 +1121,7 @@ impl RealForwardRunner {
                 .map_err(gpu_err)?;
             }
             encode_moe_phase2_any(
-                routed_layout,
+                layer_layout.phase2,
                 &mut self.context,
                 &pass,
                 routed,

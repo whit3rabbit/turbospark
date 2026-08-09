@@ -15,6 +15,17 @@ pub struct SubTensorEntry {
     pub offset: u64,
     /// Bytes; scale slices encode the group count.
     pub size: u64,
+    /// What the writer called this run's element type: `"int4"`, `"bf16"`,
+    /// `"q8_0"`, `"iq3_xxs"` and so on, lowercased ggml names for GGUF
+    /// installs.
+    ///
+    /// The writer has always emitted it and the loader has always required it
+    /// to be present; until ROADMAP Phase S it then threw it away, because
+    /// every install was uniform and the manifest's one `ggmlType` said
+    /// everything. A mixed install needs it PER SUB-TENSOR: the Phase S
+    /// candidate's expert is IQ3_XXS gate/up over an IQ4_NL down, so the
+    /// manifest cannot say which kernel a given dispatch wants and this can.
+    pub dtype: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -168,14 +179,14 @@ pub fn load(dir: &Path, max_bytes: u64) -> Result<PackedExpertsLayout, ModelErro
             for (role, t) in tensors_obj {
                 let toff = t.get("offset").and_then(Value::as_u64);
                 let tsize = t.get("size").and_then(Value::as_u64);
-                let has_dtype = t.get("dtype").is_some_and(Value::is_string);
+                let dtype = t.get("dtype").and_then(Value::as_str);
                 let has_shape = t.get("shape").is_some_and(Value::is_array);
                 let (Some(toff), Some(tsize)) = (toff, tsize) else {
                     return Err(corrupt(&format!("malformed tensor {role}")));
                 };
-                if !has_dtype || !has_shape {
+                let (Some(dtype), true) = (dtype, has_shape) else {
                     return Err(corrupt(&format!("malformed tensor {role}")));
-                }
+                };
                 if let Some(bits) = t.get("bits") {
                     if !bits.is_i64() && !bits.is_u64() {
                         return Err(corrupt(&format!("malformed tensor bits {role}")));
@@ -186,6 +197,7 @@ pub fn load(dir: &Path, max_bytes: u64) -> Result<PackedExpertsLayout, ModelErro
                     SubTensorEntry {
                         offset: toff,
                         size: tsize,
+                        dtype: dtype.to_ascii_lowercase(),
                     },
                 );
             }

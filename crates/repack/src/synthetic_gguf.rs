@@ -189,6 +189,54 @@ impl GgufBuilder {
         self.tensor(name, 14, dims, data)
     }
 
+    /// Push an IQ tensor: IQ3_XXS (18), IQ4_NL (20) or IQ4_XS (23).
+    ///
+    /// UNLIKE EVERY OTHER TENSOR HELPER HERE, this does not quantize a weight
+    /// vector, because this port has no IQ encoder and deliberately will not
+    /// grow one (an encoder means a codebook nearest-neighbour search nothing
+    /// calls, and the lossless-repack rule means real bytes arrive already
+    /// quantized). It emits random VALID CODE POINTS instead, which is a
+    /// stronger fixture rather than a weaker one: every byte of an IQ block
+    /// is either a table index, a sign field or a scale field, all of whose
+    /// bit patterns are legal, so random bytes cover the code space evenly
+    /// where an encoder would only ever emit the subset it chooses.
+    ///
+    /// The scale `d` is per type and small on purpose. Each layout reaches a
+    /// different maximum (IQ3_XXS's grid tops out at 62 under a scale nibble
+    /// worth 7.75, IQ4_XS's table at 127 under a sub-scale of 32, IQ4_NL's at
+    /// 127 flat), and an install whose weights reach +/-30 overflows FP16
+    /// before the head -- the trap `q8_0_tensor`'s `[-8, 7]` range exists for,
+    /// arriving here by a different route.
+    pub fn iq_tensor(self, name: &str, ggml_type: u32, dims: &[u64], seed: u8) -> Self {
+        // (block elements, payload bytes after the f16 scale, f16 scale bits)
+        let (elems, payload, d) = match ggml_type {
+            18 => (256u64, 96usize, 0x1800u16), // IQ3_XXS, d = 2^-9
+            20 => (32, 16, 0x2000),             // IQ4_NL,  d = 2^-7
+            23 => (256, 134, 0x0C00),           // IQ4_XS,  d = 2^-12
+            other => panic!("{name}: ggml type {other} is not an IQ layout"),
+        };
+        assert!(
+            dims[0] % elems == 0,
+            "{name}: rows of {} elements do not tile {elems}-element blocks",
+            dims[0]
+        );
+        let total: u64 = dims.iter().product();
+        let mut state = (seed as u64)
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1);
+        let mut data = Vec::new();
+        for _ in 0..total / elems {
+            data.extend_from_slice(&d.to_le_bytes());
+            for _ in 0..payload {
+                state = state
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(1);
+                data.push((state >> 33) as u8);
+            }
+        }
+        self.tensor(name, ggml_type, dims, data)
+    }
+
     /// Push an F32 tensor whose every value is EXACTLY representable in
     /// BF16, which is what llama.cpp actually writes for norms: it upcasts
     /// tensors that were BF16 in the original checkpoint, so the low sixteen
@@ -300,11 +348,32 @@ pub struct SyntheticGgufShape {
     pub top_k: u64,
     pub vocab: u64,
     pub sliding_window: u64,
-    /// Mix K-quants in the way a real `Q4_K_M` does: routed experts and the
-    /// embedding table at Q4_K, the attention projections at Q6_K, everything
-    /// else Q8_0. Needs [`SyntheticGgufShape::k_quant`]'s dimensions, since
-    /// every K-quant row has to tile 256 elements where Q8_0 needs 32.
-    pub k_quants: bool,
+    /// Which block types the fixture puts where.
+    pub mix: QuantMix,
+}
+
+/// Which mixture of block types a fixture carries.
+///
+/// A three-way enum rather than a pair of flags because the mixtures are
+/// mutually exclusive by construction and two bools would have an invalid
+/// fourth state.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum QuantMix {
+    /// Q8_0 throughout, as Gemma 4's published GGUF is.
+    #[default]
+    Q8_0,
+    /// What a real `Q4_K_M` does: routed experts and the embedding table at
+    /// Q4_K, the attention projections at Q6_K, everything else Q8_0. Needs
+    /// [`SyntheticGgufShape::k_quant`]'s dimensions, since every K-quant row
+    /// has to tile 256 elements where Q8_0 needs 32.
+    KQuant,
+    /// What ROADMAP Phase S's candidate does: IQ3_XXS routed gate/up over
+    /// IQ4_NL routed down, a Q6_K embedding table with the head tied to it,
+    /// Q8_0 attention -- and a LAST LAYER that differs from all the others
+    /// (IQ4_XS gate/up over Q8_0 down), which is the property no fixture
+    /// before this one had. Needs [`SyntheticGgufShape::iq_mixed`]'s
+    /// dimensions.
+    Iq,
 }
 
 impl Default for SyntheticGgufShape {
@@ -326,7 +395,7 @@ impl Default for SyntheticGgufShape {
             top_k: 2,
             vocab: 128,
             sliding_window: 8,
-            k_quants: false,
+            mix: QuantMix::Q8_0,
         }
     }
 }
@@ -347,9 +416,38 @@ impl SyntheticGgufShape {
             intermediate: 256,
             moe_intermediate: 256,
             vocab: 256,
-            k_quants: true,
+            mix: QuantMix::KQuant,
             ..Self::default()
         }
+    }
+
+    /// The Phase S mixture, at the smallest dimensions its block types allow.
+    ///
+    /// `hidden` and `moe_intermediate` are both 256 because IQ3_XXS, IQ4_XS
+    /// and Q6_K are all 256-element superblock types; IQ4_NL's 32 divides that
+    /// anyway. `num_layers` is 3 rather than the default 2 so the odd LAST
+    /// layer is genuinely a minority -- with two layers, "the last one" and
+    /// "half of them" are the same fixture and a plumbing bug that used layer
+    /// 0's types everywhere would still look mixed.
+    pub fn iq_mixed() -> Self {
+        Self {
+            num_layers: 3,
+            hidden: 256,
+            num_heads: 8,
+            head_dim: 32,
+            full_head_dim: 32,
+            intermediate: 256,
+            moe_intermediate: 256,
+            vocab: 256,
+            mix: QuantMix::Iq,
+            ..Self::default()
+        }
+    }
+
+    /// `true` on the one layer whose routed experts differ from the rest.
+    /// Only [`QuantMix::Iq`] has one.
+    fn odd_expert_layer(&self, layer: usize) -> bool {
+        self.mix == QuantMix::Iq && layer + 1 == self.num_layers
     }
 
     /// `true` where the layer slides, matching GGUF's own polarity.
@@ -531,6 +629,8 @@ pub fn build_synthetic_gemma4_gguf(shape: SyntheticGgufShape) -> GgufFileAndRang
             &format!("blk.{l}.ffn_gate_up_exps.weight"),
             &[s.hidden, 2 * s.moe_intermediate, s.num_experts],
             seed.wrapping_add(7),
+            l,
+            true,
         );
         b = expert_tensor(
             b,
@@ -538,16 +638,18 @@ pub fn build_synthetic_gemma4_gguf(shape: SyntheticGgufShape) -> GgufFileAndRang
             &format!("blk.{l}.ffn_down_exps.weight"),
             &[s.moe_intermediate, s.hidden, s.num_experts],
             seed.wrapping_add(8),
+            l,
+            false,
         );
     }
 
     b.build()
 }
 
-/// The three roles a K-quant fixture moves off Q8_0, each mirroring where the
-/// real `Qwen3.6-35B-A3B-Q4_K_M.gguf` puts that block type. Written as
-/// functions rather than a method on the builder because the choice belongs
-/// to the fixture's shape, not to GGUF.
+/// The roles a mixed fixture moves off Q8_0, each mirroring where the real
+/// file it models puts that block type. Written as functions rather than
+/// methods on the builder because the choice belongs to the fixture's shape,
+/// not to GGUF.
 fn embed_tensor(
     b: GgufBuilder,
     s: &SyntheticGgufShape,
@@ -555,30 +657,41 @@ fn embed_tensor(
     dims: &[u64],
     seed: u8,
 ) -> GgufBuilder {
-    if s.k_quants {
-        b.q4_k_tensor(name, dims, seed)
-    } else {
-        b.q8_0_tensor(name, dims, seed)
+    match s.mix {
+        QuantMix::Q8_0 => b.q8_0_tensor(name, dims, seed),
+        QuantMix::KQuant => b.q4_k_tensor(name, dims, seed),
+        // The Phase S candidate keeps `token_embd` at Q6_K and ties the head
+        // to it, which is what made `embed_lookup_q6_k` worth writing.
+        QuantMix::Iq => b.q6_k_tensor(name, dims, seed),
     }
 }
 
+/// A routed expert tensor. Takes the LAYER and which half it is, because
+/// [`QuantMix::Iq`] is the first mixture where those matter: its phases carry
+/// different types from each other, and its last layer differs from the rest.
 fn expert_tensor(
     b: GgufBuilder,
     s: &SyntheticGgufShape,
     name: &str,
     dims: &[u64],
     seed: u8,
+    layer: usize,
+    gate_up: bool,
 ) -> GgufBuilder {
-    if s.k_quants {
-        b.q4_k_tensor(name, dims, seed)
-    } else {
-        b.q8_0_tensor(name, dims, seed)
+    match (s.mix, gate_up, s.odd_expert_layer(layer)) {
+        (QuantMix::Q8_0, _, _) => b.q8_0_tensor(name, dims, seed),
+        (QuantMix::KQuant, _, _) => b.q4_k_tensor(name, dims, seed),
+        (QuantMix::Iq, true, false) => b.iq_tensor(name, 18, dims, seed),
+        (QuantMix::Iq, true, true) => b.iq_tensor(name, 23, dims, seed),
+        (QuantMix::Iq, false, false) => b.iq_tensor(name, 20, dims, seed),
+        (QuantMix::Iq, false, true) => b.q8_0_tensor(name, dims, seed),
     }
 }
 
-/// Q6_K, where a real file would carry it on `output.weight`. A Gemma
+/// Q6_K, where a real `Q4_K_M` would carry it on `output.weight`. A Gemma
 /// fixture ties its embeddings and so has no such tensor, and the attention
-/// projections are the next place a resident GEMV reads every token.
+/// projections are the next place a resident GEMV reads every token. The IQ
+/// mixture leaves attention at Q8_0, as its candidate does.
 fn attn_tensor(
     b: GgufBuilder,
     s: &SyntheticGgufShape,
@@ -586,10 +699,9 @@ fn attn_tensor(
     dims: &[u64],
     seed: u8,
 ) -> GgufBuilder {
-    if s.k_quants {
-        b.q6_k_tensor(name, dims, seed)
-    } else {
-        b.q8_0_tensor(name, dims, seed)
+    match s.mix {
+        QuantMix::KQuant => b.q6_k_tensor(name, dims, seed),
+        QuantMix::Q8_0 | QuantMix::Iq => b.q8_0_tensor(name, dims, seed),
     }
 }
 

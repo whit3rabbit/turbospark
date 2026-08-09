@@ -18,6 +18,8 @@ mod real_forward_qwen;
 mod real_forward_qwen_attn;
 #[cfg(target_os = "macos")]
 mod real_forward_qwen_state;
+#[cfg(target_os = "macos")]
+mod router_hist;
 
 pub use config::GenerationConfig;
 pub use error::RuntimeError;
