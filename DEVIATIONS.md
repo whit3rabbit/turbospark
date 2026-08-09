@@ -944,6 +944,16 @@ live network).
   `crates/runtime/tests/gguf_install_refused.rs` -- the backstop after
   deliberately forging the manifest past the first -- and the same file
   decodes a Q8_0 install rather than only opening one.
+  **A THIRD SET EXISTS AND IS DELIBERATELY WIDER THAN BOTH: what the
+  header PARSER can size.** `gguf_header.rs::ggml_type_block` also lists
+  Q2_K, Q3_K, Q5_0, Q5_1, Q5_K, IQ3_XXS, IQ4_NL and IQ4_XS, none of which
+  has a kernel and none of which is executable. They are there so a
+  candidate checkpoint can be HEADER-PROBED for scoping (ROADMAP Phase S)
+  without downloading it, and adding a row buys nothing but parsing. The
+  consequence to know is that the walk will now happily WRITE an install of
+  such a type and the refusal lands later, at load, by name -- which is not
+  new behaviour but the shape Q4_0 has always had. Widening executability
+  still means landing kernels and moving the two sets above together.
   **Verified against the real published files, not just fixtures.**
   `crates/repack/tests/gguf_checkpoint_network.rs` reads the header of
   `ggml-org`'s Gemma 4 26B-A4B Q8_0 and Qwen 3.6 35B-A3B Q4_K_M (a few MB
@@ -953,6 +963,15 @@ live network).
   EQUAL to the one this port's own MLX-derived install declares. That last
   one is the strongest check available, because the two sides share no
   code and no input.
+  The same file's three `scopes_phase_s_*` cases survey candidate sub-4-bit
+  checkpoints at the same cost, and print a ggml type histogram in BYTES.
+  Read that histogram's UNSIZED rows before its percentages: a type with no
+  `ggml_type_block` row is one this port cannot ingest, which on a mixed
+  file is usually the routed experts, so rendering it as zero bytes sorts
+  the most important row to the bottom of the share column. It did exactly
+  that once, making an imatrix file look 76% Q8_0 when its experts are
+  IQ3_XXS. Cross-check the sized total against the published file size
+  before believing any row.
   Beyond kernels, two things a GGUF install needed before it could run,
   both discovered by the above rather than assumed, are now DONE rather
   than outstanding: its norms are F32 where the runtime wants BF16, and its

@@ -100,6 +100,13 @@ cargo test -p turbospark-repack --test hf_checkpoint_network --release -- --igno
 # 1. The header, three ways: this port's parser against llama.cpp's
 #    converter, every tensor name maps, and the ArchConfig derived from
 #    GGUF metadata equals the one the .gturbo install declares.
+#    The same file's three `scopes_phase_s_*` cases survey candidate
+#    sub-4-bit checkpoints (ROADMAP Phase S) at the same cost, and print a
+#    ggml type histogram in BYTES. Read that histogram's UNSIZED rows first:
+#    a type this port cannot size is one it cannot ingest, which on a mixed
+#    file is usually the routed experts, and printing it as 0 bytes once
+#    made an imatrix file look 76% Q8_0. Check the sized total against the
+#    published file size before believing any row.
 TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
 TURBOSPARK_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
   cargo test -p turbospark-repack --test gguf_checkpoint_network --release -- --ignored --nocapture
@@ -201,6 +208,20 @@ TURBOSPARK_LOGIT_DUMP_DIR=/tmp/kld/gguf-warm \
   cargo test -p turbospark-bench --test logit_dump --release -- --ignored --nocapture
 uv run --python 3.12 --with numpy scripts/kld_llamacpp.py \
   ~/models/gguf-ref/gemma-4-26B-A4B-it-Q8_0.gguf /tmp/kld/gguf-warm
+
+# The same driver also answers questions about checkpoints this port CANNOT
+# RUN, which is how ROADMAP Phase S was quality-gated before a kernel
+# existed: point it at a candidate GGUF and pass this port's existing dumps
+# as the comparison arms. No ingest, no install, one download.
+uv run --python 3.12 --with numpy scripts/kld_llamacpp.py \
+  ~/models/gguf-ref/gemma-4-26B-A4B-it-UD-Q3_K_M.gguf \
+  /tmp/kld/gguf-warm /tmp/kld/mlx-warm
+#
+# The driver caches each arm's 577 MiB of logits under the MODEL STEM, and
+# that is load-bearing rather than tidy: every arm of every model is the
+# same rows * vocab * 4 bytes and the reuse check is a size check, so a
+# name without the stem makes a second model silently load the first one's
+# logits and report the two as identical. A wrong answer, not an error.
 
 # Split-KV chunk-count sweep on the decode attention kernel. Needs no
 # model install: it is the kernel alone at the real Gemma 4 shapes, and
