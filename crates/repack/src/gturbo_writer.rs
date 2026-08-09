@@ -234,6 +234,7 @@ pub struct StreamingGturboWriter {
 }
 
 impl StreamingGturboWriter {
+    /// Creates a new `StreamingGturboWriter` initializing the output directory.
     pub fn new(
         dir: &Path,
         expert_stride: u64,
@@ -256,6 +257,7 @@ impl StreamingGturboWriter {
         self.quant = Some(quant);
     }
 
+    /// Writes one layer of expert blobs directly to disk and records its layout entry.
     pub fn write_layer(&mut self, layer: &LayerBlobs) -> Result<(), WriterError> {
         let (file_bytes, entry) =
             build_layer_file(layer, self.expert_stride, self.experts_per_layer)?;
@@ -266,6 +268,7 @@ impl StreamingGturboWriter {
         Ok(())
     }
 
+    /// Finalizes the installation by writing `layout.json`, `model_weights.bin`, and `manifest.json`.
     pub fn finish(
         self,
         arch: &ArchConfig,

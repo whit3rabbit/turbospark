@@ -35,14 +35,17 @@ pub(crate) const SOURCE: &str = include_str!("shaders/dequant_iq.metal");
 const THREADS_PER_GROUP: u64 = 256; // 8 rows/threadgroup * 32 lanes/SIMD group.
 const ROWS_PER_THREADGROUP: u64 = 8;
 
-/// Elements and bytes per block, mirroring `turbospark_compute`'s constants;
-/// the two sets are held equal by `crates/repack`'s block-table test, which
-/// checks both against `ggml_type_block`.
+/// IQ4_NL elements per block (32).
 pub const IQ4_NL_BLOCK_ELEMS: usize = 32;
+/// IQ4_NL bytes per block (18).
 pub const IQ4_NL_BLOCK_BYTES: usize = 18;
+/// IQ4_XS elements per block (256).
 pub const IQ4_XS_BLOCK_ELEMS: usize = 256;
+/// IQ4_XS bytes per block (136).
 pub const IQ4_XS_BLOCK_BYTES: usize = 136;
+/// IQ3_XXS elements per block (256).
 pub const IQ3_XXS_BLOCK_ELEMS: usize = 256;
+/// IQ3_XXS bytes per block (98).
 pub const IQ3_XXS_BLOCK_BYTES: usize = 98;
 
 /// Which of the three layouts a byte run is in.
@@ -52,8 +55,11 @@ pub const IQ3_XXS_BLOCK_BYTES: usize = 98;
 /// three different strides without branching per element.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum IqBlockType {
+    /// IQ4_NL block layout.
     Iq4Nl,
+    /// IQ4_XS block layout.
     Iq4Xs,
+    /// IQ3_XXS block layout.
     Iq3Xxs,
 }
 

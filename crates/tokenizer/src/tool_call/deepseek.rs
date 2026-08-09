@@ -13,21 +13,26 @@ use crate::json_value::JsonValue;
 /// matching the model's training data.
 pub const DSML_MARK: &str = "\u{FF5C}DSML\u{FF5C}";
 
+/// DeepSeek DSML tool call parser.
 pub struct DeepseekToolCallParser;
 
 impl DeepseekToolCallParser {
+    /// Creates a new `DeepseekToolCallParser`.
     pub fn new() -> Self {
         Self
     }
 
+    /// Returns the opening DSML tool calls tag string.
     pub fn tool_calls_open_mark() -> String {
         format!("<{DSML_MARK}tool_calls>")
     }
 
+    /// Returns the closing DSML tool calls tag string.
     pub fn tool_calls_close_mark() -> String {
         format!("</{DSML_MARK}tool_calls>")
     }
 
+    /// Parses DSML tool call text against an allowed set of tool names.
     pub fn parse(
         &self,
         text: &str,

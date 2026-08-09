@@ -180,8 +180,11 @@ fn apply_source_convention_bytes(
     Ok(())
 }
 
+/// Result of transcoding an F32 GGUF tensor into BF16 or INT8 resident format.
 pub struct Transcoded {
+    /// Transcoded resident entry specification.
     pub spec: ResidentEntrySpec,
+    /// Number of values where precision loss occurred during transcoding.
     pub lossy: usize,
 }
 
@@ -192,6 +195,7 @@ fn f32_values(bytes: &[u8]) -> Vec<f32> {
         .collect()
 }
 
+/// Transcodes an F32 GGUF tensor into a BF16 raw spec or INT8 affine spec.
 pub fn transcode_f32(
     name: &str,
     canonical: String,
@@ -280,8 +284,10 @@ pub fn transcode_f32(
     })
 }
 
+/// Tuple holding a list of resident tensor specs and a list of lossy transcode counts per tensor.
 pub type ResidentSet = (Vec<ResidentEntrySpec>, Vec<(String, usize)>);
 
+/// Reads and transcodes the requested resident tensors from a GGUF checkpoint.
 pub fn resident_entries(
     header: &GgufHeader,
     source: &dyn RangeSource,

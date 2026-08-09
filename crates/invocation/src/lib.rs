@@ -6,11 +6,17 @@
 //! access, and holds no state between calls. Every claim here is testable
 //! by supplying a token list and asserting on the returned outcome.
 
+/// Exit status and stream routing diagnostics for CLI invocations.
 pub mod diagnostics;
+/// Typed parse failures returned when argument parsing fails.
 pub mod failure;
+/// CLI option declarations and options metadata table.
 pub mod options;
+/// Invocation command-line argument parser and outcome types.
 pub mod parser;
+/// Validated invocation request structures and configuration options.
 pub mod request;
+/// Help text and usage message formatting.
 pub mod usage;
 
 pub use diagnostics::{exit_status, stream_routing, ExitStatus, StreamRouting};

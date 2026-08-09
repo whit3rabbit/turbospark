@@ -8,7 +8,9 @@ use std::path::Path;
 
 use crate::error::ModelError;
 
+/// Byte size of the resident index fixed header (24 bytes).
 pub const HEADER_BYTES: usize = 24;
+/// Byte size of each resident index table entry (72 bytes).
 pub const ENTRY_BYTES: usize = 72;
 
 /// `indexSize` is the full byte size of the leading index region: it
@@ -17,28 +19,43 @@ pub const ENTRY_BYTES: usize = 72;
 /// `index_size`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ResidentIndexHeader {
+    /// Full byte size of the index region.
     pub index_size: u64,
+    /// Total bytes in the resident weights region.
     pub resident_size: u64,
+    /// Number of tensor entries in the index table.
     pub entry_count: u64,
 }
 
+/// One named resident tensor entry in the index table.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResidentIndexEntry {
+    /// Tensor lookup name.
     pub name: String,
+    /// Data type tag byte.
     pub dtype: u8,
     /// Absolute file offset of the packed weight bytes (>= `index_size`).
     pub file_offset: u64,
+    /// Weight payload size in bytes.
     pub size_bytes: u64,
+    /// Logical tensor shape (rank padded to 4).
     pub shape: (u32, u32, u32, u32),
+    /// File offset for scale factors.
     pub scale_offset: u64,
+    /// Byte size of scale factors.
     pub scale_size: u64,
+    /// File offset for bias values.
     pub bias_offset: u64,
+    /// Byte size of bias values.
     pub bias_size: u64,
 }
 
+/// Complete resident index including header and named tensor entries map.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResidentIndex {
+    /// Index header.
     pub header: ResidentIndexHeader,
+    /// Map of tensor names to index entries.
     pub entries: HashMap<String, ResidentIndexEntry>,
 }
 

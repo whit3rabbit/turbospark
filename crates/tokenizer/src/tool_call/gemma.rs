@@ -7,13 +7,16 @@ use super::{ParsedToolCall, MAXIMUM_BYTES};
 use crate::error::ToolCallParserError;
 use crate::json_value::{JsonValue, MAXIMUM_DEPTH};
 
+/// Gemma DSL tool call parser (`call:NAME{key:value,...}`).
 pub struct GemmaToolCallParser;
 
 impl GemmaToolCallParser {
+    /// Creates a new `GemmaToolCallParser`.
     pub fn new() -> Self {
         Self
     }
 
+    /// Returns true if a key string can be represented without quotes in Gemma DSL.
     pub fn is_representable_object_key(key: &str) -> bool {
         !key.is_empty()
             && key
@@ -21,6 +24,7 @@ impl GemmaToolCallParser {
                 .all(|c| c.is_alphanumeric() || "_-.$".contains(c))
     }
 
+    /// Parses a Gemma DSL tool call text string into a `ParsedToolCall`.
     pub fn parse(
         &self,
         text: &str,

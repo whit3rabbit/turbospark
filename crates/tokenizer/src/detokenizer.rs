@@ -13,6 +13,7 @@
 
 use crate::dialect::MfTokenizer;
 
+/// Streaming detokenizer accumulating tokens into UTF-8 text chunks.
 pub struct MfDetokenizer<'a> {
     tokenizer: &'a MfTokenizer,
     stable_ids: Vec<i32>,
@@ -21,6 +22,7 @@ pub struct MfDetokenizer<'a> {
 }
 
 impl<'a> MfDetokenizer<'a> {
+    /// Creates a new streaming detokenizer wrapping the given tokenizer.
     pub fn new(tokenizer: &'a MfTokenizer) -> Self {
         Self {
             tokenizer,
@@ -30,6 +32,7 @@ impl<'a> MfDetokenizer<'a> {
         }
     }
 
+    /// Pushes a single token ID into the detokenizer, returning any newly emitted text.
     pub fn push(&mut self, id: i32) -> String {
         let token = self.tokenizer.id_to_token(id).unwrap_or_default();
         if is_byte_fallback(&token) {
@@ -46,6 +49,7 @@ impl<'a> MfDetokenizer<'a> {
         self.commit_delta(&current, true)
     }
 
+    /// Flushes any pending byte fallback tokens and returns all remaining text.
     pub fn flush(&mut self) -> String {
         let stable_text = if self.stable_ids.is_empty() {
             String::new()

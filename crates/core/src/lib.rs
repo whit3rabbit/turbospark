@@ -5,10 +5,15 @@
 //! to it are not confused with the standard library `core` crate in the
 //! extern prelude.
 
+/// Prefill chunk sizing and automatic chunk size resolution.
 pub mod chunk_sizing;
+/// Error types for foundation operations.
 pub mod error;
+/// Prefill chunking strategies and runtime prefill configuration.
 pub mod prefill;
+/// Core scalar primitives, type aliases, and logit view definitions.
 pub mod primitives;
+/// Runtime engine configuration and options builder.
 pub mod runtime_config;
 
 pub use chunk_sizing::{resolve_automatic_chunk_size, InputLength};

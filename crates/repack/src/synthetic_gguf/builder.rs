@@ -38,6 +38,7 @@ impl Default for GgufBuilder {
 }
 
 impl GgufBuilder {
+    /// Creates a new `GgufBuilder` instance with default alignment.
     pub fn new() -> Self {
         Self {
             metadata: Vec::new(),
@@ -61,19 +62,23 @@ impl GgufBuilder {
         self
     }
 
+    /// Appends a key-value metadata entry to the GGUF header.
     pub fn metadata(mut self, key: &str, value: GgufValue) -> Self {
         self.metadata.push((key.to_string(), value));
         self
     }
 
+    /// Appends a string metadata entry to the GGUF header.
     pub fn metadata_str(self, key: &str, value: &str) -> Self {
         self.metadata(key, GgufValue::String(value.to_string()))
     }
 
+    /// Appends a `u32` metadata entry to the GGUF header.
     pub fn metadata_u32(self, key: &str, value: u32) -> Self {
         self.metadata(key, GgufValue::U32(value))
     }
 
+    /// Appends an `f32` metadata entry to the GGUF header.
     pub fn metadata_f32(self, key: &str, value: f32) -> Self {
         self.metadata(key, GgufValue::F32(value))
     }

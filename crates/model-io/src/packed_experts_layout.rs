@@ -9,6 +9,7 @@ use serde_json::Value;
 
 use crate::error::ModelError;
 
+/// Entry describing a sub-tensor (weight, scale, or bias) inside an expert blob.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SubTensorEntry {
     /// Offset relative to the expert blob's start.
@@ -28,6 +29,7 @@ pub struct SubTensorEntry {
     pub dtype: String,
 }
 
+/// Entry describing the offsets and sub-tensors of a single routed expert.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExpertEntry {
     /// Logical routed-expert id used by the model/router.
@@ -40,8 +42,10 @@ pub struct ExpertEntry {
     pub sub_tensors: BTreeMap<String, SubTensorEntry>,
 }
 
+/// Layout information for all experts within a single layer.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LayerLayout {
+    /// Layer index.
     pub layer: usize,
     /// Basename, e.g. "layer_00.bin".
     pub file: String,
@@ -58,9 +62,11 @@ pub struct LayerLayout {
     /// Falls back to the top-level `expertStride` when the layer does not
     /// declare one, which every install written before Phase S does.
     pub expert_stride: u64,
+    /// List of expert layout entries in this layer.
     pub experts: Vec<ExpertEntry>,
 }
 
+/// Complete layout layout descriptor for packed experts across all model layers.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PackedExpertsLayout {
     /// The model-wide MAXIMUM of [`LayerLayout::expert_stride`], which is what
@@ -68,8 +74,11 @@ pub struct PackedExpertsLayout {
     /// one number for "how big can an expert blob be" should read. Do NOT use
     /// it to size or address a specific layer: see the field above.
     pub expert_stride: u64,
+    /// Total layer count.
     pub num_layers: usize,
+    /// Expert count per layer.
     pub experts_per_layer: usize,
+    /// Per-layer expert layout descriptors.
     pub layers: Vec<LayerLayout>,
 }
 
@@ -80,10 +89,11 @@ impl PackedExpertsLayout {
     }
 }
 
-// 64 MiB: Qwen 3.6's 40 layers x 256 experts x 9 sub-tensors produce a
-// ~22 MB layout.json; Gemma's is ~5 MB.
+/// 64 MiB: Qwen 3.6's 40 layers x 256 experts x 9 sub-tensors produce a
+/// ~22 MB layout.json; Gemma's is ~5 MB.
 pub const DEFAULT_MAX_BYTES: u64 = 64 * 1024 * 1024;
 
+/// Loads packed experts layout from `dir/packed_experts/layout.json`.
 pub fn load(dir: &Path, max_bytes: u64) -> Result<PackedExpertsLayout, ModelError> {
     let path = dir.join("packed_experts").join("layout.json");
     if !path.exists() {

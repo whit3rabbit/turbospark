@@ -38,10 +38,12 @@ fn h(x: f32) -> f32 {
     F16::from_f32(x).to_f32()
 }
 
+/// SiLU activation function (`x / (1 + exp(-x))`).
 pub fn silu(x: f32) -> f32 {
     x / (1.0 + (-x).exp())
 }
 
+/// Sigmoid activation function (`1 / (1 + exp(-x))`).
 pub fn sigmoid(x: f32) -> f32 {
     1.0 / (1.0 + (-x).exp())
 }
@@ -60,10 +62,15 @@ pub fn softplus(x: f32) -> f32 {
 /// this crate depending on it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GdnDims {
+    /// Key head count.
     pub num_k_heads: usize,
+    /// Value head count.
     pub num_v_heads: usize,
+    /// Dimension per key head.
     pub key_head_dim: usize,
+    /// Dimension per value head.
     pub value_head_dim: usize,
+    /// Conv kernel width.
     pub conv_kernel_size: usize,
 }
 
@@ -100,6 +107,7 @@ pub struct GdnReference {
 }
 
 impl GdnReference {
+    /// Creates a new `GdnReference` with initialized zero state and specified layer weights.
     pub fn new(
         dims: GdnDims,
         conv_w: &[f32],

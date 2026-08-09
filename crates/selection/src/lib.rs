@@ -8,10 +8,15 @@
 //! external contract (seeded reproducibility, per-position independence,
 //! non-degenerate output) is fixed.
 
+/// Token selection strategy and candidate sampling logic.
 pub mod choose;
+/// Utility functions for deriving sampling states.
 pub mod derive;
+/// Repetition and presence penalty applications.
 pub mod penalty;
+/// Logit distribution shaping, temperature scaling, and selection errors.
 pub mod shaping;
+/// Top-k, top-p, and min-p truncation filters.
 pub mod truncation;
 
 pub use choose::select;

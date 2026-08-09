@@ -40,7 +40,9 @@ pub const DTYPE_INT8_AFFINE: u8 = 5;
 /// Raw (unquantized, companion-less) dtype tags, matching the Swift
 /// repacker's `IndexEntry` convention: 1 = BF16, 2 = FP16, 3 = FP32.
 pub const DTYPE_BF16: u8 = 1;
+/// FP16 raw unquantized dtype tag.
 pub const DTYPE_FP16: u8 = 2;
+/// FP32 raw unquantized dtype tag.
 pub const DTYPE_FP32: u8 = 3;
 
 /// GGUF block-quantized dtype tags, added by ROADMAP Phase G.
@@ -62,15 +64,20 @@ pub const DTYPE_FP32: u8 = 3;
 /// `RealForwardRunner::open`'s copy of the same set. Q4_0 has a tag and no
 /// kernel, and is refused by name.
 pub const DTYPE_GGUF_Q8_0: u8 = 6;
+/// GGUF Q4_K block dtype tag.
 pub const DTYPE_GGUF_Q4_K: u8 = 7;
+/// GGUF Q6_K block dtype tag.
 pub const DTYPE_GGUF_Q6_K: u8 = 8;
+/// GGUF Q4_0 block dtype tag.
 pub const DTYPE_GGUF_Q4_0: u8 = 9;
-/// The IQ-codebook tags (ROADMAP Phase S). Distinct from the K-quant ones
+/// GGUF IQ3_XXS block dtype tag (ROADMAP Phase S). Distinct from the K-quant ones
 /// above for a reason beyond bookkeeping: these decode through a table that
 /// ships with the format rather than through arithmetic, so a reader that
 /// guessed at one of them cannot approximate it.
 pub const DTYPE_GGUF_IQ3_XXS: u8 = 10;
+/// GGUF IQ4_NL block dtype tag.
 pub const DTYPE_GGUF_IQ4_NL: u8 = 11;
+/// GGUF IQ4_XS block dtype tag.
 pub const DTYPE_GGUF_IQ4_XS: u8 = 12;
 
 /// Every GGUF block dtype tag, for consumers that need to reject the whole

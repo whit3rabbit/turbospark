@@ -80,10 +80,12 @@ pub struct AppMemorySampler {
 }
 
 impl AppMemorySampler {
+    /// Creates a new `AppMemorySampler` with no recorded peak.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Resets the recorded peak memory footprint to `None`.
     pub fn reset_peak(&mut self) {
         self.peak_bytes = None;
     }
@@ -96,6 +98,7 @@ impl AppMemorySampler {
         Some(bytes)
     }
 
+    /// Returns the peak memory footprint in bytes recorded since creation or last reset.
     pub fn peak_bytes(&self) -> Option<u64> {
         self.peak_bytes
     }

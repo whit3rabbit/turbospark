@@ -4,6 +4,7 @@
 
 use half::f16;
 
+/// Reinterprets a reference to a `u32` scalar as a 4-byte slice.
 pub fn u32_bytes(v: &u32) -> &[u8] {
     // SAFETY: `u32` has no padding and any bit pattern is valid; the
     // returned slice borrows `v` for the caller's stack frame only.
@@ -13,6 +14,7 @@ pub fn u32_bytes(v: &u32) -> &[u8] {
     }
 }
 
+/// Reinterprets a reference to an `f32` scalar as a 4-byte slice.
 pub fn f32_bytes(v: &f32) -> &[u8] {
     // SAFETY: same as `u32_bytes`, for `f32`.
     #[allow(unsafe_code)]
@@ -21,6 +23,7 @@ pub fn f32_bytes(v: &f32) -> &[u8] {
     }
 }
 
+/// Encodes a slice of `f16` values as a vector of little-endian bytes.
 pub fn half_slice_to_le_bytes(values: &[f16]) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(values.len() * 2);
     for v in values {
@@ -40,6 +43,7 @@ pub fn u16_slice_to_le_bytes(values: &[u16]) -> Vec<u8> {
     bytes
 }
 
+/// Reads `len` `f16` elements back from a completed Metal CPU/GPU shared buffer.
 pub fn read_half_buffer(buffer: &metal::Buffer, len: usize) -> Vec<f16> {
     let ptr = buffer.contents() as *const u16;
     // SAFETY: `buffer` was allocated with `len * size_of::<u16>()` bytes in
@@ -51,6 +55,7 @@ pub fn read_half_buffer(buffer: &metal::Buffer, len: usize) -> Vec<f16> {
     bits.iter().map(|&b| f16::from_bits(b)).collect()
 }
 
+/// Reads `len` `f32` elements back from a completed Metal CPU/GPU shared buffer.
 pub fn read_f32_buffer(buffer: &metal::Buffer, len: usize) -> Vec<f32> {
     let ptr = buffer.contents() as *const f32;
     // SAFETY: same contract as `read_half_buffer`, with 4-byte elements.

@@ -8,17 +8,23 @@
 
 use std::time::Instant;
 
+/// Result of an `F_RDADVISE` readahead call.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RdAdviceCallResult {
+    /// Total bytes requested for readahead (clipped to `i32::MAX`).
     pub requested_bytes: u64,
+    /// Whether the underlying `fcntl` call succeeded.
     pub succeeded: bool,
+    /// Time spent in the `fcntl` call in nanoseconds.
     pub elapsed_nanos: u64,
 }
 
+/// Clips requested byte count to `i32::MAX` for kernel call limits.
 pub fn clipped_byte_count(byte_count: u64) -> u64 {
     byte_count.min(i32::MAX as u64)
 }
 
+/// Issues an `F_RDADVISE` readahead hint for a file descriptor range on macOS (no-op elsewhere).
 #[cfg(target_os = "macos")]
 pub fn call(fd: std::os::unix::io::RawFd, offset: u64, byte_count: u64) -> RdAdviceCallResult {
     let clipped_count = clipped_byte_count(byte_count);
@@ -49,6 +55,7 @@ pub fn call(fd: std::os::unix::io::RawFd, offset: u64, byte_count: u64) -> RdAdv
     }
 }
 
+/// Issues an `F_RDADVISE` readahead hint for a file descriptor range on macOS (no-op elsewhere).
 #[cfg(not(target_os = "macos"))]
 pub fn call(_fd: i32, _offset: u64, byte_count: u64) -> RdAdviceCallResult {
     let clipped_count = clipped_byte_count(byte_count);
