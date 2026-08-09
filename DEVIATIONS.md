@@ -910,7 +910,7 @@ live network).
   (`gguf_header.rs` parses the v3 header, `gguf_names.rs` maps tensor names
   onto the canonical HF-style ones the rest of the pipeline speaks,
   `gguf_config.rs` rebuilds an `ArchConfig` from the metadata, and
-  `gguf_checkpoint.rs` walks and writes). Quantized bytes are carried
+  `gguf_checkpoint/` walks and writes). Quantized bytes are carried
   through VERBATIM -- there is no quantization step on them, because GGUF
   blocks arrive already quantized, which is the lossless-repack rule taken
   literally. The one exception is the resident F32 core, which is
@@ -987,7 +987,7 @@ live network).
   both discovered by the above rather than assumed, are now DONE rather
   than outstanding: its norms are F32 where the runtime wants BF16, and its
   router is F32 where the runtime wants INT8. Both are transcoded at repack
-  time (`gguf_checkpoint.rs::transcode_f32`), which was chosen over an F32
+  time (`gguf_checkpoint/transcode.rs::transcode_f32`), which was chosen over an F32
   path on a measurement rather than on the tradeoff the roadmap
   anticipated: the norms are upcast BF16 and narrow back with zero bit
   loss, and INT8-transcoding the router leaves top-1 routing unchanged with
@@ -1013,7 +1013,7 @@ live network).
   second), and it stores `-exp(A_log)` in the `ssm_a` slot where the
   install carries `A_log`. Both are undone at repack time by
   `v_head_axis` + `apply_source_convention{,_bytes}` in
-  `gguf_checkpoint.rs`, never at runtime and never in a kernel, on the same
+  `gguf_checkpoint/transcode.rs`, never at runtime and never in a kernel, on the same
   rule that settled the F32 transcode. The quantized tensors are permuted
   AS BYTES, so the lossless-repack rule is untouched: a logical row is a
   contiguous block run and a head-wide column group is a whole number of
@@ -1149,7 +1149,7 @@ live network).
   while chat-formatted prompts produce real answers — `--prompt` mode
   does no templating, so pass the markup yourself or wait for the chat
   modes.
-  `crates/repack/src/gemma4_checkpoint.rs` parses a Gemma 4 `config.json`
+  `crates/repack/src/gemma4_checkpoint/config.rs` parses a Gemma 4 `config.json`
   (`text_config`, `layer_types` -> mask, dual `rope_parameters`) and its
   MLX `quantization` object (per-tensor bits overrides; group size other
   than 64 is rejected — the GPU kernels assume 64), classifies the

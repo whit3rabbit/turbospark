@@ -1,0 +1,207 @@
+//! GGUF tensor classification, expert stride calculation, and layer planning.
+
+use std::collections::BTreeMap;
+
+use model_io::{ArchConfig, ModelFamily};
+
+use super::types::{ggml_scheme_name, read_tensor, GgufRepackError, FUSED_GATE_FIRST};
+use crate::gguf_header::GgufHeader;
+use crate::gguf_names::{map_gguf_name, GgufMapping};
+use crate::gturbo_writer::{ExpertBlob, LayerBlobs, SubTensor};
+use crate::ranged_download::RangeSource;
+
+/// One routed-expert source tensor, resolved but not yet read.
+pub struct RoutedSource<'a> {
+    /// GGUF tensor name.
+    pub name: &'a str,
+    /// Roles this tensor supplies, in blob order. Two for a fused gate/up.
+    pub roles: Vec<&'static str>,
+}
+
+pub struct Plan<'a> {
+    pub resident: Vec<&'a str>,
+    /// layer -> role-bearing source tensors.
+    pub routed: BTreeMap<usize, Vec<RoutedSource<'a>>>,
+    pub ignored: Vec<String>,
+}
+
+pub fn classify<'a>(
+    header: &'a GgufHeader,
+    family: ModelFamily,
+) -> Result<Plan<'a>, GgufRepackError> {
+    let mut plan = Plan {
+        resident: Vec::new(),
+        routed: BTreeMap::new(),
+        ignored: Vec::new(),
+    };
+    for name in header.tensors.keys() {
+        match map_gguf_name(name, family)? {
+            GgufMapping::Resident(_) => plan.resident.push(name.as_str()),
+            GgufMapping::Routed { layer, role } => {
+                plan.routed.entry(layer).or_default().push(RoutedSource {
+                    name,
+                    roles: vec![role],
+                });
+            }
+            GgufMapping::RoutedFusedGateUp { layer } => {
+                let roles = if FUSED_GATE_FIRST {
+                    vec!["gate", "up"]
+                } else {
+                    vec!["up", "gate"]
+                };
+                plan.routed
+                    .entry(layer)
+                    .or_default()
+                    .push(RoutedSource { name, roles });
+            }
+            GgufMapping::Ignored { reason } => {
+                plan.ignored.push(format!("{name} ({reason})"));
+            }
+        }
+    }
+    const ORDER: [&str; 3] = ["gate", "up", "down"];
+    let rank = |r: &str| ORDER.iter().position(|o| *o == r).unwrap_or(ORDER.len());
+    for sources in plan.routed.values_mut() {
+        sources.sort_by_key(|s| rank(s.roles[0]));
+    }
+    plan.resident.sort_unstable();
+    Ok(plan)
+}
+
+/// Per-expert byte size of one routed source tensor, plus the number of
+/// experts it carries. The expert index is GGUF's SLOWEST-varying dimension
+/// (last, as stored), so each expert's bytes are one contiguous range.
+pub fn per_expert_bytes(
+    header: &GgufHeader,
+    name: &str,
+    num_experts: u64,
+) -> Result<u64, GgufRepackError> {
+    let info = header
+        .tensors
+        .get(name)
+        .ok_or_else(|| GgufRepackError::MissingTensor {
+            name: name.to_string(),
+        })?;
+    if info.dims.len() != 3 {
+        return Err(GgufRepackError::ShapeMismatch {
+            tensor: name.to_string(),
+            detail: format!("expected a rank-3 routed tensor, got {:?}", info.dims),
+        });
+    }
+    if info.dims[2] != num_experts {
+        return Err(GgufRepackError::ShapeMismatch {
+            tensor: name.to_string(),
+            detail: format!(
+                "trailing dim {} is not the expert count {num_experts}",
+                info.dims[2]
+            ),
+        });
+    }
+    let total = info.byte_size(name)?;
+    if total % num_experts != 0 {
+        return Err(GgufRepackError::ShapeMismatch {
+            tensor: name.to_string(),
+            detail: format!("{total} bytes is not divisible by {num_experts} experts"),
+        });
+    }
+    Ok(total / num_experts)
+}
+
+/// The one model-wide expert stride, from the header alone, so a streaming
+/// writer knows it before any expert byte is read.
+pub fn expert_stride(
+    header: &GgufHeader,
+    arch: &ArchConfig,
+    plan: &Plan<'_>,
+) -> Result<u64, GgufRepackError> {
+    if plan.routed.is_empty() {
+        return Ok(0);
+    }
+    let experts = arch.num_experts as u64;
+    let mut max_blob = 0u64;
+    for sources in plan.routed.values() {
+        let mut blob = 0u64;
+        for s in sources {
+            blob += per_expert_bytes(header, s.name, experts)?;
+        }
+        max_blob = max_blob.max(blob);
+    }
+    Ok(max_blob.div_ceil(crate::GTURBO_PAGE_BYTES) * crate::GTURBO_PAGE_BYTES)
+}
+
+/// Build one layer's per-expert blobs. Returns the blobs and the per-expert
+/// bytes used (the caller pads to the model-wide stride).
+pub fn plan_one_layer(
+    header: &GgufHeader,
+    source: &dyn RangeSource,
+    arch: &ArchConfig,
+    plan: &Plan<'_>,
+    layer: usize,
+) -> Result<(LayerBlobs, u64), GgufRepackError> {
+    let experts = arch.num_experts as usize;
+    let sources = plan
+        .routed
+        .get(&layer)
+        .ok_or_else(|| GgufRepackError::MissingTensor {
+            name: format!("layer {layer} routed experts"),
+        })?;
+
+    let mut blobs: Vec<ExpertBlob> = (0..experts)
+        .map(|e| ExpertBlob {
+            expert: e,
+            sub_tensors: Vec::new(),
+        })
+        .collect();
+    let mut used = 0u64;
+
+    for s in sources {
+        let info = &header.tensors[s.name];
+        let per = per_expert_bytes(header, s.name, experts as u64)? as usize;
+        let bytes = read_tensor(header, source, s.name)?;
+        if bytes.len() != per * experts {
+            return Err(GgufRepackError::ShapeMismatch {
+                tensor: s.name.to_string(),
+                detail: format!("read {} bytes, expected {}", bytes.len(), per * experts),
+            });
+        }
+
+        let parts = s.roles.len();
+        if per % parts != 0 {
+            return Err(GgufRepackError::ShapeMismatch {
+                tensor: s.name.to_string(),
+                detail: format!("{per} bytes per expert does not split into {parts} roles"),
+            });
+        }
+        let part_bytes = per / parts;
+        let out_total = info.dims[1];
+        if out_total % parts as u64 != 0 {
+            return Err(GgufRepackError::ShapeMismatch {
+                tensor: s.name.to_string(),
+                detail: format!("output dim {out_total} does not split into {parts} roles"),
+            });
+        }
+        let part_shape = vec![out_total / parts as u64, info.dims[0]];
+        let dtype = ggml_scheme_name(info.ggml_type).to_lowercase();
+
+        for (e, blob) in blobs.iter_mut().enumerate() {
+            let expert = &bytes[e * per..(e + 1) * per];
+            for (p, role) in s.roles.iter().enumerate() {
+                blob.sub_tensors.push(SubTensor {
+                    role: (*role).to_string(),
+                    bytes: expert[p * part_bytes..(p + 1) * part_bytes].to_vec(),
+                    dtype: dtype.clone(),
+                    shape: part_shape.clone(),
+                });
+            }
+        }
+        used += per as u64;
+    }
+
+    Ok((
+        LayerBlobs {
+            layer,
+            experts: blobs,
+        },
+        used,
+    ))
+}

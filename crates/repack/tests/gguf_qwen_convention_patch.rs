@@ -126,7 +126,7 @@ impl Weights {
 
 /// Every tensor on the V-head axis, as `(canonical suffix, base, span)` in
 /// units of the axis, plus whether that axis is the COLUMNS. The same table
-/// `gguf_checkpoint.rs::v_head_axis` owns, restated here against install
+/// `gguf_checkpoint/transcode.rs::v_head_axis` owns, restated here against install
 /// bytes.
 ///
 /// DELIBERATELY A SECOND EXPRESSION rather than a call into the walk: that

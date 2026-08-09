@@ -147,7 +147,7 @@ looking anything up.
 ## Phase 1 - Repack, and prove the repack alone
 
 - [ ] Map every checkpoint tensor name to a resident-index entry (the
-      mapping to copy: `crates/repack/src/gemma4_checkpoint.rs`, which is
+      mapping to copy: `crates/repack/src/gemma4_checkpoint/`, which is
       family-parameterized -- `classify_for_family` and `manifest_quant`
       take a `ModelFamily`, so a new family is usually a routed-expert
       marker plus four quant probe names, not a new file). Keep the
@@ -163,7 +163,7 @@ looking anything up.
       tensor MEANS the same thing: llama.cpp interleaves Qwen's V heads and
       stores `-exp(A_log)` where the MLX checkpoint stores `A_log`. Undo it
       at repack time, keyed by canonical name, never at runtime and never
-      in a kernel (`gguf_checkpoint.rs::v_head_axis`). Enumerate by the
+      in a kernel (`gguf_checkpoint/transcode.rs::v_head_axis`). Enumerate by the
       DIMENSION the convention indexes, not by the tensors you can most
       easily compare -- that mistake made this eight tensors instead of
       three and cost a whole session (AGENTS.md Gotcha 33). Verify by
@@ -201,7 +201,7 @@ exists nobody can repack the real checkpoint.
 
 For the first, there are two models to copy and they differ in almost every
 key name, which is the point: `parse_gemma4_config`
-(`crates/repack/src/gemma4_checkpoint.rs`) and `parse_qwen36_config`
+(`crates/repack/src/gemma4_checkpoint/config.rs`) and `parse_qwen36_config`
 (`crates/repack/src/qwen36_config.rs`). Read BOTH before assuming a key
 generalizes. Only one thing was common to them: the `text_config` wrapper,
 and that is a multimodal-checkpoint convention, not a universal one.

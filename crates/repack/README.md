@@ -1,6 +1,6 @@
 # turbospark-repack
 
-Safetensors header parsing, ranged HTTP downloads (`RangeSource`), INT4/INT8 quantization repack pipelines, `.gturbo` directory installation builder (`gturbo_writer.rs`), synthetic model generators (`synthetic_model.rs`), Hugging Face Llama repacker (`hf_checkpoint.rs`), and Gemma 4 / Qwen 3.6 checkpoint repackers (`gemma4_checkpoint.rs`).
+Safetensors header parsing, ranged HTTP downloads (`RangeSource`), INT4/INT8 quantization repack pipelines, `.gturbo` directory installation builder (`gturbo_writer.rs`), synthetic model generators (`synthetic_model.rs`), Hugging Face Llama repacker (`hf_checkpoint.rs`), Gemma 4 / Qwen 3.6 checkpoint repackers (`gemma4_checkpoint/`), and GGUF repackers (`gguf_checkpoint/`).
 
 Downstream workspace crates import this package via the `repack` alias:
 
@@ -21,7 +21,8 @@ repack = { package = "turbospark-repack", path = "../repack" }
 - `gturbo_writer.rs`: Writes `.gturbo` directory tree and manifest/layout JSON.
 - `resident_writer.rs`: Writes `model_weights.bin` resident tensor blob and binary index.
 - `synthetic_model.rs` / `synthetic_real.rs` / `synthetic_qwen.rs`: Synthetic test model generators.
-- `gemma4_checkpoint.rs`: Gemma 4 and Qwen 3.6 checkpoint converters and streamed expert pipeline builders.
+- `gemma4_checkpoint/`: Gemma 4 and Qwen 3.6 checkpoint converters and streamed expert pipeline builders.
+- `gguf_checkpoint/`: GGUF repack walk, F32 transcoding, and V-head conventions.
 - `qwen36_config.rs`: Qwen 3.6 `config.json` to `ArchConfig` converter (`parse_qwen36_config`).
 - `install_verifier.rs`: Validates repacked install directory structure and receipts.
 

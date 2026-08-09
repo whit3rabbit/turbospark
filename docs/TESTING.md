@@ -118,7 +118,7 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
   cargo test -p turbospark-repack --test gguf_fused_gate_network --release -- --ignored --nocapture
 
 # 3. The evidence behind the repack-time transcode, which is now LANDED
-#    (`gguf_checkpoint.rs::transcode_f32`): GGUF's F32 norms are upcast
+#    (`gguf_checkpoint/transcode.rs::transcode_f32`): GGUF's F32 norms are upcast
 #    BF16 and narrow back bit-exactly, and INT8-transcoding its F32 router
 #    does not move the routing decision. Needs no install. The transcode's
 #    own behaviour is covered by the unit tests in

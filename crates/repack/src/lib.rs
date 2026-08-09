@@ -32,8 +32,8 @@ pub use gemma4_checkpoint::{
     Gemma4RepackOutput, Gemma4Shards, GTURBO_PAGE_BYTES,
 };
 pub use gguf_checkpoint::{
-    dtype_tag_for_ggml_type, orchestrate_gguf_checkpoint, write_gguf_install_streamed,
-    GgufRepackError, GgufRepackOutput, FUSED_GATE_FIRST,
+    dtype_tag_for_ggml_type, gguf_manifest_quant, orchestrate_gguf_checkpoint,
+    write_gguf_install_streamed, GgufRepackError, GgufRepackOutput, FUSED_GATE_FIRST,
 };
 pub use gguf_config::{arch_from_gguf, GgufConfigError};
 pub use gguf_header::{
