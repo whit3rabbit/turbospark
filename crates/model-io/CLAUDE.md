@@ -38,7 +38,7 @@ crates/model-io/
 - `arch_config.rs`: Architecture configuration structs and field resolution.
 - `arch_baselines.rs`: Baseline specifications for Gemma 4, Qwen 3.6, and DeepSeek-V4-Flash.
 - `arch_validation.rs`: Structural validation of architecture configs.
-- `packed_experts_layout.rs`: Decodes `packed_experts/layout.json` for streamed MoE layouts.
+- `packed_experts_layout.rs`: Decodes `packed_experts/layout.json` for streamed MoE layouts. `expert_stride` exists at TWO levels and they mean different things: `PackedExpertsLayout::expert_stride` is the model-wide maximum (what `manifest.json` declares and what a slot is sized from), while `LayerLayout::expert_stride` is what that layer's file is actually padded to. Address or size a layer with the second, never the first -- see Gotcha 2.
 - `resident_index.rs`: Reads and parses tensor metadata entries from `model_weights.bin`.
 - `resident_buffer.rs`: Zero-copy `mmap` wrapper (`ResidentBuffer`) for mapped model weights.
 - `sha256.rs`: Streaming SHA-256 checksum calculator for installation integrity.
@@ -54,3 +54,4 @@ cargo test -p turbospark-model-io
 ## Crate Gotchas
 
 1. **Resident Memory Pinning**: While clean file-backed `mmap` pages are normally unpinned in host OS memory, wrapping `ResidentBuffer` into Metal buffers via `newBufferWithBytesNoCopy` pins the mapped virtual memory range. Resident weights count directly against process physical memory footprint (`phys_footprint`).
+2. **The expert stride is PER LAYER, and it was model-wide until ROADMAP Phase S.** Every install written before then is uniform across layers, which makes a uniform-stride assumption invisible: the per-layer field simply falls back to the top-level one and nothing changes. It stops being invisible on a mixed sub-4-bit install. The Phase S candidate puts IQ3_XXS + IQ4_NL experts on 29 layers and IQ4_XS + Q8_0 on the thirtieth, whose blob is 1.6x the others, so padding every layer to the maximum writes 16.2 GB where 10.3 is needed and over-reads 29 of 30 layers by that factor on every cache miss. That inverts the phase's whole -24.2% into a +35% regression, which is why this is a prerequisite rather than a tuning step. The loader refuses a layer stride ABOVE the top-level value, because a slot is allocated from the latter.

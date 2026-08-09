@@ -139,9 +139,16 @@ pub fn write_gturbo_install_with_resident_index_and_experts(
 }
 
 /// Builds one `layer_NN.bin` file's bytes plus its `layout.json` entry.
+///
+/// `max_stride` is the model-wide ceiling the manifest declares; the layer is
+/// padded to ITS OWN stride, which is the largest blob it actually holds
+/// rounded up to a page. On a uniform install the two are equal and nothing
+/// changes. On a mixed one they are not, and padding every layer to the
+/// maximum is the difference between a 10.3 GB install and a 16.2 GB one
+/// (ROADMAP Phase S; see `model_io::LayerLayout::expert_stride`).
 fn build_layer_file(
     layer: &LayerBlobs,
-    expert_stride: u64,
+    max_stride: u64,
     experts_per_layer: usize,
 ) -> Result<(Vec<u8>, serde_json::Value), WriterError> {
     if layer.experts.len() != experts_per_layer {
@@ -151,6 +158,25 @@ fn build_layer_file(
             actual: layer.experts.len(),
         });
     }
+    let used = |e: &ExpertBlob| e.sub_tensors.iter().map(|s| s.bytes.len() as u64).sum();
+    let widest: u64 = layer.experts.iter().map(used).max().unwrap_or(0);
+    if widest > max_stride {
+        // Reported against the widest expert rather than the first oversized
+        // one: the caller's ceiling is what is wrong here, not this expert.
+        return Err(WriterError::ExpertOversized {
+            layer: layer.layer,
+            expert: 0,
+            used: widest,
+            stride: max_stride,
+        });
+    }
+    // Clamped to the caller's stride rather than only rounded up, because a
+    // small install can legitimately declare one BELOW the page constant --
+    // the toy fixtures use 4096 -- and the clamped value inherits the
+    // manifest's own page-alignment guarantee. Above it, the round-up is what
+    // keeps every expert offset page-aligned for the streamer.
+    let expert_stride =
+        (widest.div_ceil(crate::GTURBO_PAGE_BYTES) * crate::GTURBO_PAGE_BYTES).min(max_stride);
     let file_name = format!("layer_{:02}.bin", layer.layer);
     let mut file_bytes = Vec::with_capacity(layer.experts.len() * expert_stride as usize);
     let mut expert_entries = Vec::with_capacity(layer.experts.len());
@@ -173,14 +199,10 @@ fn build_layer_file(
                 }),
             );
         }
-        if cursor > expert_stride {
-            return Err(WriterError::ExpertOversized {
-                layer: layer.layer,
-                expert: expert.expert,
-                used: cursor,
-                stride: expert_stride,
-            });
-        }
+        debug_assert!(
+            cursor <= expert_stride,
+            "stride was derived from the widest expert"
+        );
         file_bytes.resize(expert_offset as usize + expert_stride as usize, 0u8);
         expert_entries.push(serde_json::json!({
             "expert": expert.expert,
@@ -192,6 +214,7 @@ fn build_layer_file(
     let entry = serde_json::json!({
         "layer": layer.layer,
         "file": file_name,
+        "expertStride": expert_stride,
         "experts": expert_entries,
     });
     Ok((file_bytes, entry))

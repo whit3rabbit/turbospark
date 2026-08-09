@@ -150,3 +150,37 @@ fn multi_chunk_reads_reassemble_each_blob_exactly() {
 
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// The stream layout takes its stride from the LAYER, not from a caller's
+/// model-wide number (ROADMAP Phase S).
+///
+/// It used to be a parameter, and every install to date is uniform across
+/// layers, so a caller passing the model-wide maximum was indistinguishable
+/// from a correct one. On a mixed sub-4-bit install it is not: the candidate
+/// there has one layer 1.6x the other twenty-nine, and a uniform reader
+/// over-reads all twenty-nine by that factor on every cache miss.
+///
+/// Paired with `each_layer_is_padded_to_its_own_stride_not_the_model_wide_maximum`
+/// in `crates/repack/tests/gturbo_writer.rs`: that one proves the bytes are
+/// written narrow, this one proves they are addressed narrow.
+#[test]
+fn the_stream_layout_takes_its_stride_from_the_layer() {
+    const STRIDE: u64 = 2048;
+    let layer = model_io::LayerLayout {
+        layer: 0,
+        file: "layer_00.bin".to_string(),
+        expert_stride: STRIDE,
+        experts: (0..3)
+            .map(|e| model_io::ExpertEntry {
+                expert: e,
+                offset: e as u64 * STRIDE,
+                size: STRIDE,
+                sub_tensors: Default::default(),
+            })
+            .collect(),
+    };
+    let layout = StreamLayout::from_packed_experts_layer(&layer, std::path::Path::new("/tmp"));
+    assert_eq!(layout.expert_stride, STRIDE);
+    assert_eq!(layout.stream_size, 3 * STRIDE);
+    assert_eq!(layout.expert_offset(0, 2), 2 * STRIDE);
+}

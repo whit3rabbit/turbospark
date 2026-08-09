@@ -535,11 +535,13 @@ impl RealForwardRunner {
                             "packed_experts layout missing layer {layer}"
                         ))
                     })?;
-                let stream_layout = streaming::StreamLayout::from_packed_experts_layer(
-                    entry,
-                    dir,
-                    layout.expert_stride,
-                );
+                // THIS LAYER's stride, not the model-wide maximum. Each layer
+                // gets its own streamer with its own slots, so the slots are
+                // sized for the blobs they will actually hold; on a mixed
+                // install (ROADMAP Phase S) reading `layout.expert_stride`
+                // here would over-read every layer but the widest, by 1.6x on
+                // 29 of the candidate's 30 layers.
+                let stream_layout = streaming::StreamLayout::from_packed_experts_layer(entry, dir);
                 let streamer = streaming::PreadExpertStreamer::open(
                     stream_layout,
                     expert_cache_slots,

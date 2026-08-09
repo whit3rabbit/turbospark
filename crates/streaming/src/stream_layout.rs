@@ -20,11 +20,19 @@ impl StreamLayout {
     /// `PackedExpertsLayout`). Per-expert offsets are carried explicitly
     /// (rather than relying on the uniform `expert * expert_stride`
     /// formula) since the writer may pack experts out of stride order.
+    ///
+    /// The stride comes from the LAYER, not from the model-wide value, and
+    /// used to be a parameter the caller filled in from the latter. A mixed
+    /// sub-4-bit install (ROADMAP Phase S) is not uniform across layers, and
+    /// since one streamer serves one layer there is nothing to be gained by
+    /// sizing it for the widest layer in the model: that only over-reads and
+    /// over-allocates. Taking it off the layer removes the chance of the
+    /// caller passing the wrong one.
     pub fn from_packed_experts_layer(
         layer: &model_io::LayerLayout,
         layout_dir: &std::path::Path,
-        expert_stride: u64,
     ) -> Self {
+        let expert_stride = layer.expert_stride;
         let path = layout_dir.join("packed_experts").join(&layer.file);
         let expert_offsets: Vec<u64> = layer.experts.iter().map(|e| e.offset).collect();
         let stream_size = expert_offsets.len() as u64 * expert_stride;

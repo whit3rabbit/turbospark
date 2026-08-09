@@ -34,11 +34,28 @@ pub struct LayerLayout {
     pub layer: usize,
     /// Basename, e.g. "layer_00.bin".
     pub file: String,
+    /// Bytes per expert blob IN THIS LAYER, page-aligned.
+    ///
+    /// Per layer rather than per model because a mixed sub-4-bit checkpoint
+    /// is not uniform across layers (ROADMAP Phase S). The candidate there
+    /// puts IQ3_XXS + IQ4_NL experts on 29 layers and IQ4_XS + Q8_0 on the
+    /// thirtieth, whose blob is 1.6x the others: padding every layer to the
+    /// model-wide maximum would cost 16.2 GB against 10.3, turning the
+    /// phase's whole -24.2% into a +35% regression, and inflating per-miss
+    /// read bytes by the same factor on 29 of 30 layers.
+    ///
+    /// Falls back to the top-level `expertStride` when the layer does not
+    /// declare one, which every install written before Phase S does.
+    pub expert_stride: u64,
     pub experts: Vec<ExpertEntry>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PackedExpertsLayout {
+    /// The model-wide MAXIMUM of [`LayerLayout::expert_stride`], which is what
+    /// `manifest.json`'s `expertStride` declares and what a consumer wanting
+    /// one number for "how big can an expert blob be" should read. Do NOT use
+    /// it to size or address a specific layer: see the field above.
     pub expert_stride: u64,
     pub num_layers: usize,
     pub experts_per_layer: usize,
@@ -118,6 +135,19 @@ pub fn load(dir: &Path, max_bytes: u64) -> Result<PackedExpertsLayout, ModelErro
             .get("experts")
             .and_then(Value::as_array)
             .ok_or_else(|| corrupt("malformed layer entry"))?;
+        // Absent on every install written before ROADMAP Phase S, where the
+        // stride really was model-wide, so the top-level value is the right
+        // fallback rather than an error.
+        let layer_stride = layer_obj
+            .get("expertStride")
+            .and_then(Value::as_u64)
+            .unwrap_or(expert_stride);
+        if layer_stride > expert_stride {
+            return Err(corrupt(&format!(
+                "layer {layer_idx} declares stride {layer_stride}, above the top-level \
+                 {expert_stride} that sizes every consumer's slot"
+            )));
+        }
 
         let mut experts: Vec<Option<ExpertEntry>> = vec![None; experts_per_layer];
         for expert_obj in experts_arr {
@@ -186,6 +216,7 @@ pub fn load(dir: &Path, max_bytes: u64) -> Result<PackedExpertsLayout, ModelErro
         layers.push(LayerLayout {
             layer: layer_idx,
             file,
+            expert_stride: layer_stride,
             experts: experts.into_iter().map(Option::unwrap).collect(),
         });
     }

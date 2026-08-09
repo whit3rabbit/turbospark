@@ -72,10 +72,10 @@ const ROWS: usize = 16;
 /// Usable (non-constant) rows needed before the result means anything.
 const MIN_USABLE: usize = 4;
 
-/// A decoded output row is `elems` values; on disk it is `elems / block_elems
-/// * block_bytes` CONTIGUOUS bytes, because every block layout in the format
-/// tiles along the fastest-varying dimension. That is what makes this test a
-/// few KB rather than a 12 GB download.
+/// A decoded output row is `elems` values, which on disk is a CONTIGUOUS run
+/// of `elems / block_elems * block_bytes` bytes, because every block layout in
+/// the format tiles along the fastest-varying dimension. That is what makes
+/// this test a few KB rather than a 12 GB download.
 struct BlockKind {
     name: &'static str,
     ggml_type: u32,
@@ -149,9 +149,11 @@ fn install_rows(
     first: usize,
     count: usize,
 ) -> Vec<Vec<f32>> {
-    let layout =
-        model_io::load_packed_experts_layout(dir, model_io::PACKED_EXPERTS_LAYOUT_DEFAULT_MAX_BYTES)
-            .expect("packed_experts/layout.json");
+    let layout = model_io::load_packed_experts_layout(
+        dir,
+        model_io::PACKED_EXPERTS_LAYOUT_DEFAULT_MAX_BYTES,
+    )
+    .expect("packed_experts/layout.json");
     let entry = layout.expert(layer, 0);
     let file = layout.layers[layer].file.clone();
     let mut f = std::fs::File::open(dir.join("packed_experts").join(&file)).expect("layer blob");
@@ -281,7 +283,11 @@ fn a_real_iq3_xxs_expert_dequantizes_to_the_installed_one() {
 
     let name = "blk.0.ffn_gate_up_exps.weight";
     let (dims, start) = tensor(&header, name, &IQ3_XXS);
-    assert_eq!(dims.len(), 3, "expected [hidden, 2 * ffn, experts]: {dims:?}");
+    assert_eq!(
+        dims.len(),
+        3,
+        "expected [hidden, 2 * ffn, experts]: {dims:?}"
+    );
     let (hidden, two_ffn) = (dims[0] as usize, dims[1] as usize);
     assert_eq!(two_ffn % 2, 0);
     let ffn = two_ffn / 2;
@@ -315,9 +321,23 @@ fn a_real_iq3_xxs_expert_dequantizes_to_the_installed_one() {
         a_up.abs() < 0.2 && b_gate.abs() < 0.2,
         "the crossed pairings correlate too ({a_up:+.4}, {b_gate:+.4}), so this proves nothing"
     );
-    assert!(
+    // Derived from the numbers rather than hardcoded, so this says "the file
+    // agrees with the constant" and not "the constant is true".
+    let measured_gate_first = a_gate > b_gate;
+    assert_eq!(
+        measured_gate_first,
         turbospark_repack::FUSED_GATE_FIRST,
-        "the measurement says the first half is the gate; FUSED_GATE_FIRST disagrees"
+        "this file puts the gate in the {} half; FUSED_GATE_FIRST says the {}",
+        if measured_gate_first {
+            "first"
+        } else {
+            "second"
+        },
+        if turbospark_repack::FUSED_GATE_FIRST {
+            "first"
+        } else {
+            "second"
+        }
     );
 }
 

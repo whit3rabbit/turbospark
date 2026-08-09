@@ -179,3 +179,88 @@ fn rejects_expert_blob_that_overflows_the_stride() {
         turbospark_repack::WriterError::ExpertOversized { .. }
     ));
 }
+
+/// A layer is padded to ITS OWN stride, not to the model-wide maximum
+/// (ROADMAP Phase S).
+///
+/// Nothing in the suite covered this before, because every install written to
+/// date is uniform across layers and a uniform-stride assumption is invisible
+/// on one. On the Phase S candidate it is not: layer 29's expert blob is 1.6x
+/// the other twenty-nine, and padding all thirty to the maximum costs 16.2 GB
+/// against 10.3, which turns the phase's -24.2% into a +35% regression.
+///
+/// The assertion is on the FILE SIZE rather than only on the layout numbers.
+/// A writer that recorded a per-layer stride in `layout.json` while still
+/// padding to the maximum would pass every metadata check and produce exactly
+/// the install this change exists to avoid.
+#[test]
+fn each_layer_is_padded_to_its_own_stride_not_the_model_wide_maximum() {
+    let dir = tempdir();
+    let arch = toy_arch();
+    // Two pages against one, over a ceiling of four, so all three numbers are
+    // distinct and a fallback to any of them is visible.
+    const PAGE: u64 = 16_384;
+    let narrow = 1_000usize;
+    let wide = PAGE as usize + 1_000;
+    let layers: Vec<LayerBlobs> = [narrow, wide]
+        .iter()
+        .enumerate()
+        .map(|(layer, &size)| LayerBlobs {
+            layer,
+            experts: (0..EXPERTS_PER_LAYER)
+                .map(|expert| ExpertBlob {
+                    expert,
+                    sub_tensors: vec![SubTensor {
+                        role: "gate".to_string(),
+                        bytes: vec![(layer * 10 + expert) as u8; size],
+                        dtype: "int4".to_string(),
+                        shape: vec![size as u64],
+                    }],
+                })
+                .collect(),
+        })
+        .collect();
+
+    turbospark_repack::write_gturbo_install(
+        &dir,
+        &arch,
+        "toy-model",
+        4 * PAGE,
+        EXPERTS_PER_LAYER,
+        &layers,
+        &[],
+    )
+    .unwrap();
+
+    let layout = model_io::load_packed_experts_layout(
+        &dir,
+        model_io::PACKED_EXPERTS_LAYOUT_DEFAULT_MAX_BYTES,
+    )
+    .unwrap();
+    // The top-level value stays the declared ceiling: it is what the manifest
+    // carries and what a consumer wanting one number should read.
+    assert_eq!(layout.expert_stride, 4 * PAGE);
+    assert_eq!(layout.layers[0].expert_stride, PAGE);
+    assert_eq!(layout.layers[1].expert_stride, 2 * PAGE);
+
+    for (layer, want) in [(0usize, PAGE), (1, 2 * PAGE)] {
+        let path = dir.join("packed_experts").join(&layout.layers[layer].file);
+        let bytes = std::fs::metadata(&path).unwrap().len();
+        assert_eq!(
+            bytes,
+            want * EXPERTS_PER_LAYER as u64,
+            "layer {layer} on disk is {bytes} bytes, not {} experts of {want}",
+            EXPERTS_PER_LAYER
+        );
+        // Expert 1 must start one LAYER stride in, which is the addressing a
+        // uniform-stride reader would get wrong.
+        assert_eq!(layout.expert(layer, 1).offset, want);
+    }
+
+    verify_install_full_sha256(&dir, &arch).unwrap();
+}
+
+// The reading half of this pair lives in
+// `crates/streaming/tests/pread_streamer.rs`: repack does not depend on
+// streaming, and the two together are what matter (bytes written narrow,
+// bytes read narrow).
