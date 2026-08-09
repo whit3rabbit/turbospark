@@ -6,18 +6,22 @@
 
 mod config;
 mod error;
+#[cfg(target_os = "macos")]
+mod families;
 mod producer;
 mod raw_completion;
 #[cfg(target_os = "macos")]
 mod real_forward;
 #[cfg(target_os = "macos")]
-mod real_forward_gemma4;
+mod real_forward_dispatch;
 #[cfg(target_os = "macos")]
-mod real_forward_qwen;
+mod real_forward_init;
 #[cfg(target_os = "macos")]
-mod real_forward_qwen_attn;
+mod real_forward_layout;
 #[cfg(target_os = "macos")]
-mod real_forward_qwen_state;
+mod real_forward_types;
+#[cfg(target_os = "macos")]
+mod real_forward_utils;
 #[cfg(target_os = "macos")]
 mod router_hist;
 

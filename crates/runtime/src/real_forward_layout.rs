@@ -1,0 +1,214 @@
+//! Quantization dtypes, GGUF block type tags, and MoE expert blob layout
+//! resolution for real forward execution.
+
+use crate::real_forward_types::RealForwardError;
+
+/// Every GGUF block dtype tag the resident index can carry. Mirrors
+/// `turbospark_repack::resident_writer`'s list, which is the writer-side home;
+/// this crate must not depend on repack, so the two are held equal by
+/// `crates/runtime/tests/gguf_install_refused.rs` exercising a real written
+/// install rather than by an import.
+pub(crate) const GGUF_BLOCK_DTYPES: [u8; 7] = [6, 7, 8, 9, 10, 11, 12];
+/// GGUF Q8_0: a resident GEMV, an embedding lookup, and a routed-expert
+/// decode pair.
+pub(crate) const DTYPE_GGUF_Q8_0: u8 = 6;
+/// GGUF Q4_K: the same three, landed for Qwen 3.6's Q4_K_M.
+pub(crate) const DTYPE_GGUF_Q4_K: u8 = 7;
+/// GGUF Q6_K: a resident GEMV and nothing else, which is all any real file
+/// asks for -- Qwen's Q4_K_M carries exactly one Q6_K tensor and it is
+/// `output.weight`. An install that put Q6_K in an expert or the embedding
+/// table would pass this gate and then fail at the dispatch site, by name.
+pub(crate) const DTYPE_GGUF_Q6_K: u8 = 8;
+/// GGUF IQ3_XXS, IQ4_NL and IQ4_XS (ROADMAP Phase S). Each has a resident
+/// GEMV; on the routed path IQ3_XXS and IQ4_XS have a phase 1 and IQ4_NL a
+/// phase 2, which is the split the candidate checkpoint has and no more.
+pub(crate) const DTYPE_GGUF_IQ3_XXS: u8 = 10;
+pub(crate) const DTYPE_GGUF_IQ4_NL: u8 = 11;
+pub(crate) const DTYPE_GGUF_IQ4_XS: u8 = 12;
+/// The executable subset of [`GGUF_BLOCK_DTYPES`], and the resident-index
+/// twin of `model_io::EXECUTABLE_GGUF_TYPES`. Grows only when a kernel plus
+/// its parity test land, and the two lists have to move together or
+/// `crates/runtime/tests/gguf_install_refused.rs` reddens.
+pub(crate) const EXECUTABLE_GGUF_DTYPES: [u8; 6] = [
+    DTYPE_GGUF_Q8_0,
+    DTYPE_GGUF_Q4_K,
+    DTYPE_GGUF_Q6_K,
+    DTYPE_GGUF_IQ3_XXS,
+    DTYPE_GGUF_IQ4_NL,
+    DTYPE_GGUF_IQ4_XS,
+];
+
+/// Which layout one routed sub-tensor uses.
+///
+/// Forwarders in `real_forward_dispatch.rs` turn this into the right kernel; no
+/// call site branches on it directly, so two of them cannot disagree and read
+/// one blob two ways.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum RoutedBlobLayout {
+    /// The INT4-affine planes the vendored `moe.metal` pair reads.
+    Affine,
+    /// GGUF Q8_0 blocks (Gemma 4's published GGUF is Q8_0 throughout).
+    GgufQ8_0,
+    /// GGUF Q4_K superblocks (Qwen 3.6's Q4_K_M puts its experts here).
+    GgufQ4K,
+    /// GGUF IQ3_XXS, the codebook type carrying 29 of the Phase S
+    /// candidate's `ffn_gate_up_exps`. Phase 1 only.
+    GgufIq3Xxs,
+    /// GGUF IQ4_XS, on the candidate's layer 29 `ffn_gate_up_exps`. Phase 1
+    /// only.
+    GgufIq4Xs,
+    /// GGUF IQ4_NL, carrying 29 of the candidate's `ffn_down_exps`. Phase 2
+    /// only.
+    GgufIq4Nl,
+}
+
+impl RoutedBlobLayout {
+    /// The GGUF layout a `layout.json` sub-tensor dtype names.
+    ///
+    /// Only reached for a blob already known to be block-quantized, so an
+    /// unrecognized name here is an error rather than a fallback to affine.
+    /// That split matters: the affine writers spell their packed run `"U32"`
+    /// (it is packed into u32 words), not `"int4"`, so a dtype allowlist for
+    /// the affine side would have to track a spelling nothing else depends
+    /// on. See the caller for the discriminator that is actually used.
+    pub(crate) fn from_gguf_dtype(dtype: &str) -> Result<Self, RealForwardError> {
+        Ok(match dtype {
+            "q8_0" => RoutedBlobLayout::GgufQ8_0,
+            "q4_k" => RoutedBlobLayout::GgufQ4K,
+            "iq3_xxs" => RoutedBlobLayout::GgufIq3Xxs,
+            "iq4_xs" => RoutedBlobLayout::GgufIq4Xs,
+            "iq4_nl" => RoutedBlobLayout::GgufIq4Nl,
+            other => {
+                return Err(RealForwardError::Unsupported(format!(
+                    "routed expert sub-tensor dtype {other} has no decode kernel in this port"
+                )))
+            }
+        })
+    }
+}
+
+/// Which layout each PHASE of one layer's routed experts uses.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct RoutedLayerLayout {
+    /// Read by phase 1, from the `gate` and `up` runs.
+    pub(crate) phase1: RoutedBlobLayout,
+    /// Read by phase 2, from the `down` run.
+    pub(crate) phase2: RoutedBlobLayout,
+}
+
+/// Resolves each layer's phase-1 and phase-2 layout from `layout.json`'s
+/// per-sub-tensor dtypes (ROADMAP Phase S).
+///
+/// Off the LAYOUT rather than the manifest, which is where this used to come
+/// from, because the manifest has one `ggmlType` for the whole routed slot and
+/// a mixed install has no single answer to give it. `gate` and `up` must agree
+/// -- one phase-1 kernel reads both, so a blob where they differed could not
+/// be dispatched at all -- and that is checked rather than assumed.
+///
+/// Affine and GGUF are told apart by the presence of the SCALE COMPANIONS,
+/// not by the dtype string, which is the same discriminator
+/// [`moe_offsets_from_layout`] uses for the same blobs a few lines below. An
+/// affine blob has nine sub-tensors and a GGUF blob has three, so the test
+/// cannot drift; matching on dtype names instead would mean tracking how each
+/// writer spells its packed run (the affine ones say `"U32"`, since that is
+/// what the nibbles are packed into).
+pub(crate) fn routed_layouts_from_layout(
+    layout: &model_io::PackedExpertsLayout,
+) -> Result<Vec<RoutedLayerLayout>, RealForwardError> {
+    layout
+        .layers
+        .iter()
+        .map(|l| {
+            let subs = &l
+                .experts
+                .first()
+                .ok_or_else(|| {
+                    RealForwardError::Unsupported(format!("layer {} has no experts", l.layer))
+                })?
+                .sub_tensors;
+            if subs.contains_key("gate_scales") {
+                return Ok(RoutedLayerLayout {
+                    phase1: RoutedBlobLayout::Affine,
+                    phase2: RoutedBlobLayout::Affine,
+                });
+            }
+            let of = |role: &str| -> Result<RoutedBlobLayout, RealForwardError> {
+                let entry = subs.get(role).ok_or_else(|| {
+                    RealForwardError::MissingTensor(format!("expert blob {role}"))
+                })?;
+                RoutedBlobLayout::from_gguf_dtype(&entry.dtype)
+            };
+            let (gate, up) = (of("gate")?, of("up")?);
+            if gate != up {
+                return Err(RealForwardError::Unsupported(format!(
+                    "layer {} packs a {gate:?} gate against a {up:?} up; one phase-1 kernel \
+                     reads both, so they cannot differ",
+                    l.layer
+                )));
+            }
+            Ok(RoutedLayerLayout {
+                phase1: gate,
+                phase2: of("down")?,
+            })
+        })
+        .collect()
+}
+
+/// Resolves the shader's `ExpertOffsets` for every layer, from expert 0 of
+/// each (the writer packs every expert of a layer identically).
+///
+/// Per layer since ROADMAP Phase S. It was one struct off layer 0, which held
+/// while every blob in an install had the same shape; on a mixed install the
+/// sub-tensor sizes differ per layer, so the offsets do too.
+///
+/// Two blob shapes reach this. An INT4-affine blob has all nine sub-tensors,
+/// and its phase-2 down projection reads weight bytes with 4-byte loads, so
+/// `down`'s offset must be 4-byte aligned. A GGUF blob has only the three
+/// weight runs -- its scales live inside the blocks -- so the six companion
+/// offsets resolve to zero and the GGUF kernels never read them. The GGUF
+/// kernels read bytes one at a time, so no alignment applies to them.
+pub(crate) fn moe_offsets_from_layout(
+    layout: &model_io::PackedExpertsLayout,
+) -> Result<Vec<gpu::MoeExpertOffsets>, RealForwardError> {
+    layout
+        .layers
+        .iter()
+        .map(|l| {
+            let entry = &l
+                .experts
+                .first()
+                .ok_or_else(|| {
+                    RealForwardError::Unsupported(format!("layer {} has no experts", l.layer))
+                })?
+                .sub_tensors;
+            let get = |name: &str| -> Result<u32, RealForwardError> {
+                entry
+                    .get(name)
+                    .map(|s| s.offset as u32)
+                    .ok_or_else(|| RealForwardError::MissingTensor(format!("expert blob {name}")))
+            };
+            // Absent companions mean a block-quantized blob, not a broken one.
+            let companion =
+                |name: &str| -> u32 { entry.get(name).map(|s| s.offset as u32).unwrap_or(0) };
+            let planar = entry.contains_key("gate_scales");
+            let offsets = gpu::MoeExpertOffsets {
+                gate_w: get("gate")?,
+                gate_s: companion("gate_scales"),
+                gate_b: companion("gate_biases"),
+                up_w: get("up")?,
+                up_s: companion("up_scales"),
+                up_b: companion("up_biases"),
+                down_w: get("down")?,
+                down_s: companion("down_scales"),
+                down_b: companion("down_biases"),
+            };
+            if planar && offsets.down_w % 4 != 0 {
+                return Err(RealForwardError::Unsupported(format!(
+                    "layer {} down projection offset {} is not 4-byte aligned",
+                    l.layer, offsets.down_w
+                )));
+            }
+            Ok(offsets)
+        })
+        .collect()
+}

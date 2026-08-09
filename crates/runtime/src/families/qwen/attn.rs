@@ -1,18 +1,12 @@
-//! The two per-layer attention blocks of the Qwen 3.6 decode flow, split
-//! out of `real_forward_qwen.rs` to keep both files readable. Free
-//! functions rather than `&mut self` methods on purpose: the caller
-//! destructures `RealForwardRunner` into disjoint field borrows, which is
-//! what keeps this path clear of the E0502 re-binding dance
-//! `real_forward_gemma4.rs` has to do (crate Gotcha 3).
-//!
-//! Both blocks read `scratch.normed` (`rmsnorm_bf16w(h, input_layernorm)`)
-//! and write `scratch.o` (the projected attention output, pre-residual).
+//! The two per-layer attention blocks of the Qwen 3.6 decode flow.
 
 use model_io::{ArchConfig, ResidentIndex};
 
-use crate::real_forward::{resident_matrix, DecodeScratch, RealForwardError};
-use crate::real_forward_gemma4::{encode_gemv_any, entry, norm_view};
-use crate::real_forward_qwen::{layer_tensor, RealQwenState, RMS_EPS};
+use crate::families::qwen::{layer_tensor, RealQwenState, RMS_EPS};
+use crate::real_forward::RealForwardError;
+use crate::real_forward_dispatch::encode_gemv_any;
+use crate::real_forward_types::DecodeScratch;
+use crate::real_forward_utils::{entry, norm_view, resident_matrix};
 
 /// Mask-2 layer: gated DeltaNet. No position, no RoPE, no KV -- the whole
 /// history is the layer's FP32 recurrent state plus its `K-1` row conv
@@ -42,19 +36,6 @@ pub(crate) fn encode_linear_block(
         ("in_proj_a.weight", v_heads, &qwen.gdn_a),
         ("in_proj_b.weight", v_heads, &qwen.gdn_b),
     ];
-    // `gdn_in_proj_gemv_simd` fuses these four into ONE dispatch over their
-    // concatenated rows, and it reads INT4-affine planes: packed nibbles plus
-    // BF16 scales and biases. It is a batching optimization over four plain
-    // GEMVs and nothing else -- the kernel routes each global row to one of
-    // the four matrices and dots it against the same `x`.
-    //
-    // A GGUF install has no planes to give it (Qwen's Q4_K_M carries these
-    // four at Q8_0), so it takes the four GEMVs instead, through the same
-    // dtype-dispatched `encode_gemv_any` every other projection uses. The
-    // cost is three extra dispatches per linear layer; the alternative is a
-    // block-quant copy of the fused kernel, which is a kernel plus a parity
-    // test to buy back an encode-side batching win on a path that has never
-    // been measured as hot.
     if entry(index, &name(in_proj[0].0))?.dtype == 4 {
         let projection = |suffix: &str, rows: usize| {
             resident_matrix(weights, index, &name(suffix), rows, hidden)
@@ -160,10 +141,7 @@ pub(crate) fn encode_linear_block(
     )
 }
 
-/// Mask-1 layer: gated full attention. `q_proj` emits `2 * q_dim` rows of
-/// per-head `[query; gate]` pairs, so the split has to happen before the
-/// per-head norm and RoPE see it, and the gate multiplies the attention
-/// output back in at the end.
+/// Mask-1 layer: gated full attention.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn encode_full_attention_block(
     context: &mut gpu::MetalContext,
@@ -226,8 +204,6 @@ pub(crate) fn encode_full_attention_block(
         )?;
     }
 
-    // Learned per-head q/k norms. Qwen has NO v norm -- do not add one by
-    // analogy with the Gemma flow, which does.
     for (suffix, data, heads) in [
         ("q_norm.weight", (&scratch.q, 0u64), num_heads),
         ("k_norm.weight", (k_buf, k_off as u64), num_kv),

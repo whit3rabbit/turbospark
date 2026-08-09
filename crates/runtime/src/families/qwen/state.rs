@@ -2,19 +2,13 @@
 //! allocates once when it opens a Qwen 3.6 install -- the GDN recurrent
 //! buffers, the unit router scales that stand in for Qwen's absent
 //! `router.scale`/`per_expert_scale`, and every piece of per-token
-//! scratch the flow in `real_forward_qwen.rs` writes. Split out of that
-//! file to keep both under the workspace's 400-line guideline; the
-//! per-token flow itself carries the layer pseudocode.
-//!
-//! `build` is also where the architecture is VETTED: the family-extension
-//! flags, the GDN shape's structural preconditions, the rotary width, and
-//! a per-layer tensor-presence probe all fail here rather than at token 1.
+//! scratch the flow in `mod.rs` writes.
 
 use model_io::{ArchConfig, ResidentIndex};
 
+use crate::families::qwen::layer_tensor;
 use crate::real_forward::RealForwardError;
-use crate::real_forward_gemma4::entry;
-use crate::real_forward_qwen::layer_tensor;
+use crate::real_forward_utils::entry;
 
 /// BF16 bit pattern for 1.0.
 const BF16_ONE: u16 = 0x3F80;

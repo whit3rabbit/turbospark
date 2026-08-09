@@ -67,7 +67,7 @@ the reference implementation. Every answer becomes a field in `ArchConfig`
 - [ ] **Three one-line flags that each change the layer graph**, all
       manifest fields with a Gemma fallback, so all three must be answered
       even when the answer is "same as Gemma". `attention_k_eq_v`: Gemma's
-      full layers take V from the K PROJECTION (`real_forward_gemma4.rs`
+      full layers take V from the K PROJECTION (`crates/runtime/src/families/gemma4/mod.rs`
       still writes and per-head-norms a separate V row from those weights;
       the short-name flow in `real_forward.rs` goes further and binds the
       K buffer directly as V, so its V buffers are never written and its
@@ -107,7 +107,7 @@ the reference implementation. Every answer becomes a field in `ArchConfig`
       attention side normalizes: Gemma norms q, k AND v per head; Qwen
       norms q and k only. Adding a v norm "by analogy" is silent. Write
       the layer flow out as pseudocode before implementing it;
-      `crates/runtime/src/real_forward_qwen.rs`'s module header is the
+      `crates/runtime/src/families/qwen/mod.rs`'s module header is the
       format to copy.
 - [ ] **Output head.** Tied embeddings? Logit softcap? What does the
       reference's `forward()` RETURN - raw logits, capped logits, or

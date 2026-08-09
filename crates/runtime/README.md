@@ -17,9 +17,14 @@ runtime = { package = "turbospark-runtime", path = "../runtime" }
 
 - `producer.rs`: `LogitProducer` trait definition and `ScriptedLogitProducer` mock implementation.
 - `raw_completion.rs`: Token generation loops (`run_raw_completion` and `run_raw_completion_chunked`), integrating producer, detokenizer, stop matcher, and selection sampler.
-- `real_forward.rs`: `RealForwardRunner` short-name decode flow (`layer0.q_proj`).
-- `real_forward_gemma4.rs`: `RealForwardRunner` verbatim Gemma 4 learned-weight decode flow (BF16 norms, per-head norms, INT8 router, shared expert, sandwich tail).
-- `real_forward_qwen.rs` / `real_forward_qwen_attn.rs` / `real_forward_qwen_state.rs`: Qwen 3.6 decode flow (gated DeltaNet on mask-2 layers, gated full attention on mask-1, shared expert branch).
+- `real_forward.rs`: `RealForwardRunner` struct definition, options handling, and dispatch orchestration.
+- `real_forward_dispatch.rs`: Metal kernel dispatchers (`encode_gemv_any`, `encode_embed_any`, `encode_moe_phase1_any`, `encode_moe_phase2_any`).
+- `real_forward_layout.rs`: Quantization/GGUF dtypes and MoE blob offset calculations.
+- `real_forward_types.rs`: `RealForwardError`, `PhaseCounters`, `dispatch_profile_report`, and `DecodeScratch`.
+- `real_forward_init.rs`: Architecture validation and expert streamer setup.
+- `families/gemma4/`: Gemma 4 decode flow (`mod.rs`, `attn.rs`, `moe.rs`, `state.rs`).
+- `families/qwen/`: Qwen 3.6 decode flow (`mod.rs`, `attn.rs`, `moe.rs`, `state.rs`).
+- `families/synthetic/`: Synthetic short-name fallback flow (`mod.rs`, `layer.rs`).
 - `config.rs`: Runtime generation configuration and runner parameters.
 
 ## Development & Test Commands
