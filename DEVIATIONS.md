@@ -746,6 +746,17 @@ live network).
     <https://github.com/drumih/turbo-fieldfare/tree/main/docs/experiments>).
     `crates/streaming`'s speculative APIs exist for
     parity and stay uncalled by the runtime on purpose.
+    The OFFLINE sibling of that idea, a domain-restricted expert set
+    (profile which experts a coding corpus routes to, then prune or
+    pre-warm that set), was measured to its own dead end on 2026-08-08:
+    covering 95% of a layer's routed mass takes a mean 66.8 of 128
+    experts on a coding corpus (66.5 general, Jaccard 0.455 between hot
+    sets), so routing is domain-tilted, not domain-concentrated, and both
+    the pruned install and the pinned warm set lose to the LFU cache.
+    Method, numbers and the standing decision: `docs/EXPERT_ROUTING.md`
+    (ROADMAP dead end 11). The instrument stays wired as a diagnostic
+    (`MFERENCE_ROUTER_HIST` on `RealForwardRunner`, analyzed by
+    `scripts/router_hist.py`).
 
     What IS possible, and landed on 2026-08-06, is making the exposed
     read SHORTER rather than hiding it. With the install's expert files
