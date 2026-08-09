@@ -59,7 +59,7 @@ This separation is what enables `turbospark` to execute 26B-35B models in **~1.6
 For full binary layouts, header byte specifications, and streaming mechanics, see [`docs/GTURBO.md`](docs/GTURBO.md).
 
 ### Compatibility with Upstream `turbo-fieldfare`
-`turbospark` is a 100% behavior-compatible Rust port of upstream [turbo-fieldfare](https://github.com/drumih/turbo-fieldfare) (Mference). `.gturbo` model directories produced by `turbospark-repack` can be executed interchangeably by both Swift `MferenceCLI` and Rust `turbospark-check`.
+`turbospark` is a 100% behavior-compatible Rust port of upstream [turbo-fieldfare](https://github.com/drumih/turbo-fieldfare) (turbo-fieldflare).
 
 ### Streaming GGUF Intake Without Large RAM Allocation
 `turbospark` includes a native GGUF intake engine in `crates/repack`:
