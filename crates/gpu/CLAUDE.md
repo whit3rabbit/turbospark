@@ -14,7 +14,7 @@ crates/gpu/
 +-- Cargo.toml                      # Crate manifest
 +-- src/
 |   +-- lib.rs                      # Library root
-|   +-- context.rs                  # MetalContext, PassEncoder, CommittedPass
+|   +-- context/                    # MetalContext, PassEncoder, CommittedPass, errors, buffer IO
 |   +-- kv_cache.rs                 # KvCacheManager managing per-layer Metal KV buffers
 |   +-- attention_decode.rs         # Split-KV decode attention dispatch
 |   +-- moe_decode.rs               # MoE router, phase 1 GEMV, phase 2 down-reduce dispatches
@@ -77,7 +77,7 @@ crates/gpu/
 
 ## Key Modules
 
-- `context.rs`: `MetalContext` managing `MTLDevice`, `MTLCommandQueue`, and pipeline state caching.
+- `context/`: `MetalContext` managing `MTLDevice`, `MTLCommandQueue`, pipeline state caching, pass encoders (`PassEncoder`, `CommittedPass`), errors (`GpuError`), and buffer IO.
 - `kv_cache.rs`: `KvCacheManager` managing persistent per-layer Metal KV buffers (linear or sliding-window ring).
 - `attention_decode.rs`: Split-KV decode attention dispatch (`chunks_for`, up to 16 splits).
 - `moe_decode.rs`: Dispatches MoE router GEMV, phase-1 GEMVs, host router wait, and phase-2 down reduction.
