@@ -578,7 +578,21 @@ on this file, so the gap to the incumbent is the QUANTIZATION rather than the
 kernels. The 3-bit install still beats the 8-bit one by 3.8%.
 
 **What does it buy?** `packed_experts/` is 9.6 GiB against the MLX install's
-12 GiB, **-20%**, and the whole install is 12 GB against 13 GB.
+12 GiB, **-20%**, and the whole install is 12 GB against 13 GB. Peak
+`phys_footprint` over the frozen protocol is **1,850 MiB** against the MLX
+install's 2,108-2,182, **-13 to -15%**, which makes this the leanest Gemma 4
+configuration measured here. All three protocol cases stop at `endOfTurn`.
+
+| install | peak `phys_footprint` | protocol decode |
+| --- | ---: | ---: |
+| MLX INT4 (incumbent) | 2,108 - 2,182 MiB | 34.674 - 40.687 tok/s |
+| **IQ3_XXS / IQ4_NL** | **1,850 MiB** | **22.874 - 25.410 tok/s** |
+
+The footprint drop is smaller than the 20% disk drop, and that is the
+accounting working as documented: only the RESIDENT weights are mapped, and
+`phys_footprint` also carries KV, the expert slot capacity and the process
+baseline. The expert cache holds a fixed SLOT COUNT, so slots shrink with the
+blob but do not disappear.
 
 That -20% is the phase's premise and it is not automatic. Layer 29's expert
 blob is 4,212,736 bytes against the other twenty-nine's 2,632,960, so padding
@@ -588,9 +602,11 @@ this phase -- would have written **16.23 GB of experts instead of 10.33**, a
 is a prerequisite, not a tuning step. Both numbers are printed by
 `gguf_iq_install_network.rs` and asserted there.
 
-Decode is 25-27 tok/s against the MLX install's 35-40 on the same prompts:
-the codebook kernels cost throughput. That is measured, not tuned, and no
-attempt has been made to close it.
+Decode is 22.9-25.4 tok/s on the protocol against the MLX install's
+34.7-40.7, about -35%: the codebook kernels cost more throughput than the
+smaller reads save. Measured, untuned, and no attempt has been made to close
+it. Prefill is also slower (108 s for the 3,015-token case against ~64 s),
+which is the same per-token kernel cost paid 3,015 times.
 
 Frozen and reproducible: `iq3_quality_gate.rs` carries the row, and its
 perplexity and both digests reproduced to the last digit and last hex

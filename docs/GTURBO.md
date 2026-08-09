@@ -74,6 +74,7 @@ The root `manifest.json` contains metadata for model architecture validation, qu
   "quant": {
     "groupSize": 64
   },
+
   "files": {
     "model_weights.bin": {
       "size": 1845491200,
@@ -93,6 +94,33 @@ The root `manifest.json` contains metadata for model architecture validation, qu
   "expertStride": 33554432
 }
 ```
+
+**The `quant` object on a GGUF-sourced install.** Where an affine install
+carries only `groupSize`, a GGUF-sourced one writes a slot per role
+(`embedding`, `attention`, `router`, `sharedExpert`, `routedExpert`), each
+`{"scheme": "gguf", "ggmlType": "<type>", "scaleType": "inline", ...}`. The
+router slot is the exception and says `affine`/8/group-64, because the repack
+transcodes GGUF's F32 router to INT8 and the manifest has to describe the
+bytes on disk rather than the source.
+
+A slot carrying MORE THAN ONE block type -- which a mixed sub-4-bit routed
+slot does -- adds an array beside it:
+
+```json
+"routedExpert": {
+  "scheme": "gguf",
+  "ggmlType": "iq3_xxs",
+  "ggmlTypes": ["iq3_xxs", "iq4_nl", "iq4_xs", "q8_0"],
+  "scaleType": "inline", "biasType": "inline", "weightBits": 0, "groupSize": 0
+}
+```
+
+`ggmlTypes` is sorted by descending tensor count, so `ggmlType` stays the
+dominant type and a hand-read of the manifest is still informative. The loader
+checks EVERY member against the executable set. Checking only the dominant one
+would admit an install on the strength of its majority and then fail at a
+dispatch deep in the model. The array is omitted entirely when a slot carries
+one type, so a uniform install's manifest is unchanged.
 
 ---
 
@@ -124,6 +152,23 @@ The root `manifest.json` contains metadata for model architecture validation, qu
 
 During startup, `turbospark-model-io` reads the leading index region (`indexSize` bytes), constructs the `ResidentIndex`, and mmaps the resident tensor data payload starting at offset `indexSize`.
 
+**`dtype` tags.** Affine tensors carry their companion scale and bias regions
+in the four `scaleOffset`/`scaleSize`/`biasOffset`/`biasSize` fields; GGUF
+block tensors carry none, because a block holds its own scale inline, so those
+four fields are zero and must not be dereferenced.
+
+| tag | type | companions |
+| ---: | --- | --- |
+| 1 / 2 / 3 | BF16 / FP16 / FP32 | none |
+| 4 | INT4 affine, group 64 | BF16 scales + biases |
+| 5 | INT8 affine, group 64 | BF16 scales + biases |
+| 6 / 7 / 8 / 9 | GGUF Q8_0 / Q4_K / Q6_K / Q4_0 | inline |
+| 10 / 11 / 12 | GGUF IQ3_XXS / IQ4_NL / IQ4_XS | inline |
+
+A tag is NOT permission to run. The repack walk writes an install for every
+block type it can parse, and whether that install opens is decided separately
+per type, at load, by name: Q4_0 has a tag and no kernel and is refused.
+
 ---
 
 ### 3.3 `packed_experts/layout.json`
@@ -138,6 +183,7 @@ During startup, `turbospark-model-io` reads the leading index region (`indexSize
     {
       "layer": 0,
       "file": "layer_00.bin",
+      "expertStride": 33554432,
       "experts": [
         {
           "expert": 0,
@@ -171,8 +217,11 @@ layer_00.bin:
 +-------------------------------+-------------------------------+-- ...
 ```
 
-- **Fixed Expert Stride (`expertStride`)**: Every expert blob within a layer occupies exactly `expertStride` bytes (e.g. 32 MiB). If the sum of an expert's sub-tensors is less than `expertStride`, it is zero-padded to the stride boundary.
-- **O(1) Direct Seeking**: Because the stride is fixed, the byte offset for `expert_id` inside `layer_NN.bin` is simply `expert_id * expert_stride`. The streamer can immediately execute an OS `pread` at that exact file offset without scanning.
+- **Fixed Expert Stride, PER LAYER**: Every expert blob within one layer occupies exactly that layer's `expertStride` bytes. If the sum of an expert's sub-tensors is less than the stride, it is zero-padded to the stride boundary.
+- **O(1) Direct Seeking**: Because the stride is fixed within a layer, the byte offset for `expert_id` inside `layer_NN.bin` is simply `expert_id * expert_stride`. The streamer can immediately execute an OS `pread` at that exact file offset without scanning.
+- **Two levels of `expertStride`, and they mean different things.** The top-level value is the model-wide MAXIMUM; each layer object carries its own, which is what that layer's file is actually padded to. Address or size a layer with the layer's value, never the top-level one. A layer declaring a stride ABOVE the top-level maximum is rejected at load, since consumers size a slot from the maximum.
+- **Why per layer.** Until sub-4-bit intake, every install was uniform across layers and one number said everything. A mixed checkpoint is not: `unsloth/gemma-4-26B-A4B-it-UD-Q3_K_M` carries IQ3_XXS gate/up over IQ4_NL down on twenty-nine layers and IQ4_XS over Q8_0 on the thirtieth, whose blob is 4,212,736 bytes against the others' 2,632,960. Padding all thirty to that maximum would write 16.23 GB of experts where 10.33 is needed, and inflate every cache miss on twenty-nine of thirty layers by the same 1.6x. Nothing about the output would change, because a zero-padded blob decodes correctly.
+- **Backwards compatible**: a layer object without its own `expertStride` inherits the top-level value, which is every install written before per-layer striding.
 
 ---
 
@@ -187,7 +236,7 @@ The `repack` module converts upstream Safetensors or published GGUF checkpoints 
    - Layer Norms -> Transcoded to BF16 / FP16.
    - Router Projections -> Transcoded to INT8 affine quantization.
    - Linear Attention State & Embeddings -> Formatted into `model_weights.bin`.
-4. **Expert Layer Repacking**: Expert weights are sliced by layer, quantized (or kept in native GGUF block types Q8_0, Q4_K, Q6_K), formatted into fixed-stride blobs, and written incrementally into `packed_experts/layer_NN.bin`.
+4. **Expert Layer Repacking**: Expert weights are sliced by layer, quantized (or kept verbatim in native GGUF block types Q8_0, Q4_K, Q6_K, IQ3_XXS, IQ4_NL, IQ4_XS), formatted into fixed-stride blobs, and written incrementally into `packed_experts/layer_NN.bin`. Each layer is padded to its OWN stride, and the manifest's `expertStride` records the model-wide maximum.
 
 ---
 

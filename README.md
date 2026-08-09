@@ -18,7 +18,8 @@ This enables Mac users with limited memory (8 GB, 16 GB, 24 GB, or 36 GB) to run
 ## Key Benefits for macOS / Apple Silicon Users
 
 - **Extreme Memory Efficiency**: Runs large 26B-35B parameter Mixture-of-Experts (MoE) models using only **~1.6 GiB to 2.2 GiB of peak RAM/VRAM**. Users with 16 GB or 36 GB Macs no longer need 64 GB+ memory configurations to run 26B-35B models.
-- **Direct GGUF Streaming Intake (New / WIP)**: Native intake for published GGUF formats (such as Gemma 4 Q8_0 and Qwen 3.6 mixed Q4_K_M). Streams directly from Hugging Face or parses local GGUFs into optimized `.gturbo` format without requiring the 20-27 GB raw model payload to be loaded in RAM.
+- **Direct GGUF Streaming Intake (New / WIP)**: Native intake for published GGUF formats (Gemma 4 Q8_0, Qwen 3.6 mixed Q4_K_M, and sub-4-bit IQ imatrix builds). Streams directly from Hugging Face or parses local GGUFs into optimized `.gturbo` format without requiring the 12-27 GB raw model payload to be loaded in RAM.
+- **Sub-4-bit Option for the Tightest Budgets**: A published IQ3_XXS/IQ4_NL Gemma 4 build runs at **~1.8 GiB peak**, the leanest configuration here, verified against `llama.cpp` on the same bytes. Slower than INT4, and the tradeoff is spelled out below rather than buried.
 - **Zero-Copy Metal Execution**: Utilizes zero-copy `MTLBuffer` memory mappings (`newBufferWithBytesNoCopy`) and native Metal compute shaders for high-throughput generation.
 - **Low Memory Overhead vs standard MLX / LLM tools**: Standard MLX or llama.cpp setups load full weights into system memory (requiring 16 to 32+ GB RAM). `turbospark` streams expert layers on demand and caps physical memory usage tightly under ~2.2 GB for Gemma 4 and ~1.6 GB for Qwen 3.6.
 - **Built-in OpenAI & Anthropic API Server**: Includes a local server providing OpenAI (`/v1/chat/completions`) and Anthropic (`/v1/messages`) endpoints for drop-in integration with CLI tools (e.g., `claude-code`), Web UIs, and applications.
@@ -35,8 +36,11 @@ Measured on Apple Silicon (M4 Max, 36 GB Unified Memory) running Gemma 4 26B-A4B
 | --- | --- | ---: | ---: | ---: |
 | **Gemma 4 26B-A4B** | Safetensors / MLX Int4 MoE | ~3.9B | **2,108 - 2,182 MiB** (~2.1 GiB) | 34.6 - 40.7 tok/s |
 | **Gemma 4 26B-A4B** | Published Q8_0 GGUF | ~3.9B | **~2,180 MiB** (~2.2 GiB) | 34.0 - 40.0 tok/s |
+| **Gemma 4 26B-A4B** | Published sub-4-bit IQ GGUF | ~3.9B | **1,850 MiB** (~1.8 GiB) | 22.9 - 25.4 tok/s |
 | **Qwen 3.6 35B-A3B** | Safetensors / MLX Int4 MoE | ~3.0B | **1,587 - 1,610 MiB** (~1.6 GiB) | 32.6 - 38.0 tok/s |
 | **Qwen 3.6 35B-A3B** | Published Q4_K_M Mixed GGUF | ~3.0B | **~1,600 MiB** (~1.6 GiB) | 31.5 - 37.5 tok/s |
+
+*Note: The sub-4-bit row is the leanest Gemma 4 configuration and the slowest. It trades roughly 15% of peak memory and 20% of expert bytes on disk for about 35% of decode throughput and 2.6% of perplexity, so INT4 remains the default; pick it when memory or disk is the binding constraint. Quality is verified against `llama.cpp` on identical bytes rather than asserted.*
 
 *Note: For Qwen 3.6 35B-A3B, 30 of its 40 layers use gated-DeltaNet linear attention carrying ~2 MiB of fixed recurrent state per layer instead of standard KV cache growth, keeping footprint ~500 MiB lower than Gemma 4 despite the larger model size.*
 
@@ -88,12 +92,15 @@ For full binary layouts, header byte specifications, and streaming mechanics, se
 - **GGUF Intake**: Native parsing and direct streaming intake for published GGUF checkpoints:
   - Gemma 4 Q8_0 GGUF (`ggml-org/gemma-4-26B-A4B-it-GGUF`).
   - Qwen 3.6 mixed Q4_K_M GGUF (Q4_K experts/embeddings, Q8_0 attention, Q6_K output).
-  - Streams directly from Hugging Face without writing 20-27 GB checkpoint files to disk.
-- **`.gturbo` Format**: High-speed packed expert layout optimized for sequential SSD streaming and mmap execution.
+  - Gemma 4 sub-4-bit imatrix GGUF (`unsloth/gemma-4-26B-A4B-it-GGUF` `UD-Q3_K_M`): IQ3_XXS routed gate/up over IQ4_NL down, Q6_K tied embedding.
+  - Streams directly from Hugging Face without writing 12-27 GB checkpoint files to disk.
+- **`.gturbo` Format**: High-speed packed expert layout optimized for sequential SSD streaming and mmap execution. Expert stride is per layer, so a checkpoint whose layers carry different block types is not padded to its widest one.
 
 ### Quantization Support
 - **INT4 / INT8**: Affine quantized expert weights and resident core.
-- **GGUF Block Quantizations**: Native GPU GEMV kernels for Q8_0, Q4_K, Q6_K, plus INT8/FP16 execution paths.
+- **GGUF Block Quantizations**: Native GPU kernels for Q8_0, Q4_K, Q6_K, plus INT8/FP16 execution paths.
+- **Sub-4-bit IQ Codebooks**: IQ3_XXS, IQ4_NL and IQ4_XS, with port-local Metal kernels validated against `llama.cpp` on identical bytes (0.0044 mean nats KL, 97.5% top-1, against a 0.0374 backend floor). Shrinks Gemma 4's expert table from 12 GiB to 9.6 GiB and its peak footprint to ~1.8 GiB. **A tradeoff, not a strict upgrade**: it costs ~2.6% perplexity and ~35% decode throughput, so INT4 remains the default. See the table above.
+- **Per-Tensor Mixing**: Block type is resolved per tensor, and for routed experts per layer AND per phase, so a checkpoint that uses a different quantization for `gate`/`up` than for `down`, or for one layer than for the rest, executes as published.
 
 ### Server & Interfaces
 - **Interactive REPL & CLI**: `turbospark-check` binary for interactive chat (`--chat`), raw prompt (`--prompt`), or JSON message history (`--messages-file`).
@@ -104,6 +111,7 @@ For full binary layouts, header byte specifications, and streaming mechanics, se
 - **Apple Silicon Acceleration Only**: Metal GPU acceleration requires macOS (`xcrun -sdk macosx metal`). On non-macOS platforms, crates compile CPU stubs.
 - **Sequential Prompt Prefill**: Prompt tokens are processed sequentially per token (prefill tile kernels descoped; see [`DEVIATIONS.md`](DEVIATIONS.md)).
 - **Q4_0 GGUF Quantization**: Refused at open until dedicated Q4_0 resident GEMV and embedding kernels land.
+- **Sub-4-bit Energy Claim Unverified**: The IQ path is measured for size, quality and throughput but NOT for joules per token, which is the axis fewer expert bytes per miss is supposed to improve. `scripts/power.sh` needs `sudo` and has not been run against it.
 
 
 ---

@@ -138,6 +138,16 @@ cargo test -p turbospark-repack --test gguf_f32_transcode_network --release -- -
 TURBOSPARK_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
   cargo test -p turbospark-repack --test gguf_q4_k_network --release -- --ignored --nocapture
 
+# 4b. The same, for the three IQ-codebook types (ROADMAP Phase S), all in
+#     one run because the candidate puts a different one on each side of a
+#     routed expert and a THIRD on layer 29 alone. IQ3_XXS gate/up reads
+#     +0.9751/+0.9760 against the MLX install, IQ4_NL down +0.9927, IQ4_XS
+#     +0.9928, every crossed control under 0.05. Also re-settles
+#     FUSED_GATE_FIRST for this converter, deriving the answer from the
+#     correlations rather than asserting the constant.
+TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
+  cargo test -p turbospark-repack --test gguf_iq_network --release -- --ignored --nocapture
+
 # 5. Qwen's SOURCE CONVENTIONS, which are not a format question: llama.cpp
 #    orders V heads differently and stores -exp(A_log). Checks every tensor
 #    on that axis on every layer, and with TURBOSPARK_QWEN_PATCH=1 rewrites
@@ -172,6 +182,15 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
   cargo test -p turbospark-bench --test quality_gate --release -- --ignored --nocapture
 TURBOSPARK_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
   cargo test -p turbospark-bench --test qwen36_quality_gate --release -- --ignored --nocapture
+
+# The 3-bit install's gate (ROADMAP Phase S). A SEPARATE TARGET with its own
+# chip row, not the Gemma gate with an env var moved: the existing rows are
+# keyed on the chip and freeze the MLX INT4 goldens, so pointing an install
+# var at a different artifact asserts the wrong digests and fails for a
+# reason that is not a regression. The same trap is why neither GGUF install
+# ever got a Phase Q run. ~2 min.
+TURBOSPARK_GEMMA4_IQ_INSTALL_DIR=~/models/gemma4-iq3.gturbo \
+  cargo test -p turbospark-bench --test iq3_quality_gate --release -- --ignored --nocapture
 
 # Proof the gate above can see quantization damage: clone the install
 # (APFS clonefile, original untouched), shift one quantization level in a
@@ -229,6 +248,23 @@ uv run --python 3.12 --with numpy scripts/kld_llamacpp.py \
 # readable on a throttled machine. Takes seconds.
 cargo test -p turbospark-gpu --test attention_chunk_bench --release -- --ignored --nocapture
 
+# THE THREE STREAMED INSTALLS. Each reads a published GGUF over HTTP a layer
+# at a time -- the 12-27 GB checkpoint is never written to disk -- and writes
+# only the install. 18-24 min each. What they buy over the ranged probes is
+# everything a fixture cannot show: every hole the real files exposed was in
+# the SHAPE of the model rather than the block format. Each refuses to
+# overwrite an install the gates are measured against.
+TURBOSPARK_GEMMA4_GGUF_INSTALL_DIR=~/models/gemma4-gguf.gturbo \
+  cargo test -p turbospark-repack --test gguf_install_network --release -- --ignored --nocapture
+TURBOSPARK_QWEN36_GGUF_INSTALL_DIR=~/models/qwen36-gguf.gturbo \
+  cargo test -p turbospark-repack --test gguf_qwen_install_network --release -- --ignored --nocapture
+# The third is the MIXED one, and the only install whose layers differ from
+# each other. It asserts the per-layer stride saves over 30% on disk, which
+# is the whole premise of ingesting it: padded to the model-wide maximum the
+# same experts would take 16.23 GB instead of 10.33.
+TURBOSPARK_GEMMA4_IQ_INSTALL_DIR=~/models/gemma4-iq3.gturbo \
+  cargo test -p turbospark-repack --test gguf_iq_install_network --release -- --ignored --nocapture
+
 # The server's real backend end to end: one model open, one non-streaming
 # and one streaming request through the bound loopback server.
 TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
@@ -250,6 +286,7 @@ attention) so it cannot rot silently; only the timings are advisory.
 | --- | --- | --- |
 | `TURBOSPARK_GEMMA4_INSTALL_DIR` | `gemma4_checkpoint_network`, `memory_oracle`, `quality_gate`, `quality_sensitivity`, `logit_dump`, `real_backend`, `gguf_checkpoint_network`, `gguf_fused_gate_network` | Where the real `.gturbo` install lives. The oracle, the quality gate, the logit dump, and the server test skip (with a note) when unset; the repack test falls back to a temp dir. The two GGUF tests use the install as an independent REFERENCE rather than as a subject: `gguf_checkpoint_network` cross-checks names and `ArchConfig` against it and skips those two checks when unset, and `gguf_fused_gate_network` correlates against its expert weights and skips entirely. Both accept a leading `~/`. |
 | `TURBOSPARK_QWEN36_INSTALL_DIR` | `qwen36_checkpoint_network`, `qwen36_memory_oracle`, `qwen36_quality_gate`, `logit_dump` | Where the repacked Qwen 3.6 install lives. The oracle and the quality gate skip (with a note) when unset; the repack test falls back to a temp dir. Deliberately a second variable rather than a generalized one, so both installs can coexist and each target asserts its own family's row. `logit_dump` takes it as a fallback when the Gemma variable is unset, though `scripts/kld.py`'s reference is pinned to the Gemma repo. |
+| `TURBOSPARK_GEMMA4_IQ_INSTALL_DIR` | `gguf_iq_install_network`, `iq3_quality_gate` | Where the 3-bit (IQ3_XXS/IQ4_NL) Gemma 4 install lives (ROADMAP Phase S). A THIRD variable rather than a reuse of the Gemma one, for the reason `iq3_quality_gate` documents: the quality rows are keyed on the chip and freeze the MLX INT4 goldens, so pointing an existing variable at a different artifact asserts the wrong digests. The install test refuses to write to either of the two variables above, and both readers skip or fall back to a temp dir when unset. |
 | `TURBOSPARK_LOGIT_DUMP_DIR` | `logit_dump` | Where to write `logits.f16` and `meta.json` (~275 MiB on either family). Required: the target skips when unset, since a few hundred MB is not something to write to a default path. |
 | `TURBOSPARK_LOGIT_DUMP_COLD=1` | `logit_dump` | Skips the warmup walk, so the dump comes off a COLD expert cache. That is the condition `quality_gate` takes its perplexity under, so this reproduces the frozen row exactly; without it the dump is warm and reads about 0.5% higher. How the warm/cold difference gets measured rather than assumed. |
 | `MFERENCE_PHASES=1` | `turbospark-check` | Prints the per-phase decode breakdown (GPU wait, router readback, expert pread, routed bind, cache hit rate). |
