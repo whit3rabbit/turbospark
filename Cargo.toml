@@ -9,4 +9,6 @@ rust-version = "1.82"
 license = "MIT"
 authors = ["whit3rabbit"]
 description = "Behavior-compatible Rust implementation of an approved local inference engine and its command-line surface."
-publish = false
+repository = "https://github.com/whit3rabbit/turbospark"
+homepage = "https://github.com/whit3rabbit/turbospark"
+publish = true

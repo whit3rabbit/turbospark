@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
 publish.workspace = true
 description = "Safetensors header parsing, ranged-download planning, and int4/int8 repack into the .gturbo packed-expert layout."
 
@@ -12,9 +13,9 @@ name = "turbospark_repack"
 path = "src/lib.rs"
 
 [dependencies]
-foundation = { package = "turbospark-core", path = "../core" }
-compute = { package = "turbospark-compute", path = "../compute" }
-model_io = { package = "turbospark-model-io", path = "../model-io" }
+foundation = { package = "turbospark-core", path = "../core", version = "0.1.0" }
+compute = { package = "turbospark-compute", path = "../compute", version = "0.1.0" }
+model_io = { package = "turbospark-model-io", path = "../model-io", version = "0.1.0" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }

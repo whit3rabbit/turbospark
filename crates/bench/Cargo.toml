@@ -4,7 +4,8 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-publish.workspace = true
+repository.workspace = true
+publish = false  # dev harness: reads local model installs, not useful on crates.io
 description = "Throughput benchmark harness: three fixed prompts, fixed seeds, a discarded warmup run per prompt, driven through the raw-completion loop."
 
 [[bin]]
@@ -12,13 +13,13 @@ name = "turbospark-bench"
 path = "src/main.rs"
 
 [dependencies]
-foundation = { package = "turbospark-core", path = "../core" }
-runtime = { package = "turbospark-runtime", path = "../runtime" }
-selection = { package = "turbospark-selection", path = "../selection" }
-tokenizer = { package = "turbospark-tokenizer", path = "../tokenizer" }
+foundation = { package = "turbospark-core", path = "../core", version = "0.1.0" }
+runtime = { package = "turbospark-runtime", path = "../runtime", version = "0.1.0" }
+selection = { package = "turbospark-selection", path = "../selection", version = "0.1.0" }
+tokenizer = { package = "turbospark-tokenizer", path = "../tokenizer", version = "0.1.0" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-repack = { package = "turbospark-repack", path = "../repack" }
+repack = { package = "turbospark-repack", path = "../repack", version = "0.1.0" }
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 # phys_footprint sampling for tests/memory_oracle.rs (proc_pid_rusage).
@@ -26,4 +27,4 @@ libc = "0.2"
 # hash_data, for tests/quality_common's golden output digests. The
 # workspace's one hex-SHA-256 helper; adds no external crate (`sha2`
 # already ships inside model-io).
-model_io = { package = "turbospark-model-io", path = "../model-io" }
+model_io = { package = "turbospark-model-io", path = "../model-io", version = "0.1.0" }

@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
 publish.workspace = true
 description = "The turbospark-check process entry point: reads argv, calls the invocation crate, applies its exit-status/stream-routing decisions, and prints the resolved request."
 
@@ -12,11 +13,11 @@ name = "turbospark-check"
 path = "src/main.rs"
 
 [dependencies]
-invocation = { package = "turbospark-invocation", path = "../invocation" }
-runtime = { package = "turbospark-runtime", path = "../runtime" }
-selection = { package = "turbospark-selection", path = "../selection" }
-tokenizer = { package = "turbospark-tokenizer", path = "../tokenizer" }
-repack = { package = "turbospark-repack", path = "../repack" }
-model_io = { package = "turbospark-model-io", path = "../model-io" }
-window_fit = { package = "turbospark-window-fit", path = "../window-fit" }
+invocation = { package = "turbospark-invocation", path = "../invocation", version = "0.1.0" }
+runtime = { package = "turbospark-runtime", path = "../runtime", version = "0.1.0" }
+selection = { package = "turbospark-selection", path = "../selection", version = "0.1.0" }
+tokenizer = { package = "turbospark-tokenizer", path = "../tokenizer", version = "0.1.0" }
+repack = { package = "turbospark-repack", path = "../repack", version = "0.1.0" }
+model_io = { package = "turbospark-model-io", path = "../model-io", version = "0.1.0" }
+window_fit = { package = "turbospark-window-fit", path = "../window-fit", version = "0.1.0" }
 serde_json = "1"

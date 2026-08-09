@@ -1,0 +1,196 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]*'
+
+permissions:
+  contents: read
+
+jobs:
+  check-version:
+    name: Verify tag matches workspace version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.VER }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check tag == workspace version, and every path dep pinned to it
+        id: ver
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          VER=$(sed -nE 's/^version = "([^"]+)".*/\1/p' Cargo.toml | head -1)
+          if [ "v${VER}" != "${TAG}" ]; then
+            echo "::error::tag ${TAG} does not match [workspace.package] version v${VER}"
+            exit 1
+          fi
+          # Intra-workspace deps carry a literal version for crates.io; a stale one
+          # publishes a crate that cannot resolve its own siblings.
+          BAD=$(grep -n 'path = "\.\./' crates/*/Cargo.toml | grep -v "version = \"${VER}\"" || true)
+          if [ -n "${BAD}" ]; then
+            echo "::error::path deps not pinned to ${VER}:"
+            echo "${BAD}"
+            exit 1
+          fi
+          echo "VER=${VER}" >> "$GITHUB_OUTPUT"
+          echo "OK: ${TAG} matches v${VER}"
+
+  build-macos:
+    name: macOS arm64
+    needs: [check-version]
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build release binaries
+        run: |
+          cargo build --release --target aarch64-apple-darwin \
+            -p turbospark-cli -p turbospark-server
+
+      - name: Stage zip
+        env:
+          VER: ${{ needs.check-version.outputs.version }}
+        run: |
+          mkdir -p dist/stage
+          # The archive must contain files named exactly as the cask's binary
+          # stanzas, or brew links the wrong names.
+          cp target/aarch64-apple-darwin/release/turbospark-check dist/stage/
+          cp target/aarch64-apple-darwin/release/turbospark-server dist/stage/
+          cd dist/stage && zip "../turbospark-${VER}-macos-arm64.zip" turbospark-check turbospark-server
+          cd .. && rm -rf stage && ls -l
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-arm64
+          path: dist/
+
+  release:
+    name: Publish GitHub Release
+    needs: [build-macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+          merge-multiple: true
+
+      - name: Generate SHA256 checksums
+        run: |
+          cd artifacts
+          sha256sum -- * > SHA256SUMS
+          cat SHA256SUMS
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true
+
+  publish-crates:
+    name: Publish to crates.io
+    needs: [check-version, build-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: cargo publish --workspace
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          if [ -z "${CARGO_REGISTRY_TOKEN}" ]; then
+            echo "::notice::CARGO_REGISTRY_TOKEN not set; skipping crates.io publish"
+            exit 0
+          fi
+          # --workspace orders the 14 crates by dependency and waits for the index.
+          set +e
+          cargo publish --workspace 2>&1 | tee /tmp/publish.log
+          status=${PIPESTATUS[0]}
+          set -e
+          [ "${status}" -eq 0 ] && exit 0
+          # A re-run of the same tag is a no-op, not a failure.
+          grep -qF "already exists on crates.io index" /tmp/publish.log && exit 0
+          exit "${status}"
+
+  update-homebrew-cask:
+    name: Update Homebrew Cask
+    needs: [check-version, release]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Detect tap token
+        id: tap
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -n "${TAP_TOKEN}" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::HOMEBREW_TAP_TOKEN not set; skipping tap update"
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Compute SHA256 from the published release asset
+        if: steps.tap.outputs.available == 'true'
+        id: sha
+        env:
+          VER: ${{ needs.check-version.outputs.version }}
+        run: |
+          URL="https://github.com/whit3rabbit/turbospark/releases/download/v${VER}/turbospark-${VER}-macos-arm64.zip"
+          curl -fsSL --retry 5 --retry-delay 5 "${URL}" -o arm64.zip
+          echo "arm=$(sha256sum arm64.zip | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        if: steps.tap.outputs.available == 'true'
+        with:
+          repository: whit3rabbit/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+
+      - name: Render cask
+        if: steps.tap.outputs.available == 'true'
+        env:
+          VER: ${{ needs.check-version.outputs.version }}
+          ARM: ${{ steps.sha.outputs.arm }}
+        run: |
+          cat > homebrew-tap/Casks/turbospark.rb <<EOF
+          cask "turbospark" do
+            version "${VER}"
+            sha256 "${ARM}"
+
+            url "https://github.com/whit3rabbit/turbospark/releases/download/v#{version}/turbospark-#{version}-macos-arm64.zip"
+            name "turbospark"
+            desc "Apple Silicon MoE inference engine streaming expert weights from SSD"
+            homepage "https://github.com/whit3rabbit/turbospark"
+
+            depends_on arch: :arm64
+            depends_on macos: ">= :sonoma"
+
+            binary "turbospark-check"
+            binary "turbospark-server"
+          end
+          EOF
+          ruby -c homebrew-tap/Casks/turbospark.rb
+
+      - name: Commit and push cask
+        if: steps.tap.outputs.available == 'true'
+        working-directory: homebrew-tap
+        env:
+          VER: ${{ needs.check-version.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Casks/turbospark.rb
+          git diff --cached --quiet && echo "No changes" && exit 0
+          git commit -m "Update turbospark cask to ${VER}"
+          git push origin main

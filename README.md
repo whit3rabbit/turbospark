@@ -1,5 +1,12 @@
 # turbospark: High-Efficiency Apple Silicon Inference in Rust
 
+[![CI](https://github.com/whit3rabbit/turbospark/actions/workflows/ci.yml/badge.svg)](https://github.com/whit3rabbit/turbospark/actions/workflows/ci.yml)
+[![Release](https://github.com/whit3rabbit/turbospark/actions/workflows/release.yml/badge.svg)](https://github.com/whit3rabbit/turbospark/actions/workflows/release.yml)
+[![crates.io](https://img.shields.io/crates/v/turbospark-cli.svg)](https://crates.io/crates/turbospark-cli)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-macOS%20arm64-lightgrey.svg)](#)
+[![MSRV](https://img.shields.io/badge/rust-1.82%2B-orange.svg)](rust-toolchain.toml)
+
 `turbospark` is a high-performance, behavior-compatible Rust inspired port of the [turbo-fieldfare](https://github.com/drumih/turbo-fieldfare) local LLM inference engine.
 
 It is specifically designed for **Apple Silicon (macOS Metal)** to execute large language models (LLMs) with **extremely low memory overhead**. Instead of holding full model parameters in unified RAM/VRAM, `turbospark` streams routed expert weights directly from high-speed SSD storage into a lean working memory footprint.
@@ -121,6 +128,19 @@ The workspace is organized into modular Rust crates:
 ---
 
 ## Quick Start
+
+### Install
+
+```sh
+# Homebrew (Apple Silicon; installs turbospark-check and turbospark-server)
+brew install --cask whit3rabbit/tap/turbospark
+
+# Or from crates.io
+cargo install turbospark-cli turbospark-server
+```
+
+Both install the binaries only. Model installs (`.gturbo` directories) are built
+separately by `crates/repack`; see [`docs/GTURBO.md`](docs/GTURBO.md).
 
 ### Build & Run Tests
 

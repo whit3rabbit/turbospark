@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
 publish.workspace = true
 description = "Candidate selection: shaping configuration and the deterministic-or-randomized draw."
 
@@ -13,4 +14,4 @@ path = "src/lib.rs"
 
 [dependencies]
 # Aliased so references are not confused with the standard library `core`.
-foundation = { package = "turbospark-core", path = "../core" }
+foundation = { package = "turbospark-core", path = "../core", version = "0.1.0" }

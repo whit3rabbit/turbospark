@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
 publish.workspace = true
 description = "The raw-completion prefill+decode loop: wires a LogitProducer, the tokenizer, and the selection sampler into one token generation loop."
 
@@ -12,19 +13,19 @@ name = "turbospark_runtime"
 path = "src/lib.rs"
 
 [dependencies]
-foundation = { package = "turbospark-core", path = "../core" }
-selection = { package = "turbospark-selection", path = "../selection" }
-tokenizer = { package = "turbospark-tokenizer", path = "../tokenizer" }
+foundation = { package = "turbospark-core", path = "../core", version = "0.1.0" }
+selection = { package = "turbospark-selection", path = "../selection", version = "0.1.0" }
+tokenizer = { package = "turbospark-tokenizer", path = "../tokenizer", version = "0.1.0" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-gpu = { package = "turbospark-gpu", path = "../gpu" }
-model_io = { package = "turbospark-model-io", path = "../model-io" }
-compute = { package = "turbospark-compute", path = "../compute" }
-streaming = { package = "turbospark-streaming", path = "../streaming" }
+gpu = { package = "turbospark-gpu", path = "../gpu", version = "0.1.0" }
+model_io = { package = "turbospark-model-io", path = "../model-io", version = "0.1.0" }
+compute = { package = "turbospark-compute", path = "../compute", version = "0.1.0" }
+streaming = { package = "turbospark-streaming", path = "../streaming", version = "0.1.0" }
 half = "2"
 
 [dev-dependencies]
-turbospark-repack = { path = "../repack" }
+turbospark-repack = { path = "../repack", version = "0.1.0" }
 # Test-only: `gguf_install_refused.rs` forges a manifest to reach the
 # resident-index dtype backstop behind it. Already a dependency of
 # model-io/repack/server, so this adds nothing to the dependency graph.

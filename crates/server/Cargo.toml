@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
 publish.workspace = true
 description = "OpenAI Chat Completions and Anthropic Messages server on loopback: request/response envelopes, SSE streaming framing, and the axum router, wired to the raw-completion loop."
 
@@ -16,10 +17,10 @@ name = "turbospark-server"
 path = "src/main.rs"
 
 [dependencies]
-foundation = { package = "turbospark-core", path = "../core" }
-runtime = { package = "turbospark-runtime", path = "../runtime" }
-selection = { package = "turbospark-selection", path = "../selection" }
-tokenizer = { package = "turbospark-tokenizer", path = "../tokenizer" }
+foundation = { package = "turbospark-core", path = "../core", version = "0.1.0" }
+runtime = { package = "turbospark-runtime", path = "../runtime", version = "0.1.0" }
+selection = { package = "turbospark-selection", path = "../selection", version = "0.1.0" }
+tokenizer = { package = "turbospark-tokenizer", path = "../tokenizer", version = "0.1.0" }
 # Anthropic <-> OpenAI translation, and the OpenAI wire types this server's
 # envelopes are built from. Default features only: that is the pure, IO-free
 # core (serde/thiserror/tracing/uuid). The `middleware` feature is deliberately
@@ -36,7 +37,7 @@ futures = "0.3"
 # Only the real (macOS/GPU) backend needs the manifest peeker; on other
 # platforms `real_model.rs` does not compile at all.
 [target.'cfg(target_os = "macos")'.dependencies]
-repack = { package = "turbospark-repack", path = "../repack" }
+repack = { package = "turbospark-repack", path = "../repack", version = "0.1.0" }
 
 [dev-dependencies]
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
