@@ -41,6 +41,7 @@ crates/repack/
     +-- gguf_fused_gate_network.rs  # Settles FUSED_GATE_FIRST by correlation (ignored)
     +-- gguf_f32_transcode_network.rs # Evidence for the transcode decision (ignored)
     +-- gguf_q4_k_network.rs        # Q4_K dequant vs the real Qwen Q4_K_M, by correlation (ignored)
+    +-- gguf_iq_network.rs          # IQ3_XXS/IQ4_NL/IQ4_XS vs the Phase S candidate, by correlation (ignored)
     +-- gguf_install_network.rs     # Streams the real Q8_0 GGUF into a full install (ignored)
     +-- gguf_qwen_install_network.rs# Same for the real Qwen Q4_K_M, the mixed-block-type case (ignored)
     +-- gguf_qwen_core_probe.rs     # A GGUF install's resident core vs the MLX one, tensor by tensor (ignored)
@@ -116,6 +117,12 @@ cargo test -p turbospark-repack --test gguf_f32_transcode_network --release -- -
 # install. Few KB, ~5 s. AGENTS.md Gotcha 30 before reading a low number.
 TURBOSPARK_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
   cargo test -p turbospark-repack --test gguf_q4_k_network --release -- --ignored --nocapture
+
+# The same, for Phase S's three IQ types against the candidate checkpoint.
+# Covers all three in one run because the file puts a different one in each
+# half of a routed expert, and a THIRD on layer 29 alone. Few KB, ~5 s.
+TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
+  cargo test -p turbospark-repack --test gguf_iq_network --release -- --ignored --nocapture
 ```
 
 ## Crate Gotchas
