@@ -45,6 +45,30 @@ cargo clippy --workspace --tests
 | `server` | OpenAI-compatible endpoint shapes, full-response and SSE, the `--model` argument parser, and (gated) the real `RealForwardRunner` backend end to end. |
 | `bench` | Protocol constants and footer format, the memory sampler, and the binary's black-box output. Its gated targets carry the quality axis: per-install perplexity and golden digests, the damage-sensitivity proof, and the logit dump feeding the cross-engine KLD. |
 
+### The `llama` family (ROADMAP Phase M2)
+
+Three levels, and the split between them is what keeps the expensive one rare:
+
+- `crates/runtime/tests/real_forward_llama.rs` (default suite, macOS): builds a
+  tiny Mixtral-shaped install through the REAL repack pipeline and decodes on
+  real Metal. Covers determinism across expert-cache state, prefill/produce
+  agreement, the no-allocation-per-token rule, the slot-count cap, and the
+  dense-half refusal.
+- `crates/repack/tests/gguf_llama_rope_patch.rs` (unit part in the default
+  suite): pins the rotary row permutation as the exact inverse of llama.cpp's
+  converter transform. Its `#[ignore]`d half patches a real install in place,
+  which is the diagnostic loop AGENTS.md Gotcha 33 prescribes -- seconds per
+  hypothesis instead of a 35-minute repack.
+- `crates/repack/tests/gguf_mixtral_install_network.rs` (`#[ignore]`d): the
+  real published Mixtral Q4_K_M streamed into an install, plus a CHEAP dense
+  walk (TinyLlama 1.1B Q6_K, 0.84 GiB, ~3 min) that exercises the half of the
+  name table Mixtral never reaches. Prefer the dense one when the question is
+  about names or the dense branch; it is 30x cheaper.
+
+The streamed walk resumes: a layer file already on disk at the size the walk
+would write is adopted without a network read, so a transport failure costs
+the remaining layers rather than all of them.
+
 ## Gating conventions
 
 Three gates are in use. Match the existing idiom when adding a test.

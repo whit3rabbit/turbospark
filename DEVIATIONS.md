@@ -835,7 +835,25 @@ live network).
   linear (2) layers under the `qwen36` family only, and rejects
   compressed (3/4) layers outright, whose kernels are unported — so
   Gemma 4 and Qwen 3.6 both pass while DeepSeek-V4-Flash remains blocked
-  on DSV4. Proven end to end by
+  on DSV4.
+  **The `llama` family (ROADMAP Phase M2) is wired for the MoE half of its
+  architecture string ONLY, and that split is deliberate rather than
+  unfinished.** `general.architecture = "llama"` is both Mixtral and dense
+  Llama 2/3.x/Mistral, and nothing in the string says which a file is --
+  only `expert_count` does. Mixtral-style checkpoints run end to end
+  (real published Q4_K_M walked, both smokes coherent); a dense install is
+  REFUSED at `open()` by name, because it has no routed experts to stream
+  and the current dense FFN path bridges to CPU, so running it would
+  abandon the memory result this engine exists for and be slow for a
+  reason no user could see. Landing dense means a GPU dense-FFN path plus
+  RoPE frequency scaling, which Llama 3.1+ ships as a TENSOR
+  (`rope_freqs.weight`) rather than as metadata.
+  A separate caveat that is about the CHECKPOINT rather than the port:
+  Mixtral is a COARSE MoE (8 experts of 108.9 MiB against Gemma's 128 of
+  ~3.2 MiB), and the expert slot cache is `slots x layers x expert_stride`,
+  so it cannot stream at any useful slot count -- 54.5 GiB at 16 slots,
+  and the whole 27.2 GiB expert table at 8. It runs and it is correct; it
+  is not what this engine is for. See AGENTS.md Gotcha 36. Proven end to end by
   `crates/runtime/tests/real_forward.rs` for both shapes:
   `run_raw_completion` runs to a real stop condition, and a second run
   over the same runner (which resets internally) reaches an identical

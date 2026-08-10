@@ -20,6 +20,7 @@ This enables Mac users with limited memory (8 GB, 16 GB, 24 GB, or 36 GB) to run
 - **Extreme Memory Efficiency**: Runs large 26B-35B parameter Mixture-of-Experts (MoE) models using only **~1.6 GiB to 2.2 GiB of peak RAM/VRAM**. Users with 16 GB or 36 GB Macs no longer need 64 GB+ memory configurations to run 26B-35B models.
 - **Direct GGUF Streaming Intake (New / WIP)**: Native intake for published GGUF formats (Gemma 4 Q8_0, Qwen 3.6 mixed Q4_K_M, and sub-4-bit IQ imatrix builds). Streams directly from Hugging Face or parses local GGUFs into optimized `.gturbo` format without requiring the 12-27 GB raw model payload to be loaded in RAM.
 - **Sub-4-bit Option for the Tightest Budgets**: A published IQ3_XXS/IQ4_NL Gemma 4 build runs at **~1.8 GiB peak**, the leanest configuration here, verified against `llama.cpp` on the same bytes. Slower than INT4, and the tradeoff is spelled out below rather than buried.
+- **Architecture Registry with Honest Refusals**: GGUF `general.architecture` and Hugging Face `model_type` strings resolve through one table, every key of which was read off a real published file. An architecture this port recognizes but cannot yet run says so, names the missing work, and points at the bring-up checklist, instead of failing as "unknown". Mixtral-style `llama` MoE checkpoints run; the dense half of that same architecture string is refused by name (it has no routed experts to stream).
 - **Zero-Copy Metal Execution**: Utilizes zero-copy `MTLBuffer` memory mappings (`newBufferWithBytesNoCopy`) and native Metal compute shaders for high-throughput generation.
 - **Low Memory Overhead vs standard MLX / LLM tools**: Standard MLX or llama.cpp setups load full weights into system memory (requiring 16 to 32+ GB RAM). `turbospark` streams expert layers on demand and caps physical memory usage tightly under ~2.2 GB for Gemma 4 and ~1.6 GB for Qwen 3.6.
 - **Built-in OpenAI & Anthropic API Server**: Includes a local server providing OpenAI (`/v1/chat/completions`) and Anthropic (`/v1/messages`) endpoints for drop-in integration with CLI tools (e.g., `claude-code`), Web UIs, and applications.
@@ -41,6 +42,8 @@ Measured on Apple Silicon (M4 Max, 36 GB Unified Memory) running Gemma 4 26B-A4B
 | **Qwen 3.6 35B-A3B** | Published Q4_K_M Mixed GGUF | ~3.0B | **~1,600 MiB** (~1.6 GiB) | 31.5 - 37.5 tok/s |
 
 *Note: The sub-4-bit row is the leanest Gemma 4 configuration and the slowest. It trades roughly 15% of peak memory and 20% of expert bytes on disk for about 35% of decode throughput and 2.6% of perplexity, so INT4 remains the default; pick it when memory or disk is the binding constraint. Quality is verified against `llama.cpp` on identical bytes rather than asserted.*
+
+*Note: the memory result comes from FINE-GRAINED MoE, not from MoE as such. The expert slot cache is `slots x layers x expert_stride`, so what matters is the size of one expert: Gemma 4 splits into 128 experts of ~3.2 MiB, while a coarse MoE like Mixtral 8x7B has 8 of ~109 MiB and cannot stream usefully at any slot count. It runs here and is correct; it is not what this engine is for.*
 
 *Note: For Qwen 3.6 35B-A3B, 30 of its 40 layers use gated-DeltaNet linear attention carrying ~2 MiB of fixed recurrent state per layer instead of standard KV cache growth, keeping footprint ~500 MiB lower than Gemma 4 despite the larger model size.*
 

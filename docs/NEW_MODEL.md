@@ -122,6 +122,16 @@ the reference implementation. Every answer becomes a field in `ArchConfig`
       And is the shared expert GATED? Qwen's output is scaled by
       `sigmoid(shared_expert_gate(x))`, one scalar logit from its own
       1-row GEMV.
+- [ ] **EXPERT GRANULARITY, which is one multiplication and decides whether
+      the checkpoint fits this engine at all.** The slot cache is
+      `slots x layers x expert_stride`, so what matters is the size of ONE
+      expert, not the size of the model: `3 x moe_intermediate x hidden`
+      at the expert block type. Gemma 4 is 128 experts of ~3.2 MiB and 16
+      slots over 30 layers pin 1.5 GiB; Mixtral 8x7B is 8 experts of
+      108.9 MiB and the same 16 slots want 54.5 GiB. Both numbers come off
+      the header (`expert_count`, `feed_forward_length`) before any
+      download. Do this here, next to the layer graph -- ROADMAP Phase M2
+      did not, and spent a 26 GB download finding out. AGENTS.md Gotcha 36.
 - [ ] **Recurrent per-layer state.** Anything that is not KV: a linear
       layer's delta-rule `S`, a causal-conv tail, an SSM hidden state. For
       each, its shape, whether it grows with context (GDN's does not, which
