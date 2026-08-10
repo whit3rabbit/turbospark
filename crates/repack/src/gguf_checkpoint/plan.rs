@@ -138,6 +138,64 @@ pub fn plan_one_layer(
     plan: &Plan<'_>,
     layer: usize,
 ) -> Result<(LayerBlobs, u64), GgufRepackError> {
+    plan_one_layer_inner(header, Some(source), arch, plan, layer)
+}
+
+/// The same layer plan with NO network read: every sub-tensor gets a
+/// correctly-SIZED run of zeros instead of its real bytes.
+///
+/// This exists for resume (ROADMAP Phase M2). A layer file already on disk
+/// at its expected size does not need re-fetching, but the walk still has to
+/// produce that layer's `layout.json` entry -- offsets, strides, dtypes and
+/// shapes -- and every one of those is a function of the HEADER rather than
+/// of the bytes. Zero-filling is what lets the entry be built by the same
+/// `build_layer_file` the real path uses, so the two cannot disagree about a
+/// layout; the zeros are allocated and dropped without ever being written.
+pub fn plan_one_layer_shape(
+    header: &GgufHeader,
+    arch: &ArchConfig,
+    plan: &Plan<'_>,
+    layer: usize,
+) -> Result<(LayerBlobs, u64), GgufRepackError> {
+    plan_one_layer_inner(header, None, arch, plan, layer)
+}
+
+/// Bytes one layer's expert FILE occupies, from the header alone.
+///
+/// Needed BEFORE deciding whether to fetch a layer, so the decision cannot
+/// depend on the fetch. Mirrors `build_layer_file`'s stride arithmetic; the
+/// two are held together by the resume path asserting the size it predicted
+/// against the size the writer produces.
+pub fn layer_file_bytes(
+    header: &GgufHeader,
+    arch: &ArchConfig,
+    plan: &Plan<'_>,
+    layer: usize,
+    max_stride: u64,
+) -> Result<u64, GgufRepackError> {
+    let experts = arch.num_experts as u64;
+    let sources = plan
+        .routed
+        .get(&layer)
+        .ok_or_else(|| GgufRepackError::MissingTensor {
+            name: format!("layer {layer} routed experts"),
+        })?;
+    let mut used = 0u64;
+    for s in sources {
+        used += per_expert_bytes(header, s.name, experts)?;
+    }
+    let stride =
+        (used.div_ceil(crate::GTURBO_PAGE_BYTES) * crate::GTURBO_PAGE_BYTES).min(max_stride);
+    Ok(stride * experts)
+}
+
+fn plan_one_layer_inner(
+    header: &GgufHeader,
+    source: Option<&dyn RangeSource>,
+    arch: &ArchConfig,
+    plan: &Plan<'_>,
+    layer: usize,
+) -> Result<(LayerBlobs, u64), GgufRepackError> {
     let experts = arch.num_experts as usize;
     let sources = plan
         .routed
@@ -157,7 +215,10 @@ pub fn plan_one_layer(
     for s in sources {
         let info = &header.tensors[s.name];
         let per = per_expert_bytes(header, s.name, experts as u64)? as usize;
-        let bytes = read_tensor(header, source, s.name)?;
+        let bytes = match source {
+            Some(source) => read_tensor(header, source, s.name)?,
+            None => vec![0u8; per * experts],
+        };
         if bytes.len() != per * experts {
             return Err(GgufRepackError::ShapeMismatch {
                 tensor: s.name.to_string(),

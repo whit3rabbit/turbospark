@@ -12,10 +12,11 @@
 //! merely too small.
 
 use turbospark_compute::{
-    dequant_q4_k_gemv, dequant_q6_k_gemv, dequant_q8_0_gemv, dequantize_q4_k, dequantize_q6_k,
-    dequantize_q8_0, pearson, quantize_q4_k, quantize_q6_k, quantize_q8_0, Q4_K_BLOCK_BYTES,
-    Q4_K_BLOCK_ELEMS, Q4_K_SUB_ELEMS, Q6_K_BLOCK_BYTES, Q6_K_BLOCK_ELEMS, Q6_K_SUB_ELEMS,
-    Q8_0_BLOCK_BYTES, Q8_0_BLOCK_ELEMS,
+    dequant_q4_k_gemv, dequant_q5_k_gemv, dequant_q6_k_gemv, dequant_q8_0_gemv, dequantize_q4_k,
+    dequantize_q5_k, dequantize_q6_k, dequantize_q8_0, pearson, quantize_q4_k, quantize_q6_k,
+    quantize_q8_0, Q4_K_BLOCK_BYTES, Q4_K_BLOCK_ELEMS, Q4_K_SUB_ELEMS, Q5_K_BLOCK_BYTES,
+    Q5_K_BLOCK_ELEMS, Q6_K_BLOCK_BYTES, Q6_K_BLOCK_ELEMS, Q6_K_SUB_ELEMS, Q8_0_BLOCK_BYTES,
+    Q8_0_BLOCK_ELEMS,
 };
 
 /// Deterministic weights spanning both signs and several magnitudes, so a
@@ -473,5 +474,91 @@ fn q6_k_gemv_matches_a_dequantize_then_multiply() {
             .map(|(w, xv)| w * xv)
             .sum();
         assert!((got[i] - want).abs() <= want.abs() * 1e-6 + 1e-6);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Q5_K (ROADMAP Phase M2). Mixtral's Q4_K_M puts it on `attn_output`.
+// ---------------------------------------------------------------------------
+
+// ggml quantized these bytes and decoded these floats
+// (`scripts/ggml_q5_k_oracle.c`). Under `generated/` for the same reason the
+// IQ oracles are: every top-level file in `tests/` is its own test binary.
+include!("generated/quant_gguf_q5_k_oracle.rs");
+
+/// The one test that can catch this decoder and its author sharing a
+/// misreading, because ggml produced BOTH sides of it. Everything else in
+/// this file about Q5_K is a property check on top.
+///
+/// Compared with `==` and not a tolerance: the arithmetic is grouped exactly
+/// as ggml groups it (`d * sc` first, then `q * that - dmin * m`), so any
+/// difference at all is a real one rather than float drift.
+#[test]
+fn q5_k_decodes_exactly_what_ggml_decodes() {
+    let got = dequantize_q5_k(&Q5_K_ORACLE_BYTES, Q5_K_ORACLE_FLOATS.len());
+    assert_eq!(got.len(), Q5_K_ORACLE_FLOATS.len());
+    for (i, (&g, &want)) in got.iter().zip(Q5_K_ORACLE_FLOATS.iter()).enumerate() {
+        assert_eq!(g, want, "element {i} disagrees with ggml");
+    }
+}
+
+/// The oracle spans two superblocks so that block 1 cannot be decoded with
+/// block 0's scales and still pass. Asserted rather than assumed, since a
+/// shorter fixture would silently weaken the test above.
+#[test]
+fn the_q5_k_oracle_covers_more_than_one_superblock() {
+    assert_eq!(Q5_K_ORACLE_BYTES.len() % Q5_K_BLOCK_BYTES, 0);
+    assert!(Q5_K_ORACLE_BYTES.len() / Q5_K_BLOCK_BYTES >= 2);
+    assert_eq!(
+        Q5_K_ORACLE_FLOATS.len(),
+        Q5_K_ORACLE_BYTES.len() / Q5_K_BLOCK_BYTES * Q5_K_BLOCK_ELEMS
+    );
+}
+
+/// The fifth bit is the whole difference from Q4_K, and dropping it leaves
+/// values that are correctly signed, correctly ordered and merely compressed.
+/// So: clearing `qh` must MOVE the decode, and it must only ever move it
+/// down by whole multiples of that sub-block's step.
+#[test]
+fn clearing_the_fifth_bit_run_changes_the_decode() {
+    let full = dequantize_q5_k(&Q5_K_ORACLE_BYTES, Q5_K_ORACLE_FLOATS.len());
+
+    let mut stripped = Q5_K_ORACLE_BYTES;
+    for block in 0..stripped.len() / Q5_K_BLOCK_BYTES {
+        let at = block * Q5_K_BLOCK_BYTES + 16;
+        stripped[at..at + Q5_K_BLOCK_ELEMS / 8].fill(0);
+    }
+    let without = dequantize_q5_k(&stripped, Q5_K_ORACLE_FLOATS.len());
+
+    assert_ne!(full, without, "qh contributes nothing: it is being ignored");
+    for (a, b) in full.iter().zip(without.iter()) {
+        assert!(a >= b, "clearing a high bit must never raise a weight");
+    }
+}
+
+/// Q5_K keeps Q4_K's per-sub-block MIN, and a symmetric-quant habit carried
+/// over from Q6_K drops it. Without the subtraction every decoded weight is
+/// non-negative, so the presence of negatives is the cheap witness.
+#[test]
+fn q5_k_reconstructs_negative_weights() {
+    let got = dequantize_q5_k(&Q5_K_ORACLE_BYTES, Q5_K_ORACLE_FLOATS.len());
+    assert!(got.iter().any(|&v| v < 0.0), "no negative weights decoded");
+    assert!(got.iter().any(|&v| v > 0.0));
+}
+
+#[test]
+fn q5_k_gemv_matches_dequantize_then_dot() {
+    let n = Q5_K_BLOCK_ELEMS * 2;
+    let x: Vec<f32> = (0..n).map(|i| ((i % 13) as f32 - 6.0) / 7.0).collect();
+    let rows: Vec<&[u8]> = vec![&Q5_K_ORACLE_BYTES, &Q5_K_ORACLE_BYTES];
+
+    let got = dequant_q5_k_gemv(&rows, &x, n);
+    let want: f32 = dequantize_q5_k(&Q5_K_ORACLE_BYTES, n)
+        .iter()
+        .zip(x.iter())
+        .map(|(w, xv)| w * xv)
+        .sum();
+    for v in got {
+        assert!((v - want).abs() <= want.abs() * 1e-6 + 1e-6);
     }
 }

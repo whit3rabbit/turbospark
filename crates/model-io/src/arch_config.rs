@@ -15,6 +15,11 @@ pub enum ModelFamily {
     Gemma4,
     Qwen36,
     DeepseekV4Flash,
+    /// The `llama` GGUF architecture, which covers dense Llama 2/3.x and
+    /// Mistral AND the Mixtral MoEs -- one string, distinguished only by
+    /// `expert_count` (ROADMAP Phase M2). The baseline is Mixtral's because
+    /// every behavioural field is shared and only shape fields differ.
+    Llama,
 }
 
 impl ModelFamily {
@@ -24,6 +29,7 @@ impl ModelFamily {
             ModelFamily::Gemma4 => "gemma4",
             ModelFamily::Qwen36 => "qwen36",
             ModelFamily::DeepseekV4Flash => "deepseekV4Flash",
+            ModelFamily::Llama => "llama",
         }
     }
 
@@ -33,6 +39,7 @@ impl ModelFamily {
             "gemma4" => Some(ModelFamily::Gemma4),
             "qwen36" => Some(ModelFamily::Qwen36),
             "deepseekV4Flash" => Some(ModelFamily::DeepseekV4Flash),
+            "llama" => Some(ModelFamily::Llama),
             _ => None,
         }
     }

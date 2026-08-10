@@ -41,8 +41,13 @@ pub fn layer_index(name: &str) -> Option<usize> {
 fn routed_marker(family: ModelFamily) -> &'static str {
     match family {
         ModelFamily::Qwen36 => ".mlp.switch_mlp.",
-        // DeepSeek V4 has no repack path yet; Gemma's marker is the default.
-        ModelFamily::Gemma4 | ModelFamily::DeepseekV4Flash => ".experts.switch_glu.",
+        // A GGUF-derived Llama never reaches this classifier (the GGUF walk
+        // maps routed tensors by NAME, in `gguf_names.rs`), and there is no
+        // safetensors Llama path. DeepSeek V4 has no repack path either;
+        // Gemma's marker is the default for both.
+        ModelFamily::Gemma4 | ModelFamily::DeepseekV4Flash | ModelFamily::Llama => {
+            ".experts.switch_glu."
+        }
     }
 }
 

@@ -25,17 +25,22 @@ pub(crate) const DTYPE_GGUF_Q6_K: u8 = 8;
 pub(crate) const DTYPE_GGUF_IQ3_XXS: u8 = 10;
 pub(crate) const DTYPE_GGUF_IQ4_NL: u8 = 11;
 pub(crate) const DTYPE_GGUF_IQ4_XS: u8 = 12;
+/// GGUF Q5_K: a resident GEMV and nothing else, which is all Mixtral 8x7B's
+/// Q4_K_M asks for -- it carries Q5_K on `attn_output` and its experts are
+/// Q4_K over Q6_K (ROADMAP Phase M2).
+pub(crate) const DTYPE_GGUF_Q5_K: u8 = 13;
 /// The executable subset of [`GGUF_BLOCK_DTYPES`], and the resident-index
 /// twin of `model_io::EXECUTABLE_GGUF_TYPES`. Grows only when a kernel plus
 /// its parity test land, and the two lists have to move together or
 /// `crates/runtime/tests/gguf_install_refused.rs` reddens.
-pub(crate) const EXECUTABLE_GGUF_DTYPES: [u8; 6] = [
+pub(crate) const EXECUTABLE_GGUF_DTYPES: [u8; 7] = [
     DTYPE_GGUF_Q8_0,
     DTYPE_GGUF_Q4_K,
     DTYPE_GGUF_Q6_K,
     DTYPE_GGUF_IQ3_XXS,
     DTYPE_GGUF_IQ4_NL,
     DTYPE_GGUF_IQ4_XS,
+    DTYPE_GGUF_Q5_K,
 ];
 
 /// Which layout one routed sub-tensor uses.
@@ -60,6 +65,11 @@ pub(crate) enum RoutedBlobLayout {
     /// GGUF IQ4_NL, carrying 29 of the candidate's `ffn_down_exps`. Phase 2
     /// only.
     GgufIq4Nl,
+    /// GGUF Q6_K, carrying the `ffn_down_exps` of 16 of Mixtral 8x7B's 32
+    /// layers while the other 16 are Q4_K (ROADMAP Phase M2). Phase 2 only,
+    /// and the first type whose two layouts differ across LAYERS of one model
+    /// rather than across the phases of one expert.
+    GgufQ6K,
 }
 
 impl RoutedBlobLayout {
@@ -78,6 +88,7 @@ impl RoutedBlobLayout {
             "iq3_xxs" => RoutedBlobLayout::GgufIq3Xxs,
             "iq4_xs" => RoutedBlobLayout::GgufIq4Xs,
             "iq4_nl" => RoutedBlobLayout::GgufIq4Nl,
+            "q6_k" => RoutedBlobLayout::GgufQ6K,
             other => {
                 return Err(RealForwardError::Unsupported(format!(
                     "routed expert sub-tensor dtype {other} has no decode kernel in this port"

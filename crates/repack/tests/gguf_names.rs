@@ -229,7 +229,12 @@ fn architecture_strings_are_the_converters_names_not_the_familys() {
         Some(ModelFamily::Qwen36)
     );
     assert_eq!(family_for_architecture("qwen36"), None);
-    assert_eq!(family_for_architecture("llama"), None);
+    // `llama` is the one architecture whose GGUF string EQUALS its family
+    // name, and it gained a flow in ROADMAP Phase M2. `phi3` stands in as
+    // the recognized-but-unported case this line used to make.
+    assert_eq!(gguf_architecture(ModelFamily::Llama), Some("llama"));
+    assert_eq!(family_for_architecture("llama"), Some(ModelFamily::Llama));
+    assert_eq!(family_for_architecture("phi3"), None);
 }
 
 /// DeepSeek V4 has no repack path and must not acquire one by accident.

@@ -99,6 +99,58 @@ const CHATML_GENERATION_SUFFIX: &str = "<|im_start|>assistant\n<think>\n\n</thin
 const DEEPSEEK_GENERATION_SUFFIX: &str = "<\u{FF5C}Assistant\u{FF5C}></think>";
 const DEEPSEEK_THINK_CLOSE_MARK: &str = "</think>";
 
+/// Mistral / Mixtral instruction format (ROADMAP Phase M2).
+///
+/// PLAIN TEXT framing, which is what makes this dialect different in kind
+/// from the other three rather than in detail: `[INST]` and `[/INST]` are
+/// ordinary token sequences, not special tokens, so nothing here can be
+/// built out of ids.
+///
+/// Two rules the reference template enforces and a naive render gets wrong:
+/// a SYSTEM message has no turn of its own and is folded into the first
+/// user turn, and `</s>` closes each ASSISTANT turn only -- a user turn is
+/// closed by `[/INST]`, not by the sentence end. `<s>` is not emitted here
+/// because `bos_prefix_id` prepends it as an id.
+fn mistral_chat_template(messages: &[Message]) -> Result<String, TokenizerError> {
+    let mut out = String::new();
+    let mut pending_system: Option<String> = None;
+    for message in messages {
+        let Some(raw) = &message.content else {
+            return Err(TokenizerError::InvalidChatTemplate(
+                "text-only messages require content".to_string(),
+            ));
+        };
+        let content = raw.trim();
+        match message.role {
+            Role::System | Role::Developer => {
+                pending_system = Some(match pending_system.take() {
+                    Some(prior) => format!("{prior}\n\n{content}"),
+                    None => content.to_string(),
+                });
+            }
+            Role::User => {
+                let body = match pending_system.take() {
+                    Some(system) => format!("{system}\n\n{content}"),
+                    None => content.to_string(),
+                };
+                out.push_str(&format!(" [INST] {body} [/INST]"));
+            }
+            Role::Assistant => out.push_str(&format!(" {content}</s>")),
+            Role::Tool => {
+                return Err(TokenizerError::InvalidChatTemplate(
+                    "Mixtral 8x7B-Instruct v0.1 has no tool-calling markup".to_string(),
+                ));
+            }
+        }
+    }
+    // A trailing system message with no user turn after it would otherwise
+    // vanish; fold it into an empty instruction rather than dropping it.
+    if let Some(system) = pending_system {
+        out.push_str(&format!(" [INST] {system} [/INST]"));
+    }
+    Ok(out)
+}
+
 impl MfTokenizer {
     /// Formats a sequence of messages into a chat template string for the tokenizer's dialect.
     pub fn apply_chat_template(&self, messages: &[Message]) -> Result<String, TokenizerError> {
@@ -106,6 +158,7 @@ impl MfTokenizer {
             ChatDialect::Gemma => gemma_chat_template(messages),
             ChatDialect::ChatMl => chatml_chat_template(messages),
             ChatDialect::Deepseek => deepseek_chat_template(messages),
+            ChatDialect::Mistral => mistral_chat_template(messages),
         }
     }
 
@@ -122,6 +175,9 @@ impl MfTokenizer {
             ChatDialect::Deepseek => {
                 format!("{DEEPSEEK_USER_MARK}{user_content}{DEEPSEEK_GENERATION_SUFFIX}")
             }
+            // No leading newline and no assistant marker: this dialect's
+            // generation point is simply the character after `[/INST]`.
+            ChatDialect::Mistral => format!(" [INST] {content} [/INST]"),
         };
         let mut out = vec![self.end_of_turn_id];
         out.extend(self.encode(&suffix, false));
@@ -389,4 +445,63 @@ fn deepseek_tools_section(tools: &[FunctionDefinition]) -> Result<String, Tokeni
     Ok(format!(
         "## Tools\n\nYou have access to a set of tools to help answer the user's question. You can invoke tools by writing a \"<{dsml}tool_calls>\" block like the following:\n\n<{dsml}tool_calls>\n<{dsml}invoke name=\"$TOOL_NAME\">\n<{dsml}parameter name=\"$PARAMETER_NAME\" string=\"true|false\">$PARAMETER_VALUE</{dsml}parameter>\n...\n</{dsml}invoke>\n<{dsml}invoke name=\"$TOOL_NAME2\">\n...\n</{dsml}invoke>\n</{dsml}tool_calls>\n\nString parameters should be specified as is and set `string=\"true\"`. For all other types (numbers, booleans, arrays, objects), pass the value in JSON format and set `string=\"false\"`.\n\nIf thinking_mode is enabled (triggered by <think>), you MUST output your complete reasoning inside <think>...</think> BEFORE any tool calls or final response.\n\nOtherwise, output directly after </think> with tool calls or final response.\n\n### Available Tool Schemas\n\n{schemas}\n\nYou MUST strictly follow the above defined tool name and parameter schemas to invoke tool calls.\n"
     ))
+}
+
+#[cfg(test)]
+mod mistral_template_tests {
+    use super::*;
+
+    fn msg(role: Role, content: &str) -> Message {
+        Message {
+            role,
+            content: Some(content.to_string()),
+            tool_calls: Vec::new(),
+            tool_call_id: None,
+            name: None,
+        }
+    }
+
+    /// Tested here rather than through `MfTokenizer` because there is no
+    /// Mistral tokenizer fixture in this repo: the render is pure text and
+    /// the dialect's whole content, so it is worth pinning on its own.
+    #[test]
+    fn a_user_turn_renders_as_an_instruction_block() {
+        let out = mistral_chat_template(&[msg(Role::User, "hello")]).unwrap();
+        assert_eq!(out, " [INST] hello [/INST]");
+    }
+
+    /// THE RULE A NAIVE RENDER GETS WRONG: a system message has no turn of
+    /// its own; it is folded into the first user turn. Emitting it as its own
+    /// `[INST]` block would leave two instructions in a row, which the model
+    /// was never trained on.
+    #[test]
+    fn a_system_message_folds_into_the_first_user_turn() {
+        let out = mistral_chat_template(&[
+            msg(Role::System, "be terse"),
+            msg(Role::User, "hello"),
+            msg(Role::Assistant, "hi"),
+            msg(Role::User, "again"),
+        ])
+        .unwrap();
+        assert_eq!(
+            out,
+            " [INST] be terse\n\nhello [/INST] hi</s> [INST] again [/INST]"
+        );
+    }
+
+    /// `</s>` closes an ASSISTANT turn only. A user turn is closed by
+    /// `[/INST]`, and putting a sentence end there instead is the other half
+    /// of the same mistake.
+    #[test]
+    fn only_assistant_turns_are_closed_with_the_sentence_end() {
+        let out =
+            mistral_chat_template(&[msg(Role::User, "a"), msg(Role::Assistant, "b")]).unwrap();
+        assert_eq!(out.matches("</s>").count(), 1);
+        assert!(out.ends_with("b</s>"));
+    }
+
+    #[test]
+    fn a_tool_message_is_refused_rather_than_invented() {
+        assert!(mistral_chat_template(&[msg(Role::Tool, "{}")]).is_err());
+    }
 }

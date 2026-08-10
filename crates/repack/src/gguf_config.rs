@@ -42,10 +42,16 @@ impl std::fmt::Display for GgufConfigError {
             GgufConfigError::MissingArchitecture => {
                 write!(f, "GGUF metadata has no general.architecture")
             }
-            GgufConfigError::UnsupportedArchitecture { architecture } => write!(
-                f,
-                "GGUF architecture {architecture:?} has no family in this port"
-            ),
+            // The registry, not a bare string: a recognized-but-unported
+            // architecture gets told what it would need and where the
+            // checklist is (ROADMAP Phase M Stage 1).
+            GgufConfigError::UnsupportedArchitecture { architecture } => {
+                write!(
+                    f,
+                    "{}",
+                    crate::arch_registry::describe_gguf_architecture(architecture)
+                )
+            }
             GgufConfigError::MissingKey { key } => write!(f, "GGUF metadata has no {key}"),
             GgufConfigError::BadValue { key, detail } => write!(f, "GGUF {key}: {detail}"),
             GgufConfigError::MissingTensor { name } => {
@@ -251,9 +257,20 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
     arch.num_layers = num_layers;
     arch.hidden_size = m.i64("embedding_length")?;
     arch.num_heads = m.i64("attention.head_count")?;
-    arch.num_experts = m.i64("expert_count")?;
-    arch.top_k_experts = m.i64("expert_used_count")?;
-    arch.moe_intermediate_size = m.i64("expert_feed_forward_length")?;
+    // A DENSE checkpoint publishes none of the three MoE keys, and the
+    // `llama` architecture covers both halves (Mixtral has them, Llama 3.1
+    // does not), so they are optional and default to the dense answer.
+    arch.num_experts = m.opt_i64("expert_count").unwrap_or(0);
+    arch.top_k_experts = m.opt_i64("expert_used_count").unwrap_or(0);
+    // Gemma and Qwen publish a separate expert width; the `llama`
+    // architecture does not, and its experts are `feed_forward_length` wide.
+    // Measured absent on both Mixtral conversions, and asserted so in
+    // `gguf_checkpoint_network.rs::scopes_phase_m2_from_the_mixtral_header`.
+    arch.moe_intermediate_size = match m.opt_i64("expert_feed_forward_length") {
+        Some(width) => width,
+        None if arch.num_experts > 0 => m.i64("feed_forward_length")?,
+        None => 0,
+    };
     arch.vocab_size = vocab_size(header)?;
     // Untied only when the checkpoint actually ships a separate head.
     arch.tie_word_embeddings = !header.tensors.contains_key("output.weight");
@@ -261,6 +278,10 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
     arch.full_attention_layer_mask = match family {
         ModelFamily::Gemma4 => gemma4_layer_mask(&m, num_layers as usize)?,
         ModelFamily::Qwen36 => qwen36_layer_mask(&m, num_layers as usize)?,
+        // Every layer is full attention: neither a dense Llama nor a Mixtral
+        // publishes `attention.sliding_window`, and Mistral 7B's window is a
+        // property of that model rather than of the architecture.
+        ModelFamily::Llama => vec![1u8; num_layers as usize],
         ModelFamily::DeepseekV4Flash => {
             return Err(GgufConfigError::UnsupportedArchitecture {
                 architecture: architecture.to_string(),

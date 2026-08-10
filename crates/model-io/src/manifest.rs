@@ -405,8 +405,9 @@ fn is_production_arch(expected: &ArchConfig) -> bool {
 /// resident GEMV, but there is no IQ4_NL phase 1 and no IQ3_XXS phase 2
 /// because no real file asks for either. That is the same weaker footing
 /// Q6_K stands on, and it fails the same way: at the dispatch site, by name.
-pub const EXECUTABLE_GGUF_TYPES: [&str; 6] =
-    ["q8_0", "q4_k", "q6_k", "iq3_xxs", "iq4_nl", "iq4_xs"];
+pub const EXECUTABLE_GGUF_TYPES: [&str; 7] = [
+    "q8_0", "q4_k", "q5_k", "q6_k", "iq3_xxs", "iq4_nl", "iq4_xs",
+];
 
 fn validate_quant(quant: &ManifestQuant) -> Result<(), ModelError> {
     let slots: [(&str, &ManifestQuantSlot, &[i64]); 5] = [

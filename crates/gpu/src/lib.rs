@@ -49,6 +49,8 @@ mod dequant_iq_gemv;
 #[cfg(target_os = "macos")]
 mod dequant_q4_k_gemv;
 #[cfg(target_os = "macos")]
+mod dequant_q5_k_gemv;
+#[cfg(target_os = "macos")]
 mod dequant_q6_k_gemv;
 #[cfg(target_os = "macos")]
 mod dequant_q8_0_gemv;
@@ -115,6 +117,11 @@ pub use dequant_q4_k_gemv::{
     Q4_K_BLOCK_ELEMS,
 };
 #[cfg(target_os = "macos")]
+pub use dequant_q5_k_gemv::{
+    dequant_q5_k_gemv, dequant_q5_k_gemv_resident, encode_dequant_q5_k_gemv_resident,
+    q5_k_row_bytes, Q5KResidentMatrix, Q5_K_BLOCK_BYTES, Q5_K_BLOCK_ELEMS,
+};
+#[cfg(target_os = "macos")]
 pub use dequant_q6_k_gemv::{
     dequant_q6_k_gemv, dequant_q6_k_gemv_resident, encode_dequant_q6_k_gemv_resident,
     encode_embed_lookup_q6_k, q6_k_row_bytes, Q6KResidentMatrix, Q6_K_BLOCK_BYTES,
@@ -151,7 +158,7 @@ pub use moe_decode::{
 pub use moe_gguf::{
     encode_moe_phase1_iq3_xxs, encode_moe_phase1_iq4_xs, encode_moe_phase1_q4_k,
     encode_moe_phase1_q8_0, encode_moe_phase2_iq4_nl, encode_moe_phase2_q4_k,
-    encode_moe_phase2_q8_0,
+    encode_moe_phase2_q6_k, encode_moe_phase2_q8_0,
 };
 #[cfg(target_os = "macos")]
 pub use power_state::{low_power_mode_enabled, thermal_state_raw};

@@ -48,9 +48,10 @@ pub use quant::{
     quantize_int4_affine, quantize_int8_affine, Int4AffineRow, Int8AffineRow,
 };
 pub use quant_gguf::{
-    dequant_q4_k_gemv, dequant_q6_k_gemv, dequant_q8_0_gemv, dequantize_q4_k, dequantize_q6_k,
-    dequantize_q8_0, pearson, quantize_q4_k, quantize_q6_k, quantize_q8_0, Q4_K_BLOCK_BYTES,
-    Q4_K_BLOCK_ELEMS, Q4_K_SUB_ELEMS, Q6_K_BLOCK_BYTES, Q6_K_BLOCK_ELEMS, Q6_K_SUB_ELEMS,
+    dequant_q4_k_gemv, dequant_q5_k_gemv, dequant_q6_k_gemv, dequant_q8_0_gemv, dequantize_q4_k,
+    dequantize_q5_k, dequantize_q6_k, dequantize_q8_0, pearson, quantize_q4_k, quantize_q6_k,
+    quantize_q8_0, Q4_K_BLOCK_BYTES, Q4_K_BLOCK_ELEMS, Q4_K_SUB_ELEMS, Q5_K_BLOCK_BYTES,
+    Q5_K_BLOCK_ELEMS, Q5_K_SUB_ELEMS, Q6_K_BLOCK_BYTES, Q6_K_BLOCK_ELEMS, Q6_K_SUB_ELEMS,
     Q8_0_BLOCK_BYTES, Q8_0_BLOCK_ELEMS,
 };
 pub use quant_gguf_iq::{

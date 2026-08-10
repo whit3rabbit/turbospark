@@ -21,7 +21,7 @@ mod sha256;
 
 pub use arch_baselines::{
     all_known_architectures, deepseek_v4_flash_284b_a13b, gemma4_26b_a4b, known_architecture,
-    qwen36_35b_a3b,
+    mixtral_8x7b, qwen36_35b_a3b,
 };
 pub use arch_config::{
     ArchConfig, CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig,

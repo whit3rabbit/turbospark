@@ -90,6 +90,18 @@ impl<'a> StructuredAssistantDecoder<'a> {
             ChatDialect::ChatMl => return self.consume_chatml(token_id, delta),
             ChatDialect::Deepseek => return self.consume_deepseek(token_id, delta),
             ChatDialect::Gemma => {}
+            // Nothing to decode: this checkpoint has no tool-call or
+            // thinking markup, and its channel/tool ids are all
+            // `NO_SUCH_TOKEN_ID`. Falling through to the Gemma arm would
+            // compare every token against that sentinel, which is harmless
+            // but says something untrue about the dialect.
+            ChatDialect::Mistral => {
+                return Ok(if delta.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![StructuredAssistantEvent::Content(delta.to_string())]
+                })
+            }
         }
 
         if token_id == self.tokenizer.channel_start_id {

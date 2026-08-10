@@ -38,6 +38,24 @@ const QWEN36_UD_Q3_K_M: &str =
 // stand for "3-bit".
 const GEMMA4_STATIC_Q3_K_M: &str = "https://huggingface.co/mradermacher/gemma-4-26B-A4B-it-GGUF/resolve/main/gemma-4-26B-A4B-it.Q3_K_M.gguf";
 
+// ROADMAP Phase M2's first bring-up candidate. `docs/NEW_MODEL.md` Phase 0
+// says decide the scope in writing BEFORE touching code, and for a GGUF
+// source the header is where most of that writing comes from: which
+// `ArchConfig` fields the file determines, which tensor names have no row
+// yet, and what the layer graph looks like. A few MB off a 26 GB file.
+// TWO conversions of the SAME model, because they do not agree on how the
+// experts are laid out and the difference decides the repack walk. The 2023
+// TheBloke build predates llama.cpp merging per-expert tensors into one 3-D
+// `ffn_*_exps`; the 2025 mradermacher build is post-merge. Its quantization
+// matters too: Q4_0 experts are a type this port REFUSES, Q4_K ones it runs.
+const MIXTRAL_8X7B_LEGACY_Q4_0: &str = "https://huggingface.co/TheBloke/Mixtral-8x7B-Instruct-v0.1-GGUF/resolve/main/mixtral-8x7b-instruct-v0.1.Q4_0.gguf";
+const MIXTRAL_8X7B_Q4_K_M: &str = "https://huggingface.co/mradermacher/Mixtral-8x7B-Instruct-v0.1-GGUF/resolve/main/Mixtral-8x7B-Instruct-v0.1.Q4_K_M.gguf";
+
+// The dense half of the SAME architecture string, probed beside it because
+// the whole reason Phase M2 takes `llama` MoE-first is that one string
+// covers both and only one of them keeps the memory ceiling.
+const LLAMA31_8B_Q6_K: &str = "https://huggingface.co/bartowski/Meta-Llama-3.1-8B-Instruct-GGUF/resolve/main/Meta-Llama-3.1-8B-Instruct-Q6_K.gguf";
+
 /// Collapses `blk.<N>.` to `blk.*.` so a 30-layer model prints 20 shapes
 /// rather than 600 names.
 fn shape_key(name: &str) -> String {
@@ -323,4 +341,173 @@ fn reads_the_real_qwen36_q4_k_m_header() {
     assert_every_name_maps(&h, ModelFamily::Qwen36);
     assert_mapped_names_exist_in_install(&h, ModelFamily::Qwen36, "TURBOSPARK_QWEN36_INSTALL_DIR");
     assert_arch_matches_install(&h, "TURBOSPARK_QWEN36_INSTALL_DIR");
+}
+
+/// ROADMAP Phase M2, `docs/NEW_MODEL.md` Phase 0: scope the first bring-up
+/// candidate from its header, before any code.
+///
+/// Prints, rather than asserts, most of what it finds -- Phase 0's output is
+/// a WRITTEN scope and this is the instrument for it. The three assertions
+/// are the claims the phase's ORDERING rests on, so they are the ones that
+/// must fail loudly if a republished file ever moves: Mixtral is the `llama`
+/// architecture, its MoE is expressed in metadata, and this port classes
+/// that architecture as recognized-but-unported rather than runnable.
+///
+/// The unmapped-name list is the deliverable for `gguf_names.rs`: there is
+/// no `ModelFamily` for `llama` yet, so `assert_every_name_maps` cannot be
+/// called here and the shape rows in the report above are the inventory.
+#[test]
+#[ignore = "network: reads a few MB off two ~26 GB remote checkpoints"]
+fn scopes_phase_m2_from_the_mixtral_header() {
+    let h = fetch(MIXTRAL_8X7B_Q4_K_M);
+    report(
+        "Mixtral-8x7B-Instruct-v0.1.Q4_K_M.gguf (2025 conversion)",
+        &h,
+    );
+
+    // The same model converted in 2023, kept as the evidence that ONE
+    // architecture string has two on-disk expert layouts. A walk that
+    // assumes either one must refuse the other by name rather than
+    // misreading it: 256 separate `ffn_down.<e>.weight` tensors and one
+    // 3-D `ffn_down_exps` hold the same weights in the same order, so a
+    // mistake here is silent.
+    let legacy = fetch(MIXTRAL_8X7B_LEGACY_Q4_0);
+    report(
+        "mixtral-8x7b-instruct-v0.1.Q4_0.gguf (2023 conversion, pre-merge)",
+        &legacy,
+    );
+    let merged = |hh: &GgufHeader| {
+        hh.tensors
+            .keys()
+            .any(|n| n.ends_with("ffn_down_exps.weight"))
+    };
+    println!(
+        "\n-- expert layout: 2025 merged={} ({} tensors), 2023 merged={} ({} tensors)",
+        merged(&h),
+        h.tensors.len(),
+        merged(&legacy),
+        legacy.tensors.len()
+    );
+
+    assert_eq!(h.architecture(), Some("llama"));
+    assert_eq!(legacy.architecture(), Some("llama"));
+    assert!(
+        matches!(
+            turbospark_repack::gguf_arch_support("llama"),
+            Some(turbospark_repack::ArchSupport::Supported(_))
+        ),
+        "llama gained a decode flow in ROADMAP Phase M2"
+    );
+    let experts = h
+        .metadata
+        .get("llama.expert_count")
+        .and_then(|v| v.as_u64())
+        .expect("Mixtral publishes an expert count");
+    let used = h
+        .metadata
+        .get("llama.expert_used_count")
+        .and_then(|v| v.as_u64())
+        .expect("Mixtral publishes a top-k");
+    println!("\n-- MoE shape: {experts} experts, top-{used}");
+    assert!(experts > 1 && used >= 1 && used < experts);
+    assert!(
+        merged(&h) && !merged(&legacy),
+        "the two conversions are supposed to differ in expert layout; if they \
+         no longer do, the walk's refusal of the legacy shape is dead code"
+    );
+    // Neither file publishes a separate expert FFN width, which both other
+    // families do and `arch_from_gguf` currently REQUIRES. It has to fall
+    // back to `feed_forward_length` for this architecture.
+    assert!(
+        !h.metadata.contains_key("llama.expert_feed_forward_length"),
+        "if this key appeared, arch_from_gguf needs no fallback after all"
+    );
+}
+
+/// The dense half of the same architecture string, for the contrast that
+/// decides Phase M2's order: same `general.architecture`, no expert count,
+/// so every byte of it would be resident (AGENTS.md Gotcha 19) and the
+/// memory ceiling the engine is built around does not apply.
+#[test]
+#[ignore = "network: reads a few MB off a 7 GB remote checkpoint"]
+fn scopes_phase_m2_from_the_dense_llama_header() {
+    let h = fetch(LLAMA31_8B_Q6_K);
+    report("Meta-Llama-3.1-8B-Instruct-Q6_K.gguf", &h);
+
+    assert_eq!(h.architecture(), Some("llama"));
+    let experts = h
+        .metadata
+        .get("llama.expert_count")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    assert!(
+        experts <= 1,
+        "a dense Llama must not carry a routed expert count, got {experts}"
+    );
+
+    // The RoPE frequency scaling Llama 3.1 added ships as a TENSOR, not as
+    // metadata, and there is no `ArchConfig` field or kernel input for it
+    // here. Mixtral has none, which is part of why the MoE half goes first.
+    assert!(
+        h.tensors.contains_key("rope_freqs.weight"),
+        "expected Llama 3.1's rope_freqs tensor"
+    );
+}
+
+/// Diagnostic for the ROADMAP Phase M2 install failure: both streamed runs
+/// died writing layer 21 with "error decoding response body", which is
+/// DETERMINISTIC and therefore not CDN flakiness. The first question is
+/// whether the byte ranges the walk asks for are inside the file at all.
+///
+/// Prints the tensor whose data ends furthest into the file and compares it
+/// with the published length, plus the span of layer 21 specifically.
+#[test]
+#[ignore = "network: reads a header off a 26 GB remote checkpoint"]
+fn checks_mixtral_tensor_ranges_against_the_file_length() {
+    let h = fetch(MIXTRAL_8X7B_Q4_K_M);
+    let file_len: u64 = 28_448_468_384;
+
+    let end_of = |info: &turbospark_repack::GgufTensorInfo| -> u64 {
+        let elems: u64 = info.dims.iter().product();
+        let bytes = ggml_type_block(info.ggml_type)
+            .map(|(blk, sz)| elems / blk.max(1) * sz)
+            .unwrap_or(0);
+        h.data_region_start + info.offset + bytes
+    };
+
+    let mut furthest = ("", 0u64);
+    for (name, info) in &h.tensors {
+        let end = end_of(info);
+        if end > furthest.1 {
+            furthest = (name.as_str(), end);
+        }
+    }
+    println!("file length      {file_len}");
+    println!("furthest tensor  {} ends at {}", furthest.0, furthest.1);
+    println!(
+        "slack            {} bytes",
+        file_len as i64 - furthest.1 as i64
+    );
+
+    for name in [
+        "blk.21.ffn_gate_exps.weight",
+        "blk.21.ffn_up_exps.weight",
+        "blk.21.ffn_down_exps.weight",
+    ] {
+        if let Some(info) = h.tensors.get(name) {
+            println!(
+                "{name}: type {} dims {:?} -> [{}, {})",
+                ggml_type_name(info.ggml_type).unwrap_or("?"),
+                info.dims,
+                h.data_region_start + info.offset,
+                end_of(info)
+            );
+        }
+    }
+    assert!(
+        furthest.1 <= file_len,
+        "the walk would read past EOF: {} ends at {} in a {file_len}-byte file",
+        furthest.0,
+        furthest.1
+    );
 }

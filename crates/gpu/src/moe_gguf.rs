@@ -40,6 +40,7 @@ use crate::moe_decode::{
 const SOURCE: &str = concat!(
     include_str!("shaders/moe.metal"),
     include_str!("shaders/dequant_q4_k.metal"),
+    include_str!("shaders/dequant_q6_k.metal"),
     include_str!("shaders/dequant_iq.metal"),
     include_str!("shaders/moe_gguf.metal")
 );
@@ -242,6 +243,47 @@ pub fn encode_moe_phase2_iq4_nl(
         context,
         pass,
         "moe_phase2_down_reduce_k8_iq4_nl",
+        routed,
+        offsets,
+        acts,
+        routing_w,
+        residual,
+        y,
+        d_dim,
+        f_dim,
+        use_silu,
+    )
+}
+
+/// Phase 2 over Q6_K expert blobs, which is what Mixtral 8x7B's Q4_K_M
+/// carries on the `ffn_down_exps` of 16 of its 32 layers (the other 16 are
+/// Q4_K and use the pair above) -- ROADMAP Phase M2.
+///
+/// There is deliberately no Q6_K phase 1: that file's `ffn_gate_exps` and
+/// `ffn_up_exps` are Q4_K on every layer. Same call the Q6_K GEMV made when it
+/// shipped without an embedding or MoE sibling, and a checkpoint that needs
+/// one fails at the dispatch site by name.
+///
+/// `f_dim` must be a whole number of 256-element superblocks.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_moe_phase2_q6_k(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    routed: &RoutedBlobsBuffer,
+    offsets: &MoeExpertOffsets,
+    acts: (&metal::Buffer, u64),
+    routing_w: (&metal::Buffer, u64),
+    residual: (&metal::Buffer, u64),
+    y: (&metal::Buffer, u64),
+    d_dim: u32,
+    f_dim: u32,
+    use_silu: bool,
+) -> Result<(), GpuError> {
+    assert_eq!(f_dim as usize % crate::Q6_K_BLOCK_ELEMS, 0);
+    encode_phase2(
+        context,
+        pass,
+        "moe_phase2_down_reduce_k8_q6_k",
         routed,
         offsets,
         acts,

@@ -56,6 +56,37 @@ impl StreamingGturboWriter {
         Ok(())
     }
 
+    /// Records a layer's layout entry for a file ALREADY on disk, without
+    /// writing anything (ROADMAP Phase M2's resume path).
+    ///
+    /// `layer` must have been built by `plan_one_layer_shape`, whose
+    /// sub-tensors are correctly sized runs of zeros: the entry is a function
+    /// of sizes, dtypes and shapes, so it comes out identical to the one the
+    /// real bytes would have produced. The size the writer WOULD have written
+    /// is checked against the file that is there, so a truncated or
+    /// differently-strided leftover is refused rather than adopted -- which is
+    /// the only way this can go quietly wrong.
+    pub fn adopt_layer(&mut self, layer: &LayerBlobs) -> Result<(), WriterError> {
+        let (file_bytes, entry) =
+            build_layer_file(layer, self.expert_stride, self.experts_per_layer)?;
+        let file_name = format!("layer_{:02}.bin", layer.layer);
+        let layer_path = self.dir.join("packed_experts").join(&file_name);
+        let found = std::fs::metadata(&layer_path)
+            .map_err(|e| io_err(&layer_path, e))?
+            .len();
+        if found != file_bytes.len() as u64 {
+            return Err(WriterError::Io {
+                path: layer_path.display().to_string(),
+                detail: format!(
+                    "cannot resume: layer file is {found} bytes, this walk would write {}",
+                    file_bytes.len()
+                ),
+            });
+        }
+        self.layout_layers.push(entry);
+        Ok(())
+    }
+
     /// Finalizes the installation by writing `layout.json`, `model_weights.bin`, and `manifest.json`.
     pub fn finish(
         self,

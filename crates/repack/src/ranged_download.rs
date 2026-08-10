@@ -146,7 +146,17 @@ const MAX_RANGE_BYTES: u64 = 64 * 1024 * 1024;
 /// Attempts per chunk before giving up. Transport failures on a multi-GB
 /// walk are expected rather than exceptional; a format error is not retried
 /// because it will not change.
-const RANGE_ATTEMPTS: usize = 4;
+///
+/// Raised from 4 to 8 in ROADMAP Phase M2. It did NOT fix the failure it was
+/// raised for (a 26 GB Mixtral walk that died three times at the same layer,
+/// ~19 GB in), and it is kept only because a longer walk deserves a longer
+/// budget: the cost of being wrong is asymmetric, since another four attempts
+/// cost seconds of backoff while giving up costs the whole walk, which has no
+/// resume. Two hypotheses about that failure were tested and refuted -- bad
+/// offsets (the ranges end exactly at EOF and `curl` fetched every failing
+/// 64 MiB chunk at HTTP 206) and connection reuse (disabling pooling changed
+/// nothing) -- so do not read this constant as the fix.
+const RANGE_ATTEMPTS: usize = 8;
 
 /// Splits `[start, end_exclusive)` into successive chunks of at most `cap`
 /// bytes. Pure, so the boundary arithmetic is testable without a network.

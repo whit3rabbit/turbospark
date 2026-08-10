@@ -58,11 +58,29 @@ pub fn gguf_manifest_quant(header: &GgufHeader, plan: &Plan<'_>) -> serde_json::
     } else {
         slot(router_source)
     };
+    let attention = type_of(&["attn_q.weight", "attn_qkv.weight"]);
+    // A MODEL WITH NO SHARED EXPERT STILL NEEDS THIS SLOT TO BE A TRUE AND
+    // EXECUTABLE STATEMENT. Mixtral has neither a `ffn_gate_shexp` nor a
+    // dense `ffn_gate` (its FFN names all end `_exps.weight`), so the probe
+    // finds nothing and the literal answer is "absent" -- which
+    // `validate_quant` then refuses, because "absent" is not a block type
+    // with a kernel. This is the same hole the Qwen GGUF install hit from the
+    // other side (AGENTS.md: the walk wrote `absent` for two slots because it
+    // probed hardcoded `blk.0.` names on a hybrid model).
+    //
+    // Falling back to the ATTENTION type rather than to the routed one: both
+    // are executable whenever the install is, and the resident core is what a
+    // reader would take this slot to describe on a model that has no shared
+    // expert at all.
+    let shared = match type_of(&["ffn_gate.weight", "ffn_gate_shexp.weight"]) {
+        "absent" => attention,
+        found => found,
+    };
     serde_json::json!({
         "embedding": slot(type_of(&["token_embd.weight"])),
-        "attention": slot(type_of(&["attn_q.weight", "attn_qkv.weight"])),
+        "attention": slot(attention),
         "router": router,
-        "sharedExpert": slot(type_of(&["ffn_gate.weight", "ffn_gate_shexp.weight"])),
+        "sharedExpert": slot(shared),
         "routedExpert": routed_slot,
     })
 }
