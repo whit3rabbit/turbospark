@@ -235,6 +235,76 @@ fn architecture_strings_are_the_converters_names_not_the_familys() {
     assert_eq!(gguf_architecture(ModelFamily::Llama), Some("llama"));
     assert_eq!(family_for_architecture("llama"), Some(ModelFamily::Llama));
     assert_eq!(family_for_architecture("phi3"), None);
+    // The second architecture whose GGUF string equals its family name.
+    assert_eq!(gguf_architecture(ModelFamily::Qwen3Moe), Some("qwen3moe"));
+    assert_eq!(
+        family_for_architecture("qwen3moe"),
+        Some(ModelFamily::Qwen3Moe)
+    );
+    // And it is NOT the Qwen 3.6 family, whose string it superficially
+    // resembles. Two different models, two different flows.
+    assert_ne!(
+        family_for_architecture("qwen3moe"),
+        family_for_architecture("qwen35moe")
+    );
+}
+
+/// Qwen3-MoE's per-layer table: the `llama` set plus the two per-head norms.
+///
+/// The `llama` rows are asserted TOO, not taken on trust, because the two
+/// tables are separate functions that happen to agree; if one drifts, the
+/// decode flow they share would read the wrong tensor for one family only.
+#[test]
+fn maps_qwen3moe_as_llama_plus_the_two_per_head_norms() {
+    let f = ModelFamily::Qwen3Moe;
+    let p = "language_model.model.layers.3.";
+    for (gguf, canonical) in [
+        ("blk.3.attn_q.weight", "self_attn.q_proj.weight"),
+        ("blk.3.attn_k.weight", "self_attn.k_proj.weight"),
+        ("blk.3.attn_v.weight", "self_attn.v_proj.weight"),
+        ("blk.3.attn_output.weight", "self_attn.o_proj.weight"),
+        ("blk.3.attn_norm.weight", "input_layernorm.weight"),
+        ("blk.3.ffn_norm.weight", "post_attention_layernorm.weight"),
+        ("blk.3.ffn_gate_inp.weight", "mlp.gate.weight"),
+        // The two rows `llama` does not have.
+        ("blk.3.attn_q_norm.weight", "self_attn.q_norm.weight"),
+        ("blk.3.attn_k_norm.weight", "self_attn.k_norm.weight"),
+    ] {
+        assert_eq!(resident(gguf, f), format!("{p}{canonical}"), "{gguf}");
+    }
+    for norm in ["attn_q_norm", "attn_k_norm"] {
+        assert!(
+            map_gguf_name(&format!("blk.3.{norm}.weight"), ModelFamily::Llama).is_err(),
+            "{norm} must stay unmapped for the llama architecture, which has no per-head norms"
+        );
+    }
+}
+
+/// Its experts are unfused and there is no shared expert to map, which is
+/// the MoE half of "the llama table plus two rows".
+#[test]
+fn qwen3moe_routes_three_unfused_experts_and_has_no_shared_expert() {
+    let f = ModelFamily::Qwen3Moe;
+    for (gguf, role) in [
+        ("blk.5.ffn_gate_exps.weight", "gate"),
+        ("blk.5.ffn_up_exps.weight", "up"),
+        ("blk.5.ffn_down_exps.weight", "down"),
+    ] {
+        assert_eq!(
+            map_gguf_name(gguf, f),
+            Ok(GgufMapping::Routed { layer: 5, role }),
+            "{gguf}"
+        );
+    }
+    // Qwen 3.6's shared-expert names must not resolve here: this model has
+    // no shared expert at all, and silently mapping one would put a tensor
+    // in the install that no dispatch ever reads.
+    for shared in [
+        "blk.5.ffn_gate_shexp.weight",
+        "blk.5.ffn_gate_inp_shexp.weight",
+    ] {
+        assert!(map_gguf_name(shared, f).is_err(), "{shared}");
+    }
 }
 
 /// DeepSeek V4 has no repack path and must not acquire one by accident.

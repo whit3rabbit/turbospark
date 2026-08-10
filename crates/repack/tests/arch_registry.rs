@@ -58,10 +58,14 @@ fn an_unknown_architecture_resolves_to_nothing() {
 
 /// The point of the whole table: the refusal names the string, and for a
 /// recognized one it also names the next step.
+///
+/// `llama4` is the PLANNED exemplar here and has to be re-picked whenever it
+/// is promoted, exactly as it was when `qwen3moe` became supported. That
+/// churn is the table working: a row cannot move without a test noticing.
 #[test]
 fn the_refusal_names_the_architecture_and_the_checklist() {
-    let planned = describe_gguf_architecture("qwen3moe");
-    assert!(planned.contains("qwen3moe"), "{planned}");
+    let planned = describe_gguf_architecture("llama4");
+    assert!(planned.contains("llama4"), "{planned}");
     assert!(planned.contains("docs/NEW_MODEL.md"), "{planned}");
 
     let unknown = describe_gguf_architecture("not-a-real-architecture");
@@ -74,13 +78,13 @@ fn the_refusal_names_the_architecture_and_the_checklist() {
 /// architecture string is read before the refusal.
 #[test]
 fn arch_from_gguf_refuses_a_planned_architecture_with_the_registry_message() {
-    let bytes = minimal_gguf("qwen3moe");
+    let bytes = minimal_gguf("llama4");
     let header =
         turbospark_repack::parse_gguf_header(&bytes, bytes.len() as u64).expect("parse header");
     let message = arch_from_gguf(&header)
-        .expect_err("qwen3moe has no flow")
+        .expect_err("llama4 has no flow")
         .to_string();
-    assert!(message.contains("qwen3moe"), "{message}");
+    assert!(message.contains("llama4"), "{message}");
     assert!(message.contains("docs/NEW_MODEL.md"), "{message}");
 }
 

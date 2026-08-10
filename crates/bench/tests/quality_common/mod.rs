@@ -345,7 +345,10 @@ fn reference_perplexity(
     );
 
     runner.reset();
-    let mut logits = vec![LogitValue::from_f32(0.0); tokenizer.vocab_size];
+    // The MODEL's head width, not the tokenizer dialect's constant: two
+    // checkpoints can share a dialect and pad their heads differently
+    // (`RealForwardRunner::vocab_size`).
+    let mut logits = vec![LogitValue::from_f32(0.0); runner.vocab_size()];
     let mut nll_sum = 0.0f64;
     let first_scored = prompt_ids.len() - 1;
     for (position, &token) in ids.iter().take(ids.len() - 1).enumerate() {
@@ -409,6 +412,9 @@ fn generation_digest(
         rate: Default::default(),
     };
 
+    // Read before the mutable borrow: the logits width is the MODEL's,
+    // not the tokenizer dialect's constant.
+    let vocab_size = runner.vocab_size();
     let mut text = String::new();
     let result = run_raw_completion(
         runner,
@@ -416,7 +422,7 @@ fn generation_digest(
         prompt_ids,
         &config,
         PROTOCOL_MAX_CONTEXT,
-        tokenizer.vocab_size,
+        vocab_size,
         |event| match event {
             RawDecodeProgress::Token { delta, .. } => text.push_str(&delta),
             RawDecodeProgress::Tail(tail) => text.push_str(&tail),

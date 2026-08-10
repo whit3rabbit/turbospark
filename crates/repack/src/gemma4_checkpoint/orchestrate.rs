@@ -343,7 +343,9 @@ pub fn manifest_quant(quant: &Gemma4Quant, family: ModelFamily) -> serde_json::V
         // `ffn_gate_inp`) and has NO shared expert -- that slot's probe finds
         // nothing and takes the default, which `validate_quant` accepts at
         // 4 or 8 bits either way.
-        ModelFamily::Llama => (
+        // `qwen3moe` names every one of these the way the `llama`
+        // architecture does, shared expert included (it has none either).
+        ModelFamily::Llama | ModelFamily::Qwen3Moe => (
             format!("{l0}.self_attn.q_proj"),
             format!("{l0}.mlp.gate"),
             format!("{l0}.mlp.gate_proj"),

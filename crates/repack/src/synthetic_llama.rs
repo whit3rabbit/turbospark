@@ -45,6 +45,21 @@ const INTER: usize = 64;
 /// Gotcha 24), so anything else has to be written explicitly and matched
 /// explicitly.
 pub fn tiny_llama_arch(vocab_size: i64, num_layers: i64, num_experts: i64) -> ArchConfig {
+    tiny_gqa_moe_arch(vocab_size, num_layers, num_experts, ModelFamily::Llama)
+}
+
+/// The same shape for either family that runs this layer graph.
+///
+/// `ModelFamily::Qwen3Moe` is the identical config with a different `family`
+/// tag: the two architectures share every shape and behavioural field, and
+/// differ only in the per-head q/k norms (extra TENSORS, written by the
+/// builder below) and the RMS epsilon (not an `ArchConfig` field at all).
+pub fn tiny_gqa_moe_arch(
+    vocab_size: i64,
+    num_layers: i64,
+    num_experts: i64,
+    family: ModelFamily,
+) -> ArchConfig {
     ArchConfig {
         hidden_size: HIDDEN as i64,
         intermediate_size: INTER as i64,
@@ -69,7 +84,7 @@ pub fn tiny_llama_arch(vocab_size: i64, num_layers: i64, num_experts: i64) -> Ar
         attention_k_eq_v: false,
         full_attention_layer_mask: vec![1u8; num_layers as usize],
         hidden_activation: "silu".to_string(),
-        family: ModelFamily::Llama,
+        family,
         attn_output_gate: false,
         // 0.25, not the real model's 128^-0.5. `validate_arch` compares this
         // f64 EXACTLY against the manifest's and serde_json's default parser
@@ -109,7 +124,28 @@ pub fn build_synthetic_llama_real_install(
     num_experts: i64,
     model_id: &str,
 ) -> Result<ArchConfig, Box<dyn std::error::Error>> {
-    let arch = tiny_llama_arch(vocab_size, num_layers, num_experts);
+    build_synthetic_gqa_moe_install(
+        dir,
+        vocab_size,
+        num_layers,
+        num_experts,
+        model_id,
+        ModelFamily::Llama,
+    )
+}
+
+/// The same builder for either family, which is what makes the pair a real
+/// test of the shared flow: pass `ModelFamily::Qwen3Moe` and it additionally
+/// writes the two `[head_dim]` q/k norm vectors that architecture carries.
+pub fn build_synthetic_gqa_moe_install(
+    dir: &std::path::Path,
+    vocab_size: i64,
+    num_layers: i64,
+    num_experts: i64,
+    model_id: &str,
+    family: ModelFamily,
+) -> Result<ArchConfig, Box<dyn std::error::Error>> {
+    let arch = tiny_gqa_moe_arch(vocab_size, num_layers, num_experts, family);
     let experts = num_experts as usize;
     let vocab = vocab_size as usize;
 
@@ -145,8 +181,20 @@ pub fn build_synthetic_llama_real_install(
             ));
         }
 
-        // Plain GQA: q_proj emits exactly `num_heads * head_dim` rows (no
-        // gate half), and there are no q/k norms to write.
+        // Plain GQA: q_proj emits exactly `num_heads * head_dim` rows, with
+        // no gate half. The per-head q/k norms exist on `qwen3moe` and not
+        // on `llama`, which is one of the two differences the shared decode
+        // flow keys on the family for.
+        if family == ModelFamily::Qwen3Moe {
+            for (i, norm) in ["q_norm", "k_norm"].iter().enumerate() {
+                ts.push(bf16_vector(
+                    &format!("{p}.self_attn.{norm}.weight"),
+                    HEAD_DIM,
+                    1.0,
+                    seed + 60 + i as u64,
+                ));
+            }
+        }
         ts.extend(int4_triple(
             &format!("{p}.self_attn.q_proj.weight"),
             NUM_HEADS * HEAD_DIM,

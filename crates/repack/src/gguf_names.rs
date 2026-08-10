@@ -245,6 +245,48 @@ fn map_llama_layer(suffix: &str, layer: usize) -> Option<GgufMapping> {
     }
 }
 
+/// Qwen3-MoE's per-layer suffixes, verified against
+/// `Qwen3-30B-A3B-Q4_K_M.gguf` (ROADMAP Phase M, the fine-grained follow-on).
+///
+/// **The `llama` table plus exactly two rows.** Qwen3 norms q and k per head
+/// before RoPE where a Mixtral norms neither, and those two `[head_dim]`
+/// tensors are the only per-layer name the two architectures do not share.
+/// Everything else -- the GQA projections, `ffn_norm` sitting where HF says
+/// `post_attention_layernorm`, `ffn_gate_inp` as the router, the three
+/// unfused `_exps` tensors -- is identical, which is why one decode flow
+/// serves both.
+///
+/// Deliberately NOT delegating to [`map_llama_layer`]: the two tables are
+/// equal today by observation of two real files, not by construction, and a
+/// delegation would make a future divergence in either file silently adopt
+/// the other family's answer.
+fn map_qwen3moe_layer(suffix: &str, layer: usize) -> Option<GgufMapping> {
+    let p = layer_prefix(layer);
+    let resident = |tail: &str| Some(GgufMapping::Resident(format!("{p}{tail}")));
+    match suffix {
+        "attn_q.weight" => resident("self_attn.q_proj.weight"),
+        "attn_k.weight" => resident("self_attn.k_proj.weight"),
+        "attn_v.weight" => resident("self_attn.v_proj.weight"),
+        "attn_output.weight" => resident("self_attn.o_proj.weight"),
+        // The two rows the `llama` table does not have.
+        "attn_q_norm.weight" => resident("self_attn.q_norm.weight"),
+        "attn_k_norm.weight" => resident("self_attn.k_norm.weight"),
+        "attn_norm.weight" => resident("input_layernorm.weight"),
+        "ffn_norm.weight" => resident("post_attention_layernorm.weight"),
+        "ffn_gate_inp.weight" => resident("mlp.gate.weight"),
+        "ffn_gate_exps.weight" => Some(GgufMapping::Routed {
+            layer,
+            role: "gate",
+        }),
+        "ffn_up_exps.weight" => Some(GgufMapping::Routed { layer, role: "up" }),
+        "ffn_down_exps.weight" => Some(GgufMapping::Routed {
+            layer,
+            role: "down",
+        }),
+        _ => None,
+    }
+}
+
 /// True for a pre-merge per-expert tensor suffix: `ffn_down.3.weight` and
 /// friends, which a 2023-era Mixtral conversion carries 256 of per role.
 ///
@@ -291,6 +333,7 @@ pub fn map_gguf_name(name: &str, family: ModelFamily) -> Result<GgufMapping, Ggu
             ModelFamily::Gemma4 => map_gemma4_layer(suffix, layer),
             ModelFamily::Qwen36 => map_qwen36_layer(suffix, layer),
             ModelFamily::Llama => map_llama_layer(suffix, layer),
+            ModelFamily::Qwen3Moe => map_qwen3moe_layer(suffix, layer),
             ModelFamily::DeepseekV4Flash => None,
         }
         .ok_or_else(unmapped);
@@ -310,6 +353,7 @@ pub fn gguf_architecture(family: ModelFamily) -> Option<&'static str> {
         ModelFamily::Gemma4 => Some("gemma4"),
         ModelFamily::Qwen36 => Some("qwen35moe"),
         ModelFamily::Llama => Some("llama"),
+        ModelFamily::Qwen3Moe => Some("qwen3moe"),
         ModelFamily::DeepseekV4Flash => None,
     }
 }

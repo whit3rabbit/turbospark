@@ -96,6 +96,101 @@ fn takes_behavioural_fields_from_the_family_baseline() {
     assert_ne!(a.partial_rotary_factor, 1.0);
 }
 
+/// A `qwen3moe` header, with the exact keys the published
+/// `Qwen3-30B-A3B-Q4_K_M.gguf` carries (read off it by
+/// `gguf_checkpoint_network.rs::scopes_qwen3moe_...`), at a fixture's scale.
+///
+/// Deliberately does NOT publish `attention.sliding_window`,
+/// `attention.key_length_swa` or `rope.freq_base_swa`, because the real file
+/// does not: this is the single-attention-kind, single-rope-base case, and
+/// asserting the derivation against a fixture that invented those keys would
+/// test the wrong file.
+fn qwen3moe_header() -> Vec<u8> {
+    let (bytes, _) = GgufBuilder::new()
+        .metadata_str("general.architecture", "qwen3moe")
+        .metadata_u32("qwen3moe.block_count", 2)
+        .metadata_u32("qwen3moe.embedding_length", 64)
+        .metadata_u32("qwen3moe.attention.head_count", 8)
+        .metadata_u32("qwen3moe.attention.head_count_kv", 2)
+        .metadata_u32("qwen3moe.attention.key_length", 16)
+        .metadata_u32("qwen3moe.attention.value_length", 16)
+        .metadata_u32("qwen3moe.expert_count", 16)
+        .metadata_u32("qwen3moe.expert_used_count", 4)
+        .metadata_u32("qwen3moe.expert_feed_forward_length", 32)
+        .metadata_u32("qwen3moe.feed_forward_length", 96)
+        .metadata_f32("qwen3moe.rope.freq_base", 1_000_000.0)
+        // Q8_0 rather than the real file's Q4_K/Q6_K: `arch_from_gguf` reads
+        // DIMS and never block types, and a K-quant row cannot be a partial
+        // 256-element superblock, so matching the real types here would force
+        // a 256-wide hidden and buy nothing.
+        .q8_0_tensor("token_embd.weight", &[64, 256], 1)
+        .q8_0_tensor("output.weight", &[64, 256], 2)
+        .build();
+    bytes
+}
+
+/// The whole family, off one header: shapes from the file, behaviour from
+/// the baseline, and the two head-dim fields agreeing.
+#[test]
+fn derives_qwen3moe_from_its_own_metadata() {
+    let bytes = qwen3moe_header();
+    let h = parse_gguf_header(&bytes, GGUF_DEFAULT_MAX_HEADER_BYTES).unwrap();
+    let a = arch_from_gguf(&h).expect("arch");
+
+    assert_eq!(a.family, ModelFamily::Qwen3Moe);
+    assert_eq!(a.num_layers, 2);
+    assert_eq!(a.hidden_size, 64);
+    assert_eq!(a.num_heads, 8);
+    assert_eq!(a.num_kv_heads, 2);
+    assert_eq!(a.num_full_kv_heads, 2);
+    assert_eq!(a.num_experts, 16);
+    assert_eq!(a.top_k_experts, 4);
+    // The expert width comes from its OWN key, not from
+    // `feed_forward_length`; the `llama` architecture is the one that has to
+    // fall back, and taking 96 here would size every routed dispatch wrong.
+    assert_eq!(a.moe_intermediate_size, 32);
+    assert_eq!(a.intermediate_size, 96);
+    assert_eq!(a.vocab_size, 256);
+    // `output.weight` present, so the head is untied.
+    assert!(!a.tie_word_embeddings);
+    // One attention kind, so every layer is mask 1 and both rope bases and
+    // both head-dim fields take the single published value. `head_dim`
+    // keeping a stale baseline value here is invisible in this family (no
+    // sliding layer reads it) and would surface on the next one.
+    assert_eq!(a.full_attention_layer_mask, vec![1, 1]);
+    assert_eq!(a.rope_theta, 1_000_000.0);
+    assert_eq!(a.full_rope_theta, 1_000_000.0);
+    assert_eq!(a.head_dim, 16);
+    assert_eq!(a.full_head_dim, 16);
+
+    // Behavioural fields, none of which GGUF publishes.
+    let baseline = model_io::qwen3_30b_a3b();
+    assert_eq!(a.attention_scale, baseline.attention_scale);
+    assert_eq!(a.partial_rotary_factor, 1.0);
+    assert_eq!(a.hidden_activation, "silu");
+    assert_eq!(a.final_logit_softcap, 0.0);
+    assert!(!a.ffn_sandwich_norms);
+    assert!(!a.attn_output_gate);
+    assert!(!a.shared_expert_gated);
+    assert!(!a.embedding_scaled_by_sqrt_hidden);
+    assert!(!a.rope_neox_subdim);
+    assert!(!a.router_scaled);
+    assert!(!a.attention_k_eq_v);
+}
+
+/// `qwen3moe` and `qwen35moe` are different models that this port runs
+/// through different flows, and the strings are one character apart.
+#[test]
+fn qwen3moe_is_not_the_qwen36_family() {
+    let bytes = qwen3moe_header();
+    let h = parse_gguf_header(&bytes, GGUF_DEFAULT_MAX_HEADER_BYTES).unwrap();
+    let a = arch_from_gguf(&h).expect("arch");
+    assert_ne!(a.family, ModelFamily::Qwen36);
+    // Qwen 3.6's derivation would demand the `ssm.*` keys this file has
+    // none of, so a misrouted family fails loudly rather than silently.
+    assert_eq!(a.linear_attention, model_io::LinearAttentionConfig::NONE);
+}
+
 #[test]
 fn rejects_a_file_with_no_architecture() {
     let (bytes, _) = GgufBuilder::new()

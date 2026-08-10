@@ -1,7 +1,15 @@
-//! The `llama`-architecture decode flow for [`RealForwardRunner`] (ROADMAP
+//! The plain-GQA-plus-MoE decode flow for [`RealForwardRunner`] (ROADMAP
 //! Phase M2). MoE half only: Mixtral 8x7B / 8x22B run, dense Llama and
 //! Mistral are refused at open by `state.rs` until the dense FFN has a GPU
 //! path.
+//!
+//! **TWO FAMILIES RUN THROUGH THIS ONE FLOW**, `llama` (Mixtral) and
+//! `qwen3moe` (Qwen3-30B-A3B), because the layer graph below is the same
+//! graph for both. They differ in exactly two places, both carried by
+//! [`RealLlamaState`] and both keyed on `ArchConfig.family`: Qwen3 norms q
+//! and k per head before RoPE, and its RMS epsilon is 1e-6 against 1e-5.
+//! A third copy of this file with two lines changed would be the more
+//! likely source of a divergence bug than the shared one is.
 //!
 //! One decoder layer, which is the pseudocode `docs/NEW_MODEL.md` Phase 0
 //! asks for before any of this is written:
@@ -9,6 +17,7 @@
 //! ```text
 //! h      = rms_norm(x, input_layernorm)
 //! q,k,v  = h @ {q,k,v}_proj                 // 32 q heads over 8 kv heads
+//! q,k    = per_head_norm(q, k)               // qwen3moe ONLY, before rope
 //! q,k    = rope(q, k, pos, base 1e6)        // full-head NeoX
 //! a      = attention(q, k, v) @ o_proj      // no gate, no window, no norms
 //! x      = x + a                            // RAW, no sandwich norm
@@ -37,8 +46,6 @@ use foundation::LogitValue;
 use crate::real_forward::{RealForwardError, RealForwardRunner};
 use crate::real_forward_dispatch::{encode_embed_any, encode_gemv_any};
 use crate::real_forward_utils::{entry, norm_view};
-
-pub(crate) const RMS_EPS: f32 = 1e-5;
 
 pub(crate) fn layer_tensor(layer: usize, suffix: &str) -> String {
     format!("language_model.model.layers.{layer}.{suffix}")
@@ -149,7 +156,7 @@ impl RealForwardRunner {
                 input_norm,
                 (&scratch.normed, 0),
                 hidden as u32,
-                RMS_EPS,
+                llama.rms_eps,
             )
             .map_err(gpu_err)?;
 
@@ -183,7 +190,7 @@ impl RealForwardRunner {
                 post_attn,
                 (&llama.moe_x, 0),
                 hidden as u32,
-                RMS_EPS,
+                llama.rms_eps,
             )
             .map_err(gpu_err)?;
 
@@ -256,7 +263,7 @@ impl RealForwardRunner {
                 final_norm,
                 (&scratch.normed, 0),
                 hidden as u32,
-                RMS_EPS,
+                llama.rms_eps,
             )
             .map_err(gpu_err)?;
             let head_name = if arch.tie_word_embeddings {

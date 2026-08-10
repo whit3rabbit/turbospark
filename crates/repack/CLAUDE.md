@@ -20,7 +20,7 @@ crates/repack/
 |   +-- resident_writer.rs          # Writes model_weights.bin resident tensor blob and index
 |   +-- synthetic_model.rs          # Synthetic model generator (build_synthetic_gemma4_install)
 |   +-- synthetic_real.rs           # Real-named synthetic generator (build_synthetic_gemma4_real_install)
-|   +-- synthetic_llama.rs          # Real-named synthetic Mixtral generator (build_synthetic_llama_real_install)
+|   +-- synthetic_llama.rs          # Real-named synthetic Mixtral / Qwen3-MoE generator (build_synthetic_gqa_moe_install)
 |   +-- synthetic_qwen.rs           # Real-named synthetic Qwen 3.6 generator (build_synthetic_qwen36_real_install)
 |   +-- gemma4_checkpoint/          # Gemma 4 / Qwen 3.6 mlx-community safetensors converter & streamer
 |   |   +-- mod.rs                  # Module root and install writer entrypoints
@@ -59,6 +59,7 @@ crates/repack/
     +-- gguf_install_network.rs     # Streams the real Q8_0 GGUF into a full install (ignored)
     +-- gguf_qwen_install_network.rs# Same for the real Qwen Q4_K_M, the mixed-block-type case (ignored)
     +-- gguf_mixtral_install_network.rs # Same for the real Mixtral Q4_K_M, plus a cheap dense-llama walk (ignored)
+    +-- gguf_qwen3moe_install_network.rs # Same for the real Qwen3-30B-A3B Q4_K_M, the FINE-GRAINED MoE (ignored)
     +-- gguf_llama_rope_patch.rs    # The rotary pair convention: in-place diagnostic + the walk's inverse (ignored)
     +-- gguf_qwen_core_probe.rs     # A GGUF install's resident core vs the MLX one, tensor by tensor (ignored)
     +-- gguf_qwen_quant_probe.rs    # The same question for the QUANTIZED V-head tensors, by correlation (ignored)

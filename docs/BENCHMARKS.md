@@ -211,13 +211,14 @@ above belongs to FINE-GRAINED MoE rather than to MoE as such. Measured by
 arithmetic off the repack walk's own reported stride (ROADMAP Phase M2,
 AGENTS.md Gotcha 36):
 
-| | Gemma 4 26B-A4B | Mixtral 8x7B |
-| --- | ---: | ---: |
-| experts per layer | 128 (top-8) | 8 (top-2) |
-| one expert blob | ~3.2 MiB | 108.9 MiB |
-| whole expert table | 12 GiB | 27.2 GiB |
-| slot cache at 16 slots | 1.5 GiB | 54.5 GiB |
-| slot cache at `slots == experts` | n/a | 27.2 GiB (the whole table) |
+| | Gemma 4 26B-A4B | Mixtral 8x7B | Qwen3-30B-A3B |
+| --- | ---: | ---: | ---: |
+| layers | 30 | 32 | 48 |
+| experts per layer | 128 (top-8) | 8 (top-2) | 128 (top-8) |
+| one expert blob | ~3.2 MiB | 108.9 MiB | 2.53-2.92 MiB |
+| whole expert table | 12 GiB | 27.2 GiB | 16.36 GiB |
+| slot cache at 16 slots | 1.5 GiB | 54.5 GiB | 2.04 GiB |
+| slot cache at `slots == experts` | n/a | 27.2 GiB (the whole table) | n/a |
 
 Mixtral is the SMALLER model by parameter count and cannot stream here at any
 useful slot count. The real published Q4_K_M install runs and is correct --
@@ -228,6 +229,34 @@ than a regression signal, and both gates belong to a fine-grained checkpoint.
 
 Both inputs to that multiplication (`expert_count`, `feed_forward_length`) sit
 in the GGUF header, so the answer is available before any download.
+
+**Qwen3-30B-A3B is the third column and it is what picking on granularity
+first buys.** Measured 2026-08-10 on the real streamed `qwen3moe` install,
+frozen protocol, AC, release, 16 slots, all three cases stopping endOfTurn:
+
+| | value |
+| --- | ---: |
+| decode, short / medium / long | 27.3 / 24.0 / 16.0 tok/s |
+| peak `phys_footprint` | 2,748 MiB (2,751 on the oracle's longer session) |
+| reference-answer perplexity | 14.7576 |
+| replay growth | +0.23 MiB |
+
+**READ THE FOOTPRINT AS ARITHMETIC, NOT AS A REGRESSION, AND NOTE THAT IT
+LEAVES THE PUBLISHED BAND.** At 2.75 GiB this checkpoint sits above the
+~1.6-2.2 GiB the other two families hold, because the slot term is
+`slots x layers x expert_stride` and depth counts as much as expert size: 48
+layers at ~2.9 MiB is 2,094 MiB of slot capacity at 16 slots, against Gemma's
+30 layers at ~3.2 MiB. Add a 916 MiB resident core, which is mapped AND
+pinned. It is still a streaming install -- 2.04 GiB of a 16.36 GiB expert
+table is ever resident -- which is precisely what Mixtral could not do. The
+lesson for the next family is that "fine-grained" is necessary and still not
+the whole product; compute `slots x layers x stride` rather than reading the
+expert size alone.
+
+The perplexity is not comparable across families (each chat template puts the
+reference answer in a different position; see the Quality section), so 14.76
+against Gemma's 37.42 ranks nothing. It is a frozen row to compare against its
+own future.
 
 ## Quality
 

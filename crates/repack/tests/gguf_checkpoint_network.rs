@@ -519,6 +519,83 @@ fn checks_mixtral_tensor_ranges_against_the_file_length() {
     );
 }
 
+/// Phase 1's admission check for `qwen3moe`, off the same header the
+/// granularity probe below reads: EVERY tensor name maps, and the derived
+/// `ArchConfig` is the baseline this port declares.
+///
+/// **This is the only place a name-mapping hole can surface for this
+/// family.** `crates/repack/tests/gguf_names.rs` pins the rows, but it can
+/// only pin rows someone already wrote; a real converter's output is the
+/// only input that can contain a name nobody thought of. There is no MLX
+/// install of this model here, so unlike Gemma and Qwen 3.6 there is no
+/// second, independently-produced side to cross-check the config against --
+/// the assertion is against the hand-entered baseline, and the baseline was
+/// entered FROM this header, so what this really proves is that the two have
+/// not drifted apart since.
+#[test]
+#[ignore = "network: reads a header off a 17 GB remote checkpoint"]
+fn qwen3moe_maps_every_name_and_derives_its_baseline() {
+    let h = fetch(QWEN3_30B_A3B_Q4_K_M);
+    assert_every_name_maps(&h, ModelFamily::Qwen3Moe);
+
+    let derived = arch_from_gguf(&h).expect("arch from GGUF metadata");
+    let baseline = model_io::qwen3_30b_a3b();
+    assert_eq!(
+        derived, baseline,
+        "the derived ArchConfig has drifted from the qwen3_30b_a3b baseline"
+    );
+
+    // The two rows that make this NOT the `llama` architecture, on EVERY
+    // layer rather than on layer 0. A per-head norm present on some layers
+    // and absent on others would open, decode, and be wrong only sometimes.
+    let layers = derived.num_layers as usize;
+    for norm in ["attn_q_norm", "attn_k_norm"] {
+        let present = (0..layers)
+            .filter(|i| h.tensors.contains_key(&format!("blk.{i}.{norm}.weight")))
+            .count();
+        assert_eq!(present, layers, "{norm} on {present} of {layers} layers");
+    }
+
+    // Absences that are load-bearing: no shared expert (Qwen 3.6 has one and
+    // this model does not), no dense FFN, no sliding window, untied head.
+    for absent in [
+        "blk.0.ffn_gate_shexp.weight",
+        "blk.0.ffn_gate_inp_shexp.weight",
+        "blk.0.ffn_gate.weight",
+        "blk.0.ffn_up.weight",
+        "blk.0.ffn_down.weight",
+    ] {
+        assert!(!h.tensors.contains_key(absent), "unexpected {absent}");
+    }
+    assert!(
+        !h.metadata.contains_key("qwen3moe.attention.sliding_window"),
+        "a sliding-window key would make the all-full-attention mask a lie"
+    );
+    assert!(h.tensors.contains_key("output.weight"));
+    assert!(!derived.tie_word_embeddings);
+
+    // No new kernels: every block type in the file is one this port already
+    // executes. That is the claim that made this family the cheap next one,
+    // and it is one header read rather than an install.
+    let mut types: Vec<&str> = h
+        .tensors
+        .values()
+        .filter_map(|i| ggml_type_name(i.ggml_type))
+        .collect();
+    types.sort_unstable();
+    types.dedup();
+    println!("-- block types: {types:?}");
+    for t in &types {
+        let lower = t.to_lowercase();
+        // F32 never reaches an install: `transcode_f32` narrows the norms to
+        // BF16 and quantizes the router to INT8 affine before writing.
+        assert!(
+            lower == "f32" || model_io::EXECUTABLE_GGUF_TYPES.contains(&lower.as_str()),
+            "{t} has no kernel here, so this checkpoint is not the cheap bring-up it looks like"
+        );
+    }
+}
+
 /// Phase 0 for whatever MoE family comes after `llama`: the expert
 /// GRANULARITY multiplication, off the header, before any download
 /// (AGENTS.md Gotcha 36).

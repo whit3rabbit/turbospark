@@ -183,6 +183,73 @@ pub fn mixtral_8x7b() -> ArchConfig {
     }
 }
 
+/// Canonical Qwen3-30B-A3B baseline (ROADMAP Phase M, the fine-grained MoE
+/// follow-on): 48 full-attention layers, 32 query heads over 4 KV heads at
+/// head_dim 128, 128 routed experts at top-8 with NO shared expert, SwiGLU,
+/// untied lm_head, no logit softcap, no sliding window.
+///
+/// **Every number here was read off the published
+/// `Qwen/Qwen3-30B-A3B-GGUF/Qwen3-30B-A3B-Q4_K_M.gguf` header**, not from a
+/// model card (`gguf_checkpoint_network.rs::scopes_qwen3moe_*`).
+///
+/// `head_dim` is 128 while `hidden_size / num_heads` is 64, so the query
+/// projection emits 4096 rows against a 2048-wide stream. That is the usual
+/// case rather than the exception (`docs/NEW_MODEL.md` Phase 0 says so), and
+/// deriving the head dim from the hidden size would halve every GEMV here.
+///
+/// `intermediate_size` is the published `feed_forward_length`, which this
+/// checkpoint carries and never uses: every layer is MoE and there is no
+/// dense or shared FFN tensor in the file.
+///
+/// THE FIELD THAT MADE THIS FAMILY WORTH BRINGING UP is
+/// `moe_intermediate_size = 768`: one expert is `3 x 768 x 2048` at Q4_K,
+/// i.e. 2.5 MiB, so 16 slots over 48 layers pin 1.90 GiB. Mixtral's same
+/// arithmetic reads 108.9 MiB and 54.5 GiB (AGENTS.md Gotcha 36).
+pub fn qwen3_30b_a3b() -> ArchConfig {
+    ArchConfig {
+        hidden_size: 2048,
+        intermediate_size: 6144,
+        moe_intermediate_size: 768,
+        num_heads: 32,
+        num_kv_heads: 4,
+        num_full_kv_heads: 4,
+        head_dim: 128,
+        full_head_dim: 128,
+        vocab_size: 151_936,
+        sliding_window: 0,
+        final_logit_softcap: 0.0,
+        rope_theta: 1_000_000.0,
+        full_rope_theta: 1_000_000.0,
+        // Full rotary: the whole head is rotated, as on the `llama` side.
+        partial_rotary_factor: 1.0,
+        num_layers: 48,
+        num_experts: 128,
+        top_k_experts: 8,
+        tie_word_embeddings: false,
+        attention_k_eq_v: false,
+        full_attention_layer_mask: vec![1u8; 48],
+        hidden_activation: "silu".to_string(),
+        family: ModelFamily::Qwen3Moe,
+        attn_output_gate: false,
+        // 128^-0.5 = 2^-3.5, the same non-binary-fraction value Mixtral's
+        // head dim produces; AGENTS.md Gotcha 24's round-trip warning
+        // applies and `crates/model-io/tests/arch_config.rs` pins it.
+        attention_scale: 0.088_388_347_648_318_45,
+        embedding_scaled_by_sqrt_hidden: false,
+        router_scaled: false,
+        ffn_sandwich_norms: false,
+        shared_expert_gated: false,
+        rope_neox_subdim: false,
+        linear_attention: LinearAttentionConfig::NONE,
+        compressed_attention: CompressedAttentionConfig::NONE,
+        hyper_connections: HyperConnectionConfig::NONE,
+        num_hash_routed_layers: 0,
+        router_scoring_func: "softmax".to_string(),
+        routed_scaling_factor: 1.0,
+        swiglu_limit: 0.0,
+    }
+}
+
 fn deepseek_v4_flash_layer_mask() -> Vec<u8> {
     // Layer kinds: 0 = sliding-window only (layers 0-1), then 3 = CSA on
     // even layers and 4 = HCA on odd layers.
@@ -264,6 +331,7 @@ pub fn known_architecture(family: ModelFamily) -> ArchConfig {
         ModelFamily::Qwen36 => qwen36_35b_a3b(),
         ModelFamily::DeepseekV4Flash => deepseek_v4_flash_284b_a13b(),
         ModelFamily::Llama => mixtral_8x7b(),
+        ModelFamily::Qwen3Moe => qwen3_30b_a3b(),
     }
 }
 
@@ -273,5 +341,6 @@ pub fn all_known_architectures() -> Vec<ArchConfig> {
         qwen36_35b_a3b(),
         deepseek_v4_flash_284b_a13b(),
         mixtral_8x7b(),
+        qwen3_30b_a3b(),
     ]
 }

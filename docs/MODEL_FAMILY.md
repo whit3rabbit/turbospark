@@ -51,6 +51,11 @@ naming schemes genuinely differ and none is derivable from another: Qwen 3.6 is
     Mixtral and dense Llama, only the MoE half has a decode flow, and the
     refusal for the dense half therefore lives at `RealForwardRunner::open`
     rather than here (nothing in the string says which half a file is)
+  - `"qwen3moe"` -> `ModelFamily::Qwen3Moe`, which runs through the SAME
+    decode flow as `Llama`: the layer graph is identical, and the two
+    differences (per-head q/k norms, RMS epsilon 1e-6 against 1e-5) are
+    keyed on the family inside that flow rather than given a fourth copy
+    of it
   - anything else -> refused, with a message that says whether the string is
     *recognized but unported* (and what it would need) or *unknown*.
 - **Hugging Face Safetensors**: the family is chosen by the CALLER, which picks
@@ -100,7 +105,7 @@ port's registry" message rather than the "recognized, needs X" one.
 | **DeepSeek V4 Flash** (string unconfirmed) | MLA, mHC streams, Sinkhorn combine, INT2 experts | *Scaffolded* | *Scaffolded* | Full Support | Full Support | *TBD* |
 | **Mixtral 8x7B / 8x22B** (`llama` + `expert_count`) | Plain GQA attention + MoE (8 experts, top-2), no shared expert, untied head | **Full Support** | *Planned* | Full Support | Full Support | *MoE, keeps the ceiling* |
 | **Llama 3 / 3.1 / 3.2 / 3.3, Llama 2, Mistral 7B** (`llama`, dense) | Standard Dense Transformer, GQA, RoPE frequency scaling (a TENSOR, `rope_freqs.weight`) | *Refused at open, by name* | *Planned* | Full Support | Full Support | *dense: whole model resident* |
-| **Qwen3-MoE 30B-A3B** (`qwen3moe`) | Standard GQA attention + MoE, no linear attention, no shared expert | *Registered, planned* | *Planned* | Full Support | Full Support | *MoE, keeps the ceiling* |
+| **Qwen3-MoE 30B-A3B** (`qwen3moe`) | Plain GQA + per-head QK-norm, MoE (128 experts, top-8), no linear attention, no shared expert, untied head | **Full Support** | *Planned* | Full Support | Full Support | *MoE, keeps the ceiling* |
 | **Llama 4 Scout / Maverick** (`llama4`) | MoE with interleaved chunked attention | *Registered, planned* | *Planned* | Full Support | Full Support | *MoE, keeps the ceiling* |
 | **gpt-oss 20B / 120B** (`gpt-oss`) | MXFP4 experts, attention sinks | *Registered, planned* | *Planned* | Full Support | Full Support | *MoE, keeps the ceiling* |
 | **Phi-3 / Phi-3.5** (`phi3`) | SuScaled (longrope) RoPE, dense FFN | *Registered, planned* | *Planned* | Full Support | Full Support | *dense: whole model resident* |
@@ -163,6 +168,17 @@ competes with llama.cpp on ground where this port has no advantage. That is why
 the first planned bring-up (ROADMAP Phase M2) is the `llama` architecture's MoE
 half (Mixtral) rather than its dense half, even though dense Llama is the
 cheaper of the two.
+
+**Being MoE turned out to be necessary and not sufficient, and the correction
+is what chose the family after it.** The slot cache is
+`slots x layers x expert_stride`, so what decides whether a checkpoint streams
+here is how FINELY it splits its experts, not how big it is: Mixtral 8x7B is 8
+experts of 108.9 MiB and wants 54.5 GiB at 16 slots, while Gemma 4 is 128 of
+~3.2 MiB and wants 1.5. Mixtral runs, is correct, and cannot stream usefully.
+`qwen3moe` (Qwen3-30B-A3B) was picked next for exactly that reason -- 128
+experts of 2.5 MiB, 1.90 GiB at 16 slots -- and it reuses the flow Mixtral's
+bring-up wrote. Both numbers come off the GGUF header before any download
+(AGENTS.md Gotcha 36, `docs/NEW_MODEL.md` Phase 0).
 
 ---
 

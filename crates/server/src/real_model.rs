@@ -46,7 +46,6 @@ impl RealChatModel {
                 model_dir.display()
             )
         })?;
-        let vocab_size = tokenizer.vocab_size;
         // The install directory's own name is the advertised model id (e.g.
         // `gemma4.gturbo`). `manifest.json` carries no model name field to
         // read instead, and the full path is not something to publish.
@@ -61,6 +60,9 @@ impl RealChatModel {
             expert_cache_slots as usize,
         )
         .map_err(|e| e.to_string())?;
+        // The MODEL's padded head width, not the tokenizer dialect's
+        // constant: two checkpoints can share a dialect and pad differently.
+        let vocab_size = runner.vocab_size();
         Ok(Self {
             tokenizer,
             runner: Mutex::new(runner),

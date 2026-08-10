@@ -45,15 +45,25 @@ cargo clippy --workspace --tests
 | `server` | OpenAI-compatible endpoint shapes, full-response and SSE, the `--model` argument parser, and (gated) the real `RealForwardRunner` backend end to end. |
 | `bench` | Protocol constants and footer format, the memory sampler, and the binary's black-box output. Its gated targets carry the quality axis: per-install perplexity and golden digests, the damage-sensitivity proof, and the logit dump feeding the cross-engine KLD. |
 
-### The `llama` family (ROADMAP Phase M2)
+### The plain-GQA-plus-MoE flow: the `llama` and `qwen3moe` families
 
-Three levels, and the split between them is what keeps the expensive one rare:
+One decode flow, two families, so the tests come in pairs at the cheap end and
+stay separate at the expensive one. Four levels, and the split between them is
+what keeps the expensive ones rare:
 
 - `crates/runtime/tests/real_forward_llama.rs` (default suite, macOS): builds a
   tiny Mixtral-shaped install through the REAL repack pipeline and decodes on
   real Metal. Covers determinism across expert-cache state, prefill/produce
   agreement, the no-allocation-per-token rule, the slot-count cap, and the
   dense-half refusal.
+- `crates/runtime/tests/real_forward_qwen3moe.rs` (default suite, macOS): the
+  SAME flow under the other family tag. Its reason to exist is one test --
+  two installs of identical weights differing only in `ArchConfig.family`
+  must decode differently, because one norms q and k per head and the other
+  does not. Read at a context of 4 rather than at position 0, where a softmax
+  over one key is 1.0 whatever the logit and no q/k transform is observable
+  at all. Its module header records what it mutation-checked and what it
+  provably cannot see (the norms' order relative to RoPE, and the epsilon).
 - `crates/repack/tests/gguf_llama_rope_patch.rs` (unit part in the default
   suite): pins the rotary row permutation as the exact inverse of llama.cpp's
   converter transform. Its `#[ignore]`d half patches a real install in place,
@@ -64,6 +74,12 @@ Three levels, and the split between them is what keeps the expensive one rare:
   walk (TinyLlama 1.1B Q6_K, 0.84 GiB, ~3 min) that exercises the half of the
   name table Mixtral never reaches. Prefer the dense one when the question is
   about names or the dense branch; it is 30x cheaper.
+- `crates/repack/tests/gguf_qwen3moe_install_network.rs` (`#[ignore]`d): the
+  real published Qwen3-30B-A3B Q4_K_M streamed into an install. This is the
+  fine-grained checkpoint the Mixtral granularity finding asked for, so it is
+  also the only one of the two whose memory oracle and quality gate mean
+  anything (2.5 MiB per expert against 108.9). It asserts the granularity on
+  the ARTIFACT'S own layout rather than as arithmetic on a model card.
 
 The streamed walk resumes: a layer file already on disk at the size the walk
 would write is adopted without a network read, so a transport failure costs

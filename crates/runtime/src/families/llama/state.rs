@@ -8,7 +8,7 @@
 //! (this architecture has neither a `router.scale` nor a `per_expert_scale`,
 //! exactly as Qwen does not) plus two pieces of per-token scratch.
 
-use model_io::{ArchConfig, ResidentIndex};
+use model_io::{ArchConfig, ModelFamily, ResidentIndex};
 
 use crate::families::llama::layer_tensor;
 use crate::real_forward::RealForwardError;
@@ -22,6 +22,18 @@ pub(crate) struct RealLlamaState {
     /// at this architecture's `partial_rotary_factor = 1.0` is `head_dim / 2`
     /// -- i.e. default full-head NeoX, the whole head rotated.
     pub(crate) rotated_pairs: u32,
+    /// Norm q and k PER HEAD, with a learned `[head_dim]` weight, before
+    /// RoPE. False for the `llama` architecture (Mixtral norms neither),
+    /// true for `qwen3moe`. Derived from the FAMILY and never from whether
+    /// the tensors happen to be present: a name probe cannot tell a model
+    /// that has no q-norm from an install that lost one.
+    pub(crate) qk_norm: bool,
+    /// RMS epsilon. `llama` publishes 1e-5 and `qwen3moe` 1e-6, and this is
+    /// not an `ArchConfig` field, so the family carries it. Small enough to
+    /// be invisible in a smoke test and large enough to move a perplexity
+    /// digit, which is exactly the class of difference this port freezes
+    /// goldens over.
+    pub(crate) rms_eps: f32,
     /// BF16 `[hidden]` of ones: the INT8 router kernel scales `x[n]` by an
     /// effective scale per element, and this architecture has no
     /// `router.scale`, so the scale is identically 1. Same reason Qwen's
@@ -111,6 +123,13 @@ impl RealLlamaState {
             ));
         }
 
+        // The two places `qwen3moe` differs from `llama`. Both are read off
+        // the FAMILY rather than sniffed, per Gotcha 12's rule: two
+        // architectures that share a tensor-name contract cannot be told
+        // apart by their tensor names.
+        let qk_norm = arch.family == ModelFamily::Qwen3Moe;
+        let rms_eps = if qk_norm { 1e-6 } else { 1e-5 };
+
         // Fail at open, not at token 1.
         let hidden = arch.hidden_size as usize;
         let num_experts = arch.num_experts as usize;
@@ -125,6 +144,11 @@ impl RealLlamaState {
                 "mlp.gate.weight",
             ] {
                 entry(index, &layer_tensor(layer, suffix))?;
+            }
+            if qk_norm {
+                for suffix in ["self_attn.q_norm.weight", "self_attn.k_norm.weight"] {
+                    entry(index, &layer_tensor(layer, suffix))?;
+                }
             }
         }
         let head_name = if arch.tie_word_embeddings {
@@ -143,6 +167,8 @@ impl RealLlamaState {
         let halfs = |n: usize| context.new_output_buffer((n.max(1) * 2) as u64);
         Ok(Self {
             rotated_pairs: rotated_pairs as u32,
+            qk_norm,
+            rms_eps,
             router_ones,
             per_expert_ones: vec![1.0; num_experts],
             router_logits_f32: context.new_output_buffer((num_experts * 4) as u64),

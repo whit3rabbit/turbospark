@@ -111,6 +111,15 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
 TURBOSPARK_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
   cargo test -p turbospark-bench --test qwen36_memory_oracle --release -- --ignored --nocapture
 
+# Same oracle for Qwen3-30B-A3B (`qwen3moe`). Its ceiling is 2,900 MiB, ABOVE
+# the other two families' 1,600-2,300: the slot cache is
+# `slots x layers x expert_stride` and this model is 48 layers deep at a
+# ~2.9 MiB expert, i.e. 2,094 MiB of slot capacity at 16 slots plus a 916 MiB
+# pinned resident core. It streams (the whole expert table is 16.36 GiB); it
+# just does not land inside the band the README quotes.
+TURBOSPARK_QWEN3MOE_INSTALL_DIR=~/models/qwen3moe-gguf.gturbo \
+  cargo test -p turbospark-bench --test qwen3moe_memory_oracle --release -- --ignored --nocapture
+
 # The quality gate (ROADMAP Phase Q): teacher-forced perplexity of a fixed
 # reference answer in the ASSISTANT slot (an instruction-tuned checkpoint
 # is never trained to predict prompt tokens, so scoring those measures
@@ -123,6 +132,8 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
   cargo test -p turbospark-bench --test quality_gate --release -- --ignored --nocapture
 TURBOSPARK_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
   cargo test -p turbospark-bench --test qwen36_quality_gate --release -- --ignored --nocapture
+TURBOSPARK_QWEN3MOE_INSTALL_DIR=~/models/qwen3moe-gguf.gturbo \
+  cargo test -p turbospark-bench --test qwen3moe_quality_gate --release -- --ignored --nocapture
 
 # Cross-engine check (ROADMAP Phase Q, last item): does this port agree
 # with mlx-lm on the SAME quantized bytes? Two steps. The first dumps this
@@ -257,6 +268,19 @@ TURBOSPARK_GEMMA4_GGUF_INSTALL_DIR=~/models/gemma4-gguf.gturbo \
 # 32 layers, against Q4_K on the other 16) and Q5_K on `attn_output`.
 TURBOSPARK_MIXTRAL_INSTALL_DIR=~/models/mixtral-gguf.gturbo \
   cargo test -p turbospark-repack --test gguf_mixtral_install_network --release -- --ignored --nocapture
+
+# The FOURTH family, and the one Mixtral's granularity finding asked for
+# (Gotcha 36): install the real published Qwen3-30B-A3B Q4_K_M. Streams the
+# 17.3 GB file a layer at a time (never written to disk) into a ~18 GB
+# install. Same LAYER GRAPH as Mixtral and the same decode flow
+# (`crates/runtime/src/families/llama/`), differing only in per-head q/k
+# norms and an RMS epsilon of 1e-6 -- but 128 experts of 2.5 MiB against
+# Mixtral's 8 of 108.9, so its slot cache is 1.90 GiB at 16 slots rather
+# than 54.5 and the memory oracle and quality gate are worth running on it.
+# NO new kernels: Q4_K and Q6_K are both already executable, asserted off
+# the header before the download.
+TURBOSPARK_QWEN3MOE_INSTALL_DIR=~/models/qwen3moe-gguf.gturbo \
+  cargo test -p turbospark-repack --test gguf_qwen3moe_install_network --release -- --ignored --nocapture
 
 # ROADMAP Phase G Stage 2 item 9: the same, for the K-quants. Streams the real
 # published Qwen 3.6 Q4_K_M (~20 GB, never written to disk) into a ~20 GB
@@ -1064,11 +1088,11 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     not the size of the model. Measured 2026-08-09 while bringing up the
     `llama` family (ROADMAP Phase M2):
 
-    | | Gemma 4 26B-A4B | Mixtral 8x7B |
-    |---|---|---|
-    | experts per layer | 128 (top-8) | 8 (top-2) |
-    | one expert blob | ~3.2 MiB | **108.9 MiB** |
-    | slot cache at 16 slots | 1.5 GiB | **54.5 GiB** |
+    | | Gemma 4 26B-A4B | Mixtral 8x7B | Qwen3-30B-A3B |
+    |---|---|---|---|
+    | experts per layer | 128 (top-8) | 8 (top-2) | 128 (top-8) |
+    | one expert blob | ~3.2 MiB | **108.9 MiB** | 2.5 MiB |
+    | slot cache at 16 slots | 1.5 GiB | **54.5 GiB** | 1.90 GiB |
 
     Mixtral is the SMALLER model by parameter count and cannot stream on this
     engine in any useful configuration: at the default 16 slots it wants
@@ -1084,6 +1108,37 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     26 GB download and was not computed. Header probes had answered every
     other question in that phase. Do this multiplication in Phase 0, next to
     the layer graph.
+    THE THIRD COLUMN IS WHAT THE FINDING BOUGHT. `qwen3moe` was chosen by
+    running that multiplication FIRST, and it is the same layer graph and the
+    same decode flow as Mixtral -- so the flow Mixtral's bring-up paid for is
+    what a streamable checkpoint now runs on. Note also what the table says
+    about "small model, small working set": Qwen3-30B-A3B and Mixtral 8x7B are
+    within a factor of two on parameters and a factor of 29 apart on the
+    number that decides whether either one runs here.
+
+37. **A per-DIALECT constant standing in for a per-MODEL property is correct
+    until the second model arrives, and it fails at the first decoded
+    token.** `MfTokenizer::vocab_size` is resolved by chat DIALECT, and its
+    own comment said what it really was: "the model's padded
+    embedding/lm_head row count, not the tokenizer's actual vocab". ChatML's
+    row read 248,320, which is Qwen 3.6's padded head. Qwen3-30B-A3B is also
+    ChatML and pads to 151,936, so bringing it up produced
+    `vocab mismatch: model has 151936, caller expected 248320` -- with a
+    correct install, a correct manifest and a correct decode flow. SIX call
+    sites had taken the width from the tokenizer (`crates/cli`'s two,
+    `crates/server`'s real model, `crates/bench`'s real model, plus
+    `quality_common`, `logit_dump` and the nondeterminism probe), and every
+    one of them had a `RealForwardRunner` in hand. They now call
+    `RealForwardRunner::vocab_size()`, which reads `arch.vocab_size`.
+    Two things worth carrying. The existing families were UNMOVED by the fix
+    (Gemma's perplexity and both digests reproduced to the last hex
+    character), which is what says the old value was right by coincidence
+    rather than by design -- for one model per dialect the two numbers are
+    equal. And the general form: when a table is keyed by X and holds a
+    property of Y, it is a latent bug that stays invisible for exactly as
+    long as the X-to-Y mapping happens to be injective. The tokenizer's own
+    `vocab_size` is still correct for the SCRIPTED paths, which have no model
+    to ask.
 
 ## Per-Crate Documentation
 
@@ -1168,7 +1223,7 @@ divergence and perplexity functions rather than restating them.
 - `crates/model-io`: `manifest.json` decode and field-by-field validation against a resolved `ArchConfig` (with canonical Gemma 4, Qwen 3.6, and DeepSeek-V4-Flash baselines), `packed_experts/layout.json` decode (`PackedExpertsLayout`), `model_weights.bin` resident tensor index reader (`ResidentIndex`), `mmap`'d resident-buffer view (`ResidentBuffer`), streaming SHA-256 verification (`sha256.rs`), and trusted install receipt (`InstallReceipt`). Allowed a narrow amount of `unsafe` (the `mmap` call). Details in [`crates/model-io/CLAUDE.md`](crates/model-io/CLAUDE.md).
 - `crates/streaming`: routed-expert `pread` streamer (`PreadExpertStreamer`) with a fixed per-layer slot cache. The LFU/LRU eviction policy (`ExpertCache`) is pure logic, separated from file I/O so it can be tested against access traces without a model install. Cache misses are split into chunks and read on `read_pool`, a process-wide set of parked worker threads, so a layer that misses once still reads at full width (the `pread` is a page-cache memcpy, not disk I/O). `rdadvice` and `read_pool` are the other `unsafe`-carrying modules (macOS `F_RDADVISE`, a documented no-op elsewhere; raw destination pointers across worker threads). Details in [`crates/streaming/CLAUDE.md`](crates/streaming/CLAUDE.md).
 - `crates/gpu`: Metal device/pipeline-cache context (`MetalContext`, `PassEncoder`, `CommittedPass`) and per-kernel dispatch. macOS-only; compiles to nothing elsewhere. Dispatched, parity-tested kernels (`rmsnorm_no_scale`, `rms_norm_bf16w`, both `_perhead` norm variants, `rope_proportional_neox`, `rope_neox_subdim`, `logit_softcap_softmax`, `dequant_int4_gemv_simd`, `dequant_int8_gemv_simd` with resident variants, the port-local GGUF set (`dequant_q8_0_gemv_simd`, `dequant_q4_k_gemv_simd`, `dequant_q6_k_gemv_simd`, `embed_lookup_q8_0`, `embed_lookup_q4_k`, and `moe_gguf.metal`'s two decode pairs -- ROADMAP Phase G), `router_gemv_gemma4_r4`, two-pass split-KV `attention_decode` (multi-chunk, split up to 16 ways by `chunks_for`), `moe_decode` decode pair, `gdn.metal`'s eight gated-DeltaNet kernels, and `utility` elementwise kernels incl. Qwen's three gating kernels) are compiled from MSL source at runtime, vendored from Swift except where marked port-local. `power_state.rs` wraps `NSProcessInfo`'s `thermalState` and `isLowPowerModeEnabled` for ROADMAP Phase P2 (here rather than in `runtime`, which forbids unsafe; nothing GPU about them beyond the `metal::objc` reach). `KvCacheManager` allocates and manages real per-layer Metal KV buffers used by `RealForwardRunner`. `ResidentGpuWeights` wraps resident mmap in zero-copy MTLBuffer. `GdnStateManager` is the Qwen flow's recurrent state; `Dsv4StateManager` allocates real per-layer Metal buffers (unwired kernels); `PrefillChunkScratchLayout`/`PrefillChunkScratchBuffers` size scratch buffers (undispatched tile kernel). The `sample` kernel and fused lm_head are not yet vendored or dispatched. Details in [`crates/gpu/CLAUDE.md`](crates/gpu/CLAUDE.md).
-- `crates/runtime`: power policy for the decode loop (`power.rs`: `PowerProfile`, the `stepped_cap` thermal ladder, `RateControl`, and cfg-paired OS probes; `pacing.rs`: the pure-deadline `Pacer` -- ROADMAP Phase P2), and the raw-completion prefill+decode loop (`run_raw_completion`, `run_raw_completion_chunked`), wiring a `LogitProducer`, the tokenizer's streaming detokenizer and stop matcher, and `selection::select` into one token generation loop. `ScriptedLogitProducer` is what unit tests and `crates/server`'s `ScriptedChatModel` drive the loop with (see Gotcha 10). `RealForwardRunner` (macOS/GPU only, `src/real_forward.rs`, `src/real_forward_gemma4.rs`, and `src/real_forward_qwen{,_attn}.rs`) is a real `LogitProducer`: a genuine transformer forward pass through real GPU kernels (including real GPU decode attention) and real quantized weights, supporting dense and MoE FFN layers. Dense bridges gated FFN on CPU via `turbospark_compute::run_ffn`; MoE runs real GPU router GEMV plus real GPU GEMVs for each selected expert, host-side top-k selection, and CPU-bridged gated activation. Supports synthetic short names, verbatim real Gemma 4 checkpoint names (learned-weight flow), and the Qwen 3.6 hybrid linear/full-attention flow. See Gotcha 12. Details in [`crates/runtime/CLAUDE.md`](crates/runtime/CLAUDE.md).
+- `crates/runtime`: power policy for the decode loop (`power.rs`: `PowerProfile`, the `stepped_cap` thermal ladder, `RateControl`, and cfg-paired OS probes; `pacing.rs`: the pure-deadline `Pacer` -- ROADMAP Phase P2), and the raw-completion prefill+decode loop (`run_raw_completion`, `run_raw_completion_chunked`), wiring a `LogitProducer`, the tokenizer's streaming detokenizer and stop matcher, and `selection::select` into one token generation loop. `ScriptedLogitProducer` is what unit tests and `crates/server`'s `ScriptedChatModel` drive the loop with (see Gotcha 10). `RealForwardRunner` (macOS/GPU only, `src/real_forward.rs`, `src/real_forward_gemma4.rs`, and `src/real_forward_qwen{,_attn}.rs`) is a real `LogitProducer`: a genuine transformer forward pass through real GPU kernels (including real GPU decode attention) and real quantized weights, supporting dense and MoE FFN layers. Dense bridges gated FFN on CPU via `turbospark_compute::run_ffn`; MoE runs real GPU router GEMV plus real GPU GEMVs for each selected expert, host-side top-k selection, and CPU-bridged gated activation. Supports synthetic short names, verbatim real Gemma 4 checkpoint names (learned-weight flow), the Qwen 3.6 hybrid linear/full-attention flow, and one plain-GQA-plus-MoE flow (`src/families/llama/`) serving BOTH the `llama` (Mixtral) and `qwen3moe` (Qwen3-30B-A3B) families, which differ only in per-head q/k norms and an RMS epsilon. See Gotcha 12. Details in [`crates/runtime/CLAUDE.md`](crates/runtime/CLAUDE.md).
 - `crates/cli`: the `turbospark-check` binary process entry point (see Gotcha 7). Parses `argv`, applies `invocation`'s exit-status and stream-routing decisions, prints the resolved request for a validated invocation, and (macOS, `src/generate.rs`) attempts real generation against `--model` via `RealForwardRunner` (see Gotcha 12) in all three modes: `--prompt` (raw text), `--messages-file` (rendered through chat template), and `--chat` (interactive REPL in `src/chat.rs`, trimming turns with `turbospark-window-fit`). Details in [`crates/cli/CLAUDE.md`](crates/cli/CLAUDE.md).
 - `crates/repack`: safetensors header parsing (pure, tested against synthetic fixtures), `RangeSource` trait for ranged reads (HTTP-backed for real installs, in-memory for tests) with two-step header-fetch plan, per-row int4/int8 quantization repack (reusing `turbospark_compute`'s quantizer), byte-exact `.gturbo` directory assembly (`write_gturbo_install`), real named resident-tensor index writer (`write_gturbo_install_with_resident_index`), synthetic install builders (`synthetic_model.rs`, `synthetic_real.rs`, `synthetic_qwen.rs`), Hugging Face Llama checkpoint repacker (`hf_checkpoint.rs`), Gemma 4 mlx-community checkpoint repacker & streamed pipeline (`gemma4_checkpoint/`, family-parameterized so Qwen 3.6 goes through the same walk), Qwen 3.6 `config.json` parser (`qwen36_config.rs`, the one family-specific piece of that walk), install verifier (`install_verifier.rs`), manifest peeker (`manifest_peek.rs`), and the GGUF intake (`gguf_header.rs` parser, `gguf_names.rs` name mapping, `gguf_config.rs` metadata-to-`ArchConfig`, `gguf_checkpoint/` repack walk (expert bytes verbatim, resident F32 core transcoded to BF16/INT8, Qwen's V-head source convention undone at `v_head_axis`), `synthetic_gguf/` fixture writer -- ROADMAP Phase G; Q8_0, Q4_K and Q6_K installs are executable and Q4_0 is refused, see Gotchas 29 and 33). Details in [`crates/repack/CLAUDE.md`](crates/repack/CLAUDE.md).
 - `crates/server`: HTTP server on loopback (`turbospark-server` binary, axum framework) serving OpenAI `/v1/chat/completions`, Anthropic `/v1/messages`, and `/v1/models`, both generation endpoints supporting full-response (non-streaming) and SSE-streaming responses. The wire types come from `anyllm_translate` (crates.io, default features: pure and IO-free), which also translates an Anthropic request into the OpenAI request the existing path understands and translates the result back, so Anthropic-native clients need no proxy. Tool calling is wired on both endpoints (request `tools` render through the checkpoint's `chat_template.jinja`, generated calls come back through `StructuredAssistantDecoder`); images and `thinking` are dropped, some of it reported on an `x-anyllm-degradation` header. Two backends behind the `ChatModel` trait: `RealChatModel` (macOS, `--model <install-dir>`, one mutex-serialized `RealForwardRunner` per process) and `ScriptedChatModel` (portable, canned completions, what the integration tests drive). Details in [`crates/server/CLAUDE.md`](crates/server/CLAUDE.md).
