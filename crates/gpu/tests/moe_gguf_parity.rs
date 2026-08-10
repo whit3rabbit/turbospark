@@ -19,13 +19,17 @@
 use half::f16;
 use turbospark_gpu::{MetalContext, MoeExpertOffsets, RoutedBlobsBuffer, MAX_STREAMED_EXPERTS};
 
-/// One block layout. Q6_K is deliberately absent: no real checkpoint puts it
-/// in an expert (Qwen 3.6's Q4_K_M carries exactly one Q6_K tensor and it is
-/// `output.weight`), so there is no such kernel to test.
+/// One block layout. Q6_K arrived here late and only on the PHASE 2 side:
+/// when the type first landed, the only real file using it put it in
+/// `output.weight`, and this comment said no checkpoint puts it in an expert.
+/// Mixtral 8x7B's Q4_K_M does, on the `ffn_down_exps` of 16 of its 32 layers
+/// (ROADMAP Phase M2), which is why there is a Q6_K phase 2 and still no
+/// Q6_K phase 1.
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Kind {
     Q8_0,
     Q4K,
+    Q6K,
     Iq3Xxs,
     Iq4Xs,
     Iq4Nl,
@@ -36,7 +40,7 @@ impl Kind {
     fn block_elems(self) -> usize {
         match self {
             Kind::Q8_0 | Kind::Iq4Nl => 32,
-            Kind::Q4K | Kind::Iq3Xxs | Kind::Iq4Xs => 256,
+            Kind::Q4K | Kind::Q6K | Kind::Iq3Xxs | Kind::Iq4Xs => 256,
         }
     }
 
@@ -55,6 +59,7 @@ impl Kind {
         match self {
             Kind::Q8_0 => turbospark_compute::quantize_q8_0(&deterministic_row(seed, cols)),
             Kind::Q4K => turbospark_compute::quantize_q4_k(&deterministic_row(seed, cols)),
+            Kind::Q6K => turbospark_compute::quantize_q6_k(&deterministic_row(seed, cols)),
             _ => self.synthetic_row(cols, seed),
         }
     }
@@ -109,6 +114,7 @@ impl Kind {
         match self {
             Kind::Q8_0 => turbospark_compute::dequant_q8_0_gemv(rows, x, n),
             Kind::Q4K => turbospark_compute::dequant_q4_k_gemv(rows, x, n),
+            Kind::Q6K => turbospark_compute::dequant_q6_k_gemv(rows, x, n),
             Kind::Iq3Xxs => turbospark_compute::dequant_iq3_xxs_gemv(rows, x, n),
             Kind::Iq4Xs => turbospark_compute::dequant_iq4_xs_gemv(rows, x, n),
             Kind::Iq4Nl => turbospark_compute::dequant_iq4_nl_gemv(rows, x, n),
@@ -159,6 +165,17 @@ const IQ3_MIX: Block = Block {
     gate_up: Kind::Iq3Xxs,
     down: Kind::Iq4Nl,
     dims: (256, 96),
+};
+
+/// Mixtral 8x7B's Q4_K_M, on the 16 of 32 layers whose `ffn_down_exps` is
+/// Q6_K while gate and up stay Q4_K (ROADMAP Phase M2). Unlike every mixture
+/// above it, the two types here differ ACROSS LAYERS of one model rather than
+/// across the phases of one expert, which is what makes the per-layer half of
+/// `RoutedBlobLayout` load-bearing.
+const Q4K_OVER_Q6K: Block = Block {
+    gate_up: Kind::Q4K,
+    down: Kind::Q6K,
+    dims: (256, 512),
 };
 
 /// The candidate's layer 29: IQ4_XS gate/up over Q8_0 down.
@@ -339,11 +356,13 @@ fn run_case(block: Block, use_silu: bool, top_k: usize) {
         Kind::Iq3Xxs => turbospark_gpu::encode_moe_phase1_iq3_xxs,
         Kind::Iq4Xs => turbospark_gpu::encode_moe_phase1_iq4_xs,
         Kind::Iq4Nl => panic!("no IQ4_NL phase 1: no real file puts it in gate/up"),
+        Kind::Q6K => panic!("no Q6_K phase 1: no real file puts it in gate/up"),
     };
     let phase2 = match block.down {
         Kind::Q8_0 => turbospark_gpu::encode_moe_phase2_q8_0,
         Kind::Q4K => turbospark_gpu::encode_moe_phase2_q4_k,
         Kind::Iq4Nl => turbospark_gpu::encode_moe_phase2_iq4_nl,
+        Kind::Q6K => turbospark_gpu::encode_moe_phase2_q6_k,
         other => panic!("no {other:?} phase 2: no real file puts it in down"),
     };
     phase1(
@@ -453,4 +472,22 @@ fn the_iq4_xs_over_q8_0_expert_matches_the_cpu_reference() {
 #[test]
 fn the_silu_activation_constant_reaches_the_iq_kernels() {
     run_case(IQ3_MIX, true, 2);
+}
+
+/// Mixtral's mixed layer: Q4_K gate/up over a Q6_K down (ROADMAP Phase M2).
+#[test]
+fn the_q4_k_over_q6_k_expert_matches_the_cpu_reference() {
+    run_case(Q4K_OVER_Q6K, false, 2);
+}
+
+/// Mixtral is a SiLU model, so this is the production combination for that
+/// checkpoint rather than a symmetry with the case above.
+#[test]
+fn the_silu_activation_constant_reaches_the_q6_k_kernel() {
+    run_case(Q4K_OVER_Q6K, true, 2);
+}
+
+#[test]
+fn all_eight_q6_k_slots_participate() {
+    run_case(Q4K_OVER_Q6K, false, MAX_STREAMED_EXPERTS);
 }

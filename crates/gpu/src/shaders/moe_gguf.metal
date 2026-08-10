@@ -375,3 +375,56 @@ kernel void moe_phase2_down_reduce_k8_iq4_nl(
         y[d] = half(acc);
     }
 }
+
+// ---------------------------------------------------------------------------
+// The Q6_K phase 2 (ROADMAP Phase M2). `dequant_q6_k.metal` joins the
+// concatenation ahead of this file, so the row unpack below is ITS helper.
+//
+// PHASE 2 ONLY, and like the IQ trio above that asymmetry is the real file
+// rather than an omission. Mixtral 8x7B's Q4_K_M puts Q6_K on the
+// `ffn_down_exps` of 16 of its 32 layers and Q4_K on the other 16, with
+// `ffn_gate_exps` and `ffn_up_exps` Q4_K throughout:
+//
+//   ffn_gate_exps / ffn_up_exps  Q4_K x32                 -> phase 1
+//   ffn_down_exps                Q4_K x16, Q6_K x16       -> phase 2
+//
+// so phase 2 needs Q6_K and phase 1 does not. A Q6_K phase 1 would be a kernel
+// no real file dispatches; a checkpoint that needs one fails at the dispatch
+// site by name. Note this is the FIRST file to mix two block types across
+// LAYERS on the same routed sub-tensor, which is exactly what Phase S made
+// `RoutedBlobLayout` per-layer and per-phase for.
+[[kernel, max_total_threads_per_threadgroup(256)]]
+kernel void moe_phase2_down_reduce_k8_q6_k(
+    device const RoutedBlobs& routed          [[buffer(0)]],
+    constant ExpertOffsets&   routed_offsets  [[buffer(1)]],
+    device const half*        acts            [[buffer(2)]],
+    device const half*        routing_w       [[buffer(3)]],
+    device const half*        residual        [[buffer(4)]],
+    device half*              y               [[buffer(5)]],
+    constant uint&            D               [[buffer(6)]],
+    constant uint&            F               [[buffer(7)]],
+    uint                      d               [[threadgroup_position_in_grid]],
+    uint                      sg_idx          [[simdgroup_index_in_threadgroup]],
+    uint                      lane            [[thread_index_in_simdgroup]]
+) {
+    threadgroup float partial[8];
+    const uint DD = moe_fc_d(D);
+    const uint FF = moe_fc_f(F);
+    if (d >= DD) return;
+
+    device const uint8_t* base = routed.blob[sg_idx];
+    const ExpertOffsets re = routed_offsets;
+    device const half* act_slot = acts + sg_idx * FF;
+
+    const float value = dequant_q6_k_row_simd(
+        base + re.down_W_off + d * q6_k_row_bytes_msl(FF), act_slot, FF, lane);
+    if (lane == 0) partial[sg_idx] = float(routing_w[sg_idx]) * value;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    if (sg_idx == 0 && lane == 0) {
+        float acc = float(residual[d]);
+        acc += partial[0]; acc += partial[1]; acc += partial[2]; acc += partial[3];
+        acc += partial[4]; acc += partial[5]; acc += partial[6]; acc += partial[7];
+        y[d] = half(acc);
+    }
+}

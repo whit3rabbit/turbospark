@@ -79,10 +79,14 @@ pub const DTYPE_GGUF_IQ3_XXS: u8 = 10;
 pub const DTYPE_GGUF_IQ4_NL: u8 = 11;
 /// GGUF IQ4_XS block dtype tag.
 pub const DTYPE_GGUF_IQ4_XS: u8 = 12;
+/// GGUF Q5_K block dtype tag (ROADMAP Phase M2, for Mixtral's `attn_output`).
+/// Tag 13 rather than the next free number on purpose: it matches ggml's own
+/// type id for Q5_K, which the three K-quant tags above predate and do not.
+pub const DTYPE_GGUF_Q5_K: u8 = 13;
 
 /// Every GGUF block dtype tag, for consumers that need to reject the whole
 /// family in one check rather than enumerate it and drift.
-pub const GGUF_BLOCK_DTYPES: [u8; 7] = [
+pub const GGUF_BLOCK_DTYPES: [u8; 8] = [
     DTYPE_GGUF_Q8_0,
     DTYPE_GGUF_Q4_K,
     DTYPE_GGUF_Q6_K,
@@ -90,6 +94,7 @@ pub const GGUF_BLOCK_DTYPES: [u8; 7] = [
     DTYPE_GGUF_IQ3_XXS,
     DTYPE_GGUF_IQ4_NL,
     DTYPE_GGUF_IQ4_XS,
+    DTYPE_GGUF_Q5_K,
 ];
 
 /// One named raw tensor (a norm vector, a scalar like `router.scale`):

@@ -338,6 +338,17 @@ pub fn manifest_quant(quant: &Gemma4Quant, family: ModelFamily) -> serde_json::V
             format!("{l0}.mlp.shared_expert.gate_proj"),
             format!("{l0}.mlp.switch_mlp.gate_proj"),
         ),
+        // The `llama` architecture shares Gemma's routed marker but names
+        // its router the way Qwen does (`mlp.gate`, from GGUF's
+        // `ffn_gate_inp`) and has NO shared expert -- that slot's probe finds
+        // nothing and takes the default, which `validate_quant` accepts at
+        // 4 or 8 bits either way.
+        ModelFamily::Llama => (
+            format!("{l0}.self_attn.q_proj"),
+            format!("{l0}.mlp.gate"),
+            format!("{l0}.mlp.gate_proj"),
+            format!("{l0}.experts.switch_glu.gate_proj"),
+        ),
         ModelFamily::Gemma4 | ModelFamily::DeepseekV4Flash => (
             format!("{l0}.self_attn.q_proj"),
             format!("{l0}.router.proj"),

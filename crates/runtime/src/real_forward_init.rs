@@ -49,6 +49,29 @@ pub(crate) fn open_expert_streamers(
     let layout =
         model_io::load_packed_experts_layout(dir, max_bytes).map_err(RealForwardError::Model)?;
     let num_layers = expecting.num_layers as usize;
+
+    // THE SLOT CACHE IS SIZED `slots x layers x expert_stride`, AND THAT
+    // PRODUCT IS A PROPERTY OF THE MODEL'S EXPERT GRANULARITY, NOT OF ITS
+    // SIZE (ROADMAP Phase M2). A fine-grained MoE has many small experts --
+    // Gemma 4 26B-A4B is 128 of ~3.2 MiB, so 16 slots over 30 layers pin
+    // 1.5 GiB and the engine's ~2 GiB result follows. A COARSE one has few
+    // large ones: Mixtral 8x7B is 8 experts of 108.9 MiB, so the same 16
+    // slots over 32 layers want 54.5 GiB, and even `slots == num_experts`
+    // pins the entire 27.2 GiB expert table, which is the opposite of
+    // streaming.
+    //
+    // Two things follow, and both are cheap. A slot count ABOVE the expert
+    // count can never help, so it is capped rather than allocated. And the
+    // working set is reported in the error when the streamer cannot get its
+    // memory, because "cannot allocate" without the number sends the reader
+    // looking for a leak instead of at the arithmetic.
+    let experts_per_layer = layout.experts_per_layer.max(1);
+    let expert_cache_slots = expert_cache_slots.min(experts_per_layer);
+    let working_set = layout
+        .layers
+        .iter()
+        .map(|l| l.expert_stride * expert_cache_slots as u64)
+        .sum::<u64>();
     let mut streamers: Vec<Option<streaming::PreadExpertStreamer>> = Vec::new();
     let experts_layout = if layout.num_layers > 0 {
         for layer in 0..num_layers {
@@ -67,7 +90,18 @@ pub(crate) fn open_expert_streamers(
                 expert_cache_slots,
                 streaming::ExpertCachePolicy::DEFAULT,
             )
-            .map_err(|e| RealForwardError::Unsupported(format!("expert streamer: {e}")))?;
+            .map_err(|e| {
+                RealForwardError::Unsupported(format!(
+                    "expert streamer: {e} (this install's slot cache wants {:.1} GiB of pinned \
+                     host memory: {expert_cache_slots} slots x {num_layers} layers x \
+                     {:.1} MiB per expert. That product is set by expert GRANULARITY -- a \
+                     coarse MoE like Mixtral 8x7B has 8 experts of ~109 MiB where Gemma 4 has \
+                     128 of ~3.2 MiB -- so lower `--expert-cache-slots`, or use a \
+                     fine-grained checkpoint)",
+                    working_set as f64 / (1024.0 * 1024.0 * 1024.0),
+                    entry.expert_stride as f64 / (1024.0 * 1024.0),
+                ))
+            })?;
             streamers.push(Some(streamer));
         }
         Some(layout)

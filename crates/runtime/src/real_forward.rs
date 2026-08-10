@@ -119,6 +119,9 @@ pub struct RealForwardRunner {
     /// own `Option` rather than folded into an enum so the Gemma path's
     /// borrow shape is untouched.
     pub(crate) real_qwen: Option<crate::families::qwen::RealQwenState>,
+    /// Present for a `llama`-architecture install (ROADMAP Phase M2), which
+    /// is Mixtral-style MoE only; a dense one is refused at build.
+    pub(crate) real_llama: Option<crate::families::llama::RealLlamaState>,
     pub(crate) phases: PhaseCounters,
     /// Whether the shared-expert branch rides its own command buffer so it
     /// overlaps the host's expert `pread` (see `real_forward_gemma4.rs`).
@@ -327,6 +330,7 @@ impl RealForwardRunner {
             routed_blobs,
             real: None,
             real_qwen: None,
+            real_llama: None,
             phases: PhaseCounters::default(),
             shared_cb_overlap: std::env::var("MFERENCE_SHARED_CB").as_deref() != Ok("0"),
             routed_pipeline: std::env::var("MFERENCE_ROUTED_PIPELINE").as_deref() != Ok("0"),
@@ -351,6 +355,14 @@ impl RealForwardRunner {
             }
             model_io::ModelFamily::Qwen36 => {
                 runner.real_qwen = Some(crate::families::qwen::RealQwenState::build(
+                    &mut runner.context,
+                    &runner.weights,
+                    &runner.index,
+                    &runner.arch,
+                )?);
+            }
+            model_io::ModelFamily::Llama => {
+                runner.real_llama = Some(crate::families::llama::RealLlamaState::build(
                     &mut runner.context,
                     &runner.weights,
                     &runner.index,

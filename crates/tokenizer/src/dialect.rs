@@ -23,6 +23,10 @@ pub enum ChatDialect {
     Gemma,
     ChatMl,
     Deepseek,
+    /// Mistral / Mixtral: `[INST] user [/INST] assistant</s>`, framed in
+    /// PLAIN TEXT rather than special tokens (ROADMAP Phase M2). The only
+    /// special tokens involved are `<s>` and `</s>`.
+    Mistral,
 }
 
 /// Sentinel for token roles a dialect frames as plain text rather than a
@@ -34,6 +38,14 @@ const DEEPSEEK_ASSISTANT_MARK: &str = "<\u{FF5C}Assistant\u{FF5C}>";
 pub(crate) const DEEPSEEK_BOS_MARK: &str = "<\u{FF5C}begin\u{2581}of\u{2581}sentence\u{FF5C}>";
 pub(crate) const DEEPSEEK_EOS_MARK: &str = "<\u{FF5C}end\u{2581}of\u{2581}sentence\u{FF5C}>";
 const IM_END_MARK: &str = "<|im_end|>";
+/// Gemma's end-of-turn marker, used as the POSITIVE test for that dialect
+/// now that it is no longer the fallback for everything unrecognized.
+const GEMMA_TURN_MARK: &str = "<turn|>";
+/// Mistral / Mixtral frame turns as PLAIN TEXT (`[INST] ... [/INST]`), so
+/// there is no instruction marker in the special-token table to key on and
+/// the only reliable witness is the sentence pair.
+const MISTRAL_BOS_MARK: &str = "<s>";
+const MISTRAL_EOS_MARK: &str = "</s>";
 const IM_START_MARK: &str = "<|im_start|>";
 
 pub struct MfTokenizer {
@@ -115,10 +127,21 @@ impl MfTokenizer {
         chat_template_source: Option<String>,
         extra_eos: &[i32],
     ) -> Result<Self, TokenizerError> {
+        // Gemma is still the FALLBACK, deliberately: every fixture and
+        // install predating ROADMAP Phase M2 lands there, and moving the
+        // default would change what an unrecognized tokenizer does. Mistral
+        // is therefore tested for POSITIVELY, and only after Gemma's own
+        // marker has been ruled out -- `</s>` is far too common a token to
+        // decide a dialect on its own.
         let dialect = if special_token_id(&tokenizer, DEEPSEEK_USER_MARK).is_some() {
             ChatDialect::Deepseek
         } else if special_token_id(&tokenizer, IM_END_MARK).is_some() {
             ChatDialect::ChatMl
+        } else if special_token_id(&tokenizer, GEMMA_TURN_MARK).is_none()
+            && special_token_id(&tokenizer, MISTRAL_BOS_MARK).is_some()
+            && special_token_id(&tokenizer, MISTRAL_EOS_MARK).is_some()
+        {
+            ChatDialect::Mistral
         } else {
             ChatDialect::Gemma
         };
@@ -126,6 +149,7 @@ impl MfTokenizer {
             ChatDialect::Gemma => resolve_gemma(&tokenizer, config)?,
             ChatDialect::ChatMl => resolve_chatml(&tokenizer)?,
             ChatDialect::Deepseek => resolve_deepseek(&tokenizer)?,
+            ChatDialect::Mistral => resolve_mistral(&tokenizer)?,
         };
         resolved
             .stop_token_ids
@@ -274,6 +298,38 @@ fn resolve_gemma(
         think_end_id: None,
         stop_token_ids: [eos, eot, tool_response].into_iter().collect(),
         vocab_size: 262_144,
+    })
+}
+
+/// Mistral / Mixtral (ROADMAP Phase M2).
+///
+/// Every tool and channel id is [`NO_SUCH_TOKEN_ID`], the same sentinel the
+/// DeepSeek resolver uses for roles its checkpoint frames as text: Mixtral
+/// 8x7B-Instruct v0.1 has exactly three special tokens (`<unk>`, `<s>`,
+/// `</s>`) and no tool-calling or thinking markup at all. Inventing ids here
+/// would make `StructuredDecoder` look for markup the model cannot emit.
+///
+/// End of turn IS `</s>`, not a separate marker: the model closes an
+/// assistant turn with the sentence end.
+fn resolve_mistral(tokenizer: &Tokenizer) -> Result<Resolved, TokenizerError> {
+    let bos = required_id(tokenizer, MISTRAL_BOS_MARK)?;
+    let eos = required_id(tokenizer, MISTRAL_EOS_MARK)?;
+    Ok(Resolved {
+        bos_id: bos,
+        bos_prefix_id: Some(bos),
+        eos_id: eos,
+        pad_id: eos,
+        end_of_turn_id: eos,
+        tool_call_start_id: NO_SUCH_TOKEN_ID,
+        tool_call_end_id: NO_SUCH_TOKEN_ID,
+        tool_response_id: NO_SUCH_TOKEN_ID,
+        tool_response_end_id: NO_SUCH_TOKEN_ID,
+        channel_start_id: NO_SUCH_TOKEN_ID,
+        channel_end_id: NO_SUCH_TOKEN_ID,
+        think_start_id: None,
+        think_end_id: None,
+        stop_token_ids: [eos].into_iter().collect(),
+        vocab_size: 32_000,
     })
 }
 

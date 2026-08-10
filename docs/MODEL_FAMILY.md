@@ -36,12 +36,35 @@ When given a Hugging Face URL, local `.gturbo` directory, or GGUF checkpoint, `t
 ```
 
 ### Detection Strategy (GGUF vs. Hugging Face)
+
+Both tables live in one place, `crates/repack/src/arch_registry.rs`. **Every key
+in it was read off a real published file**, and `tests/arch_registry_network.rs`
+re-reads each one; a row without such a witness cannot be added. The three
+naming schemes genuinely differ and none is derivable from another: Qwen 3.6 is
+`qwen3_5_moe` in `config.json`, `qwen35moe` in GGUF, and `qwen36` in a
+`.gturbo` manifest.
+
 - **GGUF Checkpoints**: `turbospark-repack` fetches the initial ~512 KB metadata header via `HttpRangeSource` and inspects `general.architecture`:
   - `"gemma4"` -> `ModelFamily::Gemma4`
   - `"qwen35moe"` -> `ModelFamily::Qwen36`
-- **Hugging Face Safetensors**: `turbospark-repack` fetches `config.json` and parses `model_type` or `architectures`:
-  - `"gemma4"` -> `ModelFamily::Gemma4`
-  - `"qwen2_moe"` / `"qwen3_5_moe"` -> `ModelFamily::Qwen36`
+  - `"llama"` -> `ModelFamily::Llama`, and PARTIALLY: this string is both
+    Mixtral and dense Llama, only the MoE half has a decode flow, and the
+    refusal for the dense half therefore lives at `RealForwardRunner::open`
+    rather than here (nothing in the string says which half a file is)
+  - anything else -> refused, with a message that says whether the string is
+    *recognized but unported* (and what it would need) or *unknown*.
+- **Hugging Face Safetensors**: the family is chosen by the CALLER, which picks
+  `write_gemma4_install` or `write_qwen36_install`. `config.json`'s `model_type`
+  is a GUARD on that choice rather than a dispatcher: each parser refuses a
+  config that positively claims another family, since without it the wrong
+  parser silently produces an `ArchConfig` labelled with the family it
+  hardcodes. A config claiming nothing recognized is accepted.
+  - `"gemma4"` / `"gemma4_text"` -> `ModelFamily::Gemma4`
+  - `"qwen3_5_moe"` / `"qwen3_5_moe_text"` -> `ModelFamily::Qwen36`
+  - The `_text` spellings are what the multimodal checkpoints' `text_config`
+    carries. `architectures` (class names like
+    `Gemma4ForConditionalGeneration`) is deliberately not consulted: it is a
+    fourth naming scheme and would need a fourth table to buy nothing.
 
 ---
 
@@ -49,14 +72,38 @@ When given a Hugging Face URL, local `.gturbo` directory, or GGUF checkpoint, `t
 
 The table below provides a comprehensive list of all major LLM architectures supported across `llama.cpp`, `mlx-lm`, `turbo-fieldfare`, and `turbospark`.
 
+**Read the footprint column as an MoE result, not a general one.** The
+~1.6-2.2 GiB figures come from STREAMING routed experts: only the resident core
+is mapped, and mapped weights are pinned by
+`newBufferWithBytesNoCopy` (AGENTS.md Gotcha 19), so a model with no routed
+experts has every byte of itself resident. A dense Llama 3 8B at Q4_K_M would
+sit near its own ~4.9 GB on disk. Dense families cannot hold this ceiling, by
+construction, and no amount of engineering changes that; only the MoE rows below
+inherit it.
+
+One row's architecture string is not what its name suggests, and it is measured
+rather than assumed (`tests/arch_registry_network.rs`): **Mixtral reports
+`general.architecture = "llama"`**, identical to a dense Llama 3.1, and
+expresses its MoE through `llama.expert_count = 8`. The two halves need very
+different work, so they are two rows below even though they are one string.
+Rows marked *Registered, planned* have had their architecture string read
+off a real published file and carry a row in `arch_registry.rs`. On every other
+row the parenthesised string is llama.cpp's naming, unconfirmed here and NOT in
+the registry -- pointing a checkpoint at one of those gets the "not in this
+port's registry" message rather than the "recognized, needs X" one.
+
 | Model Family / GGUF `general.architecture` | Key Architectural Features | `turbospark` (Rust) | `turbo-fieldfare` (Swift) | `llama.cpp` | `mlx-lm` | Peak RAM Footprint in `turbospark` |
 | --- | --- | :---: | :---: | :---: | :---: | ---: |
 | **Gemma 4 26B-A4B** (`gemma4`) | SWA/Full Attention, MoE (128 experts, top-8), Tied Embeddings | **Full Support** | **Full Support** | Full Support | Full Support | **~2.1 GiB RAM** |
 | **Qwen 3.6 35B-A3B** (`qwen35moe`) | Gated-DeltaNet Linear Attention + MoE (256 experts, top-8) | **Full Support** | **Full Support** | Full Support | Full Support | **~1.6 GiB RAM** |
-| **DeepSeek V4 Flash** (`deepseek`, `deepseek2`) | Multi-head Latent Attention (MLA), DeepSeek MoE, Sinkhorn combine | *Scaffolded* | *Scaffolded* | Full Support | Full Support | *TBD* |
-| **Llama 3 / 3.1 / 3.2 / 3.3 / Llama 2** (`llama`) | Standard Dense Transformer, GQA, RoPE frequency scaling | *Planned* | *Planned* | Full Support | Full Support | *TBD* |
-| **Mistral 7B / Mixtral 8x7B / 8x22B** (`mistral`, `mixtral`) | Sliding-Window Attention (SWA), MoE expert routing | *Planned* | *Planned* | Full Support | Full Support | *TBD* |
-| **Phi-2 / Phi-3 / Phi-3.5 / Phi-4** (`phi2`, `phi3`) | SuScaled RoPE, Partial RoPE, Block-sparse / Dense attention | *Planned* | *Planned* | Full Support | Full Support | *TBD* |
+| **DeepSeek V3** (`deepseek2`, confirmed) | Multi-head Latent Attention (MLA), DeepSeek MoE | *Registered, planned* | *Planned* | Full Support | Full Support | *MoE, keeps the ceiling* |
+| **DeepSeek V4 Flash** (string unconfirmed) | MLA, mHC streams, Sinkhorn combine, INT2 experts | *Scaffolded* | *Scaffolded* | Full Support | Full Support | *TBD* |
+| **Mixtral 8x7B / 8x22B** (`llama` + `expert_count`) | Plain GQA attention + MoE (8 experts, top-2), no shared expert, untied head | **Full Support** | *Planned* | Full Support | Full Support | *MoE, keeps the ceiling* |
+| **Llama 3 / 3.1 / 3.2 / 3.3, Llama 2, Mistral 7B** (`llama`, dense) | Standard Dense Transformer, GQA, RoPE frequency scaling (a TENSOR, `rope_freqs.weight`) | *Refused at open, by name* | *Planned* | Full Support | Full Support | *dense: whole model resident* |
+| **Qwen3-MoE 30B-A3B** (`qwen3moe`) | Standard GQA attention + MoE, no linear attention, no shared expert | *Registered, planned* | *Planned* | Full Support | Full Support | *MoE, keeps the ceiling* |
+| **Llama 4 Scout / Maverick** (`llama4`) | MoE with interleaved chunked attention | *Registered, planned* | *Planned* | Full Support | Full Support | *MoE, keeps the ceiling* |
+| **gpt-oss 20B / 120B** (`gpt-oss`) | MXFP4 experts, attention sinks | *Registered, planned* | *Planned* | Full Support | Full Support | *MoE, keeps the ceiling* |
+| **Phi-3 / Phi-3.5** (`phi3`) | SuScaled (longrope) RoPE, dense FFN | *Registered, planned* | *Planned* | Full Support | Full Support | *dense: whole model resident* |
 | **Command-R / Command-R+** (`command-r`) | RAG / Tool-calling tuned architecture | *Planned* | *Planned* | Full Support | Full Support | *TBD* |
 | **Grok-1** (`grok`) | 314B MoE architecture (8 experts, top-2) | *Planned* | *Planned* | Full Support | Full Support | *TBD* |
 | **DBRX** (`dbrx`) | Fine-grained MoE (16 experts, top-4) | *Planned* | *Planned* | Full Support | Full Support | *TBD* |
@@ -83,7 +130,10 @@ The table below provides a comprehensive list of all major LLM architectures sup
 
 ### How `turbospark` Implements This Strategy
 `turbospark` follows a clean, strongly-typed Rust implementation of the same pattern:
-- **`ModelFamily` Enum** (`crates/model-io/src/arch_config.rs`): Defines supported discriminators (`Gemma4`, `Qwen36`, `DeepseekV4Flash`).
+- **Architecture Registry** (`crates/repack/src/arch_registry.rs`): the string tables, split into what RUNS and what is merely recognized. llama.cpp's `llm_arch` enum conflates the two because every variant it names has a graph builder; here they are separate, so a recognized-but-unported architecture is a better error rather than a half-wired family.
+- **`ModelFamily` Enum** (`crates/model-io/src/arch_config.rs`): Defines supported discriminators (`Gemma4`, `Qwen36`, `Llama`, `DeepseekV4Flash`).
+
+**One architecture string can cover two models, and support is then PARTIAL in a way no table column expresses.** `llama` is both Mixtral and dense Llama; only the MoE half has a decode flow, and nothing in the architecture string says which half a file is -- only `expert_count` does. So the registry calls `llama` supported, and `RealForwardRunner::open` refuses the dense half by name. A parity matrix row per MODEL rather than per string is the honest rendering, which is why the two rows above are split.
 - **Baseline Specifications** (`crates/model-io/src/arch_baselines.rs`): Provides compile-time defaults for behavioral architecture flags missing from GGUF metadata.
 - **Tensor Mapping Engine** (`crates/repack/src/gguf_names.rs`): Maps GGUF tensor naming conventions to canonical parameter names.
 - **Dedicated Metal Forward Passes** (`crates/runtime/src/real_forward_*.rs`): Each family owns an optimized Metal execution flow tuned for its layer graph.
@@ -93,9 +143,26 @@ The table below provides a comprehensive list of all major LLM architectures sup
 ## 4. Extending Support to New Families
 
 To add a new model family to `turbospark`:
-1. Register the new variant in `ModelFamily` (`crates/model-io/src/arch_config.rs`).
-2. Add baseline specs in `arch_baselines.rs`.
-3. Follow the 7-phase step-by-step checklist in [`docs/NEW_MODEL.md`](docs/NEW_MODEL.md).
+1. Read the architecture string off a real published file and add a row to
+   `crates/repack/src/arch_registry.rs` with the URL you read it from. That row
+   is recognition only: it changes the error message and nothing else.
+2. Register the new variant in `ModelFamily` (`crates/model-io/src/arch_config.rs`).
+3. Add baseline specs in `arch_baselines.rs`.
+4. Follow the 7-phase step-by-step checklist in [`docs/NEW_MODEL.md`](docs/NEW_MODEL.md).
+
+Steps 2 and 3 belong to the bring-up, not to step 1. A `ModelFamily` variant
+with an invented baseline is worse than no variant: `known_architecture` is
+exhaustive and `arch_validation` compares its result against a manifest field by
+field, so the placeholder would validate installs against fiction. Recognition
+is keyed by string precisely so it can land without that risk.
+
+**Order the families by what this engine is, not by llama.cpp's list.** The
+memory result comes from streaming routed experts, so an MoE architecture reuses
+the machinery that produces it, while a dense one gives up the ceiling and
+competes with llama.cpp on ground where this port has no advantage. That is why
+the first planned bring-up (ROADMAP Phase M2) is the `llama` architecture's MoE
+half (Mixtral) rather than its dense half, even though dense Llama is the
+cheaper of the two.
 
 ---
 

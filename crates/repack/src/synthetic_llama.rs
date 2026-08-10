@@ -1,0 +1,211 @@
+//! Builds a tiny Mixtral-shaped install through the REAL checkpoint repack
+//! pipeline (ROADMAP Phase M2), the sibling of
+//! [`crate::build_synthetic_qwen36_real_install`].
+//!
+//! Shorter than either sibling because the `llama` architecture is defined by
+//! what it lacks: no linear-attention layers, no per-head q/k norms, no
+//! packed query/gate rows, no shared expert, no sandwich norms, no softcap.
+//! One layer kind, one RoPE base, one norm before attention and one before
+//! the MoE.
+//!
+//! Shape: hidden 64, 4 query heads of 16 over 2 KV heads, expert FFN 64,
+//! every layer full attention, `num_experts` routed experts at top-2 -- the
+//! real 8x7B's ratio rather than a copy of its size.
+//!
+//! Weights are deterministic but NOT trained: generated tokens are
+//! structurally real and semantically meaningless, and a short generation can
+//! decode to the empty string. Assert on token counts and stop reasons, never
+//! on text (AGENTS.md Gotcha 12).
+
+use model_io::{
+    ArchConfig, CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig,
+    ModelFamily,
+};
+
+use crate::gemma4_checkpoint::{write_gemma4_install, Gemma4Quant};
+use crate::ranged_download::MemoryRangeSource;
+use crate::safetensors_header::parse_header;
+use crate::synthetic_real::{
+    assemble_safetensors, bf16_vector, expert_int4_triple, int4_triple, int8_triple, Tensor,
+};
+
+const HIDDEN: usize = 64;
+const NUM_HEADS: usize = 4;
+const HEAD_DIM: usize = 16;
+const NUM_KV_HEADS: usize = 2;
+/// Per-expert FFN width. The real Mixtral publishes ONE
+/// `feed_forward_length` and has no shared expert, so `intermediate_size`
+/// and `moe_intermediate_size` are the same number here as there.
+const INTER: usize = 64;
+
+/// A tiny `llama`-architecture (Mixtral-shaped) config. Every non-shape field
+/// takes `model_io::mixtral_8x7b()`'s own value, for the reason its two
+/// siblings pin theirs: the manifest's optional family-extension fields fall
+/// back to the GEMMA baseline whatever family the manifest claims (AGENTS.md
+/// Gotcha 24), so anything else has to be written explicitly and matched
+/// explicitly.
+pub fn tiny_llama_arch(vocab_size: i64, num_layers: i64, num_experts: i64) -> ArchConfig {
+    ArchConfig {
+        hidden_size: HIDDEN as i64,
+        intermediate_size: INTER as i64,
+        moe_intermediate_size: INTER as i64,
+        num_heads: NUM_HEADS as i64,
+        num_kv_heads: NUM_KV_HEADS as i64,
+        num_full_kv_heads: NUM_KV_HEADS as i64,
+        head_dim: HEAD_DIM as i64,
+        full_head_dim: HEAD_DIM as i64,
+        vocab_size,
+        sliding_window: 0,
+        final_logit_softcap: 0.0,
+        rope_theta: 1_000_000.0,
+        full_rope_theta: 1_000_000.0,
+        // Full rotary, as the real file's `rope.dimension_count == head_dim`
+        // says.
+        partial_rotary_factor: 1.0,
+        num_layers,
+        num_experts,
+        top_k_experts: num_experts.min(2),
+        tie_word_embeddings: false,
+        attention_k_eq_v: false,
+        full_attention_layer_mask: vec![1u8; num_layers as usize],
+        hidden_activation: "silu".to_string(),
+        family: ModelFamily::Llama,
+        attn_output_gate: false,
+        // 0.25, not the real model's 128^-0.5. `validate_arch` compares this
+        // f64 EXACTLY against the manifest's and serde_json's default parser
+        // is only correct to ~1 ULP, so a scale that is not a binary fraction
+        // cannot survive the round trip. These weights are untrained, so any
+        // finite scale is equally meaningless. The REAL baseline's
+        // `attention_scale` is not a binary fraction and is exercised by the
+        // real install instead.
+        attention_scale: 0.25,
+        embedding_scaled_by_sqrt_hidden: false,
+        router_scaled: false,
+        ffn_sandwich_norms: false,
+        shared_expert_gated: false,
+        rope_neox_subdim: false,
+        linear_attention: LinearAttentionConfig::NONE,
+        compressed_attention: CompressedAttentionConfig::NONE,
+        hyper_connections: HyperConnectionConfig::NONE,
+        num_hash_routed_layers: 0,
+        router_scoring_func: "softmax".to_string(),
+        routed_scaling_factor: 1.0,
+        swiglu_limit: 0.0,
+    }
+}
+
+/// Writes a tiny Mixtral-shaped `.gturbo` install and returns the
+/// `ArchConfig` needed to open it.
+///
+/// Goes through [`write_gemma4_install`] rather than a family-specific
+/// wrapper, because that walk is family-PARAMETERIZED: it classifies routed
+/// tensors by `arch.family`'s marker, and this architecture shares Gemma's
+/// (`.experts.switch_glu.`). Only Qwen needed its own name, and only because
+/// its marker differs.
+pub fn build_synthetic_llama_real_install(
+    dir: &std::path::Path,
+    vocab_size: i64,
+    num_layers: i64,
+    num_experts: i64,
+    model_id: &str,
+) -> Result<ArchConfig, Box<dyn std::error::Error>> {
+    let arch = tiny_llama_arch(vocab_size, num_layers, num_experts);
+    let experts = num_experts as usize;
+    let vocab = vocab_size as usize;
+
+    let mut ts: Vec<Tensor> = Vec::new();
+    // Untied head, as every real `llama` checkpoint here is.
+    ts.extend(int4_triple(
+        "language_model.model.embed_tokens.weight",
+        vocab,
+        HIDDEN,
+        1,
+    ));
+    ts.extend(int4_triple(
+        "language_model.lm_head.weight",
+        vocab,
+        HIDDEN,
+        2,
+    ));
+
+    let mut overrides = std::collections::HashMap::new();
+    for l in 0..num_layers as usize {
+        let p = format!("language_model.model.layers.{l}");
+        let seed = 1000 * (l as u64 + 1);
+
+        for (i, norm) in ["input_layernorm", "post_attention_layernorm"]
+            .iter()
+            .enumerate()
+        {
+            ts.push(bf16_vector(
+                &format!("{p}.{norm}.weight"),
+                HIDDEN,
+                1.0,
+                seed + 40 + i as u64,
+            ));
+        }
+
+        // Plain GQA: q_proj emits exactly `num_heads * head_dim` rows (no
+        // gate half), and there are no q/k norms to write.
+        ts.extend(int4_triple(
+            &format!("{p}.self_attn.q_proj.weight"),
+            NUM_HEADS * HEAD_DIM,
+            HIDDEN,
+            seed + 1,
+        ));
+        for (i, role) in ["k_proj", "v_proj"].iter().enumerate() {
+            ts.extend(int4_triple(
+                &format!("{p}.self_attn.{role}.weight"),
+                NUM_KV_HEADS * HEAD_DIM,
+                HIDDEN,
+                seed + 2 + i as u64,
+            ));
+        }
+        ts.extend(int4_triple(
+            &format!("{p}.self_attn.o_proj.weight"),
+            HIDDEN,
+            NUM_HEADS * HEAD_DIM,
+            seed + 4,
+        ));
+
+        // INT8 router, INT4 routed experts, and NO shared expert.
+        ts.extend(int8_triple(
+            &format!("{p}.mlp.gate.weight"),
+            experts,
+            HIDDEN,
+            seed + 50,
+        ));
+        overrides.insert(format!("{p}.mlp.gate"), 8u32);
+        for (i, role) in ["gate_proj", "up_proj", "down_proj"].iter().enumerate() {
+            let (rows, cols) = if *role == "down_proj" {
+                (HIDDEN, INTER)
+            } else {
+                (INTER, HIDDEN)
+            };
+            ts.extend(expert_int4_triple(
+                &format!("{p}.experts.switch_glu.{role}.weight"),
+                experts,
+                rows,
+                cols,
+                seed + 70 + i as u64,
+            ));
+        }
+    }
+    ts.push(bf16_vector(
+        "language_model.model.norm.weight",
+        HIDDEN,
+        1.0,
+        7,
+    ));
+
+    let blob = assemble_safetensors(&ts);
+    let source = MemoryRangeSource::new(&blob);
+    let header = parse_header(&blob, crate::safetensors_header::DEFAULT_MAX_HEADER_BYTES)?;
+    let quant = Gemma4Quant {
+        default_bits: 4,
+        group_size: 64,
+        bits_overrides: overrides,
+    };
+    write_gemma4_install(dir, &arch, model_id, &header, &source, &quant)?;
+    Ok(arch)
+}

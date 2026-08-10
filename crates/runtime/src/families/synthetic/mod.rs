@@ -84,6 +84,9 @@ impl RealForwardRunner {
         if self.real_qwen.is_some() {
             return self.produce_real_qwen36(token, position, logits);
         }
+        if self.real_llama.is_some() {
+            return self.produce_real_llama(token, position, logits);
+        }
         if self.real.is_some() {
             return self.produce_real_gemma4(token, position, logits);
         }

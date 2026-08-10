@@ -28,6 +28,11 @@ crates/runtime/
 |   |   |   +-- attn.rs         # Attention block & router GEMV pass
 |   |   |   +-- moe.rs          # Routed MoE pass encoding
 |   |   |   \-- state.rs        # RealGemmaState initialization
+|   |   +-- llama/              # `llama` architecture (Mixtral) decode flow
+|   |   |   +-- mod.rs          # Entry point & layer loop
+|   |   |   +-- attn.rs         # Plain GQA attention block
+|   |   |   +-- moe.rs          # Routed MoE pass (no shared expert)
+|   |   |   \-- state.rs        # RealLlamaState & the dense-half refusal
 |   |   +-- qwen/               # Qwen 3.6 decode flow
 |   |   |   +-- mod.rs          # Qwen 3.6 entry point & layer loop
 |   |   |   +-- attn.rs         # Gated DeltaNet & gated full attention blocks
@@ -44,6 +49,7 @@ crates/runtime/
     +-- raw_completion.rs       # Raw completion loop integration tests
     +-- real_forward.rs         # RealForwardRunner short-name integration tests
     +-- real_forward_gemma4.rs  # RealForwardRunner Gemma 4 learned-weight tests
+    +-- real_forward_llama.rs   # RealForwardRunner Mixtral-shaped decode tests
     +-- real_forward_qwen.rs    # RealForwardRunner Qwen 3.6 decode tests
     \-- fixtures/
         \-- ChatMLTokenizer/    # Toy ChatML tokenizer fixture directory for integration tests
@@ -56,6 +62,7 @@ crates/runtime/
 - `real_forward.rs`: `RealForwardRunner` struct definition, options handling, and dispatch orchestration.
 - `families/gemma4/`: Gemma 4 decode flow handling verbatim checkpoint weight names (`language_model.model.layers.0...`), per-head norms, learned weights, and MoE routing.
 - `families/qwen/`: Qwen 3.6 decode flow — gated DeltaNet on mask-2 layers, gated full attention on mask-1, one post-attention norm feeding router + shared expert + routed experts, no sandwich norms, no softcap. Selected from `ArchConfig.family`, never from tensor naming.
+- `families/llama/`: the `llama`-architecture decode flow (ROADMAP Phase M2), which is defined by its ABSENCES: plain GQA attention with no per-head norms and no output gate, a raw residual add with no sandwich norms, one post-attention norm feeding router and routed experts, no shared expert, no logit softcap, full-head NeoX RoPE at one base. **Mixtral-style MoE only.** One `general.architecture = "llama"` covers dense Llama 2/3.x and Mistral as well, and `RealLlamaState::build` refuses those by name: a dense install has no routed experts to stream, so it would need a GPU dense-FFN path (the current dense flow bridges FFN to CPU) and would abandon the memory ceiling the engine exists for. Phase 2's residual input is `scratch.zero_hidden` rather than a shared-expert output, so the routed sum is added to the stream exactly once.
 - `families/synthetic/`: Short-name synthetic execution flow (`layer0.q_proj`).
 - `config.rs`: Runtime generation configuration and runner settings.
 - `error.rs`: `RuntimeError` enum.

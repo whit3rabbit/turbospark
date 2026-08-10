@@ -81,3 +81,35 @@ fn decode_int8_gemv_shapes_include_router_and_optional_shared_expert_gate() {
     let qwen = qwen36_35b_a3b();
     assert_eq!(qwen.decode_int8_gemv_shapes().len(), 2);
 }
+
+/// AGENTS.md Gotcha 24: `validate_arch` compares float fields with `!=` on
+/// `f64` and serde_json's default parser is only accurate to ~1 ULP
+/// (exactness is behind its `float_roundtrip` feature), so a value that does
+/// not survive a serialize/parse round trip makes its install unloadable.
+///
+/// Gemma's 1.0 and Qwen's 0.0625 are binary fractions and were never at risk.
+/// Mixtral's is `128^-0.5 = 2^-3.5`, which is NOT, so this stopped being a
+/// theoretical concern in ROADMAP Phase M2 -- and it is cheaper to assert
+/// here than to discover 55 minutes into a streamed install.
+#[test]
+fn every_baseline_float_survives_the_manifest_round_trip() {
+    for arch in turbospark_model_io::all_known_architectures() {
+        for (field, value) in [
+            ("attentionScale", arch.attention_scale),
+            ("ropeTheta", arch.rope_theta),
+            ("fullRopeTheta", arch.full_rope_theta),
+            ("partialRotaryFactor", arch.partial_rotary_factor),
+            ("finalLogitSoftcap", arch.final_logit_softcap),
+            ("routedScalingFactor", arch.routed_scaling_factor),
+        ] {
+            let text = serde_json::to_string(&value).expect("serialize");
+            let back: f64 = serde_json::from_str(&text).expect("parse");
+            assert_eq!(
+                back,
+                value,
+                "{} {field} = {value} does not round-trip through serde_json (got {back} from {text})",
+                arch.family.as_str()
+            );
+        }
+    }
+}

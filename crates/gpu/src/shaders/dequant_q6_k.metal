@@ -43,6 +43,12 @@ constant constexpr uint kQ6_KDAt = 208;
 constant constexpr uint kQ6_KHalfElems = 128;
 constant constexpr uint kRowsPerTGQ6_K = 8;
 
+// Bytes one Q6_K row of `n` elements occupies. Shared with `moe_gguf.metal`,
+// which is compiled with this file concatenated ahead of it.
+static inline uint q6_k_row_bytes_msl(uint n) {
+    return n / kQ6_KBlockElems * kQ6_KBlockBytes;
+}
+
 // One Q6_K output row dotted against `x`. 32 lanes over a 128-element half:
 // each lane owns one `qh` byte and the four elements it serves, so a
 // superblock is two passes and the whole row has no inner stride.

@@ -14,6 +14,11 @@ fn int8_transcode_targets(family: ModelFamily) -> &'static [&'static str] {
     match family {
         ModelFamily::Gemma4 => &["router.proj.weight"],
         ModelFamily::Qwen36 => &["mlp.gate.weight", "mlp.shared_expert_gate.weight"],
+        // Mixtral's `ffn_gate_inp` maps to the same canonical name Qwen's
+        // router takes, and it is F16 in the 2023 conversion and F32 in the
+        // 2025 one -- both narrow to the INT8 affine the runtime's router
+        // GEMV reads. A dense Llama has no router and so no target here.
+        ModelFamily::Llama => &["mlp.gate.weight"],
         ModelFamily::DeepseekV4Flash => &[],
     }
 }
@@ -84,6 +89,74 @@ fn even_v_heads(name: &str, arch: &ArchConfig) -> Result<usize, GgufRepackError>
     Ok(heads)
 }
 
+/// Undo llama.cpp's ROTARY PAIR PERMUTATION on a `llama`-architecture
+/// `attn_q` / `attn_k` (ROADMAP Phase M2).
+///
+/// **The same class as the Qwen V-head convention above -- a source that is
+/// right about every NAME and wrong about what a tensor MEANS (AGENTS.md
+/// Gotcha 33) -- and it was found the same way: the real install opened,
+/// decoded, and produced degenerate text.**
+///
+/// ggml rotates ADJACENT pairs `(2i, 2i+1)` for this architecture, where this
+/// port's `rope_proportional_neox` rotates half-split pairs
+/// `(i, head_dim/2 + i)`. Same rotation, different element pairing, and
+/// llama.cpp's HF converter absorbs the difference into the WEIGHTS: it
+/// reshapes each head's rows to `(2, D/2)` and swaps to `(D/2, 2)`. So GGUF
+/// row `j` holds what the original layout kept at `b * (D/2) + a` for
+/// `a = j / 2`, `b = j % 2`, and undoing it means reading install row `i`
+/// from GGUF row `(i % (D/2)) * 2 + i / (D/2)`.
+///
+/// Rows only, and rows are contiguous byte runs in every block layout here,
+/// so this moves bytes without decoding any -- the same property that let the
+/// Qwen fix permute quantized tensors directly.
+///
+/// V is NOT touched: it never goes through RoPE.
+fn rotary_row_source(i: usize, head_dim: usize) -> usize {
+    let half = head_dim / 2;
+    (i % half) * 2 + i / half
+}
+
+/// True for the two tensors that need it, on the one family that does.
+fn needs_rotary_unpermute(canonical: &str, arch: &ArchConfig) -> bool {
+    arch.family == ModelFamily::Llama
+        && (canonical.ends_with("self_attn.q_proj.weight")
+            || canonical.ends_with("self_attn.k_proj.weight"))
+}
+
+fn unpermute_rotary_rows(
+    name: &str,
+    rows: usize,
+    head_dim: usize,
+    bytes: &mut [u8],
+) -> Result<(), GgufRepackError> {
+    let shape_err = |detail: String| GgufRepackError::ShapeMismatch {
+        tensor: name.to_string(),
+        detail,
+    };
+    if head_dim == 0 || head_dim % 2 != 0 || rows == 0 || rows % head_dim != 0 {
+        return Err(shape_err(format!(
+            "{rows} rows do not split into whole heads of {head_dim}"
+        )));
+    }
+    if bytes.len() % rows != 0 {
+        return Err(shape_err(format!(
+            "{} bytes is not a whole number of {rows} rows",
+            bytes.len()
+        )));
+    }
+    let row_bytes = bytes.len() / rows;
+    let original = bytes.to_vec();
+    for head_start in (0..rows).step_by(head_dim) {
+        for i in 0..head_dim {
+            let src = head_start + rotary_row_source(i, head_dim);
+            let dst = head_start + i;
+            bytes[dst * row_bytes..(dst + 1) * row_bytes]
+                .copy_from_slice(&original[src * row_bytes..(src + 1) * row_bytes]);
+        }
+    }
+    Ok(())
+}
+
 fn apply_source_convention(
     name: &str,
     canonical: &str,
@@ -133,6 +206,9 @@ fn apply_source_convention_bytes(
     (rows, cols): (usize, usize),
     bytes: &mut [u8],
 ) -> Result<(), GgufRepackError> {
+    if needs_rotary_unpermute(canonical, arch) {
+        return unpermute_rotary_rows(name, rows, arch.full_head_dim as usize, bytes);
+    }
     let Some(axis) = v_head_axis(canonical, arch) else {
         return Ok(());
     };

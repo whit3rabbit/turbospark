@@ -59,6 +59,8 @@ impl From<DownloadError> for Gemma4Error {
 pub fn parse_gemma4_config(json: &str) -> Result<ArchConfig, Gemma4Error> {
     let root: serde_json::Value =
         serde_json::from_str(json).map_err(|e| Gemma4Error::Config(e.to_string()))?;
+    crate::arch_registry::refuse_foreign_config(&root, ModelFamily::Gemma4)
+        .map_err(Gemma4Error::Config)?;
     let tc = root
         .get("text_config")
         .ok_or_else(|| Gemma4Error::Config("no text_config".to_string()))?;

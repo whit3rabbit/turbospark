@@ -4,7 +4,7 @@
 use model_io::ResidentIndex;
 
 use crate::real_forward_layout::{
-    RoutedBlobLayout, DTYPE_GGUF_Q4_K, DTYPE_GGUF_Q6_K, DTYPE_GGUF_Q8_0,
+    RoutedBlobLayout, DTYPE_GGUF_Q4_K, DTYPE_GGUF_Q5_K, DTYPE_GGUF_Q6_K, DTYPE_GGUF_Q8_0,
 };
 use crate::real_forward_types::RealForwardError;
 use crate::real_forward_utils::{entry, resident_matrix};
@@ -75,6 +75,9 @@ pub(crate) fn encode_moe_phase2_any(
             context, pass, routed, offsets, acts, routing_w, residual, y, d_dim, f_dim, use_silu,
         ),
         RoutedBlobLayout::GgufQ4K => gpu::encode_moe_phase2_q4_k(
+            context, pass, routed, offsets, acts, routing_w, residual, y, d_dim, f_dim, use_silu,
+        ),
+        RoutedBlobLayout::GgufQ6K => gpu::encode_moe_phase2_q6_k(
             context, pass, routed, offsets, acts, routing_w, residual, y, d_dim, f_dim, use_silu,
         ),
         RoutedBlobLayout::GgufIq4Nl => gpu::encode_moe_phase2_iq4_nl(
@@ -236,6 +239,23 @@ pub(crate) fn encode_gemv_any(
                 cols,
             };
             gpu::encode_dequant_q4_k_gemv_resident(context, pass, &w, x, y)
+                .map_err(RealForwardError::Gpu)
+        }
+        DTYPE_GGUF_Q5_K => {
+            let expected = gpu::q5_k_row_bytes(cols) * rows;
+            if e.size_bytes as usize != expected {
+                return Err(RealForwardError::Unsupported(format!(
+                    "tensor {name}: Q5_K packed size {} does not match {rows}x{cols} ({expected})",
+                    e.size_bytes
+                )));
+            }
+            let w = gpu::Q5KResidentMatrix {
+                buffer: weights.buffer(),
+                weights_offset: weights.gpu_offset(e.file_offset - base),
+                rows,
+                cols,
+            };
+            gpu::encode_dequant_q5_k_gemv_resident(context, pass, &w, x, y)
                 .map_err(RealForwardError::Gpu)
         }
         DTYPE_GGUF_Q6_K => {

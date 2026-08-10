@@ -54,6 +54,8 @@ const MASK_FULL: u8 = 1;
 pub fn parse_qwen36_config(json: &str) -> Result<ArchConfig, Gemma4Error> {
     let root: serde_json::Value =
         serde_json::from_str(json).map_err(|e| Gemma4Error::Config(e.to_string()))?;
+    crate::arch_registry::refuse_foreign_config(&root, ModelFamily::Qwen36)
+        .map_err(Gemma4Error::Config)?;
     // Text-only conversions drop the wrapper; accept both shapes.
     let tc = root.get("text_config").unwrap_or(&root);
 

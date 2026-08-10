@@ -103,7 +103,30 @@ pub fn write_gguf_install_streamed(
     let mut writer =
         crate::gturbo_writer::StreamingGturboWriter::new(dir, stride, arch.num_experts as usize)?;
     writer.set_quant(manifest::gguf_manifest_quant(header, &plan));
+    // RESUME (ROADMAP Phase M2). A 26 GB walk that restarts from layer 0
+    // after any transport failure is a real fragility rather than a
+    // theoretical one: it cost three 35-minute runs on one checkpoint. A
+    // layer file already on disk AT THE SIZE THIS WALK WOULD WRITE is
+    // adopted, which needs no network read -- the layout entry is a function
+    // of the header, not of the bytes.
+    //
+    // Deliberately keyed on the expected size and not on mere existence: a
+    // truncated leftover, or one from a walk with a different stride, is
+    // refused by `adopt_layer` rather than silently believed.
     for layer in plan.routed.keys().copied() {
+        let expected = plan::layer_file_bytes(header, &arch, &plan, layer, stride)?;
+        let layer_path = dir
+            .join("packed_experts")
+            .join(format!("layer_{layer:02}.bin"));
+        let on_disk = std::fs::metadata(&layer_path).map(|m| m.len()).ok();
+        if on_disk == Some(expected) {
+            let (blobs, _) = plan::plan_one_layer_shape(header, &arch, &plan, layer)?;
+            writer.adopt_layer(&blobs)?;
+            progress(&format!(
+                "layer {layer} adopted ({expected} bytes already on disk)"
+            ));
+            continue;
+        }
         let (blobs, used) = plan::plan_one_layer(header, source, &arch, &plan, layer)?;
         writer.write_layer(&blobs)?;
         progress(&format!(

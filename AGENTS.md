@@ -201,6 +201,13 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
 TURBOSPARK_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
   cargo test -p turbospark-repack --test gguf_checkpoint_network --release -- --ignored --nocapture
 
+# ROADMAP Phase M1: the admission gate for `arch_registry.rs`'s planned
+# architecture rows. Re-reads the header of the real published file each row
+# was taken from and asserts the `general.architecture` string still matches,
+# so the table cannot rot into folklore. A header per row, seconds each, no
+# install and no checkpoint. Run it after adding a row.
+cargo test -p turbospark-repack --test arch_registry_network --release -- --ignored --nocapture
+
 # Settles which half of Gemma's fused ffn_gate_up_exps is the gate (Stage 2's
 # first use of the Q8_0 reference). Correlates a dequantized layer 0 expert 0
 # against the same expert in the MLX install. Also a real-data check on the
@@ -229,6 +236,16 @@ TURBOSPARK_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
 # the MLX-derived ~/models/gemma4.gturbo; the test asserts it does not.
 TURBOSPARK_GEMMA4_GGUF_INSTALL_DIR=~/models/gemma4-gguf.gturbo \
   cargo test -p turbospark-repack --test gguf_install_network --release -- --ignored --nocapture
+
+# ROADMAP Phase M2: install the real published Mixtral 8x7B Q4_K_M. Streams
+# the 26 GB file from HF a layer at a time (never written to disk) into a
+# ~29 GB install. The THIRD family, and the first whose architecture string
+# (`llama`) covers two different models: a dense Llama 3.1 reports the same
+# string and is refused at open, because only `expert_count` says which half
+# a file is. Also the first real file to put Q6_K in a ROUTED expert (16 of
+# 32 layers, against Q4_K on the other 16) and Q5_K on `attn_output`.
+TURBOSPARK_MIXTRAL_INSTALL_DIR=~/models/mixtral-gguf.gturbo \
+  cargo test -p turbospark-repack --test gguf_mixtral_install_network --release -- --ignored --nocapture
 
 # ROADMAP Phase G Stage 2 item 9: the same, for the K-quants. Streams the real
 # published Qwen 3.6 Q4_K_M (~20 GB, never written to disk) into a ~20 GB
@@ -873,7 +890,12 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     second added by ROADMAP Phase S when a second real file finally put
     `token_embd` there; it has no MoE pair, so an install with Q6_K experts
     passes the manifest gate and fails at the routed dispatch, by name.
-    PHASE S ADDS IQ3_XXS, IQ4_NL AND IQ4_XS ON THE SAME PARTIAL FOOTING, and
+    PHASE M2 ADDS Q5_K on the narrowest footing yet (a resident GEMV and
+    nothing else: Mixtral 8x7B's Q4_K_M puts it on `attn_output` alone) and
+    gives Q6_K a routed PHASE 2, because that same file puts Q6_K in the
+    `ffn_down_exps` of 16 of its 32 layers -- the first mixture whose two
+    types differ across LAYERS of one model rather than across the phases of
+    one expert. PHASE S ADDS IQ3_XXS, IQ4_NL AND IQ4_XS ON THE SAME PARTIAL FOOTING, and
     the partition is its candidate's rather than a symmetry: IQ3_XXS and
     IQ4_XS have a routed phase 1 (gate/up) and IQ4_NL a routed phase 2
     (down), because that is where the real file puts each, and all three have
@@ -976,6 +998,19 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     equality is unavailable. Where a tensor has one row per head the
     permutation is RECOVERABLE outright by argmax over a row-by-row
     correlation matrix, which is stronger than confirming a guess.
+    **A SECOND INSTANCE LANDED IN ROADMAP PHASE M2, on a different axis and
+    a different family, found the same way.** llama.cpp rotates ADJACENT pairs
+    `(2i, 2i+1)` for the `llama` architecture where this port's
+    `rope_proportional_neox` rotates half-split pairs `(i, head_dim/2 + i)`,
+    and its HF converter absorbs the difference into the WEIGHTS: each head's
+    rows are reshaped `(2, D/2)` and swapped to `(D/2, 2)`. Every name mapped,
+    every shape checked out, the install opened and decoded, and the output
+    was degenerate. `transcode.rs::unpermute_rotary_rows` undoes it for
+    `attn_q` and `attn_k` only (V never goes through RoPE). The lesson to
+    carry: when a new family's real install produces WORD SALAD rather than an
+    error, suspect a convention on an axis some kernel indexes, and reach for
+    the in-place patch loop before a repack -- it turned a 35-minute
+    hypothesis test into a 10-second one here too.
     Two corollaries. Permuting a quantized tensor needs no dequantization:
     block layouts tile along the fastest-varying dim, so a row is a
     contiguous byte run and a head-wide column group is a whole number of
@@ -1009,6 +1044,34 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     heads are the same function and comparable), and its CPU and Metal
     perplexities differ by 1.8% on identical bytes, which is a real
     calibration for `quality_common`'s 2% `PERPLEXITY_REL_TOLERANCE`.
+
+35. **"Is it MoE?" is the wrong question for this engine. "How FINELY does it
+    split its experts?" is the right one, and it is one multiplication off the
+    header.** The expert slot cache is `slots x layers x expert_stride`, so
+    what decides whether a checkpoint can stream is the size of ONE expert,
+    not the size of the model. Measured 2026-08-09 while bringing up the
+    `llama` family (ROADMAP Phase M2):
+
+    | | Gemma 4 26B-A4B | Mixtral 8x7B |
+    |---|---|---|
+    | experts per layer | 128 (top-8) | 8 (top-2) |
+    | one expert blob | ~3.2 MiB | **108.9 MiB** |
+    | slot cache at 16 slots | 1.5 GiB | **54.5 GiB** |
+
+    Mixtral is the SMALLER model by parameter count and cannot stream on this
+    engine in any useful configuration: at the default 16 slots it wants
+    54.5 GiB of pinned host memory, and at `slots == num_experts` it pins the
+    entire 27.2 GiB expert table, which is not streaming. `open_expert_streamers`
+    now caps the slot count at the expert count and reports the working set
+    when the streamer cannot get its memory, because "cannot allocate" without
+    the number sends the reader looking for a leak instead of at the
+    arithmetic.
+    THE PART THAT GENERALISES IS WHEN IT WAS KNOWABLE: `expert_count` and
+    `feed_forward_length` are both in the GGUF header that the Phase 0 probe
+    already read, so `8 x 14336 wide -> ~109 MiB` was available before the
+    26 GB download and was not computed. Header probes had answered every
+    other question in that phase. Do this multiplication in Phase 0, next to
+    the layer graph.
 
 ## Per-Crate Documentation
 

@@ -92,7 +92,8 @@ from_error! {
 pub fn dtype_tag_for_ggml_type(ggml_type: u32) -> Option<u8> {
     use crate::resident_writer::{
         DTYPE_BF16, DTYPE_FP16, DTYPE_FP32, DTYPE_GGUF_IQ3_XXS, DTYPE_GGUF_IQ4_NL,
-        DTYPE_GGUF_IQ4_XS, DTYPE_GGUF_Q4_0, DTYPE_GGUF_Q4_K, DTYPE_GGUF_Q6_K, DTYPE_GGUF_Q8_0,
+        DTYPE_GGUF_IQ4_XS, DTYPE_GGUF_Q4_0, DTYPE_GGUF_Q4_K, DTYPE_GGUF_Q5_K, DTYPE_GGUF_Q6_K,
+        DTYPE_GGUF_Q8_0,
     };
     Some(match ggml_type {
         0 => DTYPE_FP32,
@@ -101,6 +102,7 @@ pub fn dtype_tag_for_ggml_type(ggml_type: u32) -> Option<u8> {
         2 => DTYPE_GGUF_Q4_0,
         8 => DTYPE_GGUF_Q8_0,
         12 => DTYPE_GGUF_Q4_K,
+        13 => DTYPE_GGUF_Q5_K,
         14 => DTYPE_GGUF_Q6_K,
         18 => DTYPE_GGUF_IQ3_XXS,
         20 => DTYPE_GGUF_IQ4_NL,

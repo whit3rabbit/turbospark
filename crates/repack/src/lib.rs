@@ -5,6 +5,7 @@
 //! streaming installer described in the ROADMAP.
 #![forbid(unsafe_code)]
 
+mod arch_registry;
 mod gemma4_checkpoint;
 mod gguf_checkpoint;
 mod gguf_config;
@@ -20,10 +21,15 @@ mod repack;
 mod resident_writer;
 mod safetensors_header;
 mod synthetic_gguf;
+mod synthetic_llama;
 mod synthetic_model;
 mod synthetic_qwen;
 mod synthetic_real;
 
+pub use arch_registry::{
+    describe_gguf_architecture, gguf_arch_support, hf_family_for_model_type,
+    planned_gguf_architectures, ArchSupport, PlannedArch,
+};
 pub use gemma4_checkpoint::{
     classify_for_family, classify_gemma4, gemma4_manifest_quant, manifest_quant,
     orchestrate_gemma4_checkpoint, orchestrate_gemma4_checkpoint_sharded, parse_gemma4_config,
@@ -72,6 +78,7 @@ pub use safetensors_header::{
 pub use synthetic_gguf::{
     build_synthetic_gemma4_gguf, GgufBuilder, GgufFileAndRanges, QuantMix, SyntheticGgufShape,
 };
+pub use synthetic_llama::{build_synthetic_llama_real_install, tiny_llama_arch};
 pub use synthetic_model::{
     build_synthetic_gemma4_install, build_synthetic_gemma4_moe_install,
     build_synthetic_gemma4_moe_streamed_install, build_synthetic_gemma4_swa_install,
