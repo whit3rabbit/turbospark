@@ -4,6 +4,8 @@
 //!
 //!   turbospark-server --model <install-dir> [--port N] [--max-context N]
 //!                   [--expert-cache-slots N] [--bind loopback|tailnet]
+//!                   [--power-profile performance|balanced|efficiency]
+//!                   [--max-tokens-per-sec R]
 //!   turbospark-server <tokenizer-dir> [port]
 //!
 //! The first serves real generation from a `.gturbo` install through
@@ -21,7 +23,7 @@ use std::sync::Arc;
 
 use tokenizer::MfTokenizer;
 
-const USAGE: &str = "usage: turbospark-server --model <install-dir> [--port N] [--max-context N] [--expert-cache-slots N] [--bind loopback|tailnet]\n       turbospark-server <tokenizer-dir> [port]";
+const USAGE: &str = "usage: turbospark-server --model <install-dir> [--port N] [--max-context N] [--expert-cache-slots N] [--bind loopback|tailnet] [--power-profile performance|balanced|efficiency] [--max-tokens-per-sec R]\n       turbospark-server <tokenizer-dir> [port]";
 
 /// Interface the server listens on. Resolution fails rather than widening:
 /// there is no path from `Tailnet` to a wildcard or LAN address.
@@ -110,6 +112,10 @@ struct ModelArgs {
     max_context: u32,
     expert_cache_slots: u32,
     bind: BindMode,
+    /// ROADMAP Phase P2. Process-level, like every other flag here: there
+    /// is one runner per process, so there is nothing per-request to vary.
+    power_profile: Option<runtime::PowerProfile>,
+    max_tokens_per_sec: Option<f64>,
 }
 
 /// Parses the `--model` mode's flags. Returns `Ok(None)` when the first
@@ -125,6 +131,8 @@ fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
         max_context: 4096,
         expert_cache_slots: 16,
         bind: BindMode::Loopback,
+        power_profile: None,
+        max_tokens_per_sec: None,
     };
     let mut i = 0;
     while i < args.len() {
@@ -146,6 +154,23 @@ fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
                         return Err(format!("--bind must be loopback or tailnet, not {other}"))
                     }
                 }
+            }
+            "--power-profile" => {
+                let profile = runtime::PowerProfile::parse(value).ok_or_else(|| {
+                    format!("--power-profile must be a profile name, not {value}")
+                })?;
+                parsed.power_profile = Some(profile);
+            }
+            "--max-tokens-per-sec" => {
+                let rate = value
+                    .parse::<f64>()
+                    .map_err(|e| format!("--max-tokens-per-sec: {e}"))?;
+                if !rate.is_finite() || rate <= 0.0 {
+                    return Err(format!(
+                        "--max-tokens-per-sec must be greater than 0, not {value}"
+                    ));
+                }
+                parsed.max_tokens_per_sec = Some(rate);
             }
             other => return Err(format!("unknown option {other}\n{USAGE}")),
         }
@@ -170,14 +195,25 @@ fn open_real_model(args: &ModelArgs) -> Result<Arc<dyn turbospark_server::ChatMo
     // A 13 GB install takes a noticeable while to map and compile pipelines
     // for; without this line the startup reads as hung.
     eprintln!("opening {} ...", args.model);
+    // Resolved once here, which is also the one place this process asks the
+    // OS about Low Power Mode.
+    let profile = runtime::resolve_profile(args.power_profile);
+    let rate = runtime::rate_control_for(profile, args.max_tokens_per_sec);
     let model = turbospark_server::RealChatModel::open(
         &PathBuf::from(&args.model),
         args.max_context,
         args.expert_cache_slots,
+        rate,
     )?;
     eprintln!(
-        "model open (max_context {}, {} expert cache slots)",
-        args.max_context, args.expert_cache_slots
+        "model open (max_context {}, {} expert cache slots, {} profile, rate cap {})",
+        args.max_context,
+        args.expert_cache_slots,
+        profile.as_str(),
+        match rate.max_tokens_per_sec {
+            Some(r) => format!("{r} tok/s"),
+            None => "none".to_string(),
+        }
     );
     Ok(Arc::new(model))
 }
@@ -275,6 +311,39 @@ mod tests {
     #[test]
     fn legacy_positional_mode_is_left_alone() {
         assert!(parse(&["/tmp/tok", "9000"]).unwrap().is_none());
+    }
+
+    #[test]
+    fn power_flags_default_to_unset_and_parse_their_documented_values() {
+        // Unset rather than `performance`: the Low Power Mode default is
+        // resolved at model open, where the OS can be asked.
+        let d = parse(&["--model", "/tmp/m"]).unwrap().unwrap();
+        assert_eq!(d.power_profile, None);
+        assert_eq!(d.max_tokens_per_sec, None);
+
+        let o = parse(&[
+            "--model",
+            "/tmp/m",
+            "--power-profile",
+            "efficiency",
+            "--max-tokens-per-sec",
+            "7.5",
+        ])
+        .unwrap()
+        .unwrap();
+        assert_eq!(o.power_profile, Some(runtime::PowerProfile::Efficiency));
+        assert_eq!(o.max_tokens_per_sec, Some(7.5));
+    }
+
+    #[test]
+    fn bad_power_flag_values_are_rejected() {
+        assert!(parse(&["--model", "/tmp/m", "--power-profile", "turbo"]).is_err());
+        for bad in ["0", "-1", "abc", "inf"] {
+            assert!(
+                parse(&["--model", "/tmp/m", "--max-tokens-per-sec", bad]).is_err(),
+                "expected {bad} to be rejected"
+            );
+        }
     }
 
     #[test]

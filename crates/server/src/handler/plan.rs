@@ -66,6 +66,10 @@ fn build_config(request: &ChatCompletionRequest) -> Result<GenerationConfig, Str
             .unwrap_or(256),
         stop_strings: stop_strings(request.stop.as_ref()),
         extra_stop_tokens: Vec::new(),
+        // Left at the default here and filled in by `plan` from the
+        // backend: rate control is process-level on purpose, so there is
+        // deliberately no per-request field to read off the wire.
+        rate: Default::default(),
     })
 }
 
@@ -183,5 +187,7 @@ pub(crate) fn plan(
             .map_err(|e| e.to_string())?
     };
 
-    Ok((prompt_ids, build_config(request)?))
+    let mut config = build_config(request)?;
+    config.rate = model.rate_control();
+    Ok((prompt_ids, config))
 }

@@ -40,6 +40,7 @@ fn generate(runner: &mut RealForwardRunner, tokenizer: &MfTokenizer, max_new: u3
         max_new_tokens: max_new,
         stop_strings: Vec::new(),
         extra_stop_tokens: Vec::new(),
+        rate: Default::default(),
     };
     let prompt_ids = tokenizer.encode("golden fixture prompt", false);
     assert!(!prompt_ids.is_empty());

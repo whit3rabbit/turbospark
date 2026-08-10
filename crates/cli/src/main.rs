@@ -75,6 +75,12 @@ fn print_resolved_request(request: &InvocationRequest) {
     let _ = writeln!(out, "  rdadvise: {:?}", request.rdadvise);
     let _ = writeln!(out, "  expert_cache_slots: {}", request.expert_cache_slots);
     let _ = writeln!(out, "  prefill_chunk: {:?}", request.prefill_chunk);
+    let _ = writeln!(out, "  power_profile: {:?}", request.power_profile);
+    let _ = writeln!(
+        out,
+        "  max_tokens_per_sec: {:?}",
+        request.max_tokens_per_sec
+    );
     let _ = writeln!(out, "  quiet: {}", request.quiet);
     let _ = writeln!(
         out,

@@ -23,5 +23,5 @@ pub use diagnostics::{exit_status, stream_routing, ExitStatus, StreamRouting};
 pub use failure::ParseFailure;
 pub use options::{OptionDecl, OPTIONS};
 pub use parser::{parse, ParseOutcome};
-pub use request::{InvocationRequest, Mode, PrefillChunk, ReadAheadMode};
+pub use request::{InvocationRequest, Mode, PowerProfile, PrefillChunk, ReadAheadMode};
 pub use usage::render_usage;

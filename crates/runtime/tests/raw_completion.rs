@@ -8,12 +8,14 @@
 //! the 258-entry base vocab, so the *actual* ids only exist at load time.
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use foundation::LogitValue;
 use selection::ShapingConfig;
 use tokenizer::MfTokenizer;
 use turbospark_runtime::{
-    run_raw_completion, GenerationConfig, RawDecodeProgress, ScriptedLogitProducer, StopReason,
+    run_raw_completion, GenerationConfig, RateControl, RawDecodeProgress, ScriptedLogitProducer,
+    StopReason, ThermalLevel,
 };
 
 fn load_tokenizer() -> MfTokenizer {
@@ -33,6 +35,7 @@ fn greedy_config(max_new_tokens: u32) -> GenerationConfig {
         max_new_tokens,
         stop_strings: Vec::new(),
         extra_stop_tokens: Vec::new(),
+        rate: Default::default(),
     }
 }
 
@@ -174,6 +177,7 @@ fn stop_string_truncates_visible_output() {
         max_new_tokens: 5,
         stop_strings: vec!["hh".to_string()],
         extra_stop_tokens: Vec::new(),
+        rate: Default::default(),
     };
 
     let result = run_raw_completion(
@@ -187,4 +191,132 @@ fn stop_string_truncates_visible_output() {
     )
     .unwrap();
     assert_eq!(result.reason, StopReason::StopString);
+}
+
+// --- ROADMAP Phase P2: decode-rate control -------------------------------
+
+/// Counts how often the decode loop polls thermal pressure. A `fn` pointer
+/// cannot capture, so the count lives in a static; only the test below
+/// installs this probe.
+static THERMAL_POLLS: AtomicUsize = AtomicUsize::new(0);
+
+fn counting_nominal_probe() -> ThermalLevel {
+    THERMAL_POLLS.fetch_add(1, Ordering::Relaxed);
+    ThermalLevel::Nominal
+}
+
+/// Scripts `count` decode steps that all pick the same token, so a run's
+/// length is set by `max_new_tokens` rather than by a stop.
+fn repeating_steps(
+    tokenizer: &MfTokenizer,
+    prompt_len: usize,
+    token: usize,
+    count: usize,
+) -> Vec<Vec<LogitValue>> {
+    let vocab_size = tokenizer.vocab_size;
+    let mut steps = vec![vec![LogitValue::from_f32(0.0); vocab_size]; prompt_len - 1];
+    steps.extend((0..count).map(|_| one_hot(vocab_size, token)));
+    steps
+}
+
+fn run_ids(tokenizer: &MfTokenizer, config: &GenerationConfig, max_new: usize) -> Vec<i32> {
+    let prompt_ids = tokenizer.encode("hi", false);
+    let h_id = tokenizer
+        .token_to_id("h")
+        .expect("'h' is in the base vocab") as usize;
+    let mut producer =
+        ScriptedLogitProducer::new(repeating_steps(tokenizer, prompt_ids.len(), h_id, max_new));
+    let mut ids = Vec::new();
+    run_raw_completion(
+        &mut producer,
+        tokenizer,
+        &prompt_ids,
+        config,
+        4096,
+        tokenizer.vocab_size,
+        |event| {
+            if let RawDecodeProgress::Token { id, .. } = event {
+                ids.push(id);
+            }
+        },
+    )
+    .unwrap();
+    ids
+}
+
+#[test]
+fn a_rate_cap_holds_decode_to_at_least_its_schedule() {
+    let tokenizer = load_tokenizer();
+    let prompt_ids = tokenizer.encode("hi", false);
+    let h_id = tokenizer
+        .token_to_id("h")
+        .expect("'h' is in the base vocab") as usize;
+
+    // Six tokens at 50/s. The sixth hits `max_new_tokens` and breaks out
+    // before pacing, so five slots of 20 ms are scheduled and the fifth
+    // one closes 100 ms after decode starts. Asserted as a LOWER bound
+    // only: a busy machine may take longer, but it can never finish
+    // sooner without the cap having failed to apply.
+    let mut producer =
+        ScriptedLogitProducer::new(repeating_steps(&tokenizer, prompt_ids.len(), h_id, 6));
+    let config = GenerationConfig {
+        max_new_tokens: 6,
+        rate: RateControl {
+            max_tokens_per_sec: Some(50.0),
+            thermal_probe: None,
+        },
+        ..greedy_config(6)
+    };
+
+    let result = run_raw_completion(
+        &mut producer,
+        &tokenizer,
+        &prompt_ids,
+        &config,
+        4096,
+        tokenizer.vocab_size,
+        |_| {},
+    )
+    .unwrap();
+
+    assert_eq!(result.reason, StopReason::MaxTokens);
+    assert_eq!(result.new_tokens, 6);
+    assert!(
+        result.decode_seconds >= 0.1,
+        "five 20 ms slots must have been waited out, got {}",
+        result.decode_seconds
+    );
+}
+
+#[test]
+fn pacing_polls_thermal_pressure_without_changing_the_tokens() {
+    let tokenizer = load_tokenizer();
+    const MAX_NEW: usize = 40;
+
+    let uncapped = run_ids(&tokenizer, &greedy_config(MAX_NEW as u32), MAX_NEW);
+
+    THERMAL_POLLS.store(0, Ordering::Relaxed);
+    let paced = run_ids(
+        &tokenizer,
+        &GenerationConfig {
+            rate: RateControl {
+                // Fast enough to keep the test short; the ladder itself is
+                // unit-tested in `power.rs` and the re-anchoring in
+                // `pacing.rs`.
+                max_tokens_per_sec: Some(400.0),
+                thermal_probe: Some(counting_nominal_probe),
+            },
+            ..greedy_config(MAX_NEW as u32)
+        },
+        MAX_NEW,
+    );
+
+    // Once before the loop, then every 16th token: 40 tokens gives polls
+    // at 16 and 32.
+    assert_eq!(THERMAL_POLLS.load(Ordering::Relaxed), 3);
+    assert_eq!(uncapped.len(), MAX_NEW);
+    assert_eq!(
+        paced, uncapped,
+        "pacing runs after selection and must not move a single token"
+    );
 }

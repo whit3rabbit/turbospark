@@ -32,6 +32,11 @@ fn documented_defaults_are_applied() {
     assert_eq!(req.rdadvise, ReadAheadMode::Off);
     assert_eq!(req.expert_cache_slots, DEFAULT_CACHE_SLOTS);
     assert_eq!(req.prefill_chunk, PrefillChunk::Fixed(DEFAULT_CHUNK_SIZE));
+    // Both power knobs default to unset rather than to a profile: the
+    // Low Power Mode default is resolved downstream, where the OS can be
+    // asked, and this crate performs no I/O.
+    assert_eq!(req.power_profile, None);
+    assert_eq!(req.max_tokens_per_sec, None);
 }
 
 #[test]

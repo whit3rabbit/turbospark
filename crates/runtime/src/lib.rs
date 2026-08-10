@@ -8,6 +8,8 @@ mod config;
 mod error;
 #[cfg(target_os = "macos")]
 mod families;
+mod pacing;
+mod power;
 mod producer;
 mod raw_completion;
 #[cfg(target_os = "macos")]
@@ -27,6 +29,11 @@ mod router_hist;
 
 pub use config::GenerationConfig;
 pub use error::RuntimeError;
+pub use power::{
+    low_power_mode_enabled, rate_control_for, resolve_profile, stepped_cap, thermal_level,
+    PowerProfile, RateControl, ThermalLevel, CRITICAL_TOK_PER_SEC, READING_SPEED_TOK_PER_SEC,
+    SERIOUS_TOK_PER_SEC,
+};
 pub use producer::{ChunkedPrefillRunner, LogitProducer, ScriptedLogitProducer};
 pub use raw_completion::{
     run_raw_completion, run_raw_completion_chunked, RawDecodeProgress, RawDecodeResult, StopReason,

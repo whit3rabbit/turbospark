@@ -47,6 +47,10 @@ fn a_full_invocation_with_every_other_option_still_parses_to_success_not_help() 
         "16",
         "--prefill-chunk",
         "128",
+        "--power-profile",
+        "balanced",
+        "--max-tokens-per-sec",
+        "12.5",
         "--quiet",
     ]));
     assert!(matches!(outcome, ParseOutcome::Success(_)));
@@ -84,8 +88,8 @@ fn usage_text_enumerates_every_declared_option_with_a_default_or_allowed_value_d
     );
     let other_options = OPTIONS.len() - required_and_mode_options.len();
     assert_eq!(
-        other_options, 14,
-        "expected fourteen remaining documented options"
+        other_options, 16,
+        "expected sixteen remaining documented options"
     );
 }
 

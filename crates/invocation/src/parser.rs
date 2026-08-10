@@ -8,8 +8,9 @@
 use crate::failure::ParseFailure;
 use crate::options::OPTIONS;
 use crate::request::{
-    InvocationRequest, Mode, PrefillChunk, ReadAheadMode, DEFAULT_MAX_CONTEXT, DEFAULT_MAX_NEW,
-    DEFAULT_REPETITION_PENALTY, DEFAULT_TEMPERATURE, DEFAULT_TOP_K, DEFAULT_TOP_P, MAX_TOP_K,
+    InvocationRequest, Mode, PowerProfile, PrefillChunk, ReadAheadMode, DEFAULT_MAX_CONTEXT,
+    DEFAULT_MAX_NEW, DEFAULT_REPETITION_PENALTY, DEFAULT_TEMPERATURE, DEFAULT_TOP_K, DEFAULT_TOP_P,
+    MAX_TOP_K,
 };
 use foundation::runtime_config::{ALLOWED_CACHE_SLOTS, ALLOWED_CHUNK_SIZES, DEFAULT_CACHE_SLOTS};
 
@@ -52,6 +53,8 @@ pub fn parse(tokens: &[String]) -> ParseOutcome {
     let mut rdadvise = ReadAheadMode::default();
     let mut expert_cache_slots = DEFAULT_CACHE_SLOTS;
     let mut prefill_chunk = PrefillChunk::default();
+    let mut power_profile: Option<PowerProfile> = None;
+    let mut max_tokens_per_sec: Option<f64> = None;
     let mut quiet = false;
 
     let mut i = 0;
@@ -142,6 +145,14 @@ pub fn parse(tokens: &[String]) -> ParseOutcome {
                     }
                 }
             }
+            "--power-profile" => match PowerProfile::parse(value) {
+                Some(profile) => power_profile = Some(profile),
+                None => return invalid("--power-profile", value),
+            },
+            "--max-tokens-per-sec" => match value.parse::<f64>() {
+                Ok(r) if r.is_finite() && r > 0.0 => max_tokens_per_sec = Some(r),
+                _ => return invalid("--max-tokens-per-sec", value),
+            },
             other => unreachable!("value-taking option {other} not handled"),
         }
 
@@ -225,6 +236,8 @@ pub fn parse(tokens: &[String]) -> ParseOutcome {
         rdadvise,
         expert_cache_slots,
         prefill_chunk,
+        power_profile,
+        max_tokens_per_sec,
         quiet,
     })
 }

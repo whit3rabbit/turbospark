@@ -49,7 +49,10 @@ use std::time::Instant;
 
 use foundation::runtime_config::ALLOWED_CACHE_SLOTS;
 use foundation::LogitValue;
-use runtime::{run_raw_completion, GenerationConfig, RawDecodeProgress, ScriptedLogitProducer};
+use runtime::{
+    rate_control_for, run_raw_completion, GenerationConfig, PowerProfile, RateControl,
+    RawDecodeProgress, ScriptedLogitProducer,
+};
 use selection::ShapingConfig;
 use tokenizer::MfTokenizer;
 use turbospark_bench::protocol::PROTOCOL_EXPERT_CACHE_SLOTS;
@@ -99,14 +102,20 @@ fn main() -> std::process::ExitCode {
         return std::process::ExitCode::from(2);
     };
     if first == "--model" {
-        const USAGE: &str =
-            "usage: turbospark-bench --model <install-dir> [--case <id>] [--expert-cache-slots N]";
+        const USAGE: &str = "usage: turbospark-bench --model <install-dir> [--case <id>] [--expert-cache-slots N] [--power-profile performance|balanced|efficiency] [--max-tokens-per-sec R]";
         let Some(install_dir) = args.next() else {
             eprintln!("{USAGE}");
             return std::process::ExitCode::from(2);
         };
         let mut case_filter: Option<String> = None;
         let mut slots = PROTOCOL_EXPERT_CACHE_SLOTS;
+        // ROADMAP Phase P2. Deliberately NOT defaulted from Low Power Mode
+        // the way the CLI and server are: a measurement tool has to be
+        // explicit, or an LPM-enabled machine would silently cap the
+        // `performance` arm of a power A/B and manufacture the very gain
+        // the A/B exists to measure.
+        let mut power_profile = PowerProfile::Performance;
+        let mut max_tokens_per_sec: Option<f64> = None;
         while let Some(flag) = args.next() {
             match flag.as_str() {
                 "--case" => match args.next() {
@@ -125,13 +134,28 @@ fn main() -> std::process::ExitCode {
                         return std::process::ExitCode::from(2);
                     }
                 },
+                "--power-profile" => match args.next().as_deref().map(PowerProfile::parse) {
+                    Some(Some(profile)) => power_profile = profile,
+                    _ => {
+                        eprintln!("--power-profile needs performance, balanced or efficiency");
+                        return std::process::ExitCode::from(2);
+                    }
+                },
+                "--max-tokens-per-sec" => match args.next().map(|v| v.parse::<f64>()) {
+                    Some(Ok(r)) if r.is_finite() && r > 0.0 => max_tokens_per_sec = Some(r),
+                    _ => {
+                        eprintln!("--max-tokens-per-sec needs a number greater than 0");
+                        return std::process::ExitCode::from(2);
+                    }
+                },
                 other => {
                     eprintln!("unexpected argument {other:?}; {USAGE}");
                     return std::process::ExitCode::from(2);
                 }
             }
         }
-        return run_model_mode(&install_dir, case_filter.as_deref(), slots);
+        let rate = rate_control_for(power_profile, max_tokens_per_sec);
+        return run_model_mode(&install_dir, case_filter.as_deref(), slots, rate);
     }
     let tokenizer_dir = first;
     let real_mode = args.next().as_deref() == Some("--real");
@@ -207,6 +231,7 @@ fn run_once(tok: &MfTokenizer, prompt: &str) -> Result<RunStats, String> {
         max_new_tokens: FIXED_MAX_NEW_TOKENS,
         stop_strings: Vec::new(),
         extra_stop_tokens: Vec::new(),
+        rate: Default::default(),
     };
 
     let start = Instant::now();
@@ -314,6 +339,7 @@ fn run_once_real(
         max_new_tokens: FIXED_MAX_NEW_TOKENS,
         stop_strings: Vec::new(),
         extra_stop_tokens: Vec::new(),
+        rate: Default::default(),
     };
 
     let start = Instant::now();
@@ -347,6 +373,7 @@ fn run_model_mode(
     install_dir: &str,
     case_filter: Option<&str>,
     slots: usize,
+    rate: RateControl,
 ) -> std::process::ExitCode {
     use turbospark_bench::memory::AppMemorySampler;
     use turbospark_bench::protocol::{swift_footer, PROTOCOL_CASES};
@@ -393,7 +420,7 @@ fn run_model_mode(
     let mut sampler = AppMemorySampler::new();
     for case in cases {
         // Discarded warmup, then the measured run (frozen protocol).
-        if let Err(e) = run_protocol_case(&mut runner, &tok, case, &mut sampler) {
+        if let Err(e) = run_protocol_case(&mut runner, &tok, case, &mut sampler, rate) {
             eprintln!("{} warmup failed: {e}", case.id);
             return std::process::ExitCode::from(1);
         }
@@ -410,7 +437,7 @@ fn run_model_mode(
             case.id,
             unix_millis()
         );
-        let measured = run_protocol_case(&mut runner, &tok, case, &mut sampler);
+        let measured = run_protocol_case(&mut runner, &tok, case, &mut sampler, rate);
         eprintln!(
             "[power-window case={} phase=end unix_ms={}]",
             case.id,
@@ -462,6 +489,7 @@ fn run_model_mode(
     _install_dir: &str,
     _case_filter: Option<&str>,
     _slots: usize,
+    _rate: RateControl,
 ) -> std::process::ExitCode {
     eprintln!("--model requires macOS (Metal)");
     std::process::ExitCode::from(2)

@@ -485,6 +485,23 @@ live network).
 
 ## Phase 7 (runtime, CLI)
 
+- **Decode rate control is PORT-LOCAL and has no Swift counterpart
+  (ROADMAP Phase P2, 2026-08-09).** The Swift engine has no rate limiter,
+  no thermal adaptation and no power profiles, so nothing here mirrors an
+  upstream design and there is no parity question to answer. It is off by
+  default in every binary: with `RateControl::default()` (both fields
+  `None`) `raw_completion::decode` executes the identical statement
+  sequence it did before the feature landed, so every published throughput
+  and memory number remains a number about the same code path.
+  Two limits worth stating rather than discovering. The cap paces DECODE
+  only -- prefill runs one `produce` call per prompt token through a
+  different loop and is untouched, so a long prompt still draws full power
+  for its whole prefill. And the thermal ladder's constants (serious ->
+  10 tok/s, critical -> 5) are heuristics chosen ahead of the measurement,
+  not results: Phase P2's joules-per-token gate has not been run yet
+  (it needs sudo), so nothing here is yet evidence that the efficiency
+  profile buys energy rather than merely spending longer.
+
 - **Qwen 3.6: PROVEN on the real 35B-A3B checkpoint (2026-08-07).**
   `mlx-community/Qwen3.6-35B-A3B-4bit` repacks through
   `write_qwen36_install_streamed` in 19 minutes into an 18 GB install and

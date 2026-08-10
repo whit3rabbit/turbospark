@@ -178,3 +178,44 @@ fn cache_slots_and_rdadvise_outside_their_sets_are_rejected() {
         }
     ));
 }
+
+#[test]
+fn power_control_values_outside_their_documented_sets_are_rejected() {
+    let profile = expect_failure(parse(&tok(&[
+        "--model",
+        "m",
+        "--chat",
+        "--power-profile",
+        "turbo",
+    ])));
+    assert!(matches!(
+        profile,
+        ParseFailure::InvalidValue {
+            option: "--power-profile",
+            ..
+        }
+    ));
+
+    // A rate must be a positive, finite number of tokens per second. Zero
+    // and negatives have no meaning as a rate, and the non-finite ones
+    // parse as `f64` but cannot become an interval.
+    for bad in ["0", "-1", "abc", "inf", "NaN"] {
+        let rate = expect_failure(parse(&tok(&[
+            "--model",
+            "m",
+            "--chat",
+            "--max-tokens-per-sec",
+            bad,
+        ])));
+        assert!(
+            matches!(
+                rate,
+                ParseFailure::InvalidValue {
+                    option: "--max-tokens-per-sec",
+                    ..
+                }
+            ),
+            "expected {bad} to be rejected"
+        );
+    }
+}

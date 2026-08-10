@@ -4,7 +4,9 @@
 //! test-012, test-014, test-016, and test-017.
 
 use foundation::runtime_config::ALLOWED_CHUNK_SIZES;
-use turbospark_invocation::{parse, InvocationRequest, Mode, ParseOutcome, PrefillChunk};
+use turbospark_invocation::{
+    parse, InvocationRequest, Mode, ParseOutcome, PowerProfile, PrefillChunk,
+};
 
 fn tok(items: &[&str]) -> Vec<String> {
     items.iter().map(|s| s.to_string()).collect()
@@ -122,4 +124,46 @@ fn automatic_chunk_sizing_keyword_selects_auto() {
         "auto",
     ])));
     assert_eq!(req.prefill_chunk, PrefillChunk::Auto);
+}
+
+#[test]
+fn power_profile_and_rate_cap_translate_to_their_validated_values() {
+    let req = expect_success(parse(&tok(&[
+        "--model",
+        "m",
+        "--chat",
+        "--power-profile",
+        "efficiency",
+        "--max-tokens-per-sec",
+        "8.5",
+    ])));
+    assert_eq!(req.power_profile, Some(PowerProfile::Efficiency));
+    assert_eq!(req.max_tokens_per_sec, Some(8.5));
+
+    // The two are independent: a cap without a profile is the documented
+    // way to pace without changing thermal behavior.
+    let rate_only = expect_success(parse(&tok(&[
+        "--model",
+        "m",
+        "--chat",
+        "--max-tokens-per-sec",
+        "3",
+    ])));
+    assert_eq!(rate_only.power_profile, None);
+    assert_eq!(rate_only.max_tokens_per_sec, Some(3.0));
+
+    for spelling in ["performance", "balanced", "efficiency"] {
+        let req = expect_success(parse(&tok(&[
+            "--model",
+            "m",
+            "--chat",
+            "--power-profile",
+            spelling,
+        ])));
+        assert_eq!(
+            req.power_profile.map(PowerProfile::as_str),
+            Some(spelling),
+            "profile spelling must round-trip"
+        );
+    }
 }

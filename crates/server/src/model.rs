@@ -32,6 +32,15 @@ pub trait ChatModel: Send + Sync {
         &self,
         f: &mut dyn FnMut(&mut dyn LogitProducer) -> Result<RawDecodeResult, RuntimeError>,
     ) -> Result<RawDecodeResult, RuntimeError>;
+
+    /// The decode rate cap and thermal stepping this backend generates
+    /// under (ROADMAP Phase P2). Process-level, not per request: there is
+    /// one runner per process and a power setting is a property of the
+    /// machine, not of a caller's prompt. The default is uncapped, which
+    /// is what the scripted backend wants.
+    fn rate_control(&self) -> runtime::RateControl {
+        runtime::RateControl::default()
+    }
 }
 
 /// Always replays the same scripted logit sequence, regardless of the

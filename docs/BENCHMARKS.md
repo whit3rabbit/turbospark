@@ -652,7 +652,7 @@ Qwen is the more efficient engine here, 0.35 J/token against Gemma's
 the hybrid linear-attention design showing up on the power axis the way it
 already does on memory. Energy per token grows with context on both.
 
-Three results worth carrying, each detailed in `docs/POWER_BASELINE.md`:
+Four results worth carrying, each detailed in `docs/POWER_BASELINE.md`:
 
 - **AC vs battery answers AGENTS.md Gotcha 22, which had stood unmeasured.**
   Energy is NOT the axis that moves: watts and J/token differ by a few

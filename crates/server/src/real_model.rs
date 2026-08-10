@@ -9,11 +9,13 @@
 //! for a fleet one. Two known limitations follow from it: throughput is one
 //! request at a time, and a client that disconnects mid-stream does not
 //! abort generation -- the run finishes and only then releases the lock.
+//! A `--max-tokens-per-sec` cap lengthens the lock hold in proportion,
+//! which is acceptable for the same reason: the queue is already serial.
 
 use std::path::Path;
 use std::sync::Mutex;
 
-use runtime::{LogitProducer, RawDecodeResult, RealForwardRunner, RuntimeError};
+use runtime::{LogitProducer, RateControl, RawDecodeResult, RealForwardRunner, RuntimeError};
 use tokenizer::MfTokenizer;
 
 use crate::model::ChatModel;
@@ -24,6 +26,7 @@ pub struct RealChatModel {
     max_context: u32,
     vocab_size: usize,
     model_id: String,
+    rate: RateControl,
 }
 
 impl RealChatModel {
@@ -34,6 +37,7 @@ impl RealChatModel {
         model_dir: &Path,
         max_context: u32,
         expert_cache_slots: u32,
+        rate: RateControl,
     ) -> Result<Self, String> {
         let arch = repack::peek_manifest_arch(model_dir)?;
         let tokenizer = MfTokenizer::load_from_dir(model_dir).map_err(|e| {
@@ -63,6 +67,7 @@ impl RealChatModel {
             max_context,
             vocab_size,
             model_id,
+            rate,
         })
     }
 }
@@ -96,5 +101,9 @@ impl ChatModel for RealChatModel {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         f(&mut *runner)
+    }
+
+    fn rate_control(&self) -> RateControl {
+        self.rate
     }
 }

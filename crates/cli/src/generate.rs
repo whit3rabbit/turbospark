@@ -22,7 +22,8 @@ use std::path::Path;
 
 use invocation::{InvocationRequest, Mode};
 use runtime::{
-    run_raw_completion, GenerationConfig, RawDecodeProgress, RawDecodeResult, RealForwardRunner,
+    run_raw_completion, GenerationConfig, RateControl, RawDecodeProgress, RawDecodeResult,
+    RealForwardRunner,
 };
 use selection::ShapingConfig;
 use tokenizer::{Message, MfTokenizer, Role};
@@ -34,6 +35,10 @@ pub(crate) struct Session {
     pub(crate) tokenizer: MfTokenizer,
     pub(crate) runner: RealForwardRunner,
     pub(crate) shaping: ShapingConfig,
+    /// Resolved once at open, because resolving it per turn would let Low
+    /// Power Mode toggling mid-chat change the pace for reasons the caller
+    /// never asked about.
+    pub(crate) rate: RateControl,
 }
 
 pub fn try_generate(request: &InvocationRequest) {
@@ -58,6 +63,7 @@ fn run_prompt(request: &InvocationRequest, prompt: &str) {
         max_new_tokens: request.max_new,
         stop_strings: request.stop.clone(),
         extra_stop_tokens: Vec::new(),
+        rate: session.rate,
     };
 
     let prompt_ids = session.tokenizer.encode(prompt, true);
@@ -173,6 +179,7 @@ pub(crate) fn stream_turn(
         max_new_tokens: max_new,
         stop_strings: request.stop.clone(),
         extra_stop_tokens: Vec::new(),
+        rate: session.rate,
     };
     let vocab_size = session.tokenizer.vocab_size;
 
@@ -337,11 +344,28 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
     )
     .map_err(|e| e.to_string())?;
 
+    // ROADMAP Phase P2. `resolve_profile` is where the OS gets asked about
+    // Low Power Mode, and it is asked exactly once per process.
+    let profile = runtime::resolve_profile(request.power_profile.map(map_power_profile));
+    let rate = runtime::rate_control_for(profile, request.max_tokens_per_sec);
+
     Ok(Session {
         tokenizer,
         runner,
         shaping,
+        rate,
     })
+}
+
+/// The two crates declare their own profile enums on purpose: `invocation`
+/// is pure and depends only on `foundation`. This is the one place the two
+/// spellings meet.
+fn map_power_profile(profile: invocation::PowerProfile) -> runtime::PowerProfile {
+    match profile {
+        invocation::PowerProfile::Performance => runtime::PowerProfile::Performance,
+        invocation::PowerProfile::Balanced => runtime::PowerProfile::Balanced,
+        invocation::PowerProfile::Efficiency => runtime::PowerProfile::Efficiency,
+    }
 }
 
 /// Decode the `--messages-file` JSON: an array of `{"role", "content"}`

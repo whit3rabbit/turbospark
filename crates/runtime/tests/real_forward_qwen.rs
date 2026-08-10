@@ -184,6 +184,7 @@ fn runs_through_the_raw_completion_loop_sampled() {
         max_new_tokens: 8,
         stop_strings: Vec::new(),
         extra_stop_tokens: Vec::new(),
+        rate: Default::default(),
     };
     let prompt_ids = tokenizer.encode("hi", false);
     let mut tokens = Vec::new();
@@ -219,6 +220,7 @@ fn runs_through_the_raw_completion_loop() {
         max_new_tokens: 4,
         stop_strings: Vec::new(),
         extra_stop_tokens: Vec::new(),
+        rate: Default::default(),
     };
 
     let mut tokens = Vec::new();

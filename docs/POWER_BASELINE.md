@@ -18,8 +18,15 @@ start if it does not.
 LABEL=ac OUT=/tmp/power-gemma-ac MODEL=~/models/gemma4.gturbo scripts/power.sh 2
 LABEL=ac OUT=/tmp/power-qwen-ac  MODEL=~/models/qwen36.gturbo scripts/power.sh 2
 LABEL=ac MODEL=~/models/gemma4.gturbo CASES=short-explanation \
-  QOS=default,utility scripts/power.sh 3
+  ARMS=default,utility scripts/power.sh 3
 ```
+
+`ARMS` is the comparison axis (`QOS` is its former name and still works).
+It takes `default`/`utility`, which set `MFERENCE_READ_QOS`, or
+`performance`/`balanced`/`efficiency`, which pass `--power-profile` to the
+bench (ROADMAP Phase P2). The two kinds cannot be mixed in one run: the
+arm name is a single column of `rows.tsv` and a single grouping key in the
+summary, so mixing them would compare two different seams under one label.
 
 ## Run provenance
 
@@ -237,6 +244,57 @@ identical work means the column cannot support a claim about where this
 process runs. It is reported for context only. (M4 Max also has TWO
 performance clusters, P0 and P1, which the harness averages into one P
 column.)
+
+## The efficiency profile: measured, and it works
+
+ROADMAP Phase P2's gate. Gemma, `short-explanation`, AC, 3 pairs, arms
+alternating WITHIN each pair. Every arm held Nominal thermal pressure, so
+nothing is filtered. `performance` is the shipped default (no cap, no
+thermal stepping); `efficiency` caps decode at reading speed, 10 tok/s.
+
+| pair | performance J/tok | efficiency J/tok | delta |
+| --- | ---: | ---: | ---: |
+| 1 | 0.4593 | 0.2368 | -48.4% |
+| 2 | 0.3616 | 0.2333 | -35.5% |
+| 3 | 0.3798 | 0.2248 | -40.8% |
+
+**Decode energy per token falls by a third to a half for a 4.1x slowdown**
+(41.1 -> 10.0 tok/s). Read the WORST pair, -35.5%: pair 1's
+`performance` arm is a high outlier (0.4593 against 0.3616/0.3798, and
+39.02 tok/s against 41.09/41.12), which is the first measured process of
+the session paying a DVFS ramp the per-process warmup does not cover.
+
+The mechanism is visible in the split: GPU power drops 11.88 -> 1.27 W
+while CPU drops 5.07 -> 1.07 W. The GPU is genuinely idle between paced
+steps, which is what the sleep's placement in `raw_completion::decode`
+(after the continue decision, before the next `produce`) is for. A cap
+implemented inside a forward pass would show the throughput loss and none
+of the energy win.
+
+**No `performance`-mode regression.** Its clean pairs read 0.3616 and
+0.3798 (mean 0.3707) against the 0.3838 frozen above, and 41.09/41.12
+tok/s against 40.70. That comparison is cross-session AND cross-binary,
+though -- Phase G, Phase S and the Gotcha 27 determinism fix all landed
+between the two captures -- so it is corroboration, not proof. The proof
+that the default path is unchanged is structural: `RateControl::default()`
+leaves both fields `None`, `RateControl::is_active` is false, and the
+loop executes the identical statement sequence.
+
+**DO NOT QUOTE THIS RUN'S PREFILL ROWS.** The summary reports
+`efficiency` prefill at 0.2497 J/token against `performance`'s 0.3870,
+which reads like a 35% prefill win and is an artifact. Prefill is not
+paced at all -- the `Pacer` is constructed inside `decode`, after prefill
+has finished -- and the measurement agrees: prefill takes the same 1.3-1.6
+s over the same 61 tokens in both arms. Same work in the same time cannot
+cost less energy. What happens instead is window attribution: the
+prefill/decode boundary is computed arithmetically from the footer's
+prefill seconds, a prefill window is only 5-8 samples at 200 ms, and on
+the `efficiency` arm the far side of that boundary is 2.3 W rather than
+16 W, so a single straddling sample drags the short window down hard. The
+same leak exists on the `performance` arm and is invisible there because
+both sides of the boundary draw about the same. The tell that these rows
+are noise regardless: `performance` prefill alone ranges 0.3011 to 0.5143
+across three pairs, a 71% spread.
 
 ## Read-pool QoS: measured, and NOT wired
 

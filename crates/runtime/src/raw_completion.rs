@@ -16,6 +16,8 @@ use tokenizer::{MfDetokenizer, MfTokenizer, StreamingStopMatcher};
 
 use crate::config::GenerationConfig;
 use crate::error::RuntimeError;
+use crate::pacing::{Pacer, THERMAL_POLL_TOKENS};
+use crate::power::{stepped_cap, ThermalLevel};
 use crate::producer::{ChunkedPrefillRunner, LogitProducer};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -204,6 +206,20 @@ fn decode<P: LogitProducer + ?Sized>(
     let mut generated = 0usize;
     let reason;
 
+    // ROADMAP Phase P2. `None` for the default uncapped config, which
+    // leaves the loop below executing exactly the statement sequence it
+    // did before rate control existed.
+    let mut pacer = config.rate.is_active().then(|| {
+        let level = config
+            .rate
+            .thermal_probe
+            .map_or(ThermalLevel::Nominal, |probe| probe());
+        Pacer::new(
+            stepped_cap(config.rate.max_tokens_per_sec, level),
+            decode_start,
+        )
+    });
+
     loop {
         let token_id = select(
             LogitsView::new(logits),
@@ -256,6 +272,24 @@ fn decode<P: LogitProducer + ?Sized>(
         }
 
         history.push(token_id);
+
+        // Pace AFTER the decision to continue, so the last token of a
+        // generation never pays a sleep nobody waits through, and BEFORE
+        // `produce`, so the idle window falls between forward passes
+        // rather than inside one.
+        if let Some(pacer) = pacer.as_mut() {
+            pacer.note_token();
+            if let Some(probe) = config.rate.thermal_probe {
+                if generated % THERMAL_POLL_TOKENS == 0 {
+                    let cap = stepped_cap(config.rate.max_tokens_per_sec, probe());
+                    pacer.apply_cap(cap, Instant::now());
+                }
+            }
+            if let Some(wait) = pacer.due_in(Instant::now()) {
+                std::thread::sleep(wait);
+            }
+        }
+
         producer
             .produce(token_id, position, logits)
             .map_err(RuntimeError::Producer)?;

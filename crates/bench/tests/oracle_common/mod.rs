@@ -63,10 +63,22 @@ pub fn run_oracle(dir: &Path, baselines: &[ChipBaseline], unknown_ceiling_mib: u
     let mut measured = Vec::new();
     for case in &PROTOCOL_CASES {
         // Frozen protocol: one discarded warmup, then the measured run.
-        run_protocol_case(&mut runner, &tokenizer, case, &mut sampler)
-            .unwrap_or_else(|e| panic!("{} warmup failed: {e}", case.id));
-        let result = run_protocol_case(&mut runner, &tokenizer, case, &mut sampler)
-            .unwrap_or_else(|e| panic!("{} failed: {e}", case.id));
+        run_protocol_case(
+            &mut runner,
+            &tokenizer,
+            case,
+            &mut sampler,
+            Default::default(),
+        )
+        .unwrap_or_else(|e| panic!("{} warmup failed: {e}", case.id));
+        let result = run_protocol_case(
+            &mut runner,
+            &tokenizer,
+            case,
+            &mut sampler,
+            Default::default(),
+        )
+        .unwrap_or_else(|e| panic!("{} failed: {e}", case.id));
         eprintln!(
             "{:<18} {}  peak so far {:.1} MiB",
             result.case_id,
@@ -110,8 +122,14 @@ pub fn run_oracle(dir: &Path, baselines: &[ChipBaseline], unknown_ceiling_mib: u
     let mut growth = u64::MAX;
     let mut round = 0usize;
     while round < STEADY_STATE_ROUNDS && growth > STEADY_STATE_SLACK_BYTES {
-        run_protocol_case(&mut runner, &tokenizer, warm_case, &mut sampler)
-            .unwrap_or_else(|e| panic!("{} replay failed: {e}", warm_case.id));
+        run_protocol_case(
+            &mut runner,
+            &tokenizer,
+            warm_case,
+            &mut sampler,
+            Default::default(),
+        )
+        .unwrap_or_else(|e| panic!("{} replay failed: {e}", warm_case.id));
         let now = sampler.sample().expect("footprint sampling worked");
         growth = now.saturating_sub(previous);
         previous = now;

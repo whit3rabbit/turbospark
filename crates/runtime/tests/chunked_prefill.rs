@@ -53,6 +53,7 @@ fn chunked_prefill_reaches_the_same_stop_as_the_unchunked_loop() {
         max_new_tokens: 10,
         stop_strings: Vec::new(),
         extra_stop_tokens: Vec::new(),
+        rate: Default::default(),
     };
 
     let mut events = Vec::new();
@@ -90,6 +91,7 @@ fn chunked_prefill_rejects_empty_prompt() {
         max_new_tokens: 5,
         stop_strings: Vec::new(),
         extra_stop_tokens: Vec::new(),
+        rate: Default::default(),
     };
     let err = run_raw_completion_chunked(
         &mut producer,

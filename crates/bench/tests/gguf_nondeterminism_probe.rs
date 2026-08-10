@@ -20,6 +20,7 @@ fn one(runner: &mut RealForwardRunner, tokenizer: &MfTokenizer, prompt_ids: &[i3
         max_new_tokens: MAX_NEW,
         stop_strings: Vec::new(),
         extra_stop_tokens: Vec::new(),
+        rate: Default::default(),
     };
     let mut text = String::new();
     run_raw_completion(

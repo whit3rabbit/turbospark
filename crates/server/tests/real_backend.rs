@@ -32,7 +32,8 @@ async fn real_backend_serves_streaming_and_non_streaming_requests() {
         return;
     };
 
-    let model = RealChatModel::open(&dir, 1024, 16).expect("real install should open");
+    let model =
+        RealChatModel::open(&dir, 1024, 16, Default::default()).expect("real install should open");
     let model: Arc<dyn turbospark_server::ChatModel> = Arc::new(model);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

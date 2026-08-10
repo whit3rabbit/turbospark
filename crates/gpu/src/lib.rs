@@ -69,6 +69,8 @@ mod moe_decode;
 #[cfg(target_os = "macos")]
 mod moe_gguf;
 #[cfg(target_os = "macos")]
+mod power_state;
+#[cfg(target_os = "macos")]
 mod prefill_scratch;
 #[cfg(target_os = "macos")]
 mod resident_metal;
@@ -151,6 +153,8 @@ pub use moe_gguf::{
     encode_moe_phase1_q8_0, encode_moe_phase2_iq4_nl, encode_moe_phase2_q4_k,
     encode_moe_phase2_q8_0,
 };
+#[cfg(target_os = "macos")]
+pub use power_state::{low_power_mode_enabled, thermal_state_raw};
 #[cfg(target_os = "macos")]
 pub use prefill_scratch::{PrefillChunkScratchBuffers, PrefillChunkScratchLayout};
 #[cfg(target_os = "macos")]

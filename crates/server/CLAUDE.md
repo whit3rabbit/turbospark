@@ -60,7 +60,8 @@ ANTHROPIC_BASE_URL=http://127.0.0.1:8080 ANTHROPIC_API_KEY=unused \
 # build decodes far too slowly to be usable).
 cargo run --release -p turbospark-server --bin turbospark-server -- \
   --model ~/models/gemma4.gturbo [--port N] [--max-context N] [--expert-cache-slots N] \
-  [--bind loopback|tailnet]
+  [--bind loopback|tailnet] [--power-profile performance|balanced|efficiency] \
+  [--max-tokens-per-sec R]
 
 # Launch the portable scripted server (tokenizer only, canned completions).
 cargo run -p turbospark-server --bin turbospark-server -- <tokenizer-dir> [port]
@@ -89,4 +90,6 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
    # -> content[0].type "tool_use", stop_reason "tool_use"
    ```
    Feed the result back as a `tool_result` block to check the other half: that turn only renders correctly because `plan` carries `tool_call_id` across.
-9. **`--bind tailnet` fails rather than widening, and is not authentication.** It binds only the single address `tailscale ip -4` reports, and only when that address is a dotted-quad inside 100.64.0.0/10; zero, several, IPv6, out-of-range, or malformed output is an error, never a fall back to loopback or a wildcard. Every device the Tailnet ACL admits gets unauthenticated access to the full API (no auth, no TLS). The flag exists only in `--model` mode; the scripted `<tokenizer-dir>` mode always binds loopback.
+10. **Rate control is process-level, and that is a decision rather than an omission.** `--power-profile` / `--max-tokens-per-sec` are resolved ONCE in `main.rs` (which is also the only place this process asks the OS about Low Power Mode) and reach `GenerationConfig` through `ChatModel::rate_control`, applied in `plan` after `build_config`. There is deliberately no per-request field: there is one runner per process, a power setting is a property of the machine rather than of a caller's prompt, and a request that could pick its own rate would let any client opt out of the machine's power policy. The consequence to know is that a cap lengthens the runner mutex hold in proportion, so a capped server queues concurrent requests for longer -- acceptable only because Gotcha 1's queue is already serial.
+
+11. **`--bind tailnet` fails rather than widening, and is not authentication.** It binds only the single address `tailscale ip -4` reports, and only when that address is a dotted-quad inside 100.64.0.0/10; zero, several, IPv6, out-of-range, or malformed output is an error, never a fall back to loopback or a wildcard. Every device the Tailnet ACL admits gets unauthenticated access to the full API (no auth, no TLS). The flag exists only in `--model` mode; the scripted `<tokenizer-dir>` mode always binds loopback.

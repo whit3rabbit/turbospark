@@ -46,6 +46,7 @@ fn greedy_config(max_new_tokens: u32) -> GenerationConfig {
         max_new_tokens,
         stop_strings: Vec::new(),
         extra_stop_tokens: Vec::new(),
+        rate: Default::default(),
     }
 }
 

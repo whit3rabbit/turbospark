@@ -6,7 +6,8 @@
 #
 # Usage: scripts/power.sh [pairs]        (default 2 measured pairs per case)
 # Env:   MODEL, RUST_BENCH, OUT, LABEL (ac|battery),
-#        QOS (default|utility, comma-separated to interleave an A/B),
+#        ARMS (comma-separated arms to interleave; see ARMS below),
+#        QOS (the Phase P1 spelling of ARMS, still honored),
 #        CASES (space-separated protocol case ids)
 #
 # NEEDS SUDO: powermetrics is root-only. It prompts once, up front.
@@ -34,11 +35,16 @@ MODEL="${MODEL:-$HOME/models/gemma4.gturbo}"
 RUST_BENCH="${RUST_BENCH:-./target/release/turbospark-bench}"
 OUT="${OUT:-/tmp/mference-power}"
 LABEL="${LABEL:-unlabelled}"
-# The literal "default" means "set no QoS class", spelled as a token
-# rather than as the empty string: macOS ships bash 3.2, where
-# `read -ra` on an empty line leaves a ZERO-element array and indexing it
-# under `set -u` aborts the script.
-QOS="${QOS:-default}"
+# ARMS names the comparison axis, comma separated. Two kinds of token are
+# understood and they can NOT be mixed in one run, because the arm name is
+# a single column in rows.tsv:
+#   default, utility                        -> MFERENCE_READ_QOS (Phase P1)
+#   performance, balanced, efficiency       -> --power-profile   (Phase P2)
+# "default" means "vary nothing", spelled as a token rather than as the
+# empty string: macOS ships bash 3.2, where `read -ra` on an empty line
+# leaves a ZERO-element array and indexing it under `set -u` aborts.
+# QOS is still read so the Phase P1 invocations reproduce unchanged.
+ARMS="${ARMS:-${QOS:-default}}"
 CASES="${CASES:-short-explanation medium-review long-synthesis}"
 
 # powermetrics sample interval. Decode windows are ~26 s and would be
@@ -131,7 +137,7 @@ KEEPALIVE_PID=$!
   echo "macos        $(sw_vers -productVersion) ($(sw_vers -buildVersion))"
   echo "power        $(pmset -g ps | head -1)"
   echo "label        $LABEL"
-  echo "read qos     ${QOS:-default}"
+  echo "arms         ${ARMS}"
   echo "rev          $(git rev-parse --short HEAD)$(git diff --quiet || echo ' (dirty)')"
   echo "install      $MODEL"
   echo "manifest sha $(shasum -a 256 "$MODEL/manifest.json" | cut -d' ' -f1)"
@@ -155,12 +161,25 @@ sleep 2
 # inside the process, and the markers exclude it.
 run_arm() {
   local case_id="$1" tag="$2"
-  ARM_QOS="$3"
+  ARM="$3"
   local stem="$OUT/${case_id}.${tag}"
-  # "default" is the absence of the seam, so it maps to an unset class.
-  local qos_env="$ARM_QOS"
-  [ "$qos_env" = "default" ] && qos_env=""
+  # Each arm token names ONE seam to vary; everything else stays at its
+  # default, so "default" runs the binary exactly as it ships.
+  local qos_env=""
+  local arm_args=()
+  case "$ARM" in
+    default) ;;
+    utility) qos_env="utility" ;;
+    performance | balanced | efficiency) arm_args=(--power-profile "$ARM") ;;
+    *)
+      echo "  unknown arm $ARM (want default|utility|performance|balanced|efficiency)"
+      return 1
+      ;;
+  esac
+  # bash 3.2 aborts under `set -u` on "${arr[@]}" when arr is EMPTY, hence
+  # the +expansion guard rather than a bare splat.
   MFERENCE_READ_QOS="$qos_env" "$RUST_BENCH" --model "$MODEL" --case "$case_id" \
+    ${arm_args[@]+"${arm_args[@]}"} \
     > "$stem.stdout" 2> "$stem.stderr"
 
   local footer stop prompt_tok prefill_s new_tok decode_s tok_s win_start win_end
@@ -200,7 +219,7 @@ integrate() {
   local case_id="$1" tag="$2" stop="$3" w0="$4" w1="$5" secs="$6" toks="$7" phase="$8"
   awk -v t0="$PM_T0" -v w0="$w0" -v w1="$w1" -v secs="$secs" -v toks="$toks" \
       -v case_id="$case_id" -v tag="$tag" -v stop="$stop" -v phase="$phase" \
-      -v label="$LABEL" -v qos="${ARM_QOS:-default}" -v battf="$OUT/batt.tsv" '
+      -v label="$LABEL" -v qos="${ARM:-default}" -v battf="$OUT/batt.tsv" '
     function flush_sample() {
       if (!have) return
       mid = t_prev + (t_now - t_prev) / 2
@@ -253,11 +272,12 @@ integrate() {
   ' "$OUT/pm.txt" >> "$OUT/rows.tsv"
 }
 
-# QOS may name SEVERAL arms, comma separated (`QOS=default,utility`).
-# They alternate WITHIN each pair rather than running as two consecutive
-# batches, because consecutive batches carry thermal drift and the paired
-# delta is the only comparison worth making (CLAUDE.local.md).
-IFS=',' read -ra QOS_ARMS <<< "$QOS"
+# ARMS may name SEVERAL arms, comma separated
+# (`ARMS=performance,efficiency`). They alternate WITHIN each pair rather
+# than running as two consecutive batches, because consecutive batches
+# carry thermal drift and the paired delta is the only comparison worth
+# making (CLAUDE.local.md).
+IFS=',' read -ra ARM_LIST <<< "$ARMS"
 
 for case_id in $CASES; do
   echo "== $case_id"
@@ -265,9 +285,9 @@ for case_id in $CASES; do
   # process, but the FIRST process of a session also pays Metal pipeline
   # compilation and a cold page cache for this install's expert blobs
   # (AGENTS.md Gotcha 20).
-  run_arm "$case_id" warmup "${QOS_ARMS[0]}"
+  run_arm "$case_id" warmup "${ARM_LIST[0]}"
   for ((p = 1; p <= PAIRS; p++)); do
-    for arm in "${QOS_ARMS[@]}"; do
+    for arm in "${ARM_LIST[@]}"; do
       run_arm "$case_id" "p$p.$arm" "$arm"
     done
   done
@@ -298,10 +318,10 @@ awk -v t0="$PM_T0" -v tend="$PM_T_END" '
 ' "$OUT/pm.txt"
 echo
 
-echo "== measured rows (warmups excluded), $LABEL, read qos ${QOS:-default}"
+echo "== measured rows (warmups excluded), $LABEL, arms ${ARMS}"
 awk -F'\t' '
   $4 != "warmup" {
-    # Grouped by QoS arm as well as case and phase: the arms alternate
+    # Grouped by ARM as well as case and phase: the arms alternate
     # within a pair, so averaging across them would erase the comparison.
     k = $1 "\t" $3 "\t" $5
     # Too few samples means the window is short against the interval and
@@ -315,7 +335,7 @@ awk -F'\t' '
   }
   END {
     printf "%-18s %-8s %-8s %5s %8s %9s %9s %8s %8s %7s %7s %9s\n", \
-      "case", "qos", "phase", "runs", "secs", "joules", "watts", "J/tok", \
+      "case", "arm", "phase", "runs", "secs", "joules", "watts", "J/tok", \
       "cpu_W", "gpu_W", "E%", "wall_W"
     for (k in n) {
       split(k, f, "\t")

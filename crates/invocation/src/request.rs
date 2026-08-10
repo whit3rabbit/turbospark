@@ -60,6 +60,42 @@ impl ReadAheadMode {
     }
 }
 
+/// Power profile selection. Declared here rather than reused from the
+/// runtime crate because this crate is pure and depends only on
+/// `foundation`; the two spellings are pinned against each other by
+/// `crates/cli`'s mapping and by `parse_outcomes.rs`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PowerProfile {
+    /// No rate cap and no thermal stepping.
+    Performance,
+    /// Uncapped, steps down under thermal pressure.
+    Balanced,
+    /// Capped near reading speed, steps down further under pressure.
+    Efficiency,
+}
+
+impl PowerProfile {
+    /// Parse a profile from its documented spelling. Returns `None` for
+    /// any text outside the fixed set.
+    pub fn parse(text: &str) -> Option<Self> {
+        match text {
+            "performance" => Some(Self::Performance),
+            "balanced" => Some(Self::Balanced),
+            "efficiency" => Some(Self::Efficiency),
+            _ => None,
+        }
+    }
+
+    /// The inverse of [`Self::parse`].
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Performance => "performance",
+            Self::Balanced => "balanced",
+            Self::Efficiency => "efficiency",
+        }
+    }
+}
+
 /// Prompt-processing chunk-size tuning: a fixed token count drawn from the
 /// foundation-published allowed set, or automatic sizing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -107,6 +143,12 @@ pub struct InvocationRequest {
     pub expert_cache_slots: u32,
     /// The prompt-processing chunk-size tuning.
     pub prefill_chunk: PrefillChunk,
+    /// The power profile, or `None` for automatic (which resolves against
+    /// the OS's Low Power Mode when the session opens).
+    pub power_profile: Option<PowerProfile>,
+    /// The explicit decode rate cap in tokens per second, or `None` to
+    /// take whatever the resolved profile carries.
+    pub max_tokens_per_sec: Option<f64>,
     /// Whether incidental output is suppressed.
     pub quiet: bool,
 }

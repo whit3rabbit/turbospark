@@ -136,6 +136,20 @@ pub const OPTIONS: &[OptionDecl] = &[
         usage_hint: "prompt-processing chunk size, or auto (default 128)",
     },
     OptionDecl {
+        flag: "--power-profile",
+        takes_value: true,
+        is_required: false,
+        is_mode_selecting: false,
+        usage_hint: "power profile: performance, balanced, efficiency (default performance, or efficiency under Low Power Mode)",
+    },
+    OptionDecl {
+        flag: "--max-tokens-per-sec",
+        takes_value: true,
+        is_required: false,
+        is_mode_selecting: false,
+        usage_hint: "decode rate cap, greater than 0 (default: uncapped, or the efficiency profile's reading speed)",
+    },
+    OptionDecl {
         flag: "--quiet",
         takes_value: false,
         is_required: false,

@@ -10,7 +10,8 @@
 use std::path::Path;
 
 use runtime::{
-    run_raw_completion, GenerationConfig, RawDecodeProgress, RealForwardRunner, StopReason,
+    run_raw_completion, GenerationConfig, RateControl, RawDecodeProgress, RealForwardRunner,
+    StopReason,
 };
 use selection::ShapingConfig;
 use tokenizer::{Message, MfTokenizer, Role};
@@ -75,6 +76,7 @@ pub fn run_protocol_case(
     tokenizer: &MfTokenizer,
     case: &ProtocolCase,
     sampler: &mut AppMemorySampler,
+    rate: RateControl,
 ) -> Result<CaseResult, String> {
     // Chat-format exactly as the CLI does: the dialect template renders
     // the turn markup (and its own <bos>, hence add_bos false).
@@ -96,6 +98,7 @@ pub fn run_protocol_case(
         max_new_tokens: PROTOCOL_MAX_NEW,
         stop_strings: Vec::new(),
         extra_stop_tokens: Vec::new(),
+        rate,
     };
 
     sampler.sample();
