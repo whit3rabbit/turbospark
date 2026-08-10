@@ -51,6 +51,13 @@ const GEMMA4_STATIC_Q3_K_M: &str = "https://huggingface.co/mradermacher/gemma-4-
 const MIXTRAL_8X7B_LEGACY_Q4_0: &str = "https://huggingface.co/TheBloke/Mixtral-8x7B-Instruct-v0.1-GGUF/resolve/main/mixtral-8x7b-instruct-v0.1.Q4_0.gguf";
 const MIXTRAL_8X7B_Q4_K_M: &str = "https://huggingface.co/mradermacher/Mixtral-8x7B-Instruct-v0.1-GGUF/resolve/main/Mixtral-8x7B-Instruct-v0.1.Q4_K_M.gguf";
 
+// The candidate the ROADMAP Phase M2 granularity finding points at: a
+// FINE-GRAINED MoE with the same dense-GQA-plus-MoE layer graph the `llama`
+// flow already runs. Probed header-only, to do the multiplication that Phase
+// M2 skipped BEFORE anyone downloads 17 GB.
+const QWEN3_30B_A3B_Q4_K_M: &str =
+    "https://huggingface.co/Qwen/Qwen3-30B-A3B-GGUF/resolve/main/Qwen3-30B-A3B-Q4_K_M.gguf";
+
 // The dense half of the SAME architecture string, probed beside it because
 // the whole reason Phase M2 takes `llama` MoE-first is that one string
 // covers both and only one of them keeps the memory ceiling.
@@ -509,5 +516,59 @@ fn checks_mixtral_tensor_ranges_against_the_file_length() {
         "the walk would read past EOF: {} ends at {} in a {file_len}-byte file",
         furthest.0,
         furthest.1
+    );
+}
+
+/// Phase 0 for whatever MoE family comes after `llama`: the expert
+/// GRANULARITY multiplication, off the header, before any download
+/// (AGENTS.md Gotcha 36).
+///
+/// Prints the blob size and the slot-cache working set rather than asserting
+/// a threshold, because what counts as "fits" depends on the machine. What IS
+/// asserted is the comparison that decides it: this candidate's expert must be
+/// far smaller than Mixtral's 108.9 MiB, or it is the same dead end again.
+#[test]
+#[ignore = "network: reads a header off a 17 GB remote checkpoint"]
+fn scopes_the_next_moe_candidate_by_expert_granularity() {
+    let h = fetch(QWEN3_30B_A3B_Q4_K_M);
+    report("Qwen3-30B-A3B-Q4_K_M.gguf", &h);
+    let arch = h.architecture().expect("architecture");
+    assert_eq!(arch, "qwen3moe");
+
+    let u64_at = |key: &str| -> u64 {
+        h.metadata
+            .get(&format!("{arch}.{key}"))
+            .and_then(turbospark_repack::GgufValue::as_u64)
+            .unwrap_or_else(|| panic!("missing {arch}.{key}"))
+    };
+    let experts = u64_at("expert_count");
+    let top_k = u64_at("expert_used_count");
+    let layers = u64_at("block_count");
+    let hidden = u64_at("embedding_length");
+    let expert_ff = u64_at("expert_feed_forward_length");
+
+    // Q4_K: 144 bytes per 256 elements, over gate + up + down.
+    let blob = 3 * expert_ff * hidden * 144 / 256;
+    let mib = |b: u64| b as f64 / (1024.0 * 1024.0);
+    let gib = |b: u64| b as f64 / (1024.0 * 1024.0 * 1024.0);
+    println!("\n-- granularity: {experts} experts (top-{top_k}), {layers} layers");
+    println!("   expert ffn {expert_ff} x hidden {hidden}");
+    println!("   one expert blob   {:.1} MiB", mib(blob));
+    println!(
+        "   whole table       {:.1} GiB",
+        gib(blob * experts * layers)
+    );
+    for slots in [8u64, 16, 32] {
+        println!(
+            "   slot cache at {slots:>2}: {:.2} GiB",
+            gib(blob * slots * layers)
+        );
+    }
+
+    const MIXTRAL_BLOB: u64 = 108 * 1024 * 1024;
+    assert!(
+        blob < MIXTRAL_BLOB / 8,
+        "expert blob {:.1} MiB is not fine-grained; this is Mixtral's problem again",
+        mib(blob)
     );
 }
