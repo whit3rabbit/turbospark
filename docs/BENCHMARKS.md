@@ -934,6 +934,58 @@ only 1.07-1.40x -- and 8 x the resulting rate lands at the ~355 GiB/s
 saturation figure, which says the hardware genuinely moved the weight bytes
 eight times.
 
+### The real compute split, and the accept length it demands
+
+Two measurements replace the guesses in the composite above.
+
+**Where decode compute actually goes** (`MFERENCE_DISPATCH_PROFILE=1` on the
+real Qwen 3.6 install, 810 dispatches per token; absolute times are inflated
+by the profiling mode, only shares transfer):
+
+| family | share of GPU busy | batches? |
+| --- | ---: | --- |
+| GEMV family (int4, int8, `gdn_in_proj`, router, embed) | 52.7% | yes, `c(8)` 0.44-0.79 |
+| MoE expert kernels (phase 1 + phase 2) | 26.0% | no batched form yet |
+| elementwise and norms | 13.7% | NO -- no weights to amortize |
+| GDN recurrent step and conv | 5.3% | NO -- sequential by definition |
+| attention | 2.3% | yes, well: M queries share one KV read |
+
+The 60/40 expert-vs-projection split the earlier composite assumed was
+wrong, and the correction is structural rather than numeric: **19% of decode
+compute is per-token work with no weight reuse at all**, which sets a floor
+under `c(M)` that no kernel can move. Granting a good batched MoE, `c(8)`
+lands near 0.67, making a verify pass about 1.8x cheaper than eight
+sequential passes -- so the question is entirely how many of the eight
+proposals survive. Break-even is about 4.4 accepted of 8.
+
+**Accept length, measured** (`accept_length_probe.rs`, real Qwen 3.6, greedy,
+300 generated tokens per arm). The drafter is n-gram / prompt-lookup, which
+needs no weights, and the verify pass runs sequentially because only the
+RATIO matters here:
+
+| block | drafter fires | accepted + bonus | break-even | verdict |
+| ---: | ---: | ---: | ---: | --- |
+| 4 | 11% of rounds | 2.46 | 2.6 | loses |
+| 8 | 10% | 2.76 | 4.4 | loses |
+| 16 | 10% | 2.76 | 7.5 | loses |
+
+The n-gram drafter is REFUTED for this workload, and the shape of its
+failure says why: it fires on only a tenth of rounds, and when it does fire
+its accepted length saturates at 1.8 tokens -- block 16 accepts exactly what
+block 8 does, because the matched continuation runs out long before the
+block does. A trained drafter has neither problem: it always fires, and its
+proposals are model predictions rather than a repetition of earlier text.
+So this settles that free drafting does not work here, and settles nothing
+about DFlash.
+
+It does settle the correctness question. All three speculative arms produce
+a token stream BYTE-IDENTICAL to the same generation with speculation
+switched off, so the accept walk and the D1 rollback are lossless in
+practice and not just by construction.
+
+What remains is one number: a trained DFlash drafter's accept length on this
+model. Above ~4.4 of 8 it pays here; below, it does not.
+
 So the component measurements no longer decide it either way, and the next
 step is an end-to-end speculative loop rather than more kernel work: build
 the batched MoE and attention paths, put an n-gram drafter on the front

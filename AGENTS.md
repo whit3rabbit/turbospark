@@ -384,6 +384,15 @@ TURBOSPARK_PROBE_SLOTS=32 TURBOSPARK_PROBE_INSTALL_DIR=~/models/gemma4.gturbo \
 TURBOSPARK_PROBE_INSTALL_DIR=~/models/qwen36.gturbo \
   cargo test -p turbospark-bench --test rollback_probe --release -- --ignored --nocapture
 
+# Phase D2's last unknown: how many proposed tokens does the target accept?
+# Needs NO batched kernels -- only the ratio matters, so the verify pass runs
+# sequentially. The drafter is n-gram/prompt-lookup (zero weights), which is a
+# LOWER bound on a trained one. Also the end-to-end losslessness check: every
+# block size must produce a token stream byte-identical to speculation off.
+# ~40 s.
+TURBOSPARK_PROBE_INSTALL_DIR=~/models/qwen36.gturbo \
+  cargo test -p turbospark-bench --test accept_length_probe --release -- --ignored --nocapture
+
 # The two measurement surfaces behind ROADMAP's speculative-decoding item
 # (its Phase D0 gate: does a batched verify pay on this engine, and at what
 # block size?). Neither needs a drafter or a new kernel.
