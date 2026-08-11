@@ -154,6 +154,21 @@ live network).
   `chat_template.jinja`); Gemma's template is untested (no Gemma fixture
   with a `chat_template.jinja` is vendored) but goes through the same
   generic renderer.
+- **PLAIN TEXT chat also renders through the checkpoint's own template
+  now**, not just tool chat: chat framing is a property of the checkpoint
+  and the special-token dialect is not evidence about it (AGENTS.md Gotcha
+  41). `chat_template.rs`'s per-dialect renderers are the fallback for a
+  checkpoint that ships none. The template is read from either HF
+  convention -- a standalone `chat_template.jinja` or
+  `tokenizer_config.json`'s older `chat_template` key -- because the real
+  installs here split across both and the split does not follow family.
+  The two renders differ by nothing but `trim`: the dialect renderers strip
+  surrounding whitespace from content unconditionally, a template only where
+  it says `| trim`. Three of the four gated families' templates do, so their
+  frozen rows are untouched; Qwen3-30B-A3B's does not, so its user turn
+  regained the protocol prompt's trailing newline and its row was re-frozen
+  (perplexity 14.7576 -> 14.5988, both digests). All of it is pinned per
+  family in `crates/tokenizer/tests/installed_template.rs`.
 - **`JSONValue`'s `Decimal` case is folded into `f64`.** The Swift type
   keeps arbitrary-precision decimals separate from doubles to round-trip
   tool-call arguments exactly; this port accepts `f64`'s precision as
@@ -928,8 +943,9 @@ live network).
   invocation modes generate: `--prompt` encodes its text verbatim (no
   templating, matching the Swift original), `--messages-file` decodes a
   JSON `[{"role", "content"}]` conversation and renders it through the
-  tokenizer's own dialect chat template (`add_bos` false, since the Gemma
-  template emits the `<bos>` mark itself), and `--chat`
+  checkpoint's own chat template, falling back to the dialect renderer only
+  when it ships none (`add_bos` false either way, since a real template
+  emits its own `<bos>`/`<s>` mark), and `--chat`
   (`crates/cli/src/chat.rs`) is the interactive REPL ported from
   `MferenceCLI/Run.swift`'s `runChat`: `/clear`, `/history`, `/quit`,
   `/exit`, `--system` seeding the opening turn, per-turn window fitting

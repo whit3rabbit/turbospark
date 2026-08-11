@@ -1,11 +1,11 @@
 //! Tokenizer wrapper and chat-dialect resolution. Ported from the loading
 //! and special-token-resolution parts of `Tokenization/Tokenizer.swift`.
 //!
-//! Chat-template Jinja rendering (the generic tool-call path routed through
-//! the checkpoint's `chat_template.jinja` for Gemma/ChatML) is out of scope:
-//! this port implements the text-only chat templates and the DeepSeek native
-//! (non-Jinja) tool chat, which cover the CLI's raw-completion and
-//! instruction-chat paths. See `chat_template.rs`.
+//! The dialect resolved here decides SPECIAL TOKEN IDS and the stop set. It
+//! does NOT decide chat framing: that is a property of the checkpoint, which
+//! ships its own Jinja template (loaded below, in either of HF's two
+//! conventions) and is preferred by `MfTokenizer::apply_chat_template`. See
+//! `chat_template.rs` for why the two came apart.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -68,9 +68,10 @@ pub struct MfTokenizer {
     /// dialects that never use a BOS prefix (ChatML).
     bos_prefix_id: Option<i32>,
     tokenizer: Tokenizer,
-    /// The installed `chat_template.jinja` source, if the tokenizer
-    /// directory shipped one. Used by [`crate::jinja_chat_template`] for
-    /// the generic tool-chat path.
+    /// The checkpoint's own chat-template source, from whichever of HF's
+    /// two conventions the directory shipped it in. Rendered by
+    /// [`crate::jinja_chat_template`] for BOTH tool chat and plain text
+    /// chat; `None` means fall back to the per-dialect renderer.
     pub(crate) chat_template_source: Option<String>,
 }
 
@@ -106,7 +107,17 @@ impl MfTokenizer {
             .ok()
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default();
-        let chat_template_source = std::fs::read_to_string(dir.join("chat_template.jinja")).ok();
+        // Two conventions, and which one a checkpoint uses is a matter of
+        // its converter's vintage rather than of its family: HF moved the
+        // template out of `tokenizer_config.json` into a standalone
+        // `chat_template.jinja` partway through, and llama.cpp's GGUF
+        // converter still writes the older embedded key. Reading only the
+        // file made every pre-move checkpoint look template-less and fall
+        // through to the dialect renderer, which is how TinyLlama-1.1B-Chat
+        // (Zephyr framing) came to be fed Mistral's `[INST]`.
+        let chat_template_source = std::fs::read_to_string(dir.join("chat_template.jinja"))
+            .ok()
+            .or_else(|| config.chat_template_source());
         // `generation_config.json` is the authority for the checkpoint's
         // FULL end-of-sequence set: `tokenizer_config.json` only ever
         // carries one `eos_token` string, so a multi-stop checkpoint
@@ -217,6 +228,42 @@ impl MfTokenizer {
 struct TokenizerConfig {
     bos_token: Option<String>,
     eos_token: Option<String>,
+    /// The pre-`chat_template.jinja` convention. HF allowed either one
+    /// template string or a NAMED LIST of them (the `default` /
+    /// `tool_use` split some checkpoints ship), so both shapes parse.
+    #[serde(default)]
+    chat_template: Option<EmbeddedChatTemplate>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+enum EmbeddedChatTemplate {
+    One(String),
+    Named(Vec<NamedChatTemplate>),
+}
+
+#[derive(serde::Deserialize)]
+struct NamedChatTemplate {
+    name: String,
+    template: String,
+}
+
+impl TokenizerConfig {
+    /// The embedded template's source, if any. From a named list this takes
+    /// the entry called `default`, falling back to the first: the other
+    /// names are tool-use variants, and the tool path here renders through
+    /// [`crate::jinja_chat_template`] with `tools` in the context rather
+    /// than by selecting a different template.
+    fn chat_template_source(&self) -> Option<String> {
+        match self.chat_template.as_ref()? {
+            EmbeddedChatTemplate::One(source) => Some(source.clone()),
+            EmbeddedChatTemplate::Named(entries) => entries
+                .iter()
+                .find(|entry| entry.name == "default")
+                .or_else(|| entries.first())
+                .map(|entry| entry.template.clone()),
+        }
+    }
 }
 
 /// The slice of `generation_config.json` this loader reads. HF writes
@@ -388,4 +435,51 @@ fn resolve_deepseek(tokenizer: &Tokenizer) -> Result<Resolved, TokenizerError> {
         stop_token_ids: [eos].into_iter().collect(),
         vocab_size: 129_280,
     })
+}
+
+#[cfg(test)]
+mod embedded_template_tests {
+    use super::*;
+
+    fn parse(json: &str) -> TokenizerConfig {
+        serde_json::from_str(json).expect("config parses")
+    }
+
+    #[test]
+    fn a_plain_string_template_is_read() {
+        let config = parse(r#"{"chat_template": "<|user|>\n{{ x }}"}"#);
+        assert_eq!(
+            config.chat_template_source().as_deref(),
+            Some("<|user|>\n{{ x }}")
+        );
+    }
+
+    /// The other shape the pre-`chat_template.jinja` convention allowed. A
+    /// loader that handles only the string form does not FAIL on this one,
+    /// it silently reports no template and falls back to the dialect
+    /// renderer, which is the failure mode this whole change exists to
+    /// remove.
+    #[test]
+    fn a_named_list_resolves_to_the_default_entry() {
+        let config = parse(
+            r#"{"chat_template": [
+                {"name": "tool_use", "template": "TOOLS"},
+                {"name": "default", "template": "PLAIN"}
+            ]}"#,
+        );
+        assert_eq!(config.chat_template_source().as_deref(), Some("PLAIN"));
+    }
+
+    #[test]
+    fn a_named_list_without_a_default_takes_the_first_entry() {
+        let config = parse(r#"{"chat_template": [{"name": "rag", "template": "R"}]}"#);
+        assert_eq!(config.chat_template_source().as_deref(), Some("R"));
+    }
+
+    #[test]
+    fn a_config_without_the_key_reports_no_template() {
+        assert!(parse(r#"{"eos_token": "</s>"}"#)
+            .chat_template_source()
+            .is_none());
+    }
 }

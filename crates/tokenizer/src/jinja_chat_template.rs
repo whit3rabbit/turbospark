@@ -1,9 +1,15 @@
 //! Generic Jinja-templated chat/tool-chat rendering, using the checkpoint's
-//! own installed `chat_template.jinja` (the `swift-transformers`
+//! own installed template (the `swift-transformers`
 //! `applyChatTemplate(messages:tools:...)` path, ported using the `minijinja`
-//! crate as the Jinja engine instead of hand-rolling one). Only Gemma and
-//! ChatML route through this; DeepSeek keeps its hand-rolled native tool
-//! chat in `chat_template.rs` (it ships no `chat_template.jinja`).
+//! crate as the Jinja engine instead of hand-rolling one).
+//!
+//! This is the primary path for PLAIN TEXT chat too, not just tool chat:
+//! `MfTokenizer::apply_chat_template` routes here whenever the checkpoint
+//! ships a template, in either of HF's two conventions (a standalone
+//! `chat_template.jinja` or the older `chat_template` key inside
+//! `tokenizer_config.json`). A checkpoint that ships neither falls back to
+//! `chat_template.rs`'s per-dialect renderers; DeepSeek keeps its
+//! hand-rolled native tool chat there for the same reason.
 //!
 //! `raise_exception` (a function HF's own Python Jinja environment injects
 //! for chat templates to call on malformed input) is registered manually,

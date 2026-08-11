@@ -26,16 +26,33 @@ mod quality_common;
 const BASELINES: &[quality_common::ChipQuality] = &[
     // M4 Max 36GB (the development machine; see CLAUDE.local.md).
     //
-    // Measured 2026-08-10 on AC, release, 16 expert-cache slots, the session
-    // that streamed the real checkpoint, then reproduced in a second process
-    // at the same commit -- perplexity to the last digit and both digests to
-    // the last hex character.
+    // RE-FROZEN 2026-08-11 on AC, release, 16 expert-cache slots, reproduced
+    // in two separate processes -- perplexity to the last digit and both
+    // digests to the last hex character. The prior row was 14.7576 /
+    // 65f57a1a... / c7657395..., measured 2026-08-10.
+    //
+    // WHY IT MOVED, and why this is a re-freeze rather than a regression:
+    // chat framing now comes from the checkpoint's own template instead of
+    // the special-token dialect (AGENTS.md Gotcha 41), and THIS FAMILY IS
+    // THE ONLY ONE OF THE FOUR WHOSE BYTES CHANGE. The protocol prompt is a
+    // file ending in `\n`; the dialect renderer called `raw.trim()`
+    // unconditionally, while a template trims only if it says so. Gemma's
+    // and Qwen 3.6's say `| trim`, so those three rows are untouched to the
+    // last hex character. Qwen3-30B-A3B's does not, so one trailing newline
+    // now reaches the model -- which is what HF, vLLM and llama.cpp send it,
+    // and what the port was wrong to strip.
+    //
+    // The move is ONE TOKEN of prompt, and the numbers say so: perplexity
+    // -1.08% (inside the 2% tolerance, and in the improving direction),
+    // greedy and sampled digests both changed, constrained-vs-16-slot
+    // byte-identity still holds. `crates/tokenizer/tests/installed_template.rs`
+    // pins the trim behaviour per family so this cannot move again unnoticed.
     quality_common::ChipQuality {
         brand_substr: "Apple M4 Max",
-        perplexity: 14.7576,
-        greedy_digest: "65f57a1aa684c3acd34c821fb5701ddbbefd0fc1b2f285835d7e8e92853e1bd1",
-        sampled_digest: "c76573959430ace79441edc52afbf2aadc34655cd141a0b57c7bdfc53e81683d",
-        source: "this port, 2026-08-10, Apple M4 Max, AC, 16 slots",
+        perplexity: 14.5988,
+        greedy_digest: "b9211e34142a2e9c6fd60feca13600d1a2e668885d3dadedeeaa25debd5cc848",
+        sampled_digest: "92c294a3bb2ec623583e76f412c61d705381d9aa122ebace8d8d97be14a1c874",
+        source: "this port, 2026-08-11, Apple M4 Max, AC, 16 slots",
     },
 ];
 

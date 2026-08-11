@@ -315,10 +315,9 @@ TURBOSPARK_MISTRAL_INSTALL_DIR=~/models/mistral7b-dense.gturbo \
 # and the one that caught Gotcha 39 (its head_dim is 64, where every other
 # real `llama` file agrees with the Mixtral baseline's 128). Without the env
 # var it installs to a temp dir and deletes it, which is the walk-only case.
-# NOTE its chat dialect is Zephyr, not `[INST]`, and this port renders
-# `[INST]` for the whole family -- so drive it with a raw `--prompt` carrying
-# `<|user|>` / `<|assistant|>`, not with `--messages-file` (ROADMAP M4's one
-# open item).
+# Its chat framing is Zephyr, not `[INST]`, and `--messages-file` now renders
+# that correctly: the checkpoint's own template wins over the dialect (Gotcha
+# 41). This used to be M4's one open item and needed a raw `--prompt`.
 TURBOSPARK_DENSE_LLAMA_INSTALL_DIR=~/models/tinyllama-dense.gturbo \
   cargo test -p turbospark-repack --test gguf_mixtral_install_network --release -- --ignored --nocapture repacks_a_real_dense_llama_gguf
 
@@ -406,6 +405,21 @@ uv run --python 3.12 --with numpy scripts/kld_llamacpp.py \
 # 1.6-2.2 GiB band cannot.
 cargo test -p turbospark-repack --test gguf_checkpoint_network --release -- \
   --ignored --nocapture scopes_the_dense_llama_candidates
+
+# The cheapest gate in the repo and the one to run BEFORE the quality gates
+# whenever prompt rendering moves. It asserts that each family's own chat
+# template differs from the per-dialect renderer by nothing but `trim`, and
+# pins per family WHETHER that template trims -- which is the axis that
+# decides whether the frozen digests move, and the one that already moved
+# `qwen3moe`'s. It compares the real protocol prompt, trailing newline and
+# all, because on a tidy one-line string `trim` is a no-op and the guard
+# sees nothing. Seconds, no GPU, no model load beyond the tokenizer.
+# See Gotcha 41.
+TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
+TURBOSPARK_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
+TURBOSPARK_QWEN3MOE_INSTALL_DIR=~/models/qwen3moe-gguf.gturbo \
+TURBOSPARK_GEMMA4_IQ_INSTALL_DIR=~/models/gemma4-iq3.gturbo \
+  cargo test -p turbospark-tokenizer --test installed_template -- --ignored --nocapture
 
 # The determinism check nothing else makes: one runner, the same greedy
 # generation six times, asserting ONE distinct output. This is what caught
@@ -1328,6 +1342,53 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     1,201 MiB, of which 1,024 is KV; at the 4,096 the other three families
     use it reads 684. Neither number is comparable to a sibling's without
     the window, which is why `run_oracle_at_context` prints it.
+
+41. **CHAT FRAMING IS A PROPERTY OF THE CHECKPOINT. The dialect resolved from
+    the special-token table is not evidence about it, and the two come apart
+    inside a single family.** Fourth instance of 37's shape, and the one that
+    reaches the user's screen rather than a counter.
+    `dialect.rs` picked `ChatDialect::Mistral` for any tokenizer carrying
+    `<s>`/`</s>` and no Gemma/ChatML/DeepSeek marker, then rendered `[INST]`
+    from it. TinyLlama-1.1B-Chat presents exactly that table -- `<unk>`,
+    `<s>`, `</s>` and nothing else, because Zephyr's `<|user|>` /
+    `<|assistant|>` are PLAIN TEXT and never enter the table -- so the probe
+    cannot tell it from Mistral-7B-Instruct and never could. Fed `[INST]`, it
+    echoes the markup back instead of answering: fluent output, not an answer,
+    and no error anywhere. `apply_chat_template` now prefers the checkpoint's
+    own Jinja template and keeps the dialect for what it IS evidence for --
+    BOS/EOS and turn ids, the stop set, and the fallback render for a
+    checkpoint that ships no template.
+    THE TEMPLATE HIDES IN TWO PLACES, which is why this looked like an
+    absence rather than a mis-read: HF moved it out of
+    `tokenizer_config.json`'s `chat_template` key into a standalone
+    `chat_template.jinja` partway through, and llama.cpp's GGUF converter
+    still writes the old one. `load_from_dir` read only the file, so every
+    GGUF-derived install looked template-less. Note the split does not follow
+    family: gemma4, qwen36 and gemma4-iq3 ship the file, while qwen3moe and
+    both dense `llama` installs ship the key. The key also has a NAMED-LIST
+    form (`default` / `tool_use`), which a string-only reader reports as
+    absent rather than rejecting.
+    ONE FAMILY'S FROZEN ROW MOVED, and the axis is `trim`. The per-dialect
+    renderers call `raw.trim()` on message content unconditionally; a
+    template trims only where it says `| trim`. Gemma's and Qwen 3.6's do, so
+    those three rows are untouched to the last hex character. Qwen3-30B-A3B's
+    does not, and the protocol prompt is a file ending in `\n`, so ONE
+    TRAILING NEWLINE now reaches the model: `qwen3moe_quality_gate`'s
+    perplexity went 14.7576 -> 14.5988 (-1.08%, inside the 2% tolerance and
+    in the improving direction) and both digests changed. Re-frozen, not
+    suppressed -- the new values reproduce across two processes, and the
+    verbatim content is what HF, vLLM and llama.cpp all send.
+    THE INSTRUMENT MISTAKE IS THE PART TO REMEMBER. The guard test that was
+    supposed to answer "will the digests move" said no, because its fixture
+    was a tidy one-line string on which `trim` is a no-op. The real protocol
+    case is a multi-line file with a trailing newline, and a comparison
+    fixture chosen for tidiness cannot see the property being asserted.
+    `crates/tokenizer/tests/installed_template.rs` now `include_str!`s the
+    protocol prompt itself rather than retyping it, and pins per family both
+    that the two renders differ by NOTHING but the trim and whether that
+    family's template trims. Env-gated, seconds, no GPU: run it before the
+    quality gates, not after -- it answers "will the digests move, and for
+    which family" for the price of a string compare.
 
 ## Per-Crate Documentation
 

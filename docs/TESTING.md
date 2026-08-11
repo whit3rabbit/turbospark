@@ -35,7 +35,7 @@ cargo clippy --workspace --tests
 | `invocation` | Argument parsing: outcomes, ordering, failures, defaults, usage text, exit status. Pure, no I/O. |
 | `selection` | Sampling contract: shaping, truncation, penalty, choose. |
 | `window-fit` | Conversation-window turn dropping. |
-| `tokenizer` | Dialect resolution, chat templates (including the real vendored Qwen ChatML template through minijinja), streaming detokenizer, stop matching, tool-call parsing. |
+| `tokenizer` | Dialect resolution, chat templates (including the real vendored Qwen ChatML template through minijinja, and that a checkpoint's own template beats its dialect), streaming detokenizer, stop matching, tool-call parsing. |
 | `model-io` | Manifest decode and field validation, packed-expert layout, resident index, SHA-256, install receipt. |
 | `streaming` | Expert cache eviction policy against scripted access traces (no real install needed). |
 | `gpu` | Per-kernel parity against the matching `compute` reference on real hardware, plus KV cache sizing and the resident zero-copy proof. macOS only. |

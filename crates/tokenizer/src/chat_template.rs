@@ -1,12 +1,13 @@
-//! Text-only chat-template rendering for the three dialects, plus DeepSeek's
+//! Text-only chat-template rendering for the four dialects, plus DeepSeek's
 //! hand-rolled (non-Jinja) native tool chat. Ported from the chat-template
 //! section of `Tokenization/Tokenizer.swift`.
 //!
-//! The generic Jinja-templated tool chat that Gemma/ChatML route through the
-//! checkpoint's `chat_template.jinja` is out of scope for this port; it needs
-//! a full Jinja engine and a real installed tokenizer sidecar to test
-//! against. Only DeepSeek's tool framing is plain string composition and is
-//! ported in full.
+//! These per-dialect renderers are now the FALLBACK rather than the primary
+//! path: `apply_chat_template` prefers the checkpoint's own installed Jinja
+//! template (see its doc comment for why, and [`crate::jinja_chat_template`]
+//! for the render). They still serve every checkpoint that ships no
+//! template -- all the synthetic fixtures here, and DeepSeek, whose native
+//! tool chat is plain string composition and is ported in full below.
 
 use crate::dialect::{ChatDialect, MfTokenizer, DEEPSEEK_BOS_MARK, DEEPSEEK_EOS_MARK};
 use crate::error::TokenizerError;
@@ -109,8 +110,17 @@ const DEEPSEEK_THINK_CLOSE_MARK: &str = "</think>";
 /// Two rules the reference template enforces and a naive render gets wrong:
 /// a SYSTEM message has no turn of its own and is folded into the first
 /// user turn, and `</s>` closes each ASSISTANT turn only -- a user turn is
-/// closed by `[/INST]`, not by the sentence end. `<s>` is not emitted here
-/// because `bos_prefix_id` prepends it as an id.
+/// closed by `[/INST]`, not by the sentence end.
+///
+/// FALLBACK ONLY since the installed template took over: every real
+/// `<s>`/`</s>` checkpoint on the shelf ships one, so this render now fires
+/// solely for a hypothetical template-less one. Which is just as well,
+/// because it emits no `<s>` -- it was written expecting `bos_prefix_id` to
+/// prepend it, and every call site renders with `add_bos = false` (the
+/// convention the other three dialects need, since their templates emit
+/// their own BOS as text). Mistral's real template emits `<s>` itself, so
+/// the live path is correct and this gap is inert. Fix it here before
+/// relying on this function for a real checkpoint.
 fn mistral_chat_template(messages: &[Message]) -> Result<String, TokenizerError> {
     let mut out = String::new();
     let mut pending_system: Option<String> = None;
@@ -152,8 +162,53 @@ fn mistral_chat_template(messages: &[Message]) -> Result<String, TokenizerError>
 }
 
 impl MfTokenizer {
-    /// Formats a sequence of messages into a chat template string for the tokenizer's dialect.
+    /// Formats a sequence of messages into a chat template string.
+    ///
+    /// THE CHECKPOINT'S OWN TEMPLATE WINS when it ships one, because framing
+    /// is a property of the CHECKPOINT and the dialect is only a property of
+    /// its special-token table. The two are not in one-to-one correspondence:
+    /// TinyLlama-1.1B-Chat and Mistral-7B-Instruct present the identical
+    /// `<s>`/`</s>` table, resolve to the same [`ChatDialect::Mistral`], and
+    /// are trained on Zephyr and `[INST]` framing respectively. Fed the wrong
+    /// one, a model echoes the markup back instead of answering -- fluent,
+    /// and not an answer.
+    ///
+    /// The dialect keeps everything it is actually evidence for: BOS/EOS and
+    /// turn ids, the stop set, and the fallback render for a checkpoint that
+    /// ships no template at all (every synthetic fixture here, and DeepSeek,
+    /// whose native tool chat is hand-rolled in this file).
+    ///
+    /// The renderers below differ from a real template by exactly one
+    /// thing, and it is worth knowing before changing either: they
+    /// `trim()` message content unconditionally, where a template trims
+    /// only if it says `| trim`. Gemma's and Qwen 3.6's do, so those rows
+    /// are byte-identical; Qwen3-30B-A3B's does not, and that one trailing
+    /// newline re-froze its quality-gate row. `tests/installed_template.rs`
+    /// pins the behaviour per family.
+    ///
+    /// A template that fails to render ERRORS rather than falling back.
+    /// The fallback would be a renderer this checkpoint is known not to
+    /// match, and its output is fluent -- the whole failure mode above.
+    /// A visible error is the better of the two.
     pub fn apply_chat_template(&self, messages: &[Message]) -> Result<String, TokenizerError> {
+        if self.chat_template_source.is_some() {
+            return crate::jinja_chat_template::render_generic_chat_template(
+                self,
+                messages,
+                &[],
+                true,
+                false,
+            );
+        }
+        self.apply_dialect_chat_template(messages)
+    }
+
+    /// The hand-written per-dialect render, bypassing any installed
+    /// template. Public so the guard test can compare the two.
+    pub fn apply_dialect_chat_template(
+        &self,
+        messages: &[Message],
+    ) -> Result<String, TokenizerError> {
         match self.dialect {
             ChatDialect::Gemma => gemma_chat_template(messages),
             ChatDialect::ChatMl => chatml_chat_template(messages),
