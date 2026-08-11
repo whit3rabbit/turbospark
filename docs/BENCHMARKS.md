@@ -983,8 +983,48 @@ a token stream BYTE-IDENTICAL to the same generation with speculation
 switched off, so the accept walk and the D1 rollback are lossless in
 practice and not just by construction.
 
-What remains is one number: a trained DFlash drafter's accept length on this
-model. Above ~4.4 of 8 it pays here; below, it does not.
+### The trained drafter's accept length, and the verdict
+
+That last number did not need the drafter built: DFlash publishes it, and
+its definition (`completion_tokens / spec_verify_ct`, the accepted prefix
+plus the bonus token) is exactly what the probe above measures, so the two
+are directly comparable. Mean accept length is 6.49 across tasks at block 16
+and peaks at 7.87 on MATH-500 (arXiv 2602.06036); the per-position curve at
+temperature 0 is 100 / 81.6 / 64.0 / 50.7 / 41.3 / 34.4 / 29.3 / 25.2 %
+(DeLS-Spec, arXiv 2607.07409), whose prefix sums give the shorter blocks.
+
+| block | DFlash accept length | break-even here | verdict |
+| ---: | ---: | ---: | --- |
+| 4 | 2.96 | 2.6 | **pays, 1.14x** |
+| 8 | 4.26 | 4.4 | loses, 0.97x |
+| 16 | 6.49 (mean) | 7.5 | loses, 0.87x |
+| 16 | 7.87 (best task) | 7.5 | pays, 1.05x |
+
+**On this engine the optimum is a SMALL block, and the win is about 1.1x**,
+against the 3.6x DFlash reaches at concurrency 1 on datacenter GPUs. The
+inversion is the interesting part and it follows from the compute split
+above: there, verify is nearly free, so a bigger block is always better;
+here verify cost scales almost linearly in M, because 19% of compute cannot
+amortize and the expert union grows with the block, so every extra proposal
+costs nearly a full decode step while its acceptance probability is already
+down to 50% by position 4.
+
+Verifying only a 4-token prefix is not an off-design use of a block-16
+drafter: the drafter runs one forward at its trained block size either way,
+and verifying fewer of its proposals leaves the first four positions of the
+acceptance curve untouched.
+
+Three caveats, all pointing the same way -- this is a coin flip, not a
+comfortable margin. The position curve is published for Qwen3-4B rather than
+Qwen3.6-35B-A3B, and the 35B drafter is a later retrain. The break-even
+column assumes a batched MoE that does not exist yet; without one every row
+loses. And 1.14x is inside the error bar of a composite whose compute-share
+term is measured but whose `c(M)` for the unbuilt MoE kernel is not.
+
+The lever is `c(M)`, not the drafter, and it is worth stating in one line:
+at `c(8) = 0.67` block 8 reads 0.97x, at 0.60 it reads 1.05x, and at 0.55 it
+reads 1.11x. An 18% kernel improvement is worth more here than any drafter
+change.
 
 So the component measurements no longer decide it either way, and the next
 step is an end-to-end speculative loop rather than more kernel work: build
