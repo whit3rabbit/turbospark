@@ -49,6 +49,19 @@ pub enum GgufNameError {
     /// layouts hold the same weights in the same order and misreading one as
     /// the other is silent (ROADMAP Phase M2).
     PreMergeExperts { name: String },
+    /// `rope_freqs.weight`: a LEARNED per-dimension RoPE frequency scaling
+    /// vector (Llama 3.1's, `[64]` F32), which this port's two rope kernels
+    /// cannot express -- they take a scalar theta (ROADMAP M4).
+    ///
+    /// Refused BY NAME rather than ignored, and the distinction is the whole
+    /// point. It WAS ignored, on the reading that RoPE frequencies are
+    /// derived from `rope_theta` at runtime, which is true of every file
+    /// that omits this tensor and false of every file that ships it. Dropping
+    /// it produces an install that loads, decodes, and is wrong only at long
+    /// context -- the failure mode with no symptom at the length anyone
+    /// smoke-tests. Harmless until ROADMAP M4 made dense `llama` installs
+    /// runnable, at which point a Llama 3.1 checkpoint became reachable.
+    UnsupportedRopeScaling { name: String },
 }
 
 impl std::fmt::Display for GgufNameError {
@@ -67,6 +80,15 @@ impl std::fmt::Display for GgufNameError {
                  ffn_*_exps, and this port reads only the merged layout. \
                  Re-convert the checkpoint, or fetch a build published after \
                  the merge"
+            ),
+            GgufNameError::UnsupportedRopeScaling { name } => write!(
+                f,
+                "GGUF tensor {name} is a learned per-dimension RoPE frequency \
+                 scaling vector (Llama 3.1's), and this port's rope kernels take \
+                 a scalar theta. Carrying the checkpoint without it would be \
+                 wrong only at long context, so it is refused instead. Use a \
+                 checkpoint that does not ship rope_freqs.weight (Mistral 7B, \
+                 Llama 2, TinyLlama), or land scaled RoPE first"
             ),
         }
     }
@@ -104,12 +126,6 @@ fn map_top_level(name: &str) -> Option<GgufMapping> {
             GgufMapping::Resident("language_model.model.norm.weight".to_string())
         }
         "output.weight" => GgufMapping::Resident("language_model.lm_head.weight".to_string()),
-        // Precomputed RoPE frequencies. This port derives its own from
-        // `rope_theta` in the manifest, so carrying them would be dead
-        // weight in the install.
-        "rope_freqs.weight" => GgufMapping::Ignored {
-            reason: "RoPE frequencies are derived from rope_theta at runtime",
-        },
         _ => return None,
     })
 }
@@ -339,6 +355,15 @@ pub fn map_gguf_name(name: &str, family: ModelFamily) -> Result<GgufMapping, Ggu
         .ok_or_else(unmapped);
     }
 
+    // Refused for every family, before the table, so no family can grow a
+    // row for it by accident. See `UnsupportedRopeScaling`: this used to be
+    // an `Ignored` row, which is the one disposition that produces a wrong
+    // model rather than an error.
+    if name == "rope_freqs.weight" {
+        return Err(GgufNameError::UnsupportedRopeScaling {
+            name: name.to_string(),
+        });
+    }
     map_top_level(name).ok_or_else(unmapped)
 }
 

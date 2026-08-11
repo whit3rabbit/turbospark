@@ -79,8 +79,8 @@ pub use synthetic_gguf::{
     build_synthetic_gemma4_gguf, GgufBuilder, GgufFileAndRanges, QuantMix, SyntheticGgufShape,
 };
 pub use synthetic_llama::{
-    build_synthetic_gqa_moe_install, build_synthetic_llama_real_install, tiny_gqa_moe_arch,
-    tiny_llama_arch,
+    build_synthetic_dense_llama_install, build_synthetic_gqa_moe_install,
+    build_synthetic_llama_real_install, tiny_dense_llama_arch, tiny_gqa_moe_arch, tiny_llama_arch,
 };
 pub use synthetic_model::{
     build_synthetic_gemma4_install, build_synthetic_gemma4_moe_install,

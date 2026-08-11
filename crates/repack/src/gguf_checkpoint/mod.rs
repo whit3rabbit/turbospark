@@ -90,12 +90,20 @@ pub fn write_gguf_install_streamed(
     ));
 
     if plan.routed.is_empty() {
-        crate::gturbo_writer::write_gturbo_install_with_resident_index(
-            dir,
-            &arch,
-            model_id,
-            &resident_bytes,
-        )?;
+        // A DENSE INSTALL STILL NEEDS ITS QUANT BLOCK (ROADMAP M4), which is
+        // why this goes through the streaming writer at zero layers rather
+        // than through `write_gturbo_install_with_resident_index` -- that one
+        // has no way to carry one, and writes `"quant": null`.
+        //
+        // The two produce an identical `layout.json` (stride 0, no layers),
+        // so nothing else changes. What changes is that a dense checkpoint
+        // whose (num_layers, hidden_size) happens to match a shipped baseline
+        // is held to `is_production_arch`'s rule and needs the block to load
+        // at all: Mistral 7B is 32 layers of 4096, which is Mixtral 8x7B's,
+        // and it failed at `load_manifest` with `manifest.quant is required`.
+        let mut writer = crate::gturbo_writer::StreamingGturboWriter::new(dir, 0, 0)?;
+        writer.set_quant(manifest::gguf_manifest_quant(header, &plan));
+        writer.finish(&arch, model_id, &resident_bytes)?;
         progress("install written (no routed experts)");
         return Ok(arch);
     }

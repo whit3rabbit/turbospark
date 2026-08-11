@@ -1,7 +1,7 @@
-//! The plain-GQA-plus-MoE decode flow for [`RealForwardRunner`] (ROADMAP
-//! Phase M2). MoE half only: Mixtral 8x7B / 8x22B run, dense Llama and
-//! Mistral are refused at open by `state.rs` until the dense FFN has a GPU
-//! path.
+//! The plain-GQA decode flow for [`RealForwardRunner`] (ROADMAP Phase M2,
+//! completed by M4). BOTH HALVES of the `llama` architecture string run:
+//! Mixtral 8x7B / 8x22B on routed experts, and Mistral / Llama 2 / 3.x on a
+//! dense gated FFN. `RealLlamaState.dense` picks, off `num_experts`.
 //!
 //! **TWO FAMILIES RUN THROUGH THIS ONE FLOW**, `llama` (Mixtral) and
 //! `qwen3moe` (Qwen3-30B-A3B), because the layer graph below is the same
@@ -26,6 +26,13 @@
 //! x      = x + sum(r_w * expert(m))         // no shared expert
 //! ```
 //!
+//! The dense half replaces the last two lines with one gated FFN and nothing
+//! else changes (`dense.rs`):
+//!
+//! ```text
+//! x      = x + down_proj(silu(gate_proj @ m) * (up_proj @ m))
+//! ```
+//!
 //! Then a final norm and an untied head, with no softcap.
 //!
 //! Every difference from the two existing flows is an ABSENCE, which is why
@@ -34,6 +41,7 @@
 //! and so are Qwen's linear layers, output gate and gated shared expert.
 
 mod attn;
+mod dense;
 mod moe;
 mod state;
 
@@ -74,6 +82,11 @@ impl RealForwardRunner {
         let arch = self.arch.clone();
         let hidden = arch.hidden_size as usize;
         let moe_inter = arch.moe_intermediate_size as u32;
+        // The DENSE width, which is a different field. Mixtral publishes one
+        // `feed_forward_length` and the walk copies it into both, so on the
+        // MoE half these are equal and the distinction is invisible; a dense
+        // checkpoint sets only this one.
+        let dense_inter = arch.intermediate_size as usize;
         let vocab = arch.vocab_size as usize;
         let num_experts = arch.num_experts as usize;
         let top_k = arch.top_k_experts as usize;
@@ -193,6 +206,27 @@ impl RealForwardRunner {
                 llama.rms_eps,
             )
             .map_err(gpu_err)?;
+
+            // THE DENSE HALF DIVERGES HERE AND NOWHERE ELSE. Everything
+            // above -- embedding, both norms, attention, the raw residual --
+            // is the same code for a Mistral as for a Mixtral, and so is the
+            // head below. A dense layer also needs no mid-layer commit,
+            // because nothing in it is data-dependent on a host readback.
+            if llama.dense {
+                dense::encode_llama_layer_dense(
+                    context,
+                    &pass,
+                    weights,
+                    index,
+                    scratch,
+                    llama,
+                    layer,
+                    hidden,
+                    dense_inter,
+                    use_silu,
+                )?;
+                continue;
+            }
 
             let router_name = layer_tensor(layer, "mlp.gate.weight");
             let router = entry(index, &router_name)?;

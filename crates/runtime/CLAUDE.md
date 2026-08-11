@@ -28,11 +28,12 @@ crates/runtime/
 |   |   |   +-- attn.rs         # Attention block & router GEMV pass
 |   |   |   +-- moe.rs          # Routed MoE pass encoding
 |   |   |   \-- state.rs        # RealGemmaState initialization
-|   |   +-- llama/              # `llama` architecture (Mixtral) decode flow
+|   |   +-- llama/              # `llama` architecture (Mixtral + dense) decode flow
 |   |   |   +-- mod.rs          # Entry point & layer loop
 |   |   |   +-- attn.rs         # Plain GQA attention block
+|   |   |   +-- dense.rs        # Dense gated FFN (Mistral, Llama 2/3.x)
 |   |   |   +-- moe.rs          # Routed MoE pass (no shared expert)
-|   |   |   \-- state.rs        # RealLlamaState & the dense-half refusal
+|   |   |   \-- state.rs        # RealLlamaState & the dense/MoE split
 |   |   +-- qwen/               # Qwen 3.6 decode flow
 |   |   |   +-- mod.rs          # Qwen 3.6 entry point & layer loop
 |   |   |   +-- attn.rs         # Gated DeltaNet & gated full attention blocks
@@ -52,6 +53,7 @@ crates/runtime/
     +-- real_forward.rs         # RealForwardRunner short-name integration tests
     +-- real_forward_gemma4.rs  # RealForwardRunner Gemma 4 learned-weight tests
     +-- real_forward_llama.rs   # RealForwardRunner Mixtral-shaped decode tests
+    +-- real_forward_llama_dense.rs # The DENSE half of the same architecture
     +-- real_forward_qwen3moe.rs# The same flow under the Qwen3-MoE family tag
     +-- real_forward_qwen.rs    # RealForwardRunner Qwen 3.6 decode tests
     \-- fixtures/
@@ -65,7 +67,7 @@ crates/runtime/
 - `real_forward.rs`: `RealForwardRunner` struct definition, options handling, and dispatch orchestration.
 - `families/gemma4/`: Gemma 4 decode flow handling verbatim checkpoint weight names (`language_model.model.layers.0...`), per-head norms, learned weights, and MoE routing.
 - `families/qwen/`: Qwen 3.6 decode flow — gated DeltaNet on mask-2 layers, gated full attention on mask-1, one post-attention norm feeding router + shared expert + routed experts, no sandwich norms, no softcap. Selected from `ArchConfig.family`, never from tensor naming.
-- `families/llama/`: the plain-GQA-plus-MoE decode flow (ROADMAP Phase M2), which serves **two families**, `Llama` (Mixtral) and `Qwen3Moe` (Qwen3-30B-A3B). It is defined by its ABSENCES: plain GQA attention with no per-head norms and no output gate, a raw residual add with no sandwich norms, one post-attention norm feeding router and routed experts, no shared expert, no logit softcap, full-head NeoX RoPE at one base. **Mixtral-style MoE only.** One `general.architecture = "llama"` covers dense Llama 2/3.x and Mistral as well, and `RealLlamaState::build` refuses those by name: a dense install has no routed experts to stream, so it would need a GPU dense-FFN path (the current dense flow bridges FFN to CPU) and would abandon the memory ceiling the engine exists for. Phase 2's residual input is `scratch.zero_hidden` rather than a shared-expert output, so the routed sum is added to the stream exactly once. **`Qwen3Moe` differs in exactly two places, both carried by `RealLlamaState` and both keyed on `ArchConfig.family` rather than sniffed from tensor names**: it norms q and k PER HEAD before RoPE (`qk_norm`), and its RMS epsilon is 1e-6 against `llama`'s 1e-5 (`rms_eps`, which is not an `ArchConfig` field). A fourth copy of the flow with two lines changed would be a likelier source of a divergence bug than the shared one is.
+- `families/llama/`: the plain-GQA-plus-MoE decode flow (ROADMAP Phase M2), which serves **two families**, `Llama` (Mixtral) and `Qwen3Moe` (Qwen3-30B-A3B). It is defined by its ABSENCES: plain GQA attention with no per-head norms and no output gate, a raw residual add with no sandwich norms, one post-attention norm feeding router and routed experts, no shared expert, no logit softcap, full-head NeoX RoPE at one base. **BOTH HALVES OF THE ARCHITECTURE STRING RUN** since ROADMAP M4: one `general.architecture = "llama"` covers dense Llama 2/3.x and Mistral as well as the Mixtral MoEs, and `RealLlamaState` tells them apart by `num_experts` (`dense`), never by tensor naming. A dense layer swaps the router and routed experts for one gated FFN (`dense.rs`: `mlp.gate_proj` / `mlp.up_proj` / `silu_mul` / `mlp.down_proj`, all through `encode_gemv_any`, no new kernel) and is IDENTICAL above and below it -- embedding, both norms, attention, the raw residual and the head are the same code. Two non-obvious points: its width is `intermediate_size` and NOT `moe_intermediate_size` (Mixtral copies one `feed_forward_length` into both, so on the MoE half they are interchangeable and a dense checkpoint sets only the first), and a dense layer needs no mid-layer commit, because nothing in it is data-dependent on a host readback the way the router's top-k is. Phase 2's residual input is `scratch.zero_hidden` rather than a shared-expert output, so the routed sum is added to the stream exactly once. **`Qwen3Moe` differs in exactly two places, both carried by `RealLlamaState` and both keyed on `ArchConfig.family` rather than sniffed from tensor names**: it norms q and k PER HEAD before RoPE (`qk_norm`), and its RMS epsilon is 1e-6 against `llama`'s 1e-5 (`rms_eps`, which is not an `ArchConfig` field). A fourth copy of the flow with two lines changed would be a likelier source of a divergence bug than the shared one is.
 - `families/synthetic/`: Short-name synthetic execution flow (`layer0.q_proj`).
 - `config.rs`: Runtime generation configuration and runner settings.
 - `power.rs`: ROADMAP Phase P2's policy: `PowerProfile`, `ThermalLevel`, the `stepped_cap` ladder, `RateControl`, and the two cfg-paired OS probes (`thermal_level`, `low_power_mode_enabled`) that call `crates/gpu`'s `NSProcessInfo` wrappers on macOS and return constants elsewhere.

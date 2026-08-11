@@ -26,9 +26,6 @@ pub fn gguf_manifest_quant(header: &GgufHeader, plan: &Plan<'_>) -> serde_json::
     }
     let mut routed_types: Vec<&str> = routed_counts.keys().copied().collect();
     routed_types.sort_by_key(|t| std::cmp::Reverse(routed_counts[t]));
-    if routed_types.is_empty() {
-        routed_types.push("absent");
-    }
     let slot = |ggml: &str| {
         serde_json::json!({
             "weightBits": 0,
@@ -39,14 +36,37 @@ pub fn gguf_manifest_quant(header: &GgufHeader, plan: &Plan<'_>) -> serde_json::
             "groupSize": 0,
         })
     };
-    let routed_slot = {
-        let mut v = slot(routed_types[0]);
-        if routed_types.len() > 1 {
-            v["ggmlTypes"] = serde_json::json!(routed_types);
-        }
-        v
-    };
-    let router_source = type_of(&["ffn_gate_inp.weight"]);
+    let attention = type_of(&["attn_q.weight", "attn_qkv.weight"]);
+
+    // EVERY SLOT NAMING A COMPONENT THE MODEL DOES NOT HAVE FALLS BACK TO
+    // THE ATTENTION TYPE, and this is the rule rather than three patches.
+    //
+    // `manifest.quant` has five fixed slots and no architecture has all five.
+    // A probe that finds nothing answers "absent", `validate_quant` refuses
+    // "absent" because it is not a block type with a kernel, and a perfectly
+    // runnable install fails to load with a message about a component it
+    // never had. That has now happened three times, each found by the next
+    // real checkpoint: the Qwen hybrid wrote `absent` for attention and
+    // shared expert because it probed hardcoded `blk.0.` names on a model
+    // whose layer 0 has no `attn_q` (AGENTS.md); Mixtral has no shared expert
+    // at all; and ROADMAP M4's dense Mistral has neither a router nor routed
+    // experts.
+    //
+    // Attention is the right fallback because it is executable exactly when
+    // the install is, and because the resident core is what a reader would
+    // take an inapplicable slot to describe. It is a defaulted statement, not
+    // a measured one, so anything reading these slots for a DISPATCH must
+    // read the resident index or `packed_experts/layout.json` instead
+    // (crate Gotcha 10 already requires that).
+    //
+    // Worth knowing why the dense case surfaced only now: `is_production_arch`
+    // keys on (num_layers, hidden_size), and Mistral 7B's (32, 4096) is
+    // Mixtral 8x7B's exactly, so it is the first dense file held to the
+    // production manifest rules at all. TinyLlama's (22, 2048) matches no
+    // baseline and skips the check entirely.
+    let or_attention = |found: &'static str| if found == "absent" { attention } else { found };
+
+    let router_source = or_attention(type_of(&["ffn_gate_inp.weight"]));
     let router = if router_source == "F32" {
         serde_json::json!({
             "weightBits": 8,
@@ -58,23 +78,18 @@ pub fn gguf_manifest_quant(header: &GgufHeader, plan: &Plan<'_>) -> serde_json::
     } else {
         slot(router_source)
     };
-    let attention = type_of(&["attn_q.weight", "attn_qkv.weight"]);
-    // A MODEL WITH NO SHARED EXPERT STILL NEEDS THIS SLOT TO BE A TRUE AND
-    // EXECUTABLE STATEMENT. Mixtral has neither a `ffn_gate_shexp` nor a
-    // dense `ffn_gate` (its FFN names all end `_exps.weight`), so the probe
-    // finds nothing and the literal answer is "absent" -- which
-    // `validate_quant` then refuses, because "absent" is not a block type
-    // with a kernel. This is the same hole the Qwen GGUF install hit from the
-    // other side (AGENTS.md: the walk wrote `absent` for two slots because it
-    // probed hardcoded `blk.0.` names on a hybrid model).
-    //
-    // Falling back to the ATTENTION type rather than to the routed one: both
-    // are executable whenever the install is, and the resident core is what a
-    // reader would take this slot to describe on a model that has no shared
-    // expert at all.
-    let shared = match type_of(&["ffn_gate.weight", "ffn_gate_shexp.weight"]) {
-        "absent" => attention,
-        found => found,
+    let shared = or_attention(type_of(&["ffn_gate.weight", "ffn_gate_shexp.weight"]));
+    let routed_types: Vec<&str> = if routed_types.is_empty() {
+        vec![attention]
+    } else {
+        routed_types
+    };
+    let routed_slot = {
+        let mut v = slot(routed_types[0]);
+        if routed_types.len() > 1 {
+            v["ggmlTypes"] = serde_json::json!(routed_types);
+        }
+        v
     };
     serde_json::json!({
         "embedding": slot(type_of(&["token_embd.weight"])),

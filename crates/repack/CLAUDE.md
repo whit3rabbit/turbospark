@@ -20,7 +20,7 @@ crates/repack/
 |   +-- resident_writer.rs          # Writes model_weights.bin resident tensor blob and index
 |   +-- synthetic_model.rs          # Synthetic model generator (build_synthetic_gemma4_install)
 |   +-- synthetic_real.rs           # Real-named synthetic generator (build_synthetic_gemma4_real_install)
-|   +-- synthetic_llama.rs          # Real-named synthetic Mixtral / Qwen3-MoE generator (build_synthetic_gqa_moe_install)
+|   +-- synthetic_llama.rs          # Real-named synthetic Mixtral / Qwen3-MoE / DENSE llama generators
 |   +-- synthetic_qwen.rs           # Real-named synthetic Qwen 3.6 generator (build_synthetic_qwen36_real_install)
 |   +-- gemma4_checkpoint/          # Gemma 4 / Qwen 3.6 mlx-community safetensors converter & streamer
 |   |   +-- mod.rs                  # Module root and install writer entrypoints
@@ -58,7 +58,7 @@ crates/repack/
     +-- gguf_iq_network.rs          # IQ3_XXS/IQ4_NL/IQ4_XS vs the Phase S candidate, by correlation (ignored)
     +-- gguf_install_network.rs     # Streams the real Q8_0 GGUF into a full install (ignored)
     +-- gguf_qwen_install_network.rs# Same for the real Qwen Q4_K_M, the mixed-block-type case (ignored)
-    +-- gguf_mixtral_install_network.rs # Same for the real Mixtral Q4_K_M, plus a cheap dense-llama walk (ignored)
+    +-- gguf_mixtral_install_network.rs # Same for the real Mixtral Q4_K_M, plus the two DENSE llama installs (ignored)
     +-- gguf_qwen3moe_install_network.rs # Same for the real Qwen3-30B-A3B Q4_K_M, the FINE-GRAINED MoE (ignored)
     +-- gguf_llama_rope_patch.rs    # The rotary pair convention: in-place diagnostic + the walk's inverse (ignored)
     +-- gguf_qwen_core_probe.rs     # A GGUF install's resident core vs the MLX one, tensor by tensor (ignored)
@@ -171,3 +171,10 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
    Repacking the real file reports 130 lossy-narrowing warnings: 101 norms (40 `attn_norm`, 40 `post_attention_norm`, 10 `attn_q_norm`, 10 `attn_k_norm`, 1 `output_norm`) plus 29 of the 30 `ssm_a`. That count moved from 131 when this transform landed and is NOT a regression: `ssm_a` is now narrowed as `ln(-ssm_a)`, so what is measured is the logarithm's BF16 alignment rather than the source's. Layer 0's 32 values happen to land on the grid; the rest lose 3 to 14 each.
 
    VERIFY THIS CLASS OF FIX BY PATCHING THE INSTALL, NOT BY REPACKING. The tensors sit at fixed `file_offset`/`size_bytes`, every transform preserves length, and `RealForwardRunner::open` runs no receipt or SHA-256 check (`model_io` has a verifier; the open path never calls it), so a whole-model coherence test costs seconds against a streamed repack's ~21 minutes. Run the repack ONCE at the end as the proof that the walk writes what the patch wrote. `tests/gguf_qwen_convention_patch.rs` is idempotent (it patches only a tensor whose transform agrees with the MLX install better than the bytes already on disk), so a second run is a no-op rather than a double permutation.
+
+8. **A DENSE checkpoint takes the same walk, and every place the walk assumed routed experts turned out to be a DEFAULT stated wrong rather than a missing branch** (ROADMAP M4). `write_gguf_install_streamed` already had a `plan.routed.is_empty()` arm, so the shape was there; what was not there was what the empty case should SAY.
+   - **`manifest.quant` has five fixed slots and no architecture fills all five.** A probe that finds nothing answers `absent`, `validate_quant` refuses `absent` because it is not a block type with a kernel, and a perfectly runnable install fails to open with a message about a component it never had. Three slots did this on a dense model (router, routed expert, shared expert), each found by one five-minute re-stream of the real Mistral. Every inapplicable slot now falls back to the ATTENTION type, as one rule (`or_attention`) rather than three patches: it is executable exactly when the install is. These are DEFAULTED statements, not measured ones, so anything resolving a DISPATCH must read the resident index or `packed_experts/layout.json` (Gotcha 10 in `crates/runtime` already requires that).
+   - **The dense branch goes through `StreamingGturboWriter` at ZERO layers**, not through `write_gturbo_install_with_resident_index`, purely because the latter cannot carry a quant block and writes `"quant": null`. The two produce a byte-identical `layout.json`. It matters as soon as the model's `(num_layers, hidden_size)` collides with a shipped baseline, which `is_production_arch` keys on: Mistral 7B's `(32, 4096)` is Mixtral 8x7B's exactly.
+   - **`head_dim` fell back to the family BASELINE when `attention.key_length` was absent**, where llama.cpp's own default is `embedding_length / head_count`. See AGENTS.md Gotcha 39; the general rule is that an optional key's fallback belongs to the FORMAT, never to a neighbouring model.
+   - **`rope_freqs.weight` is REFUSED, not ignored.** It was an `Ignored` row until this phase made dense installs runnable and so made a Llama 3.1 checkpoint reachable. Dropping learned RoPE scaling gives a model wrong only past the training length.
+   `tests/gguf_checkpoint.rs::a_dense_llama_gguf_installs_and_its_manifest_loads` is the fixture that catches all of it in milliseconds, and its absence is why the real file found the slots one per round trip: every other GGUF fixture is MoE, so nothing had ever asked what the walk writes when `plan.routed` is empty.

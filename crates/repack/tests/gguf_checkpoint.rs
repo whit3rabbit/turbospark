@@ -642,9 +642,24 @@ fn reports_ignored_tensors_rather_than_dropping_them_silently() {
         .tensor("rope_freqs.weight", 0, &[16], vec![0u8; 64])
         .build();
     let h = parse_gguf_header(&bytes, GGUF_DEFAULT_MAX_HEADER_BYTES).unwrap();
-    let out = orchestrate_gguf_checkpoint(&h, &MemoryRangeSource::new(&bytes)).expect("walk");
-    assert_eq!(out.ignored.len(), 1);
-    assert!(out.ignored[0].starts_with("rope_freqs.weight ("));
+    // `rope_freqs.weight` USED TO BE THIS TEST'S EXEMPLAR of an ignored
+    // tensor, and ROADMAP M4 turned it into a refusal: it is Llama 3.1's
+    // LEARNED frequency scaling, which the two rope kernels here cannot
+    // express, so dropping it yields an install that is wrong only at long
+    // context. Ignoring is the one disposition that produces a wrong model
+    // instead of an error, so it has to be earned per tensor.
+    //
+    // The `ignored` channel above is still the thing under test and still
+    // has no rows; it now has no exemplar either, and the next tensor that
+    // is genuinely safe to drop should be asserted here.
+    let err = orchestrate_gguf_checkpoint(&h, &MemoryRangeSource::new(&bytes))
+        .err()
+        .expect("a learned rope scaling must be refused, not dropped");
+    let text = err.to_string();
+    assert!(
+        text.contains("rope_freqs.weight") && text.contains("scalar theta"),
+        "the refusal must say why the tensor cannot be carried: {text}"
+    );
 }
 
 /// The written install must be readable as a layout and an index, and its
@@ -764,4 +779,104 @@ fn the_written_manifest_describes_the_bytes_and_gates_on_the_kernels() {
     );
 
     std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A DENSE `llama` GGUF installs AND its manifest loads (ROADMAP M4).
+///
+/// The second clause is the one worth having, and it cost two five-minute
+/// re-streams of the real Mistral 7B to learn. `manifest.quant` has five
+/// fixed slots and a dense model has nothing to put in three of them
+/// (router, routed expert, shared expert); each answered "absent",
+/// `validate_quant` refuses "absent" because it is not a block type with a
+/// kernel, and a perfectly runnable install failed to open with a message
+/// about components it never had. One slot was found per round trip.
+///
+/// A fixture catches all of it in milliseconds, which nothing in the suite
+/// did: every existing GGUF fixture is MoE, so no test ever asked what the
+/// walk writes when `plan.routed` is empty. Shapes are 256-wide because a
+/// K-quant row cannot be a partial superblock.
+#[test]
+fn a_dense_llama_gguf_installs_and_its_manifest_loads() {
+    const HIDDEN: u64 = 256;
+    const HEADS: u32 = 4;
+    const KV_HEADS: u32 = 2;
+    const FFN: u64 = 256;
+
+    let mut b = turbospark_repack::GgufBuilder::new()
+        .metadata_str("general.architecture", "llama")
+        .metadata_u32("llama.block_count", 1)
+        .metadata_u32("llama.embedding_length", HIDDEN as u32)
+        .metadata_u32("llama.feed_forward_length", FFN as u32)
+        .metadata_u32("llama.attention.head_count", HEADS)
+        .metadata_u32("llama.attention.head_count_kv", KV_HEADS)
+        .metadata_f32("llama.rope.freq_base", 10000.0)
+        .metadata_f32("llama.attention.layer_norm_rms_epsilon", 1e-5)
+        // NO `expert_count` and NO `expert_used_count`: that absence is what
+        // makes this the dense half of the architecture string.
+        .q4_k_tensor("token_embd.weight", &[HIDDEN, 512], 1)
+        .q6_k_tensor("output.weight", &[HIDDEN, 512], 2)
+        .f32_upcast_bf16_tensor("output_norm.weight", &[HIDDEN], 3);
+
+    let kv = HIDDEN * KV_HEADS as u64 / HEADS as u64;
+    b = b
+        .f32_upcast_bf16_tensor("blk.0.attn_norm.weight", &[HIDDEN], 4)
+        .f32_upcast_bf16_tensor("blk.0.ffn_norm.weight", &[HIDDEN], 5)
+        .q4_k_tensor("blk.0.attn_q.weight", &[HIDDEN, HIDDEN], 6)
+        .q4_k_tensor("blk.0.attn_k.weight", &[HIDDEN, kv], 7)
+        .q4_k_tensor("blk.0.attn_v.weight", &[HIDDEN, kv], 8)
+        .q4_k_tensor("blk.0.attn_output.weight", &[HIDDEN, HIDDEN], 9)
+        // The three dense FFN names, which no MoE fixture carries.
+        .q4_k_tensor("blk.0.ffn_gate.weight", &[HIDDEN, FFN], 10)
+        .q4_k_tensor("blk.0.ffn_up.weight", &[HIDDEN, FFN], 11)
+        .q4_k_tensor("blk.0.ffn_down.weight", &[FFN, HIDDEN], 12);
+
+    let (bytes, _) = b.build();
+    let h = parse_gguf_header(&bytes, GGUF_DEFAULT_MAX_HEADER_BYTES).unwrap();
+    let dir = tempdir();
+    let arch =
+        write_gguf_install_streamed(&dir, &h, &MemoryRangeSource::new(&bytes), "dense", |_| {})
+            .expect("dense install writes");
+
+    assert_eq!(arch.num_experts, 0);
+    assert_eq!(arch.top_k_experts, 0);
+    assert_eq!(arch.moe_intermediate_size, 0);
+    assert_eq!(arch.intermediate_size, FFN as i64);
+    // `attention.key_length` is absent here, as it is on every 2023-era
+    // conversion, so this also pins the `embedding_length / head_count`
+    // fallback: without it the Mixtral baseline's 128 survives and the first
+    // q_proj dispatch fails on a packed-size mismatch.
+    assert_eq!(arch.head_dim, HIDDEN as i64 / HEADS as i64);
+    assert_eq!(arch.full_head_dim, arch.head_dim);
+
+    let packed: Vec<_> = std::fs::read_dir(dir.join("packed_experts"))
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.starts_with("layer_"))
+        .collect();
+    assert!(packed.is_empty(), "nothing streams in a dense install");
+
+    // THE ASSERTION THIS TEST EXISTS FOR.
+    model_io::load_manifest(&dir, &arch, model_io::DEFAULT_MAX_BYTES)
+        .expect("a dense install's manifest must load, quant block and all");
+
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.join("manifest.json")).unwrap()).unwrap();
+    assert!(
+        !manifest["quant"].is_null(),
+        "a dense install still needs a quant block: `is_production_arch` keys on \
+         (num_layers, hidden_size) and a real dense model can collide with a shipped baseline"
+    );
+    for slot in [
+        "embedding",
+        "attention",
+        "router",
+        "sharedExpert",
+        "routedExpert",
+    ] {
+        assert_ne!(
+            manifest["quant"][slot]["ggmlType"], "absent",
+            "slot {slot} must name an executable block type, not `absent`"
+        );
+    }
 }

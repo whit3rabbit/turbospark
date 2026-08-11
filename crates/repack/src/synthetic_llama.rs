@@ -48,12 +48,26 @@ pub fn tiny_llama_arch(vocab_size: i64, num_layers: i64, num_experts: i64) -> Ar
     tiny_gqa_moe_arch(vocab_size, num_layers, num_experts, ModelFamily::Llama)
 }
 
+/// A tiny DENSE `llama` config: the same architecture with `num_experts` 0,
+/// which is how one `general.architecture` string covers Mistral and Llama
+/// 2/3.x as well as the Mixtral MoEs (ROADMAP M4).
+///
+/// Nothing else changes. That is the point of the pair: a dense Llama's
+/// family-EXTENSION fields are Mixtral's exactly (no output gate, no sandwich
+/// norms, no subdim rope), and those are the only fields
+/// `arch_validation` really binds to a baseline (AGENTS.md Gotcha 24).
+pub fn tiny_dense_llama_arch(vocab_size: i64, num_layers: i64) -> ArchConfig {
+    tiny_gqa_moe_arch(vocab_size, num_layers, 0, ModelFamily::Llama)
+}
+
 /// The same shape for either family that runs this layer graph.
 ///
 /// `ModelFamily::Qwen3Moe` is the identical config with a different `family`
 /// tag: the two architectures share every shape and behavioural field, and
 /// differ only in the per-head q/k norms (extra TENSORS, written by the
 /// builder below) and the RMS epsilon (not an `ArchConfig` field at all).
+///
+/// `num_experts == 0` is the DENSE case and gives `top_k_experts` 0 with it.
 pub fn tiny_gqa_moe_arch(
     vocab_size: i64,
     num_layers: i64,
@@ -134,10 +148,49 @@ pub fn build_synthetic_llama_real_install(
     )
 }
 
+/// Writes a tiny DENSE `llama` install: the same attention block with a
+/// plain gated FFN (`mlp.gate_proj` / `mlp.up_proj` / `mlp.down_proj`) in
+/// place of the router and the routed experts (ROADMAP M4).
+///
+/// Those three names are not invented for the fixture: they are exactly what
+/// `gguf_names.rs` maps a dense `llama` file's `ffn_gate` / `ffn_up` /
+/// `ffn_down` to, and exactly what
+/// `families/gemma4/mod.rs::encode_shared_expert_branch` already reads.
+///
+/// The install comes out with ZERO packed-expert layer files, which the
+/// writer already handles (`write_gemma4_install` routes an empty
+/// `out.layers` to `write_gturbo_install_with_resident_index`).
+pub fn build_synthetic_dense_llama_install(
+    dir: &std::path::Path,
+    vocab_size: i64,
+    num_layers: i64,
+    model_id: &str,
+) -> Result<ArchConfig, Box<dyn std::error::Error>> {
+    build_gqa_install(dir, vocab_size, num_layers, 0, model_id, ModelFamily::Llama)
+}
+
 /// The same builder for either family, which is what makes the pair a real
 /// test of the shared flow: pass `ModelFamily::Qwen3Moe` and it additionally
 /// writes the two `[head_dim]` q/k norm vectors that architecture carries.
 pub fn build_synthetic_gqa_moe_install(
+    dir: &std::path::Path,
+    vocab_size: i64,
+    num_layers: i64,
+    num_experts: i64,
+    model_id: &str,
+    family: ModelFamily,
+) -> Result<ArchConfig, Box<dyn std::error::Error>> {
+    assert!(
+        num_experts > 0,
+        "build_synthetic_gqa_moe_install is the MoE half; \
+         use build_synthetic_dense_llama_install for num_experts == 0"
+    );
+    build_gqa_install(dir, vocab_size, num_layers, num_experts, model_id, family)
+}
+
+/// The shared body. `num_experts == 0` writes the dense FFN and omits the
+/// router; anything above writes the router and the routed experts.
+fn build_gqa_install(
     dir: &std::path::Path,
     vocab_size: i64,
     num_layers: i64,
@@ -216,27 +269,45 @@ pub fn build_synthetic_gqa_moe_install(
             seed + 4,
         ));
 
-        // INT8 router, INT4 routed experts, and NO shared expert.
-        ts.extend(int8_triple(
-            &format!("{p}.mlp.gate.weight"),
-            experts,
-            HIDDEN,
-            seed + 50,
-        ));
-        overrides.insert(format!("{p}.mlp.gate"), 8u32);
-        for (i, role) in ["gate_proj", "up_proj", "down_proj"].iter().enumerate() {
-            let (rows, cols) = if *role == "down_proj" {
-                (HIDDEN, INTER)
-            } else {
-                (INTER, HIDDEN)
-            };
-            ts.extend(expert_int4_triple(
-                &format!("{p}.experts.switch_glu.{role}.weight"),
+        if experts == 0 {
+            // The DENSE half: one gated FFN, resident like every other
+            // non-routed tensor, and no router at all.
+            for (i, role) in ["gate_proj", "up_proj", "down_proj"].iter().enumerate() {
+                let (rows, cols) = if *role == "down_proj" {
+                    (HIDDEN, INTER)
+                } else {
+                    (INTER, HIDDEN)
+                };
+                ts.extend(int4_triple(
+                    &format!("{p}.mlp.{role}.weight"),
+                    rows,
+                    cols,
+                    seed + 70 + i as u64,
+                ));
+            }
+        } else {
+            // INT8 router, INT4 routed experts, and NO shared expert.
+            ts.extend(int8_triple(
+                &format!("{p}.mlp.gate.weight"),
                 experts,
-                rows,
-                cols,
-                seed + 70 + i as u64,
+                HIDDEN,
+                seed + 50,
             ));
+            overrides.insert(format!("{p}.mlp.gate"), 8u32);
+            for (i, role) in ["gate_proj", "up_proj", "down_proj"].iter().enumerate() {
+                let (rows, cols) = if *role == "down_proj" {
+                    (HIDDEN, INTER)
+                } else {
+                    (INTER, HIDDEN)
+                };
+                ts.extend(expert_int4_triple(
+                    &format!("{p}.experts.switch_glu.{role}.weight"),
+                    experts,
+                    rows,
+                    cols,
+                    seed + 70 + i as u64,
+                ));
+            }
         }
     }
     ts.push(bf16_vector(

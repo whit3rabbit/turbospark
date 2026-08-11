@@ -41,8 +41,16 @@ pub(crate) struct RealLlamaState {
     pub(crate) router_ones: gpu::MetalBuffer,
     /// `[num_experts]` of ones, so `router_topk_gemma4`'s per-expert
     /// weighting is a no-op and selection reduces to softmax over the
-    /// selected.
+    /// selected. Empty on a dense install.
     pub(crate) per_expert_ones: Vec<f32>,
+    /// DENSE, i.e. `num_experts == 0`: one `general.architecture = "llama"`
+    /// covers Mistral and Llama 2/3.x as well as the Mixtral MoEs (ROADMAP
+    /// M4). Read off `num_experts` and not off tensor naming, for the reason
+    /// `qk_norm` is read off the family.
+    ///
+    /// It changes what the FFN half of a layer is and nothing above it:
+    /// attention, both norms and the head are the same code either way.
+    pub(crate) dense: bool,
     pub(crate) router_logits_f32: gpu::MetalBuffer,
     /// `[hidden]`: the post-attention norm that feeds the router and the
     /// routed experts. There is no shared expert to feed.
@@ -89,27 +97,45 @@ impl RealLlamaState {
                     .to_string(),
             );
         }
-        // THE DENSE HALF IS REFUSED, DELIBERATELY AND BY NAME. One
-        // `general.architecture` covers dense Llama 2/3.x, Mistral AND the
-        // Mixtral MoEs, and only the MoE half reuses the routed-expert
-        // streamer this engine's memory result comes from. A dense install
-        // needs a GPU dense-FFN path (ROADMAP Phase M2 step 2); until that
-        // lands, refusing is the honest answer, since the alternative is a
-        // CPU-bridged FFN that would run and be slow for reasons no one
-        // could see.
-        if arch.num_experts <= 0 || arch.top_k_experts <= 0 {
-            return unsupported(
-                "this is a DENSE llama install (no routed experts) and the llama flow is \
-                 MoE-only so far: the dense FFN has no GPU path here yet. Mixtral-style \
-                 checkpoints run; Llama 2/3.x and Mistral do not"
-                    .to_string(),
-            );
+        // DENSE AND MoE ARE BOTH THIS FLOW, and one `general.architecture`
+        // really does cover both: Mistral and Llama 2/3.x report `llama`
+        // exactly as the Mixtral MoEs do, and only `expert_count` tells them
+        // apart (ROADMAP M2 finding 3, built out in M4).
+        //
+        // The two are mutually exclusive rather than a spectrum, so a file
+        // claiming experts with no `top_k` (or the reverse) is malformed and
+        // is refused rather than guessed at.
+        let dense = arch.num_experts == 0;
+        if dense != (arch.top_k_experts == 0) {
+            return unsupported(format!(
+                "num_experts {} and top_k_experts {} disagree about whether this install is \
+                 dense; both must be zero or both positive",
+                arch.num_experts, arch.top_k_experts
+            ));
+        }
+        if arch.num_experts < 0 || arch.top_k_experts < 0 {
+            return unsupported(format!(
+                "negative expert counts: num_experts {}, top_k_experts {}",
+                arch.num_experts, arch.top_k_experts
+            ));
         }
         if arch.top_k_experts as usize > gpu::MAX_STREAMED_EXPERTS {
             return unsupported(format!(
                 "top_k {} exceeds the {}-slot MoE kernels",
                 arch.top_k_experts,
                 gpu::MAX_STREAMED_EXPERTS
+            ));
+        }
+        // A DENSE INSTALL'S WORKING SET IS ITS WHOLE WEIGHT FILE, and that is
+        // worth saying at open rather than leaving to be discovered from a
+        // footprint number. Routed experts are the only thing this engine
+        // streams; everything else is mapped AND PINNED (AGENTS.md Gotcha
+        // 19), so Gotcha 36's `slots x layers x expert_stride` does not apply
+        // and no slot count moves the answer.
+        if dense && arch.intermediate_size <= 0 {
+            return unsupported(format!(
+                "a dense llama install needs a positive ffnIntermediate, got {}",
+                arch.intermediate_size
             ));
         }
 
@@ -141,8 +167,23 @@ impl RealLlamaState {
                 "self_attn.k_proj.weight",
                 "self_attn.v_proj.weight",
                 "self_attn.o_proj.weight",
-                "mlp.gate.weight",
             ] {
+                entry(index, &layer_tensor(layer, suffix))?;
+            }
+            // The FFN half is the only thing the two shapes disagree on. A
+            // dense layer's three names are exactly what `gguf_names.rs`
+            // maps `ffn_gate` / `ffn_up` / `ffn_down` to, and exactly what
+            // the Gemma flow's shared-expert branch already reads.
+            let ffn: &[&str] = if dense {
+                &[
+                    "mlp.gate_proj.weight",
+                    "mlp.up_proj.weight",
+                    "mlp.down_proj.weight",
+                ]
+            } else {
+                &["mlp.gate.weight"]
+            };
+            for suffix in ffn {
                 entry(index, &layer_tensor(layer, suffix))?;
             }
             if qk_norm {
@@ -170,8 +211,11 @@ impl RealLlamaState {
             qk_norm,
             rms_eps,
             router_ones,
+            dense,
             per_expert_ones: vec![1.0; num_experts],
-            router_logits_f32: context.new_output_buffer((num_experts * 4) as u64),
+            // `new_output_buffer(0)` is not a thing worth finding out about
+            // at the first dispatch, and a dense flow never binds this.
+            router_logits_f32: context.new_output_buffer((num_experts.max(1) * 4) as u64),
             moe_x: halfs(hidden),
             h2: halfs(hidden),
         })

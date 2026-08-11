@@ -177,12 +177,34 @@ fn maps_top_level_tensors_for_both_families() {
     }
 }
 
+/// `rope_freqs.weight` is REFUSED, for every family, and it used to be
+/// ignored (ROADMAP M4).
+///
+/// The old row read "RoPE frequencies are derived from `rope_theta` at
+/// runtime", which is true of every checkpoint that OMITS this tensor and
+/// false of every checkpoint that ships it: Llama 3.1's is a learned `[64]`
+/// F32 scaling vector and the two rope kernels here take a scalar theta.
+/// Dropping it gives an install that loads, decodes, and is wrong only past
+/// the original training length -- no symptom at any length a smoke test
+/// reaches.
+///
+/// Asserted for every family because the check sits ahead of the per-family
+/// tables, so no family can grow a row for it by accident.
 #[test]
-fn ignores_derived_rope_frequencies_visibly() {
-    assert!(matches!(
-        map_gguf_name("rope_freqs.weight", ModelFamily::Gemma4).unwrap(),
-        GgufMapping::Ignored { .. }
-    ));
+fn refuses_a_learned_rope_frequency_scaling_for_every_family() {
+    for family in [
+        ModelFamily::Gemma4,
+        ModelFamily::Qwen36,
+        ModelFamily::Llama,
+        ModelFamily::Qwen3Moe,
+    ] {
+        match map_gguf_name("rope_freqs.weight", family) {
+            Err(GgufNameError::UnsupportedRopeScaling { name }) => {
+                assert_eq!(name, "rope_freqs.weight");
+            }
+            other => panic!("{}: expected a refusal, got {other:?}", family.as_str()),
+        }
+    }
 }
 
 /// An unmapped name must be an error rather than a skip. Gotcha 26 records

@@ -332,14 +332,45 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
             arch.full_head_dim = k;
         }
     } else {
-        if let Some(k) = m.opt_i64("attention.key_length") {
-            arch.full_head_dim = k;
-            // A model with one attention kind publishes no `_swa` width, and
-            // its two head-dim fields must not be allowed to disagree: the
-            // baseline's `head_dim` would otherwise survive a checkpoint that
-            // moved `full_head_dim`, and nothing reads them together.
-            if m.opt("attention.key_length_swa").is_none() {
-                arch.head_dim = k;
+        match m.opt_i64("attention.key_length") {
+            Some(k) => {
+                arch.full_head_dim = k;
+                // A model with one attention kind publishes no `_swa` width,
+                // and its two head-dim fields must not be allowed to
+                // disagree: the baseline's `head_dim` would otherwise survive
+                // a checkpoint that moved `full_head_dim`, and nothing reads
+                // them together.
+                if m.opt("attention.key_length_swa").is_none() {
+                    arch.head_dim = k;
+                }
+            }
+            // `attention.key_length` IS OPTIONAL, AND LEAVING THE BASELINE'S
+            // VALUE IN PLACE IS WRONG RATHER THAN CONSERVATIVE (ROADMAP M4).
+            // llama.cpp defaults it to `embedding_length / head_count`, so
+            // that is what a file omitting it means -- and the 2023-era
+            // conversions omit it routinely.
+            //
+            // Nothing caught this for two families because they agree by
+            // coincidence: Mixtral 8x7B, Mistral 7B and Llama 3.1 8B are all
+            // 32 heads of 128, which is the baseline's own value. TinyLlama
+            // 1.1B is 32 heads of 64, and it fails at the FIRST q_proj with
+            // a packed-size mismatch rather than anywhere near the config.
+            // Same shape as AGENTS.md Gotcha 37: a per-MODEL property left
+            // standing on a per-BASELINE constant, invisible for exactly as
+            // long as the two happen to be equal.
+            None => {
+                let heads = arch.num_heads;
+                if heads <= 0 || arch.hidden_size % heads != 0 {
+                    return Err(GgufConfigError::MissingKey {
+                        key: format!(
+                            "{architecture}.attention.key_length (absent, and \
+                             embedding_length {} is not divisible by head_count {heads})",
+                            arch.hidden_size
+                        ),
+                    });
+                }
+                arch.head_dim = arch.hidden_size / heads;
+                arch.full_head_dim = arch.head_dim;
             }
         }
         if let Some(k) = m.opt_i64("attention.key_length_swa") {

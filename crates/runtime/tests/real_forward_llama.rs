@@ -150,12 +150,21 @@ fn prefill_and_produce_agree_on_the_scored_token() {
     assert_eq!(argmax, all_produce[2], "prefill skipped more than the head");
 }
 
-/// THE DENSE HALF IS REFUSED, and by name. One `general.architecture` covers
-/// dense Llama 2/3.x, Mistral and the Mixtral MoEs; only the MoE half has a
-/// flow here, and a dense install must say so at open rather than run on a
-/// path that was never written for it.
+/// A MoE install RELABELLED dense is refused, and the shape of the refusal
+/// is what changed in ROADMAP M4.
+///
+/// This case used to assert the flow's blanket dense refusal, because only
+/// the MoE half had a path. Both halves run now
+/// (`real_forward_llama_dense.rs`), so what has to hold instead is narrower
+/// and more useful: a `num_experts` of 0 makes the flow demand the three
+/// dense FFN tensors, and a Mixtral fixture has none of them. The install is
+/// still refused, now for the true reason rather than a categorical one.
+///
+/// Keeping the case rather than deleting it is the point: the failure mode
+/// it guards -- an install whose manifest and whose bytes disagree about
+/// which half it is -- got MORE likely once both halves became legal.
 #[test]
-fn a_dense_llama_install_is_refused_at_open() {
+fn a_moe_install_relabelled_dense_is_refused_at_open() {
     let dir = temp_dir();
     let arch = build_synthetic_llama_real_install(&dir, VOCAB, LAYERS, EXPERTS, "tiny-mixtral")
         .expect("install builds");
@@ -177,11 +186,11 @@ fn a_dense_llama_install_is_refused_at_open() {
     dense.top_k_experts = 0;
     let err = RealForwardRunner::open(&dir, dense)
         .err()
-        .expect("a dense llama install must be refused");
+        .expect("a Mixtral fixture has no dense FFN, so this must be refused");
     let message = err.to_string();
     assert!(
-        message.contains("DENSE") || message.contains("dense"),
-        "the refusal must name the dense half: {message}"
+        message.contains("mlp.gate_proj.weight"),
+        "the refusal must name the dense tensor that is missing: {message}"
     );
 }
 
