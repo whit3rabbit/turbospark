@@ -11,6 +11,13 @@ use model_io::ArchConfig;
 const FP32_SIZE: usize = 4;
 const FP16_SIZE: usize = 2;
 
+/// A host copy of every linear layer's recurrent state, taken by
+/// [`GdnStateManager::snapshot`]. `None` at indices that are not linear
+/// layers, so the index is the model's layer index.
+pub struct GdnSnapshot {
+    layers: Vec<Option<(Vec<u8>, Vec<u8>)>>,
+}
+
 pub struct GdnStateManager {
     /// `Some` only at indices whose layer mask is 2 (linear attention).
     state_buffers: Vec<Option<metal::Buffer>>,
@@ -79,6 +86,55 @@ impl GdnStateManager {
 
     pub fn is_linear(&self, layer: usize) -> bool {
         self.state_buffers[layer].is_some()
+    }
+
+    /// Copies every linear layer's recurrent state out to the host.
+    ///
+    /// A KV cache can be rolled back by moving a cursor, because it keeps
+    /// one row per position. This cannot: `S` and the conv tail are the
+    /// whole history folded into a fixed-size accumulator, and the
+    /// delta-rule update is not invertible. So a speculative rollback has
+    /// to keep a copy from before the block and replay the accepted prefix
+    /// over it.
+    ///
+    /// Cheap enough to do per verify round: the state is
+    /// `num_v_heads * value_head_dim * key_head_dim` FP32 plus a `K-1` row
+    /// conv tail, which on Qwen 3.6 is 2 MiB per linear layer and 60 MiB
+    /// over its 30, all `storageModeShared`, so this is a memcpy and not a
+    /// GPU round trip. It is O(1) in context, unlike the KV cache.
+    ///
+    /// Only valid once the pass that last advanced the state has completed.
+    pub fn snapshot(&self) -> GdnSnapshot {
+        GdnSnapshot {
+            layers: self
+                .state_buffers
+                .iter()
+                .zip(self.conv_tail_buffers.iter())
+                .map(|(state, conv)| match (state, conv) {
+                    (Some(state), Some(conv)) => Some((
+                        crate::context::read_buffer_bytes(state, 0, self.state_bytes_per_layer),
+                        crate::context::read_buffer_bytes(conv, 0, self.conv_tail_bytes_per_layer),
+                    )),
+                    _ => None,
+                })
+                .collect(),
+        }
+    }
+
+    /// Writes a [`Self::snapshot`] back. The caller then replays whatever
+    /// tokens it decided to keep; this restores the state as of BEFORE the
+    /// snapshot's block, not as of any position inside it.
+    pub fn restore(&mut self, snapshot: &GdnSnapshot) {
+        assert_eq!(
+            snapshot.layers.len(),
+            self.state_buffers.len(),
+            "snapshot is from a different model"
+        );
+        for (layer, saved) in snapshot.layers.iter().enumerate() {
+            let Some((state, conv)) = saved else { continue };
+            crate::context::write_buffer_bytes(self.state_buffer(layer), 0, state);
+            crate::context::write_buffer_bytes(self.conv_tail_buffer(layer), 0, conv);
+        }
     }
 
     /// Resets all recurrent state to the empty-context value (zeros): both
