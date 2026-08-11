@@ -753,21 +753,58 @@ separate GEMV calls is EXACT, and mutation-checked three ways.
 
 | shape | M=2 | M=4 | M=8 | M=16 |
 | --- | ---: | ---: | ---: | ---: |
-| expert 512x2048 | 0.91 | 0.66 | 0.51 | 0.47 |
-| o_proj 2048x2048 | 1.48 | 1.09 | 0.93 | 0.88 |
-| q_proj 4096x2048 | 1.45 | 1.10 | 0.97 | 0.86 |
-| stacked 8192x2048 | 1.61 | 1.25 | 1.09 | 1.04 |
+| expert 512x2048 | 0.77 | 0.55 | 0.44 | 0.36 |
+| o_proj 2048x2048 | 1.01 | 0.80 | 0.71 | 0.67 |
+| q_proj 4096x2048 | 1.01 | 0.82 | 0.78 | 0.75 |
+| stacked 8192x2048 | 1.03 | 0.87 | 0.79 | 0.78 |
 
-Ideal is `1/M`. The routed-expert shape reaches 0.47 (a real 2.1x, and it is
-the shape an MoE decode spends most of its time in), but the larger
-projections sit at 0.86-1.04 and the threadgroup barriers make small M worse
-than not batching at all.
+Ideal is `1/M`. The routed-expert shape reaches 0.36 (a 2.8x, and it is the
+shape an MoE decode spends most of its time in); the larger projections sit
+at 0.67-0.78, and nothing below M=4 is worth batching at all.
 
-Weighting experts at 60% of decode compute gives `c(16) ~ 0.63`, so a
-16-token verify costs about 10 decode steps of compute plus `0.25 x 5.74`
-of expert IO: **~8.9 decode steps to propose 16 tokens**. Against a DFlash
-accept length of ~6 that is 1.48 per accepted token, i.e. a LOSS. M=4 works
-out the same way (3.2 steps for 4 proposed, ~2.5 accepted, 1.26 per token).
+Weighting experts at 60% of decode compute gives `c(8) ~ 0.57`, so an
+8-token verify costs about 3.4 decode steps of compute plus `0.25 x 3.78`
+of expert IO: **~4.4 decode steps to propose 8 tokens**, against ~4
+accepted. That is 1.09 per accepted token on the strict reading. Fold in the
+per-step overheads a verify pass pays ONCE per block rather than M times
+(host encode, router readback, routed bind and retire: ~8% of a decode step
+between them) and it lands at ~0.97, i.e. marginally positive.
+
+**So the honest verdict is BORDERLINE, not a loss.** The two readings
+straddle break-even, and the difference between them is entirely in how the
+compute share is apportioned -- a number this composite takes from the
+prefill attribution rather than measuring. A component composite can no
+longer resolve the question; only an end-to-end speculative loop can.
+
+Two of the four benchmarked shapes are also proxies rather than the real
+thing: the routed experts run `moe_phase1_gate_up_act_u16load` and
+`moe_phase2_down_reduce_k8`, not this INT4 GEMV, and neither has a batched
+form yet.
+
+### Two optimizations that lost, and why they lost the same way
+
+Both are recorded in the kernel's own header so they are not re-attempted.
+
+**Staging `x` in threadgroup memory** removes the per-batch device reads and
+is slower on EVERY shape (expert 0.36 -> 0.55 at M=16, o_proj 0.67 -> 0.86).
+The per-block barriers serialize the eight SIMD groups for longer than the
+saved reads cost, and the cache already serves those reads. An earlier
+revision of this document claimed the opposite for the expert shape; that
+was an inference from a comparison that had never been run, and measuring
+both paths reversed it.
+
+**Register blocking over rows**, so one activation read serves R rows, is
+the textbook fix and does not reorder any sum, so it keeps bit-exactness.
+It is worse even at R=1 (expert 0.44 -> 0.79 at M=8), because holding
+activations across rows needs `float e[8][16]` beside `acc[R][16]` -- about
+208 floats of register array, which spills.
+
+Both failures say one thing: the register file cannot hold an M-wide
+activation tile, and threadgroup memory's barriers cost more than they save.
+Amortizing activations further needs real matrix hardware
+(`simdgroup_matrix`), and that reorders accumulation, which trades away the
+bit-exact agreement with the sequential path that makes a speculative decode
+provably lossless. That is a design decision, not an optimization.
 
 Why the D0 estimate missed it: D0 established that the GEMV is not
 bandwidth-bound at decode's shapes and inferred that batching would
@@ -787,14 +824,18 @@ only 1.07-1.40x -- and 8 x the resulting rate lands at the ~355 GiB/s
 saturation figure, which says the hardware genuinely moved the weight bytes
 eight times.
 
-So speculative decoding does not pay on this engine as it stands. Closing
-the gap needs a properly tiled GEMM (simdgroup matrix ops, register
-blocking over rows as well as tokens), which is the same descoped
-tile-kernel work batched prefill needs (`DEVIATIONS.md` PF-02) rather than
-an increment on this kernel. ROADMAP records it there. The kernel, the
-three measurement arms and the D1 rollback primitives are kept: they are
-the parts a future tile-kernel phase would otherwise have to rebuild, and
-the rollback probe is a standing correctness test regardless.
+So the component measurements no longer decide it either way, and the next
+step is an end-to-end speculative loop rather than more kernel work: build
+the batched MoE and attention paths, put an n-gram drafter on the front
+(zero weights), and measure tok/s directly. That replaces a composite whose
+error bars are now wider than the effect with one number.
+
+What would still tip it decisively toward a win is `simdgroup_matrix`, and
+the cost of that is not effort but the guarantee: it reorders accumulation,
+so the verify pass would stop agreeing bit-for-bit with a sequential decode
+and speculative output would no longer be provably identical to
+non-speculative output. Worth doing only if an end-to-end measurement shows
+the exact path landing short.
 
 ## Power
 

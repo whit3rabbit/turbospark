@@ -16,6 +16,25 @@
 // nibble once, multiply it into B accumulators. That is the whole idea,
 // and everything else here is `dequant_int4_gemv_simd` unchanged.
 //
+// TWO OPTIMIZATIONS WERE TRIED HERE AND BOTH LOST. Do not re-add either
+// without re-measuring `c_of_m` first.
+//
+//   1. Staging `x` in threadgroup memory. It removes the per-batch device
+//      reads, and it is slower on EVERY shape (0.39 -> 0.55 at M=16 on the
+//      512-row routed-expert shape, 0.67 -> 0.86 on o_proj): the per-block
+//      barriers serialize the eight SIMD groups for more than the saved
+//      reads cost, and the cache already serves them.
+//   2. Register blocking over rows, so one activation read serves R rows.
+//      It is the right idea and it does not reorder any sum, but holding
+//      the activations across rows needs `float e[8][kMaxBatchRows]` plus
+//      `acc[R][kMaxBatchRows]`, about 208 floats of register array, which
+//      spills. Measured WORSE even at R=1 (expert 0.45 -> 0.79 at M=8).
+//
+// Both failures say the same thing: the register file cannot hold an
+// M-wide activation tile and threadgroup memory's barriers cost more than
+// they save, so amortizing activations needs real matrix hardware
+// (`simdgroup_matrix`) rather than a loop rearrangement.
+//
 // Layouts. `x` is [B, N] and `y` is [B, M], both token-major, so each
 // token's vectors stay contiguous and a caller can hand one row of either
 // to a kernel that still wants a single token. B is capped at
@@ -26,9 +45,6 @@
 // the includes and kGroupSize. Never dispatch this file's own constant.
 
 constant constexpr uint kMaxBatchRows = 16;
-/// Elements one vectorized block covers: 32 lanes x 4 bytes x 2 nibbles.
-constant constexpr uint kBlockElems = 256;
-constant constexpr uint kThreadsPerGroup = 256;
 
 kernel void dequant_int4_gemm_simd(
     device const uint8_t* W      [[buffer(0)]],
@@ -41,23 +57,17 @@ kernel void dequant_int4_gemm_simd(
     constant uint&        B      [[buffer(7)]],
     uint                  tg_idx [[threadgroup_position_in_grid]],
     uint                  sg_idx [[simdgroup_index_in_threadgroup]],
-    uint                  lane   [[thread_index_in_simdgroup]],
-    uint                  tid    [[thread_index_in_threadgroup]]
+    uint                  lane   [[thread_index_in_simdgroup]]
 ) {
     constexpr uint rows_per_tg = 8;
     const uint row = tg_idx * rows_per_tg + sg_idx;
-    threadgroup half x_tile[kMaxBatchRows * kBlockElems];
-    // NOT an early return: every thread must reach the barriers that fill
-    // `x_tile`, and a threadgroup whose rows run past M still has threads
-    // that have to participate. Guard the WRITE instead.
-    const bool active = row < M;
+    if (row >= M) return;
 
     const uint n_groups  = N / kGroupSize;
     const uint row_bytes = N / 2;
-    const uint safe_row = active ? row : 0u;
-    device const uint8_t* W_row = W      + uint(safe_row) * row_bytes;
-    device const bfloat*  s_row = scales + uint(safe_row) * n_groups;
-    device const bfloat*  b_row = biases + uint(safe_row) * n_groups;
+    device const uint8_t* W_row = W      + uint(row) * row_bytes;
+    device const bfloat*  s_row = scales + uint(row) * n_groups;
+    device const bfloat*  b_row = biases + uint(row) * n_groups;
 
     float acc[kMaxBatchRows];
     for (uint i = 0; i < kMaxBatchRows; ++i) {
@@ -66,22 +76,6 @@ kernel void dequant_int4_gemm_simd(
 
     const uint full_blocks = n_groups / 4;
     for (uint blk = 0; blk < full_blocks; ++blk) {
-        // Stage this block's slice of every token's activations in
-        // threadgroup memory. Without this the inner loop re-reads `x`
-        // from device memory once per batch element AND once per SIMD
-        // group, which at B=16 moves 256 bytes of activations for every 4
-        // bytes of weight and makes the batched kernel activation-bound:
-        // measured c(16) = 0.64-0.77x, against 0.10x if the weight read
-        // were the cost. One block is 256 elements, so the tile is
-        // B * 256 halfs, 8 KiB at the cap, shared by all 8 rows.
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-        for (uint i = tid; i < B * kBlockElems; i += kThreadsPerGroup) {
-            const uint bi = i / kBlockElems;
-            const uint e = i % kBlockElems;
-            x_tile[i] = x[bi * N + blk * kBlockElems + e];
-        }
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-
         const uint byte_base = blk * 128u + lane * 4u;
         // Same 2-byte-aligned pair load as the GEMV: the resident tensors
         // are 2-aligned but not 4-aligned, so a `uint*` load is undefined.
@@ -101,11 +95,10 @@ kernel void dequant_int4_gemm_simd(
         const float q6 = float((w4 >> 24)  & 0x0Fu);
         const float q7 = float(((w4 >> 24) & 0xFFu) >> 4);
 
-        const uint tile_base = lane * 8u;
         for (uint bi = 0; bi < B; ++bi) {
-            threadgroup const half* x_b = x_tile + bi * kBlockElems;
-            const half4 xa = *((threadgroup const half4*)(x_b + tile_base));
-            const half4 xb = *((threadgroup const half4*)(x_b + tile_base + 4u));
+            device const half* x_b = x + bi * N;
+            const half4 xa = *((device const half4*)(x_b + elem));
+            const half4 xb = *((device const half4*)(x_b + elem + 4u));
             const float e0 = float(xa.x), e1 = float(xa.y), e2 = float(xa.z), e3 = float(xa.w);
             const float e4 = float(xb.x), e5 = float(xb.y), e6 = float(xb.z), e7 = float(xb.w);
             float dot = 0.0f;
@@ -139,7 +132,7 @@ kernel void dequant_int4_gemm_simd(
 
     for (uint bi = 0; bi < B; ++bi) {
         const float total = simd_sum(acc[bi]);
-        if (lane == 0 && active) {
+        if (lane == 0) {
             y[bi * M + row] = half(total);
         }
     }
