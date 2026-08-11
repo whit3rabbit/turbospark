@@ -115,6 +115,19 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
 TURBOSPARK_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
   cargo test -p turbospark-bench --test qwen36_memory_oracle --release -- --ignored --nocapture
 
+# The dense family's oracle (ROADMAP M4). RUNS AT 8,192 CONTEXT where the
+# other three run at 4,096, and that is not a knob: the protocol freezes the
+# PROSE, and its token count belongs to the checkpoint's tokenizer -- the same
+# text is 3,444 tokens under Mistral's 32k vocab against qwen3moe's 2,842, and
+# 3444 + 1024 does not fit 4,096, so `long-synthesis` does not run at all.
+# Raising the shared PROTOCOL_MAX_CONTEXT would resize KV for every family and
+# move every frozen peak, so the window is a per-target parameter and is
+# printed on every run beside the ceiling. Its 1,300 MiB ceiling is NOT
+# comparable to the MoE rows: 1,024 of the measured 1,201 MiB is KV, and the
+# 4.07 GiB of weights count for nothing (Gotcha 40). ~8 min.
+TURBOSPARK_MISTRAL_INSTALL_DIR=~/models/mistral7b-dense.gturbo \
+  cargo test -p turbospark-bench --test mistral_memory_oracle --release -- --ignored --nocapture
+
 # Same oracle for Qwen3-30B-A3B (`qwen3moe`). Its ceiling is 2,900 MiB, ABOVE
 # the other two families' 1,600-2,300: the slot cache is
 # `slots x layers x expert_stride` and this model is 48 layers deep at a
@@ -1309,6 +1322,12 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     mapping is always counted. Re-derive it per install shape rather than
     quoting it, and note the practical consequence is the pleasant one: a
     dense 7B runs in well under a gigabyte of counted footprint.
+    THE COROLLARY FOR AN ORACLE ROW: with the weights out of the picture and
+    no expert slot cache, KV is what is left, so the row is mostly asserting
+    the CONTEXT WINDOW. `mistral_memory_oracle.rs` runs at 8,192 and reads
+    1,201 MiB, of which 1,024 is KV; at the 4,096 the other three families
+    use it reads 684. Neither number is comparable to a sibling's without
+    the window, which is why `run_oracle_at_context` prints it.
 
 ## Per-Crate Documentation
 

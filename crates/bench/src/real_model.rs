@@ -55,6 +55,34 @@ pub fn open_model_runner(
     model_dir: &Path,
     slots: usize,
 ) -> Result<(RealForwardRunner, MfTokenizer), String> {
+    open_model_runner_with_context(model_dir, slots, PROTOCOL_MAX_CONTEXT)
+}
+
+/// [`open_model_runner`] with the KV window named explicitly.
+///
+/// THE PROTOCOL'S 4K IS A PROPERTY OF THE HARNESS, NOT OF THE PROMPTS, and
+/// one family already needs a different one (ROADMAP M4). The protocol fixes
+/// the PROSE, and how many tokens that prose becomes is the checkpoint's
+/// tokenizer's answer: `long-synthesis` is 2,842 tokens under Qwen3-30B-A3B's
+/// 152k vocab and 3,444 under Mistral 7B's 32k, and `3444 + PROTOCOL_MAX_NEW`
+/// does not fit 4,096. The case then fails to run at all, and an oracle that
+/// asserts `endOfTurn` on every case cannot be written for that family.
+///
+/// Raising `PROTOCOL_MAX_CONTEXT` itself is NOT the fix: KV is sized
+/// `max_context * kv_stride` at open, so it would move every already-frozen
+/// peak in every other family's rows. A per-family window in that family's
+/// own oracle target moves only its own, which is why this is a parameter
+/// rather than a constant.
+///
+/// The number is load-bearing for the row that uses it: KV is most of a
+/// dense install's counted footprint (AGENTS.md Gotcha 40), so a row
+/// measured at one window says nothing about another. Record it beside the
+/// ceiling.
+pub fn open_model_runner_with_context(
+    model_dir: &Path,
+    slots: usize,
+    max_context: u32,
+) -> Result<(RealForwardRunner, MfTokenizer), String> {
     let arch = repack::peek_manifest_arch(model_dir)?;
     let tokenizer = MfTokenizer::load_from_dir(model_dir).map_err(|e| {
         format!(
@@ -62,9 +90,8 @@ pub fn open_model_runner(
             model_dir.display()
         )
     })?;
-    let runner =
-        RealForwardRunner::open_with_options(model_dir, arch, PROTOCOL_MAX_CONTEXT as usize, slots)
-            .map_err(|e| e.to_string())?;
+    let runner = RealForwardRunner::open_with_options(model_dir, arch, max_context as usize, slots)
+        .map_err(|e| e.to_string())?;
     Ok((runner, tokenizer))
 }
 
@@ -77,6 +104,23 @@ pub fn run_protocol_case(
     case: &ProtocolCase,
     sampler: &mut AppMemorySampler,
     rate: RateControl,
+) -> Result<CaseResult, String> {
+    run_protocol_case_with_context(runner, tokenizer, case, sampler, rate, PROTOCOL_MAX_CONTEXT)
+}
+
+/// [`run_protocol_case`] with the context window named explicitly.
+///
+/// It MUST be the same window the runner was opened with. The generation
+/// loop enforces its own limit independently of the KV allocation, so
+/// opening at 8,192 and running at the 4,096 default refuses the long case
+/// exactly as before, with nothing pointing at the mismatch.
+pub fn run_protocol_case_with_context(
+    runner: &mut RealForwardRunner,
+    tokenizer: &MfTokenizer,
+    case: &ProtocolCase,
+    sampler: &mut AppMemorySampler,
+    rate: RateControl,
+    max_context: u32,
 ) -> Result<CaseResult, String> {
     // Chat-format exactly as the CLI does: the dialect template renders
     // the turn markup (and its own <bos>, hence add_bos false).
@@ -110,7 +154,7 @@ pub fn run_protocol_case(
         tokenizer,
         &prompt_ids,
         &config,
-        PROTOCOL_MAX_CONTEXT,
+        max_context,
         vocab_size,
         |event| {
             // The Swift runtime samples every 8th decoded token.

@@ -18,8 +18,12 @@ use std::path::Path;
 
 use runtime::StopReason;
 use turbospark_bench::memory::{chip_brand_string, AppMemorySampler};
-use turbospark_bench::protocol::{swift_footer, PROTOCOL_CASES, PROTOCOL_EXPERT_CACHE_SLOTS};
-use turbospark_bench::real_model::{open_model_runner, run_protocol_case};
+use turbospark_bench::protocol::{
+    swift_footer, PROTOCOL_CASES, PROTOCOL_EXPERT_CACHE_SLOTS, PROTOCOL_MAX_CONTEXT,
+};
+use turbospark_bench::real_model::{
+    open_model_runner_with_context, run_protocol_case_with_context,
+};
 
 pub struct ChipBaseline {
     pub brand_substr: &'static str,
@@ -40,43 +44,76 @@ pub const SWIFT_DOCS: &str = "Swift docs/BENCHMARKS.md";
 /// a row) the decode floor. `unknown_ceiling_mib` holds when the chip is
 /// not in `baselines`: memory sizing does not depend on the chip, so the
 /// loosest documented ceiling for THIS FAMILY still applies.
+///
+/// `allow(dead_code)` because each oracle target compiles its own copy of
+/// this module and `mistral_memory_oracle.rs` calls the windowed form only.
+#[allow(dead_code)]
 pub fn run_oracle(dir: &Path, baselines: &[ChipBaseline], unknown_ceiling_mib: u64) {
+    run_oracle_at_context(dir, baselines, unknown_ceiling_mib, PROTOCOL_MAX_CONTEXT)
+}
+
+/// [`run_oracle`] at a family-specific KV window.
+///
+/// EVERY CEILING IS A CEILING AT ONE WINDOW, and on a dense install the
+/// window is most of what is being asserted: Mistral 7B's KV at 4,096 is
+/// 537 MiB of a 684 MiB peak (AGENTS.md Gotcha 40), so doubling the window
+/// nearly doubles the number. The window is therefore printed on every run
+/// beside the ceiling, and a row's comment has to state it -- comparing two
+/// rows measured at different windows is meaningless in a way that the two
+/// numbers alone do not reveal.
+///
+/// Why any family needs this at all: the protocol freezes the PROSE, and its
+/// token count is the checkpoint's tokenizer's answer. `long-synthesis` is
+/// 3,444 tokens under Mistral's 32k vocab against 2,842 under
+/// Qwen3-30B-A3B's 152k, and `3444 + PROTOCOL_MAX_NEW > 4096`, so the case
+/// does not run and the `endOfTurn` gate below cannot be satisfied.
+pub fn run_oracle_at_context(
+    dir: &Path,
+    baselines: &[ChipBaseline],
+    unknown_ceiling_mib: u64,
+    max_context: u32,
+) {
     let brand = chip_brand_string();
     let baseline = brand
         .as_deref()
         .and_then(|b| baselines.iter().find(|row| b.contains(row.brand_substr)));
     match baseline {
         Some(row) => eprintln!(
-            "memory_oracle: chip {:?} -> ceiling {} MiB, tok/s floor {} (source: {})",
+            "memory_oracle: chip {:?} -> ceiling {} MiB at {max_context} context, \
+             tok/s floor {} (source: {})",
             brand, row.footprint_ceiling_mib, row.tok_s_floor, row.source
         ),
         None => eprintln!(
             "memory_oracle: chip {brand:?} not in the baseline table -> ceiling \
-             {unknown_ceiling_mib} MiB, tok/s reported but not asserted"
+             {unknown_ceiling_mib} MiB at {max_context} context, tok/s reported \
+             but not asserted"
         ),
     }
 
     let (mut runner, tokenizer) =
-        open_model_runner(dir, PROTOCOL_EXPERT_CACHE_SLOTS).expect("real install should open");
+        open_model_runner_with_context(dir, PROTOCOL_EXPERT_CACHE_SLOTS, max_context)
+            .expect("real install should open");
     let mut sampler = AppMemorySampler::new();
 
     let mut measured = Vec::new();
     for case in &PROTOCOL_CASES {
         // Frozen protocol: one discarded warmup, then the measured run.
-        run_protocol_case(
+        run_protocol_case_with_context(
             &mut runner,
             &tokenizer,
             case,
             &mut sampler,
             Default::default(),
+            max_context,
         )
         .unwrap_or_else(|e| panic!("{} warmup failed: {e}", case.id));
-        let result = run_protocol_case(
+        let result = run_protocol_case_with_context(
             &mut runner,
             &tokenizer,
             case,
             &mut sampler,
             Default::default(),
+            max_context,
         )
         .unwrap_or_else(|e| panic!("{} failed: {e}", case.id));
         eprintln!(
@@ -122,12 +159,13 @@ pub fn run_oracle(dir: &Path, baselines: &[ChipBaseline], unknown_ceiling_mib: u
     let mut growth = u64::MAX;
     let mut round = 0usize;
     while round < STEADY_STATE_ROUNDS && growth > STEADY_STATE_SLACK_BYTES {
-        run_protocol_case(
+        run_protocol_case_with_context(
             &mut runner,
             &tokenizer,
             warm_case,
             &mut sampler,
             Default::default(),
+            max_context,
         )
         .unwrap_or_else(|e| panic!("{} replay failed: {e}", warm_case.id));
         let now = sampler.sample().expect("footprint sampling worked");
@@ -167,7 +205,10 @@ pub fn run_oracle(dir: &Path, baselines: &[ChipBaseline], unknown_ceiling_mib: u
     let peak_mib = peak / 1_048_576;
     let ceiling_mib = baseline.map_or(unknown_ceiling_mib, |row| row.footprint_ceiling_mib);
     let ceiling_source = baseline.map_or(SWIFT_DOCS, |row| row.source);
-    eprintln!("memory_oracle: session peak {peak_mib} MiB, ceiling {ceiling_mib} MiB");
+    eprintln!(
+        "memory_oracle: session peak {peak_mib} MiB, ceiling {ceiling_mib} MiB \
+         (at {max_context} context)"
+    );
     assert!(
         peak_mib <= ceiling_mib,
         "peak phys_footprint {peak_mib} MiB exceeds the {ceiling_mib} MiB \
