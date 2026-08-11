@@ -325,6 +325,29 @@ uv run --python 3.12 --with numpy scripts/kld_llamacpp.py \
 TURBOSPARK_PROBE_SLOTS=32 TURBOSPARK_PROBE_INSTALL_DIR=~/models/gemma4.gturbo \
   cargo test -p turbospark-bench --test gguf_nondeterminism_probe --release -- --ignored --nocapture
 
+# The two measurement surfaces behind ROADMAP's speculative-decoding item
+# (its Phase D0 gate: does a batched verify pay on this engine, and at what
+# block size?). Neither needs a drafter or a new kernel.
+#
+# 1. Expert union. `MFERENCE_ROUTER_TRACE=1` adds the top-k ids IN PASS
+#    ORDER to the histogram file, which the counts throw away; a batched
+#    verify of M tokens reads their UNION, so its expert cost is the
+#    distinct-expert count over a window of M consecutive passes. Pass the
+#    run's PROMPT TOKEN COUNT as the second argument -- the trace covers
+#    prefill too, and prefill routes differently. Read `breakeven_accept`:
+#    a block pays, on this axis, only if it accepts more than that.
+MFERENCE_ROUTER_HIST=/tmp/rq.json MFERENCE_ROUTER_TRACE=1 \
+  ./target/release/turbospark-check --model ~/models/qwen36.gturbo \
+  --messages-file /tmp/p.json --max-new 300 --temperature 0.0001 --top-k 1
+python3 scripts/router_window.py /tmp/rq.json 22 2,4,8,16
+
+# 2. Compute headroom. Is `dequant_int4_gemv_simd` already bandwidth-bound
+#    at the shapes decode dispatches? If it is, batching cannot help. It is
+#    at the big projections and is NOT at the routed-expert shape. Reports
+#    ratios against the same kernel at a large row count, never against a
+#    spec number; read its module doc before quoting an absolute GiB/s.
+cargo test -p turbospark-gpu --test gemv_bandwidth_bench --release -- --ignored --nocapture
+
 # The other #[ignore]d tests: real checkpoint downloads (many GB).
 cargo test -p turbospark-repack --test gemma4_checkpoint_network --release -- --ignored --nocapture
 cargo test -p turbospark-repack --test hf_checkpoint_network --release -- --ignored --nocapture
@@ -1188,7 +1211,13 @@ cargo clippy --workspace --tests
 
 Anything that touches the decode path, the output head, the KV cache, or a
 Metal encode loop additionally needs the real-model gates from "Real-model
-smoke" above, all three of them:
+smoke" above, all three of them. **"Touches" includes MOVING it.** A pure
+refactor of a family flow is a numerics change until a real model says
+otherwise: `5279c88` split `real_forward_qwen.rs` into `families/qwen/`,
+picked up a Gemma sandwich norm on the way, and shipped a Qwen whose
+reference perplexity read 255,409 against a frozen 6.2536, with the whole
+workspace suite green (`crates/runtime/CLAUDE.md` Gotcha 11). Run the gates
+per FAMILY the change touches, not once for the workspace.
 
 1. greedy generation stays coherent (catches broken math),
 2. SAMPLED generation stays coherent (catches distribution bugs that greedy

@@ -157,6 +157,25 @@ impl RealForwardRunner {
                 )?;
             }
 
+            // The RAW attention output joins the residual stream. Qwen has
+            // no sandwich norms (`ffn_sandwich_norms: false` in
+            // `qwen36_35b_a3b()`), so normalizing `scratch.o` before this
+            // add is a Gemma habit, not a Qwen one -- and it applies
+            // `post_attention_layernorm`, a tensor that belongs to the
+            // stream below, to the attention output as well. Doing both
+            // took the reference-answer perplexity from 6.25 to 255,409.
+            gpu::encode_residual_add(
+                context,
+                &pass,
+                (&scratch.x, 0),
+                (&scratch.o, 0),
+                hidden as u32,
+            )
+            .map_err(gpu_err)?;
+
+            // ONE post-attention norm feeds the router, the shared expert,
+            // and the routed experts. Gemma splits this three ways; Qwen
+            // does not, and adding the split would change every number.
             let post_attn = norm_view(
                 weights,
                 index,
@@ -166,33 +185,8 @@ impl RealForwardRunner {
             gpu::encode_rms_norm_bf16w(
                 context,
                 &pass,
-                (&scratch.o, 0),
+                (&scratch.x, 0),
                 post_attn,
-                (&scratch.o_normed, 0),
-                hidden as u32,
-                RMS_EPS,
-            )
-            .map_err(gpu_err)?;
-            gpu::encode_residual_add(
-                context,
-                &pass,
-                (&scratch.x, 0),
-                (&scratch.o_normed, 0),
-                hidden as u32,
-            )
-            .map_err(gpu_err)?;
-
-            let post_attn2 = norm_view(
-                weights,
-                index,
-                &layer_tensor(layer, "post_attention_layernorm.weight"),
-                hidden,
-            )?;
-            gpu::encode_rms_norm_bf16w(
-                context,
-                &pass,
-                (&scratch.x, 0),
-                post_attn2,
                 (&qwen.moe_x, 0),
                 hidden as u32,
                 RMS_EPS,
