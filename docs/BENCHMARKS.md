@@ -540,6 +540,87 @@ to the unquantized model, which would need a bf16 reference nobody has run
 here. And nothing in the standing gate runs this: it is a script, and the
 26.9 GB GGUF it needs is not kept on disk.
 
+### Cross-engine: llama.cpp on the same GGUF, `qwen3moe`
+
+The section above audits Gemma's GGUF path. This is the same question for
+the third family (ROADMAP M3, Qwen3-30B-A3B), and it is the ONLY instrument
+that can answer the two things `crates/runtime/tests/real_forward_qwen3moe.rs`
+records itself as unable to see: **the order of the per-head q/k norms
+relative to RoPE**, and **the RMS epsilon's own value**. RoPE is a rotation
+and preserves per-head RMS, so both norm orders differ from "no norm" by
+about as much, and a fixture cannot rank them; the epsilon is invisible to
+any test whose weights are untrained. Both belong here or nowhere.
+
+Same method as Gemma's: `scripts/kld_llamacpp.py` replays this port's own id
+sequence through llama.cpp b10330 on `Qwen/Qwen3-30B-A3B-GGUF`'s `Q4_K_M`
+file, the exact 18,556,685,824 bytes `~/models/qwen3moe-gguf.gturbo` was
+streamed from. 562 positions, 16 expert-cache slots, 2026-08-10, on AC.
+
+| Comparison | Mean KL | Median | p99 | Max | Top-1 agree |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| llama.cpp batched vs cached, both Metal (shape floor) | 0.00135 | 0.00039 | 0.018 | 0.033 | 99.1% |
+| **this port vs llama.cpp, same bytes, both Metal, both cached** | **0.00320** | **0.00078** | **0.040** | **0.208** | **97.9%** |
+| llama.cpp Metal vs llama.cpp CPU, both cached (backend floor) | 0.00988 | 0.00461 | 0.071 | 0.293 | 96.4% |
+
+| Reading | Perplexity |
+| --- | ---: |
+| **this port, Q4_K_M GGUF install** | **14.7576** |
+| llama.cpp, same GGUF, Metal, cached | 14.6167 |
+| llama.cpp, same GGUF, Metal, batched | 14.9835 |
+| llama.cpp, same GGUF, CPU, cached | 14.2399 |
+
+**The headline sits BETWEEN the two floors and nearer the lower one.** At
+0.00320 nats it is 2.4x the shape floor and less than a third of the backend
+floor: this port and llama.cpp agree on identical bytes more closely than
+ggml's own two backends agree with each other. Gemma's headline is 6.3x its
+shape floor by the same arithmetic, so `qwen3moe` is the tighter of the two
+families this has been run on.
+
+**That settles the norm order and the epsilon.** Neither is a rounding-scale
+effect: a q/k norm applied on the wrong side of RoPE, or an epsilon off by a
+factor of ten, perturbs every one of 48 layers systematically and compounds
+into the head. Nothing of that shape fits 3x under a backend floor. The
+perplexity says it again on a different axis -- 14.7576 against the
+reference's 14.6167 is 0.96% apart, comfortably inside the 2.65% by which
+llama.cpp's own Metal and CPU paths disagree on these same bytes.
+
+Unlike Gemma's section the two KL directions DO agree here, within 3.3% on
+every row (reverse means 0.00137 / 0.00330 / 0.00978), so no conclusion
+turns on the choice. Quote the direction anyway.
+
+**A guard in the driver had to be fixed first, and the failure was the
+interesting part.** `kld_llamacpp.py` refused any run whose max |logit|
+exceeded a literal `30.0` -- Gemma's `final_logit_softcapping`, which every
+previous caller happened to share. This family declares
+`finalLogitSoftcap: 0.0` and both engines read max |logit| ~51.9, so the
+unfixed script aborts a correct run and blames the heads. The bound now
+comes from the install's own manifest, and both engines' maxima are reported
+side by side (51.93 llama.cpp against 51.97 this port) so the no-softcap
+case still has an observable rather than an invented tolerance. See AGENTS.md
+Gotcha 38.
+
+Everything here is deterministic, like the other quality numbers and unlike
+any tok/s figure: this port's dump is SHA-256 `16bfad2b...` and llama.cpp's
+Metal cached arm `7a6a1fbf...`. Treat movement as a real change.
+
+One sibling fact worth keeping. This port's WARM dump reads perplexity
+14.757589 against the frozen COLD row of 14.7576 in
+`qwen3moe_quality_gate.rs`. Those are the same number, which is Gotcha 27's
+fix holding on a third family, and it is what licenses comparing a warm
+dump against a cold frozen row at all.
+
+Cost, for planning: the 562-position cached walk is **~30 s on Metal** and
+**~40 s on CPU** -- far closer than Gemma's 26 s against 2m21, because only
+3B of 30B parameters are active per token. Add ~12 min for the one-time
+17.3 GB download, which is the whole expense: llama.cpp cannot stream the
+file the way the repack walk did (Gotcha 34).
+
+Caveats, the same ones as Gemma's. One corpus, one family, one machine, one
+llama.cpp build. This says the two engines agree on these bytes; it does not
+say either is close to the unquantized model, which still needs a bf16
+reference nobody has run here. Nothing in the standing gate runs it, and the
+GGUF it needs is not kept on disk.
+
 ### Sub-4-bit candidate survey (ROADMAP Phase S)
 
 NOT A MEASUREMENT OF THIS PORT. This port cannot ingest IQ3_XXS, so there

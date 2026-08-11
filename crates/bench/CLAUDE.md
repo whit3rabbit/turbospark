@@ -14,7 +14,7 @@ crates/bench/
 |   +-- protocol.rs         # Frozen community benchmark protocol definitions
 |   \-- real_model.rs       # Real model benchmark runner driving RealForwardRunner
 +-- tests/
-|   +-- logit_dump.rs       # Full-vocab logit dump for the cross-engine KLD (scripts/kld.py)
+|   +-- logit_dump.rs       # Full-vocab logit dump for the cross-engine KLD (scripts/kld{,_llamacpp}.py)
 |   +-- memory_oracle.rs    # Memory oracle asserting peak footprint ceiling & steady state (Gemma 4)
 |   +-- mference_bench.rs   # Benchmark harness integration smoke test
 |   +-- oracle_common/      # Shared memory oracle assertion helpers (mod.rs)

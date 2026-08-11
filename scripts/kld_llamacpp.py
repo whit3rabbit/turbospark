@@ -65,11 +65,53 @@ from kld import divergences, perplexity  # noqa: E402  (path set above)
 HARNESS_SRC = pathlib.Path(__file__).resolve().parent / "llamacpp_logits.c"
 HARNESS_BIN = pathlib.Path("/tmp/llamacpp_logits")
 
-# Gemma's GGUF carries `final_logit_softcapping = 30`, and this port applies
-# it in `utility.metal`'s `logit_softcap_fp16`. If llama.cpp's logits exceed
-# it, the two heads are not the same function and every divergence below
-# would be measuring that rather than the weights.
-SOFTCAP_BOUND = 30.0
+def softcap_of(install: str) -> float:
+    """The install's declared `final_logit_softcapping`, or 0.0 for none.
+
+    THIS USED TO BE THE LITERAL 30.0, which is Gemma's value, because every
+    caller until `qwen3moe` was Gemma. A family that does not softcap
+    (`finalLogitSoftcap: 0.0`) produces raw logits well past 30, so the
+    constant turned a correct run into a hard exit whose message blamed the
+    heads. Read the property, do not recall it.
+
+    Falls back to "unknown" when the install is gone: the dump is a frozen
+    artifact and outlives the install dir it names (the Gemma GGUF arms in
+    /tmp/kld are the standing example -- that install was deleted and its
+    logits cannot be regenerated).
+    """
+    try:
+        manifest = json.loads((pathlib.Path(install) / "manifest.json").read_text())
+    except OSError:
+        return float("nan")
+    return float(manifest.get("arch", {}).get("finalLogitSoftcap", 0.0))
+
+
+def check_heads(cached: np.ndarray, port: np.ndarray, softcap: float) -> dict:
+    """Are the two engines' output heads the same function?
+
+    Every divergence below is meaningless if they are not, and the failure
+    is not hypothetical: a reference that skips a saturating nonlinearity
+    the port applies disagrees by a factor, not by a rounding error.
+
+    Where the family softcaps, the bound is exact and declared, so this
+    asserts against it (1.001 for f32 rounding at the asymptote). Where it
+    does not, there is no transform to mismatch and nothing to assert -- so
+    both maxima are REPORTED instead of being checked against an invented
+    tolerance. A gross mismatch is visible in the two numbers.
+    """
+    llamacpp_max = float(np.abs(cached).max())
+    port_max = float(np.abs(port).max())
+    if softcap > 0.0 and llamacpp_max > softcap * 1.001:
+        sys.exit(
+            f"llama.cpp's max |logit| is {llamacpp_max:.4f}, over the {softcap} "
+            "softcap this install declares: the two heads are not the same "
+            "function, so no divergence below would be about the weights"
+        )
+    return {
+        "declared_softcap": softcap,
+        "max_abs_logit_llamacpp": llamacpp_max,
+        "max_abs_logit_port": port_max,
+    }
 
 
 def build_harness() -> None:
@@ -117,13 +159,10 @@ def llamacpp_logits(
         print(f"  {report}", file=sys.stderr)
         if int(report["n_vocab"]) != vocab:
             sys.exit(f"llama.cpp reports vocab {report['n_vocab']}, the dump says {vocab}")
-        max_abs = float(report["max_abs_logit"])
-        if max_abs > SOFTCAP_BOUND * 1.001:
-            sys.exit(
-                f"llama.cpp's max |logit| is {max_abs:.4f}, over the {SOFTCAP_BOUND} "
-                "softcap this port applies: the two heads are not the same function, "
-                "so no divergence below would be about the weights"
-            )
+    # The head check lives in `check_heads`, off the returned array rather
+    # than off the harness's printed `max_abs_logit`, so that it runs on a
+    # REUSED arm too. Keyed on the fresh-run path it was skipped exactly
+    # when the analysis was being re-run, which is most of the time.
     data = np.fromfile(out, dtype=np.float32)
     if data.size != rows * vocab:
         sys.exit(f"{out} holds {data.size} values, expected {rows * vocab}")
@@ -184,6 +223,8 @@ def main() -> None:
         "model": str(model),
         "rows": rows,
         "backend": backend(n_gpu_layers),
+        # Read this first. It is the precondition for everything under it.
+        "heads": check_heads(cached, primary, softcap_of(meta["install"])),
         # llama.cpp against ITSELF, twice, so the headline has a scale.
         # Nothing below is readable without these two (see the module doc).
         "kl_shape_floor": divergences(batched, cached),

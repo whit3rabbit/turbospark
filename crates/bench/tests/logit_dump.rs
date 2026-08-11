@@ -72,12 +72,14 @@ fn env_dir(key: &str) -> Option<PathBuf> {
 fn dump_reference_logits() {
     let (Some(install), Some(out)) = (
         env_dir("TURBOSPARK_GEMMA4_INSTALL_DIR")
-            .or_else(|| env_dir("TURBOSPARK_QWEN36_INSTALL_DIR")),
+            .or_else(|| env_dir("TURBOSPARK_QWEN36_INSTALL_DIR"))
+            .or_else(|| env_dir("TURBOSPARK_QWEN3MOE_INSTALL_DIR")),
         env_dir("TURBOSPARK_LOGIT_DUMP_DIR"),
     ) else {
         eprintln!(
             "logit_dump: needs TURBOSPARK_GEMMA4_INSTALL_DIR (or \
-             TURBOSPARK_QWEN36_INSTALL_DIR) and TURBOSPARK_LOGIT_DUMP_DIR; skipping."
+             TURBOSPARK_QWEN36_INSTALL_DIR, or TURBOSPARK_QWEN3MOE_INSTALL_DIR) \
+             and TURBOSPARK_LOGIT_DUMP_DIR; skipping."
         );
         return;
     };

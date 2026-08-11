@@ -281,6 +281,14 @@ fn fetch(url: &str) -> GgufHeader {
     fetch_gguf_header(&source).expect("fetch GGUF header")
 }
 
+/// [`fetch`] without the panic, for probes that SURVEY candidates rather
+/// than assert about one known-good file. A header this parser refuses is
+/// itself a Phase 0 finding.
+fn try_fetch(url: &str) -> Result<GgufHeader, String> {
+    let source = HttpRangeSource::new(url);
+    fetch_gguf_header(&source).map_err(|e| format!("{e:?}"))
+}
+
 #[test]
 #[ignore = "network: reads a few MB off a 27 GB remote checkpoint"]
 fn reads_the_real_gemma4_q8_0_header() {
@@ -647,5 +655,140 @@ fn scopes_the_next_moe_candidate_by_expert_granularity() {
         blob < MIXTRAL_BLOB / 8,
         "expert blob {:.1} MiB is not fine-grained; this is Mixtral's problem again",
         mib(blob)
+    );
+}
+
+// ROADMAP Phase M2 step 2: the DENSE half of the `llama` architecture.
+//
+// M2's finding 3 says choosing the CHECKPOINT is part of step 1 rather
+// than a detail, and the dense half has two gates that a header answers
+// outright: does the file carry `rope_freqs.weight` (Llama 3.1's RoPE
+// frequency scaling, which ships as a TENSOR and has neither an
+// `ArchConfig` field nor a kernel input here), and is every block type in
+// it one this port can already execute. Three real published files, a few
+// MB read off each.
+const MISTRAL_7B_V03_Q4_K_M: &str = "https://huggingface.co/bartowski/Mistral-7B-Instruct-v0.3-GGUF/resolve/main/Mistral-7B-Instruct-v0.3-Q4_K_M.gguf";
+const LLAMA2_7B_CHAT_Q4_K_M: &str =
+    "https://huggingface.co/TheBloke/Llama-2-7B-Chat-GGUF/resolve/main/llama-2-7b-chat.Q4_K_M.gguf";
+const LLAMA31_8B_Q4_K_M: &str = "https://huggingface.co/bartowski/Meta-Llama-3.1-8B-Instruct-GGUF/resolve/main/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf";
+
+/// What a dense `llama` candidate would cost this port, off its header
+/// alone: `(carries rope_freqs, block types with no kernel here, sized
+/// bytes)`.
+fn dense_candidate_gates(h: &GgufHeader) -> (bool, Vec<String>, u64) {
+    let rope_freqs = h.tensors.contains_key("rope_freqs.weight");
+    let mut missing: Vec<String> = h
+        .tensors
+        .values()
+        .filter_map(|i| ggml_type_name(i.ggml_type))
+        // The UNQUANTIZED widths never reach a kernel, so they must not be
+        // read against `EXECUTABLE_GGUF_TYPES` -- that list is the set of
+        // BLOCK types a dispatch can decode. `transcode_f32` narrows F32
+        // norms to BF16 and INT8s the router at repack time, so nothing F32
+        // is in an install at all (Gotcha 29). The first run of this probe
+        // reported `["F32"]` against every candidate, which reads as three
+        // blocked checkpoints and is three false positives.
+        .filter(|t| !matches!(*t, "F32" | "F16" | "BF16"))
+        .filter(|t| !model_io::EXECUTABLE_GGUF_TYPES.contains(&t.to_lowercase().as_str()))
+        .map(|t| t.to_string())
+        .collect();
+    missing.sort();
+    missing.dedup();
+    let bytes = h
+        .tensors
+        .values()
+        .filter_map(|i| {
+            let elems: u64 = i.dims.iter().product();
+            ggml_type_block(i.ggml_type).map(|(blk, sz)| elems / blk.max(1) * sz)
+        })
+        .sum();
+    (rope_freqs, missing, bytes)
+}
+
+#[test]
+#[ignore = "network: reads three real dense-llama GGUF headers (a few MB each)"]
+fn scopes_the_dense_llama_candidates() {
+    // GOTCHA 36'S MULTIPLICATION DOES NOT APPLY HERE, AND THAT IS THE
+    // FINDING. `slots x layers x expert_stride` sizes a slot cache, and a
+    // dense model has no routed experts to put in one. Routed experts are
+    // the ONLY thing this engine streams; every other tensor is mapped AND
+    // PINNED (Gotcha 19). So a dense model's working-set floor is its
+    // WHOLE weight file, and the GiB column below IS that floor rather
+    // than an estimate of it. No engineering moves it, which is why the
+    // ROADMAP says this half ships without the memory ceiling and the
+    // parity row has to say so per row.
+    let gib = |b: u64| b as f64 / (1024.0 * 1024.0 * 1024.0);
+    let mut clean: Vec<&str> = Vec::new();
+    for (label, url) in [
+        ("Mistral-7B-Instruct-v0.3 Q4_K_M", MISTRAL_7B_V03_Q4_K_M),
+        ("Llama-2-7B-Chat Q4_K_M", LLAMA2_7B_CHAT_Q4_K_M),
+        ("Meta-Llama-3.1-8B-Instruct Q4_K_M", LLAMA31_8B_Q4_K_M),
+    ] {
+        // NOT `fetch`, which panics. A candidate this port cannot even
+        // PARSE is a Phase 0 result and belongs in the table beside the
+        // ones it can; killing the run on the second of three would hide
+        // the third. TheBloke's 2023-era Llama 2 is the live case: it is
+        // GGUF v2 and this parser accepts v3 only, which is the same shape
+        // of problem as M2 finding 1 (that era's Mixtral carries the
+        // pre-merge per-expert layout). Both say the 2023 conversions are
+        // a separate ingest question, not a cheaper way in.
+        let h = match try_fetch(url) {
+            Ok(h) => h,
+            Err(e) => {
+                println!("\n=== {label}\n   UNREADABLE by this port's parser: {e}");
+                continue;
+            }
+        };
+        let experts = h
+            .metadata
+            .get("llama.expert_count")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let (rope_freqs, missing, bytes) = dense_candidate_gates(&h);
+        println!(
+            "\n=== {label}\n   architecture    {:?}\n   tensors         {}\n   \
+             expert_count    {experts}\n   rope_freqs      {}\n   \
+             types w/o kernel{}\n   RESIDENT FLOOR  {:.2} GiB (all of it pinned; \
+             nothing streams)",
+            h.architecture(),
+            h.tensors.len(),
+            if rope_freqs {
+                "PRESENT -- needs a per-pair frequency input the rope kernels do not take"
+            } else {
+                "absent -- the existing scalar-theta rope kernel is enough"
+            },
+            if missing.is_empty() {
+                " none".to_string()
+            } else {
+                format!(" {missing:?}")
+            },
+            gib(bytes),
+        );
+
+        assert_eq!(h.architecture(), Some("llama"), "{label}");
+        assert!(experts <= 1, "{label} is not dense: expert_count {experts}");
+        // Every dense candidate is well clear of the 1.6-2.2 GiB band the
+        // MoE families hold. Asserted rather than described, so the claim
+        // cannot rot into prose while the numbers move.
+        assert!(
+            gib(bytes) > 3.0,
+            "{label} resident floor {:.2} GiB -- if a dense llama ever fits \
+             the MoE band, this comment is wrong and needs rewriting",
+            gib(bytes)
+        );
+        if !rope_freqs && missing.is_empty() {
+            clean.push(label);
+        }
+    }
+
+    // THE DECISION, stated as an assertion rather than left to the reader.
+    // A candidate that needs neither a new kernel nor a new rope input is
+    // the one the dense bring-up targets; Llama 3.1 is deliberately NOT it,
+    // for the same reason Mixtral went before the dense half at all.
+    println!("\n-- clears both gates with no new kernel work: {clean:?}");
+    assert!(
+        !clean.is_empty(),
+        "no dense candidate avoids both new-kernel gates; the dense half \
+         cannot land without rope frequency scaling after all"
     );
 }

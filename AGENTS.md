@@ -342,6 +342,31 @@ TURBOSPARK_LOGIT_DUMP_DIR=/tmp/kld/iq3-warm \
 uv run --python 3.12 --with numpy scripts/kld_llamacpp.py \
   ~/models/gguf-ref/gemma-4-26B-A4B-it-UD-Q3_K_M.gguf /tmp/kld/iq3-warm
 
+# The same check for the `qwen3moe` family (ROADMAP M3), and the ONLY
+# instrument that can see the two things its fixture tests record themselves
+# as blind to: the per-head q/k norms' ORDER relative to RoPE, and the RMS
+# epsilon. Reads 0.00320 mean nats at 97.9% top-1 between a 0.00135 shape
+# floor and a 0.00988 backend floor, so both are right. Metal, not CPU
+# (Gotcha 34). Needs the 17.3 GB GGUF locally; the install was STREAMED from
+# it, so it is not on disk by default. ~30 s per arm plus ~12 min to fetch.
+TURBOSPARK_QWEN3MOE_INSTALL_DIR=~/models/qwen3moe-gguf.gturbo \
+TURBOSPARK_LOGIT_DUMP_DIR=/tmp/kld/qwen3moe-warm \
+  cargo test -p turbospark-bench --test logit_dump --release -- --ignored --nocapture
+hf download Qwen/Qwen3-30B-A3B-GGUF Qwen3-30B-A3B-Q4_K_M.gguf --local-dir ~/models/gguf-ref
+uv run --python 3.12 --with numpy scripts/kld_llamacpp.py \
+  ~/models/gguf-ref/Qwen3-30B-A3B-Q4_K_M.gguf /tmp/kld/qwen3moe-warm
+
+# ROADMAP M4 Phase 0: which dense `llama` checkpoint the dense half should
+# target. Three real headers, no download, ~36 s. The two gates it reads are
+# whether the file carries `rope_freqs.weight` (Llama 3.1's RoPE scaling,
+# which ships as a TENSOR and has no kernel input here) and whether every
+# block type in it already has a kernel. Also prints each candidate's
+# RESIDENT FLOOR, which for a dense model is the whole weight file: nothing
+# streams, so Gotcha 36's slot-cache multiplication does not apply and the
+# 1.6-2.2 GiB band cannot.
+cargo test -p turbospark-repack --test gguf_checkpoint_network --release -- \
+  --ignored --nocapture scopes_the_dense_llama_candidates
+
 # The determinism check nothing else makes: one runner, the same greedy
 # generation six times, asserting ONE distinct output. This is what caught
 # Gotcha 27's cache-state-dependent reduce order; run it at 8/16/32 slots
@@ -1162,6 +1187,37 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     long as the X-to-Y mapping happens to be injective. The tokenizer's own
     `vocab_size` is still correct for the SCRIPTED paths, which have no model
     to ask.
+
+38. **A MEASUREMENT tool's model-specific constant is a wrong ANSWER waiting
+    for its second caller, and it fails LOUDLY in the one direction that
+    looks like your engine's fault.** Sibling of 37 one layer out: that one
+    was a per-dialect constant standing in for a per-model property, this is
+    a per-MODEL constant standing in for a universal, and both stay invisible
+    while exactly one model exercises them. `scripts/kld_llamacpp.py` carried
+    `SOFTCAP_BOUND = 30.0` and aborted any run whose reference logits
+    exceeded it, on the correct reasoning that if llama.cpp skips a softcap
+    this port applies, the two heads are not the same function and no
+    divergence below means anything. 30 is Gemma's
+    `final_logit_softcapping`, and Phase G, Phase S and every other caller
+    were Gemma. `qwen3moe` declares `finalLogitSoftcap: 0.0` and both engines
+    read max |logit| ~51.9, so the FIRST non-Gemma run of a script written to
+    be model-agnostic died with a message blaming the heads. The bound now
+    comes from the install's own `manifest.json`, and where a family declares
+    none there is no transform to mismatch, so both engines' maxima are
+    REPORTED (51.93 against 51.97) rather than checked against an invented
+    tolerance. Three things worth carrying. Read the property, never recall
+    it -- the fix is `softcap_of(install)` and it costs one file read.
+    Prefer a reported observable to a fabricated threshold when the
+    assertion genuinely does not apply. And the check had a second, quieter
+    bug the move fixed for free: it hung off the FRESH-RUN branch, so it was
+    skipped precisely when an arm was reused from cache, which is most
+    re-runs; it now computes from the returned array and runs either way.
+    A guard that only fires on a cold path is close to no guard.
+    Look for siblings before assuming this one is done: `scripts/kld.py` is
+    Gemma-pinned throughout (`REPO`, and a docstring asserting softcap 30),
+    which is BY DESIGN there -- its reference checkpoint is a Gemma repo --
+    but the same audit is owed to any measurement script that claims to take
+    an arbitrary install.
 
 ## Per-Crate Documentation
 
