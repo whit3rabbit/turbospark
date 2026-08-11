@@ -22,6 +22,9 @@ fn one(runner: &mut RealForwardRunner, tokenizer: &MfTokenizer, prompt_ids: &[i3
         extra_stop_tokens: Vec::new(),
         rate: Default::default(),
     };
+    // Read before the mutable borrow: the logits width is the MODEL's,
+    // not the tokenizer dialect's constant.
+    let vocab_size = runner.vocab_size();
     let mut text = String::new();
     run_raw_completion(
         runner,
@@ -29,7 +32,7 @@ fn one(runner: &mut RealForwardRunner, tokenizer: &MfTokenizer, prompt_ids: &[i3
         prompt_ids,
         &config,
         MAX_CONTEXT,
-        tokenizer.vocab_size,
+        vocab_size,
         |event| match event {
             RawDecodeProgress::Token { delta, .. } => text.push_str(&delta),
             RawDecodeProgress::Tail(tail) => text.push_str(&tail),

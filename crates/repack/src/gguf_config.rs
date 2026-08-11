@@ -281,7 +281,9 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
         // Every layer is full attention: neither a dense Llama nor a Mixtral
         // publishes `attention.sliding_window`, and Mistral 7B's window is a
         // property of that model rather than of the architecture.
-        ModelFamily::Llama => vec![1u8; num_layers as usize],
+        // Qwen3-MoE is the same story: no `attention.sliding_window` key on
+        // the published file, every layer full attention.
+        ModelFamily::Llama | ModelFamily::Qwen3Moe => vec![1u8; num_layers as usize],
         ModelFamily::DeepseekV4Flash => {
             return Err(GgufConfigError::UnsupportedArchitecture {
                 architecture: architecture.to_string(),
@@ -332,6 +334,13 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
     } else {
         if let Some(k) = m.opt_i64("attention.key_length") {
             arch.full_head_dim = k;
+            // A model with one attention kind publishes no `_swa` width, and
+            // its two head-dim fields must not be allowed to disagree: the
+            // baseline's `head_dim` would otherwise survive a checkpoint that
+            // moved `full_head_dim`, and nothing reads them together.
+            if m.opt("attention.key_length_swa").is_none() {
+                arch.head_dim = k;
+            }
         }
         if let Some(k) = m.opt_i64("attention.key_length_swa") {
             arch.head_dim = k;

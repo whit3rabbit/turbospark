@@ -18,7 +18,10 @@ fn int8_transcode_targets(family: ModelFamily) -> &'static [&'static str] {
         // router takes, and it is F16 in the 2023 conversion and F32 in the
         // 2025 one -- both narrow to the INT8 affine the runtime's router
         // GEMV reads. A dense Llama has no router and so no target here.
-        ModelFamily::Llama => &["mlp.gate.weight"],
+        // Same canonical router name, same F32 source tensor. `qwen3moe`
+        // additionally ships its q/k norms as F32, but those take the BF16
+        // default: the runtime's `norm_view` reads BF16.
+        ModelFamily::Llama | ModelFamily::Qwen3Moe => &["mlp.gate.weight"],
         ModelFamily::DeepseekV4Flash => &[],
     }
 }

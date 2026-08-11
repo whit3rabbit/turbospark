@@ -132,6 +132,14 @@ the reference implementation. Every answer becomes a field in `ArchConfig`
       the header (`expert_count`, `feed_forward_length`) before any
       download. Do this here, next to the layer graph -- ROADMAP Phase M2
       did not, and spent a 26 GB download finding out. AGENTS.md Gotcha 36.
+      **COMPUTE THE WHOLE PRODUCT, NOT THE EXPERT SIZE.** `num_layers` is
+      the factor that is easy to skip because it is not about experts at
+      all, and it is the one that moved next: Qwen3-30B-A3B has a SMALLER
+      expert than Gemma 4 (~2.9 MiB against ~3.2) and a LARGER working set
+      (2,094 MiB against ~1,500), because it is 48 layers deep against 30.
+      It streams and it is a good fit; it just does not land in the
+      1.6-2.2 GiB band, and a bring-up should say which of those two
+      outcomes it is expecting before the download rather than after.
 - [ ] **Recurrent per-layer state.** Anything that is not KV: a linear
       layer's delta-rule `S`, a causal-conv tail, an SSM hidden state. For
       each, its shape, whether it grows with context (GDN's does not, which

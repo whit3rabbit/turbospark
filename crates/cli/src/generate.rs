@@ -67,7 +67,7 @@ fn run_prompt(request: &InvocationRequest, prompt: &str) {
     };
 
     let prompt_ids = session.tokenizer.encode(prompt, true);
-    let vocab_size = session.tokenizer.vocab_size;
+    let vocab_size = session.runner.vocab_size();
 
     println!("generating (real forward pass, synthetic/untrained weights):");
     let stdout = std::io::stdout();
@@ -181,7 +181,7 @@ pub(crate) fn stream_turn(
         extra_stop_tokens: Vec::new(),
         rate: session.rate,
     };
-    let vocab_size = session.tokenizer.vocab_size;
+    let vocab_size = session.runner.vocab_size();
 
     let mut reply = String::new();
     let stdout = std::io::stdout();

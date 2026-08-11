@@ -69,6 +69,32 @@ pub(crate) fn encode_attention_block(
         )?;
     }
 
+    // QK-NORM, and note the ORDER: after the projections, before RoPE. Both
+    // reference implementations norm the raw head then rotate; rotating
+    // first and norming after is a different function that still produces
+    // finite, plausible-looking text. `qwen3moe` only; `llama` skips it.
+    if llama.qk_norm {
+        let head_norm = |suffix: &str| {
+            crate::real_forward_utils::norm_view(weights, index, &name(suffix), head_dim as usize)
+        };
+        for (data, heads, suffix) in [
+            ((&scratch.q, 0u64), num_heads, "q_norm.weight"),
+            ((k_buf, k_off as u64), num_kv, "k_norm.weight"),
+        ] {
+            gpu::encode_rms_norm_bf16w_perhead(
+                context,
+                pass,
+                data,
+                head_norm(suffix)?,
+                data,
+                heads,
+                head_dim,
+                llama.rms_eps,
+            )
+            .map_err(gpu_err)?;
+        }
+    }
+
     // One theta for every layer: this architecture publishes `rope.freq_base`
     // and no `freq_base_swa`, so `arch_from_gguf` sets both fields from it.
     let theta = arch.full_rope_theta as f32;

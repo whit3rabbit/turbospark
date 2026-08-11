@@ -20,6 +20,18 @@ pub enum ModelFamily {
     /// `expert_count` (ROADMAP Phase M2). The baseline is Mixtral's because
     /// every behavioural field is shared and only shape fields differ.
     Llama,
+    /// The `qwen3moe` GGUF architecture (Qwen3-30B-A3B and siblings), the
+    /// first FINE-GRAINED MoE brought up after Mixtral showed that being MoE
+    /// is not enough for this engine's memory result (AGENTS.md Gotcha 36).
+    ///
+    /// It runs through the SAME decode flow as [`ModelFamily::Llama`]
+    /// (`crates/runtime/src/families/llama/`), because the layer graph is
+    /// identical: plain GQA, raw residual add, one post-attention norm
+    /// feeding router and routed experts, no shared expert, no softcap,
+    /// full-head NeoX RoPE. It differs in exactly two places, both carried
+    /// by `RealLlamaState`: it norms q and k PER HEAD before RoPE, and its
+    /// RMS epsilon is 1e-6 where the `llama` architecture's is 1e-5.
+    Qwen3Moe,
 }
 
 impl ModelFamily {
@@ -30,6 +42,7 @@ impl ModelFamily {
             ModelFamily::Qwen36 => "qwen36",
             ModelFamily::DeepseekV4Flash => "deepseekV4Flash",
             ModelFamily::Llama => "llama",
+            ModelFamily::Qwen3Moe => "qwen3moe",
         }
     }
 
@@ -40,6 +53,7 @@ impl ModelFamily {
             "qwen36" => Some(ModelFamily::Qwen36),
             "deepseekV4Flash" => Some(ModelFamily::DeepseekV4Flash),
             "llama" => Some(ModelFamily::Llama),
+            "qwen3moe" => Some(ModelFamily::Qwen3Moe),
             _ => None,
         }
     }

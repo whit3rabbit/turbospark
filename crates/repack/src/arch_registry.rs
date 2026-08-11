@@ -72,6 +72,11 @@ const SUPPORTED_GGUF: &[(&str, ModelFamily)] = &[
     // llama.cpp named Qwen 3.6's converter after the 3.5 series it shares a
     // graph with; a real Qwen 3.6 GGUF says this, not "qwen36".
     ("qwen35moe", ModelFamily::Qwen36),
+    // Promoted out of the planned table after Mixtral showed that the memory
+    // ceiling needs FINE-GRAINED MoE rather than merely MoE (AGENTS.md
+    // Gotcha 36). Shares the `llama` decode flow; see `ModelFamily::Qwen3Moe`
+    // for the two places they differ.
+    ("qwen3moe", ModelFamily::Qwen3Moe),
 ];
 
 /// HF `config.json -> model_type` -> family, for the architectures that run.
@@ -94,13 +99,6 @@ const SUPPORTED_HF: &[(&str, ModelFamily)] = &[
 /// one makes every byte resident (AGENTS.md Gotcha 19). Hence `llama`'s
 /// note naming its two halves separately.
 const PLANNED_GGUF: &[(&str, PlannedArch)] = &[
-    (
-        "qwen3moe",
-        PlannedArch {
-            needs: "a standard-GQA attention flow over the existing routed streamer",
-            witness: "https://huggingface.co/Qwen/Qwen3-30B-A3B-GGUF/resolve/main/Qwen3-30B-A3B-Q4_K_M.gguf",
-        },
-    ),
     (
         "llama4",
         PlannedArch {

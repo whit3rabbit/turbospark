@@ -853,7 +853,21 @@ live network).
   ~3.2 MiB), and the expert slot cache is `slots x layers x expert_stride`,
   so it cannot stream at any useful slot count -- 54.5 GiB at 16 slots,
   and the whole 27.2 GiB expert table at 8. It runs and it is correct; it
-  is not what this engine is for. See AGENTS.md Gotcha 36. Proven end to end by
+  is not what this engine is for. See AGENTS.md Gotcha 36.
+  **`qwen3moe` (Qwen3-30B-A3B) is that same flow's fine-grained checkpoint,
+  and it is a FOURTH family rather than a fourth flow.** The layer graph is
+  identical to Mixtral's, so `crates/runtime/src/families/llama/` serves
+  both and the two differences are keyed on `ArchConfig.family` inside it:
+  Qwen3 norms q and k per head before RoPE, and its RMS epsilon is 1e-6
+  against 1e-5. It needed NO new kernels (Q4_K and Q6_K were already
+  executable) and no new chat dialect (ChatML). 128 experts of 2.5 MiB
+  puts its slot cache at 1.90 GiB at 16 slots, so unlike Mixtral it is a
+  checkpoint the memory oracle and the quality gate can meaningfully
+  measure. What the fixture tests CANNOT see is stated where they live
+  (`crates/runtime/tests/real_forward_qwen3moe.rs`): the norms' ORDER
+  relative to RoPE, and the epsilon's own value, are not separable on
+  untrained weights and belong to the cross-engine gate.
+  Proven end to end by
   `crates/runtime/tests/real_forward.rs` for both shapes:
   `run_raw_completion` runs to a real stop condition, and a second run
   over the same runner (which resets internally) reaches an identical

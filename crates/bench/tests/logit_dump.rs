@@ -104,7 +104,7 @@ fn dump(install: &Path, out: &Path) {
     // Row i holds the next-token logits after consuming ids[i], so the last
     // id is fed to nobody and there is one row fewer than there are ids.
     let rows = ids.len() - 1;
-    let vocab = tokenizer.vocab_size;
+    let vocab = runner.vocab_size();
     eprintln!(
         "logit_dump: {} prompt + {} answer = {} ids -> {rows} rows x {vocab} \
          {DUMP_DTYPE} = {:.1} MiB",

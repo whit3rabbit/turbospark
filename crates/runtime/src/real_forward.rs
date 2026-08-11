@@ -169,6 +169,20 @@ impl RealForwardRunner {
         self.context.buffer_allocation_count()
     }
 
+    /// Rows this model's output head writes, i.e. the length every `produce`
+    /// logits buffer must have.
+    ///
+    /// **This is a property of the MODEL, and callers used to take it from
+    /// the TOKENIZER's dialect instead.** `MfTokenizer::vocab_size` is a
+    /// per-dialect constant standing in for the checkpoint's padded
+    /// embedding row count, which is correct only while one model uses a
+    /// dialect: Qwen 3.6 and Qwen3-30B-A3B are both ChatML and pad to
+    /// 248,320 and 151,936 rows respectively, so the second one failed at
+    /// the first token with a vocab mismatch. Ask the runner.
+    pub fn vocab_size(&self) -> usize {
+        self.arch.vocab_size as usize
+    }
+
     /// Cumulative phase timings across every `produce` call so far. See
     /// [`PhaseCounters`] for what each bucket covers.
     pub fn phase_counters(&self) -> PhaseCounters {
@@ -361,7 +375,10 @@ impl RealForwardRunner {
                     &runner.arch,
                 )?);
             }
-            model_io::ModelFamily::Llama => {
+            // One flow for both: `qwen3moe` is the same layer graph, and
+            // `RealLlamaState` carries the two differences (per-head q/k
+            // norms, a different RMS epsilon).
+            model_io::ModelFamily::Llama | model_io::ModelFamily::Qwen3Moe => {
                 runner.real_llama = Some(crate::families::llama::RealLlamaState::build(
                     &mut runner.context,
                     &runner.weights,

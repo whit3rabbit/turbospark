@@ -101,6 +101,9 @@ pub fn run_protocol_case(
         rate,
     };
 
+    // Read before the mutable borrow: the logits width is the MODEL's, not
+    // the tokenizer dialect's (`RealForwardRunner::vocab_size`).
+    let vocab_size = runner.vocab_size();
     sampler.sample();
     let result = run_raw_completion(
         runner,
@@ -108,7 +111,7 @@ pub fn run_protocol_case(
         &prompt_ids,
         &config,
         PROTOCOL_MAX_CONTEXT,
-        tokenizer.vocab_size,
+        vocab_size,
         |event| {
             // The Swift runtime samples every 8th decoded token.
             if let RawDecodeProgress::Token { index, .. } = event {
