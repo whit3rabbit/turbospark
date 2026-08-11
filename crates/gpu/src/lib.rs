@@ -41,6 +41,7 @@ mod bytes;
 #[cfg(target_os = "macos")]
 mod context;
 #[cfg(target_os = "macos")]
+mod dequant_int4_batch;
 mod dequant_int4_gemv;
 #[cfg(target_os = "macos")]
 mod dequant_int8_gemv;
@@ -95,6 +96,8 @@ pub use context::{
     dispatch_threads_3d, read_buffer_bytes, read_buffer_f16, write_buffer_bytes, CommittedPass,
     GpuError, MetalContext, PassEncoder,
 };
+#[cfg(target_os = "macos")]
+pub use dequant_int4_batch::{encode_dequant_int4_gemm_resident, MAX_BATCH_ROWS};
 #[cfg(target_os = "macos")]
 pub use dequant_int4_gemv::{
     dequant_int4_gemv, dequant_int4_gemv_resident, encode_dequant_int4_gemv_resident,

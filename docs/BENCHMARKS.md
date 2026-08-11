@@ -741,6 +741,61 @@ DFlash drafters declare `block_size` 16, which stays usable here (breakeven
 than measured, because measuring it needs the M-row kernels this gate exists
 to justify building. Nothing downstream should be trusted until it is.
 
+### c(M) measured, and the gate turns RED
+
+It was measured (Phase D2, same machine, 2026-08-10) and the estimate was
+wrong in the direction that matters. `dequant_int4_gemm_simd` is the real
+M-row kernel: one dispatch, each packed nibble read once and multiplied into
+M accumulators, activations staged in threadgroup memory. Parity against M
+separate GEMV calls is EXACT, and mutation-checked three ways.
+
+`c(M)` is the per-token cost of a batched pass against M sequential ones:
+
+| shape | M=2 | M=4 | M=8 | M=16 |
+| --- | ---: | ---: | ---: | ---: |
+| expert 512x2048 | 0.91 | 0.66 | 0.51 | 0.47 |
+| o_proj 2048x2048 | 1.48 | 1.09 | 0.93 | 0.88 |
+| q_proj 4096x2048 | 1.45 | 1.10 | 0.97 | 0.86 |
+| stacked 8192x2048 | 1.61 | 1.25 | 1.09 | 1.04 |
+
+Ideal is `1/M`. The routed-expert shape reaches 0.47 (a real 2.1x, and it is
+the shape an MoE decode spends most of its time in), but the larger
+projections sit at 0.86-1.04 and the threadgroup barriers make small M worse
+than not batching at all.
+
+Weighting experts at 60% of decode compute gives `c(16) ~ 0.63`, so a
+16-token verify costs about 10 decode steps of compute plus `0.25 x 5.74`
+of expert IO: **~8.9 decode steps to propose 16 tokens**. Against a DFlash
+accept length of ~6 that is 1.48 per accepted token, i.e. a LOSS. M=4 works
+out the same way (3.2 steps for 4 proposed, ~2.5 accepted, 1.26 per token).
+
+Why the D0 estimate missed it: D0 established that the GEMV is not
+bandwidth-bound at decode's shapes and inferred that batching would
+therefore approach `1/M`. But the sequential arm is not bandwidth-bound
+EITHER -- a cold matrix reads at 66 GiB/s against the kernel's 355 GiB/s
+saturation, so per-dispatch launch and the FMA count dominate. Batching
+divides the weight reads by M and MULTIPLIES the FMAs by M, and when the
+weight read was never the cost, dividing it buys little. Headroom against a
+bandwidth ceiling does not imply headroom against a batched-work ceiling;
+they are different denominators.
+
+Two earlier arms rule out the cheap alternatives, so the kernel is not the
+lazy option that was skipped. M dispatches of the GEMV over one matrix cost
+0.65M rather than ~1 (the weights do not stay cached), and encoding them into
+a CONCURRENT compute encoder rather than the engine's serial one recovers
+only 1.07-1.40x -- and 8 x the resulting rate lands at the ~355 GiB/s
+saturation figure, which says the hardware genuinely moved the weight bytes
+eight times.
+
+So speculative decoding does not pay on this engine as it stands. Closing
+the gap needs a properly tiled GEMM (simdgroup matrix ops, register
+blocking over rows as well as tokens), which is the same descoped
+tile-kernel work batched prefill needs (`DEVIATIONS.md` PF-02) rather than
+an increment on this kernel. ROADMAP records it there. The kernel, the
+three measurement arms and the D1 rollback primitives are kept: they are
+the parts a future tile-kernel phase would otherwise have to rebuild, and
+the rollback probe is a standing correctness test regardless.
+
 ## Power
 
 NOT A PARITY CLAIM. Swift was never measured for power, here or upstream;
