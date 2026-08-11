@@ -18,6 +18,21 @@ pub fn write_buffer_bytes(buffer: &metal::Buffer, offset: usize, bytes: &[u8]) {
     }
 }
 
+/// Host-reads `len` raw bytes from a shared-storage buffer at `offset`.
+/// Dtype-blind on purpose: the recurrent-state snapshot behind a
+/// speculative rollback copies FP32 state and FP16 conv rows through the
+/// same path and never interprets either.
+pub fn read_buffer_bytes(buffer: &metal::Buffer, offset: usize, len: usize) -> Vec<u8> {
+    assert!(offset + len <= buffer.length() as usize);
+    // SAFETY: bounds asserted above against a live shared-storage
+    // `MTLBuffer`'s allocation; `u8` has no alignment requirement and no
+    // invalid bit patterns.
+    #[allow(unsafe_code)]
+    let bytes =
+        unsafe { std::slice::from_raw_parts((buffer.contents() as *const u8).add(offset), len) };
+    bytes.to_vec()
+}
+
 /// Host-reads `count` halfs from a shared-storage buffer starting at
 /// `byte_offset`. Only valid after the pass that wrote them completed.
 pub fn read_buffer_f16(buffer: &metal::Buffer, byte_offset: usize, count: usize) -> Vec<half::f16> {

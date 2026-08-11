@@ -40,7 +40,7 @@ pub use raw_completion::{
 };
 #[cfg(target_os = "macos")]
 pub use real_forward::{
-    dispatch_profile_report, PhaseCounters, RealForwardError, RealForwardRunner,
+    dispatch_profile_report, PhaseCounters, RealForwardError, RealForwardRunner, RollbackPoint,
 };
 
 // Token id width consumed from the core primitives, keeping the dependency

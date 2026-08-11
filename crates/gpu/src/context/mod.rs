@@ -10,7 +10,7 @@ mod dispatch;
 mod error;
 mod pass;
 
-pub use buffer_io::{read_buffer_f16, write_buffer_bytes};
+pub use buffer_io::{read_buffer_bytes, read_buffer_f16, write_buffer_bytes};
 pub use device::MetalContext;
 pub use dispatch::{
     dispatch_one_threadgroup_per_row, dispatch_one_threadgroup_per_row_offsets, dispatch_threads_3d,

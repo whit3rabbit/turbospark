@@ -374,6 +374,16 @@ cargo test -p turbospark-repack --test gguf_checkpoint_network --release -- \
 TURBOSPARK_PROBE_SLOTS=32 TURBOSPARK_PROBE_INSTALL_DIR=~/models/gemma4.gturbo \
   cargo test -p turbospark-bench --test gguf_nondeterminism_probe --release -- --ignored --nocapture
 
+# Phase D1's gate: does rollback return the engine to the state a fresh run
+# would have reached? Asserts BIT-IDENTICAL logits against a reset-and-replay
+# ground truth, because a stale recurrent state or a clobbered KV row produces
+# fluent wrong text that no coherence smoke can see. Run it on BOTH families:
+# Qwen exercises the recurrent half (30 linear layers of 40, unbounded
+# rollback), Gemma the sliding-window ring (25 of 30, rollback capped at the
+# ring's 128-token slack). ~4 s each.
+TURBOSPARK_PROBE_INSTALL_DIR=~/models/qwen36.gturbo \
+  cargo test -p turbospark-bench --test rollback_probe --release -- --ignored --nocapture
+
 # The two measurement surfaces behind ROADMAP's speculative-decoding item
 # (its Phase D0 gate: does a batched verify pay on this engine, and at what
 # block size?). Neither needs a drafter or a new kernel.
