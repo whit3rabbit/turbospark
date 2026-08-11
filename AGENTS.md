@@ -19,7 +19,11 @@ Swift parity claims and which are this port measuring itself).
 `docs/EXPERT_ROUTING.md` records the measured-negative answer to
 domain-restricted expert sets (coding routes to ~67 of 128 experts per
 layer, not a prunable region) -- read it before proposing expert pruning
-or pinning.
+or pinning. `docs/SPECULATIVE_DECODING.md` does the same for speculative
+decoding and DFlash: worth ~1.1x here at a SMALL block size, which inverts
+the datacenter result, because 19% of decode compute has no weights to
+amortize -- read it before proposing a drafter, and note that the lever it
+identifies is the batched-MoE kernel rather than the drafter.
 
 Do your best to keep code files under 400 lines but it's a suggestion not a hard rule. If over 400, decide if refactoring makes sense.
 
@@ -1298,6 +1302,7 @@ Workspace directory structure and crate layout:
 \-- docs
     +-- BENCHMARKING.md# benchmark modes, mach memory sampling & memory oracle details
     +-- EXPERT_ROUTING.md # domain-restricted expert sets, measured negative
+    +-- SPECULATIVE_DECODING.md # DFlash / batched verify, measured marginal
     +-- POWER_BASELINE.md # watts, joules-per-token, hygiene audit (ROADMAP Phase P1)
     \-- TESTING.md     # test suite organization, platform gating & testing rules
 ```
