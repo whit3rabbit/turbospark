@@ -652,6 +652,95 @@ expert bytes per miss was an energy claim and the measurement refutes it
 at this size. Full rows and the cross-session caveat:
 `docs/POWER_BASELINE.md`, "The 3-bit install". ROADMAP dead end 12.
 
+## Batched verify: the speculative-decoding feasibility gate
+
+NOT A PARITY CLAIM, and not a throughput number. Swift has no speculative
+decoding. This is the arithmetic that decides whether ROADMAP's "Speculative
+Decoding with Draft Model" item can pay on this engine, measured BEFORE any
+kernel exists. Reproduce with the two commands in AGENTS.md ("The two
+measurement surfaces behind ROADMAP's speculative-decoding item").
+
+Measured 2026-08-10 on AC, both real MLX INT4 installs, 16 slots.
+
+The premise: a drafter proposes M tokens, the target verifies them in ONE
+forward pass, and the longest correct prefix is accepted. That is only worth
+doing if one verify pass over M tokens costs less than M decode passes. Two
+independent things decide it, and each has its own measurement.
+
+### Expert union
+
+A batched verify of M tokens must read the UNION of those tokens' routes,
+where M sequential decode steps read them one group at a time. `breakeven`
+is that union divided by `top_k`, i.e. the number of accepted tokens a block
+must beat on the expert-IO axis alone. Two prompts per family (one
+explanation, one coding), greedy and sampled, ~300 generated tokens each,
+prefill passes excluded.
+
+| M | Gemma distinct of 128 | breakeven | Qwen distinct of 256 | breakeven |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 | 8.0 | 1.00 | 8.0 | 1.00 |
+| 2 | 12.6-12.9 | 1.57-1.61 | 12.4-13.6 | 1.55-1.70 |
+| 4 | 19.0-19.7 | 2.37-2.46 | 19.6-22.9 | 2.44-2.86 |
+| 8 | 27.4-28.7 | 3.42-3.59 | 30.3-37.6 | 3.78-4.70 |
+| 16 | 37.8-39.4 | 4.72-4.92 | 45.9-59.5 | 5.74-7.44 |
+
+The M = 1 row reading exactly 8.0 is the identity check on the analysis.
+
+The feared blowup does not happen. Sixteen consecutive tokens touch 46-60 of
+Qwen's 256 experts per layer, not the 128 a union-free cost model charges,
+because adjacent tokens route alike. That is the same temporal locality the
+expert slot cache already lives on, restated per block instead of per token.
+
+Read `breakeven`, not the redundancy figure beside it in the script's output:
+the sequential arm's true cost is cache MISSES rather than touches, and a
+rejected token's bytes are spent either way.
+
+### Compute headroom
+
+Whether a batched GEMV can be cheaper than M separate ones is decided by
+whether `dequant_int4_gemv_simd` is already bandwidth-bound at the shapes
+decode dispatches. The reference is the same kernel at a large row count,
+not a second kernel and not a spec sheet, so it is a LOWER bound on the
+device and can only understate the headroom. Three rounds per shape, all
+within 2% of each other.
+
+| shape | GiB/s | headroom |
+| --- | ---: | ---: |
+| expert 512x2048 | 175 | 2.0x |
+| o_proj 2048x2048 | 300 | 1.2x |
+| q_proj 4096x2048 | 352 | 1.0x |
+| reference 32768x2048 | 355-380 | 1.0x |
+
+The projections are already saturated and the routed-expert shape is not,
+which is the useful half: that 512-row shape is where an MoE decode spends
+its time and is exactly what batching amortizes.
+
+Two drafts of this bench were wrong in ways worth not repeating.
+`residual_add_fp16` is not a valid bandwidth ceiling (the GEMV beat it by
+2x, because a scalar f16 elementwise kernel is itself poor). And a fixed
+repeat count measures DVFS ramp rather than throughput: an early draft read
+311 GiB/s for the reference shape purely because a heavy arm had run just
+before it and left the clocks high. The bench now equalizes BYTES per timed
+call and pre-faults every buffer outside the timed region.
+
+### The composite, and the block size it picks
+
+Taking a decode step as roughly 75% compute and 25% expert IO (the
+prefill-attribution split in `CLAUDE.local.md`), a verify pass costs about
+`0.75 * c(M) + 0.25 * breakeven(M)`, and the modelled end-to-end speedups
+land at 1.6x for M = 4, 1.7x for M = 8 and 1.6x for M = 16. Meta measured
+DFlash on Muse Glimmer 30B at 1.5x on an M4 Max, independently, so the model
+is not fooling itself.
+
+M = 8 is the pick: the best modelled speedup, and a breakeven of 3.8-4.7
+that sits below the accept length a block-16 drafter reports. Published
+DFlash drafters declare `block_size` 16, which stays usable here (breakeven
+5.7-7.4) but is the marginal end on this engine.
+
+`c(M)`, the compute multiplier, is the one term that is estimated rather
+than measured, because measuring it needs the M-row kernels this gate exists
+to justify building. Nothing downstream should be trusted until it is.
+
 ## Power
 
 NOT A PARITY CLAIM. Swift was never measured for power, here or upstream;
