@@ -27,6 +27,8 @@ pub mod quant_gguf;
 pub mod quant_gguf_iq;
 /// Look up tables for IQ3_XXS and IQ4_NL quantization formats.
 pub mod quant_gguf_iq_tables;
+/// Dequantization primitives for the GGUF MXFP4 format (ROADMAP M5).
+pub mod quant_gguf_mxfp4;
 /// Root-Mean-Square Normalization (RMSNorm) compute kernels.
 pub mod rms_norm;
 /// Rotary Position Embedding (RoPE) compute kernels.
@@ -61,6 +63,10 @@ pub use quant_gguf_iq::{
     IQ4_XS_BLOCK_ELEMS, IQ4_XS_SUB_ELEMS,
 };
 pub use quant_gguf_iq_tables::{IQ3XXS_GRID, IQ4NL_VALUES};
+pub use quant_gguf_mxfp4::{
+    dequant_mxfp4_gemv, dequantize_mxfp4, mxfp4_scale, MXFP4_BLOCK_BYTES, MXFP4_BLOCK_ELEMS,
+    MXFP4_VALUES,
+};
 pub use rms_norm::rms_norm;
 pub use rope::{rope_neox, rope_neox_subdim, rope_paired};
 pub use sampling::logit_softcap_softmax;
