@@ -16,9 +16,27 @@ pub fn gguf_manifest_quant(header: &GgufHeader, plan: &Plan<'_>) -> serde_json::
             .map(|(_, i)| ggml_scheme_name(i.ggml_type))
             .unwrap_or("absent")
     };
+    // THE BIAS PLANES ARE COMPANIONS, NOT A QUANTIZATION SCHEME, and counting
+    // them here put `F32` in the routed slot's type list and stopped a
+    // perfectly runnable `gpt-oss` install at `validate_quant` (ROADMAP M5).
+    //
+    // The slot answers one question -- "does this type have the kernels its
+    // slot needs" -- and a bias needs none: `moe_gguf.metal` reads it as a
+    // plain `device const float*` off an offset the WEIGHT's kernel already
+    // resolved. It is the same relationship the affine layout's `gate_scales`
+    // has to its packed run, and those have never been counted either; they
+    // only escaped notice because an affine blob's sources are not GGUF
+    // tensors at all, so this loop never saw one.
+    //
+    // Keyed on the ROLE rather than on the dtype (`!= F32`) so that a future
+    // checkpoint shipping BF16 biases, or an F32 weight, is classified by what
+    // the sub-tensor IS rather than by what it happens to be stored as.
     let mut routed_counts: BTreeMap<&str, usize> = BTreeMap::new();
     for sources in plan.routed.values() {
         for s in sources {
+            if s.roles.iter().all(|r| r.ends_with("_biases")) {
+                continue;
+            }
             *routed_counts
                 .entry(ggml_scheme_name(header.tensors[s.name].ggml_type))
                 .or_default() += 1;

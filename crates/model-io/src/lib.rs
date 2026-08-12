@@ -20,8 +20,8 @@ mod resident_index;
 mod sha256;
 
 pub use arch_baselines::{
-    all_known_architectures, deepseek_v4_flash_284b_a13b, gemma4_26b_a4b, known_architecture,
-    mixtral_8x7b, qwen36_35b_a3b, qwen3_30b_a3b,
+    all_known_architectures, deepseek_v4_flash_284b_a13b, gemma4_26b_a4b, gpt_oss_20b,
+    known_architecture, mixtral_8x7b, qwen36_35b_a3b, qwen3_30b_a3b,
 };
 pub use arch_config::{
     ArchConfig, CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig,

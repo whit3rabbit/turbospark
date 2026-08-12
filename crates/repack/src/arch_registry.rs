@@ -77,14 +77,18 @@ const SUPPORTED_GGUF: &[(&str, ModelFamily)] = &[
     // Gotcha 36). Shares the `llama` decode flow; see `ModelFamily::Qwen3Moe`
     // for the two places they differ.
     ("qwen3moe", ModelFamily::Qwen3Moe),
-    // Promoted by ROADMAP M5 step 3, and PARTIALLY, on the same terms
-    // `llama` was: it has a baseline, a name table and a metadata mapping,
-    // and its DECODE FLOW is step 4. Until then `RealForwardRunner::open`
-    // refuses it by name and says which four things it needs. Promoting
-    // ahead of the flow is what lets `arch_from_gguf` derive an ArchConfig
-    // from the real header and be checked against the baseline, which is the
-    // cheapest place to catch a wrong shape -- M3 did the same and it is why
-    // that bring-up needed no second download.
+    // Promoted by ROADMAP M5 step 3 and FULLY supported since step 4: a
+    // baseline, a name table, a metadata mapping and its own decode flow
+    // (`crates/runtime/src/families/gptoss/`), with both real-model gates
+    // frozen against the published 12.1 GB checkpoint.
+    //
+    // It was promoted BEFORE the flow existed, on the same terms `llama`
+    // was, and that ordering is the reusable part: it is what lets
+    // `arch_from_gguf` derive an ArchConfig from the real header and check
+    // it against the baseline, which is the cheapest place to catch a wrong
+    // shape. M3 did the same and it is why that bring-up needed no second
+    // download; M5 confirmed all 459 real tensor names mapped before a byte
+    // of expert data was fetched.
     ("gpt-oss", ModelFamily::GptOss),
 ];
 

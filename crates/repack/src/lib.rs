@@ -83,7 +83,8 @@ pub use safetensors_header::{
     DEFAULT_MAX_HEADER_BYTES,
 };
 pub use synthetic_gguf::{
-    build_synthetic_gemma4_gguf, GgufBuilder, GgufFileAndRanges, QuantMix, SyntheticGgufShape,
+    build_synthetic_gemma4_gguf, build_synthetic_gpt_oss_gguf, GgufBuilder, GgufFileAndRanges,
+    QuantMix, SyntheticGgufShape, SyntheticGptOssShape,
 };
 pub use synthetic_llama::{
     build_synthetic_dense_llama_install, build_synthetic_gqa_moe_install,

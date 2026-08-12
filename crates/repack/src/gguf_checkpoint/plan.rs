@@ -59,13 +59,60 @@ pub fn classify<'a>(
             }
         }
     }
-    const ORDER: [&str; 3] = ["gate", "up", "down"];
+    // Each bias sits immediately after the projection it belongs to, which is
+    // the order `gemma4_checkpoint/orchestrate.rs` already documents for the
+    // affine layout (`gate, gate_scales, gate_biases, up, ...`). Nothing
+    // ADDRESSES a sub-tensor by position -- `moe_offsets_from_layout` resolves
+    // every one by role through `layout.json` -- so this buys byte
+    // reproducibility and readability rather than correctness. Leaving the
+    // three M5 roles off the list would have sorted them all to the end in
+    // whatever order the header happened to list them.
+    const ORDER: [&str; 6] = [
+        "gate",
+        "gate_biases",
+        "up",
+        "up_biases",
+        "down",
+        "down_biases",
+    ];
     let rank = |r: &str| ORDER.iter().position(|o| *o == r).unwrap_or(ORDER.len());
     for sources in plan.routed.values_mut() {
         sources.sort_by_key(|s| rank(s.roles[0]));
     }
     plan.resident.sort_unstable();
     Ok(plan)
+}
+
+/// One routed source's dims with the trailing EXPERT dimension removed.
+///
+/// Rank 3 (`[in, out, experts]`) is a matrix per expert and was the only shape
+/// any routed tensor had before ROADMAP M5. `gpt-oss` adds RANK 2
+/// (`[out, experts]`), its per-expert biases, so the walk can no longer assume
+/// a routed tensor has an input dimension at all. Both are handled the same
+/// way once the expert axis is off: whatever is left is that expert's payload,
+/// stored fastest-varying first.
+fn routed_body_dims<'a>(
+    info: &'a crate::gguf_header::GgufTensorInfo,
+    name: &str,
+    num_experts: u64,
+) -> Result<&'a [u64], GgufRepackError> {
+    if !matches!(info.dims.len(), 2 | 3) {
+        return Err(GgufRepackError::ShapeMismatch {
+            tensor: name.to_string(),
+            detail: format!(
+                "expected a rank-2 or rank-3 routed tensor, got {:?}",
+                info.dims
+            ),
+        });
+    }
+    let last = info.dims[info.dims.len() - 1];
+    if last != num_experts {
+        return Err(GgufRepackError::ShapeMismatch {
+            tensor: name.to_string(),
+            detail: format!("trailing dim {last} is not the expert count {num_experts}"),
+        });
+    }
+    Ok(&info.dims[..info.dims.len() - 1])
 }
 
 /// Per-expert byte size of one routed source tensor, plus the number of
@@ -82,21 +129,7 @@ pub fn per_expert_bytes(
         .ok_or_else(|| GgufRepackError::MissingTensor {
             name: name.to_string(),
         })?;
-    if info.dims.len() != 3 {
-        return Err(GgufRepackError::ShapeMismatch {
-            tensor: name.to_string(),
-            detail: format!("expected a rank-3 routed tensor, got {:?}", info.dims),
-        });
-    }
-    if info.dims[2] != num_experts {
-        return Err(GgufRepackError::ShapeMismatch {
-            tensor: name.to_string(),
-            detail: format!(
-                "trailing dim {} is not the expert count {num_experts}",
-                info.dims[2]
-            ),
-        });
-    }
+    routed_body_dims(info, name, num_experts)?;
     let total = info.byte_size(name)?;
     if total % num_experts != 0 {
         return Err(GgufRepackError::ShapeMismatch {
@@ -234,14 +267,24 @@ fn plan_one_layer_inner(
             });
         }
         let part_bytes = per / parts;
-        let out_total = info.dims[1];
+        // The OUTPUT dim is the slowest-varying one of the per-expert body,
+        // which is `dims[1]` for a rank-3 weight and `dims[0]` for a rank-2
+        // bias. Indexing `dims[1]` unconditionally read the EXPERT COUNT on a
+        // bias, which is a plausible number and would have produced a
+        // correctly-sized blob with a nonsense recorded shape.
+        let body = routed_body_dims(info, s.name, experts as u64)?;
+        let out_total = body[body.len() - 1];
         if out_total % parts as u64 != 0 {
             return Err(GgufRepackError::ShapeMismatch {
                 tensor: s.name.to_string(),
                 detail: format!("output dim {out_total} does not split into {parts} roles"),
             });
         }
-        let part_shape = vec![out_total / parts as u64, info.dims[0]];
+        // Logical shape, i.e. GGUF's reversed: `[out, in]` for a weight and
+        // `[out]` for a bias. Only Gemma's fused gate/up ever has `parts > 1`
+        // and it is rank 3, so the division always lands on the output dim.
+        let mut part_shape = vec![out_total / parts as u64];
+        part_shape.extend(body[..body.len() - 1].iter().rev().copied());
         let dtype = ggml_scheme_name(info.ggml_type).to_lowercase();
 
         for (e, blob) in blobs.iter_mut().enumerate() {

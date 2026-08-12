@@ -880,3 +880,129 @@ fn a_dense_llama_gguf_installs_and_its_manifest_loads() {
         );
     }
 }
+
+/// ROADMAP M5's structural fixture: does the walk survive a `gpt-oss`-shaped
+/// model at all?
+///
+/// This is `crates/repack/CLAUDE.md` Gotcha 8's lesson applied BEFORE the
+/// download rather than after it. On the dense `llama` half, every hole the
+/// real file exposed was in the SHAPE of the model, and each cost a
+/// five-minute re-stream because no fixture had asked first; gpt-oss's stream
+/// is 12.1 GB and ~25 minutes, so the same three-round-trip discovery loop is
+/// two hours.
+///
+/// Four shape properties, none of which any existing GGUF fixture has:
+/// RANK-2 routed tensors (the per-expert biases), SIX routed roles per layer
+/// instead of three, a bias beside every projection, and an untied head.
+#[test]
+fn a_gpt_oss_gguf_installs_with_its_biases_sinks_and_untied_head() {
+    let shape = turbospark_repack::SyntheticGptOssShape::default();
+    let (bytes, _) = turbospark_repack::build_synthetic_gpt_oss_gguf(shape);
+    let h = parse_gguf_header(&bytes, GGUF_DEFAULT_MAX_HEADER_BYTES).unwrap();
+    let dir = tempdir();
+    let arch =
+        write_gguf_install_streamed(&dir, &h, &MemoryRangeSource::new(&bytes), "gptoss", |_| {})
+            .expect("a gpt-oss install writes");
+
+    assert_eq!(arch.family, model_io::ModelFamily::GptOss);
+    assert_eq!(arch.num_experts, shape.num_experts as i64);
+    assert_eq!(arch.top_k_experts, shape.top_k as i64);
+    assert!(!arch.tie_word_embeddings, "gpt-oss ships its own head");
+    // EVEN LAYERS SLIDE. Derived from llama.cpp's period-2 default rather
+    // than read, because the real file publishes no pattern -- and inverting
+    // the phase gives a model wrong only past 128 tokens of context, which no
+    // smoke reaches.
+    assert_eq!(arch.full_attention_layer_mask, vec![0u8, 1]);
+    // YaRN comes off the metadata, and only because `rope.scaling.type` says
+    // yarn: the same `factor` key also spells linear scaling.
+    assert_eq!(arch.rope_scaling.factor, 32.0);
+    assert_eq!(arch.rope_scaling.original_context, 4096);
+    // Hardcoded in llama.cpp's graph builder, so it must come from the
+    // BASELINE and not from the file, which publishes no such key.
+    assert_eq!(arch.swiglu_limit, 7.0);
+
+    // The manifest must load: `validate_quant` reads the routed slot's
+    // `ggmlType` against `EXECUTABLE_GGUF_TYPES`, and `mxfp4` is in it.
+    model_io::load_manifest(&dir, &arch, model_io::DEFAULT_MAX_BYTES)
+        .expect("a gpt-oss install's manifest must load");
+
+    // THE ASSERTION THIS TEST EXISTS FOR: six roles per expert, not three.
+    // The per-expert biases ride in the BLOB beside the weights they belong
+    // to, so the streamer reads one contiguous run per miss and the kernel
+    // never needs to know which expert a slot holds.
+    let layout = model_io::load_packed_experts_layout(&dir, model_io::DEFAULT_MAX_BYTES)
+        .expect("layout.json loads");
+    let layer0 = layout
+        .layers
+        .iter()
+        .find(|l| l.layer == 0)
+        .expect("layer 0 present");
+    let roles: Vec<&str> = layer0.experts[0]
+        .sub_tensors
+        .keys()
+        .map(String::as_str)
+        .collect();
+    for role in [
+        "gate",
+        "up",
+        "down",
+        "gate_biases",
+        "up_biases",
+        "down_biases",
+    ] {
+        assert!(
+            roles.contains(&role),
+            "expert blob is missing the `{role}` sub-tensor; got {roles:?}"
+        );
+    }
+
+    // AND THAT THE TWO BIAS WIDTHS ARE TOLD APART. On the real 20b `hidden`
+    // and the expert width are both 2880, so the file cannot distinguish a
+    // gate/up bias from a down bias; here they are 32 and 64.
+    // Sized in BYTES, and the biases ride F32 verbatim from the GGUF -- the
+    // routed blob is never transcoded, and `moe_gguf.metal` reads
+    // `device const float*` off `gate_b_off`.
+    let width = |role: &str| -> u64 {
+        layer0.experts[0]
+            .sub_tensors
+            .get(role)
+            .unwrap_or_else(|| panic!("{role} present"))
+            .size
+            / 4
+    };
+    assert_eq!(width("gate_biases"), shape.moe_intermediate);
+    assert_eq!(width("up_biases"), shape.moe_intermediate);
+    assert_eq!(
+        width("down_biases"),
+        shape.hidden,
+        "the down projection writes back to the residual stream, so its bias \
+         is `hidden` wide and not the expert width"
+    );
+
+    // The resident core carries the four projection biases and the sinks,
+    // narrowed to BF16 like any other F32 vector.
+    let index = model_io::load_resident_index(&dir.join("model_weights.bin"))
+        .expect("resident index reads");
+    for tail in [
+        "self_attn.q_proj.bias",
+        "self_attn.k_proj.bias",
+        "self_attn.v_proj.bias",
+        "self_attn.o_proj.bias",
+        "self_attn.sinks.weight",
+        "mlp.gate.bias",
+    ] {
+        let name = format!("language_model.model.layers.0.{tail}");
+        let entry = index
+            .entries
+            .get(&name)
+            .unwrap_or_else(|| panic!("{name} missing from the resident index"));
+        assert_eq!(
+            entry.dtype, DTYPE_BF16,
+            "{name} must narrow to BF16; no F32 reaches an install"
+        );
+    }
+    // One learned logit per QUERY head. A per-KV-head sink would be four
+    // times too short here and a wrong softmax denominator on the real file.
+    let sinks = &index.entries["language_model.model.layers.0.self_attn.sinks.weight"];
+    assert_eq!(sinks.size_bytes as u64, shape.num_heads * 2);
+}
