@@ -67,31 +67,82 @@ fn env_dir(key: &str) -> Option<PathBuf> {
     std::env::var_os(key).map(PathBuf::from)
 }
 
+/// Which install the dump walks, plus the family-specific framing the walk
+/// needs so its ids are the SAME sequence the family's quality gate scores.
+///
+/// The assistant prefix is bench crate Gotcha 13's: Harmony's assistant
+/// slot is structured, so the reference answer sits behind
+/// `<|channel|>final<|message|>` exactly as `reference_perplexity` places
+/// it. It is empty for the other families, and that is not an oversight --
+/// their templates open an assistant turn and then say words.
+///
+/// The date pin is Gotcha 14's: Harmony's template reads a clock, so an
+/// unpinned dump would encode a different prompt every day and never
+/// reproduce. Pinning to the gate's own date is also what lets the COLD
+/// dump reproduce the gate's frozen perplexity.
+struct DumpTarget {
+    install: PathBuf,
+    assistant_prefix: &'static str,
+    pinned_chat_date: Option<&'static str>,
+}
+
+fn resolve_target() -> Option<DumpTarget> {
+    let plain = |key: &str| {
+        env_dir(key).map(|install| DumpTarget {
+            install,
+            assistant_prefix: "",
+            pinned_chat_date: None,
+        })
+    };
+    plain("TURBOSPARK_GEMMA4_INSTALL_DIR")
+        .or_else(|| plain("TURBOSPARK_QWEN36_INSTALL_DIR"))
+        .or_else(|| plain("TURBOSPARK_QWEN3MOE_INSTALL_DIR"))
+        .or_else(|| {
+            env_dir("TURBOSPARK_GPTOSS_INSTALL_DIR").map(|install| DumpTarget {
+                install,
+                assistant_prefix: quality_common::HARMONY_ASSISTANT_PREFIX,
+                pinned_chat_date: Some(quality_common::GPTOSS_PINNED_CHAT_DATE),
+            })
+        })
+}
+
 #[test]
 #[ignore = "needs a real .gturbo install (TURBOSPARK_GEMMA4_INSTALL_DIR) and an output dir (TURBOSPARK_LOGIT_DUMP_DIR)"]
 fn dump_reference_logits() {
-    let (Some(install), Some(out)) = (
-        env_dir("TURBOSPARK_GEMMA4_INSTALL_DIR")
-            .or_else(|| env_dir("TURBOSPARK_QWEN36_INSTALL_DIR"))
-            .or_else(|| env_dir("TURBOSPARK_QWEN3MOE_INSTALL_DIR")),
-        env_dir("TURBOSPARK_LOGIT_DUMP_DIR"),
-    ) else {
+    let (Some(target), Some(out)) = (resolve_target(), env_dir("TURBOSPARK_LOGIT_DUMP_DIR")) else {
         eprintln!(
             "logit_dump: needs TURBOSPARK_GEMMA4_INSTALL_DIR (or \
-             TURBOSPARK_QWEN36_INSTALL_DIR, or TURBOSPARK_QWEN3MOE_INSTALL_DIR) \
-             and TURBOSPARK_LOGIT_DUMP_DIR; skipping."
+             TURBOSPARK_QWEN36_INSTALL_DIR, TURBOSPARK_QWEN3MOE_INSTALL_DIR, or \
+             TURBOSPARK_GPTOSS_INSTALL_DIR) and TURBOSPARK_LOGIT_DUMP_DIR; skipping."
         );
         return;
     };
-    dump(&install, &out);
+    // Before ANY render (one model per process, so this is the whole
+    // process's clock).
+    if let Some(date) = target.pinned_chat_date {
+        std::env::set_var(tokenizer::CHAT_DATE_ENV, date);
+        eprintln!("logit_dump: chat template date pinned to {date}");
+    }
+    dump(&target.install, &out, target.assistant_prefix);
 }
 
-fn dump(install: &Path, out: &Path) {
+fn dump(install: &Path, out: &Path, assistant_prefix: &str) {
     std::fs::create_dir_all(out).expect("create the dump directory");
     let (mut runner, tokenizer) =
         open_model_runner(install, PROTOCOL_EXPERT_CACHE_SLOTS).expect("real install should open");
 
-    let prompt_ids = quality_common::user_turn_ids(&tokenizer);
+    // The prefix counts as PROMPT, exactly as `reference_perplexity` scores
+    // it: `prompt_len` and `first_scored_position` move with it, so the
+    // first answer token keeps its meaning in the sidecar.
+    let mut prompt_ids = quality_common::user_turn_ids(&tokenizer);
+    if !assistant_prefix.is_empty() {
+        let prefix_ids = tokenizer.encode(assistant_prefix, false);
+        assert!(
+            !prefix_ids.is_empty(),
+            "a non-empty assistant prefix must tokenize"
+        );
+        prompt_ids.extend(&prefix_ids);
+    }
     let answer_ids = tokenizer.encode(quality_common::REFERENCE_ANSWER, false);
     assert!(!answer_ids.is_empty(), "the reference answer must tokenize");
     let mut ids = prompt_ids.to_vec();

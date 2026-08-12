@@ -104,6 +104,26 @@ use turbospark_bench::real_model::open_model_runner;
 /// perplexity number are then two readings of one forward pass.
 pub const REFERENCE_ANSWER: &str = include_str!("../../prompts/quality-v1/assistant-reference.txt");
 
+/// What a Harmony assistant turn opens with, after the generation prompt's
+/// trailing `<|start|>assistant`. The reference answer is a finished
+/// ANSWER, so it belongs in the `final` channel; the model would otherwise
+/// reason first. Shared by `gptoss_quality_gate.rs` and `logit_dump.rs` so
+/// the gate's perplexity and the dump's id walk are the SAME sequence --
+/// without it the assistant slot scores the model's surprise at prose
+/// instead of a channel marker and reads 148,421.76 (see
+/// [`reference_perplexity`]).
+pub const HARMONY_ASSISTANT_PREFIX: &str = "<|channel|>final<|message|>";
+
+/// The date every gpt-oss measurement renders under. Arbitrary but FIXED:
+/// Harmony's template writes `Current date: ` into its system preamble via
+/// `strftime_now`, so an unpinned digest or dump expires at midnight and
+/// reads as a numerics regression the next morning. Set
+/// `tokenizer::CHAT_DATE_ENV` to this BEFORE any render. The pin lives in
+/// the measurements rather than the renderer on purpose -- the renderer's
+/// job is to send what transformers, vLLM and llama.cpp send, the real
+/// date; only a frozen number needs determinism.
+pub const GPTOSS_PINNED_CHAT_DATE: &str = "2026-01-01";
+
 /// A recorded quality baseline for one chip and one install.
 ///
 /// Chip-keyed for the same reason the memory oracle's rows are: the GPU

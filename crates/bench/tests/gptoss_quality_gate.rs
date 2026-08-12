@@ -34,8 +34,9 @@
 mod quality_common;
 
 /// The date every measurement of this family renders under. Arbitrary but
-/// FIXED; see the module header for why it exists at all.
-const PINNED_CHAT_DATE: &str = "2026-01-01";
+/// FIXED; see the module header for why it exists at all. Shared with
+/// `logit_dump.rs` so the dump reproduces this gate's frozen numbers.
+const PINNED_CHAT_DATE: &str = quality_common::GPTOSS_PINNED_CHAT_DATE;
 
 /// What a Harmony assistant turn opens with, after the generation prompt's
 /// trailing `<|start|>assistant`.
@@ -44,8 +45,9 @@ const PINNED_CHAT_DATE: &str = "2026-01-01";
 /// channel; the model would otherwise reason first. Without this the gate
 /// scores the model's surprise that an assistant turn began with prose
 /// instead of a channel marker and reads 148,421.76 -- see
-/// `quality_common::reference_perplexity`.
-const HARMONY_ASSISTANT_PREFIX: &str = "<|channel|>final<|message|>";
+/// `quality_common::reference_perplexity`. Shared with `logit_dump.rs` so
+/// the gate's scored sequence and the dump's id walk are the same ids.
+const HARMONY_ASSISTANT_PREFIX: &str = quality_common::HARMONY_ASSISTANT_PREFIX;
 
 /// Per-chip rows for `gpt-oss-20b`, MOST SPECIFIC SUBSTRING FIRST.
 /// `quality_gate.rs` explains why a row cannot be written ahead of a run.
