@@ -107,7 +107,7 @@ port's registry" message rather than the "recognized, needs X" one.
 | **Llama 3 / 3.1 / 3.2 / 3.3, Llama 2, Mistral 7B** (`llama`, dense) | Standard Dense Transformer, GQA, RoPE frequency scaling (a TENSOR, `rope_freqs.weight`) | *Refused at open, by name* | *Planned* | Full Support | Full Support | *dense: whole model resident* |
 | **Qwen3-MoE 30B-A3B** (`qwen3moe`) | Plain GQA + per-head QK-norm, MoE (128 experts, top-8), no linear attention, no shared expert, untied head | **Full Support** | *Planned* | Full Support | Full Support | *MoE, keeps the ceiling* |
 | **Llama 4 Scout / Maverick** (`llama4`) | MoE with interleaved chunked attention | *Registered, planned* | *Planned* | Full Support | Full Support | *MoE, keeps the ceiling* |
-| **gpt-oss 20B / 120B** (`gpt-oss`) | MXFP4 experts, attention sinks | *Registered, planned* | *Planned* | Full Support | Full Support | *MoE, keeps the ceiling* |
+| **gpt-oss 20B / 120B** (`gpt-oss`) | MXFP4 experts, attention sinks, per-projection biases, YaRN, clamped SwiGLU | *Supported string; kernels landed, decode flow pending (ROADMAP M5)* | *Planned* | Full Support | Full Support | *MoE at 12.6 MiB per expert; 20B keeps the ceiling at 4.73 GiB of slot cache, 120B does not stream usefully* |
 | **Phi-3 / Phi-3.5** (`phi3`) | SuScaled (longrope) RoPE, dense FFN | *Registered, planned* | *Planned* | Full Support | Full Support | *dense: whole model resident* |
 | **Command-R / Command-R+** (`command-r`) | RAG / Tool-calling tuned architecture | *Planned* | *Planned* | Full Support | Full Support | *TBD* |
 | **Grok-1** (`grok`) | 314B MoE architecture (8 experts, top-2) | *Planned* | *Planned* | Full Support | Full Support | *TBD* |

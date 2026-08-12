@@ -572,16 +572,34 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
    `dequant_q8_0_gemv_simd`, `dequant_q4_k_gemv_simd` and
    `dequant_q6_k_gemv_simd` (GGUF Q8_0, Q4_K and Q6_K, each also with a
    resident variant), `embed_lookup_q8_0` and `embed_lookup_q4_k`, and
-   `moe_gguf.metal`'s two routed-expert decode pairs
-   (`moe_phase1_gate_up_act_{q8_0,q4_k}` +
-   `moe_phase2_down_reduce_k8_{q8_0,q4_k}`), all port-local because Swift
-   has no GGUF intake. Q6_K has a GEMV and no siblings on purpose: the only
-   real file using it puts it in `output.weight`. Then
+   `moe_gguf.metal`'s three routed-expert decode pairs
+   (`moe_phase1_gate_up_act_{q8_0,q4_k,mxfp4}` +
+   `moe_phase2_down_reduce_k8_{q8_0,q4_k,mxfp4}`), all port-local because
+   Swift has no GGUF intake. Q6_K has a GEMV and no siblings on purpose:
+   the only real file using it puts it in `output.weight`. MXFP4 is the
+   MIRROR of that (ROADMAP M5): both routed phases and NO resident GEMV,
+   because `gpt-oss` puts it in `ffn_*_exps` and nowhere else. Its pair
+   also carries gpt-oss's expert MATH, not just its block layout -- the
+   clamped SwiGLU (`min(gate, limit)`, a swish with `alpha`, times
+   `(clamp(up) + 1)`) and the per-expert biases -- selected by
+   `Mxfp4Activation` as a UNIFORM rather than a function constant, since
+   `moe_gguf.rs`'s `constants_key` is one byte wide and a second
+   specialization axis that misses the key silently reuses the wrong
+   pipeline (Gotcha 18's trap, one file over). Then
    `router_gemv_gemma4_r4`,
    two-pass split-KV `attention_decode` (multi-chunk, split up to 16 ways by
-   `chunks_for`), `moe_decode` decode pair, all eight of `gdn.metal`'s
-   gated-DeltaNet kernels, and
-   `utility` elementwise kernels including the port-local `scalar_mul_fp16`
+   `chunks_for`, and since ROADMAP M5 optionally folding gpt-oss's
+   ATTENTION SINKS into the combine pass -- one learned logit per q head
+   added to the softmax DENOMINATOR and to nothing else, behind
+   `FC_ATTN_HAS_SINKS`, whose byte is in `attention_constants_key`),
+   `moe_decode` decode pair, all eight of `gdn.metal`'s
+   gated-DeltaNet kernels, the port-local `rope_neox_freqs` (M5's YaRN: a
+   PRECOMPUTED per-pair frequency table plus a magnitude scale, because
+   the three older rope kernels derive every frequency from a scalar theta
+   and YaRN is not expressible that way), and
+   `utility` elementwise kernels including the port-local `scalar_mul_fp16`,
+   the port-local `bias_add_bf16_fp16` (M5: a separate pass rather than a
+   bias argument on seven GEMV kernels and four families' dispatch sites)
    and Qwen's three gating kernels)
    are compiled from vendored MSL source at
    runtime, matching how Mference itself builds pipelines. `MetalContext::pipeline`
@@ -657,7 +675,14 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     `real_forward_qwen.rs` + `real_forward_qwen_attn.rs` (gated DeltaNet
     on mask-2 layers, gated full attention on mask-1, one post-attention
     norm feeding router + shared + routed, no sandwich norms, no softcap);
-    `DeepseekV4Flash` is refused. Within `Gemma4`, naming picks: synthetic
+    `DeepseekV4Flash` is refused, and so is `GptOss` -- ROADMAP M5 landed
+    that family's baseline, name table and all four of its kernel-level
+    differences (biases, attention sinks, YaRN, the clamped SwiGLU), but
+    not the flow that assembles them, so `open()` refuses BY NAME and says
+    which four things are missing rather than falling through to a
+    neighbour's flow. Every one of those four produces fluent wrong output
+    rather than an error, which is why the refusal is explicit.
+    Within `Gemma4`, naming picks: synthetic
     short names (`layer0.q_proj`) get
     the plain no-scale flow in `real_forward.rs`; verbatim
     real-checkpoint names (`language_model.model.layers.0...`, what
@@ -1055,16 +1080,39 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     the partition is its candidate's rather than a symmetry: IQ3_XXS and
     IQ4_XS have a routed phase 1 (gate/up) and IQ4_NL a routed phase 2
     (down), because that is where the real file puts each, and all three have
-    a resident GEMV. Q4_0 has nothing and is refused. The two gates are
-    independent on purpose, and each reads a different thing.
-    `model_io::validate_quant` reads the manifest's `ggmlType` against
-    `model_io::EXECUTABLE_GGUF_TYPES`; `RealForwardRunner::open` reads the
-    resident index's dtype TAGS against its own copy of that set, which is
-    the backstop for a hand-edited manifest and believes the bytes rather
-    than the claim. Both directions are asserted
-    (`crates/runtime/tests/gguf_install_refused.rs`, which also decodes),
-    so widening the set means landing kernels, not editing a list: the two
-    lists have to move together or one of those tests reddens.
+    a resident GEMV. Q4_0 has nothing and is refused.
+    ROADMAP M5 ADDS MXFP4 ON A FOOTING THAT IS NARROW IN A NEW DIRECTION:
+    BOTH routed phases and NO resident GEMV and no embedding lookup, where
+    Q5_K and Q6_K are the reverse. That is `gpt-oss-20b-MXFP4.gguf`'s own
+    shape rather than a choice -- it puts MXFP4 in
+    `ffn_{gate,up,down}_exps` and keeps attention, `token_embd` and
+    `output` at Q8_0 -- so the usual three-kernels-per-type rule cost two.
+    The two gates are independent on purpose, and each reads a different
+    thing. `model_io::validate_quant` reads the manifest's per-SLOT
+    `ggmlType` against `model_io::EXECUTABLE_GGUF_TYPES`;
+    `RealForwardRunner::open` reads the resident index's dtype TAGS against
+    `EXECUTABLE_GGUF_DTYPES`, which is the backstop for a hand-edited
+    manifest and believes the bytes rather than the claim. Both directions
+    are asserted (`crates/runtime/tests/gguf_install_refused.rs`, which
+    also decodes), so widening either means landing kernels rather than
+    editing a list.
+    **THE TWO LISTS ARE TWINS AND NOT COPIES, AND MXFP4 IS THE FIRST TYPE
+    TO SHOW IT.** This gotcha used to say they "have to move together or
+    one of those tests reddens", which held while every type was executable
+    in both senses and is not a rule. They answer different questions:
+    "does this type have the kernels its SLOT needs" against "can this
+    TENSOR be dispatched". MXFP4 is executable in the first sense and not
+    the second, so `"mxfp4"` joins `EXECUTABLE_GGUF_TYPES` and its tag 14
+    does NOT join `EXECUTABLE_GGUF_DTYPES` -- an install with MXFP4
+    attention passes the manifest gate and is stopped by the backstop,
+    which is the layering working rather than a leak. Both halves are
+    asserted on one install by
+    `mxfp4_is_refused_as_a_resident_tensor_though_its_experts_run`.
+    A related drift the same phase found: `GGUF_BLOCK_DTYPES`, the list the
+    backstop tests membership of FIRST, had been one behind the writer
+    since Q5_K landed in M2, so a resident Q5_K tensor was invisible to it.
+    Harmless while Q5_K was executable, and exactly what a bare-literal
+    list invites; it is spelled out of the named constants now.
     A MIXED file is the case a Gemma GGUF cannot exercise, and it is the
     normal one: `Q4_K_M` means Q4_K experts and embedding, Q8_0 attention and
     shared experts, one Q6_K tensor. So the block type has to be read PER

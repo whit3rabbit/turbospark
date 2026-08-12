@@ -31,7 +31,7 @@ cargo clippy --workspace --tests
 | Crate | Covers |
 | --- | --- |
 | `core` | Runtime-config allowed sets and their panicking setters, chunk-size resolution. |
-| `compute` | CPU reference kernels (RmsNorm, WHT, RoPE, causal attention, int4/int8 quant + GEMV, embedding, MoE FFN, softcap-softmax). These are the numerical ground truth the GPU is checked against. |
+| `compute` | CPU reference kernels (RmsNorm, WHT, RoPE incl. YaRN frequency tables, causal attention with and without sinks, int4/int8 quant + GEMV, the GGUF block-quant and codebook references incl. MXFP4, embedding, MoE FFN, softcap-softmax). These are the numerical ground truth the GPU is checked against. |
 | `invocation` | Argument parsing: outcomes, ordering, failures, defaults, usage text, exit status. Pure, no I/O. |
 | `selection` | Sampling contract: shaping, truncation, penalty, choose. |
 | `window-fit` | Conversation-window turn dropping. |
@@ -44,6 +44,37 @@ cargo clippy --workspace --tests
 | `repack` | Safetensors parsing, quantization, `.gturbo` assembly round-tripped through every `model-io` loader, install verification. |
 | `server` | OpenAI-compatible endpoint shapes, full-response and SSE, the `--model` argument parser, and (gated) the real `RealForwardRunner` backend end to end. |
 | `bench` | Protocol constants and footer format, the memory sampler, and the binary's black-box output. Its gated targets carry the quality axis: per-install perplexity and golden digests, the damage-sensitivity proof, and the logit dump feeding the cross-engine KLD. |
+
+### `gpt-oss`: kernels tested, flow not yet written (ROADMAP M5)
+
+The family's four kernel-level differences each have a parity target, and
+each is held against a reference **written out from ggml's own source
+rather than called from this port** -- a formula compared against this
+port's copy of it establishes only that the copy was self-consistent,
+which is exactly the failure a new family risks.
+
+| target | proves |
+| --- | --- |
+| `gpu/tests/moe_gguf_parity.rs` | the MXFP4 unpack against `dequantize_mxfp4`, and separately gpt-oss's expert MATH (clamped SwiGLU, per-expert biases) against `ggml_compute_forward_swiglu_oai_f32`. The two are separate cases so neither hides the other. |
+| `gpu/tests/attention_sinks.rs` | the sink term against `causal_attention_with_sinks`, at sinks negligible, comparable and dominant relative to the real scores. |
+| `gpu/tests/rope_yarn_parity.rs` | the YaRN frequency table against ggml's `rope_yarn` restated inline, plus the ramp boundaries and that `mscale` is not 1.0. |
+| `compute/tests/quant_gguf_mxfp4.rs` | the MXFP4 codebook and E8M0 scale against a ggml oracle, by `==`, over all 256 exponent bytes. |
+| `runtime/tests/gguf_install_refused.rs` | that an MXFP4 install opens and decodes, and that the SAME type is refused as a resident tensor -- the two executable-type gates disagreeing on purpose. |
+| `repack/tests/gguf_checkpoint_network.rs` (ignored) | that all 459 real tensor names map and the derived `ArchConfig` equals the baseline, off the header and before any download. |
+
+**Two mutations in this set are documented as UNOBSERVABLE rather than
+claimed**, which is the honest form when a test cannot see something.
+Dropping MXFP4's subnormal-exponent branch leaves everything green because
+`e = 0` and `e = 1` stand for ~1e-39, which cannot survive a dot product
+rounded to FP16 (the `compute` oracle is what pins those two). And omitting
+the attention sink from the running maximum is a numerical-STABILITY guard,
+not a correctness one -- softmax is invariant to the choice of maximum, and
+wherever the omission would overflow, the sink already dominates and both
+answers are ~0.
+
+There is no end-to-end test of the gpt-oss LAYER, because
+`crates/runtime/src/families/gptoss/` does not exist yet. The fixture that
+does exist is Gemma-shaped with gpt-oss's block types.
 
 ### The plain-GQA-plus-MoE flow: the `llama` and `qwen3moe` families
 

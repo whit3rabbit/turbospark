@@ -851,18 +851,38 @@ live network).
   compressed (3/4) layers outright, whose kernels are unported — so
   Gemma 4 and Qwen 3.6 both pass while DeepSeek-V4-Flash remains blocked
   on DSV4.
-  **The `llama` family (ROADMAP Phase M2) is wired for the MoE half of its
-  architecture string ONLY, and that split is deliberate rather than
-  unfinished.** `general.architecture = "llama"` is both Mixtral and dense
+  **The `llama` family (ROADMAP Phase M2) was wired for the MoE half of
+  its architecture string only, and ROADMAP M4 CLOSED THAT SPLIT.**
+  `general.architecture = "llama"` is both Mixtral and dense
   Llama 2/3.x/Mistral, and nothing in the string says which a file is --
-  only `expert_count` does. Mixtral-style checkpoints run end to end
-  (real published Q4_K_M walked, both smokes coherent); a dense install is
-  REFUSED at `open()` by name, because it has no routed experts to stream
-  and the current dense FFN path bridges to CPU, so running it would
-  abandon the memory result this engine exists for and be slow for a
-  reason no user could see. Landing dense means a GPU dense-FFN path plus
-  RoPE frequency scaling, which Llama 3.1+ ships as a TENSOR
-  (`rope_freqs.weight`) rather than as metadata.
+  only `expert_count` does. Both halves now run: Mixtral-style checkpoints
+  through the routed path, and dense ones through `families/llama/dense.rs`
+  (`mlp.gate_proj` / `mlp.up_proj` / `silu_mul` / `mlp.down_proj`, all
+  through `encode_gemv_any`, no new kernel), with real published Mistral
+  7B and TinyLlama installs and coherent smokes. A dense install does NOT
+  keep the memory ceiling and never could -- nothing streams -- so its
+  parity row says so. What is still refused by name is a checkpoint
+  shipping `rope_freqs.weight`, Llama 3.1's LEARNED per-dimension RoPE
+  scaling: dropping it yields a model wrong only past the training length,
+  which no smoke test reaches. ROADMAP M5's `rope_neox_freqs` is the kernel
+  shape that would take it, and nothing wires it up.
+  **`gpt-oss` (ROADMAP M5) is the current scaffolded-not-wired family, and
+  the split is between KERNELS and FLOW rather than between halves of an
+  architecture.** Landed and parity-tested: `ModelFamily::GptOss` with its
+  baseline and name table, the MXFP4 routed pair (the first block type here
+  with BOTH routed phases and no resident GEMV), per-projection biases
+  (`bias_add_bf16_fp16`), attention sinks in the split-KV combine pass,
+  YaRN rope scaling (`yarn_frequencies` + `rope_neox_freqs`), and the
+  clamped SwiGLU with per-expert biases inside the MXFP4 phase-1 kernel.
+  NOT landed: `crates/runtime/src/families/gptoss/`, which assembles them,
+  and the Harmony stop set. `RealForwardRunner::open` therefore refuses the
+  family BY NAME and lists those four, rather than falling through to a
+  neighbouring flow -- each of them produces fluent WRONG output rather
+  than an error, which is the failure mode `crates/runtime/CLAUDE.md`
+  Gotcha 11 exists for. No real install has been walked; the fixture that
+  exists (`SyntheticGgufShape::mxfp4()`) is Gemma-shaped with gpt-oss's
+  block types, so it proves the routed pair dispatches inside a forward
+  pass and nothing about the gpt-oss layer.
   A separate caveat that is about the CHECKPOINT rather than the port:
   Mixtral is a COARSE MoE (8 experts of 108.9 MiB against Gemma's 128 of
   ~3.2 MiB), and the expert slot cache is `slots x layers x expert_stride`,
