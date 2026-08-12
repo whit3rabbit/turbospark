@@ -42,6 +42,9 @@ pub(crate) fn encode_moe_phase1_any(
         RoutedBlobLayout::GgufIq4Xs => gpu::encode_moe_phase1_iq4_xs(
             context, pass, routed, offsets, x, acts, d_dim, f_dim, top_k, use_silu,
         ),
+        RoutedBlobLayout::GgufMxfp4 => gpu::encode_moe_phase1_mxfp4(
+            context, pass, routed, offsets, x, acts, d_dim, f_dim, top_k, use_silu,
+        ),
         RoutedBlobLayout::Affine => gpu::encode_moe_phase1(
             context, pass, routed, offsets, x, acts, d_dim, f_dim, top_k, use_silu,
         ),
@@ -81,6 +84,9 @@ pub(crate) fn encode_moe_phase2_any(
             context, pass, routed, offsets, acts, routing_w, residual, y, d_dim, f_dim, use_silu,
         ),
         RoutedBlobLayout::GgufIq4Nl => gpu::encode_moe_phase2_iq4_nl(
+            context, pass, routed, offsets, acts, routing_w, residual, y, d_dim, f_dim, use_silu,
+        ),
+        RoutedBlobLayout::GgufMxfp4 => gpu::encode_moe_phase2_mxfp4(
             context, pass, routed, offsets, acts, routing_w, residual, y, d_dim, f_dim, use_silu,
         ),
         RoutedBlobLayout::Affine => gpu::encode_moe_phase2(

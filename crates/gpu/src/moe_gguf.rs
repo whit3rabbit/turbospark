@@ -47,6 +47,32 @@ const SOURCE: &str = concat!(
 const ROWS_PER_THREADGROUP: u64 = 8;
 const THREADS_PER_GROUP: u64 = 256;
 
+/// Elements per MXFP4 block. Mirrors
+/// `turbospark_compute::MXFP4_BLOCK_ELEMS`; held equal by
+/// `crates/gpu/tests/moe_gguf_parity.rs` rather than by an import, as every
+/// other block type's pair of constants is.
+///
+/// These live HERE, and not in a `dequant_mxfp4_gemv.rs` beside the six other
+/// block types', because MXFP4 has no resident GEMV: the only real file
+/// carrying it (`gpt-oss-20b-MXFP4.gguf`) puts it in `ffn_*_exps` and nowhere
+/// else, so this module is its sole consumer.
+pub const MXFP4_BLOCK_ELEMS: usize = 32;
+/// Bytes per MXFP4 block: one E8M0 exponent byte then 16 nibble-packed
+/// indices. ODD, unlike every other block type here, which is why the kernel
+/// reads bytes and never a `ushort`.
+pub const MXFP4_BLOCK_BYTES: usize = 17;
+
+/// Bytes in one MXFP4 row of `n` elements.
+#[must_use]
+pub fn mxfp4_row_bytes(n: usize) -> usize {
+    assert_eq!(
+        n % MXFP4_BLOCK_ELEMS,
+        0,
+        "N ({n}) is not a whole number of {MXFP4_BLOCK_ELEMS}-element blocks"
+    );
+    n / MXFP4_BLOCK_ELEMS * MXFP4_BLOCK_BYTES
+}
+
 /// Phase 1 over Q4_K expert blobs: for each of `top_k` slots,
 /// `acts[slot * f_dim + f] = activation(gate_f(x)) * up_f(x)`.
 ///
@@ -284,6 +310,77 @@ pub fn encode_moe_phase2_q6_k(
         context,
         pass,
         "moe_phase2_down_reduce_k8_q6_k",
+        routed,
+        offsets,
+        acts,
+        routing_w,
+        residual,
+        y,
+        d_dim,
+        f_dim,
+        use_silu,
+    )
+}
+
+/// Phase 1 over MXFP4 expert blobs (ROADMAP M5), which is what `gpt-oss`
+/// streams. Unlike every other type here MXFP4 has NO resident GEMV and no
+/// embedding lookup, because that file puts it in `ffn_*_exps` and nowhere
+/// else; see `moe_gguf.metal`'s MXFP4 header.
+///
+/// `d_dim` must be a whole number of 32-element blocks, as for Q8_0.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_moe_phase1_mxfp4(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    routed: &RoutedBlobsBuffer,
+    offsets: &MoeExpertOffsets,
+    x: (&metal::Buffer, u64),
+    acts: (&metal::Buffer, u64),
+    d_dim: u32,
+    f_dim: u32,
+    top_k: u32,
+    use_silu: bool,
+) -> Result<(), GpuError> {
+    assert_eq!(d_dim as usize % MXFP4_BLOCK_ELEMS, 0);
+    assert!(top_k as usize <= crate::moe_decode::MAX_STREAMED_EXPERTS);
+    encode_phase1(
+        context,
+        pass,
+        "moe_phase1_gate_up_act_mxfp4",
+        routed,
+        offsets,
+        x,
+        acts,
+        d_dim,
+        f_dim,
+        top_k,
+        use_silu,
+    )
+}
+
+/// Phase 2 over MXFP4 expert blobs, reducing all eight slots unconditionally
+/// (see the vendored sibling's contract).
+///
+/// `f_dim` must be a whole number of 32-element blocks.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_moe_phase2_mxfp4(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    routed: &RoutedBlobsBuffer,
+    offsets: &MoeExpertOffsets,
+    acts: (&metal::Buffer, u64),
+    routing_w: (&metal::Buffer, u64),
+    residual: (&metal::Buffer, u64),
+    y: (&metal::Buffer, u64),
+    d_dim: u32,
+    f_dim: u32,
+    use_silu: bool,
+) -> Result<(), GpuError> {
+    assert_eq!(f_dim as usize % MXFP4_BLOCK_ELEMS, 0);
+    encode_phase2(
+        context,
+        pass,
+        "moe_phase2_down_reduce_k8_mxfp4",
         routed,
         offsets,
         acts,

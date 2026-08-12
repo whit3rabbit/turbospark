@@ -159,9 +159,10 @@ pub use moe_decode::{
 };
 #[cfg(target_os = "macos")]
 pub use moe_gguf::{
-    encode_moe_phase1_iq3_xxs, encode_moe_phase1_iq4_xs, encode_moe_phase1_q4_k,
-    encode_moe_phase1_q8_0, encode_moe_phase2_iq4_nl, encode_moe_phase2_q4_k,
-    encode_moe_phase2_q6_k, encode_moe_phase2_q8_0,
+    encode_moe_phase1_iq3_xxs, encode_moe_phase1_iq4_xs, encode_moe_phase1_mxfp4,
+    encode_moe_phase1_q4_k, encode_moe_phase1_q8_0, encode_moe_phase2_iq4_nl,
+    encode_moe_phase2_mxfp4, encode_moe_phase2_q4_k, encode_moe_phase2_q6_k,
+    encode_moe_phase2_q8_0, mxfp4_row_bytes, MXFP4_BLOCK_BYTES, MXFP4_BLOCK_ELEMS,
 };
 #[cfg(target_os = "macos")]
 pub use power_state::{low_power_mode_enabled, thermal_state_raw};

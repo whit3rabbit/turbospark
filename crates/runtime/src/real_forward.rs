@@ -276,10 +276,14 @@ impl RealForwardRunner {
         if let Some(entry) = index.entries.values().find(|e| {
             GGUF_BLOCK_DTYPES.contains(&e.dtype) && !EXECUTABLE_GGUF_DTYPES.contains(&e.dtype)
         }) {
+            // The message names the RESIDENT question, not a global one: a
+            // type can have routed kernels and no GEMV (MXFP4 does), so
+            // "has no kernel in this port" was about to become false while
+            // the refusal stayed correct.
             return Err(RealForwardError::Unsupported(format!(
-                "tensor {} carries GGUF block dtype {}, which has no kernel in this port \
-                 (ROADMAP Phase G Stage 2; executable so far: Q8_0, Q4_K, Q6_K)",
-                entry.name, entry.dtype
+                "tensor {} carries GGUF block dtype {}, which has no RESIDENT kernel in this \
+                 port (ROADMAP Phase G Stage 2; resident-executable tags: {:?})",
+                entry.name, entry.dtype, EXECUTABLE_GGUF_DTYPES
             )));
         }
 

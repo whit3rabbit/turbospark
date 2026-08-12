@@ -46,6 +46,19 @@ pub enum QuantMix {
     /// before this one had. Needs [`SyntheticGgufShape::iq_mixed`]'s
     /// dimensions.
     Iq,
+    /// What ROADMAP M5's `gpt-oss` does with its block types: MXFP4 routed
+    /// experts over a Q8_0 everything-else. The first mixture whose expert
+    /// type has NO resident GEMV, which is the property this fixture exists
+    /// to exercise -- the manifest gate must let it through on the routed
+    /// slot while the resident dtype backstop would refuse the same type on
+    /// an attention tensor. Needs [`SyntheticGgufShape::mxfp4`]'s dimensions.
+    ///
+    /// It carries none of gpt-oss's FLOW differences (biases, sinks, YaRN,
+    /// the clamped SwiGLU): this is a Gemma-shaped install with gpt-oss's
+    /// block types, exactly as [`QuantMix::Iq`] is a Gemma-shaped install
+    /// with the Phase S candidate's. What it proves is that the MXFP4 pair
+    /// dispatches and decodes inside a whole forward pass.
+    Mxfp4,
 }
 
 impl Default for SyntheticGgufShape {
@@ -112,6 +125,24 @@ impl SyntheticGgufShape {
             moe_intermediate: 256,
             vocab: 256,
             mix: QuantMix::Iq,
+            ..Self::default()
+        }
+    }
+
+    /// ROADMAP M5's mixture, at the smallest dimensions its block types
+    /// allow.
+    ///
+    /// MXFP4's block is 32, so this needs NONE of the 256s the two mixtures
+    /// above do -- the default shape's dimensions almost all qualify. The one
+    /// that does not is `moe_intermediate`, which defaults to 16 and is a
+    /// routed row length; the same widening `k_quant` needs for a different
+    /// reason. Left at 32 rather than raised to 256 on purpose: a fixture
+    /// whose every dimension is the largest block in the file cannot catch a
+    /// kernel striding by the wrong one.
+    pub fn mxfp4() -> Self {
+        Self {
+            moe_intermediate: 32,
+            mix: QuantMix::Mxfp4,
             ..Self::default()
         }
     }
@@ -335,6 +366,8 @@ fn embed_tensor(
         // The Phase S candidate keeps `token_embd` at Q6_K and ties the head
         // to it, which is what made `embed_lookup_q6_k` worth writing.
         QuantMix::Iq => b.q6_k_tensor(name, dims, seed),
+        // gpt-oss keeps `token_embd` at Q8_0 and unties its head.
+        QuantMix::Mxfp4 => b.q8_0_tensor(name, dims, seed),
     }
 }
 
@@ -357,6 +390,9 @@ fn expert_tensor(
         (QuantMix::Iq, true, true) => b.iq_tensor(name, 23, dims, seed),
         (QuantMix::Iq, false, false) => b.iq_tensor(name, 20, dims, seed),
         (QuantMix::Iq, false, true) => b.q8_0_tensor(name, dims, seed),
+        // Both phases, every layer: gpt-oss is uniform in a way the two
+        // mixtures above deliberately are not.
+        (QuantMix::Mxfp4, _, _) => b.mxfp4_tensor(name, dims, seed),
     }
 }
 
@@ -373,6 +409,6 @@ fn attn_tensor(
 ) -> GgufBuilder {
     match s.mix {
         QuantMix::KQuant => b.q6_k_tensor(name, dims, seed),
-        QuantMix::Q8_0 | QuantMix::Iq => b.q8_0_tensor(name, dims, seed),
+        QuantMix::Q8_0 | QuantMix::Iq | QuantMix::Mxfp4 => b.q8_0_tensor(name, dims, seed),
     }
 }

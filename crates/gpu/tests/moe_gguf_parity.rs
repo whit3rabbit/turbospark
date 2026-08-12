@@ -33,13 +33,17 @@ enum Kind {
     Iq3Xxs,
     Iq4Xs,
     Iq4Nl,
+    /// ROADMAP M5. The only type here with BOTH phases and NEITHER a resident
+    /// GEMV nor an embedding lookup: `gpt-oss` puts MXFP4 in all three of
+    /// `ffn_{gate,up,down}_exps` and nowhere else at all.
+    Mxfp4,
 }
 
 impl Kind {
     /// Elements per block, which is the constraint on a row's length.
     fn block_elems(self) -> usize {
         match self {
-            Kind::Q8_0 | Kind::Iq4Nl => 32,
+            Kind::Q8_0 | Kind::Iq4Nl | Kind::Mxfp4 => 32,
             Kind::Q4K | Kind::Q6K | Kind::Iq3Xxs | Kind::Iq4Xs => 256,
         }
     }
@@ -78,18 +82,41 @@ impl Kind {
     /// largest representable weight just under 1.0, matching what the Q8_0 and
     /// Q4_K arms get from quantizing values in [-1, 1].
     fn synthetic_row(self, cols: usize, seed: u64) -> Vec<u8> {
-        let d: u16 = match self {
-            Kind::Iq3Xxs => 0x1800, // 2^-9;  max |w| = 7.75 * 62  * d = 0.94
-            Kind::Iq4Xs => 0x0C00,  // 2^-12; max |w| = 32   * 127 * d = 0.99
-            Kind::Iq4Nl => 0x2000,  // 2^-7;  max |w| =        127 * d = 0.99
-            other => unreachable!("{other:?} has a quantizer"),
-        };
         let mut state = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
         let mut byte = || {
             state = state
                 .wrapping_mul(6_364_136_223_846_793_005)
                 .wrapping_add(1);
             (state >> 33) as u8
+        };
+
+        // MXFP4's per-block scale is not an f16 at all: it is ONE byte, a bare
+        // E8M0 exponent standing for `2^(e - 128)`. So it cannot share the
+        // two-byte header the three IQ types below use, and its dynamic-range
+        // choice is an exponent rather than a bit pattern. `e = 124` is
+        // `2^-4`, and the codebook tops out at 12, so the largest
+        // representable weight is 0.75 -- the same "just under 1.0" the IQ
+        // rows aim for, landing lower because 12 is not a power of two.
+        if self == Kind::Mxfp4 {
+            // A one-byte slice rather than `push`, only because
+            // `clippy::same_item_push` reads a constant push in a loop as a
+            // mistake. The block header really is one fixed byte per block.
+            const EXPONENT: [u8; 1] = [124];
+            let mut out = Vec::new();
+            for _ in 0..cols / 32 {
+                out.extend_from_slice(&EXPONENT);
+                for _ in 0..16 {
+                    out.push(byte());
+                }
+            }
+            return out;
+        }
+
+        let d: u16 = match self {
+            Kind::Iq3Xxs => 0x1800, // 2^-9;  max |w| = 7.75 * 62  * d = 0.94
+            Kind::Iq4Xs => 0x0C00,  // 2^-12; max |w| = 32   * 127 * d = 0.99
+            Kind::Iq4Nl => 0x2000,  // 2^-7;  max |w| =        127 * d = 0.99
+            other => unreachable!("{other:?} has a quantizer"),
         };
         let (payload, per_block) = match self {
             // f16 d, then 16 nibble bytes.
@@ -118,6 +145,7 @@ impl Kind {
             Kind::Iq3Xxs => turbospark_compute::dequant_iq3_xxs_gemv(rows, x, n),
             Kind::Iq4Xs => turbospark_compute::dequant_iq4_xs_gemv(rows, x, n),
             Kind::Iq4Nl => turbospark_compute::dequant_iq4_nl_gemv(rows, x, n),
+            Kind::Mxfp4 => turbospark_compute::dequant_mxfp4_gemv(rows, x, n),
         }
     }
 }
@@ -183,6 +211,18 @@ const IQ4XS_MIX: Block = Block {
     gate_up: Kind::Iq4Xs,
     down: Kind::Q8_0,
     dims: (256, 96),
+};
+
+/// `gpt-oss` (ROADMAP M5): MXFP4 on BOTH phases, which no other type here
+/// manages -- Q6_K and IQ4_NL have only a phase 2, IQ3_XXS and IQ4_XS only a
+/// phase 1. `f_dim` is 96 rather than a multiple of 256 for the reason
+/// `IQ3_MIX`'s is: MXFP4's block is 32, and a harness that rounded both dims
+/// up to the largest block in the file would never notice a kernel striding
+/// by the wrong one.
+const MXFP4: Block = Block {
+    gate_up: Kind::Mxfp4,
+    down: Kind::Mxfp4,
+    dims: (64, 96),
 };
 
 fn deterministic_row(seed: u64, n: usize) -> Vec<f32> {
@@ -355,6 +395,7 @@ fn run_case(block: Block, use_silu: bool, top_k: usize) {
         Kind::Q4K => turbospark_gpu::encode_moe_phase1_q4_k,
         Kind::Iq3Xxs => turbospark_gpu::encode_moe_phase1_iq3_xxs,
         Kind::Iq4Xs => turbospark_gpu::encode_moe_phase1_iq4_xs,
+        Kind::Mxfp4 => turbospark_gpu::encode_moe_phase1_mxfp4,
         Kind::Iq4Nl => panic!("no IQ4_NL phase 1: no real file puts it in gate/up"),
         Kind::Q6K => panic!("no Q6_K phase 1: no real file puts it in gate/up"),
     };
@@ -363,6 +404,7 @@ fn run_case(block: Block, use_silu: bool, top_k: usize) {
         Kind::Q4K => turbospark_gpu::encode_moe_phase2_q4_k,
         Kind::Iq4Nl => turbospark_gpu::encode_moe_phase2_iq4_nl,
         Kind::Q6K => turbospark_gpu::encode_moe_phase2_q6_k,
+        Kind::Mxfp4 => turbospark_gpu::encode_moe_phase2_mxfp4,
         other => panic!("no {other:?} phase 2: no real file puts it in down"),
     };
     phase1(
@@ -490,4 +532,71 @@ fn the_silu_activation_constant_reaches_the_q6_k_kernel() {
 #[test]
 fn all_eight_q6_k_slots_participate() {
     run_case(Q4K_OVER_Q6K, false, MAX_STREAMED_EXPERTS);
+}
+
+/// ROADMAP M5's pair, on the shared body every other block type runs through.
+///
+/// The dims here (64 hidden, 96 ffn) are far below the real model's 2880 for
+/// both, deliberately: what a parity case can see is the LAYOUT, and the
+/// layout repeats every 32 elements. What it cannot see is a shape-dependent
+/// bug, which is what the synthetic install in
+/// `crates/runtime/tests/gguf_install_refused.rs` and then the real one are
+/// for.
+///
+/// MUTATION-CHECKED, four of the format's five traps: reading the two nibbles
+/// of a byte as ADJACENT elements, swapping which half each nibble serves,
+/// the plain E8M0 bias `2^(e - 127)`, and an affine `q - 8` read in place of
+/// the codebook. All four redden all three cases below.
+///
+/// THE FIFTH IS INVISIBLE FROM HERE AND THAT IS STRUCTURAL, NOT AN OMISSION.
+/// Dropping `mxfp4_scale_msl`'s subnormal branch (`e < 2`) leaves these tests
+/// GREEN, because the fixture's every block uses `e = 124` -- and widening it
+/// would not help, since `e = 0` and `e = 1` stand for ~1e-39, which
+/// contributes nothing to a dot product that is then rounded to FP16. No
+/// arrangement of this kernel can observe those two bytes. What pins them is
+/// `crates/compute/tests/quant_gguf_mxfp4.rs`, whose ggml-generated oracle
+/// sweeps all 256 exponent bytes and compares with `==`.
+#[test]
+fn the_mxfp4_decode_pair_matches_the_cpu_reference() {
+    run_case(MXFP4, false, 2);
+}
+
+/// `gpt-oss` is a SiLU-family model (its real activation is a swish with
+/// alpha, which is a FLOW property and lands with the family, not with the
+/// block type), so this is the combination its install will dispatch.
+#[test]
+fn the_silu_activation_constant_reaches_the_mxfp4_kernels() {
+    run_case(MXFP4, true, 2);
+}
+
+#[test]
+fn all_eight_mxfp4_slots_participate() {
+    run_case(MXFP4, false, MAX_STREAMED_EXPERTS);
+}
+
+/// The two constants the MSL copy of the format restates, held against the
+/// crate that owns them.
+///
+/// `moe_gguf.metal` carries its own `kMxfp4Values` and `mxfp4_scale_msl`
+/// because there is no `dequant_mxfp4.metal` to borrow them from -- MXFP4 has
+/// no resident GEMV. A second copy of a codebook is exactly how two call
+/// sites come to disagree, and unlike an arithmetic reconstruction there is
+/// no formula a reader could check the second copy against. The parity cases
+/// above would catch a WRONG value; this catches the pair of constants
+/// drifting while both remain self-consistent.
+#[test]
+fn the_msl_side_agrees_with_the_crate_that_owns_the_format() {
+    assert_eq!(
+        turbospark_gpu::MXFP4_BLOCK_ELEMS,
+        turbospark_compute::MXFP4_BLOCK_ELEMS
+    );
+    assert_eq!(
+        turbospark_gpu::MXFP4_BLOCK_BYTES,
+        turbospark_compute::MXFP4_BLOCK_BYTES
+    );
+    // 17 bytes is ODD, which no other block type here is, and it is why the
+    // kernel reads `uint8_t` throughout: a row of an odd number of blocks
+    // starts at an odd offset, where an `as_type<half>` would be misaligned.
+    assert_eq!(turbospark_gpu::MXFP4_BLOCK_BYTES % 2, 1);
+    assert_eq!(turbospark_gpu::mxfp4_row_bytes(96), 51);
 }

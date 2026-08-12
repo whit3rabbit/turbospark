@@ -428,3 +428,170 @@ kernel void moe_phase2_down_reduce_k8_q6_k(
         y[d] = half(acc);
     }
 }
+
+// ---------------------------------------------------------------------------
+// The MXFP4 pair (ROADMAP M5, the `gpt-oss` family). PORT-LOCAL like every
+// kernel in this file.
+//
+// TWO KERNELS, NOT THREE, and for once the asymmetry is not a judgement call
+// about what a real file asks for: `gpt-oss-20b-MXFP4.gguf` puts MXFP4 in
+// `ffn_gate_exps`, `ffn_up_exps` and `ffn_down_exps` and NOWHERE ELSE. Its
+// attention, `token_embd` and `output` are all Q8_0, so there is no resident
+// GEMV and no embedding lookup to write, and a file that wanted one would
+// fail at the dispatch site by name like Q6_K's and the IQ trio's do.
+//
+// The row unpack is written HERE rather than borrowed, because unlike Q4_K,
+// Q6_K and the IQ types there is no `dequant_mxfp4.metal` to borrow it from --
+// nothing else in this port decodes MXFP4. The contract it is held to is
+// `turbospark_compute::dequantize_mxfp4`, by
+// `crates/gpu/tests/moe_gguf_parity.rs`.
+//
+// FOUR THINGS ARE SILENTLY WRONG IF CARRIED OVER FROM A NEIGHBOUR BY HABIT,
+// and they are the same four `quant_gguf_mxfp4.rs` lists for the CPU side:
+//
+//  1. The nibbles of a byte are 16 elements apart, not adjacent. Byte j
+//     serves elements j and j + 16 (IQ4_NL's split-half layout, the opposite
+//     of the K-quant habit). Reading them adjacent gives a correctly-scaled
+//     PERMUTATION, which correlates well and is wrong.
+//  2. The codebook is not affine. Index 8 is a SECOND ZERO, not `-0.5`, so a
+//     `q - 8` read gets every magnitude past index 4 wrong.
+//  3. The scale is `2^(e - 128)`, not `2^(e - 127)`. ggml applies the
+//     E8M0-to-fp32 "half" variant because its codebook is the FP4 grid scaled
+//     by two; the plain bias doubles every weight in the model.
+//  4. `e = 0` and `e = 1` land in the subnormal range of that encoding and
+//     ggml builds them by shifting a fixed pattern. ~1e-39 and unable to
+//     matter, and exactly the two an expression written from the common case
+//     gets wrong.
+//
+// ONE THING IS NEW TO THIS FILE RATHER THAN TO MXFP4: A 17-BYTE BLOCK MAKES
+// ROWS ODD-LENGTHED IN GENERAL, so a row pointer is not guaranteed to be even.
+// Every read below is `uint8_t` and there is no f16 scale to `as_type`, which
+// is what makes that free -- a `ushort` read copied in from the Q8_0 helper
+// next door would be misaligned on half the rows.
+// ---------------------------------------------------------------------------
+
+constant constexpr uint kMxfp4BlockElems = 32;
+constant constexpr uint kMxfp4BlockBytes = 17;
+
+// The FP4 codebook an MXFP4 index expands to. Mirrors
+// `turbospark_compute::MXFP4_VALUES`, which was RECOVERED FROM GGML rather
+// than transcribed; the parity test is what holds the two equal. Both zeros
+// are POSITIVE: ggml's `kvalues_mxfp4` is an int8 array and has no signed
+// zero, whatever the FP4 E2M1 encoding the format is named for would say.
+constant float kMxfp4Values[16] = {
+    0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 6.0f, 8.0f, 12.0f,
+    0.0f, -1.0f, -2.0f, -3.0f, -4.0f, -6.0f, -8.0f, -12.0f,
+};
+
+// The scale one E8M0 shared-exponent byte stands for. See trap 3 and 4 above.
+static inline float mxfp4_scale_msl(uint8_t e) {
+    const uint bits = (uint(e) < 2u) ? (0x00200000u << uint(e)) : ((uint(e) - 1u) << 23);
+    return as_type<float>(bits);
+}
+
+static inline uint mxfp4_row_bytes(uint n) {
+    return (n / kMxfp4BlockElems) * kMxfp4BlockBytes;
+}
+
+// One MXFP4 row dotted against `x`.
+//
+// ONE ELEMENT PER LANE, as for the IQ types and Q8_0 and unlike Q4_K (where a
+// lane owns a BYTE and therefore two elements 32 apart). Lane L owns element
+// L of each block, which is the LOW nibble of byte L when L < 16 and the HIGH
+// nibble of byte L - 16 otherwise. Two lanes therefore read the same byte and
+// take different halves of it, which costs nothing and keeps the element
+// index a plain `lane`.
+static inline float dequant_mxfp4_row_simd(
+    device const uint8_t* row,
+    device const half* x,
+    uint n,
+    uint lane
+) {
+    const uint n_blocks = n / kMxfp4BlockElems;
+    const uint half_elems = kMxfp4BlockElems / 2;
+    const uint byte_idx = (lane < half_elems) ? lane : (lane - half_elems);
+    const bool high = lane >= half_elems;
+
+    float acc = 0.0f;
+    for (uint b = 0; b < n_blocks; ++b) {
+        device const uint8_t* blk = row + b * kMxfp4BlockBytes;
+        const float d = mxfp4_scale_msl(blk[0]);
+        const uint8_t packed = blk[1 + byte_idx];
+        const uint q = high ? uint(packed >> 4) : uint(packed & 0x0Fu);
+        const float xv = float(x[b * kMxfp4BlockElems + lane]);
+        acc = fma(kMxfp4Values[q] * d, xv, acc);
+    }
+    return simd_sum(acc);
+}
+
+// Phase 1, MXFP4. Same dispatch as every sibling: one SIMD group per
+// (slot, f) row, eight rows per threadgroup, 256 threads.
+[[kernel, max_total_threads_per_threadgroup(256)]]
+kernel void moe_phase1_gate_up_act_mxfp4(
+    device const RoutedBlobs& routed          [[buffer(0)]],
+    constant ExpertOffsets&   routed_offsets  [[buffer(1)]],
+    device const half*        x               [[buffer(2)]],
+    device half*              acts            [[buffer(3)]],
+    constant uint&            D               [[buffer(4)]],
+    constant uint&            F               [[buffer(5)]],
+    constant uint&            top_k           [[buffer(6)]],
+    uint                      tg_idx          [[threadgroup_position_in_grid]],
+    uint                      sg_idx          [[simdgroup_index_in_threadgroup]],
+    uint                      lane            [[thread_index_in_simdgroup]]
+) {
+    constexpr uint rows_per_tg = 8;
+    const uint DD = moe_fc_d(D);
+    const uint FF = moe_fc_f(F);
+    const uint rowg = tg_idx * rows_per_tg + sg_idx;
+    if (rowg >= moe_fc_top_k(top_k) * FF) return;
+    const uint slot = rowg / FF;
+    const uint f = rowg % FF;
+
+    device const uint8_t* base = routed.blob[slot];
+    const ExpertOffsets re = routed_offsets;
+    const uint row_bytes = mxfp4_row_bytes(DD);
+    const float gate = dequant_mxfp4_row_simd(
+        base + re.gate_W_off + f * row_bytes, x, DD, lane);
+    const float up = dequant_mxfp4_row_simd(
+        base + re.up_W_off + f * row_bytes, x, DD, lane);
+    if (lane == 0) acts[slot * FF + f] = half(moe_hidden_activation(gate) * up);
+}
+
+// Phase 2, MXFP4. Reduces ALL EIGHT slots unconditionally, exactly like every
+// sibling, so an unused slot needs a zero routing weight, a valid blob
+// pointer, and a finite acts row (AGENTS.md Gotcha 8).
+[[kernel, max_total_threads_per_threadgroup(256)]]
+kernel void moe_phase2_down_reduce_k8_mxfp4(
+    device const RoutedBlobs& routed          [[buffer(0)]],
+    constant ExpertOffsets&   routed_offsets  [[buffer(1)]],
+    device const half*        acts            [[buffer(2)]],
+    device const half*        routing_w       [[buffer(3)]],
+    device const half*        residual        [[buffer(4)]],
+    device half*              y               [[buffer(5)]],
+    constant uint&            D               [[buffer(6)]],
+    constant uint&            F               [[buffer(7)]],
+    uint                      d               [[threadgroup_position_in_grid]],
+    uint                      sg_idx          [[simdgroup_index_in_threadgroup]],
+    uint                      lane            [[thread_index_in_simdgroup]]
+) {
+    threadgroup float partial[8];
+    const uint DD = moe_fc_d(D);
+    const uint FF = moe_fc_f(F);
+    if (d >= DD) return;
+
+    device const uint8_t* base = routed.blob[sg_idx];
+    const ExpertOffsets re = routed_offsets;
+    device const half* act_slot = acts + sg_idx * FF;
+
+    const float value = dequant_mxfp4_row_simd(
+        base + re.down_W_off + d * mxfp4_row_bytes(FF), act_slot, FF, lane);
+    if (lane == 0) partial[sg_idx] = float(routing_w[sg_idx]) * value;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    if (sg_idx == 0 && lane == 0) {
+        float acc = float(residual[d]);
+        acc += partial[0]; acc += partial[1]; acc += partial[2]; acc += partial[3];
+        acc += partial[4]; acc += partial[5]; acc += partial[6]; acc += partial[7];
+        y[d] = half(acc);
+    }
+}

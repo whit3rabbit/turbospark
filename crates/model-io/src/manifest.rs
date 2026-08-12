@@ -405,8 +405,19 @@ fn is_production_arch(expected: &ArchConfig) -> bool {
 /// resident GEMV, but there is no IQ4_NL phase 1 and no IQ3_XXS phase 2
 /// because no real file asks for either. That is the same weaker footing
 /// Q6_K stands on, and it fails the same way: at the dispatch site, by name.
-pub const EXECUTABLE_GGUF_TYPES: [&str; 7] = [
-    "q8_0", "q4_k", "q5_k", "q6_k", "iq3_xxs", "iq4_nl", "iq4_xs",
+///
+/// MXFP4 (ROADMAP M5, `gpt-oss`) joins on the narrowest footing yet, and it
+/// is narrow in a NEW DIRECTION: it has both routed phases and NO resident
+/// GEMV, where Q6_K and Q5_K have a resident GEMV and (almost) no routed
+/// kernels. That is the real file's shape rather than a choice -- the one
+/// checkpoint carrying MXFP4 puts it in `ffn_{gate,up,down}_exps` and keeps
+/// attention, `token_embd` and `output` at Q8_0. This list is what the
+/// manifest's per-slot `ggmlType` is read against, so MXFP4 belongs in it;
+/// `RealForwardRunner`'s `EXECUTABLE_GGUF_DTYPES`, which reads RESIDENT
+/// tensors, deliberately omits it, and its doc explains why the two are twins
+/// rather than copies.
+pub const EXECUTABLE_GGUF_TYPES: [&str; 8] = [
+    "q8_0", "q4_k", "q5_k", "q6_k", "iq3_xxs", "iq4_nl", "iq4_xs", "mxfp4",
 ];
 
 fn validate_quant(quant: &ManifestQuant) -> Result<(), ModelError> {

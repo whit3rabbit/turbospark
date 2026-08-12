@@ -8,7 +8,28 @@ use crate::real_forward_types::RealForwardError;
 /// this crate must not depend on repack, so the two are held equal by
 /// `crates/runtime/tests/gguf_install_refused.rs` exercising a real written
 /// install rather than by an import.
-pub(crate) const GGUF_BLOCK_DTYPES: [u8; 7] = [6, 7, 8, 9, 10, 11, 12];
+///
+/// IT HAD FALLEN ONE BEHIND THE WRITER AND THAT WEAKENED THE BACKSTOP: Q5_K
+/// (13) landed in `resident_writer` in ROADMAP M2 and never arrived here, so
+/// a resident tensor tagged 13 was not a "GGUF block dtype" as far as
+/// `RealForwardRunner::open` was concerned. It did no harm while Q5_K was
+/// executable -- the guard only fires on a type in this list and NOT in
+/// [`EXECUTABLE_GGUF_DTYPES`] -- but the whole point of the guard is to
+/// believe the bytes over the manifest, and a type missing here is one it
+/// cannot see. Add to both lists when the writer gains a tag. It is spelled
+/// out of the NAMED constants below rather than as bare literals for the same
+/// reason: a literal list is what let one go missing.
+pub(crate) const GGUF_BLOCK_DTYPES: [u8; 9] = [
+    DTYPE_GGUF_Q8_0,
+    DTYPE_GGUF_Q4_K,
+    DTYPE_GGUF_Q6_K,
+    DTYPE_GGUF_Q4_0,
+    DTYPE_GGUF_IQ3_XXS,
+    DTYPE_GGUF_IQ4_NL,
+    DTYPE_GGUF_IQ4_XS,
+    DTYPE_GGUF_Q5_K,
+    DTYPE_GGUF_MXFP4,
+];
 /// GGUF Q8_0: a resident GEMV, an embedding lookup, and a routed-expert
 /// decode pair.
 pub(crate) const DTYPE_GGUF_Q8_0: u8 = 6;
@@ -19,6 +40,10 @@ pub(crate) const DTYPE_GGUF_Q4_K: u8 = 7;
 /// `output.weight`. An install that put Q6_K in an expert or the embedding
 /// table would pass this gate and then fail at the dispatch site, by name.
 pub(crate) const DTYPE_GGUF_Q6_K: u8 = 8;
+/// GGUF Q4_0: parsed and installable, and the ONLY tag here with no kernel of
+/// any kind. It is what `gguf_install_refused.rs` forges an install to, so it
+/// belongs in [`GGUF_BLOCK_DTYPES`] and never in [`EXECUTABLE_GGUF_DTYPES`].
+pub(crate) const DTYPE_GGUF_Q4_0: u8 = 9;
 /// GGUF IQ3_XXS, IQ4_NL and IQ4_XS (ROADMAP Phase S). Each has a resident
 /// GEMV; on the routed path IQ3_XXS and IQ4_XS have a phase 1 and IQ4_NL a
 /// phase 2, which is the split the candidate checkpoint has and no more.
@@ -29,10 +54,30 @@ pub(crate) const DTYPE_GGUF_IQ4_XS: u8 = 12;
 /// Q4_K_M asks for -- it carries Q5_K on `attn_output` and its experts are
 /// Q4_K over Q6_K (ROADMAP Phase M2).
 pub(crate) const DTYPE_GGUF_Q5_K: u8 = 13;
+/// GGUF MXFP4 (ROADMAP M5, `gpt-oss`). The NARROWEST footing of any type
+/// here and the first with a routed pair but no resident GEMV: the only real
+/// file carrying it puts MXFP4 in `ffn_{gate,up,down}_exps` and keeps
+/// attention, `token_embd` and `output` at Q8_0. A tensor tagged MXFP4 in the
+/// RESIDENT index is therefore something no walk has ever written, and it
+/// fails at `encode_gemv_any` by name. The tag exists so this list and the
+/// writer's stay structurally parallel.
+pub(crate) const DTYPE_GGUF_MXFP4: u8 = 14;
 /// The executable subset of [`GGUF_BLOCK_DTYPES`], and the resident-index
 /// twin of `model_io::EXECUTABLE_GGUF_TYPES`. Grows only when a kernel plus
 /// its parity test land, and the two lists have to move together or
 /// `crates/runtime/tests/gguf_install_refused.rs` reddens.
+///
+/// "TWIN" IS NOT "COPY", AND MXFP4 IS THE FIRST TYPE TO SHOW THE DIFFERENCE.
+/// The two lists answer different questions: `model_io`'s reads the
+/// manifest's per-SLOT `ggmlType` and asks "does this type have the kernels
+/// its slot needs", while this one reads a RESIDENT tensor's dtype tag and
+/// asks "can this tensor be dispatched". MXFP4 is executable in the first
+/// sense (it has a routed pair) and not in the second (it has no resident
+/// GEMV at all, because the one real file carrying it puts it only in
+/// `ffn_*_exps`). So `"mxfp4"` joins `EXECUTABLE_GGUF_TYPES` and 14 does NOT
+/// join this list, and a hypothetical install with MXFP4 attention passes the
+/// manifest gate and is stopped here -- which is the layering working, not a
+/// leak.
 pub(crate) const EXECUTABLE_GGUF_DTYPES: [u8; 7] = [
     DTYPE_GGUF_Q8_0,
     DTYPE_GGUF_Q4_K,
@@ -65,6 +110,11 @@ pub(crate) enum RoutedBlobLayout {
     /// GGUF IQ4_NL, carrying 29 of the candidate's `ffn_down_exps`. Phase 2
     /// only.
     GgufIq4Nl,
+    /// GGUF MXFP4 (ROADMAP M5), which `gpt-oss` puts on ALL THREE routed
+    /// sub-tensors. BOTH phases, unlike the four partial rows around it, and
+    /// no resident GEMV, unlike every one of them -- that file keeps its
+    /// attention, embedding and head at Q8_0.
+    GgufMxfp4,
     /// GGUF Q6_K, carrying the `ffn_down_exps` of 16 of Mixtral 8x7B's 32
     /// layers while the other 16 are Q4_K (ROADMAP Phase M2). Phase 2 only,
     /// and the first type whose two layouts differ across LAYERS of one model
@@ -89,6 +139,7 @@ impl RoutedBlobLayout {
             "iq4_xs" => RoutedBlobLayout::GgufIq4Xs,
             "iq4_nl" => RoutedBlobLayout::GgufIq4Nl,
             "q6_k" => RoutedBlobLayout::GgufQ6K,
+            "mxfp4" => RoutedBlobLayout::GgufMxfp4,
             other => {
                 return Err(RealForwardError::Unsupported(format!(
                     "routed expert sub-tensor dtype {other} has no decode kernel in this port"

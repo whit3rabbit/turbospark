@@ -219,6 +219,54 @@ fn the_phase_s_iq_mixture_decodes() {
     decodes(SyntheticGgufShape::iq_mixed());
 }
 
+/// ROADMAP M5's block type, inside a whole forward pass.
+///
+/// What this adds over `crates/gpu/tests/moe_gguf_parity.rs`, which already
+/// holds the MXFP4 pair against the CPU reference: the parity test hands the
+/// kernels a hand-built blob at hand-chosen offsets, where this one makes the
+/// REPACK WALK produce the blob, the manifest and the layout, and then makes
+/// `RealForwardRunner` resolve a dispatch from them. Every hole the real files
+/// have exposed in this port was in that resolution rather than in a block
+/// format (`crates/repack/CLAUDE.md` Gotcha 5 lists four of them), and the
+/// cheapest place to find the next one is here rather than after a 12 GB
+/// stream.
+///
+/// It is also the first install whose expert type has NO resident GEMV, which
+/// is the asymmetry `EXECUTABLE_GGUF_TYPES` and `EXECUTABLE_GGUF_DTYPES` now
+/// differ over: this install has to OPEN (its routed slot names a type with a
+/// routed pair) while an MXFP4 attention tensor would still be refused.
+#[test]
+fn the_mxfp4_expert_mixture_decodes() {
+    decodes(SyntheticGgufShape::mxfp4());
+}
+
+/// The other half of that asymmetry, which no other block type can express:
+/// MXFP4 is executable in a routed slot and NOT as a resident tensor, so an
+/// install that moves it into the resident index must be refused even though
+/// the very same type decodes fine two lines above.
+///
+/// Retags the Q8_0 resident tensors rather than the routed blobs, because the
+/// routed experts are not IN the resident index -- which is precisely why one
+/// type can be executable in one place and not the other.
+#[test]
+fn mxfp4_is_refused_as_a_resident_tensor_though_its_experts_run() {
+    let (dir, arch) = gguf_install(SyntheticGgufShape::mxfp4());
+
+    let changed = retag_dtypes(&dir, 6, 14);
+    assert!(changed > 0, "the fixture carries no Q8_0 resident tensors");
+
+    let text = match RealForwardRunner::open(&dir, arch) {
+        Ok(_) => panic!("MXFP4 has no resident GEMV; a resident MXFP4 tensor must not open"),
+        Err(e) => e.to_string(),
+    };
+    assert!(
+        text.contains("RESIDENT kernel"),
+        "the refusal must say which kind of kernel is missing, got: {text}"
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// The offsets really are per layer, checked on the fixture rather than
 /// through the decode above. A resolve-once bug is not guaranteed to produce
 /// a NaN -- it reads valid bytes at the wrong place -- so the structural

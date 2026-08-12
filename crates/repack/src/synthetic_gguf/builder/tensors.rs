@@ -146,6 +146,47 @@ impl GgufBuilder {
         self.tensor(name, ggml_type, dims, data)
     }
 
+    /// Push an MXFP4 tensor (32-element blocks, 17 bytes each: one E8M0
+    /// exponent then sixteen nibble-packed indices) -- ROADMAP M5's
+    /// `gpt-oss`.
+    ///
+    /// Random valid code points like [`Self::iq_tensor`], and for the same
+    /// reason: MXFP4 stores an INDEX into a fixed table, every nibble value
+    /// is a legal index, and this port has no encoder. Its scale is not an
+    /// f16 at all, so it cannot share that helper's two-byte header.
+    ///
+    /// `e = 124` is `2^-4` and the codebook tops out at 12, so the largest
+    /// representable weight is 0.75. That is the same dynamic-range choice
+    /// the two helpers above document, made in the one unit MXFP4 offers: an
+    /// exponent. At `e = 128` the weights would reach 12 and a fixture
+    /// install would overflow FP16 well before the head.
+    pub fn mxfp4_tensor(self, name: &str, dims: &[u64], seed: u8) -> Self {
+        let elements: u64 = dims.iter().product();
+        assert!(
+            dims[0] % 32 == 0,
+            "{name}: rows of {} elements do not tile 32-element MXFP4 blocks",
+            dims[0]
+        );
+        let mut state = (seed as u64)
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1);
+        // `extend_from_slice` of a one-byte slice rather than `push`, only
+        // because `clippy::same_item_push` reads a constant push in a loop as
+        // a mistake. The block header really is one fixed byte per block.
+        const EXPONENT: [u8; 1] = [124];
+        let mut data = Vec::with_capacity((elements / 32 * 17) as usize);
+        for _ in 0..elements / 32 {
+            data.extend_from_slice(&EXPONENT);
+            for _ in 0..16 {
+                state = state
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(1);
+                data.push((state >> 33) as u8);
+            }
+        }
+        self.tensor(name, 39, dims, data)
+    }
+
     /// Push an F32 tensor whose every value is EXACTLY representable in
     /// BF16, which is what llama.cpp actually writes for norms: it upcasts
     /// tensors that were BF16 in the original checkpoint, so the low sixteen
