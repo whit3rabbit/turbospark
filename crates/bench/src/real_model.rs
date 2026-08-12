@@ -122,6 +122,45 @@ pub fn run_protocol_case_with_context(
     rate: RateControl,
     max_context: u32,
 ) -> Result<CaseResult, String> {
+    run_protocol_case_with_budget(
+        runner,
+        tokenizer,
+        case,
+        sampler,
+        rate,
+        max_context,
+        PROTOCOL_MAX_NEW,
+    )
+}
+
+/// [`run_protocol_case_with_context`] with the GENERATION BUDGET named too.
+///
+/// The second per-family parameter, and it exists for the same reason the
+/// first does: the protocol freezes the PROSE, and how many tokens a model
+/// spends answering it is the model's property, not the protocol's.
+///
+/// `gpt-oss` is what forced it (ROADMAP M5). Harmony puts the model's
+/// reasoning in an `analysis` channel BEFORE its answer, so the three cases
+/// need 818 / 1,780 / 1,211 tokens to reach `<|return|>` where every other
+/// family here finishes inside `PROTOCOL_MAX_NEW`. At 1,024 two of the three
+/// stop on `maxTokens`, which the oracle's validity gate refuses -- correctly,
+/// since a truncated run is not comparable to a completed one, and wrongly
+/// diagnosed, since nothing is broken. Raising the SHARED constant is not an
+/// option: it would let every other family's frozen row generate further and
+/// move peaks that are already published.
+///
+/// Read the budget with the number, as with the window: a peak measured at a
+/// larger budget saw more KV rows and more expert-slot warming.
+#[allow(clippy::too_many_arguments)]
+pub fn run_protocol_case_with_budget(
+    runner: &mut RealForwardRunner,
+    tokenizer: &MfTokenizer,
+    case: &ProtocolCase,
+    sampler: &mut AppMemorySampler,
+    rate: RateControl,
+    max_context: u32,
+    max_new: u32,
+) -> Result<CaseResult, String> {
     // Chat-format exactly as the CLI does: the dialect template renders
     // the turn markup (and its own <bos>, hence add_bos false).
     let messages = [Message::new(Role::User, case.content)];
@@ -139,7 +178,7 @@ pub fn run_protocol_case_with_context(
             Some(case.seed),
         )
         .map_err(|e| e.to_string())?,
-        max_new_tokens: PROTOCOL_MAX_NEW,
+        max_new_tokens: max_new,
         stop_strings: Vec::new(),
         extra_stop_tokens: Vec::new(),
         rate,

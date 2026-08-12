@@ -20,10 +20,9 @@ use runtime::StopReason;
 use turbospark_bench::memory::{chip_brand_string, AppMemorySampler};
 use turbospark_bench::protocol::{
     swift_footer, PROTOCOL_CASES, PROTOCOL_EXPERT_CACHE_SLOTS, PROTOCOL_MAX_CONTEXT,
+    PROTOCOL_MAX_NEW,
 };
-use turbospark_bench::real_model::{
-    open_model_runner_with_context, run_protocol_case_with_context,
-};
+use turbospark_bench::real_model::{open_model_runner_with_context, run_protocol_case_with_budget};
 
 pub struct ChipBaseline {
     pub brand_substr: &'static str,
@@ -52,6 +51,30 @@ pub fn run_oracle(dir: &Path, baselines: &[ChipBaseline], unknown_ceiling_mib: u
     run_oracle_at_context(dir, baselines, unknown_ceiling_mib, PROTOCOL_MAX_CONTEXT)
 }
 
+/// [`run_oracle_at_context`] with the GENERATION BUDGET named too.
+///
+/// The second per-family parameter. `gpt-oss` needs it: Harmony puts the
+/// model's reasoning in an `analysis` channel BEFORE the answer, so its three
+/// cases need 818 / 1,780 / 1,211 tokens to reach `<|return|>` and two of
+/// three stop on `maxTokens` at the shared 1,024 -- which the validity gate
+/// below refuses, correctly (a truncated run is not comparable) and for a
+/// reason that is not a defect. See `run_protocol_case_with_budget`.
+#[allow(dead_code)]
+pub fn run_oracle_at_context(
+    dir: &Path,
+    baselines: &[ChipBaseline],
+    unknown_ceiling_mib: u64,
+    max_context: u32,
+) {
+    run_oracle_with_budget(
+        dir,
+        baselines,
+        unknown_ceiling_mib,
+        max_context,
+        PROTOCOL_MAX_NEW,
+    )
+}
+
 /// [`run_oracle`] at a family-specific KV window.
 ///
 /// EVERY CEILING IS A CEILING AT ONE WINDOW, and on a dense install the
@@ -67,11 +90,12 @@ pub fn run_oracle(dir: &Path, baselines: &[ChipBaseline], unknown_ceiling_mib: u
 /// 3,444 tokens under Mistral's 32k vocab against 2,842 under
 /// Qwen3-30B-A3B's 152k, and `3444 + PROTOCOL_MAX_NEW > 4096`, so the case
 /// does not run and the `endOfTurn` gate below cannot be satisfied.
-pub fn run_oracle_at_context(
+pub fn run_oracle_with_budget(
     dir: &Path,
     baselines: &[ChipBaseline],
     unknown_ceiling_mib: u64,
     max_context: u32,
+    max_new: u32,
 ) {
     let brand = chip_brand_string();
     let baseline = brand
@@ -80,7 +104,7 @@ pub fn run_oracle_at_context(
     match baseline {
         Some(row) => eprintln!(
             "memory_oracle: chip {:?} -> ceiling {} MiB at {max_context} context, \
-             tok/s floor {} (source: {})",
+             {max_new} max_new, tok/s floor {} (source: {})",
             brand, row.footprint_ceiling_mib, row.tok_s_floor, row.source
         ),
         None => eprintln!(
@@ -98,22 +122,24 @@ pub fn run_oracle_at_context(
     let mut measured = Vec::new();
     for case in &PROTOCOL_CASES {
         // Frozen protocol: one discarded warmup, then the measured run.
-        run_protocol_case_with_context(
+        run_protocol_case_with_budget(
             &mut runner,
             &tokenizer,
             case,
             &mut sampler,
             Default::default(),
             max_context,
+            max_new,
         )
         .unwrap_or_else(|e| panic!("{} warmup failed: {e}", case.id));
-        let result = run_protocol_case_with_context(
+        let result = run_protocol_case_with_budget(
             &mut runner,
             &tokenizer,
             case,
             &mut sampler,
             Default::default(),
             max_context,
+            max_new,
         )
         .unwrap_or_else(|e| panic!("{} failed: {e}", case.id));
         eprintln!(
@@ -159,13 +185,14 @@ pub fn run_oracle_at_context(
     let mut growth = u64::MAX;
     let mut round = 0usize;
     while round < STEADY_STATE_ROUNDS && growth > STEADY_STATE_SLACK_BYTES {
-        run_protocol_case_with_context(
+        run_protocol_case_with_budget(
             &mut runner,
             &tokenizer,
             warm_case,
             &mut sampler,
             Default::default(),
             max_context,
+            max_new,
         )
         .unwrap_or_else(|e| panic!("{} replay failed: {e}", warm_case.id));
         let now = sampler.sample().expect("footprint sampling worked");

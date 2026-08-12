@@ -164,12 +164,26 @@ pub fn measure_perplexity(dir: &Path) -> f64 {
     let (mut runner, tokenizer) =
         open_model_runner(dir, PROTOCOL_EXPERT_CACHE_SLOTS).expect("install should open");
     let prompt_ids = user_turn_ids(&tokenizer);
-    reference_perplexity(&mut runner, &tokenizer, &prompt_ids)
+    // No prefix: the only caller is `quality_sensitivity.rs`, which measures
+    // a damaged Gemma clone against an undamaged one, and Gemma opens an
+    // assistant turn with words.
+    reference_perplexity(&mut runner, &tokenizer, &prompt_ids, "")
 }
 
 /// Run Phase Q's in-repo half against `dir` and assert what `rows` records
 /// for this chip.
 pub fn run_quality_gate(dir: &Path, rows: &[ChipQuality]) {
+    run_quality_gate_with_assistant_prefix(dir, rows, "")
+}
+
+/// [`run_quality_gate`] with the markup an assistant turn opens with, for a
+/// family whose assistant slot is structured. See [`reference_perplexity`].
+#[allow(dead_code)]
+pub fn run_quality_gate_with_assistant_prefix(
+    dir: &Path,
+    rows: &[ChipQuality],
+    assistant_prefix: &str,
+) {
     let brand = chip_brand_string();
     let row = brand
         .as_deref()
@@ -190,7 +204,7 @@ pub fn run_quality_gate(dir: &Path, rows: &[ChipQuality]) {
     let prompt_ids = user_turn_ids(&tokenizer);
 
     // 1. Perplexity of the reference answer in the assistant slot.
-    let perplexity = reference_perplexity(&mut runner, &tokenizer, &prompt_ids);
+    let perplexity = reference_perplexity(&mut runner, &tokenizer, &prompt_ids, assistant_prefix);
     eprintln!("quality_gate: reference-answer perplexity {perplexity:.4}");
 
     // 2. The two digests. Exactly 0.0 is the argmax fast path; 0.0001 is
@@ -328,14 +342,48 @@ pub fn user_turn_ids(tokenizer: &MfTokenizer) -> Vec<i32> {
 /// therefore assistant-side. `produce_prefill` must NOT be used anywhere
 /// here: it is allowed to skip the output head, which is the only thing
 /// this function reads.
+/// `assistant_prefix` is the markup an assistant turn must open with BEFORE
+/// its prose, for families whose assistant slot is structured rather than
+/// plain. It is scored as part of the prompt, never as a target: it is
+/// prepended to `prompt_ids` and `first_scored` moves with it, so the first
+/// scored token is still the first token of the reference ANSWER.
+///
+/// **EMPTY FOR FOUR OF THE FIVE FAMILIES, AND THAT IS NOT AN OVERSIGHT.**
+/// Gemma, ChatML, Mistral and Qwen all open an assistant turn and then say
+/// words, so splicing the reference straight in is exactly what the model was
+/// trained to see. Harmony does not: its generation prompt ends at
+/// `<|start|>assistant` and the very next token must be `<|channel|>`.
+///
+/// Measured 2026-08-12, and it is worth stating how large the effect is
+/// because it looks exactly like a broken model: with no prefix the gpt-oss
+/// install reads perplexity 148,421.76, against 6-38 for every other family
+/// and against 255,409 for the genuinely broken Qwen of `5279c88`. The
+/// generations were coherent throughout, which is the contradiction that
+/// gives it away -- a model that cannot predict its own output does not write
+/// fluent prose. What the number measured was the model's surprise that an
+/// assistant turn began with words instead of a channel marker, which is
+/// crate Gotcha 7's rule (score only positions the model was trained to
+/// predict) arriving from a direction that gotcha did not anticipate: not the
+/// wrong TOKENS, but the right tokens in a position the family's framing does
+/// not put them in.
 fn reference_perplexity(
     runner: &mut RealForwardRunner,
     tokenizer: &MfTokenizer,
     prompt_ids: &[i32],
+    assistant_prefix: &str,
 ) -> f64 {
     let answer_ids = tokenizer.encode(REFERENCE_ANSWER, false);
     assert!(!answer_ids.is_empty(), "the reference answer must tokenize");
     let mut ids = prompt_ids.to_vec();
+    if !assistant_prefix.is_empty() {
+        let prefix_ids = tokenizer.encode(assistant_prefix, false);
+        assert!(
+            !prefix_ids.is_empty(),
+            "a non-empty assistant prefix must tokenize"
+        );
+        ids.extend(&prefix_ids);
+    }
+    let prompt_ids = ids.clone();
     ids.extend(&answer_ids);
     assert!(
         ids.len() <= PROTOCOL_MAX_CONTEXT as usize,
