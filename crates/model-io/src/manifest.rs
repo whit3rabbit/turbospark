@@ -178,6 +178,17 @@ pub struct ManifestArch {
     /// SwiGLU activation clamp limit.
     #[serde(default)]
     pub swiglu_limit: Option<f64>,
+    /// YaRN rope scaling (ROADMAP M5, `gpt-oss`). Absent means no scaling,
+    /// which is what `RopeScalingConfig::NONE` says and what every family
+    /// before this one declares.
+    #[serde(default)]
+    pub rope_scaling_factor: Option<f64>,
+    #[serde(default)]
+    pub rope_scaling_original_context: Option<i64>,
+    #[serde(default)]
+    pub rope_scaling_beta_fast: Option<f64>,
+    #[serde(default)]
+    pub rope_scaling_beta_slow: Option<f64>,
 }
 
 /// Quantization parameters for a model component slot in `manifest.json`.

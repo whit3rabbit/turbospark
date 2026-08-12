@@ -32,6 +32,22 @@ pub enum ModelFamily {
     /// by `RealLlamaState`: it norms q and k PER HEAD before RoPE, and its
     /// RMS epsilon is 1e-6 where the `llama` architecture's is 1e-5.
     Qwen3Moe,
+    /// The `gpt-oss` GGUF architecture (ROADMAP M5), the third fine-grained
+    /// MoE and the FIFTH real family. Chosen by the M5 Phase 0 survey on
+    /// AGENTS.md Gotcha 36's axis: 12.6 MiB per expert against Llama 4
+    /// Scout's 77.8 and DeepSeek-V3's 34.5, both of which want tens of GiB
+    /// of slot cache and cannot stream here.
+    ///
+    /// Unlike [`ModelFamily::Qwen3Moe`] this is NOT another family on an
+    /// existing flow. Its layer differs from every flow here in four ways,
+    /// each a first for this port: per-projection BIASES on q/k/v/output and
+    /// on the router and every routed expert, ATTENTION SINKS (one learned
+    /// logit per q head, added to the softmax denominator only), YARN rope
+    /// scaling, and a CLAMPED SwiGLU whose activation is a swish with alpha
+    /// times `(up + 1)` rather than silu times `up`. Its alternating
+    /// 128-token sliding window is the one part that is free, because
+    /// Gemma's SWA ring already exists.
+    GptOss,
 }
 
 impl ModelFamily {
@@ -43,6 +59,7 @@ impl ModelFamily {
             ModelFamily::DeepseekV4Flash => "deepseekV4Flash",
             ModelFamily::Llama => "llama",
             ModelFamily::Qwen3Moe => "qwen3moe",
+            ModelFamily::GptOss => "gptOss",
         }
     }
 
@@ -54,8 +71,52 @@ impl ModelFamily {
             "deepseekV4Flash" => Some(ModelFamily::DeepseekV4Flash),
             "llama" => Some(ModelFamily::Llama),
             "qwen3moe" => Some(ModelFamily::Qwen3Moe),
+            "gptOss" => Some(ModelFamily::GptOss),
             _ => None,
         }
+    }
+}
+
+/// YaRN rope scaling, as `gpt-oss` declares it (ROADMAP M5). Zeroed for
+/// architectures that scale nothing, which is every other family here.
+///
+/// A grouped struct rather than four flat fields for the reason
+/// [`LinearAttentionConfig`] is one: the four values are meaningless apart,
+/// and one `NONE` in fifteen `ArchConfig` literals is less to get wrong than
+/// four zeros in each.
+///
+/// THE VALUES ARE READ FROM THE FILE, NOT ASSUMED. `gpt-oss` publishes
+/// `rope.scaling.{factor, original_context_length, yarn_beta_fast,
+/// yarn_beta_slow}`, so this is a metadata path rather than a baseline
+/// constant -- unlike the clamped SwiGLU's `alpha`, which llama.cpp
+/// hardcodes and which therefore lives in the baseline.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RopeScalingConfig {
+    /// YaRN's `factor`. The interpolation scale is its reciprocal. ZERO
+    /// means no scaling at all, which is what makes this struct's `NONE`
+    /// unambiguous -- 1.0 would read as "declared, and the identity".
+    pub factor: f64,
+    /// The context length the checkpoint was trained at, which is what the
+    /// correction dims are computed against.
+    pub original_context: i64,
+    /// YaRN's `beta_fast`, the high-frequency end of the correction ramp.
+    pub beta_fast: f64,
+    /// YaRN's `beta_slow`, the low-frequency end.
+    pub beta_slow: f64,
+}
+
+impl RopeScalingConfig {
+    /// No rope scaling, for the four families that declare none.
+    pub const NONE: RopeScalingConfig = RopeScalingConfig {
+        factor: 0.0,
+        original_context: 0,
+        beta_fast: 0.0,
+        beta_slow: 0.0,
+    };
+
+    /// Whether YaRN applies at all.
+    pub fn is_active(&self) -> bool {
+        self.factor > 0.0
     }
 }
 
@@ -251,6 +312,8 @@ pub struct ArchConfig {
     pub routed_scaling_factor: f64,
     /// Clamp for expert gate/up pre-activations. 0 = no clamp.
     pub swiglu_limit: f64,
+    /// YaRN rope scaling, or [`RopeScalingConfig::NONE`].
+    pub rope_scaling: RopeScalingConfig,
 }
 
 impl ArchConfig {

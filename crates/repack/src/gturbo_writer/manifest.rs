@@ -91,6 +91,23 @@ pub(crate) fn build_manifest_json(
             "linearKeyHeadDim": arch.linear_attention.key_head_dim,
             "linearValueHeadDim": arch.linear_attention.value_head_dim,
             "linearConvKernelSize": arch.linear_attention.conv_kernel_size,
+            // ROADMAP M5. `swigluLimit` was VALIDATED AND NEVER WRITTEN, and
+            // that was invisible for exactly as long as every writable
+            // family's value was the `unwrap_or(0.0)` fallback. `gpt-oss` is
+            // the first with a non-zero one (7.0), so an omitted field would
+            // have compared 0.0 against 7.0 and refused a correct install.
+            // Same species as the gotcha the block comment above describes,
+            // one field further along.
+            "swigluLimit": arch.swiglu_limit,
+            "ropeScalingFactor": arch.rope_scaling.factor,
+            "ropeScalingOriginalContext": arch.rope_scaling.original_context,
+            "ropeScalingBetaFast": arch.rope_scaling.beta_fast,
+            "ropeScalingBetaSlow": arch.rope_scaling.beta_slow,
+            // STILL VALIDATED AND NOT WRITTEN: `hcEps` and `hcMult`. They are
+            // DeepSeek-V4-Flash's, that family is refused at open because its
+            // kernels are unported, and no walk can produce such an install --
+            // so the hole is unreachable rather than fixed. It becomes real
+            // the day a DSV4 install can be written.
         },
         "quant": null,
         "files": files,

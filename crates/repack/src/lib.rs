@@ -4,6 +4,13 @@
 //! (the verifier) and the intent of the (unported, closed-source) HF
 //! streaming installer described in the ROADMAP.
 #![forbid(unsafe_code)]
+// `gturbo_writer::manifest`'s one `serde_json::json!` literal writes every
+// arch field, and each field is one level of macro recursion. ROADMAP M5's
+// five additions (`swigluLimit` plus the four YaRN scalars) took it past the
+// default 128. Raising the limit is serde_json's own documented answer; the
+// alternative is splitting the literal, which would hide the "written
+// UNCONDITIONALLY" rule that block comment exists to enforce.
+#![recursion_limit = "256"]
 
 mod arch_registry;
 mod gemma4_checkpoint;

@@ -335,3 +335,75 @@ fn deepseek_v4_is_refused() {
     assert_eq!(gguf_architecture(ModelFamily::DeepseekV4Flash), None);
     assert!(map_gguf_name("blk.0.attn_q.weight", ModelFamily::DeepseekV4Flash).is_err());
 }
+
+/// ROADMAP M5. Every row read off the real `gpt-oss-20b-MXFP4.gguf` header
+/// (`gguf_checkpoint_network.rs::scopes_phase_m5_gpt_oss_layer`), pinned here
+/// so the walk cannot lose one silently -- an unmapped name is refused, but a
+/// name mapped to the WRONG canonical target is not.
+#[test]
+fn maps_gpt_oss_attention_biases_and_sinks() {
+    let f = ModelFamily::GptOss;
+    let p = "language_model.model.layers.3.";
+    for (gguf, canonical) in [
+        ("attn_q.weight", "self_attn.q_proj.weight"),
+        ("attn_k.weight", "self_attn.k_proj.weight"),
+        ("attn_v.weight", "self_attn.v_proj.weight"),
+        ("attn_output.weight", "self_attn.o_proj.weight"),
+        // The four rows no other family has: every projection is biased.
+        ("attn_q.bias", "self_attn.q_proj.bias"),
+        ("attn_k.bias", "self_attn.k_proj.bias"),
+        ("attn_v.bias", "self_attn.v_proj.bias"),
+        ("attn_output.bias", "self_attn.o_proj.bias"),
+        // One learned logit per q head.
+        ("attn_sinks.weight", "self_attn.sinks.weight"),
+        ("attn_norm.weight", "input_layernorm.weight"),
+        // `post_attention_norm`, where `llama` and `qwen3moe` say `ffn_norm`.
+        (
+            "post_attention_norm.weight",
+            "post_attention_layernorm.weight",
+        ),
+        ("ffn_gate_inp.weight", "mlp.gate.weight"),
+        ("ffn_gate_inp.bias", "mlp.gate.bias"),
+    ] {
+        assert_eq!(
+            resident(&format!("blk.3.{gguf}"), f),
+            format!("{p}{canonical}"),
+            "{gguf}"
+        );
+    }
+}
+
+/// The per-expert biases go into the BLOB, under the three `*_biases` roles
+/// the INT4-affine layout already defines and every GGUF install so far has
+/// left empty.
+///
+/// This is the row most worth pinning, because the alternative spelling is
+/// silent rather than fatal: mapping them `Resident` would produce an install
+/// that writes every bias into `model_weights.bin`, opens, and decodes
+/// without them -- `MoeExpertOffsets`' bias fields would simply stay 0, which
+/// is what a blob with no biases looks like.
+#[test]
+fn gpt_oss_routes_its_per_expert_biases_into_the_blob() {
+    for (gguf, role) in [
+        ("ffn_gate_exps.weight", "gate"),
+        ("ffn_up_exps.weight", "up"),
+        ("ffn_down_exps.weight", "down"),
+        ("ffn_gate_exps.bias", "gate_biases"),
+        ("ffn_up_exps.bias", "up_biases"),
+        ("ffn_down_exps.bias", "down_biases"),
+    ] {
+        assert_eq!(
+            map_gguf_name(&format!("blk.7.{gguf}"), ModelFamily::GptOss).unwrap(),
+            GgufMapping::Routed { layer: 7, role },
+            "{gguf}"
+        );
+    }
+}
+
+/// gpt-oss does NOT fuse gate and up, so Gemma's fused tensor must not map
+/// for it -- the same guard `gemma4_fuses_gate_and_up_but_qwen_does_not`
+/// applies to Qwen.
+#[test]
+fn gpt_oss_does_not_take_gemmas_fused_expert_tensor() {
+    assert!(map_gguf_name("blk.0.ffn_gate_up_exps.weight", ModelFamily::GptOss).is_err());
+}

@@ -58,6 +58,7 @@ fn toy_dsv4_arch() -> model_io::ArchConfig {
         router_scoring_func: "sqrtsoftplus".to_string(),
         routed_scaling_factor: 1.0,
         swiglu_limit: 0.0,
+        rope_scaling: model_io::RopeScalingConfig::NONE,
     }
 }
 

@@ -77,6 +77,15 @@ const SUPPORTED_GGUF: &[(&str, ModelFamily)] = &[
     // Gotcha 36). Shares the `llama` decode flow; see `ModelFamily::Qwen3Moe`
     // for the two places they differ.
     ("qwen3moe", ModelFamily::Qwen3Moe),
+    // Promoted by ROADMAP M5 step 3, and PARTIALLY, on the same terms
+    // `llama` was: it has a baseline, a name table and a metadata mapping,
+    // and its DECODE FLOW is step 4. Until then `RealForwardRunner::open`
+    // refuses it by name and says which four things it needs. Promoting
+    // ahead of the flow is what lets `arch_from_gguf` derive an ArchConfig
+    // from the real header and be checked against the baseline, which is the
+    // cheapest place to catch a wrong shape -- M3 did the same and it is why
+    // that bring-up needed no second download.
+    ("gpt-oss", ModelFamily::GptOss),
 ];
 
 /// HF `config.json -> model_type` -> family, for the architectures that run.
@@ -123,22 +132,6 @@ const PLANNED_GGUF: &[(&str, PlannedArch)] = &[
             // Shard 1 of 12: a split GGUF puts the whole header in the first
             // shard, so this stays a header read like every other row.
             witness: "https://huggingface.co/unsloth/DeepSeek-V3-GGUF/resolve/main/DeepSeek-V3-Q6_K/DeepSeek-V3-Q6_K-00001-of-00012.gguf",
-        },
-    ),
-    // ROADMAP M5 Phase 0 WIDENED THIS CLAUSE. The original two items are
-    // real and are not the whole bill: this is the first checkpoint here
-    // whose projections carry BIASES (q/k/v/output, the router, and every
-    // routed expert), the first with YaRN RoPE scaling, and the first whose
-    // expert activation is not plain SwiGLU. It is also the only one of the
-    // three remaining planned MoE rows whose granularity works here --
-    // 12.6 MiB per expert, 4.73 GiB of slot cache at 16 slots over 9.5 GiB
-    // of experts -- which is why the clause is longer rather than shorter.
-    (
-        "gpt-oss",
-        PlannedArch {
-            needs: "an MXFP4 expert block type, attention sinks, per-projection biases, \
-                    YaRN RoPE scaling, and the clamped SwiGLU its experts use",
-            witness: "https://huggingface.co/ggml-org/gpt-oss-20b-GGUF/resolve/main/gpt-oss-20b-MXFP4.gguf",
         },
     ),
     (

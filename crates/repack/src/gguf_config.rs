@@ -103,6 +103,41 @@ impl Meta<'_> {
     }
 }
 
+/// `gpt-oss`'s alternating window (ROADMAP M5), derived rather than read.
+///
+/// This is the third spelling of "which layers slide" in this file and the
+/// only one the file does not state directly. Gemma ships a per-layer BOOL
+/// ARRAY; Qwen 3.6 a period; `gpt-oss` ships `attention.sliding_window` and
+/// NOTHING ELSE, and llama.cpp's loader supplies the rest: an absent
+/// `attention.sliding_window_pattern` means period 2, and
+/// `llama_hparams::set_swa_pattern(2, dense_first = false)` computes
+/// `is_swa[il] = (il % 2) < 1`. So EVEN layers slide.
+///
+/// AGENTS.md Gotcha 39's rule applies twice here. The default belongs to the
+/// FORMAT (llama.cpp's 2), not to a neighbouring family, and a file that DOES
+/// publish a period must be believed over it -- which is why the key is read
+/// rather than assumed even though the shipped checkpoints omit it. Getting
+/// the phase inverted yields a model wrong only past 128 tokens of context.
+fn gpt_oss_layer_mask(m: &Meta<'_>, num_layers: usize) -> Result<Vec<u8>, GgufConfigError> {
+    let window = m.i64("attention.sliding_window")?;
+    if window <= 0 {
+        return Err(GgufConfigError::BadValue {
+            key: m.key("attention.sliding_window"),
+            detail: format!("{window} is not a usable sliding window"),
+        });
+    }
+    let period = m.opt_i64("attention.sliding_window_pattern").unwrap_or(2);
+    if period < 1 {
+        return Err(GgufConfigError::BadValue {
+            key: m.key("attention.sliding_window_pattern"),
+            detail: format!("period {period} is not usable"),
+        });
+    }
+    Ok((0..num_layers)
+        .map(|i| u8::from(i as i64 % period >= period - 1))
+        .collect())
+}
+
 /// Layer kinds, matching `ArchConfig::full_attention_layer_mask`:
 /// 0 = sliding-window, 1 = full attention, 2 = gated-DeltaNet linear.
 fn gemma4_layer_mask(m: &Meta<'_>, num_layers: usize) -> Result<Vec<u8>, GgufConfigError> {
@@ -284,6 +319,7 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
         // Qwen3-MoE is the same story: no `attention.sliding_window` key on
         // the published file, every layer full attention.
         ModelFamily::Llama | ModelFamily::Qwen3Moe => vec![1u8; num_layers as usize],
+        ModelFamily::GptOss => gpt_oss_layer_mask(&m, num_layers as usize)?,
         ModelFamily::DeepseekV4Flash => {
             return Err(GgufConfigError::UnsupportedArchitecture {
                 architecture: architecture.to_string(),
@@ -322,6 +358,37 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
     }
     if let Some(theta) = m.opt_f64("rope.freq_base_swa") {
         arch.rope_theta = theta;
+    }
+
+    // YaRN (ROADMAP M5). Read only when the file says the scaling TYPE is
+    // yarn: `rope.scaling.factor` alone is ambiguous, since the same key
+    // carries linear scaling's factor and applying YaRN's ramp to it would
+    // be wrong in a way that is finite and fluent. Absent type means no
+    // scaling, which is `RopeScalingConfig::NONE`, which is what the
+    // baseline already holds for every other family.
+    if m.opt("rope.scaling.type").and_then(GgufValue::as_str) == Some("yarn") {
+        let key = m.key("rope.scaling.factor");
+        let factor = m
+            .opt_f64("rope.scaling.factor")
+            .ok_or(GgufConfigError::MissingKey { key: key.clone() })?;
+        if factor <= 0.0 {
+            return Err(GgufConfigError::BadValue {
+                key,
+                detail: format!("yarn factor {factor} is not usable"),
+            });
+        }
+        arch.rope_scaling = model_io::RopeScalingConfig {
+            factor,
+            original_context: m.opt_i64("rope.scaling.original_context_length").ok_or(
+                GgufConfigError::MissingKey {
+                    key: m.key("rope.scaling.original_context_length"),
+                },
+            )?,
+            // The two betas DO have llama.cpp defaults (32 and 1), so an
+            // absent one is not an error. gpt-oss publishes both.
+            beta_fast: m.opt_f64("rope.scaling.yarn_beta_fast").unwrap_or(32.0),
+            beta_slow: m.opt_f64("rope.scaling.yarn_beta_slow").unwrap_or(1.0),
+        };
     }
 
     if family == ModelFamily::Qwen36 {

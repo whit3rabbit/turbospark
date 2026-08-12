@@ -395,6 +395,20 @@ impl RealForwardRunner {
                     "the DeepSeek-V4-Flash family has no decode flow yet".to_string(),
                 ));
             }
+            // ROADMAP M5 step 3 lands the family; step 4 lands the flow.
+            // Refused BY NAME in between rather than falling through to a
+            // neighbour's flow, because `gpt-oss` differs from every existing
+            // one in four ways that each produce fluent wrong output rather
+            // than an error: per-projection biases, attention sinks, YaRN
+            // rope scaling, and a clamped SwiGLU.
+            model_io::ModelFamily::GptOss => {
+                return Err(RealForwardError::Unsupported(
+                    "the gpt-oss family has no decode flow yet; it needs per-projection \
+                     biases, attention sinks, YaRN rope scaling and a clamped SwiGLU \
+                     (ROADMAP M5 step 4). Bring-up checklist: docs/NEW_MODEL.md"
+                        .to_string(),
+                ));
+            }
         }
         Ok(runner)
     }

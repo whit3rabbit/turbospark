@@ -25,7 +25,7 @@ pub use arch_baselines::{
 };
 pub use arch_config::{
     ArchConfig, CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig,
-    ModelFamily,
+    ModelFamily, RopeScalingConfig,
 };
 pub use error::ModelError;
 pub use install_receipt::{

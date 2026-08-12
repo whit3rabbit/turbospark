@@ -48,7 +48,8 @@ fn routed_marker(family: ModelFamily) -> &'static str {
         ModelFamily::Gemma4
         | ModelFamily::DeepseekV4Flash
         | ModelFamily::Llama
-        | ModelFamily::Qwen3Moe => ".experts.switch_glu.",
+        | ModelFamily::Qwen3Moe
+        | ModelFamily::GptOss => ".experts.switch_glu.",
     }
 }
 

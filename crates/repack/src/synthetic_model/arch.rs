@@ -3,7 +3,7 @@
 use compute::quantize_int4_affine;
 use model_io::{
     ArchConfig, CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig,
-    ModelFamily,
+    ModelFamily, RopeScalingConfig,
 };
 
 use crate::resident_writer::ResidentTensorSpec;
@@ -60,6 +60,7 @@ pub fn tiny_gemma4_arch(vocab_size: i64, num_layers: i64) -> ArchConfig {
         router_scoring_func: "softmax".to_string(),
         routed_scaling_factor: 1.0,
         swiglu_limit: 0.0,
+        rope_scaling: RopeScalingConfig::NONE,
     }
 }
 

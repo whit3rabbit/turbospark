@@ -32,7 +32,7 @@
 
 use model_io::{
     ArchConfig, CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig,
-    ModelFamily,
+    ModelFamily, RopeScalingConfig,
 };
 
 use crate::gemma4_checkpoint::Gemma4Error;
@@ -163,5 +163,6 @@ pub fn parse_qwen36_config(json: &str) -> Result<ArchConfig, Gemma4Error> {
         router_scoring_func: "softmax".to_string(),
         routed_scaling_factor: 1.0,
         swiglu_limit: 0.0,
+        rope_scaling: RopeScalingConfig::NONE,
     })
 }

@@ -234,5 +234,30 @@ pub(crate) fn validate_arch(a: &ManifestArch, e: &ArchConfig) -> Result<(), Mode
         e.routed_scaling_factor
     );
     check!("swigluLimit", a.swiglu_limit.unwrap_or(0.0), e.swiglu_limit);
+    // ROADMAP M5. Each falls back to the "no scaling" value rather than to a
+    // neighbouring family's, which is AGENTS.md Gotcha 39's rule: a default
+    // is a claim about what SILENCE means, and silence here means the file
+    // declares no rope scaling. gpt-oss's four are 32.0 / 4096 / 32.0 / 1.0,
+    // all binary fractions, so Gotcha 24's f64 round-trip is not in play.
+    check!(
+        "ropeScalingFactor",
+        a.rope_scaling_factor.unwrap_or(0.0),
+        e.rope_scaling.factor
+    );
+    check!(
+        "ropeScalingOriginalContext",
+        a.rope_scaling_original_context.unwrap_or(0),
+        e.rope_scaling.original_context
+    );
+    check!(
+        "ropeScalingBetaFast",
+        a.rope_scaling_beta_fast.unwrap_or(0.0),
+        e.rope_scaling.beta_fast
+    );
+    check!(
+        "ropeScalingBetaSlow",
+        a.rope_scaling_beta_slow.unwrap_or(0.0),
+        e.rope_scaling.beta_slow
+    );
     Ok(())
 }

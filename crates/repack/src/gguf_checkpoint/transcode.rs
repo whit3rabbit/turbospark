@@ -21,7 +21,11 @@ fn int8_transcode_targets(family: ModelFamily) -> &'static [&'static str] {
         // Same canonical router name, same F32 source tensor. `qwen3moe`
         // additionally ships its q/k norms as F32, but those take the BF16
         // default: the runtime's `norm_view` reads BF16.
-        ModelFamily::Llama | ModelFamily::Qwen3Moe => &["mlp.gate.weight"],
+        // gpt-oss names its router `ffn_gate_inp` too, so it maps to the
+        // same canonical name and takes the same INT8 transcode. Its BIASES
+        // are F32 and are NOT here: they take the BF16 default, which is
+        // what a bias-add kernel reads.
+        ModelFamily::Llama | ModelFamily::Qwen3Moe | ModelFamily::GptOss => &["mlp.gate.weight"],
         ModelFamily::DeepseekV4Flash => &[],
     }
 }

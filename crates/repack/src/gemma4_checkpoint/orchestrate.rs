@@ -351,7 +351,10 @@ pub fn manifest_quant(quant: &Gemma4Quant, family: ModelFamily) -> serde_json::V
             format!("{l0}.mlp.gate_proj"),
             format!("{l0}.experts.switch_glu.gate_proj"),
         ),
-        ModelFamily::Gemma4 | ModelFamily::DeepseekV4Flash => (
+        // gpt-oss has no safetensors path at all (it is GGUF-only here), so
+        // it never reaches this probe; grouped with the families whose names
+        // it shares rather than given an arm that cannot run.
+        ModelFamily::Gemma4 | ModelFamily::DeepseekV4Flash | ModelFamily::GptOss => (
             format!("{l0}.self_attn.q_proj"),
             format!("{l0}.router.proj"),
             format!("{l0}.mlp.gate_proj"),

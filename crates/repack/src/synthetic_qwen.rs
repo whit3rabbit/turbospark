@@ -20,7 +20,7 @@
 
 use model_io::{
     ArchConfig, CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig,
-    ModelFamily,
+    ModelFamily, RopeScalingConfig,
 };
 
 use crate::gemma4_checkpoint::{write_qwen36_install, Gemma4Quant};
@@ -108,6 +108,7 @@ pub fn tiny_qwen36_arch(vocab_size: i64, num_layers: i64, num_experts: i64) -> A
         router_scoring_func: "softmax".to_string(),
         routed_scaling_factor: 1.0,
         swiglu_limit: 0.0,
+        rope_scaling: RopeScalingConfig::NONE,
     }
 }
 

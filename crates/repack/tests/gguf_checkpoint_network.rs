@@ -1162,3 +1162,94 @@ fn scopes_phase_m5_gpt_oss_layer() {
         "the routed experts stopped being MXFP4, which is the whole of step 2"
     );
 }
+
+/// ROADMAP M5 step 3: the derived config against the declared baseline, and
+/// every real tensor name against the table.
+///
+/// THE CHEAPEST PLACE A WRONG BASELINE CAN BE CAUGHT, and the reason this
+/// runs before the 12 GB stream rather than after it. M3 did the same and
+/// needed no second download; M4 skipped it for the manifest slots and paid
+/// two five-minute re-streams, one per slot.
+///
+/// It also exercises the half of `gguf_names.rs` a unit test structurally
+/// cannot: a fixture only ever contains names its author already knew, so a
+/// tensor the real converter emits and this port has never heard of shows up
+/// here or nowhere.
+#[test]
+#[ignore = "network: reads the real gpt-oss-20b GGUF header (a few MB)"]
+fn gpt_oss_header_derives_the_declared_baseline() {
+    let h = try_fetch(GPT_OSS_20B_MXFP4).expect("gpt-oss-20b header");
+
+    let mut unmapped = Vec::new();
+    for name in h.tensors.keys() {
+        if turbospark_repack::map_gguf_name(name, ModelFamily::GptOss).is_err() {
+            unmapped.push(name.clone());
+        }
+    }
+    assert!(
+        unmapped.is_empty(),
+        "{} of {} real gpt-oss tensors have no mapping: {:?}",
+        unmapped.len(),
+        h.tensors.len(),
+        &unmapped[..unmapped.len().min(12)]
+    );
+    println!("   all {} tensor names map", h.tensors.len());
+
+    let derived = turbospark_repack::arch_from_gguf(&h).expect("arch from gguf");
+    let declared = model_io::known_architecture(ModelFamily::GptOss);
+
+    // Field by field rather than a struct compare, so a mismatch names the
+    // field instead of printing two 40-field structs side by side.
+    assert_eq!(derived.family, ModelFamily::GptOss);
+    assert_eq!(derived.num_layers, declared.num_layers, "num_layers");
+    assert_eq!(derived.hidden_size, declared.hidden_size, "hidden_size");
+    assert_eq!(derived.num_heads, declared.num_heads, "num_heads");
+    assert_eq!(derived.num_kv_heads, declared.num_kv_heads, "num_kv_heads");
+    assert_eq!(derived.head_dim, declared.head_dim, "head_dim");
+    assert_eq!(derived.vocab_size, declared.vocab_size, "vocab_size");
+    assert_eq!(derived.num_experts, declared.num_experts, "num_experts");
+    assert_eq!(derived.top_k_experts, declared.top_k_experts, "top_k");
+    assert_eq!(
+        derived.moe_intermediate_size, declared.moe_intermediate_size,
+        "moe_intermediate_size"
+    );
+    assert_eq!(
+        derived.sliding_window, declared.sliding_window,
+        "sliding_window"
+    );
+    assert_eq!(derived.rope_theta, declared.rope_theta, "rope_theta");
+    assert_eq!(
+        derived.tie_word_embeddings, declared.tie_word_embeddings,
+        "tie_word_embeddings"
+    );
+    assert_eq!(
+        derived.rope_scaling, declared.rope_scaling,
+        "the YaRN scalars are the one metadata path M5 added; a mismatch here \
+         is the phase's own new code being wrong"
+    );
+
+    // THE MASK IS THE ONE FIELD NEITHER SIDE READS DIRECTLY. The file
+    // publishes a window and no pattern, so both sides DERIVE the alternation
+    // from llama.cpp's default period of 2. Asserting it against the baseline
+    // alone would compare two copies of the same assumption, so the shape is
+    // spelled out here too.
+    assert_eq!(
+        derived.full_attention_layer_mask, declared.full_attention_layer_mask,
+        "layer mask"
+    );
+    assert_eq!(
+        derived.full_attention_layer_mask[0], 0,
+        "layer 0 must slide"
+    );
+    assert_eq!(derived.full_attention_layer_mask[1], 1, "layer 1 must not");
+    assert_eq!(
+        derived
+            .full_attention_layer_mask
+            .iter()
+            .filter(|&&m| m == 0)
+            .count(),
+        12,
+        "half of 24 layers slide"
+    );
+    println!("   derived ArchConfig equals the gpt_oss_20b() baseline");
+}

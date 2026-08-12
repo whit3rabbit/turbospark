@@ -48,6 +48,7 @@ fn qwen_style_arch() -> model_io::ArchConfig {
         router_scoring_func: "softmax".to_string(),
         routed_scaling_factor: 1.0,
         swiglu_limit: 0.0,
+        rope_scaling: model_io::RopeScalingConfig::NONE,
     }
 }
 
