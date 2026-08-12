@@ -898,9 +898,10 @@ expire at midnight and read as a numerics regression the next morning. The
 renderer itself uses the real clock, matching transformers, vLLM and
 llama.cpp -- only the measurement asks for determinism.
 
-NOT DONE and deliberate: no cross-engine KL against llama.cpp on the same
-bytes (which is what would settle the YaRN `mscale` and the sink's exact
-placement end to end, neither of which any fixture here can see), and no
+The cross-engine KL HAS since been run and passed (2026-08-12, the
+"Cross-engine: llama.cpp on the same GGUF, `gpt-oss`" section below):
+0.00978 mean nats at 97.5% top-1, under the backend floor, which settles
+the YaRN `mscale` and the sink placement. Still not done: the
 `scripts/power.sh` capture.
 
 ## Batched verify and speculative decoding

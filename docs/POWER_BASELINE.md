@@ -147,6 +147,50 @@ binary. Cross-session energy drift measured here is a few percent with no
 consistent sign (Gotcha 22 in AGENTS.md); the effect is 100-140%. No
 interleaved same-binary A/B could plausibly close that gap.
 
+## Qwen3-30B-A3B (`qwen3moe`): the M3 capture
+
+Measured 2026-08-12 on AC, `~/models/qwen3moe-gguf.gturbo`, same protocol,
+same interval, 2 measured pairs per case after a discarded warmup, rev
+`b964d0b`, all runs `stop=endOfTurn`, no thermal-pressure exclusions,
+drift -0.7 s over a 1,364 s span. Raw capture: `/tmp/power-qwen3moe/`.
+This closes the family's last Definition-of-Done item (ROADMAP M3).
+
+Decode:
+
+| install | case | tok/s | watts | J/token | cpu W | gpu W |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Qwen3-30B-A3B Q4_K_M | short-explanation | 25.10 | 20.78 | 0.7811 | 4.98 | 15.79 |
+| Qwen3-30B-A3B Q4_K_M | medium-review | 21.20 | 19.79 | 0.9031 | 5.51 | 14.27 |
+| Qwen3-30B-A3B Q4_K_M | long-synthesis | 15.57 | 21.99 | 1.4004 | 3.94 | 18.05 |
+
+Prefill:
+
+| install | case | watts | J/prompt token |
+| --- | --- | ---: | ---: |
+| Qwen3-30B-A3B Q4_K_M | short-explanation | 19.93 | 0.9431 |
+| Qwen3-30B-A3B Q4_K_M | medium-review | 17.77 | 0.8397 |
+| Qwen3-30B-A3B Q4_K_M | long-synthesis | 20.56 | 1.0493 |
+
+**J/token is roughly double the two MLX-install families' (0.78-1.40
+against Gemma's 0.38-0.50 and Qwen 3.6's 0.35-0.43), and the driver is
+throughput, not watts.** Power sits at 20-22 W, between Gemma's 16.7-17.8
+and the 3-bit install's 25-27, while decode runs 15.6-25.1 tok/s against
+their 34-41. Same energy shape as every family: J/token grows with
+context because tok/s falls, not because watts rise.
+
+**Prefill is the energy story on the long case.** `long-synthesis`
+prefills 2,842 tokens for ~146 s at ~20.6 W, so its prefill window costs
+2,982 J against its decode window's 466 J -- 86% of the case's measured
+energy is prompt processing. That is the descoped sequential-prefill gap
+(one forward pass per prompt token) showing up on the joules axis; on the
+faster-decoding families the same gap exists but the split is less
+lopsided.
+
+One spread observation, noted rather than excluded: `medium-review` p2's
+prefill wall clock read 27.5 s against 16.1 s (p1) and 15.5 s (warmup) at
+similar watts. This is a single-arm baseline rather than an A/B, so no
+conclusion turns on it; the prefill row averages both pairs.
+
 ## Battery, and what differs
 
 Battery rows are partial: they exclude runs whose thermal pressure left
