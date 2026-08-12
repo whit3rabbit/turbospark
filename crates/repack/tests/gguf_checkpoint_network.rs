@@ -1069,3 +1069,96 @@ fn scopes_phase_m5_moe_candidates() {
          picked its target on this number"
     );
 }
+
+/// ROADMAP M5 step 0: the gpt-oss layer, read off the real header rather than
+/// off llama.cpp's graph builder.
+///
+/// The graph builder settles what the layer COMPUTES (and it does: the
+/// clamped-SwiGLU constants `alpha = 1.702` / `limit = 7.0` are hardcoded
+/// there, not carried in metadata). What it cannot settle is what this
+/// FILE declares, and that is the half a bring-up plans from: which YaRN
+/// scalars are present, whether the SWA layers get their own rope base, and
+/// what dtype the biases arrive in. Every one of those has a wrong answer
+/// that produces a finite, plausible model.
+///
+/// Prints rather than asserts, except for the three claims the bring-up is
+/// built on. Deliberately skips the tokenizer arrays: `tokenizer.ggml.tokens`
+/// alone is 201,088 strings.
+#[test]
+#[ignore = "network: reads the real gpt-oss-20b GGUF header (a few MB)"]
+fn scopes_phase_m5_gpt_oss_layer() {
+    let h = try_fetch(GPT_OSS_20B_MXFP4).expect("gpt-oss-20b header");
+
+    println!("\n=== gpt-oss-20b MXFP4: every non-tokenizer metadata key");
+    for (k, v) in &h.metadata {
+        if k.starts_with("tokenizer.") {
+            continue;
+        }
+        println!("   {k:<52} {v:?}");
+    }
+
+    // The tokenizer keys that are SCALARS are still worth seeing: the turn
+    // ids and the template's presence decide the stop set (Gotcha 41).
+    println!("\n-- tokenizer scalars");
+    for (k, v) in &h.metadata {
+        if !k.starts_with("tokenizer.") {
+            continue;
+        }
+        match v {
+            turbospark_repack::GgufValue::Array(_) => continue,
+            turbospark_repack::GgufValue::String(s) if s.len() > 120 => {
+                println!("   {k:<52} <string, {} bytes>", s.len());
+            }
+            other => println!("   {k:<52} {other:?}"),
+        }
+    }
+
+    // Layer 0 and layer 1, because the window alternates and the two halves
+    // of the pattern do not have to carry the same tensors.
+    for layer in [0usize, 1] {
+        println!("\n-- blk.{layer}.* (name, ggml type, dims as stored)");
+        let prefix = format!("blk.{layer}.");
+        for (name, info) in &h.tensors {
+            if !name.starts_with(&prefix) {
+                continue;
+            }
+            println!(
+                "   {:<34} {:<8} {:?}",
+                name,
+                turbospark_repack::ggml_type_name(info.ggml_type).unwrap_or("UNKNOWN"),
+                info.dims
+            );
+        }
+    }
+
+    println!("\n-- top level");
+    for (name, info) in &h.tensors {
+        if name.starts_with("blk.") {
+            continue;
+        }
+        println!(
+            "   {:<34} {:<8} {:?}",
+            name,
+            turbospark_repack::ggml_type_name(info.ggml_type).unwrap_or("UNKNOWN"),
+            info.dims
+        );
+    }
+
+    // THE THREE CLAIMS THE BRING-UP RESTS ON, asserted so they cannot rot.
+    assert!(
+        h.tensors.contains_key("blk.0.attn_sinks.weight"),
+        "attention sinks are the tensor this family's attention change exists \
+         for; without them the M5 plan is describing a different checkpoint"
+    );
+    assert!(
+        h.tensors.contains_key("blk.0.ffn_gate_exps.bias"),
+        "per-expert biases are what the routed pair's bias offsets are for"
+    );
+    assert_eq!(
+        h.tensors
+            .get("blk.0.ffn_gate_exps.weight")
+            .map(|t| turbospark_repack::ggml_type_name(t.ggml_type)),
+        Some(Some("MXFP4")),
+        "the routed experts stopped being MXFP4, which is the whole of step 2"
+    );
+}
