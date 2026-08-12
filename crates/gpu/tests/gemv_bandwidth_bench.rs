@@ -225,6 +225,7 @@ fn int4_gemv_headroom_across_decode_shapes() {
 ///     M forward passes do (a pool far larger than any cache, so each is
 ///     cold, the way a real token's 1.29 GiB walk is);
 ///   - `batched`: M dispatches over ONE matrix before moving on.
+///
 /// Same kernel, same dispatch count, same bytes of allocation touched.
 /// `c(M)` is batched / sequential, and the ideal is 1/M.
 const POOL_BYTES: u64 = 512 << 20;

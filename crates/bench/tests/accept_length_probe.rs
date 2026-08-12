@@ -216,7 +216,7 @@ fn ngram_accept_length_against_the_break_even_it_has_to_clear() {
     let (_, plain) = run_block(&mut runner, &prompt, vocab, 0);
 
     println!("\n block   rounds  fired   proposed/round  accepted/round   break-even  verdict");
-    let mut reference: Option<Vec<i32>> = Some(plain);
+    let reference: Option<Vec<i32>> = Some(plain);
     for block in BLOCKS {
         let (s, generated) = run_block(&mut runner, &prompt, vocab, block);
         let per_round = s.accepted as f64 / s.proposed_rounds.max(1) as f64;

@@ -117,12 +117,18 @@ fn real_mistral_install_peak_footprint_and_throughput_hold() {
         eprintln!("skipping: TURBOSPARK_MISTRAL_INSTALL_DIR is not set");
         return;
     };
-    assert!(
-        MISTRAL_MAX_CONTEXT > PROTOCOL_MAX_CONTEXT,
-        "this target exists because the shared window is too small for this \
-         checkpoint's tokenizer; if that stops being true, delete the override \
-         rather than leaving a silent divergence"
-    );
+    // Both operands are constants, so this is a compile-time invariant rather
+    // than a runtime one: a `const` block fails the BUILD if the override
+    // stops being an override, where a plain `assert!` would only fire on the
+    // rare occasions this `#[ignore]`d target is run with the install present.
+    const {
+        assert!(
+            MISTRAL_MAX_CONTEXT > PROTOCOL_MAX_CONTEXT,
+            "this target exists because the shared window is too small for this \
+             checkpoint's tokenizer; if that stops being true, delete the override \
+             rather than leaving a silent divergence"
+        );
+    }
     oracle_common::run_oracle_at_context(
         std::path::Path::new(&dir),
         BASELINES,
