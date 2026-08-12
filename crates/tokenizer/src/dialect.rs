@@ -27,6 +27,18 @@ pub enum ChatDialect {
     /// PLAIN TEXT rather than special tokens (ROADMAP Phase M2). The only
     /// special tokens involved are `<s>` and `</s>`.
     Mistral,
+    /// `gpt-oss`'s Harmony format (ROADMAP M5):
+    /// `<|start|>role<|message|>content<|end|>`, with an explicit
+    /// `<|channel|>` for the analysis / final split.
+    ///
+    /// **THE RENDERER IS THE CHECKPOINT'S OWN 17 KB TEMPLATE, NOT A CASE IN
+    /// `chat_template.rs`.** Harmony carries a system preamble, a reasoning
+    /// effort knob and a tool namespace written in TypeScript syntax; a
+    /// hand-rolled renderer for it would be a large second implementation of
+    /// something the checkpoint already ships, and Gotcha 1 makes the
+    /// checkpoint's version win anyway. This variant therefore exists for
+    /// what a dialect IS evidence for -- the ids and the STOP SET.
+    Harmony,
 }
 
 /// Sentinel for token roles a dialect frames as plain text rather than a
@@ -47,6 +59,21 @@ const GEMMA_TURN_MARK: &str = "<turn|>";
 const MISTRAL_BOS_MARK: &str = "<s>";
 const MISTRAL_EOS_MARK: &str = "</s>";
 const IM_START_MARK: &str = "<|im_start|>";
+/// Harmony's turn frame (ROADMAP M5). `<|start|>` is the witness because it
+/// opens every turn and appears in no other family's table; `<|return|>` is
+/// the end-of-turn marker and `<|call|>` the tool-call one, and BOTH end a
+/// generation. All three names were read off `openai/gpt-oss-20b`'s
+/// `tokenizer_config.json` rather than recalled -- their ids there are
+/// 200006 / 200002 / 200012, and they are looked up BY NAME here for the
+/// reason crate Gotcha 2 gives.
+pub(crate) const HARMONY_START_MARK: &str = "<|start|>";
+pub(crate) const HARMONY_MESSAGE_MARK: &str = "<|message|>";
+pub(crate) const HARMONY_END_MARK: &str = "<|end|>";
+const HARMONY_RETURN_MARK: &str = "<|return|>";
+const HARMONY_CALL_MARK: &str = "<|call|>";
+const HARMONY_CHANNEL_MARK: &str = "<|channel|>";
+const HARMONY_BOS_MARK: &str = "<|startoftext|>";
+const HARMONY_PAD_MARK: &str = "<|endoftext|>";
 
 pub struct MfTokenizer {
     pub dialect: ChatDialect,
@@ -146,6 +173,18 @@ impl MfTokenizer {
         // decide a dialect on its own.
         let dialect = if special_token_id(&tokenizer, DEEPSEEK_USER_MARK).is_some() {
             ChatDialect::Deepseek
+        } else if special_token_id(&tokenizer, HARMONY_START_MARK).is_some()
+            && special_token_id(&tokenizer, HARMONY_MESSAGE_MARK).is_some()
+        {
+            // TESTED BEFORE ChatML, and the order is load-bearing rather than
+            // arbitrary: Harmony's table carries neither `<|im_end|>` nor
+            // `<|im_start|>` today, so the two probes are disjoint on the real
+            // checkpoints -- but `<|start|>` and `<|message|>` are a far more
+            // specific pair than a single `<|im_end|>`, and Gotcha 41's lesson
+            // is that a dialect probe stops being injective the moment a
+            // second checkpoint arrives. Two markers rather than one for the
+            // same reason.
+            ChatDialect::Harmony
         } else if special_token_id(&tokenizer, IM_END_MARK).is_some() {
             ChatDialect::ChatMl
         } else if special_token_id(&tokenizer, GEMMA_TURN_MARK).is_none()
@@ -161,6 +200,7 @@ impl MfTokenizer {
             ChatDialect::ChatMl => resolve_chatml(&tokenizer)?,
             ChatDialect::Deepseek => resolve_deepseek(&tokenizer)?,
             ChatDialect::Mistral => resolve_mistral(&tokenizer)?,
+            ChatDialect::Harmony => resolve_harmony(&tokenizer)?,
         };
         resolved
             .stop_token_ids
@@ -345,6 +385,71 @@ fn resolve_gemma(
         think_end_id: None,
         stop_token_ids: [eos, eot, tool_response].into_iter().collect(),
         vocab_size: 262_144,
+    })
+}
+
+/// `gpt-oss`'s Harmony format (ROADMAP M5).
+///
+/// **THE STOP SET IS THE POINT OF THIS FUNCTION, and it has THREE members
+/// where every other dialect here has one or two.** Harmony ends an assistant
+/// turn with `<|return|>` when it has answered and with `<|call|>` when it is
+/// invoking a tool, and `<|endoftext|>` is the base end-of-sequence; the real
+/// checkpoint's `generation_config.json` declares exactly those three
+/// (`[200002, 199999, 200012]`, read rather than recalled). Missing `<|call|>`
+/// would not error -- the model would emit a tool call and then keep
+/// generating past it, which reads as a rambling model rather than a stop-set
+/// bug.
+///
+/// `<|end|>` is deliberately NOT a stop: it closes the SYSTEM and USER turns
+/// inside a rendered prompt, so stopping on it would end generation at the
+/// first token of a well-formed reply.
+///
+/// END OF TURN IS `<|return|>` AND BOS IS `<|startoftext|>`, which is the one
+/// place Harmony's naming misleads: `<|endoftext|>` is the PAD token here, not
+/// the turn end, inverting the convention every other dialect in this file
+/// follows.
+///
+/// Tool ids stay [`NO_SUCH_TOKEN_ID`] even though Harmony HAS tool calling,
+/// because it frames a call as a channel plus a recipient in the message
+/// header rather than as a bracketing token pair, which is not what
+/// `StructuredDecoder`'s start/end contract describes. Wiring tool calls for
+/// this family is its own item; claiming ids here would make the decoder hunt
+/// for markup in the wrong shape.
+fn resolve_harmony(tokenizer: &Tokenizer) -> Result<Resolved, TokenizerError> {
+    let bos = required_id(tokenizer, HARMONY_BOS_MARK)?;
+    let pad = required_id(tokenizer, HARMONY_PAD_MARK)?;
+    let ret = required_id(tokenizer, HARMONY_RETURN_MARK)?;
+    let call = required_id(tokenizer, HARMONY_CALL_MARK)?;
+    // Resolved so a table missing them fails at LOAD rather than at the first
+    // rendered prompt, and so the detection probe above cannot pass on a
+    // checkpoint whose frame is only half present.
+    let _end = required_id(tokenizer, HARMONY_END_MARK)?;
+    let channel = required_id(tokenizer, HARMONY_CHANNEL_MARK)?;
+    Ok(Resolved {
+        bos_id: bos,
+        // The checkpoint's template emits `<|start|>` itself, so the encoder
+        // must not prepend a BOS on top of it -- the same arrangement Gemma
+        // and ChatML have and the one Mixtral's fallback renderer does not
+        // (AGENTS.md Gotcha 41's closing note).
+        bos_prefix_id: None,
+        eos_id: ret,
+        pad_id: pad,
+        end_of_turn_id: ret,
+        tool_call_start_id: NO_SUCH_TOKEN_ID,
+        tool_call_end_id: NO_SUCH_TOKEN_ID,
+        tool_response_id: NO_SUCH_TOKEN_ID,
+        tool_response_end_id: NO_SUCH_TOKEN_ID,
+        channel_start_id: channel,
+        channel_end_id: NO_SUCH_TOKEN_ID,
+        think_start_id: None,
+        think_end_id: None,
+        stop_token_ids: [ret, call, pad].into_iter().collect(),
+        // The model's PADDED lm_head row count, which is not the tokenizer's
+        // vocabulary (AGENTS.md Gotcha 37). Every caller with a
+        // `RealForwardRunner` in hand must read `vocab_size()` off that
+        // instead; this value serves the scripted paths, which have no model
+        // to ask.
+        vocab_size: 201_088,
     })
 }
 

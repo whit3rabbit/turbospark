@@ -9,7 +9,10 @@
 //! template -- all the synthetic fixtures here, and DeepSeek, whose native
 //! tool chat is plain string composition and is ported in full below.
 
-use crate::dialect::{ChatDialect, MfTokenizer, DEEPSEEK_BOS_MARK, DEEPSEEK_EOS_MARK};
+use crate::dialect::{
+    ChatDialect, MfTokenizer, DEEPSEEK_BOS_MARK, DEEPSEEK_EOS_MARK, HARMONY_END_MARK,
+    HARMONY_MESSAGE_MARK, HARMONY_START_MARK,
+};
 use crate::error::TokenizerError;
 use crate::json_value::JsonValue;
 use crate::tool_call::DeepseekToolCallParser;
@@ -214,6 +217,25 @@ impl MfTokenizer {
             ChatDialect::ChatMl => chatml_chat_template(messages),
             ChatDialect::Deepseek => deepseek_chat_template(messages),
             ChatDialect::Mistral => mistral_chat_template(messages),
+            // NO FALLBACK RENDERER FOR HARMONY, ON PURPOSE (ROADMAP M5).
+            //
+            // Every other arm here is a handful of markers around the content.
+            // Harmony is a 17 KB template with a system preamble, a knowledge
+            // cutoff, a reasoning-effort knob and a tool namespace written in
+            // TypeScript syntax, and a partial re-implementation of it is
+            // exactly AGENTS.md Gotcha 41's failure: framing the model was not
+            // trained on, which comes back as fluent output that is not an
+            // answer, with no error anywhere.
+            //
+            // Refusing is safe because it is unreachable for a real install --
+            // `apply_chat_template` prefers the checkpoint's own template and
+            // gpt-oss always ships one. This arm is what a MALFORMED install
+            // gets, and saying so beats inventing a prompt.
+            ChatDialect::Harmony => Err(TokenizerError::UnsupportedForDialect(
+                "the Harmony format has no fallback renderer; a gpt-oss install must carry its \
+                 own chat_template.jinja (or tokenizer_config.json's chat_template key)"
+                    .to_string(),
+            )),
         }
     }
 
@@ -233,6 +255,15 @@ impl MfTokenizer {
             // No leading newline and no assistant marker: this dialect's
             // generation point is simply the character after `[/INST]`.
             ChatDialect::Mistral => format!(" [INST] {content} [/INST]"),
+            // Harmony's TURN FRAME is writable even though its full template
+            // is not: a continuation is one user turn and the opening of an
+            // assistant one, with no system preamble involved. The channel is
+            // left for the model to choose, which is what the checkpoint's own
+            // generation prompt does.
+            ChatDialect::Harmony => format!(
+                "{HARMONY_START_MARK}user{HARMONY_MESSAGE_MARK}{content}{HARMONY_END_MARK}\
+                 {HARMONY_START_MARK}assistant"
+            ),
         };
         let mut out = vec![self.end_of_turn_id];
         out.extend(self.encode(&suffix, false));

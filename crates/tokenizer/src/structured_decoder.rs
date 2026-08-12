@@ -102,6 +102,24 @@ impl<'a> StructuredAssistantDecoder<'a> {
                     vec![StructuredAssistantEvent::Content(delta.to_string())]
                 })
             }
+            // HARMONY HAS CHANNELS AND THIS DECODER DOES NOT READ THEM YET
+            // (ROADMAP M5). Content passes through, so the model's
+            // `analysis` channel reaches the caller as text instead of being
+            // split off as reasoning. That is a stated limitation, not an
+            // oversight, and it is strictly better than the alternative:
+            // Harmony's `channel_start_id` IS a real token, but it has no
+            // closing counterpart (`channel_end_id` is `NO_SUCH_TOKEN_ID`),
+            // so falling through to the Gemma arm would open a channel label
+            // on the first `<|channel|>` and never close it -- swallowing the
+            // whole reply. Wiring it needs a header parser rather than a
+            // token pair, which is its own item.
+            ChatDialect::Harmony => {
+                return Ok(if delta.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![StructuredAssistantEvent::Content(delta.to_string())]
+                })
+            }
         }
 
         if token_id == self.tokenizer.channel_start_id {

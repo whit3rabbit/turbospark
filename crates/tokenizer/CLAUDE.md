@@ -1,6 +1,6 @@
 # turbospark-tokenizer
 
-Tokenizer wrapper around HF `tokenizers` (`MfTokenizer`), chat dialect resolution (Gemma 4, ChatML/Qwen, DeepSeek-V4), chat template rendering (text-only and `minijinja` + `pycompat`), streaming detokenization (`StreamingDetokenizer`), stop condition matching (`StopMatcher`), tool call DSL parsers, and streaming structured decoder (`StructuredDecoder`).
+Tokenizer wrapper around HF `tokenizers` (`MfTokenizer`), chat dialect resolution (Gemma 4, ChatML/Qwen, DeepSeek-V4, Mistral, Harmony/gpt-oss), chat template rendering (text-only and `minijinja` + `pycompat`), streaming detokenization (`StreamingDetokenizer`), stop condition matching (`StopMatcher`), tool call DSL parsers, and streaming structured decoder (`StructuredDecoder`).
 
 ## Safety
 
@@ -30,6 +30,7 @@ crates/tokenizer/
     +-- chatml_dialect.rs           # ChatML dialect encoding & detokenization unit tests
     +-- deepseek_dialect.rs         # DeepSeek-V4 dialect formatting unit tests
     +-- generation_config_eos.rs    # EOS token array resolution unit tests
+    +-- harmony_dialect.rs          # gpt-oss: the three-member stop set, and no fallback renderer
     +-- installed_template.rs       # Checkpoint template beats dialect; per-family agreement guard
     +-- jinja_chat_template.rs      # Jinja template rendering unit tests
     +-- structured_decoder.rs       # Streaming structured decoder unit tests
@@ -37,6 +38,7 @@ crates/tokenizer/
     \-- fixtures/                   # Vendored toy tokenizer fixture directories
         +-- ChatMLTokenizer/        # Toy ChatML tokenizer.json fixture
         +-- DeepseekTokenizer/      # Toy DeepSeek tokenizer.json fixture
+        +-- HarmonyTokenizer/       # gpt-oss's special-token NAMES + a minimal Harmony template
         \-- ZephyrTokenizer/        # Mistral's token table + an embedded Zephyr template
 ```
 
@@ -84,4 +86,6 @@ cargo test -p turbospark-tokenizer
    REAL protocol prompt via `include_str!`, not a retyped one -- on a tidy
    one-line string `trim` is a no-op and the guard sees nothing.
 
-2. **Dynamic Added Token IDs in Test Fixtures**: Vendored test fixtures under `crates/*/tests/fixtures/{ChatMLTokenizer,DeepseekTokenizer}` embed placeholder added token IDs (e.g. `248044`) in their `added_tokens` JSON lists. The `tokenizers` loader renumbers added tokens sequentially starting right after the base vocabulary. NEVER hardcode token IDs by reading fixture JSON directly; always resolve token IDs at runtime from a loaded `MfTokenizer` (e.g., using `token_to_id`, `end_of_turn_id`).
+2. **Harmony's stop set has THREE members and its naming is inverted** (ROADMAP M5). `ChatDialect::Harmony` covers `gpt-oss`, and it is the one dialect here whose stop set is not obvious from its EOS token: generation ends at `<|return|>` when the model has answered AND at `<|call|>` when it is invoking a tool, with `<|endoftext|>` as the base end-of-sequence. Dropping `<|call|>` does not error -- the model generates straight past its own tool call, which reads as a rambling model rather than as a stop-set bug. `<|end|>` is deliberately NOT a stop: it closes the SYSTEM and USER turns inside a rendered prompt, so stopping on it ends generation at the first token of a well-formed reply. The naming inverts every other dialect here: `<|endoftext|>` is the PAD token and `<|return|>` is the turn end. There is NO fallback renderer and `apply_dialect_chat_template` REFUSES for this dialect, because Harmony's real template is 17 KB of system preamble, reasoning-effort knob and TypeScript tool namespace, and a partial re-implementation is Gotcha 1's failure mode exactly; a real install always ships the template, so the refusal is what a MALFORMED install gets. `StructuredDecoder` passes Harmony content through UNDECODED, so the `analysis` channel reaches a caller as text -- a stated limitation, and strictly better than the alternative, since Harmony's `channel_start_id` has no closing counterpart and the Gemma arm would open a channel label and never close it, swallowing the whole reply.
+
+3. **Dynamic Added Token IDs in Test Fixtures**: Vendored test fixtures under `crates/*/tests/fixtures/{ChatMLTokenizer,DeepseekTokenizer}` embed placeholder added token IDs (e.g. `248044`) in their `added_tokens` JSON lists. The `tokenizers` loader renumbers added tokens sequentially starting right after the base vocabulary. NEVER hardcode token IDs by reading fixture JSON directly; always resolve token IDs at runtime from a loaded `MfTokenizer` (e.g., using `token_to_id`, `end_of_turn_id`).
