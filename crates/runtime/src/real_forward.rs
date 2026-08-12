@@ -122,6 +122,11 @@ pub struct RealForwardRunner {
     /// Present for a `llama`-architecture install (ROADMAP Phase M2), which
     /// is Mixtral-style MoE only; a dense one is refused at build.
     pub(crate) real_llama: Option<crate::families::llama::RealLlamaState>,
+    /// Present for a `gpt-oss` install (ROADMAP M5). Its own state rather
+    /// than a flag on `real_llama` because all four of this architecture's
+    /// differences are inside the layer: a YaRN frequency table, the
+    /// per-layer router bias, attention sinks and per-projection biases.
+    pub(crate) real_gpt_oss: Option<crate::families::gptoss::RealGptOssState>,
     pub(crate) phases: PhaseCounters,
     /// Whether the shared-expert branch rides its own command buffer so it
     /// overlaps the host's expert `pread` (see `real_forward_gemma4.rs`).
@@ -349,6 +354,7 @@ impl RealForwardRunner {
             real: None,
             real_qwen: None,
             real_llama: None,
+            real_gpt_oss: None,
             phases: PhaseCounters::default(),
             shared_cb_overlap: std::env::var("MFERENCE_SHARED_CB").as_deref() != Ok("0"),
             routed_pipeline: std::env::var("MFERENCE_ROUTED_PIPELINE").as_deref() != Ok("0"),
@@ -395,19 +401,18 @@ impl RealForwardRunner {
                     "the DeepSeek-V4-Flash family has no decode flow yet".to_string(),
                 ));
             }
-            // ROADMAP M5 step 3 lands the family; step 4 lands the flow.
-            // Refused BY NAME in between rather than falling through to a
-            // neighbour's flow, because `gpt-oss` differs from every existing
-            // one in four ways that each produce fluent wrong output rather
-            // than an error: per-projection biases, attention sinks, YaRN
-            // rope scaling, and a clamped SwiGLU.
+            // A FIFTH FLOW, not a sixth family on an existing one: all four
+            // of `gpt-oss`'s differences (per-projection biases, attention
+            // sinks, YaRN rope scaling, a clamped SwiGLU) are INSIDE the
+            // layer, and each produces fluent wrong output rather than an
+            // error if a neighbour's flow is used instead.
             model_io::ModelFamily::GptOss => {
-                return Err(RealForwardError::Unsupported(
-                    "the gpt-oss family has no decode flow yet; it needs per-projection \
-                     biases, attention sinks, YaRN rope scaling and a clamped SwiGLU \
-                     (ROADMAP M5 step 4). Bring-up checklist: docs/NEW_MODEL.md"
-                        .to_string(),
-                ));
+                runner.real_gpt_oss = Some(crate::families::gptoss::RealGptOssState::build(
+                    &mut runner.context,
+                    &runner.weights,
+                    &runner.index,
+                    &runner.arch,
+                )?);
             }
         }
         Ok(runner)

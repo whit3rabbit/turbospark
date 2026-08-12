@@ -87,6 +87,9 @@ impl RealForwardRunner {
         if self.real_llama.is_some() {
             return self.produce_real_llama(token, position, logits);
         }
+        if self.real_gpt_oss.is_some() {
+            return self.produce_real_gpt_oss(token, position, logits);
+        }
         if self.real.is_some() {
             return self.produce_real_gemma4(token, position, logits);
         }

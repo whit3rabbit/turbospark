@@ -1,0 +1,185 @@
+//! `gpt-oss`'s attention block (ROADMAP M5): plain grouped-query attention
+//! plus THREE of the four things that make this a fifth flow.
+//!
+//! Structurally it is `families/llama/attn.rs` -- no per-head q/k norms, no
+//! output gate, no packed query/gate split, no `attention_k_eq_v` aliasing.
+//! What it adds, in the order the layer applies them:
+//!
+//! 1. **A BIAS ON ALL FOUR PROJECTIONS.** No GEMV kernel in this port takes
+//!    one, so each is a separate `bias_add_bf16_fp16` pass rather than a
+//!    seventh argument on seven kernels and four families' dispatch sites.
+//!    Order matters and is llama.cpp's: bias FIRST, then RoPE.
+//! 2. **YaRN RoPE**, through `rope_neox_freqs` and a precomputed per-pair
+//!    frequency table, because YaRN's ramp between two correction dimensions
+//!    is not expressible as the scalar theta the three older rope kernels
+//!    take.
+//! 3. **ATTENTION SINKS**: one learned logit per QUERY head, added to the
+//!    softmax DENOMINATOR and to nothing else, so it drains probability mass
+//!    without contributing a value row.
+//!
+//! And the window ALTERNATES, which is nearly free -- the SWA ring and the
+//! layer mask already exist for Gemma (AGENTS.md Gotcha 18) -- but is not
+//! free of thought: EVEN layers slide here, and inverting that phase gives a
+//! model wrong only past 128 tokens of context, which no short smoke reaches.
+
+use model_io::{ArchConfig, ResidentIndex};
+
+use crate::families::gptoss::{layer_tensor, RealGptOssState};
+use crate::real_forward_dispatch::encode_gemv_any;
+use crate::real_forward_types::{DecodeScratch, RealForwardError};
+use crate::real_forward_utils::norm_view;
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn encode_attention_block(
+    context: &mut gpu::MetalContext,
+    pass: &gpu::PassEncoder,
+    weights: &gpu::ResidentGpuWeights,
+    index: &ResidentIndex,
+    arch: &ArchConfig,
+    state: &RealGptOssState,
+    scratch: &DecodeScratch,
+    kv: &gpu::KvCacheManager,
+    layer: usize,
+    position: usize,
+) -> Result<(), RealForwardError> {
+    let gpu_err = RealForwardError::Gpu;
+    let hidden = arch.hidden_size as usize;
+    let num_heads = arch.num_heads as u32;
+    let num_kv = arch.num_full_kv_heads as u32;
+    let head_dim = arch.full_head_dim as u32;
+    let q_dim = (num_heads * head_dim) as usize;
+    let kv_dim = (num_kv * head_dim) as usize;
+    let name = |suffix: &str| layer_tensor(layer, &format!("self_attn.{suffix}"));
+
+    // K and V go STRAIGHT INTO the cache slot, which is what keeps the decode
+    // path zero-copy. Their biases and RoPE are then applied in place, at that
+    // same offset, so the cache holds the finished rows.
+    let (k_buf, k_off) = kv.k_slot(layer, position);
+    let (v_buf, v_off) = kv.v_slot(layer, position);
+
+    encode_gemv_any(
+        context,
+        pass,
+        weights,
+        index,
+        &name("q_proj.weight"),
+        q_dim,
+        hidden,
+        (&scratch.normed, 0),
+        (&scratch.q, 0),
+    )?;
+    for (suffix, out) in [
+        ("k_proj.weight", (k_buf, k_off as u64)),
+        ("v_proj.weight", (v_buf, v_off as u64)),
+    ] {
+        encode_gemv_any(
+            context,
+            pass,
+            weights,
+            index,
+            &name(suffix),
+            kv_dim,
+            hidden,
+            (&scratch.normed, 0),
+            out,
+        )?;
+    }
+
+    // THE BIASES, BEFORE ROPE. Reversing the two is a different function that
+    // still produces finite, plausible text: RoPE is linear in its input, so
+    // rotating a biased vector and biasing a rotated one differ by a rotation
+    // of the bias, which is a small, position-dependent, entirely wrong term.
+    for (suffix, elems, out) in [
+        ("q_proj.bias", q_dim, (&scratch.q, 0u64)),
+        ("k_proj.bias", kv_dim, (k_buf, k_off as u64)),
+        ("v_proj.bias", kv_dim, (v_buf, v_off as u64)),
+    ] {
+        let bias = norm_view(weights, index, &name(suffix), elems)?;
+        gpu::encode_bias_add(context, pass, out, bias, elems as u32).map_err(gpu_err)?;
+    }
+
+    // V IS NOT ROTATED. Only q and k carry position.
+    for (data, heads) in [
+        ((&scratch.q, 0u64), num_heads),
+        ((k_buf, k_off as u64), num_kv),
+    ] {
+        gpu::encode_rope_neox_freqs(
+            context,
+            pass,
+            data,
+            position as u32,
+            heads,
+            head_dim,
+            state.rotated_pairs,
+            (&state.rope_frequencies, 0),
+            state.rope_mscale,
+        )
+        .map_err(gpu_err)?;
+    }
+
+    // THE WINDOW. Mask 1 is full attention and mask 0 slides; the ring is
+    // sized `sliding_window + max_prefill_chunk_tokens` by `KvCacheManager`,
+    // and `ring_capacity` is 0 on a full layer, which the kernel reads as
+    // identity addressing.
+    let seq_len = (position + 1) as u32;
+    let is_full = arch
+        .full_attention_layer_mask
+        .get(layer)
+        .copied()
+        .unwrap_or(1)
+        == 1;
+    let (kv_start, active_ring) = if is_full {
+        (0, 0)
+    } else {
+        let ring = kv.ring_capacity(layer) as u32;
+        (
+            seq_len.saturating_sub(arch.sliding_window as u32),
+            if ring > 0 && seq_len > ring { ring } else { 0 },
+        )
+    };
+
+    // ONE SINK PER QUERY HEAD, checked for length at open. It joins the
+    // softmax denominator in the COMBINE pass, behind `FC_ATTN_HAS_SINKS`
+    // -- a function constant rather than a uniform, because an unbound
+    // buffer is undefined behaviour, and its byte is in
+    // `attention_constants_key` so a sink dispatch cannot silently reuse the
+    // sinkless pipeline (AGENTS.md Gotcha 18's trap, one file over).
+    let sinks = norm_view(
+        weights,
+        index,
+        &layer_tensor(layer, "self_attn.sinks.weight"),
+        num_heads as usize,
+    )?;
+    gpu::encode_attention_decode(
+        context,
+        pass,
+        (&scratch.q, 0),
+        k_buf,
+        v_buf,
+        &scratch.attn,
+        (&scratch.attn_out, 0),
+        head_dim,
+        num_heads,
+        num_kv,
+        seq_len,
+        kv_start,
+        active_ring,
+        arch.attention_scale as f32,
+        Some(sinks),
+    )
+    .map_err(gpu_err)?;
+
+    encode_gemv_any(
+        context,
+        pass,
+        weights,
+        index,
+        &name("o_proj.weight"),
+        hidden,
+        q_dim,
+        (&scratch.attn_out, 0),
+        (&scratch.o, 0),
+    )?;
+    let o_bias = norm_view(weights, index, &name("o_proj.bias"), hidden)?;
+    gpu::encode_bias_add(context, pass, (&scratch.o, 0), o_bias, hidden as u32).map_err(gpu_err)
+}
