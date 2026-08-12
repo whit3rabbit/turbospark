@@ -87,12 +87,20 @@ pub fn ggml_type_block(id: u32) -> Option<(u64, u64)> {
         18 => (256, 98),  // IQ3_XXS
         20 => (32, 18),   // IQ4_NL
         23 => (256, 136), // IQ4_XS
-        24 => (1, 1),     // I8
-        25 => (1, 2),     // I16
-        26 => (1, 4),     // I32
-        27 => (1, 8),     // I64
-        28 => (1, 8),     // F64
-        30 => (1, 2),     // BF16
+        // ROADMAP M5 Phase 0. Parse-only, like the six above it: gpt-oss
+        // ships its routed experts as MXFP4 and nothing else does, so
+        // without this row the candidate's expert table sizes to ZERO and
+        // the survey reports the model as 1.8 GiB of Q8_0 bystanders. That
+        // is exactly the UNSIZED failure Phase S hit from the other side
+        // (AGENTS.md Gotcha 29), and it ranks the type carrying ~85% of the
+        // weights last in a share column.
+        39 => (32, 17), // MXFP4
+        24 => (1, 1),   // I8
+        25 => (1, 2),   // I16
+        26 => (1, 4),   // I32
+        27 => (1, 8),   // I64
+        28 => (1, 8),   // F64
+        30 => (1, 2),   // BF16
         _ => return None,
     })
 }

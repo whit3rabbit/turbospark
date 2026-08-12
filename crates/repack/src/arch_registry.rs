@@ -99,10 +99,20 @@ const SUPPORTED_HF: &[(&str, ModelFamily)] = &[
 /// one makes every byte resident (AGENTS.md Gotcha 19). Hence `llama`'s
 /// note naming its two halves separately.
 const PLANNED_GGUF: &[(&str, PlannedArch)] = &[
+    // ROADMAP M5 Phase 0 REWROTE THIS CLAUSE, and the correction is the
+    // point: the original named a layer graph, and the binding obstacle is
+    // arithmetic that has nothing to do with one. Scout is 16 experts of
+    // 77.8 MiB over 48 layers, so its slot cache wants 58.4 GiB at the
+    // default 16 slots -- Mixtral's dead end again and worse, because depth
+    // multiplies it (AGENTS.md Gotcha 36). It also carries
+    // `rope_freqs.weight`, which M4 made a refusal by name. Two independent
+    // gates, neither of which a decode flow would fix.
     (
         "llama4",
         PlannedArch {
-            needs: "routed-expert reuse plus its interleaved chunked-attention layer graph",
+            needs: "an expert granularity this engine can stream (16 experts of 77.8 MiB \
+                    is 58.4 GiB of slot cache at 16 slots), plus RoPE frequency scaling \
+                    and its interleaved chunked-attention layer graph",
             witness: "https://huggingface.co/unsloth/Llama-4-Scout-17B-16E-Instruct-GGUF/resolve/main/Llama-4-Scout-17B-16E-Instruct-Q2_K.gguf",
         },
     ),
@@ -115,10 +125,19 @@ const PLANNED_GGUF: &[(&str, PlannedArch)] = &[
             witness: "https://huggingface.co/unsloth/DeepSeek-V3-GGUF/resolve/main/DeepSeek-V3-Q6_K/DeepSeek-V3-Q6_K-00001-of-00012.gguf",
         },
     ),
+    // ROADMAP M5 Phase 0 WIDENED THIS CLAUSE. The original two items are
+    // real and are not the whole bill: this is the first checkpoint here
+    // whose projections carry BIASES (q/k/v/output, the router, and every
+    // routed expert), the first with YaRN RoPE scaling, and the first whose
+    // expert activation is not plain SwiGLU. It is also the only one of the
+    // three remaining planned MoE rows whose granularity works here --
+    // 12.6 MiB per expert, 4.73 GiB of slot cache at 16 slots over 9.5 GiB
+    // of experts -- which is why the clause is longer rather than shorter.
     (
         "gpt-oss",
         PlannedArch {
-            needs: "an MXFP4 expert block type and attention sinks",
+            needs: "an MXFP4 expert block type, attention sinks, per-projection biases, \
+                    YaRN RoPE scaling, and the clamped SwiGLU its experts use",
             witness: "https://huggingface.co/ggml-org/gpt-oss-20b-GGUF/resolve/main/gpt-oss-20b-MXFP4.gguf",
         },
     ),

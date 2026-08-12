@@ -792,3 +792,280 @@ fn scopes_the_dense_llama_candidates() {
          cannot land without rope frequency scaling after all"
     );
 }
+
+// ROADMAP M5 Phase 0: which MoE family comes after `llama` and `qwen3moe`.
+//
+// The registry's remaining planned rows in the order Phase M states them
+// (`llama4`, `gpt-oss`, `deepseek2`), probed by header rather than argued
+// about. Phase M's own correction is why this test exists at all: being MoE
+// is necessary and not sufficient, and the multiplication that decides it
+// (AGENTS.md Gotcha 36) is two metadata keys and a tensor size. Mixtral cost
+// a 26 GB download to learn that; this costs a few MB per candidate.
+//
+// `deepseek2` is probed but is not a candidate: it needs the MLA kernels
+// that DeepSeek-V4-Flash is also blocked on, which is a kernel FAMILY rather
+// than a block type. It is here so the granularity column has its number
+// beside the others rather than an assumption.
+const GPT_OSS_20B_MXFP4: &str =
+    "https://huggingface.co/ggml-org/gpt-oss-20b-GGUF/resolve/main/gpt-oss-20b-MXFP4.gguf";
+const GPT_OSS_120B_MXFP4: &str =
+    "https://huggingface.co/ggml-org/gpt-oss-120b-GGUF/resolve/main/gpt-oss-120b-MXFP4.gguf";
+// Shard 1 of 2. A split GGUF puts the whole header in the first shard, so
+// this stays a header read like every other row here.
+const LLAMA4_SCOUT_Q4_K_M: &str = "https://huggingface.co/unsloth/Llama-4-Scout-17B-16E-Instruct-GGUF/resolve/main/Q4_K_M/Llama-4-Scout-17B-16E-Instruct-Q4_K_M-00001-of-00002.gguf";
+const DEEPSEEK_V3_Q6_K: &str = "https://huggingface.co/unsloth/DeepSeek-V3-GGUF/resolve/main/DeepSeek-V3-Q6_K/DeepSeek-V3-Q6_K-00001-of-00012.gguf";
+
+/// The size of ONE routed expert, read off the file rather than computed
+/// from an assumed quantization.
+///
+/// Two reasons not to multiply a block constant by a shape the way
+/// [`scopes_the_next_moe_candidate_by_expert_granularity`] does. The
+/// candidates here are not all Q4_K (gpt-oss ships MXFP4 experts), so one
+/// constant would be wrong for at least one row. And ROADMAP Phase S made
+/// the stride PER LAYER, so the honest number is a maximum over layers, not
+/// layer 0's -- padding every layer to the widest is exactly the 35% size
+/// regression Phase S caught, and a Phase 0 estimate that reads layer 0
+/// alone would under-report it.
+///
+/// Returns `(layer0_blob, max_layer_blob)` in bytes, both per expert.
+fn routed_expert_blob(h: &GgufHeader, experts: u64) -> Option<(u64, u64)> {
+    if experts == 0 {
+        return None;
+    }
+    let mut per_layer: std::collections::BTreeMap<&str, u64> = std::collections::BTreeMap::new();
+    for (name, info) in &h.tensors {
+        if !name.ends_with("_exps.weight") && !name.ends_with("_exps") {
+            continue;
+        }
+        // `blk.<N>.<role>` -- the layer index is the second dotted field.
+        let mut parts = name.split('.');
+        let (Some("blk"), Some(layer)) = (parts.next(), parts.next()) else {
+            continue;
+        };
+        let elems: u64 = info.dims.iter().product();
+        // An UNSIZED type contributes nothing and would silently shrink the
+        // blob, which on an MXFP4 file is the whole expert table. Bail to
+        // `None` instead: "cannot size this candidate" is a Phase 0 result
+        // and a quietly small number is not (Gotcha 29's UNSIZED rule, one
+        // layer out).
+        let (blk, sz) = ggml_type_block(info.ggml_type)?;
+        *per_layer.entry(layer).or_insert(0) += elems / blk.max(1) * sz;
+    }
+    if per_layer.is_empty() {
+        return None;
+    }
+    let layer0 = *per_layer.get("0").unwrap_or(&0) / experts;
+    let max = per_layer.values().copied().max().unwrap_or(0) / experts;
+    Some((layer0, max))
+}
+
+/// The Phase 0 facts an MoE candidate is decided on, all off the header.
+fn report_moe_candidate(label: &str, h: &GgufHeader) -> Option<u64> {
+    let arch = h.architecture().unwrap_or("?").to_string();
+    let key = |k: &str| -> Option<u64> {
+        h.metadata
+            .get(&format!("{arch}.{k}"))
+            .and_then(turbospark_repack::GgufValue::as_u64)
+    };
+    let mib = |b: u64| b as f64 / (1024.0 * 1024.0);
+    let gib = |b: u64| b as f64 / (1024.0 * 1024.0 * 1024.0);
+
+    let experts = key("expert_count").unwrap_or(0);
+    let top_k = key("expert_used_count").unwrap_or(0);
+    let layers = key("block_count").unwrap_or(0);
+    let hidden = key("embedding_length").unwrap_or(0);
+    let q_heads = key("attention.head_count").unwrap_or(0);
+    let kv_heads = key("attention.head_count_kv").unwrap_or(0);
+
+    println!("\n=== {label}");
+    println!("   architecture    {arch:?}");
+    println!("   tensors         {}", h.tensors.len());
+    println!("   layers          {layers}, hidden {hidden}, {q_heads} q heads over {kv_heads} kv");
+    println!(
+        "   experts         {experts} (top-{top_k}), expert ffn {:?}, dense ffn {:?}",
+        key("expert_feed_forward_length"),
+        key("feed_forward_length")
+    );
+
+    // GOTCHA 36, THE WHOLE REASON THIS PROBE RUNS BEFORE A DOWNLOAD.
+    let blob = routed_expert_blob(h, experts);
+    match blob {
+        None if experts == 0 => println!("   granularity     n/a (dense)"),
+        None => println!(
+            "   granularity     UNSIZABLE -- a routed expert uses a block type with no \
+             `ggml_type_block` row, so its bytes cannot be counted here at all"
+        ),
+        Some((l0, max)) => {
+            println!(
+                "   one expert      {:.1} MiB (layer 0) / {:.1} MiB (widest layer)",
+                mib(l0),
+                mib(max)
+            );
+            println!("   whole table     {:.1} GiB", gib(max * experts * layers));
+            for slots in [8u64, 16, 32] {
+                println!(
+                    "   slot cache @{slots:>2}  {:.2} GiB",
+                    gib(max * slots * layers)
+                );
+            }
+        }
+    }
+
+    // The block-type gate, read the same way the dense probe reads it: the
+    // unquantized widths are transcoded at repack and never reach a dispatch.
+    let (_, missing, bytes) = dense_candidate_gates(h);
+    println!(
+        "   types w/o kernel{}",
+        if missing.is_empty() {
+            " none".to_string()
+        } else {
+            format!(" {missing:?}")
+        }
+    );
+    println!("   sized bytes     {:.2} GiB", gib(bytes));
+
+    // The layer-graph keys that name NEW DECODE WORK rather than new
+    // kernels. Each of these is a flow question, and a flow question is the
+    // expensive kind: M3 was cheap precisely because its answer to all of
+    // them was "same graph as `llama`".
+    let mut graph: Vec<String> = Vec::new();
+    for k in [
+        "attention.sliding_window",
+        "attention.sliding_window_pattern",
+        "rope.scaling.type",
+        "rope.scaling.factor",
+        "expert_shared_count",
+        "expert_shared_feed_forward_length",
+        "attention.key_length",
+        "leading_dense_block_count",
+        "expert_gating_func",
+        "attention.q_lora_rank",
+        "attention.kv_lora_rank",
+    ] {
+        if let Some(v) = h.metadata.get(&format!("{arch}.{k}")) {
+            graph.push(format!("{k}={v:?}"));
+        }
+    }
+    println!(
+        "   graph keys      {}",
+        if graph.is_empty() {
+            "none of the ones that would mean a new flow".to_string()
+        } else {
+            graph.join(", ")
+        }
+    );
+
+    // Tensors with no analogue in either name table. Printed as SHAPE KEYS
+    // rather than counted, because the point is to read them.
+    let mut novel: Vec<String> = h
+        .tensors
+        .keys()
+        .map(|n| shape_key(n))
+        .filter(|k| {
+            !k.starts_with("blk.*.attn_")
+                && !k.starts_with("blk.*.ffn_")
+                && !matches!(
+                    k.as_str(),
+                    "token_embd.weight" | "output.weight" | "output_norm.weight"
+                )
+        })
+        .collect();
+    novel.sort();
+    novel.dedup();
+    println!("   novel tensors   {novel:?}");
+    // `attn_sinks` hides inside the `blk.*.attn_` prefix above, and it is
+    // the one gpt-oss tensor with no counterpart in any flow here, so it is
+    // named explicitly rather than filtered away with the rest of attention.
+    let sinks: Vec<String> = h
+        .tensors
+        .keys()
+        .map(|n| shape_key(n))
+        .filter(|k| k.contains("sink"))
+        .collect();
+    if !sinks.is_empty() {
+        println!("   attention sinks {:?} -- no kernel input here", {
+            let mut s = sinks;
+            s.sort();
+            s.dedup();
+            s
+        });
+    }
+
+    blob.map(|(_, max)| max)
+}
+
+/// ROADMAP M5 Phase 0. Four real headers, no download.
+///
+/// Asserts nothing about which candidate wins -- that is a judgement about
+/// cost, and the phase records it in prose. What it DOES assert is the thing
+/// a future edit could quietly break: that each candidate is still the
+/// architecture its registry row claims, so a survey cannot rot into folklore
+/// the way `arch_registry_network.rs` exists to prevent for the strings.
+#[test]
+#[ignore = "network: reads four real MoE GGUF headers (a few MB each)"]
+fn scopes_phase_m5_moe_candidates() {
+    let mut blobs: Vec<(&str, Option<u64>)> = Vec::new();
+    for (label, url, expect_arch) in [
+        ("gpt-oss-20b MXFP4", GPT_OSS_20B_MXFP4, "gpt-oss"),
+        ("gpt-oss-120b MXFP4", GPT_OSS_120B_MXFP4, "gpt-oss"),
+        (
+            "Llama-4-Scout-17B-16E Q4_K_M",
+            LLAMA4_SCOUT_Q4_K_M,
+            "llama4",
+        ),
+        ("DeepSeek-V3 Q6_K", DEEPSEEK_V3_Q6_K, "deepseek2"),
+    ] {
+        // `try_fetch`, for the same reason the dense survey uses it: a
+        // candidate this parser refuses is a row, not the end of the run.
+        let h = match try_fetch(url) {
+            Ok(h) => h,
+            Err(e) => {
+                println!("\n=== {label}\n   UNREADABLE by this port's parser: {e}");
+                blobs.push((label, None));
+                continue;
+            }
+        };
+        assert_eq!(
+            h.architecture(),
+            Some(expect_arch),
+            "{label} no longer reports the architecture its registry row was admitted on"
+        );
+        blobs.push((label, report_moe_candidate(label, &h)));
+    }
+
+    // The comparison the phase turns on, printed as one table so the
+    // granularity finding is read rather than re-derived.
+    println!("\n-- expert blob, against the two families that already run");
+    println!("   Gemma 4 26B-A4B   ~3.2 MiB   (streams, 1.5 GiB slot cache at 16)");
+    println!("   Qwen3-30B-A3B      2.5 MiB   (streams, 1.90 GiB at 16 over 48 layers)");
+    println!("   Mixtral 8x7B     108.9 MiB   (does NOT stream here: 54.5 GiB at 16)");
+    for (label, blob) in &blobs {
+        match blob {
+            Some(b) => println!("   {label:<30} {:.1} MiB", *b as f64 / (1024.0 * 1024.0)),
+            None => println!("   {label:<30} unsized or unreadable"),
+        }
+    }
+
+    // THE TWO DECISIONS, asserted rather than left in prose, for the same
+    // reason `scopes_the_dense_llama_candidates` asserts its resident floor:
+    // a number that only ever appears in a comment rots silently when the
+    // published files move.
+    let blob_of = |needle: &str| -> u64 {
+        blobs
+            .iter()
+            .find(|(l, _)| l.contains(needle))
+            .and_then(|(_, b)| *b)
+            .unwrap_or_else(|| panic!("no sized expert blob for {needle}"))
+    };
+    const MIB: u64 = 1024 * 1024;
+    assert!(
+        blob_of("Llama-4-Scout") > 64 * MIB,
+        "Llama 4 Scout's expert got small enough to stream here; the M5 refusal \
+         clause in arch_registry.rs is now wrong and needs rewriting"
+    );
+    assert!(
+        blob_of("gpt-oss-20b") < 16 * MIB,
+        "gpt-oss stopped being the fine-grained survivor of this survey; M5 \
+         picked its target on this number"
+    );
+}
