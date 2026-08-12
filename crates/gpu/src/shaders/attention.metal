@@ -45,6 +45,14 @@ constant bool FC_ATTN_USE_FC [[function_constant(63)]];
 constant float FC_ATTN_SCALE [[function_constant(64)]];
 constant uint FC_ATTN_NUM_CHUNKS [[function_constant(65)]];
 constant uint FC_ATTN_RING_CAP [[function_constant(69)]];
+// ROADMAP M5: whether this dispatch has ATTENTION SINKS, one learned logit
+// per q head added to the softmax DENOMINATOR and to nothing else. A
+// function constant rather than a runtime flag so the `sinks` argument does
+// not exist at all for the four families that have none -- an unbound buffer
+// is undefined behaviour, and a dummy buffer would mean touching every one
+// of their dispatch sites. Its byte is in `attention_constants_key`, without
+// which a sink dispatch would silently reuse the sink-free pipeline.
+constant bool FC_ATTN_HAS_SINKS [[function_constant(70)]];
 
 static inline uint attn_fc_head_dim(constant uint& head_dim) {
     return (is_function_constant_defined(FC_ATTN_USE_FC) &&
@@ -347,6 +355,7 @@ void attention_decode_combine(
     device       half*  out          [[buffer(3)]],    // [num_q_heads * head_dim]
     constant     uint&  head_dim     [[buffer(4)]],
     constant     uint&  num_chunks   [[buffer(5)]],
+    device const bfloat* sinks       [[buffer(6), function_constant(FC_ATTN_HAS_SINKS)]],
     uint tg_id           [[threadgroup_position_in_grid]],
     uint lid             [[thread_position_in_threadgroup]],
     uint lsize           [[threads_per_threadgroup]]
@@ -362,8 +371,20 @@ void attention_decode_combine(
     // max and denominator rather than pay a threadgroup reduction + barriers.
     float m_glob = -INFINITY;
     for (uint c = 0; c < NC; ++c) { m_glob = max(m_glob, m_row[c]); }
+    // THE SINK ENTERS THE MAX AND THE DENOMINATOR, AND NOTHING ELSE. It is a
+    // logit for a key that has no VALUE row, so it takes probability mass
+    // away from the real keys and contributes nothing to the numerator --
+    // exactly what ggml's `ggml_soft_max_add_sinks` does
+    // (`max = MAX(max, sk[head])`, then `sum += expf(sk[head] - max)`).
+    // Adding it to `acc` below would be the plausible wrong version.
+    float sink = 0.0f;
+    if (FC_ATTN_HAS_SINKS) {
+        sink = float(sinks[q_head]);
+        m_glob = max(m_glob, sink);
+    }
     float D = 0.0f;
     for (uint c = 0; c < NC; ++c) { D += d_row[c] * attn_softmax_exp(m_row[c] - m_glob); }
+    if (FC_ATTN_HAS_SINKS) { D += attn_softmax_exp(sink - m_glob); }
     const float inv_d = (D > 0.0f) ? (1.0f / D) : 0.0f;
 
     device half* out_row = out + uint(q_head) * HD;

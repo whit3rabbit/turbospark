@@ -38,6 +38,42 @@ fn unused_function_constants() -> FunctionConstantValues {
 /// num_heads, head_dim]` halfs in place at `data` (a `(buffer, byte
 /// offset)` view — which may sit inside a persistent KV buffer, rotating
 /// the K row directly in its cache slot), appended to `pass`.
+/// NeoX rope from a precomputed per-pair frequency table, with a magnitude
+/// scale on cos and sin -- ROADMAP M5's YaRN.
+///
+/// `frequencies` holds `rotated_pairs` floats, built once at open by
+/// `turbospark_compute::yarn_frequencies`. See the shader for why a scalar
+/// theta cannot express this.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_rope_neox_freqs(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    data: (&metal::Buffer, u64),
+    position: u32,
+    num_heads: u32,
+    head_dim: u32,
+    rotated_pairs: u32,
+    frequencies: (&metal::Buffer, u64),
+    mscale: f32,
+) -> Result<(), GpuError> {
+    let pipeline =
+        context.pipeline(SOURCE, "rope_neox_freqs", &unused_function_constants(), b"")?;
+    pass.encode_threads_3d(
+        &pipeline,
+        &[(data.0, 0, data.1), (frequencies.0, 4, frequencies.1)],
+        &[
+            (u32_bytes(&position), 1),
+            (u32_bytes(&head_dim), 2),
+            (u32_bytes(&num_heads), 3),
+            (u32_bytes(&rotated_pairs), 5),
+            (f32_bytes(&mscale), 6),
+        ],
+        (rotated_pairs.max(1) as u64, num_heads.max(1) as u64, 1),
+        (1, 1, 1),
+    );
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn encode_rope_proportional_neox(
     context: &mut MetalContext,

@@ -390,50 +390,89 @@ fn run_case(block: Block, use_silu: bool, top_k: usize) {
     // The two phases are selected INDEPENDENTLY, which is the whole reason
     // this harness exists in its current shape: a mixed expert reads one
     // layout in phase 1 and another in phase 2.
-    let phase1 = match block.gate_up {
-        Kind::Q8_0 => turbospark_gpu::encode_moe_phase1_q8_0,
-        Kind::Q4K => turbospark_gpu::encode_moe_phase1_q4_k,
-        Kind::Iq3Xxs => turbospark_gpu::encode_moe_phase1_iq3_xxs,
-        Kind::Iq4Xs => turbospark_gpu::encode_moe_phase1_iq4_xs,
-        Kind::Mxfp4 => turbospark_gpu::encode_moe_phase1_mxfp4,
-        Kind::Iq4Nl => panic!("no IQ4_NL phase 1: no real file puts it in gate/up"),
-        Kind::Q6K => panic!("no Q6_K phase 1: no real file puts it in gate/up"),
-    };
-    let phase2 = match block.down {
-        Kind::Q8_0 => turbospark_gpu::encode_moe_phase2_q8_0,
-        Kind::Q4K => turbospark_gpu::encode_moe_phase2_q4_k,
-        Kind::Iq4Nl => turbospark_gpu::encode_moe_phase2_iq4_nl,
-        Kind::Q6K => turbospark_gpu::encode_moe_phase2_q6_k,
-        Kind::Mxfp4 => turbospark_gpu::encode_moe_phase2_mxfp4,
-        other => panic!("no {other:?} phase 2: no real file puts it in down"),
-    };
-    phase1(
-        &mut context,
-        &pass,
-        &routed,
-        &offsets,
-        (&x_buf, 0),
-        (&acts_buf, 0),
-        d_dim as u32,
-        f_dim as u32,
-        top_k as u32,
-        use_silu,
-    )
-    .expect("phase1");
-    phase2(
-        &mut context,
-        &pass,
-        &routed,
-        &offsets,
-        (&acts_buf, 0),
-        (&routing_buf, 0),
-        (&residual_buf, 0),
-        (&y_buf, 0),
-        d_dim as u32,
-        f_dim as u32,
-        use_silu,
-    )
-    .expect("phase2");
+    // MXFP4's encoders take the activation spec the other block types have
+    // no notion of, so they cannot share a function pointer with them. The
+    // spec here is always PLAIN: this body asserts the BLOCK TYPE against the
+    // CPU reference, and gpt-oss's activation is a family property tested
+    // separately in `the_oai_activation_matches_its_reference`.
+    if block.gate_up == Kind::Mxfp4 {
+        turbospark_gpu::encode_moe_phase1_mxfp4(
+            &mut context,
+            &pass,
+            &routed,
+            &offsets,
+            (&x_buf, 0),
+            (&acts_buf, 0),
+            d_dim as u32,
+            f_dim as u32,
+            top_k as u32,
+            use_silu,
+            turbospark_gpu::Mxfp4Activation::PLAIN,
+        )
+        .expect("phase1");
+    } else {
+        let phase1 = match block.gate_up {
+            Kind::Q8_0 => turbospark_gpu::encode_moe_phase1_q8_0,
+            Kind::Q4K => turbospark_gpu::encode_moe_phase1_q4_k,
+            Kind::Iq3Xxs => turbospark_gpu::encode_moe_phase1_iq3_xxs,
+            Kind::Iq4Xs => turbospark_gpu::encode_moe_phase1_iq4_xs,
+            Kind::Iq4Nl => panic!("no IQ4_NL phase 1: no real file puts it in gate/up"),
+            Kind::Q6K => panic!("no Q6_K phase 1: no real file puts it in gate/up"),
+            Kind::Mxfp4 => unreachable!(),
+        };
+        phase1(
+            &mut context,
+            &pass,
+            &routed,
+            &offsets,
+            (&x_buf, 0),
+            (&acts_buf, 0),
+            d_dim as u32,
+            f_dim as u32,
+            top_k as u32,
+            use_silu,
+        )
+        .expect("phase1");
+    }
+    if block.down == Kind::Mxfp4 {
+        turbospark_gpu::encode_moe_phase2_mxfp4(
+            &mut context,
+            &pass,
+            &routed,
+            &offsets,
+            (&acts_buf, 0),
+            (&routing_buf, 0),
+            (&residual_buf, 0),
+            (&y_buf, 0),
+            d_dim as u32,
+            f_dim as u32,
+            use_silu,
+            false,
+        )
+        .expect("phase2");
+    } else {
+        let phase2 = match block.down {
+            Kind::Q8_0 => turbospark_gpu::encode_moe_phase2_q8_0,
+            Kind::Q4K => turbospark_gpu::encode_moe_phase2_q4_k,
+            Kind::Iq4Nl => turbospark_gpu::encode_moe_phase2_iq4_nl,
+            Kind::Q6K => turbospark_gpu::encode_moe_phase2_q6_k,
+            other => panic!("no {other:?} phase 2: no real file puts it in down"),
+        };
+        phase2(
+            &mut context,
+            &pass,
+            &routed,
+            &offsets,
+            (&acts_buf, 0),
+            (&routing_buf, 0),
+            (&residual_buf, 0),
+            (&y_buf, 0),
+            d_dim as u32,
+            f_dim as u32,
+            use_silu,
+        )
+        .expect("phase2");
+    }
     pass.commit_and_wait();
 
     let got = read_f16(&y_buf, d_dim);
@@ -599,4 +638,183 @@ fn the_msl_side_agrees_with_the_crate_that_owns_the_format() {
     // starts at an odd offset, where an `as_type<half>` would be misaligned.
     assert_eq!(turbospark_gpu::MXFP4_BLOCK_BYTES % 2, 1);
     assert_eq!(turbospark_gpu::mxfp4_row_bytes(96), 51);
+}
+
+/// gpt-oss's EXPERT MATH, which is a family property rather than a block-type
+/// one: the clamped SwiGLU with a swish alpha and a `(up + 1)` term, and the
+/// per-expert biases the blob carries at the three offsets every other GGUF
+/// install leaves at zero.
+///
+/// Separate from the cases above because they assert a different thing. Those
+/// hold the MXFP4 UNPACK against `dequantize_mxfp4`; this holds the
+/// ACTIVATION against ggml's `ggml_compute_forward_swiglu_oai_f32`, written
+/// out here from that source rather than called from the crate under test.
+///
+/// The reference is spelled out inline for the same reason
+/// `rope_yarn_parity.rs` restates ggml's `rope_yarn`: a formula compared
+/// against this port's own copy of it establishes only that the copy was
+/// consistent.
+#[test]
+fn the_oai_activation_matches_its_reference() {
+    let (d_dim, f_dim, top_k) = (64usize, 96usize, 2usize);
+    let (alpha, limit) = (1.702f32, 7.0f32);
+
+    let mut context = MetalContext::new().expect("Metal device");
+
+    // Weight rows, then a BIAS PLANE per role appended to the blob exactly as
+    // the repack walk packs `ffn_*_exps.bias`: F32, per expert, contiguous.
+    let experts: Vec<Expert> = (0..top_k)
+        .map(|e| {
+            let seed = 9000 + 100 * e as u64;
+            (
+                quant_rows(Kind::Mxfp4, f_dim, d_dim, seed + 1),
+                quant_rows(Kind::Mxfp4, f_dim, d_dim, seed + 2),
+                quant_rows(Kind::Mxfp4, d_dim, f_dim, seed + 3),
+            )
+        })
+        .collect();
+    // Biases large enough to matter against weights whose rows sum to O(1),
+    // and spanning the clamp in both directions so `min(gate, limit)` and
+    // `clamp(up, -limit, limit)` are both exercised rather than inert.
+    let bias = |n: usize, seed: f32| -> Vec<f32> {
+        (0..n)
+            .map(|i| ((i as f32) * 0.37 + seed).sin() * 9.0)
+            .collect()
+    };
+
+    let x32: Vec<f32> = (0..d_dim).map(|i| ((i as f32) * 0.21).sin()).collect();
+    let x16: Vec<f16> = x32.iter().map(|&v| f16::from_f32(v)).collect();
+    let x32r: Vec<f32> = x16.iter().map(|v| v.to_f32()).collect();
+    let residual32: Vec<f32> = vec![0.0; d_dim];
+    let residual16: Vec<f16> = residual32.iter().map(|&v| f16::from_f32(v)).collect();
+    let weights: Vec<f32> = (0..top_k).map(|e| 0.6 - 0.15 * e as f32).collect();
+
+    let mut blobs = Vec::new();
+    let mut offsets = None;
+    let mut expected: Vec<f32> = vec![0.0; d_dim];
+    for (e, (gate, up, down)) in experts.iter().enumerate() {
+        let (gb, ub, db) = (
+            bias(f_dim, e as f32),
+            bias(f_dim, e as f32 + 11.0),
+            bias(d_dim, e as f32 + 23.0),
+        );
+        let (mut blob, mut off) = build_blob(gate, up, down);
+        let push = |blob: &mut Vec<u8>, v: &[f32]| -> u32 {
+            let at = blob.len() as u32;
+            for f in v {
+                blob.extend_from_slice(&f.to_le_bytes());
+            }
+            at
+        };
+        off.gate_b = push(&mut blob, &gb);
+        off.up_b = push(&mut blob, &ub);
+        off.down_b = push(&mut blob, &db);
+        offsets.get_or_insert(off);
+        blobs.push(context.new_buffer_with_data(&blob));
+
+        // ggml's `ggml_compute_forward_swiglu_oai_f32`, verbatim.
+        let g: Vec<&[u8]> = gate.iter().map(|r| r.as_slice()).collect();
+        let u: Vec<&[u8]> = up.iter().map(|r| r.as_slice()).collect();
+        let gate_out = turbospark_compute::dequant_mxfp4_gemv(&g, &x32r, d_dim);
+        let up_out = turbospark_compute::dequant_mxfp4_gemv(&u, &x32r, d_dim);
+        let acts: Vec<f32> = (0..f_dim)
+            .map(|f| {
+                let x = (gate_out[f] + gb[f]).min(limit);
+                let y = (up_out[f] + ub[f]).clamp(-limit, limit);
+                let glu = x / (1.0 + (-alpha * x).exp());
+                f16::from_f32(glu * (y + 1.0)).to_f32()
+            })
+            .collect();
+        let d: Vec<&[u8]> = down.iter().map(|r| r.as_slice()).collect();
+        let out = turbospark_compute::dequant_mxfp4_gemv(&d, &acts, f_dim);
+        for (i, dst) in expected.iter_mut().enumerate() {
+            *dst += weights[e] * (out[i] + db[i]);
+        }
+    }
+    let offsets = offsets.unwrap();
+
+    let x_buf = context.new_buffer_with_data(&to_le(&x16));
+    let residual_buf = context.new_buffer_with_data(&to_le(&residual16));
+    let acts_buf = context.new_buffer_with_data(&vec![0u8; MAX_STREAMED_EXPERTS * f_dim * 2]);
+    let y_buf = context.new_output_buffer((d_dim * 2) as u64);
+    let mut routing = vec![f16::from_f32(0.0); MAX_STREAMED_EXPERTS];
+    for (slot, &w) in weights.iter().enumerate() {
+        routing[slot] = f16::from_f32(w);
+    }
+    let routing_buf = context.new_buffer_with_data(&to_le(&routing));
+
+    let routed = RoutedBlobsBuffer::new(&mut context, true).expect("arg buffer");
+    let blob_refs: Vec<(&metal::Buffer, u64)> = blobs.iter().map(|b| (b, 0u64)).collect();
+    routed
+        .bind(&mut context, true, &blob_refs)
+        .expect("bind blobs");
+
+    let pass = context.begin_pass();
+    for blob in &blobs {
+        pass.use_read_buffer(blob);
+    }
+    turbospark_gpu::encode_moe_phase1_mxfp4(
+        &mut context,
+        &pass,
+        &routed,
+        &offsets,
+        (&x_buf, 0),
+        (&acts_buf, 0),
+        d_dim as u32,
+        f_dim as u32,
+        top_k as u32,
+        true,
+        turbospark_gpu::Mxfp4Activation::GPT_OSS,
+    )
+    .expect("phase1");
+    turbospark_gpu::encode_moe_phase2_mxfp4(
+        &mut context,
+        &pass,
+        &routed,
+        &offsets,
+        (&acts_buf, 0),
+        (&routing_buf, 0),
+        (&residual_buf, 0),
+        (&y_buf, 0),
+        d_dim as u32,
+        f_dim as u32,
+        true,
+        true,
+    )
+    .expect("phase2");
+    pass.commit_and_wait();
+
+    let got = read_f16(&y_buf, d_dim);
+    for d in 0..d_dim {
+        let diff = (got[d] - expected[d]).abs();
+        let tol = 5e-2_f32.max(expected[d].abs() * 3e-2);
+        assert!(
+            diff <= tol,
+            "d={d}: got {} want {} (diff {diff})",
+            got[d],
+            expected[d]
+        );
+    }
+}
+
+/// The constants really are gpt-oss's, so a future edit cannot quietly move
+/// them. `alpha` and `limit` are HARDCODED in llama.cpp's graph builder
+/// rather than carried in metadata, so nothing in an install would contradict
+/// a wrong value here.
+#[test]
+fn the_gpt_oss_activation_constants_are_the_ones_llama_cpp_hardcodes() {
+    let a = turbospark_gpu::Mxfp4Activation::GPT_OSS;
+    assert_eq!(a.alpha, 1.702);
+    assert_eq!(a.limit, 7.0);
+    assert!(a.has_bias);
+    // And PLAIN must select the ordinary gated activation, which is what the
+    // block-type cases above depend on.
+    assert_eq!(
+        turbospark_gpu::Mxfp4Activation::PLAIN,
+        turbospark_gpu::Mxfp4Activation {
+            alpha: 0.0,
+            limit: 0.0,
+            has_bias: false,
+        }
+    );
 }

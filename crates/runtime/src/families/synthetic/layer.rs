@@ -127,6 +127,7 @@ impl RealForwardRunner {
             kv_start,
             active_ring,
             attn_scale,
+            None,
         )
         .map_err(gpu_err)?;
         gpu::encode_dequant_int4_gemv_resident(

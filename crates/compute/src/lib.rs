@@ -40,7 +40,7 @@ pub mod tolerance;
 /// Walsh-Hadamard Transform (WHT) compute kernels.
 pub mod wht;
 
-pub use attention::causal_attention;
+pub use attention::{causal_attention, causal_attention_with_sinks};
 pub use gating::{sigmoid_gate_mul, sigmoid_scalar_mul, split_q_gate};
 pub use gdn::{sigmoid, silu, softplus, GdnDims, GdnReference, GDN_RMS_EPS};
 pub use moe::{apply_streamed_routed, gelu_tanh, run_ffn};
@@ -68,7 +68,7 @@ pub use quant_gguf_mxfp4::{
     MXFP4_VALUES,
 };
 pub use rms_norm::rms_norm;
-pub use rope::{rope_neox, rope_neox_subdim, rope_paired};
+pub use rope::{rope_neox, rope_neox_subdim, rope_paired, yarn_frequencies, YarnSpec};
 pub use sampling::logit_softcap_softmax;
 pub use tolerance::{bounded_rel_error, max_abs_diff, rel_error, Tolerance};
 pub use wht::wht;

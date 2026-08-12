@@ -42,8 +42,29 @@ pub(crate) fn encode_moe_phase1_any(
         RoutedBlobLayout::GgufIq4Xs => gpu::encode_moe_phase1_iq4_xs(
             context, pass, routed, offsets, x, acts, d_dim, f_dim, top_k, use_silu,
         ),
+        // MXFP4 IS `gpt-oss` AND NOTHING ELSE, so the activation constants
+        // come from that family here rather than being threaded through
+        // every caller of this forwarder. `has_bias` is DERIVED rather than
+        // assumed, though: a bias offset of 0 is what
+        // `moe_offsets_from_layout` writes when the blob has no bias plane,
+        // and 0 cannot be a real one because `gate_w` occupies it. If a
+        // second MXFP4 checkpoint ever appears with a different activation,
+        // this is the line that has to become a parameter.
         RoutedBlobLayout::GgufMxfp4 => gpu::encode_moe_phase1_mxfp4(
-            context, pass, routed, offsets, x, acts, d_dim, f_dim, top_k, use_silu,
+            context,
+            pass,
+            routed,
+            offsets,
+            x,
+            acts,
+            d_dim,
+            f_dim,
+            top_k,
+            use_silu,
+            gpu::Mxfp4Activation {
+                has_bias: offsets.gate_b != 0,
+                ..gpu::Mxfp4Activation::GPT_OSS
+            },
         ),
         RoutedBlobLayout::Affine => gpu::encode_moe_phase1(
             context, pass, routed, offsets, x, acts, d_dim, f_dim, top_k, use_silu,
@@ -87,7 +108,18 @@ pub(crate) fn encode_moe_phase2_any(
             context, pass, routed, offsets, acts, routing_w, residual, y, d_dim, f_dim, use_silu,
         ),
         RoutedBlobLayout::GgufMxfp4 => gpu::encode_moe_phase2_mxfp4(
-            context, pass, routed, offsets, acts, routing_w, residual, y, d_dim, f_dim, use_silu,
+            context,
+            pass,
+            routed,
+            offsets,
+            acts,
+            routing_w,
+            residual,
+            y,
+            d_dim,
+            f_dim,
+            use_silu,
+            offsets.down_b != 0,
         ),
         RoutedBlobLayout::Affine => gpu::encode_moe_phase2(
             context, pass, routed, offsets, acts, routing_w, residual, y, d_dim, f_dim, use_silu,

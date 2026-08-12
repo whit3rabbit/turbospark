@@ -199,6 +199,8 @@ impl RealForwardRunner {
             kv_start,
             active_ring,
             attn_scale,
+            // Gemma has no attention sinks; only `gpt-oss` does.
+            None,
         )
         .map_err(gpu_err)?;
         encode_gemv_any(

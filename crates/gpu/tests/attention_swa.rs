@@ -96,6 +96,7 @@ fn assert_windowed_attention_matches_cpu(
         kv_start,
         ring_capacity,
         scale,
+        None,
     )
     .expect("encode");
     pass.commit_and_wait();

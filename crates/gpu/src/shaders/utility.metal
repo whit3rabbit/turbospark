@@ -148,3 +148,27 @@ void logit_softcap_fp16(
     if (tid >= count) return;
     logits[tid] = half(softcap * tanh(float(logits[tid]) / softcap));
 }
+
+// Port-local addition (ROADMAP M5): y[i] += bf16(bias[i]).
+//
+// `gpt-oss` is the first family here whose projections carry BIASES, and
+// every one of them arrives as F32 in the GGUF and is narrowed to BF16 by
+// `transcode_f32`'s default -- the same width the norms take, read the same
+// way, through MSL's native `bfloat`.
+//
+// A SEPARATE PASS RATHER THAN A BINDING ON EVERY GEMV, deliberately. There
+// are seven quant GEMV kernels here plus their resident variants, and a bias
+// argument on each would touch every one of them and every existing family's
+// dispatch sites, to serve one family. An elementwise add over `[D]` after a
+// GEMV that already read `D x N` weights is not a cost worth that: it is one
+// more dispatch on a stream the residual add already walks twice.
+[[kernel, max_total_threads_per_threadgroup(256)]]
+void bias_add_bf16_fp16(
+    device half*         y     [[buffer(0)]],
+    device const bfloat* bias  [[buffer(1)]],
+    constant uint&       count [[buffer(2)]],
+    uint                 tid   [[thread_position_in_grid]]
+) {
+    if (tid >= count) return;
+    y[tid] = half(float(y[tid]) + float(bias[tid]));
+}

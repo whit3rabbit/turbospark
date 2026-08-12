@@ -125,3 +125,57 @@ kernel void rope_proportional_neox(
     apply_neox_pair(head, pair, half_dimension, dimension,
                     float(position), theta);
 }
+
+// Port-local (ROADMAP M5): NeoX rope from a PRECOMPUTED per-pair frequency
+// table, with a magnitude scale on cos and sin.
+//
+// The three kernels above derive each pair's frequency from a scalar theta
+// (`pow(theta, -2i/D)`), which is every rope this port had until `gpt-oss`.
+// YaRN is not expressible that way: it interpolates per dimension between
+// extrapolating and interpolating the trained frequency along a ramp, so the
+// per-pair frequencies are no longer a function of one number.
+//
+// The table is position-INDEPENDENT (see `turbospark_compute::yarn_spec`), so
+// it is built once at open and bound, rather than recomputed per token.
+//
+// `mscale` is not decoration and does not cancel: YaRN scales q and k, and
+// therefore `q.k` by its square. See the reference's doc comment for why
+// llama.cpp's own source makes it look like a no-op.
+//
+// This also happens to be the shape a LEARNED frequency table needs, which
+// is what `rope_freqs.weight` is -- refused by name since M4. Nothing here
+// wires that up; it is only worth noting that the kernel would not be the
+// obstacle.
+kernel void rope_neox_freqs(
+    device half* data [[buffer(0)]],
+    constant uint& position [[buffer(1)]],
+    constant uint& head_dim [[buffer(2)]],
+    constant uint& num_heads [[buffer(3)]],
+    device const float* frequencies [[buffer(4)]],
+    constant uint& rotated_pairs [[buffer(5)]],
+    constant float& mscale [[buffer(6)]],
+    uint3 gid [[thread_position_in_grid]]
+) {
+    const uint pair = gid.x;
+    const uint head_index = gid.y;
+    const uint token_index = gid.z;
+    const uint dimension = rope_head_dim(head_dim);
+    const uint heads = rope_num_heads(num_heads);
+    const uint active_pairs = rope_rotated_pairs(rotated_pairs);
+    if (pair >= active_pairs || head_index >= heads) return;
+
+    const uint half_dimension = dimension / 2u;
+    device half* head = data
+        + token_index * heads * dimension
+        + head_index * dimension;
+
+    const float angle = float(position) * frequencies[pair];
+    const float cosine = cos(angle) * mscale;
+    const float sine = sin(angle) * mscale;
+    const uint lower = pair;
+    const uint upper = half_dimension + pair;
+    const float x0 = float(head[lower]);
+    const float x1 = float(head[upper]);
+    head[lower] = half(x0 * cosine - x1 * sine);
+    head[upper] = half(x0 * sine + x1 * cosine);
+}

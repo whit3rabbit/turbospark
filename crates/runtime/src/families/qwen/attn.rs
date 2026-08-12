@@ -248,6 +248,7 @@ pub(crate) fn encode_full_attention_block(
         0,
         0,
         arch.attention_scale as f32,
+        None,
     )
     .map_err(gpu_err)?;
     gpu::encode_sigmoid_gate_mul(

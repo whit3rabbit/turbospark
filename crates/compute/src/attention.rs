@@ -23,6 +23,45 @@ pub fn causal_attention(
     window: Option<usize>,
     scale: Option<f32>,
 ) -> Vec<f32> {
+    causal_attention_with_sinks(
+        q,
+        k,
+        v,
+        head_dim,
+        num_q_heads,
+        num_kv_heads,
+        seq_len,
+        window,
+        scale,
+        None,
+    )
+}
+
+/// The same, with ROADMAP M5's ATTENTION SINKS: one learned logit per query
+/// head that joins the softmax denominator and nothing else.
+///
+/// A sink has no VALUE row, so it takes probability mass away from the real
+/// keys and contributes nothing to the output -- the whole of its effect is
+/// that the attention weights no longer sum to one. Adding it to the
+/// numerator is the plausible wrong version and would make it an ordinary
+/// extra key with a zero value, which is a different function.
+///
+/// Reference: ggml's `ggml_compute_forward_soft_max_f32` under
+/// `ggml_soft_max_add_sinks`, which does `max = MAX(max, sk[head])` and then
+/// `sum += expf(sk[head] - max)`.
+#[allow(clippy::too_many_arguments)]
+pub fn causal_attention_with_sinks(
+    q: &[f32],
+    k: &[f32],
+    v: &[f32],
+    head_dim: usize,
+    num_q_heads: usize,
+    num_kv_heads: usize,
+    seq_len: usize,
+    window: Option<usize>,
+    scale: Option<f32>,
+    sinks: Option<&[f32]>,
+) -> Vec<f32> {
     assert!(
         num_q_heads % num_kv_heads == 0,
         "num_q_heads must be a multiple of num_kv_heads"
@@ -57,11 +96,18 @@ pub fn causal_attention(
             })
             .collect();
 
-        let mx = scores.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        let sink = sinks.map(|s| s[qh]);
+        let mut mx = scores.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        if let Some(sink) = sink {
+            mx = mx.max(sink);
+        }
         for s in scores.iter_mut() {
             *s = (*s - mx).exp();
         }
-        let sum: f32 = scores.iter().sum();
+        let mut sum: f32 = scores.iter().sum();
+        if let Some(sink) = sink {
+            sum += (sink - mx).exp();
+        }
         let inv_sum = 1.0 / sum;
         for s in scores.iter_mut() {
             *s *= inv_sum;

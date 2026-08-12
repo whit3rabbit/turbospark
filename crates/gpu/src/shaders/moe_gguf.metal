@@ -524,6 +524,38 @@ static inline float dequant_mxfp4_row_simd(
     return simd_sum(acc);
 }
 
+// gpt-oss's expert activation (ROADMAP M5), which is NOT the one every other
+// flow here uses. Verbatim from ggml's `ggml_compute_forward_swiglu_oai_f32`:
+//
+//     x = min(gate, limit)
+//     y = clamp(up, -limit, limit)
+//     out = (x / (1 + exp(-alpha * x))) * (y + 1)
+//
+// The CLAMP half is `moe.metal`'s `moe_swiglu_clamp` byte for byte. The
+// ACTIVATION half is new twice over: a swish with `alpha` where every
+// existing flow uses silu (which is alpha 1) or gelu-tanh, and a `(y + 1)`
+// where every existing flow multiplies by `up` directly. `alpha = 1.702` and
+// `limit = 7.0` are hardcoded constants in llama.cpp's graph builder, not
+// metadata, so they arrive here from the family baseline.
+//
+// PASSED AS UNIFORMS RATHER THAN FUNCTION CONSTANTS, deliberately.
+// `moe_function_constants` already carries a `FC_MOE_SWIGLU_LIMIT` slot and
+// `constants_key` is ONE BYTE wide (the silu flag); adding two specialization
+// axes to a key that narrow is how a pipeline cache silently hands back the
+// wrong kernel, which is AGENTS.md Gotcha 18's ring-capacity trap in a new
+// place. A uniform costs a branch on a code path that just read a whole
+// expert row from memory.
+//
+// `alpha <= 0` means "not gpt-oss": the plain `activation(gate) * up` every
+// other block type's pair does, so the block-type parity cases and the
+// family cases run through one kernel.
+static inline float moe_activate_mxfp4(float gate, float up, float alpha, float limit) {
+    if (alpha <= 0.0f) return moe_hidden_activation(gate) * up;
+    const float x = min(gate, limit);
+    const float y = clamp(up, -limit, limit);
+    return (x / (1.0f + exp(-alpha * x))) * (y + 1.0f);
+}
+
 // Phase 1, MXFP4. Same dispatch as every sibling: one SIMD group per
 // (slot, f) row, eight rows per threadgroup, 256 threads.
 [[kernel, max_total_threads_per_threadgroup(256)]]
@@ -535,6 +567,9 @@ kernel void moe_phase1_gate_up_act_mxfp4(
     constant uint&            D               [[buffer(4)]],
     constant uint&            F               [[buffer(5)]],
     constant uint&            top_k           [[buffer(6)]],
+    constant uint&            has_bias        [[buffer(7)]],
+    constant float&           alpha           [[buffer(8)]],
+    constant float&           limit           [[buffer(9)]],
     uint                      tg_idx          [[threadgroup_position_in_grid]],
     uint                      sg_idx          [[simdgroup_index_in_threadgroup]],
     uint                      lane            [[thread_index_in_simdgroup]]
@@ -550,11 +585,21 @@ kernel void moe_phase1_gate_up_act_mxfp4(
     device const uint8_t* base = routed.blob[slot];
     const ExpertOffsets re = routed_offsets;
     const uint row_bytes = mxfp4_row_bytes(DD);
-    const float gate = dequant_mxfp4_row_simd(
+    float gate = dequant_mxfp4_row_simd(
         base + re.gate_W_off + f * row_bytes, x, DD, lane);
-    const float up = dequant_mxfp4_row_simd(
+    float up = dequant_mxfp4_row_simd(
         base + re.up_W_off + f * row_bytes, x, DD, lane);
-    if (lane == 0) acts[slot * FF + f] = half(moe_hidden_activation(gate) * up);
+    // THE BIAS IS ADDED BEFORE THE ACTIVATION, which is where the clamp
+    // reads it too -- `min(gate + b, limit)`, not `min(gate, limit) + b`.
+    // The blob carries the biases as F32, verbatim from the GGUF, because
+    // routed bytes are never transcoded.
+    if (has_bias != 0u) {
+        device const float* gb = (device const float*)(base + re.gate_b_off);
+        device const float* ub = (device const float*)(base + re.up_b_off);
+        gate += gb[f];
+        up += ub[f];
+    }
+    if (lane == 0) acts[slot * FF + f] = half(moe_activate_mxfp4(gate, up, alpha, limit));
 }
 
 // Phase 2, MXFP4. Reduces ALL EIGHT slots unconditionally, exactly like every
@@ -570,6 +615,7 @@ kernel void moe_phase2_down_reduce_k8_mxfp4(
     device half*              y               [[buffer(5)]],
     constant uint&            D               [[buffer(6)]],
     constant uint&            F               [[buffer(7)]],
+    constant uint&            has_bias        [[buffer(8)]],
     uint                      d               [[threadgroup_position_in_grid]],
     uint                      sg_idx          [[simdgroup_index_in_threadgroup]],
     uint                      lane            [[thread_index_in_simdgroup]]
@@ -583,8 +629,17 @@ kernel void moe_phase2_down_reduce_k8_mxfp4(
     const ExpertOffsets re = routed_offsets;
     device const half* act_slot = acts + sg_idx * FF;
 
-    const float value = dequant_mxfp4_row_simd(
+    float value = dequant_mxfp4_row_simd(
         base + re.down_W_off + d * mxfp4_row_bytes(FF), act_slot, FF, lane);
+    // PER SLOT AND INSIDE THE ROUTING WEIGHT, because it is that expert's
+    // own bias on that expert's own output -- llama.cpp adds it to the
+    // expert result before the weighted sum. Adding it once outside the
+    // reduce would apply one expert's bias to every token and scale it
+    // wrongly.
+    if (has_bias != 0u && lane == 0) {
+        device const float* db = (device const float*)(base + re.down_b_off);
+        value += db[d];
+    }
     if (lane == 0) partial[sg_idx] = float(routing_w[sg_idx]) * value;
     threadgroup_barrier(mem_flags::mem_threadgroup);
 

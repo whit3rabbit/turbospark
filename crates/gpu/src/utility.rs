@@ -77,6 +77,29 @@ pub fn encode_silu_mul(
     )
 }
 
+/// `y[i] += bf16(bias[i])`, in place — ROADMAP M5's per-projection bias.
+///
+/// `bias` is BF16 because that is what `transcode_f32` narrows gpt-oss's F32
+/// biases to at repack, the same width and the same reader as a norm weight.
+/// See the shader for why this is a separate pass rather than an argument on
+/// every GEMV.
+pub fn encode_bias_add(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    y: (&metal::Buffer, u64),
+    bias: (&metal::Buffer, u64),
+    count: u32,
+) -> Result<(), GpuError> {
+    encode_elementwise(
+        context,
+        pass,
+        "bias_add_bf16_fp16",
+        &[(y.0, 0, y.1), (bias.0, 1, bias.1)],
+        count,
+        2,
+    )
+}
+
 /// `hidden[i] += delta[i]`, in place, in FP16 — the residual stream stays
 /// on the GPU exactly as the Swift original keeps it.
 pub fn encode_residual_add(

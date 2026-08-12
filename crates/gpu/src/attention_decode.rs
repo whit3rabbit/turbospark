@@ -101,6 +101,7 @@ fn attention_function_constants(
     scale: f32,
     ring_capacity: u32,
     num_chunks: u32,
+    has_sinks: bool,
 ) -> FunctionConstantValues {
     let values = FunctionConstantValues::new();
     let zero_u32: u32 = 0;
@@ -116,14 +117,29 @@ fn attention_function_constants(
         MTLDataType::UInt,
         69,
     );
+    // ROADMAP M5. `false` makes the combine kernel's `sinks` argument not
+    // exist, so the four sink-free families bind exactly what they always
+    // did and compile to the same code.
+    values.set_constant_value_at_index((&has_sinks as *const bool).cast(), MTLDataType::Bool, 70);
     values
 }
 
-fn attention_constants_key(scale: f32, ring_capacity: u32, num_chunks: u32) -> [u8; 12] {
-    let mut key = [0u8; 12];
+fn attention_constants_key(
+    scale: f32,
+    ring_capacity: u32,
+    num_chunks: u32,
+    has_sinks: bool,
+) -> [u8; 13] {
+    let mut key = [0u8; 13];
     key[..4].copy_from_slice(&scale.to_le_bytes());
     key[4..8].copy_from_slice(&ring_capacity.to_le_bytes());
-    key[8..].copy_from_slice(&num_chunks.to_le_bytes());
+    key[8..12].copy_from_slice(&num_chunks.to_le_bytes());
+    // The fourth axis, and it has to be here for the reason the doc above
+    // gives about the other three: without it a sink dispatch and a
+    // sink-free one at the same (scale, ring, chunks) share a cache entry,
+    // and whichever compiled first wins. That failure is silent both ways --
+    // sinks ignored, or a kernel reading an argument nobody bound.
+    key[12] = u8::from(has_sinks);
     key
 }
 
@@ -219,6 +235,10 @@ pub fn encode_attention_decode(
     kv_start: u32,
     ring_capacity: u32,
     scale: f32,
+    // ROADMAP M5's attention sinks: one BF16 logit per q head, added to the
+    // softmax denominator. `None` for every family but `gpt-oss`, and the
+    // combine kernel then has no such argument at all.
+    sinks: Option<(&metal::Buffer, u64)>,
 ) -> Result<(), GpuError> {
     assert_eq!(num_q_heads % num_kv_heads, 0);
     assert!(kv_start < seq_len);
@@ -242,8 +262,9 @@ pub fn encode_attention_decode(
     // past the final chunk's end, silently dropping them from the softmax.
     let chunk_len = range.div_ceil(num_chunks);
 
-    let constants = attention_function_constants(scale, ring_capacity, num_chunks);
-    let constants_key = attention_constants_key(scale, ring_capacity, num_chunks);
+    let has_sinks = sinks.is_some();
+    let constants = attention_function_constants(scale, ring_capacity, num_chunks, has_sinks);
+    let constants_key = attention_constants_key(scale, ring_capacity, num_chunks, has_sinks);
     let partial_pipeline = context.pipeline(
         SOURCE,
         "attention_decode_partial",
@@ -280,14 +301,18 @@ pub fn encode_attention_decode(
         &constants,
         &constants_key,
     )?;
+    let mut combine_buffers: Vec<(&metal::Buffer, u64, u64)> = vec![
+        (&scratch.m, 0, 0),
+        (&scratch.d, 1, 0),
+        (&scratch.o, 2, 0),
+        (out.0, 3, out.1),
+    ];
+    if let Some((buf, off)) = sinks {
+        combine_buffers.push((buf, 6, off));
+    }
     pass.encode_threadgroups(
         &combine_pipeline,
-        &[
-            (&scratch.m, 0, 0),
-            (&scratch.d, 1, 0),
-            (&scratch.o, 2, 0),
-            (out.0, 3, out.1),
-        ],
+        &combine_buffers,
         &[(u32_bytes(&head_dim), 4), (u32_bytes(&num_chunks), 5)],
         num_q_heads as u64,
         THREADS_PER_GROUP,
@@ -331,8 +356,8 @@ pub fn attention_decode_buffers(
     // is allowed to differ from only by FP reassociation.
     let num_chunks: u32 = 1;
 
-    let constants = attention_function_constants(scale, 0, num_chunks);
-    let constants_key = attention_constants_key(scale, 0, num_chunks);
+    let constants = attention_function_constants(scale, 0, num_chunks, false);
+    let constants_key = attention_constants_key(scale, 0, num_chunks, false);
     let partial_pipeline = context.pipeline(
         SOURCE,
         "attention_decode_partial",

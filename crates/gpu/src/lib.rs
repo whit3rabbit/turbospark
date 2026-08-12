@@ -162,7 +162,7 @@ pub use moe_gguf::{
     encode_moe_phase1_iq3_xxs, encode_moe_phase1_iq4_xs, encode_moe_phase1_mxfp4,
     encode_moe_phase1_q4_k, encode_moe_phase1_q8_0, encode_moe_phase2_iq4_nl,
     encode_moe_phase2_mxfp4, encode_moe_phase2_q4_k, encode_moe_phase2_q6_k,
-    encode_moe_phase2_q8_0, mxfp4_row_bytes, MXFP4_BLOCK_BYTES, MXFP4_BLOCK_ELEMS,
+    encode_moe_phase2_q8_0, mxfp4_row_bytes, Mxfp4Activation, MXFP4_BLOCK_BYTES, MXFP4_BLOCK_ELEMS,
 };
 #[cfg(target_os = "macos")]
 pub use power_state::{low_power_mode_enabled, thermal_state_raw};
@@ -177,10 +177,13 @@ pub use rms_norm::{
     rms_norm_no_scale_perhead,
 };
 #[cfg(target_os = "macos")]
-pub use rope::{encode_rope_neox_subdim, encode_rope_proportional_neox, rope_proportional_neox};
+pub use rope::{
+    encode_rope_neox_freqs, encode_rope_neox_subdim, encode_rope_proportional_neox,
+    rope_proportional_neox,
+};
 #[cfg(target_os = "macos")]
 pub use utility::{
-    encode_gelu_mul, encode_logit_softcap, encode_residual_add, encode_scalar_mul,
+    encode_bias_add, encode_gelu_mul, encode_logit_softcap, encode_residual_add, encode_scalar_mul,
     encode_sigmoid_gate_mul, encode_sigmoid_scalar_mul, encode_silu_mul, encode_split_q_gate,
 };
 
