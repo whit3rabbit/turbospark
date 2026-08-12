@@ -920,8 +920,12 @@ live network).
   for the YaRN magnitude scale leaves every one of them green, because
   that scale is a function of the rope factor alone and no config
   difference isolates it from the frequency table. Its value and argument
-  order are pinned by a unit test; the end-to-end property belongs to a
-  cross-engine gate that has not been run.
+  order are pinned by a unit test; the end-to-end property belonged to
+  the cross-engine gate, which HAS now been run and passed (2026-08-12):
+  0.00978 mean nats at 97.5% top-1 against llama.cpp on the identical
+  bytes, under ggml's own 0.01181 Metal/CPU backend floor, which is what
+  says the mscale value and the sink placement are right
+  (`docs/BENCHMARKS.md`).
   TWO LIMITATIONS ARE STATED RATHER THAN SILENT. Harmony's channels are
   NOT decoded by `StructuredDecoder`, so the model's `analysis` reasoning
   reaches a caller as text rather than as separated reasoning. And there

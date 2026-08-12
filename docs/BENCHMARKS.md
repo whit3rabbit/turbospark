@@ -621,6 +621,85 @@ say either is close to the unquantized model, which still needs a bf16
 reference nobody has run here. Nothing in the standing gate runs it, and the
 GGUF it needs is not kept on disk.
 
+### Cross-engine: llama.cpp on the same GGUF, `gpt-oss`
+
+The same question for the sixth family (ROADMAP M5, gpt-oss-20b), and the
+one instrument that can answer the two things
+`crates/runtime/tests/real_forward_gptoss.rs` records itself as unable to
+see: **whether YaRN's magnitude scale is the right VALUE** (`mscale =
+1.3465736`, which scales `q.k` by 1.8133 -- the flow tests can catch it
+CHANGING but nothing in this repo can say the number is right), and **the
+attention sink's exact placement** (one learned logit per q head, added to
+the softmax denominator and to nothing else). Both perturb every one of 24
+layers systematically; both belong here or nowhere.
+
+Same method as the two sections above: `scripts/kld_llamacpp.py` replays
+this port's own id sequence through llama.cpp b10360 on
+`ggml-org/gpt-oss-20b-GGUF`'s `gpt-oss-20b-MXFP4.gguf`, the exact
+12,109,566,624 bytes `~/models/gptoss-20b.gturbo` was streamed from. 612
+positions, 16 expert-cache slots, chat date pinned to the quality gate's
+own `2026-01-01` (the Harmony template reads a clock; bench crate
+Gotcha 14), the reference answer behind `<|channel|>final<|message|>`
+(Gotcha 13, the same framing the gate scores). 2026-08-12, on AC.
+
+| Comparison | Mean KL | Median | p99 | Max | Top-1 agree |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| llama.cpp batched vs cached, both Metal (shape floor) | 0.00258 | 0.0000055 | 0.072 | 0.393 | 99.2% |
+| **this port vs llama.cpp, same bytes, both Metal, both cached** | **0.00978** | **0.00117** | **0.215** | **0.458** | **97.5%** |
+| llama.cpp Metal vs llama.cpp CPU, both cached (backend floor) | 0.01181 | 0.00212 | 0.259 | 0.434 | 96.9% |
+
+| Reading | Perplexity |
+| --- | ---: |
+| **this port, MXFP4 GGUF install** | **12.0801** |
+| llama.cpp, same GGUF, Metal, cached | 12.1526 |
+| llama.cpp, same GGUF, Metal, batched | 12.1676 |
+| llama.cpp, same GGUF, CPU, cached | 12.1456 |
+
+**The headline sits BETWEEN the two floors, under the backend floor.** At
+0.00978 nats it is 3.8x the shape floor and 0.83x the backend floor: this
+port agrees with llama.cpp-on-Metal more closely than ggml's own two
+backends agree with each other on these same bytes. For scale, Gemma reads
+6.3x its shape floor and `qwen3moe` 2.4x.
+
+**That settles the mscale value and the sink placement.** A YaRN factor
+applied twice (what the `mscale` division in llama.cpp exists to prevent),
+not at all, or at the wrong magnitude scales every attention in the model;
+a sink added to the numerator instead of the denominator reweights every
+softmax. Nothing of either shape fits under a backend floor. Perplexity
+says it again on a separate axis: 12.0801 against the reference's 12.1526
+is 0.60% apart -- and this family's llama.cpp CPU and Metal perplexities
+agree to 0.06%, so the head really is the same function on both sides
+(max |logit| 53.10 llama.cpp against 53.53 this port, no softcap declared,
+reported rather than checked per AGENTS.md Gotcha 38).
+
+The two KL directions agree within 10% on every row (reverse means
+0.00230 / 0.00887 / 0.01290), so no conclusion turns on the choice. One
+reported-not-chased observation: the shape floor (0.00258) is ~2x the
+other two families' (~0.00135), i.e. ggml's batched and cached paths
+disagree more on this model; it does not change any reading here.
+
+Everything is deterministic, like the other quality numbers and unlike any
+tok/s figure: this port's dump is SHA-256 `1761d134...` (byte-identical
+across two processes) and llama.cpp's Metal cached arm `65a6200d...`. Treat
+movement as a real change.
+
+One sibling fact worth keeping. This port's WARM dump reads perplexity
+12.080073 against the frozen COLD row of 12.0801 in
+`gptoss_quality_gate.rs`. Those are the same number: Gotcha 27's fix
+holding on a fourth family, and only because the dump pins the SAME chat
+date the gate pins -- an unpinned dump encodes a different prompt every day
+and reproduces nothing.
+
+Cost, for planning: the 612-position cached walk is well under a minute on
+either backend (3.6B of 21B parameters active per token, like `qwen3moe`
+and unlike Gemma). Add ~7 min for the one-time 12.1 GB download, which is
+the whole expense: llama.cpp cannot stream the file the way the repack walk
+did (Gotcha 34).
+
+Caveats, the same ones as the two sections above. One corpus, one family,
+one machine, one llama.cpp build; nothing here says how far MXFP4 sits from
+the unquantized model.
+
 ### Sub-4-bit candidate survey (ROADMAP Phase S)
 
 NOT A MEASUREMENT OF THIS PORT. This port cannot ingest IQ3_XXS, so there
