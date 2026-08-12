@@ -137,6 +137,22 @@ TURBOSPARK_MISTRAL_INSTALL_DIR=~/models/mistral7b-dense.gturbo \
 TURBOSPARK_QWEN3MOE_INSTALL_DIR=~/models/qwen3moe-gguf.gturbo \
   cargo test -p turbospark-bench --test qwen3moe_memory_oracle --release -- --ignored --nocapture
 
+# The SIXTH family's two gates (ROADMAP M5). BOTH differ from their four
+# siblings in a way that has to be read with the numbers. The oracle runs at
+# 8,192 context AND a 3,072-token budget, because Harmony puts the model's
+# reasoning in an `analysis` channel BEFORE its answer -- the three cases need
+# 818 / 2,153 / 1,108 tokens to reach `<|return|>`, so at the shared 1,024 two
+# of three stop on maxTokens and the validity gate refuses them. Its ceiling
+# is 5,700 MiB, far above the README's 1.6-2.2 GiB band, and that is
+# `slots x layers x expert_stride` = 4,854 MiB of slot cache, not a
+# regression (Gotcha 36). The quality gate PINS A DATE, because Harmony's
+# template writes `Current date: ` into its system preamble and a digest over
+# a clock-reading prompt expires at midnight.
+TURBOSPARK_GPTOSS_INSTALL_DIR=~/models/gptoss-20b.gturbo \
+  cargo test -p turbospark-bench --test gptoss_memory_oracle --release -- --ignored --nocapture
+TURBOSPARK_GPTOSS_INSTALL_DIR=~/models/gptoss-20b.gturbo \
+  cargo test -p turbospark-bench --test gptoss_quality_gate --release -- --ignored --nocapture
+
 # The quality gate (ROADMAP Phase Q): teacher-forced perplexity of a fixed
 # reference answer in the ASSISTANT slot (an instruction-tuned checkpoint
 # is never trained to predict prompt tokens, so scoring those measures
@@ -285,6 +301,17 @@ TURBOSPARK_GEMMA4_GGUF_INSTALL_DIR=~/models/gemma4-gguf.gturbo \
 # 32 layers, against Q4_K on the other 16) and Q5_K on `attn_output`.
 TURBOSPARK_MIXTRAL_INSTALL_DIR=~/models/mixtral-gguf.gturbo \
   cargo test -p turbospark-repack --test gguf_mixtral_install_network --release -- --ignored --nocapture
+
+# The SIXTH family (ROADMAP M5), and the one whose expert block type has NO
+# resident GEMV: MXFP4 lives in `ffn_*_exps` and nowhere else, with attention,
+# `token_embd` and `output` all Q8_0. Streams the 12.1 GB file a layer at a
+# time (never written to disk) into a ~12 GB install, ~25 min. It is also the
+# first file with a BIAS beside every projection, a sink vector per block, and
+# a RANK-2 per-expert bias inside the routed blob -- all three exercised
+# against `SyntheticGptOssShape` first, which is what kept the two walk holes
+# it exposed to milliseconds each instead of a re-stream apiece (Gotcha 42).
+TURBOSPARK_GPTOSS_INSTALL_DIR=~/models/gptoss-20b.gturbo \
+  cargo test -p turbospark-repack --test gguf_gptoss_install_network --release -- --ignored --nocapture
 
 # The FOURTH family, and the one Mixtral's granularity finding asked for
 # (Gotcha 36): install the real published Qwen3-30B-A3B Q4_K_M. Streams the
@@ -675,13 +702,21 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     `real_forward_qwen.rs` + `real_forward_qwen_attn.rs` (gated DeltaNet
     on mask-2 layers, gated full attention on mask-1, one post-attention
     norm feeding router + shared + routed, no sandwich norms, no softcap);
-    `DeepseekV4Flash` is refused, and so is `GptOss` -- ROADMAP M5 landed
-    that family's baseline, name table and all four of its kernel-level
-    differences (biases, attention sinks, YaRN, the clamped SwiGLU), but
-    not the flow that assembles them, so `open()` refuses BY NAME and says
-    which four things are missing rather than falling through to a
-    neighbour's flow. Every one of those four produces fluent wrong output
-    rather than an error, which is why the refusal is explicit.
+    `DeepseekV4Flash` is refused. `GptOss` builds `RealGptOssState` and
+    runs `families/gptoss/` (ROADMAP M5) -- plain GQA with a BIAS on all
+    four projections, YaRN rope through a precomputed frequency table,
+    ATTENTION SINKS, an alternating 128-token window on the EVEN layers,
+    and MXFP4 routed experts carrying a clamped SwiGLU and per-expert
+    biases. A FIFTH FLOW rather than a sixth family on an existing one,
+    because all four of those are inside the layer; every one of them
+    produces fluent WRONG output rather than an error if a neighbour's flow
+    is used instead. Two of them are not where a reader would look: the
+    ROUTER bias is added in `moe.rs`, on the host, between the router
+    readback and the top-k (llama.cpp's `SOFTMAX_WEIGHT` selects on the
+    biased RAW logits, so after the top-k would pick the wrong experts and
+    still read fluently), and the clamped SwiGLU plus the per-expert biases
+    are named nowhere in the flow at all -- they ride inside the MXFP4 pair
+    and arrive through `RoutedBlobLayout`.
     Within `Gemma4`, naming picks: synthetic
     short names (`layer0.q_proj`) get
     the plain no-scale flow in `real_forward.rs`; verbatim
@@ -1438,6 +1473,40 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     quality gates, not after -- it answers "will the digests move, and for
     which family" for the price of a string compare.
 
+42. **A ROUTED SUB-TENSOR IS NOT ALWAYS A MATRIX, AND NOT EVERYTHING IN AN
+    EXPERT BLOB IS A QUANTIZATION SCHEME.** ROADMAP M5's `gpt-oss` is the
+    first checkpoint to put a per-expert BIAS in the routed blob, and both
+    halves of the walk had quietly assumed otherwise since Phase G. Neither
+    assumption was wrong when written; both were unstated defaults that one
+    new model turned into refusals.
+    - **`plan.rs` demanded RANK 3.** Every routed tensor before this was
+      `[in, out, experts]`, a matrix per expert. A bias is `[out, experts]`,
+      a VECTOR per expert, and the walk refused it by name. `routed_body_dims`
+      now drops the trailing expert axis and takes whatever is left, so the
+      two ranks are one case. The nastier half was the shape RECORD rather
+      than the refusal: `out_total` was read as `dims[1]`, which on a rank-2
+      bias is the EXPERT COUNT -- a plausible number that would have written
+      a correctly-sized blob with a nonsense logical shape, and no byte
+      assertion catches that.
+    - **`gguf_manifest_quant` counted the F32 bias planes as routed BLOCK
+      TYPES**, so `validate_quant` refused a perfectly runnable install for
+      "F32 has no kernel". A bias is a COMPANION: `moe_gguf.metal` reads it
+      as a plain `device const float*` off an offset the weight's kernel
+      already resolved, exactly as the affine layout's `gate_scales` relates
+      to its packed run. Those escaped notice only because an affine blob's
+      sources are not GGUF tensors, so the histogram never saw one. Excluded
+      by ROLE rather than by `dtype != F32`, so a future BF16 bias is
+      classified by what the sub-tensor IS.
+    THE REUSABLE PART IS WHEN IT WAS FOUND. Both cost milliseconds against
+    `SyntheticGptOssShape` and would have cost a 25-minute re-stream apiece
+    against the real 12.1 GB file -- `crates/repack/CLAUDE.md` Gotcha 8's
+    rule (build the structurally-real fixture BEFORE the download) paying off
+    for the second time, on a phase that was warned to be M2-sized. Note the
+    fixture had to differ from the real file to be useful: gpt-oss's `hidden`
+    and expert width are both 2880, so the published checkpoint cannot tell a
+    gate/up bias from a down bias, and a fixture that copied its proportions
+    could not either.
+
 ## Per-Crate Documentation
 
 When working on code inside a specific crate, refer to that crate's `CLAUDE.md` file for crate-specific architecture, key modules, dev commands, and localized gotchas:
@@ -1522,7 +1591,7 @@ divergence and perplexity functions rather than restating them.
 - `crates/model-io`: `manifest.json` decode and field-by-field validation against a resolved `ArchConfig` (with canonical Gemma 4, Qwen 3.6, and DeepSeek-V4-Flash baselines), `packed_experts/layout.json` decode (`PackedExpertsLayout`), `model_weights.bin` resident tensor index reader (`ResidentIndex`), `mmap`'d resident-buffer view (`ResidentBuffer`), streaming SHA-256 verification (`sha256.rs`), and trusted install receipt (`InstallReceipt`). Allowed a narrow amount of `unsafe` (the `mmap` call). Details in [`crates/model-io/CLAUDE.md`](crates/model-io/CLAUDE.md).
 - `crates/streaming`: routed-expert `pread` streamer (`PreadExpertStreamer`) with a fixed per-layer slot cache. The LFU/LRU eviction policy (`ExpertCache`) is pure logic, separated from file I/O so it can be tested against access traces without a model install. Cache misses are split into chunks and read on `read_pool`, a process-wide set of parked worker threads, so a layer that misses once still reads at full width (the `pread` is a page-cache memcpy, not disk I/O). `rdadvice` and `read_pool` are the other `unsafe`-carrying modules (macOS `F_RDADVISE`, a documented no-op elsewhere; raw destination pointers across worker threads). Details in [`crates/streaming/CLAUDE.md`](crates/streaming/CLAUDE.md).
 - `crates/gpu`: Metal device/pipeline-cache context (`MetalContext`, `PassEncoder`, `CommittedPass`) and per-kernel dispatch. macOS-only; compiles to nothing elsewhere. Dispatched, parity-tested kernels (`rmsnorm_no_scale`, `rms_norm_bf16w`, both `_perhead` norm variants, `rope_proportional_neox`, `rope_neox_subdim`, `logit_softcap_softmax`, `dequant_int4_gemv_simd`, `dequant_int8_gemv_simd` with resident variants, the port-local GGUF set (`dequant_q8_0_gemv_simd`, `dequant_q4_k_gemv_simd`, `dequant_q6_k_gemv_simd`, `embed_lookup_q8_0`, `embed_lookup_q4_k`, and `moe_gguf.metal`'s two decode pairs -- ROADMAP Phase G), `router_gemv_gemma4_r4`, two-pass split-KV `attention_decode` (multi-chunk, split up to 16 ways by `chunks_for`), `moe_decode` decode pair, `gdn.metal`'s eight gated-DeltaNet kernels, and `utility` elementwise kernels incl. Qwen's three gating kernels) are compiled from MSL source at runtime, vendored from Swift except where marked port-local. `power_state.rs` wraps `NSProcessInfo`'s `thermalState` and `isLowPowerModeEnabled` for ROADMAP Phase P2 (here rather than in `runtime`, which forbids unsafe; nothing GPU about them beyond the `metal::objc` reach). `KvCacheManager` allocates and manages real per-layer Metal KV buffers used by `RealForwardRunner`. `ResidentGpuWeights` wraps resident mmap in zero-copy MTLBuffer. `GdnStateManager` is the Qwen flow's recurrent state; `Dsv4StateManager` allocates real per-layer Metal buffers (unwired kernels); `PrefillChunkScratchLayout`/`PrefillChunkScratchBuffers` size scratch buffers (undispatched tile kernel). The `sample` kernel and fused lm_head are not yet vendored or dispatched. Details in [`crates/gpu/CLAUDE.md`](crates/gpu/CLAUDE.md).
-- `crates/runtime`: power policy for the decode loop (`power.rs`: `PowerProfile`, the `stepped_cap` thermal ladder, `RateControl`, and cfg-paired OS probes; `pacing.rs`: the pure-deadline `Pacer` -- ROADMAP Phase P2), and the raw-completion prefill+decode loop (`run_raw_completion`, `run_raw_completion_chunked`), wiring a `LogitProducer`, the tokenizer's streaming detokenizer and stop matcher, and `selection::select` into one token generation loop. `ScriptedLogitProducer` is what unit tests and `crates/server`'s `ScriptedChatModel` drive the loop with (see Gotcha 10). `RealForwardRunner` (macOS/GPU only, `src/real_forward.rs`, `src/real_forward_gemma4.rs`, and `src/real_forward_qwen{,_attn}.rs`) is a real `LogitProducer`: a genuine transformer forward pass through real GPU kernels (including real GPU decode attention) and real quantized weights, supporting dense and MoE FFN layers. Dense bridges gated FFN on CPU via `turbospark_compute::run_ffn`; MoE runs real GPU router GEMV plus real GPU GEMVs for each selected expert, host-side top-k selection, and CPU-bridged gated activation. Supports synthetic short names, verbatim real Gemma 4 checkpoint names (learned-weight flow), the Qwen 3.6 hybrid linear/full-attention flow, and one plain-GQA flow (`src/families/llama/`) serving BOTH the `llama` and `qwen3moe` families AND both halves of `llama` itself: Mixtral's routed experts and, since ROADMAP M4, the dense gated FFN of Mistral and Llama 2/3.x (`dense.rs`, no new kernel). `llama` and `qwen3moe` differ only in per-head q/k norms and an RMS epsilon. See Gotcha 12. Details in [`crates/runtime/CLAUDE.md`](crates/runtime/CLAUDE.md).
+- `crates/runtime`: power policy for the decode loop (`power.rs`: `PowerProfile`, the `stepped_cap` thermal ladder, `RateControl`, and cfg-paired OS probes; `pacing.rs`: the pure-deadline `Pacer` -- ROADMAP Phase P2), and the raw-completion prefill+decode loop (`run_raw_completion`, `run_raw_completion_chunked`), wiring a `LogitProducer`, the tokenizer's streaming detokenizer and stop matcher, and `selection::select` into one token generation loop. `ScriptedLogitProducer` is what unit tests and `crates/server`'s `ScriptedChatModel` drive the loop with (see Gotcha 10). `RealForwardRunner` (macOS/GPU only, `src/real_forward.rs`, `src/real_forward_gemma4.rs`, and `src/real_forward_qwen{,_attn}.rs`) is a real `LogitProducer`: a genuine transformer forward pass through real GPU kernels (including real GPU decode attention) and real quantized weights, supporting dense and MoE FFN layers. Dense bridges gated FFN on CPU via `turbospark_compute::run_ffn`; MoE runs real GPU router GEMV plus real GPU GEMVs for each selected expert, host-side top-k selection, and CPU-bridged gated activation. Supports synthetic short names, verbatim real Gemma 4 checkpoint names (learned-weight flow), the Qwen 3.6 hybrid linear/full-attention flow, one plain-GQA flow (`src/families/llama/`) serving BOTH the `llama` and `qwen3moe` families AND both halves of `llama` itself: Mixtral's routed experts and, since ROADMAP M4, the dense gated FFN of Mistral and Llama 2/3.x (`dense.rs`, no new kernel). `llama` and `qwen3moe` differ only in per-head q/k norms and an RMS epsilon. A FIFTH flow (`src/families/gptoss/`, ROADMAP M5) serves `gpt-oss`: the same plain GQA plus a bias on all four projections, YaRN rope off a precomputed frequency table, attention sinks, an alternating window on the EVEN layers, and MXFP4 routed experts carrying a clamped SwiGLU and per-expert biases. See Gotcha 12. Details in [`crates/runtime/CLAUDE.md`](crates/runtime/CLAUDE.md).
 - `crates/cli`: the `turbospark-check` binary process entry point (see Gotcha 7). Parses `argv`, applies `invocation`'s exit-status and stream-routing decisions, prints the resolved request for a validated invocation, and (macOS, `src/generate.rs`) attempts real generation against `--model` via `RealForwardRunner` (see Gotcha 12) in all three modes: `--prompt` (raw text), `--messages-file` (rendered through chat template), and `--chat` (interactive REPL in `src/chat.rs`, trimming turns with `turbospark-window-fit`). Details in [`crates/cli/CLAUDE.md`](crates/cli/CLAUDE.md).
 - `crates/repack`: safetensors header parsing (pure, tested against synthetic fixtures), `RangeSource` trait for ranged reads (HTTP-backed for real installs, in-memory for tests) with two-step header-fetch plan, per-row int4/int8 quantization repack (reusing `turbospark_compute`'s quantizer), byte-exact `.gturbo` directory assembly (`write_gturbo_install`), real named resident-tensor index writer (`write_gturbo_install_with_resident_index`), synthetic install builders (`synthetic_model.rs`, `synthetic_real.rs`, `synthetic_qwen.rs`), Hugging Face Llama checkpoint repacker (`hf_checkpoint.rs`), Gemma 4 mlx-community checkpoint repacker & streamed pipeline (`gemma4_checkpoint/`, family-parameterized so Qwen 3.6 goes through the same walk), Qwen 3.6 `config.json` parser (`qwen36_config.rs`, the one family-specific piece of that walk), install verifier (`install_verifier.rs`), manifest peeker (`manifest_peek.rs`), and the GGUF intake (`gguf_header.rs` parser, `gguf_names.rs` name mapping, `gguf_config.rs` metadata-to-`ArchConfig`, `gguf_checkpoint/` repack walk (expert bytes verbatim, resident F32 core transcoded to BF16/INT8, Qwen's V-head source convention undone at `v_head_axis`), `synthetic_gguf/` fixture writer -- ROADMAP Phase G; Q8_0, Q4_K and Q6_K installs are executable and Q4_0 is refused, see Gotchas 29 and 33). Details in [`crates/repack/CLAUDE.md`](crates/repack/CLAUDE.md).
 - `crates/server`: HTTP server on loopback (`turbospark-server` binary, axum framework) serving OpenAI `/v1/chat/completions`, Anthropic `/v1/messages`, and `/v1/models`, both generation endpoints supporting full-response (non-streaming) and SSE-streaming responses. The wire types come from `anyllm_translate` (crates.io, default features: pure and IO-free), which also translates an Anthropic request into the OpenAI request the existing path understands and translates the result back, so Anthropic-native clients need no proxy. Tool calling is wired on both endpoints (request `tools` render through the checkpoint's `chat_template.jinja`, generated calls come back through `StructuredAssistantDecoder`); images and `thinking` are dropped, some of it reported on an `x-anyllm-degradation` header. Two backends behind the `ChatModel` trait: `RealChatModel` (macOS, `--model <install-dir>`, one mutex-serialized `RealForwardRunner` per process) and `ScriptedChatModel` (portable, canned completions, what the integration tests drive). Details in [`crates/server/CLAUDE.md`](crates/server/CLAUDE.md).

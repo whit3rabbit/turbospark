@@ -762,6 +762,68 @@ expert bytes per miss was an energy claim and the measurement refutes it
 at this size. Full rows and the cross-session caveat:
 `docs/POWER_BASELINE.md`, "The 3-bit install". ROADMAP dead end 12.
 
+### The sixth family: `gpt-oss-20b` MXFP4 (ROADMAP M5)
+
+NOT A PARITY CLAIM. Swift has no GGUF intake, so every number here is this
+port measuring itself. Measured 2026-08-12 on AC, release, 16 expert-cache
+slots, against `~/models/gptoss-20b.gturbo` streamed from
+`ggml-org/gpt-oss-20b-GGUF`.
+
+| | value |
+| --- | --- |
+| reference-answer perplexity | 12.0801 |
+| one expert blob | 12.64 MiB |
+| slot cache at 16 slots | 4.74 GiB (24 layers) |
+| peak `phys_footprint` | 5,421 MiB at 8,192 context |
+| decode, protocol cases | 31.343 / 26.710 / 23.472 tok/s |
+| constrained (8 slots) | 0.83x, digest byte-identical |
+
+**THE FOOTPRINT IS THE HIGHEST OF ANY FAMILY HERE AND IT IS ARITHMETIC, NOT
+A REGRESSION.** `slots x layers x expert_stride` is 4,854 MiB of slot
+capacity on its own, against Qwen3-30B-A3B's 2,094 and Gemma 4's ~1,500, so
+this install sits far above the 1.6-2.2 GiB band the README quotes. It is
+still STREAMING, which is the whole reason the family was chosen: the expert
+table is 9.5 GiB and only 4.7 of it is ever resident, where Mixtral's
+108.9 MiB experts wanted 54.5 GiB and could not run here at all (AGENTS.md
+Gotcha 36).
+
+**ITS ROW MOVES TWO PROTOCOL PARAMETERS AND BOTH ARE FORCED**, so it is
+comparable to no other row without reading them. The budget is 3,072 new
+tokens rather than 1,024 because Harmony puts the model's reasoning in an
+`analysis` channel BEFORE its answer: the three cases need 818 / 2,153 /
+1,108 tokens to reach `<|return|>`, and at the shared budget two of three
+stop on `maxTokens`, which the validity gate refuses. The window is 8,192
+rather than 4,096 because `2839 + 3072` does not fit. Worth carrying: a
+budget derived from a GREEDY probe understated it (that read 1,780 for
+`medium-review` against the protocol's sampled 2,153) -- a reasoning model's
+answer length is a distribution, and it lengthens under sampling.
+
+**THE PERPLEXITY NEEDED A FAMILY-SPECIFIC ASSISTANT PREFIX AND THE RAW
+NUMBER LOOKED LIKE A BROKEN MODEL.** Harmony's generation prompt ends at
+`<|start|>assistant`, where the next token must be `<|channel|>`; splicing
+the reference answer's prose straight in scores the model's surprise at
+prose-instead-of-marker and reads **148,421.76**, against 6-38 for every
+other family and 255,409 for the genuinely broken Qwen of `5279c88`. With
+`<|channel|>final<|message|>` in front it reads 12.0801. The contradiction
+that gives it away is that the generations were coherent throughout -- a
+model that cannot predict its own output does not write fluent prose. This
+is crate Gotcha 7's rule (score only positions the model was trained to
+predict) arriving from a direction that gotcha did not anticipate: not the
+wrong tokens, but the right tokens in a position the family's framing does
+not put them in.
+
+**THE GATE PINS A DATE.** Harmony's template writes `Current date: ` into
+its system preamble via transformers' `strftime_now`, so this is the first
+gate here whose prompt reads a clock; without the pin both digests would
+expire at midnight and read as a numerics regression the next morning. The
+renderer itself uses the real clock, matching transformers, vLLM and
+llama.cpp -- only the measurement asks for determinism.
+
+NOT DONE and deliberate: no cross-engine KL against llama.cpp on the same
+bytes (which is what would settle the YaRN `mscale` and the sink's exact
+placement end to end, neither of which any fixture here can see), and no
+`scripts/power.sh` capture.
+
 ## Batched verify and speculative decoding
 
 NOT A PARITY CLAIM. Swift has no speculative decoding. **Full write-up,

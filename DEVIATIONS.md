@@ -902,6 +902,33 @@ live network).
   (`crates/runtime/tests/real_forward_qwen3moe.rs`): the norms' ORDER
   relative to RoPE, and the epsilon's own value, are not separable on
   untrained weights and belong to the cross-engine gate.
+  **`gptOss` (gpt-oss-20b) is a SIXTH family and a FIFTH FLOW** (ROADMAP
+  M5), and it is the first bring-up here where the answer to "same graph?"
+  was no. `crates/runtime/src/families/gptoss/` runs plain GQA plus four
+  things that are each inside the layer: a bias on all four projections
+  (a separate `bias_add_bf16_fp16` pass, applied BEFORE RoPE), YaRN rope
+  off a precomputed per-pair frequency table with a magnitude scale of
+  1.3465736, attention SINKS (one learned logit per query head, added to
+  the softmax denominator alone), and an alternating 128-token window on
+  the EVEN layers. Its MXFP4 routed experts additionally carry a clamped
+  SwiGLU and per-expert biases, both of which ride inside the routed pair
+  and are named nowhere in the flow. The real 12.1 GB checkpoint streams,
+  opens, and generates coherent chat-formatted answers; both gates are
+  frozen (perplexity 12.0801, peak 5,421 MiB). What the fixture tests
+  CANNOT see is stated where they live
+  (`crates/runtime/tests/real_forward_gptoss.rs`): passing a literal 1.0
+  for the YaRN magnitude scale leaves every one of them green, because
+  that scale is a function of the rope factor alone and no config
+  difference isolates it from the frequency table. Its value and argument
+  order are pinned by a unit test; the end-to-end property belongs to a
+  cross-engine gate that has not been run.
+  TWO LIMITATIONS ARE STATED RATHER THAN SILENT. Harmony's channels are
+  NOT decoded by `StructuredDecoder`, so the model's `analysis` reasoning
+  reaches a caller as text rather than as separated reasoning. And there
+  is no fallback chat renderer for the dialect at all: Harmony's real
+  template is 17 KB of system preamble, reasoning-effort knob and
+  TypeScript tool namespace, so `apply_dialect_chat_template` refuses by
+  name instead of inventing a partial frame (AGENTS.md Gotcha 41).
   Proven end to end by
   `crates/runtime/tests/real_forward.rs` for both shapes:
   `run_raw_completion` runs to a real stop condition, and a second run
