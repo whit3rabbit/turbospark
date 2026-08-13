@@ -101,8 +101,8 @@ pub use context::{
 #[cfg(target_os = "macos")]
 pub use dequant_1bit_gemv::{
     dequant_int1_gemv, dequant_int1_gemv_resident, dequant_int1_gemv_symmetric,
-    encode_dequant_int1_gemv_resident, int1_row_bytes, Int1AffineRowGpu, Int1ResidentMatrix,
-    Int1SymmetricRowGpu,
+    encode_dequant_int1_gemv_resident, encode_embed_lookup_int1, int1_row_bytes, Int1AffineRowGpu,
+    Int1ResidentMatrix, Int1SymmetricRowGpu,
 };
 #[cfg(target_os = "macos")]
 pub use dequant_int4_batch::{encode_dequant_int4_gemm_resident, MAX_BATCH_ROWS};

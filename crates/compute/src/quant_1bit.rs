@@ -218,6 +218,64 @@ pub fn dequantize_int1_affine(r: &Int1AffineRow, n: usize) -> Vec<f32> {
     out
 }
 
+/// FP32 reference for the 1-bit-affine embedding lookup: one row of a
+/// `[V, D]` table, dequantized and scaled by `out_scale` (Gemma's
+/// `sqrt(hidden)` post-embedding scale, or `1.0` for a raw dequant).
+///
+/// The sibling of [`crate::quant::embed_lookup_int4`], and it exists because
+/// the real checkpoint QUANTIZES ITS EMBEDDING TABLE AT ONE BIT. That was
+/// read off the safetensors header rather than assumed: 498 tensors carry
+/// `.scales`, and `language_model.model.embed_tokens` and
+/// `language_model.lm_head` are two of them, both `U32 [248320, 160]` (160
+/// packed words is 5120 elements, the hidden size). The head goes through
+/// the resident GEMV like any other matrix; the table needs this, so 1-bit
+/// is a type with a GEMV and a lookup and no routed-expert pair -- the
+/// per-type footing AGENTS.md Gotcha 29 describes, decided by what the one
+/// real file puts where.
+///
+/// `group_size` is a parameter for the module header's reason. Note the
+/// bound checks are on the SCALE plane as well as the packed one: at one bit
+/// a row is eight times shorter than at eight, so a `token_id` that walks
+/// off the end of one plane can still be inside the other.
+pub fn embed_lookup_int1(
+    table_packed: &[u8],
+    table_scales: &[u16],
+    table_biases: &[u16],
+    token_id: usize,
+    d: usize,
+    group_size: usize,
+    out_scale: f32,
+) -> Vec<f32> {
+    check_shape(d, group_size);
+    let groups_per_row = d / group_size;
+    let row_bytes = d / 8;
+    let pack_base = token_id * row_bytes;
+    let scale_base = token_id * groups_per_row;
+    assert!(
+        pack_base + row_bytes <= table_packed.len(),
+        "token out of range"
+    );
+    assert!(
+        scale_base + groups_per_row <= table_scales.len(),
+        "scales out of range"
+    );
+    assert!(
+        scale_base + groups_per_row <= table_biases.len(),
+        "biases out of range"
+    );
+
+    let mut out = vec![0f32; d];
+    for (i, out_val) in out.iter_mut().enumerate() {
+        let byte = table_packed[pack_base + (i / 8)];
+        let q = (byte >> (i % 8)) & 1;
+        let g = i / group_size;
+        let scale = f16_to_f32(table_scales[scale_base + g]);
+        let bias = f16_to_f32(table_biases[scale_base + g]);
+        *out_val = (q as f32 * scale + bias) * out_scale;
+    }
+    out
+}
+
 /// Dequantize-and-multiply reference GEMV: `out[row] = sum_i w[row][i] * x[i]`.
 ///
 /// Accumulates in FP32 in element order, which is the order a per-row GPU

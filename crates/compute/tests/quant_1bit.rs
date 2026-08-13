@@ -17,8 +17,8 @@
 
 use turbospark_compute::quant_1bit::{
     asymmetric_group_count, dequant_int1_gemv, dequant_int1_gemv_symmetric, dequantize_int1_affine,
-    f16_to_f32, f32_to_f16, is_symmetric, quantize_int1_affine_symmetric, Int1AffineRow,
-    BONSAI_GROUP_SIZE,
+    embed_lookup_int1, f16_to_f32, f32_to_f16, is_symmetric, quantize_int1_affine_symmetric,
+    Int1AffineRow, BONSAI_GROUP_SIZE,
 };
 
 // Ranged-read out of the real published checkpoint and decoded by MLX
@@ -206,6 +206,53 @@ fn the_symmetric_gemv_agrees_with_the_affine_one() {
             "row {r}: affine {a} vs symmetric {f}"
         );
     }
+}
+
+/// The embedding lookup reads the row it was asked for, and the row stride
+/// is `D / 8` rather than `D`.
+///
+/// The real checkpoint quantizes `embed_tokens` at one bit like everything
+/// else, so this is a kernel the type genuinely needs. The bug it is written
+/// for is the stride: at one bit a row is EIGHT times shorter than the
+/// element count, so an off-by-a-factor read lands inside a neighbouring
+/// token's weights, which is finite and plausible. The token is deliberately
+/// not row 0, and the expected values come from `dequantize_int1_affine` of
+/// that row alone.
+#[test]
+fn the_embedding_lookup_reads_the_right_row_and_scales_it() {
+    let (vocab, d, g) = (7usize, 256usize, BONSAI_GROUP_SIZE);
+    let rows: Vec<Int1AffineRow> = (0..vocab)
+        .map(|t| {
+            let src: Vec<f32> = (0..d)
+                .map(|i| ((i + 13 * t) as f32 * 0.23).sin() * (1.0 + t as f32))
+                .collect();
+            quantize_int1_affine_symmetric(&src, g)
+        })
+        .collect();
+    let mut packed = Vec::new();
+    let mut scales = Vec::new();
+    let mut biases = Vec::new();
+    for r in &rows {
+        packed.extend_from_slice(&r.packed);
+        scales.extend_from_slice(&r.scales);
+        biases.extend_from_slice(&r.biases);
+    }
+
+    let token = 5usize;
+    let out_scale = 4.0f32;
+    let got = embed_lookup_int1(&packed, &scales, &biases, token, d, g, out_scale);
+    let want: Vec<f32> = dequantize_int1_affine(&rows[token], d)
+        .iter()
+        .map(|v| v * out_scale)
+        .collect();
+    assert_eq!(got, want);
+
+    // Non-vacuous on both counts: a neighbouring row decodes differently, so
+    // a stride bug would show, and the scale is large enough that dropping
+    // it could not pass as rounding.
+    assert_ne!(dequantize_int1_affine(&rows[token - 1], d), want);
+    let peak = want.iter().fold(0f32, |m, &v| m.max(v.abs()));
+    assert!(peak > 1.0, "the test row is too small to prove the scale");
 }
 
 /// A row length that is not a whole number of groups is a caller error, not

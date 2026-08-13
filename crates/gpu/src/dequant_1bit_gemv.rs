@@ -230,6 +230,53 @@ pub fn dequant_int1_gemv_symmetric(
     Ok(read_half_buffer(&y_buffer, m))
 }
 
+/// Encoder-level `embed_lookup_int1`: dequantizes one row of a 1-bit affine
+/// embedding table (bound in place, normally offsets into the resident
+/// buffer) into `out` (`d` halfs), scaled by `out_scale`.
+///
+/// The 1-bit sibling of [`crate::encode_embed_lookup_int4`]. It exists
+/// because the real checkpoint quantizes `embed_tokens` at one bit like
+/// everything else, which was read off the safetensors header rather than
+/// assumed -- so this type's footing is a GEMV plus a lookup and no
+/// routed-expert pair (AGENTS.md Gotcha 29's per-type rule).
+///
+/// One argument wider than the INT4 sibling, and it is the group size: see
+/// the module header for why that travels rather than being a constant.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_embed_lookup_int1(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    table: (&metal::Buffer, u64),
+    scales: (&metal::Buffer, u64),
+    biases: (&metal::Buffer, u64),
+    out: (&metal::Buffer, u64),
+    token_id: u32,
+    d: u32,
+    group_size: u32,
+    out_scale: f32,
+) -> Result<(), GpuError> {
+    check_shape(d as usize, group_size as usize);
+    let pipeline = context.pipeline(SOURCE, "embed_lookup_int1", &no_function_constants(), b"")?;
+    pass.encode_threads_3d(
+        &pipeline,
+        &[
+            (table.0, 0, table.1),
+            (scales.0, 1, scales.1),
+            (biases.0, 2, biases.1),
+            (out.0, 3, out.1),
+        ],
+        &[
+            (u32_bytes(&token_id), 4),
+            (u32_bytes(&d), 5),
+            (u32_bytes(&group_size), 6),
+            (crate::bytes::f32_bytes(&out_scale), 7),
+        ],
+        (d as u64, 1, 1),
+        (64, 1, 1),
+    );
+    Ok(())
+}
+
 /// A whole 1-bit affine weight matrix addressed IN PLACE inside one shared
 /// `MTLBuffer` (normally `ResidentGpuWeights::buffer`): `rows * cols / 8`
 /// weight bytes at `weights_offset`, `rows * cols / group_size` FP16 scale

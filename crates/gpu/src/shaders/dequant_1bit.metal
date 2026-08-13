@@ -101,6 +101,41 @@ kernel void dequant_int1_gemv_simd(
     }
 }
 
+// One row of a 1-bit affine embedding table, dequantized into `out` and
+// scaled. The sibling of `embed_lookup_int4` in `dequant_int4.metal`, and it
+// exists because the real checkpoint quantizes its EMBEDDING TABLE at one bit
+// like everything else -- read off the safetensors header
+// (`language_model.model.embed_tokens` is `U32 [248320, 160]` with F16
+// companions), not assumed. So 1-bit is a type with a GEMV and a lookup and
+// no routed-expert pair, which is the per-type footing AGENTS.md Gotcha 29
+// describes.
+//
+// One thread per element; `out_scale` is sqrt(hidden) for a scaled-embedding
+// family, 1.0 otherwise. The row stride is `D / 8`, not `D`: getting that
+// factor wrong lands inside a neighbouring token's weights, which decodes
+// perfectly well and is the wrong token.
+kernel void embed_lookup_int1(
+    device const uint8_t* table     [[buffer(0)]],   // [V, D/8] packed bits
+    device const half*    scales    [[buffer(1)]],   // [V, D/G] FP16
+    device const half*    biases    [[buffer(2)]],   // [V, D/G] FP16
+    device half*          out       [[buffer(3)]],   // [D] FP16
+    constant uint&        token_id  [[buffer(4)]],
+    constant uint&        D         [[buffer(5)]],
+    constant uint&        G         [[buffer(6)]],
+    constant float&       out_scale [[buffer(7)]],   // pass 1.0 to disable
+    uint                  gid       [[thread_position_in_grid]]
+) {
+    if (gid >= D) return;
+    const uint groups_per_row = D / G;
+    device const uint8_t* row_q = table  + uint(token_id) * (D / 8u);
+    device const half*    row_s = scales + uint(token_id) * groups_per_row;
+    device const half*    row_b = biases + uint(token_id) * groups_per_row;
+    const uint  q = (uint(row_q[gid / 8u]) >> (gid % 8u)) & 1u;
+    const float s = float(row_s[gid / G]);
+    const float b = float(row_b[gid / G]);
+    out[gid] = half((float(q) * s + b) * out_scale);
+}
+
 // The `+/-1` form, for rows whose every group satisfies `bias == -scale/2`
 // (`turbospark_compute::is_symmetric`). Its two representable values are
 // then `+/- scale/2`, so a byte contributes `(scale/2) * sum(+/-x)` and the

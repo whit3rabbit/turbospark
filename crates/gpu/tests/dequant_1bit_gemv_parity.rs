@@ -405,6 +405,77 @@ fn the_resident_form_matches_the_copying_form() {
     assert_matches("resident at three offsets", &gpu, &cpu, n);
 }
 
+/// `embed_lookup_int1` against the CPU dequant of the same row.
+///
+/// The bug it is written for is the row stride: at one bit an embedding row
+/// is `D / 8` bytes, not `D`, so an off-by-a-factor read lands inside a
+/// neighbouring token's weights and decodes perfectly well. The token looked
+/// up is deliberately not row 0, and the neighbouring rows are asserted to
+/// decode differently so the case can see it.
+#[test]
+fn embed_lookup_reads_the_right_row_and_scales_it() {
+    let mut context = MetalContext::new().expect("Metal device available on this machine");
+
+    let (vocab, d, g) = (7usize, 256usize, BONSAI_GROUP_SIZE);
+    let rows: Vec<Int1AffineRow> = (0..vocab)
+        .map(|t| {
+            let src: Vec<f32> = (0..d)
+                .map(|i| ((i + 13 * t) as f32 * 0.23).sin() * (1.0 + t as f32))
+                .collect();
+            quantize_int1_affine_symmetric(&src, g)
+        })
+        .collect();
+    let mut packed = Vec::new();
+    let mut scale_bits: Vec<u8> = Vec::new();
+    let mut bias_bits: Vec<u8> = Vec::new();
+    for r in &rows {
+        packed.extend_from_slice(&r.packed);
+        for &s in &r.scales {
+            scale_bits.extend_from_slice(&s.to_le_bytes());
+        }
+        for &b in &r.biases {
+            bias_bits.extend_from_slice(&b.to_le_bytes());
+        }
+    }
+    let table = context.new_buffer_with_data(&packed);
+    let scales = context.new_buffer_with_data(&scale_bits);
+    let biases = context.new_buffer_with_data(&bias_bits);
+    let out = context.new_output_buffer((d * std::mem::size_of::<u16>()) as u64);
+
+    let token = 5u32;
+    let out_scale = 4.0f32;
+    let pass = context.begin_pass();
+    turbospark_gpu::encode_embed_lookup_int1(
+        &mut context,
+        &pass,
+        (&table, 0),
+        (&scales, 0),
+        (&biases, 0),
+        (&out, 0),
+        token,
+        d as u32,
+        g as u32,
+        out_scale,
+    )
+    .expect("GPU dispatch succeeds");
+    pass.commit_and_wait();
+
+    let want: Vec<f32> = dequantize_int1_affine(&rows[token as usize], d)
+        .iter()
+        .map(|v| v * out_scale)
+        .collect();
+    let got = turbospark_gpu::read_buffer_f16(&out, 0, d);
+    assert_matches("embed row 5, scale 4", &got, &want, d);
+
+    // Non-vacuous on both counts.
+    assert_ne!(dequantize_int1_affine(&rows[token as usize - 1], d), want);
+    let peak = want.iter().fold(0f32, |m, &v| m.max(v.abs()));
+    assert!(
+        peak > 1.0,
+        "the test row is too small to prove the scale: {peak}"
+    );
+}
+
 /// A row shorter than the 32 bytes a SIMD group has lanes for.
 ///
 /// One group of 128 elements is 16 bytes, so half the lanes find nothing to

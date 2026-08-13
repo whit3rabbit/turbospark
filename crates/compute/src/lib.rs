@@ -53,8 +53,8 @@ pub use quant::{
 };
 pub use quant_1bit::{
     asymmetric_group_count, dequant_int1_gemv, dequant_int1_gemv_symmetric, dequantize_int1_affine,
-    f16_to_f32, f32_to_f16, is_symmetric, quantize_int1_affine_symmetric, Int1AffineRow,
-    BONSAI_GROUP_SIZE,
+    embed_lookup_int1, f16_to_f32, f32_to_f16, is_symmetric, quantize_int1_affine_symmetric,
+    Int1AffineRow, BONSAI_GROUP_SIZE,
 };
 pub use quant_gguf::{
     dequant_q4_k_gemv, dequant_q5_k_gemv, dequant_q6_k_gemv, dequant_q8_0_gemv, dequantize_q4_k,
