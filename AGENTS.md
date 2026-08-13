@@ -1032,15 +1032,24 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     simultaneously more energy-efficient per token (voltage-frequency
     scaling is superlinear), so a throttled arm does not look broken in a
     power table, it looks GOOD. In a tok/s table it just looks like a bad
-    sample. THIS IS A BATTERY PHENOMENON on this machine, and the
+    sample. THIS IS A FUNCTION OF THE INSTALL'S WATTAGE, NOT OF THE POWER
+    SOURCE -- the 2026-08-07 session read it as a battery phenomenon
+    because every install it measured drew 14-18 W, and at that draw the
     contrast is sharp: the protocol's `long-synthesis` case left Nominal
-    on every run of both installs on battery (it prefills ~3,000 tokens
-    for 63-72 s before decoding anything), while the SAME binary running
-    the SAME protocol on AC held Nominal on 50 of 50 sampled arms.
-    `scripts/power.sh` flags any run whose pressure leaves Nominal and
-    excludes it; `scripts/parity.sh` and the oracles do NOT, so a
-    surprising throughput row from a long battery session is worth
-    checking against `pmset -g therm` before it is believed. The
+    on every battery run of both installs (it prefills ~3,000 tokens for
+    63-72 s before decoding anything), while the SAME binary running the
+    SAME protocol on AC held Nominal on 50 of 50 sampled arms. Then
+    gpt-oss-20b (2026-08-12), the highest-wattage install here at ~36 W
+    combined / ~32 W GPU, dropped one of two AC decode windows to Heavy,
+    and the throttled arm read 3.7% BETTER J/token than the clean one --
+    the same trap, now reachable on AC.
+    `scripts/power.sh` WARNS on any run whose pressure leaves Nominal but
+    its summary still averages that run in -- exclusion is by hand, from
+    the per-run rows in `rows.tsv` (this sentence used to claim the
+    script excludes it, which its own awk refutes); `scripts/parity.sh`
+    and the oracles do not even warn, so a surprising throughput row from
+    a long session on either power source is worth checking against
+    `pmset -g therm` before it is believed. The
     corollary for A/B work is stronger than "prefer AC": an effect
     smaller than a few percent CANNOT be measured on battery at all. The
     read-pool QoS seam read as a clear loss on battery (one pair at +8.8%

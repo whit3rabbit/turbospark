@@ -191,6 +191,56 @@ prefill wall clock read 27.5 s against 16.1 s (p1) and 15.5 s (warmup) at
 similar watts. This is a single-arm baseline rather than an A/B, so no
 conclusion turns on it; the prefill row averages both pairs.
 
+## gpt-oss-20b: the M5 capture, one case, and the first AC throttle
+
+Measured 2026-08-12 on AC, `~/models/gptoss-20b.gturbo`, rev `b964d0b`,
+2 measured pairs after a discarded warmup, drift -0.6 s. Raw capture:
+`/tmp/power-gptoss/`. **One case only, `short-explanation`, and that is a
+scope limit rather than a shortcut**: Harmony puts the model's reasoning
+in an `analysis` channel before its answer, so `medium-review` needs
+2,153 sampled tokens against the shared 1,024-token budget and
+`long-synthesis` 1,108 -- both stop on `maxTokens` at the stock bench
+parameters, and a truncated run is not a protocol row. The 8,192/3,072
+per-family parameters exist only on the oracle path today; a full
+three-case capture needs them wired into `turbospark-bench --model`
+first.
+
+**The decode row is p1 ALONE (n=1), excluded by hand from `rows.tsv`**:
+p2's decode window left Nominal thermal pressure (Heavy), and the
+script's summary only WARNS -- its aggregate still averages the throttled
+run in. The throttled arm read 1.1085 J/token against the clean 1.1506,
+i.e. 3.7% BETTER, which is exactly the direction AGENTS.md Gotcha 28
+warns makes a throttled arm flatter a power table. Prefill is n=2; both
+prefill windows stayed Nominal.
+
+Decode (n=1, the clean pair):
+
+| install | case | tok/s | watts | J/token | cpu W | gpu W |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| gpt-oss-20b MXFP4 | short-explanation | 31.04 | 36.67 | 1.1506 | 4.32 | 32.35 |
+
+Prefill (n=2):
+
+| install | case | watts | J/prompt token |
+| --- | --- | ---: | ---: |
+| gpt-oss-20b MXFP4 | short-explanation | 33.67 | 1.0028 |
+
+**This is the highest sustained power of any install measured here, and
+the first to leave Nominal on AC.** ~36 W combined and ~32 W GPU, against
+Gemma's 16.7-17.8, Qwen 3.6's 13.8-14.9, Qwen3-30B-A3B's 19.8-22.0, and
+even the 3-bit install's 25.4-27.7. Unlike `qwen3moe` above, whose 2x
+J/token came from the tok/s denominator, gpt-oss decodes at a healthy
+31 tok/s and its 1.15 J/token comes from the WATTS numerator. The
+attribution is GPU-side (cpu W is an ordinary 4.3), consistent with the
+MXFP4 codebook-style dequant running in every routed expert the way the
+IQ install's did -- but no interleaved A/B isolates that here, so read it
+as a shape, not a proof.
+
+The AC throttle retires a reading the baseline session left standing:
+thermal saturation on this machine is a function of the INSTALL'S
+WATTAGE, not of the power source. At ~17 W (Gemma) AC held Nominal on 50
+of 50 arms; at ~36 W it lost one decode window in three.
+
 ## Battery, and what differs
 
 Battery rows are partial: they exclude runs whose thermal pressure left

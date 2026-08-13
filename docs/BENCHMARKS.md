@@ -901,8 +901,12 @@ llama.cpp -- only the measurement asks for determinism.
 The cross-engine KL HAS since been run and passed (2026-08-12, the
 "Cross-engine: llama.cpp on the same GGUF, `gpt-oss`" section below):
 0.00978 mean nats at 97.5% top-1, under the backend floor, which settles
-the YaRN `mscale` and the sink placement. Still not done: the
-`scripts/power.sh` capture.
+the YaRN `mscale` and the sink placement. The `scripts/power.sh` capture
+also landed 2026-08-12: decode 36.67 W / 1.1506 J/token at 31.0 tok/s on
+the one protocol case Harmony's token budget permits at the stock bench
+parameters -- the highest-wattage install measured here and the first to
+leave Nominal thermal pressure on AC. Rows, scope limit and the
+throttled-pair exclusion: `docs/POWER_BASELINE.md`, "gpt-oss-20b".
 
 ## Batched verify and speculative decoding
 
