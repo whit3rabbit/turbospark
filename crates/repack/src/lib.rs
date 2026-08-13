@@ -66,7 +66,7 @@ pub use gturbo_writer::{
 pub use hf_checkpoint::{orchestrate_llama_checkpoint, LlamaCheckpointDims, OrchestrateError};
 pub use install_verifier::verify_install_full_sha256;
 pub use manifest_peek::peek_manifest_arch;
-pub use qwen36_config::parse_qwen36_config;
+pub use qwen36_config::{parse_qwen35_config, parse_qwen36_config};
 pub use ranged_download::{
     fetch_gguf_header, fetch_safetensors_header, DownloadError, HttpRangeSource, MemoryRangeSource,
     RangeSource, GGUF_INITIAL_FETCH_BYTES,

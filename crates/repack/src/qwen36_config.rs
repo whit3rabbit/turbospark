@@ -52,10 +52,36 @@ const MASK_FULL: u8 = 1;
 /// Cross-check the result against [`model_io::qwen36_35b_a3b`]: if the two
 /// disagree field for field, one of them is wrong.
 pub fn parse_qwen36_config(json: &str) -> Result<ArchConfig, Gemma4Error> {
+    parse_qwen_family_config(json, ModelFamily::Qwen36)
+}
+
+/// Parses a `qwen3_5` `config.json` into an [`ArchConfig`]
+/// (`prism-ml/Bonsai-27B-mlx-1bit`, ROADMAP's 1-bit entry).
+///
+/// **The same parser as [`parse_qwen36_config`] with FOUR fields resolved
+/// differently, which is why this is a parameterized body and Qwen 3.6's own
+/// parser is not a parameterized Gemma one.** Against Gemma almost every key
+/// name differs; against Qwen 3.6 almost none does, because the two share a
+/// behavioural profile entirely (see [`model_io::bonsai_27b`]). What differs
+/// is exactly the FFN:
+///
+/// | field | `qwen3_5` | `qwen3_5_moe` |
+/// |---|---|---|
+/// | `intermediate_size` | `intermediate_size`, the DENSE FFN | `shared_expert_intermediate_size` |
+/// | `moe_intermediate_size` | 0 | `moe_intermediate_size` |
+/// | `num_experts` / `top_k_experts` | 0 | `num_experts` / `num_experts_per_tok` |
+/// | `shared_expert_gated` | false | true |
+///
+/// Cross-check the result against [`model_io::bonsai_27b`]: if the two
+/// disagree field for field, one of them is wrong.
+pub fn parse_qwen35_config(json: &str) -> Result<ArchConfig, Gemma4Error> {
+    parse_qwen_family_config(json, ModelFamily::Qwen35)
+}
+
+fn parse_qwen_family_config(json: &str, family: ModelFamily) -> Result<ArchConfig, Gemma4Error> {
     let root: serde_json::Value =
         serde_json::from_str(json).map_err(|e| Gemma4Error::Config(e.to_string()))?;
-    crate::arch_registry::refuse_foreign_config(&root, ModelFamily::Qwen36)
-        .map_err(Gemma4Error::Config)?;
+    crate::arch_registry::refuse_foreign_config(&root, family).map_err(Gemma4Error::Config)?;
     // Text-only conversions drop the wrapper; accept both shapes.
     let tc = root.get("text_config").unwrap_or(&root);
 
@@ -116,10 +142,35 @@ pub fn parse_qwen36_config(json: &str) -> Result<ArchConfig, Gemma4Error> {
 
     let kv_heads = i("num_key_value_heads")?;
 
+    // The four fields the two Qwen configs resolve differently. Everything
+    // else above and below is shared verbatim.
+    let dense = family == ModelFamily::Qwen35;
+    let (intermediate_size, moe_intermediate_size, num_experts, top_k_experts) = if dense {
+        // A dense config that ALSO declares experts is a contradiction, and
+        // reading only half of it produces an `ArchConfig` whose FFN width
+        // and expert count disagree -- which validates structurally and
+        // dispatches the wrong branch. Refused rather than ignored.
+        if let Some(n) = tc.get("num_experts").and_then(|v| v.as_i64()) {
+            if n > 0 {
+                return Err(Gemma4Error::Config(format!(
+                    "a qwen3_5 config declares num_experts {n}; the dense family has none,                      and a checkpoint with experts is qwen3_5_moe"
+                )));
+            }
+        }
+        (i("intermediate_size")?, 0, 0, 0)
+    } else {
+        (
+            i("shared_expert_intermediate_size")?,
+            i("moe_intermediate_size")?,
+            i("num_experts")?,
+            i("num_experts_per_tok")?,
+        )
+    };
+
     Ok(ArchConfig {
         hidden_size: i("hidden_size")?,
-        intermediate_size: i("shared_expert_intermediate_size")?,
-        moe_intermediate_size: i("moe_intermediate_size")?,
+        intermediate_size,
+        moe_intermediate_size,
         num_heads: i("num_attention_heads")?,
         num_kv_heads: kv_heads,
         num_full_kv_heads: kv_heads,
@@ -132,8 +183,8 @@ pub fn parse_qwen36_config(json: &str) -> Result<ArchConfig, Gemma4Error> {
         full_rope_theta: rope_theta,
         partial_rotary_factor: prf,
         num_layers,
-        num_experts: i("num_experts")?,
-        top_k_experts: i("num_experts_per_tok")?,
+        num_experts,
+        top_k_experts,
         tie_word_embeddings: b("tie_word_embeddings"),
         attention_k_eq_v: false,
         full_attention_layer_mask: mask,
@@ -142,13 +193,13 @@ pub fn parse_qwen36_config(json: &str) -> Result<ArchConfig, Gemma4Error> {
             .and_then(|v| v.as_str())
             .unwrap_or("silu")
             .to_string(),
-        family: ModelFamily::Qwen36,
+        family,
         attn_output_gate: b("attn_output_gate"),
         attention_scale: (head_dim as f64).powf(-0.5),
         embedding_scaled_by_sqrt_hidden: false,
         router_scaled: false,
         ffn_sandwich_norms: false,
-        shared_expert_gated: true,
+        shared_expert_gated: !dense,
         rope_neox_subdim: true,
         linear_attention: LinearAttentionConfig {
             num_k_heads: i("linear_num_key_heads")?,
