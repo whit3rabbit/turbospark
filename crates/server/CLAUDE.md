@@ -8,7 +8,7 @@ Events (SSE) streaming output.
 The wire types are `anyllm_translate`'s (crates.io 0.16, default features:
 pure, IO-free), not hand-rolled. An Anthropic request is translated into the
 OpenAI request the existing path already understands, run through the shared
-generation core in `handler.rs`, and translated back.
+generation core in `handler/`, and translated back.
 
 ## Directory & File Structure
 
@@ -18,7 +18,11 @@ crates/server/
 +-- src/
 |   +-- main.rs                 # Binary entry point for turbospark-server
 |   +-- lib.rs                  # Library root: router, re-exported wire types
-|   +-- handler.rs              # /v1/chat/completions + /v1/models, and the shared generation core
+|   +-- handler/                # /v1/chat/completions + /v1/models, and the shared generation core
+|   |   +-- mod.rs              # The two Axum handlers and the router wiring
+|   |   +-- plan.rs             # `plan`: chat template, encode, shaping config
+|   |   +-- exec.rs             # `run_full` and `stream_blocking`
+|   |   \-- tests.rs            # Unit tests for the two above
 |   +-- messages.rs             # Anthropic /v1/messages: translate in, generate, translate out
 |   +-- model.rs                # ChatModel trait and the ScriptedChatModel backend
 |   +-- real_model.rs           # RealChatModel: RealForwardRunner backend (macOS only)
@@ -33,7 +37,7 @@ crates/server/
 ## Key Modules
 
 - `main.rs`: Server binary entry point and CLI option handling (`--model` real mode, legacy positional scripted mode, port, `--bind loopback|tailnet`).
-- `handler.rs`: the `/v1/chat/completions` and `/v1/models` handlers, plus the generation core both endpoints share -- `plan` (chat template, encode, shaping config), `run_full`, and `stream_blocking` (which owns the `StructuredAssistantDecoder` when a request carries tools).
+- `handler/`: the `/v1/chat/completions` and `/v1/models` handlers, plus the generation core both endpoints share -- `plan.rs` (chat template, encode, shaping config) and `exec.rs`'s `run_full` and `stream_blocking` (which owns the `StructuredAssistantDecoder` when a request carries tools).
 - `messages.rs`: the Anthropic `/v1/messages` handler, wrapping the same core in `translate_request` / `translate_response` / `new_stream_translator`.
 - `model.rs`: the `ChatModel` trait and `ScriptedChatModel`, bridging Axum handlers to `turbospark-runtime`.
 - `real_model.rs`: `RealChatModel`, a `RealForwardRunner` behind the same trait (macOS only).
