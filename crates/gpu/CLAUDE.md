@@ -20,6 +20,7 @@ crates/gpu/
 |   +-- moe_decode.rs               # MoE router, phase 1 GEMV, phase 2 down-reduce dispatches
 |   +-- rms_norm.rs                 # RMSNorm dispatches (no-scale, BF16, per-head)
 |   +-- rope.rs                     # RoPE positional embedding dispatch
+|   +-- dequant_1bit_gemv.rs        # MLX 1-bit affine GEMV pair (port-local, ROADMAP's 1-bit entry)
 |   +-- dequant_int4_gemv.rs        # INT4 SIMD GEMV dispatches (resident & streamed)
 |   +-- dequant_int4_batch.rs       # The M-ROW batched INT4 GEMM (ROADMAP Phase D2); see its header for the two register-file dead ends
 |   +-- dequant_iq_gemv.rs          # IQ3_XXS / IQ4_NL / IQ4_XS codebook GEMV (Phase S)
@@ -41,6 +42,7 @@ crates/gpu/
 |   +-- prefill_scratch.rs          # Chunked prefill scratch buffer layout (undispatched)
 |   \-- shaders/                    # MSL source, vendored from Swift except where marked port-local
 |       +-- attention.metal         # Decode attention Metal shader source
+|       +-- dequant_1bit.metal      # MLX 1-bit affine GEMV + the `+/-1` form
 |       +-- dequant_int4.metal      # INT4 dequantization GEMV shader source
 |       +-- dequant_int8.metal      # INT8 dequantization GEMV shader source
 |       +-- dequant_q4_k.metal      # GGUF Q4_K dequantization GEMV + embedding lookup
@@ -58,6 +60,7 @@ crates/gpu/
     +-- attention_chunk_bench.rs
     +-- attention_decode_parity.rs
     +-- attention_swa.rs
+    +-- dequant_1bit_gemv_parity.rs
     +-- dequant_int4_gemv_parity.rs
     +-- dequant_int8_gemv_parity.rs
     +-- dequant_q4_k_gemv_parity.rs
@@ -93,6 +96,7 @@ crates/gpu/
 - `rope.rs`: Rotary positional embedding dispatches (`rope_proportional_neox`, `rope_neox_subdim`, and ROADMAP M5's `rope_neox_freqs`). The first three derive each pair's frequency from a SCALAR theta; `rope_neox_freqs` reads a precomputed per-pair table plus a magnitude scale, because YaRN interpolates per dimension along a ramp and no single number expresses that. The table is position-independent, so it is built once at open by `turbospark_compute::yarn_frequencies`. Incidentally the shape a LEARNED frequency table needs, which is what `rope_freqs.weight` is -- refused by name since M4, and nothing here wires it up.
 - `gdn.rs`: The eight gated-DeltaNet dispatches plus `GdnShape` and its structural preconditions.
 - `dequant_int4_gemv.rs` & `dequant_int8_gemv.rs`: INT4/INT8 GEMV SIMD dispatches.
+- `dequant_1bit_gemv.rs`: the MLX `affine` GEMV pair at ONE bit (`prism-ml/Bonsai-27B-mlx-1bit`, ROADMAP's 1-bit entry step 2). PORT-LOCAL for the GGUF set's reason -- the Swift engine reads no 1-bit checkpoint -- and its contract is `turbospark_compute::quant_1bit`. Same CONTAINER as the INT4 sibling next door and NOT a narrower version of it: the companions bind as `device const half*` rather than `bfloat*` (same width, so a misread passes every length check and reads the checkpoint's 0.0271 scales as 1.7e-16), the group size is the checkpoint's 128 rather than the sibling's compile-time 64, and a byte holds 8 elements rather than 2, which makes the LSB-first bit order inside it load-bearing. **The group size is a runtime UNIFORM, deliberately not a function constant**: it is a property of the checkpoint rather than of the container, and a specialization axis that missed `pipeline`'s constants key would silently reuse the wrong pipeline (Gotcha 1). **`dequant_int1_gemv_symmetric_simd` is a SECOND KERNEL, not a fast path inside the first**, for two reasons that both matter: factoring the group scale out of the sum reassociates it (AGENTS.md Gotcha 27), and it binds no bias plane at all, so `Int1SymmetricRowGpu` has no field through which an unchecked bias could reach it -- the `bias == -scale/2` check is the caller's, and it is measured (`turbospark_compute::is_symmetric`) rather than assumed. The symmetric form has no resident variant yet on purpose: which offsets it would bind depends on whether the repack step writes a bias plane for a symmetric tensor at all. Nothing dispatches either kernel yet; `tests/dequant_1bit_gemv_parity.rs` is the whole of its current use, and its two trap cases (bit order, companion dtype) construct data that discriminates and then ASSERT that it does, because at one bit a wrong reading leaves every magnitude, every group scale and the total popcount untouched.
 - `dequant_int4_batch.rs`: `dequant_int4_gemm_simd`, the M-row batched form of the above (ROADMAP Phase D2's verify kernel). Not on any decode path -- decode is M=1 -- and kept because a tile-kernel phase would otherwise rebuild it. **Read its header before optimizing it**: threadgroup staging of `x` and register blocking over rows are both measured LOSSES on every shape, and the reason (the register file cannot hold an M-wide activation tile, and threadgroup barriers cost more than they save) is the argument for `simdgroup_matrix` being the only remaining lever. `tests/dequant_int4_gemm_parity.rs` pins it against the GEMV on identical bytes.
 - `dequant_iq_gemv.rs`: the IQ3_XXS / IQ4_NL / IQ4_XS codebook GEMV dispatches (ROADMAP Phase S), whose tables are GENERATED from libggml by `scripts/ggml_tables.c` rather than transcribed, so the CPU and MSL copies cannot drift. `tests/dequant_iq_gemv_parity.rs`.
 - `dequant_q8_0_gemv.rs`: the GGUF Q8_0 GEMV dispatch (ROADMAP Phase G Stage 2). PORT-LOCAL, not vendored -- the Swift engine has no GGUF intake, so its only contract is `turbospark_compute::dequant_q8_0_gemv`. Shorter than the INT8 sibling because a Q8_0 row is ONE byte run: the scale lives inside each 34-byte block, so there are no scale or bias planes to bind and no group size to agree on. 32 lanes over a 32-element block, one weight per lane.
