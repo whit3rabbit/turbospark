@@ -158,6 +158,142 @@ fn peek_family_defaults_to_gemma_when_family_field_is_absent() {
     assert_eq!(family, ModelFamily::Gemma4);
 }
 
+// ---------------------------------------------------------------------------
+// `validate_quant`
+//
+// The toy manifest above carries `"quant": null`, which is why none of the
+// cases before this point reach the gate at all. These build a quant block
+// explicitly. They exist because the gate had no direct test: it was only
+// ever exercised through `crates/repack`'s manifests, where a wrong
+// acceptance reads as a repack bug three crates away.
+// ---------------------------------------------------------------------------
+
+/// The INT4 install's per-slot bit widths. The router is 8 and always has
+/// been; a uniform 4 across all five is not a shape any install has, which
+/// the first draft of these tests got wrong and the gate caught.
+const INT4_BITS: [i64; 5] = [4, 4, 8, 4, 4];
+/// The 1-bit install's. Uniform, because the checkpoint quantizes everything
+/// it quantizes at one bit and the three slots it has no component for fall
+/// back to the same value.
+const INT1_BITS: [i64; 5] = [1, 1, 1, 1, 1];
+
+/// A quant block with per-slot bit widths, one companion dtype and one group
+/// size, so a case can vary exactly one axis away from a valid shape.
+fn quant_block(bits: [i64; 5], companions: &str, group: i64) -> String {
+    let names = [
+        "embedding",
+        "attention",
+        "router",
+        "sharedExpert",
+        "routedExpert",
+    ];
+    let slots: Vec<String> = names
+        .iter()
+        .zip(bits.iter())
+        .map(|(name, b)| {
+            format!(
+                r#""{name}": {{"weightBits": {b}, "scheme": "affine",
+                    "scaleType": "{companions}", "biasType": "{companions}",
+                    "groupSize": {group}}}"#
+            )
+        })
+        .collect();
+    format!(r#""quant": {{{}}}"#, slots.join(", "))
+}
+
+fn manifest_with_quant(bits: [i64; 5], companions: &str, group: i64) -> String {
+    toy_manifest_json().replace("\"quant\": null", &quant_block(bits, companions, group))
+}
+
+fn quant_error(bits: [i64; 5], companions: &str, group: i64) -> String {
+    let dir = tempfile_dir();
+    write_manifest(dir.path(), &manifest_with_quant(bits, companions, group));
+    match load_manifest(dir.path(), &toy_arch(), 4 * 1024 * 1024).unwrap_err() {
+        ModelError::IndexCorrupt { detail } => detail,
+        other => panic!("expected IndexCorrupt, got {other:?}"),
+    }
+}
+
+/// The shape the one published 1-bit checkpoint declares: FP16 companions at
+/// group 128, on every slot.
+///
+/// Every slot, including `routedExpert`, which has no 1-bit kernel. That is
+/// deliberate and `validate_quant`'s doc says why: the checkpoint is dense,
+/// so three of the five slots describe components it does not have and fall
+/// back to the type the rest of the model uses.
+#[test]
+fn a_one_bit_affine_quant_block_at_group_128_is_accepted() {
+    let dir = tempfile_dir();
+    write_manifest(dir.path(), &manifest_with_quant(INT1_BITS, "fp16", 128));
+    let manifest = load_manifest(dir.path(), &toy_arch(), 4 * 1024 * 1024).unwrap();
+    let quant = manifest.quant.expect("the quant block decoded");
+    assert_eq!(quant.embedding.weight_bits, 1);
+    assert_eq!(quant.embedding.group_size, 128);
+    assert_eq!(quant.routed_expert.scale_type, "fp16");
+}
+
+/// FP16 companions on a 1-bit slot are required, and BF16 ones are refused.
+///
+/// This is the axis that cannot fail any other way: the two planes are the
+/// same width, so a wrong reading passes every length and offset check in
+/// the install and decodes 0.0271 as 1.7e-16. The message is asserted to
+/// name the dtype, because a bare "unsupported quantization" would send the
+/// reader looking at the bit width.
+#[test]
+fn a_one_bit_slot_with_bf16_companions_is_refused_and_the_dtype_is_named() {
+    let detail = quant_error(INT1_BITS, "bf16", 128);
+    assert!(detail.contains("bf16"), "{detail}");
+    assert!(detail.contains("fp16"), "{detail}");
+}
+
+/// The bit width, the group size and the companion dtype are ONE shape, not
+/// three independent axes.
+///
+/// Every case here starts from an ACCEPTED shape and moves exactly one axis,
+/// so what it proves is that the axis is load-bearing rather than that some
+/// field somewhere was wrong. A gate written as three independent widenings
+/// (`1` added to the bit lists, `128` to the group sizes, `fp16` to the
+/// companion types) accepts all four of these, and no kernel implements any
+/// of them.
+#[test]
+fn the_cross_products_of_the_two_affine_shapes_are_refused() {
+    let cases = [
+        (INT4_BITS, "fp16", 64, "INT4 with the 1-bit companions"),
+        (INT4_BITS, "bf16", 128, "INT4 at the 1-bit group size"),
+        (INT1_BITS, "bf16", 128, "1-bit with the INT4 companions"),
+        (INT1_BITS, "fp16", 64, "1-bit at the INT4 group size"),
+        // The one case that moves TWO axes, and it has to be here: it is the
+        // only shape the bit-width conjunct alone refuses. Without it,
+        // deleting `weight_bits == 1` from the 1-bit predicate leaves this
+        // whole file green -- checked, not assumed.
+        (
+            INT4_BITS,
+            "fp16",
+            128,
+            "INT4 bits under the 1-bit companion shape",
+        ),
+    ];
+    for (bits, companions, group, what) in cases {
+        let detail = quant_error(bits, companions, group);
+        assert!(
+            detail.contains("unsupported quantization"),
+            "{what} was accepted: {detail}"
+        );
+    }
+}
+
+/// The INT4 shape is unmoved. A regression guard, since the 1-bit arm was
+/// added beside it rather than by widening it.
+#[test]
+fn the_four_bit_affine_shape_still_loads() {
+    let dir = tempfile_dir();
+    write_manifest(dir.path(), &manifest_with_quant(INT4_BITS, "bf16", 64));
+    let manifest = load_manifest(dir.path(), &toy_arch(), 4 * 1024 * 1024).unwrap();
+    let quant = manifest.quant.unwrap();
+    assert_eq!(quant.attention.weight_bits, 4);
+    assert_eq!(quant.router.weight_bits, 8);
+}
+
 fn tempfile_dir() -> TempDir {
     TempDir::new()
 }
