@@ -114,6 +114,35 @@ fn both_model_type_spellings_resolve() {
     assert_eq!(hf_family_for_model_type("qwen2_moe"), None);
 }
 
+/// `qwen3_5` and `qwen3_5_moe` are DIFFERENT FAMILIES whose strings differ
+/// by a suffix, which is the closest pair in the table and the one a prefix
+/// match would collapse.
+///
+/// Bonsai-27B reports `qwen3_5`; Qwen 3.6 reports `qwen3_5_moe`. Resolving
+/// the first to the second's family gives a baseline with 256 experts and a
+/// decode flow with a router in it -- fluent wrong output rather than an
+/// error. The lookup is exact equality, and this pins that both directions
+/// stay distinct.
+#[test]
+fn the_two_qwen_model_types_do_not_collapse_into_one_family() {
+    assert_eq!(
+        hf_family_for_model_type("qwen3_5"),
+        Some(ModelFamily::Qwen35)
+    );
+    assert_eq!(
+        hf_family_for_model_type("qwen3_5_text"),
+        Some(ModelFamily::Qwen35)
+    );
+    assert_ne!(
+        hf_family_for_model_type("qwen3_5"),
+        hf_family_for_model_type("qwen3_5_moe"),
+        "the dense and MoE Qwen model types resolved to one family"
+    );
+    // And neither is a prefix of a third thing that resolves.
+    assert_eq!(hf_family_for_model_type("qwen3_5_moe_dense"), None);
+    assert_eq!(hf_family_for_model_type("qwen3_"), None);
+}
+
 /// The silent failure this guard exists for: every parser hardcodes
 /// `family:` on the way out, so without it a Qwen config parsed by the Gemma
 /// parser yields a Gemma-labelled `ArchConfig`.

@@ -62,15 +62,101 @@ pub fn gemma4_26b_a4b() -> ArchConfig {
 }
 
 fn qwen36_layer_mask() -> Vec<u8> {
-    // Layer kinds: 2 = gated-DeltaNet linear, 1 = full attention on every
-    // 4th layer ((i + 1) % 4 == 0).
-    let mut mask = vec![2u8; 40];
+    qwen_hybrid_layer_mask(40)
+}
+
+/// The Qwen hybrid layer mask: gated-DeltaNet linear everywhere except
+/// every 4th layer, which is full attention.
+///
+/// Layer kinds: 2 = gated-DeltaNet linear, 1 = full attention on every 4th
+/// layer (`(i + 1) % 4 == 0`). Shared by Qwen 3.6 at 40 layers and
+/// `qwen3_5` at 64, which both declare `full_attention_interval: 4` and
+/// whose `layer_types` lists reproduce exactly this pattern.
+fn qwen_hybrid_layer_mask(layers: usize) -> Vec<u8> {
+    let mut mask = vec![2u8; layers];
     let mut i = 3;
-    while i < 40 {
+    while i < layers {
         mask[i] = 1;
         i += 4;
     }
     mask
+}
+
+/// Canonical `prism-ml/Bonsai-27B-mlx-1bit` baseline (ROADMAP's 1-bit
+/// entry): a 64-layer hybrid of 48 gated-DeltaNet linear-attention layers
+/// and 16 full-attention layers (every 4th), a DENSE SwiGLU FFN, untied
+/// lm_head, no logit softcap and no sliding window.
+///
+/// **Every behavioural field here is Qwen 3.6's and every shape field
+/// differs**, which is what makes this the same relationship dense Mistral
+/// has to Mixtral. All of it is read off the checkpoint's own `config.json`
+/// (`model_type: qwen3_5`, `text_config.model_type: qwen3_5_text`) rather
+/// than inferred from the sibling: `head_dim` 256, `vocab_size` 248320,
+/// `rope_theta` 1e7, `partial_rotary_factor` 0.25, `attn_output_gate`, the
+/// linear key/value head dims and the conv kernel all coincide with Qwen
+/// 3.6 as published, while hidden is 5120 against 2048, layers 64 against
+/// 40, and there are no experts at all.
+///
+/// Two fields are worth reading twice. `intermediate_size` is the DENSE FFN
+/// width (17408) where Qwen 3.6's is its shared expert's 512, so the same
+/// field name means a different thing in the two baselines -- the dense
+/// `llama` half has exactly this collision. And `rope_scaling` is `NONE`
+/// even though the checkpoint declares `mrope_section [11, 11, 10]`:
+/// [`RopeScalingConfig`] carries YARN's four scalars, and mrope is not
+/// YaRN. On TEXT positions mrope's three sections are equal and it reduces
+/// to the `rope_neox_subdim` this baseline already sets, which is a claim
+/// the cross-engine check has to verify rather than one to assume.
+pub fn bonsai_27b() -> ArchConfig {
+    ArchConfig {
+        hidden_size: 5120,
+        // The dense FFN, not a shared expert. See the doc above.
+        intermediate_size: 17408,
+        // No routed experts, so no routed width.
+        moe_intermediate_size: 0,
+        num_heads: 24,
+        num_kv_heads: 4,
+        num_full_kv_heads: 4,
+        head_dim: 256,
+        full_head_dim: 256,
+        vocab_size: 248_320,
+        sliding_window: 0,
+        final_logit_softcap: 0.0,
+        rope_theta: 10_000_000.0,
+        full_rope_theta: 10_000_000.0,
+        partial_rotary_factor: 0.25,
+        num_layers: 64,
+        num_experts: 0,
+        top_k_experts: 0,
+        tie_word_embeddings: false,
+        attention_k_eq_v: false,
+        full_attention_layer_mask: qwen_hybrid_layer_mask(64),
+        hidden_activation: "silu".to_string(),
+        family: ModelFamily::Qwen35,
+        attn_output_gate: true,
+        attention_scale: 0.0625, // 256^-0.5, a binary fraction (Gotcha 24)
+        embedding_scaled_by_sqrt_hidden: false,
+        router_scaled: false,
+        ffn_sandwich_norms: false,
+        // No shared expert to gate: the FFN is dense.
+        shared_expert_gated: false,
+        rope_neox_subdim: true,
+        linear_attention: LinearAttentionConfig {
+            num_k_heads: 16,
+            // 48, against Qwen 3.6's 32: three V heads per K head rather
+            // than two.
+            num_v_heads: 48,
+            key_head_dim: 128,
+            value_head_dim: 128,
+            conv_kernel_size: 4,
+        },
+        compressed_attention: CompressedAttentionConfig::NONE,
+        hyper_connections: HyperConnectionConfig::NONE,
+        num_hash_routed_layers: 0,
+        router_scoring_func: "softmax".to_string(),
+        routed_scaling_factor: 1.0,
+        swiglu_limit: 0.0,
+        rope_scaling: RopeScalingConfig::NONE,
+    }
 }
 
 /// Canonical Qwen3.6-35B-A3B baseline: a 40-layer hybrid of 30
@@ -430,6 +516,7 @@ pub fn known_architecture(family: ModelFamily) -> ArchConfig {
         ModelFamily::Llama => mixtral_8x7b(),
         ModelFamily::Qwen3Moe => qwen3_30b_a3b(),
         ModelFamily::GptOss => gpt_oss_20b(),
+        ModelFamily::Qwen35 => bonsai_27b(),
     }
 }
 
@@ -441,5 +528,6 @@ pub fn all_known_architectures() -> Vec<ArchConfig> {
         mixtral_8x7b(),
         qwen3_30b_a3b(),
         gpt_oss_20b(),
+        bonsai_27b(),
     ]
 }

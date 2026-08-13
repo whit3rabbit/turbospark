@@ -420,7 +420,10 @@ pub fn map_gguf_name(name: &str, family: ModelFamily) -> Result<GgufMapping, Ggu
             ModelFamily::Llama => map_llama_layer(suffix, layer),
             ModelFamily::Qwen3Moe => map_qwen3moe_layer(suffix, layer),
             ModelFamily::GptOss => map_gpt_oss_layer(suffix, layer),
-            ModelFamily::DeepseekV4Flash => None,
+            // No `qwen3_5` GGUF exists; an unmapped name is the right
+            // answer rather than Qwen 3.6's table, which would map names
+            // this family does not have.
+            ModelFamily::DeepseekV4Flash | ModelFamily::Qwen35 => None,
         }
         .ok_or_else(unmapped);
     }
@@ -450,7 +453,11 @@ pub fn gguf_architecture(family: ModelFamily) -> Option<&'static str> {
         ModelFamily::Llama => Some("llama"),
         ModelFamily::Qwen3Moe => Some("qwen3moe"),
         ModelFamily::GptOss => Some("gpt-oss"),
-        ModelFamily::DeepseekV4Flash => None,
+        // `qwen3_5` is published as MLX safetensors only. `None` is the
+        // honest answer: inventing a string here would make
+        // `family_for_architecture` claim to recognize a GGUF that does
+        // not exist.
+        ModelFamily::DeepseekV4Flash | ModelFamily::Qwen35 => None,
     }
 }
 

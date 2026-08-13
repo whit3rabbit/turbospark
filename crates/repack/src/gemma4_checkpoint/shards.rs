@@ -40,7 +40,12 @@ pub fn layer_index(name: &str) -> Option<usize> {
 /// The container path a family's routed (per-expert) weights live under.
 fn routed_marker(family: ModelFamily) -> &'static str {
     match family {
-        ModelFamily::Qwen36 => ".mlp.switch_mlp.",
+        // `qwen3_5` is DENSE -- one `mlp.{gate,up,down}_proj` per layer and
+        // no routed tensors at all -- so this marker never fires on it. It
+        // takes Qwen 3.6's rather than Gemma's because it is that family's
+        // safetensors sibling, and because a marker that could only ever
+        // match the wrong thing is worse than one that cannot match.
+        ModelFamily::Qwen36 | ModelFamily::Qwen35 => ".mlp.switch_mlp.",
         // A GGUF-derived Llama or Qwen3-MoE never reaches this classifier
         // (the GGUF walk maps routed tensors by NAME, in `gguf_names.rs`),
         // and neither has a safetensors path. DeepSeek V4 has no repack path

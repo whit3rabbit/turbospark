@@ -26,7 +26,11 @@ fn int8_transcode_targets(family: ModelFamily) -> &'static [&'static str] {
         // are F32 and are NOT here: they take the BF16 default, which is
         // what a bias-add kernel reads.
         ModelFamily::Llama | ModelFamily::Qwen3Moe | ModelFamily::GptOss => &["mlp.gate.weight"],
-        ModelFamily::DeepseekV4Flash => &[],
+        // `qwen3_5` has NO GGUF file -- it is published as MLX
+        // safetensors only -- so the GGUF walk never reaches it. Empty
+        // rather than Qwen 3.6's list, which would be a claim about bytes
+        // that do not exist.
+        ModelFamily::DeepseekV4Flash | ModelFamily::Qwen35 => &[],
     }
 }
 

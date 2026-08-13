@@ -48,6 +48,35 @@ pub enum ModelFamily {
     /// 128-token sliding window is the one part that is free, because
     /// Gemma's SWA ring already exists.
     GptOss,
+    /// The `qwen3_5` HF architecture (`prism-ml/Bonsai-27B-mlx-1bit`,
+    /// ROADMAP's 1-bit entry), the SIXTH real family and the first whose
+    /// weights are one bit wide.
+    ///
+    /// It runs through the SAME decode flow as [`ModelFamily::Qwen36`]
+    /// (`crates/runtime/src/families/qwen/`), because every BEHAVIOURAL
+    /// field is shared -- gated DeltaNet on the linear layers, gated full
+    /// attention on every fourth, `attn_output_gate`, `head_dim` 256,
+    /// `partial_rotary_factor` 0.25 at theta 1e7, no sandwich norms, no
+    /// softcap, silu -- and only SHAPE fields differ (hidden 5120 against
+    /// 2048, 64 layers against 40, 24 q heads over 4 kv). Read off the
+    /// checkpoint's own `config.json`, not assumed.
+    ///
+    /// It differs in exactly two ways, and the first is why it needs a
+    /// branch rather than just a baseline: it is DENSE, one
+    /// `mlp.{gate,up,down}_proj` per layer where Qwen 3.6 has a router, a
+    /// shared expert and 256 routed ones. The second is mrope
+    /// (`mrope_section [11, 11, 10]`), which on TEXT positions reduces to
+    /// the `rope_neox_subdim` already here -- a claim to verify against
+    /// the reference, not to assume.
+    ///
+    /// **A SEPARATE VARIANT DESPITE SHARING A FLOW, and the precedent is
+    /// [`ModelFamily::Qwen3Moe`] rather than [`ModelFamily::Llama`].**
+    /// `qwen3moe` shares `families/llama/`'s flow ENTIRELY and is still
+    /// its own variant, because its architecture string differs. `llama`
+    /// covers a dense and an MoE half under one variant only because
+    /// Mixtral and Mistral report the SAME string. Strings decide the
+    /// variant; flows are shared separately.
+    Qwen35,
 }
 
 impl ModelFamily {
@@ -60,6 +89,7 @@ impl ModelFamily {
             ModelFamily::Llama => "llama",
             ModelFamily::Qwen3Moe => "qwen3moe",
             ModelFamily::GptOss => "gptOss",
+            ModelFamily::Qwen35 => "qwen35",
         }
     }
 
@@ -72,6 +102,7 @@ impl ModelFamily {
             "llama" => Some(ModelFamily::Llama),
             "qwen3moe" => Some(ModelFamily::Qwen3Moe),
             "gptOss" => Some(ModelFamily::GptOss),
+            "qwen35" => Some(ModelFamily::Qwen35),
             _ => None,
         }
     }

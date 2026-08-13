@@ -102,6 +102,19 @@ const SUPPORTED_HF: &[(&str, ModelFamily)] = &[
     ("gemma4_text", ModelFamily::Gemma4),
     ("qwen3_5_moe", ModelFamily::Qwen36),
     ("qwen3_5_moe_text", ModelFamily::Qwen36),
+    // ROADMAP's 1-bit entry. Read off `prism-ml/Bonsai-27B-mlx-1bit`
+    // @ ef22f239c670078e1507f9769bcaa66657332b96, whose root `model_type`
+    // is `qwen3_5` and whose `text_config.model_type` is `qwen3_5_text`.
+    //
+    // **NOTE HOW CLOSE THESE ARE TO THE TWO ROWS ABOVE, and that the
+    // lookup is exact equality rather than a prefix match.** Qwen 3.6
+    // reports `qwen3_5_moe`; this reports `qwen3_5`. A `starts_with` here
+    // would resolve every Bonsai checkpoint to the MoE family, which is a
+    // different baseline and a decode flow with a router in it -- fluent
+    // wrong output rather than an error. The two ARE separate families
+    // for exactly this reason (`ModelFamily::Qwen35`'s doc).
+    ("qwen3_5", ModelFamily::Qwen35),
+    ("qwen3_5_text", ModelFamily::Qwen35),
 ];
 
 /// GGUF architectures this port recognizes and cannot run.

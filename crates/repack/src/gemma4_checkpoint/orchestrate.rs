@@ -357,6 +357,21 @@ pub fn manifest_quant(quant: &Gemma4Quant, family: ModelFamily) -> serde_json::V
             format!("{l0}.mlp.shared_expert.gate_proj"),
             format!("{l0}.mlp.switch_mlp.gate_proj"),
         ),
+        // `qwen3_5` shares Qwen 3.6's layer 0 (a LINEAR layer, so the
+        // attention probe is `in_proj_qkv` and not `self_attn.q_proj`) and
+        // is DENSE. Its router and routed-expert probes therefore find
+        // nothing and fall back to the default bits, which is the whole
+        // model's width -- `crates/repack` Gotcha 8's rule, and the reason
+        // `model_io::validate_quant` accepts the 1-bit shape on all five
+        // slots. The shared-expert probe deliberately names the DENSE FFN,
+        // which does exist, rather than a `shared_expert` path that never
+        // will: the slot then reports a width that was actually measured.
+        ModelFamily::Qwen35 => (
+            format!("{l0}.linear_attn.in_proj_qkv"),
+            format!("{l0}.mlp.gate"),
+            format!("{l0}.mlp.gate_proj"),
+            format!("{l0}.mlp.switch_mlp.gate_proj"),
+        ),
         // The `llama` architecture shares Gemma's routed marker but names
         // its router the way Qwen does (`mlp.gate`, from GGUF's
         // `ffn_gate_inp`) and has NO shared expert -- that slot's probe finds

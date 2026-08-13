@@ -401,6 +401,20 @@ impl RealForwardRunner {
                     "the DeepSeek-V4-Flash family has no decode flow yet".to_string(),
                 ));
             }
+            // Refused BY NAME until the dense branch lands, which is the
+            // same order `llama`'s dense half and `gpt-oss` were brought up
+            // in: the registry and the repack walk recognize a family one
+            // phase before `open()` will run it (`crates/repack`'s
+            // `arch_registry` doc states the split). The flow it will take
+            // is `families/qwen/`'s -- every behavioural field is Qwen
+            // 3.6's -- plus a dense FFN branch, so this arm becomes a
+            // `RealQwenState::build` call and not a sixth flow.
+            model_io::ModelFamily::Qwen35 => {
+                return Err(RealForwardError::Unsupported(
+                    "the qwen3_5 family installs and validates but has no decode flow yet                      (ROADMAP's 1-bit entry, step 4): it needs the dense-FFN branch in                      families/qwen/"
+                        .to_string(),
+                ));
+            }
             // A FIFTH FLOW, not a sixth family on an existing one: all four
             // of `gpt-oss`'s differences (per-projection biases, attention
             // sinks, YaRN rope scaling, a clamped SwiGLU) are INSIDE the

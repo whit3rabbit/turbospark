@@ -161,8 +161,21 @@ pub const fn protocol_parameters(family: ModelFamily) -> ProtocolParameters {
     match family {
         // The shared protocol, and what every frozen row in
         // `docs/BENCHMARKS.md` was measured at.
+        // `qwen3_5` is here on the TOKENIZER's evidence rather than on a
+        // measurement, and this comment is the answer the doc above asks
+        // for. The window is decided by how many tokens the frozen prose
+        // becomes, which belongs to the checkpoint's tokenizer -- and this
+        // one declares `vocab_size: 248320`, Qwen 3.6's exactly, under the
+        // same ChatML dialect. So the protocol's ~2.8k-token long case fits
+        // 4,096 for the same reason it does there, and NOT for the reason
+        // it fails on the dense `llama` half below (Mistral's 32k
+        // sentencepiece vocab makes the same prose 3,444 tokens).
+        // UNVERIFIED until an install exists: the first memory-oracle run
+        // is what confirms it, and a `long-synthesis` that stops on
+        // maxTokens is what would refute it.
         ModelFamily::Gemma4
         | ModelFamily::Qwen36
+        | ModelFamily::Qwen35
         | ModelFamily::Qwen3Moe
         | ModelFamily::DeepseekV4Flash => ProtocolParameters {
             family,

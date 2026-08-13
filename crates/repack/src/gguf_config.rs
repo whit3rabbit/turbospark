@@ -320,7 +320,10 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
         // the published file, every layer full attention.
         ModelFamily::Llama | ModelFamily::Qwen3Moe => vec![1u8; num_layers as usize],
         ModelFamily::GptOss => gpt_oss_layer_mask(&m, num_layers as usize)?,
-        ModelFamily::DeepseekV4Flash => {
+        // Refused rather than defaulted, for the reason DeepSeek is: no
+        // `qwen3_5` GGUF exists, so any mask here would be invented. If one
+        // is ever published, its mask is Qwen 3.6's at 64 layers.
+        ModelFamily::DeepseekV4Flash | ModelFamily::Qwen35 => {
             return Err(GgufConfigError::UnsupportedArchitecture {
                 architecture: architecture.to_string(),
             })
