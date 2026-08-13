@@ -20,11 +20,13 @@ tokenizer = { package = "turbospark-tokenizer", path = "../tokenizer", version =
 
 [target.'cfg(target_os = "macos")'.dependencies]
 repack = { package = "turbospark-repack", path = "../repack", version = "0.1.0" }
+# `ModelFamily`, for `real_model::protocol_parameters`'s exhaustive match
+# (the protocol's context window and generation budget are per-family), and
+# `hash_data` for tests/quality_common's golden output digests. Was a
+# dev-dependency until the resolver needed it in `src/`; a regular
+# dependency is visible to the tests too, so nothing moved out of reach.
+model_io = { package = "turbospark-model-io", path = "../model-io", version = "0.1.0" }
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 # phys_footprint sampling for tests/memory_oracle.rs (proc_pid_rusage).
 libc = "0.2"
-# hash_data, for tests/quality_common's golden output digests. The
-# workspace's one hex-SHA-256 helper; adds no external crate (`sha2`
-# already ships inside model-io).
-model_io = { package = "turbospark-model-io", path = "../model-io", version = "0.1.0" }

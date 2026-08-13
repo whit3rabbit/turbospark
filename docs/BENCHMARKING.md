@@ -68,7 +68,25 @@ both engines run the identical workload:
 - Seeds: `short-explanation` 20260721, `medium-review` 20260722,
   `long-synthesis` 20260723.
 - Sampling: temperature 0.2, top-k 64, top-p 0.95, repetition penalty 1.0.
-- Budget: `--max-new 1024`, 4K context.
+- Budget and context window: **per family**, resolved from the install's own
+  `manifest.json` by `real_model::protocol_parameters` and printed in the
+  header. 4,096 context / 1,024 new tokens for `gemma4`, `qwen36` and
+  `qwen3moe`; 8,192 / 1,024 for the dense `llama` half; 8,192 / 3,072 for
+  `gpt-oss`. Neither is a knob, and both are the same numbers the memory
+  oracles freeze their rows at (the oracle targets assert the agreement at
+  compile time). Why they differ is the point: the protocol freezes the
+  PROSE, so its token count belongs to the checkpoint's tokenizer
+  (`long-synthesis` is 3,444 tokens under Mistral's 32k vocab and does not
+  fit 4,096 at all), and how many tokens a model spends answering is the
+  MODEL's property (Harmony puts gpt-oss's reasoning in an `analysis`
+  channel before its answer, so two of three cases stop on `maxTokens` at
+  1,024). Raising the shared constants was not an option in either
+  direction: KV is sized at open, so a wider window moves every already
+  frozen peak, and a larger budget lets every other family generate further.
+- **Read a peak or a tok/s row WITH the window and the budget.** The same
+  Mistral install reads 684 MiB at 4,096 and ~1,200 MiB at 8,192, because on
+  a dense install KV is nearly all of the counted footprint. Any dense
+  `llama` bench number taken before 2026-08-12 is at the old shared 4,096.
 - Each case runs one discarded warmup, then one measured run.
 - Prompts are chat-templated exactly as the CLI templates them. The IT
   checkpoint needs its turn markup; a raw prompt babbles.
@@ -78,6 +96,8 @@ Use `--release`. A debug build's numbers are meaningless.
 Output per case, on stdout:
 
 ```
+turbospark-bench: real install ~/models/gemma4.gturbo on Apple M4 Max, frozen protocol real-generation-v1
+  family=gemma4 context=4096 max_new=1024 expert_cache_slots=16
 case               prompt_tok  prefill_s  new_tok  decode_s    tok_s  peak_mib
 short-explanation          61       1.55     1024     43.14   23.736    2710.8
 ```

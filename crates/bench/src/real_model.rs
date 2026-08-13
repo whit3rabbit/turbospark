@@ -9,6 +9,7 @@
 
 use std::path::Path;
 
+use model_io::{ArchConfig, ModelFamily};
 use runtime::{
     run_raw_completion, GenerationConfig, RateControl, RawDecodeProgress, RealForwardRunner,
     StopReason,
@@ -84,6 +85,17 @@ pub fn open_model_runner_with_context(
     max_context: u32,
 ) -> Result<(RealForwardRunner, MfTokenizer), String> {
     let arch = repack::peek_manifest_arch(model_dir)?;
+    open_with_arch(model_dir, arch, slots, max_context)
+}
+
+/// The body both entry points share, taking an already-peeked `ArchConfig`
+/// so [`open_model_runner_for_protocol`] reads `manifest.json` once.
+fn open_with_arch(
+    model_dir: &Path,
+    arch: ArchConfig,
+    slots: usize,
+    max_context: u32,
+) -> Result<(RealForwardRunner, MfTokenizer), String> {
     let tokenizer = MfTokenizer::load_from_dir(model_dir).map_err(|e| {
         format!(
             "failed to load a tokenizer from {}: {e}",
@@ -93,6 +105,108 @@ pub fn open_model_runner_with_context(
     let runner = RealForwardRunner::open_with_options(model_dir, arch, max_context as usize, slots)
         .map_err(|e| e.to_string())?;
     Ok((runner, tokenizer))
+}
+
+/// The KV window and the generation budget the frozen protocol runs a given
+/// family at. Both are PER-FAMILY parameters and neither is a knob: see
+/// [`open_model_runner_with_context`] and [`run_protocol_case_with_budget`]
+/// for why each one had to stop being a shared constant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProtocolParameters {
+    /// The family these came from, so a caller can NAME it in a header
+    /// without peeking `manifest.json` a second time. Both numbers below are
+    /// meaningless without it.
+    pub family: ModelFamily,
+    /// KV window the runner is opened at, and the limit the generation loop
+    /// enforces. MUST be the same number in both places.
+    pub max_context: u32,
+    /// New-token budget per case.
+    pub max_new: u32,
+}
+
+/// The dense `llama` window (`mistral_memory_oracle.rs`'s). `long-synthesis`
+/// is 3,444 tokens under Mistral's 32k vocab and `3444 + PROTOCOL_MAX_NEW`
+/// does not fit 4,096, so the case does not run at all at the shared window.
+const DENSE_LLAMA_MAX_CONTEXT: u32 = 8192;
+/// The `gpt-oss` window (`gptoss_memory_oracle.rs`'s). Follows from the
+/// budget below: `long-synthesis` is 2,839 tokens under o200k and
+/// `2839 + 3072` does not fit 4,096.
+const GPTOSS_MAX_CONTEXT: u32 = 8192;
+/// The `gpt-oss` budget (`gptoss_memory_oracle.rs`'s). Harmony puts the
+/// model's reasoning in an `analysis` channel BEFORE its answer, so the three
+/// cases need 818 / 2,153 / 1,108 sampled tokens to reach `<|return|>`.
+const GPTOSS_MAX_NEW: u32 = 3072;
+
+/// Resolve the protocol's two per-family parameters from the install's own
+/// declared family.
+///
+/// **The match is exhaustive with NO wildcard arm, and that is the guard
+/// rather than a style choice.** A `_ =>` here would let a seventh family
+/// silently inherit Gemma's window and budget, which is the shape of bug
+/// AGENTS.md Gotchas 24, 37 and 39 are all instances of: a default is a
+/// claim about what silence means, and a table keyed by X holding a property
+/// of Y stays invisible for exactly as long as the mapping is injective.
+/// Adding a family should not compile until someone has answered this.
+///
+/// The two moved rows are the oracles' own numbers, asserted equal by
+/// `mistral_memory_oracle.rs` and `gptoss_memory_oracle.rs` so the binary and
+/// the oracles cannot drift apart. Read a peak or a tok/s row WITH these two
+/// numbers; a row taken at one window says nothing about another (crate
+/// Gotchas 11 and 12).
+///
+/// `const` so the two oracle targets can assert agreement in a `const`
+/// block, which fails the BUILD rather than only firing on the rare
+/// occasions those `#[ignore]`d targets run with an install present.
+pub const fn protocol_parameters(family: ModelFamily) -> ProtocolParameters {
+    match family {
+        // The shared protocol, and what every frozen row in
+        // `docs/BENCHMARKS.md` was measured at.
+        ModelFamily::Gemma4
+        | ModelFamily::Qwen36
+        | ModelFamily::Qwen3Moe
+        | ModelFamily::DeepseekV4Flash => ProtocolParameters {
+            family,
+            max_context: PROTOCOL_MAX_CONTEXT,
+            max_new: PROTOCOL_MAX_NEW,
+        },
+        // ONE FAMILY, BOTH HALVES OF THE ARCHITECTURE STRING. The window is
+        // the dense half's requirement, measured on Mistral-7B-Instruct-v0.3
+        // (ROADMAP M4). Mixtral shares that checkpoint's 32k sentencepiece
+        // tokenizer, so the same window is right for it by the same
+        // arithmetic -- not measured there, and it will not be: Mixtral
+        // cannot stream on this engine at any useful slot count and runs the
+        // protocol at 0.16 tok/s (AGENTS.md Gotcha 36).
+        ModelFamily::Llama => ProtocolParameters {
+            family,
+            max_context: DENSE_LLAMA_MAX_CONTEXT,
+            max_new: PROTOCOL_MAX_NEW,
+        },
+        // The only family that moves BOTH.
+        ModelFamily::GptOss => ProtocolParameters {
+            family,
+            max_context: GPTOSS_MAX_CONTEXT,
+            max_new: GPTOSS_MAX_NEW,
+        },
+    }
+}
+
+/// [`open_model_runner`] with the protocol's parameters resolved from the
+/// install's family, returned alongside the runner.
+///
+/// **Returning them together is the point.** The window is needed at open
+/// (KV is sized there) and again at run (the generation loop enforces its own
+/// limit), and the two diverging is silent: opening at 8,192 and running at
+/// 4,096 refuses the long case exactly as the shared default did, with
+/// nothing pointing at the mismatch. Handing back one value that both call
+/// sites read makes that unrepresentable.
+pub fn open_model_runner_for_protocol(
+    model_dir: &Path,
+    slots: usize,
+) -> Result<(RealForwardRunner, MfTokenizer, ProtocolParameters), String> {
+    let arch = repack::peek_manifest_arch(model_dir)?;
+    let params = protocol_parameters(arch.family);
+    let (runner, tokenizer) = open_with_arch(model_dir, arch, slots, params.max_context)?;
+    Ok((runner, tokenizer, params))
 }
 
 /// One run of one protocol case (the caller decides whether it is a
@@ -216,4 +330,65 @@ pub fn run_protocol_case_with_budget(
         peak_footprint_bytes: sampler.peak_bytes(),
         reason: result.reason,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The families whose published rows were measured at the shared
+    /// protocol. If one of these ever moves, every number in
+    /// `docs/BENCHMARKS.md` for that family is at a different workload.
+    #[test]
+    fn four_families_run_the_shared_protocol_parameters() {
+        for family in [
+            ModelFamily::Gemma4,
+            ModelFamily::Qwen36,
+            ModelFamily::Qwen3Moe,
+            ModelFamily::DeepseekV4Flash,
+        ] {
+            let params = protocol_parameters(family);
+            assert_eq!(
+                params.max_context,
+                PROTOCOL_MAX_CONTEXT,
+                "{} is measured at the shared window; moving it invalidates its frozen rows",
+                family.as_str()
+            );
+            assert_eq!(
+                params.max_new,
+                PROTOCOL_MAX_NEW,
+                "{} is measured at the shared budget; moving it invalidates its frozen rows",
+                family.as_str()
+            );
+        }
+    }
+
+    /// The dense `llama` window, which `mistral_memory_oracle.rs` freezes a
+    /// 1,300 MiB ceiling against.
+    #[test]
+    fn the_llama_family_runs_at_the_dense_window() {
+        let params = protocol_parameters(ModelFamily::Llama);
+        assert_eq!(params.max_context, 8192, "mistral_memory_oracle.rs's row");
+        assert_eq!(params.max_new, PROTOCOL_MAX_NEW);
+        assert!(
+            params.max_context > PROTOCOL_MAX_CONTEXT,
+            "the point of the row is that `long-synthesis` does not fit 4,096 \
+             under a 32k-vocab tokenizer"
+        );
+    }
+
+    /// The one family that moves BOTH parameters, which
+    /// `gptoss_memory_oracle.rs` freezes a 5,700 MiB ceiling against.
+    #[test]
+    fn the_gptoss_family_moves_both_parameters() {
+        let params = protocol_parameters(ModelFamily::GptOss);
+        assert_eq!(params.max_context, 8192, "gptoss_memory_oracle.rs's row");
+        assert_eq!(params.max_new, 3072, "gptoss_memory_oracle.rs's row");
+        assert!(
+            params.max_new > PROTOCOL_MAX_NEW,
+            "Harmony's reasoning channel needs 2,153 sampled tokens on \
+             `medium-review`; at the shared budget two of three cases stop on \
+             maxTokens"
+        );
+    }
 }

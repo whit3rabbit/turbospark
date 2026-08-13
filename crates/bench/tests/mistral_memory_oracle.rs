@@ -44,8 +44,16 @@
 mod oracle_common;
 
 use turbospark_bench::protocol::PROTOCOL_MAX_CONTEXT;
+use turbospark_bench::real_model::protocol_parameters;
 
 /// The KV window this family's protocol run needs. See the module header.
+///
+/// Kept as a local constant rather than read from
+/// [`protocol_parameters`] -- it carries this row's provenance, and the
+/// `const` block in the test body asserts the two agree. `turbospark-bench
+/// --model` resolves the same number from the install's family, so the
+/// binary and this row measure one workload; that agreement is a build
+/// failure to break, not a runtime one.
 const MISTRAL_MAX_CONTEXT: u32 = 8192;
 
 /// Per-chip rows for Mistral-7B-Instruct-v0.3 Q4_K_M, MOST SPECIFIC
@@ -127,6 +135,13 @@ fn real_mistral_install_peak_footprint_and_throughput_hold() {
             "this target exists because the shared window is too small for this \
              checkpoint's tokenizer; if that stops being true, delete the override \
              rather than leaving a silent divergence"
+        );
+        // The binary resolves its own window per family. If the two ever
+        // disagree, this row and `turbospark-bench --model` are measuring
+        // different workloads while reporting one number.
+        assert!(
+            protocol_parameters(model_io::ModelFamily::Llama).max_context == MISTRAL_MAX_CONTEXT,
+            "this row's window and turbospark-bench's resolved window have drifted apart"
         );
     }
     oracle_common::run_oracle_at_context(

@@ -98,6 +98,13 @@ cargo run -p turbospark-bench --bin turbospark-bench -- <tokenizer-dir>
 # Real-install benchmark (macOS): frozen community protocol against a real
 # .gturbo install, reporting split prefill/decode tok/s and peak
 # phys_footprint (the Swift-parity memory counter). Use --release.
+# The CONTEXT WINDOW and the GENERATION BUDGET are resolved from the
+# install's own family and printed in the header, the same pair the oracles
+# take (`real_model::protocol_parameters`): 4,096/1,024 for gemma4, qwen36
+# and qwen3moe, 8,192/1,024 for the dense `llama` half, 8,192/3,072 for
+# gpt-oss. Read a peak or a tok/s row WITH those two numbers -- a dense
+# `llama` number taken before 2026-08-12 is at the old shared 4,096, where
+# `long-synthesis` did not fit at all.
 cargo run --release -p turbospark-bench --bin turbospark-bench -- --model ~/models/gemma4.gturbo
 
 # The memory oracle: asserts endOfTurn on every protocol case, peak

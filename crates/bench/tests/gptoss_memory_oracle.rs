@@ -116,6 +116,13 @@ const UNKNOWN_CHIP_FOOTPRINT_CEILING_MIB: u64 = 5700;
 
 /// See the module header: both of these are forced, and both have to be read
 /// with the numbers.
+///
+/// Kept local rather than read from
+/// `turbospark_bench::real_model::protocol_parameters` -- they carry this
+/// row's provenance -- with the `const` block in the test body asserting the
+/// two agree. `turbospark-bench --model` resolves the same pair from the
+/// install's family, which is what lets a power capture of all three cases
+/// be compared against this row at all.
 const GPTOSS_MAX_CONTEXT: u32 = 8192;
 const GPTOSS_MAX_NEW: u32 = 3072;
 
@@ -133,6 +140,16 @@ fn real_gpt_oss_install_peak_footprint_and_throughput_hold() {
         );
         return;
     };
+    // Compile-time, so it fails the BUILD rather than only when this
+    // `#[ignore]`d target runs with a 12 GB install present.
+    const {
+        let resolved =
+            turbospark_bench::real_model::protocol_parameters(model_io::ModelFamily::GptOss);
+        assert!(
+            resolved.max_context == GPTOSS_MAX_CONTEXT && resolved.max_new == GPTOSS_MAX_NEW,
+            "this row's window/budget and turbospark-bench's resolved pair have drifted apart"
+        );
+    }
     oracle_common::run_oracle_with_budget(
         &dir,
         BASELINES,

@@ -30,14 +30,23 @@
 //! `--model <install-dir>` (macOS only): THE Swift-comparison mode. Opens
 //! a real `.gturbo` install (tokenizer bundled in the same directory) and
 //! runs the frozen community-protocol cases (real-generation-v1: frozen
-//! prompts, seeds 20260721-23, temp 0.2, top-k 64, top-p 0.95, max-new
-//! 1024, 4K context), one discarded warmup then one measured run per
+//! prompts, seeds 20260721-23, temp 0.2, top-k 64, top-p 0.95), one
+//! discarded warmup then one measured run per
 //! case. Prints per case the split prefill/decode seconds (from
 //! `RawDecodeResult`, unlike the scripted mode's wall-clock lump), tok/s,
 //! and the peak `phys_footprint` in MiB — the exact counter and cadence
 //! the published Swift baselines were measured with — plus the
 //! Swift-format `[stop=...]` footer on stderr for `grep -h '^\[stop='`
 //! parity with `docs/COMMUNITY_BENCHMARKS.md`.
+//!
+//! THE CONTEXT WINDOW AND THE GENERATION BUDGET ARE PER-FAMILY, resolved
+//! from the opened install's own manifest by
+//! `real_model::protocol_parameters` and printed in the header beside the
+//! slot count. Four families run the shared 4,096/1,024; the dense `llama`
+//! half needs 8,192 (its tokenizer makes `long-synthesis` 3,444 tokens) and
+//! `gpt-oss` needs 8,192/3,072 (Harmony's reasoning channel). Read a peak
+//! or a tok/s row WITH those two numbers -- a row taken at one window says
+//! nothing about another.
 //!
 //! `--case <id>` restricts that mode to one protocol case, which is how
 //! the protocol's fresh-process leg is run (Swift's CLI launches once per
@@ -377,7 +386,9 @@ fn run_model_mode(
 ) -> std::process::ExitCode {
     use turbospark_bench::memory::AppMemorySampler;
     use turbospark_bench::protocol::{swift_footer, PROTOCOL_CASES};
-    use turbospark_bench::real_model::{open_model_runner, run_protocol_case};
+    use turbospark_bench::real_model::{
+        open_model_runner_for_protocol, run_protocol_case_with_budget,
+    };
 
     // `--case` runs exactly one case in this process, which is the frozen
     // protocol's fresh-process leg (Swift launches its CLI once per case).
@@ -398,13 +409,19 @@ fn run_model_mode(
         }
     };
 
-    let (mut runner, tok) = match open_model_runner(std::path::Path::new(install_dir), slots) {
-        Ok(pair) => pair,
-        Err(e) => {
-            eprintln!("failed to open {install_dir}: {e}");
-            return std::process::ExitCode::from(1);
-        }
-    };
+    // The protocol's window and budget are PER-FAMILY (see
+    // `real_model::protocol_parameters`), and they are resolved from the
+    // install's own manifest rather than taken from the shared constants:
+    // `gpt-oss` stops two of three cases on maxTokens at 1,024, and the dense
+    // `llama` half cannot fit `long-synthesis` in 4,096 at all.
+    let (mut runner, tok, params) =
+        match open_model_runner_for_protocol(std::path::Path::new(install_dir), slots) {
+            Ok(triple) => triple,
+            Err(e) => {
+                eprintln!("failed to open {install_dir}: {e}");
+                return std::process::ExitCode::from(1);
+            }
+        };
     if let Some(brand) = turbospark_bench::memory::chip_brand_string() {
         println!("turbospark-bench: real install {install_dir} on {brand}, frozen protocol real-generation-v1");
     } else {
@@ -412,6 +429,17 @@ fn run_model_mode(
             "turbospark-bench: real install {install_dir}, frozen protocol real-generation-v1"
         );
     }
+    // Printed beside the numbers because a peak or a tok/s row measured at
+    // one window and budget says nothing about another (crate Gotchas 11
+    // and 12). The oracles print theirs beside the ceiling for the same
+    // reason.
+    println!(
+        "  family={} context={} max_new={} expert_cache_slots={}",
+        params.family.as_str(),
+        params.max_context,
+        params.max_new,
+        slots
+    );
     println!(
         "{:<18} {:>10} {:>10} {:>8} {:>9} {:>8} {:>9}",
         "case", "prompt_tok", "prefill_s", "new_tok", "decode_s", "tok_s", "peak_mib"
@@ -420,7 +448,15 @@ fn run_model_mode(
     let mut sampler = AppMemorySampler::new();
     for case in cases {
         // Discarded warmup, then the measured run (frozen protocol).
-        if let Err(e) = run_protocol_case(&mut runner, &tok, case, &mut sampler, rate) {
+        if let Err(e) = run_protocol_case_with_budget(
+            &mut runner,
+            &tok,
+            case,
+            &mut sampler,
+            rate,
+            params.max_context,
+            params.max_new,
+        ) {
             eprintln!("{} warmup failed: {e}", case.id);
             return std::process::ExitCode::from(1);
         }
@@ -437,7 +473,15 @@ fn run_model_mode(
             case.id,
             unix_millis()
         );
-        let measured = run_protocol_case(&mut runner, &tok, case, &mut sampler, rate);
+        let measured = run_protocol_case_with_budget(
+            &mut runner,
+            &tok,
+            case,
+            &mut sampler,
+            rate,
+            params.max_context,
+            params.max_new,
+        );
         eprintln!(
             "[power-window case={} phase=end unix_ms={}]",
             case.id,
