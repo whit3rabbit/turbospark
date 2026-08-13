@@ -1049,7 +1049,11 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     gpt-oss-20b (2026-08-12), the highest-wattage install here at ~36 W
     combined / ~32 W GPU, dropped one of two AC decode windows to Heavy,
     and the throttled arm read 3.7% BETTER J/token than the clean one --
-    the same trap, now reachable on AC.
+    the same trap, now reachable on AC. (That ~36 W is itself ~3 W of
+    background load; the install's own clean draw is ~33 W. See Gotcha
+    43, which is the other half of this one: pressure is not the only
+    thing that silently rewrites a power row, and the Nominal check
+    cannot see the other.)
     `scripts/power.sh` WARNS on any run whose pressure leaves Nominal but
     its summary still averages that run in -- exclusion is by hand, from
     the per-run rows in `rows.tsv` (this sentence used to claim the
@@ -1522,6 +1526,35 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     and expert width are both 2880, so the published checkpoint cannot tell a
     gate/up bias from a down bias, and a fixture that copied its proportions
     could not either.
+
+43. **`powermetrics` MEASURES THE MACHINE, NOT YOUR PROCESS, AND THE
+    THERMAL CHECK CANNOT SEE THE DIFFERENCE.** Gotcha 28 is about pressure
+    silently rewriting a power row; this is its sibling, and the two need
+    separate instruments. Measured 2026-08-13 on the gpt-oss install, AC,
+    every arm Nominal: `medium-review` decode read **1.7072 J/token on p1
+    and 1.0799 on p2 for byte-identical work** (2,597 tokens both times, a
+    37% spread), and `scripts/power.sh` averaged them into 1.3936 -- a
+    number describing neither run. Nothing was throttling. `cpu_W` fell
+    monotonically through the capture (4.76 / 4.07 / 3.34 / 3.03 early
+    against 1.50 / 1.62 / 1.66 / 1.81 late) with `gpu_W` tracking it,
+    because Combined Power is SYSTEM-wide and this machine's desktop UI was
+    busy early and idle late. A re-run on a quiet machine reproduced to
+    0.4% and 1.7%.
+    THREE THINGS TO CARRY. **The tells are `cpu_W` against the install's
+    own norm and DISPERSION between arms doing identical work**, and
+    `scripts/power.sh` prints neither in its summary -- read `rows.tsv` per
+    arm before believing any row, exactly as Gotcha 28 requires for
+    pressure. **A published row can carry it silently**: the one-case
+    gpt-oss row of 2026-08-12 read 36.67 W against a clean 32.92, and the
+    whole 3.75 W difference is `cpu_W` (4.32 against 1.48) while `gpu_W`
+    agrees to 2.9% and tok/s to 2% -- so it was never an engine reading.
+    And **the contaminating load can be the thing watching the
+    measurement**: the top consumers here were the desktop app rendering
+    this session plus WindowServer, so a capture driven from an interactive
+    session has to be left alone while it runs, not watched.
+    The cheap discipline: run each case at least twice, compare the ARMS
+    rather than the mean, and treat any within-case spread over a few
+    percent as contamination until a quiet re-run says otherwise.
 
 ## Per-Crate Documentation
 

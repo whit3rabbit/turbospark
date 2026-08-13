@@ -902,11 +902,15 @@ The cross-engine KL HAS since been run and passed (2026-08-12, the
 "Cross-engine: llama.cpp on the same GGUF, `gpt-oss`" section below):
 0.00978 mean nats at 97.5% top-1, under the backend floor, which settles
 the YaRN `mscale` and the sink placement. The `scripts/power.sh` capture
-also landed 2026-08-12: decode 36.67 W / 1.1506 J/token at 31.0 tok/s on
-the one protocol case Harmony's token budget permits at the stock bench
-parameters -- the highest-wattage install measured here and the first to
-leave Nominal thermal pressure on AC. Rows, scope limit and the
-throttled-pair exclusion: `docs/POWER_BASELINE.md`, "gpt-oss-20b".
+landed 2026-08-12 on one case and was RE-TAKEN across all three on
+2026-08-13, once `turbospark-bench --model` learned to resolve this
+family's 8,192/3,072 protocol parameters: decode 32.92 / 30.09 / 29.44 W
+at 1.0569 / 1.1109 / 1.2813 J/token and 30.4 / 27.0 / 22.9 tok/s. Still
+the highest-wattage install measured here. The superseded one-case row
+read 36.67 W and the whole 3.75 W difference is `cpu W` (4.32 against
+1.48): system-wide counters had attributed a busy desktop UI to the
+decode loop. Rows, the diagnosis and what it does to the AC-throttle
+reading: `docs/POWER_BASELINE.md`, "gpt-oss-20b".
 
 ## Batched verify and speculative decoding
 

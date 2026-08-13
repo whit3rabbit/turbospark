@@ -38,6 +38,13 @@ summary, so mixing them would compare two different seams under one label.
 | Installs | `~/models/gemma4.gturbo`, `~/models/qwen36.gturbo` |
 | Expert-cache slots | 16 (protocol default) |
 | Protocol | frozen `real-generation-v1`, seeds 20260721-23, temp 0.2, top-k 64, top-p 0.95, 1024 new-token budget, 4K context |
+
+The last row is this table's own scope. The context window and the
+generation budget became PER-FAMILY on 2026-08-12, resolved by
+`turbospark-bench --model` from the install's manifest, so the gpt-oss
+section below is measured at 8,192/3,072 and its rows are not comparable
+to a 4,096/1,024 row of another install without saying so.
+
 | Sampler | `powermetrics -s cpu_power,gpu_power,thermal -i 200` |
 | Runs per case | 1 discarded warmup process, then 2 measured (3 pairs for the QoS A/B) |
 
@@ -191,55 +198,102 @@ prefill wall clock read 27.5 s against 16.1 s (p1) and 15.5 s (warmup) at
 similar watts. This is a single-arm baseline rather than an A/B, so no
 conclusion turns on it; the prefill row averages both pairs.
 
-## gpt-oss-20b: the M5 capture, one case, and the first AC throttle
+## gpt-oss-20b: all three cases, and what a competing load costs a row
 
-Measured 2026-08-12 on AC, `~/models/gptoss-20b.gturbo`, rev `b964d0b`,
-2 measured pairs after a discarded warmup, drift -0.6 s. Raw capture:
-`/tmp/power-gptoss/`. **One case only, `short-explanation`, and that is a
-scope limit rather than a shortcut**: Harmony puts the model's reasoning
-in an `analysis` channel before its answer, so `medium-review` needs
-2,153 sampled tokens against the shared 1,024-token budget and
-`long-synthesis` 1,108 -- both stop on `maxTokens` at the stock bench
-parameters, and a truncated run is not a protocol row. The 8,192/3,072
-per-family parameters exist only on the oracle path today; a full
-three-case capture needs them wired into `turbospark-bench --model`
-first.
+Measured 2026-08-13 on AC, `~/models/gptoss-20b.gturbo`, rev `aa2c99f`,
+2 measured pairs per case after a discarded warmup, every arm Nominal.
+Raw captures: `long-synthesis` from `/tmp/power-gptoss3/`, the other two
+from `/tmp/power-gptoss3b/`. **This supersedes the one-case capture of
+2026-08-12** (`/tmp/power-gptoss/`), which the section below explains and
+does not simply delete.
 
-**The decode row is p1 ALONE (n=1), excluded by hand from `rows.tsv`**:
-p2's decode window left Nominal thermal pressure (Heavy), and the
-script's summary only WARNS -- its aggregate still averages the throttled
-run in. The throttled arm read 1.1085 J/token against the clean 1.1506,
-i.e. 3.7% BETTER, which is exactly the direction AGENTS.md Gotcha 28
-warns makes a throttled arm flatter a power table. Prefill is n=2; both
-prefill windows stayed Nominal.
+All three cases run now because `turbospark-bench --model` resolves the
+protocol's context window and generation budget from the install's family
+(8,192/3,072 here) instead of the shared 4,096/1,024, under which two of
+the three stopped on `maxTokens` and a truncated run is not a protocol
+row.
 
-Decode (n=1, the clean pair):
+Decode (n=2 per case):
 
 | install | case | tok/s | watts | J/token | cpu W | gpu W |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
-| gpt-oss-20b MXFP4 | short-explanation | 31.04 | 36.67 | 1.1506 | 4.32 | 32.35 |
+| gpt-oss-20b MXFP4 | short-explanation | 30.44 | 32.92 | 1.0569 | 1.48 | 31.44 |
+| gpt-oss-20b MXFP4 | medium-review | 27.0 | 30.09 | 1.1109 | 1.71 | 28.36 |
+| gpt-oss-20b MXFP4 | long-synthesis | 22.9 | 29.44 | 1.2813 | 1.73 | 27.70 |
 
-Prefill (n=2):
+Prefill (n=2 per case):
 
 | install | case | watts | J/prompt token |
 | --- | --- | ---: | ---: |
-| gpt-oss-20b MXFP4 | short-explanation | 33.67 | 1.0028 |
+| gpt-oss-20b MXFP4 | short-explanation | 35.55 | 1.0257 |
+| gpt-oss-20b MXFP4 | medium-review | 34.19 | 0.9576 |
+| gpt-oss-20b MXFP4 | long-synthesis | 34.27 | 1.0793 |
 
-**This is the highest sustained power of any install measured here, and
-the first to leave Nominal on AC.** ~36 W combined and ~32 W GPU, against
-Gemma's 16.7-17.8, Qwen 3.6's 13.8-14.9, Qwen3-30B-A3B's 19.8-22.0, and
-even the 3-bit install's 25.4-27.7. Unlike `qwen3moe` above, whose 2x
-J/token came from the tok/s denominator, gpt-oss decodes at a healthy
-31 tok/s and its 1.15 J/token comes from the WATTS numerator. The
-attribution is GPU-side (cpu W is an ordinary 4.3), consistent with the
-MXFP4 codebook-style dequant running in every routed expert the way the
-IQ install's did -- but no interleaved A/B isolates that here, so read it
-as a shape, not a proof.
+**The three cases are internally consistent, which is part of why they
+are believable**: watts fall and J/token rises monotonically as the case
+lengthens (32.92 -> 30.09 -> 29.44 W against 1.0569 -> 1.1109 -> 1.2813
+J/token) because decode slows with context (30.4 -> 27.0 -> 22.9 tok/s)
+while instantaneous power barely moves. Three independently measured
+cases landing on one trend is a stronger statement than any single row.
 
-The AC throttle retires a reading the baseline session left standing:
-thermal saturation on this machine is a function of the INSTALL'S
-WATTAGE, not of the power source. At ~17 W (Gemma) AC held Nominal on 50
-of 50 arms; at ~36 W it lost one decode window in three.
+**This is still the highest sustained power of any install measured
+here.** ~29-33 W combined and ~28-31 W GPU, against Gemma's 16.7-17.8,
+Qwen 3.6's 13.8-14.9, Qwen3-30B-A3B's 19.8-22.0 and the 3-bit install's
+25.4-27.7. Unlike `qwen3moe`, whose 2x J/token came from the tok/s
+denominator, gpt-oss decodes at a healthy 30 tok/s and its ~1.1 J/token
+comes from the WATTS numerator. The attribution is GPU-side (cpu W is
+1.5-1.7), consistent with MXFP4 dequant running in every routed expert
+the way the IQ install's codebooks did -- but no interleaved A/B isolates
+that here, so read it as a shape, not a proof.
+
+### Why the 2026-08-12 row moved, and it was not the engine
+
+The superseded row read decode 36.67 W / 1.1506 J/token at 31.04 tok/s
+against today's 32.92 W / 1.0569 at 30.44. Throughput is the same to 2%
+and `gpu W` agrees to 2.9% (32.35 then 31.44); **the entire difference is
+`cpu W`, 4.32 then 1.48**, and 2.84 of the 3.75 W gap is exactly that
+term. The old row was measured while this machine's UI was busy, and
+`powermetrics` Combined Power is SYSTEM-wide: a busy desktop app lands in
+the same counter as the decode loop.
+
+The first three-case attempt the same day caught it in the act, which is
+how it was diagnosed. Every arm held Nominal, so the thermal exclusion
+rule saw nothing, and yet `medium-review` read **1.7072 J/token on p1 and
+1.0799 on p2 for byte-identical work** (2,597 tokens both times) -- a 37%
+spread that the script's summary averaged into 1.3936, a number
+describing neither run. `cpu W` fell monotonically through that capture
+(4.76 / 4.07 / 3.34 / 3.03 early against 1.50 / 1.62 / 1.66 / 1.81 late)
+as the UI went idle, with `gpu W` tracking it. The re-run on a quiet
+machine reproduces to 0.4% on `short-explanation` (1.0590 / 1.0548) and
+1.7% on `medium-review` (1.1204 / 1.1014).
+
+`long-synthesis` is kept from that first capture rather than re-measured,
+and the reason is the same discriminator: its arms were taken after the
+machine went quiet (cpu W 1.66 / 1.81, in the re-run's 1.4-1.9 band) and
+its three readings already agreed to 0.6% (1.2862 / 1.2781 / 1.2845).
+
+The general form is now AGENTS.md Gotcha 43. A thermal-pressure check
+cannot see a competing load; the tells are `cpu W` against the install's
+own norm and DISPERSION between arms doing identical work, neither of
+which `scripts/power.sh` puts in its summary.
+
+### The AC throttle, in light of the above
+
+The 2026-08-12 capture remains the only time this machine left Nominal on
+AC: one decode window read Heavy, and that throttled arm read 1.1085
+J/token against the clean 1.1506, i.e. 3.7% BETTER -- exactly the
+direction AGENTS.md Gotcha 28 warns makes a throttled arm flatter a power
+table. It is not retracted; it happened and its rows are in
+`/tmp/power-gptoss/`.
+
+What today qualifies is the WATTAGE at which it happened. Thirty arms
+across the two captures here all held Nominal at a clean ~29-33 W, where
+the throttled session was reading ~36-37 W with background load included.
+So the install's own draw is a few watts lower than that session
+suggested, and whatever pushed the machine over was partly not the
+engine. Gotcha 28's conclusion -- that thermal saturation here is a
+function of total draw rather than of the power source -- is unchanged;
+the number attached to it is.
 
 ## Battery, and what differs
 
@@ -464,5 +518,15 @@ a different lever than this one.
   is also how one battery row was caught and dropped by hand rather than
   by the thermal flag: Qwen `long-synthesis` p1 reported `cpu_W = 18.40`
   against roughly 4.3 W everywhere else, which is a competing process.
+  **That refusal only covers OTHER MODEL processes, and the gpt-oss
+  capture of 2026-08-13 shows what the gap costs**: an ordinary desktop
+  UI, well under the 18.40 W that made the Qwen row obvious, moved a
+  decode row 37% with every arm Nominal. See the gpt-oss section and
+  AGENTS.md Gotcha 43.
+- **A dispersion line in `scripts/power.sh`'s summary.** It prints a mean
+  per case and phase, so two arms 37% apart on identical work look like
+  one number. The per-arm values are in `rows.tsv` and reading them is
+  currently a manual step; a min/max column would make contamination
+  visible where the row is published.
 - **A wall-power number**, which needs an external meter rather than the
   battery gauge.
