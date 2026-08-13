@@ -37,6 +37,22 @@ const DTYPE_INT4_AFFINE: u8 = 4;
 /// one byte per element instead of one nibble.
 pub const DTYPE_INT8_AFFINE: u8 = 5;
 
+/// 1-bit-affine dtype tag (ROADMAP's 1-bit entry): the same three-region
+/// entry shape again, one BIT per element.
+///
+/// **The number is 15 rather than something next to its two affine siblings,
+/// and the reason is worth stating: 6..=14 were taken by the GGUF block tags
+/// before this existed.** It is NOT a GGUF block dtype and must never join
+/// [`GGUF_BLOCK_DTYPES`] -- a reader that treated it as one would look for a
+/// scale inside the weight run, where a 1-bit affine tensor keeps its scales
+/// in a separate plane like INT4 does.
+///
+/// Two things differ from [`DTYPE_INT4_AFFINE`] beyond the width, and both
+/// are invisible to any length check, which is why the tag has to be
+/// distinct rather than INT4 with a bit count beside it: the companions are
+/// FP16 rather than BF16, and the group is 128 rather than 64.
+pub const DTYPE_INT1_AFFINE: u8 = 15;
+
 /// Raw (unquantized, companion-less) dtype tags, matching the Swift
 /// repacker's `IndexEntry` convention: 1 = BF16, 2 = FP16, 3 = FP32.
 pub const DTYPE_BF16: u8 = 1;
@@ -120,6 +136,10 @@ pub enum ResidentEntrySpec {
     Int4(ResidentTensorSpec),
     /// INT8-affine quantized tensor spec.
     Int8(ResidentTensorSpec),
+    /// 1-bit-affine quantized tensor spec (ROADMAP's 1-bit entry). Same three
+    /// regions as the two above; its companions are FP16 and its group is
+    /// 128, neither of which this type carries -- see [`DTYPE_INT1_AFFINE`].
+    Int1(ResidentTensorSpec),
     /// Unquantized raw tensor spec.
     Raw(RawTensorSpec),
 }
@@ -152,6 +172,7 @@ pub fn build_resident_weights_bin_mixed(specs: &[ResidentEntrySpec]) -> Vec<u8> 
         .map(|s| match s {
             ResidentEntrySpec::Int4(t) => EntryView::Packed(t, DTYPE_INT4_AFFINE),
             ResidentEntrySpec::Int8(t) => EntryView::Packed(t, DTYPE_INT8_AFFINE),
+            ResidentEntrySpec::Int1(t) => EntryView::Packed(t, DTYPE_INT1_AFFINE),
             ResidentEntrySpec::Raw(r) => EntryView::Raw(r),
         })
         .collect();

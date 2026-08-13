@@ -8,8 +8,10 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use turbospark_repack::{
-    classify_gemma4, orchestrate_gemma4_checkpoint, parse_gemma4_config, parse_gemma4_quantization,
-    write_gemma4_install, Gemma4Bucket, MemoryRangeSource, ResidentEntrySpec,
+    classify_gemma4, is_supported_affine_shape, manifest_quant, orchestrate_gemma4_checkpoint,
+    parse_gemma4_config, parse_gemma4_quantization, pass_through_packed, write_gemma4_install,
+    Gemma4Bucket, Gemma4Error, Gemma4Shards, MemoryRangeSource, ResidentEntrySpec,
+    AFFINE_1BIT_GROUP_SIZE, AFFINE_GROUP_SIZE,
 };
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -288,6 +290,204 @@ fn quantization_overrides_parse() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// The 1-bit affine shape (ROADMAP's 1-bit entry, step 3).
+//
+// These do NOT build a whole install. A 1-bit install is DENSE -- the one
+// published checkpoint has no experts at all -- and a Gemma-shaped fixture
+// would force a 1-bit routed-expert path that no kernel implements and no
+// file asks for. So what is exercised here is the quantization plumbing
+// alone: the config spec, and one tensor through `pass_through_packed`.
+// The dense install fixture belongs with the family work.
+// ---------------------------------------------------------------------------
+
+/// A `quantization` object with an arbitrary global pair and no overrides.
+fn quant_config_json(bits: u32, group: u32) -> String {
+    serde_json::json!({
+        "quantization": {"group_size": group, "bits": bits}
+    })
+    .to_string()
+}
+
+/// One quantized tensor plus its two companions, at an arbitrary bit width
+/// and companion dtype so a case can vary exactly one of them.
+fn packed_tensor(
+    name: &str,
+    rows: usize,
+    cols: usize,
+    bits: u32,
+    companions: &str,
+) -> Vec<FixtureTensor> {
+    let base = name.strip_suffix(".weight").unwrap();
+    let group = if bits == 1 { 128 } else { 64 };
+    let words = cols * bits as usize / 32;
+    let groups = cols / group;
+    let companion = |suffix: &str, seed: usize| FixtureTensor {
+        name: format!("{base}.{suffix}"),
+        dtype: match companions {
+            "fp16" => "F16",
+            _ => "BF16",
+        },
+        shape: vec![rows as u64, groups as u64],
+        bytes: bytes_for(seed, rows * groups * 2),
+    };
+    vec![
+        FixtureTensor {
+            name: name.to_string(),
+            dtype: "U32",
+            shape: vec![rows as u64, words as u64],
+            bytes: bytes_for(1, rows * words * 4),
+        },
+        companion("scales", 2),
+        companion("biases", 3),
+    ]
+}
+
+/// Runs one tensor through `pass_through_packed` under a given quant spec.
+fn pass_one(bits: u32, group: u32, companions: &str) -> Result<ResidentEntrySpec, Gemma4Error> {
+    const ROWS: usize = 4;
+    const COLS: usize = 128; // a whole number of groups at 64 and at 128 alike
+    let name = "language_model.model.layers.0.self_attn.q_proj.weight";
+    let tensors = packed_tensor(name, ROWS, COLS, bits, companions);
+    let blob = assemble(&tensors);
+    let header = turbospark_repack::parse_header(&blob, 1 << 20).expect("fixture header parses");
+    let source = MemoryRangeSource::new(&blob);
+    let shards = Gemma4Shards::single(&header, &source);
+    let quant = parse_gemma4_quantization(&quant_config_json(bits, group))
+        .expect("the fixture's own spec parses");
+    pass_through_packed(&shards, name, &quant)
+}
+
+/// The published 1-bit checkpoint's spec: `{group_size: 128, bits: 1}`, no
+/// per-tensor overrides at all (which is itself a measured fact -- the file's
+/// `quantization` object has exactly those two keys).
+#[test]
+fn a_one_bit_quantization_spec_parses() {
+    let quant = parse_gemma4_quantization(&quant_config_json(1, 128)).expect("parses");
+    assert_eq!(quant.default_bits, 1);
+    assert_eq!(quant.group_size, AFFINE_1BIT_GROUP_SIZE);
+    assert!(quant.bits_overrides.is_empty());
+}
+
+/// Bit width and group size are ONE shape. The four cross-products have no
+/// kernel at either end of the pipeline and are refused at parse.
+#[test]
+fn the_cross_products_of_bits_and_group_size_are_refused() {
+    for (bits, group) in [(1, 64), (4, 128), (8, 128), (2, 64)] {
+        assert!(
+            !is_supported_affine_shape(bits, group),
+            "{bits}-bit at group {group} claims to be supported"
+        );
+        assert!(
+            parse_gemma4_quantization(&quant_config_json(bits, group)).is_err(),
+            "{bits}-bit at group {group} parsed"
+        );
+    }
+    assert!(is_supported_affine_shape(4, AFFINE_GROUP_SIZE));
+    assert!(is_supported_affine_shape(8, AFFINE_GROUP_SIZE));
+    assert!(is_supported_affine_shape(1, AFFINE_1BIT_GROUP_SIZE));
+}
+
+/// A per-tensor override cannot straddle the two shapes.
+///
+/// This is what lets the manifest writer read the companion dtype off the
+/// DEFAULT bits: an override may change 4 to 8 within group 64, but it can
+/// never make one tensor 1-bit inside a group-64 checkpoint.
+#[test]
+fn a_per_tensor_override_that_leaves_the_group_size_behind_is_refused() {
+    let json = serde_json::json!({
+        "quantization": {
+            "group_size": 64,
+            "bits": 4,
+            "language_model.model.layers.0.self_attn.q_proj": {"bits": 1}
+        }
+    })
+    .to_string();
+    let err = parse_gemma4_quantization(&json).expect_err("1-bit at group 64 must be refused");
+    let text = format!("{err:?}");
+    assert!(text.contains("q_proj"), "{text}");
+}
+
+/// A 1-bit tensor passes through as `Int1`, 32 elements per packed word.
+#[test]
+fn a_one_bit_tensor_passes_through_as_int1() {
+    match pass_one(1, 128, "fp16").expect("passes through") {
+        ResidentEntrySpec::Int1(t) => {
+            assert_eq!(t.rows, 4);
+            // 4 packed u32 words per row * 32 elements each.
+            assert_eq!(t.cols, 128);
+            // One group of 128 per row.
+            assert_eq!(t.scales.len(), 4);
+            assert_eq!(t.biases.len(), 4);
+        }
+        other => panic!("expected Int1, got {other:?}"),
+    }
+}
+
+/// **The companion dtype is required per width, and this is the axis that
+/// fails silently.** FP16 and BF16 are the same width and share no exponent
+/// field, so accepting either would produce an install of exactly the right
+/// SIZE whose scales are wrong by orders of magnitude. Both directions are
+/// refused, and the message names the dtype.
+#[test]
+fn the_companion_dtype_is_required_per_bit_width() {
+    let err = pass_one(1, 128, "bf16").expect_err("BF16 on a 1-bit tensor must be refused");
+    let text = format!("{err:?}");
+    assert!(text.contains("BF16"), "{text}");
+    assert!(text.contains("F16"), "{text}");
+
+    let err = pass_one(4, 64, "fp16").expect_err("FP16 on a 4-bit tensor must be refused");
+    assert!(format!("{err:?}").contains("F16"));
+}
+
+/// The INT4 path is unmoved: same variant, same dims, BF16 companions at
+/// group 64.
+#[test]
+fn the_four_bit_pass_through_is_unmoved() {
+    match pass_one(4, 64, "bf16").expect("passes through") {
+        ResidentEntrySpec::Int4(t) => {
+            assert_eq!((t.rows, t.cols), (4, 128));
+            // Two groups of 64 per row.
+            assert_eq!(t.scales.len(), 8);
+        }
+        other => panic!("expected Int4, got {other:?}"),
+    }
+}
+
+/// The manifest the walk writes has to describe the bytes it wrote.
+///
+/// `manifest_quant` used to emit `bf16`/64 as literals, which was a true
+/// statement about every install that existed and became false the moment a
+/// 1-bit checkpoint could be walked. `model_io::validate_quant` reads these
+/// three fields TOGETHER and accepts only `(4|8, bf16, 64)` and
+/// `(1, fp16, 128)`, so a literal here is an install that cannot open.
+#[test]
+fn the_manifest_quant_block_reports_the_checkpoints_own_companions_and_group() {
+    let one_bit = parse_gemma4_quantization(&quant_config_json(1, 128)).expect("parses");
+    let json = manifest_quant(&one_bit, model_io::ModelFamily::Gemma4);
+    for slot in [
+        "embedding",
+        "attention",
+        "router",
+        "sharedExpert",
+        "routedExpert",
+    ] {
+        let s = &json[slot];
+        assert_eq!(s["weightBits"], 1, "{slot}");
+        assert_eq!(s["scaleType"], "fp16", "{slot}");
+        assert_eq!(s["biasType"], "fp16", "{slot}");
+        assert_eq!(s["groupSize"], 128, "{slot}");
+    }
+
+    // And the INT4 shape is unmoved, router still 8-bit.
+    let int4 = parse_gemma4_quantization(&config_json()).expect("parses");
+    let json = manifest_quant(&int4, model_io::ModelFamily::Gemma4);
+    assert_eq!(json["attention"]["weightBits"], 4);
+    assert_eq!(json["router"]["weightBits"], 8);
+    assert_eq!(json["attention"]["scaleType"], "bf16");
+    assert_eq!(json["attention"]["groupSize"], 64);
+}
+
 #[test]
 fn classification_buckets() {
     assert_eq!(
@@ -330,7 +530,9 @@ fn orchestrate_orders_passes_through_and_slices_experts() {
         .resident
         .iter()
         .map(|e| match e {
-            ResidentEntrySpec::Int4(t) | ResidentEntrySpec::Int8(t) => t.name.as_str(),
+            ResidentEntrySpec::Int4(t)
+            | ResidentEntrySpec::Int8(t)
+            | ResidentEntrySpec::Int1(t) => t.name.as_str(),
             ResidentEntrySpec::Raw(r) => r.name.as_str(),
         })
         .collect();
@@ -477,7 +679,9 @@ fn sharded_orchestration_matches_single_source() {
         out.resident
             .iter()
             .map(|e| match e {
-                ResidentEntrySpec::Int4(t) | ResidentEntrySpec::Int8(t) => t.name.clone(),
+                ResidentEntrySpec::Int4(t)
+                | ResidentEntrySpec::Int8(t)
+                | ResidentEntrySpec::Int1(t) => t.name.clone(),
                 ResidentEntrySpec::Raw(r) => r.name.clone(),
             })
             .collect()

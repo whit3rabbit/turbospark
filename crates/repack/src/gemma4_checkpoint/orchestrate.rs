@@ -321,13 +321,32 @@ pub fn gemma4_manifest_quant(quant: &Gemma4Quant) -> serde_json::Value {
 /// slot has to be probed at `linear_attn.in_proj_qkv` -- there is no
 /// `self_attn.q_proj` under layer 0 at all.
 pub fn manifest_quant(quant: &Gemma4Quant, family: ModelFamily) -> serde_json::Value {
+    // The companion dtype and the group size are read off the CHECKPOINT, not
+    // written as constants. They used to be `bf16`/64 literals, which was a
+    // true statement about every install that existed and became a false one
+    // the moment a 1-bit checkpoint could be walked: its companions are FP16
+    // at group 128, and a manifest claiming otherwise describes bytes the
+    // install does not contain. `model_io::validate_quant` reads exactly
+    // these three fields together and refuses any other combination.
+    //
+    // Keying the dtype on the DEFAULT bits is sound only because
+    // `is_supported_affine_shape` has already refused every mixture that
+    // would break it: 1 bit exists at group 128 and nowhere else, and 4 and 8
+    // exist at group 64 and nowhere else, so a per-tensor override can change
+    // the width within a group size but can never straddle the two shapes.
+    let companions = if quant.default_bits == 1 {
+        "fp16"
+    } else {
+        "bf16"
+    };
+    let group_size = quant.group_size;
     let slot = |bits: u32| {
         serde_json::json!({
             "weightBits": bits,
             "scheme": "affine",
-            "scaleType": "bf16",
-            "biasType": "bf16",
-            "groupSize": 64,
+            "scaleType": companions,
+            "biasType": companions,
+            "groupSize": group_size,
         })
     };
     let l0 = "language_model.model.layers.0";

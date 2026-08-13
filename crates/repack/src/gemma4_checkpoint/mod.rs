@@ -13,13 +13,17 @@ mod config;
 mod orchestrate;
 mod shards;
 
-pub use config::{parse_gemma4_config, parse_gemma4_quantization, Gemma4Error, Gemma4Quant};
+pub use config::{
+    is_supported_affine_shape, parse_gemma4_config, parse_gemma4_quantization, Gemma4Error,
+    Gemma4Quant, AFFINE_1BIT_GROUP_SIZE, AFFINE_GROUP_SIZE,
+};
 pub use orchestrate::{
     gemma4_manifest_quant, manifest_quant, orchestrate_gemma4_checkpoint,
     orchestrate_gemma4_checkpoint_sharded, Gemma4RepackOutput,
 };
 pub use shards::{
-    classify_for_family, classify_gemma4, Gemma4Bucket, Gemma4Shards, GTURBO_PAGE_BYTES,
+    classify_for_family, classify_gemma4, pass_through_packed, Gemma4Bucket, Gemma4Shards,
+    GTURBO_PAGE_BYTES,
 };
 
 use std::path::Path;

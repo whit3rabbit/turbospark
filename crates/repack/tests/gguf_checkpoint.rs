@@ -71,8 +71,8 @@ fn resident_tensors_keep_their_bytes_names_and_logical_shapes() {
         .map(|e| match e {
             ResidentEntrySpec::Raw(r) => (r.name.as_str(), e),
             ResidentEntrySpec::Int8(t) => (t.name.as_str(), e),
-            ResidentEntrySpec::Int4(_) => {
-                panic!("nothing in a GGUF becomes INT4; the transcode targets are INT8 only")
+            ResidentEntrySpec::Int4(_) | ResidentEntrySpec::Int1(_) => {
+                panic!("nothing in a GGUF becomes INT4 or 1-bit; transcode targets are INT8 only")
             }
         })
         .collect();

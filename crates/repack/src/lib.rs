@@ -38,11 +38,12 @@ pub use arch_registry::{
     planned_gguf_architectures, ArchSupport, PlannedArch,
 };
 pub use gemma4_checkpoint::{
-    classify_for_family, classify_gemma4, gemma4_manifest_quant, manifest_quant,
-    orchestrate_gemma4_checkpoint, orchestrate_gemma4_checkpoint_sharded, parse_gemma4_config,
-    parse_gemma4_quantization, write_gemma4_install, write_gemma4_install_streamed,
-    write_qwen36_install, write_qwen36_install_streamed, Gemma4Bucket, Gemma4Error, Gemma4Quant,
-    Gemma4RepackOutput, Gemma4Shards, GTURBO_PAGE_BYTES,
+    classify_for_family, classify_gemma4, gemma4_manifest_quant, is_supported_affine_shape,
+    manifest_quant, orchestrate_gemma4_checkpoint, orchestrate_gemma4_checkpoint_sharded,
+    parse_gemma4_config, parse_gemma4_quantization, pass_through_packed, write_gemma4_install,
+    write_gemma4_install_streamed, write_qwen36_install, write_qwen36_install_streamed,
+    Gemma4Bucket, Gemma4Error, Gemma4Quant, Gemma4RepackOutput, Gemma4Shards,
+    AFFINE_1BIT_GROUP_SIZE, AFFINE_GROUP_SIZE, GTURBO_PAGE_BYTES,
 };
 pub use gguf_checkpoint::{
     dtype_tag_for_ggml_type, gguf_manifest_quant, orchestrate_gguf_checkpoint,

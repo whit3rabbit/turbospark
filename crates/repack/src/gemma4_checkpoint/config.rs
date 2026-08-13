@@ -210,14 +210,46 @@ pub fn parse_gemma4_quantization(json: &str) -> Result<Gemma4Quant, Gemma4Error>
             }
         }
     }
-    if group_size != 64 {
-        return Err(Gemma4Error::Config(format!(
-            "group_size {group_size} unsupported: this port's GEMV kernels assume 64"
-        )));
+    // Every EFFECTIVE (bits, group_size) pair has to be a shape with kernels,
+    // the default and each override alike -- an override is the one way a
+    // single checkpoint can carry two widths (Gemma's routers are 8-bit under
+    // 4-bit weights), and at one bit an override to 4 would ask for a shape
+    // that exists at neither group size.
+    for (name, bits) in std::iter::once(("<default>", default_bits))
+        .chain(bits_overrides.iter().map(|(k, v)| (k.as_str(), *v)))
+    {
+        if !is_supported_affine_shape(bits, group_size) {
+            return Err(Gemma4Error::Config(format!(
+                "unsupported affine quantization for {name}: {bits}-bit at group \
+                 {group_size}; this port's kernels implement 4- or 8-bit at group \
+                 {AFFINE_GROUP_SIZE} and 1-bit at group {AFFINE_1BIT_GROUP_SIZE}"
+            )));
+        }
     }
     Ok(Gemma4Quant {
         default_bits,
         group_size,
         bits_overrides,
     })
+}
+
+/// The group size the INT4/INT8 GEMV kernels are compiled against.
+pub const AFFINE_GROUP_SIZE: u32 = 64;
+/// The group size the 1-bit GEMV kernels take, and the one the published
+/// 1-bit checkpoint declares (`turbospark_compute::quant_1bit`).
+pub const AFFINE_1BIT_GROUP_SIZE: u32 = 128;
+
+/// True for the `(bits, group_size)` pairs this port has kernels for.
+///
+/// The pairs are checked TOGETHER rather than as two independent lists, and
+/// `model_io::validate_quant` states the same rule at the other end of the
+/// pipeline for the same reason: a checkpoint's bit width and group size
+/// travel together, so `1`-bit at 64 and `4`-bit at 128 are combinations no
+/// real file has and no kernel implements. Widening either list alone would
+/// admit them.
+pub fn is_supported_affine_shape(bits: u32, group_size: u32) -> bool {
+    matches!(
+        (bits, group_size),
+        (4 | 8, AFFINE_GROUP_SIZE) | (1, AFFINE_1BIT_GROUP_SIZE)
+    )
 }

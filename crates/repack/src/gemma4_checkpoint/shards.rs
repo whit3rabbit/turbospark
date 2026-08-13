@@ -2,7 +2,7 @@
 
 use model_io::ModelFamily;
 
-use super::config::{Gemma4Error, Gemma4Quant};
+use super::config::{is_supported_affine_shape, Gemma4Error, Gemma4Quant};
 use crate::ranged_download::RangeSource;
 use crate::resident_writer::{
     ResidentEntrySpec, ResidentTensorSpec, DTYPE_BF16, DTYPE_FP16, DTYPE_FP32,
@@ -246,15 +246,25 @@ pub fn pass_through_packed(
     }
     let base = name.strip_suffix(".weight").unwrap_or(name);
     let bits = quant.bits_for(base);
-    let factor = match bits {
-        4 | 8 => 32 / bits as u64,
-        other => {
-            return Err(Gemma4Error::UnsupportedDtype {
-                tensor: name.to_string(),
-                dtype: format!("{other}-bit quantization"),
-            })
-        }
-    };
+    let group_size = quant.group_size;
+    if !is_supported_affine_shape(bits, group_size) {
+        return Err(Gemma4Error::UnsupportedDtype {
+            tensor: name.to_string(),
+            dtype: format!("{bits}-bit quantization at group {group_size}"),
+        });
+    }
+    // Elements per packed u32 word. The formula covers one bit as well as
+    // four and eight; what does NOT generalize is everything below it.
+    let factor = 32 / bits as u64;
+    // **The companion dtype is a function of the bit width, and this is the
+    // one axis in the whole walk that fails silently if it is wrong.** MLX
+    // writes companions in the checkpoint's own dtype: BF16 for the INT4/INT8
+    // installs this port already reads, FP16 for the 1-bit one. The two are
+    // the same width and share no exponent field, so accepting either here
+    // would produce an install of exactly the right SIZE whose scales are
+    // wrong by orders of magnitude -- 0.0271 read as 1.7e-16. Hence a
+    // required dtype per width rather than a set of allowed ones.
+    let companion_dtype = if bits == 1 { "F16" } else { "BF16" };
     let scales_name = format!("{base}.scales");
     let biases_name = format!("{base}.biases");
     for companion in [&scales_name, &biases_name] {
@@ -262,10 +272,13 @@ pub fn pass_through_packed(
             return Err(Gemma4Error::MissingCompanion(name.to_string()));
         }
         let c = shards.info(companion)?;
-        if c.dtype != "BF16" {
+        if c.dtype != companion_dtype {
             return Err(Gemma4Error::UnsupportedDtype {
                 tensor: companion.to_string(),
-                dtype: c.dtype.clone(),
+                dtype: format!(
+                    "{} companions on a {bits}-bit tensor (expected {companion_dtype})",
+                    c.dtype
+                ),
             });
         }
     }
@@ -274,13 +287,14 @@ pub fn pass_through_packed(
     let packed = shards.read(name)?;
     let scales = le_u16(&shards.read(&scales_name)?);
     let biases = le_u16(&shards.read(&biases_name)?);
-    let expected_groups = (rows * cols / 64) as usize;
-    if cols % 64 != 0 || scales.len() != expected_groups || biases.len() != expected_groups {
+    let group = group_size as u64;
+    let expected_groups = (rows * cols / group) as usize;
+    if cols % group != 0 || scales.len() != expected_groups || biases.len() != expected_groups {
         return Err(Gemma4Error::ShapeMismatch {
             tensor: name.to_string(),
             detail: format!(
                 "shape {rows}x{cols} with {} scales / {} biases does not match \
-                 the 64-element groups this port's kernels assume",
+                 the {group}-element groups this checkpoint declares",
                 scales.len(),
                 biases.len()
             ),
@@ -295,6 +309,7 @@ pub fn pass_through_packed(
         cols: cols as u32,
     };
     Ok(match bits {
+        1 => ResidentEntrySpec::Int1(spec),
         4 => ResidentEntrySpec::Int4(spec),
         _ => ResidentEntrySpec::Int8(spec),
     })
