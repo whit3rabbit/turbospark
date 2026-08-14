@@ -61,8 +61,8 @@ use model_io::{ArchConfig, ResidentBuffer, ResidentIndex};
 
 use crate::producer::LogitProducer;
 use crate::real_forward_layout::{
-    moe_offsets_from_layout, routed_layouts_from_layout, RoutedLayerLayout, EXECUTABLE_GGUF_DTYPES,
-    GGUF_BLOCK_DTYPES,
+    moe_offsets_from_layout, readable_resident_dtype, routed_layouts_from_layout,
+    RoutedLayerLayout, EXECUTABLE_GGUF_DTYPES, GGUF_BLOCK_DTYPES,
 };
 use crate::real_forward_types::DecodeScratch;
 pub use crate::real_forward_types::{dispatch_profile_report, PhaseCounters, RealForwardError};
@@ -291,6 +291,24 @@ impl RealForwardRunner {
                 "tensor {} carries GGUF block dtype {}, which has no RESIDENT kernel in this \
                  port (ROADMAP Phase G Stage 2; resident-executable tags: {:?})",
                 entry.name, entry.dtype, EXECUTABLE_GGUF_DTYPES
+            )));
+        }
+        // The same question for every OTHER tag, and the one that catches the
+        // quiet half. The check above only looks at tags the writer calls
+        // GGUF blocks; an unquantized tensor written FP16 (tag 2) or FP32
+        // (tag 3) passes it and is then decoded as BF16 off its byte size,
+        // because that is what every unquantized reader here does. FP16 is
+        // the same width, so nothing fails and the values are wrong by up to
+        // 2^112 -- fluent garbage from an install that opened cleanly.
+        if let Some(entry) = index
+            .entries
+            .values()
+            .find(|e| !readable_resident_dtype(e.dtype))
+        {
+            return Err(RealForwardError::Unsupported(format!(
+                "tensor {} carries resident dtype {}, which no reader in this crate honours; \
+                 unquantized tensors must be narrowed to BF16 (tag 1) at repack time",
+                entry.name, entry.dtype
             )));
         }
 

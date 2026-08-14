@@ -22,8 +22,8 @@ pub use orchestrate::{
     orchestrate_gemma4_checkpoint_sharded, Gemma4RepackOutput,
 };
 pub use shards::{
-    classify_for_family, classify_gemma4, pass_through_packed, Gemma4Bucket, Gemma4Shards,
-    GTURBO_PAGE_BYTES,
+    classify_for_family, classify_gemma4, narrow_raw_to_bf16, pass_through_packed, Gemma4Bucket,
+    Gemma4Shards, NarrowedRaw, GTURBO_PAGE_BYTES,
 };
 
 use std::path::Path;
@@ -55,7 +55,26 @@ pub fn write_gemma4_install_streamed(
     ));
 
     let resident = orchestrate::read_resident_entries(shards, &plan.resident_bases, quant)?;
-    let resident_bytes = crate::resident_writer::build_resident_weights_bin_mixed(&resident);
+    let resident_bytes =
+        crate::resident_writer::build_resident_weights_bin_mixed(&resident.entries);
+    // Reported rather than merely counted, on the streamed path especially:
+    // this is the only place a 25-minute walk says out loud that it narrowed
+    // an F16 checkpoint's norms (`narrow_raw_to_bf16`), and a silent lossy
+    // step is how a quality question turns into a mystery three phases later.
+    let lossy: usize = resident.lossy_narrowing.iter().map(|(_, n)| n).sum();
+    if lossy > 0 {
+        progress(&format!(
+            "narrowed {} unquantized tensors to BF16, {lossy} values lost bits (worst offenders: {})",
+            resident.lossy_narrowing.len(),
+            resident
+                .lossy_narrowing
+                .iter()
+                .take(3)
+                .map(|(n, c)| format!("{n} x{c}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
     drop(resident);
     progress(&format!(
         "resident region built ({} bytes)",
@@ -185,6 +204,32 @@ pub fn write_qwen35_install(
         ))));
     }
     write_gemma4_install(dir, arch, model_id, header, source, quant)
+}
+
+/// [`write_qwen35_install`] for the real 4.78 GiB checkpoint.
+///
+/// The streamed body has nothing to stream on a dense model -- there are no
+/// expert layers -- so what this buys over the one-shot writer is the
+/// `progress` callback, and on this family that is not cosmetic: it is where
+/// the F16-to-BF16 narrowing report comes out (`narrow_raw_to_bf16`), and
+/// Bonsai-27B is the first checkpoint whose unquantized tensors are lossy to
+/// narrow. A 25-minute walk that does something lossy in silence is how a
+/// quality question becomes a mystery three phases later.
+pub fn write_qwen35_install_streamed(
+    dir: &Path,
+    arch: &ArchConfig,
+    model_id: &str,
+    shards: &Gemma4Shards<'_>,
+    quant: &Gemma4Quant,
+    progress: impl FnMut(&str),
+) -> Result<(), Box<dyn std::error::Error>> {
+    if arch.family != ModelFamily::Qwen35 {
+        return Err(Box::new(Gemma4Error::Config(format!(
+            "write_qwen35_install_streamed needs arch.family = qwen35, got {}",
+            arch.family.as_str()
+        ))));
+    }
+    write_gemma4_install_streamed(dir, arch, model_id, shards, quant, progress)
 }
 
 /// [`write_qwen36_install`] for a real multi-GB checkpoint: the same family

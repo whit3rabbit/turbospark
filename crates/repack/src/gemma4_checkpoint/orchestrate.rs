@@ -6,8 +6,8 @@ use model_io::{ArchConfig, ModelFamily};
 
 use super::config::{Gemma4Error, Gemma4Quant};
 use super::shards::{
-    classify_for_family, lm_order_key, pass_through_packed, raw_dtype_tag, shape4, Gemma4Bucket,
-    Gemma4Shards, GTURBO_PAGE_BYTES,
+    classify_for_family, lm_order_key, narrow_raw_to_bf16, pass_through_packed, shape4,
+    Gemma4Bucket, Gemma4Shards, GTURBO_PAGE_BYTES,
 };
 use crate::gturbo_writer::{ExpertBlob, LayerBlobs, SubTensor};
 use crate::ranged_download::RangeSource;
@@ -23,6 +23,9 @@ pub struct Gemma4RepackOutput {
     pub layers: Vec<LayerBlobs>,
     pub expert_stride: u64,
     pub excluded_multimodal: Vec<String>,
+    /// One `(tensor, values that lost bits)` row per unquantized tensor this
+    /// walk had to narrow to BF16. See `narrow_raw_to_bf16`.
+    pub lossy_narrowing: Vec<(String, usize)>,
 }
 
 /// Walks a Gemma 4 checkpoint's tensors: classifies every name, orders and
@@ -56,10 +59,11 @@ pub fn orchestrate_gemma4_checkpoint_sharded(
         }
     }
     Ok(Gemma4RepackOutput {
-        resident,
+        resident: resident.entries,
         layers,
         expert_stride,
         excluded_multimodal: plan.excluded,
+        lossy_narrowing: resident.lossy_narrowing,
     })
 }
 
@@ -110,26 +114,49 @@ pub fn classify_all<'a>(
     })
 }
 
+/// The resident set plus what narrowing it to BF16 cost.
+pub struct ResidentRead {
+    pub entries: Vec<ResidentEntrySpec>,
+    /// One `(tensor, values that lost bits)` row per lossily-narrowed tensor,
+    /// mirroring `GgufRepackOutput::lossy_narrowing`. Empty for every
+    /// BF16-source checkpoint, which is every one but Bonsai-27B.
+    pub lossy_narrowing: Vec<(String, usize)>,
+}
+
 pub fn read_resident_entries(
     shards: &Gemma4Shards<'_>,
     resident_bases: &[&str],
     quant: &Gemma4Quant,
-) -> Result<Vec<ResidentEntrySpec>, Gemma4Error> {
-    let mut resident = Vec::with_capacity(resident_bases.len());
+) -> Result<ResidentRead, Gemma4Error> {
+    let mut entries = Vec::with_capacity(resident_bases.len());
+    let mut lossy_narrowing = Vec::new();
     for &name in resident_bases {
         let t = shards.info(name)?;
         if t.dtype == "U32" && name.ends_with(".weight") {
-            resident.push(pass_through_packed(shards, name, quant)?);
+            entries.push(pass_through_packed(shards, name, quant)?);
         } else {
-            resident.push(ResidentEntrySpec::Raw(RawTensorSpec {
+            // NARROWED, not tagged. The deleted `raw_dtype_tag` recorded F16
+            // or F32 and nothing downstream reads either tag: every consumer
+            // of an unquantized tensor decodes it as BF16 off its byte size,
+            // so an F16 norm written verbatim is misread rather than
+            // refused. See `narrow_raw_to_bf16` for the measurement behind
+            // accepting the loss.
+            let narrowed = narrow_raw_to_bf16(name, &t.dtype, shards.read(name)?)?;
+            if narrowed.lossy > 0 {
+                lossy_narrowing.push((name.to_string(), narrowed.lossy));
+            }
+            entries.push(ResidentEntrySpec::Raw(RawTensorSpec {
                 name: name.to_string(),
-                dtype: raw_dtype_tag(name, &t.dtype)?,
-                bytes: shards.read(name)?,
+                dtype: narrowed.dtype,
+                bytes: narrowed.bytes,
                 shape: shape4(&t.shape),
             }));
         }
     }
-    Ok(resident)
+    Ok(ResidentRead {
+        entries,
+        lossy_narrowing,
+    })
 }
 
 /// The one model-wide expert stride, computed from shard HEADERS alone

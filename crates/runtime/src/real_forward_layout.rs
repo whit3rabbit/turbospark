@@ -62,6 +62,32 @@ pub(crate) const DTYPE_GGUF_Q5_K: u8 = 13;
 /// fails at `encode_gemv_any` by name. The tag exists so this list and the
 /// writer's stay structurally parallel.
 pub(crate) const DTYPE_GGUF_MXFP4: u8 = 14;
+/// The RAW (companion-less, unquantized) tag this port can read, and the only
+/// one: every consumer of an unquantized resident tensor -- `norm_view`,
+/// `read_bf16_host`, every kernel binding a `device const bfloat*` --
+/// identifies it by BYTE SIZE and decodes it as BF16.
+///
+/// The writer also defines FP16 (2) and FP32 (3) tags and NOTHING HERE READS
+/// EITHER, which is why [`readable_resident_dtype`] refuses them rather than
+/// letting them through to be misread. An F16 norm is the dangerous case: it
+/// is the same width as BF16, so every length check passes and the values
+/// come out wrong by up to 2^112. The repack side narrows instead
+/// (`turbospark_repack`'s `narrow_raw_to_bf16`); this is the backstop for a
+/// hand-made install, in the same relationship the GGUF dtype gate has to
+/// `model_io::validate_quant`.
+pub(crate) const DTYPE_RAW_BF16: u8 = 1;
+
+/// Whether a resident entry's dtype tag has a reader in this crate.
+///
+/// Listed rather than defaulted, for `encode_gemv_any`'s catch-all's reason:
+/// a tag added to the writer and not here is refused at open with its number
+/// in the message, where a permissive default would dispatch it as something
+/// else.
+pub(crate) fn readable_resident_dtype(dtype: u8) -> bool {
+    matches!(dtype, DTYPE_RAW_BF16 | 4 | 5 | DTYPE_INT1_AFFINE)
+        || EXECUTABLE_GGUF_DTYPES.contains(&dtype)
+}
+
 /// 1-BIT AFFINE (ROADMAP's 1-bit entry), mirroring
 /// `turbospark_repack::DTYPE_INT1_AFFINE`. Its number is 15 rather than
 /// something beside the 4 and 5 of its affine siblings only because 6..=14

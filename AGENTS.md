@@ -1571,6 +1571,46 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     rather than the mean, and treat any within-case spread over a few
     percent as contamination until a quiet re-run says otherwise.
 
+45. **A WRITER MAY ONLY RECORD A TAG SOME READER HONOURS. The safetensors
+    walk had three raw dtype tags and the runtime reads exactly one of
+    them.** `raw_dtype_tag` mapped `BF16`/`F16`/`F32` onto tags 1/2/3 and
+    nothing in `crates/runtime` has ever read 2 or 3: `norm_view`,
+    `read_bf16_host` and every kernel binding a `device const bfloat*`
+    identify an unquantized tensor by BYTE SIZE and decode it as BF16. So an
+    F16 norm written verbatim is not refused, it is MISREAD -- same width,
+    every length check passes, and the values come out wrong by up to 2^112.
+    Found 2026-08-14 by reading the real `prism-ml/Bonsai-27B-mlx-1bit`
+    header, where EVERY unquantized tensor is F16; the four checkpoints
+    before it are BF16 throughout, which is why a tag with no reader survived
+    since the first repack walk.
+    THE FIX IS THE SHAPE THE GGUF SIDE ALREADY HAD, and the difference between
+    the two is the part worth keeping. `transcode_f32` narrows F32 to BF16
+    because llama.cpp had UPCAST from BF16, so that narrowing was measured to
+    be exactly lossless (Gotcha 29). `narrow_raw_to_bf16` does the same thing
+    to F16 and it is NOT lossless -- F16 carries 10 mantissa bits against
+    BF16's 7 -- so the two decisions look identical and rest on opposite
+    measurements. Measured off the real file before writing any code: the
+    five RMS-norm families lose 19.5% of their values at a worst relative
+    error of 0.003891 (2^-8, BF16's own quantum), and the gated-DeltaNet
+    tensors lose NOTHING because that QAT checkpoint stores them on a grid
+    coarse enough to be exact in both (its layer 0 `A_log` has one distinct
+    value across 48 elements). The real repack reproduced it exactly: 161
+    tensors narrowed lossily, 546,190 values, and the 192 GDN tensors clean.
+    Accepting the loss is a JUDGEMENT, recorded as one: the alternative is an
+    FP16-weight variant of `rms_norm_bf16w` and its `_perhead` sibling plus a
+    dtype threaded through every `norm_view` call site in four family flows,
+    and 0.4% on a norm scale is not the limiting error in a model whose
+    weight matrices are ONE BIT. If the cross-engine KL for this family lands
+    above its backend floor, this is the first place to look.
+    TWO STRUCTURAL COROLLARIES, both landed. The walk narrows rather than
+    tags, so no install can carry 2 or 3 (`raw_dtype_tag` is DELETED rather
+    than left beside its replacement -- a function whose only use would be to
+    record a claim no reader honours). And `RealForwardRunner::open` now
+    refuses any resident dtype with no reader BY NAME, which is the same
+    backstop relationship the GGUF dtype gate has to
+    `model_io::validate_quant`: the writer states, the reader verifies, and
+    neither is trusted to be the only check.
+
 ## Per-Crate Documentation
 
 When working on code inside a specific crate, refer to that crate's `CLAUDE.md` file for crate-specific architecture, key modules, dev commands, and localized gotchas:

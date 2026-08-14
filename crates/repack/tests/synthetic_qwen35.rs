@@ -11,9 +11,12 @@
 //! What it can and cannot see is worth stating. It CAN see: that the walk
 //! writes an install with no packed-expert files, that the manifest it emits
 //! is one `load_manifest` accepts, that the resident index tags 1-bit
-//! tensors distinctly, and that FP16 companions survive as FP16. It CANNOT
-//! see anything about decode -- the weights are untrained and `open()`
-//! refuses the family until step 4 lands the dense branch.
+//! tensors distinctly, that FP16 companions survive as FP16, and that every
+//! UNQUANTIZED tensor is narrowed to BF16 (step 4's finding -- this fixture
+//! wrote BF16 norms until then, where the real checkpoint writes F16). It
+//! CANNOT see anything about the NUMBERS: the weights are untrained, so
+//! `crates/runtime/tests/real_forward_qwen35.rs` asserts that a dense 1-bit
+//! install decodes and nothing about what it decodes to.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -141,13 +144,16 @@ fn one_bit_tensors_carry_their_own_dtype_tag_and_fp16_companions() {
     );
 }
 
-/// The BF16 tensors stay BF16 beside the FP16 companions, which is the
-/// arrangement that makes the dtype axis worth checking at all.
+/// The norms come out BF16 beside FP16 companions, which is the arrangement
+/// that makes the dtype axis worth checking at all.
 ///
-/// One install now carries both widths for different roles: FP16 for the
-/// 1-bit companions, BF16 for the norms and the conv kernel. A walk that
-/// resolved the companion dtype once per install rather than per tensor
-/// would pass every length check here and be wrong on one of the two.
+/// One install carries both widths for different roles: FP16 for the 1-bit
+/// companions, which are read as FP16, and BF16 for the norms and the conv
+/// kernel, which are read as BF16. A walk that resolved the companion dtype
+/// once per install rather than per tensor would pass every length check here
+/// and be wrong on one of the two. Note the two get there differently -- the
+/// companions are passed through, the norms are NARROWED from the
+/// checkpoint's F16 (see `every_unquantized_tensor_is_narrowed_to_bf16`).
 #[test]
 fn norms_stay_bf16_beside_the_fp16_companions() {
     let (dir, _) = build();
@@ -169,6 +175,78 @@ fn norms_stay_bf16_beside_the_fp16_companions() {
         .get("language_model.model.layers.0.linear_attn.conv1d.weight")
         .expect("layer 0 is linear and carries a conv kernel");
     assert_eq!(conv.dtype, 1);
+}
+
+/// EVERY unquantized tensor comes out tagged BF16, whatever the checkpoint
+/// wrote -- and this fixture writes F16, like the real Bonsai-27B.
+///
+/// The walk used to record the SOURCE dtype (`raw_dtype_tag`, now deleted),
+/// and nothing in `crates/runtime` reads tag 2 or tag 3: `norm_view`,
+/// `read_bf16_host` and every kernel binding a `device const bfloat*`
+/// identify an unquantized tensor by BYTE SIZE and decode it as BF16. F16 is
+/// the same width, so an install carrying it opens, decodes, and is wrong on
+/// every norm by up to 2^112 -- no error anywhere.
+///
+/// This is the case that would have caught it, and the reason it did not
+/// exist before is worth keeping: the fixture was forked from the Qwen 3.6
+/// one, whose checkpoint really is BF16, and only the QUANTIZED triple's
+/// companions were re-read off the real header. A fixture copies the real
+/// file's dtypes or it proves nothing about them.
+#[test]
+fn every_unquantized_tensor_is_narrowed_to_bf16() {
+    let (dir, _) = build();
+    let index = model_io::load_resident_index(&dir.join("model_weights.bin"))
+        .expect("the resident index parses");
+
+    let raw: Vec<_> = index
+        .entries
+        .values()
+        .filter(|e| e.scale_size == 0 && e.bias_size == 0)
+        .collect();
+    assert!(
+        raw.len() >= 4 * LAYERS as usize,
+        "expected the norms and the gated-DeltaNet tensors, got {}",
+        raw.len()
+    );
+    for e in raw {
+        assert_eq!(
+            e.dtype, 1,
+            "{} carries raw dtype {}, which no reader honours",
+            e.name, e.dtype
+        );
+    }
+}
+
+/// The narrowing is LOSSY here and the count is reported rather than
+/// swallowed, which is the half that matters when a quality number moves.
+///
+/// It is deliberately measured against a value that cannot survive: BF16 has
+/// 7 stored mantissa bits against F16's 10, so a value needing more than 7
+/// loses the rest. The real checkpoint's norms lose 19.5% of their values
+/// this way and its gated-DeltaNet tensors lose none, because that QAT
+/// checkpoint stores those on a grid coarse enough to be exact in both.
+#[test]
+fn narrowing_f16_to_bf16_counts_what_it_loses() {
+    // 1 + 2^-10 needs ten mantissa bits: exact in F16, not in BF16.
+    let exact_in_f16 = 1.0f32 + 2f32.powi(-10);
+    let bytes = compute::f32_to_f16(exact_in_f16).to_le_bytes().to_vec();
+    let narrowed = turbospark_repack::narrow_raw_to_bf16("probe", "F16", bytes).expect("narrows");
+    assert_eq!(narrowed.dtype, 1, "narrowed bytes are BF16 bytes");
+    assert_eq!(narrowed.bytes.len(), 2);
+    assert_eq!(narrowed.lossy, 1, "this value cannot survive the narrowing");
+
+    // A BF16 source is a pass-through, byte for byte, and never counts.
+    let bf16_one = compute::f32_to_bf16(1.0).to_le_bytes().to_vec();
+    let passed =
+        turbospark_repack::narrow_raw_to_bf16("probe", "BF16", bf16_one.clone()).expect("passes");
+    assert_eq!(passed.bytes, bf16_one);
+    assert_eq!(passed.lossy, 0);
+
+    // And a value that IS representable in both is narrowed without a count,
+    // which is what keeps the counter a measurement rather than a dtype flag.
+    let half = compute::f32_to_f16(0.5).to_le_bytes().to_vec();
+    let clean = turbospark_repack::narrow_raw_to_bf16("probe", "F16", half).expect("narrows");
+    assert_eq!(clean.lossy, 0);
 }
 
 /// The architecture the fixture declares is the one that comes back out,

@@ -38,7 +38,7 @@ use model_io::{
 use crate::gemma4_checkpoint::{write_qwen35_install, Gemma4Quant};
 use crate::ranged_download::MemoryRangeSource;
 use crate::safetensors_header::parse_header;
-use crate::synthetic_real::{assemble_safetensors, bf16_vector, deterministic_row, u16_le, Tensor};
+use crate::synthetic_real::{assemble_safetensors, deterministic_row, u16_le, Tensor};
 
 /// 128 rather than the Qwen 3.6 fixture's 64: every quantized tensor's
 /// COLUMN count must be a whole number of 128-element groups.
@@ -127,6 +127,36 @@ pub fn tiny_qwen35_arch(vocab_size: i64, num_layers: i64) -> ArchConfig {
         routed_scaling_factor: 1.0,
         swiglu_limit: 0.0,
         rope_scaling: RopeScalingConfig::NONE,
+    }
+}
+
+/// An UNQUANTIZED vector, F16 like every unquantized tensor in the real
+/// checkpoint -- and unlike the Qwen 3.6 fixture's BF16, which this file was
+/// forked from.
+///
+/// **That difference is the whole reason this helper exists rather than
+/// reusing `bf16_vector`, and it is the second time this fixture has earned
+/// its place.** The 1-bit entry's step 3 got the quantized triple's F16
+/// companions right off the real header and left the RAW tensors at the
+/// sibling's BF16, so the fixture said nothing about a walk that wrote F16
+/// bytes under a dtype tag no reader in `crates/runtime` honours. Every
+/// consumer of an unquantized tensor decodes BF16 off the byte size, so the
+/// install would have opened, decoded, and been wrong by a factor of 2^112 on
+/// every norm.
+///
+/// The values go through F16 rather than being BF16 values relabelled,
+/// because a BF16 value narrows back losslessly and a fixture that cannot
+/// lose a bit cannot exercise `narrow_raw_to_bf16`'s counting at all.
+fn f16_vector(name: &str, n: usize, center: f32, seed: u64) -> Tensor {
+    let bits: Vec<u16> = deterministic_row(seed, n)
+        .iter()
+        .map(|&j| compute::f32_to_f16(center + j * 0.05))
+        .collect();
+    Tensor {
+        name: name.to_string(),
+        dtype: "F16",
+        shape: vec![n as u64],
+        bytes: u16_le(&bits),
     }
 }
 
@@ -224,7 +254,7 @@ pub fn build_synthetic_qwen35_real_install(
             .iter()
             .enumerate()
         {
-            ts.push(bf16_vector(
+            ts.push(f16_vector(
                 &format!("{p}.{norm}.weight"),
                 HIDDEN,
                 1.0,
@@ -255,7 +285,7 @@ pub fn build_synthetic_qwen35_real_install(
                 seed + 4,
             ));
             for (i, norm) in ["q_norm", "k_norm"].iter().enumerate() {
-                ts.push(bf16_vector(
+                ts.push(f16_vector(
                     &format!("{p}.self_attn.{norm}.weight"),
                     HEAD_DIM,
                     1.0,
@@ -285,19 +315,19 @@ pub fn build_synthetic_qwen35_real_install(
             ));
             // A_log and dt_bias carry NO `.weight` suffix in the real
             // checkpoint (AGENTS.md Gotcha 26).
-            ts.push(bf16_vector(
+            ts.push(f16_vector(
                 &format!("{p}.linear_attn.A_log"),
                 v_heads,
                 0.0,
                 seed + 11,
             ));
-            ts.push(bf16_vector(
+            ts.push(f16_vector(
                 &format!("{p}.linear_attn.dt_bias"),
                 v_heads,
                 0.0,
                 seed + 12,
             ));
-            ts.push(bf16_vector(
+            ts.push(f16_vector(
                 &format!("{p}.linear_attn.norm.weight"),
                 LA_VALUE_DIM,
                 1.0,
@@ -322,7 +352,7 @@ pub fn build_synthetic_qwen35_real_install(
             ));
         }
     }
-    ts.push(bf16_vector(
+    ts.push(f16_vector(
         "language_model.model.norm.weight",
         HIDDEN,
         1.0,
@@ -347,7 +377,7 @@ pub fn build_synthetic_qwen35_real_install(
 /// the Qwen 3.6 fixture writes it. Unquantized in the real checkpoint too --
 /// its 48 `conv1d` tensors carry no `.scales`.
 fn conv1d_weight(name: &str, channels: usize, taps: usize, seed: u64) -> Tensor {
-    let flat = bf16_vector(name, channels * taps, 0.0, seed);
+    let flat = f16_vector(name, channels * taps, 0.0, seed);
     Tensor {
         name: flat.name,
         dtype: flat.dtype,

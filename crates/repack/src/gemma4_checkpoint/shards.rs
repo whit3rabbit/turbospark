@@ -4,9 +4,7 @@ use model_io::ModelFamily;
 
 use super::config::{is_supported_affine_shape, Gemma4Error, Gemma4Quant};
 use crate::ranged_download::RangeSource;
-use crate::resident_writer::{
-    ResidentEntrySpec, ResidentTensorSpec, DTYPE_BF16, DTYPE_FP16, DTYPE_FP32,
-};
+use crate::resident_writer::{ResidentEntrySpec, ResidentTensorSpec, DTYPE_BF16};
 use crate::safetensors_header::{SafetensorsHeader, TensorInfo};
 
 /// On-disk page alignment unit for `.gturbo` files (the Swift repacker's
@@ -217,12 +215,101 @@ impl<'a> Gemma4Shards<'a> {
     }
 }
 
-/// Converts string data type to raw byte dtype tag.
-pub fn raw_dtype_tag(tensor: &str, dtype: &str) -> Result<u8, Gemma4Error> {
+/// One unquantized tensor narrowed to BF16, which is the only unquantized
+/// width this port can dispatch.
+///
+/// This replaced a `raw_dtype_tag` that mapped `BF16`/`F16`/`F32` onto the
+/// three raw tags and was DELETED rather than left beside it: nothing in
+/// `crates/runtime` reads tags 2 or 3, so its only remaining use would have
+/// been to record a claim no reader honours.
+pub struct NarrowedRaw {
+    pub bytes: Vec<u8>,
+    /// Always [`DTYPE_BF16`]; a field so a caller cannot forget to change the
+    /// tag when it changes the bytes.
+    pub dtype: u8,
+    /// How many values did not survive the narrowing exactly. Zero for a BF16
+    /// source, and NOT always zero otherwise -- see the header.
+    pub lossy: usize,
+}
+
+/// Narrows an unquantized tensor to BF16, counting the values that lose bits.
+///
+/// **This is the safetensors sibling of the GGUF walk's `transcode_f32`, and
+/// it is owed for the same reason with a DIFFERENT measurement behind it.**
+/// The GGUF case narrows F32 that llama.cpp had upcast from BF16, so it is
+/// exactly lossless and was measured to be. This one narrows F16, and F16 is
+/// not a widened BF16: it carries 10 mantissa bits against BF16's 7, so a
+/// value only survives if it happens to sit on the coarser grid.
+///
+/// Measured on the real `prism-ml/Bonsai-27B-mlx-1bit`, whose every
+/// unquantized tensor is F16 (2026-08-14, ranged reads off the published
+/// file, deterministic):
+///
+/// | tensor | values | lossy | worst relative |
+/// |---|---|---|---|
+/// | `input_layernorm.weight` | 5120 | 4364 | 0.003891 |
+/// | `post_attention_layernorm.weight` | 5120 | 3738 | 0.003717 |
+/// | `self_attn.q_norm.weight` | 256 | 216 | 0.003690 |
+/// | `self_attn.k_norm.weight` | 256 | 222 | 0.003344 |
+/// | `model.norm.weight` | 5120 | 2583 | 0.003891 |
+/// | `linear_attn.{A_log,dt_bias,norm.weight,conv1d.weight}` | 41184 | **0** | 0.000000 |
+///
+/// So the loss is confined to the five RMS-norm families and is bounded by
+/// BF16's own quantum, 2^-8; the gated-DeltaNet tensors are exactly
+/// representable because this QAT checkpoint stores them on a coarse grid
+/// (its layer 0 `A_log` has ONE distinct value across 48 elements and its
+/// `conv1d` 538 across 40,960).
+///
+/// **The alternative was an FP16-weight variant of `rms_norm_bf16w` and its
+/// `_perhead` sibling**, which is two kernels plus a dtype threaded through
+/// every `norm_view` call site in four family flows. It is the fix if
+/// ROADMAP's step 5 cross-engine KL lands above its backend floor, and the
+/// first place to look if it does; it is not worth two kernels on the
+/// strength of a 0.4% perturbation of a norm scale in a model whose weight
+/// matrices are ONE BIT.
+pub fn narrow_raw_to_bf16(
+    tensor: &str,
+    dtype: &str,
+    bytes: Vec<u8>,
+) -> Result<NarrowedRaw, Gemma4Error> {
+    let mismatch = |detail: String| Gemma4Error::ShapeMismatch {
+        tensor: tensor.to_string(),
+        detail,
+    };
     match dtype {
-        "BF16" => Ok(DTYPE_BF16),
-        "F16" => Ok(DTYPE_FP16),
-        "F32" => Ok(DTYPE_FP32),
+        "BF16" => Ok(NarrowedRaw {
+            bytes,
+            dtype: DTYPE_BF16,
+            lossy: 0,
+        }),
+        "F16" | "F32" => {
+            let width = if dtype == "F16" { 2 } else { 4 };
+            if bytes.len() % width != 0 {
+                return Err(mismatch(format!(
+                    "{} bytes is not a whole number of {dtype} values",
+                    bytes.len()
+                )));
+            }
+            let mut out = Vec::with_capacity(bytes.len() / width * 2);
+            let mut lossy = 0usize;
+            for chunk in bytes.chunks_exact(width) {
+                let value = if width == 2 {
+                    compute::f16_to_f32(u16::from_le_bytes([chunk[0], chunk[1]]))
+                } else {
+                    f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]])
+                };
+                let narrowed = compute::f32_to_bf16(value);
+                if compute::bf16_to_f32(narrowed) != value {
+                    lossy += 1;
+                }
+                out.extend_from_slice(&narrowed.to_le_bytes());
+            }
+            Ok(NarrowedRaw {
+                bytes: out,
+                dtype: DTYPE_BF16,
+                lossy,
+            })
+        }
         other => Err(Gemma4Error::UnsupportedDtype {
             tensor: tensor.to_string(),
             dtype: other.to_string(),
