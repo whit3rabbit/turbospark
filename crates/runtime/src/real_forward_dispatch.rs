@@ -5,9 +5,10 @@ use model_io::ResidentIndex;
 
 use crate::real_forward_layout::{
     RoutedBlobLayout, DTYPE_GGUF_Q4_K, DTYPE_GGUF_Q5_K, DTYPE_GGUF_Q6_K, DTYPE_GGUF_Q8_0,
+    DTYPE_INT1_AFFINE,
 };
 use crate::real_forward_types::RealForwardError;
-use crate::real_forward_utils::{entry, resident_matrix};
+use crate::real_forward_utils::{entry, int1_group_size, resident_matrix};
 
 /// The routed-expert decode pair, dispatched for whichever blob layout this
 /// install carries: the vendored INT4-affine `moe.metal` kernels or one of
@@ -133,8 +134,8 @@ pub(crate) fn encode_moe_phase2_any(
 }
 
 /// Dispatches the embedding lookup matching the table's dtype tag: 4 =
-/// INT4-affine, plus the two GGUF block types a real file puts an embedding
-/// table in.
+/// INT4-affine, 15 = 1-bit affine, plus the GGUF block types a real file puts
+/// an embedding table in.
 ///
 /// Shared by both real flows rather than written at each one, because it is a
 /// property of the tensor and not of the family: Qwen's Q4_K_M keeps
@@ -173,6 +174,41 @@ pub(crate) fn encode_embed_any(
             gpu::encode_embed_lookup_q6_k(context, pass, table, out, token, hidden, embed_scale)
                 .map_err(RealForwardError::Gpu)
         }
+        // The 1-bit table (ROADMAP's 1-bit entry). It exists because the real
+        // checkpoint quantizes `embed_tokens` at one bit like everything else,
+        // which was read off its safetensors header rather than assumed.
+        //
+        // The ROW COUNT is derived rather than passed: this function's callers
+        // know the hidden size and the token id, never the vocabulary, and the
+        // group size cannot be read off the companion planes without it. One
+        // bit per element makes it exact.
+        DTYPE_INT1_AFFINE => {
+            let d = hidden as usize;
+            if d == 0 || (e.size_bytes as usize * 8) % d != 0 {
+                return Err(RealForwardError::Unsupported(format!(
+                    "embedding table {name}: {} 1-bit bytes is not a whole number of {d}-element \
+                     rows",
+                    e.size_bytes
+                )));
+            }
+            let rows = e.size_bytes as usize * 8 / d;
+            let group_size = int1_group_size(e, name, rows, d)?;
+            let scales = (weights.buffer(), weights.gpu_offset(e.scale_offset - base));
+            let biases = (weights.buffer(), weights.gpu_offset(e.bias_offset - base));
+            gpu::encode_embed_lookup_int1(
+                context,
+                pass,
+                table,
+                scales,
+                biases,
+                out,
+                token,
+                hidden,
+                group_size as u32,
+                embed_scale,
+            )
+            .map_err(RealForwardError::Gpu)
+        }
         4 => {
             // Resolved inside this arm on purpose: a GGUF entry carries no
             // companions, so its `scale_offset` is 0 and subtracting the
@@ -199,8 +235,8 @@ pub(crate) fn encode_embed_any(
 }
 
 /// Resolves a packed projection by its dtype tag: 4 = INT4-affine,
-/// 5 = INT8-affine (the resident writer's tags), and encodes the matching
-/// offset-bound GEMV.
+/// 5 = INT8-affine, 15 = 1-bit affine (the resident writer's tags), and
+/// encodes the matching offset-bound GEMV.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn encode_gemv_any(
     context: &mut gpu::MetalContext,
@@ -237,6 +273,34 @@ pub(crate) fn encode_gemv_any(
         4 => {
             let w = resident_matrix(weights, index, name, rows, cols)?;
             gpu::encode_dequant_int4_gemv_resident(context, pass, &w, x, y)
+                .map_err(RealForwardError::Gpu)
+        }
+        // 1-BIT AFFINE (ROADMAP's 1-bit entry, step 4). The same three planar
+        // regions as the two arms above and NOT a narrower version of them:
+        // the companions are FP16 rather than BF16 (same width, so no length
+        // check can tell), and the group size is the checkpoint's rather than
+        // the siblings' compile-time 64 -- so it is DERIVED from the entry
+        // here rather than named, and the derivation doubles as the shape
+        // check the other arms spell out.
+        //
+        // The SYMMETRIC kernel is deliberately not reachable from here. It is
+        // a different summation order (`crates/gpu`'s module header), so
+        // choosing it per tensor at dispatch time would make the bytes a
+        // function of which tensors happened to quantize symmetrically. If it
+        // is ever wired, that decision belongs at repack time and needs its
+        // own dtype tag.
+        DTYPE_INT1_AFFINE => {
+            let group_size = int1_group_size(e, name, rows, cols)?;
+            let w = gpu::Int1ResidentMatrix {
+                buffer: weights.buffer(),
+                weights_offset: weights.gpu_offset(e.file_offset - base),
+                scales_offset: weights.gpu_offset(e.scale_offset - base),
+                biases_offset: weights.gpu_offset(e.bias_offset - base),
+                rows,
+                cols,
+                group_size,
+            };
+            gpu::encode_dequant_int1_gemv_resident(context, pass, &w, x, y)
                 .map_err(RealForwardError::Gpu)
         }
         // GGUF Q8_0 (ROADMAP Phase G Stage 2). One byte run, no companions:

@@ -114,10 +114,12 @@ pub struct RealForwardRunner {
     /// scales, layer scalars. `None` for synthetic short-name installs,
     /// which keep the plain no-scale flow. See `real_forward_gemma4.rs`.
     pub(crate) real: Option<crate::families::gemma4::RealGemmaState>,
-    /// Real-checkpoint Qwen 3.6 decode state: the GDN recurrent buffers and
-    /// the Qwen-only scratch. Mutually exclusive with `real`; kept as its
-    /// own `Option` rather than folded into an enum so the Gemma path's
-    /// borrow shape is untouched.
+    /// Real-checkpoint Qwen decode state: the GDN recurrent buffers and
+    /// the Qwen-only scratch, for BOTH the MoE `qwen36` family and the dense
+    /// `qwen3_5` one (ROADMAP's 1-bit entry), which it tells apart by
+    /// `num_experts`. Mutually exclusive with `real`; kept as its own
+    /// `Option` rather than folded into an enum so the Gemma path's borrow
+    /// shape is untouched.
     pub(crate) real_qwen: Option<crate::families::qwen::RealQwenState>,
     /// Present for a `llama`-architecture install (ROADMAP Phase M2), which
     /// is Mixtral-style MoE only; a dense one is refused at build.
@@ -377,7 +379,12 @@ impl RealForwardRunner {
                     )?);
                 }
             }
-            model_io::ModelFamily::Qwen36 => {
+            // One flow for both, on the same footing `llama` and `qwen3moe`
+            // share `families/llama/`'s: every BEHAVIOURAL field of
+            // `bonsai_27b()` equals `qwen36_35b_a3b()`'s and every SHAPE field
+            // differs, so `qwen3_5` is the DENSE half of this flow and not a
+            // sixth one. `RealQwenState` carries the split, off `num_experts`.
+            model_io::ModelFamily::Qwen36 | model_io::ModelFamily::Qwen35 => {
                 runner.real_qwen = Some(crate::families::qwen::RealQwenState::build(
                     &mut runner.context,
                     &runner.weights,
@@ -399,20 +406,6 @@ impl RealForwardRunner {
             model_io::ModelFamily::DeepseekV4Flash => {
                 return Err(RealForwardError::Unsupported(
                     "the DeepSeek-V4-Flash family has no decode flow yet".to_string(),
-                ));
-            }
-            // Refused BY NAME until the dense branch lands, which is the
-            // same order `llama`'s dense half and `gpt-oss` were brought up
-            // in: the registry and the repack walk recognize a family one
-            // phase before `open()` will run it (`crates/repack`'s
-            // `arch_registry` doc states the split). The flow it will take
-            // is `families/qwen/`'s -- every behavioural field is Qwen
-            // 3.6's -- plus a dense FFN branch, so this arm becomes a
-            // `RealQwenState::build` call and not a sixth flow.
-            model_io::ModelFamily::Qwen35 => {
-                return Err(RealForwardError::Unsupported(
-                    "the qwen3_5 family installs and validates but has no decode flow yet                      (ROADMAP's 1-bit entry, step 4): it needs the dense-FFN branch in                      families/qwen/"
-                        .to_string(),
                 ));
             }
             // A FIFTH FLOW, not a sixth family on an existing one: all four

@@ -1,8 +1,16 @@
 //! `RealQwenState`: everything [`crate::real_forward::RealForwardRunner`]
-//! allocates once when it opens a Qwen 3.6 install -- the GDN recurrent
-//! buffers, the unit router scales that stand in for Qwen's absent
+//! allocates once when it opens a Qwen 3.6 or `qwen3_5` install -- the GDN
+//! recurrent buffers, the unit router scales that stand in for Qwen's absent
 //! `router.scale`/`per_expert_scale`, and every piece of per-token
 //! scratch the flow in `mod.rs` writes.
+//!
+//! **TWO FAMILIES, one state, and they differ in the FFN alone** (ROADMAP's
+//! 1-bit entry). `bonsai_27b()`'s every BEHAVIOURAL field equals
+//! `qwen36_35b_a3b()`'s and every SHAPE field differs, which is what licenses
+//! sharing the flow rather than forking it; `shared_expert_gated` is the one
+//! that legitimately parts company, and it does so BECAUSE the model is
+//! dense. The split is read off `num_experts`, never off tensor naming, for
+//! the reason `families/llama/state.rs` reads its own off the same field.
 
 use model_io::{ArchConfig, ResidentIndex};
 
@@ -21,6 +29,14 @@ pub(crate) struct RealQwenState {
     /// `rotary_dim`: `full_head_dim * partial_rotary_factor`, the width of
     /// the rotated prefix of each head.
     pub(crate) rotary_dim: u32,
+    /// DENSE, i.e. `num_experts == 0`: the `qwen3_5` half of this flow, whose
+    /// layers carry one `mlp.{gate,up,down}_proj` where Qwen 3.6 carries a
+    /// router, a gated shared expert and a routed table.
+    ///
+    /// It changes the FFN half of a layer and nothing above it: the
+    /// embedding, both norms, both attention blocks, the raw residual and the
+    /// head are the same code either way.
+    pub(crate) dense: bool,
     /// BF16 `[hidden]` of ones. The INT8 router kernel multiplies `x[n]`
     /// by an effective scale per element; Qwen has no `router.scale` and
     /// `router_scaled` is false, so the scale is identically 1.
@@ -62,24 +78,57 @@ impl RealQwenState {
         arch: &ArchConfig,
     ) -> Result<Self, RealForwardError> {
         let unsupported = |detail: String| Err(RealForwardError::Unsupported(detail));
+        // DENSE AND MoE ARE BOTH THIS FLOW. The two are mutually exclusive
+        // rather than a spectrum, so a file claiming experts with no `top_k`
+        // (or the reverse) is malformed and is refused rather than guessed at.
+        if arch.num_experts < 0 || arch.top_k_experts < 0 {
+            return unsupported(format!(
+                "negative expert counts: num_experts {}, top_k_experts {}",
+                arch.num_experts, arch.top_k_experts
+            ));
+        }
+        let dense = arch.num_experts == 0;
+        if dense != (arch.top_k_experts == 0) {
+            return unsupported(format!(
+                "num_experts {} and top_k_experts {} disagree about whether this install is \
+                 dense; both must be zero or both positive",
+                arch.num_experts, arch.top_k_experts
+            ));
+        }
         if arch.ffn_sandwich_norms
             || arch.router_scaled
             || arch.embedding_scaled_by_sqrt_hidden
             || !arch.attn_output_gate
-            || !arch.shared_expert_gated
             || !arch.rope_neox_subdim
         {
             return unsupported(
-                "the Qwen 3.6 flow needs attnOutputGate + sharedExpertGated + ropeNeoxSubdim \
-                 and none of ffnSandwichNorms / routerScaled / embeddingScaledBySqrtHidden"
+                "the Qwen flow needs attnOutputGate + ropeNeoxSubdim and none of \
+                 ffnSandwichNorms / routerScaled / embeddingScaledBySqrtHidden"
                     .to_string(),
             );
         }
-        if arch.final_logit_softcap != 0.0 {
-            return unsupported("Qwen 3.6 has no final logit softcap".to_string());
+        // `sharedExpertGated` is the ONE behavioural field the two halves
+        // disagree on, and the disagreement follows from the FFN shape rather
+        // than being an independent axis: there is no shared expert to gate on
+        // a dense model. Checked in both directions, because a MoE install
+        // that lost the flag would silently skip the sigmoid gate and a dense
+        // one that claimed it would be describing a tensor it does not have.
+        if arch.shared_expert_gated == dense {
+            return unsupported(format!(
+                "sharedExpertGated is {} on a {} install; a MoE Qwen gates its shared expert and \
+                 a dense one has none",
+                arch.shared_expert_gated,
+                if dense { "dense" } else { "MoE" }
+            ));
         }
-        if arch.num_experts <= 0 || arch.top_k_experts <= 0 {
-            return unsupported("Qwen 3.6 installs are MoE on every layer".to_string());
+        if arch.final_logit_softcap != 0.0 {
+            return unsupported("no Qwen family here has a final logit softcap".to_string());
+        }
+        if dense && arch.intermediate_size <= 0 {
+            return unsupported(format!(
+                "a dense Qwen install needs a positive ffnIntermediate, got {}",
+                arch.intermediate_size
+            ));
         }
         if arch.top_k_experts as usize > gpu::MAX_STREAMED_EXPERTS {
             return unsupported(format!(
@@ -94,11 +143,14 @@ impl RealQwenState {
             .any(|&m| m != 1 && m != 2)
         {
             return unsupported(
-                "Qwen 3.6 layers are full attention (1) or gated DeltaNet (2) only".to_string(),
+                "this flow's layers are full attention (1) or gated DeltaNet (2) only".to_string(),
             );
         }
         if !arch.has_linear_attention_layers() {
-            return unsupported("a Qwen 3.6 install with no linear layers is not Qwen".to_string());
+            return unsupported(
+                "a hybrid Qwen install with no linear layers is not one this flow can run"
+                    .to_string(),
+            );
         }
 
         let shape = gpu::GdnShape {
@@ -128,10 +180,29 @@ impl RealQwenState {
             let mut probes = vec![
                 layer_tensor(layer, "input_layernorm.weight"),
                 layer_tensor(layer, "post_attention_layernorm.weight"),
-                layer_tensor(layer, "mlp.gate.weight"),
-                layer_tensor(layer, "mlp.shared_expert_gate.weight"),
-                layer_tensor(layer, "mlp.shared_expert.gate_proj.weight"),
             ];
+            // The FFN half is the only thing the two shapes disagree on. A
+            // dense layer's three names are the ones the MoE half's SHARED
+            // expert spells `mlp.shared_expert.*`, one level shallower.
+            probes.extend(
+                if dense {
+                    [
+                        "mlp.gate_proj.weight",
+                        "mlp.up_proj.weight",
+                        "mlp.down_proj.weight",
+                    ]
+                    .as_slice()
+                } else {
+                    [
+                        "mlp.gate.weight",
+                        "mlp.shared_expert_gate.weight",
+                        "mlp.shared_expert.gate_proj.weight",
+                    ]
+                    .as_slice()
+                }
+                .iter()
+                .map(|s| layer_tensor(layer, s)),
+            );
             probes.extend(if arch.layer_is_linear(layer) {
                 [
                     "linear_attn.in_proj_qkv.weight",
@@ -175,9 +246,12 @@ impl RealQwenState {
             gdn: gpu::GdnStateManager::new(context.device(), arch),
             shape,
             rotary_dim: rotary_dim as u32,
+            dense,
             router_ones,
             per_expert_ones: vec![1.0; num_experts],
-            router_logits_f32: context.new_output_buffer((num_experts * 4) as u64),
+            // `new_output_buffer(0)` is not a thing worth finding out about at
+            // the first dispatch, and a dense flow never binds this.
+            router_logits_f32: context.new_output_buffer((num_experts.max(1) * 4) as u64),
             q_packed: halfs(2 * q_dim),
             attn_gate: halfs(q_dim),
             gdn_qkv_raw: halfs(qkv_dim),

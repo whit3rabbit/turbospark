@@ -62,6 +62,19 @@ pub(crate) const DTYPE_GGUF_Q5_K: u8 = 13;
 /// fails at `encode_gemv_any` by name. The tag exists so this list and the
 /// writer's stay structurally parallel.
 pub(crate) const DTYPE_GGUF_MXFP4: u8 = 14;
+/// 1-BIT AFFINE (ROADMAP's 1-bit entry), mirroring
+/// `turbospark_repack::DTYPE_INT1_AFFINE`. Its number is 15 rather than
+/// something beside the 4 and 5 of its affine siblings only because 6..=14
+/// were taken by the GGUF tags first.
+///
+/// **It is NOT a GGUF block type and must never join [`GGUF_BLOCK_DTYPES`] or
+/// [`EXECUTABLE_GGUF_DTYPES`].** Those two lists are about self-contained
+/// blocks carrying their scale inline; a 1-bit affine tensor has the same
+/// three planar regions an INT4 one has, and the guard at `open()` tests
+/// membership of the first list before anything else, so a tag listed there
+/// by accident would be refused as an unrunnable GGUF type.
+pub(crate) const DTYPE_INT1_AFFINE: u8 = 15;
+
 /// The executable subset of [`GGUF_BLOCK_DTYPES`], and the resident-index
 /// twin of `model_io::EXECUTABLE_GGUF_TYPES`. Grows only when a kernel plus
 /// its parity test land, and the two lists have to move together or

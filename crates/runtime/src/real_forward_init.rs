@@ -19,9 +19,20 @@ pub(crate) fn validate_arch_config(expecting: &ArchConfig) -> Result<(), RealFor
             "compressed (DeepSeek CSA/HCA) attention layers are not supported yet".to_string(),
         ));
     }
-    if max_kind == 2 && expecting.family != model_io::ModelFamily::Qwen36 {
+    // A mask-2 layer is gated DeltaNet, and the two families whose flow can
+    // encode one are the two `families/qwen/` serves: `qwen36` and (ROADMAP's
+    // 1-bit entry) the dense `qwen3_5`. Listed rather than defaulted for the
+    // reason `encode_gemv_any`'s catch-all is: a family added later that
+    // declares linear layers and has no GDN flow would otherwise reach
+    // `RealQwenState` and bind a neighbour's tensors.
+    if max_kind == 2
+        && !matches!(
+            expecting.family,
+            model_io::ModelFamily::Qwen36 | model_io::ModelFamily::Qwen35
+        )
+    {
         return Err(RealForwardError::Unsupported(format!(
-            "linear-attention layers need the qwen36 family, not {}",
+            "linear-attention layers need a qwen36 or qwen35 family, not {}",
             expecting.family.as_str()
         )));
     }

@@ -1,6 +1,9 @@
-//! The real-checkpoint Qwen 3.6 decode flow for [`RealForwardRunner`].
+//! The real-checkpoint Qwen decode flow for [`RealForwardRunner`], serving
+//! BOTH the `qwen36` family and (ROADMAP's 1-bit entry) the dense `qwen3_5`
+//! one, which differ in their FFN half and in nothing else.
 
 mod attn;
+mod dense;
 mod moe;
 mod state;
 
@@ -37,20 +40,20 @@ impl RealForwardRunner {
         Some(max)
     }
 
-    pub(crate) fn produce_real_qwen36(
+    pub(crate) fn produce_real_qwen(
         &mut self,
         token: i32,
         position: usize,
         logits: &mut [LogitValue],
     ) -> Result<(), RealForwardError> {
         let started = Instant::now();
-        let result = self.produce_real_qwen36_inner(token, position, logits);
+        let result = self.produce_real_qwen_inner(token, position, logits);
         self.phases.calls += 1;
         self.phases.total_nanos += started.elapsed().as_nanos() as u64;
         result
     }
 
-    fn produce_real_qwen36_inner(
+    fn produce_real_qwen_inner(
         &mut self,
         token: i32,
         position: usize,
@@ -192,6 +195,20 @@ impl RealForwardRunner {
                 RMS_EPS,
             )
             .map_err(gpu_err)?;
+
+            // THE DENSE HALF DIVERGES HERE AND NOWHERE ELSE. Everything above
+            // -- embedding, both norms, both attention blocks, the raw
+            // residual -- is the same code for a `qwen3_5` as for a Qwen 3.6,
+            // and so is the head below. A dense layer also needs no mid-layer
+            // commit, because nothing in it is data-dependent on a host
+            // readback the way the router's top-k is, so the pass stays open
+            // across the whole token.
+            if qwen.dense {
+                dense::encode_qwen_layer_dense(
+                    context, &pass, weights, index, scratch, qwen, layer, hidden, inter, use_silu,
+                )?;
+                continue;
+            }
 
             let router_name = layer_tensor(layer, "mlp.gate.weight");
             let router = entry(index, &router_name)?;
