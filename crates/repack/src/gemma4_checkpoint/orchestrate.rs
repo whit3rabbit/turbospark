@@ -321,6 +321,28 @@ pub fn gemma4_manifest_quant(quant: &Gemma4Quant) -> serde_json::Value {
 /// slot has to be probed at `linear_attn.in_proj_qkv` -- there is no
 /// `self_attn.q_proj` under layer 0 at all.
 pub fn manifest_quant(quant: &Gemma4Quant, family: ModelFamily) -> serde_json::Value {
+    manifest_quant_for(quant, family, true)
+}
+
+/// [`manifest_quant`] told whether the model HAS routed experts.
+///
+/// **`has_experts = false` makes the three MoE slots mirror the attention
+/// one, which is `crates/repack` Gotcha 8's `or_attention` rule arriving on
+/// the safetensors side.** The GGUF walk learned it in ROADMAP M4, at one
+/// five-minute re-stream per slot; this side kept the old shape only because
+/// no dense safetensors checkpoint existed until `qwen3_5`, and because its
+/// dense path wrote no quant block at all so nothing ever read these.
+///
+/// A probe here cannot tell "found, at the default width" from "not found":
+/// `bits_for` reads the OVERRIDES map, not the tensor list. So denseness is
+/// passed in rather than inferred, and a slot describing a component the
+/// model does not have says the same thing the attention slot does --
+/// executable exactly when the install is.
+pub fn manifest_quant_for(
+    quant: &Gemma4Quant,
+    family: ModelFamily,
+    has_experts: bool,
+) -> serde_json::Value {
     // The companion dtype and the group size are read off the CHECKPOINT, not
     // written as constants. They used to be `bf16`/64 literals, which was a
     // true statement about every install that existed and became a false one
@@ -395,11 +417,22 @@ pub fn manifest_quant(quant: &Gemma4Quant, family: ModelFamily) -> serde_json::V
             format!("{l0}.experts.switch_glu.gate_proj"),
         ),
     };
+    // The three MoE slots mirror ATTENTION when there are no experts: see
+    // this function's doc, and `crates/repack` Gotcha 8 for what refusing
+    // them instead cost the GGUF side.
+    let attention_bits = quant.bits_for(&attention);
+    let moe_slot = |probe: &str| {
+        if has_experts {
+            slot(quant.bits_for(probe))
+        } else {
+            slot(attention_bits)
+        }
+    };
     serde_json::json!({
         "embedding": slot(quant.bits_for("language_model.model.embed_tokens")),
-        "attention": slot(quant.bits_for(&attention)),
-        "router": slot(quant.bits_for(&router)),
-        "sharedExpert": slot(quant.bits_for(&shared)),
-        "routedExpert": slot(quant.bits_for(&routed)),
+        "attention": slot(attention_bits),
+        "router": moe_slot(&router),
+        "sharedExpert": moe_slot(&shared),
+        "routedExpert": moe_slot(&routed),
     })
 }

@@ -485,7 +485,26 @@ fn validate_quant(quant: &ManifestQuant) -> Result<(), ModelError> {
         // dynamic-quant checkpoint ships Q2 experts under a Q4 core.
         ("routedExpert", &quant.routed_expert, &[2, 4]),
     ];
+    // A slot that is byte-for-byte the ATTENTION slot is a DEFAULTED
+    // statement about a component the model does not have, not a claim about
+    // bytes. The repack walks write it that way on purpose
+    // (`crates/repack`'s `manifest_quant_for` and Gotcha 8's `or_attention`):
+    // `manifest.quant` has five fixed slots and no architecture fills all
+    // five, so refusing one is how a runnable dense install fails to open
+    // with a message about something it never had -- which cost M4 one
+    // five-minute re-stream per slot.
+    //
+    // The residual is worth naming: this admits an MoE install whose ROUTER
+    // genuinely is 4-bit and happens to match its attention slot, which the
+    // INT8-only `router_gemv_gemma4_r4` would misread. Nothing writes one --
+    // Gemma and Qwen both override the router to 8 bits, and a checkpoint
+    // that did not would be a new family's problem -- but it is admitted
+    // here rather than refused, unlike the bit lists below.
+    let attention = &quant.attention;
     for (name, slot, allowed_bits) in slots {
+        if !std::ptr::eq(slot, attention) && slot == attention {
+            continue;
+        }
         let affine = allowed_bits.contains(&slot.weight_bits)
             && slot.scheme.to_lowercase() == "affine"
             && slot.scale_type.to_lowercase() == "bf16"

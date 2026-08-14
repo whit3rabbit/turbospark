@@ -31,6 +31,7 @@ mod synthetic_gguf;
 mod synthetic_llama;
 mod synthetic_model;
 mod synthetic_qwen;
+mod synthetic_qwen35;
 mod synthetic_real;
 
 pub use arch_registry::{
@@ -41,9 +42,9 @@ pub use gemma4_checkpoint::{
     classify_for_family, classify_gemma4, gemma4_manifest_quant, is_supported_affine_shape,
     manifest_quant, orchestrate_gemma4_checkpoint, orchestrate_gemma4_checkpoint_sharded,
     parse_gemma4_config, parse_gemma4_quantization, pass_through_packed, write_gemma4_install,
-    write_gemma4_install_streamed, write_qwen36_install, write_qwen36_install_streamed,
-    Gemma4Bucket, Gemma4Error, Gemma4Quant, Gemma4RepackOutput, Gemma4Shards,
-    AFFINE_1BIT_GROUP_SIZE, AFFINE_GROUP_SIZE, GTURBO_PAGE_BYTES,
+    write_gemma4_install_streamed, write_qwen35_install, write_qwen36_install,
+    write_qwen36_install_streamed, Gemma4Bucket, Gemma4Error, Gemma4Quant, Gemma4RepackOutput,
+    Gemma4Shards, AFFINE_1BIT_GROUP_SIZE, AFFINE_GROUP_SIZE, GTURBO_PAGE_BYTES,
 };
 pub use gguf_checkpoint::{
     dtype_tag_for_ggml_type, gguf_manifest_quant, orchestrate_gguf_checkpoint,
@@ -99,6 +100,7 @@ pub use synthetic_model::{
     tiny_gemma4_arch, up_proj_name,
 };
 pub use synthetic_qwen::{build_synthetic_qwen36_real_install, tiny_qwen36_arch};
+pub use synthetic_qwen35::{build_synthetic_qwen35_real_install, tiny_qwen35_arch};
 pub use synthetic_real::build_synthetic_gemma4_real_install;
 
 // Token id width consumed from the core primitives, keeping the dependency

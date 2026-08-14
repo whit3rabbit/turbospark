@@ -63,12 +63,22 @@ pub fn write_gemma4_install_streamed(
     ));
 
     if plan.routed.is_empty() {
-        crate::gturbo_writer::write_gturbo_install_with_resident_index(
-            dir,
-            arch,
-            model_id,
-            &resident_bytes,
-        )?;
+        // A DENSE INSTALL STILL NEEDS ITS QUANT BLOCK, which is why this
+        // goes through the streaming writer at zero layers rather than
+        // through `write_gturbo_install_with_resident_index` -- that one has
+        // no way to carry one and writes `"quant": null`. The GGUF walk
+        // learned this in ROADMAP M4 (`crates/repack` Gotcha 8); this side
+        // kept the old shape only because no DENSE safetensors checkpoint
+        // existed until `qwen3_5`.
+        //
+        // The two produce an identical `layout.json` (stride 0, no layers),
+        // so nothing else changes. What changes is that the install now
+        // DECLARES its quantization -- which for a 1-bit checkpoint is the
+        // only thing that carries `(1, fp16, 128)` to `validate_quant` at
+        // all, and without which the whole manifest gate never runs.
+        let mut writer = crate::gturbo_writer::StreamingGturboWriter::new(dir, 0, 0)?;
+        writer.set_quant(orchestrate::manifest_quant_for(quant, arch.family, false));
+        writer.finish(arch, model_id, &resident_bytes)?;
         progress("install written (no routed experts)");
         return Ok(());
     }
@@ -106,12 +116,12 @@ pub fn write_gemma4_install(
     let out = orchestrate_gemma4_checkpoint(header, source, arch, quant)?;
     let resident_bytes = crate::resident_writer::build_resident_weights_bin_mixed(&out.resident);
     if out.layers.is_empty() {
-        crate::gturbo_writer::write_gturbo_install_with_resident_index(
-            dir,
-            arch,
-            model_id,
-            &resident_bytes,
-        )?;
+        // The streamed walk's reason, verbatim: a dense install still needs
+        // its quant block, and `write_gturbo_install_with_resident_index`
+        // cannot carry one.
+        let mut writer = crate::gturbo_writer::StreamingGturboWriter::new(dir, 0, 0)?;
+        writer.set_quant(orchestrate::manifest_quant_for(quant, arch.family, false));
+        writer.finish(arch, model_id, &resident_bytes)?;
     } else {
         let mut writer = crate::gturbo_writer::StreamingGturboWriter::new(
             dir,
@@ -143,6 +153,34 @@ pub fn write_qwen36_install(
     if arch.family != ModelFamily::Qwen36 {
         return Err(Box::new(Gemma4Error::Config(format!(
             "write_qwen36_install needs arch.family = qwen36, got {}",
+            arch.family.as_str()
+        ))));
+    }
+    write_gemma4_install(dir, arch, model_id, header, source, quant)
+}
+
+/// [`write_gemma4_install`] behind a `qwen3_5` family guard (ROADMAP's
+/// 1-bit entry).
+///
+/// The same walk again, and the guard is the whole wrapper for the reason
+/// [`write_qwen36_install`]'s is: `write_gemma4_install` reads the routed
+/// marker and the quant probe names off `arch.family`, so an install written
+/// under the wrong tag is well-formed and wrong. That matters more here than
+/// for any other pair, because `qwen3_5` and `qwen3_5_moe` are one suffix
+/// apart -- a Bonsai checkpoint written as Qwen 3.6 would look for
+/// `.mlp.switch_mlp.` experts that do not exist and quietly make every dense
+/// FFN tensor resident.
+pub fn write_qwen35_install(
+    dir: &Path,
+    arch: &ArchConfig,
+    model_id: &str,
+    header: &SafetensorsHeader,
+    source: &dyn RangeSource,
+    quant: &Gemma4Quant,
+) -> Result<Gemma4RepackOutput, Box<dyn std::error::Error>> {
+    if arch.family != ModelFamily::Qwen35 {
+        return Err(Box::new(Gemma4Error::Config(format!(
+            "write_qwen35_install needs arch.family = qwen35, got {}",
             arch.family.as_str()
         ))));
     }
