@@ -54,6 +54,7 @@ Dense models (no experts to stream) work too, but the memory story is different 
 | **Qwen3.8-27B** (INT4) | 14 GB | 660 MB counted | 17 - 19 tok/s | see caveat |
 | **Mistral 7B** (Q4_K_M) | 4.1 GB | 1.2 GB counted | 16 - 30 tok/s | measured at 8k context |
 | **Bonsai-27B** (1-bit) | 3.9 GB | not yet measured | ~18 tok/s | |
+| **Ternary-Bonsai-27B** (2-bit) | 7.6 GB | 660 MB counted | 13 - 14 tok/s | same caveat |
 
 > **Caveat, and please read it before quoting the 660 MB.** Nothing streams in a dense model. That figure is what macOS *counts* against the process; the 14 GB of weights are memory-mapped and simply are not counted. You still need a machine that can hold and page them, so treat a dense model as needing roughly its **size on disk** in free RAM, not its counted footprint. The counted number is useful for spotting leaks, not for capacity planning.
 
@@ -115,7 +116,7 @@ Six architecture families run end to end, each with a real decode flow rather th
 | --- | --- | --- |
 | **Gemma 4** | `gemma-4-26B-A4B-it` (MLX INT4, Q8_0 GGUF, sub-4-bit IQ GGUF) | Sliding-window + full attention, 128 streamed experts |
 | **Qwen 3.6** (`qwen3_5_moe`) | `Qwen3.6-35B-A3B` (MLX INT4, Q4_K_M GGUF) | Gated-DeltaNet linear attention + 256 streamed experts |
-| **Qwen 3.5/3.8 dense** (`qwen3_5`) | `Qwen/Qwen3.8-27B`, `prism-ml/Bonsai-27B-mlx-1bit` | Same hybrid attention, dense FFN. **Two checkpoints, one architecture** |
+| **Qwen 3.5/3.8 dense** (`qwen3_5`) | `Qwen/Qwen3.8-27B`, `prism-ml/Bonsai-27B-mlx-1bit`, `prism-ml/Ternary-Bonsai-27B-mlx-2bit` | Same hybrid attention, dense FFN. **Three checkpoints at 4, 2 and 1 bits, one architecture** |
 | **Qwen3-MoE** (`qwen3moe`) | `Qwen3-30B-A3B` | Plain GQA + 128 streamed experts |
 | **Llama** (`llama`) | Mixtral 8x7B, Mistral 7B, TinyLlama 1.1B | Plain GQA; covers both the MoE and dense halves of one architecture string |
 | **gpt-oss** (`gptOss`) | `gpt-oss-20b` MXFP4 | GQA with attention sinks, YaRN rope, Harmony reasoning channels |

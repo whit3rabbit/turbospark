@@ -71,9 +71,12 @@ naming schemes genuinely differ and none is derivable from another: Qwen 3.6 is
     these two rows are why**: `qwen3_5` and `qwen3_5_moe` are one suffix
     apart, so a prefix match resolves every dense checkpoint to the MoE
     family -- a baseline with 256 experts and a decode flow with a router in
-    it, i.e. fluent WRONG output rather than an error. Two published
-    checkpoints report `qwen3_5`: `prism-ml/Bonsai-27B-mlx-1bit` and
-    `Qwen/Qwen3.8-27B`, and they share one `ArchConfig` exactly.
+    it, i.e. fluent WRONG output rather than an error. THREE published
+    checkpoints report `qwen3_5`: `prism-ml/Bonsai-27B-mlx-1bit`,
+    `Qwen/Qwen3.8-27B` and `prism-ml/Ternary-Bonsai-27B-mlx-2bit`, at 1, 4
+    and 2 bits, and they share one `ArchConfig` exactly. The last two needed
+    no field, no kernel-independent change and no decode flow -- only their
+    own affine WIDTH.
   - The `_text` spellings are what the multimodal checkpoints' `text_config`
     carries. `architectures` (class names like
     `Gemma4ForConditionalGeneration`) is deliberately not consulted: it is a
@@ -125,7 +128,7 @@ port's registry" message rather than the "recognized, needs X" one.
 | **Mixtral 8x7B / 8x22B** (`llama` + `expert_count`) | Plain GQA attention + MoE (8 experts, top-2), no shared expert, untied head | **Full Support** | *Planned* | Full Support | Full Support | *MoE, keeps the ceiling* |
 | **Llama 3 / 3.1 / 3.2 / 3.3, Llama 2, Mistral 7B** (`llama`, dense) | Standard Dense Transformer, GQA, RoPE frequency scaling (a TENSOR, `rope_freqs.weight`) | *Refused at open, by name* | *Planned* | Full Support | Full Support | *dense: whole model resident* |
 | **Qwen3-MoE 30B-A3B** (`qwen3moe`) | Plain GQA + per-head QK-norm, MoE (128 experts, top-8), no linear attention, no shared expert, untied head | **Full Support** | *Planned* | Full Support | Full Support | *MoE, keeps the ceiling* |
-| **Qwen3.8-27B / Bonsai-27B** (`qwen3_5`, dense) | Gated-DeltaNet Linear Attention (48 of 64 layers) + DENSE SwiGLU FFN, packed q/gate, untied head | **Full Support** | *Not supported* | Full Support | Full Support | **~660 MiB RAM** (dense; see note) |
+| **Qwen3.8-27B / Bonsai-27B / Ternary-Bonsai-27B** (`qwen3_5`, dense) | Gated-DeltaNet Linear Attention (48 of 64 layers) + DENSE SwiGLU FFN, packed q/gate, untied head | **Full Support** | *Not supported* | Full Support | Full Support | **~660 MiB RAM** (dense; see note) |
 | **Llama 4 Scout / Maverick** (`llama4`) | MoE with interleaved chunked attention | *Registered, planned* | *Planned* | Full Support | Full Support | *MoE, keeps the ceiling* |
 | **gpt-oss 20B / 120B** (`gpt-oss`) | MXFP4 experts, attention sinks, per-projection biases, YaRN, clamped SwiGLU | *Supported string; kernels landed, decode flow pending (ROADMAP M5)* | *Planned* | Full Support | Full Support | *MoE at 12.6 MiB per expert; 20B keeps the ceiling at 4.73 GiB of slot cache, 120B does not stream usefully* |
 | **Phi-3 / Phi-3.5** (`phi3`) | SuScaled (longrope) RoPE, dense FFN | *Registered, planned* | *Planned* | Full Support | Full Support | *dense: whole model resident* |

@@ -106,6 +106,10 @@ fn resolve_target() -> Option<DumpTarget> {
         // the KL is what it is here for, and that replays IDS rather than
         // prose, so it is valid whatever the framing is.
         .or_else(|| plain("TURBOSPARK_QWEN35_INSTALL_DIR"))
+        // ROADMAP's ternary entry. The same family and the same plain arm:
+        // one architecture at a third quantization, so nothing about the
+        // FRAMING moves and only the install does.
+        .or_else(|| plain("TURBOSPARK_TERNARY_INSTALL_DIR"))
         .or_else(|| {
             env_dir("TURBOSPARK_GPTOSS_INSTALL_DIR").map(|install| DumpTarget {
                 install,
@@ -122,7 +126,8 @@ fn dump_reference_logits() {
         eprintln!(
             "logit_dump: needs TURBOSPARK_GEMMA4_INSTALL_DIR (or \
              TURBOSPARK_QWEN36_INSTALL_DIR, TURBOSPARK_QWEN3MOE_INSTALL_DIR, \
-             TURBOSPARK_QWEN35_INSTALL_DIR, or TURBOSPARK_GPTOSS_INSTALL_DIR) and \
+             TURBOSPARK_QWEN35_INSTALL_DIR, TURBOSPARK_TERNARY_INSTALL_DIR, or \
+             TURBOSPARK_GPTOSS_INSTALL_DIR) and \
              TURBOSPARK_LOGIT_DUMP_DIR; skipping."
         );
         return;

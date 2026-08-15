@@ -747,7 +747,7 @@ and the first whose reference is MLX rather than llama.cpp, because the
 checkpoint is MLX-native and there is no GGUF of it. **It is also the
 tightest agreement measured in this repo, by two orders of magnitude.**
 
-`scripts/kld_mlx_1bit.py` replays this port's own id sequence through
+`scripts/kld_mlx_affine.py` replays this port's own id sequence through
 `mlx-lm==0.31.2` on the exact 5,129,115,752 bytes `~/models/bonsai27b.gturbo`
 was streamed from. 573 positions, warm cache, 2026-08-14 on AC. The
 reference runs on `github.com/PrismML-Eng/mlx@prism` built from source: **the
@@ -1075,7 +1075,9 @@ different TRAINED weights and not two quantizations of one training run
   64-layer depth and the gated-DeltaNet recurrence, not the weight reads,
   are what set the rate.
 - **660 MiB of counted footprint on a 27B model**, because AGENTS.md Gotcha
-  40 holds here too. That gotcha was measured on a dense GGUF install a
+  40 holds here too. (The ternary section below turns this into the
+  strongest form of that evidence: the same architecture at HALF the weight
+  bytes reads 661.6 MiB.) That gotcha was measured on a dense GGUF install a
   quarter this size and explicitly said to re-derive it per install shape;
   re-derived on a dense SAFETENSORS install of 15.1 GB, the weights are
   still absent from the counter. The accounting that is left closes on KV
@@ -1100,6 +1102,139 @@ put this family in the shared 4,096/1,024 group on the TOKENIZER's evidence
 and flagged it "UNVERIFIED until an install exists". Confirmed:
 `long-synthesis` tokenizes to 2,940 and generates 637 more, so all three
 cases stop `endOfTurn` with 3,577 of 4,096 used.
+
+### The eighth checkpoint, and the ternary operating point: `prism-ml/Ternary-Bonsai-27B-mlx-2bit`
+
+NOT A PARITY CLAIM. Swift has no `qwen3_5` support at all, so every number
+here is this port measuring itself.
+
+Measured 2026-08-15 on the machine in the provenance table, on AC, release,
+16 expert-cache slots (inert on a dense install), 4,096 context. Install
+streamed from the 8,490,785,104-byte published artifact into 7.57 GB of
+resident weights, in 13.8 minutes.
+
+| | value |
+| --- | ---: |
+| resident weights | 7,569,161,216 bytes |
+| packed-expert files | 0 (dense) |
+| unquantized tensors narrowed to BF16 | 161 tensors, 546,104 values |
+| reference perplexity | 6.8350 |
+| greedy digest | `6a99d870` |
+| sampled digest | `7ea1f8d9` |
+| greedy at 8 slots | `6a99d870` (equal, as it must be) |
+| decode, greedy / sampled smoke | 14.2 / 13.8 tok/s |
+| peak `phys_footprint` | 661.6 / 657.8 MiB (two readings) |
+| decode, short / medium / long | 13.8 / 13.6 / 12.7 tok/s |
+| replay growth | +0.00 / +0.02 MiB |
+
+**THE THIRD CHECKPOINT OF ONE ARCHITECTURE, and it needed no `ArchConfig`
+field, no baseline, no parser and no decode flow.** Its `text_config` is
+Bonsai-27B's to the KEY -- the same `eos_token_id` 248046 and all -- so the
+two files differ in their `quantization` object alone, which is a stronger
+statement than the Qwen3.8 pair makes (that one differs in two keys).
+`both_published_checkpoints_parse_to_one_baseline` asserts all three parse
+to `qwen_gdn_dense_27b()` offline, without the network.
+
+What it cost was a WIDTH, not a family: a CPU reference (`quant_2bit.rs`),
+two Metal kernels (a GEMV and an embedding lookup), a `(2, fp16, 128)` arm
+in three gates, a `DTYPE_INT2_AFFINE` tag, and two dispatch arms. The
+symmetric-fast-path kernel the 1-bit entry built has no analogue here on
+purpose: the checkpoint IS ternary, so one could exist, and it would
+reassociate the sum exactly as the 1-bit one does -- which is why that one
+is reachable from no decode flow, and why a second was not built.
+
+Three things measured off the real bytes before any of it was written:
+
+- **`bias == -scale` in every probed group** (1,920 of them), and the level
+  histogram over 245,760 elements is `{0: 93895, 1: 57398, 2: 94467}` --
+  **level 3 never occurs**. So the three levels in use are `-s`, `0`, `+s`:
+  a ternary grid in a 2-bit affine word, which is what "1.58 bits" names.
+  ROADMAP predicted that grid with a ZERO bias and that is wrong -- `q = 0`
+  has to reach `-s`.
+- **The level histogram proves nothing about field order**, and the module
+  states it as a test. Permuting the four 2-bit fields inside a word
+  permutes their multiset without changing it, so "no level 3" survives any
+  wrong order untouched -- the 2-bit form of the popcount trap at one bit.
+  Only `mx.dequantize` can see the order, and LSB-first reproduces it on all
+  245,760 elements.
+- **Neither property is baked in.** The container permits any
+  `(scale, bias)` pair and all four levels, so `is_ternary_symmetric` and
+  `uses_fourth_level` MEASURE them, and the GEMV decodes level 3 correctly
+  (`the_fourth_level_is_decoded_not_clamped` is what stops a kernel written
+  from the ternary description from masking the top bit).
+
+#### Cross-engine: MLX on the same bytes, at TWO bits
+
+Same driver as the 1-bit family's (`scripts/kld_mlx_affine.py`, one file
+serving both widths), same 573 positions, warm cache, 2026-08-15 on AC,
+replayed through `mlx-lm==0.31.2` on the exact 8,490,785,104 bytes the
+install was streamed from. **Unlike the 1-bit arm this one runs on UPSTREAM
+mlx** (0.32.0, out of a `uv run` ephemeral env): upstream refuses `bits=1`
+at the API level and accepts `bits=2`, so no fork is needed and the whole
+measurement is two commands.
+
+| Comparison | Mean KL | Median | p99 | Max | Top-1 agree |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| MLX batched vs cached, both Metal (shape floor) | 0.0000072 | 0.0000032 | 0.000038 | 0.000052 | 99.8% |
+| **this port vs MLX, same bytes, both Metal, both cached** | **0.0000171** | **0.0000130** | **0.000086** | **0.000141** | **99.8%** |
+| MLX Metal vs MLX CPU (backend floor) | not measured | | | | |
+
+| Reading | Perplexity |
+| --- | ---: |
+| **this port, 2-bit install** | **6.8350** |
+| MLX, same bytes, Metal, cached | 6.8355 |
+| MLX, same bytes, Metal, batched | 6.8327 |
+
+**2.4x the shape floor, against the 1-bit family's 2.1x**, and both are
+~500x smaller in absolute terms than any MoE family's (Gemma 0.00845,
+`qwen3moe` 0.00320, gpt-oss 0.00978, IQ3 0.00440). That is the MoE term's
+absence rather than a better kernel, exactly as the 1-bit row records:
+batched-vs-cached expert routing and reduce order is what makes the other
+floors big, and this model is dense with 75% linear attention. **The RATIO
+transfers between families and the absolutes do not**, which is why the two
+sub-4-bit rows are worth reading against each other and not against the
+rest of the table.
+
+The reference is asserted to be running the PACKED weights, counted rather
+than spot-checked: 497 `QuantizedLinear` plus 1 `QuantizedEmbedding`, all at
+`bits=2, group_size=128`, equal to the checkpoint header's 498 `.scales`
+tensors. Without that guard the comparison could quietly become "this port's
+2-bit kernels against MLX's fp16 kernels on dequantized weights", whose tell
+would be a suspiciously SMALL divergence -- the direction nobody
+investigates. The driver additionally REQUIRES the checkpoint name on the
+command line rather than defaulting: the 1-bit and 2-bit checkpoints have
+the same module count and the same shapes, so pairing a dump with the wrong
+reference passes every check inside the script and reads as a kernel bug.
+
+One difference from the 1-bit row worth noting rather than explaining away:
+max |logit| is 32.75 here against MLX's 32.78125, where the 1-bit pair
+agreed to the last bit. The port's dump is float16 and 32.75 is the nearer
+representable value below 32.78125, so this is the dump WIDTH and not a
+head difference -- at one bit the maximum happened to land on a value f16
+represents exactly.
+
+**The peak is Qwen3.8-27B's number on half the weights, and that is the
+point.** 661.6 MiB here on 7.57 GB of dense weights against 660.3 MiB there
+on 15.1 GB -- same architecture, same 4,096 window, 1.3 MiB of difference.
+AGENTS.md Gotcha 40 says a dense install's resident weights are absent from
+`phys_footprint` and says to re-derive it per install shape; this is that
+re-derivation on a pair that varies nothing but the quantization, which is
+the cleanest form the evidence has taken. What is left closes on KV (256.0
+MiB at 4,096), the fixed delta-rule state (144.0) and the conv tail (7.5) --
+all functions of the architecture and the window, none of the width.
+
+**The perplexity is 6.8350 against Qwen3.8-27B's 4.9432 on the same
+architecture, the same corpus and the same framing, and that is NOT a clean
+quantization ablation.** Ternary-Bonsai is prism-ml's own QAT checkpoint and
+Qwen3.8-27B is Qwen's release quantized by mlx-community, so a TRAINING
+separates the two numbers as well as a width. What the pair does say
+cleanly is on the throughput axis, where the third point completes a
+picture the 1-bit entry could only suspect: 14.2 tok/s here against
+Bonsai's 18.3 at one bit and Qwen3.8's 19.0 at four, on 3.9 / 1.0 / 7.7 GB
+of weights respectively. **Decode does not track the weight bytes at all**,
+which is the compute-bound reading the Qwen3.8 pair first supported; the
+2-bit GEMV is simply doing more per byte than either neighbour (four
+elements a byte against eight, and no `+/-1` shortcut).
 
 ## Batched verify and speculative decoding
 
