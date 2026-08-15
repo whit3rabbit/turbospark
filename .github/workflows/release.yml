@@ -15,9 +15,9 @@ jobs:
     outputs:
       version: ${{ steps.ver.outputs.VER }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - name: Check tag == workspace version, and every path dep pinned to it
+      - name: Check tag == workspace version, changelog has an entry, and every path dep pinned to it
         id: ver
         env:
           TAG: ${{ github.ref_name }}
@@ -35,15 +35,22 @@ jobs:
             echo "${BAD}"
             exit 1
           fi
+          # CHANGELOG.md must be updated as part of the version bump, not
+          # after -- see docs/RELEASE.md. Matches "## [X.Y.Z]" with or
+          # without a trailing " - YYYY-MM-DD" date.
+          if ! grep -qE "^## \[${VER}\]" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no '## [${VER}]' entry -- move the Unreleased section there before tagging"
+            exit 1
+          fi
           echo "VER=${VER}" >> "$GITHUB_OUTPUT"
-          echo "OK: ${TAG} matches v${VER}"
+          echo "OK: ${TAG} matches v${VER}, CHANGELOG.md has an entry for it"
 
   build-macos:
     name: macOS arm64
     needs: [check-version]
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -63,24 +70,50 @@ jobs:
           mkdir -p dist/stage
           # The archive must contain files named exactly as the cask's binary
           # stanzas, or brew links the wrong names.
+          # turbospark-check and turbospark-model are both [[bin]] targets of
+          # the one turbospark-cli package, so `-p turbospark-cli` above
+          # already built both.
           cp target/aarch64-apple-darwin/release/turbospark-check dist/stage/
+          cp target/aarch64-apple-darwin/release/turbospark-model dist/stage/
           cp target/aarch64-apple-darwin/release/turbospark-server dist/stage/
-          cd dist/stage && zip "../turbospark-${VER}-macos-arm64.zip" turbospark-check turbospark-server
+          cd dist/stage && zip "../turbospark-${VER}-macos-arm64.zip" \
+            turbospark-check turbospark-model turbospark-server
           cd .. && rm -rf stage && ls -l
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: macos-arm64
           path: dist/
 
   release:
     name: Publish GitHub Release
-    needs: [build-macos]
+    needs: [check-version, build-macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+
+      - name: Extract this version's CHANGELOG.md section
+        id: notes
+        env:
+          VER: ${{ needs.check-version.outputs.version }}
+        run: |
+          # Body of the "## [VER] ..." section, up to (not including) the
+          # next "## [" heading or EOF. check-version already asserted this
+          # heading exists, so a miss here would mean the two diverged.
+          awk -v ver="$VER" '
+            /^## \[/ {
+              if (found) exit
+              if ($0 ~ "^## \\[" ver "\\]") { found = 1; next }
+              next
+            }
+            found { print }
+          ' CHANGELOG.md > /tmp/changelog-section.md
+          echo "--- release body from CHANGELOG.md ---"
+          cat /tmp/changelog-section.md
+
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts/
           merge-multiple: true
@@ -91,9 +124,12 @@ jobs:
           sha256sum -- * > SHA256SUMS
           cat SHA256SUMS
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: artifacts/*
+          body_path: /tmp/changelog-section.md
+          # Appended below body_path's content: a categorized PR/commit
+          # list GitHub generates from the diff since the previous tag.
           generate_release_notes: true
 
   publish-crates:
@@ -101,11 +137,11 @@ jobs:
     needs: [check-version, build-macos]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: cargo publish --workspace
+      - name: cargo publish, one crate at a time in dependency order
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
@@ -113,15 +149,49 @@ jobs:
             echo "::notice::CARGO_REGISTRY_TOKEN not set; skipping crates.io publish"
             exit 0
           fi
-          # --workspace orders the 14 crates by dependency and waits for the index.
-          set +e
-          cargo publish --workspace 2>&1 | tee /tmp/publish.log
-          status=${PIPESTATUS[0]}
-          set -e
-          [ "${status}" -eq 0 ] && exit 0
-          # A re-run of the same tag is a no-op, not a failure.
-          grep -qF "already exists on crates.io index" /tmp/publish.log && exit 0
-          exit "${status}"
+          # Topological order -- keep in sync with docs/RELEASE.md and with
+          # crates/*/Cargo.toml's internal `path = "../x", version = "..."`
+          # deps. One `cargo publish -p` call per crate rather than a single
+          # `cargo publish --workspace`: cargo's workspace-publish behavior
+          # on a partial re-run (some crates already published from a prior
+          # failed attempt) is undocumented, and its own changelog warns
+          # publish is "non-atomic ... left in partially published state"
+          # on a server error. A per-crate loop that treats "already
+          # published" as success for THAT crate and continues gives a
+          # re-run of the same tag correct resume behavior regardless.
+          ORDER=(
+            turbospark-core
+            turbospark-window-fit
+            turbospark-compute
+            turbospark-invocation
+            turbospark-model-io
+            turbospark-selection
+            turbospark-tokenizer
+            turbospark-repack
+            turbospark-catalog
+            turbospark-streaming
+            turbospark-gpu
+            turbospark-runtime
+            turbospark-cli
+            turbospark-server
+          )
+          for crate in "${ORDER[@]}"; do
+            echo "::group::cargo publish -p ${crate}"
+            set +e
+            out=$(cargo publish -p "${crate}" 2>&1)
+            status=$?
+            set -e
+            echo "${out}"
+            echo "::endgroup::"
+            if [ "${status}" -ne 0 ]; then
+              if echo "${out}" | grep -qiE "already (uploaded|exists)"; then
+                echo "::notice::${crate} already published at this version, continuing"
+              else
+                echo "::error::cargo publish failed for ${crate}"
+                exit "${status}"
+              fi
+            fi
+          done
 
   update-homebrew-cask:
     name: Update Homebrew Cask
@@ -150,7 +220,7 @@ jobs:
           curl -fsSL --retry 5 --retry-delay 5 "${URL}" -o arm64.zip
           echo "arm=$(sha256sum arm64.zip | awk '{print $1}')" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         if: steps.tap.outputs.available == 'true'
         with:
           repository: whit3rabbit/homebrew-tap
@@ -177,6 +247,7 @@ jobs:
             depends_on macos: ">= :sonoma"
 
             binary "turbospark-check"
+            binary "turbospark-model"
             binary "turbospark-server"
           end
           EOF
