@@ -1,6 +1,7 @@
 //! `parse_qwen_gdn_dense_config` against the PRODUCTION field values of BOTH
 //! published `qwen3_5` checkpoints: `prism-ml/Bonsai-27B-mlx-1bit` (ROADMAP's
-//! 1-bit entry) and `Qwen/Qwen3.8-27B` (2026-08-14).
+//! 1-bit entry), `Qwen/Qwen3.8-27B` (2026-08-14) and
+//! `prism-ml/Ternary-Bonsai-27B-mlx-2bit` (its ternary entry).
 //!
 //! Its own target rather than a case in `qwen36_config.rs`, and the fixture
 //! is the real `text_config` verbatim for that file's reason: the whole test
@@ -114,6 +115,26 @@ fn config_json() -> String {
     .to_string()
 }
 
+/// The `prism-ml/Ternary-Bonsai-27B-mlx-2bit` config: the SAME architecture
+/// again, at 2-bit group 128 (ROADMAP's ternary entry).
+///
+/// Its `text_config` is Bonsai's to the KEY -- same `eos_token_id` 248046 and
+/// all -- so the two differ in the `quantization` object alone. That is a
+/// stronger statement than the Qwen3.8 pair makes, and it is why the ternary
+/// checkpoint needed no parser, baseline or flow work at all.
+fn ternary_config_json() -> String {
+    serde_json::json!({
+        "architectures": ["Qwen3_5ForConditionalGeneration"],
+        "language_model_only": false,
+        "model_type": "qwen3_5",
+        "text_config": text_config(),
+        "vision_config": {"depth": 27},
+        // The real object, verbatim: two keys and no per-tensor overrides.
+        "quantization": {"group_size": 128, "bits": 2}
+    })
+    .to_string()
+}
+
 /// The `mlx-community/Qwen3.8-27B-4bit` config: the SAME architecture at INT4
 /// group 64.
 ///
@@ -160,13 +181,16 @@ fn parses_the_production_config_into_the_pinned_baseline() {
 fn both_published_checkpoints_parse_to_one_baseline() {
     let bonsai = parse_qwen_gdn_dense_config(&config_json()).expect("bonsai config parses");
     let qwen38 = parse_qwen_gdn_dense_config(&qwen38_config_json()).expect("qwen3.8 config parses");
+    let ternary = parse_qwen_gdn_dense_config(&ternary_config_json()).expect("ternary parses");
 
     assert_eq!(bonsai, model_io::qwen_gdn_dense_27b());
     assert_eq!(qwen38, model_io::qwen_gdn_dense_27b());
+    assert_eq!(ternary, model_io::qwen_gdn_dense_27b());
     assert_eq!(
         bonsai, qwen38,
-        "the two published qwen3_5 checkpoints must share one architecture"
+        "the published qwen3_5 checkpoints must share one architecture"
     );
+    assert_eq!(bonsai, ternary, "ternary is Bonsai at a different width");
 }
 
 /// The quantization SPEC is where the two checkpoints really differ, and each
@@ -186,6 +210,13 @@ fn the_two_checkpoints_declare_the_two_supported_affine_shapes() {
     let qwen38 =
         parse_gemma4_quantization(&qwen38_config_json()).expect("qwen3.8 quantization parses");
     assert_eq!((qwen38.default_bits, qwen38.group_size), (4, 64));
+
+    // The third: ROADMAP's ternary entry. It shares Bonsai's group size and
+    // companion dtype and differs in the width alone, which is exactly the
+    // pair `is_supported_affine_shape` had to grow.
+    let ternary =
+        parse_gemma4_quantization(&ternary_config_json()).expect("ternary quantization parses");
+    assert_eq!((ternary.default_bits, ternary.group_size), (2, 128));
 }
 
 /// The dense FFN width comes from `intermediate_size`, and the three MoE

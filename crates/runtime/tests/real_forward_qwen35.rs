@@ -1,6 +1,7 @@
 #![cfg(target_os = "macos")]
-//! End-to-end proof of the DENSE, ONE-BIT `qwen3_5` decode path (ROADMAP's
-//! 1-bit entry, step 4): builds a tiny install through the REAL repack
+//! End-to-end proof of the DENSE, SUB-4-BIT `qwen3_5` decode path (ROADMAP's
+//! 1-bit entry step 4, and its ternary entry at two bits): builds a tiny
+//! install through the REAL repack
 //! pipeline, opens it with `RealForwardRunner` -- which selects
 //! `families/qwen/`'s flow from `ArchConfig.family` and its dense half from
 //! `num_experts` -- and drives real decode steps on real Metal.
@@ -25,7 +26,9 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use half::f16;
-use turbospark_repack::build_synthetic_qwen_gdn_dense_install;
+use turbospark_repack::{
+    build_synthetic_qwen_gdn_dense_install, build_synthetic_qwen_gdn_dense_install_at_bits,
+};
 use turbospark_runtime::{LogitProducer, RealForwardRunner};
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -47,6 +50,13 @@ fn temp_dir(tag: &str) -> std::path::PathBuf {
 fn build(dir: &std::path::Path) {
     build_synthetic_qwen_gdn_dense_install(dir, VOCAB, LAYERS, "tiny-bonsai")
         .expect("dense 1-bit qwen3_5 install builds");
+}
+
+/// The same at TWO bits (ROADMAP's ternary entry). One architecture, two
+/// quantizations, so the fixture takes the width rather than being forked.
+fn build_2bit(dir: &std::path::Path) {
+    build_synthetic_qwen_gdn_dense_install_at_bits(dir, VOCAB, LAYERS, "tiny-ternary", 2)
+        .expect("dense 2-bit qwen3_5 install builds");
 }
 
 /// The step-4 headline: a dense 1-bit install OPENS, where until this step
@@ -188,6 +198,173 @@ fn the_one_bit_scale_planes_reach_the_logits() {
         first_logits(&b),
         "the FP16 scale plane does not reach the logits"
     );
+}
+
+/// The ternary entry's headline: a dense TWO-BIT install opens and decodes.
+///
+/// The same install shape as the 1-bit case above with one constant moved, and
+/// what it proves is the two new dtype-16 arms: before them a dtype-16 tensor
+/// reached `encode_gemv_any`'s named catch-all and `open()`'s
+/// `readable_resident_dtype` guard refused the install outright, so merely
+/// producing a logit means both arms are reached.
+///
+/// Note it cannot be passing through the 1-bit arm by accident:
+/// `affine_group_size` checks the packed run against `rows * cols / 4`, and a
+/// 2-bit tensor read at one bit is off by a factor of two.
+#[test]
+fn a_dense_two_bit_qwen35_install_opens_and_decodes() {
+    let dir = temp_dir("decodes-2bit");
+    build_2bit(&dir);
+
+    let peeked = turbospark_repack::peek_manifest_arch(&dir)
+        .expect("a dense 2-bit manifest peeks against the qwen3_5 baseline");
+    assert_eq!(peeked.num_experts, 0, "dense: no routed experts");
+
+    let mut runner = RealForwardRunner::open(&dir, peeked).expect("a 2-bit qwen3_5 install opens");
+    assert_eq!(runner.vocab_size(), VOCAB as usize);
+
+    runner.reset();
+    let mut token = 5i32;
+    for position in 0..6usize {
+        let mut head = vec![f16::from_f32(0.0); VOCAB as usize];
+        runner
+            .produce(token, position, &mut head)
+            .expect("dense 2-bit produce succeeds");
+        assert!(
+            head.iter().all(|v| v.to_f32().is_finite()),
+            "non-finite logit at position {position}"
+        );
+        let sum: f32 = head.iter().map(|v| v.to_f32()).sum();
+        assert!(
+            head.iter().any(|v| v.to_f32() < 0.0) || (sum - 1.0).abs() > 1e-2,
+            "position {position} looks like a normalized distribution, sum {sum}"
+        );
+        token = head
+            .iter()
+            .enumerate()
+            .max_by(|a, b| a.1.to_f32().total_cmp(&b.1.to_f32()))
+            .map(|(i, _)| i as i32)
+            .unwrap();
+    }
+}
+
+/// The 2-bit dense FFN and its COMPANION planes both reach the logits.
+///
+/// Two perturbations in one case because they answer one question at this
+/// width: the packed run says the GEMV runs at all, and the FP16 scale plane
+/// says the whole affine triple is read rather than just the bits. The scale
+/// axis is the one no length check can see, FP16 and BF16 being the same
+/// width.
+#[test]
+fn the_two_bit_weights_and_scale_planes_reach_the_logits() {
+    let a = temp_dir("2bit-a");
+    let b = temp_dir("2bit-b");
+    let c = temp_dir("2bit-c");
+    build_2bit(&a);
+    build_2bit(&b);
+    build_2bit(&c);
+
+    let baseline = first_logits(&a);
+    assert_eq!(baseline, first_logits(&b), "the pair starts identical");
+
+    let patched = patch_packed_bytes(
+        &b,
+        &[
+            "mlp.gate_proj.weight",
+            "mlp.up_proj.weight",
+            "mlp.down_proj.weight",
+        ],
+    );
+    assert_eq!(
+        patched,
+        3 * LAYERS as usize,
+        "expected gate/up/down on every layer"
+    );
+    assert_ne!(
+        baseline,
+        first_logits(&b),
+        "the 2-bit dense FFN weights do not reach the logits"
+    );
+
+    let patched = patch_scale_planes(&c, &["mlp.down_proj.weight"]);
+    assert_eq!(patched, LAYERS as usize, "one down_proj per layer");
+    assert_ne!(
+        baseline,
+        first_logits(&c),
+        "the FP16 scale plane does not reach the logits at two bits"
+    );
+}
+
+/// The embedding lookup dispatched for a 2-bit table is the 2-BIT one.
+///
+/// **This case exists because the obvious ones do not discriminate**, which
+/// was checked rather than assumed: swapping `encode_embed_lookup_int2` for
+/// its 1-bit sibling in the dispatch leaves every other test in this file
+/// green. The wrong kernel still reads the table, still produces finite
+/// logits, and still moves them when the table is perturbed -- it simply reads
+/// the WRONG ROW, because it strides by `D / 8` bytes where a 2-bit table
+/// strides by `D / 4`.
+///
+/// So the perturbation here is a BYTE RANGE rather than a whole tensor: token
+/// 5's row under the 2-bit stride is `[5D/4, 6D/4)`, and under the 1-bit
+/// stride the same token reads `[5D/8, 6D/8)` -- disjoint ranges. Patching
+/// only the first moves the logits under the correct kernel and cannot move
+/// them under the wrong one.
+#[test]
+fn the_embedding_lookup_strides_at_the_tables_own_width() {
+    let a = temp_dir("embed-stride-a");
+    let b = temp_dir("embed-stride-b");
+    build_2bit(&a);
+    build_2bit(&b);
+
+    let baseline = first_logits(&a);
+    assert_eq!(baseline, first_logits(&b), "the pair starts identical");
+
+    // `first_logits` decodes token 5, and HIDDEN is 128 in this fixture.
+    let d = 128usize;
+    let row_bytes_2bit = d / 4;
+    let row_bytes_1bit = d / 8;
+    let token = 5usize;
+    let (lo, hi) = (token * row_bytes_2bit, (token + 1) * row_bytes_2bit);
+    // The discriminating half, asserted rather than reasoned about: the range
+    // being patched is one the 1-bit stride does not read for this token.
+    let (wrong_lo, wrong_hi) = (token * row_bytes_1bit, (token + 1) * row_bytes_1bit);
+    assert!(
+        wrong_hi <= lo || wrong_lo >= hi,
+        "the two strides overlap for token {token}, so this case cannot discriminate"
+    );
+
+    patch_byte_range(
+        &b,
+        "language_model.model.embed_tokens.weight",
+        lo as u64,
+        hi as u64,
+    );
+    assert_ne!(
+        baseline,
+        first_logits(&b),
+        "token {token}'s own 2-bit embedding row does not reach the logits; the lookup is \
+         striding at the wrong width"
+    );
+}
+
+/// Flips bits in a byte range of one tensor's PACKED region, offsets relative
+/// to the start of that region.
+fn patch_byte_range(dir: &std::path::Path, name: &str, lo: u64, hi: u64) {
+    let path = dir.join("model_weights.bin");
+    let index = model_io::load_resident_index(&path).expect("index loads");
+    let entry = &index.entries[name];
+    assert!(
+        hi <= entry.size_bytes,
+        "{name}: range {lo}..{hi} is outside"
+    );
+    let mut bytes = std::fs::read(&path).unwrap();
+    let start = (entry.file_offset + lo) as usize;
+    let end = (entry.file_offset + hi) as usize;
+    for b in &mut bytes[start..end] {
+        *b ^= 0xFF;
+    }
+    std::fs::write(&path, bytes).unwrap();
 }
 
 /// Flips bits in the PACKED region of every entry whose name ends in one of

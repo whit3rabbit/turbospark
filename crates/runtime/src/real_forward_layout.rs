@@ -84,8 +84,10 @@ pub(crate) const DTYPE_RAW_BF16: u8 = 1;
 /// in the message, where a permissive default would dispatch it as something
 /// else.
 pub(crate) fn readable_resident_dtype(dtype: u8) -> bool {
-    matches!(dtype, DTYPE_RAW_BF16 | 4 | 5 | DTYPE_INT1_AFFINE)
-        || EXECUTABLE_GGUF_DTYPES.contains(&dtype)
+    matches!(
+        dtype,
+        DTYPE_RAW_BF16 | 4 | 5 | DTYPE_INT1_AFFINE | DTYPE_INT2_AFFINE
+    ) || EXECUTABLE_GGUF_DTYPES.contains(&dtype)
 }
 
 /// 1-BIT AFFINE (ROADMAP's 1-bit entry), mirroring
@@ -100,6 +102,17 @@ pub(crate) fn readable_resident_dtype(dtype: u8) -> bool {
 /// membership of the first list before anything else, so a tag listed there
 /// by accident would be refused as an unrunnable GGUF type.
 pub(crate) const DTYPE_INT1_AFFINE: u8 = 15;
+
+/// 2-BIT AFFINE (ROADMAP's ternary entry), mirroring
+/// `turbospark_repack::DTYPE_INT2_AFFINE`. 16 for the tag above's reason: it
+/// is the next free number after the GGUF block tags.
+///
+/// **It is NOT a GGUF block type either**, and the same warning applies. Note
+/// what distinguishes it from the 1-bit tag at a dispatch: nothing but the
+/// tag. All four affine widths share an entry shape of three planar regions,
+/// so a 2-bit tensor read as 1-bit is a row of half the columns -- finite,
+/// ordered, and wrong.
+pub(crate) const DTYPE_INT2_AFFINE: u8 = 16;
 
 /// The executable subset of [`GGUF_BLOCK_DTYPES`], and the resident-index
 /// twin of `model_io::EXECUTABLE_GGUF_TYPES`. Grows only when a kernel plus

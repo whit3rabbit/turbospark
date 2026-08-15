@@ -42,7 +42,7 @@ pub(crate) fn tensor_bytes<'a>(
     Ok(&data[local..local + entry.size_bytes as usize])
 }
 
-/// The GROUP SIZE of a 1-bit affine tensor, read off its own companion
+/// The GROUP SIZE of a sub-4-bit affine tensor, read off its own companion
 /// planes rather than recalled from the checkpoint that motivated the type.
 ///
 /// The resident index records no group size, and the obvious alternative was
@@ -55,34 +55,45 @@ pub(crate) fn tensor_bytes<'a>(
 /// constant for the same reason and takes the value as an argument.
 ///
 /// Every conjunct below is also a check on the install: the two companion
-/// planes must agree in size, the packed run must be exactly one bit per
+/// planes must agree in size, the packed run must be exactly `bits` per
 /// element, and the group must divide the row and be a whole number of bytes
 /// (the kernel's own precondition, which it ASSERTS -- so a malformed install
 /// that reached the dispatch would abort the process rather than return an
 /// error).
-pub(crate) fn int1_group_size(
+///
+/// **`bits` is a PARAMETER and the packed-size conjunct is the only thing it
+/// changes**, which is why the ternary entry widened this function rather than
+/// copying it: everything else here is a statement about the companion planes,
+/// and the companions are FP16 at one group per row at either width. The
+/// packed check is what tells a 1-bit tensor from a 2-bit one, since the two
+/// entry SHAPES are identical.
+pub(crate) fn affine_group_size(
     e: &model_io::ResidentIndexEntry,
     name: &str,
     rows: usize,
     cols: usize,
+    bits: usize,
 ) -> Result<usize, RealForwardError> {
     let bad = |detail: String| Err(RealForwardError::Unsupported(detail));
     if rows == 0 || cols == 0 {
         return bad(format!(
-            "tensor {name}: 1-bit shape {rows}x{cols} has a zero dimension"
+            "tensor {name}: {bits}-bit shape {rows}x{cols} has a zero dimension"
         ));
     }
-    if (rows * cols) % 8 != 0 || e.size_bytes as usize != rows * cols / 8 {
+    let elements_per_byte = 8 / bits;
+    if (rows * cols) % elements_per_byte != 0
+        || e.size_bytes as usize != rows * cols / elements_per_byte
+    {
         return bad(format!(
-            "tensor {name}: 1-bit packed size {} does not match {rows}x{cols} ({} bytes)",
+            "tensor {name}: {bits}-bit packed size {} does not match {rows}x{cols} ({} bytes)",
             e.size_bytes,
-            rows * cols / 8
+            rows * cols / elements_per_byte
         ));
     }
     if e.scale_size != e.bias_size {
         return bad(format!(
-            "tensor {name}: 1-bit scale plane is {} bytes against {} bias bytes; the two carry \
-             one FP16 value per group each",
+            "tensor {name}: {bits}-bit scale plane is {} bytes against {} bias bytes; the two \
+             carry one FP16 value per group each",
             e.scale_size, e.bias_size
         ));
     }
@@ -100,7 +111,7 @@ pub(crate) fn int1_group_size(
         ));
     }
     let group_size = cols / groups;
-    if group_size % 8 != 0 {
+    if group_size % elements_per_byte != 0 {
         return bad(format!(
             "tensor {name}: derived group size {group_size} is not a whole number of bytes"
         ));
@@ -255,18 +266,18 @@ pub(crate) fn topk_softmax(logits: &[f32], k: usize) -> (Vec<usize>, Vec<f32>) {
 
 #[cfg(test)]
 mod tests {
-    use super::int1_group_size;
+    use super::affine_group_size;
     use model_io::ResidentIndexEntry;
 
-    /// The real checkpoint's shape, in miniature: one bit per element, one
-    /// FP16 scale and one FP16 bias per 128-element group.
-    fn entry(rows: usize, cols: usize, group: usize) -> ResidentIndexEntry {
+    /// The real checkpoints' shape, in miniature: `bits` per element, one FP16
+    /// scale and one FP16 bias per group.
+    fn entry(rows: usize, cols: usize, group: usize, bits: usize) -> ResidentIndexEntry {
         let groups = rows * (cols / group);
         ResidentIndexEntry {
             name: "w".to_string(),
-            dtype: 15,
+            dtype: if bits == 1 { 15 } else { 16 },
             file_offset: 4096,
-            size_bytes: (rows * cols / 8) as u64,
+            size_bytes: (rows * cols * bits / 8) as u64,
             shape: (rows as u32, cols as u32, 0, 0),
             scale_offset: 8192,
             scale_size: (groups * 2) as u64,
@@ -277,44 +288,61 @@ mod tests {
 
     /// THE POINT OF THE DERIVATION: the group size comes off the tensor, so
     /// two tensors in one install may disagree and neither has to match a
-    /// constant somebody wrote down. 128 is the published checkpoint's; 64 is
+    /// constant somebody wrote down. 128 is the published checkpoints'; 64 is
     /// what a per-checkpoint constant would have forced on this row.
     #[test]
     fn the_group_size_is_read_off_the_companion_planes() {
         assert_eq!(
-            int1_group_size(&entry(8, 256, 128), "w", 8, 256).unwrap(),
+            affine_group_size(&entry(8, 256, 128, 1), "w", 8, 256, 1).unwrap(),
             128
         );
         assert_eq!(
-            int1_group_size(&entry(8, 256, 64), "w", 8, 256).unwrap(),
+            affine_group_size(&entry(8, 256, 64, 1), "w", 8, 256, 1).unwrap(),
             64
         );
         assert_eq!(
-            int1_group_size(&entry(3, 384, 128), "w", 3, 384).unwrap(),
+            affine_group_size(&entry(3, 384, 128, 1), "w", 3, 384, 1).unwrap(),
             128
         );
+    }
+
+    /// The same derivation at TWO bits, where only the packed run moves.
+    ///
+    /// The pair of assertions is the point: identical companion planes and a
+    /// packed run of exactly twice the size yield the same group size, which
+    /// is what says `bits` reaches the one conjunct it should and no other.
+    #[test]
+    fn the_derivation_takes_the_width_as_a_parameter() {
+        assert_eq!(
+            affine_group_size(&entry(8, 256, 128, 2), "w", 8, 256, 2).unwrap(),
+            128
+        );
+        // ...and each width REFUSES the other's packed run, which is the only
+        // thing that tells the two entry shapes apart.
+        assert!(affine_group_size(&entry(8, 256, 128, 1), "w", 8, 256, 2).is_err());
+        assert!(affine_group_size(&entry(8, 256, 128, 2), "w", 8, 256, 1).is_err());
     }
 
     /// Each conjunct is also a check on the install, and this is the one that
     /// matters most: the two planes are the same width, so a companion region
     /// that is half the size it should be passes every other length check.
     #[test]
-    fn a_malformed_one_bit_entry_is_refused_rather_than_dispatched() {
-        let mut half_scales = entry(8, 256, 128);
+    fn a_malformed_sub_four_bit_entry_is_refused_rather_than_dispatched() {
+        let mut half_scales = entry(8, 256, 128, 1);
         half_scales.scale_size /= 2;
-        assert!(int1_group_size(&half_scales, "w", 8, 256).is_err());
+        assert!(affine_group_size(&half_scales, "w", 8, 256, 1).is_err());
 
-        let mut no_companions = entry(8, 256, 128);
+        let mut no_companions = entry(8, 256, 128, 1);
         no_companions.scale_size = 0;
         no_companions.bias_size = 0;
-        assert!(int1_group_size(&no_companions, "w", 8, 256).is_err());
+        assert!(affine_group_size(&no_companions, "w", 8, 256, 1).is_err());
 
         // A shape the caller and the file disagree about.
-        assert!(int1_group_size(&entry(8, 256, 128), "w", 4, 256).is_err());
+        assert!(affine_group_size(&entry(8, 256, 128, 1), "w", 4, 256, 1).is_err());
 
         // A group that is not a whole number of bytes: the kernel ASSERTS
         // this, so reaching it would abort the process rather than error.
-        let ragged = entry(1, 12, 4);
-        assert!(int1_group_size(&ragged, "w", 1, 12).is_err());
+        let ragged = entry(1, 12, 4, 1);
+        assert!(affine_group_size(&ragged, "w", 1, 12, 1).is_err());
     }
 }

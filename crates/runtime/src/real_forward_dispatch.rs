@@ -5,10 +5,10 @@ use model_io::ResidentIndex;
 
 use crate::real_forward_layout::{
     RoutedBlobLayout, DTYPE_GGUF_Q4_K, DTYPE_GGUF_Q5_K, DTYPE_GGUF_Q6_K, DTYPE_GGUF_Q8_0,
-    DTYPE_INT1_AFFINE,
+    DTYPE_INT1_AFFINE, DTYPE_INT2_AFFINE,
 };
 use crate::real_forward_types::RealForwardError;
-use crate::real_forward_utils::{entry, int1_group_size, resident_matrix};
+use crate::real_forward_utils::{affine_group_size, entry, resident_matrix};
 
 /// The routed-expert decode pair, dispatched for whichever blob layout this
 /// install carries: the vendored INT4-affine `moe.metal` kernels or one of
@@ -182,20 +182,27 @@ pub(crate) fn encode_embed_any(
         // know the hidden size and the token id, never the vocabulary, and the
         // group size cannot be read off the companion planes without it. One
         // bit per element makes it exact.
-        DTYPE_INT1_AFFINE => {
+        DTYPE_INT1_AFFINE | DTYPE_INT2_AFFINE => {
+            let bits = if e.dtype == DTYPE_INT1_AFFINE { 1 } else { 2 };
+            let elements_per_byte = 8 / bits;
             let d = hidden as usize;
-            if d == 0 || (e.size_bytes as usize * 8) % d != 0 {
+            if d == 0 || (e.size_bytes as usize * elements_per_byte) % d != 0 {
                 return Err(RealForwardError::Unsupported(format!(
-                    "embedding table {name}: {} 1-bit bytes is not a whole number of {d}-element \
-                     rows",
+                    "embedding table {name}: {} {bits}-bit bytes is not a whole number of \
+                     {d}-element rows",
                     e.size_bytes
                 )));
             }
-            let rows = e.size_bytes as usize * 8 / d;
-            let group_size = int1_group_size(e, name, rows, d)?;
+            let rows = e.size_bytes as usize * elements_per_byte / d;
+            let group_size = affine_group_size(e, name, rows, d, bits)?;
             let scales = (weights.buffer(), weights.gpu_offset(e.scale_offset - base));
             let biases = (weights.buffer(), weights.gpu_offset(e.bias_offset - base));
-            gpu::encode_embed_lookup_int1(
+            let encode = if bits == 1 {
+                gpu::encode_embed_lookup_int1
+            } else {
+                gpu::encode_embed_lookup_int2
+            };
+            encode(
                 context,
                 pass,
                 table,
@@ -235,8 +242,8 @@ pub(crate) fn encode_embed_any(
 }
 
 /// Resolves a packed projection by its dtype tag: 4 = INT4-affine,
-/// 5 = INT8-affine, 15 = 1-bit affine (the resident writer's tags), and
-/// encodes the matching offset-bound GEMV.
+/// 5 = INT8-affine, 15 = 1-bit affine, 16 = 2-bit affine (the resident
+/// writer's tags), and encodes the matching offset-bound GEMV.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn encode_gemv_any(
     context: &mut gpu::MetalContext,
@@ -290,7 +297,7 @@ pub(crate) fn encode_gemv_any(
         // is ever wired, that decision belongs at repack time and needs its
         // own dtype tag.
         DTYPE_INT1_AFFINE => {
-            let group_size = int1_group_size(e, name, rows, cols)?;
+            let group_size = affine_group_size(e, name, rows, cols, 1)?;
             let w = gpu::Int1ResidentMatrix {
                 buffer: weights.buffer(),
                 weights_offset: weights.gpu_offset(e.file_offset - base),
@@ -301,6 +308,27 @@ pub(crate) fn encode_gemv_any(
                 group_size,
             };
             gpu::encode_dequant_int1_gemv_resident(context, pass, &w, x, y)
+                .map_err(RealForwardError::Gpu)
+        }
+        // 2-BIT AFFINE (ROADMAP's ternary entry). The 1-bit arm above with one
+        // constant moved, and the constant is the ONLY thing that separates
+        // them at this level: the three planar regions, the FP16 companions
+        // and the derived group size are identical, so the dtype TAG is what
+        // says how wide a row is. There is no symmetric fast path to choose
+        // between here for the 1-bit arm's reason, restated in
+        // `crates/compute`'s `quant_2bit` header.
+        DTYPE_INT2_AFFINE => {
+            let group_size = affine_group_size(e, name, rows, cols, 2)?;
+            let w = gpu::Int2ResidentMatrix {
+                buffer: weights.buffer(),
+                weights_offset: weights.gpu_offset(e.file_offset - base),
+                scales_offset: weights.gpu_offset(e.scale_offset - base),
+                biases_offset: weights.gpu_offset(e.bias_offset - base),
+                rows,
+                cols,
+                group_size,
+            };
+            gpu::encode_dequant_int2_gemv_resident(context, pass, &w, x, y)
                 .map_err(RealForwardError::Gpu)
         }
         // GGUF Q8_0 (ROADMAP Phase G Stage 2). One byte run, no companions:
