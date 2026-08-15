@@ -97,6 +97,15 @@ fn resolve_target() -> Option<DumpTarget> {
     plain("TURBOSPARK_GEMMA4_INSTALL_DIR")
         .or_else(|| plain("TURBOSPARK_QWEN36_INSTALL_DIR"))
         .or_else(|| plain("TURBOSPARK_QWEN3MOE_INSTALL_DIR"))
+        // ROADMAP's 1-bit entry, step 5. A plain arm like its three
+        // neighbours: this family is ChatML, whose template opens an
+        // assistant turn and then says words, so there is no structured
+        // slot to prefix (Gotcha 13) and no clock in the template to pin
+        // (Gotcha 14). It has NO quality gate row, so the perplexity this
+        // target prints for it is a diagnostic and not a frozen number --
+        // the KL is what it is here for, and that replays IDS rather than
+        // prose, so it is valid whatever the framing is.
+        .or_else(|| plain("TURBOSPARK_QWEN35_INSTALL_DIR"))
         .or_else(|| {
             env_dir("TURBOSPARK_GPTOSS_INSTALL_DIR").map(|install| DumpTarget {
                 install,
@@ -112,8 +121,9 @@ fn dump_reference_logits() {
     let (Some(target), Some(out)) = (resolve_target(), env_dir("TURBOSPARK_LOGIT_DUMP_DIR")) else {
         eprintln!(
             "logit_dump: needs TURBOSPARK_GEMMA4_INSTALL_DIR (or \
-             TURBOSPARK_QWEN36_INSTALL_DIR, TURBOSPARK_QWEN3MOE_INSTALL_DIR, or \
-             TURBOSPARK_GPTOSS_INSTALL_DIR) and TURBOSPARK_LOGIT_DUMP_DIR; skipping."
+             TURBOSPARK_QWEN36_INSTALL_DIR, TURBOSPARK_QWEN3MOE_INSTALL_DIR, \
+             TURBOSPARK_QWEN35_INSTALL_DIR, or TURBOSPARK_GPTOSS_INSTALL_DIR) and \
+             TURBOSPARK_LOGIT_DUMP_DIR; skipping."
         );
         return;
     };

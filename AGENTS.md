@@ -1664,6 +1664,7 @@ Workspace directory structure and crate layout:
 +-- scripts
 |   +-- kld.py         # cross-engine KL vs mlx-lm (reads tests/logit_dump.rs's output)
 |   +-- kld_llamacpp.py# the same, vs llama.cpp on the same GGUF bytes (Gotcha 34)
+|   +-- kld_mlx_1bit.py# the same, vs MLX at ONE BIT (needs the PrismML mlx fork)
 |   +-- llamacpp_logits.c # its harness: ids in, full-vocab logits out, via libllama
 |   +-- parity.sh      # head-to-head protocol run against the Swift MferenceCLI
 |   +-- phasediff.sh   # bucket-level decode phase diff against the Swift engine

@@ -700,6 +700,80 @@ Caveats, the same ones as the two sections above. One corpus, one family,
 one machine, one llama.cpp build; nothing here says how far MXFP4 sits from
 the unquantized model.
 
+### Cross-engine: MLX on the same bytes, the 1-BIT family
+
+The seventh family (ROADMAP's 1-bit entry, `prism-ml/Bonsai-27B-mlx-1bit`)
+and the first whose reference is MLX rather than llama.cpp, because the
+checkpoint is MLX-native and there is no GGUF of it. **It is also the
+tightest agreement measured in this repo, by two orders of magnitude.**
+
+`scripts/kld_mlx_1bit.py` replays this port's own id sequence through
+`mlx-lm==0.31.2` on the exact 5,129,115,752 bytes `~/models/bonsai27b.gturbo`
+was streamed from. 573 positions, warm cache, 2026-08-14 on AC. The
+reference runs on `github.com/PrismML-Eng/mlx@prism` built from source: **the
+comparison is impossible on upstream mlx**, which refuses `bits=1` at the
+API level rather than merely lacking a Metal kernel ("The supported bits are
+2, 3, 4, 5, 6 and 8"), on every device.
+
+| Comparison | Mean KL | Median | p99 | Max | Top-1 agree |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| MLX batched vs cached, both Metal (shape floor) | 0.0000074 | 0.0000034 | 0.000041 | 0.000086 | 100.0% |
+| **this port vs MLX, same bytes, both Metal, both cached** | **0.0000157** | **0.0000104** | **0.000084** | **0.000119** | **100.0%** |
+| MLX Metal vs MLX CPU (backend floor) | not measured | | | | |
+
+| Reading | Perplexity |
+| --- | ---: |
+| **this port, 1-bit install** | **8.3554** |
+| MLX, same bytes, Metal, cached | 8.3587 |
+| MLX, same bytes, Metal, batched | 8.3576 |
+
+**The headline is 2.1x the shape floor and ~200x SMALLER in absolute terms
+than any other family's** (Gemma 0.00845, `qwen3moe` 0.00320, gpt-oss
+0.00978, IQ3 0.00440). Top-1 agreement is 100.0% on all 573 positions,
+where every other family reads 97.5-98.2%. Perplexity agrees to 0.04%, and
+max |logit| is 28.171875 on BOTH sides -- the same value to the last bit.
+
+**Both numbers being tiny is the reading, and it is consistent rather than
+suspicious.** The other families' floors are dominated by MoE: batched and
+cached passes route and reduce experts differently, and FP addition is not
+associative. This model is DENSE with 75% linear attention, so its shape
+floor has almost nothing to be made of -- which is why the floor is ~5,000x
+smaller than Gemma's mlx-self floor (0.0352) and the headline shrinks with
+it. The RATIO is what transfers between families; the absolutes do not.
+
+**What it settles.** Three things this port assumed and could not otherwise
+check. The **mrope reduction** -- though the reference SOURCE had already
+settled that one for free (see ROADMAP step 5: the checkpoint declares
+`rope_type: "default"`, so `mrope_section` is read by nothing on the text
+path). The **RMS epsilon** at 1e-6 and the **q/k norm order** relative to
+RoPE, both of which perturb all 64 layers systematically and neither of
+which could hide under a floor this small. And the **F16-to-BF16 norm
+narrowing** this port does and MLX does not (AGENTS.md Gotcha 45): the
+step-4 judgement call was that losing 19.5% of the norm values at up to
+2^-8 relative would not be the limiting error in a model whose weight
+matrices are one bit. At 1.6e-5 nats and 100% top-1 that is now measured
+rather than argued, and the FP16-weight kernel variant it was weighed
+against stays unbuilt on evidence.
+
+Everything is deterministic: the report reproduces to the last digit across
+two processes, and this port's dump is SHA-256 `f2970b98...`. Treat movement
+as a real change.
+
+Two things NOT measured, named rather than skipped. There is **no backend
+floor** -- the same engine's CPU against its Metal, which AGENTS.md Gotcha 34
+records as the axis that made a correct Gemma run look broken. This model is
+dense, so every one of its 24.8B backbone weights is read per token, where
+the families with a cheap CPU arm activate 3B; the arm is unaffordable rather
+than forgotten. A missing floor is a missing scale, and the headline here is
+read against the shape floor alone. And there is **no bf16 reference**, so
+nothing here says how far 1-bit sits from the unquantized model -- the
+checkpoint's own README claims ~90% of FP16 on 15 benchmarks, which is a
+different measurement by different people.
+
+Cost, for planning: ~3 min to build the mlx fork from source, ~7 min for the
+4.78 GB reference download, ~24 s for both arms plus the KL. The port's dump
+is 72 s and 271 MiB.
+
 ### Sub-4-bit candidate survey (ROADMAP Phase S)
 
 NOT A MEASUREMENT OF THIS PORT. This port cannot ingest IQ3_XXS, so there
