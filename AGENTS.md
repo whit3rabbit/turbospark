@@ -1635,6 +1635,67 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     `model_io::validate_quant`: the writer states, the reader verifies, and
     neither is trusted to be the only check.
 
+46. **XET IS A TRANSFER LAYER, NOT A FORMAT, AND EVERY REAL INSTALL HERE WAS
+    ALREADY STREAMED THROUGH IT.** Researched 2026-08-14. Hugging Face replaced
+    Git LFS with Xet (content-defined chunking, ~64 KiB chunks, dedup in a CAS),
+    which reads like a fifth checkpoint format to sit beside safetensors and
+    GGUF and is nothing of the kind: the client reconstructs the file
+    byte-identically, so `gguf_header`, `safetensors_header`, the `.gturbo`
+    writer, every kernel and MLX are all untouched by it. There was no
+    compatibility work to do, and the reason is worth stating so nobody
+    re-derives it: THE PORT HAD BEEN READING XET-BACKED BYTES FOR MONTHS. A GET
+    on `resolve/main` for `ggml-org/gpt-oss-20b-GGUF` and
+    `prism-ml/Bonsai-27B-mlx-1bit` returns an `x-xet-hash` header and a 302 into
+    `us.aws.cdn.hf.co/xet-bridge-us/...`, and that bridge answers an arbitrary
+    `Range` with a correct `206` and `Content-Range`, which is exactly what
+    `HttpRangeSource::read_chunk` already asserts. The MLX side needed nothing
+    either: the `hf` CLI here runs `hf_xet` already, and `mlx`/`mlx-lm` only ever
+    see local files.
+    **WHAT THE QUESTION ACTUALLY TURNED UP IS A THROUGHPUT CEILING, and it has
+    been in every repack timing in this repo.** The bridge is the LFS-compatible
+    path, which is SINGLE-STREAM by construction: one connection to one
+    CloudFront edge, and `xet-core` issue #821 documents 65-75% of those edges
+    capped at exactly 8.7 MB/s while the rest run 60-70. That is not a
+    hypothesis about this repo's numbers, it is a match to them -- gpt-oss
+    12.1 GB in 25 min is 8.1 MB/s and Bonsai-27B 5.13 GB in 9.7 min is 8.8.
+    Measured here at the 64 MiB chunk size the walk dispatches, over a 512 MiB
+    span: serial 60.4 s (8.9 MB/s) against 8-way 17.6 s (30.5 MB/s), a 3.4x.
+    The serial arm landing on 8.9 against the documented 8.7 is what says the
+    cap is the thing being measured. `read_range` now issues its chunks
+    concurrently.
+    **BUT KNOW WHICH WALKS THAT TOUCHES, because it is not "repacks are 3.4x
+    faster" and the obvious verification cannot see it.** The concurrency
+    engages only when ONE `read_range` exceeds the 64 MiB chunk cap, and
+    `gguf_checkpoint::read_tensor` issues one call per TENSOR. On an MoE
+    checkpoint that is most of the bytes, because a routed tensor is the whole
+    expert table for a layer (Gemma's `ffn_gate_up_exps` is ~410 MiB). On a
+    DENSE one it is almost nothing: TinyLlama re-streamed in 3:28 against a
+    recorded ~3 min, i.e. unchanged, because not one of its 201 tensors is over
+    the cap. That run was still the right CORRECTNESS gate (`model_weights.bin`
+    came out SHA-256-identical to the install already on disk) and the wrong
+    THROUGHPUT one, which is worth remembering the next time a cheap fixture is
+    picked to verify a change: the small model was chosen because it was cheap,
+    and cheapness is exactly what made it unable to exercise the property.
+    Extending the win to dense checkpoints means reading several tensors
+    concurrently, which is a change to the walk and not to `ranged_download.rs`.
+    **THE TRAP IN COLLECTING IT IS THAT THE OPTIMIZATION IS THE CLIENT SETTING,
+    NOT THE CONCURRENCY.** The bridge speaks HTTP/2 and reqwest will happily
+    multiplex N concurrent range GETs onto ONE connection, which is one edge,
+    which is the same cap -- so the parallel version does the same work at the
+    same speed, with no error and nothing in any log to say the knob did
+    nothing. `HttpRangeSource::new` sets `http1_only()` for that reason alone.
+    Any future change to that client, or any measurement of that constant, has
+    to confirm the connections are actually distinct before believing a number.
+    **NATIVE `hf-xet` WAS COSTED AND DECLINED**, so this is a closed question
+    rather than an unexplored one. It is Apache-2.0 and maintained, but it pulls
+    tokio and a large tree into a crate that is `#![forbid(unsafe_code)]` and
+    needs a `xet-read-token` auth flow, and what it buys is adaptive concurrency
+    (had far more cheaply above) plus chunk dedup, which is worth NOTHING to
+    this workload: every checkpoint here is streamed exactly once, never written
+    to disk, and two quantizations of one model share no chunks. Re-open it only
+    if the walk ever needs a file over the bridge's size ceiling, which no
+    checkpoint here approaches.
+
 ## Per-Crate Documentation
 
 When working on code inside a specific crate, refer to that crate's `CLAUDE.md` file for crate-specific architecture, key modules, dev commands, and localized gotchas:

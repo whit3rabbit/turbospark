@@ -169,19 +169,34 @@ const RANGE_ATTEMPTS: usize = 8;
 /// existed it did so one [`MAX_RANGE_BYTES`] GET at a time. That is one
 /// connection, hence one CloudFront edge of the Xet bridge, hence one
 /// per-edge rate cap. Measured 2026-08-14 on AC against the real
-/// `gpt-oss-20b-MXFP4.gguf`, 16 MiB ranges, one connection per stream:
+/// `gpt-oss-20b-MXFP4.gguf`, at the 64 MiB chunk size this actually
+/// dispatches, over a 512 MiB span (the size of one routed tensor):
 ///
-/// | streams | aggregate | per stream |
+/// | | wall clock | rate |
 /// |---|---|---|
-/// | 1 (four serial reads) | 10.4 MB/s | 6.3 / 11.1 / 11.9 / 12.3 |
-/// | 4 | 16.0 MB/s | 4.0 - 9.2 |
-/// | 8 | 23.4 MB/s | 2.9 - 3.7 |
+/// | serial, 8 x 64 MiB | 60.4 s | 8.9 MB/s |
+/// | 8-way, same 512 MiB | 17.6 s | 30.5 MB/s |
 ///
-/// Scaling is real but sublinear, so this sits at 8 rather than higher: past
-/// that the shared link is the limit and the only thing more streams buy is
-/// more sockets to drop. These are cross-session NETWORK numbers, unlike the
-/// two constants in `crates/streaming/src/read_pool.rs` whose sweeps measure
-/// this machine's page cache, so read the shape and not the absolutes.
+/// 3.4x, and the serial arm landing on 8.9 MB/s is itself the finding: the
+/// per-edge cap `xet-core` #821 documents is 8.7. Scaling is sublinear (a
+/// 16 MiB sweep the same day read 10.4 / 16.0 / 23.4 MB/s at 1 / 4 / 8), so
+/// this sits at 8 rather than higher, where the shared link is the limit and
+/// more streams buy only more sockets to drop. These are cross-session
+/// NETWORK numbers, unlike the two constants in
+/// `crates/streaming/src/read_pool.rs` whose sweeps measure this machine's
+/// page cache: read the shape, re-measure before quoting an absolute.
+///
+/// **KNOW WHICH WALKS THIS TOUCHES.** It engages only when ONE `read_range`
+/// exceeds [`MAX_RANGE_BYTES`], and `gguf_checkpoint::read_tensor` issues one
+/// call per TENSOR. So it is worth the 3.4x on an MoE checkpoint, whose
+/// routed tensors are the whole expert table for a layer (Gemma's
+/// `ffn_gate_up_exps` is ~410 MiB, i.e. 7 chunks) and are the dominant share
+/// of its bytes, and worth almost NOTHING on a dense one, whose largest
+/// tensor is under the cap: TinyLlama re-streamed in 3:28 against a recorded
+/// ~3 min, unchanged, because not one of its 201 tensors chunked. That is the
+/// expected result and not a failed optimization. Collecting it for dense
+/// checkpoints too means reading several tensors concurrently, which is a
+/// change to the walk rather than to this file.
 ///
 /// This is worth nothing on its own: see [`HttpRangeSource::new`] for the
 /// client setting that makes these separate connections rather than one
@@ -274,8 +289,7 @@ where
     });
 
     let mut failures = failures.into_inner().expect("chunk failure lock");
-    // MUTATION
-    // failures.sort_by_key(|(index, _)| *index);
+    failures.sort_by_key(|(index, _)| *index);
     match failures.into_iter().next() {
         Some((_, err)) => Err(err),
         None => Ok(()),

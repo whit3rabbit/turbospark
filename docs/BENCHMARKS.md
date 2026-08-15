@@ -1067,6 +1067,106 @@ Four results worth carrying, each detailed in `docs/POWER_BASELINE.md`:
   NOT wired. The battery session read it as a clear loss; that reading was
   thermal drift.
 
+## Checkpoint intake: the Xet bridge, and what parallel range reads buy
+
+Measured 2026-08-14 on AC, this machine. **This is the one section here that
+measures the NETWORK rather than the machine**, so it is the least
+reproducible page in the file: the link, the CDN edge and the time of day all
+move it. Read the ratios, re-measure before quoting an absolute, and do not
+compare a row here against a row taken in another session.
+
+Hugging Face replaced Git LFS with Xet, which is a storage and transfer layer
+rather than a format: content-defined chunking and dedup underneath the Hub,
+with the file reconstructed byte-identically at the client. Nothing about
+GGUF or safetensors parsing, the `.gturbo` install, the kernels or MLX
+changes, and no compatibility work was needed. What did need measuring is
+throughput, because the LFS-compatible bridge every `resolve/...` URL
+redirects to is SINGLE-STREAM: one connection to one CloudFront edge, and
+`xet-core` issue #821 documents 65-75% of those edges capped at 8.7 MB/s.
+
+### The cap, against this repo's own recorded repack times
+
+End-to-end wall clock of a streamed repack, so these bound the transfer rate
+from below rather than measuring it (each also does transcode and write work):
+
+| checkpoint | streamed | wall clock | effective |
+|---|---|---|---|
+| Gemma 4 26B-A4B Q8_0 | 26.9 GB | 24 min | 18.7 MB/s |
+| Qwen 3.6 35B-A3B Q4_K_M | 20 GB | 23 min | 14.5 MB/s |
+| Qwen3-30B-A3B Q4_K_M | 17.3 GB | 24 min | 12.0 MB/s |
+| Mistral 7B Q4_K_M | 4.1 GB | 5 min | 13.7 MB/s |
+| gemma4 UD-Q3_K_M | 12 GB | 17.5 min | 11.4 MB/s |
+| **gpt-oss-20b MXFP4** | 12.1 GB | 25 min | **8.1 MB/s** |
+| **Bonsai-27B 1-bit** | 5.13 GB | 9.7 min | **8.8 MB/s** |
+
+The two bold rows sitting on 8.1 and 8.8 against a documented 8.7 is what
+first made the cap worth measuring directly rather than inferred.
+
+### Serial against parallel, at the size the walk dispatches
+
+Against the real `gpt-oss-20b-MXFP4.gguf`, one connection per stream. The
+64 MiB row is the operative one: that is `MAX_RANGE_BYTES`, and 512 MiB is
+about the size of one routed tensor.
+
+| chunk | arm | wall clock | rate |
+|---|---|---|---|
+| 64 MiB | serial, 8 chunks | 60.4 s | 8.9 MB/s |
+| 64 MiB | 8-way, same 512 MiB | 17.6 s | **30.5 MB/s** |
+| 16 MiB | 1 stream | | 10.4 MB/s |
+| 16 MiB | 4 streams | | 16.0 MB/s |
+| 16 MiB | 8 streams | | 23.4 MB/s |
+
+**3.4x at 64 MiB**, and the serial arm landing on 8.9 against the documented
+8.7 is the reading that says the cap is what is being measured rather than
+the link. Scaling is sublinear, which is why `RANGE_CONCURRENCY` is 8 and not
+higher: past that the shared link is the limit and more streams buy only more
+sockets to drop.
+
+### What the 3.4x does and does not cover
+
+The concurrency engages only when ONE `read_range` exceeds `MAX_RANGE_BYTES`,
+and `gguf_checkpoint::read_tensor` issues one call per TENSOR. So:
+
+- **MoE checkpoints get it.** A routed tensor is a layer's whole expert table
+  (Gemma's `ffn_gate_up_exps` is ~410 MiB, seven chunks), which is the
+  dominant share of those files' bytes.
+- **Dense checkpoints get essentially nothing.** Their largest tensor is
+  under the cap. TinyLlama re-streamed in 3:28 against a recorded ~3 min,
+  unchanged, because not one of its 201 tensors chunked.
+
+Extending it to dense checkpoints means reading several tensors concurrently,
+which is a change to the walk rather than to `ranged_download.rs`. No
+full-walk MoE timing has been taken yet; the 3.4x is measured on the wire.
+
+### Lessons
+
+- **The concurrency is not the optimization; `http1_only()` is.** The bridge
+  speaks HTTP/2, and reqwest will multiplex every concurrent range GET onto
+  ONE connection, hence one edge, hence the same cap. There is no error and
+  nothing in any log to say the knob did nothing, only the old wall clock.
+  Any future change to that client has to confirm the connections really are
+  distinct before a number from it is believed.
+- **The cheapest fixture was the one that could not see the effect.**
+  TinyLlama was picked for the end-to-end gate because it is the cheapest
+  real walk. It was the right CORRECTNESS gate (`model_weights.bin` came out
+  SHA-256-identical to the install already on disk) and the wrong THROUGHPUT
+  one, for the same reason it is cheap: it is small, so nothing chunks. Same
+  species as the tidy one-line prompt that missed the `trim` (AGENTS.md
+  Gotcha 41).
+- **A quality question about a transport does not need the transport
+  adopted.** Native `hf-xet` (1.6.0, Apache-2.0) was costed and declined: it
+  pulls tokio and a large tree into a crate that is `#![forbid(unsafe_code)]`
+  plus a `xet-read-token` auth flow, to buy adaptive concurrency (had far
+  more cheaply above) and chunk dedup, which is worth nothing when every
+  checkpoint here is streamed exactly once, never kept, and two
+  quantizations of one model share no chunks.
+- **`x-linked-etag` on a resolve URL is exactly the SHA-256 of the file
+  content**, and `x-linked-size` its byte length, both free from headers with
+  no auth and no download (verified against
+  `Bonsai-27B-mlx-1bit/tokenizer.json`). The streamed walks verify nothing
+  about their source bytes today. Not wired; recorded because it is the
+  cheapest integrity anchor available to this repo.
+
 ## Caveats worth repeating
 
 - **The power numbers are on BATTERY and every other number in this file
