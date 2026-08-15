@@ -8,6 +8,8 @@ This document describes how `turbospark` detects, registers, and executes suppor
 
 When given a Hugging Face URL, local `.gturbo` directory, or GGUF checkpoint, `turbospark` detects the model architecture automatically before fetching large weight payloads.
 
+**This is a command, not just an internal step.** `turbospark-model probe <repo>` runs the detection below against any Hugging Face repository, reading headers only, and reports what it concluded: the architecture verdict, each block type against the kernels that exist, the affine `(bits, group_size)` pair for an MLX checkpoint, the expert-slot arithmetic of section 4, and which tokenizer sidecars the repository has. It costs KB and seconds and exits 0 only if the checkpoint would run. See [`MODELS.md`](MODELS.md).
+
 ```
                     +--------------------------------+
                     |  GGUF / HF Checkpoint Download |
@@ -207,6 +209,7 @@ bring-up wrote. Both numbers come off the GGUF header before any download
 
 ## 5. Document References
 
+- Installing a model, and probing one that is not listed: [`docs/MODELS.md`](MODELS.md)
 - Architecture Bring-up Guide: [`docs/NEW_MODEL.md`](docs/NEW_MODEL.md)
 - `.gturbo` Format Specification: [`docs/GTURBO.md`](docs/GTURBO.md)
 - Benchmark Parity & Measurements: [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md)

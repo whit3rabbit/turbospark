@@ -1,28 +1,39 @@
-# turbospark: High-Efficiency Apple Silicon Inference in Rust
+# turbospark: Low-Memory LLM Inference for Apple Silicon, in Rust
 
 [![CI](https://github.com/whit3rabbit/turbospark/actions/workflows/ci.yml/badge.svg)](https://github.com/whit3rabbit/turbospark/actions/workflows/ci.yml)
 [![Release](https://github.com/whit3rabbit/turbospark/actions/workflows/release.yml/badge.svg)](https://github.com/whit3rabbit/turbospark/actions/workflows/release.yml)
 [![crates.io](https://img.shields.io/crates/v/turbospark-cli.svg)](https://crates.io/crates/turbospark-cli)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-macOS%20arm64-lightgrey.svg)](#)
+[![Platform](https://img.shields.io/badge/platform-macOS%20arm64-lightgrey.svg)](#limitations--out-of-scope)
 [![MSRV](https://img.shields.io/badge/rust-1.82%2B-orange.svg)](rust-toolchain.toml)
 
-`turbospark` is a high-performance, behavior-compatible Rust inspired port of the [turbo-fieldfare](https://github.com/drumih/turbo-fieldfare) local LLM inference engine.
+`turbospark` is a behavior-compatible **Rust port** of [Mference](https://github.com/NeelM0906/Mference), a Swift LLM inference engine for Apple Silicon, built to the design published in [turbo-fieldfare](https://github.com/drumih/turbo-fieldfare). There is no Swift in this tree: the engine, the expert streamer, the repack pipeline, and the server are all Rust, and the only non-Rust source is the vendored Metal shader code both engines dispatch.
 
-It is specifically designed for **Apple Silicon (macOS Metal)** to execute large language models (LLMs) with **extremely low memory overhead**. Instead of holding full model parameters in unified RAM/VRAM, `turbospark` streams routed expert weights directly from high-speed SSD storage into a lean working memory footprint.
+It is specifically designed for **Apple Silicon (macOS Metal)** to execute large language models (LLMs) with **extremely low memory overhead**. Instead of holding full model parameters in unified RAM/VRAM, `turbospark` streams routed expert weights directly from high-speed SSD storage into a lean working memory footprint. This enables Mac users with limited memory (8 GB, 16 GB, 24 GB, or 36 GB) to run large models like **Gemma 4 26B-A4B** and **Qwen 3.6 35B-A3B** locally without exhausting system memory.
 
-This enables Mac users with limited memory (8 GB, 16 GB, 24 GB, or 36 GB) to run large models like **Gemma 4 26B-A4B** and **Qwen 3.6 35B-A3B** locally without exhausting system memory.
+The port is tested against the original rather than assumed compatible. Decode throughput lands within 1% of the Swift engine on the same install, each model family carries a frozen quality gate (teacher-forced perplexity plus output digests), memory oracles assert peak-footprint ceilings, and the numerics are cross-checked against `mlx-lm`, `llama.cpp`, and MLX on identical bytes. What the suite proves is in [`docs/TESTING.md`](docs/TESTING.md), and the frozen numbers are in [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md).
+
+## Table of Contents
+
+- [Key Benefits for macOS / Apple Silicon Users](#key-benefits-for-macos--apple-silicon-users)
+- [Memory Footprint & Benchmark Parity](#memory-footprint--benchmark-parity)
+- [GGUF Intake & Custom `.gturbo` Format](#gguf-intake--custom-gturbo-format)
+- [Supported Features & Models](#supported-features--models)
+- [Architecture & Repository Layout](#architecture--repository-layout)
+- [Quick Start](#quick-start)
+- [Documentation](#documentation)
+- [License](#license)
 
 ---
 
 ## Key Benefits for macOS / Apple Silicon Users
 
-- **Extreme Memory Efficiency**: Runs large 26B-35B parameter Mixture-of-Experts (MoE) models using only **~1.6 GiB to 2.2 GiB of peak RAM/VRAM**. Users with 16 GB or 36 GB Macs no longer need 64 GB+ memory configurations to run 26B-35B models.
+- **26B-35B Models in ~2 GB**: Runs large Mixture-of-Experts (MoE) models using only **~1.6 GiB to 2.2 GiB of peak RAM/VRAM**. Users with 16 GB or 36 GB Macs no longer need 64 GB+ memory configurations to run 26B-35B models.
 - **Direct GGUF Streaming Intake (New / WIP)**: Native intake for published GGUF formats (Gemma 4 Q8_0, Qwen 3.6 mixed Q4_K_M, and sub-4-bit IQ imatrix builds). Streams directly from Hugging Face or parses local GGUFs into optimized `.gturbo` format without requiring the 12-27 GB raw model payload to be loaded in RAM.
-- **Sub-4-bit Option for the Tightest Budgets**: A published IQ3_XXS/IQ4_NL Gemma 4 build runs at **~1.8 GiB peak**, the leanest configuration here, verified against `llama.cpp` on the same bytes. Slower than INT4, and the tradeoff is spelled out below rather than buried.
-- **Architecture Registry with Honest Refusals**: GGUF `general.architecture` and Hugging Face `model_type` strings resolve through one table, every key of which was read off a real published file. An architecture this port recognizes but cannot yet run says so, names the missing work, and points at the bring-up checklist, instead of failing as "unknown". Mixtral-style `llama` MoE checkpoints run, as do `qwen3moe` ones (Qwen3-30B-A3B) through the same decode flow; the dense half of the `llama` string is refused by name (it has no routed experts to stream).
-- **Zero-Copy Metal Execution**: Utilizes zero-copy `MTLBuffer` memory mappings (`newBufferWithBytesNoCopy`) and native Metal compute shaders for high-throughput generation.
-- **Low Memory Overhead vs standard MLX / LLM tools**: Standard MLX or llama.cpp setups load full weights into system memory (requiring 16 to 32+ GB RAM). `turbospark` streams expert layers on demand and caps physical memory usage tightly under ~2.2 GB for Gemma 4 and ~1.6 GB for Qwen 3.6.
+- **Sub-4-bit Option for the Tightest Budgets**: A published IQ3_XXS/IQ4_NL Gemma 4 build runs at **~1.8 GiB peak**, the leanest streaming configuration here, verified against `llama.cpp` on the same bytes. Slower than INT4, and the tradeoff is spelled out below rather than buried.
+- **Architecture Registry with Honest Refusals**: GGUF `general.architecture` and Hugging Face `model_type` strings resolve through one table, every key of which was read off a real published file. An architecture this port recognizes but cannot yet run says so, names the missing work, and points at the bring-up checklist, instead of failing as "unknown". One string can cover two model shapes: `llama` covers Mixtral-style MoE and dense Mistral/Llama alike, and both halves run through the same decode flow, told apart by `num_experts` rather than by tensor names.
+- **Zero-Copy Metal Execution**: The resident weights are mapped once and wrapped in a single `MTLBuffer` through `newBufferWithBytesNoCopy`, so the GPU reads them in place. Nothing is copied into a staging buffer per token.
+- **Low Memory Overhead vs standard MLX / LLM tools, on mixture-of-experts models**: `mlx-lm` or `llama.cpp` keep full weights resident, so a 13 GB checkpoint wants roughly 13 GB. This engine streams routed experts on demand and holds under ~2.2 GB for Gemma 4 and ~1.6 GB for Qwen 3.6. The condition is load-bearing: a DENSE model has no experts to stream and gets none of this, and a coarse mixture like Mixtral gets none of it either. Both cases are in the comparison table below rather than left out of it.
 - **Built-in OpenAI & Anthropic API Server**: Includes a local server providing OpenAI (`/v1/chat/completions`) and Anthropic (`/v1/messages`) endpoints for drop-in integration with CLI tools (e.g., `claude-code`), Web UIs, and applications.
 
 ---
@@ -39,42 +50,83 @@ The plain version: on a 36 GB laptop, a 26B-parameter model that would normally 
 
 | Model | Model size (a normal runner such as mlx-lm or llama.cpp holds ~all of this in RAM) | RAM while generating | Speed | Power draw | Energy per token |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| **Gemma 4 26B-A4B** (INT4) | 13 GB | **~2.1 GB** | 35 - 41 tok/s | 17 W | 0.4 - 0.5 J |
-| **Gemma 4 26B-A4B** (3-bit) | 12 GB | **~1.8 GB** | 23 - 25 tok/s | 27 W | ~1.0 J |
-| **Qwen 3.6 35B-A3B** (INT4) | 18 GB | **~1.6 GB** | 33 - 38 tok/s | 14 W | ~0.4 J |
-| **Qwen3-30B-A3B** (Q4_K_M) | 17 GB | ~2.7 GB | 16 - 25 tok/s | 21 W | ~0.8 - 1.4 J |
-| **gpt-oss-20b** (MXFP4) | 11 GB | ~5.4 GB | 23 - 30 tok/s | 30 - 33 W | ~1.1 - 1.3 J |
+| **Gemma 4 26B-A4B** (INT4) | 13 GB | **~2.1 GB** | 35 to 41 tok/s | 17 W | 0.4 to 0.5 J |
+| **Gemma 4 26B-A4B** (3-bit) | 12 GB | **~1.8 GB** | 23 to 25 tok/s | 27 W | ~1.0 J |
+| **Qwen 3.6 35B-A3B** (INT4) | 18 GB | **~1.6 GB** | 33 to 38 tok/s | 14 W | ~0.4 J |
+| **Qwen3-30B-A3B** (Q4_K_M) | 17 GB | ~2.7 GB | 16 to 25 tok/s | 21 W | ~0.8 to 1.4 J |
+| **gpt-oss-20b** (MXFP4) | 11 GB | ~5.4 GB | 23 to 30 tok/s | 30 to 33 W | ~1.1 to 1.3 J |
 
-**The first three rows are the point of the project**: a 26B model in ~2.1 GB and a 35B model in ~1.6 GB, against 13 GB and 18 GB on disk. The last two rows are honest counter-examples that still stream but land higher, and the reason is arithmetic rather than a defect - see the note on expert size below.
+**The first three rows are the point of the project**: a 26B model in ~2.1 GB and a 35B model in ~1.6 GB, against 13 GB and 18 GB on disk. The last two rows are honest counter-examples that still stream but land higher, and the reason is arithmetic rather than a defect: see the note on expert size below.
 
 Dense models (no experts to stream) work too, but the memory story is different and the table above does not apply to them:
 
 | Model | Size on disk | RAM while generating | Speed | Note |
 | --- | ---: | ---: | ---: | --- |
-| **Qwen3.8-27B** (INT4) | 14 GB | 660 MB counted | 17 - 19 tok/s | see caveat |
-| **Mistral 7B** (Q4_K_M) | 4.1 GB | 1.2 GB counted | 16 - 30 tok/s | measured at 8k context |
+| **Qwen3.8-27B** (INT4) | 14 GB | 660 MB counted | 17 to 19 tok/s | see caveat |
+| **Mistral 7B** (Q4_K_M) | 4.1 GB | 1.2 GB counted | 16 to 30 tok/s | measured at 8k context |
 | **Bonsai-27B** (1-bit) | 3.9 GB | not yet measured | ~18 tok/s | |
-| **Ternary-Bonsai-27B** (2-bit) | 7.6 GB | 660 MB counted | 13 - 14 tok/s | same caveat |
+| **Ternary-Bonsai-27B** (2-bit) | 7.6 GB | 660 MB counted | 13 to 14 tok/s | same caveat |
 
-> **Caveat, and please read it before quoting the 660 MB.** Nothing streams in a dense model. That figure is what macOS *counts* against the process; the 14 GB of weights are memory-mapped and simply are not counted. You still need a machine that can hold and page them, so treat a dense model as needing roughly its **size on disk** in free RAM, not its counted footprint. The counted number is useful for spotting leaks, not for capacity planning.
+> **Caveat, and please read it before quoting the 660 MB.** Nothing streams in a dense model. That figure is what macOS *counts* against the process. The 14 GB of weights are memory-mapped and simply are not counted. You still need a machine that can hold and page them, so treat a dense model as needing roughly its **size on disk** in free RAM, not its counted footprint. The counted number is useful for spotting leaks, not for capacity planning.
 
-**How to read the other columns.** "Power draw" is the engine's own CPU + GPU draw while generating, not the whole machine - the laptop as a whole measured roughly 50 - 70 W under load, most of the difference being the display. "Energy per word" is joules per generated token, so at ~0.4 J a thousand tokens costs about 400 J, roughly 0.1 Wh. Speed and power vary by prompt length; the ranges span three fixed benchmark prompts of increasing size. Power figures exist for five installs and are simply absent for the rest.
+### With this engine against without it
 
-**Memory is compared at a fixed context window.** The MoE rows are at 4,096 tokens; gpt-oss runs at 8,192 and Mistral at 8,192, because their tokenizers or their reasoning output need it. A footprint number without its window is not comparable to another one - on a dense model the KV cache is most of what is being measured, and doubling the window roughly doubles the figure.
+The saving comes from streaming routed experts, so it exists only where there are routed experts to stream.
 
-*Why the memory result is about EXPERT SIZE, not about MoE.* The expert cache is `slots x layers x expert_size`, so what matters is how finely the model splits. Gemma 4 has 128 experts of ~3.2 MiB and lands at 2.1 GB; Qwen3-30B-A3B has smaller experts (2.5 MiB) but 48 layers, so it lands at 2.7 GB; gpt-oss is deeper still and reaches 5.4 GB. A coarse mixture like Mixtral 8x7B has 8 experts of ~109 MiB and cannot stream usefully at any setting - it runs correctly here and is simply not what this engine is for. Compute the product before assuming a new model will be small.
+The right-hand column is arithmetic rather than a measurement. A conventional runner keeps every weight resident, so it needs roughly the file size plus a KV cache. If a model is dense, both columns hold the same number and this engine buys nothing on memory.
+
+| Install | Format | Bits | On disk | RAM here | A conventional runner needs | Ratio |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Qwen 3.6 35B-A3B | MLX affine | 4 | 18 GB | **1.6 GB** | ~18 GB | **11x** |
+| Gemma 4 26B-A4B | MLX affine | 4 | 13 GB | **2.1 GB** | ~13 GB | **6x** |
+| Gemma 4 26B-A4B | GGUF IQ3_XXS/IQ4_NL | ~3 | 12 GB | **1.8 GB** | ~12 GB | **6.5x** |
+| Qwen3-30B-A3B | GGUF Q4_K_M | 4 | 17 GB | **2.7 GB** | ~17 GB | **6x** |
+| gpt-oss-20b | GGUF MXFP4 | 4 | 11 GB | **5.4 GB** | ~11 GB | **2x** |
+| Mixtral 8x7B | GGUF Q4_K_M | 4 | 26 GB | runs, does not stream usefully | ~26 GB | **1x** |
+| Qwen3.8-27B | MLX affine | 4 | 14 GB | ~14 GB | ~14 GB | **1x** |
+| Ternary-Bonsai-27B | MLX affine | 2 | 7.6 GB | ~7.6 GB | ~7.6 GB | **1x** |
+| Bonsai-27B | MLX affine | 1 | 3.9 GB | ~3.9 GB | ~3.9 GB | **1x** |
+| Mistral 7B | GGUF Q4_K_M | 4 | 4.1 GB | ~4.1 GB | ~4.1 GB | **1x** |
+
+The four dense rows say 1x on purpose. Their *counted* footprints are 660 MB, 660 MB, not measured, and 1.2 GB respectively, and quoting those as the RAM requirement would be wrong for the reason the caveat above gives. Ratios are rounded, and the ones above 1x are the whole engineering claim of this project.
+
+Mixtral is the interesting failure. It is a mixture of experts and it still gets no benefit, because the expert cache is `slots x layers x expert_size` and its 8 experts of ~109 MiB each want 54 GiB at the default 16 slots.
+
+Fine-grained mixtures stream and coarse ones do not. Compute that product before assuming a new checkpoint will be small.
+
+### Does this help if the model is dense, and what about the 1-bit checkpoint
+
+On memory, no. A dense model has nothing to stream, so this engine and `mlx-lm` both need roughly the weights in RAM, and any table that claims otherwise is quoting a counter rather than a requirement.
+
+For `prism-ml/Bonsai-27B-mlx-1bit` the advantage is different in kind, and it is narrow. **Upstream `mlx` refuses `bits=1` at the API level**, on every device, not merely on Metal: `mx.quantize` reports "The supported bits are 2, 3, 4, 5, 6 and 8".
+
+Running that checkpoint under stock `mlx-lm` is therefore not slow, it is impossible, and the reference implementation has to be built from source (`github.com/PrismML-Eng/mlx@prism`). This engine reads it natively with a 1-bit GEMV and a 1-bit embedding lookup, so a working install needs no fork and no build.
+
+That argument does not extend to two bits. Upstream `mlx` supports `bits=2`, and this project's own cross-engine check for the ternary checkpoint runs against stock `mlx` 0.32.0. If you want the ternary model and already have `mlx-lm` working, this engine offers you the server, the GGUF intake, and the frozen quality gates, and it does not offer you less memory.
+
+**How to read the other columns.** "Power draw" is the engine's own CPU + GPU draw while generating, not the whole machine: the laptop as a whole measured roughly 50 to 70 W under load, most of the difference being the display. "Energy per token" is joules per generated token, so at ~0.4 J a thousand tokens costs about 400 J, roughly 0.1 Wh. Speed and power vary by prompt length, and the ranges span three fixed benchmark prompts of increasing size. Power figures exist for five installs and are simply absent for the rest.
+
+**Memory is compared at a fixed context window.** The MoE rows are at 4,096 tokens. gpt-oss and Mistral run at 8,192, because their tokenizers or their reasoning output need it. A footprint number without its window is not comparable to another one: on a dense model the KV cache is most of what is being measured, and doubling the window roughly doubles the figure.
+
+*Why the memory result is about EXPERT SIZE, not about MoE.* The expert cache is `slots x layers x expert_size`, so what matters is how finely the model splits. Gemma 4 has 128 experts of ~3.2 MiB and lands at 2.1 GB. Qwen3-30B-A3B has smaller experts (2.5 MiB) but 48 layers, so it lands at 2.7 GB, and gpt-oss is deeper still and reaches 5.4 GB.
+
+A coarse mixture like Mixtral 8x7B has 8 experts of ~109 MiB and cannot stream usefully at any setting. It runs correctly here and is simply not what this engine is for. Compute the product before assuming a new model will be small.
 
 *Why Qwen 3.6 beats Gemma 4 on memory despite being the larger model.* 30 of its 40 layers use gated-DeltaNet linear attention, which carries ~2 MiB of fixed recurrent state per layer instead of a KV cache that grows with context.
 
-*On the 3-bit row.* It is the leanest Gemma 4 configuration and the slowest: about 15% less peak memory and 20% fewer expert bytes on disk, for roughly 35% of the decode speed and 2.6% worse perplexity. INT4 remains the default; choose 3-bit only when memory or disk is the binding constraint. Its quality is verified against `llama.cpp` on identical bytes rather than asserted.
+*On the 3-bit row.* It is the leanest Gemma 4 configuration and the slowest: about 15% less peak memory and 20% fewer expert bytes on disk, for roughly 35% of the decode speed and 2.6% worse perplexity. INT4 remains the default. Choose 3-bit only when memory or disk is the binding constraint. Its quality is verified against `llama.cpp` on identical bytes rather than asserted.
 
-### Parity with Swift Original (Gemma 4 26B-A4B)
+### Parity with the Swift Original (Gemma 4 26B-A4B)
+
+Both engines opened the same install on the same machine. The Swift arm is [Mference](https://github.com/NeelM0906/Mference)'s own CLI, unmodified.
 
 | Metric | `turbospark` (Rust) | Swift Original | Notes |
 | --- | ---: | ---: | --- |
 | **Decode Speed** | 34.6 to 40.7 tok/s | 34.3 to 41.1 tok/s | Decode throughput within 1% parity |
-| **Peak RAM Footprint** | **2,108 to 2,182 MiB** | 2,217 to 2,235 MiB | `turbospark` uses **2-5% less memory** |
+| **Peak RAM Footprint** | **2,108 to 2,182 MiB** | 2,217 to 2,235 MiB | `turbospark` uses **2-5% less memory**, but on one counter only, and peak RSS runs the other way |
 | **Install Disk Size** | 14 GB | 14 GB | Identical disk model layout read by both |
+
+The 2-5% is one machine, one install, and one counter. It is `phys_footprint` on an M4 Max, and this port's process covered two generations to the Swift CLI's one, which if anything favours Swift. Peak RSS runs the other way (1,991 to 1,993 MiB here against 1,682 to 1,831), and that counter moves with how much of the mapped install happens to be resident, so neither number alone settles the question. Do not read a 2% gap as an engineering result. Read it as evidence the two engines do the same work.
 
 Full benchmarks, quality verification, KL divergence vs `mlx-lm`, and power consumption measurements are available in [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) and [`docs/POWER_BASELINE.md`](docs/POWER_BASELINE.md).
 
@@ -94,7 +146,7 @@ This separation is what enables `turbospark` to execute 26B-35B models in **~1.6
 For full binary layouts, header byte specifications, and streaming mechanics, see [`docs/GTURBO.md`](docs/GTURBO.md).
 
 ### Compatibility with Upstream `turbo-fieldfare`
-`turbospark` is a 100% behavior-compatible Rust port of upstream [turbo-fieldfare](https://github.com/drumih/turbo-fieldfare) (Mference). `.gturbo` model directories produced by `turbospark-repack` can be executed interchangeably by both Swift `MferenceCLI` and Rust `turbospark-check`: the parity numbers in [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) were produced by the Swift CLI opening this port's install unmodified.
+`turbospark` is a behavior-compatible Rust port of upstream [turbo-fieldfare](https://github.com/drumih/turbo-fieldfare) ([Mference](https://github.com/NeelM0906/Mference)). `.gturbo` model directories produced by `turbospark-repack` can be executed interchangeably by both the Swift `MferenceCLI` and the Rust `turbospark-check`: the parity numbers in [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) were produced by the Swift CLI opening this port's install unmodified.
 
 ### Streaming GGUF Intake Without Large RAM Allocation
 `turbospark` includes a native GGUF intake engine in `crates/repack`:
@@ -110,18 +162,20 @@ For full binary layouts, header byte specifications, and streaming mechanics, se
 
 ### Supported Models
 
-Six architecture families run end to end, each with a real decode flow rather than a config entry:
+Six architecture families run end to end, each with a real decode flow rather than a config entry. Every checkpoint named below has been installed from its published bytes and generated text through `turbospark-check` on this machine. None is a projection from a config file.
 
-| Family | Example checkpoints | Shape |
+| Family | Checkpoints that run today | Shape |
 | --- | --- | --- |
-| **Gemma 4** | `gemma-4-26B-A4B-it` (MLX INT4, Q8_0 GGUF, sub-4-bit IQ GGUF) | Sliding-window + full attention, 128 streamed experts |
-| **Qwen 3.6** (`qwen3_5_moe`) | `Qwen3.6-35B-A3B` (MLX INT4, Q4_K_M GGUF) | Gated-DeltaNet linear attention + 256 streamed experts |
-| **Qwen 3.5/3.8 dense** (`qwen3_5`) | `Qwen/Qwen3.8-27B`, `prism-ml/Bonsai-27B-mlx-1bit`, `prism-ml/Ternary-Bonsai-27B-mlx-2bit` | Same hybrid attention, dense FFN. **Three checkpoints at 4, 2 and 1 bits, one architecture** |
-| **Qwen3-MoE** (`qwen3moe`) | `Qwen3-30B-A3B` | Plain GQA + 128 streamed experts |
-| **Llama** (`llama`) | Mixtral 8x7B, Mistral 7B, TinyLlama 1.1B | Plain GQA; covers both the MoE and dense halves of one architecture string |
+| **Gemma 4** | `gemma-4-26B-A4B-it` at MLX INT4, Q8_0 GGUF, and sub-4-bit IQ GGUF | Sliding-window + full attention, 128 streamed experts |
+| **Qwen 3.6** (`qwen3_5_moe`) | `Qwen3.6-35B-A3B` at MLX INT4 and Q4_K_M GGUF | Gated-DeltaNet linear attention + 256 streamed experts |
+| **Qwen 3.5/3.8 dense** (`qwen3_5`) | `Qwen/Qwen3.8-27B` (4-bit), `prism-ml/Ternary-Bonsai-27B-mlx-2bit` (2-bit), `prism-ml/Bonsai-27B-mlx-1bit` (1-bit) | Same hybrid attention, dense FFN. **Three checkpoints, three widths, one architecture** |
+| **Qwen3-MoE** (`qwen3moe`) | `Qwen3-30B-A3B` at Q4_K_M GGUF | Plain GQA + 128 streamed experts |
+| **Llama** (`llama`) | Mixtral 8x7B, Mistral 7B, TinyLlama 1.1B | Plain GQA, one architecture string covering a MoE half and a dense half, both running |
 | **gpt-oss** (`gptOss`) | `gpt-oss-20b` MXFP4 | GQA with attention sinks, YaRN rope, Harmony reasoning channels |
 
-Two things worth knowing. **A new checkpoint is usually not a new family**: `Qwen/Qwen3.8-27B` shipped in August 2026 and needed no engine change at all, because its architecture is identical to a checkpoint already supported - which is asserted by a test that parses both configs, not assumed. And **the family is chosen from the architecture string, never from tensor names**, because several of these families use identical tensor naming and picking the wrong flow produces fluent, wrong output rather than an error.
+DeepSeek-V4-Flash is recognized and refused at open. Its kernels are unported, and the refusal names them rather than reporting the architecture as unknown.
+
+Two things worth knowing. **A new checkpoint is usually not a new family**: `Qwen/Qwen3.8-27B` shipped in August 2026 and needed no engine change at all, because its architecture is identical to a checkpoint already supported, which is asserted by a test that parses every published config against one baseline rather than assumed. The ternary checkpoint went further and differs from `Bonsai-27B` in its `quantization` block alone. And **the family is chosen from the architecture string, never from tensor names**, because several of these families use identical tensor naming and picking the wrong flow produces fluent, wrong output rather than an error.
 
 ### Checkpoints & GGUF Support
 - **GGUF Intake**: Native parsing and direct streaming intake for published GGUF checkpoints:
@@ -132,9 +186,35 @@ Two things worth knowing. **A new checkpoint is usually not a new family**: `Qwe
 - **`.gturbo` Format**: High-speed packed expert layout optimized for sequential SSD streaming and mmap execution. Expert stride is per layer, so a checkpoint whose layers carry different block types is not padded to its widest one.
 
 ### Quantization Support
-- **INT4 / INT8**: Affine quantized expert weights and resident core.
-- **GGUF Block Quantizations**: Native GPU kernels for Q8_0, Q4_K, Q6_K, plus INT8/FP16 execution paths.
-- **Sub-4-bit IQ Codebooks**: IQ3_XXS, IQ4_NL and IQ4_XS, with port-local Metal kernels validated against `llama.cpp` on identical bytes (0.0044 mean nats KL, 97.5% top-1, against a 0.0374 backend floor). Shrinks Gemma 4's expert table from 12 GiB to 9.6 GiB and its peak footprint to ~1.8 GiB. **A tradeoff, not a strict upgrade**: it costs ~2.6% perplexity and ~35% decode throughput, so INT4 remains the default. See the table above.
+
+Two container families, twelve types. Whether a type runs is decided per type and per ROLE, not per format: a kernel that decodes a weight matrix is not the same kernel as one that decodes a routed expert or an embedding row, and several types have only the ones their real checkpoint needed.
+
+**MLX affine** (a packed plane beside per-group scales and biases). The bit width, the group size, and the companion dtype travel together and are checked as one shape, because the cross-products are combinations no published file has:
+
+| Bits | Group | Companions | Roles | Example checkpoint |
+| ---: | ---: | --- | --- | --- |
+| 1 | 128 | FP16 | matrix, embedding | `prism-ml/Bonsai-27B-mlx-1bit` |
+| 2 | 128 | FP16 | matrix, embedding | `prism-ml/Ternary-Bonsai-27B-mlx-2bit` |
+| 4 | 64 | BF16 | matrix, embedding, routed experts | `gemma-4-26B-A4B-it` 4bit |
+| 8 | 64 | BF16 | matrix, embedding, routed experts | routers, shared experts |
+
+**GGUF block quants**, every row read off a real published file rather than off the format spec:
+
+| Type | Bits | Matrix | Embedding | Routed gate/up | Routed down | Why it stops there |
+| --- | ---: | :-: | :-: | :-: | :-: | --- |
+| Q8_0 | 8 | yes | yes | yes | yes | full set |
+| Q4_K | 4 | yes | yes | yes | yes | full set |
+| Q6_K | 6 | yes | yes | no | yes | no real file puts it in gate/up |
+| Q5_K | 5 | yes | no | no | no | Mixtral puts it on `attn_output` alone |
+| IQ3_XXS | ~3 | yes | no | yes | no | the imatrix build puts it in gate/up |
+| IQ4_XS | ~4 | yes | no | yes | no | same, on one layer |
+| IQ4_NL | ~4 | yes | no | no | yes | the same file's `down` |
+| MXFP4 | 4 | no | no | yes | yes | `gpt-oss` puts it in `ffn_*_exps` and nowhere else |
+| Q4_0 | 4 | no | no | no | no | refused at open, by name |
+
+If a checkpoint uses a type in a role that has no kernel, it passes the manifest gate and is refused at the dispatch with the tensor named, rather than decoding to something plausible and wrong. Widening either list means landing kernels, not editing a list.
+
+- **Sub-4-bit IQ Codebooks**: validated against `llama.cpp` on identical bytes (0.0044 mean nats KL, 97.5% top-1, against a 0.0374 backend floor). Shrinks Gemma 4's expert table from 12 GiB to 9.6 GiB and its peak footprint to ~1.8 GiB. **A tradeoff, not a strict upgrade**: it costs ~2.6% perplexity and ~35% decode throughput, so INT4 remains the default. See the table above.
 - **Per-Tensor Mixing**: Block type is resolved per tensor, and for routed experts per layer AND per phase, so a checkpoint that uses a different quantization for `gate`/`up` than for `down`, or for one layer than for the rest, executes as published.
 
 ### Server & Interfaces
@@ -144,10 +224,10 @@ Two things worth knowing. **A new checkpoint is usually not a new family**: `Qwe
 
 ### Limitations & Out of Scope
 - **Apple Silicon Acceleration Only**: Metal GPU acceleration requires macOS (`xcrun -sdk macosx metal`). On non-macOS platforms, crates compile CPU stubs.
-- **Sequential Prompt Prefill**: Prompt tokens are processed sequentially per token (prefill tile kernels descoped; see [`DEVIATIONS.md`](DEVIATIONS.md)).
+- **Sequential Prompt Prefill**: Prompt tokens are processed sequentially per token (prefill tile kernels descoped, see [`DEVIATIONS.md`](DEVIATIONS.md)).
 - **Q4_0 GGUF Quantization**: Refused at open until dedicated Q4_0 resident GEMV and embedding kernels land.
-- **Sub-4-bit Costs Energy, Not Just Throughput**: The IQ path is a memory and disk win only (-15% peak footprint, -20% expert bytes). Measured on the power harness it draws roughly 2x the joules per decoded token of the INT4 install (codebook dequant nearly doubles GPU watts while running 35% slower). Use it when memory is the constraint; INT4 remains the default on every other axis. See [`docs/POWER_BASELINE.md`](docs/POWER_BASELINE.md).
-- **No Speculative Decoding (DFlash)**: Measured before building, and it does not pay here yet. A batched verify of M tokens has to cost less, in decode-steps, than the tokens it gets accepted; on this engine 19% of decode compute is per-token work with no weights to amortize, so verify cost scales almost linearly in M. Against a trained DFlash drafter's published accept lengths that lands at **1.14x at block 4, 0.97x at block 8 and 0.87x at block 16** -- so small blocks win and large ones lose, inverting the datacenter result where verify is nearly free. About 1.1x is not worth the drafter, and the break-even column already assumes a batched MoE kernel that does not exist. The lever is that kernel rather than the drafter. Full arithmetic, the five measurement surfaces, and what would change the answer: [`docs/SPECULATIVE_DECODING.md`](docs/SPECULATIVE_DECODING.md).
+- **Sub-4-bit Costs Energy, Not Just Throughput**: The IQ path is a memory and disk win only (-15% peak footprint, -20% expert bytes). Measured on the power harness it draws roughly 2x the joules per decoded token of the INT4 install (codebook dequant nearly doubles GPU watts while running 35% slower). Use it when memory is the constraint. INT4 remains the default on every other axis. See [`docs/POWER_BASELINE.md`](docs/POWER_BASELINE.md).
+- **No Speculative Decoding (DFlash)**: Measured before building, and it does not pay here yet. A batched verify of M tokens has to cost less, in decode-steps, than the tokens it gets accepted. On this engine 19% of decode compute is per-token work with no weights to amortize, so verify cost scales almost linearly in M. Against a trained DFlash drafter's published accept lengths that lands at **1.14x at block 4, 0.97x at block 8 and 0.87x at block 16**, so small blocks win and large ones lose, inverting the datacenter result where verify is nearly free. About 1.1x is not worth the drafter, and the break-even column already assumes a batched MoE kernel that does not exist. The lever is that kernel rather than the drafter. Full arithmetic, the five measurement surfaces, and what would change the answer: [`docs/SPECULATIVE_DECODING.md`](docs/SPECULATIVE_DECODING.md).
 
 
 ---
@@ -162,10 +242,11 @@ The workspace is organized into modular Rust crates:
 - **`crates/streaming`**: SSD streamer for routed expert weights with LFU/LRU caching.
 - **`crates/model-io`**: Model manifest parsing, tensor indexes, and file verification.
 - **`crates/repack`**: GGUF/Safetensors intake and transcode pipeline into `.gturbo`.
+- **`crates/catalog`**: The curated model table, the header-only Hugging Face probe, and the install driver behind `turbospark-model`.
 - **`crates/tokenizer`**: Fast tokenization, chat template application, streaming detokenizer, and tool-call parsing.
 - **`crates/runtime`**: Core execution engine for prefill and decode loops.
 - **`crates/server`**: Local OpenAI and Anthropic compatible HTTP server (`turbospark-server`).
-- **`crates/cli`**: Command-line application binary (`turbospark-check`).
+- **`crates/cli`**: Command-line application binaries (`turbospark-check`, `turbospark-model`).
 - **`crates/selection`**, **`crates/window-fit`**, **`crates/invocation`**: Context window management and candidate sampling.
 - **`crates/bench`**: Throughput benchmark harness, memory oracle tests, and quality gate suite.
 
@@ -176,15 +257,41 @@ The workspace is organized into modular Rust crates:
 ### Install
 
 ```sh
-# Homebrew (Apple Silicon; installs turbospark-check and turbospark-server)
+# Homebrew (Apple Silicon; installs turbospark-check, turbospark-model
+# and turbospark-server)
 brew install --cask whit3rabbit/tap/turbospark
 
-# Or from crates.io
+# Or from crates.io. `turbospark-cli` carries both turbospark-check and
+# turbospark-model.
 cargo install turbospark-cli turbospark-server
 ```
 
-Both install the binaries only. Model installs (`.gturbo` directories) are built
-separately by `crates/repack`; see [`docs/GTURBO.md`](docs/GTURBO.md).
+### Get a model
+
+`turbospark-model` streams a published checkpoint from Hugging Face in ranges and writes a `.gturbo` directory, so the 8 to 27 GB original is never written to disk.
+
+```sh
+turbospark-model list            # the curated table, with what each row's numbers are backed by
+turbospark-model pull gemma4     # install one
+turbospark-check --model gemma4 --messages-file /tmp/p.json
+```
+
+Every catalog row names a repository and a revision that were actually streamed and run on this port, and a `verified` status means a frozen quality-gate or memory-oracle row in [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) asserts something about that exact artifact.
+
+For anything not in the table, ask first. `probe` reads headers only, costs KB and seconds, and answers whether a checkpoint would run before a byte of it is downloaded:
+
+```sh
+turbospark-model probe Qwen/Qwen3-30B-A3B-GGUF \
+  --file Qwen3-30B-A3B-Q4_K_M.gguf --sidecar-repo Qwen/Qwen3-30B-A3B
+
+turbospark-model pull --repo owner/name --alias mine --sidecar-repo owner/original
+```
+
+It reports the architecture verdict (naming what an unported one would need), each block type against the kernels that exist, which tokenizer sidecars the repository actually has, and the expert-slot arithmetic that decides whether a mixture-of-experts model fits here at all. That last one is worth reading before any large download: Mixtral 8x7B installs and decodes correctly and wants 54.5 GiB of pinned expert cache, because what this engine can hold is decided by how finely a model splits its experts rather than by its size.
+
+Full guide, including how a pull orders its steps and how to add a catalog row: [`docs/MODELS.md`](docs/MODELS.md). Format details: [`docs/GTURBO.md`](docs/GTURBO.md).
+
+Each checkpoint also still has its own `crates/repack` integration-test target, listed with its environment variable in [`AGENTS.md`](AGENTS.md); those are what the catalog rows were built from.
 
 ### Build & Run Tests
 
@@ -199,6 +306,10 @@ cargo test --workspace
 cargo fmt --check
 cargo clippy --workspace --tests
 ```
+
+The workspace suite runs on any platform and covers the structural contracts. The heavier proof is env-gated and opt-in, because it needs a real model install: per-family quality gates freeze teacher-forced perplexity plus greedy and sampled output digests, memory oracles assert peak footprint against a per-chip ceiling and re-run a warm case to catch growth, and a determinism probe runs one greedy generation six times and requires exactly one distinct output.
+
+The quality gate is calibrated rather than decorative. Shifting one quantization level in 0.0122% of Gemma 4's expert bytes moves its perplexity +10.5%, so the gate sees damage far below what reads as coherent by eye. Gating conventions and test-writing rules are in [`docs/TESTING.md`](docs/TESTING.md).
 
 ### Running the CLI
 
@@ -232,15 +343,15 @@ ANTHROPIC_BASE_URL=http://127.0.0.1:8080 ANTHROPIC_API_KEY=unused claude
 
 ## Documentation
 
+- [`docs/MODELS.md`](docs/MODELS.md): The model catalog, the header-only probe, `turbospark-model pull`, and how to install something not in the table.
 - [`docs/MODEL_FAMILY.md`](docs/MODEL_FAMILY.md): Supported model families, automatic detection, and parity matrix.
 - [`docs/GTURBO.md`](docs/GTURBO.md): Comprehensive specification of the `.gturbo` installation format.
 - [`DEVIATIONS.md`](DEVIATIONS.md): Wired features vs scaffolded scope.
 - [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md): Benchmark results, quality gates, and parity analysis.
 - [`docs/BENCHMARKING.md`](docs/BENCHMARKING.md): Harness documentation and memory oracle details.
 - [`docs/POWER_BASELINE.md`](docs/POWER_BASELINE.md): Power metrics (Watts, Joules/token).
-- [`docs/SPECULATIVE_DECODING.md`](docs/SPECULATIVE_DECODING.md): DFlash and batched verify, measured marginal (~1.1x, small blocks only) and why it is not shipped.
+- [`docs/SPECULATIVE_DECODING.md`](docs/SPECULATIVE_DECODING.md): DFlash and batched verify, measured marginal (~1.1x, small blocks only), and why it is not shipped.
 - [`docs/EXPERT_ROUTING.md`](docs/EXPERT_ROUTING.md): Domain-restricted expert sets, measured negative.
-- [`ROADMAP.md`](ROADMAP.md): Project roadmap and status.
 
 
 
@@ -248,5 +359,5 @@ ANTHROPIC_BASE_URL=http://127.0.0.1:8080 ANTHROPIC_API_KEY=unused claude
 
 ## License
 
-MIT
+MIT. See [LICENSE](LICENSE).
 

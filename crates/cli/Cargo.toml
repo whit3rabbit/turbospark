@@ -12,8 +12,16 @@ description = "The turbospark-check process entry point: reads argv, calls the i
 name = "turbospark-check"
 path = "src/main.rs"
 
+# The catalog and download surface. A second binary rather than subcommands
+# on `turbospark-check`, whose parser is pure, flat and requires `--model` --
+# see `src/bin/model.rs`'s header.
+[[bin]]
+name = "turbospark-model"
+path = "src/bin/model.rs"
+
 [dependencies]
 invocation = { package = "turbospark-invocation", path = "../invocation", version = "0.1.0" }
+catalog = { package = "turbospark-catalog", path = "../catalog", version = "0.1.0" }
 runtime = { package = "turbospark-runtime", path = "../runtime", version = "0.1.0" }
 selection = { package = "turbospark-selection", path = "../selection", version = "0.1.0" }
 tokenizer = { package = "turbospark-tokenizer", path = "../tokenizer", version = "0.1.0" }

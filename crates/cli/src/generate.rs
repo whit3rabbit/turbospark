@@ -19,7 +19,6 @@
 
 use std::collections::HashSet;
 use std::io::Write;
-use std::path::Path;
 
 use invocation::{InvocationRequest, Mode};
 use runtime::{
@@ -374,7 +373,13 @@ pub(crate) fn print_footer(result: &RawDecodeResult, quiet: bool) {
 }
 
 pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, String> {
-    let model_dir = Path::new(&request.model);
+    // `--model` takes a path OR a `turbospark-model` alias, resolved HERE
+    // rather than in `invocation`, which is pure and whose contract keeps the
+    // value an opaque string. A path that exists always wins: a bare name
+    // that silently preferred an alias would run a DIFFERENT model than the
+    // one on the command line, fluently and with no error.
+    let resolved = catalog::resolve_model_arg(&request.model);
+    let model_dir = resolved.as_path();
     let arch = repack::peek_manifest_arch(model_dir)?;
 
     let tokenizer = MfTokenizer::load_from_dir(model_dir).map_err(|e| {

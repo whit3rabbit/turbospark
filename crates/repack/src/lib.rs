@@ -35,8 +35,8 @@ mod synthetic_qwen35;
 mod synthetic_real;
 
 pub use arch_registry::{
-    describe_gguf_architecture, gguf_arch_support, hf_family_for_model_type,
-    planned_gguf_architectures, ArchSupport, PlannedArch,
+    config_json_family, describe_gguf_architecture, gguf_arch_support, hf_family_for_model_type,
+    planned_gguf_architectures, refuse_foreign_config, ArchSupport, PlannedArch,
 };
 pub use gemma4_checkpoint::{
     classify_for_family, classify_gemma4, gemma4_manifest_quant, is_supported_affine_shape,

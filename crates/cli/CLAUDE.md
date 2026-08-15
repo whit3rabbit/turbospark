@@ -1,26 +1,38 @@
 # turbospark-cli
 
-Process entry point binary (`turbospark-check`). Parses `argv` using `turbospark-invocation`, applies exit status and output stream routing, and drives GPU token generation (`RealForwardRunner`) on macOS.
+TWO process entry points. `turbospark-check` parses `argv` using
+`turbospark-invocation`, applies exit status and output stream routing, and
+drives GPU token generation (`RealForwardRunner`) on macOS.
+`turbospark-model` is the catalog and download surface, backed by
+`turbospark-catalog`.
 
 ## Directory & File Structure
 
 ```
 crates/cli/
-+-- Cargo.toml              # Crate manifest
++-- Cargo.toml              # Crate manifest, declaring BOTH binaries
 +-- src/
-|   +-- main.rs             # CLI binary process entry point
+|   +-- main.rs             # turbospark-check process entry point
 |   +-- generate.rs         # Non-interactive text & chat template generation driver
-|   \-- chat.rs             # Interactive REPL session runner using window-fit
+|   +-- chat.rs             # Interactive REPL session runner using window-fit
+|   \-- bin/
+|       +-- model.rs        # turbospark-model: argv, subcommand parse, exit codes
+|       \-- model_cmd/
+|           +-- mod.rs      # The six subcommands
+|           \-- render.rs   # Printing. No decisions.
 \-- tests/
     +-- mference_check.rs   # CLI flag parse & exit status integration tests
-    \-- real_generation.rs  # End-to-end real generation integration tests
+    +-- real_generation.rs  # End-to-end real generation integration tests
+    \-- model_cli.rs        # turbospark-model argument surface & exit codes
 ```
 
 ## Key Modules
 
 - `main.rs`: Reads command-line arguments, delegates parsing to `turbospark-invocation`, prints resolved requests, and routes execution to generation routines.
-- `generate.rs`: Coordinates tokenizer loading, chat template rendering, prefill chunking, and GPU decode generation loops.
+- `generate.rs`: Coordinates tokenizer loading, chat template rendering, prefill chunking, and GPU decode generation loops. `open_session` resolves `--model` through `catalog::resolve_model_arg` first (see Gotcha 5).
 - `chat.rs`: Interactive REPL loop maintaining user/assistant turn history and applying `fit_conversation_window` to manage context window bounds.
+- `bin/model.rs`: `turbospark-model`'s argv parse and exit-code mapping. **A second binary rather than subcommands on `turbospark-check`, and that is a decision**: `turbospark-invocation` is a pure, flat option parser whose contract is "`--model` is required and exactly one mode flag is set", with a five-place rule for every new flag and a hardcoded option-count assertion. A subcommand grammar does not belong in it, and bending it into one would put a required `--model` in front of a command whose entire job is that there is no model yet. Two exit codes, and a script doing `probe X && pull X` depends on the difference: 2 for a malformed invocation, 1 for a run that was asked for correctly and did not work.
+- `bin/model_cmd/`: the six subcommands (`list`, `info`, `probe`, `pull`, `path`, `rm`). **Nothing here decides anything** -- `turbospark-catalog` resolves rows, reaches verdicts and runs the walk; this module chooses column widths. Same split `main.rs` has with `invocation`, and it is what lets the verdict logic be tested without a terminal.
 
 ## Development & Test Commands
 
@@ -33,6 +45,15 @@ cargo run -p turbospark-cli --bin turbospark-check -- --model /path/to/model --p
 
 # Interactive chat mode
 cargo run -p turbospark-cli --bin turbospark-check -- --model /path/to/model --chat
+
+# The catalog and download surface (docs/MODELS.md).
+cargo run -p turbospark-cli --bin turbospark-model -- list
+cargo run -p turbospark-cli --bin turbospark-model -- probe owner/name
+cargo run --release -p turbospark-cli --bin turbospark-model -- pull tinyllama
+
+# Then, with no path anywhere:
+cargo run --release -p turbospark-cli --bin turbospark-check -- \
+  --model tinyllama --messages-file /tmp/p.json
 ```
 
 ## Real-Model Smoke Tests (Run Before Handoff)
@@ -60,3 +81,13 @@ printf '[{"role":"user","content":"Explain how coastal wetlands reduce flood dam
 4. **On `gpt-oss`, STDOUT is the answer and STDERR is the reasoning.** Harmony puts the model's reasoning in an `analysis` channel before its answer, so `ChannelSplit` runs that one dialect's output through `StructuredAssistantDecoder` and routes the two streams apart; redirecting stdout therefore captures the answer alone. For the other five families no decoder is built at all and the printing path is byte-identical to what it was. **Only the ANSWER accumulates into the returned reply**, which is what `chat.rs` appends to history: that is a correctness point rather than cosmetics, because Harmony's own convention drops the analysis channel from prior turns and feeding it back sends the model framing it was never trained to read. Note the consequence for any test asserting stderr is empty: on a gpt-oss install the reasoning is expected there. `tests/real_generation.rs` no longer makes that assertion in any mode -- all three now print the shared `[stop=...]` footer to stderr (`--prompt` used to print its own summary to stdout instead, and with it skipped the withheld `Tail`).
 
    **DO NOT SKIP AN EMPTY DELTA BEFORE THE SPLIT.** `stream_turn` used to return early on empty text, which is harmless for five families and total for this one: the detokenizer skips special tokens, so EVERY Harmony frame token (`<|channel|>`, `<|message|>`, `<|end|>`, `<|start|>`) arrives as `(id, "")`. Skipping those means the state machine never sees a single transition and the whole turn prints as one run of content, markup words and all, with no error anywhere. Measured on the real install: the first end-to-end run after wiring the splitter printed `analysisThe user asks...assistantfinalThe sky appears blue...` to stdout, which looks exactly like a decoder that was never built. Every transition arrives as an empty delta; the emptiness check belongs AFTER `ChannelSplit::push`, on its output.
+
+5. **`--model` takes a path OR a catalog alias, and the PATH always wins.**
+   Resolution lives in `generate.rs` via `catalog::resolve_model_arg`, not in
+   `turbospark-invocation`, which is pure and whose contract keeps the value an
+   opaque string. The order is load-bearing rather than a tie-break: a bare
+   name that silently preferred an alias would run a DIFFERENT model than the
+   one on the command line, fluently, with no error and with a perfectly
+   plausible tok/s footer. An unresolvable name is passed through unchanged, so
+   a machine with no `HOME` reports the same "no such install" it always did.
+   `crates/catalog/tests/store.rs` pins both directions.

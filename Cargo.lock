@@ -1777,10 +1777,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "turbospark-catalog"
+version = "0.1.0"
+dependencies = [
+ "reqwest",
+ "serde",
+ "serde_json",
+ "turbospark-core",
+ "turbospark-model-io",
+ "turbospark-repack",
+ "turbospark-tokenizer",
+]
+
+[[package]]
 name = "turbospark-cli"
 version = "0.1.0"
 dependencies = [
  "serde_json",
+ "turbospark-catalog",
  "turbospark-invocation",
  "turbospark-model-io",
  "turbospark-repack",

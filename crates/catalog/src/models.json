@@ -1,0 +1,369 @@
+{
+  "schema_version": 1,
+  "models": [
+    {
+      "alias": "gemma4",
+      "name": "Gemma 4 26B-A4B Instruct (MLX INT4, group 64)",
+      "family": "gemma4",
+      "source": {
+        "kind": "mlx",
+        "repo": "mlx-community/gemma-4-26b-a4b-it-4bit",
+        "revision": "0d77464eeb233a2da68ebf9d7dc4edaac7db956d",
+        "file": null
+      },
+      "sidecars": {
+        "repo": null,
+        "revision": null,
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "chat_template.jinja",
+          "generation_config.json"
+        ]
+      },
+      "download_bytes": 15341205776,
+      "install_bytes": 13000000000,
+      "status": "verified",
+      "gates": [
+        "quality_gate",
+        "memory_oracle",
+        "quality_sensitivity",
+        "logit_dump + scripts/kld.py"
+      ],
+      "notes": "The install every frozen Gemma 4 row in docs/BENCHMARKS.md is measured against, and the one the sensitivity proof and the mlx-lm cross-engine KL run on. If you install one model, install this one."
+    },
+    {
+      "alias": "qwen36",
+      "name": "Qwen 3.6 35B-A3B (MLX INT4, group 64)",
+      "family": "qwen36",
+      "source": {
+        "kind": "mlx",
+        "repo": "mlx-community/Qwen3.6-35B-A3B-4bit",
+        "revision": "38740b847e4cb78f352aba30aa41c76e08e6eb46",
+        "file": null
+      },
+      "sidecars": {
+        "repo": null,
+        "revision": null,
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "chat_template.jinja",
+          "generation_config.json"
+        ]
+      },
+      "download_bytes": 20402204271,
+      "install_bytes": 18000000000,
+      "status": "verified",
+      "gates": [
+        "qwen36_quality_gate",
+        "qwen36_memory_oracle"
+      ],
+      "notes": "Gated-DeltaNet linear attention on 30 of 40 layers. One of the two gated rows with NO cross-engine KL number (qwen38-27b is the other): scripts/kld.py is still pinned to a Gemma reference repo, so nothing external has checked this family's numerics."
+    },
+    {
+      "alias": "qwen3moe",
+      "name": "Qwen3-30B-A3B (GGUF Q4_K_M)",
+      "family": "qwen3moe",
+      "source": {
+        "kind": "gguf",
+        "repo": "Qwen/Qwen3-30B-A3B-GGUF",
+        "revision": "main",
+        "file": "Qwen3-30B-A3B-Q4_K_M.gguf"
+      },
+      "sidecars": {
+        "repo": "Qwen/Qwen3-30B-A3B",
+        "revision": "main",
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json"
+        ]
+      },
+      "download_bytes": 18556685824,
+      "install_bytes": 18600000000,
+      "status": "verified",
+      "gates": [
+        "qwen3moe_quality_gate",
+        "qwen3moe_memory_oracle",
+        "logit_dump + scripts/kld_llamacpp.py"
+      ],
+      "notes": "128 experts of 2.5 MiB, so it streams. Peak footprint 2.7 GiB rather than the README band: 48 layers deep, and the slot cache is slots x layers x expert_stride."
+    },
+    {
+      "alias": "gptoss-20b",
+      "name": "gpt-oss 20B (GGUF MXFP4)",
+      "family": "gptOss",
+      "source": {
+        "kind": "gguf",
+        "repo": "ggml-org/gpt-oss-20b-GGUF",
+        "revision": "main",
+        "file": "gpt-oss-20b-MXFP4.gguf"
+      },
+      "sidecars": {
+        "repo": "openai/gpt-oss-20b",
+        "revision": "main",
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "chat_template.jinja"
+        ]
+      },
+      "download_bytes": 12109566624,
+      "install_bytes": 12200000000,
+      "status": "verified",
+      "gates": [
+        "gptoss_memory_oracle",
+        "gptoss_quality_gate",
+        "logit_dump + scripts/kld_llamacpp.py"
+      ],
+      "notes": "Harmony puts reasoning in an analysis channel BEFORE the answer, so turbospark-check prints the answer on stdout and the reasoning on stderr. Needs an 8192 context AND a 3072-token budget: its three protocol cases take 818 / 2153 / 1108 tokens to reach the stop token. Peak footprint 5,421 MiB, most of it expert-slot cache."
+    },
+    {
+      "alias": "ternary27b",
+      "name": "Ternary-Bonsai 27B (MLX affine 2-bit, group 128)",
+      "family": "qwen35",
+      "source": {
+        "kind": "mlx",
+        "repo": "prism-ml/Ternary-Bonsai-27B-mlx-2bit",
+        "revision": "70f75f3ad081ab840a42f3304c02c27e7f89bfb7",
+        "file": null
+      },
+      "sidecars": {
+        "repo": null,
+        "revision": null,
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "chat_template.jinja",
+          "vocab.json",
+          "merges.txt"
+        ]
+      },
+      "download_bytes": 8490785104,
+      "install_bytes": 7600000000,
+      "status": "verified",
+      "gates": [
+        "ternary_quality_gate",
+        "ternary_memory_oracle",
+        "logit_dump + scripts/kld_mlx_affine.py"
+      ],
+      "notes": "Dense, so it streams nothing and its counted footprint is 661.6 MiB on 7.6 GB of weights -- but a dense model's weights are mapped and NOT counted, so budget its size on disk in free RAM. Ships merges.txt and NO generation_config.json, the exact inverse of qwen38-27b."
+    },
+    {
+      "alias": "qwen38-27b",
+      "name": "Qwen3.8 27B (MLX INT4, group 64)",
+      "family": "qwen35",
+      "source": {
+        "kind": "mlx",
+        "repo": "mlx-community/Qwen3.8-27B-4bit",
+        "revision": "3e6447f082e89cc7f0bc6e5441afd38dfce760ff",
+        "file": null
+      },
+      "sidecars": {
+        "repo": null,
+        "revision": null,
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "chat_template.jinja",
+          "generation_config.json",
+          "vocab.json"
+        ]
+      },
+      "download_bytes": 16054541349,
+      "install_bytes": 15200000000,
+      "status": "verified",
+      "gates": [
+        "qwen38_memory_oracle",
+        "qwen38_quality_gate"
+      ],
+      "notes": "Same architecture as ternary27b and bonsai27b, at a third quantization. Renders in NON-THINKING mode, so the shared 1024-token budget is enough. No merges.txt: this conversion embeds the merges in tokenizer.json. Has no cross-engine KL number (see qwen36)."
+    },
+    {
+      "alias": "gemma4-iq3",
+      "name": "Gemma 4 26B-A4B Instruct (GGUF UD-Q3_K_M, IQ3_XXS/IQ4_NL experts)",
+      "family": "gemma4",
+      "source": {
+        "kind": "gguf",
+        "repo": "unsloth/gemma-4-26B-A4B-it-GGUF",
+        "revision": "main",
+        "file": "gemma-4-26B-A4B-it-UD-Q3_K_M.gguf"
+      },
+      "sidecars": {
+        "repo": "mlx-community/gemma-4-26b-a4b-it-4bit",
+        "revision": "0d77464eeb233a2da68ebf9d7dc4edaac7db956d",
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "chat_template.jinja",
+          "generation_config.json"
+        ]
+      },
+      "download_bytes": 12728497888,
+      "install_bytes": 12800000000,
+      "status": "verified",
+      "gates": [
+        "iq3_quality_gate",
+        "logit_dump + scripts/kld_llamacpp.py"
+      ],
+      "notes": "-20% expert bytes against the MLX INT4 install for +2.56% perplexity (38.3753 against 37.4176), and it decodes SLOWER: 22.9-25.4 tok/s on the protocol against 35-41, at 2.0-2.4x the joules per token. A memory result, not a speed or power one."
+    },
+    {
+      "alias": "gemma4-gguf",
+      "name": "Gemma 4 26B-A4B Instruct (GGUF Q8_0)",
+      "family": "gemma4",
+      "source": {
+        "kind": "gguf",
+        "repo": "ggml-org/gemma-4-26B-A4B-it-GGUF",
+        "revision": "main",
+        "file": "gemma-4-26B-A4B-it-Q8_0.gguf"
+      },
+      "sidecars": {
+        "repo": "mlx-community/gemma-4-26b-a4b-it-4bit",
+        "revision": "0d77464eeb233a2da68ebf9d7dc4edaac7db956d",
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "chat_template.jinja",
+          "generation_config.json"
+        ]
+      },
+      "download_bytes": 26859860992,
+      "install_bytes": 26900000000,
+      "status": "runs",
+      "gates": [
+        "logit_dump + scripts/kld_llamacpp.py"
+      ],
+      "notes": "Eight bits and MEASURABLY WORSE than the INT4 MLX install on this corpus (perplexity 39.88 against 37.42), confirmed against llama.cpp on the identical bytes. Do not assume more bits is better here."
+    },
+    {
+      "alias": "qwen36-gguf",
+      "name": "Qwen 3.6 35B-A3B (GGUF Q4_K_M)",
+      "family": "qwen36",
+      "source": {
+        "kind": "gguf",
+        "repo": "ggml-org/Qwen3.6-35B-A3B-GGUF",
+        "revision": "main",
+        "file": "Qwen3.6-35B-A3B-Q4_K_M.gguf"
+      },
+      "sidecars": {
+        "repo": "mlx-community/Qwen3.6-35B-A3B-4bit",
+        "revision": "38740b847e4cb78f352aba30aa41c76e08e6eb46",
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "chat_template.jinja",
+          "generation_config.json"
+        ]
+      },
+      "download_bytes": 20419565568,
+      "install_bytes": 20500000000,
+      "status": "runs",
+      "gates": [],
+      "notes": "The mixed-block-type case: Q4_K experts and embedding, Q8_0 attention, one Q6_K tensor. The walk un-does llama.cpp's V-head interleaving on eight tensors; five of them are quantized and no BF16 probe can see them."
+    },
+    {
+      "alias": "bonsai27b",
+      "name": "Bonsai 27B (MLX affine 1-bit, group 128)",
+      "family": "qwen35",
+      "source": {
+        "kind": "mlx",
+        "repo": "prism-ml/Bonsai-27B-mlx-1bit",
+        "revision": "ef22f239c670078e1507f9769bcaa66657332b96",
+        "file": null
+      },
+      "sidecars": {
+        "repo": null,
+        "revision": null,
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "chat_template.jinja",
+          "vocab.json",
+          "merges.txt"
+        ]
+      },
+      "download_bytes": 5129115752,
+      "install_bytes": 3900000000,
+      "status": "runs",
+      "gates": [
+        "logit_dump + scripts/kld_mlx_affine.py"
+      ],
+      "notes": "One bit. The cross-engine KL needs the PrismML mlx fork, because upstream mlx refuses bits=1 at the API level on every device. Has no quality-gate or memory-oracle row."
+    },
+    {
+      "alias": "mistral7b",
+      "name": "Mistral 7B Instruct v0.3 (GGUF Q4_K_M, dense)",
+      "family": "llama",
+      "source": {
+        "kind": "gguf",
+        "repo": "bartowski/Mistral-7B-Instruct-v0.3-GGUF",
+        "revision": "main",
+        "file": "Mistral-7B-Instruct-v0.3-Q4_K_M.gguf"
+      },
+      "sidecars": {
+        "repo": "mistralai/Mistral-7B-Instruct-v0.3",
+        "revision": "main",
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json"
+        ]
+      },
+      "download_bytes": 4372812000,
+      "install_bytes": 4400000000,
+      "status": "runs",
+      "gates": [
+        "mistral_memory_oracle"
+      ],
+      "notes": "Dense, so nothing streams and there are zero packed-expert files. Its oracle runs at 8192 context, not the shared 4096: the protocol's long case is 3444 tokens under Mistral's 32k vocab and does not fit otherwise. Counted footprint 1,201 MiB at 8192 and 684 at 4096, of which KV is most -- the 4.07 GiB of weights are not counted, so budget disk size in free RAM."
+    },
+    {
+      "alias": "tinyllama",
+      "name": "TinyLlama 1.1B Chat v1.0 (GGUF Q6_K, dense)",
+      "family": "llama",
+      "source": {
+        "kind": "gguf",
+        "repo": "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF",
+        "revision": "main",
+        "file": "tinyllama-1.1b-chat-v1.0.Q6_K.gguf"
+      },
+      "sidecars": {
+        "repo": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+        "revision": "main",
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json"
+        ]
+      },
+      "download_bytes": 904385920,
+      "install_bytes": 910000000,
+      "status": "runs",
+      "gates": [],
+      "notes": "The cheapest real install here, ~3 minutes. Its chat framing is Zephyr and its special-token table is Mistral's, which is why framing comes from the checkpoint's own template and not from the dialect probe."
+    },
+    {
+      "alias": "mixtral",
+      "name": "Mixtral 8x7B Instruct v0.1 (GGUF Q4_K_M)",
+      "family": "llama",
+      "source": {
+        "kind": "gguf",
+        "repo": "mradermacher/Mixtral-8x7B-Instruct-v0.1-GGUF",
+        "revision": "main",
+        "file": "Mixtral-8x7B-Instruct-v0.1.Q4_K_M.gguf"
+      },
+      "sidecars": {
+        "repo": "mistralai/Mixtral-8x7B-Instruct-v0.1",
+        "revision": "main",
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json"
+        ]
+      },
+      "download_bytes": 28448468384,
+      "install_bytes": 29000000000,
+      "status": "caveat",
+      "gates": [],
+      "notes": "INSTALLS AND RUNS AND CANNOT STREAM USEFULLY. 8 experts of 108.9 MiB means 54.5 GiB of pinned slot cache at the default 16 slots; at slots == experts it pins the whole 27.2 GiB expert table, which is not streaming. Expert GRANULARITY decides what this engine can hold, not model size. Listed so the arithmetic is visible before the 26 GB download rather than after it."
+    }
+  ]
+}
