@@ -1127,7 +1127,7 @@ resident weights, in 13.8 minutes.
 | sampled digest | `7ea1f8d9` |
 | greedy at 8 slots | `6a99d870` (equal, as it must be) |
 | decode, greedy / sampled smoke | 14.2 / 13.8 tok/s |
-| peak `phys_footprint` | 661.6 / 657.8 MiB (two readings) |
+| peak `phys_footprint` | 661.6 / 657.8 / 659.3 MiB (three readings) |
 | decode, short / medium / long | 13.8 / 13.6 / 12.7 tok/s |
 | replay growth | +0.00 / +0.02 MiB |
 
