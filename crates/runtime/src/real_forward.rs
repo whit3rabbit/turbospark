@@ -399,10 +399,10 @@ impl RealForwardRunner {
             }
             // One flow for both, on the same footing `llama` and `qwen3moe`
             // share `families/llama/`'s: every BEHAVIOURAL field of
-            // `bonsai_27b()` equals `qwen36_35b_a3b()`'s and every SHAPE field
+            // `qwen_gdn_dense_27b()` equals `qwen_gdn_moe_35b_a3b()`'s and every SHAPE field
             // differs, so `qwen3_5` is the DENSE half of this flow and not a
             // sixth one. `RealQwenState` carries the split, off `num_experts`.
-            model_io::ModelFamily::Qwen36 | model_io::ModelFamily::Qwen35 => {
+            model_io::ModelFamily::QwenGdnMoe | model_io::ModelFamily::QwenGdnDense => {
                 runner.real_qwen = Some(crate::families::qwen::RealQwenState::build(
                     &mut runner.context,
                     &runner.weights,

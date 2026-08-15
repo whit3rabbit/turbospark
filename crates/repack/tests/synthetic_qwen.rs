@@ -3,7 +3,7 @@
 //! classification actually fires.
 
 use turbospark_repack::{
-    build_synthetic_qwen36_real_install, classify_for_family, peek_manifest_arch, Gemma4Bucket,
+    build_synthetic_qwen_gdn_moe_install, classify_for_family, peek_manifest_arch, Gemma4Bucket,
 };
 
 use model_io::ModelFamily;
@@ -13,7 +13,7 @@ const LAYERS: i64 = 4;
 const EXPERTS: i64 = 8;
 
 fn build(dir: &std::path::Path) -> model_io::ArchConfig {
-    build_synthetic_qwen36_real_install(dir, VOCAB, LAYERS, EXPERTS, "qwen-toy")
+    build_synthetic_qwen_gdn_moe_install(dir, VOCAB, LAYERS, EXPERTS, "qwen-toy")
         .expect("synthetic qwen install")
 }
 
@@ -43,7 +43,7 @@ fn peek_round_trips_family_mask_and_linear_config() {
     let dir = temp_dir("peek");
     let built = build(&dir);
     let peeked = peek_manifest_arch(&dir).expect("peek");
-    assert_eq!(peeked.family, ModelFamily::Qwen36);
+    assert_eq!(peeked.family, ModelFamily::QwenGdnMoe);
     assert_eq!(peeked.full_attention_layer_mask, vec![2u8, 1, 2, 1]);
     assert_eq!(peeked.linear_attention, built.linear_attention);
     assert_eq!(peeked.linear_attention.qkv_dim(), 256);
@@ -64,7 +64,7 @@ fn peek_round_trips_family_mask_and_linear_config() {
 fn switch_mlp_is_routed_only_under_qwen() {
     let qwen_expert = "language_model.model.layers.2.mlp.switch_mlp.gate_proj.weight";
     assert_eq!(
-        classify_for_family(qwen_expert, 4, ModelFamily::Qwen36),
+        classify_for_family(qwen_expert, 4, ModelFamily::QwenGdnMoe),
         Gemma4Bucket::RoutedExpert {
             role: "gate",
             layer: 2
@@ -77,7 +77,7 @@ fn switch_mlp_is_routed_only_under_qwen() {
 
     let gemma_expert = "language_model.model.layers.2.experts.switch_glu.up_proj.weight";
     assert_eq!(
-        classify_for_family(gemma_expert, 4, ModelFamily::Qwen36),
+        classify_for_family(gemma_expert, 4, ModelFamily::QwenGdnMoe),
         Gemma4Bucket::LmResident
     );
 
@@ -89,7 +89,7 @@ fn switch_mlp_is_routed_only_under_qwen() {
         "language_model.model.layers.0.linear_attn.A_log",
     ] {
         assert_eq!(
-            classify_for_family(name, 4, ModelFamily::Qwen36),
+            classify_for_family(name, 4, ModelFamily::QwenGdnMoe),
             Gemma4Bucket::LmResident,
             "{name}"
         );

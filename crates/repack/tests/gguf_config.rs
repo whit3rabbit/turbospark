@@ -185,7 +185,7 @@ fn qwen3moe_is_not_the_qwen36_family() {
     let bytes = qwen3moe_header();
     let h = parse_gguf_header(&bytes, GGUF_DEFAULT_MAX_HEADER_BYTES).unwrap();
     let a = arch_from_gguf(&h).expect("arch");
-    assert_ne!(a.family, ModelFamily::Qwen36);
+    assert_ne!(a.family, ModelFamily::QwenGdnMoe);
     // Qwen 3.6's derivation would demand the `ssm.*` keys this file has
     // none of, so a misrouted family fails loudly rather than silently.
     assert_eq!(a.linear_attention, model_io::LinearAttentionConfig::NONE);

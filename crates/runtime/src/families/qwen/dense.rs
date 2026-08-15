@@ -17,8 +17,8 @@
 //!
 //! **The width is `intermediate_size`, never `moe_intermediate_size`**, which
 //! reads as an obvious statement and is the one place this family is more
-//! dangerous than `llama`: `qwen36_35b_a3b()` sets `intermediate_size` to the
-//! SHARED EXPERT's width and `bonsai_27b()` sets it to the dense FFN's, so the
+//! dangerous than `llama`: `qwen_gdn_moe_35b_a3b()` sets `intermediate_size` to the
+//! SHARED EXPERT's width and `qwen_gdn_dense_27b()` sets it to the dense FFN's, so the
 //! same field means two things across the two installs this file's flow
 //! serves. A dense install sets `moe_intermediate_size` to 0, so taking that
 //! one encodes nothing at all.

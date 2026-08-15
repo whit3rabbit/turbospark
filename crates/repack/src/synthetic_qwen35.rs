@@ -1,6 +1,6 @@
 //! Builds a tiny `qwen3_5` install through the REAL checkpoint repack
 //! pipeline (ROADMAP's 1-bit entry, step 3): the DENSE, ONE-BIT sibling of
-//! [`crate::build_synthetic_qwen36_real_install`].
+//! [`crate::build_synthetic_qwen_gdn_moe_install`].
 //!
 //! **This fixture exists to be built BEFORE the 4.78 GiB stream rather than
 //! after it**, which is `crates/repack` Gotcha 8's rule and what M4's dense
@@ -35,7 +35,7 @@ use model_io::{
     ModelFamily, RopeScalingConfig,
 };
 
-use crate::gemma4_checkpoint::{write_qwen35_install, Gemma4Quant};
+use crate::gemma4_checkpoint::{write_qwen_gdn_dense_install, Gemma4Quant};
 use crate::ranged_download::MemoryRangeSource;
 use crate::safetensors_header::parse_header;
 use crate::synthetic_real::{assemble_safetensors, deterministic_row, u16_le, Tensor};
@@ -72,10 +72,10 @@ fn linear_attention() -> LinearAttentionConfig {
 }
 
 /// A tiny `qwen3_5`-shaped architecture. Every non-shape field takes
-/// [`model_io::bonsai_27b`]'s own value, for the reason `tiny_qwen36_arch`
+/// [`model_io::qwen_gdn_dense_27b`]'s own value, for the reason `tiny_qwen_gdn_moe_arch`
 /// pins Qwen 3.6's: the manifest's optional family extensions fall back to a
 /// baseline, so anything else has to be written and matched explicitly.
-pub fn tiny_qwen35_arch(vocab_size: i64, num_layers: i64) -> ArchConfig {
+pub fn tiny_qwen_gdn_dense_arch(vocab_size: i64, num_layers: i64) -> ArchConfig {
     ArchConfig {
         hidden_size: HIDDEN as i64,
         intermediate_size: INTER as i64,
@@ -104,10 +104,10 @@ pub fn tiny_qwen35_arch(vocab_size: i64, num_layers: i64) -> ArchConfig {
             .map(|l| if l % 2 == 1 { 1u8 } else { 2u8 })
             .collect(),
         hidden_activation: "silu".to_string(),
-        family: ModelFamily::Qwen35,
+        family: ModelFamily::QwenGdnDense,
         attn_output_gate: true,
         // 0.125, not the mathematically-right 32^-0.5, for the reason
-        // `tiny_qwen36_arch` gives: `validate_arch` compares this f64
+        // `tiny_qwen_gdn_moe_arch` gives: `validate_arch` compares this f64
         // EXACTLY against the manifest's and serde_json's default parser is
         // only correct to ~1 ULP, so a scale that is not a binary fraction
         // cannot survive the round trip (AGENTS.md Gotcha 24). The real
@@ -215,13 +215,13 @@ fn int1_triple(name: &str, rows: usize, cols: usize, seed: u64) -> Vec<Tensor> {
 ///
 /// Takes no `num_experts`: the family is dense and a fixture that could be
 /// asked for experts would be a fixture no real file corresponds to.
-pub fn build_synthetic_qwen35_real_install(
+pub fn build_synthetic_qwen_gdn_dense_install(
     dir: &std::path::Path,
     vocab_size: i64,
     num_layers: i64,
     model_id: &str,
 ) -> Result<ArchConfig, Box<dyn std::error::Error>> {
-    let arch = tiny_qwen35_arch(vocab_size, num_layers);
+    let arch = tiny_qwen_gdn_dense_arch(vocab_size, num_layers);
     let vocab = vocab_size as usize;
     let la = &arch.linear_attention;
     let qkv_dim = la.qkv_dim() as usize;
@@ -369,7 +369,7 @@ pub fn build_synthetic_qwen35_real_install(
         group_size: GROUP as u32,
         bits_overrides: std::collections::HashMap::new(),
     };
-    write_qwen35_install(dir, &arch, model_id, &header, &source, &quant)?;
+    write_qwen_gdn_dense_install(dir, &arch, model_id, &header, &source, &quant)?;
     Ok(arch)
 }
 

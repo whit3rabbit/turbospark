@@ -8,7 +8,7 @@
 use model_io::ModelFamily;
 use turbospark_repack::{
     arch_from_gguf, describe_gguf_architecture, gguf_arch_support, hf_family_for_model_type,
-    parse_gemma4_config, parse_qwen36_config, planned_gguf_architectures, ArchSupport,
+    parse_gemma4_config, parse_qwen_gdn_moe_config, planned_gguf_architectures, ArchSupport,
 };
 
 #[test]
@@ -20,7 +20,7 @@ fn the_two_running_architectures_resolve_to_their_family() {
     // Not "qwen36": llama.cpp's converter name is what a real file carries.
     assert_eq!(
         gguf_arch_support("qwen35moe"),
-        Some(ArchSupport::Supported(ModelFamily::Qwen36))
+        Some(ArchSupport::Supported(ModelFamily::QwenGdnMoe))
     );
     // Supported PARTIALLY (ROADMAP Phase M2): the MoE half of this
     // architecture runs and the dense half is refused at open, which no
@@ -103,11 +103,11 @@ fn both_model_type_spellings_resolve() {
     );
     assert_eq!(
         hf_family_for_model_type("qwen3_5_moe"),
-        Some(ModelFamily::Qwen36)
+        Some(ModelFamily::QwenGdnMoe)
     );
     assert_eq!(
         hf_family_for_model_type("qwen3_5_moe_text"),
-        Some(ModelFamily::Qwen36)
+        Some(ModelFamily::QwenGdnMoe)
     );
     // Qwen2-MoE is a different model, and an earlier draft of
     // docs/MODEL_FAMILY.md claimed this row existed.
@@ -127,11 +127,11 @@ fn both_model_type_spellings_resolve() {
 fn the_two_qwen_model_types_do_not_collapse_into_one_family() {
     assert_eq!(
         hf_family_for_model_type("qwen3_5"),
-        Some(ModelFamily::Qwen35)
+        Some(ModelFamily::QwenGdnDense)
     );
     assert_eq!(
         hf_family_for_model_type("qwen3_5_text"),
-        Some(ModelFamily::Qwen35)
+        Some(ModelFamily::QwenGdnDense)
     );
     assert_ne!(
         hf_family_for_model_type("qwen3_5"),
@@ -156,7 +156,7 @@ fn each_config_parser_refuses_the_other_family() {
         .to_string();
     assert!(e.contains("qwen36"), "{e}");
 
-    let e = parse_qwen36_config(gemma)
+    let e = parse_qwen_gdn_moe_config(gemma)
         .expect_err("qwen parser must refuse a gemma config")
         .to_string();
     assert!(e.contains("gemma4"), "{e}");

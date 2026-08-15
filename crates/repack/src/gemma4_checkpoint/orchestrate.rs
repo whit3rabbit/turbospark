@@ -400,7 +400,7 @@ pub fn manifest_quant_for(
     };
     let l0 = "language_model.model.layers.0";
     let (attention, router, shared, routed) = match family {
-        ModelFamily::Qwen36 => (
+        ModelFamily::QwenGdnMoe => (
             format!("{l0}.linear_attn.in_proj_qkv"),
             format!("{l0}.mlp.gate"),
             format!("{l0}.mlp.shared_expert.gate_proj"),
@@ -415,7 +415,7 @@ pub fn manifest_quant_for(
         // slots. The shared-expert probe deliberately names the DENSE FFN,
         // which does exist, rather than a `shared_expert` path that never
         // will: the slot then reports a width that was actually measured.
-        ModelFamily::Qwen35 => (
+        ModelFamily::QwenGdnDense => (
             format!("{l0}.linear_attn.in_proj_qkv"),
             format!("{l0}.mlp.gate"),
             format!("{l0}.mlp.gate_proj"),

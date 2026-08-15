@@ -1,8 +1,8 @@
 //! Qwen 3.6 `config.json` -> [`ArchConfig`].
 //!
 //! The ONE family-specific piece of the repack path. Everything downstream
-//! of it -- `classify_for_family`, `manifest_quant`, `write_qwen36_install`,
-//! `write_qwen36_install_streamed` -- already takes a `ModelFamily` and
+//! of it -- `classify_for_family`, `manifest_quant`, `write_qwen_gdn_moe_install`,
+//! `write_qwen_gdn_moe_install_streamed` -- already takes a `ModelFamily` and
 //! needs nothing else from this module.
 //!
 //! Shaped like [`crate::parse_gemma4_config`], but almost every key name
@@ -49,20 +49,20 @@ const MASK_FULL: u8 = 1;
 /// is ignored -- `classify_for_family` drops the `vision_tower.` tensors
 /// separately.
 ///
-/// Cross-check the result against [`model_io::qwen36_35b_a3b`]: if the two
+/// Cross-check the result against [`model_io::qwen_gdn_moe_35b_a3b`]: if the two
 /// disagree field for field, one of them is wrong.
-pub fn parse_qwen36_config(json: &str) -> Result<ArchConfig, Gemma4Error> {
-    parse_qwen_family_config(json, ModelFamily::Qwen36)
+pub fn parse_qwen_gdn_moe_config(json: &str) -> Result<ArchConfig, Gemma4Error> {
+    parse_qwen_family_config(json, ModelFamily::QwenGdnMoe)
 }
 
 /// Parses a `qwen3_5` `config.json` into an [`ArchConfig`]
 /// (`prism-ml/Bonsai-27B-mlx-1bit`, ROADMAP's 1-bit entry).
 ///
-/// **The same parser as [`parse_qwen36_config`] with FOUR fields resolved
+/// **The same parser as [`parse_qwen_gdn_moe_config`] with FOUR fields resolved
 /// differently, which is why this is a parameterized body and Qwen 3.6's own
 /// parser is not a parameterized Gemma one.** Against Gemma almost every key
 /// name differs; against Qwen 3.6 almost none does, because the two share a
-/// behavioural profile entirely (see [`model_io::bonsai_27b`]). What differs
+/// behavioural profile entirely (see [`model_io::qwen_gdn_dense_27b`]). What differs
 /// is exactly the FFN:
 ///
 /// | field | `qwen3_5` | `qwen3_5_moe` |
@@ -72,10 +72,10 @@ pub fn parse_qwen36_config(json: &str) -> Result<ArchConfig, Gemma4Error> {
 /// | `num_experts` / `top_k_experts` | 0 | `num_experts` / `num_experts_per_tok` |
 /// | `shared_expert_gated` | false | true |
 ///
-/// Cross-check the result against [`model_io::bonsai_27b`]: if the two
+/// Cross-check the result against [`model_io::qwen_gdn_dense_27b`]: if the two
 /// disagree field for field, one of them is wrong.
-pub fn parse_qwen35_config(json: &str) -> Result<ArchConfig, Gemma4Error> {
-    parse_qwen_family_config(json, ModelFamily::Qwen35)
+pub fn parse_qwen_gdn_dense_config(json: &str) -> Result<ArchConfig, Gemma4Error> {
+    parse_qwen_family_config(json, ModelFamily::QwenGdnDense)
 }
 
 fn parse_qwen_family_config(json: &str, family: ModelFamily) -> Result<ArchConfig, Gemma4Error> {
@@ -144,7 +144,7 @@ fn parse_qwen_family_config(json: &str, family: ModelFamily) -> Result<ArchConfi
 
     // The four fields the two Qwen configs resolve differently. Everything
     // else above and below is shared verbatim.
-    let dense = family == ModelFamily::Qwen35;
+    let dense = family == ModelFamily::QwenGdnDense;
     let (intermediate_size, moe_intermediate_size, num_experts, top_k_experts) = if dense {
         // A dense config that ALSO declares experts is a contradiction, and
         // reading only half of it produces an `ArchConfig` whose FFN width

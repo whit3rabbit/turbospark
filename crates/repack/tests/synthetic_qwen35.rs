@@ -21,7 +21,7 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use turbospark_repack::{build_synthetic_qwen35_real_install, tiny_qwen35_arch};
+use turbospark_repack::{build_synthetic_qwen_gdn_dense_install, tiny_qwen_gdn_dense_arch};
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -40,7 +40,7 @@ const LAYERS: i64 = 4;
 
 fn build() -> (PathBuf, model_io::ArchConfig) {
     let dir = temp_dir();
-    let arch = build_synthetic_qwen35_real_install(&dir, VOCAB, LAYERS, "qwen35-toy")
+    let arch = build_synthetic_qwen_gdn_dense_install(&dir, VOCAB, LAYERS, "qwen35-toy")
         .expect("the 1-bit dense install writes");
     (dir, arch)
 }
@@ -254,12 +254,12 @@ fn narrowing_f16_to_bf16_counts_what_it_loses() {
 #[test]
 fn the_install_declares_the_dense_family() {
     let (dir, arch) = build();
-    assert_eq!(arch, tiny_qwen35_arch(VOCAB, LAYERS));
-    assert_eq!(arch.family, model_io::ModelFamily::Qwen35);
+    assert_eq!(arch, tiny_qwen_gdn_dense_arch(VOCAB, LAYERS));
+    assert_eq!(arch.family, model_io::ModelFamily::QwenGdnDense);
     assert_eq!(arch.num_experts, 0);
 
     let family = model_io::peek_family(&dir, 4 * 1024 * 1024).expect("family peeks");
-    assert_eq!(family, model_io::ModelFamily::Qwen35);
+    assert_eq!(family, model_io::ModelFamily::QwenGdnDense);
 }
 
 /// The family guard on the writer refuses an install written under the
@@ -272,8 +272,8 @@ fn the_install_declares_the_dense_family() {
 #[test]
 fn the_writer_refuses_a_mislabelled_arch() {
     let dir = temp_dir();
-    let mut arch = tiny_qwen35_arch(VOCAB, LAYERS);
-    arch.family = model_io::ModelFamily::Qwen36;
+    let mut arch = tiny_qwen_gdn_dense_arch(VOCAB, LAYERS);
+    arch.family = model_io::ModelFamily::QwenGdnMoe;
 
     // An EMPTY safetensors blob suffices: the guard runs before any tensor
     // is read, which is itself the property worth having -- a family check
@@ -291,7 +291,9 @@ fn the_writer_refuses_a_mislabelled_arch() {
 
     // `Gemma4RepackOutput` is not `Debug`, so match rather than
     // `expect_err`.
-    match turbospark_repack::write_qwen35_install(&dir, &arch, "toy", &header, &source, &quant) {
+    match turbospark_repack::write_qwen_gdn_dense_install(
+        &dir, &arch, "toy", &header, &source, &quant,
+    ) {
         Ok(_) => panic!("a qwen36-tagged arch must be refused"),
         Err(err) => assert!(format!("{err}").contains("qwen35"), "{err}"),
     }

@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use half::f16;
 use selection::ShapingConfig;
 use tokenizer::MfTokenizer;
-use turbospark_repack::build_synthetic_qwen36_real_install;
+use turbospark_repack::build_synthetic_qwen_gdn_moe_install;
 use turbospark_runtime::{
     run_raw_completion, GenerationConfig, LogitProducer, RawDecodeProgress, RealForwardRunner,
 };
@@ -44,7 +44,7 @@ fn chatml_tokenizer() -> MfTokenizer {
 }
 
 fn open_runner(dir: &std::path::Path, vocab: i64) -> RealForwardRunner {
-    let arch = build_synthetic_qwen36_real_install(dir, vocab, LAYERS, EXPERTS, "tiny-qwen36")
+    let arch = build_synthetic_qwen_gdn_moe_install(dir, vocab, LAYERS, EXPERTS, "tiny-qwen36")
         .expect("qwen install builds");
     RealForwardRunner::open(dir, arch).expect("qwen install opens")
 }
@@ -251,7 +251,7 @@ fn runs_through_the_raw_completion_loop() {
 #[test]
 fn open_rejects_linear_layers_outside_qwen_and_all_compressed_layers() {
     let dir = temp_dir();
-    let arch = build_synthetic_qwen36_real_install(&dir, VOCAB, LAYERS, EXPERTS, "tiny-qwen36")
+    let arch = build_synthetic_qwen_gdn_moe_install(&dir, VOCAB, LAYERS, EXPERTS, "tiny-qwen36")
         .expect("qwen install builds");
 
     let mut mislabelled = arch.clone();

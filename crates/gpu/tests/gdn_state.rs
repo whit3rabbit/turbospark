@@ -27,7 +27,7 @@ fn qwen_style_arch() -> model_io::ArchConfig {
         attention_k_eq_v: false,
         full_attention_layer_mask: vec![2, 2, 1], // two linear, one full
         hidden_activation: "silu".to_string(),
-        family: model_io::ModelFamily::Qwen36,
+        family: model_io::ModelFamily::QwenGdnMoe,
         attn_output_gate: true,
         attention_scale: 1.0,
         embedding_scaled_by_sqrt_hidden: false,

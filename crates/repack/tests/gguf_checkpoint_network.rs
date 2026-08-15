@@ -341,7 +341,7 @@ fn scopes_phase_s_from_the_qwen36_ud_q3_k_m_header() {
     let h = fetch(QWEN36_UD_Q3_K_M);
     report("Qwen3.6-35B-A3B-UD-Q3_K_M.gguf", &h);
     assert_eq!(h.architecture(), Some("qwen35moe"));
-    assert_every_name_maps(&h, ModelFamily::Qwen36);
+    assert_every_name_maps(&h, ModelFamily::QwenGdnMoe);
     assert_arch_matches_install(&h, "TURBOSPARK_QWEN36_INSTALL_DIR");
 }
 
@@ -353,8 +353,12 @@ fn reads_the_real_qwen36_q4_k_m_header() {
     // llama.cpp converts Qwen 3.6 under the 3.5 series' name.
     assert_eq!(h.architecture(), Some("qwen35moe"));
     assert!(h.tensors.len() > 100);
-    assert_every_name_maps(&h, ModelFamily::Qwen36);
-    assert_mapped_names_exist_in_install(&h, ModelFamily::Qwen36, "TURBOSPARK_QWEN36_INSTALL_DIR");
+    assert_every_name_maps(&h, ModelFamily::QwenGdnMoe);
+    assert_mapped_names_exist_in_install(
+        &h,
+        ModelFamily::QwenGdnMoe,
+        "TURBOSPARK_QWEN36_INSTALL_DIR",
+    );
     assert_arch_matches_install(&h, "TURBOSPARK_QWEN36_INSTALL_DIR");
 }
 

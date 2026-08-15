@@ -61,7 +61,7 @@ pub fn gemma4_26b_a4b() -> ArchConfig {
     }
 }
 
-fn qwen36_layer_mask() -> Vec<u8> {
+fn qwen_gdn_moe_layer_mask() -> Vec<u8> {
     qwen_hybrid_layer_mask(40)
 }
 
@@ -82,10 +82,21 @@ fn qwen_hybrid_layer_mask(layers: usize) -> Vec<u8> {
     mask
 }
 
-/// Canonical `prism-ml/Bonsai-27B-mlx-1bit` baseline (ROADMAP's 1-bit
-/// entry): a 64-layer hybrid of 48 gated-DeltaNet linear-attention layers
-/// and 16 full-attention layers (every 4th), a DENSE SwiGLU FFN, untied
-/// lm_head, no logit softcap and no sliding window.
+/// Canonical `qwen3_5` baseline: a 64-layer hybrid of 48 gated-DeltaNet
+/// linear-attention layers and 16 full-attention layers (every 4th), a DENSE
+/// SwiGLU FFN, untied lm_head, no logit softcap and no sliding window.
+///
+/// **It is named for the ARCHITECTURE rather than for a checkpoint because it
+/// serves two published ones**, which is what the rename off `bonsai_27b`
+/// records. `prism-ml/Bonsai-27B-mlx-1bit` (ROADMAP's 1-bit entry) came
+/// first; `Qwen/Qwen3.8-27B` arrived 2026-08-14 and its `text_config` agrees
+/// with Bonsai's on 33 of 35 fields -- everything below is identical, and the
+/// only differences are `eos_token_id` (248044 against 248046, a tokenizer
+/// concern that reaches no field here) and the quantization block, which is
+/// not part of an `ArchConfig` either. The two therefore share this baseline
+/// exactly, and the QUANTIZATION is what a reader should expect to differ
+/// between installs of them: 1-bit at group 128 for Bonsai, INT4 at group 64
+/// for the mlx-community Qwen3.8 artifact.
 ///
 /// **Every behavioural field here is Qwen 3.6's and every shape field
 /// differs**, which is what makes this the same relationship dense Mistral
@@ -106,7 +117,7 @@ fn qwen_hybrid_layer_mask(layers: usize) -> Vec<u8> {
 /// YaRN. On TEXT positions mrope's three sections are equal and it reduces
 /// to the `rope_neox_subdim` this baseline already sets, which is a claim
 /// the cross-engine check has to verify rather than one to assume.
-pub fn bonsai_27b() -> ArchConfig {
+pub fn qwen_gdn_dense_27b() -> ArchConfig {
     ArchConfig {
         hidden_size: 5120,
         // The dense FFN, not a shared expert. See the doc above.
@@ -131,7 +142,7 @@ pub fn bonsai_27b() -> ArchConfig {
         attention_k_eq_v: false,
         full_attention_layer_mask: qwen_hybrid_layer_mask(64),
         hidden_activation: "silu".to_string(),
-        family: ModelFamily::Qwen35,
+        family: ModelFamily::QwenGdnDense,
         attn_output_gate: true,
         attention_scale: 0.0625, // 256^-0.5, a binary fraction (Gotcha 24)
         embedding_scaled_by_sqrt_hidden: false,
@@ -163,7 +174,7 @@ pub fn bonsai_27b() -> ArchConfig {
 /// gated-DeltaNet linear-attention layers and 10 full-attention layers
 /// (every 4th layer), 256 routed experts (top-8) plus a sigmoid-gated
 /// shared expert, SwiGLU activations, untied lm_head, no logit softcap.
-pub fn qwen36_35b_a3b() -> ArchConfig {
+pub fn qwen_gdn_moe_35b_a3b() -> ArchConfig {
     ArchConfig {
         hidden_size: 2048,
         intermediate_size: 512,
@@ -184,9 +195,9 @@ pub fn qwen36_35b_a3b() -> ArchConfig {
         top_k_experts: 8,
         tie_word_embeddings: false,
         attention_k_eq_v: false,
-        full_attention_layer_mask: qwen36_layer_mask(),
+        full_attention_layer_mask: qwen_gdn_moe_layer_mask(),
         hidden_activation: "silu".to_string(),
-        family: ModelFamily::Qwen36,
+        family: ModelFamily::QwenGdnMoe,
         attn_output_gate: true,
         attention_scale: 0.0625, // 256^-0.5
         embedding_scaled_by_sqrt_hidden: false,
@@ -511,23 +522,23 @@ pub fn deepseek_v4_flash_284b_a13b() -> ArchConfig {
 pub fn known_architecture(family: ModelFamily) -> ArchConfig {
     match family {
         ModelFamily::Gemma4 => gemma4_26b_a4b(),
-        ModelFamily::Qwen36 => qwen36_35b_a3b(),
+        ModelFamily::QwenGdnMoe => qwen_gdn_moe_35b_a3b(),
         ModelFamily::DeepseekV4Flash => deepseek_v4_flash_284b_a13b(),
         ModelFamily::Llama => mixtral_8x7b(),
         ModelFamily::Qwen3Moe => qwen3_30b_a3b(),
         ModelFamily::GptOss => gpt_oss_20b(),
-        ModelFamily::Qwen35 => bonsai_27b(),
+        ModelFamily::QwenGdnDense => qwen_gdn_dense_27b(),
     }
 }
 
 pub fn all_known_architectures() -> Vec<ArchConfig> {
     vec![
         gemma4_26b_a4b(),
-        qwen36_35b_a3b(),
+        qwen_gdn_moe_35b_a3b(),
         deepseek_v4_flash_284b_a13b(),
         mixtral_8x7b(),
         qwen3_30b_a3b(),
         gpt_oss_20b(),
-        bonsai_27b(),
+        qwen_gdn_dense_27b(),
     ]
 }

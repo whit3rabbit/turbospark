@@ -172,6 +172,46 @@ higher here (2,217 to 2,235) than its own published M5 Pro band, on a
 different chip and OS build, so do not treat the M4 Max numbers above as
 transferable to those rows.
 
+### Every install, side by side
+
+The table the README's summary is drawn from. All M4 Max, AC, release, 16
+expert-cache slots; each row is the SESSION PEAK its memory oracle asserts,
+and the ceiling beside it is that oracle's bound (deliberately ~8-13% above
+the reading, so allocator jitter cannot flake it).
+
+| Install | On disk | Context | Measured peak | Oracle ceiling | Decode tok/s | Streams? |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| Gemma 4 26B-A4B, MLX INT4 | 13 GB | 4,096 | 2,108 - 2,182 MiB | 2,250 | 34.6 - 40.7 | yes, 128 experts |
+| Gemma 4 26B-A4B, IQ3 GGUF | 12 GB | 4,096 | ~1,850 MiB | -- | 22.9 - 25.4 | yes |
+| Qwen 3.6 35B-A3B, MLX INT4 | 18 GB | 4,096 | 1,587 - 1,610 MiB | 1,700 | 32.6 - 38.0 | yes, 256 experts |
+| Qwen3-30B-A3B, Q4_K_M | 17 GB | 4,096 | 2,741 - 2,753 MiB | 2,900 | 16.0 - 28.1 | yes, 128 experts |
+| gpt-oss-20b, MXFP4 | 11 GB | 8,192 | 5,417 - 5,421 MiB | 5,700 | 22.9 - 30.4 | yes, 32 experts |
+| **Qwen3.8-27B, MLX INT4** | 14 GB | 4,096 | **660.0 - 660.3 MiB** | 750 | 16.8 - 19.0 | **no, dense** |
+| Mistral 7B, Q4_K_M | 4.1 GB | 8,192 | 1,201 - 1,203 MiB | 1,300 | 16.3 - 30.4 | no, dense |
+| Bonsai-27B, MLX 1-bit | 3.9 GB | -- | not measured | -- | ~18.3 | no, dense |
+
+**READ THE `Streams?` COLUMN BEFORE COMPARING ANY TWO ROWS**, because the
+two groups are measuring different things and only one of them is a result
+about this engine.
+
+- **Streaming rows**: the peak is `resident core + KV + slot cache`, and the
+  slot term (`slots x layers x expert_stride`) dominates. That is the
+  engineering claim -- a 13 GB model held in 2.1 GB. It also explains the
+  spread: gpt-oss is not a regression at 5.4 GiB, it is 24 layers of a much
+  larger expert, and Qwen3-30B-A3B sits at 2.7 GiB on depth alone (48
+  layers) despite having the smallest expert here (Gotcha 36).
+- **Dense rows**: nothing streams, and the peak is small for an entirely
+  different reason -- `phys_footprint` does not count the memory-mapped
+  weights at all (Gotcha 40). Qwen3.8-27B's 660 MiB sits beside 15.1 GB of
+  weights that are mapped and pinned and simply not counted. A dense row is
+  therefore NOT a claim that the model runs in that much RAM; the practical
+  requirement is closer to its size on disk. The counted figure is a leak
+  sentinel, not a capacity number.
+
+And the CONTEXT column is load-bearing on the dense rows in particular: KV
+is most of what they measure, so Mistral reads 1,201 MiB at 8,192 and 684
+MiB at 4,096 for the same install and the same model.
+
 ## Expert-cache slots: the one runtime control that moves this
 
 Both engines default to 16 slots and the table above is measured there.
@@ -985,6 +1025,81 @@ read 36.67 W and the whole 3.75 W difference is `cpu W` (4.32 against
 1.48): system-wide counters had attributed a busy desktop UI to the
 decode loop. Rows, the diagnosis and what it does to the AC-throttle
 reading: `docs/POWER_BASELINE.md`, "gpt-oss-20b".
+
+### The seventh checkpoint, and the first controlled quantization pair: `Qwen/Qwen3.8-27B`
+
+NOT A PARITY CLAIM. Swift has no `qwen3_5` support at all, so every number
+here is this port measuring itself.
+
+Measured 2026-08-14 on the machine in the provenance table, on AC, release,
+16 expert-cache slots (inert on a dense install), 4,096 context. Install
+streamed from `mlx-community/Qwen3.8-27B-4bit` into ~15.1 GB.
+
+| | value |
+| --- | ---: |
+| peak `phys_footprint` | 660.3 / 660.0 / 660.2 MiB (three readings) |
+| resident weights | 15,132,916,736 bytes, and NONE of it counted |
+| decode, short / medium / long | 19.0 / 18.7 / 16.8 tok/s |
+| reference perplexity | 4.9432 |
+| greedy digest | `c3df0095` |
+| sampled digest | `f272437c` |
+| greedy at 8 slots | `c3df0095` (equal, as it must be) |
+| replay growth | +0.02 MiB |
+
+**THIS IS NOT A NEW FAMILY, AND THAT IS THE INTERESTING PART.** Qwen3.8-27B
+and `prism-ml/Bonsai-27B-mlx-1bit` are ONE architecture: their
+`text_config`s agree on 33 of 35 keys, both have 2,180 tensors and 333
+`vision_tower.` tensors, and both parse to the same `ArchConfig`
+(`qwen_gdn_dense_27b()`) -- asserted offline, without the network, by
+`both_published_checkpoints_parse_to_one_baseline`. The two that differ,
+`eos_token_id` and the quantization block, reach no field of it. So no
+`ArchConfig` field, no kernel and no decode flow changed to support this
+checkpoint; the repack walk needed nothing either.
+
+What that buys is the comparison this document has been unable to make
+anywhere else. Every other quantization number here varies the checkpoint
+and the quantization together (the Q8_0-against-INT4 Gemma pair is two
+different producers; the Phase S IQ3 pair is a different file). **Bonsai at
+1 bit and Qwen3.8 at INT4 hold the architecture, the layer graph, the
+tokenizer and the decode flow fixed and vary the quantization alone** --
+1-bit group 128 with FP16 companions against INT4 group 64 with BF16 ones.
+Two readings from it, both to be taken with the caveat that these are
+different TRAINED weights and not two quantizations of one training run
+(Bonsai is a QAT checkpoint of its own):
+
+- **Decode is 19.0 tok/s here against Bonsai's 18.3**, on 3.9x the weight
+  bytes (15.1 GB against 3.9). If either were bandwidth-bound that could
+  not happen, so this flow is compute-bound at both widths -- which is what
+  the 1-bit entry suspected ("well below the MLX INT4 families' 35-44 ...
+  nobody has profiled it") and had no second point to check against. The
+  64-layer depth and the gated-DeltaNet recurrence, not the weight reads,
+  are what set the rate.
+- **660 MiB of counted footprint on a 27B model**, because AGENTS.md Gotcha
+  40 holds here too. That gotcha was measured on a dense GGUF install a
+  quarter this size and explicitly said to re-derive it per install shape;
+  re-derived on a dense SAFETENSORS install of 15.1 GB, the weights are
+  still absent from the counter. The accounting that is left closes on KV
+  (256.0 MiB at 4,096), the fixed delta-rule state (144.0 MiB, which does
+  not grow with context) and the conv tail (7.5 MiB).
+
+Two further notes on the perplexity, which at 4.9432 is the lowest in this
+document. It is NOT a ranking against the other families: the corpus is the
+frozen protocol's, chosen for Gemma, and each family's template puts the
+reference answer in a different position. And it needed NO assistant prefix
+even though this checkpoint's assistant slot is structured -- its template
+opens a `<think>` block, which is exactly the shape that made gpt-oss read
+148,421.76 without one. It needs none because `apply_chat_template` renders
+with `enable_thinking: false` and this template's non-thinking branch emits
+a CLOSED, EMPTY block (`<think>\n\n</think>\n\n`), so the reference answer
+already lands in the answer position. Splicing a `</think>` in would have
+written a second close and measured the model's surprise at that: the same
+error as omitting one, from the other side.
+
+The run also discharged a written-down unknown. `protocol_parameters` had
+put this family in the shared 4,096/1,024 group on the TOKENIZER's evidence
+and flagged it "UNVERIFIED until an install exists". Confirmed:
+`long-synthesis` tokenizes to 2,940 and generates 637 more, so all three
+cases stop `endOfTurn` with 3,577 of 4,096 used.
 
 ## Batched verify and speculative decoding
 

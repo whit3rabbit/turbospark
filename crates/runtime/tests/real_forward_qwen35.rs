@@ -25,7 +25,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use half::f16;
-use turbospark_repack::build_synthetic_qwen35_real_install;
+use turbospark_repack::build_synthetic_qwen_gdn_dense_install;
 use turbospark_runtime::{LogitProducer, RealForwardRunner};
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -45,7 +45,7 @@ fn temp_dir(tag: &str) -> std::path::PathBuf {
 }
 
 fn build(dir: &std::path::Path) {
-    build_synthetic_qwen35_real_install(dir, VOCAB, LAYERS, "tiny-bonsai")
+    build_synthetic_qwen_gdn_dense_install(dir, VOCAB, LAYERS, "tiny-bonsai")
         .expect("dense 1-bit qwen3_5 install builds");
 }
 
@@ -54,7 +54,7 @@ fn build(dir: &std::path::Path) {
 ///
 /// It goes through `peek_manifest_arch` rather than the builder's own
 /// `ArchConfig`, exactly as `crates/cli` does, so validation against
-/// `bonsai_27b()` is really exercised.
+/// `qwen_gdn_dense_27b()` is really exercised.
 #[test]
 fn a_dense_one_bit_qwen35_install_opens_and_decodes() {
     let dir = temp_dir("decodes");

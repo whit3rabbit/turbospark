@@ -3,7 +3,7 @@
 //! an in-memory safetensors blob using the verbatim Qwen naming
 //! (`language_model.` prefix, `.mlp.switch_mlp.` routed experts,
 //! `linear_attn.*` gated-DeltaNet tensors, INT8 router + shared expert,
-//! BF16 norms), pushed through [`crate::write_qwen36_install`]. This is
+//! BF16 norms), pushed through [`crate::write_qwen_gdn_moe_install`]. This is
 //! what `crates/runtime`'s Qwen decode flow is exercised against, since no
 //! trained Qwen `.gturbo` checkpoint exists in this environment.
 //!
@@ -23,7 +23,7 @@ use model_io::{
     ModelFamily, RopeScalingConfig,
 };
 
-use crate::gemma4_checkpoint::{write_qwen36_install, Gemma4Quant};
+use crate::gemma4_checkpoint::{write_qwen_gdn_moe_install, Gemma4Quant};
 use crate::ranged_download::MemoryRangeSource;
 use crate::safetensors_header::parse_header;
 use crate::synthetic_real::{
@@ -54,11 +54,11 @@ fn linear_attention() -> LinearAttentionConfig {
 }
 
 /// A tiny Qwen-3.6-shaped architecture. Every non-shape field takes
-/// `turbospark_model_io::qwen36_35b_a3b()`'s own value, for the same reason
+/// `turbospark_model_io::qwen_gdn_moe_35b_a3b()`'s own value, for the same reason
 /// `tiny_gemma4_arch` pins Gemma's: the manifest's optional family
 /// extensions fall back to a baseline, so anything else has to be written
 /// explicitly and matched explicitly.
-pub fn tiny_qwen36_arch(vocab_size: i64, num_layers: i64, num_experts: i64) -> ArchConfig {
+pub fn tiny_qwen_gdn_moe_arch(vocab_size: i64, num_layers: i64, num_experts: i64) -> ArchConfig {
     ArchConfig {
         hidden_size: HIDDEN as i64,
         intermediate_size: INTER as i64,
@@ -86,7 +86,7 @@ pub fn tiny_qwen36_arch(vocab_size: i64, num_layers: i64, num_experts: i64) -> A
             .map(|l| if l % 2 == 1 { 1u8 } else { 2u8 })
             .collect(),
         hidden_activation: "silu".to_string(),
-        family: ModelFamily::Qwen36,
+        family: ModelFamily::QwenGdnMoe,
         attn_output_gate: true,
         // 0.125, not the mathematically-right 32^-0.5. `validate_arch`
         // compares this f64 EXACTLY against the manifest's, and
@@ -129,14 +129,14 @@ fn conv1d_weight(name: &str, channels: usize, taps: usize, seed: u64) -> Tensor 
 /// Writes a tiny Qwen 3.6 `.gturbo` install and returns the `ArchConfig`
 /// needed to open it. `num_experts` must be positive; `top_k` is
 /// `min(num_experts, 8)` (the MoE kernels' fixed slot count).
-pub fn build_synthetic_qwen36_real_install(
+pub fn build_synthetic_qwen_gdn_moe_install(
     dir: &std::path::Path,
     vocab_size: i64,
     num_layers: i64,
     num_experts: i64,
     model_id: &str,
 ) -> Result<ArchConfig, Box<dyn std::error::Error>> {
-    let arch = tiny_qwen36_arch(vocab_size, num_layers, num_experts);
+    let arch = tiny_qwen_gdn_moe_arch(vocab_size, num_layers, num_experts);
     let experts = num_experts as usize;
     let vocab = vocab_size as usize;
     let la = &arch.linear_attention;
@@ -306,6 +306,6 @@ pub fn build_synthetic_qwen36_real_install(
         group_size: 64,
         bits_overrides: overrides,
     };
-    write_qwen36_install(dir, &arch, model_id, &header, &source, &quant)?;
+    write_qwen_gdn_moe_install(dir, &arch, model_id, &header, &source, &quant)?;
     Ok(arch)
 }

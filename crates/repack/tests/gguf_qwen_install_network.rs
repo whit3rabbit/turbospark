@@ -85,7 +85,7 @@ fn repacks_the_real_qwen36_q4_k_m_gguf() {
         eprintln!("[repack] {stage}");
     })
     .expect("streamed GGUF install");
-    assert_eq!(arch, model_io::qwen36_35b_a3b());
+    assert_eq!(arch, model_io::qwen_gdn_moe_35b_a3b());
 
     for name in [
         "tokenizer.json",

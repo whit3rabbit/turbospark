@@ -21,8 +21,8 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use turbospark_repack::{
-    fetch_safetensors_header, parse_gemma4_quantization, parse_qwen36_config,
-    write_qwen36_install_streamed, Gemma4Shards, HttpRangeSource,
+    fetch_safetensors_header, parse_gemma4_quantization, parse_qwen_gdn_moe_config,
+    write_qwen_gdn_moe_install_streamed, Gemma4Shards, HttpRangeSource,
 };
 
 const REPO_BASE: &str = "https://huggingface.co/mlx-community/Qwen3.6-35B-A3B-4bit/resolve/38740b847e4cb78f352aba30aa41c76e08e6eb46";
@@ -90,17 +90,18 @@ fn repacks_the_real_qwen36_checkpoint() {
     // `tests/qwen36_config.rs`; failing HERE and passing there means the
     // upstream checkpoint moved, not that the parser broke.
     let config = String::from_utf8(get("config.json")).expect("config utf8");
-    let arch = parse_qwen36_config(&config).expect("config parses");
+    let arch = parse_qwen_gdn_moe_config(&config).expect("config parses");
     assert_eq!(
         arch,
-        model_io::qwen36_35b_a3b(),
+        model_io::qwen_gdn_moe_35b_a3b(),
         "parsed config does not match the pinned Qwen3.6-35B-A3B baseline"
     );
     let quant = parse_gemma4_quantization(&config).expect("quantization parses");
     assert_eq!(quant.default_bits, 4);
     // `validate_quant` accepts router 8 ONLY, so an upstream change here
     // would fail much later, at load, with a far less obvious message.
-    let manifest_quant = turbospark_repack::manifest_quant(&quant, model_io::ModelFamily::Qwen36);
+    let manifest_quant =
+        turbospark_repack::manifest_quant(&quant, model_io::ModelFamily::QwenGdnMoe);
     assert_eq!(
         manifest_quant["router"]["weightBits"], 8,
         "router must be INT8"
@@ -125,7 +126,7 @@ fn repacks_the_real_qwen36_checkpoint() {
 
     let dir = install_dir();
     eprintln!("installing to {}", dir.display());
-    write_qwen36_install_streamed(&dir, &arch, MODEL_ID, &shards, &quant, |stage| {
+    write_qwen_gdn_moe_install_streamed(&dir, &arch, MODEL_ID, &shards, &quant, |stage| {
         eprintln!("[repack] {stage}");
     })
     .expect("streamed install");

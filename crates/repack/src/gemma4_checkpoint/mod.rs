@@ -161,7 +161,7 @@ pub fn write_gemma4_install(
 /// [`write_gemma4_install`] plus the guard that `arch.family` actually says
 /// Qwen -- passing a Gemma arch here would silently classify
 /// `.mlp.switch_mlp.` tensors as resident.
-pub fn write_qwen36_install(
+pub fn write_qwen_gdn_moe_install(
     dir: &Path,
     arch: &ArchConfig,
     model_id: &str,
@@ -169,9 +169,9 @@ pub fn write_qwen36_install(
     source: &dyn RangeSource,
     quant: &Gemma4Quant,
 ) -> Result<Gemma4RepackOutput, Box<dyn std::error::Error>> {
-    if arch.family != ModelFamily::Qwen36 {
+    if arch.family != ModelFamily::QwenGdnMoe {
         return Err(Box::new(Gemma4Error::Config(format!(
-            "write_qwen36_install needs arch.family = qwen36, got {}",
+            "write_qwen_gdn_moe_install needs arch.family = qwen36, got {}",
             arch.family.as_str()
         ))));
     }
@@ -182,14 +182,14 @@ pub fn write_qwen36_install(
 /// 1-bit entry).
 ///
 /// The same walk again, and the guard is the whole wrapper for the reason
-/// [`write_qwen36_install`]'s is: `write_gemma4_install` reads the routed
+/// [`write_qwen_gdn_moe_install`]'s is: `write_gemma4_install` reads the routed
 /// marker and the quant probe names off `arch.family`, so an install written
 /// under the wrong tag is well-formed and wrong. That matters more here than
 /// for any other pair, because `qwen3_5` and `qwen3_5_moe` are one suffix
 /// apart -- a Bonsai checkpoint written as Qwen 3.6 would look for
 /// `.mlp.switch_mlp.` experts that do not exist and quietly make every dense
 /// FFN tensor resident.
-pub fn write_qwen35_install(
+pub fn write_qwen_gdn_dense_install(
     dir: &Path,
     arch: &ArchConfig,
     model_id: &str,
@@ -197,16 +197,16 @@ pub fn write_qwen35_install(
     source: &dyn RangeSource,
     quant: &Gemma4Quant,
 ) -> Result<Gemma4RepackOutput, Box<dyn std::error::Error>> {
-    if arch.family != ModelFamily::Qwen35 {
+    if arch.family != ModelFamily::QwenGdnDense {
         return Err(Box::new(Gemma4Error::Config(format!(
-            "write_qwen35_install needs arch.family = qwen35, got {}",
+            "write_qwen_gdn_dense_install needs arch.family = qwen35, got {}",
             arch.family.as_str()
         ))));
     }
     write_gemma4_install(dir, arch, model_id, header, source, quant)
 }
 
-/// [`write_qwen35_install`] for the real 4.78 GiB checkpoint.
+/// [`write_qwen_gdn_dense_install`] for the real 4.78 GiB checkpoint.
 ///
 /// The streamed body has nothing to stream on a dense model -- there are no
 /// expert layers -- so what this buys over the one-shot writer is the
@@ -215,7 +215,7 @@ pub fn write_qwen35_install(
 /// Bonsai-27B is the first checkpoint whose unquantized tensors are lossy to
 /// narrow. A 25-minute walk that does something lossy in silence is how a
 /// quality question becomes a mystery three phases later.
-pub fn write_qwen35_install_streamed(
+pub fn write_qwen_gdn_dense_install_streamed(
     dir: &Path,
     arch: &ArchConfig,
     model_id: &str,
@@ -223,18 +223,18 @@ pub fn write_qwen35_install_streamed(
     quant: &Gemma4Quant,
     progress: impl FnMut(&str),
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if arch.family != ModelFamily::Qwen35 {
+    if arch.family != ModelFamily::QwenGdnDense {
         return Err(Box::new(Gemma4Error::Config(format!(
-            "write_qwen35_install_streamed needs arch.family = qwen35, got {}",
+            "write_qwen_gdn_dense_install_streamed needs arch.family = qwen35, got {}",
             arch.family.as_str()
         ))));
     }
     write_gemma4_install_streamed(dir, arch, model_id, shards, quant, progress)
 }
 
-/// [`write_qwen36_install`] for a real multi-GB checkpoint: the same family
+/// [`write_qwen_gdn_moe_install`] for a real multi-GB checkpoint: the same family
 /// guard in front of [`write_gemma4_install_streamed`].
-pub fn write_qwen36_install_streamed(
+pub fn write_qwen_gdn_moe_install_streamed(
     dir: &Path,
     arch: &ArchConfig,
     model_id: &str,
@@ -242,9 +242,9 @@ pub fn write_qwen36_install_streamed(
     quant: &Gemma4Quant,
     progress: impl FnMut(&str),
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if arch.family != ModelFamily::Qwen36 {
+    if arch.family != ModelFamily::QwenGdnMoe {
         return Err(Box::new(Gemma4Error::Config(format!(
-            "write_qwen36_install_streamed needs arch.family = qwen36, got {}",
+            "write_qwen_gdn_moe_install_streamed needs arch.family = qwen36, got {}",
             arch.family.as_str()
         ))));
     }

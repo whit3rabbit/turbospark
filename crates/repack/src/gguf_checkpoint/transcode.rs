@@ -13,7 +13,7 @@ use crate::resident_writer::{RawTensorSpec, ResidentEntrySpec, ResidentTensorSpe
 fn int8_transcode_targets(family: ModelFamily) -> &'static [&'static str] {
     match family {
         ModelFamily::Gemma4 => &["router.proj.weight"],
-        ModelFamily::Qwen36 => &["mlp.gate.weight", "mlp.shared_expert_gate.weight"],
+        ModelFamily::QwenGdnMoe => &["mlp.gate.weight", "mlp.shared_expert_gate.weight"],
         // Mixtral's `ffn_gate_inp` maps to the same canonical name Qwen's
         // router takes, and it is F16 in the 2023 conversion and F32 in the
         // 2025 one -- both narrow to the INT8 affine the runtime's router
@@ -30,7 +30,7 @@ fn int8_transcode_targets(family: ModelFamily) -> &'static [&'static str] {
         // safetensors only -- so the GGUF walk never reaches it. Empty
         // rather than Qwen 3.6's list, which would be a claim about bytes
         // that do not exist.
-        ModelFamily::DeepseekV4Flash | ModelFamily::Qwen35 => &[],
+        ModelFamily::DeepseekV4Flash | ModelFamily::QwenGdnDense => &[],
     }
 }
 
@@ -50,7 +50,7 @@ struct VHeadAxis {
 }
 
 fn v_head_axis(canonical: &str, arch: &ArchConfig) -> Option<VHeadAxis> {
-    if arch.family != ModelFamily::Qwen36 {
+    if arch.family != ModelFamily::QwenGdnMoe {
         return None;
     }
     let la = &arch.linear_attention;

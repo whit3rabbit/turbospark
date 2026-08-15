@@ -2,8 +2,8 @@
 //! helpers.
 
 use turbospark_model_io::{
-    bonsai_27b, deepseek_v4_flash_284b_a13b, gemma4_26b_a4b, known_architecture, qwen36_35b_a3b,
-    ModelFamily,
+    deepseek_v4_flash_284b_a13b, gemma4_26b_a4b, known_architecture, qwen_gdn_dense_27b,
+    qwen_gdn_moe_35b_a3b, ModelFamily,
 };
 
 #[test]
@@ -20,7 +20,7 @@ fn gemma4_layer_mask_marks_every_sixth_layer_full() {
 
 #[test]
 fn qwen_layer_mask_is_mostly_linear_with_full_every_fourth() {
-    let arch = qwen36_35b_a3b();
+    let arch = qwen_gdn_moe_35b_a3b();
     assert_eq!(arch.full_attention_layer_mask.len(), 40);
     assert!(arch.has_linear_attention_layers());
     assert!(arch.layer_is_linear(0));
@@ -43,23 +43,31 @@ fn deepseek_layer_mask_has_csa_and_hca_from_layer_two() {
 #[test]
 fn known_architecture_matches_the_named_baseline() {
     assert_eq!(known_architecture(ModelFamily::Gemma4), gemma4_26b_a4b());
-    assert_eq!(known_architecture(ModelFamily::Qwen36), qwen36_35b_a3b());
+    assert_eq!(
+        known_architecture(ModelFamily::QwenGdnMoe),
+        qwen_gdn_moe_35b_a3b()
+    );
     assert_eq!(
         known_architecture(ModelFamily::DeepseekV4Flash),
         deepseek_v4_flash_284b_a13b()
     );
-    assert_eq!(known_architecture(ModelFamily::Qwen35), bonsai_27b());
+    assert_eq!(
+        known_architecture(ModelFamily::QwenGdnDense),
+        qwen_gdn_dense_27b()
+    );
 }
 
-/// Bonsai-27B's layer graph: 64 layers, full attention on every 4th, and so
+/// The `qwen3_5` layer graph: 64 layers, full attention on every 4th, and so
 /// 48 gated-DeltaNet layers to 16 full-attention ones.
 ///
 /// The counts are the check rather than the pattern, because they are what
-/// the checkpoint's own tensor inventory independently reports: 48 of each
+/// each checkpoint's own tensor inventory independently reports: 48 of each
 /// `linear_attn.in_proj_*` against 16 of each `self_attn.{q,k,v,o}_proj`.
+/// BOTH published checkpoints report exactly that, which is one of the
+/// observations that says they share this baseline.
 #[test]
-fn bonsai_layer_mask_is_48_linear_to_16_full() {
-    let arch = bonsai_27b();
+fn qwen_gdn_dense_layer_mask_is_48_linear_to_16_full() {
+    let arch = qwen_gdn_dense_27b();
     assert_eq!(arch.full_attention_layer_mask.len(), 64);
     assert_eq!(
         arch.full_attention_layer_mask
@@ -81,69 +89,69 @@ fn bonsai_layer_mask_is_48_linear_to_16_full() {
     assert_eq!(arch.full_attention_layer_mask[63], 1);
 }
 
-/// **The claim the `Qwen35` family rests on, asserted rather than commented:
+/// **The claim the `QwenGdnDense` family rests on, asserted rather than commented:
 /// every BEHAVIOURAL field is Qwen 3.6's and the shape fields differ.**
 ///
-/// That is what makes it a variant sharing `families/qwen/`'s flow rather
+/// That is what makes it a variant sharing `families/moe/`'s flow rather
 /// than a sixth flow, and it is the same relationship dense Mistral has to
 /// Mixtral. If a future edit moves one of these apart, the shared flow stops
 /// being correct and this is where it should be noticed -- not in a
 /// coherence smoke, which cannot see a behavioural field at all.
 #[test]
-fn bonsai_shares_qwen36s_behaviour_and_differs_in_shape() {
-    let bonsai = bonsai_27b();
-    let qwen = qwen36_35b_a3b();
+fn qwen_gdn_dense_shares_the_moe_flows_behaviour_and_differs_in_shape() {
+    let dense = qwen_gdn_dense_27b();
+    let moe = qwen_gdn_moe_35b_a3b();
 
     // Behavioural: identical.
-    assert_eq!(bonsai.attn_output_gate, qwen.attn_output_gate);
-    assert_eq!(bonsai.attention_scale, qwen.attention_scale);
-    assert_eq!(bonsai.rope_neox_subdim, qwen.rope_neox_subdim);
-    assert_eq!(bonsai.ffn_sandwich_norms, qwen.ffn_sandwich_norms);
-    assert_eq!(bonsai.router_scaled, qwen.router_scaled);
+    assert_eq!(dense.attn_output_gate, moe.attn_output_gate);
+    assert_eq!(dense.attention_scale, moe.attention_scale);
+    assert_eq!(dense.rope_neox_subdim, moe.rope_neox_subdim);
+    assert_eq!(dense.ffn_sandwich_norms, moe.ffn_sandwich_norms);
+    assert_eq!(dense.router_scaled, moe.router_scaled);
     assert_eq!(
-        bonsai.embedding_scaled_by_sqrt_hidden,
-        qwen.embedding_scaled_by_sqrt_hidden
+        dense.embedding_scaled_by_sqrt_hidden,
+        moe.embedding_scaled_by_sqrt_hidden
     );
-    assert_eq!(bonsai.attention_k_eq_v, qwen.attention_k_eq_v);
-    assert_eq!(bonsai.tie_word_embeddings, qwen.tie_word_embeddings);
-    assert_eq!(bonsai.hidden_activation, qwen.hidden_activation);
-    assert_eq!(bonsai.final_logit_softcap, qwen.final_logit_softcap);
-    assert_eq!(bonsai.sliding_window, qwen.sliding_window);
-    assert_eq!(bonsai.rope_theta, qwen.rope_theta);
-    assert_eq!(bonsai.partial_rotary_factor, qwen.partial_rotary_factor);
-    assert_eq!(bonsai.head_dim, qwen.head_dim);
-    assert_eq!(bonsai.vocab_size, qwen.vocab_size);
+    assert_eq!(dense.attention_k_eq_v, moe.attention_k_eq_v);
+    assert_eq!(dense.tie_word_embeddings, moe.tie_word_embeddings);
+    assert_eq!(dense.hidden_activation, moe.hidden_activation);
+    assert_eq!(dense.final_logit_softcap, moe.final_logit_softcap);
+    assert_eq!(dense.sliding_window, moe.sliding_window);
+    assert_eq!(dense.rope_theta, moe.rope_theta);
+    assert_eq!(dense.partial_rotary_factor, moe.partial_rotary_factor);
+    assert_eq!(dense.head_dim, moe.head_dim);
+    assert_eq!(dense.vocab_size, moe.vocab_size);
     assert_eq!(
-        bonsai.linear_attention.key_head_dim,
-        qwen.linear_attention.key_head_dim
+        dense.linear_attention.key_head_dim,
+        moe.linear_attention.key_head_dim
     );
     assert_eq!(
-        bonsai.linear_attention.conv_kernel_size,
-        qwen.linear_attention.conv_kernel_size
+        dense.linear_attention.conv_kernel_size,
+        moe.linear_attention.conv_kernel_size
     );
 
     // Shape: different, and the DENSE difference is the one that needs a
     // branch rather than just a baseline.
-    assert_ne!(bonsai.hidden_size, qwen.hidden_size);
-    assert_ne!(bonsai.num_layers, qwen.num_layers);
-    assert_ne!(bonsai.num_heads, qwen.num_heads);
+    assert_ne!(dense.hidden_size, moe.hidden_size);
+    assert_ne!(dense.num_layers, moe.num_layers);
+    assert_ne!(dense.num_heads, moe.num_heads);
     assert_ne!(
-        bonsai.linear_attention.num_v_heads,
-        qwen.linear_attention.num_v_heads
+        dense.linear_attention.num_v_heads,
+        moe.linear_attention.num_v_heads
     );
-    assert_eq!(bonsai.num_experts, 0, "the checkpoint is dense");
-    assert_eq!(bonsai.top_k_experts, 0);
-    assert!(qwen.num_experts > 0, "the comparison is not vacuous");
+    assert_eq!(dense.num_experts, 0, "both checkpoints are dense");
+    assert_eq!(dense.top_k_experts, 0);
+    assert!(moe.num_experts > 0, "the comparison is not vacuous");
     // ...and `shared_expert_gated` differs BECAUSE it is dense, which is the
     // one behavioural field that legitimately parts company.
-    assert!(qwen.shared_expert_gated && !bonsai.shared_expert_gated);
+    assert!(moe.shared_expert_gated && !dense.shared_expert_gated);
 }
 
 #[test]
 fn model_family_round_trips_through_its_string_form() {
     for family in [
         ModelFamily::Gemma4,
-        ModelFamily::Qwen36,
+        ModelFamily::QwenGdnMoe,
         ModelFamily::DeepseekV4Flash,
     ] {
         assert_eq!(ModelFamily::parse(family.as_str()), Some(family));
@@ -151,11 +159,48 @@ fn model_family_round_trips_through_its_string_form() {
     assert_eq!(ModelFamily::parse("unknown"), None);
 }
 
+/// **The wire strings are an ON-DISK FORMAT, pinned here as literals so a
+/// rename cannot change them by accident.**
+///
+/// Every `.gturbo` install records `as_str()` in its `manifest.json` and
+/// `parse()` reads it back at load, so changing one of these does not
+/// rename a concept -- it makes every existing install of that family
+/// unloadable, with an "unknown family" error pointing nowhere near the
+/// commit that caused it.
+///
+/// TWO OF THESE DELIBERATELY NO LONGER MATCH THEIR VARIANT NAME. The two
+/// gated-DeltaNet families were called `Qwen35` and `Qwen36` until
+/// 2026-08-15, named after checkpoint versions that had already drifted
+/// (upstream keeps `model_type: qwen3_5` stable across the 3.5, 3.6 and 3.8
+/// releases, and `Qwen36` matched `qwen3_5_moe` anyway). The Rust names were
+/// fixed and the strings were not, because only one of the two is free.
+/// If this test fails, do not update the literals -- restore the strings.
+#[test]
+fn the_on_disk_family_strings_are_frozen() {
+    for (family, expected) in [
+        (ModelFamily::Gemma4, "gemma4"),
+        (ModelFamily::QwenGdnMoe, "qwen36"),
+        (ModelFamily::DeepseekV4Flash, "deepseekV4Flash"),
+        (ModelFamily::Llama, "llama"),
+        (ModelFamily::Qwen3Moe, "qwen3moe"),
+        (ModelFamily::GptOss, "gptOss"),
+        (ModelFamily::QwenGdnDense, "qwen35"),
+    ] {
+        assert_eq!(
+            family.as_str(),
+            expected,
+            "{family:?}'s on-disk string changed; every install carrying the old \
+             one becomes unloadable"
+        );
+        assert_eq!(ModelFamily::parse(expected), Some(family));
+    }
+}
+
 #[test]
 fn decode_int4_gemv_shapes_nonempty_for_every_baseline() {
     for arch in [
         gemma4_26b_a4b(),
-        qwen36_35b_a3b(),
+        qwen_gdn_moe_35b_a3b(),
         deepseek_v4_flash_284b_a13b(),
     ] {
         let shapes = arch.decode_int4_gemv_shapes();
@@ -168,8 +213,8 @@ fn decode_int4_gemv_shapes_nonempty_for_every_baseline() {
 fn decode_int8_gemv_shapes_include_router_and_optional_shared_expert_gate() {
     let gemma = gemma4_26b_a4b();
     assert_eq!(gemma.decode_int8_gemv_shapes().len(), 1);
-    let qwen = qwen36_35b_a3b();
-    assert_eq!(qwen.decode_int8_gemv_shapes().len(), 2);
+    let moe = qwen_gdn_moe_35b_a3b();
+    assert_eq!(moe.decode_int8_gemv_shapes().len(), 2);
 }
 
 /// AGENTS.md Gotcha 24: `validate_arch` compares float fields with `!=` on

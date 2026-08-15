@@ -46,7 +46,7 @@ naming schemes genuinely differ and none is derivable from another: Qwen 3.6 is
 
 - **GGUF Checkpoints**: `turbospark-repack` fetches the initial ~512 KB metadata header via `HttpRangeSource` and inspects `general.architecture`:
   - `"gemma4"` -> `ModelFamily::Gemma4`
-  - `"qwen35moe"` -> `ModelFamily::Qwen36`
+  - `"qwen35moe"` -> `ModelFamily::QwenGdnMoe`
   - `"llama"` -> `ModelFamily::Llama`, and PARTIALLY: this string is both
     Mixtral and dense Llama, only the MoE half has a decode flow, and the
     refusal for the dense half therefore lives at `RealForwardRunner::open`
@@ -59,13 +59,21 @@ naming schemes genuinely differ and none is derivable from another: Qwen 3.6 is
   - anything else -> refused, with a message that says whether the string is
     *recognized but unported* (and what it would need) or *unknown*.
 - **Hugging Face Safetensors**: the family is chosen by the CALLER, which picks
-  `write_gemma4_install` or `write_qwen36_install`. `config.json`'s `model_type`
+  `write_gemma4_install` or `write_qwen_gdn_moe_install`. `config.json`'s `model_type`
   is a GUARD on that choice rather than a dispatcher: each parser refuses a
   config that positively claims another family, since without it the wrong
   parser silently produces an `ArchConfig` labelled with the family it
   hardcodes. A config claiming nothing recognized is accepted.
   - `"gemma4"` / `"gemma4_text"` -> `ModelFamily::Gemma4`
-  - `"qwen3_5_moe"` / `"qwen3_5_moe_text"` -> `ModelFamily::Qwen36`
+  - `"qwen3_5_moe"` / `"qwen3_5_moe_text"` -> `ModelFamily::QwenGdnMoe`
+  - `"qwen3_5"` / `"qwen3_5_text"` -> `ModelFamily::QwenGdnDense` (the DENSE
+    sibling). **The lookup is exact equality and not a prefix match, and
+    these two rows are why**: `qwen3_5` and `qwen3_5_moe` are one suffix
+    apart, so a prefix match resolves every dense checkpoint to the MoE
+    family -- a baseline with 256 experts and a decode flow with a router in
+    it, i.e. fluent WRONG output rather than an error. Two published
+    checkpoints report `qwen3_5`: `prism-ml/Bonsai-27B-mlx-1bit` and
+    `Qwen/Qwen3.8-27B`, and they share one `ArchConfig` exactly.
   - The `_text` spellings are what the multimodal checkpoints' `text_config`
     carries. `architectures` (class names like
     `Gemma4ForConditionalGeneration`) is deliberately not consulted: it is a
@@ -79,12 +87,23 @@ The table below provides a comprehensive list of all major LLM architectures sup
 
 **Read the footprint column as an MoE result, not a general one.** The
 ~1.6-2.2 GiB figures come from STREAMING routed experts: only the resident core
-is mapped, and mapped weights are pinned by
-`newBufferWithBytesNoCopy` (AGENTS.md Gotcha 19), so a model with no routed
-experts has every byte of itself resident. A dense Llama 3 8B at Q4_K_M would
-sit near its own ~4.9 GB on disk. Dense families cannot hold this ceiling, by
-construction, and no amount of engineering changes that; only the MoE rows below
-inherit it.
+is mapped, and its mapped weights are pinned by `newBufferWithBytesNoCopy`
+(AGENTS.md Gotcha 19), so those rows are `resident core + KV + slot cache`.
+The slot term is `slots x layers x expert_stride` and it DOMINATES them, which
+is why `qwen3moe` sits at 2.7 GiB and `gpt-oss` at 5.4 rather than inside the
+band (Gotcha 36).
+
+**The DENSE rows are low for an entirely different reason, and an earlier
+version of this note had it backwards.** It said a dense family sits near its
+own on-disk size "by construction", reasoning from Gotcha 19 that every mapped
+byte is counted. Measured, that is false: a dense install's resident weights do
+NOT appear in `phys_footprint` at all (AGENTS.md Gotcha 40, on Mistral 7B --
+4.07 GiB of weights against a 684 MiB peak, agreeing on two independent
+counters). Re-derived 2026-08-14 on a dense install four times that size,
+Qwen3.8-27B: 15.1 GB of resident weights, 660 MiB of counted peak. So a dense
+row here is KV plus whatever fixed per-layer state the architecture carries,
+and it is the MoE rows that are large. Do not quote either number without the
+context window, which is most of what a dense row asserts.
 
 One row's architecture string is not what its name suggests, and it is measured
 rather than assumed (`tests/arch_registry_network.rs`): **Mixtral reports
@@ -106,6 +125,7 @@ port's registry" message rather than the "recognized, needs X" one.
 | **Mixtral 8x7B / 8x22B** (`llama` + `expert_count`) | Plain GQA attention + MoE (8 experts, top-2), no shared expert, untied head | **Full Support** | *Planned* | Full Support | Full Support | *MoE, keeps the ceiling* |
 | **Llama 3 / 3.1 / 3.2 / 3.3, Llama 2, Mistral 7B** (`llama`, dense) | Standard Dense Transformer, GQA, RoPE frequency scaling (a TENSOR, `rope_freqs.weight`) | *Refused at open, by name* | *Planned* | Full Support | Full Support | *dense: whole model resident* |
 | **Qwen3-MoE 30B-A3B** (`qwen3moe`) | Plain GQA + per-head QK-norm, MoE (128 experts, top-8), no linear attention, no shared expert, untied head | **Full Support** | *Planned* | Full Support | Full Support | *MoE, keeps the ceiling* |
+| **Qwen3.8-27B / Bonsai-27B** (`qwen3_5`, dense) | Gated-DeltaNet Linear Attention (48 of 64 layers) + DENSE SwiGLU FFN, packed q/gate, untied head | **Full Support** | *Not supported* | Full Support | Full Support | **~660 MiB RAM** (dense; see note) |
 | **Llama 4 Scout / Maverick** (`llama4`) | MoE with interleaved chunked attention | *Registered, planned* | *Planned* | Full Support | Full Support | *MoE, keeps the ceiling* |
 | **gpt-oss 20B / 120B** (`gpt-oss`) | MXFP4 experts, attention sinks, per-projection biases, YaRN, clamped SwiGLU | *Supported string; kernels landed, decode flow pending (ROADMAP M5)* | *Planned* | Full Support | Full Support | *MoE at 12.6 MiB per expert; 20B keeps the ceiling at 4.73 GiB of slot cache, 120B does not stream usefully* |
 | **Phi-3 / Phi-3.5** (`phi3`) | SuScaled (longrope) RoPE, dense FFN | *Registered, planned* | *Planned* | Full Support | Full Support | *dense: whole model resident* |
@@ -136,7 +156,7 @@ port's registry" message rather than the "recognized, needs X" one.
 ### How `turbospark` Implements This Strategy
 `turbospark` follows a clean, strongly-typed Rust implementation of the same pattern:
 - **Architecture Registry** (`crates/repack/src/arch_registry.rs`): the string tables, split into what RUNS and what is merely recognized. llama.cpp's `llm_arch` enum conflates the two because every variant it names has a graph builder; here they are separate, so a recognized-but-unported architecture is a better error rather than a half-wired family.
-- **`ModelFamily` Enum** (`crates/model-io/src/arch_config.rs`): Defines supported discriminators (`Gemma4`, `Qwen36`, `Llama`, `DeepseekV4Flash`).
+- **`ModelFamily` Enum** (`crates/model-io/src/arch_config.rs`): Defines supported discriminators (`Gemma4`, `QwenGdnMoe`, `Llama`, `DeepseekV4Flash`).
 
 **One architecture string can cover two models, and support is then PARTIAL in a way no table column expresses.** `llama` is both Mixtral and dense Llama; only the MoE half has a decode flow, and nothing in the architecture string says which half a file is -- only `expert_count` does. So the registry calls `llama` supported, and `RealForwardRunner::open` refuses the dense half by name. A parity matrix row per MODEL rather than per string is the honest rendering, which is why the two rows above are split.
 - **Baseline Specifications** (`crates/model-io/src/arch_baselines.rs`): Provides compile-time defaults for behavioral architecture flags missing from GGUF metadata.

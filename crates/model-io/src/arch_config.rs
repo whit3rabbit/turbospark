@@ -13,7 +13,7 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ModelFamily {
     Gemma4,
-    Qwen36,
+    QwenGdnMoe,
     DeepseekV4Flash,
     /// The `llama` GGUF architecture, which covers dense Llama 2/3.x and
     /// Mistral AND the Mixtral MoEs -- one string, distinguished only by
@@ -48,11 +48,28 @@ pub enum ModelFamily {
     /// 128-token sliding window is the one part that is free, because
     /// Gemma's SWA ring already exists.
     GptOss,
-    /// The `qwen3_5` HF architecture (`prism-ml/Bonsai-27B-mlx-1bit`,
-    /// ROADMAP's 1-bit entry), the SIXTH real family and the first whose
-    /// weights are one bit wide.
+    /// The `qwen3_5` HF architecture: the gated-DeltaNet hybrid in its DENSE
+    /// form. Two published checkpoints, `prism-ml/Bonsai-27B-mlx-1bit`
+    /// (ROADMAP's 1-bit entry) and `Qwen/Qwen3.8-27B`, which share one
+    /// `ArchConfig` exactly and differ only in quantization.
     ///
-    /// It runs through the SAME decode flow as [`ModelFamily::Qwen36`]
+    /// **NAMED FOR THE ARCHITECTURE, NOT A VERSION, AND ITS WIRE STRING IS
+    /// FROZEN AT THE OLD SPELLING.** [`ModelFamily::as_str`] still returns
+    /// `"qwen35"` and [`ModelFamily::parse`] still reads it, because that
+    /// string is written into every install's `manifest.json` and read back
+    /// at load: renaming it would invalidate every `.gturbo` directory ever
+    /// built. So the on-disk identifier is a FORMAT CONSTANT, historical and
+    /// deliberately not descriptive, while this Rust name is free to say
+    /// what the family is. Do not "fix" the string to match the variant.
+    ///
+    /// The variant was called `Qwen35` until 2026-08-15 and the rename is
+    /// what stopped the drift: upstream keeps `model_type: qwen3_5` stable
+    /// across checkpoints named 3.5, 3.6 and 3.8, so a version-shaped name
+    /// reads as "the 3.5 one" when it means "the gated-DeltaNet dense one".
+    /// Its sibling was worse -- `Qwen36` was named after the Qwen 3.6
+    /// checkpoint while matching `model_type: qwen3_5_moe`.
+    ///
+    /// It runs through the SAME decode flow as [`ModelFamily::QwenGdnMoe`]
     /// (`crates/runtime/src/families/qwen/`), because every BEHAVIOURAL
     /// field is shared -- gated DeltaNet on the linear layers, gated full
     /// attention on every fourth, `attn_output_gate`, `head_dim` 256,
@@ -76,20 +93,36 @@ pub enum ModelFamily {
     /// covers a dense and an MoE half under one variant only because
     /// Mixtral and Mistral report the SAME string. Strings decide the
     /// variant; flows are shared separately.
-    Qwen35,
+    QwenGdnDense,
 }
 
 impl ModelFamily {
     /// Returns static string identifier for the model family.
+    ///
+    /// **THESE STRINGS ARE AN ON-DISK FORMAT AND TWO OF THEM NO LONGER MATCH
+    /// THEIR VARIANT'S NAME. That is deliberate.** Every `.gturbo` install
+    /// records this value in `manifest.json`, and [`ModelFamily::parse`]
+    /// reads it back at load, so a string here is a compatibility promise to
+    /// artifacts already on disk -- not a label to keep tidy.
+    ///
+    /// `QwenGdnMoe` therefore still writes `"qwen36"` and `QwenGdnDense`
+    /// still writes `"qwen35"`, the version-shaped names both variants were
+    /// called before 2026-08-15. Changing either would make every existing
+    /// install of those families unloadable (`parse` returns `None`, and the
+    /// open path reports an unknown family) for a cosmetic gain. The Rust
+    /// names carry the meaning; these carry the history.
+    ///
+    /// A NEW family is free to pick a matching string, because nothing has
+    /// been written with it yet.
     pub fn as_str(&self) -> &'static str {
         match self {
             ModelFamily::Gemma4 => "gemma4",
-            ModelFamily::Qwen36 => "qwen36",
+            ModelFamily::QwenGdnMoe => "qwen36",
             ModelFamily::DeepseekV4Flash => "deepseekV4Flash",
             ModelFamily::Llama => "llama",
             ModelFamily::Qwen3Moe => "qwen3moe",
             ModelFamily::GptOss => "gptOss",
-            ModelFamily::Qwen35 => "qwen35",
+            ModelFamily::QwenGdnDense => "qwen35",
         }
     }
 
@@ -97,12 +130,12 @@ impl ModelFamily {
     pub fn parse(s: &str) -> Option<Self> {
         match s {
             "gemma4" => Some(ModelFamily::Gemma4),
-            "qwen36" => Some(ModelFamily::Qwen36),
+            "qwen36" => Some(ModelFamily::QwenGdnMoe),
             "deepseekV4Flash" => Some(ModelFamily::DeepseekV4Flash),
             "llama" => Some(ModelFamily::Llama),
             "qwen3moe" => Some(ModelFamily::Qwen3Moe),
             "gptOss" => Some(ModelFamily::GptOss),
-            "qwen35" => Some(ModelFamily::Qwen35),
+            "qwen35" => Some(ModelFamily::QwenGdnDense),
             _ => None,
         }
     }

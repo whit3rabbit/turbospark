@@ -162,7 +162,7 @@ impl RealForwardRunner {
 
             // The RAW attention output joins the residual stream. Qwen has
             // no sandwich norms (`ffn_sandwich_norms: false` in
-            // `qwen36_35b_a3b()`), so normalizing `scratch.o` before this
+            // `qwen_gdn_moe_35b_a3b()`), so normalizing `scratch.o` before this
             // add is a Gemma habit, not a Qwen one -- and it applies
             // `post_attention_layernorm`, a tensor that belongs to the
             // stream below, to the attention output as well. Doing both

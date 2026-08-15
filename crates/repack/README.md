@@ -23,7 +23,7 @@ repack = { package = "turbospark-repack", path = "../repack" }
 - `synthetic_model.rs` / `synthetic_real.rs` / `synthetic_qwen.rs`: Synthetic test model generators.
 - `gemma4_checkpoint/`: Gemma 4 and Qwen 3.6 checkpoint converters and streamed expert pipeline builders.
 - `gguf_checkpoint/`: GGUF repack walk, F32 transcoding, and V-head conventions.
-- `qwen36_config.rs`: Qwen 3.6 `config.json` to `ArchConfig` converter (`parse_qwen36_config`).
+- `qwen36_config.rs`: Qwen 3.6 `config.json` to `ArchConfig` converter (`parse_qwen_gdn_moe_config`).
 - `install_verifier.rs`: Validates repacked install directory structure and receipts.
 
 ## Development & Test Commands

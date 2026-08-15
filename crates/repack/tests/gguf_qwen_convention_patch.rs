@@ -276,7 +276,7 @@ fn the_convention_holds_on_every_layer_and_optionally_patches_the_install() {
     let mlx_dir = install("TURBOSPARK_QWEN36_INSTALL_DIR");
     let gguf_dir = install("TURBOSPARK_QWEN36_GGUF_INSTALL_DIR");
     let (mlx, gguf) = (Weights::open(&mlx_dir), Weights::open(&gguf_dir));
-    let arch = model_io::known_architecture(model_io::ModelFamily::Qwen36);
+    let arch = model_io::known_architecture(model_io::ModelFamily::QwenGdnMoe);
     let heads = arch.linear_attention.num_v_heads as usize;
     let table = axes(&arch);
 

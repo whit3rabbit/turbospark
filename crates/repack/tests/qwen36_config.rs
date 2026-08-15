@@ -1,9 +1,9 @@
-//! `parse_qwen36_config` against the PRODUCTION field values.
+//! `parse_qwen_gdn_moe_config` against the PRODUCTION field values.
 //!
 //! Unlike the Gemma config tests, this fixture is not a tiny synthetic
 //! shape: it carries the real `mlx-community/Qwen3.6-35B-A3B-4bit`
 //! `text_config` values verbatim, so the whole test reduces to one
-//! assertion -- the parse equals `model_io::qwen36_35b_a3b()` field for
+//! assertion -- the parse equals `model_io::qwen_gdn_moe_35b_a3b()` field for
 //! field. That is the only assertion that can catch a key mapped to the
 //! wrong field, which a shape-only fixture cannot (every dimension would
 //! be some other made-up number either way).
@@ -11,7 +11,7 @@
 //! `tests/qwen36_checkpoint_network.rs` runs the same assertion against the
 //! config fetched over the network; this one runs in the default suite.
 
-use turbospark_repack::parse_qwen36_config;
+use turbospark_repack::parse_qwen_gdn_moe_config;
 
 /// 40 layers, gated-DeltaNet everywhere except every 4th
 /// (`full_attention_interval = 4`).
@@ -82,17 +82,17 @@ fn config_json() -> String {
 
 #[test]
 fn parses_the_production_config_into_the_pinned_baseline() {
-    let arch = parse_qwen36_config(&config_json()).expect("config parses");
+    let arch = parse_qwen_gdn_moe_config(&config_json()).expect("config parses");
     assert_eq!(
         arch,
-        model_io::qwen36_35b_a3b(),
+        model_io::qwen_gdn_moe_35b_a3b(),
         "parsed config does not match the pinned Qwen3.6-35B-A3B baseline"
     );
 }
 
 #[test]
 fn attention_scale_is_the_reference_head_dim_power() {
-    let arch = parse_qwen36_config(&config_json()).expect("config parses");
+    let arch = parse_qwen_gdn_moe_config(&config_json()).expect("config parses");
     // mlx-lm `Qwen3NextAttention.__init__`: `self.scale = head_dim**-0.5`.
     // Exactly 1/16 at head_dim 256, so `==` is safe here (AGENTS.md
     // Gotcha 24 is about scales that are NOT binary fractions).
@@ -102,7 +102,7 @@ fn attention_scale_is_the_reference_head_dim_power() {
 
 #[test]
 fn linear_layers_are_2_and_full_layers_are_1() {
-    let arch = parse_qwen36_config(&config_json()).expect("config parses");
+    let arch = parse_qwen_gdn_moe_config(&config_json()).expect("config parses");
     let mask = &arch.full_attention_layer_mask;
     assert_eq!(mask.len(), 40);
     assert_eq!(mask.iter().filter(|&&m| m == 1).count(), 10);
@@ -118,8 +118,8 @@ fn linear_layers_are_2_and_full_layers_are_1() {
 fn accepts_a_text_only_config_without_the_wrapper() {
     let unwrapped = text_config().to_string();
     assert_eq!(
-        parse_qwen36_config(&unwrapped).expect("unwrapped config parses"),
-        model_io::qwen36_35b_a3b()
+        parse_qwen_gdn_moe_config(&unwrapped).expect("unwrapped config parses"),
+        model_io::qwen_gdn_moe_35b_a3b()
     );
 }
 
@@ -127,7 +127,7 @@ fn accepts_a_text_only_config_without_the_wrapper() {
 fn rejects_a_missing_layer_types() {
     let mut tc = text_config();
     tc.as_object_mut().unwrap().remove("layer_types");
-    let err = parse_qwen36_config(&tc.to_string()).expect_err("must reject");
+    let err = parse_qwen_gdn_moe_config(&tc.to_string()).expect_err("must reject");
     assert!(err.to_string().contains("layer_types"), "{err}");
 }
 
@@ -135,7 +135,7 @@ fn rejects_a_missing_layer_types() {
 fn rejects_a_layer_types_length_mismatch() {
     let mut tc = text_config();
     tc["layer_types"] = serde_json::json!(["linear_attention", "full_attention"]);
-    let err = parse_qwen36_config(&tc.to_string()).expect_err("must reject");
+    let err = parse_qwen_gdn_moe_config(&tc.to_string()).expect_err("must reject");
     assert!(err.to_string().contains("num_hidden_layers is 40"), "{err}");
 }
 
@@ -145,7 +145,7 @@ fn rejects_an_unknown_layer_type() {
     let mut types = layer_types();
     types[0] = "sliding_attention";
     tc["layer_types"] = serde_json::json!(types);
-    let err = parse_qwen36_config(&tc.to_string()).expect_err("must reject");
+    let err = parse_qwen_gdn_moe_config(&tc.to_string()).expect_err("must reject");
     assert!(err.to_string().contains("sliding_attention"), "{err}");
 }
 
@@ -155,7 +155,7 @@ fn rejects_an_odd_rotary_dim() {
     // so this is specifically the fractional/odd guard, not a size guard.
     let mut tc = text_config();
     tc["head_dim"] = serde_json::json!(254);
-    let err = parse_qwen36_config(&tc.to_string()).expect_err("must reject");
+    let err = parse_qwen_gdn_moe_config(&tc.to_string()).expect_err("must reject");
     assert!(err.to_string().contains("even integer"), "{err}");
 }
 
@@ -163,7 +163,7 @@ fn rejects_an_odd_rotary_dim() {
 fn quantization_reads_the_router_and_shared_gate_as_int8() {
     let quant =
         turbospark_repack::parse_gemma4_quantization(&config_json()).expect("quantization parses");
-    let manifest = turbospark_repack::manifest_quant(&quant, model_io::ModelFamily::Qwen36);
+    let manifest = turbospark_repack::manifest_quant(&quant, model_io::ModelFamily::QwenGdnMoe);
     // `validate_quant` accepts router 8 only; routedExpert 2 or 4.
     assert_eq!(manifest["router"]["weightBits"], 8);
     assert_eq!(manifest["routedExpert"]["weightBits"], 4);

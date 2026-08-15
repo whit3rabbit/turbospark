@@ -5,8 +5,8 @@
 //! scratch the flow in `mod.rs` writes.
 //!
 //! **TWO FAMILIES, one state, and they differ in the FFN alone** (ROADMAP's
-//! 1-bit entry). `bonsai_27b()`'s every BEHAVIOURAL field equals
-//! `qwen36_35b_a3b()`'s and every SHAPE field differs, which is what licenses
+//! 1-bit entry). `qwen_gdn_dense_27b()`'s every BEHAVIOURAL field equals
+//! `qwen_gdn_moe_35b_a3b()`'s and every SHAPE field differs, which is what licenses
 //! sharing the flow rather than forking it; `shared_expert_gated` is the one
 //! that legitimately parts company, and it does so BECAUSE the model is
 //! dense. The split is read off `num_experts`, never off tensor naming, for

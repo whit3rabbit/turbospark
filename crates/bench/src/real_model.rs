@@ -174,8 +174,8 @@ pub const fn protocol_parameters(family: ModelFamily) -> ProtocolParameters {
         // is what confirms it, and a `long-synthesis` that stops on
         // maxTokens is what would refute it.
         ModelFamily::Gemma4
-        | ModelFamily::Qwen36
-        | ModelFamily::Qwen35
+        | ModelFamily::QwenGdnMoe
+        | ModelFamily::QwenGdnDense
         | ModelFamily::Qwen3Moe
         | ModelFamily::DeepseekV4Flash => ProtocolParameters {
             family,
@@ -356,7 +356,7 @@ mod tests {
     fn four_families_run_the_shared_protocol_parameters() {
         for family in [
             ModelFamily::Gemma4,
-            ModelFamily::Qwen36,
+            ModelFamily::QwenGdnMoe,
             ModelFamily::Qwen3Moe,
             ModelFamily::DeepseekV4Flash,
         ] {

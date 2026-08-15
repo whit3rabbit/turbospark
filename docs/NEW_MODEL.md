@@ -199,7 +199,7 @@ looking anything up.
       binary fraction cannot survive the round trip. Pick powers of two
       for anything you invent for a synthetic fixture.
 - [ ] Add a synthetic install builder next to
-      `build_synthetic_gemma4_real_install` / `build_synthetic_qwen36_real_install`
+      `build_synthetic_gemma4_real_install` / `build_synthetic_qwen_gdn_moe_install`
       (`crates/repack/src/synthetic_real.rs`, `synthetic_qwen.rs` -- the
       latter reuses the former's `pub(crate)` tensor helpers, so a third
       family should too): deterministic untrained
@@ -219,7 +219,7 @@ exists nobody can repack the real checkpoint.
 
 For the first, there are two models to copy and they differ in almost every
 key name, which is the point: `parse_gemma4_config`
-(`crates/repack/src/gemma4_checkpoint/config.rs`) and `parse_qwen36_config`
+(`crates/repack/src/gemma4_checkpoint/config.rs`) and `parse_qwen_gdn_moe_config`
 (`crates/repack/src/qwen36_config.rs`). Read BOTH before assuming a key
 generalizes. Only one thing was common to them: the `text_config` wrapper,
 and that is a multimodal-checkpoint convention, not a universal one.

@@ -96,18 +96,18 @@ fn gemma4_fuses_gate_and_up_but_qwen_does_not() {
         ("blk.2.ffn_down_exps.weight", "down"),
     ] {
         assert_eq!(
-            map_gguf_name(gguf, ModelFamily::Qwen36).unwrap(),
+            map_gguf_name(gguf, ModelFamily::QwenGdnMoe).unwrap(),
             GgufMapping::Routed { layer: 2, role },
             "{gguf}"
         );
     }
     // And Qwen has no fused tensor at all.
-    assert!(map_gguf_name("blk.2.ffn_gate_up_exps.weight", ModelFamily::Qwen36).is_err());
+    assert!(map_gguf_name("blk.2.ffn_gate_up_exps.weight", ModelFamily::QwenGdnMoe).is_err());
 }
 
 #[test]
 fn maps_qwen36_gated_deltanet_and_shared_expert() {
-    let f = ModelFamily::Qwen36;
+    let f = ModelFamily::QwenGdnMoe;
     let p = "language_model.model.layers.11.";
     for (gguf, canonical) in [
         ("blk.11.attn_qkv.weight", "linear_attn.in_proj_qkv.weight"),
@@ -145,7 +145,7 @@ fn maps_qwen36_gated_deltanet_and_shared_expert() {
 /// drops them is the bad one.
 #[test]
 fn qwen36_a_log_and_dt_bias_keep_their_suffixless_names() {
-    let f = ModelFamily::Qwen36;
+    let f = ModelFamily::QwenGdnMoe;
     assert_eq!(
         resident("blk.4.ssm_a", f),
         "language_model.model.layers.4.linear_attn.A_log"
@@ -158,7 +158,7 @@ fn qwen36_a_log_and_dt_bias_keep_their_suffixless_names() {
 
 #[test]
 fn maps_top_level_tensors_for_both_families() {
-    for f in [ModelFamily::Gemma4, ModelFamily::Qwen36] {
+    for f in [ModelFamily::Gemma4, ModelFamily::QwenGdnMoe] {
         assert_eq!(
             resident("token_embd.weight", f),
             "language_model.model.embed_tokens.weight"
@@ -194,7 +194,7 @@ fn maps_top_level_tensors_for_both_families() {
 fn refuses_a_learned_rope_frequency_scaling_for_every_family() {
     for family in [
         ModelFamily::Gemma4,
-        ModelFamily::Qwen36,
+        ModelFamily::QwenGdnMoe,
         ModelFamily::Llama,
         ModelFamily::Qwen3Moe,
     ] {
@@ -219,7 +219,7 @@ fn refuses_to_silently_skip_an_unknown_tensor() {
         }
         other => panic!("expected Unmapped, got {other:?}"),
     }
-    assert!(map_gguf_name("mystery.weight", ModelFamily::Qwen36).is_err());
+    assert!(map_gguf_name("mystery.weight", ModelFamily::QwenGdnMoe).is_err());
     // A Qwen tensor offered to the Gemma mapping is also unmapped, rather
     // than falling through to a same-named Gemma row.
     assert!(map_gguf_name("blk.0.ssm_a", ModelFamily::Gemma4).is_err());
@@ -239,16 +239,19 @@ fn rejects_a_malformed_layer_index() {
 #[test]
 fn architecture_strings_are_the_converters_names_not_the_familys() {
     assert_eq!(gguf_architecture(ModelFamily::Gemma4), Some("gemma4"));
-    assert_eq!(gguf_architecture(ModelFamily::Qwen36), Some("qwen35moe"));
+    assert_eq!(
+        gguf_architecture(ModelFamily::QwenGdnMoe),
+        Some("qwen35moe")
+    );
     assert_ne!(
-        gguf_architecture(ModelFamily::Qwen36),
-        Some(ModelFamily::Qwen36.as_str())
+        gguf_architecture(ModelFamily::QwenGdnMoe),
+        Some(ModelFamily::QwenGdnMoe.as_str())
     );
 
     assert_eq!(family_for_architecture("gemma4"), Some(ModelFamily::Gemma4));
     assert_eq!(
         family_for_architecture("qwen35moe"),
-        Some(ModelFamily::Qwen36)
+        Some(ModelFamily::QwenGdnMoe)
     );
     assert_eq!(family_for_architecture("qwen36"), None);
     // `llama` is the one architecture whose GGUF string EQUALS its family

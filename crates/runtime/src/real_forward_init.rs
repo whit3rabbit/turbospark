@@ -28,7 +28,7 @@ pub(crate) fn validate_arch_config(expecting: &ArchConfig) -> Result<(), RealFor
     if max_kind == 2
         && !matches!(
             expecting.family,
-            model_io::ModelFamily::Qwen36 | model_io::ModelFamily::Qwen35
+            model_io::ModelFamily::QwenGdnMoe | model_io::ModelFamily::QwenGdnDense
         )
     {
         return Err(RealForwardError::Unsupported(format!(

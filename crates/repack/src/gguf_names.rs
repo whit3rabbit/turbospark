@@ -178,7 +178,7 @@ fn map_gemma4_layer(suffix: &str, layer: usize) -> Option<GgufMapping> {
 /// hybrid layer split: the 10 full-attention layers carry `attn_q/k/v`, the
 /// 30 linear-attention layers carry `attn_qkv` plus the `ssm_*` family, and
 /// no layer carries both.
-fn map_qwen36_layer(suffix: &str, layer: usize) -> Option<GgufMapping> {
+fn map_qwen_gdn_moe_layer(suffix: &str, layer: usize) -> Option<GgufMapping> {
     let p = layer_prefix(layer);
     let resident = |tail: &str| Some(GgufMapping::Resident(format!("{p}{tail}")));
     match suffix {
@@ -416,14 +416,14 @@ pub fn map_gguf_name(name: &str, family: ModelFamily) -> Result<GgufMapping, Ggu
         }
         return match family {
             ModelFamily::Gemma4 => map_gemma4_layer(suffix, layer),
-            ModelFamily::Qwen36 => map_qwen36_layer(suffix, layer),
+            ModelFamily::QwenGdnMoe => map_qwen_gdn_moe_layer(suffix, layer),
             ModelFamily::Llama => map_llama_layer(suffix, layer),
             ModelFamily::Qwen3Moe => map_qwen3moe_layer(suffix, layer),
             ModelFamily::GptOss => map_gpt_oss_layer(suffix, layer),
             // No `qwen3_5` GGUF exists; an unmapped name is the right
             // answer rather than Qwen 3.6's table, which would map names
             // this family does not have.
-            ModelFamily::DeepseekV4Flash | ModelFamily::Qwen35 => None,
+            ModelFamily::DeepseekV4Flash | ModelFamily::QwenGdnDense => None,
         }
         .ok_or_else(unmapped);
     }
@@ -449,7 +449,7 @@ pub fn map_gguf_name(name: &str, family: ModelFamily) -> Result<GgufMapping, Ggu
 pub fn gguf_architecture(family: ModelFamily) -> Option<&'static str> {
     match family {
         ModelFamily::Gemma4 => Some("gemma4"),
-        ModelFamily::Qwen36 => Some("qwen35moe"),
+        ModelFamily::QwenGdnMoe => Some("qwen35moe"),
         ModelFamily::Llama => Some("llama"),
         ModelFamily::Qwen3Moe => Some("qwen3moe"),
         ModelFamily::GptOss => Some("gpt-oss"),
@@ -457,7 +457,7 @@ pub fn gguf_architecture(family: ModelFamily) -> Option<&'static str> {
         // honest answer: inventing a string here would make
         // `family_for_architecture` claim to recognize a GGUF that does
         // not exist.
-        ModelFamily::DeepseekV4Flash | ModelFamily::Qwen35 => None,
+        ModelFamily::DeepseekV4Flash | ModelFamily::QwenGdnDense => None,
     }
 }
 

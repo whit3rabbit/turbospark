@@ -43,7 +43,7 @@ fn routed_marker(family: ModelFamily) -> &'static str {
         // takes Qwen 3.6's rather than Gemma's because it is that family's
         // safetensors sibling, and because a marker that could only ever
         // match the wrong thing is worse than one that cannot match.
-        ModelFamily::Qwen36 | ModelFamily::Qwen35 => ".mlp.switch_mlp.",
+        ModelFamily::QwenGdnMoe | ModelFamily::QwenGdnDense => ".mlp.switch_mlp.",
         // A GGUF-derived Llama or Qwen3-MoE never reaches this classifier
         // (the GGUF walk maps routed tensors by NAME, in `gguf_names.rs`),
         // and neither has a safetensors path. DeepSeek V4 has no repack path

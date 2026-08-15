@@ -25,8 +25,8 @@
 use std::path::PathBuf;
 
 use turbospark_repack::{
-    fetch_safetensors_header, parse_gemma4_quantization, parse_qwen35_config,
-    write_qwen35_install_streamed, Gemma4Shards, HttpRangeSource,
+    fetch_safetensors_header, parse_gemma4_quantization, parse_qwen_gdn_dense_config,
+    write_qwen_gdn_dense_install_streamed, Gemma4Shards, HttpRangeSource,
 };
 
 const REPO_BASE: &str = "https://huggingface.co/prism-ml/Bonsai-27B-mlx-1bit/resolve/ef22f239c670078e1507f9769bcaa66657332b96";
@@ -99,11 +99,11 @@ fn repacks_the_real_bonsai27b_checkpoint() {
     // same assertion runs offline in `tests/qwen35_config.rs`; failing HERE
     // and passing there means the upstream checkpoint moved.
     let config = String::from_utf8(get("config.json")).expect("config utf8");
-    let arch = parse_qwen35_config(&config).expect("config parses");
+    let arch = parse_qwen_gdn_dense_config(&config).expect("config parses");
     assert_eq!(
         arch,
-        model_io::bonsai_27b(),
-        "parsed config does not match the pinned Bonsai-27B baseline"
+        model_io::qwen_gdn_dense_27b(),
+        "parsed config does not match the pinned qwen3_5 baseline"
     );
     assert_eq!(arch.num_experts, 0, "this family is DENSE");
     let quant = parse_gemma4_quantization(&config).expect("quantization parses");
@@ -135,7 +135,7 @@ fn repacks_the_real_bonsai27b_checkpoint() {
     let shards = Gemma4Shards::single(&header, &source);
     let dir = install_dir();
     eprintln!("installing to {}", dir.display());
-    write_qwen35_install_streamed(&dir, &arch, MODEL_ID, &shards, &quant, |stage| {
+    write_qwen_gdn_dense_install_streamed(&dir, &arch, MODEL_ID, &shards, &quant, |stage| {
         eprintln!("[repack] {stage}");
     })
     .expect("streamed install");

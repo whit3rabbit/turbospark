@@ -71,7 +71,7 @@ const SUPPORTED_GGUF: &[(&str, ModelFamily)] = &[
     ("llama", ModelFamily::Llama),
     // llama.cpp named Qwen 3.6's converter after the 3.5 series it shares a
     // graph with; a real Qwen 3.6 GGUF says this, not "qwen36".
-    ("qwen35moe", ModelFamily::Qwen36),
+    ("qwen35moe", ModelFamily::QwenGdnMoe),
     // Promoted out of the planned table after Mixtral showed that the memory
     // ceiling needs FINE-GRAINED MoE rather than merely MoE (AGENTS.md
     // Gotcha 36). Shares the `llama` decode flow; see `ModelFamily::Qwen3Moe`
@@ -100,8 +100,8 @@ const SUPPORTED_GGUF: &[(&str, ModelFamily)] = &[
 const SUPPORTED_HF: &[(&str, ModelFamily)] = &[
     ("gemma4", ModelFamily::Gemma4),
     ("gemma4_text", ModelFamily::Gemma4),
-    ("qwen3_5_moe", ModelFamily::Qwen36),
-    ("qwen3_5_moe_text", ModelFamily::Qwen36),
+    ("qwen3_5_moe", ModelFamily::QwenGdnMoe),
+    ("qwen3_5_moe_text", ModelFamily::QwenGdnMoe),
     // ROADMAP's 1-bit entry. Read off `prism-ml/Bonsai-27B-mlx-1bit`
     // @ ef22f239c670078e1507f9769bcaa66657332b96, whose root `model_type`
     // is `qwen3_5` and whose `text_config.model_type` is `qwen3_5_text`.
@@ -112,9 +112,9 @@ const SUPPORTED_HF: &[(&str, ModelFamily)] = &[
     // would resolve every Bonsai checkpoint to the MoE family, which is a
     // different baseline and a decode flow with a router in it -- fluent
     // wrong output rather than an error. The two ARE separate families
-    // for exactly this reason (`ModelFamily::Qwen35`'s doc).
-    ("qwen3_5", ModelFamily::Qwen35),
-    ("qwen3_5_text", ModelFamily::Qwen35),
+    // for exactly this reason (`ModelFamily::QwenGdnDense`'s doc).
+    ("qwen3_5", ModelFamily::QwenGdnDense),
+    ("qwen3_5_text", ModelFamily::QwenGdnDense),
 ];
 
 /// GGUF architectures this port recognizes and cannot run.

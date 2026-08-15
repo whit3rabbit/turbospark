@@ -169,7 +169,7 @@ fn gemma4_layer_mask(m: &Meta<'_>, num_layers: usize) -> Result<Vec<u8>, GgufCon
         .collect()
 }
 
-fn qwen36_layer_mask(m: &Meta<'_>, num_layers: usize) -> Result<Vec<u8>, GgufConfigError> {
+fn qwen_gdn_moe_layer_mask(m: &Meta<'_>, num_layers: usize) -> Result<Vec<u8>, GgufConfigError> {
     let interval = m.u64("full_attention_interval")? as usize;
     if interval == 0 {
         return Err(GgufConfigError::BadValue {
@@ -312,7 +312,7 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
 
     arch.full_attention_layer_mask = match family {
         ModelFamily::Gemma4 => gemma4_layer_mask(&m, num_layers as usize)?,
-        ModelFamily::Qwen36 => qwen36_layer_mask(&m, num_layers as usize)?,
+        ModelFamily::QwenGdnMoe => qwen_gdn_moe_layer_mask(&m, num_layers as usize)?,
         // Every layer is full attention: neither a dense Llama nor a Mixtral
         // publishes `attention.sliding_window`, and Mistral 7B's window is a
         // property of that model rather than of the architecture.
@@ -323,7 +323,7 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
         // Refused rather than defaulted, for the reason DeepSeek is: no
         // `qwen3_5` GGUF exists, so any mask here would be invented. If one
         // is ever published, its mask is Qwen 3.6's at 64 layers.
-        ModelFamily::DeepseekV4Flash | ModelFamily::Qwen35 => {
+        ModelFamily::DeepseekV4Flash | ModelFamily::QwenGdnDense => {
             return Err(GgufConfigError::UnsupportedArchitecture {
                 architecture: architecture.to_string(),
             })
@@ -394,7 +394,7 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
         };
     }
 
-    if family == ModelFamily::Qwen36 {
+    if family == ModelFamily::QwenGdnMoe {
         arch.linear_attention = linear_attention(&m)?;
         // Qwen's key/value length are per-head and equal on both paths.
         if let Some(k) = m.opt_i64("attention.key_length") {

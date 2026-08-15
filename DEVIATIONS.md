@@ -519,7 +519,7 @@ live network).
 
 - **Qwen 3.6: PROVEN on the real 35B-A3B checkpoint (2026-08-07).**
   `mlx-community/Qwen3.6-35B-A3B-4bit` repacks through
-  `write_qwen36_install_streamed` in 19 minutes into an 18 GB install and
+  `write_qwen_gdn_moe_install_streamed` in 19 minutes into an 18 GB install and
   generates coherent chat-formatted answers via `turbospark-check`: greedy
   and sampled both stay coherent for 400 tokens, and a short question
   stops on `EndOfTurn` with a correct answer, so the ChatML stop set
@@ -577,7 +577,7 @@ live network).
   tensor naming (both real families carry
   `language_model.model.embed_tokens.weight`). Proven by
   `crates/runtime/tests/real_forward_qwen.rs` (8 tests) against
-  `turbospark_repack::build_synthetic_qwen36_real_install`, and end to end
+  `turbospark_repack::build_synthetic_qwen_gdn_moe_install`, and end to end
   through `turbospark-check`. What is NOT done: no real ~20 GB Qwen
   checkpoint has been downloaded or repacked, so there is no throughput
   number and no memory-oracle row. Weights in the fixture are
@@ -593,13 +593,13 @@ live network).
   from the family -- but it does mean the fixture never exercises the
   INT4 shared-expert dispatch that the real install will take on every
   layer. `validate_quant` accepts both widths for that slot.
-- **`parse_qwen36_config` exists and is proven against the production
+- **`parse_qwen_gdn_moe_config` exists and is proven against the production
   field values, but nothing has been repacked with it.**
   `crates/repack/src/qwen36_config.rs` parses
   `mlx-community/Qwen3.6-35B-A3B-4bit`'s `config.json` into an
-  `ArchConfig` equal to `model_io::qwen36_35b_a3b()` field for field
+  `ArchConfig` equal to `model_io::qwen_gdn_moe_35b_a3b()` field for field
   (`crates/repack/tests/qwen36_config.rs`, offline, real values inline).
-  `write_qwen36_install_streamed` is the guarded streamed writer for it.
+  `write_qwen_gdn_moe_install_streamed` is the guarded streamed writer for it.
   The multi-shard walk itself is still UNPROVEN on this family: the only
   test that covers it is `tests/qwen36_checkpoint_network.rs`, which is
   `#[ignore]`d behind a ~20.4 GB download and has not been run. The

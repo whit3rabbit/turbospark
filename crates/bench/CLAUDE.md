@@ -28,7 +28,9 @@ crates/bench/
 |   +-- qwen3moe_memory_oracle.rs # Memory oracle for Qwen3-30B-A3B (`qwen3moe`)
 |   +-- qwen3moe_quality_gate.rs  # Quality gate for Qwen3-30B-A3B
 |   +-- gptoss_memory_oracle.rs # Memory oracle for gpt-oss-20b, at 8192 context AND a 3072 budget
-|   \-- gptoss_quality_gate.rs  # Quality gate for gpt-oss-20b; pins the template's date
+|   +-- gptoss_quality_gate.rs  # Quality gate for gpt-oss-20b; pins the template's date
+|   +-- qwen38_memory_oracle.rs # Memory oracle for Qwen3.8-27B (`qwen35`), the family's FIRST
+|   \-- qwen38_quality_gate.rs  # Quality gate for Qwen3.8-27B; no assistant prefix, and see its header for why
 \-- prompts/
     +-- quality-v1/         # Quality gate reference prompt fixtures
     |   \-- assistant-reference.txt

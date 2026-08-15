@@ -147,7 +147,7 @@ fn expected(h: usize, heads: usize) -> usize {
 fn which_quantized_gdn_tensors_carry_the_v_head_permutation() {
     let mlx = Weights::open(&install("TURBOSPARK_QWEN36_INSTALL_DIR"));
     let gguf = Weights::open(&install("TURBOSPARK_QWEN36_GGUF_INSTALL_DIR"));
-    let arch = model_io::known_architecture(model_io::ModelFamily::Qwen36);
+    let arch = model_io::known_architecture(model_io::ModelFamily::QwenGdnMoe);
     let la = &arch.linear_attention;
     let heads = la.num_v_heads as usize;
 

@@ -1,6 +1,6 @@
 //! Builds a tiny Mixtral-shaped install through the REAL checkpoint repack
 //! pipeline (ROADMAP Phase M2), the sibling of
-//! [`crate::build_synthetic_qwen36_real_install`].
+//! [`crate::build_synthetic_qwen_gdn_moe_install`].
 //!
 //! Shorter than either sibling because the `llama` architecture is defined by
 //! what it lacks: no linear-attention layers, no per-head q/k norms, no

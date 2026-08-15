@@ -29,23 +29,43 @@ This enables Mac users with limited memory (8 GB, 16 GB, 24 GB, or 36 GB) to run
 
 ## Memory Footprint & Benchmark Parity
 
-Measured on Apple Silicon (M4 Max, 36 GB Unified Memory) running Gemma 4 26B-A4B and Qwen 3.6 35B-A3B:
+Everything below was measured on one machine: an **Apple M4 Max, 36 GB unified memory, on mains power**. Numbers do not transfer to other chips.
 
-### Memory & Decode Throughput Summary
+### What this actually buys you
 
-| Model | Format / Checkpoint Source | Active Params | Peak Memory (`phys_footprint`) | Decode Throughput |
-| --- | --- | ---: | ---: | ---: |
-| **Gemma 4 26B-A4B** | Safetensors / MLX Int4 MoE | ~3.9B | **2,108 - 2,182 MiB** (~2.1 GiB) | 34.6 - 40.7 tok/s |
-| **Gemma 4 26B-A4B** | Published Q8_0 GGUF | ~3.9B | **~2,180 MiB** (~2.2 GiB) | 34.0 - 40.0 tok/s |
-| **Gemma 4 26B-A4B** | Published sub-4-bit IQ GGUF | ~3.9B | **1,850 MiB** (~1.8 GiB) | 22.9 - 25.4 tok/s |
-| **Qwen 3.6 35B-A3B** | Safetensors / MLX Int4 MoE | ~3.0B | **1,587 - 1,610 MiB** (~1.6 GiB) | 32.6 - 38.0 tok/s |
-| **Qwen 3.6 35B-A3B** | Published Q4_K_M Mixed GGUF | ~3.0B | **~1,600 MiB** (~1.6 GiB) | 31.5 - 37.5 tok/s |
+A conventional runner keeps the whole model in RAM. This engine keeps only a small resident core in RAM and streams the mixture-of-experts weights off SSD on demand, so **the model on disk can be far bigger than the RAM it occupies while running**.
 
-*Note: The sub-4-bit row is the leanest Gemma 4 configuration and the slowest. It trades roughly 15% of peak memory and 20% of expert bytes on disk for about 35% of decode throughput and 2.6% of perplexity, so INT4 remains the default; pick it when memory or disk is the binding constraint. Quality is verified against `llama.cpp` on identical bytes rather than asserted.*
+The plain version: on a 36 GB laptop, a 26B-parameter model that would normally need ~13 GB of RAM runs in about **2 GB**.
 
-*Note: the memory result comes from FINE-GRAINED MoE, not from MoE as such. The expert slot cache is `slots x layers x expert_stride`, so what matters is the size of one expert: Gemma 4 splits into 128 experts of ~3.2 MiB, while a coarse MoE like Mixtral 8x7B has 8 of ~109 MiB and cannot stream usefully at any slot count. It runs here and is correct; it is not what this engine is for. Qwen3-30B-A3B is the other side of that line at 128 experts of 2.5 MiB, and it runs on the same decode flow Mixtral's bring-up wrote.*
+| Model | Model size (a normal runner such as mlx-lm or llama.cpp holds ~all of this in RAM) | RAM while generating | Speed | Power draw | Energy per token |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| **Gemma 4 26B-A4B** (INT4) | 13 GB | **~2.1 GB** | 35 - 41 tok/s | 17 W | 0.4 - 0.5 J |
+| **Gemma 4 26B-A4B** (3-bit) | 12 GB | **~1.8 GB** | 23 - 25 tok/s | 27 W | ~1.0 J |
+| **Qwen 3.6 35B-A3B** (INT4) | 18 GB | **~1.6 GB** | 33 - 38 tok/s | 14 W | ~0.4 J |
+| **Qwen3-30B-A3B** (Q4_K_M) | 17 GB | ~2.7 GB | 16 - 25 tok/s | 21 W | ~0.8 - 1.4 J |
+| **gpt-oss-20b** (MXFP4) | 11 GB | ~5.4 GB | 23 - 30 tok/s | 30 - 33 W | ~1.1 - 1.3 J |
 
-*Note: For Qwen 3.6 35B-A3B, 30 of its 40 layers use gated-DeltaNet linear attention carrying ~2 MiB of fixed recurrent state per layer instead of standard KV cache growth, keeping footprint ~500 MiB lower than Gemma 4 despite the larger model size.*
+**The first three rows are the point of the project**: a 26B model in ~2.1 GB and a 35B model in ~1.6 GB, against 13 GB and 18 GB on disk. The last two rows are honest counter-examples that still stream but land higher, and the reason is arithmetic rather than a defect - see the note on expert size below.
+
+Dense models (no experts to stream) work too, but the memory story is different and the table above does not apply to them:
+
+| Model | Size on disk | RAM while generating | Speed | Note |
+| --- | ---: | ---: | ---: | --- |
+| **Qwen3.8-27B** (INT4) | 14 GB | 660 MB counted | 17 - 19 tok/s | see caveat |
+| **Mistral 7B** (Q4_K_M) | 4.1 GB | 1.2 GB counted | 16 - 30 tok/s | measured at 8k context |
+| **Bonsai-27B** (1-bit) | 3.9 GB | not yet measured | ~18 tok/s | |
+
+> **Caveat, and please read it before quoting the 660 MB.** Nothing streams in a dense model. That figure is what macOS *counts* against the process; the 14 GB of weights are memory-mapped and simply are not counted. You still need a machine that can hold and page them, so treat a dense model as needing roughly its **size on disk** in free RAM, not its counted footprint. The counted number is useful for spotting leaks, not for capacity planning.
+
+**How to read the other columns.** "Power draw" is the engine's own CPU + GPU draw while generating, not the whole machine - the laptop as a whole measured roughly 50 - 70 W under load, most of the difference being the display. "Energy per word" is joules per generated token, so at ~0.4 J a thousand tokens costs about 400 J, roughly 0.1 Wh. Speed and power vary by prompt length; the ranges span three fixed benchmark prompts of increasing size. Power figures exist for five installs and are simply absent for the rest.
+
+**Memory is compared at a fixed context window.** The MoE rows are at 4,096 tokens; gpt-oss runs at 8,192 and Mistral at 8,192, because their tokenizers or their reasoning output need it. A footprint number without its window is not comparable to another one - on a dense model the KV cache is most of what is being measured, and doubling the window roughly doubles the figure.
+
+*Why the memory result is about EXPERT SIZE, not about MoE.* The expert cache is `slots x layers x expert_size`, so what matters is how finely the model splits. Gemma 4 has 128 experts of ~3.2 MiB and lands at 2.1 GB; Qwen3-30B-A3B has smaller experts (2.5 MiB) but 48 layers, so it lands at 2.7 GB; gpt-oss is deeper still and reaches 5.4 GB. A coarse mixture like Mixtral 8x7B has 8 experts of ~109 MiB and cannot stream usefully at any setting - it runs correctly here and is simply not what this engine is for. Compute the product before assuming a new model will be small.
+
+*Why Qwen 3.6 beats Gemma 4 on memory despite being the larger model.* 30 of its 40 layers use gated-DeltaNet linear attention, which carries ~2 MiB of fixed recurrent state per layer instead of a KV cache that grows with context.
+
+*On the 3-bit row.* It is the leanest Gemma 4 configuration and the slowest: about 15% less peak memory and 20% fewer expert bytes on disk, for roughly 35% of the decode speed and 2.6% worse perplexity. INT4 remains the default; choose 3-bit only when memory or disk is the binding constraint. Its quality is verified against `llama.cpp` on identical bytes rather than asserted.
 
 ### Parity with Swift Original (Gemma 4 26B-A4B)
 
@@ -88,8 +108,19 @@ For full binary layouts, header byte specifications, and streaming mechanics, se
 ## Supported Features & Models
 
 ### Supported Models
-- **Gemma 4 26B-A4B**: Instruction-tuned MoE architecture with streamed expert execution.
-- **Qwen 3.6 35B-A3B**: Hybrid Gated-DeltaNet linear attention + MoE architecture.
+
+Six architecture families run end to end, each with a real decode flow rather than a config entry:
+
+| Family | Example checkpoints | Shape |
+| --- | --- | --- |
+| **Gemma 4** | `gemma-4-26B-A4B-it` (MLX INT4, Q8_0 GGUF, sub-4-bit IQ GGUF) | Sliding-window + full attention, 128 streamed experts |
+| **Qwen 3.6** (`qwen3_5_moe`) | `Qwen3.6-35B-A3B` (MLX INT4, Q4_K_M GGUF) | Gated-DeltaNet linear attention + 256 streamed experts |
+| **Qwen 3.5/3.8 dense** (`qwen3_5`) | `Qwen/Qwen3.8-27B`, `prism-ml/Bonsai-27B-mlx-1bit` | Same hybrid attention, dense FFN. **Two checkpoints, one architecture** |
+| **Qwen3-MoE** (`qwen3moe`) | `Qwen3-30B-A3B` | Plain GQA + 128 streamed experts |
+| **Llama** (`llama`) | Mixtral 8x7B, Mistral 7B, TinyLlama 1.1B | Plain GQA; covers both the MoE and dense halves of one architecture string |
+| **gpt-oss** (`gptOss`) | `gpt-oss-20b` MXFP4 | GQA with attention sinks, YaRN rope, Harmony reasoning channels |
+
+Two things worth knowing. **A new checkpoint is usually not a new family**: `Qwen/Qwen3.8-27B` shipped in August 2026 and needed no engine change at all, because its architecture is identical to a checkpoint already supported - which is asserted by a test that parses both configs, not assumed. And **the family is chosen from the architecture string, never from tensor names**, because several of these families use identical tensor naming and picking the wrong flow produces fluent, wrong output rather than an error.
 
 ### Checkpoints & GGUF Support
 - **GGUF Intake**: Native parsing and direct streaming intake for published GGUF checkpoints:

@@ -504,11 +504,32 @@ python3 scripts/router_window.py /tmp/rq.json 22 2,4,8,16
 #    spec number; read its module doc before quoting an absolute GiB/s.
 cargo test -p turbospark-gpu --test gemv_bandwidth_bench --release -- --ignored --nocapture
 
+# The SECOND checkpoint of the `qwen3_5` family (2026-08-14), and the one
+# that makes the pair a CONTROLLED comparison: `Qwen/Qwen3.8-27B` shares
+# Bonsai-27B's architecture EXACTLY (33 of 35 text_config keys equal; the
+# two that differ reach no ArchConfig field), so the only thing that varies
+# between the two installs is the quantization -- 1-bit group 128 against
+# INT4 group 64. Streams the 16.08 GB mlx-community artifact a tensor at a
+# time (never written to disk) into a ~16 GB install. Nothing in `src/`
+# changed for it; the offline `qwen35_config` target is what says so, and it
+# is the gate to run BEFORE this one.
+TURBOSPARK_QWEN38_INSTALL_DIR=~/models/qwen38-27b.gturbo \
+  cargo test -p turbospark-repack --test qwen38_checkpoint_network --release -- --ignored --nocapture
+
+# Its two gates, the FIRST this family has ever had (Bonsai got neither, so
+# the DENSE half of `families/qwen/` had no sentinel at all until now).
+TURBOSPARK_QWEN38_INSTALL_DIR=~/models/qwen38-27b.gturbo \
+  cargo test -p turbospark-bench --test qwen38_memory_oracle --release -- --ignored --nocapture
+TURBOSPARK_QWEN38_INSTALL_DIR=~/models/qwen38-27b.gturbo \
+  cargo test -p turbospark-bench --test qwen38_quality_gate --release -- --ignored --nocapture
+
 # The other #[ignore]d tests: real checkpoint downloads (many GB).
 cargo test -p turbospark-repack --test gemma4_checkpoint_network --release -- --ignored --nocapture
 cargo test -p turbospark-repack --test hf_checkpoint_network --release -- --ignored --nocapture
 TURBOSPARK_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
   cargo test -p turbospark-repack --test qwen36_checkpoint_network --release -- --ignored --nocapture
+TURBOSPARK_QWEN35_INSTALL_DIR=~/models/bonsai27b.gturbo \
+  cargo test -p turbospark-repack --test qwen35_checkpoint_network --release -- --ignored --nocapture
 ```
 
 ### Real-model smoke (needs the pinned install)
@@ -714,15 +735,17 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     THREE decode flows. The FAMILY picks first (`ArchConfig.family`, NOT
     tensor naming -- Gemma 4 and Qwen 3.6 both carry
     `language_model.model.embed_tokens.weight`, so a naming probe cannot
-    tell them apart): `Qwen36` builds `RealQwenState` and runs
+    tell them apart): `QwenGdnMoe` builds `RealQwenState` and runs
     `families/qwen/` (gated DeltaNet
     on mask-2 layers, gated full attention on mask-1, one post-attention
     norm feeding router + shared + routed, no sandwich norms, no softcap);
-    `Qwen35` builds the SAME state and runs the SAME flow, its DENSE half
-    (ROADMAP's 1-bit entry) -- every behavioural field of `bonsai_27b()`
-    equals `qwen36_35b_a3b()`'s and every shape field differs, so the FFN
+    `QwenGdnDense` builds the SAME state and runs the SAME flow, its DENSE half
+    (ROADMAP's 1-bit entry) -- every behavioural field of `qwen_gdn_dense_27b()`
+    equals `qwen_gdn_moe_35b_a3b()`'s and every shape field differs, so the FFN
     is the only thing that forks, on `num_experts == 0` and never on
-    tensor naming;
+    tensor naming. TWO published checkpoints run that flow, at two
+    quantizations of ONE architecture: `prism-ml/Bonsai-27B-mlx-1bit` and
+    `Qwen/Qwen3.8-27B` (see Gotcha 47);
     `DeepseekV4Flash` is refused. `GptOss` builds `RealGptOssState` and
     runs `families/gptoss/` (ROADMAP M5) -- plain GQA with a BIAS on all
     four projections, YaRN rope through a precomputed frequency table,
@@ -799,14 +822,14 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     pinned host memory per slot per layer on the 26B); it was hardcoded
     to 16 before, so measurements taken with the flag set are only
     meaningful from that change on. Qwen 3.6 runs on a
-    SYNTHETIC install (`build_synthetic_qwen36_real_install`); no real
+    SYNTHETIC install (`build_synthetic_qwen_gdn_moe_install`); no real
     checkpoint has been repacked. DeepSeek-V4-Flash remains blocked on
     DSV4. Build a test/demo install with
     `turbospark_repack::build_synthetic_gemma4_install` (dense) or its
     `_swa`/`_moe`/`_moe_streamed` variants,
     `build_synthetic_gemma4_real_install` (real naming, exercises the
     real checkpoint repack pipeline), or
-    `build_synthetic_qwen36_real_install` (the Qwen sibling), instead of
+    `build_synthetic_qwen_gdn_moe_install` (the Qwen sibling), instead of
     hand-writing an `ArchConfig`; their non-shape fields are pinned to match
     `gemma4_26b_a4b()`'s own values on purpose (see their module docs for
     why: `manifest.json`'s optional fields fall back to the Gemma 4
@@ -1695,6 +1718,39 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     to disk, and two quantizations of one model share no chunks. Re-open it only
     if the walk ever needs a file over the bridge's size ceiling, which no
     checkpoint here approaches.
+
+47. **A NEW CHECKPOINT IS NOT A NEW FAMILY, AND THE CHEAPEST WAY TO FIND OUT
+    IS TO PARSE ITS CONFIG BEFORE DOWNLOADING ANYTHING.** `Qwen/Qwen3.8-27B`
+    was published 2026-08-14 and needed ZERO changes to `crates/model-io`,
+    `crates/gpu` or `crates/runtime`: its `text_config` agrees with
+    `prism-ml/Bonsai-27B-mlx-1bit`'s on 33 of 35 keys, so it parses to the
+    existing `qwen_gdn_dense_27b()` baseline exactly and runs the existing
+    `families/qwen/` dense flow. The two keys that differ (`eos_token_id`,
+    and the `quantization` object) reach no `ArchConfig` field at all --
+    one is the tokenizer's business and the other
+    `parse_gemma4_quantization`'s. Both checkpoints also carry 2,180 tensors
+    and 333 `vision_tower.` ones, which is independent evidence: the config
+    comparison and the tensor inventory share no input.
+    THE WORKFLOW IS THE REUSABLE PART, because the alternative was assuming
+    a seventh family and budgeting a bring-up. `config.json` is a few KB
+    over HTTP; diffing it against every shipped baseline costs seconds and
+    answers "is this new?" before any of the expensive questions are asked.
+    `both_published_checkpoints_parse_to_one_baseline`
+    (`crates/repack/tests/qwen35_config.rs`) is that diff turned into an
+    offline assertion, so a future point release that DOES move a shape key
+    reddens a millisecond test rather than failing a 16 GB stream at some
+    tensor offset.
+    TWO CONSEQUENCES WORTH KEEPING. The baseline is named for the
+    ARCHITECTURE (`qwen_gdn_dense_27b`, renamed off `bonsai_27b`) because a
+    checkpoint name on a shared baseline misleads every later reader. And
+    the pair is this repo's first CONTROLLED quantization comparison: same
+    architecture, same tokenizer, same flow, 1-bit group 128 against INT4
+    group 64. It reads 18.3 against 19.0 tok/s on 3.9x the weight bytes,
+    which says the flow is COMPUTE-bound at both widths -- a thing the 1-bit
+    entry suspected and had no second point to test. Note the pair is not a
+    clean quantization ablation in the other direction: Bonsai is its own
+    QAT checkpoint, so the weights differ too, and no perplexity comparison
+    between them is licensed.
 
 ## Per-Crate Documentation
 

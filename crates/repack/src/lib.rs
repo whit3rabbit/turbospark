@@ -42,10 +42,11 @@ pub use gemma4_checkpoint::{
     classify_for_family, classify_gemma4, gemma4_manifest_quant, is_supported_affine_shape,
     manifest_quant, narrow_raw_to_bf16, orchestrate_gemma4_checkpoint,
     orchestrate_gemma4_checkpoint_sharded, parse_gemma4_config, parse_gemma4_quantization,
-    pass_through_packed, write_gemma4_install, write_gemma4_install_streamed, write_qwen35_install,
-    write_qwen35_install_streamed, write_qwen36_install, write_qwen36_install_streamed,
-    Gemma4Bucket, Gemma4Error, Gemma4Quant, Gemma4RepackOutput, Gemma4Shards, NarrowedRaw,
-    AFFINE_1BIT_GROUP_SIZE, AFFINE_GROUP_SIZE, GTURBO_PAGE_BYTES,
+    pass_through_packed, write_gemma4_install, write_gemma4_install_streamed,
+    write_qwen_gdn_dense_install, write_qwen_gdn_dense_install_streamed,
+    write_qwen_gdn_moe_install, write_qwen_gdn_moe_install_streamed, Gemma4Bucket, Gemma4Error,
+    Gemma4Quant, Gemma4RepackOutput, Gemma4Shards, NarrowedRaw, AFFINE_1BIT_GROUP_SIZE,
+    AFFINE_GROUP_SIZE, GTURBO_PAGE_BYTES,
 };
 pub use gguf_checkpoint::{
     dtype_tag_for_ggml_type, gguf_manifest_quant, orchestrate_gguf_checkpoint,
@@ -68,7 +69,7 @@ pub use gturbo_writer::{
 pub use hf_checkpoint::{orchestrate_llama_checkpoint, LlamaCheckpointDims, OrchestrateError};
 pub use install_verifier::verify_install_full_sha256;
 pub use manifest_peek::peek_manifest_arch;
-pub use qwen36_config::{parse_qwen35_config, parse_qwen36_config};
+pub use qwen36_config::{parse_qwen_gdn_dense_config, parse_qwen_gdn_moe_config};
 pub use ranged_download::{
     fetch_gguf_header, fetch_safetensors_header, DownloadError, HttpRangeSource, MemoryRangeSource,
     RangeSource, GGUF_INITIAL_FETCH_BYTES,
@@ -100,8 +101,8 @@ pub use synthetic_model::{
     expert_up_proj_name, gate_proj_name, k_proj_name, o_proj_name, q_proj_name, router_name,
     tiny_gemma4_arch, up_proj_name,
 };
-pub use synthetic_qwen::{build_synthetic_qwen36_real_install, tiny_qwen36_arch};
-pub use synthetic_qwen35::{build_synthetic_qwen35_real_install, tiny_qwen35_arch};
+pub use synthetic_qwen::{build_synthetic_qwen_gdn_moe_install, tiny_qwen_gdn_moe_arch};
+pub use synthetic_qwen35::{build_synthetic_qwen_gdn_dense_install, tiny_qwen_gdn_dense_arch};
 pub use synthetic_real::build_synthetic_gemma4_real_install;
 
 // Token id width consumed from the core primitives, keeping the dependency
