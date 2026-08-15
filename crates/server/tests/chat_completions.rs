@@ -107,3 +107,101 @@ async fn malformed_request_body_is_rejected() {
         .unwrap();
     assert!(response.status().is_client_error());
 }
+
+#[tokio::test]
+async fn get_models_list_and_model_detail_endpoint() {
+    let base = spawn_server(Vec::new()).await;
+    let client = reqwest::Client::new();
+
+    // GET /v1/models
+    let res = client
+        .get(format!("{base}/v1/models"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 200);
+    let body: serde_json::Value = res.json().await.unwrap();
+    assert_eq!(body["object"], "list");
+    assert_eq!(body["data"][0]["id"], "scripted");
+
+    // GET /v1/models/scripted (existing)
+    let res = client
+        .get(format!("{base}/v1/models/scripted"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 200);
+    let detail: serde_json::Value = res.json().await.unwrap();
+    assert_eq!(detail["id"], "scripted");
+    assert_eq!(detail["object"], "model");
+
+    // GET /v1/models/nonexistent (not found)
+    let res = client
+        .get(format!("{base}/v1/models/nonexistent"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 404);
+}
+
+#[tokio::test]
+async fn streaming_chat_completion_with_include_usage_emits_usage_chunk() {
+    let tok = load_tokenizer();
+    let steps = h_steps(&tok, 50);
+    let base = spawn_server(steps).await;
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post(format!("{base}/v1/chat/completions"))
+        .json(&serde_json::json!({
+            "model": "scripted",
+            "messages": [{"role": "user", "content": "hi"}],
+            "max_tokens": 2,
+            "temperature": 0.0,
+            "stream": true,
+            "stream_options": { "include_usage": true }
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = response.text().await.unwrap();
+    assert!(body.contains("chat.completion.chunk"));
+    assert!(body.contains("\"usage\":"));
+    assert!(body.contains("[DONE]"));
+}
+
+#[tokio::test]
+async fn chat_completion_with_custom_shaping_and_tool_choice_none() {
+    let tok = load_tokenizer();
+    let steps = h_steps(&tok, 50);
+    let base = spawn_server(steps).await;
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post(format!("{base}/v1/chat/completions"))
+        .json(&serde_json::json!({
+            "model": "scripted",
+            "messages": [{"role": "user", "content": "hi"}],
+            "max_tokens": 3,
+            "temperature": 0.5,
+            "top_k": 32,
+            "repetition_penalty": 1.1,
+            "tools": [{
+                "type": "function",
+                "function": {
+                    "name": "get_weather",
+                    "description": "Get current weather"
+                }
+            }],
+            "tool_choice": "none"
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["choices"][0]["finish_reason"], "length");
+}

@@ -12,8 +12,10 @@
 //! Scope: text and tool calling. `tools` and `tool_choice` come across as
 //! OpenAI tools, which `handler::plan` renders through the checkpoint's own
 //! Jinja chat template, and a parsed call comes back as an Anthropic
-//! `tool_use` block. Images and `thinking` have no backend here and are
-//! dropped in translation. `x-anyllm-degradation` reports only what
+//! `tool_use` block. Images and a request's `thinking` CONFIG have no
+//! backend here and are dropped in translation; a RESPONSE's thinking is a
+//! different matter, and `gpt-oss` produces one (see `handler::exec`'s
+//! `needs_decoder`). `x-anyllm-degradation` reports only what
 //! `compute_request_warnings` knows about (`top_k`, `thinking`,
 //! `cache_control`, document blocks, truncated stop sequences); dropped
 //! images are NOT among them. See `DEVIATIONS.md`.
@@ -41,7 +43,8 @@ use crate::handler::{
     now_unix, plan, run_full, status_for, stream_blocking, tool_names, AppState, GenError, Piece,
 };
 use crate::response::{
-    completion_chunk, completion_response, finish_reason, role_delta, text_delta, tool_call_delta,
+    completion_chunk, completion_response, finish_reason, reasoning_delta, role_delta, text_delta,
+    tool_call_delta,
 };
 
 const DEGRADATION_HEADER: &str = "x-anyllm-degradation";
@@ -147,7 +150,7 @@ async fn full_response(
     // rather than derived.
     client_model: String,
 ) -> Response {
-    let (text, calls, decode) = match run_full(model, prompt_ids, config, tools).await {
+    let generated = match run_full(model, prompt_ids, config, tools).await {
         Ok(r) => r,
         Err(e) => return gen_error_body(e),
     };
@@ -156,11 +159,12 @@ async fn full_response(
         format!("chatcmpl-{}", now_unix()),
         now_unix(),
         backend_model,
-        text,
-        calls,
-        decode.reason,
-        decode.prompt_tokens as u32,
-        decode.new_tokens as u32,
+        generated.text,
+        generated.reasoning,
+        generated.calls,
+        generated.decode.reason,
+        generated.decode.prompt_tokens as u32,
+        generated.decode.new_tokens as u32,
     );
     Json(translate_response(&openai_response, &client_model)).into_response()
 }
@@ -207,6 +211,9 @@ fn stream_response(
         let result = stream_blocking(&model, &prompt_ids, &config, &tools, &mut |piece| {
             let delta = match piece {
                 Piece::Text(text) => text_delta(text),
+                // The translator turns this into a `thinking` content block,
+                // opened on the first one and closed on the first text delta.
+                Piece::Reasoning(text) => reasoning_delta(text),
                 Piece::Tool(call) => {
                     call_index += 1;
                     tool_call_delta(call_index - 1, call)

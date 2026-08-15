@@ -179,7 +179,7 @@ fn a_generated_tool_call_is_decoded_out_of_the_stream() {
         .iter()
         .filter_map(|p| match p {
             Piece::Tool(c) => Some(c),
-            Piece::Text(_) => None,
+            Piece::Text(_) | Piece::Reasoning(_) => None,
         })
         .collect();
     assert_eq!(calls.len(), 1);
@@ -191,7 +191,7 @@ fn a_generated_tool_call_is_decoded_out_of_the_stream() {
         .iter()
         .filter_map(|p| match p {
             Piece::Text(t) => Some(t.as_str()),
-            Piece::Tool(_) => None,
+            Piece::Tool(_) | Piece::Reasoning(_) => None,
         })
         .collect();
     assert!(!text.contains("get_weather"), "{text}");

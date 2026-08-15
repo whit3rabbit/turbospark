@@ -87,6 +87,16 @@ pub struct MfTokenizer {
     pub tool_response_end_id: i32,
     pub channel_start_id: i32,
     pub channel_end_id: i32,
+    /// The token that ends a channel HEADER and opens its body, and the one
+    /// that closes that body. Harmony's frame is a header/body pair rather
+    /// than the bracketing token pair `channel_start_id`/`channel_end_id`
+    /// describes, so those two cannot express it: `<|channel|>` opens a
+    /// header and `<|end|>` closes a whole message, with `<|message|>`
+    /// between them. Both are [`NO_SUCH_TOKEN_ID`] for every other dialect
+    /// here, whose channels either bracket (Gemma) or are plain text
+    /// (DeepSeek). Read by [`crate::structured_decoder`]'s Harmony arm.
+    pub message_start_id: i32,
+    pub message_end_id: i32,
     pub think_start_id: Option<i32>,
     pub think_end_id: Option<i32>,
     pub stop_token_ids: BTreeSet<i32>,
@@ -114,6 +124,8 @@ struct Resolved {
     tool_response_end_id: i32,
     channel_start_id: i32,
     channel_end_id: i32,
+    message_start_id: i32,
+    message_end_id: i32,
     think_start_id: Option<i32>,
     think_end_id: Option<i32>,
     stop_token_ids: BTreeSet<i32>,
@@ -218,6 +230,8 @@ impl MfTokenizer {
             tool_response_end_id: resolved.tool_response_end_id,
             channel_start_id: resolved.channel_start_id,
             channel_end_id: resolved.channel_end_id,
+            message_start_id: resolved.message_start_id,
+            message_end_id: resolved.message_end_id,
             think_start_id: resolved.think_start_id,
             think_end_id: resolved.think_end_id,
             stop_token_ids: resolved.stop_token_ids,
@@ -381,6 +395,10 @@ fn resolve_gemma(
         tool_response_end_id: tool_response_end,
         channel_start_id: channel_start,
         channel_end_id: channel_end,
+        // Gemma's channels BRACKET, so the pair above says everything and
+        // there is no header to end.
+        message_start_id: NO_SUCH_TOKEN_ID,
+        message_end_id: NO_SUCH_TOKEN_ID,
         think_start_id: None,
         think_end_id: None,
         stop_token_ids: [eos, eot, tool_response].into_iter().collect(),
@@ -423,7 +441,8 @@ fn resolve_harmony(tokenizer: &Tokenizer) -> Result<Resolved, TokenizerError> {
     // Resolved so a table missing them fails at LOAD rather than at the first
     // rendered prompt, and so the detection probe above cannot pass on a
     // checkpoint whose frame is only half present.
-    let _end = required_id(tokenizer, HARMONY_END_MARK)?;
+    let end = required_id(tokenizer, HARMONY_END_MARK)?;
+    let message = required_id(tokenizer, HARMONY_MESSAGE_MARK)?;
     let channel = required_id(tokenizer, HARMONY_CHANNEL_MARK)?;
     Ok(Resolved {
         bos_id: bos,
@@ -440,7 +459,13 @@ fn resolve_harmony(tokenizer: &Tokenizer) -> Result<Resolved, TokenizerError> {
         tool_response_id: NO_SUCH_TOKEN_ID,
         tool_response_end_id: NO_SUCH_TOKEN_ID,
         channel_start_id: channel,
+        // `<|channel|>` HAS no closing counterpart: it opens a header that
+        // `<|message|>` ends, and `<|end|>` then closes the body. Leaving
+        // this sentinel is what stops the Gemma-shaped bracketing arm from
+        // being reachable for this dialect.
         channel_end_id: NO_SUCH_TOKEN_ID,
+        message_start_id: message,
+        message_end_id: end,
         think_start_id: None,
         think_end_id: None,
         stop_token_ids: [ret, call, pad].into_iter().collect(),
@@ -478,6 +503,8 @@ fn resolve_mistral(tokenizer: &Tokenizer) -> Result<Resolved, TokenizerError> {
         tool_response_end_id: NO_SUCH_TOKEN_ID,
         channel_start_id: NO_SUCH_TOKEN_ID,
         channel_end_id: NO_SUCH_TOKEN_ID,
+        message_start_id: NO_SUCH_TOKEN_ID,
+        message_end_id: NO_SUCH_TOKEN_ID,
         think_start_id: None,
         think_end_id: None,
         stop_token_ids: [eos].into_iter().collect(),
@@ -507,6 +534,9 @@ fn resolve_chatml(tokenizer: &Tokenizer) -> Result<Resolved, TokenizerError> {
         tool_response_end_id: tool_response_end,
         channel_start_id: think_start,
         channel_end_id: think_end,
+        // The thought channel above already brackets; there is no header.
+        message_start_id: NO_SUCH_TOKEN_ID,
+        message_end_id: NO_SUCH_TOKEN_ID,
         think_start_id: Some(think_start),
         think_end_id: Some(think_end),
         stop_token_ids: [im_end, end_of_text].into_iter().collect(),
@@ -535,6 +565,9 @@ fn resolve_deepseek(tokenizer: &Tokenizer) -> Result<Resolved, TokenizerError> {
         tool_response_end_id: NO_SUCH_TOKEN_ID,
         channel_start_id: think_start,
         channel_end_id: think_end,
+        // The thought channel above already brackets; there is no header.
+        message_start_id: NO_SUCH_TOKEN_ID,
+        message_end_id: NO_SUCH_TOKEN_ID,
         think_start_id: Some(think_start),
         think_end_id: Some(think_end),
         stop_token_ids: [eos].into_iter().collect(),

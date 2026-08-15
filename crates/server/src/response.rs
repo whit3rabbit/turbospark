@@ -6,8 +6,8 @@
 //! `new_stream_translator` consume when `/v1/messages` re-renders the same
 //! generation as Anthropic. One set of types, one construction path, two
 //! endpoints. This module is only the constructors: filling in the many
-//! fields this server never populates (logprobs, reasoning, system
-//! fingerprint) exactly once, so the handlers stay readable.
+//! fields this server never populates (logprobs, signed thinking blocks,
+//! system fingerprint) exactly once, so the handlers stay readable.
 
 use anyllm_translate::openai::streaming::{
     ChatCompletionChunk, ChunkChoice, ChunkDelta, ChunkFunctionCall, ChunkToolCall,
@@ -44,10 +44,20 @@ fn tool_call(call: ParsedToolCall) -> ToolCall {
     }
 }
 
-/// An assistant turn: text, plus any tool calls the structured decoder
-/// parsed out of it. This server generates no reasoning content (see
-/// `DEVIATIONS.md`), so the remaining fields are `None`.
-pub fn assistant_message(text: String, calls: Vec<ParsedToolCall>) -> ChatMessage {
+/// An assistant turn: text, the reasoning that preceded it, and any tool calls
+/// the structured decoder parsed out of it.
+///
+/// `reasoning_content` is the de-facto OpenAI field for a thinking model's
+/// separated reasoning, and populating it is the WHOLE server-side cost of
+/// surfacing Harmony's `analysis` channel: `translate_response` already turns
+/// it into an Anthropic `thinking` block. `thinking_blocks` stays `None`
+/// because that field carries Anthropic's SIGNED blocks, which only Anthropic
+/// can mint; a local model has nothing to sign with.
+pub fn assistant_message(
+    text: String,
+    reasoning: String,
+    calls: Vec<ParsedToolCall>,
+) -> ChatMessage {
     ChatMessage {
         role: ChatRole::Assistant,
         content: Some(ChatContent::Text(text)),
@@ -59,7 +69,7 @@ pub fn assistant_message(text: String, calls: Vec<ParsedToolCall>) -> ChatMessag
         },
         tool_call_id: None,
         refusal: None,
-        reasoning_content: None,
+        reasoning_content: (!reasoning.is_empty()).then_some(reasoning),
         thinking_blocks: None,
     }
 }
@@ -73,6 +83,7 @@ pub fn completion_response(
     created: u64,
     model: String,
     text: String,
+    reasoning: String,
     calls: Vec<ParsedToolCall>,
     reason: runtime::StopReason,
     prompt_tokens: u32,
@@ -84,7 +95,7 @@ pub fn completion_response(
         model,
         choices: vec![Choice {
             index: 0,
-            message: assistant_message(text, calls),
+            message: assistant_message(text, reasoning, calls),
             finish_reason: Some(finish_reason(reason)),
             logprobs: None,
         }],
@@ -126,6 +137,32 @@ pub fn completion_chunk(
     }
 }
 
+/// An SSE chunk carrying usage statistics with empty choices, emitted when
+/// `stream_options.include_usage` is true.
+pub fn usage_chunk(
+    id: String,
+    created: u64,
+    model: String,
+    prompt_tokens: u32,
+    completion_tokens: u32,
+) -> ChatCompletionChunk {
+    ChatCompletionChunk {
+        id,
+        object: "chat.completion.chunk".to_string(),
+        model,
+        choices: vec![],
+        usage: Some(ChatUsage {
+            prompt_tokens,
+            completion_tokens,
+            total_tokens: prompt_tokens + completion_tokens,
+            ..Default::default()
+        }),
+        created: Some(created),
+        system_fingerprint: None,
+        error: None,
+    }
+}
+
 /// The opening chunk's delta: role only, no content.
 pub fn role_delta() -> ChunkDelta {
     ChunkDelta {
@@ -138,6 +175,23 @@ pub fn role_delta() -> ChunkDelta {
 pub fn text_delta(text: String) -> ChunkDelta {
     ChunkDelta {
         content: Some(text),
+        ..Default::default()
+    }
+}
+
+/// A reasoning delta, which `StreamingTranslator` renders as an Anthropic
+/// `thinking` content block.
+///
+/// ORDER IS LOAD-BEARING AND IS INHERITED, not enforced here. The translator
+/// opens a thinking block on the first reasoning delta and CLOSES it on the
+/// first content delta, without reopening; Harmony emits its `analysis`
+/// channel before its `final` one, so the sequence this server produces is
+/// well formed. A backend that interleaved the two would need the translator
+/// to grow a second thinking block, which is upstream work rather than
+/// something to paper over by reordering a caller's output.
+pub fn reasoning_delta(text: String) -> ChunkDelta {
+    ChunkDelta {
+        reasoning_content: Some(text),
         ..Default::default()
     }
 }
@@ -164,9 +218,10 @@ pub fn tool_call_delta(index: u32, call: ParsedToolCall) -> ChunkDelta {
     }
 }
 
-/// The half of tool calling that is testable without a model: a parsed call
-/// put through these constructors has to survive translation into an
-/// Anthropic `tool_use` block, in both the full and the streaming shape.
+/// The half of tool calling and reasoning that is testable without a model: a
+/// parsed call, or a separated reasoning string, put through these
+/// constructors has to survive translation into the Anthropic block it claims
+/// to map onto, in both the full and the streaming shape.
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -187,6 +242,7 @@ mod tests {
             "chatcmpl-1".to_string(),
             0,
             "m".to_string(),
+            String::new(),
             String::new(),
             vec![call()],
             runtime::StopReason::ToolCalls,
@@ -260,5 +316,116 @@ mod tests {
             "{names:?}"
         );
         assert!(names.iter().any(|e| e["type"] == "content_block_stop"));
+    }
+
+    /// Separated reasoning becomes an Anthropic `thinking` block, BEFORE the
+    /// text block. This is the whole server-side claim of Harmony channel
+    /// decoding: fill `reasoning_content` and `anyllm_translate` does the
+    /// rest, so what is under test here is that the field really is the one
+    /// its mapping reads.
+    #[test]
+    fn reasoning_becomes_an_anthropic_thinking_block() {
+        let response = completion_response(
+            "chatcmpl-1".to_string(),
+            0,
+            "m".to_string(),
+            "Rayleigh scattering.".to_string(),
+            "The user asks why the sky is blue.".to_string(),
+            Vec::new(),
+            runtime::StopReason::EndOfTurn,
+            3,
+            7,
+        );
+        let anthropic = anyllm_translate::translate_response(&response, "claude-sonnet-4-6");
+        let body = serde_json::to_value(&anthropic).unwrap();
+
+        let kinds: Vec<&str> = body["content"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|b| b["type"].as_str().unwrap())
+            .collect();
+        assert_eq!(kinds, vec!["thinking", "text"], "{body}");
+        assert_eq!(
+            body["content"][0]["thinking"],
+            "The user asks why the sky is blue."
+        );
+        assert_eq!(body["content"][1]["text"], "Rayleigh scattering.");
+    }
+
+    /// A generation with no reasoning must not grow an empty thinking block:
+    /// every family but `gpt-oss` produces none, and this is the guard that
+    /// their responses are unchanged.
+    #[test]
+    fn no_reasoning_leaves_the_response_shape_alone() {
+        let response = completion_response(
+            "chatcmpl-1".to_string(),
+            0,
+            "m".to_string(),
+            "plain answer".to_string(),
+            String::new(),
+            Vec::new(),
+            runtime::StopReason::EndOfTurn,
+            3,
+            7,
+        );
+        assert!(response.choices[0].message.reasoning_content.is_none());
+
+        let body = serde_json::to_value(anyllm_translate::translate_response(
+            &response,
+            "claude-sonnet-4-6",
+        ))
+        .unwrap();
+        let kinds: Vec<&str> = body["content"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|b| b["type"].as_str().unwrap())
+            .collect();
+        assert_eq!(kinds, vec!["text"], "{body}");
+    }
+
+    /// The streaming shape: reasoning deltas open a `thinking` content block
+    /// and the first text delta CLOSES it, so the two arrive as separate
+    /// blocks rather than as one run of text.
+    #[test]
+    fn streamed_reasoning_opens_a_thinking_block_that_text_closes() {
+        let mut translator =
+            anyllm_translate::new_stream_translator("claude-sonnet-4-6".to_string());
+        let mut events = Vec::new();
+        let mut record = |chunk| {
+            for event in translator.process_chunk(&chunk) {
+                events.push(serde_json::to_value(&event).unwrap());
+            }
+        };
+        let chunk =
+            |delta| completion_chunk("chatcmpl-1".to_string(), 0, "m".to_string(), delta, None);
+
+        record(chunk(role_delta()));
+        record(chunk(reasoning_delta("thinking out loud".to_string())));
+        record(chunk(text_delta("the answer".to_string())));
+        record(completion_chunk(
+            "chatcmpl-1".to_string(),
+            0,
+            "m".to_string(),
+            ChunkDelta::default(),
+            Some(FinishReason::Stop),
+        ));
+        for event in translator.finish() {
+            events.push(serde_json::to_value(&event).unwrap());
+        }
+
+        let deltas: Vec<&str> = events
+            .iter()
+            .filter_map(|e| e["delta"]["type"].as_str())
+            .collect();
+        assert_eq!(deltas, vec!["thinking_delta", "text_delta"], "{events:?}");
+
+        let opened: Vec<&str> = events
+            .iter()
+            .filter(|e| e["type"] == "content_block_start")
+            .map(|e| e["content_block"]["type"].as_str().unwrap())
+            .collect();
+        assert_eq!(opened, vec!["thinking", "text"], "{events:?}");
     }
 }

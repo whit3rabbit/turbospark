@@ -926,10 +926,25 @@ live network).
   bytes, under ggml's own 0.01181 Metal/CPU backend floor, which is what
   says the mscale value and the sink placement are right
   (`docs/BENCHMARKS.md`).
-  TWO LIMITATIONS ARE STATED RATHER THAN SILENT. Harmony's channels are
-  NOT decoded by `StructuredDecoder`, so the model's `analysis` reasoning
-  reaches a caller as text rather than as separated reasoning. And there
-  is no fallback chat renderer for the dialect at all: Harmony's real
+  HARMONY'S CHANNELS ARE NOW DECODED (this used to be one of two stated
+  limitations here). `StructuredDecoder` reads the
+  `<|channel|>HEADER<|message|>BODY<|end|>` frame as its own small state
+  machine (the start/end token pair every other dialect keys on cannot
+  express it, since `<|channel|>` has no closing counterpart), and reports
+  the `final` channel as content and everything else as REASONING. It is
+  the one arm here that emits its thought channel rather than discarding
+  it, because `gpt-oss` puts most of its generated tokens there. The
+  server surfaces the split as OpenAI `reasoning_content` and, through
+  `anyllm_translate`'s existing mapping, as an Anthropic `thinking` block
+  ahead of the text block; `turbospark-check` prints reasoning to STDERR
+  and the answer to stdout, and only the answer enters `--chat` history,
+  which is what Harmony's own convention asks for. Harmony TOOL CALLS
+  remain undecoded and are a separate item: a call is framed as a
+  recipient inside the channel header rather than as the bracketing token
+  pair the decoder's tool contract describes, so its `commentary` body
+  comes back as reasoning rather than as a parsed call. What has not
+  changed: there is no fallback chat renderer for the dialect at all;
+  Harmony's real
   template is 17 KB of system preamble, reasoning-effort knob and
   TypeScript tool namespace, so `apply_dialect_chat_template` refuses by
   name instead of inventing a partial frame (AGENTS.md Gotcha 41).

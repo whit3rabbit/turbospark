@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyllm_translate::openai::{
-    ChatCompletionRequest, ChatMessage, ChatRole, ChatTool, Stop, ToolCall,
+    ChatCompletionRequest, ChatMessage, ChatRole, ChatTool, ChatToolChoice, Stop, ToolCall,
 };
 use runtime::GenerationConfig;
 use selection::ShapingConfig;
@@ -43,21 +43,30 @@ fn stop_strings(stop: Option<&Stop>) -> Vec<String> {
 }
 
 fn build_config(request: &ChatCompletionRequest) -> Result<GenerationConfig, String> {
-    // top_k defaults to the CLI's 64 rather than 0 (unbounded): `ShapingConfig`
-    // rejects a top_p below 1.0 when top_k is 0, so a plain OpenAI request
-    // carrying only top_p would otherwise be a 400.
+    // top_k defaults to 64 if unspecified, but can be overridden via `top_k` in extra.
+    let top_k = request
+        .extra
+        .get("top_k")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as u32)
+        .unwrap_or(64);
+
+    let repetition_penalty = request
+        .extra
+        .get("repetition_penalty")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(1.0);
+
     let shaping = ShapingConfig::new(
         request.temperature.map(f64::from).unwrap_or(1.0),
-        64,
+        top_k,
         request.top_p.map(f64::from),
-        1.0,
-        // `seed` has no field on the OpenAI request type: it needs no
-        // translation, so it lands in the `extra` flatten map. Reading it back
-        // out is not optional -- a missing lookup here silently unseeds every
-        // seeded request, with no deserialization error to catch it.
+        repetition_penalty,
+        // `seed` has no field on the OpenAI request type: it lands in the `extra` flatten map.
         request.extra.get("seed").and_then(|v| v.as_u64()),
     )
     .map_err(|e| e.to_string())?;
+
     Ok(GenerationConfig {
         shaping,
         max_new_tokens: request
@@ -143,15 +152,22 @@ fn tool_definition(tool: &ChatTool) -> FunctionDefinition {
 }
 
 /// The tool names the structured decoder will accept in generated output.
-/// Kept out of [`plan`]'s return so its signature stays a pair; both call
-/// sites need one line either way.
+/// Respects `tool_choice`: "none" suppresses tools, named tool_choice restricts to that function.
 pub(crate) fn tool_names(request: &ChatCompletionRequest) -> HashSet<String> {
-    request
-        .tools
-        .iter()
-        .flatten()
-        .map(|t| t.function.name.clone())
-        .collect()
+    match &request.tool_choice {
+        Some(ChatToolChoice::Simple(s)) if s == "none" => HashSet::new(),
+        Some(ChatToolChoice::Named(n)) => {
+            let mut set = HashSet::new();
+            set.insert(n.function.name.clone());
+            set
+        }
+        _ => request
+            .tools
+            .iter()
+            .flatten()
+            .map(|t| t.function.name.clone())
+            .collect(),
+    }
 }
 
 /// Renders the chat template, encodes it, and resolves the shaping config.
@@ -160,12 +176,27 @@ pub(crate) fn plan(
     request: &ChatCompletionRequest,
 ) -> Result<(Vec<foundation::TokenId>, GenerationConfig), String> {
     let messages: Vec<Message> = request.messages.iter().filter_map(to_message).collect();
-    let tools: Vec<FunctionDefinition> = request
-        .tools
-        .iter()
-        .flatten()
-        .map(tool_definition)
-        .collect();
+
+    let is_none_choice =
+        matches!(&request.tool_choice, Some(ChatToolChoice::Simple(s)) if s == "none");
+    let tools: Vec<FunctionDefinition> = if is_none_choice {
+        Vec::new()
+    } else if let Some(ChatToolChoice::Named(n)) = &request.tool_choice {
+        request
+            .tools
+            .iter()
+            .flatten()
+            .filter(|t| t.function.name == n.function.name)
+            .map(tool_definition)
+            .collect()
+    } else {
+        request
+            .tools
+            .iter()
+            .flatten()
+            .map(tool_definition)
+            .collect()
+    };
 
     // With tools, the checkpoint's own `chat_template.jinja` is the only
     // renderer that can express them (it already speaks OpenAI's shape:

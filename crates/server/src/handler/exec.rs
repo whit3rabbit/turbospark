@@ -19,19 +19,49 @@ pub(crate) enum GenError {
 /// One decoded unit of assistant output.
 pub(crate) enum Piece {
     Text(String),
+    /// Reasoning the model produced before its answer. Only `gpt-oss`'s
+    /// Harmony frame separates one (see [`needs_decoder`]).
+    Reasoning(String),
     Tool(ParsedToolCall),
 }
 
-/// Runs a generation to completion, returning the whole text and every tool
-/// call parsed out of it.
+/// Everything one generation produced: the answer, the reasoning that preceded
+/// it, and every tool call parsed out of it.
+pub(crate) struct Generated {
+    pub text: String,
+    pub reasoning: String,
+    pub calls: Vec<ParsedToolCall>,
+    pub decode: RawDecodeResult,
+}
+
+/// Whether this generation's output has to go through
+/// [`StructuredAssistantDecoder`] rather than straight to the caller.
+///
+/// TWO INDEPENDENT REASONS, and keeping them independent is the point. Tools
+/// need the decoder because the tool-chat generation prompt opens a thought
+/// channel and the calls arrive as markup. Harmony needs it because
+/// `gpt-oss` writes its reasoning into an `analysis` channel BEFORE its
+/// answer, so without decoding the reasoning and the frame markup reach the
+/// caller as the reply.
+///
+/// **The prompt path in `plan` stays keyed on `tools` ALONE** (crate Gotcha
+/// 7). Those two conditions used to be the same expression, and widening this
+/// one is exactly the change that could couple them again: rendering the tool
+/// template for a request with no tools would change every Harmony prompt.
+fn needs_decoder(model: &AppState, tools: &HashSet<String>) -> bool {
+    !tools.is_empty() || model.tokenizer().dialect == tokenizer::ChatDialect::Harmony
+}
+
+/// Runs a generation to completion.
 pub(crate) async fn run_full(
     model: AppState,
     prompt_ids: Vec<foundation::TokenId>,
     config: GenerationConfig,
     tools: HashSet<String>,
-) -> Result<(String, Vec<ParsedToolCall>, RawDecodeResult), GenError> {
+) -> Result<Generated, GenError> {
     let joined = tokio::task::spawn_blocking(move || {
         let mut text = String::new();
+        let mut reasoning = String::new();
         let mut calls = Vec::new();
         let result = stream_blocking(
             &model,
@@ -40,16 +70,22 @@ pub(crate) async fn run_full(
             &tools,
             &mut |piece| match piece {
                 Piece::Text(delta) => text.push_str(&delta),
+                Piece::Reasoning(delta) => reasoning.push_str(&delta),
                 Piece::Tool(call) => calls.push(call),
             },
         );
-        (result, text, calls)
+        (result, text, reasoning, calls)
     })
     .await;
 
     match joined {
-        Ok((Ok(decode), text, calls)) => Ok((text, calls, decode)),
-        Ok((Err(e), _, _)) => Err(GenError::Runtime(e)),
+        Ok((Ok(decode), text, reasoning, calls)) => Ok(Generated {
+            text,
+            reasoning,
+            calls,
+            decode,
+        }),
+        Ok((Err(e), ..)) => Err(GenError::Runtime(e)),
         Err(e) => Err(GenError::Join(e.to_string())),
     }
 }
@@ -59,11 +95,11 @@ pub(crate) async fn run_full(
 /// [`run_full`] go through here, so the stop-string tail handling and the
 /// structured decoding are written once.
 ///
-/// With `tools` empty the generated text is passed straight through, exactly
-/// as before tool calling existed. With tools, it goes through
-/// [`StructuredAssistantDecoder`], which splits it into visible content and
-/// parsed calls and swallows the thought channel the tool-chat generation
-/// prompt opens.
+/// Text is passed straight through unless [`needs_decoder`] says otherwise,
+/// exactly as before tool calling existed. Through the decoder, it is split
+/// into visible content, reasoning, and parsed calls: the thought channel the
+/// tool-chat generation prompt opens is swallowed, and Harmony's `analysis`
+/// channel comes back as [`Piece::Reasoning`].
 pub(crate) fn stream_blocking(
     model: &AppState,
     prompt_ids: &[foundation::TokenId],
@@ -76,7 +112,7 @@ pub(crate) fn stream_blocking(
     // never against an earlier turn's. A counter is enough, and keeps
     // responses reproducible.
     let mut next_id = 0usize;
-    let mut decoder = (!tools.is_empty()).then(|| {
+    let mut decoder = needs_decoder(model, tools).then(|| {
         StructuredAssistantDecoder::new(model.tokenizer(), tools.clone(), move || {
             next_id += 1;
             format!("toolu_{}", next_id - 1)
@@ -115,6 +151,7 @@ pub(crate) fn stream_blocking(
                             for event in events {
                                 on_piece(match event {
                                     StructuredAssistantEvent::Content(c) => Piece::Text(c),
+                                    StructuredAssistantEvent::Reasoning(r) => Piece::Reasoning(r),
                                     StructuredAssistantEvent::ToolCall(c) => Piece::Tool(c),
                                 });
                             }

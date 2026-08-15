@@ -17,6 +17,7 @@
 //! renders a JSON conversation through the tokenizer's own chat template,
 //! and `--chat` runs the interactive REPL in [`crate::chat`].
 
+use std::collections::HashSet;
 use std::io::Write;
 use std::path::Path;
 
@@ -26,7 +27,9 @@ use runtime::{
     RealForwardRunner,
 };
 use selection::ShapingConfig;
-use tokenizer::{Message, MfTokenizer, Role};
+use tokenizer::{
+    ChatDialect, Message, MfTokenizer, Role, StructuredAssistantDecoder, StructuredAssistantEvent,
+};
 
 /// Everything a generating mode needs: the loaded model, its tokenizer, and
 /// the validated sampling configuration. Opened once per process, reused by
@@ -39,6 +42,62 @@ pub(crate) struct Session {
     /// Power Mode toggling mid-chat change the pace for reasons the caller
     /// never asked about.
     pub(crate) rate: RateControl,
+}
+
+/// Splits a generated token's text into the answer and the reasoning that
+/// preceded it.
+///
+/// `gpt-oss` is the only family here that separates the two: Harmony puts the
+/// model's reasoning in an `analysis` channel BEFORE its answer, so without
+/// this the reasoning and the frame markup print as the reply. For every other
+/// dialect [`Self::push`] is the identity and no decoder is built at all, so
+/// five families' output is byte-identical to what it was.
+///
+/// **The ANSWER is what a caller accumulates as the assistant turn**, not the
+/// pair. Harmony's own convention drops the analysis channel from prior turns,
+/// so feeding it back into `--chat` history would send the model something it
+/// was never trained to read.
+struct ChannelSplit<'a> {
+    decoder: Option<StructuredAssistantDecoder<'a>>,
+}
+
+impl<'a> ChannelSplit<'a> {
+    fn new(tokenizer: &'a MfTokenizer) -> Self {
+        Self {
+            decoder: (tokenizer.dialect == ChatDialect::Harmony).then(|| {
+                // No tool names: Harmony frames a call as a channel header
+                // rather than as the bracketing token pair this decoder's
+                // tool contract describes, so it parses none (ROADMAP's
+                // Harmony tool-calling item).
+                StructuredAssistantDecoder::new(tokenizer, HashSet::new(), String::new)
+            }),
+        }
+    }
+
+    /// One token's `(answer, reasoning)`. Either may be empty.
+    fn push(&mut self, id: i32, text: &str) -> (String, String) {
+        let Some(decoder) = self.decoder.as_mut() else {
+            return (text.to_string(), String::new());
+        };
+        let (mut answer, mut reasoning) = (String::new(), String::new());
+        match decoder.consume(id, text) {
+            Ok(events) => {
+                for event in events {
+                    match event {
+                        StructuredAssistantEvent::Content(c) => answer.push_str(&c),
+                        StructuredAssistantEvent::Reasoning(r) => reasoning.push_str(&r),
+                        // Unreachable on this dialect (see `new`), and
+                        // dropping beats inventing a rendering for it.
+                        StructuredAssistantEvent::ToolCall(_) => {}
+                    }
+                }
+            }
+            // The Harmony arm has no failure mode, but a caller losing its
+            // output to one would be the worst outcome: pass the text through.
+            Err(_) => answer.push_str(text),
+        }
+        (answer, reasoning)
+    }
 }
 
 pub fn try_generate(request: &InvocationRequest) {
@@ -72,6 +131,7 @@ fn run_prompt(request: &InvocationRequest, prompt: &str) {
     println!("generating (real forward pass, synthetic/untrained weights):");
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
+    let mut split = ChannelSplit::new(&session.tokenizer);
     let result = run_raw_completion(
         &mut session.runner,
         &session.tokenizer,
@@ -80,8 +140,12 @@ fn run_prompt(request: &InvocationRequest, prompt: &str) {
         request.max_context,
         vocab_size,
         |event| {
-            if let RawDecodeProgress::Token { delta, .. } = event {
-                let _ = write!(out, "{delta}");
+            if let RawDecodeProgress::Token { id, delta, .. } = event {
+                let (answer, reasoning) = split.push(id, &delta);
+                if !reasoning.is_empty() {
+                    eprint!("{reasoning}");
+                }
+                let _ = write!(out, "{answer}");
                 let _ = out.flush();
             }
         },
@@ -186,6 +250,7 @@ pub(crate) fn stream_turn(
     let mut reply = String::new();
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
+    let mut split = ChannelSplit::new(&session.tokenizer);
     let result = run_raw_completion(
         &mut session.runner,
         &session.tokenizer,
@@ -196,17 +261,31 @@ pub(crate) fn stream_turn(
         |event| {
             // Both variants carry visible text: `Tail` is what the stop
             // matcher withheld, so dropping it truncates the reply.
-            let text = match event {
-                RawDecodeProgress::Token { delta, .. } => delta,
-                RawDecodeProgress::Tail(tail) => tail,
+            let (id, text) = match event {
+                RawDecodeProgress::Token { id, delta, .. } => (id, delta),
+                // A withheld tail has no token id behind it, which is what
+                // the tokenizer's "no such token" sentinel means.
+                RawDecodeProgress::Tail(tail) => (tokenizer::NO_SUCH_TOKEN_ID, tail),
                 RawDecodeProgress::Prefill { .. } => return,
             };
-            if text.is_empty() {
+            // NO EARLY RETURN ON EMPTY TEXT. Harmony's frame tokens decode to
+            // nothing at all -- the detokenizer skips special tokens -- so
+            // skipping them here means the state machine never sees a single
+            // `<|channel|>` and the whole turn reads as one run of content.
+            // Every transition this split makes arrives as `(id, "")`.
+            //
+            // Reasoning goes to stderr so redirecting stdout captures the
+            // ANSWER alone, and only the answer becomes the assistant turn.
+            let (answer, reasoning) = split.push(id, &text);
+            if !reasoning.is_empty() {
+                eprint!("{reasoning}");
+            }
+            if answer.is_empty() {
                 return;
             }
-            let _ = write!(out, "{text}");
+            let _ = write!(out, "{answer}");
             let _ = out.flush();
-            reply.push_str(&text);
+            reply.push_str(&answer);
         },
     )?;
     let _ = writeln!(out);

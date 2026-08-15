@@ -15,6 +15,17 @@ use crate::tool_call::{
 pub enum StructuredAssistantEvent {
     /// Text content chunk for display.
     Content(String),
+    /// Reasoning the model produced on its way to the answer, separated from
+    /// the answer itself.
+    ///
+    /// **Only the Harmony arm emits this**, and the asymmetry is deliberate.
+    /// Every other dialect here DISCARDS its thought channel (Gemma's
+    /// non-final label, ChatML's `<think>`, DeepSeek's), which is what four
+    /// shipped families' callers already see; turning those into events is a
+    /// separate decision with its own gates. Harmony emits because
+    /// `gpt-oss` puts most of its generated tokens in that channel and a
+    /// caller that paid to generate them should be able to read them.
+    Reasoning(String),
     /// Parsed tool call invocation.
     ToolCall(ParsedToolCall),
 }
@@ -26,12 +37,47 @@ enum Channel {
     Label,
 }
 
+/// Which Harmony channel a message body belongs to.
+///
+/// Only `final` is the answer. `analysis` is the model's reasoning, and
+/// `commentary` carries tool calls and preambles; both are reported as
+/// reasoning rather than as content, so nothing but the final channel is ever
+/// presented as the reply.
+#[derive(Clone, Copy, PartialEq)]
+enum HarmonyChannel {
+    Final,
+    Reasoning,
+}
+
+/// Position in Harmony's `<|channel|>HEADER<|message|>BODY<|end|>` frame.
+///
+/// Harmony is the one dialect here whose channels do not BRACKET: `<|channel|>`
+/// opens a header, `<|message|>` ends that header and opens the body, and
+/// `<|end|>` closes the body. So the start/end token pair every other arm keys
+/// on cannot express it, and reusing the Gemma arm would open a channel label
+/// on the first `<|channel|>` and never close it, swallowing the whole reply.
+enum HarmonyState {
+    /// Before the first `<|channel|>`. Text passes through as content, so a
+    /// model that never emits the frame is reported rather than silenced.
+    Unframed,
+    /// Inside a header, accumulating its text.
+    Header,
+    /// Inside a message body.
+    Body(HarmonyChannel),
+    /// After `<|end|>` and before the next `<|channel|>`. Everything here is
+    /// dropped: what falls in this gap is the `<|start|>assistant` that opens
+    /// the next message, and passing it through would emit the bare word
+    /// "assistant" into the reply.
+    Between,
+}
+
 /// Streaming assistant output decoder splitting tokens into visible content and tool calls.
 pub struct StructuredAssistantDecoder<'a> {
     tokenizer: &'a MfTokenizer,
     allowed_tools: HashSet<String>,
     id_generator: Box<dyn FnMut() -> String + 'a>,
     channel: Channel,
+    harmony: HarmonyState,
     label: String,
     tool_tokens: Option<Vec<i32>>,
     held_text: String,
@@ -52,6 +98,7 @@ impl<'a> StructuredAssistantDecoder<'a> {
             allowed_tools,
             id_generator: Box::new(id_generator),
             channel: Channel::Visible,
+            harmony: HarmonyState::Unframed,
             label: String::new(),
             tool_tokens: None,
             held_text: String::new(),
@@ -102,24 +149,7 @@ impl<'a> StructuredAssistantDecoder<'a> {
                     vec![StructuredAssistantEvent::Content(delta.to_string())]
                 })
             }
-            // HARMONY HAS CHANNELS AND THIS DECODER DOES NOT READ THEM YET
-            // (ROADMAP M5). Content passes through, so the model's
-            // `analysis` channel reaches the caller as text instead of being
-            // split off as reasoning. That is a stated limitation, not an
-            // oversight, and it is strictly better than the alternative:
-            // Harmony's `channel_start_id` IS a real token, but it has no
-            // closing counterpart (`channel_end_id` is `NO_SUCH_TOKEN_ID`),
-            // so falling through to the Gemma arm would open a channel label
-            // on the first `<|channel|>` and never close it -- swallowing the
-            // whole reply. Wiring it needs a header parser rather than a
-            // token pair, which is its own item.
-            ChatDialect::Harmony => {
-                return Ok(if delta.is_empty() {
-                    Vec::new()
-                } else {
-                    vec![StructuredAssistantEvent::Content(delta.to_string())]
-                })
-            }
+            ChatDialect::Harmony => return Ok(self.consume_harmony(token_id, delta)),
         }
 
         if token_id == self.tokenizer.channel_start_id {
@@ -204,6 +234,62 @@ impl<'a> StructuredAssistantDecoder<'a> {
                 } else {
                     Ok(Vec::new())
                 }
+            }
+        }
+    }
+
+    /// `gpt-oss`'s Harmony frame. A real assistant turn reads
+    ///
+    /// ```text
+    /// <|channel|>analysis<|message|>REASONING<|end|>
+    /// <|start|>assistant<|channel|>final<|message|>ANSWER<|return|>
+    /// ```
+    ///
+    /// **Every transition keys on a TOKEN ID, never on text**, the way the
+    /// Gemma arm does: that is what makes the state machine independent of
+    /// whether the detokenizer renders special tokens, and of how the header's
+    /// words happen to be split into tokens.
+    ///
+    /// The three tokens that CLOSE a turn -- `<|return|>`, `<|call|>` and
+    /// `<|endoftext|>` -- never reach here at all. They are in the dialect's
+    /// stop set, and `run_raw_completion` breaks before the progress callback,
+    /// so the only frame token this sees inside a body is `<|end|>`, which is
+    /// deliberately not a stop (it also closes the PROMPT's system and user
+    /// turns).
+    ///
+    /// ONE ORDERING CONSTRAINT IS INHERITED RATHER THAN ENFORCED HERE. A
+    /// consumer mapping [`StructuredAssistantEvent::Reasoning`] onto an
+    /// Anthropic `thinking` block gets a well-formed stream because Harmony
+    /// emits `analysis` BEFORE `final` within one response. This arm reports
+    /// whatever order the model produced; it does not reorder to protect a
+    /// downstream state machine.
+    fn consume_harmony(&mut self, token_id: i32, delta: &str) -> Vec<StructuredAssistantEvent> {
+        if token_id == self.tokenizer.channel_start_id {
+            self.label.clear();
+            self.harmony = HarmonyState::Header;
+            return Vec::new();
+        }
+        if token_id == self.tokenizer.message_start_id {
+            self.harmony = HarmonyState::Body(harmony_channel(&self.label));
+            self.label.clear();
+            return Vec::new();
+        }
+        if token_id == self.tokenizer.message_end_id {
+            self.harmony = HarmonyState::Between;
+            return Vec::new();
+        }
+        match self.harmony {
+            HarmonyState::Header => {
+                self.label.push_str(delta);
+                Vec::new()
+            }
+            HarmonyState::Between => Vec::new(),
+            HarmonyState::Body(_) | HarmonyState::Unframed if delta.is_empty() => Vec::new(),
+            HarmonyState::Body(HarmonyChannel::Reasoning) => {
+                vec![StructuredAssistantEvent::Reasoning(delta.to_string())]
+            }
+            HarmonyState::Body(HarmonyChannel::Final) | HarmonyState::Unframed => {
+                vec![StructuredAssistantEvent::Content(delta.to_string())]
             }
         }
     }
@@ -360,6 +446,28 @@ impl<'a> StructuredAssistantDecoder<'a> {
             return Err(ToolCallParserError::Malformed);
         }
         Ok(released)
+    }
+}
+
+/// Which channel a Harmony message header names.
+///
+/// A header is the text between `<|channel|>` and `<|message|>`, and it is not
+/// always one word: a tool call reads `commentary to=functions.get_weather
+/// <|constrain|>json`. The channel is the first whitespace-delimited word, and
+/// the rest is deliberately IGNORED here -- Harmony frames a tool call as a
+/// recipient in this header rather than as the bracketing token pair
+/// [`StructuredAssistantDecoder`]'s tool contract describes, which is why
+/// `resolve_harmony` leaves every tool id `NO_SUCH_TOKEN_ID` and why decoding
+/// them is its own item.
+///
+/// ANYTHING THAT IS NOT `final` IS REASONING, including an unrecognized
+/// channel name. The default direction matters: a new channel misreported as
+/// reasoning is visible in the wrong place, while one misreported as the
+/// answer corrupts the reply.
+fn harmony_channel(header: &str) -> HarmonyChannel {
+    match header.split_whitespace().next() {
+        Some("final") => HarmonyChannel::Final,
+        _ => HarmonyChannel::Reasoning,
     }
 }
 

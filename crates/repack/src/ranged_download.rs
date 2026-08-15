@@ -152,11 +152,41 @@ const MAX_RANGE_BYTES: u64 = 64 * 1024 * 1024;
 /// ~19 GB in), and it is kept only because a longer walk deserves a longer
 /// budget: the cost of being wrong is asymmetric, since another four attempts
 /// cost seconds of backoff while giving up costs the whole walk, which has no
-/// resume. Two hypotheses about that failure were tested and refuted -- bad
-/// offsets (the ranges end exactly at EOF and `curl` fetched every failing
-/// 64 MiB chunk at HTTP 206) and connection reuse (disabling pooling changed
-/// nothing) -- so do not read this constant as the fix.
+/// resume. Three hypotheses about that failure have been raised and none is
+/// the fix. Two were tested and refuted -- bad offsets (the ranges end exactly
+/// at EOF and `curl` fetched every failing 64 MiB chunk at HTTP 206) and
+/// connection reuse (disabling pooling changed nothing). The third is
+/// UNTESTED and is only a candidate: every one of these URLs is served by the
+/// Xet LFS bridge, which is a single CloudFront edge per connection with a
+/// documented per-edge rate cap (AGENTS.md Gotcha 46), so a long-lived
+/// single-stream body is exactly the shape a CDN drops. Nothing here has
+/// measured that, so do not read this constant as the fix either.
 const RANGE_ATTEMPTS: usize = 8;
+
+/// Concurrent chunk GETs per [`RangeSource::read_range`] call.
+///
+/// The walk reads a 4-27 GB checkpoint once, sequentially, and until this
+/// existed it did so one [`MAX_RANGE_BYTES`] GET at a time. That is one
+/// connection, hence one CloudFront edge of the Xet bridge, hence one
+/// per-edge rate cap. Measured 2026-08-14 on AC against the real
+/// `gpt-oss-20b-MXFP4.gguf`, 16 MiB ranges, one connection per stream:
+///
+/// | streams | aggregate | per stream |
+/// |---|---|---|
+/// | 1 (four serial reads) | 10.4 MB/s | 6.3 / 11.1 / 11.9 / 12.3 |
+/// | 4 | 16.0 MB/s | 4.0 - 9.2 |
+/// | 8 | 23.4 MB/s | 2.9 - 3.7 |
+///
+/// Scaling is real but sublinear, so this sits at 8 rather than higher: past
+/// that the shared link is the limit and the only thing more streams buy is
+/// more sockets to drop. These are cross-session NETWORK numbers, unlike the
+/// two constants in `crates/streaming/src/read_pool.rs` whose sweeps measure
+/// this machine's page cache, so read the shape and not the absolutes.
+///
+/// This is worth nothing on its own: see [`HttpRangeSource::new`] for the
+/// client setting that makes these separate connections rather than one
+/// multiplexed HTTP/2 one.
+const RANGE_CONCURRENCY: usize = 8;
 
 /// Splits `[start, end_exclusive)` into successive chunks of at most `cap`
 /// bytes. Pure, so the boundary arithmetic is testable without a network.
@@ -172,13 +202,94 @@ fn chunk_ranges(start: u64, end_exclusive: u64, cap: u64) -> Vec<(u64, u64)> {
     out
 }
 
+/// One chunk's index, its half-open byte range, and the slice of the output
+/// buffer it owns.
+type ChunkJob<'a> = (usize, u64, u64, &'a mut [u8]);
+
+/// Fills `out` by running `fetch` over `chunks`, up to `concurrency` at a
+/// time. `chunks` must partition `out` in order, which is what
+/// [`chunk_ranges`] produces.
+///
+/// Each worker gets a DISJOINT `&mut [u8]` carved out of `out` up front
+/// rather than returning a `Vec` to be concatenated. That is why this needs
+/// no `unsafe` in a crate that forbids it, why ordering is structural rather
+/// than something the caller has to reassemble correctly, and why peak memory
+/// is unchanged: collecting [`RANGE_CONCURRENCY`] separate
+/// [`MAX_RANGE_BYTES`] buffers in flight would add half a gigabyte on top of
+/// an allocation the caller has already made.
+///
+/// Generic over `fetch` so the two properties worth asserting -- that chunks
+/// land at their own offsets, and that a multi-failure read reports the
+/// LOWEST-indexed failure the way a serial one would -- are testable with no
+/// server.
+fn fill_chunks<F>(
+    out: &mut [u8],
+    chunks: &[(u64, u64)],
+    concurrency: usize,
+    fetch: F,
+) -> Result<(), DownloadError>
+where
+    F: Fn(u64, u64, &mut [u8]) -> Result<(), DownloadError> + Sync,
+{
+    let mut rest: &mut [u8] = out;
+    let mut jobs: Vec<ChunkJob<'_>> = Vec::with_capacity(chunks.len());
+    for (index, &(start, end_exclusive)) in chunks.iter().enumerate() {
+        let (head, tail) = rest.split_at_mut((end_exclusive - start) as usize);
+        jobs.push((index, start, end_exclusive, head));
+        rest = tail;
+    }
+
+    // A single chunk is the COMMON case, not a degenerate one:
+    // `fetch_gguf_header` reads a megabyte at a time and every norm and
+    // router tensor in a walk is far under the cap. It must not pay for a
+    // thread, and it must keep reporting its error directly.
+    if jobs.len() <= 1 {
+        for (_, start, end_exclusive, dst) in jobs {
+            fetch(start, end_exclusive, dst)?;
+        }
+        return Ok(());
+    }
+
+    let queue = std::sync::Mutex::new(jobs);
+    let failures = std::sync::Mutex::new(Vec::<(usize, DownloadError)>::new());
+    let workers = concurrency.clamp(1, chunks.len());
+    std::thread::scope(|scope| {
+        for _ in 0..workers {
+            scope.spawn(|| {
+                // Pop under the lock and fetch outside it, so a stalled
+                // chunk holds up nothing but itself. A fixed split of the
+                // job list would instead let one slow edge idle a worker.
+                while let Some((index, start, end_exclusive, dst)) =
+                    queue.lock().expect("chunk queue lock").pop()
+                {
+                    if let Err(err) = fetch(start, end_exclusive, dst) {
+                        failures
+                            .lock()
+                            .expect("chunk failure lock")
+                            .push((index, err));
+                    }
+                }
+            });
+        }
+    });
+
+    let mut failures = failures.into_inner().expect("chunk failure lock");
+    // MUTATION
+    // failures.sort_by_key(|(index, _)| *index);
+    match failures.into_iter().next() {
+        Some((_, err)) => Err(err),
+        None => Ok(()),
+    }
+}
+
 /// HTTP-backed [`RangeSource`] using the `blocking` `reqwest` client. Issues
 /// `Range: bytes=start-(end-1)` GETs and requires a `206 Partial Content`
 /// response, so a server that silently ignores range requests (and would
 /// otherwise hand back the whole file) is caught rather than treated as
 /// success.
 ///
-/// A call is split into [`MAX_RANGE_BYTES`] chunks, each retried up to
+/// A call is split into [`MAX_RANGE_BYTES`] chunks, up to
+/// [`RANGE_CONCURRENCY`] of them in flight at once, each retried up to
 /// [`RANGE_ATTEMPTS`] times. Callers see one contiguous `Vec` either way.
 pub struct HttpRangeSource {
     url: String,
@@ -187,15 +298,37 @@ pub struct HttpRangeSource {
 
 impl HttpRangeSource {
     pub fn new(url: impl Into<String>) -> Self {
+        let client = reqwest::blocking::Client::builder()
+            // `http1_only` IS the optimization; [`RANGE_CONCURRENCY`] on its
+            // own is not. Every one of these URLs redirects to the Xet LFS
+            // bridge, which speaks HTTP/2, and reqwest would then multiplex
+            // all the concurrent chunk GETs onto ONE connection -- so one
+            // CloudFront edge, so the one per-edge rate cap, so the
+            // concurrency buys exactly nothing. There is no error and no
+            // warning in that case, only the old wall clock (AGENTS.md
+            // Gotcha 46). HTTP/1.1 forces a connection per in-flight
+            // request, which is what the measurement in
+            // [`RANGE_CONCURRENCY`]'s table was taken over.
+            .http1_only()
+            .pool_max_idle_per_host(RANGE_CONCURRENCY)
+            .build()
+            // Matches `Client::new`, which panics on the same failure.
+            .expect("blocking HTTP client");
         Self {
             url: url.into(),
-            client: reqwest::blocking::Client::new(),
+            client,
         }
     }
 
-    /// One `Range` GET, no retry. Length is checked here so a truncated body
-    /// is a retryable error rather than silent corruption.
-    fn read_chunk(&self, start: u64, end_exclusive: u64) -> Result<Vec<u8>, DownloadError> {
+    /// One `Range` GET, no retry, written straight into `dst`. Length is
+    /// checked here so a truncated body is a retryable error rather than
+    /// silent corruption.
+    fn read_chunk(
+        &self,
+        start: u64,
+        end_exclusive: u64,
+        dst: &mut [u8],
+    ) -> Result<(), DownloadError> {
         let end_inclusive = end_exclusive.saturating_sub(1);
         let response = self
             .client
@@ -221,35 +354,47 @@ impl HttpRangeSource {
                 actual: bytes.len() as u64,
             });
         }
-        Ok(bytes.to_vec())
+        dst.copy_from_slice(&bytes);
+        Ok(())
+    }
+
+    /// [`Self::read_chunk`] under the retry ladder: [`RANGE_ATTEMPTS`]
+    /// attempts with an exponential backoff capped at four seconds. A range
+    /// the server will not serve at all is not going to start working, so
+    /// `UnexpectedStatus` is fatal; everything else is treated as transport.
+    fn read_chunk_retrying(
+        &self,
+        start: u64,
+        end_exclusive: u64,
+        dst: &mut [u8],
+    ) -> Result<(), DownloadError> {
+        let mut last = None;
+        for attempt in 0..RANGE_ATTEMPTS {
+            match self.read_chunk(start, end_exclusive, dst) {
+                Ok(()) => return Ok(()),
+                Err(e @ DownloadError::UnexpectedStatus { .. }) => return Err(e),
+                Err(e) => {
+                    last = Some(e);
+                    if attempt + 1 < RANGE_ATTEMPTS {
+                        std::thread::sleep(std::time::Duration::from_millis(250 << attempt.min(4)));
+                    }
+                }
+            }
+        }
+        Err(last.expect("RANGE_ATTEMPTS is nonzero, so a failed loop recorded an error"))
     }
 }
 
 impl RangeSource for HttpRangeSource {
     fn read_range(&self, start: u64, end_exclusive: u64) -> Result<Vec<u8>, DownloadError> {
-        let mut out = Vec::with_capacity((end_exclusive - start) as usize);
-        for (chunk_start, chunk_end) in chunk_ranges(start, end_exclusive, MAX_RANGE_BYTES) {
-            let mut last = None;
-            for attempt in 0..RANGE_ATTEMPTS {
-                match self.read_chunk(chunk_start, chunk_end) {
-                    Ok(bytes) => {
-                        out.extend_from_slice(&bytes);
-                        last = None;
-                        break;
-                    }
-                    // A range the server will not serve at all is not going
-                    // to start working; everything else is transport.
-                    Err(e @ DownloadError::UnexpectedStatus { .. }) => return Err(e),
-                    Err(e) => {
-                        std::thread::sleep(std::time::Duration::from_millis(250 << attempt.min(4)));
-                        last = Some(e);
-                    }
-                }
-            }
-            if let Some(e) = last {
-                return Err(e);
-            }
-        }
+        let chunks = chunk_ranges(start, end_exclusive, MAX_RANGE_BYTES);
+        let mut out = vec![0u8; (end_exclusive - start) as usize];
+        fill_chunks(
+            &mut out,
+            &chunks,
+            RANGE_CONCURRENCY,
+            |chunk_start, chunk_end, dst| self.read_chunk_retrying(chunk_start, chunk_end, dst),
+        )?;
         Ok(out)
     }
 }
@@ -281,7 +426,7 @@ impl RangeSource for MemoryRangeSource<'_> {
 
 #[cfg(test)]
 mod chunk_tests {
-    use super::chunk_ranges;
+    use super::{chunk_ranges, fill_chunks, DownloadError};
 
     #[test]
     fn chunks_cover_the_range_exactly_and_in_order() {
@@ -306,5 +451,77 @@ mod chunk_tests {
             chunk_ranges(4, 4, 8).is_empty(),
             "empty range yields no GET"
         );
+    }
+
+    /// The property a parallel fill can break and a serial one cannot:
+    /// every chunk must land at ITS OWN offset. Each fetch writes its
+    /// absolute file position, so any permutation or overlap of the
+    /// destination slices shows up as a value mismatch rather than as a
+    /// length one.
+    #[test]
+    fn a_parallel_fill_lands_every_chunk_at_its_own_offset() {
+        let total = 4096u64;
+        let chunks = chunk_ranges(0, total, 100);
+        assert!(chunks.len() > 8, "want more chunks than workers");
+        let mut out = vec![0u8; total as usize];
+        fill_chunks(&mut out, &chunks, 8, |start, end_exclusive, dst| {
+            assert_eq!(dst.len() as u64, end_exclusive - start, "slice width");
+            for (i, byte) in dst.iter_mut().enumerate() {
+                *byte = (start + i as u64) as u8;
+            }
+            Ok(())
+        })
+        .expect("every chunk succeeds");
+        let expected: Vec<u8> = (0..total).map(|i| i as u8).collect();
+        assert_eq!(out, expected);
+    }
+
+    /// A serial read reports the FIRST chunk that failed, and the parallel
+    /// one has to keep reporting the same chunk however the workers happen
+    /// to interleave. Without the sort this is whichever thread lost the
+    /// race, i.e. a flaky multi-GB walk that blames a different offset every
+    /// time it dies.
+    #[test]
+    fn a_parallel_fill_reports_the_lowest_indexed_failure() {
+        let chunks = chunk_ranges(0, 1000, 10);
+        let mut out = vec![0u8; 1000];
+        let err = fill_chunks(&mut out, &chunks, 8, |start, _end, _dst| {
+            if start == 70 || start == 320 {
+                return Err(DownloadError::Request(format!("boom at {start}")));
+            }
+            Ok(())
+        })
+        .expect_err("two chunks fail");
+        assert_eq!(err, DownloadError::Request("boom at 70".to_string()));
+    }
+
+    /// `fetch_gguf_header` calls `read_range` once per growth step and every
+    /// small tensor in a walk is one chunk, so the single-chunk case is the
+    /// common one and must not spawn.
+    #[test]
+    fn a_single_chunk_range_is_filled_on_the_calling_thread() {
+        let caller = std::thread::current().id();
+        let seen = std::sync::Mutex::new(None);
+        let chunks = chunk_ranges(0, 8, 64);
+        assert_eq!(chunks.len(), 1);
+        let mut out = vec![0u8; 8];
+        fill_chunks(&mut out, &chunks, 8, |_start, _end, dst| {
+            *seen.lock().unwrap() = Some(std::thread::current().id());
+            dst.fill(7);
+            Ok(())
+        })
+        .expect("the one chunk succeeds");
+        assert_eq!(out, vec![7u8; 8]);
+        assert_eq!(seen.into_inner().unwrap(), Some(caller));
+    }
+
+    /// An empty range is not an error and issues no fetch at all.
+    #[test]
+    fn an_empty_range_fetches_nothing() {
+        let mut out = Vec::new();
+        fill_chunks(&mut out, &chunk_ranges(4, 4, 8), 8, |_, _, _| {
+            panic!("an empty range must not fetch")
+        })
+        .expect("empty range succeeds");
     }
 }

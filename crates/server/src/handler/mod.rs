@@ -16,7 +16,7 @@ mod tests;
 use std::collections::HashSet;
 
 use anyllm_translate::openai::ChatCompletionRequest;
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::response::sse::{Event, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
@@ -28,7 +28,7 @@ pub use plan::AppState;
 pub(crate) use plan::*;
 
 use crate::response::{
-    completion_chunk, completion_response, role_delta, text_delta, tool_call_delta,
+    completion_chunk, completion_response, reasoning_delta, role_delta, text_delta, tool_call_delta,
 };
 
 pub(crate) fn error_response(status: axum::http::StatusCode, message: String) -> Response {
@@ -71,6 +71,32 @@ pub async fn models(State(model): State<AppState>) -> Response {
     .into_response()
 }
 
+/// `GET /v1/models/:model`. Returns model details if `:model` matches the active backend model.
+pub async fn model_detail(State(model): State<AppState>, Path(model_id): Path<String>) -> Response {
+    if model_id == model.model_id() {
+        Json(serde_json::json!({
+            "id": model.model_id(),
+            "object": "model",
+            "created": now_unix(),
+            "owned_by": "mference",
+        }))
+        .into_response()
+    } else {
+        (
+            axum::http::StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error": {
+                    "message": format!("The model '{model_id}' does not exist"),
+                    "type": "invalid_request_error",
+                    "param": "model",
+                    "code": "model_not_found"
+                }
+            })),
+        )
+            .into_response()
+    }
+}
+
 pub async fn chat_completions(
     State(model): State<AppState>,
     Json(request): Json<ChatCompletionRequest>,
@@ -81,11 +107,24 @@ pub async fn chat_completions(
     };
 
     let tools = tool_names(&request);
+    let include_usage = request
+        .stream_options
+        .as_ref()
+        .map(|o| o.include_usage)
+        .unwrap_or(false);
+
     if request.stream.unwrap_or(false) {
-        return stream_response(model, prompt_ids, config, tools, request.model);
+        return stream_response(
+            model,
+            prompt_ids,
+            config,
+            tools,
+            request.model,
+            include_usage,
+        );
     }
 
-    let (text, calls, decode) = match run_full(model, prompt_ids, config, tools).await {
+    let generated = match run_full(model, prompt_ids, config, tools).await {
         Ok(r) => r,
         Err(e) => return gen_error_response(e),
     };
@@ -94,11 +133,12 @@ pub async fn chat_completions(
         format!("chatcmpl-{}", now_unix()),
         now_unix(),
         request.model,
-        text,
-        calls,
-        decode.reason,
-        decode.prompt_tokens as u32,
-        decode.new_tokens as u32,
+        generated.text,
+        generated.reasoning,
+        generated.calls,
+        generated.decode.reason,
+        generated.decode.prompt_tokens as u32,
+        generated.decode.new_tokens as u32,
     ))
     .into_response()
 }
@@ -109,6 +149,7 @@ fn stream_response(
     config: GenerationConfig,
     tools: HashSet<String>,
     model_name: String,
+    include_usage: bool,
 ) -> Response {
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
     let id = format!("chatcmpl-{}", now_unix());
@@ -131,6 +172,7 @@ fn stream_response(
         let result = stream_blocking(&model, &prompt_ids, &config, &tools, &mut |piece| {
             let delta = match piece {
                 Piece::Text(text) => text_delta(text),
+                Piece::Reasoning(text) => reasoning_delta(text),
                 Piece::Tool(call) => {
                     call_index += 1;
                     tool_call_delta(call_index - 1, call)
@@ -146,13 +188,24 @@ fn stream_response(
         });
 
         match result {
-            Ok(r) => send(completion_chunk(
-                id.clone(),
-                created,
-                model_name.clone(),
-                Default::default(),
-                Some(crate::response::finish_reason(r.reason)),
-            )),
+            Ok(r) => {
+                send(completion_chunk(
+                    id.clone(),
+                    created,
+                    model_name.clone(),
+                    Default::default(),
+                    Some(crate::response::finish_reason(r.reason)),
+                ));
+                if include_usage {
+                    send(crate::response::usage_chunk(
+                        id.clone(),
+                        created,
+                        model_name.clone(),
+                        r.prompt_tokens as u32,
+                        r.new_tokens as u32,
+                    ));
+                }
+            }
             // A failed run is not a completed one: report it as an error
             // event rather than a fabricated `stop` finish reason.
             Err(e) => {

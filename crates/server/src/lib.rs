@@ -40,6 +40,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/v1/chat/completions", post(handler::chat_completions))
         .route("/v1/messages", post(messages::messages))
         .route("/v1/models", get(handler::models))
+        .route("/v1/models/:model", get(handler::model_detail))
         .with_state(state)
 }
 
