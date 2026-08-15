@@ -1,6 +1,6 @@
 //! Builds a tiny `qwen3_5` install through the REAL checkpoint repack
-//! pipeline (ROADMAP's 1-bit entry, step 3): the DENSE, ONE-BIT sibling of
-//! [`crate::build_synthetic_qwen_gdn_moe_install`].
+//! pipeline (ROADMAP's 1-bit entry, step 3, and its ternary entry): the DENSE,
+//! SUB-4-BIT sibling of [`crate::build_synthetic_qwen_gdn_moe_install`].
 //!
 //! **This fixture exists to be built BEFORE the 4.78 GiB stream rather than
 //! after it**, which is `crates/repack` Gotcha 8's rule and what M4's dense
@@ -14,10 +14,13 @@
 //! - **It is DENSE.** One `mlp.{gate,up,down}_proj` per layer, and NO
 //!   router, shared expert or `.mlp.switch_mlp.` routed experts anywhere.
 //!   The install therefore comes out with ZERO packed-expert layer files.
-//! - **It is 1-BIT AT GROUP 128 WITH FP16 COMPANIONS.** All three axes
+//! - **It is 1- OR 2-BIT AT GROUP 128 WITH FP16 COMPANIONS.** All three axes
 //!   together, because that is how a checkpoint carries them; the FP16 one
 //!   is the axis nothing else can catch, since FP16 and BF16 are the same
-//!   width.
+//!   width. The width is a PARAMETER
+//!   ([`build_synthetic_qwen_gdn_dense_install_at_bits`]) because the two real
+//!   checkpoints are one architecture at two quantizations, so one fixture
+//!   covers both and neither gets a second copy of the dense-path assertions.
 //!
 //! **The shape constraint that decided the constants: only COLUMN counts
 //! have to be multiples of the group size.** `pass_through_packed` checks
@@ -29,7 +32,7 @@
 //! Weights are deterministic but NOT trained: generated tokens are
 //! structurally real and semantically meaningless (AGENTS.md Gotcha 12).
 
-use compute::quantize_int1_affine_symmetric;
+use compute::{quantize_int1_affine_symmetric, quantize_int2_affine_ternary};
 use model_io::{
     ArchConfig, CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig,
     ModelFamily, RopeScalingConfig,
@@ -160,15 +163,22 @@ fn f16_vector(name: &str, n: usize, center: f32, seed: u64) -> Tensor {
     }
 }
 
-/// One 1-bit-affine weight plus its two FP16 companions.
+/// One sub-4-bit-affine weight plus its two FP16 companions, at `bits` = 1 or
+/// 2.
 ///
 /// The sibling of `int4_triple`, and it differs on all three axes at once:
-/// 32 elements per packed `u32` word rather than 8, one companion per 128
-/// elements rather than per 64, and `F16` rather than `BF16`. The dtype
+/// 32 (or 16) elements per packed `u32` word rather than 8, one companion per
+/// 128 elements rather than per 64, and `F16` rather than `BF16`. The dtype
 /// string is the one that matters here -- `pass_through_packed` requires it
 /// per bit width, and a fixture writing `BF16` would produce an install of
 /// exactly the right size whose scales are wrong by orders of magnitude.
-fn int1_triple(name: &str, rows: usize, cols: usize, seed: u64) -> Vec<Tensor> {
+///
+/// **Parameterized rather than forked, and the parameter is load-bearing.**
+/// The two widths' packed planes differ only in LENGTH, so a 2-bit fixture
+/// built by copying this file and changing a literal would be a second copy of
+/// every dense-path assertion; what actually has to vary is the quantizer and
+/// the word count, both of which fall out of `bits`.
+fn packed_triple(name: &str, rows: usize, cols: usize, seed: u64, bits: u32) -> Vec<Tensor> {
     assert_eq!(
         cols % GROUP,
         0,
@@ -179,20 +189,31 @@ fn int1_triple(name: &str, rows: usize, cols: usize, seed: u64) -> Vec<Tensor> {
     let mut scales = Vec::new();
     let mut biases = Vec::new();
     for r in 0..rows {
-        let q = quantize_int1_affine_symmetric(
-            &deterministic_row(seed.wrapping_add(r as u64 * 97 + 1), cols),
-            GROUP,
-        );
-        packed.extend_from_slice(&q.packed);
-        scales.extend_from_slice(&q.scales);
-        biases.extend_from_slice(&q.biases);
+        let row = deterministic_row(seed.wrapping_add(r as u64 * 97 + 1), cols);
+        // Each width takes its OWN quantizer, not a shared one with a level
+        // count: at one bit the rule is a sign and at two it is a ternary
+        // threshold, and both are stated where the layout they produce is.
+        let (p, s, b) = match bits {
+            1 => {
+                let q = quantize_int1_affine_symmetric(&row, GROUP);
+                (q.packed, q.scales, q.biases)
+            }
+            2 => {
+                let q = quantize_int2_affine_ternary(&row, GROUP);
+                (q.packed, q.scales, q.biases)
+            }
+            other => panic!("this fixture builds 1- or 2-bit installs, not {other}"),
+        };
+        packed.extend_from_slice(&p);
+        scales.extend_from_slice(&s);
+        biases.extend_from_slice(&b);
     }
     let groups = cols / GROUP;
     vec![
         Tensor {
             name: name.to_string(),
             dtype: "U32",
-            shape: vec![rows as u64, (cols / 32) as u64],
+            shape: vec![rows as u64, (cols * bits as usize / 32) as u64],
             bytes: packed,
         },
         Tensor {
@@ -221,6 +242,26 @@ pub fn build_synthetic_qwen_gdn_dense_install(
     num_layers: i64,
     model_id: &str,
 ) -> Result<ArchConfig, Box<dyn std::error::Error>> {
+    build_synthetic_qwen_gdn_dense_install_at_bits(dir, vocab_size, num_layers, model_id, 1)
+}
+
+/// [`build_synthetic_qwen_gdn_dense_install`] at an explicit affine width:
+/// 1 for `prism-ml/Bonsai-27B-mlx-1bit`, 2 for
+/// `prism-ml/Ternary-Bonsai-27B-mlx-2bit` (ROADMAP's ternary entry).
+///
+/// Both real checkpoints are the same architecture at two quantizations, so
+/// ONE fixture serves both and the width is the only argument. Everything the
+/// dense path is checked for -- zero packed-expert files, a quant block that
+/// reaches `validate_quant` at all, the attention slot mirrored into the three
+/// MoE ones -- is exercised identically at either width, which is the point of
+/// not forking the file.
+pub fn build_synthetic_qwen_gdn_dense_install_at_bits(
+    dir: &std::path::Path,
+    vocab_size: i64,
+    num_layers: i64,
+    model_id: &str,
+    bits: u32,
+) -> Result<ArchConfig, Box<dyn std::error::Error>> {
     let arch = tiny_qwen_gdn_dense_arch(vocab_size, num_layers);
     let vocab = vocab_size as usize;
     let la = &arch.linear_attention;
@@ -229,20 +270,22 @@ pub fn build_synthetic_qwen_gdn_dense_install(
     let v_heads = LA_V_HEADS;
 
     let mut ts: Vec<Tensor> = Vec::new();
-    // Untied head, and BOTH quantized at one bit -- which is what the real
-    // checkpoint's safetensors header says (`embed_tokens` and `lm_head` are
-    // two of its 498 tensors carrying `.scales`).
-    ts.extend(int1_triple(
+    // Untied head, and BOTH quantized -- which is what the real checkpoints'
+    // safetensors headers say (`embed_tokens` and `lm_head` are two of the 498
+    // tensors carrying `.scales`, in the 1-bit file and the 2-bit one alike).
+    ts.extend(packed_triple(
         "language_model.model.embed_tokens.weight",
         vocab,
         HIDDEN,
         1,
+        bits,
     ));
-    ts.extend(int1_triple(
+    ts.extend(packed_triple(
         "language_model.lm_head.weight",
         vocab,
         HIDDEN,
         2,
+        bits,
     ));
 
     for l in 0..num_layers as usize {
@@ -264,25 +307,28 @@ pub fn build_synthetic_qwen_gdn_dense_install(
 
         if is_full {
             // attn_output_gate: q_proj emits per-head [query; gate] pairs.
-            ts.extend(int1_triple(
+            ts.extend(packed_triple(
                 &format!("{p}.self_attn.q_proj.weight"),
                 2 * NUM_HEADS * HEAD_DIM,
                 HIDDEN,
                 seed + 1,
+                bits,
             ));
             for (i, role) in ["k_proj", "v_proj"].iter().enumerate() {
-                ts.extend(int1_triple(
+                ts.extend(packed_triple(
                     &format!("{p}.self_attn.{role}.weight"),
                     NUM_KV_HEADS * HEAD_DIM,
                     HIDDEN,
                     seed + 2 + i as u64,
+                    bits,
                 ));
             }
-            ts.extend(int1_triple(
+            ts.extend(packed_triple(
                 &format!("{p}.self_attn.o_proj.weight"),
                 HIDDEN,
                 NUM_HEADS * HEAD_DIM,
                 seed + 4,
+                bits,
             ));
             for (i, norm) in ["q_norm", "k_norm"].iter().enumerate() {
                 ts.push(f16_vector(
@@ -300,11 +346,12 @@ pub fn build_synthetic_qwen_gdn_dense_install(
                 ("in_proj_b", v_heads, HIDDEN, 4),
                 ("out_proj", HIDDEN, value_dim, 5),
             ] {
-                ts.extend(int1_triple(
+                ts.extend(packed_triple(
                     &format!("{p}.linear_attn.{name}.weight"),
                     rows,
                     cols,
                     seed + s,
+                    bits,
                 ));
             }
             ts.push(conv1d_weight(
@@ -344,11 +391,12 @@ pub fn build_synthetic_qwen_gdn_dense_install(
             } else {
                 (INTER, HIDDEN)
             };
-            ts.extend(int1_triple(
+            ts.extend(packed_triple(
                 &format!("{p}.mlp.{role}.weight"),
                 rows,
                 cols,
                 seed + 60 + i as u64,
+                bits,
             ));
         }
     }
@@ -365,7 +413,7 @@ pub fn build_synthetic_qwen_gdn_dense_install(
     // The real checkpoint's `quantization` object, verbatim: two keys and no
     // per-tensor overrides.
     let quant = Gemma4Quant {
-        default_bits: 1,
+        default_bits: bits,
         group_size: GROUP as u32,
         bits_overrides: std::collections::HashMap::new(),
     };

@@ -176,6 +176,12 @@ const INT4_BITS: [i64; 5] = [4, 4, 8, 4, 4];
 /// it quantizes at one bit and the three slots it has no component for fall
 /// back to the same value.
 const INT1_BITS: [i64; 5] = [1, 1, 1, 1, 1];
+/// The ternary install's, uniform for the 1-bit install's reason. Note the
+/// value 2 also appears in the INT4 arm's `routedExpert` bit list at BF16 and
+/// group 64 (DeepSeek-V4-Flash's dynamic quant), which is a DIFFERENT shape:
+/// the cases below vary the companions and group away from this one to keep
+/// the two from being read as one.
+const INT2_BITS: [i64; 5] = [2, 2, 2, 2, 2];
 
 /// A quant block with per-slot bit widths, one companion dtype and one group
 /// size, so a case can vary exactly one axis away from a valid shape.
@@ -244,6 +250,47 @@ fn a_one_bit_slot_with_bf16_companions_is_refused_and_the_dtype_is_named() {
     let detail = quant_error(INT1_BITS, "bf16", 128);
     assert!(detail.contains("bf16"), "{detail}");
     assert!(detail.contains("fp16"), "{detail}");
+}
+
+/// The shape the published ternary checkpoint declares: FP16 companions at
+/// group 128 on every slot, at TWO bits.
+///
+/// Every slot again, for the 1-bit case's reason: that checkpoint is dense
+/// too, so three of the five slots are defaulted statements.
+#[test]
+fn a_two_bit_affine_quant_block_at_group_128_is_accepted() {
+    let dir = tempfile_dir();
+    write_manifest(dir.path(), &manifest_with_quant(INT2_BITS, "fp16", 128));
+    let manifest = load_manifest(dir.path(), &toy_arch(), 4 * 1024 * 1024).unwrap();
+    let quant = manifest.quant.expect("the quant block decoded");
+    assert_eq!(quant.embedding.weight_bits, 2);
+    assert_eq!(quant.embedding.group_size, 128);
+    assert_eq!(quant.routed_expert.scale_type, "fp16");
+}
+
+/// The 2-bit shape is its own conjunction and does NOT inherit the affine
+/// arm's `routedExpert` 2-bit permission.
+///
+/// That arm allows `weightBits: 2` at BF16 and group 64 on the routed slot
+/// alone, for the DeepSeek-V4-Flash dynamic-quant checkpoint. This install
+/// declares 2 bits at FP16 and group 128 on EVERY slot, so the two overlap
+/// only in the width -- and a gate that collapsed them into one bit list
+/// would accept the four cases below.
+#[test]
+fn the_cross_products_of_the_two_bit_shape_are_refused() {
+    let cases = [
+        (INT2_BITS, "bf16", 128, "2-bit with the INT4 companions"),
+        (INT2_BITS, "fp16", 64, "2-bit at the INT4 group size"),
+        (INT2_BITS, "bf16", 64, "the DSV4 routed shape on every slot"),
+        (INT4_BITS, "fp16", 128, "INT4 bits under the 2-bit shape"),
+    ];
+    for (bits, companions, group, what) in cases {
+        let detail = quant_error(bits, companions, group);
+        assert!(
+            detail.contains("unsupported quantization"),
+            "{what} was accepted: {detail}"
+        );
+    }
 }
 
 /// The bit width, the group size and the companion dtype are ONE shape, not

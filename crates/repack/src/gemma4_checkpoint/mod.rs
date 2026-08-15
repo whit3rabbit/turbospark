@@ -15,7 +15,7 @@ mod shards;
 
 pub use config::{
     is_supported_affine_shape, parse_gemma4_config, parse_gemma4_quantization, Gemma4Error,
-    Gemma4Quant, AFFINE_1BIT_GROUP_SIZE, AFFINE_GROUP_SIZE,
+    Gemma4Quant, AFFINE_1BIT_GROUP_SIZE, AFFINE_2BIT_GROUP_SIZE, AFFINE_GROUP_SIZE,
 };
 pub use orchestrate::{
     gemma4_manifest_quant, manifest_quant, orchestrate_gemma4_checkpoint,

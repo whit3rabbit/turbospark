@@ -26,6 +26,16 @@ const QUANT_GROUP_SIZE: i64 = 64;
 /// conjunction rather than three independent axes.
 const QUANT_1BIT_GROUP_SIZE: i64 = 128;
 
+/// Affine-quant group size at TWO bits (matches
+/// `turbospark_compute::quant_2bit::TERNARY_GROUP_SIZE`, duplicated for the
+/// reason above).
+///
+/// Equal to [`QUANT_1BIT_GROUP_SIZE`] and a separate constant for the same
+/// reason that one is separate from [`QUANT_GROUP_SIZE`]: the two happen to
+/// agree because one publisher chose 128 for both of its checkpoints, not
+/// because sub-4-bit implies 128.
+const QUANT_2BIT_GROUP_SIZE: i64 = 128;
+
 /// Default maximum byte limit for reading `manifest.json`.
 pub const DEFAULT_MAX_BYTES: u64 = 4 * 1024 * 1024;
 
@@ -445,31 +455,38 @@ pub const EXECUTABLE_GGUF_TYPES: [&str; 8] = [
 
 /// Accepts a quant block iff every slot's shape has kernels behind it.
 ///
-/// Three shapes are accepted, and the third is the one added by ROADMAP's
-/// 1-bit entry.
+/// Four shapes are accepted; the third came with ROADMAP's 1-bit entry and
+/// the fourth with its ternary one.
 ///
 /// 1. **INT4/INT8 affine**: BF16 companions at group 64, per-slot bit widths.
 /// 2. **GGUF**: every declared block type in [`EXECUTABLE_GGUF_TYPES`].
 /// 3. **1-bit affine**: FP16 companions at group 128.
+/// 4. **2-bit affine**: FP16 companions at group 128.
 ///
-/// **THE THIRD IS CHECKED AS ONE CONJUNCTION, NOT AS THREE WIDENINGS, and
-/// that is the point of writing it as a separate predicate.** It would have
-/// been shorter to add `1` to the affine bit lists, `128` to the group sizes
-/// and `fp16` to the companion types, and the result would accept six
-/// combinations that no kernel implements -- 1-bit at group 64, 4-bit with
-/// FP16 companions, and so on. The two real shapes are `(4|8, bf16, 64)` and
-/// `(1, fp16, 128)`, because a checkpoint's bit width, companion dtype and
-/// group size travel together, and the FP16-versus-BF16 axis is the
-/// dangerous one: the two planes are the same width, so a wrong reading
-/// passes every length check and decodes this checkpoint's 0.0271 scales as
-/// 1.7e-16.
+/// **EACH SUB-4-BIT SHAPE IS CHECKED AS ONE CONJUNCTION, NOT AS WIDENINGS OF
+/// THE FIRST, and that is the point of writing them as separate predicates.**
+/// It would have been shorter to add `1` and `2` to the affine bit lists,
+/// `128` to the group sizes and `fp16` to the companion types, and the result
+/// would accept a dozen combinations that no kernel implements -- 1-bit at
+/// group 64, 4-bit with FP16 companions, and so on. The real shapes are
+/// `(4|8, bf16, 64)`, `(1, fp16, 128)` and `(2, fp16, 128)`, because a
+/// checkpoint's bit width, companion dtype and group size travel together,
+/// and the FP16-versus-BF16 axis is the dangerous one: the two planes are the
+/// same width, so a wrong reading passes every length check and decodes these
+/// checkpoints' 0.027 and 0.0137 scales as ~1e-16.
 ///
-/// **1-bit is accepted on ALL FIVE SLOTS, including `routedExpert`, though
-/// it has no routed-expert kernel.** That is not an oversight and it is not
-/// a claim that a 1-bit MoE install would run. `manifest.quant` has five
-/// fixed slots and no architecture fills all five; the one published 1-bit
-/// checkpoint is DENSE, so its router, shared-expert and routed-expert
-/// probes find nothing and fall back to the type the rest of the model uses
+/// Note the fourth shape does NOT subsume the `weight_bits == 2` the affine
+/// arm already allows on `routedExpert`: that one is BF16 at group 64, for
+/// the DeepSeek-V4-Flash dynamic-quant checkpoint, and the two 2-bit shapes
+/// share nothing but their width.
+///
+/// **Both sub-4-bit shapes are accepted on ALL FIVE SLOTS, including
+/// `routedExpert`, though neither has a routed-expert kernel.** That is not
+/// an oversight and it is not a claim that such an MoE install would run.
+/// `manifest.quant` has five fixed slots and no architecture fills all five;
+/// both published sub-4-bit checkpoints are DENSE, so their router,
+/// shared-expert and routed-expert probes find nothing and fall back to the
+/// type the rest of the model uses
 /// (`crates/repack` Gotcha 8: refusing a slot for a component the install
 /// does not have is how a runnable model fails to open). An install that
 /// really did carry 1-bit routed experts passes here and fails at the routed
@@ -517,6 +534,18 @@ fn validate_quant(quant: &ManifestQuant) -> Result<(), ModelError> {
             && slot.scale_type.to_lowercase() == "fp16"
             && slot.bias_type.to_lowercase() == "fp16"
             && slot.group_size == QUANT_1BIT_GROUP_SIZE;
+        // The 2-bit shape (ROADMAP's ternary entry), a FOURTH conjunction and
+        // not a widening of the third: it is a separate `(bits, companions,
+        // group)` triple that happens to share two of its three fields with
+        // the 1-bit one. Note `routedExpert` already admits `weight_bits == 2`
+        // through the affine arm above, at BF16 and group 64 -- a different
+        // shape entirely, for the DeepSeek-V4 dynamic-quant checkpoint -- so
+        // the two must not be collapsed into one bit list.
+        let affine_2bit = slot.weight_bits == 2
+            && slot.scheme.to_lowercase() == "affine"
+            && slot.scale_type.to_lowercase() == "fp16"
+            && slot.bias_type.to_lowercase() == "fp16"
+            && slot.group_size == QUANT_2BIT_GROUP_SIZE;
         // A GGUF slot carries no bits, no group size and no companion types:
         // the scale lives inside each block. What it does carry is the block
         // type -- possibly SEVERAL, since ROADMAP Phase S -- and that is the
@@ -532,7 +561,7 @@ fn validate_quant(quant: &ManifestQuant) -> Result<(), ModelError> {
             && declared
                 .iter()
                 .all(|t| EXECUTABLE_GGUF_TYPES.contains(&t.to_lowercase().as_str()));
-        if !(affine || affine_1bit || gguf) {
+        if !(affine || affine_1bit || affine_2bit || gguf) {
             let detail = match slot.scheme.to_lowercase().as_str() {
                 // An affine slot has four fields that can each be wrong and a
                 // bare "unsupported" names none of them. It matters most on
@@ -544,8 +573,9 @@ fn validate_quant(quant: &ManifestQuant) -> Result<(), ModelError> {
                     "unsupported quantization for {name}: affine slot is \
                      {}-bit with {}/{} companions at group {}, and the shapes \
                      with kernels are {allowed_bits:?}-bit bf16 at group \
-                     {QUANT_GROUP_SIZE} and 1-bit fp16 at group \
-                     {QUANT_1BIT_GROUP_SIZE}",
+                     {QUANT_GROUP_SIZE}, 1-bit fp16 at group \
+                     {QUANT_1BIT_GROUP_SIZE} and 2-bit fp16 at group \
+                     {QUANT_2BIT_GROUP_SIZE}",
                     slot.weight_bits, slot.scale_type, slot.bias_type, slot.group_size
                 ),
                 "gguf" => {

@@ -21,7 +21,10 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use turbospark_repack::{build_synthetic_qwen_gdn_dense_install, tiny_qwen_gdn_dense_arch};
+use turbospark_repack::{
+    build_synthetic_qwen_gdn_dense_install, build_synthetic_qwen_gdn_dense_install_at_bits,
+    tiny_qwen_gdn_dense_arch,
+};
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -142,6 +145,72 @@ fn one_bit_tensors_carry_their_own_dtype_tag_and_fp16_companions() {
             .any(|k| k.ends_with(".mlp.gate.weight")),
         "a dense install wrote a router"
     );
+}
+
+/// The same walk at TWO bits (ROADMAP's ternary entry): a dense 2-bit install
+/// writes a manifest that loads, tags its tensors 16, and its packed run is
+/// twice the 1-bit one's.
+///
+/// One test rather than a second copy of the three above, because the dense
+/// path is not what varies here -- the WIDTH is, and it varies in exactly
+/// three observable places: the manifest's `weightBits`, the resident dtype
+/// tag, and the packed byte count. Everything else about the install is
+/// asserted at one bit and shared.
+#[test]
+fn the_dense_two_bit_install_loads_and_is_tagged_apart_from_the_one_bit_one() {
+    let dir = temp_dir();
+    let arch =
+        build_synthetic_qwen_gdn_dense_install_at_bits(&dir, VOCAB, LAYERS, "ternary-toy", 2)
+            .expect("the 2-bit dense install writes");
+
+    let manifest = model_io::load_manifest(&dir, &arch, 4 * 1024 * 1024)
+        .expect("the manifest this walk wrote is one the loader accepts");
+    assert_eq!(manifest.num_layers, 0, "a dense install streams nothing");
+    let quant = manifest.quant.expect("a quant block was written");
+    for (name, slot) in [
+        ("embedding", &quant.embedding),
+        ("attention", &quant.attention),
+        ("router", &quant.router),
+        ("sharedExpert", &quant.shared_expert),
+        ("routedExpert", &quant.routed_expert),
+    ] {
+        assert_eq!(slot.weight_bits, 2, "{name}");
+        assert_eq!(slot.scheme, "affine", "{name}");
+        assert_eq!(slot.group_size, 128, "{name}");
+        // FP16 like the 1-bit install and unlike every 4/8-bit one. The
+        // manifest writer keys this on the DEFAULT bits, so a checkpoint that
+        // moved 2 into the BF16 branch would produce an install of exactly
+        // the right size that cannot open.
+        assert_eq!(slot.scale_type, "fp16", "{name}");
+        assert_eq!(slot.bias_type, "fp16", "{name}");
+    }
+
+    let index = model_io::load_resident_index(&dir.join("model_weights.bin"))
+        .expect("the resident index parses");
+    let embed = index
+        .entries
+        .get("language_model.model.embed_tokens.weight")
+        .expect("the embedding table is resident");
+    // 16, the 2-bit affine tag: NOT 15 (1-bit), NOT 4 (INT4), and not a GGUF
+    // block tag. All four entry shapes are identical, so nothing structural
+    // objects to the wrong one -- the dispatch four layers later would read a
+    // row of half or twice the columns and decode it perfectly.
+    assert_eq!(embed.dtype, 16, "the embedding is not tagged 2-bit affine");
+    let (rows, cols) = (VOCAB as u64, 128u64);
+    assert_eq!(embed.size_bytes, rows * cols / 4);
+    assert_eq!(embed.scale_size, rows * (cols / 128) * 2);
+    assert_eq!(embed.bias_size, embed.scale_size);
+
+    // The discriminating half: the SAME fixture at one bit writes half the
+    // bytes for the same tensor, so the width really did reach the walk.
+    let one_bit_dir = temp_dir();
+    build_synthetic_qwen_gdn_dense_install(&one_bit_dir, VOCAB, LAYERS, "qwen35-toy")
+        .expect("the 1-bit dense install writes");
+    let one_bit = model_io::load_resident_index(&one_bit_dir.join("model_weights.bin"))
+        .expect("the resident index parses");
+    let one_bit_embed = &one_bit.entries["language_model.model.embed_tokens.weight"];
+    assert_eq!(embed.size_bytes, 2 * one_bit_embed.size_bytes);
+    assert_eq!(embed.scale_size, one_bit_embed.scale_size);
 }
 
 /// The norms come out BF16 beside FP16 companions, which is the arrangement

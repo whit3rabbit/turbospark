@@ -11,7 +11,7 @@ use turbospark_repack::{
     classify_gemma4, is_supported_affine_shape, manifest_quant, orchestrate_gemma4_checkpoint,
     parse_gemma4_config, parse_gemma4_quantization, pass_through_packed, write_gemma4_install,
     Gemma4Bucket, Gemma4Error, Gemma4Shards, MemoryRangeSource, ResidentEntrySpec,
-    AFFINE_1BIT_GROUP_SIZE, AFFINE_GROUP_SIZE,
+    AFFINE_1BIT_GROUP_SIZE, AFFINE_2BIT_GROUP_SIZE, AFFINE_GROUP_SIZE,
 };
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -319,7 +319,7 @@ fn packed_tensor(
     companions: &str,
 ) -> Vec<FixtureTensor> {
     let base = name.strip_suffix(".weight").unwrap();
-    let group = if bits == 1 { 128 } else { 64 };
+    let group = if bits <= 2 { 128 } else { 64 };
     let words = cols * bits as usize / 32;
     let groups = cols / group;
     let companion = |suffix: &str, seed: usize| FixtureTensor {
@@ -374,6 +374,10 @@ fn a_one_bit_quantization_spec_parses() {
 #[test]
 fn the_cross_products_of_bits_and_group_size_are_refused() {
     for (bits, group) in [(1, 64), (4, 128), (8, 128), (2, 64)] {
+        // Note `(2, 64)` stays refused now that 2-bit has kernels: the
+        // published ternary checkpoint is group 128, and the BF16-at-64 2-bit
+        // shape `model_io`'s routed slot admits is a DeepSeek-V4 idea with no
+        // affine kernel here.
         assert!(
             !is_supported_affine_shape(bits, group),
             "{bits}-bit at group {group} claims to be supported"
@@ -386,6 +390,7 @@ fn the_cross_products_of_bits_and_group_size_are_refused() {
     assert!(is_supported_affine_shape(4, AFFINE_GROUP_SIZE));
     assert!(is_supported_affine_shape(8, AFFINE_GROUP_SIZE));
     assert!(is_supported_affine_shape(1, AFFINE_1BIT_GROUP_SIZE));
+    assert!(is_supported_affine_shape(2, AFFINE_2BIT_GROUP_SIZE));
 }
 
 /// A per-tensor override cannot straddle the two shapes.
@@ -421,6 +426,37 @@ fn a_one_bit_tensor_passes_through_as_int1() {
             assert_eq!(t.biases.len(), 4);
         }
         other => panic!("expected Int1, got {other:?}"),
+    }
+}
+
+/// The published ternary checkpoint's spec: `{group_size: 128, bits: 2}`,
+/// again with no per-tensor overrides (measured off the real `config.json`).
+#[test]
+fn a_two_bit_quantization_spec_parses() {
+    let quant = parse_gemma4_quantization(&quant_config_json(2, 128)).expect("parses");
+    assert_eq!(quant.default_bits, 2);
+    assert_eq!(quant.group_size, AFFINE_2BIT_GROUP_SIZE);
+    assert!(quant.bits_overrides.is_empty());
+}
+
+/// A 2-bit tensor passes through as `Int2`, 16 elements per packed word.
+///
+/// The width is what the `Int1` case cannot cover: both come out of the same
+/// `32 / bits` arithmetic, so a fixture at one width says nothing about the
+/// other, and the variant is chosen by a `match` that could route 2 to either
+/// neighbour.
+#[test]
+fn a_two_bit_tensor_passes_through_as_int2() {
+    match pass_one(2, 128, "fp16").expect("passes through") {
+        ResidentEntrySpec::Int2(t) => {
+            assert_eq!(t.rows, 4);
+            // 8 packed u32 words per row * 16 elements each.
+            assert_eq!(t.cols, 128);
+            // One group of 128 per row.
+            assert_eq!(t.scales.len(), 4);
+            assert_eq!(t.biases.len(), 4);
+        }
+        other => panic!("expected Int2, got {other:?}"),
     }
 }
 
@@ -532,7 +568,8 @@ fn orchestrate_orders_passes_through_and_slices_experts() {
         .map(|e| match e {
             ResidentEntrySpec::Int4(t)
             | ResidentEntrySpec::Int8(t)
-            | ResidentEntrySpec::Int1(t) => t.name.as_str(),
+            | ResidentEntrySpec::Int1(t)
+            | ResidentEntrySpec::Int2(t) => t.name.as_str(),
             ResidentEntrySpec::Raw(r) => r.name.as_str(),
         })
         .collect();
@@ -681,7 +718,8 @@ fn sharded_orchestration_matches_single_source() {
             .map(|e| match e {
                 ResidentEntrySpec::Int4(t)
                 | ResidentEntrySpec::Int8(t)
-                | ResidentEntrySpec::Int1(t) => t.name.clone(),
+                | ResidentEntrySpec::Int1(t)
+                | ResidentEntrySpec::Int2(t) => t.name.clone(),
                 ResidentEntrySpec::Raw(r) => r.name.clone(),
             })
             .collect()

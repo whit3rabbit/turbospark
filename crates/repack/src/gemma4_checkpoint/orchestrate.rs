@@ -380,10 +380,12 @@ pub fn manifest_quant_for(
     //
     // Keying the dtype on the DEFAULT bits is sound only because
     // `is_supported_affine_shape` has already refused every mixture that
-    // would break it: 1 bit exists at group 128 and nowhere else, and 4 and 8
-    // exist at group 64 and nowhere else, so a per-tensor override can change
-    // the width within a group size but can never straddle the two shapes.
-    let companions = if quant.default_bits == 1 {
+    // would break it: 1 and 2 bits exist at group 128 and nowhere else, and 4
+    // and 8 exist at group 64 and nowhere else, so a per-tensor override can
+    // change the width within a group size but can never straddle the two
+    // shapes. It CAN move between 1 and 2 bits, which share both the group
+    // size and the companion dtype, so this stays one answer per install.
+    let companions = if quant.default_bits <= 2 {
         "fp16"
     } else {
         "bf16"

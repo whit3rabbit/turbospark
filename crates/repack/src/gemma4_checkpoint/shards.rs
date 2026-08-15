@@ -345,18 +345,26 @@ pub fn pass_through_packed(
             dtype: format!("{bits}-bit quantization at group {group_size}"),
         });
     }
-    // Elements per packed u32 word. The formula covers one bit as well as
-    // four and eight; what does NOT generalize is everything below it.
+    // Elements per packed u32 word. The formula covers one and two bits as
+    // well as four and eight; what does NOT generalize is everything below it.
     let factor = 32 / bits as u64;
     // **The companion dtype is a function of the bit width, and this is the
     // one axis in the whole walk that fails silently if it is wrong.** MLX
     // writes companions in the checkpoint's own dtype: BF16 for the INT4/INT8
-    // installs this port already reads, FP16 for the 1-bit one. The two are
-    // the same width and share no exponent field, so accepting either here
-    // would produce an install of exactly the right SIZE whose scales are
+    // installs this port already reads, FP16 for the 1-bit and 2-bit ones. The
+    // two are the same width and share no exponent field, so accepting either
+    // here would produce an install of exactly the right SIZE whose scales are
     // wrong by orders of magnitude -- 0.0271 read as 1.7e-16. Hence a
     // required dtype per width rather than a set of allowed ones.
-    let companion_dtype = if bits == 1 { "F16" } else { "BF16" };
+    //
+    // Both sub-4-bit checkpoints happen to be F16 and both 4/8-bit ones BF16,
+    // so this reads as a threshold and is not one: it is a table of what each
+    // published file carries, and a future 2-bit checkpoint in BF16 would be a
+    // third row rather than a moved boundary.
+    let companion_dtype = match bits {
+        1 | 2 => "F16",
+        _ => "BF16",
+    };
     let scales_name = format!("{base}.scales");
     let biases_name = format!("{base}.biases");
     for companion in [&scales_name, &biases_name] {
@@ -402,6 +410,7 @@ pub fn pass_through_packed(
     };
     Ok(match bits {
         1 => ResidentEntrySpec::Int1(spec),
+        2 => ResidentEntrySpec::Int2(spec),
         4 => ResidentEntrySpec::Int4(spec),
         _ => ResidentEntrySpec::Int8(spec),
     })

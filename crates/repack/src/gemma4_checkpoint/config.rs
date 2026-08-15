@@ -222,7 +222,8 @@ pub fn parse_gemma4_quantization(json: &str) -> Result<Gemma4Quant, Gemma4Error>
             return Err(Gemma4Error::Config(format!(
                 "unsupported affine quantization for {name}: {bits}-bit at group \
                  {group_size}; this port's kernels implement 4- or 8-bit at group \
-                 {AFFINE_GROUP_SIZE} and 1-bit at group {AFFINE_1BIT_GROUP_SIZE}"
+                 {AFFINE_GROUP_SIZE}, 1-bit at group {AFFINE_1BIT_GROUP_SIZE} and \
+                 2-bit at group {AFFINE_2BIT_GROUP_SIZE}"
             )));
         }
     }
@@ -238,6 +239,14 @@ pub const AFFINE_GROUP_SIZE: u32 = 64;
 /// The group size the 1-bit GEMV kernels take, and the one the published
 /// 1-bit checkpoint declares (`turbospark_compute::quant_1bit`).
 pub const AFFINE_1BIT_GROUP_SIZE: u32 = 128;
+/// The group size the 2-bit GEMV kernels take, and the one the published
+/// ternary checkpoint declares (`turbospark_compute::quant_2bit`).
+///
+/// Equal to [`AFFINE_1BIT_GROUP_SIZE`] and deliberately a SECOND constant
+/// rather than a shared one: the two are equal because one publisher chose 128
+/// twice, not because sub-4-bit implies 128. A 2-bit checkpoint at group 64
+/// would move this one alone.
+pub const AFFINE_2BIT_GROUP_SIZE: u32 = 128;
 
 /// True for the `(bits, group_size)` pairs this port has kernels for.
 ///
@@ -250,6 +259,6 @@ pub const AFFINE_1BIT_GROUP_SIZE: u32 = 128;
 pub fn is_supported_affine_shape(bits: u32, group_size: u32) -> bool {
     matches!(
         (bits, group_size),
-        (4 | 8, AFFINE_GROUP_SIZE) | (1, AFFINE_1BIT_GROUP_SIZE)
+        (4 | 8, AFFINE_GROUP_SIZE) | (1, AFFINE_1BIT_GROUP_SIZE) | (2, AFFINE_2BIT_GROUP_SIZE)
     )
 }
