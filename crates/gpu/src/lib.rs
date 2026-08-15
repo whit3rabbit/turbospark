@@ -43,6 +43,8 @@ mod context;
 #[cfg(target_os = "macos")]
 mod dequant_1bit_gemv;
 #[cfg(target_os = "macos")]
+mod dequant_2bit_gemv;
+#[cfg(target_os = "macos")]
 mod dequant_int4_batch;
 mod dequant_int4_gemv;
 #[cfg(target_os = "macos")]
@@ -103,6 +105,11 @@ pub use dequant_1bit_gemv::{
     dequant_int1_gemv, dequant_int1_gemv_resident, dequant_int1_gemv_symmetric,
     encode_dequant_int1_gemv_resident, encode_embed_lookup_int1, int1_row_bytes, Int1AffineRowGpu,
     Int1ResidentMatrix, Int1SymmetricRowGpu,
+};
+#[cfg(target_os = "macos")]
+pub use dequant_2bit_gemv::{
+    dequant_int2_gemv, dequant_int2_gemv_resident, encode_dequant_int2_gemv_resident,
+    encode_embed_lookup_int2, int2_row_bytes, Int2AffineRowGpu, Int2ResidentMatrix,
 };
 #[cfg(target_os = "macos")]
 pub use dequant_int4_batch::{encode_dequant_int4_gemm_resident, MAX_BATCH_ROWS};
