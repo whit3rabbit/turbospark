@@ -38,7 +38,7 @@ turbospark-check --model qwen38-27b --chat
 Then serve it to anything speaking the OpenAI or Anthropic API, Claude Code included:
 
 ```sh
-turbospark-server --model "$(turbospark-model path qwen38-27b)"
+turbospark-server --model qwen38-27b
 ANTHROPIC_BASE_URL=http://127.0.0.1:8080 ANTHROPIC_API_KEY=unused \
   CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=true claude
 ```
@@ -351,10 +351,10 @@ Use `--messages-file` or `--chat` rather than `--prompt` on an instruction-tuned
 ### 4. Serve it
 
 ```sh
-turbospark-server --model "$(turbospark-model path qwen38-27b)"
+turbospark-server --model qwen38-27b
 ```
 
-Loopback on port 8080, serving OpenAI `/v1/chat/completions`, Anthropic `/v1/messages`, and `/v1/models`. One runner per process, so requests are answered one at a time. `turbospark-server` wants a directory rather than an alias, which is what `turbospark-model path` is for: it prints the install directory and FAILS if the model is not installed, so the substitution cannot quietly expand to an empty `--model`.
+Loopback on port 8080, serving OpenAI `/v1/chat/completions`, Anthropic `/v1/messages`, and `/v1/models`. One runner per process, so requests are answered one at a time. `--model` takes an alias or a directory here exactly as it does for `turbospark-check`, and the startup line prints which directory an alias resolved to. In a script that would rather fail early than serve the wrong thing, `turbospark-model path <alias>` prints the install directory and exits non-zero if the model is not installed.
 
 ```sh
 curl -s localhost:8080/v1/models | python3 -m json.tool

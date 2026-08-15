@@ -22,8 +22,11 @@ when this file gets updated relative to the version bump and the tag.
   `probe`, `pull`, `path`, `rm`. `probe` reads KB off a repository and reports
   whether a checkpoint would run before any of it is downloaded; `pull` fetches
   and verifies the tokenizer sidecars before a byte of weight data moves.
-- `--model` accepts a catalog alias as well as a path. An existing directory
-  always wins, so nothing that previously worked changes.
+- `--model` accepts a catalog alias as well as a path, on both
+  `turbospark-check` and `turbospark-server`. An existing directory always
+  wins, so nothing that previously worked changes; the server prints which
+  directory an alias resolved to at startup, since it is the one that runs
+  unattended.
 - Documentation: `docs/MODELS.md` (the catalog, the probe, adding a row) and
   `docs/RELEASE.md` (how a release is cut).
 

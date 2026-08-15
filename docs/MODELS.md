@@ -46,14 +46,20 @@ Adding resume is a change to the walks in `crates/repack`, not to
 | installs | `$ROOT/models/<alias>.gturbo`, or wherever `--out` says |
 | record | `$ROOT/installed.json` |
 
-`turbospark-check --model <name>` takes a path OR an alias. **An existing
-directory always wins.** A bare name that silently preferred an alias would
-run a different model than the one on the command line, fluently and with no
-error, so the fallback only applies to a string that is not a directory.
+`--model <name>` takes a path OR an alias, on **both** `turbospark-check` and
+`turbospark-server`; the two call one `resolve_model_arg`, so an install has
+one name whichever binary opens it. **An existing directory always wins.** A
+bare name that silently preferred an alias would run a different model than
+the one on the command line, fluently and with no error, so the fallback only
+applies to a string that is not a directory. The server prints the resolved
+directory beside the alias at startup, because it is the one of the two that
+runs unattended.
 
 `turbospark-model path <alias>` prints the directory and FAILS if the model is
-not installed, so `--model $(turbospark-model path x)` cannot quietly expand
-to `--model ''`.
+not installed. `--model <alias>` is the shorter form; reach for `path` in a
+script that would rather fail before starting than serve the wrong model, and
+note `--model $(turbospark-model path x)` cannot quietly expand to
+`--model ''`.
 
 ---
 

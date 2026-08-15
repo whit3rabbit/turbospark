@@ -34,10 +34,14 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 futures = "0.3"
 
-# Only the real (macOS/GPU) backend needs the manifest peeker; on other
-# platforms `real_model.rs` does not compile at all.
+# Only the real (macOS/GPU) backend needs the manifest peeker or the catalog
+# store; on other platforms `real_model.rs` does not compile at all and
+# `--model` is refused before either could be reached. `catalog` adds no new
+# external crate here: its dependency set is a subset of `repack`'s plus
+# `tokenizer`, both of which this crate already links.
 [target.'cfg(target_os = "macos")'.dependencies]
 repack = { package = "turbospark-repack", path = "../repack", version = "0.1.0" }
+catalog = { package = "turbospark-catalog", path = "../catalog", version = "0.1.0" }
 
 [dev-dependencies]
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

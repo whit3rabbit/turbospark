@@ -2,7 +2,7 @@
 //! `/v1/chat/completions`, Anthropic `/v1/messages`, and `/v1/models`) to
 //! loopback, or to this machine's Tailscale IPv4 address. Two modes:
 //!
-//!   turbospark-server --model <install-dir> [--port N] [--max-context N]
+//!   turbospark-server --model <install-dir|alias> [--port N] [--max-context N]
 //!                   [--expert-cache-slots N] [--bind loopback|tailnet]
 //!                   [--power-profile performance|balanced|efficiency]
 //!                   [--max-tokens-per-sec R]
@@ -10,9 +10,12 @@
 //!
 //! The first serves real generation from a `.gturbo` install through
 //! `RealForwardRunner` (macOS only; one runner per process, requests
-//! serialized). The second is the portable scripted mode: it takes only a
-//! tokenizer and every response comes from `ScriptedChatModel`, a fixed
-//! placeholder sequence, not a forward pass; it always binds loopback.
+//! serialized). Its `--model` takes a directory or a `turbospark-model`
+//! alias, resolved through the same `catalog::resolve_model_arg` that backs
+//! `turbospark-check --model`. The second is the portable scripted mode: it
+//! takes only a tokenizer and every response comes from `ScriptedChatModel`,
+//! a fixed placeholder sequence, not a forward pass; it always binds
+//! loopback.
 //!
 //! Default port 8080, default bind loopback. `--bind tailnet` is NOT
 //! authentication: the server has no auth and no TLS, so access is governed
@@ -23,7 +26,7 @@ use std::sync::Arc;
 
 use tokenizer::MfTokenizer;
 
-const USAGE: &str = "usage: turbospark-server --model <install-dir> [--port N] [--max-context N] [--expert-cache-slots N] [--bind loopback|tailnet] [--power-profile performance|balanced|efficiency] [--max-tokens-per-sec R]\n       turbospark-server <tokenizer-dir> [port]";
+const USAGE: &str = "usage: turbospark-server --model <install-dir|alias> [--port N] [--max-context N] [--expert-cache-slots N] [--bind loopback|tailnet] [--power-profile performance|balanced|efficiency] [--max-tokens-per-sec R]\n       turbospark-server <tokenizer-dir> [port]\n\n`--model` takes a .gturbo directory or a turbospark-model alias (`turbospark-model list`).";
 
 /// Interface the server listens on. Resolution fails rather than widening:
 /// there is no path from `Tailnet` to a wildcard or LAN address.
@@ -192,15 +195,27 @@ fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
 
 #[cfg(target_os = "macos")]
 fn open_real_model(args: &ModelArgs) -> Result<Arc<dyn turbospark_server::ChatModel>, String> {
+    // `--model` takes a path OR a `turbospark-model` alias, resolved the same
+    // way `turbospark-check` resolves it, so one install serves both binaries
+    // under one name. An existing directory always wins over an alias: a bare
+    // name that silently preferred an alias would serve a DIFFERENT model
+    // than the one on the command line, and a server does that unattended.
+    let dir = catalog::resolve_model_arg(&args.model);
     // A 13 GB install takes a noticeable while to map and compile pipelines
-    // for; without this line the startup reads as hung.
-    eprintln!("opening {} ...", args.model);
+    // for; without this line the startup reads as hung. Print what the
+    // argument RESOLVED to when the two differ, since an alias says nothing
+    // about which directory is being served.
+    if dir.as_os_str() == args.model.as_str() {
+        eprintln!("opening {} ...", args.model);
+    } else {
+        eprintln!("opening {} ({}) ...", args.model, dir.display());
+    }
     // Resolved once here, which is also the one place this process asks the
     // OS about Low Power Mode.
     let profile = runtime::resolve_profile(args.power_profile);
     let rate = runtime::rate_control_for(profile, args.max_tokens_per_sec);
     let model = turbospark_server::RealChatModel::open(
-        &PathBuf::from(&args.model),
+        &dir,
         args.max_context,
         args.expert_cache_slots,
         rate,
@@ -311,6 +326,47 @@ mod tests {
     #[test]
     fn legacy_positional_mode_is_left_alone() {
         assert!(parse(&["/tmp/tok", "9000"]).unwrap().is_none());
+    }
+
+    /// `--model` reaches the catalog store, so one install serves this
+    /// binary and `turbospark-check` under one alias.
+    ///
+    /// The assertion is deliberately on a name that is NOT a directory:
+    /// swapping `resolve_model_arg` back for `PathBuf::from` leaves every
+    /// path case passing, because for a real path the two agree. Only the
+    /// alias arm can tell them apart, and this is the cheapest form of it
+    /// -- the "default install location that happens to exist" arm, which
+    /// needs no `installed.json` and no model.
+    ///
+    /// It is the only test in this binary that touches `TURBOSPARK_HOME`,
+    /// which is what keeps it safe under the default parallel test threads.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn an_alias_resolves_to_its_install_directory() {
+        let root = std::env::temp_dir().join(format!(
+            "turbospark-server-alias-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        let installed = root.join("models").join("some-alias.gturbo");
+        std::fs::create_dir_all(&installed).unwrap();
+        std::env::set_var("TURBOSPARK_HOME", &root);
+
+        assert_eq!(
+            catalog::resolve_model_arg("some-alias"),
+            installed,
+            "an alias should resolve to its install directory"
+        );
+        // The property the resolution order exists to protect: a bare name
+        // that is also a real directory is that directory, never the alias.
+        assert_ne!(
+            catalog::resolve_model_arg("some-alias"),
+            PathBuf::from("some-alias"),
+            "resolution must not be a pass-through for a known alias"
+        );
+
+        std::env::remove_var("TURBOSPARK_HOME");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

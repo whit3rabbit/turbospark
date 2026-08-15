@@ -155,10 +155,11 @@ impl Store {
 /// [`Store::resolve`] against the default store, falling back to the raw
 /// string when there is no store at all.
 ///
-/// This is what `turbospark-check` calls, and it must NEVER fail a run that
-/// used to work: a machine with no `HOME` still has paths, so an
-/// unresolvable name comes back unchanged and the caller reports the same
-/// "no such install" it always did.
+/// This is what `turbospark-check` and `turbospark-server` both call -- one
+/// resolution for both binaries, so an install answers to one name whichever
+/// opens it -- and it must NEVER fail a run that used to work: a machine with
+/// no `HOME` still has paths, so an unresolvable name comes back unchanged
+/// and the caller reports the same "no such install" it always did.
 pub fn resolve_model_arg(name: &str) -> PathBuf {
     match Store::default_store() {
         Ok(store) => store.resolve(name).unwrap_or_else(|| PathBuf::from(name)),

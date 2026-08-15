@@ -1897,6 +1897,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-stream",
+ "turbospark-catalog",
  "turbospark-core",
  "turbospark-repack",
  "turbospark-runtime",

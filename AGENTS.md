@@ -113,7 +113,11 @@ cargo test -p turbospark-catalog --test catalog_network --release -- --ignored -
 # `/v1/chat/completions`, Anthropic `/v1/messages`, and `/v1/models`. Add
 # `--bind tailnet` to bind this machine's Tailscale IPv4 address instead of
 # loopback (no auth, no TLS: the Tailnet ACL is the only access control).
+# `--model` takes a catalog ALIAS as well as a directory, through the same
+# `catalog::resolve_model_arg` `turbospark-check` uses; the startup line
+# prints what an alias resolved to.
 cargo run --release -p turbospark-server --bin turbospark-server -- --model ~/models/gemma4.gturbo
+cargo run --release -p turbospark-server --bin turbospark-server -- --model gemma4
 
 # Point an Anthropic-native client straight at it, no proxy in between.
 ANTHROPIC_BASE_URL=http://127.0.0.1:8080 ANTHROPIC_API_KEY=unused \
