@@ -15,14 +15,35 @@ The port is tested against the original rather than assumed compatible. Decode t
 
 ## Table of Contents
 
+- [In a hurry](#in-a-hurry)
 - [Key Benefits for macOS / Apple Silicon Users](#key-benefits-for-macos--apple-silicon-users)
 - [Memory Footprint & Benchmark Parity](#memory-footprint--benchmark-parity)
 - [GGUF Intake & Custom `.gturbo` Format](#gguf-intake--custom-gturbo-format)
 - [Supported Features & Models](#supported-features--models)
 - [Architecture & Repository Layout](#architecture--repository-layout)
-- [Quick Start](#quick-start)
+- [Getting Started](#getting-started)
 - [Documentation](#documentation)
 - [License](#license)
+
+---
+
+## In a hurry
+
+```sh
+brew install --cask whit3rabbit/tap/turbospark
+turbospark-model pull qwen38-27b
+turbospark-check --model qwen38-27b --chat
+```
+
+Then serve it to anything speaking the OpenAI or Anthropic API, Claude Code included:
+
+```sh
+turbospark-server --model "$(turbospark-model path qwen38-27b)"
+ANTHROPIC_BASE_URL=http://127.0.0.1:8080 ANTHROPIC_API_KEY=unused \
+  CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=true claude
+```
+
+The long version, including installing without Homebrew and choosing a different model, is under [Getting Started](#getting-started).
 
 ---
 
@@ -252,33 +273,111 @@ The workspace is organized into modular Rust crates:
 
 ---
 
-## Quick Start
+## Getting Started
 
-### Install
+Four steps, start to finish: install the binaries, pull a model, talk to it, then serve it to your own tools. Needs an Apple Silicon Mac on macOS. The walkthrough uses **Qwen3.8-27B**; see the note under step 2 for why you might want a different one.
+
+### 1. Install
+
+Three ways in. Homebrew is the shortest, and all three put the same three binaries on `PATH`: `turbospark-check` (generate), `turbospark-model` (find and install models), and `turbospark-server` (HTTP).
 
 ```sh
-# Homebrew (Apple Silicon; installs turbospark-check, turbospark-model
-# and turbospark-server)
+# Homebrew. One cask, all three binaries.
 brew install --cask whit3rabbit/tap/turbospark
+```
 
-# Or from crates.io. `turbospark-cli` carries both turbospark-check and
-# turbospark-model.
+```sh
+# crates.io. `turbospark-cli` carries turbospark-check AND turbospark-model.
 cargo install turbospark-cli turbospark-server
 ```
 
-### Get a model
-
-`turbospark-model` streams a published checkpoint from Hugging Face in ranges and writes a `.gturbo` directory, so the 8 to 27 GB original is never written to disk.
+Or grab the [latest release](https://github.com/whit3rabbit/turbospark/releases) directly. The asset is one zip per version, built for `aarch64-apple-darwin`, with a `SHA256SUMS` beside it:
 
 ```sh
-turbospark-model list            # the curated table, with what each row's numbers are backed by
-turbospark-model pull gemma4     # install one
-turbospark-check --model gemma4 --messages-file /tmp/p.json
+VER=0.1.0
+curl -LO "https://github.com/whit3rabbit/turbospark/releases/download/v${VER}/turbospark-${VER}-macos-arm64.zip"
+unzip "turbospark-${VER}-macos-arm64.zip" -d ~/bin
+
+# macOS quarantines anything downloaded by a browser or curl. Without this
+# the first run dies with "cannot be opened because the developer cannot be
+# verified" rather than anything about turbospark.
+xattr -d com.apple.quarantine ~/bin/turbospark-* 2>/dev/null
+```
+
+However you installed it, this should now print the model catalog:
+
+```sh
+turbospark-model list
+```
+
+### 2. Pull a model
+
+```sh
+turbospark-model pull qwen38-27b
+```
+
+That streams `mlx-community/Qwen3.8-27B-4bit` from Hugging Face in ranges and writes a `.gturbo` install to `~/.turbospark/models/qwen38-27b.gturbo`. About 15 GiB moves over the network and ~14 GiB lands on disk; the original checkpoint is **never written to disk whole**. Budget 20 minutes on a fast connection.
+
+Two things worth knowing before you start it:
+
+- **A pull cannot resume.** One that dies 12 GB in starts again from zero. The command says so before it begins.
+- **Qwen3.8-27B is dense, so it does not stream.** It needs roughly its 14 GiB of weights in memory while running, and it is the walkthrough model because it is well-behaved and current, not because it is the low-memory demo. If your machine is tight on RAM, or you want the thing this project is actually for, pull `gemma4` instead: a 26B mixture-of-experts model that runs in **~2.1 GB** because its routed experts stream off SSD. Same commands from here on, with `gemma4` in place of `qwen38-27b`.
+
+```sh
+turbospark-model list             # the whole table, and what each row's numbers are backed by
+turbospark-model info qwen38-27b  # one row in full
+turbospark-model path qwen38-27b  # where it landed
 ```
 
 Every catalog row names a repository and a revision that were actually streamed and run on this port, and a `verified` status means a frozen quality-gate or memory-oracle row in [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) asserts something about that exact artifact.
 
-For anything not in the table, ask first. `probe` reads headers only, costs KB and seconds, and answers whether a checkpoint would run before a byte of it is downloaded:
+### 3. Talk to it
+
+`--model` takes a catalog alias or a path. An existing directory always wins over an alias, so nothing that used to work changes.
+
+```sh
+# Interactive REPL.
+turbospark-check --model qwen38-27b --chat
+```
+
+```sh
+# Or one shot, through the checkpoint's own chat template.
+printf '[{"role":"user","content":"Explain how coastal wetlands reduce flood damage."}]' > /tmp/p.json
+turbospark-check --model qwen38-27b --messages-file /tmp/p.json
+```
+
+Use `--messages-file` or `--chat` rather than `--prompt` on an instruction-tuned model. `--prompt` sends raw text with no chat framing, which makes these checkpoints babble; that is the template missing, not a decode bug.
+
+### 4. Serve it
+
+```sh
+turbospark-server --model "$(turbospark-model path qwen38-27b)"
+```
+
+Loopback on port 8080, serving OpenAI `/v1/chat/completions`, Anthropic `/v1/messages`, and `/v1/models`. One runner per process, so requests are answered one at a time. `turbospark-server` wants a directory rather than an alias, which is what `turbospark-model path` is for: it prints the install directory and FAILS if the model is not installed, so the substitution cannot quietly expand to an empty `--model`.
+
+```sh
+curl -s localhost:8080/v1/models | python3 -m json.tool
+```
+
+### 5. Point Claude Code at it
+
+The Anthropic endpoint is native, so there is no proxy in between:
+
+```sh
+ANTHROPIC_BASE_URL=http://127.0.0.1:8080 \
+ANTHROPIC_API_KEY=unused \
+CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=true \
+  claude
+```
+
+`ANTHROPIC_API_KEY` is required by the client and ignored by the server, which has **no authentication and no TLS**: it is a loopback service. The model discovery flag makes Claude Code ask `/v1/models` instead of assuming Anthropic's hosted names; the server advertises one id, the install directory's own name (`qwen38-27b.gturbo` here). Anything else speaking either API works the same way, e.g. `OPENAI_BASE_URL=http://127.0.0.1:8080/v1`.
+
+To reach it from another machine on your Tailnet, add `--bind tailnet`. That binds this machine's Tailscale IPv4 address, and the Tailnet ACL is then the only access control there is.
+
+### Installing something not in the catalog
+
+Ask before downloading. `probe` reads headers only, costs KB and seconds, and answers whether a checkpoint would run before a byte of it moves:
 
 ```sh
 turbospark-model probe Qwen/Qwen3-30B-A3B-GGUF \
@@ -289,11 +388,11 @@ turbospark-model pull --repo owner/name --alias mine --sidecar-repo owner/origin
 
 It reports the architecture verdict (naming what an unported one would need), each block type against the kernels that exist, which tokenizer sidecars the repository actually has, and the expert-slot arithmetic that decides whether a mixture-of-experts model fits here at all. That last one is worth reading before any large download: Mixtral 8x7B installs and decodes correctly and wants 54.5 GiB of pinned expert cache, because what this engine can hold is decided by how finely a model splits its experts rather than by its size.
 
-Full guide, including how a pull orders its steps and how to add a catalog row: [`docs/MODELS.md`](docs/MODELS.md). Format details: [`docs/GTURBO.md`](docs/GTURBO.md).
+`probe` exits 0 only on a runnable verdict, so `probe X && pull --repo X ...` works. Full guide, including how a pull orders its steps and how to add a catalog row: [`docs/MODELS.md`](docs/MODELS.md). Format details: [`docs/GTURBO.md`](docs/GTURBO.md).
 
 Each checkpoint also still has its own `crates/repack` integration-test target, listed with its environment variable in [`AGENTS.md`](AGENTS.md); those are what the catalog rows were built from.
 
-### Build & Run Tests
+### Building from source
 
 ```sh
 # Build all workspace crates
@@ -307,37 +406,11 @@ cargo fmt --check
 cargo clippy --workspace --tests
 ```
 
+The binaries land in `target/release/`, and `cargo run -p turbospark-cli --bin turbospark-check -- ...` works in place of an installed `turbospark-check` throughout the walkthrough above.
+
 The workspace suite runs on any platform and covers the structural contracts. The heavier proof is env-gated and opt-in, because it needs a real model install: per-family quality gates freeze teacher-forced perplexity plus greedy and sampled output digests, memory oracles assert peak footprint against a per-chip ceiling and re-run a warm case to catch growth, and a determinism probe runs one greedy generation six times and requires exactly one distinct output.
 
 The quality gate is calibrated rather than decorative. Shifting one quantization level in 0.0122% of Gemma 4's expert bytes moves its perplexity +10.5%, so the gate sees damage far below what reads as coherent by eye. Gating conventions and test-writing rules are in [`docs/TESTING.md`](docs/TESTING.md).
-
-### Running the CLI
-
-```sh
-# Run interactive chat against a model install
-cargo run --release -p turbospark-cli --bin turbospark-check -- \
-  --model ~/models/gemma4.gturbo \
-  --chat
-
-# Run prompt via JSON messages file
-cargo run --release -p turbospark-cli --bin turbospark-check -- \
-  --model ~/models/gemma4.gturbo \
-  --messages-file prompt.json
-```
-
-### Running the HTTP Server
-
-```sh
-# Start local OpenAI / Anthropic compatible HTTP server
-cargo run --release -p turbospark-server --bin turbospark-server -- \
-  --model ~/models/gemma4.gturbo
-```
-
-Point Anthropic-compatible clients (like `claude-code`) directly to loopback:
-
-```sh
-ANTHROPIC_BASE_URL=http://127.0.0.1:8080 ANTHROPIC_API_KEY=unused claude
-```
 
 ---
 

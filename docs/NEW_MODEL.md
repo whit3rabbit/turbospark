@@ -20,11 +20,12 @@ Every command a gate below names in prose is spelled out in `AGENTS.md`:
 "Real-model smoke" for the two 400-token runs Phase 3 and Phase 4 gate on.
 
 **A new SOURCE is a different axis from a new FAMILY, and this file is about
-the family axis.** Bringing GGUF in (ROADMAP Phase G) changed Phase 1 and
-Phase 2 and touched nothing in Phases 3 to 7: the decode flow, the head, the
-memory model and the quality gates do not know where the bytes came from.
-So if you are adding a source rather than an architecture, read Phase 1 and
-Phase 2 and skip the rest. The differences are marked "SOURCE:" below, and
+the family axis.** Bringing GGUF in (ROADMAP Phase G) changed Phase 1,
+Phase 2 and Phase 7's probe, and touched nothing in Phases 3 to 6: the
+decode flow, the head, the memory model and the quality gates do not know
+where the bytes came from.
+So if you are adding a source rather than an architecture, read Phase 1,
+Phase 2 and Phase 7 and skip the rest. The differences are marked "SOURCE:" below, and
 the record is `crates/repack/CLAUDE.md` Gotchas 4 to 7 plus `AGENTS.md`
 Gotchas 29, 30 and 33. The one thing that axis adds and this one does not
 have is that a source can be RIGHT about every name and still WRONG about
@@ -538,9 +539,110 @@ than whatever you were about to freeze.
 
 ---
 
-## Phase 7 - Write it down
+## Phase 7 - Make it reachable from the CLI
+
+Everything up to here is provable with an env var pointing at a directory
+you built by hand. **A family that stops at Phase 6 exists for you and for
+nobody else**: `turbospark-model probe` refuses it, `pull` will not install
+it, and the only way to get one is to run an `#[ignore]`d test with the
+right environment variable set. This phase is what turns that into
+`turbospark-model pull <alias>`.
+
+Which of the items below apply depends on the SOURCE, and the split is
+sharp:
+
+- **GGUF costs nothing here.** Both halves are family-agnostic:
+  `probe/gguf.rs` resolves the family through `repack::gguf_arch_support`
+  and checks block types against `model_io::EXECUTABLE_GGUF_TYPES`, and
+  `install.rs::stream_gguf` calls the one `write_gguf_install_streamed`
+  whatever family came back. The `arch_registry.rs` row Phase 1 already
+  wrote is the whole wiring. Skip to the catalog row.
+- **A safetensors / MLX family has THREE `match family` sites**, and they
+  are the same shape as `crates/invocation`'s two parser matches
+  (AGENTS.md Gotcha 14): every one ends in an `other =>` arm that returns
+  an error, so a missing arm is a refusal at runtime rather than a compile
+  failure.
+
+- [ ] **`crates/catalog/src/probe/safetensors.rs::evaluate_config`** - the
+      parser behind the VERDICT. Until the family has an arm here, `probe`
+      answers `REFUSED` with "whose safetensors intake is not wired here",
+      and `pull` refuses before downloading anything, which is the correct
+      behavior and is indistinguishable from the family not existing.
+- [ ] **`crates/catalog/src/install.rs::stream_mlx`** - the same parse
+      again at install time.
+- [ ] **`crates/catalog/src/install.rs`'s writer match** - the
+      `write_<family>_install_streamed` call. Miss this one and the failure
+      lands in the worst place of the three: the probe says `RUNNABLE`, the
+      sidecars fetch and verify, and it dies at the top of the stream.
+- [ ] **A new affine WIDTH is a fourth site**, and it is a conjunction
+      rather than a list: `repack::is_supported_affine_shape(bits, group)`
+      checks the `(bits, group_size)` PAIR, because the cross-products are
+      combinations no published file has. The probe reports the pair it
+      found either way, so a refusal here names the shape rather than
+      saying "unsupported quantization".
+
+Then the catalog row, which is the part with an admission rule rather than
+a code change:
+
+- [ ] **A row exists only if that exact repository and revision were
+      streamed and run here** - the same rule `arch_registry.rs` states for
+      its architecture strings. A model you expect to work is not a row.
+      Install it with `pull --repo ... --alias ...` FIRST, generate with
+      it, then add the row to `crates/catalog/src/models.json`.
+- [ ] Pin a commit sha where the publisher offers one. Where they do not
+      (every GGUF publisher here), the row floats at `main` and
+      `download_bytes` is the ONLY fingerprint that would notice a
+      re-upload, so take that figure from the network guard rather than
+      from a listing page. The guard's tolerance is 2%: an earlier draft
+      carried round numbers at 10%, under which `mixtral`'s recorded
+      "26 GB" sat 9.4% from its real size and would have absorbed an
+      entire re-quantization.
+- [ ] Set `status` honestly. `verified` means a frozen quality-gate or
+      memory-oracle row in `BENCHMARKS.md` asserts something about that
+      exact artifact - i.e. Phase 5 and Phase 6 landed for it. `runs` means
+      it generated coherent text here and nothing is frozen. `caveat` means
+      it installs and runs and the notes disqualify it, and is worth using:
+      `mixtral` is a row precisely because "installs, decodes, wants
+      54.5 GiB of pinned slot cache" is invisible any other way.
+- [ ] `install_bytes` feeds the free-space check, so keep it generous
+      rather than exact. The honest post-install figure is recorded from
+      `directory_bytes` at install time.
+- [ ] Name the sidecars. **A GGUF row almost always needs a
+      `sidecar_repo`** pointing at the checkpoint the GGUF was converted
+      from: a GGUF carries its tokenizer as llama.cpp metadata and this
+      port loads an HF `tokenizer.json`, and nothing about the weights repo
+      says which one that is. Read the sidecar repo's own file list rather
+      than copying a list from a sibling checkpoint of the same family -
+      `Qwen3.8-27B` ships its merges inside `tokenizer.json` where
+      `Bonsai-27B` ships `merges.txt`, and the copied list 404s.
+
+**Model SELECTION needs nothing family-specific, and that is worth knowing
+so you do not go looking.** `catalog::resolve_model_arg` maps a `--model`
+string to a path with no reference to the family, and `open_session`
+(`crates/cli/src/generate.rs`) then goes through `peek_manifest_arch`,
+which Phase 1 already extended. An existing directory always wins over an
+alias, deliberately: a bare name that silently preferred an alias would run
+a DIFFERENT model than the one on the command line, fluently and with no
+error. So the moment the row exists, `--model <alias>` works for
+`turbospark-check` and `turbospark-server` alike.
+
+Gate: on a machine with nothing pre-installed,
+`turbospark-model probe <repo>` prints `RUNNABLE`,
+`turbospark-model pull <alias>` installs, and
+`turbospark-check --model <alias> --messages-file p.json` generates
+coherent text. Then `cargo test -p turbospark-catalog` offline, and the rot
+guard (`make catalog-guard`, ~26 s, downloads nothing) with its published
+byte figure pasted back into the row.
+
+---
+
+## Phase 8 - Write it down
 
 - [ ] `AGENTS.md`: a Gotcha for anything a reader would get wrong twice.
+- [ ] `docs/MODELS.md` and the README's model tables: a family nobody can
+      find is a family nobody uses. The catalog row from Phase 7 is what
+      `turbospark-model list` prints; these are where a reader learns the
+      command exists.
 - [ ] `DEVIATIONS.md`: every deliberate divergence from the reference, with
       the reason. "Swift fuses cap+softmax because it samples on the GPU"
       is the shape - what they do, what we do, why the difference is
@@ -565,6 +667,10 @@ than whatever you were about to freeze.
 | Symptom | Look here first |
 |---|---|
 | Greedy fine, sampled degenerates | Double softmax in the head (Gotcha 16) |
+| `probe` says REFUSED on a family that decodes fine from a hand-built install | Phase 7: `probe/safetensors.rs::evaluate_config` has no arm for it. GGUF needs no arm at all, only the `arch_registry.rs` row |
+| `probe` says RUNNABLE, sidecars verify, then it dies at the top of the stream | Phase 7: the writer match in `install.rs` was missed while the two parse sites were done |
+| `pull` 404s on a sidecar after a long stream | It cannot: sidecars are fetched and verified FIRST (Gotcha 47). If it happened, the sidecar list is being read somewhere other than `InstallPlan` |
+| `--model <alias>` runs a different model than expected | A directory of that name exists in the cwd and wins over the alias, by design. `turbospark-model path <alias>` prints the resolved directory |
 | Babble from token 1 on any prompt | Chat template not applied |
 | Coherent then collapses at a fixed position | KV ring capacity vs window |
 | Never emits EOS | EOS set not resolved from `generation_config.json` |

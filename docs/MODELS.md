@@ -155,6 +155,13 @@ architecture strings: **a row exists only if that exact repository and
 revision were streamed and run here.** A model somebody expects to work is not
 a row; a model somebody ran is.
 
+If the model is a new ARCHITECTURE rather than another checkpoint of one that
+already runs, the row is the last step rather than the first: see
+[`NEW_MODEL.md`](NEW_MODEL.md) Phase 7, which lists the probe and install-driver
+match sites a new family has to be wired into before `pull` can reach it at
+all. A new GGUF-source family needs none of them -- both halves of that path
+are family-agnostic and read `arch_registry.rs`.
+
 1. Install it with `pull --repo ... --alias ...` and generate with it.
 2. Add the row to `crates/catalog/src/models.json`. Pin a commit sha where the
    publisher offers one. Take `download_bytes` from the network guard rather
