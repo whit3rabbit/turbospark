@@ -117,46 +117,27 @@ fn run_prompt(request: &InvocationRequest, prompt: &str) {
         }
     };
 
-    let config = GenerationConfig {
-        shaping: session.shaping,
-        max_new_tokens: request.max_new,
-        stop_strings: request.stop.clone(),
-        extra_stop_tokens: Vec::new(),
-        rate: session.rate,
+    // Verbatim, with a BOS prefix and no chat template: this mode's contract,
+    // matching the Swift original. An instruction-tuned model babbles here;
+    // that is the missing markup, not a decode bug.
+    let prompt_ids = session.tokenizer.encode(prompt, true);
+    // Clamp rather than let `check_admission` refuse the whole run: a long
+    // raw prompt generates into whatever room is left, the same as the other
+    // two modes.
+    let max_new = match clamp_max_new(request, prompt_ids.len()) {
+        Ok(n) => n,
+        Err(e) => {
+            eprintln!("note: not attempting real generation: {e}");
+            return;
+        }
     };
 
-    let prompt_ids = session.tokenizer.encode(prompt, true);
-    let vocab_size = session.runner.vocab_size();
-
-    println!("generating (real forward pass, synthetic/untrained weights):");
-    let stdout = std::io::stdout();
-    let mut out = stdout.lock();
-    let mut split = ChannelSplit::new(&session.tokenizer);
-    let result = run_raw_completion(
-        &mut session.runner,
-        &session.tokenizer,
-        &prompt_ids,
-        &config,
-        request.max_context,
-        vocab_size,
-        |event| {
-            if let RawDecodeProgress::Token { id, delta, .. } = event {
-                let (answer, reasoning) = split.push(id, &delta);
-                if !reasoning.is_empty() {
-                    eprint!("{reasoning}");
-                }
-                let _ = write!(out, "{answer}");
-                let _ = out.flush();
-            }
-        },
-    );
-    println!();
-
-    match result {
-        Ok(r) => println!(
-            "note: {} prompt tokens, {} generated, stop reason {:?}",
-            r.prompt_tokens, r.new_tokens, r.reason
-        ),
+    println!("generating (real forward pass):");
+    // Shared with the other two modes rather than reimplemented: this is
+    // where the withheld `Tail` is printed (dropping it truncates the reply)
+    // and where Harmony's channels are split.
+    match stream_turn(&mut session, request, &prompt_ids, max_new) {
+        Ok((_, result)) => print_footer(&result, request.quiet),
         Err(e) => eprintln!("generation failed: {e}"),
     }
     print_phases(&session);

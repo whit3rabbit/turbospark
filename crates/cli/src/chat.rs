@@ -109,6 +109,13 @@ fn take_turn(
         measure,
     );
     if !fitted.has_room_for_generation() {
+        // `measure_prompt`'s render-failure sentinel, which is a length no
+        // conversation has: printing it reads as an absurd token count.
+        if fitted.measured_length() == u64::MAX {
+            return Err(
+                "error: the conversation failed to render through the chat template".to_string(),
+            );
+        }
         return Err(format!(
             "error: message needs {} tokens and does not fit max_context {}; \
              shorten it or raise --max-context",
@@ -122,13 +129,18 @@ fn take_turn(
             fitted.removed_turn_count()
         );
     }
-    *history = fitted.retained_turns().to_vec();
+    // NOT committed to `history` yet. A render or generation failure here
+    // must leave the history as it was: committing first strands the new user
+    // message in it, so the natural retry sends two consecutive `user` turns,
+    // which some dialects (Mistral's `[INST]`) render as a malformed prompt.
+    let fitted_history = fitted.retained_turns().to_vec();
 
-    let prompt_ids = render_prompt(&session.tokenizer, history)?;
+    let prompt_ids = render_prompt(&session.tokenizer, &fitted_history)?;
     let max_new = clamp_max_new(request, prompt_ids.len())?;
     let (reply, result) =
         stream_turn(session, request, &prompt_ids, max_new).map_err(|e| format!("error: {e}"))?;
     print_footer(&result, request.quiet);
+    *history = fitted_history;
     if !reply.is_empty() {
         history.push(Message::new(Role::Assistant, reply));
     }

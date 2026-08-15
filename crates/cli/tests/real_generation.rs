@@ -72,9 +72,10 @@ fn real_prompt_mode_generates_real_tokens() {
     assert_eq!(output.status.code(), Some(0));
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("generating (real forward pass"));
-    assert!(stdout.contains("generated, stop reason"));
+    // The run summary is the shared footer now, on stderr, exactly as in
+    // `--messages-file` mode.
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.is_empty(), "unexpected stderr: {stderr}");
+    assert!(stderr.contains("[stop="), "unexpected stderr: {stderr}");
 }
 
 #[test]
@@ -114,9 +115,8 @@ fn real_naming_gemma4_install_generates() {
     assert_eq!(output.status.code(), Some(0));
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("generating (real forward pass"));
-    assert!(stdout.contains("generated, stop reason"));
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.is_empty(), "unexpected stderr: {stderr}");
+    assert!(stderr.contains("[stop="), "unexpected stderr: {stderr}");
 }
 
 #[test]
