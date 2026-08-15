@@ -86,6 +86,7 @@ crates/repack/
     +-- synthetic_qwen35.rs         # The dense 1-bit install, end to end through the walk
     +-- qwen35_checkpoint_network.rs# The REAL Bonsai-27B 1-bit checkpoint, streamed (ignored)
     +-- qwen38_checkpoint_network.rs# The REAL Qwen3.8-27B INT4 checkpoint, streamed (ignored)
+    +-- ternary_checkpoint_network.rs# The REAL Ternary-Bonsai-27B 2-bit checkpoint, streamed (ignored)
     +-- qwen36_checkpoint_network.rs# Real Qwen 3.6 checkpoint download integration test (ignored)
     +-- gturbo_writer.rs            # .gturbo layout writer unit tests
     +-- hf_checkpoint.rs            # HF Llama converter unit tests

@@ -43,14 +43,15 @@ const BASELINES: &[oracle_common::ChipBaseline] = &[
     //
     // Frozen protocol, release, on AC, 16 expert-cache slots (inert here --
     // a dense install has no routed experts to cache), 4,096 context, the
-    // session the real checkpoint was streamed in (2026-08-15). TWO readings
-    // of this oracle:
-    //   peak footprint     661.6 / 657.8 MiB
-    //   short-explanation  13.714 / 13.812 tok/s
-    //   medium-review      13.617 / 13.155 tok/s
-    //   long-synthesis     12.545 / 12.676 tok/s
-    // All three cases stopped endOfTurn both times; the replay of
-    // short-explanation grew +0.00 then +0.02 MiB.
+    // session the real checkpoint was streamed in (2026-08-15). THREE
+    // readings of this oracle -- two before the row was frozen and one
+    // confirming it afterwards:
+    //   peak footprint     661.6 / 657.8 / 659.3 MiB
+    //   short-explanation  13.714 / 13.812 / 13.864 tok/s
+    //   medium-review      13.617 / 13.155 / 13.666 tok/s
+    //   long-synthesis     12.545 / 12.676 / 12.672 tok/s
+    // All three cases stopped endOfTurn every time; the replay of
+    // short-explanation grew +0.00, +0.02 and +0.00 MiB.
     //
     // **THE PEAK IS THE INTERESTING NUMBER AND IT IS QWEN3.8'S.** That
     // install is the SAME architecture at INT4 and reads 660.3 MiB on
@@ -71,9 +72,8 @@ const BASELINES: &[oracle_common::ChipBaseline] = &[
     oracle_common::ChipBaseline {
         brand_substr: "Apple M4 Max",
         footprint_ceiling_mib: 750,
-        // 0.73 of the SLOWER of the two readings of the slowest case
-        // (12.545), the same margin the mistral, qwen3moe and qwen38 rows
-        // take. Crate Gotcha 15's rule satisfied: two readings, floor off the
+        // 0.73 of the SLOWEST reading of the slowest case (12.545), the
+        // same margin the mistral, qwen3moe and qwen38 rows take. Crate Gotcha 15's rule satisfied: two readings, floor off the
         // slower. A first draft of this row carried 12.0 -- copied from the
         // qwen38 row, where it is 0.72 of a FASTER model -- which left 4% of
         // margin here and would have flaked on machine state rather than on a

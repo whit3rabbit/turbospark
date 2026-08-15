@@ -775,9 +775,10 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     (ROADMAP's 1-bit entry) -- every behavioural field of `qwen_gdn_dense_27b()`
     equals `qwen_gdn_moe_35b_a3b()`'s and every shape field differs, so the FFN
     is the only thing that forks, on `num_experts == 0` and never on
-    tensor naming. TWO published checkpoints run that flow, at two
-    quantizations of ONE architecture: `prism-ml/Bonsai-27B-mlx-1bit` and
-    `Qwen/Qwen3.8-27B` (see Gotcha 47);
+    tensor naming. THREE published checkpoints run that flow, at three
+    quantizations of ONE architecture: `prism-ml/Bonsai-27B-mlx-1bit` (1-bit),
+    `prism-ml/Ternary-Bonsai-27B-mlx-2bit` (2-bit) and `Qwen/Qwen3.8-27B`
+    (INT4) (see Gotcha 47);
     `DeepseekV4Flash` is refused. `GptOss` builds `RealGptOssState` and
     runs `families/gptoss/` (ROADMAP M5) -- plain GQA with a BIAS on all
     four projections, YaRN rope through a precomputed frequency table,
@@ -1767,7 +1768,7 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     a seventh family and budgeting a bring-up. `config.json` is a few KB
     over HTTP; diffing it against every shipped baseline costs seconds and
     answers "is this new?" before any of the expensive questions are asked.
-    `both_published_checkpoints_parse_to_one_baseline`
+    `every_published_checkpoint_parses_to_one_baseline`
     (`crates/repack/tests/qwen35_config.rs`) is that diff turned into an
     offline assertion, so a future point release that DOES move a shape key
     reddens a millisecond test rather than failing a 16 GB stream at some
@@ -1775,14 +1776,23 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     TWO CONSEQUENCES WORTH KEEPING. The baseline is named for the
     ARCHITECTURE (`qwen_gdn_dense_27b`, renamed off `bonsai_27b`) because a
     checkpoint name on a shared baseline misleads every later reader. And
-    the pair is this repo's first CONTROLLED quantization comparison: same
-    architecture, same tokenizer, same flow, 1-bit group 128 against INT4
-    group 64. It reads 18.3 against 19.0 tok/s on 3.9x the weight bytes,
-    which says the flow is COMPUTE-bound at both widths -- a thing the 1-bit
-    entry suspected and had no second point to test. Note the pair is not a
-    clean quantization ablation in the other direction: Bonsai is its own
-    QAT checkpoint, so the weights differ too, and no perplexity comparison
-    between them is licensed.
+    the family is this repo's first CONTROLLED quantization comparison: same
+    architecture, same tokenizer, same flow, at 1-bit group 128, 2-bit group
+    128 and INT4 group 64. **IT IS A TRIPLE SINCE 2026-08-15**, and the third
+    point is what settles the reading: 18.3 tok/s at one bit (3.9 GB of
+    weights), 14.2 at two (7.6 GB) and 19.0 at four (15.1 GB). Decode does
+    not track the weight bytes AT ALL -- not even monotonically -- so the
+    flow is COMPUTE-bound at every width, which the 1-bit entry suspected
+    and a two-point line could still have been read as bandwidth. The 2-bit
+    GEMV is simply doing more per byte than either neighbour (four elements
+    a byte, and no `+/-1` shortcut).
+    Note it is not a clean quantization ablation in the OTHER direction:
+    Bonsai and its ternary sibling are prism-ml's own QAT checkpoints while
+    Qwen3.8 is Qwen's release quantized by mlx-community, so a TRAINING
+    separates the perplexities as well as a width. The two prism-ml files
+    are the closest thing to a clean pair (same publisher, same base) and
+    read 6.8350 at two bits against no frozen row at one, since Bonsai never
+    got a quality gate.
 
 48. **A SUMMARY STATISTIC THAT IS INVARIANT UNDER THE MUTATION YOU ARE
     TESTING FOR PROVES NOTHING, AND SUB-4-BIT PACKING PRODUCES ONE EVERY

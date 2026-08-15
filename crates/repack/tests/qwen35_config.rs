@@ -17,17 +17,20 @@
 //! structurally. What catches it is the baseline comparison plus the
 //! `num_experts` cases below.
 //!
-//! **ONE `text_config()` SERVES BOTH CHECKPOINTS, WHICH IS THE FINDING AND
-//! NOT A SHORTCUT.** Read side by side off the two published files, their
+//! **ONE `text_config()` SERVES ALL THREE CHECKPOINTS, WHICH IS THE FINDING
+//! AND NOT A SHORTCUT.** Read side by side off the published files, their
 //! `text_config`s agree on 33 of 35 keys; the two that differ are
-//! `eos_token_id` (248046 against 248044) and the `quantization` object, and
-//! NEITHER reaches an `ArchConfig` field -- the first is the tokenizer's
-//! business and the second `parse_gemma4_quantization`'s. So the fixture
-//! carries the shared body once and forks only on those two, and
-//! `both_published_checkpoints_parse_to_one_baseline` is what turns that
-//! reading into an assertion. If a future Qwen3.8 point release moves a
-//! shape key, THAT is the test which reddens, rather than a 16 GB stream
-//! failing at some tensor offset.
+//! `eos_token_id` (248046 for Bonsai and the ternary checkpoint, 248044 for
+//! Qwen3.8) and the `quantization` object, and NEITHER reaches an
+//! `ArchConfig` field -- the first is the tokenizer's business and the second
+//! `parse_gemma4_quantization`'s. The ternary file goes further and shares
+//! Bonsai's `eos_token_id` too, so those two differ in the quantization
+//! object ALONE. So the fixture carries the shared body once and forks only
+//! where it must, and
+//! `every_published_checkpoint_parses_to_one_baseline` is what turns that
+//! reading into an assertion. If a future point release of any of the three
+//! moves a shape key, THAT is the test which reddens, rather than a multi-GB
+//! stream failing at some tensor offset.
 
 use turbospark_repack::{
     parse_gemma4_quantization, parse_qwen_gdn_dense_config, parse_qwen_gdn_moe_config,
@@ -51,10 +54,11 @@ fn layer_types() -> Vec<&'static str> {
 /// The production `text_config`, trimmed to the keys the parser reads plus
 /// the mrope fields it must ignore and the `mtp_*` ones nothing implements.
 ///
-/// `eos` is the one key that differs between the two published checkpoints
-/// (Bonsai 248046, Qwen3.8 248044). It is a parameter rather than a constant
-/// so the difference is stated, and it must reach NO field of the result --
-/// which `both_published_checkpoints_parse_to_one_baseline` is what checks.
+/// `eos` is the one key that differs across the published checkpoints (Bonsai
+/// and the ternary file 248046, Qwen3.8 248044). It is a parameter rather
+/// than a constant so the difference is stated, and it must reach NO field of
+/// the result --
+/// which `every_published_checkpoint_parses_to_one_baseline` is what checks.
 fn text_config_with_eos(eos: u32) -> serde_json::Value {
     serde_json::json!({
         "eos_token_id": eos,
@@ -164,13 +168,14 @@ fn parses_the_production_config_into_the_pinned_baseline() {
     );
 }
 
-/// **BOTH published `qwen3_5` checkpoints parse to ONE `ArchConfig`, and that
-/// is what makes Qwen3.8-27B a second checkpoint rather than a new family.**
+/// **ALL THREE published `qwen3_5` checkpoints parse to ONE `ArchConfig`, and
+/// that is what makes each of the later two a checkpoint rather than a new
+/// family.**
 ///
-/// The equality is with `qwen_gdn_dense_27b()` on both sides AND with each other, so
-/// it fails whichever way a future divergence arrives: a Qwen3.8 point
-/// release that moves a shape key, or an edit to the baseline that suits one
-/// checkpoint and not the other.
+/// The equality is with `qwen_gdn_dense_27b()` on every side AND between them,
+/// so it fails whichever way a future divergence arrives: a point release that
+/// moves a shape key, or an edit to the baseline that suits one checkpoint and
+/// not the others.
 ///
 /// It also pins the two differences as INERT. `eos_token_id` and the
 /// quantization block are the only keys the two files disagree on, and
@@ -178,7 +183,7 @@ fn parses_the_production_config_into_the_pinned_baseline() {
 /// either into the arch would be caught here rather than by an install that
 /// validates and then decodes wrongly.
 #[test]
-fn both_published_checkpoints_parse_to_one_baseline() {
+fn every_published_checkpoint_parses_to_one_baseline() {
     let bonsai = parse_qwen_gdn_dense_config(&config_json()).expect("bonsai config parses");
     let qwen38 = parse_qwen_gdn_dense_config(&qwen38_config_json()).expect("qwen3.8 config parses");
     let ternary = parse_qwen_gdn_dense_config(&ternary_config_json()).expect("ternary parses");
@@ -193,17 +198,17 @@ fn both_published_checkpoints_parse_to_one_baseline() {
     assert_eq!(bonsai, ternary, "ternary is Bonsai at a different width");
 }
 
-/// The quantization SPEC is where the two checkpoints really differ, and each
-/// is a shape this port has kernels for.
+/// The quantization SPEC is where the checkpoints really differ, and each is a
+/// shape this port has kernels for.
 ///
-/// Bonsai is `(1, 128)` with FP16 companions and Qwen3.8's mlx-community
-/// artifact is `(4, 64)` with BF16 ones -- the two halves of
-/// `is_supported_affine_shape`'s conjunction. Asserted here because it is the
+/// Bonsai is `(1, 128)` with FP16 companions, the ternary file `(2, 128)` with
+/// FP16 ones, and Qwen3.8's mlx-community artifact `(4, 64)` with BF16 --
+/// the three arms of `is_supported_affine_shape`'s conjunction. Asserted here because it is the
 /// one axis the shared baseline above deliberately says nothing about, and
 /// because a `mode` key mis-read as a per-tensor override would surface as a
 /// bogus bits entry rather than as an error.
 #[test]
-fn the_two_checkpoints_declare_the_two_supported_affine_shapes() {
+fn the_three_checkpoints_declare_three_supported_affine_shapes() {
     let bonsai = parse_gemma4_quantization(&config_json()).expect("bonsai quantization parses");
     assert_eq!((bonsai.default_bits, bonsai.group_size), (1, 128));
 

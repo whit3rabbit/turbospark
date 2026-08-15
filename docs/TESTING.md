@@ -240,6 +240,16 @@ TURBOSPARK_QWEN36_GGUF_INSTALL_DIR=~/models/qwen36-gguf.gturbo \
 # The memory oracle (see docs/BENCHMARKING.md). One target per model
 # family: the footprint assertion is a whole-session peak, so two
 # families in one process cannot each have a ceiling.
+#
+# THE TWO BLOCKS BELOW ARE EXAMPLES, NOT THE FULL LIST, and the list has
+# grown past what is worth duplicating here: SEVEN oracle targets (gemma4,
+# qwen36, qwen3moe, mistral, gptoss, qwen38, ternary) and SEVEN quality
+# gates (the same list without mistral, which has none, plus iq3's).
+# AGENTS.md's command block carries all fourteen
+# with their env vars and their per-family quirks -- the two windows that
+# are not 4,096, the one budget that is not 1,024, and which installs each
+# needs. Run `ls crates/bench/tests/*_{quality_gate,memory_oracle}.rs` if
+# that block is ever out of date too.
 TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
   cargo test -p turbospark-bench --test memory_oracle --release -- --ignored --nocapture
 TURBOSPARK_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \

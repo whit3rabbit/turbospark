@@ -188,6 +188,7 @@ the reading, so allocator jitter cannot flake it).
 | gpt-oss-20b, MXFP4 | 11 GB | 8,192 | 5,417 - 5,421 MiB | 5,700 | 22.9 - 30.4 | yes, 32 experts |
 | **Qwen3.8-27B, MLX INT4** | 14 GB | 4,096 | **660.0 - 660.3 MiB** | 750 | 16.8 - 19.0 | **no, dense** |
 | Mistral 7B, Q4_K_M | 4.1 GB | 8,192 | 1,201 - 1,203 MiB | 1,300 | 16.3 - 30.4 | no, dense |
+| **Ternary-Bonsai-27B, MLX 2-bit** | 7.6 GB | 4,096 | **657.8 - 661.6 MiB** | 750 | 12.5 - 13.9 | **no, dense** |
 | Bonsai-27B, MLX 1-bit | 3.9 GB | -- | not measured | -- | ~18.3 | no, dense |
 
 **READ THE `Streams?` COLUMN BEFORE COMPARING ANY TWO ROWS**, because the
@@ -203,7 +204,10 @@ about this engine.
 - **Dense rows**: nothing streams, and the peak is small for an entirely
   different reason -- `phys_footprint` does not count the memory-mapped
   weights at all (Gotcha 40). Qwen3.8-27B's 660 MiB sits beside 15.1 GB of
-  weights that are mapped and pinned and simply not counted. A dense row is
+  weights that are mapped and pinned and simply not counted. **The two
+  `qwen3_5` rows are the cleanest demonstration of that in this table**: the
+  same architecture at INT4 and at 2 bits, the same 4,096 window, 15.1 GB of
+  weights against 7.6, and their peaks differ by 1.3 MiB. A dense row is
   therefore NOT a claim that the model runs in that much RAM; the practical
   requirement is closer to its size on disk. The counted figure is a leak
   sentinel, not a capacity number.
@@ -1051,7 +1055,7 @@ and `prism-ml/Bonsai-27B-mlx-1bit` are ONE architecture: their
 `text_config`s agree on 33 of 35 keys, both have 2,180 tensors and 333
 `vision_tower.` tensors, and both parse to the same `ArchConfig`
 (`qwen_gdn_dense_27b()`) -- asserted offline, without the network, by
-`both_published_checkpoints_parse_to_one_baseline`. The two that differ,
+`every_published_checkpoint_parses_to_one_baseline`. The two that differ,
 `eos_token_id` and the quantization block, reach no field of it. So no
 `ArchConfig` field, no kernel and no decode flow changed to support this
 checkpoint; the repack walk needed nothing either.
@@ -1132,7 +1136,7 @@ field, no baseline, no parser and no decode flow.** Its `text_config` is
 Bonsai-27B's to the KEY -- the same `eos_token_id` 248046 and all -- so the
 two files differ in their `quantization` object alone, which is a stronger
 statement than the Qwen3.8 pair makes (that one differs in two keys).
-`both_published_checkpoints_parse_to_one_baseline` asserts all three parse
+`every_published_checkpoint_parses_to_one_baseline` asserts all three parse
 to `qwen_gdn_dense_27b()` offline, without the network.
 
 What it cost was a WIDTH, not a family: a CPU reference (`quant_2bit.rs`),

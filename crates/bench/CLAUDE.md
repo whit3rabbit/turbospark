@@ -31,7 +31,8 @@ crates/bench/
 |   +-- gptoss_quality_gate.rs  # Quality gate for gpt-oss-20b; pins the template's date
 |   +-- qwen38_memory_oracle.rs # Memory oracle for Qwen3.8-27B (`qwen35`), the family's FIRST
 |   +-- qwen38_quality_gate.rs  # Quality gate for Qwen3.8-27B; no assistant prefix, and see its header for why
-|   \-- ternary_quality_gate.rs # Quality gate for Ternary-Bonsai-27B (2-bit), the same family's third checkpoint
+|   +-- ternary_quality_gate.rs # Quality gate for Ternary-Bonsai-27B (2-bit), the same family's third checkpoint
+|   \-- ternary_memory_oracle.rs # Its oracle; the peak is Qwen3.8's on HALF the weights (Gotcha 40)
 \-- prompts/
     +-- quality-v1/         # Quality gate reference prompt fixtures
     |   \-- assistant-reference.txt
