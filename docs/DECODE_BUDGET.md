@@ -66,6 +66,12 @@ goes to zero, which it will not. That is a real but ordinary optimization,
 not the largest one available, and it should be scoped against 1.09 rather
 than against 5.
 
+**And prefill, not decode, is where the `pread` is worth a phase.** A
+prefill chunk of M tokens reads the UNION of their routes rather than the
+sum, which no decode-side change can imitate: see
+`docs/BATCHED_PREFILL.md`, where the same bucket is 25.2% and the union
+cuts it 3.3x at M=16.
+
 The `pread` is the item that is worth a phase, and its cheapest lever needs
 no kernel work at all: slot count. 32 slots buys +28% decode over 8 and
 +15.7% over 16, for pinned host memory of `slots x layers x expert_stride`
@@ -82,6 +88,47 @@ resolves to 32. Every harness keeps its pinned 16 through a separate entry
 point, so the rows above and every row in `docs/BENCHMARKS.md` still
 describe 16 slots and are still reproducible with
 `--expert-cache-slots 16`.
+
+## Two more dead ends, measured 2026-08-16
+
+Both were "measure before believing" items left open by the session above.
+Both came back null, and both are recorded here so nobody re-derives them.
+
+**The routed command buffer's retire does NOT hide a `pread` overlap.**
+`families/gemma4/mod.rs` retires layer N-1's routed CB before encoding
+layer N's routed MoE, which contains the expert `pread` -- so moving the
+retire past the `pread` looks like free overlap. The bucket that bounds it
+is `routed cb retire`, and it reads **0.26 and 0.28 ms/token** over two
+runs at 32 slots (1.4% and 1.3% of the token), against 0.23 in the
+2026-08-06 prefill attribution. Layer N-1's routed work has essentially
+completed by the time cb1's wait returns, which is what
+`MFERENCE_ROUTED_PIPELINE` already claims and this confirms. The ceiling is
+1.4% and the achievable part is less.
+
+Worth recording alongside it, because it bounds any future attempt: the
+retire can move past the `pread` but **not** past the bind. Everything from
+`t_bind` onward in `families/gemma4/moe.rs` writes `scratch.routing_w`,
+`scratch.moe_acts` and the routed argument buffer, all of which live in
+`DecodeScratch` and are shared across layers, so a host write there while
+layer N-1's CB is still reading them is a data race producing fluent wrong
+text. Covering the bind too needs those double-buffered, which is a
+different and larger change.
+
+**GDN function constants 90-94 are not reachable from a measurable
+install.** The standing item read "declared but never specialized", and
+that is wrong twice. They ARE set (`crates/gpu/src/gdn.rs:132`),
+deliberately to `FC_GDN_IN_USE_FC = false` so every dispatch takes its
+shape at runtime, and the module doc says so. And the kernel they belong
+to, `encode_gdn_in_proj`, is gated on `dtype == 4`
+(`families/qwen/attn.rs:39`): only an INT4 install reaches the fused
+four-way projection, while the sub-4-bit checkpoints take the
+four-separate-GEMV branch. On `ternary27b`, the only GDN install on disk,
+`gdn_in_proj_gemv_simd` does not appear in the dispatch profile at all --
+and all four GDN kernels that DO appear total 2.2% of the sampled buffer,
+against `dequant_int2_gemv_simd` at 93.9%. Specializing a row count inside
+a GEMV that is 2% of the token is not worth the 20-minute install
+re-stream it would take to measure, let alone the pipeline-cache key it
+would need (`crates/gpu` Gotcha 1).
 
 ## Caveats
 

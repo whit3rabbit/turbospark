@@ -9,6 +9,8 @@ mod error;
 mod expert_cache_policy;
 #[cfg(target_os = "macos")]
 mod families;
+#[cfg(target_os = "macos")]
+mod ffn_hist;
 mod pacing;
 mod power;
 mod producer;

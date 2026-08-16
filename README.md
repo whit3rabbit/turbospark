@@ -11,7 +11,7 @@
 
 It is specifically designed for **Apple Silicon (macOS Metal)** to execute large language models (LLMs) with **extremely low memory overhead**. Instead of holding full model parameters in unified RAM/VRAM, `turbospark` streams routed expert weights directly from high-speed SSD storage into a lean working memory footprint. This enables Mac users with limited memory (8 GB, 16 GB, 24 GB, or 36 GB) to run large models like **Gemma 4 26B-A4B** and **Qwen 3.6 35B-A3B** locally without exhausting system memory.
 
-The port is tested against the original rather than assumed compatible. Decode throughput lands within 1% of the Swift engine on the same install, each model family carries a frozen quality gate (teacher-forced perplexity plus output digests), memory oracles assert peak-footprint ceilings, and the numerics are cross-checked against `mlx-lm`, `llama.cpp`, and MLX on identical bytes. What the suite proves is in [`docs/TESTING.md`](docs/TESTING.md), and the frozen numbers are in [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md).
+The port is tested against the original rather than assumed compatible. Decode throughput lands within 1% of the Swift engine on the same install, every family carries a memory oracle asserting a peak-footprint ceiling, every family but the dense `llama` one carries a frozen quality gate (teacher-forced perplexity plus output digests), and the numerics are cross-checked against `mlx-lm`, `llama.cpp`, and MLX on identical bytes. What the suite proves is in [`docs/TESTING.md`](docs/TESTING.md), and the frozen numbers are in [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md).
 
 ## Table of Contents
 
@@ -87,8 +87,9 @@ Dense models (no experts to stream) work too, but the memory story is different 
 | **Mistral 7B** (Q4_K_M) | 4.1 GB | 1.2 GB counted | 16 to 30 tok/s | measured at 8k context |
 | **Bonsai-27B** (1-bit) | 3.9 GB | not yet measured | ~18 tok/s | |
 | **Ternary-Bonsai-27B** (2-bit) | 7.6 GB | 660 MB counted | 13 to 14 tok/s | same caveat |
+| **Muse Glimmer 30B** (INT4) | 15 GB | 535 MB counted | 13 to 19 tok/s | measured at 8k context; reasons before answering |
 
-> **Caveat, and please read it before quoting the 660 MB.** Nothing streams in a dense model. That figure is what macOS *counts* against the process. The 14 GB of weights are memory-mapped and simply are not counted. You still need a machine that can hold and page them, so treat a dense model as needing roughly its **size on disk** in free RAM, not its counted footprint. The counted number is useful for spotting leaks, not for capacity planning.
+> **Caveat, and please read it before quoting the counted figures.** Nothing streams in a dense model. Those figures are what macOS *counts* against the process. The weights are memory-mapped and simply are not counted — most starkly for Muse Glimmer, where 535 MB is counted against 15 GB of weights. You still need a machine that can hold and page them, so treat a dense model as needing roughly its **size on disk** in free RAM, not its counted footprint. The counted number is useful for spotting leaks, not for capacity planning.
 
 ### With this engine against without it
 
@@ -126,7 +127,7 @@ Running that checkpoint under stock `mlx-lm` is therefore not slow, it is imposs
 
 That argument does not extend to two bits. Upstream `mlx` supports `bits=2`, and this project's own cross-engine check for the ternary checkpoint runs against stock `mlx` 0.32.0. If you want the ternary model and already have `mlx-lm` working, this engine offers you the server, the GGUF intake, and the frozen quality gates, and it does not offer you less memory.
 
-**How to read the other columns.** "Power draw" is the engine's own CPU + GPU draw while generating, not the whole machine: the laptop as a whole measured roughly 50 to 70 W under load, most of the difference being the display. "Energy per token" is joules per generated token, so at ~0.4 J a thousand tokens costs about 400 J, roughly 0.1 Wh. Speed and power vary by prompt length, and the ranges span three fixed benchmark prompts of increasing size. Power figures exist for five installs and are simply absent for the rest.
+**How to read the other columns.** "Power draw" is the engine's own CPU + GPU draw while generating, not the whole machine: the laptop as a whole measured roughly 50 to 70 W under load, most of the difference being the display. "Energy per token" is joules per generated token, so at ~0.4 J a thousand tokens costs about 400 J, roughly 0.1 Wh. Speed and power vary by prompt length, and the ranges span three fixed benchmark prompts of increasing size. Power figures exist for five installs and are simply absent for the rest. A sixth, **Muse Glimmer 30B, is deliberately not in a table**: it draws ~38 W and saturates this laptop thermally within about two minutes, so every arm the harness measures is being driven by the thermal governor rather than by the workload, and their energy-per-token wanders 25% run to run. Its unconstrained cost is known (~2.02 J/token, reproduced across three sessions to 1.5%); its sustained cost on this hardware is not knowable. The direction of that error is the trap worth knowing: a throttled run is slower AND cheaper per token, so it does not look broken in a power table, it looks good.
 
 **Memory is compared at a fixed context window.** The MoE rows are at 4,096 tokens. gpt-oss, Mistral and Muse Glimmer run at 8,192, because their tokenizers or their reasoning output need it. A footprint number without its window is not comparable to another one: on a dense model the KV cache is most of what is being measured, and doubling the window roughly doubles the figure.
 

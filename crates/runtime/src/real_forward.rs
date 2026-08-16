@@ -157,6 +157,10 @@ pub struct RealForwardRunner {
     /// `MFERENCE_ROUTER_HIST=/path.json`. Written on drop; see
     /// `router_hist.rs`.
     pub(crate) router_hist: Option<crate::router_hist::RouterHistogram>,
+    /// Dense-FFN activation census, `None` unless
+    /// `MFERENCE_FFN_HIST=/path.json` on a family whose flow feeds the
+    /// capture (museGlimmer today). Written on drop; see `ffn_hist.rs`.
+    pub(crate) ffn_hist: Option<crate::ffn_hist::FfnActHist>,
     /// Set for the duration of one [`LogitProducer::produce_prefill`] call:
     /// the caller is discarding this token's logits, so the output head
     /// (final norm, full-vocab GEMV, softcap, host readback) is skipped.
@@ -406,6 +410,7 @@ impl RealForwardRunner {
             expecting.num_layers as usize,
             expecting.num_experts.max(0) as usize,
         );
+        let ffn_hist = crate::ffn_hist::FfnActHist::from_env(&context, &expecting);
         let mut runner = Self {
             context,
             weights,
@@ -428,6 +433,7 @@ impl RealForwardRunner {
             routed_pipeline: std::env::var("MFERENCE_ROUTED_PIPELINE").as_deref() != Ok("0"),
             routed_layouts,
             router_hist,
+            ffn_hist,
             skip_head: false,
         };
         match runner.arch.family {

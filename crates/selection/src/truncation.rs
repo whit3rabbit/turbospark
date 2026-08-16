@@ -121,13 +121,41 @@ pub fn rank_indices_u32_into(keys: &[f64], out: &mut Vec<u32>) {
 /// writes a 1 MiB identity permutation first.
 ///
 /// So this finds the cut with one SEQUENTIAL pass instead, then ranks only
-/// the handful of indices that reach it. The result is identical rather
-/// than merely equivalent: with no NaN present `rank_order_u32` is a total
-/// order (`partial_cmp` always resolves and the index tie-break settles the
+/// the indices that reach it. The result is identical rather than merely
+/// equivalent: with no NaN present `rank_order_u32` is a total order
+/// (`partial_cmp` always resolves and the index tie-break settles the
 /// rest), the collected set is a superset of the top-`k` because it admits
-/// every tie at the cut, and sorting a superset then truncating yields the
-/// same prefix as sorting the whole domain. `tests/rank_top_k.rs` checks
-/// that against the full-sort reference, ties included.
+/// every tie at the cut, and reducing a superset to its top-`k` then
+/// ordering it yields the same prefix as sorting the whole domain.
+/// `tests/rank_top_k.rs` checks that against the full-sort reference, ties
+/// included.
+///
+/// **THE ADMITTED SET IS BOUNDED BY NOTHING, AND WHAT KEEPS THAT CHEAP IS
+/// THE ORDER IT IS COLLECTED IN.** How many indices reach the cut is a
+/// property of the input: on a real distribution it is `k` or a few more,
+/// and on a largely constant key array (a uniform-ish distribution, or an
+/// `exp` pass that underflowed most of the vocabulary to one value) it is
+/// the whole domain. Sorting the whole domain is exactly the cost this
+/// function exists to avoid, so the second case looks like a hole.
+///
+/// It is not one, and the reason is a coincidence worth pinning rather
+/// than relying on silently. Everything tied at the cut has the SAME key,
+/// so `rank_order_u32` falls to its ascending-index tie-break; the collect
+/// loop pushes indices in ascending order; so the admitted set arrives
+/// ALREADY SORTED but for the at most `k - 1` entries above the cut, and
+/// `sort_unstable_by` is pdqsort, which takes that in linear time. A fully
+/// tied cut costs 1.3-1.6x a well-separated one, not the ~50x a real full
+/// sort would (`tests/rank_top_k.rs`, the tied-cut timing case).
+///
+/// **Partitioning the admitted set first was tried and is SLOWER**, by a
+/// measured 1.4x on that shape: `select_nth_unstable_by` cannot exploit an
+/// already-sorted input and pays random access into the 2 MiB key array to
+/// find a cut the sort gets for free. Do not "fix" this by adding one.
+///
+/// What WOULD reopen the hole is breaking the collection order -- a
+/// parallel or chunked collect loop, or a tie-break that is not ascending
+/// index. Measured on the same shape, shuffling the admitted set takes the
+/// sort from 0.304 to 5.450 ms. That is what the test above guards.
 ///
 /// A NaN key falls back to the old path deliberately. `partial_cmp(..)
 /// .unwrap_or(Equal)` makes NaN compare equal to everything, which is NOT a
@@ -148,6 +176,8 @@ pub fn rank_top_k_u32_into(keys: &[f64], k: usize, out: &mut Vec<u32>) {
                     out.push(i as u32);
                 }
             }
+            // PUSHED IN ASCENDING INDEX ORDER, and that is load-bearing
+            // rather than incidental -- see this function's doc comment.
             out.sort_unstable_by(rank_order_u32(keys));
             out.truncate(k);
             return;

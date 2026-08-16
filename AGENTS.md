@@ -24,6 +24,11 @@ decoding and DFlash: worth ~1.1x here at a SMALL block size, which inverts
 the datacenter result, because 19% of decode compute has no weights to
 amortize -- read it before proposing a drafter, and note that the lever it
 identifies is the batched-MoE kernel rather than the drafter.
+`docs/ACTIVATION_SPARSITY.md` is the dense-side sibling of the expert-routing
+negative: Muse Glimmer's FFN spreads 95% of its activation mass over 91% of
+its neurons, so PowerInfer-style neuron caching and streaming is a measured
+dead end here -- read it before proposing to shrink a dense model's working
+set by "loading only what the token uses".
 
 Do your best to keep code files under 400 lines but it's a suggestion not a hard rule. If over 400, decide if refactoring makes sense.
 
@@ -2143,8 +2148,11 @@ Workspace directory structure and crate layout:
 |   +-- phasediff.sh   # bucket-level decode phase diff against the Swift engine
 |   \-- power.sh       # watts & joules-per-token over the protocol (needs sudo)
 \-- docs
+    +-- ACTIVATION_SPARSITY.md # dense-FFN neuron caching/streaming, measured negative
+    +-- BATCHED_PREFILL.md # the one open gap against Swift: scope, cost, order of work
     +-- BENCHMARKS.md  # the FROZEN rows: quality, throughput, memory, cross-engine KL
     +-- BENCHMARKING.md# benchmark modes, mach memory sampling & memory oracle details
+    +-- DECODE_BUDGET.md # where a decoded token's time goes; three decode dead ends
     +-- EXPERT_ROUTING.md # domain-restricted expert sets, measured negative
     +-- GTURBO.md      # the .gturbo install format this port reads and writes
     +-- MODELS.md      # the catalog, the probe, `pull`, and how to add a row

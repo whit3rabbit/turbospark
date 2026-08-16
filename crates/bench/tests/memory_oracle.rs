@@ -110,6 +110,42 @@ const BASELINES: &[oracle_common::ChipBaseline] = &[
     // seen here, and would fail loudly if the whole sampler fix were lost
     // (which would land the slowest case back near 23).
     //
+    // THE FLOOR WAS RE-EXAMINED 2026-08-16 AFTER THE HOST-SAMPLER FIX AND
+    // DELIBERATELY LEFT AT 25.0. It had been flagged as "very loose, 25.0
+    // against a slowest case reading 38.2". It is not loose; 38.2 was the
+    // most favourable reading of the noisiest case. Four readings of the
+    // same three cases, same binary, same install, same day:
+    //
+    //   short-explanation  43.960 / 45.648 / 45.254 / 44.6    spread  3.8%
+    //   medium-review      40.798 / 41.841 / 41.496 / 40.8    spread  2.6%
+    //   long-synthesis     35.234 / 33.039 / 37.559 / 35.8    spread 14.0%
+    //
+    // (first three this session -- one battery, two AC -- the fourth from
+    // a concurrent session on AC. Peaks 2,104 / 2,175 / 2,155 / 2,174 MiB,
+    // inside the documented 77 MiB expert-slot-warming band.)
+    //
+    // **THE CASE THAT GOVERNS THE FLOOR HAS FOUR TO FIVE TIMES THE
+    // VARIANCE OF ITS SIBLINGS**, and that is structural rather than bad
+    // luck: `long-synthesis` prefills 3,015 tokens for ~67 s and then
+    // decodes only 599, so its short decode window sits downstream of a
+    // long hot prefill and is the arm most exposed to thermal state and to
+    // whatever else is on the machine. One floor is asserted against every
+    // case, so it is this one's worst reading that sets it.
+    //
+    // 25.0 is therefore 0.757 x the WORST observed (33.039), which is a
+    // tighter margin than the ~0.72 this row's earlier raises used, not a
+    // looser one. Raising to 27.5 would be 0.83 x that reading -- inside
+    // the case's own 14% spread, i.e. a test that fails on machine state.
+    //
+    // Nor would raising it buy anything. NO floor at a margin this case's
+    // variance permits can catch losing a recent optimization: the
+    // 2026-08-15 sampler fix is worth 9.4% at the protocol's sampled
+    // settings, and losing it entirely lands `long-synthesis` near 32,
+    // above any defensible floor. That is a statement about what a floor
+    // is for rather than a defect -- this one exists to catch the
+    // catastrophic classes (2026-08-06 split-KV, 2026-08-07 sampler, both
+    // of which roughly halved throughput), and it still does.
+    //
     // A REAL Swift comparison exists for this chip (2026-08-07,
     // `docs/BENCHMARKS.md`, reproduce with `scripts/parity.sh`): the same
     // install through `../Mference`'s MferenceCLI decodes at 41.1 / 38.6

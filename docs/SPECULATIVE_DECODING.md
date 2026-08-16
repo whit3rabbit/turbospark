@@ -16,6 +16,15 @@ Nothing here refutes DFlash. It is a statement about this engine's verify
 cost, and every number that would have to change for the answer to change
 is named at the bottom.
 
+**DO NOT CARRY THIS VERDICT TO BATCHED PREFILL**, which reuses the same
+`c(M)` and `union(M)` terms and reaches a different answer. A verify pass
+divides its cost by an ACCEPT LENGTH -- most of why 1.1x -- while a prefill
+chunk keeps every one of its M tokens, so its divisor is M with no
+probability in it. The compute split below is also DECODE's, where
+attention is 2.3%; in prefill it is 22.3%. See `docs/BATCHED_PREFILL.md`.
+The kernel facts here (the `c(M)` table, `union(M)`, and the two
+register-file dead ends) transfer; the conclusion does not.
+
 ## Where the question came from
 
 DFlash (arXiv 2602.06036) is becoming the default speculative-decoding

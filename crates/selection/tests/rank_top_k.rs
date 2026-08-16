@@ -160,11 +160,13 @@ fn nan_keys_rank_last_and_no_longer_panic() {
 }
 
 /// The cut admits every tie at the boundary, so when the boundary value is
-/// heavily repeated the admitted set is far larger than `k` and the
-/// truncation after the sort is what makes the answer right. A cut path
-/// that admitted only `k` entries, or compared with `>` instead of `>=`,
-/// would return too few here rather than the wrong ones -- which is the
-/// failure a spot check on distinct values cannot see.
+/// heavily repeated the admitted set is far larger than `k` and reducing it
+/// to `k` is what makes the answer right. A cut path that admitted only `k`
+/// entries, or compared with `>` instead of `>=`, would return too few here
+/// rather than the wrong ones -- which is the failure a spot check on
+/// distinct values cannot see. This case pins the ANSWER; the COST of that
+/// same shape is pinned separately by
+/// `a_tied_cut_stays_cheap_on_the_collected_order`.
 #[test]
 fn a_heavily_tied_cut_admits_the_ties_and_truncates_after_ordering() {
     // 4 clear winners, then 200 exact ties straddling any k in 5..205.
@@ -195,6 +197,118 @@ fn keeps_no_more_than_the_domain() {
     assert!(out.is_empty());
     rank_top_k_u32_into(&[], 8, &mut out);
     assert!(out.is_empty());
+}
+
+/// How many indices reach the cut is a property of the INPUT, not of `k`,
+/// and the degenerate input is not exotic: any key array that is largely
+/// constant admits its whole domain. That is reachable in the hot path,
+/// where the keys are `exp(s - max)` over the full vocabulary and a flat
+/// or underflowed tail makes most of them equal.
+///
+/// So the cut path sorts the whole domain on exactly the inputs it exists
+/// to protect -- and it stays cheap anyway, for a reason that is a
+/// coincidence of two unrelated choices and is therefore worth pinning.
+/// Everything tied at the cut has the SAME key, so `rank_order_u32` falls
+/// to its ascending-index tie-break; the collect loop pushes in ascending
+/// index order; so the admitted set arrives ALREADY SORTED but for the at
+/// most `k - 1` entries above the cut, and pdqsort takes that linearly.
+/// Measured here, release, V = 262144, k = 64: a fully tied cut costs
+/// ~1.6x a well-separated one, against the ~50x a genuine full sort would
+/// (`cost_at_the_real_vocabulary` below reads 20.05 ms against 0.30).
+///
+/// **Partitioning the admitted set before sorting it was tried and is
+/// SLOWER**, 1.4x on this shape, because `select_nth_unstable_by` cannot
+/// exploit an already-sorted input and pays random access into the 2 MiB
+/// key array for a cut the sort gets free. That is the change this test
+/// exists to reject as much as any regression.
+///
+/// What WOULD reopen the hole is breaking the collection order: a parallel
+/// or chunked collect, or a tie-break that is not ascending index. Measured
+/// on the same shape, shuffling the admitted set takes the sort from 0.304
+/// to 5.450 ms. The 3x bound sits well above the 1.6x the shipped path
+/// reads and well below that.
+///
+/// Timed PAIRED and interleaved so the ratio survives desktop contention
+/// an absolute number does not (AGENTS.md Gotcha 43).
+#[test]
+#[ignore = "timing assertion; needs --release to mean anything"]
+fn a_tied_cut_stays_cheap_on_the_collected_order() {
+    const V: usize = 262_144;
+    const K: usize = 64;
+
+    // Same domain, same k -- only the number of indices reaching the cut
+    // differs: K here...
+    let spread = probs(V);
+    // ...and all of V here. THE TIES HAVE TO BE AT THE CUT, which is the
+    // fixture's whole content and is easy to get wrong: put K distinct
+    // winners above a sea of equal keys and the `k`th largest VALUE is the
+    // last winner, so `>=` admits exactly K and the degenerate case never
+    // occurs. Four winners against `k = 64` puts the cut ON the repeated
+    // value instead, so every one of the V - 4 ties is admitted too.
+    let mut tied = vec![1.0f64; V];
+    for (i, slot) in tied.iter_mut().take(4).enumerate() {
+        *slot = 100.0 - i as f64;
+    }
+
+    // ASSERT THE FIXTURE DISCRIMINATES before relying on the timing. The
+    // first draft of this test put K distinct winners on top, admitted
+    // exactly K, and passed against the very implementation it was written
+    // to reject -- the same trap Gotchas 48 and 50 record on two other
+    // axes, here on a third.
+    let above = tied.iter().filter(|&&v| v > 1.0).count();
+    assert!(
+        above < K,
+        "{above} keys beat the repeated value, so the cut is not on it and \
+         the admitted set is not degenerate"
+    );
+    assert_eq!(
+        tied.iter().filter(|&&v| v >= 1.0).count(),
+        V,
+        "the whole domain must reach the cut, or there is nothing to partition"
+    );
+
+    let mut out = Vec::new();
+    rank_top_k_u32_into(&tied, K, &mut out);
+    assert_eq!(out.len(), K);
+    assert_eq!(
+        out,
+        (0..K as u32).collect::<Vec<u32>>(),
+        "the tied arm must still return the right answer, or the timing means nothing"
+    );
+
+    // The BEST of three rounds, not the worst: contention inflates a ratio
+    // and never deflates one, so the minimum is the least contaminated
+    // estimate available on a machine that cannot be quiesced.
+    let mut best = f64::INFINITY;
+    println!("\n-- top-{K} of {V}, spread cut against fully tied cut --");
+    for round in 1..=3 {
+        let t0 = std::time::Instant::now();
+        for _ in 0..10 {
+            rank_top_k_u32_into(&spread, K, &mut out);
+            std::hint::black_box(&out);
+        }
+        let a = t0.elapsed().as_secs_f64() * 1e3 / 10.0;
+
+        let t1 = std::time::Instant::now();
+        for _ in 0..10 {
+            rank_top_k_u32_into(&tied, K, &mut out);
+            std::hint::black_box(&out);
+        }
+        let b = t1.elapsed().as_secs_f64() * 1e3 / 10.0;
+
+        println!(
+            "  round {round}: spread {a:>6.3} ms, tied {b:>6.3} ms  ({:.2}x)",
+            b / a
+        );
+        best = best.min(b / a);
+    }
+    println!();
+    assert!(
+        best < 3.0,
+        "a fully tied cut costs {best:.2}x a spread one, against ~1.6x for \
+         the shipped path; the admitted set is no longer reaching the sort \
+         in ascending index order"
+    );
 }
 
 /// Timing, not correctness: prints the per-call cost at the real Gemma 4

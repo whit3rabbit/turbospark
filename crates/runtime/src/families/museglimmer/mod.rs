@@ -126,7 +126,7 @@ impl RealForwardRunner {
             1.0,
         )?;
 
-        let (context, weights, index, arch, scratch, kv, muse, phases) = (
+        let (context, weights, index, arch, scratch, kv, muse, phases, ffn_hist) = (
             &mut self.context,
             &self.weights,
             &self.index,
@@ -135,6 +135,7 @@ impl RealForwardRunner {
             &mut self.kv,
             self.real_muse.as_ref().expect("real muse state present"),
             &mut self.phases,
+            self.ffn_hist.as_ref(),
         );
 
         // `embed_norm`. A no-scale RMS over the embedding row, before any
@@ -239,12 +240,23 @@ impl RealForwardRunner {
                     (out, 0),
                 )?;
             }
+            // Under the activation census, `silu_mul` writes into a
+            // per-layer region of the capture buffer instead of the shared
+            // `ffn_act` scratch (which the next layer would overwrite), and
+            // `down_proj` reads from the same region. Same kernel, same
+            // inputs, different destination address: the math and the
+            // generated text are byte-identical either way. See
+            // `ffn_hist.rs`.
+            let act = match ffn_hist {
+                Some(hist) => (&hist.capture, (layer * inter * 2) as u64),
+                None => (&scratch.ffn_act, 0),
+            };
             gpu::encode_silu_mul(
                 context,
                 &pass,
                 (&scratch.ffn_gate, 0),
                 (&scratch.ffn_up, 0),
-                (&scratch.ffn_act, 0),
+                act,
                 inter as u32,
             )
             .map_err(gpu_err)?;
@@ -256,7 +268,7 @@ impl RealForwardRunner {
                 &layer_tensor(layer, "mlp.down_proj.weight"),
                 hidden,
                 inter,
-                (&scratch.ffn_act, 0),
+                act,
                 (&scratch.ffn_out, 0),
             )?;
 
@@ -337,6 +349,18 @@ impl RealForwardRunner {
         phases.final_wait_nanos += t_wait.elapsed().as_nanos() as u64;
         self.kv.advance();
 
+        // The command buffer has been waited on, so every layer's capture
+        // region is final. Prefill passes are counted but not read back:
+        // prefill routes differently and a 2 MB readback per prompt token
+        // buys data the analysis would exclude (`ffn_hist.rs`).
+        if let Some(hist) = self.ffn_hist.as_mut() {
+            if self.skip_head {
+                hist.note_prefill_pass();
+            } else {
+                hist.record_pass();
+            }
+        }
+
         if self.skip_head {
             return Ok(());
         }
@@ -344,15 +368,20 @@ impl RealForwardRunner {
         // softmaxes whatever it is handed (AGENTS.md Gotcha 16). The softcap
         // is what HF's `*ForCausalLM.forward` returns, and the multiplier is
         // part of the head rather than of the sampler.
-        let head = gpu::read_buffer_f16(&scratch.logits, 0, vocab);
-        if head.len() != logits.len() {
+        //
+        // Read the head STRAIGHT into the caller's slice. The owned-`Vec`
+        // form of this cost a 512 KiB allocation and a second 512 KiB copy
+        // per decoded token, outside every profiling bucket in this repo
+        // (AGENTS.md Gotcha 23). The length check moves ahead of the read
+        // because it was only ever comparing `vocab` to `logits.len()`.
+        if vocab != logits.len() {
             return Err(RealForwardError::Unsupported(format!(
                 "vocab mismatch: model has {}, caller expected {}",
-                head.len(),
+                vocab,
                 logits.len()
             )));
         }
-        logits.copy_from_slice(&head);
+        gpu::read_buffer_f16_into(&scratch.logits, 0, logits);
         Ok(())
     }
 }
