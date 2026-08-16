@@ -8,11 +8,11 @@
 use crate::failure::ParseFailure;
 use crate::options::OPTIONS;
 use crate::request::{
-    InvocationRequest, Mode, PowerProfile, PrefillChunk, ReadAheadMode, DEFAULT_MAX_CONTEXT,
-    DEFAULT_MAX_NEW, DEFAULT_REPETITION_PENALTY, DEFAULT_TEMPERATURE, DEFAULT_TOP_K, DEFAULT_TOP_P,
-    MAX_TOP_K,
+    ExpertCacheSlots, InvocationRequest, Mode, PowerProfile, PrefillChunk, ReadAheadMode,
+    DEFAULT_MAX_CONTEXT, DEFAULT_MAX_NEW, DEFAULT_REPETITION_PENALTY, DEFAULT_TEMPERATURE,
+    DEFAULT_TOP_K, DEFAULT_TOP_P, MAX_TOP_K,
 };
-use foundation::runtime_config::{ALLOWED_CACHE_SLOTS, ALLOWED_CHUNK_SIZES, DEFAULT_CACHE_SLOTS};
+use foundation::runtime_config::{ALLOWED_CACHE_SLOTS, ALLOWED_CHUNK_SIZES};
 
 /// One of the three possible outcomes of parsing a token list. There is no
 /// fourth outcome and no partially populated result.
@@ -51,7 +51,7 @@ pub fn parse(tokens: &[String]) -> ParseOutcome {
     let mut seed: Option<u64> = None;
     let mut stop: Vec<String> = Vec::new();
     let mut rdadvise = ReadAheadMode::default();
-    let mut expert_cache_slots = DEFAULT_CACHE_SLOTS;
+    let mut expert_cache_slots = ExpertCacheSlots::default();
     let mut prefill_chunk = PrefillChunk::default();
     let mut power_profile: Option<PowerProfile> = None;
     let mut max_tokens_per_sec: Option<f64> = None;
@@ -129,10 +129,18 @@ pub fn parse(tokens: &[String]) -> ParseOutcome {
                 Some(mode) => rdadvise = mode,
                 None => return invalid("--rdadvise", value),
             },
-            "--expert-cache-slots" => match value.parse::<u32>() {
-                Ok(n) if ALLOWED_CACHE_SLOTS.contains(&n) => expert_cache_slots = n,
-                _ => return invalid("--expert-cache-slots", value),
-            },
+            "--expert-cache-slots" => {
+                if value == "auto" {
+                    expert_cache_slots = ExpertCacheSlots::Auto;
+                } else {
+                    match value.parse::<u32>() {
+                        Ok(n) if ALLOWED_CACHE_SLOTS.contains(&n) => {
+                            expert_cache_slots = ExpertCacheSlots::Fixed(n);
+                        }
+                        _ => return invalid("--expert-cache-slots", value),
+                    }
+                }
+            }
             "--prefill-chunk" => {
                 if value == "auto" {
                     prefill_chunk = PrefillChunk::Auto;

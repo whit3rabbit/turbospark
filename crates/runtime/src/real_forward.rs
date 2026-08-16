@@ -59,6 +59,7 @@ use std::path::Path;
 use foundation::LogitValue;
 use model_io::{ArchConfig, ResidentBuffer, ResidentIndex};
 
+use crate::expert_cache_policy::ExpertCacheSlots;
 use crate::producer::LogitProducer;
 use crate::real_forward_layout::{
     moe_offsets_from_layout, readable_resident_dtype, routed_layouts_from_layout,
@@ -104,6 +105,12 @@ pub struct RealForwardRunner {
     /// before the allocations they alias.
     pub(crate) slot_buffers: Vec<Vec<gpu::MetalBuffer>>,
     pub(crate) streamers: Vec<Option<streaming::PreadExpertStreamer>>,
+    /// What the slot policy actually resolved to, kept so a caller can
+    /// REPORT it. Under `ExpertCacheSlots::Auto` the number is a property of
+    /// this machine and this install, so a startup line that echoed the
+    /// request rather than the resolution would be describing nothing --
+    /// and every throughput or footprint figure has to be read beside it.
+    pub(crate) expert_cache_slots: usize,
     /// Blob-relative sub-tensor offsets, ONE ENTRY PER LAYER, and the
     /// reusable argument buffer. Empty when the install does not pack
     /// experts.
@@ -190,6 +197,17 @@ impl RealForwardRunner {
         self.arch.vocab_size as usize
     }
 
+    /// The per-layer routed-expert slot count this runner actually opened
+    /// with, after [`ExpertCacheSlots::Auto`] resolved and after the cap at
+    /// the install's own expert count.
+    ///
+    /// Worth printing next to any throughput or footprint number, because
+    /// under `Auto` it is a property of the machine: `docs/DECODE_BUDGET.md`
+    /// measures 44.2 tok/s at 16 slots against 51.2 at 32 on one install.
+    pub fn expert_cache_slots(&self) -> usize {
+        self.expert_cache_slots
+    }
+
     /// Cumulative phase timings across every `produce` call so far. See
     /// [`PhaseCounters`] for what each bucket covers.
     pub fn phase_counters(&self) -> PhaseCounters {
@@ -237,7 +255,33 @@ impl RealForwardRunner {
         max_context: usize,
         expert_cache_slots: usize,
     ) -> Result<Self, RealForwardError> {
-        Self::open_inner(dir, expecting, max_context, expert_cache_slots, None)
+        Self::open_inner(
+            dir,
+            expecting,
+            max_context,
+            ExpertCacheSlots::Fixed(expert_cache_slots),
+            None,
+        )
+    }
+
+    /// [`RealForwardRunner::open_with_options`] taking a slot POLICY rather
+    /// than a count, so a caller can ask for [`ExpertCacheSlots::Auto`] and
+    /// have the count sized against this machine and this install at open.
+    ///
+    /// Deliberately a sibling rather than a widened `open_with_options`.
+    /// Every caller that measures something -- `turbospark-bench`, both
+    /// memory oracles, every quality gate, `logit_dump` -- passes a pinned
+    /// `PROTOCOL_EXPERT_CACHE_SLOTS` through the count-taking form, and
+    /// leaving that signature alone is what guarantees none of them can
+    /// acquire an environment-sensing default by accident (AGENTS.md Gotcha
+    /// 35). The user-facing binaries are the only callers of this one.
+    pub fn open_with_slot_policy(
+        dir: &Path,
+        expecting: ArchConfig,
+        max_context: usize,
+        slots: ExpertCacheSlots,
+    ) -> Result<Self, RealForwardError> {
+        Self::open_inner(dir, expecting, max_context, slots, None)
     }
 
     /// [`RealForwardRunner::open_with_options`] with an explicit SWA ring
@@ -256,7 +300,7 @@ impl RealForwardRunner {
             dir,
             expecting,
             max_context,
-            expert_cache_slots,
+            ExpertCacheSlots::Fixed(expert_cache_slots),
             fp16_ring_capacity_override,
         )
     }
@@ -265,10 +309,10 @@ impl RealForwardRunner {
         dir: &Path,
         expecting: ArchConfig,
         max_context: usize,
-        expert_cache_slots: usize,
+        expert_cache_slots: ExpertCacheSlots,
         fp16_ring_capacity_override: Option<usize>,
     ) -> Result<Self, RealForwardError> {
-        if expert_cache_slots == 0 {
+        if expert_cache_slots == ExpertCacheSlots::Fixed(0) {
             return Err(RealForwardError::Unsupported(
                 "expert_cache_slots must be positive".to_string(),
             ));
@@ -334,11 +378,12 @@ impl RealForwardRunner {
         .map_err(RealForwardError::Gpu)?;
         let scratch = DecodeScratch::new(&context, &expecting);
 
-        let (streamers, slot_buffers, experts_layout) =
+        let (streamers, slot_buffers, experts_layout, resolved_slots) =
             crate::real_forward_init::open_expert_streamers(
                 dir,
                 &expecting,
                 expert_cache_slots,
+                index.header.resident_size,
                 PACKED_LAYOUT_MAX_BYTES,
                 &mut context,
             )?;
@@ -368,6 +413,7 @@ impl RealForwardRunner {
             kv,
             scratch,
             slot_buffers,
+            expert_cache_slots: resolved_slots,
             streamers,
             moe_offsets,
             routed_blobs,

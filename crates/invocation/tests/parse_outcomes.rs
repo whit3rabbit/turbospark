@@ -3,9 +3,9 @@
 //! Corresponds to behavior-spec test-001, test-002, test-004, test-010,
 //! test-012, test-014, test-016, and test-017.
 
-use foundation::runtime_config::ALLOWED_CHUNK_SIZES;
+use foundation::runtime_config::{ALLOWED_CACHE_SLOTS, ALLOWED_CHUNK_SIZES};
 use turbospark_invocation::{
-    parse, InvocationRequest, Mode, ParseOutcome, PowerProfile, PrefillChunk,
+    parse, ExpertCacheSlots, InvocationRequest, Mode, ParseOutcome, PowerProfile, PrefillChunk,
 };
 
 fn tok(items: &[&str]) -> Vec<String> {
@@ -124,6 +124,33 @@ fn automatic_chunk_sizing_keyword_selects_auto() {
         "auto",
     ])));
     assert_eq!(req.prefill_chunk, PrefillChunk::Auto);
+}
+
+/// The slot flag now takes the same `auto`-or-a-member grammar
+/// `--prefill-chunk` does, and unlike that one `auto` is also the DEFAULT
+/// (`request_defaults.rs`). Every allowed count must still round-trip, since
+/// pinning one is how every harness in the repo keeps its frozen rows
+/// comparable.
+#[test]
+fn every_documented_slot_count_is_accepted_and_auto_is_a_value() {
+    for &slots in ALLOWED_CACHE_SLOTS.iter() {
+        let req = expect_success(parse(&tok(&[
+            "--model",
+            "m",
+            "--chat",
+            "--expert-cache-slots",
+            &slots.to_string(),
+        ])));
+        assert_eq!(req.expert_cache_slots, ExpertCacheSlots::Fixed(slots));
+    }
+    let req = expect_success(parse(&tok(&[
+        "--model",
+        "m",
+        "--chat",
+        "--expert-cache-slots",
+        "auto",
+    ])));
+    assert_eq!(req.expert_cache_slots, ExpertCacheSlots::Auto);
 }
 
 #[test]

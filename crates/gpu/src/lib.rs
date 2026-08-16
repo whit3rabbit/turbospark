@@ -180,7 +180,7 @@ pub use moe_gguf::{
     encode_moe_phase2_q8_0, mxfp4_row_bytes, Mxfp4Activation, MXFP4_BLOCK_BYTES, MXFP4_BLOCK_ELEMS,
 };
 #[cfg(target_os = "macos")]
-pub use power_state::{low_power_mode_enabled, thermal_state_raw};
+pub use power_state::{low_power_mode_enabled, physical_memory, thermal_state_raw};
 #[cfg(target_os = "macos")]
 pub use prefill_scratch::{PrefillChunkScratchBuffers, PrefillChunkScratchLayout};
 #[cfg(target_os = "macos")]

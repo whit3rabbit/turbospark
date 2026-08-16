@@ -5,6 +5,7 @@ use std::path::Path;
 
 use model_io::ArchConfig;
 
+use crate::expert_cache_policy::ExpertCacheSlots;
 use crate::real_forward_types::RealForwardError;
 
 pub(crate) fn validate_arch_config(expecting: &ArchConfig) -> Result<(), RealForwardError> {
@@ -48,12 +49,17 @@ pub(crate) type ExpertStreamersResult = (
     Vec<Option<streaming::PreadExpertStreamer>>,
     Vec<Vec<gpu::MetalBuffer>>,
     Option<model_io::PackedExpertsLayout>,
+    // The RESOLVED slot count. Handed back rather than recomputed by the
+    // caller because `Auto` reads the machine, so a second evaluation is not
+    // guaranteed to agree with the one the buffers were allocated against.
+    usize,
 );
 
 pub(crate) fn open_expert_streamers(
     dir: &Path,
     expecting: &ArchConfig,
-    expert_cache_slots: usize,
+    expert_cache_slots: ExpertCacheSlots,
+    resident_bytes: u64,
     max_bytes: u64,
     context: &mut gpu::MetalContext,
 ) -> Result<ExpertStreamersResult, RealForwardError> {
@@ -77,12 +83,16 @@ pub(crate) fn open_expert_streamers(
     // memory, because "cannot allocate" without the number sends the reader
     // looking for a leak instead of at the arithmetic.
     let experts_per_layer = layout.experts_per_layer.max(1);
-    let expert_cache_slots = expert_cache_slots.min(experts_per_layer);
-    let working_set = layout
-        .layers
-        .iter()
-        .map(|l| l.expert_stride * expert_cache_slots as u64)
-        .sum::<u64>();
+    // ONE additional slot costs this much across the whole model, which is
+    // the quantity the `Auto` policy divides its budget by. Summed over the
+    // real per-layer strides rather than `layers * max(stride)`, because
+    // ROADMAP Phase S's candidate has a layer 29 at 1.6x its siblings and
+    // the model-wide maximum over-states the cost by 35% there.
+    let bytes_per_slot = layout.layers.iter().map(|l| l.expert_stride).sum::<u64>();
+    let expert_cache_slots = expert_cache_slots
+        .resolve(gpu::physical_memory(), resident_bytes, bytes_per_slot)
+        .min(experts_per_layer);
+    let working_set = bytes_per_slot * expert_cache_slots as u64;
     let mut streamers: Vec<Option<streaming::PreadExpertStreamer>> = Vec::new();
     let experts_layout = if layout.num_layers > 0 {
         for layer in 0..num_layers {
@@ -139,5 +149,5 @@ pub(crate) fn open_expert_streamers(
         }
     }
 
-    Ok((streamers, slot_buffers, experts_layout))
+    Ok((streamers, slot_buffers, experts_layout, expert_cache_slots))
 }

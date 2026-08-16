@@ -910,10 +910,27 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     for the pointers), so do not re-derive it.
     The Qwen path has NONE of those three seams (DEVIATIONS.md).
     Slot count comes from `open_with_options`
-    (`--expert-cache-slots`, allowed 8/16/24/32, default 16, ~3.2 MB of
+    (`--expert-cache-slots`, allowed 8/16/24/32, ~3.2 MB of
     pinned host memory per slot per layer on the 26B); it was hardcoded
     to 16 before, so measurements taken with the flag set are only
-    meaningful from that change on. Qwen 3.6 runs on a
+    meaningful from that change on. **THE DEFAULT IS `auto` SINCE
+    2026-08-16, AND THE TWO WAYS IN ARE DELIBERATELY DIFFERENT.**
+    `open_with_slot_policy` takes an `ExpertCacheSlots` and resolves
+    `Auto` against this machine and this install at open
+    (`crates/runtime/src/expert_cache_policy.rs`: the largest allowed
+    count whose `slots x sum(expert_stride)` fits a quarter of
+    `physical - resident - 4 GiB`); `open_with_options` still takes a
+    plain count and is what every harness calls. The floor is
+    `DEFAULT_CACHE_SLOTS`, so `Auto` can only ever CLIMB -- a machine
+    with no headroom gets exactly the 16 it always got, and no user can
+    be made slower by the feature existing. What licenses an
+    environment-sensing default at all is that a slot-count change is a
+    THROUGHPUT axis only: output is byte-identical across 8/16/24/32
+    since Gotcha 27's fix, so no digest and no perplexity can move.
+    What licenses the two entry points is Gotcha 35: every measuring
+    caller passes `PROTOCOL_EXPERT_CACHE_SLOTS` through the count-taking
+    form, so no frozen footprint row can acquire the sensing default.
+    Qwen 3.6 runs on a
     SYNTHETIC install (`build_synthetic_qwen_gdn_moe_install`); no real
     checkpoint has been repacked. DeepSeek-V4-Flash remains blocked on
     DSV4. Build a test/demo install with

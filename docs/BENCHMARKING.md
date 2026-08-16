@@ -72,7 +72,7 @@ both engines run the identical workload:
   `manifest.json` by `real_model::protocol_parameters` and printed in the
   header. 4,096 context / 1,024 new tokens for `gemma4`, `qwen36` and
   `qwen3moe`; 8,192 / 1,024 for the dense `llama` half; 8,192 / 3,072 for
-  `gpt-oss`. Neither is a knob, and both are the same numbers the memory
+  `gpt-oss`; 8,192 / 2,048 for `muse_glimmer`. Neither is a knob, and both are the same numbers the memory
   oracles freeze their rows at (the oracle targets assert the agreement at
   compile time). Why they differ is the point: the protocol freezes the
   PROSE, so its token count belongs to the checkpoint's tokenizer
@@ -166,6 +166,20 @@ Two things this deliberately is not:
 
 Sampling is in-process, so it covers one leg of the protocol. "Fresh
 processes" is left to the caller (a shell loop around the binary).
+
+**Every number on this page is at 16 expert-cache slots, and that is pinned
+rather than defaulted into.** `turbospark-bench`, both memory oracles, every
+quality gate and `logit_dump` pass `protocol::PROTOCOL_EXPERT_CACHE_SLOTS`
+explicitly, so none of them can pick up the `--expert-cache-slots auto`
+default that `turbospark-check` and `turbospark-server` now carry. That is
+deliberate and is the same rule AGENTS.md Gotcha 35 states for the power
+profile: a harness that measures a knob is exactly the caller that must not
+sense it, because a frozen footprint row taken at whatever the machine felt
+like that morning is not a row. The consequence for a reader: a figure here
+is NOT what the CLI will print on a machine with memory to spare, which
+climbs to 24 or 32 slots and trades roughly 1.5 GB of peak for 16% of decode
+(`docs/DECODE_BUDGET.md` has the sweep). Reproduce a row with
+`--expert-cache-slots 16`.
 
 ## The memory oracle
 

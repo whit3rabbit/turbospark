@@ -25,6 +25,7 @@ pub struct RealChatModel {
     runner: Mutex<RealForwardRunner>,
     max_context: u32,
     vocab_size: usize,
+    expert_cache_slots: usize,
     model_id: String,
     rate: RateControl,
 }
@@ -33,10 +34,15 @@ impl RealChatModel {
     /// Opens a `.gturbo` install, mirroring the CLI's `open_session`: the
     /// architecture comes from the install's own `manifest.json` and the
     /// tokenizer is expected to be bundled in the same directory.
+    ///
+    /// `expert_cache_slots` is a POLICY rather than a count: `None` means
+    /// `auto`, sized against this machine and this install at open. Read the
+    /// count back with [`Self::expert_cache_slots`] -- under `auto` the
+    /// request says nothing about what was allocated.
     pub fn open(
         model_dir: &Path,
         max_context: u32,
-        expert_cache_slots: u32,
+        expert_cache_slots: Option<u32>,
         rate: RateControl,
     ) -> Result<Self, String> {
         let arch = repack::peek_manifest_arch(model_dir)?;
@@ -53,24 +59,35 @@ impl RealChatModel {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "model".to_string());
-        let runner = RealForwardRunner::open_with_options(
+        let runner = RealForwardRunner::open_with_slot_policy(
             model_dir,
             arch,
             max_context as usize,
-            expert_cache_slots as usize,
+            match expert_cache_slots {
+                Some(n) => runtime::ExpertCacheSlots::Fixed(n as usize),
+                None => runtime::ExpertCacheSlots::Auto,
+            },
         )
         .map_err(|e| e.to_string())?;
         // The MODEL's padded head width, not the tokenizer dialect's
         // constant: two checkpoints can share a dialect and pad differently.
         let vocab_size = runner.vocab_size();
+        let expert_cache_slots = runner.expert_cache_slots();
         Ok(Self {
             tokenizer,
             runner: Mutex::new(runner),
             max_context,
             vocab_size,
+            expert_cache_slots,
             model_id,
             rate,
         })
+    }
+
+    /// The per-layer routed-expert slot count the runner actually opened
+    /// with, for the startup line to report.
+    pub fn expert_cache_slots(&self) -> usize {
+        self.expert_cache_slots
     }
 }
 

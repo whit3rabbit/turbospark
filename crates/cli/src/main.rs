@@ -73,7 +73,11 @@ fn print_resolved_request(request: &InvocationRequest) {
     let _ = writeln!(out, "  seed: {:?}", request.seed);
     let _ = writeln!(out, "  stop: {:?}", request.stop);
     let _ = writeln!(out, "  rdadvise: {:?}", request.rdadvise);
-    let _ = writeln!(out, "  expert_cache_slots: {}", request.expert_cache_slots);
+    let _ = writeln!(
+        out,
+        "  expert_cache_slots: {:?}",
+        request.expert_cache_slots
+    );
     let _ = writeln!(out, "  prefill_chunk: {:?}", request.prefill_chunk);
     let _ = writeln!(out, "  power_profile: {:?}", request.power_profile);
     let _ = writeln!(

@@ -6,6 +6,7 @@
 
 mod config;
 mod error;
+mod expert_cache_policy;
 #[cfg(target_os = "macos")]
 mod families;
 mod pacing;
@@ -29,6 +30,7 @@ mod router_hist;
 
 pub use config::GenerationConfig;
 pub use error::RuntimeError;
+pub use expert_cache_policy::{ExpertCacheSlots, HEADROOM_FRACTION, HEADROOM_RESERVE_BYTES};
 pub use power::{
     low_power_mode_enabled, rate_control_for, resolve_profile, stepped_cap, thermal_level,
     PowerProfile, RateControl, ThermalLevel, CRITICAL_TOK_PER_SEC, READING_SPEED_TOK_PER_SEC,

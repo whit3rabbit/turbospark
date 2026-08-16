@@ -37,6 +37,34 @@ pub fn thermal_state_raw() -> i64 {
     }
 }
 
+/// `NSProcessInfo.processInfo.physicalMemory`, in bytes.
+///
+/// Backs the routed-expert cache's automatic slot sizing, which lives in
+/// `crates/runtime` for the same reason the two probes above do: that crate
+/// is `#![forbid(unsafe_code)]`, so the message send belongs here and crosses
+/// the boundary as a plain integer.
+///
+/// This is INSTALLED memory, not free memory, and the caller is expected to
+/// know that -- `runtime`'s resolver subtracts the install's own resident
+/// bytes and a fixed reserve rather than treating this as headroom. The
+/// honest alternative would be `host_statistics64`'s free page count, which
+/// is a poor budget for a different reason: it moves second to second with
+/// whatever else the machine is doing, so the same install would pick a
+/// different slot count on each open and no two runs would be comparable.
+/// A stable over-estimate that the caller discounts beats an accurate number
+/// that is never the same twice.
+// See `thermal_state_raw` for the allow.
+#[allow(unexpected_cfgs)]
+pub fn physical_memory() -> u64 {
+    // SAFETY: same singleton as above; `physicalMemory` is a documented
+    // no-argument `unsigned long long` property on it.
+    #[allow(unsafe_code)]
+    unsafe {
+        let info: *mut Object = msg_send![class!(NSProcessInfo), processInfo];
+        msg_send![info, physicalMemory]
+    }
+}
+
 /// `NSProcessInfo.processInfo.isLowPowerModeEnabled`.
 // See `thermal_state_raw` for the allow.
 #[allow(unexpected_cfgs)]

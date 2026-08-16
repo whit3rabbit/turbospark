@@ -113,7 +113,11 @@ struct ModelArgs {
     model: String,
     port: u16,
     max_context: u32,
-    expert_cache_slots: u32,
+    /// `None` is `auto`, which is also the default -- the slot count is
+    /// sized against this machine and this install at open. Spelled as an
+    /// `Option` rather than reusing `invocation`'s enum because this binary
+    /// has its own flat parser and does not depend on that crate.
+    expert_cache_slots: Option<u32>,
     bind: BindMode,
     /// ROADMAP Phase P2. Process-level, like every other flag here: there
     /// is one runner per process, so there is nothing per-request to vary.
@@ -132,7 +136,7 @@ fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
         model: String::new(),
         port: 8080,
         max_context: 4096,
-        expert_cache_slots: 16,
+        expert_cache_slots: None,
         bind: BindMode::Loopback,
         power_profile: None,
         max_tokens_per_sec: None,
@@ -148,7 +152,13 @@ fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
             "--model" => parsed.model = value.clone(),
             "--port" => parsed.port = value.parse::<u16>().map_err(|e| format!("--port: {e}"))?,
             "--max-context" => parsed.max_context = number()?,
-            "--expert-cache-slots" => parsed.expert_cache_slots = number()?,
+            "--expert-cache-slots" => {
+                parsed.expert_cache_slots = if value == "auto" {
+                    None
+                } else {
+                    Some(number()?)
+                }
+            }
             "--bind" => {
                 parsed.bind = match value.as_str() {
                     "loopback" => BindMode::Loopback,
@@ -183,12 +193,16 @@ fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
         return Err(format!("--model needs a value\n{USAGE}"));
     }
     // Read the allowed set rather than re-hardcoding it (AGENTS.md Gotcha 2);
-    // the runtime setter would panic on a value outside it.
-    if !foundation::ALLOWED_CACHE_SLOTS.contains(&parsed.expert_cache_slots) {
-        return Err(format!(
-            "--expert-cache-slots must be one of {:?}",
-            foundation::ALLOWED_CACHE_SLOTS
-        ));
+    // the runtime setter would panic on a value outside it. `auto` is
+    // unchecked because the resolver only ever returns a member of that same
+    // set, which `every_resolved_value_is_in_the_allowed_set` asserts.
+    if let Some(n) = parsed.expert_cache_slots {
+        if !foundation::ALLOWED_CACHE_SLOTS.contains(&n) {
+            return Err(format!(
+                "--expert-cache-slots must be auto or one of {:?}",
+                foundation::ALLOWED_CACHE_SLOTS
+            ));
+        }
     }
     Ok(Some(parsed))
 }
@@ -220,10 +234,18 @@ fn open_real_model(args: &ModelArgs) -> Result<Arc<dyn turbospark_server::ChatMo
         args.expert_cache_slots,
         rate,
     )?;
+    // The slot count is the RESOLVED one, never `args`: under `auto` the
+    // request carries no number, and the figure has to be readable beside
+    // any throughput or footprint the operator goes on to measure.
     eprintln!(
-        "model open (max_context {}, {} expert cache slots, {} profile, rate cap {})",
+        "model open (max_context {}, {} expert cache slots{}, {} profile, rate cap {})",
         args.max_context,
-        args.expert_cache_slots,
+        model.expert_cache_slots(),
+        if args.expert_cache_slots.is_none() {
+            " (auto)"
+        } else {
+            ""
+        },
         profile.as_str(),
         match rate.max_tokens_per_sec {
             Some(r) => format!("{r} tok/s"),
@@ -405,9 +427,11 @@ mod tests {
     #[test]
     fn model_mode_defaults_and_overrides() {
         let d = parse(&["--model", "/tmp/m"]).unwrap().unwrap();
+        // Slots default to `None`, i.e. `auto`: sized at open against this
+        // machine and this install, never below the shipped 16.
         assert_eq!(
             (d.port, d.max_context, d.expert_cache_slots),
-            (8080, 4096, 16)
+            (8080, 4096, None)
         );
         let o = parse(&[
             "--model",
@@ -421,7 +445,17 @@ mod tests {
         ])
         .unwrap()
         .unwrap();
-        assert_eq!((o.port, o.max_context, o.expert_cache_slots), (9, 1024, 32));
+        assert_eq!(
+            (o.port, o.max_context, o.expert_cache_slots),
+            (9, 1024, Some(32))
+        );
+        // `auto` is accepted by name as well as by omission, and is the one
+        // value the allowed-set check must not reject.
+        let a = parse(&["--model", "/tmp/m", "--expert-cache-slots", "auto"])
+            .unwrap()
+            .unwrap();
+        assert_eq!(a.expert_cache_slots, None);
+        assert!(parse(&["--model", "/tmp/m", "--expert-cache-slots", "20"]).is_err());
     }
 
     #[test]

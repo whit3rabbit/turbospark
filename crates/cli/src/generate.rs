@@ -392,13 +392,37 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
     // Size the KV cache to the same bound the completion loop admits
     // against, rather than the runner's own 4096-token default, and honor
     // --expert-cache-slots instead of the runner's default 16.
-    let runner = RealForwardRunner::open_with_options(
+    //
+    // The slot POLICY crosses the boundary unresolved, exactly as
+    // `--power-profile` does: `crates/invocation` is pure and may not read
+    // the machine's memory or the install's expert stride, and both are
+    // needed to size the cache.
+    let runner = RealForwardRunner::open_with_slot_policy(
         model_dir,
         arch,
         request.max_context as usize,
-        request.expert_cache_slots as usize,
+        match request.expert_cache_slots {
+            invocation::ExpertCacheSlots::Auto => runtime::ExpertCacheSlots::Auto,
+            invocation::ExpertCacheSlots::Fixed(n) => runtime::ExpertCacheSlots::Fixed(n as usize),
+        },
     )
     .map_err(|e| e.to_string())?;
+
+    // Report the RESOLVED slot count, not the request. Under `auto` the
+    // request carries no number, and this one is a property of the machine
+    // and the install -- 44.2 tok/s at 16 slots against 51.2 at 32 on the
+    // same Gemma 4 install (`docs/DECODE_BUDGET.md`), so no throughput or
+    // footprint figure from this run is readable without it.
+    if !request.quiet {
+        eprintln!(
+            "expert cache: {} slots per layer{}",
+            runner.expert_cache_slots(),
+            match request.expert_cache_slots {
+                invocation::ExpertCacheSlots::Auto => " (auto)",
+                invocation::ExpertCacheSlots::Fixed(_) => "",
+            }
+        );
+    }
 
     let shaping = ShapingConfig::new(
         request.temperature,

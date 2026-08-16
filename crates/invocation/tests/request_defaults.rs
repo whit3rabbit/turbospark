@@ -4,8 +4,10 @@
 //! documented defaults are asserted, and the six failure values are shown
 //! distinguishable without inspecting any message string.
 
-use foundation::runtime_config::{DEFAULT_CACHE_SLOTS, DEFAULT_CHUNK_SIZE};
-use turbospark_invocation::{parse, Mode, ParseFailure, ParseOutcome, PrefillChunk, ReadAheadMode};
+use foundation::runtime_config::DEFAULT_CHUNK_SIZE;
+use turbospark_invocation::{
+    parse, ExpertCacheSlots, Mode, ParseFailure, ParseOutcome, PrefillChunk, ReadAheadMode,
+};
 
 fn tok(items: &[&str]) -> Vec<String> {
     items.iter().map(|s| s.to_string()).collect()
@@ -30,7 +32,12 @@ fn documented_defaults_are_applied() {
     assert!(req.stop.is_empty());
     assert!(!req.quiet);
     assert_eq!(req.rdadvise, ReadAheadMode::Off);
-    assert_eq!(req.expert_cache_slots, DEFAULT_CACHE_SLOTS);
+    // `Auto` rather than a literal count, and unlike `prefill_chunk` below
+    // that is the whole point: the slot cache is a RAM-for-throughput trade
+    // whose right answer depends on the machine and the install, neither of
+    // which this pure crate may look at. Resolved in `crates/runtime`, where
+    // it can never come out below `DEFAULT_CACHE_SLOTS`.
+    assert_eq!(req.expert_cache_slots, ExpertCacheSlots::Auto);
     assert_eq!(req.prefill_chunk, PrefillChunk::Fixed(DEFAULT_CHUNK_SIZE));
     // Both power knobs default to unset rather than to a profile: the
     // Low Power Mode default is resolved downstream, where the OS can be

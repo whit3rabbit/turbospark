@@ -112,6 +112,31 @@ impl Default for PrefillChunk {
     }
 }
 
+/// Routed-expert cache sizing: a fixed per-layer slot count drawn from the
+/// foundation-published allowed set, or automatic sizing.
+///
+/// Unlike [`PrefillChunk`], whose default is a fixed value, the default here
+/// is [`Self::Auto`]. The slot cache is a pure RAM-for-throughput trade --
+/// `docs/DECODE_BUDGET.md` measures the GPU idle 40-52% of a decoded token
+/// waiting on the expert `pread` it exists to avoid -- and a machine with
+/// headroom should spend it. What makes that safe as a DEFAULT is that
+/// resolution can only ever climb: see the runtime-side resolver, which
+/// floors at `DEFAULT_CACHE_SLOTS`, so no machine gets a smaller cache than
+/// it had before this existed.
+///
+/// Resolution needs the install's per-layer expert stride and the machine's
+/// memory, neither of which this pure crate may look at, so `Auto` crosses
+/// into `crates/runtime` unresolved. That is the same division
+/// [`PowerProfile`] takes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ExpertCacheSlots {
+    /// A fixed slot count drawn from the foundation-published allowed set.
+    Fixed(u32),
+    /// Automatic sizing, selected with the "auto" keyword and the default.
+    #[default]
+    Auto,
+}
+
 /// A fully populated, validated invocation.
 #[derive(Debug, Clone, PartialEq)]
 pub struct InvocationRequest {
@@ -139,8 +164,8 @@ pub struct InvocationRequest {
     pub stop: Vec<String>,
     /// The read-ahead advisory mode.
     pub rdadvise: ReadAheadMode,
-    /// The routed-cache slot count.
-    pub expert_cache_slots: u32,
+    /// The routed-cache slot count, or `Auto` to size it at open.
+    pub expert_cache_slots: ExpertCacheSlots,
     /// The prompt-processing chunk-size tuning.
     pub prefill_chunk: PrefillChunk,
     /// The power profile, or `None` for automatic (which resolves against
