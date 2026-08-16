@@ -2,13 +2,16 @@
 //! visible content and parsed tool calls per dialect. Ported from
 //! `Tokenization/StructuredAssistantDecoder.swift`.
 
+mod chatml;
+mod deepseek;
+mod harmony;
+
 use std::collections::HashSet;
 
+use self::harmony::{HarmonyChannel, HarmonyState};
 use crate::dialect::{ChatDialect, MfTokenizer};
 use crate::error::ToolCallParserError;
-use crate::tool_call::{
-    DeepseekToolCallParser, GemmaToolCallParser, ParsedToolCall, QwenToolCallParser, DSML_MARK,
-};
+use crate::tool_call::{GemmaToolCallParser, ParsedToolCall};
 
 /// Decoded event emitted by the structured assistant output decoder.
 #[derive(Debug, Clone, PartialEq)]
@@ -35,40 +38,6 @@ enum Channel {
     Thought,
     Visible,
     Label,
-}
-
-/// Which Harmony channel a message body belongs to.
-///
-/// Only `final` is the answer. `analysis` is the model's reasoning, and
-/// `commentary` carries tool calls and preambles; both are reported as
-/// reasoning rather than as content, so nothing but the final channel is ever
-/// presented as the reply.
-#[derive(Clone, Copy, PartialEq)]
-enum HarmonyChannel {
-    Final,
-    Reasoning,
-}
-
-/// Position in Harmony's `<|channel|>HEADER<|message|>BODY<|end|>` frame.
-///
-/// Harmony is the one dialect here whose channels do not BRACKET: `<|channel|>`
-/// opens a header, `<|message|>` ends that header and opens the body, and
-/// `<|end|>` closes the body. So the start/end token pair every other arm keys
-/// on cannot express it, and reusing the Gemma arm would open a channel label
-/// on the first `<|channel|>` and never close it, swallowing the whole reply.
-enum HarmonyState {
-    /// Before the first `<|channel|>`. Text passes through as content, so a
-    /// model that never emits the frame is reported rather than silenced.
-    Unframed,
-    /// Inside a header, accumulating its text.
-    Header,
-    /// Inside a message body.
-    Body(HarmonyChannel),
-    /// After `<|end|>` and before the next `<|channel|>`. Everything here is
-    /// dropped: what falls in this gap is the `<|start|>assistant` that opens
-    /// the next message, and passing it through would emit the bare word
-    /// "assistant" into the reply.
-    Between,
 }
 
 /// Streaming assistant output decoder splitting tokens into visible content and tool calls.
@@ -270,7 +239,7 @@ impl<'a> StructuredAssistantDecoder<'a> {
             return Vec::new();
         }
         if token_id == self.tokenizer.message_start_id {
-            self.harmony = HarmonyState::Body(harmony_channel(&self.label));
+            self.harmony = HarmonyState::Body(harmony::harmony_channel(&self.label));
             self.label.clear();
             return Vec::new();
         }
@@ -294,143 +263,6 @@ impl<'a> StructuredAssistantDecoder<'a> {
         }
     }
 
-    fn consume_chatml(
-        &mut self,
-        token_id: i32,
-        delta: &str,
-    ) -> Result<Vec<StructuredAssistantEvent>, ToolCallParserError> {
-        if token_id == self.tokenizer.tool_call_start_id {
-            if self.tool_tokens.is_some() {
-                self.failed = true;
-                return Err(ToolCallParserError::Malformed);
-            }
-            self.tool_tokens = Some(Vec::new());
-            return Ok(Vec::new());
-        }
-        if token_id == self.tokenizer.tool_call_end_id {
-            let Some(tokens) = self.tool_tokens.take() else {
-                self.failed = true;
-                return Err(ToolCallParserError::Malformed);
-            };
-            let text = self.tokenizer.decode(&tokens, false);
-            match QwenToolCallParser::new().parse(
-                &text,
-                &self.allowed_tools,
-                &(self.id_generator)(),
-            ) {
-                Ok(call) => {
-                    self.emitted_calls += 1;
-                    return Ok(vec![StructuredAssistantEvent::ToolCall(call)]);
-                }
-                Err(e) => {
-                    self.failed = true;
-                    return Err(e);
-                }
-            }
-        }
-        if let Some(tokens) = &mut self.tool_tokens {
-            tokens.push(token_id);
-            if tokens.len() * 4 > crate::tool_call::MAXIMUM_BYTES {
-                self.failed = true;
-                return Err(ToolCallParserError::Oversized);
-            }
-            return Ok(Vec::new());
-        }
-        if Some(token_id) == self.tokenizer.think_start_id {
-            self.channel = Channel::Thought;
-            return Ok(Vec::new());
-        }
-        if Some(token_id) == self.tokenizer.think_end_id {
-            self.channel = Channel::Visible;
-            return Ok(Vec::new());
-        }
-        if self.channel == Channel::Thought {
-            return Ok(Vec::new());
-        }
-        if delta.is_empty() {
-            Ok(Vec::new())
-        } else {
-            Ok(vec![StructuredAssistantEvent::Content(delta.to_string())])
-        }
-    }
-
-    fn consume_deepseek(
-        &mut self,
-        token_id: i32,
-        delta: &str,
-    ) -> Result<Vec<StructuredAssistantEvent>, ToolCallParserError> {
-        if Some(token_id) == self.tokenizer.think_start_id
-            || Some(token_id) == self.tokenizer.think_end_id
-        {
-            self.channel = if Some(token_id) == self.tokenizer.think_start_id {
-                Channel::Thought
-            } else {
-                Channel::Visible
-            };
-            if self.dsml_text.is_none() && !self.held_text.is_empty() {
-                let visible = std::mem::take(&mut self.held_text);
-                return Ok(vec![StructuredAssistantEvent::Content(visible)]);
-            }
-            return Ok(Vec::new());
-        }
-        if self.channel == Channel::Thought || delta.is_empty() {
-            return Ok(Vec::new());
-        }
-        self.held_text.push_str(delta);
-        let mut events = Vec::new();
-        let open_mark = format!("<{DSML_MARK}tool_calls>");
-        let close_mark = format!("</{DSML_MARK}tool_calls>");
-        'scanning: while !self.held_text.is_empty() {
-            if let Some(dsml) = &mut self.dsml_text {
-                dsml.push_str(&self.held_text);
-                self.held_text.clear();
-                let Some(close_pos) = dsml.find(&close_mark) else {
-                    if dsml.len() > crate::tool_call::MAXIMUM_BYTES {
-                        self.failed = true;
-                        return Err(ToolCallParserError::Oversized);
-                    }
-                    break 'scanning;
-                };
-                let body = dsml[..close_pos].to_string();
-                self.held_text = dsml[close_pos + close_mark.len()..].to_string();
-                self.dsml_text = None;
-                let generator = &mut self.id_generator;
-                match DeepseekToolCallParser::new().parse(&body, &self.allowed_tools, generator) {
-                    Ok(calls) => {
-                        self.emitted_calls += calls.len();
-                        events.extend(calls.into_iter().map(StructuredAssistantEvent::ToolCall));
-                    }
-                    Err(e) => {
-                        self.failed = true;
-                        return Err(e);
-                    }
-                }
-                continue 'scanning;
-            }
-            if let Some(open_pos) = self.held_text.find(&open_mark) {
-                let visible = self.held_text[..open_pos].to_string();
-                if !visible.is_empty() {
-                    events.push(StructuredAssistantEvent::Content(visible));
-                }
-                self.held_text = self.held_text[open_pos + open_mark.len()..].to_string();
-                self.dsml_text = Some(String::new());
-                continue 'scanning;
-            }
-            let held = open_marker_prefix_length(&self.held_text, &open_mark);
-            let total = self.held_text.chars().count();
-            if held < total {
-                let split_at_char = total - held;
-                let byte_idx = char_index_to_byte(&self.held_text, split_at_char);
-                events.push(StructuredAssistantEvent::Content(
-                    self.held_text[..byte_idx].to_string(),
-                ));
-                self.held_text = self.held_text[byte_idx..].to_string();
-            }
-            break 'scanning;
-        }
-        Ok(events)
-    }
-
     /// Release any tail withheld as a potential DSML-open prefix.
     pub fn drain(&mut self) -> Vec<StructuredAssistantEvent> {
         if self.failed || self.dsml_text.is_some() || self.held_text.is_empty() {
@@ -447,51 +279,4 @@ impl<'a> StructuredAssistantDecoder<'a> {
         }
         Ok(released)
     }
-}
-
-/// Which channel a Harmony message header names.
-///
-/// A header is the text between `<|channel|>` and `<|message|>`, and it is not
-/// always one word: a tool call reads `commentary to=functions.get_weather
-/// <|constrain|>json`. The channel is the first whitespace-delimited word, and
-/// the rest is deliberately IGNORED here -- Harmony frames a tool call as a
-/// recipient in this header rather than as the bracketing token pair
-/// [`StructuredAssistantDecoder`]'s tool contract describes, which is why
-/// `resolve_harmony` leaves every tool id `NO_SUCH_TOKEN_ID` and why decoding
-/// them is its own item.
-///
-/// ANYTHING THAT IS NOT `final` IS REASONING, including an unrecognized
-/// channel name. The default direction matters: a new channel misreported as
-/// reasoning is visible in the wrong place, while one misreported as the
-/// answer corrupts the reply.
-fn harmony_channel(header: &str) -> HarmonyChannel {
-    match header.split_whitespace().next() {
-        Some("final") => HarmonyChannel::Final,
-        _ => HarmonyChannel::Reasoning,
-    }
-}
-
-/// Length (in chars) of the longest suffix of `text` that is a proper prefix
-/// of `open_mark`.
-fn open_marker_prefix_length(text: &str, open_mark: &str) -> usize {
-    let text_chars: Vec<char> = text.chars().collect();
-    let mark_chars: Vec<char> = open_mark.chars().collect();
-    let longest = text_chars.len().min(mark_chars.len().saturating_sub(1));
-    if longest == 0 {
-        return 0;
-    }
-    for length in (1..=longest).rev() {
-        let suffix = &text_chars[text_chars.len() - length..];
-        if mark_chars.starts_with(suffix) {
-            return length;
-        }
-    }
-    0
-}
-
-fn char_index_to_byte(s: &str, char_idx: usize) -> usize {
-    s.char_indices()
-        .nth(char_idx)
-        .map(|(b, _)| b)
-        .unwrap_or(s.len())
 }

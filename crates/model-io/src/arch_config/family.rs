@@ -1,0 +1,134 @@
+/// Model family discriminator. Selects the tensor-name contract, the layer
+/// graph shape, and family-specific kernel behavior. Stored in
+/// `manifest.json -> arch.family`; absent means Gemma 4 (the format's
+/// original architecture).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ModelFamily {
+    Gemma4,
+    QwenGdnMoe,
+    DeepseekV4Flash,
+    /// The `llama` GGUF architecture, which covers dense Llama 2/3.x and
+    /// Mistral AND the Mixtral MoEs -- one string, distinguished only by
+    /// `expert_count` (ROADMAP Phase M2). The baseline is Mixtral's because
+    /// every behavioural field is shared and only shape fields differ.
+    Llama,
+    /// The `qwen3moe` GGUF architecture (Qwen3-30B-A3B and siblings), the
+    /// first FINE-GRAINED MoE brought up after Mixtral showed that being MoE
+    /// is not enough for this engine's memory result (AGENTS.md Gotcha 36).
+    ///
+    /// It runs through the SAME decode flow as [`ModelFamily::Llama`]
+    /// (`crates/runtime/src/families/llama/`), because the layer graph is
+    /// identical: plain GQA, raw residual add, one post-attention norm
+    /// feeding router and routed experts, no shared expert, no softcap,
+    /// full-head NeoX RoPE. It differs in exactly two places, both carried
+    /// by `RealLlamaState`: it norms q and k PER HEAD before RoPE, and its
+    /// RMS epsilon is 1e-6 where the `llama` architecture's is 1e-5.
+    Qwen3Moe,
+    /// The `gpt-oss` GGUF architecture (ROADMAP M5), the third fine-grained
+    /// MoE and the FIFTH real family. Chosen by the M5 Phase 0 survey on
+    /// AGENTS.md Gotcha 36's axis: 12.6 MiB per expert against Llama 4
+    /// Scout's 77.8 and DeepSeek-V3's 34.5, both of which want tens of GiB
+    /// of slot cache and cannot stream here.
+    ///
+    /// Unlike [`ModelFamily::Qwen3Moe`] this is NOT another family on an
+    /// existing flow. Its layer differs from every flow here in four ways,
+    /// each a first for this port: per-projection BIASES on q/k/v/output and
+    /// on the router and every routed expert, ATTENTION SINKS (one learned
+    /// logit per q head, added to the softmax denominator only), YARN rope
+    /// scaling, and a CLAMPED SwiGLU whose activation is a swish with alpha
+    /// times `(up + 1)` rather than silu times `up`. Its alternating
+    /// 128-token sliding window is the one part that is free, because
+    /// Gemma's SWA ring already exists.
+    GptOss,
+    /// The `qwen3_5` HF architecture: the gated-DeltaNet hybrid in its DENSE
+    /// form. Two published checkpoints, `prism-ml/Bonsai-27B-mlx-1bit`
+    /// (ROADMAP's 1-bit entry) and `Qwen/Qwen3.8-27B`, which share one
+    /// `ArchConfig` exactly and differ only in quantization.
+    ///
+    /// **NAMED FOR THE ARCHITECTURE, NOT A VERSION, AND ITS WIRE STRING IS
+    /// FROZEN AT THE OLD SPELLING.** [`ModelFamily::as_str`] still returns
+    /// `"qwen35"` and [`ModelFamily::parse`] still reads it, because that
+    /// string is written into every install's `manifest.json` and read back
+    /// at load: renaming it would invalidate every `.gturbo` directory ever
+    /// built. So the on-disk identifier is a FORMAT CONSTANT, historical and
+    /// deliberately not descriptive, while this Rust name is free to say
+    /// what the family is. Do not "fix" the string to match the variant.
+    ///
+    /// The variant was called `Qwen35` until 2026-08-15 and the rename is
+    /// what stopped the drift: upstream keeps `model_type: qwen3_5` stable
+    /// across checkpoints named 3.5, 3.6 and 3.8, so a version-shaped name
+    /// reads as "the 3.5 one" when it means "the gated-DeltaNet dense one".
+    /// Its sibling was worse -- `Qwen36` was named after the Qwen 3.6
+    /// checkpoint while matching `model_type: qwen3_5_moe`.
+    ///
+    /// It runs through the SAME decode flow as [`ModelFamily::QwenGdnMoe`]
+    /// (`crates/runtime/src/families/qwen/`), because every BEHAVIOURAL
+    /// field is shared -- gated DeltaNet on the linear layers, gated full
+    /// attention on every fourth, `attn_output_gate`, `head_dim` 256,
+    /// `partial_rotary_factor` 0.25 at theta 1e7, no sandwich norms, no
+    /// softcap, silu -- and only SHAPE fields differ (hidden 5120 against
+    /// 2048, 64 layers against 40, 24 q heads over 4 kv). Read off the
+    /// checkpoint's own `config.json`, not assumed.
+    ///
+    /// It differs in exactly two ways, and the first is why it needs a
+    /// branch rather than just a baseline: it is DENSE, one
+    /// `mlp.{gate,up,down}_proj` per layer where Qwen 3.6 has a router, a
+    /// shared expert and 256 routed ones. The second is mrope
+    /// (`mrope_section [11, 11, 10]`), which on TEXT positions reduces to
+    /// the `rope_neox_subdim` already here -- a claim to verify against
+    /// the reference, not to assume.
+    ///
+    /// **A SEPARATE VARIANT DESPITE SHARING A FLOW, and the precedent is
+    /// [`ModelFamily::Qwen3Moe`] rather than [`ModelFamily::Llama`].**
+    /// `qwen3moe` shares `families/llama/`'s flow ENTIRELY and is still
+    /// its own variant, because its architecture string differs. `llama`
+    /// covers a dense and an MoE half under one variant only because
+    /// Mixtral and Mistral report the SAME string. Strings decide the
+    /// variant; flows are shared separately.
+    QwenGdnDense,
+}
+
+impl ModelFamily {
+    /// Returns static string identifier for the model family.
+    ///
+    /// **THESE STRINGS ARE AN ON-DISK FORMAT AND TWO OF THEM NO LONGER MATCH
+    /// THEIR VARIANT'S NAME. That is deliberate.** Every `.gturbo` install
+    /// records this value in `manifest.json`, and [`ModelFamily::parse`]
+    /// reads it back at load, so a string here is a compatibility promise to
+    /// artifacts already on disk -- not a label to keep tidy.
+    ///
+    /// `QwenGdnMoe` therefore still writes `"qwen36"` and `QwenGdnDense`
+    /// still writes `"qwen35"`, the version-shaped names both variants were
+    /// called before 2026-08-15. Changing either would make every existing
+    /// install of those families unloadable (`parse` returns `None`, and the
+    /// open path reports an unknown family) for a cosmetic gain. The Rust
+    /// names carry the meaning; these carry the history.
+    ///
+    /// A NEW family is free to pick a matching string, because nothing has
+    /// been written with it yet.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ModelFamily::Gemma4 => "gemma4",
+            ModelFamily::QwenGdnMoe => "qwen36",
+            ModelFamily::DeepseekV4Flash => "deepseekV4Flash",
+            ModelFamily::Llama => "llama",
+            ModelFamily::Qwen3Moe => "qwen3moe",
+            ModelFamily::GptOss => "gptOss",
+            ModelFamily::QwenGdnDense => "qwen35",
+        }
+    }
+
+    /// Parses string identifier into model family.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "gemma4" => Some(ModelFamily::Gemma4),
+            "qwen36" => Some(ModelFamily::QwenGdnMoe),
+            "deepseekV4Flash" => Some(ModelFamily::DeepseekV4Flash),
+            "llama" => Some(ModelFamily::Llama),
+            "qwen3moe" => Some(ModelFamily::Qwen3Moe),
+            "gptOss" => Some(ModelFamily::GptOss),
+            "qwen35" => Some(ModelFamily::QwenGdnDense),
+            _ => None,
+        }
+    }
+}

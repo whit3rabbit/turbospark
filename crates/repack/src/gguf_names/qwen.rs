@@ -1,0 +1,92 @@
+//! Qwen GGUF tensor name mappings (Qwen 3.6 GDN MoE and Qwen3-MoE).
+
+use super::{layer_prefix, GgufMapping};
+
+/// Qwen 3.6's per-layer suffixes, verified against
+/// `Qwen3.6-35B-A3B-Q4_K_M.gguf` and `~/models/qwen36.gturbo`. Note the
+/// hybrid layer split: the 10 full-attention layers carry `attn_q/k/v`, the
+/// 30 linear-attention layers carry `attn_qkv` plus the `ssm_*` family, and
+/// no layer carries both.
+pub fn map_qwen_gdn_moe_layer(suffix: &str, layer: usize) -> Option<GgufMapping> {
+    let p = layer_prefix(layer);
+    let resident = |tail: &str| Some(GgufMapping::Resident(format!("{p}{tail}")));
+    match suffix {
+        "attn_q.weight" => resident("self_attn.q_proj.weight"),
+        "attn_k.weight" => resident("self_attn.k_proj.weight"),
+        "attn_v.weight" => resident("self_attn.v_proj.weight"),
+        "attn_output.weight" => resident("self_attn.o_proj.weight"),
+        "attn_q_norm.weight" => resident("self_attn.q_norm.weight"),
+        "attn_k_norm.weight" => resident("self_attn.k_norm.weight"),
+        "attn_norm.weight" => resident("input_layernorm.weight"),
+        "post_attention_norm.weight" => resident("post_attention_layernorm.weight"),
+        // Gated DeltaNet. GGUF names these after the SSM family it borrows
+        // its tensor slots from; the install names them after what they do.
+        "attn_qkv.weight" => resident("linear_attn.in_proj_qkv.weight"),
+        "attn_gate.weight" => resident("linear_attn.in_proj_z.weight"),
+        "ssm_alpha.weight" => resident("linear_attn.in_proj_a.weight"),
+        "ssm_beta.weight" => resident("linear_attn.in_proj_b.weight"),
+        "ssm_out.weight" => resident("linear_attn.out_proj.weight"),
+        "ssm_conv1d.weight" => resident("linear_attn.conv1d.weight"),
+        "ssm_norm.weight" => resident("linear_attn.norm.weight"),
+        // Gotcha 26: no `.weight` suffix on either of these, on either side.
+        "ssm_a" => resident("linear_attn.A_log"),
+        "ssm_dt.bias" => resident("linear_attn.dt_bias"),
+        "ffn_gate_inp.weight" => resident("mlp.gate.weight"),
+        "ffn_gate_inp_shexp.weight" => resident("mlp.shared_expert_gate.weight"),
+        "ffn_gate_shexp.weight" => resident("mlp.shared_expert.gate_proj.weight"),
+        "ffn_up_shexp.weight" => resident("mlp.shared_expert.up_proj.weight"),
+        "ffn_down_shexp.weight" => resident("mlp.shared_expert.down_proj.weight"),
+        "ffn_gate_exps.weight" => Some(GgufMapping::Routed {
+            layer,
+            role: "gate",
+        }),
+        "ffn_up_exps.weight" => Some(GgufMapping::Routed { layer, role: "up" }),
+        "ffn_down_exps.weight" => Some(GgufMapping::Routed {
+            layer,
+            role: "down",
+        }),
+        _ => None,
+    }
+}
+
+/// Qwen3-MoE's per-layer suffixes, verified against
+/// `Qwen3-30B-A3B-Q4_K_M.gguf` (ROADMAP Phase M, the fine-grained follow-on).
+///
+/// **The `llama` table plus exactly two rows.** Qwen3 norms q and k per head
+/// before RoPE where a Mixtral norms neither, and those two `[head_dim]`
+/// tensors are the only per-layer name the two architectures do not share.
+/// Everything else -- the GQA projections, `ffn_norm` sitting where HF says
+/// `post_attention_layernorm`, `ffn_gate_inp` as the router, the three
+/// unfused `_exps` tensors -- is identical, which is why one decode flow
+/// serves both.
+///
+/// Deliberately NOT delegating to `map_llama_layer`: the two tables are
+/// equal today by observation of two real files, not by construction, and a
+/// delegation would make a future divergence in either file silently adopt
+/// the other family's answer.
+pub fn map_qwen3moe_layer(suffix: &str, layer: usize) -> Option<GgufMapping> {
+    let p = layer_prefix(layer);
+    let resident = |tail: &str| Some(GgufMapping::Resident(format!("{p}{tail}")));
+    match suffix {
+        "attn_q.weight" => resident("self_attn.q_proj.weight"),
+        "attn_k.weight" => resident("self_attn.k_proj.weight"),
+        "attn_v.weight" => resident("self_attn.v_proj.weight"),
+        "attn_output.weight" => resident("self_attn.o_proj.weight"),
+        // The two rows the `llama` table does not have.
+        "attn_q_norm.weight" => resident("self_attn.q_norm.weight"),
+        "attn_k_norm.weight" => resident("self_attn.k_norm.weight"),
+        "attn_norm.weight" => resident("input_layernorm.weight"),
+        "ffn_norm.weight" => resident("post_attention_layernorm.weight"),
+        "ffn_gate_inp.weight" => resident("mlp.gate.weight"),
+        "ffn_gate_exps.weight" => Some(GgufMapping::Routed {
+            layer,
+            role: "gate",
+        }),
+        "ffn_up_exps.weight" => Some(GgufMapping::Routed { layer, role: "up" }),
+        "ffn_down_exps.weight" => Some(GgufMapping::Routed {
+            layer,
+            role: "down",
+        }),
+        _ => None,
+    }
+}

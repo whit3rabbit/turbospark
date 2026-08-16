@@ -1,22 +1,4 @@
-//! Builds a tiny Qwen 3.6 install through the REAL checkpoint repack
-//! pipeline, the sibling of [`crate::build_synthetic_gemma4_real_install`]:
-//! an in-memory safetensors blob using the verbatim Qwen naming
-//! (`language_model.` prefix, `.mlp.switch_mlp.` routed experts,
-//! `linear_attn.*` gated-DeltaNet tensors, INT8 router + shared expert,
-//! BF16 norms), pushed through [`crate::write_qwen_gdn_moe_install`]. This is
-//! what `crates/runtime`'s Qwen decode flow is exercised against, since no
-//! trained Qwen `.gturbo` checkpoint exists in this environment.
-//!
-//! Shape mirrors the Swift `QwenToySynthetic` fixture: hidden 64, 4 query
-//! heads of 32 over 2 KV heads, linear attention (2 K heads, 4 V heads,
-//! 32/32 head dims, 4 conv taps -> 256 conv channels, 128 value dim),
-//! layers alternating linear (mask 2) and full attention (mask 1), 8
-//! routed experts.
-//!
-//! Weights are deterministic but NOT trained: generated tokens are
-//! structurally real and semantically meaningless, and a short generation
-//! can decode to the empty string. Assert on token counts and stop
-//! reasons, never on text (see AGENTS.md Gotcha 12).
+//! Builds a tiny Qwen 3.6 MoE install through the REAL checkpoint repack pipeline.
 
 use model_io::{
     ArchConfig, CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig,
@@ -79,22 +61,20 @@ pub fn tiny_qwen_gdn_moe_arch(vocab_size: i64, num_layers: i64, num_experts: i64
         top_k_experts: num_experts.min(8),
         tie_word_embeddings: false,
         attention_k_eq_v: false,
-        // Layer 0 is linear, matching the real 40-layer model (full
-        // attention on every 4th layer); alternating keeps a toy model
-        // small while still exercising both flows and their interleaving.
+        // Layer 0 is linear attention on the real 48-layer model;
+        // alternating keeps a toy small while exercising both flows and
+        // their interleaving.
         full_attention_layer_mask: (0..num_layers)
             .map(|l| if l % 2 == 1 { 1u8 } else { 2u8 })
             .collect(),
         hidden_activation: "silu".to_string(),
         family: ModelFamily::QwenGdnMoe,
         attn_output_gate: true,
-        // 0.125, not the mathematically-right 32^-0.5. `validate_arch`
-        // compares this f64 EXACTLY against the manifest's, and
-        // serde_json's default float parser is only correct to ~1 ULP
-        // (exactness needs its `float_roundtrip` feature), so a scale that
-        // is not a binary fraction cannot survive the round trip. The real
-        // 35B's 0.0625 is a power of two and is unaffected; these weights
-        // are untrained, so any finite scale is equally meaningless.
+        // 0.125, not the mathematically-right 32^-0.5: `validate_arch`
+        // compares this f64 EXACTLY against the manifest's, and serde_json's
+        // default parser is only correct to ~1 ULP -- so a scale that is not
+        // a binary fraction cannot survive the round trip (AGENTS.md Gotcha
+        // 24). The real baseline's 0.0625 is a power of two and is unaffected.
         attention_scale: 0.125,
         embedding_scaled_by_sqrt_hidden: false,
         router_scaled: false,
@@ -112,23 +92,8 @@ pub fn tiny_qwen_gdn_moe_arch(vocab_size: i64, num_layers: i64, num_experts: i64
     }
 }
 
-/// The depthwise conv kernel: BF16, rank 3 `[channels, taps, 1]`. Rank 3
-/// with a trailing 1 is what the real checkpoint ships (a PyTorch
-/// `Conv1d` weight), and `shape4` pads it out, so the resident entry
-/// records `(C, K, 1, 0)`.
-fn conv1d_weight(name: &str, channels: usize, taps: usize, seed: u64) -> Tensor {
-    let flat = bf16_vector(name, channels * taps, 0.0, seed);
-    Tensor {
-        name: flat.name,
-        dtype: flat.dtype,
-        shape: vec![channels as u64, taps as u64, 1],
-        bytes: flat.bytes,
-    }
-}
-
-/// Writes a tiny Qwen 3.6 `.gturbo` install and returns the `ArchConfig`
-/// needed to open it. `num_experts` must be positive; `top_k` is
-/// `min(num_experts, 8)` (the MoE kernels' fixed slot count).
+/// Builds an in-memory synthetic Qwen checkpoint, runs it through the
+/// real repack pipeline, and writes a `.gturbo` install to `dir`.
 pub fn build_synthetic_qwen_gdn_moe_install(
     dir: &std::path::Path,
     vocab_size: i64,
@@ -308,4 +273,14 @@ pub fn build_synthetic_qwen_gdn_moe_install(
     };
     write_qwen_gdn_moe_install(dir, &arch, model_id, &header, &source, &quant)?;
     Ok(arch)
+}
+
+fn conv1d_weight(name: &str, channels: usize, taps: usize, seed: u64) -> Tensor {
+    let flat = bf16_vector(name, channels * taps, 0.0, seed);
+    Tensor {
+        name: flat.name,
+        dtype: flat.dtype,
+        shape: vec![channels as u64, taps as u64, 1],
+        bytes: flat.bytes,
+    }
 }

@@ -9,22 +9,26 @@
 //! `.experts.switch_glu.` routed-expert tensors into per-expert blobs with
 //! ONE page-rounded (16 KiB) expert stride for the whole model.
 
+mod classify;
 mod config;
+mod expert_blobs;
+mod manifest_quant;
+mod narrow;
 mod orchestrate;
 mod shards;
 
+pub use classify::{classify_for_family, classify_gemma4, Gemma4Bucket};
 pub use config::{
     is_supported_affine_shape, parse_gemma4_config, parse_gemma4_quantization, Gemma4Error,
     Gemma4Quant, AFFINE_1BIT_GROUP_SIZE, AFFINE_2BIT_GROUP_SIZE, AFFINE_GROUP_SIZE,
 };
+pub use expert_blobs::{expert_stride_from_headers, plan_one_expert_layer};
+pub use manifest_quant::{gemma4_manifest_quant, manifest_quant, manifest_quant_for};
+pub use narrow::{narrow_raw_to_bf16, pass_through_packed, NarrowedRaw};
 pub use orchestrate::{
-    gemma4_manifest_quant, manifest_quant, orchestrate_gemma4_checkpoint,
-    orchestrate_gemma4_checkpoint_sharded, Gemma4RepackOutput,
+    orchestrate_gemma4_checkpoint, orchestrate_gemma4_checkpoint_sharded, Gemma4RepackOutput,
 };
-pub use shards::{
-    classify_for_family, classify_gemma4, narrow_raw_to_bf16, pass_through_packed, Gemma4Bucket,
-    Gemma4Shards, NarrowedRaw, GTURBO_PAGE_BYTES,
-};
+pub use shards::{Gemma4Shards, GTURBO_PAGE_BYTES};
 
 use std::path::Path;
 
@@ -47,7 +51,7 @@ pub fn write_gemma4_install_streamed(
     mut progress: impl FnMut(&str),
 ) -> Result<(), Box<dyn std::error::Error>> {
     let plan = orchestrate::classify_all(shards, arch)?;
-    let expert_stride = orchestrate::expert_stride_from_headers(shards, arch, quant, &plan.routed)?;
+    let expert_stride = expert_stride_from_headers(shards, arch, quant, &plan.routed)?;
     progress(&format!(
         "classified {} resident tensors, {} routed layers, expert stride {expert_stride}",
         plan.resident_bases.len(),
@@ -96,7 +100,7 @@ pub fn write_gemma4_install_streamed(
         // only thing that carries `(1, fp16, 128)` to `validate_quant` at
         // all, and without which the whole manifest gate never runs.
         let mut writer = crate::gturbo_writer::StreamingGturboWriter::new(dir, 0, 0)?;
-        writer.set_quant(orchestrate::manifest_quant_for(quant, arch.family, false));
+        writer.set_quant(manifest_quant_for(quant, arch.family, false));
         writer.finish(arch, model_id, &resident_bytes)?;
         progress("install written (no routed experts)");
         return Ok(());
@@ -109,8 +113,7 @@ pub fn write_gemma4_install_streamed(
     )?;
     writer.set_quant(manifest_quant(quant, arch.family));
     for layer in 0..arch.num_layers as usize {
-        let (blobs, used) =
-            orchestrate::plan_one_expert_layer(shards, arch, quant, &plan.routed, layer)?;
+        let (blobs, used) = plan_one_expert_layer(shards, arch, quant, &plan.routed, layer)?;
         writer.write_layer(&blobs)?;
         progress(&format!(
             "layer {layer} written ({} experts, {used} bytes/expert)",
@@ -139,7 +142,7 @@ pub fn write_gemma4_install(
         // its quant block, and `write_gturbo_install_with_resident_index`
         // cannot carry one.
         let mut writer = crate::gturbo_writer::StreamingGturboWriter::new(dir, 0, 0)?;
-        writer.set_quant(orchestrate::manifest_quant_for(quant, arch.family, false));
+        writer.set_quant(manifest_quant_for(quant, arch.family, false));
         writer.finish(arch, model_id, &resident_bytes)?;
     } else {
         let mut writer = crate::gturbo_writer::StreamingGturboWriter::new(

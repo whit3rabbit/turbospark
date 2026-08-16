@@ -1,36 +1,4 @@
-//! Builds a tiny `qwen3_5` install through the REAL checkpoint repack
-//! pipeline (ROADMAP's 1-bit entry, step 3, and its ternary entry): the DENSE,
-//! SUB-4-BIT sibling of [`crate::build_synthetic_qwen_gdn_moe_install`].
-//!
-//! **This fixture exists to be built BEFORE the 4.78 GiB stream rather than
-//! after it**, which is `crates/repack` Gotcha 8's rule and what M4's dense
-//! `llama` half paid three five-minute re-streams for. Every place the walk
-//! assumed routed experts, or assumed BF16 companions at group 64, is
-//! exercised here in milliseconds.
-//!
-//! Two things differ from the Qwen 3.6 fixture and they are the two the
-//! checkpoint's own header and config establish:
-//!
-//! - **It is DENSE.** One `mlp.{gate,up,down}_proj` per layer, and NO
-//!   router, shared expert or `.mlp.switch_mlp.` routed experts anywhere.
-//!   The install therefore comes out with ZERO packed-expert layer files.
-//! - **It is 1- OR 2-BIT AT GROUP 128 WITH FP16 COMPANIONS.** All three axes
-//!   together, because that is how a checkpoint carries them; the FP16 one
-//!   is the axis nothing else can catch, since FP16 and BF16 are the same
-//!   width. The width is a PARAMETER
-//!   ([`build_synthetic_qwen_gdn_dense_install_at_bits`]) because the two real
-//!   checkpoints are one architecture at two quantizations, so one fixture
-//!   covers both and neither gets a second copy of the dense-path assertions.
-//!
-//! **The shape constraint that decided the constants: only COLUMN counts
-//! have to be multiples of the group size.** `pass_through_packed` checks
-//! `cols % group == 0` and leaves rows free, so this fixture is the Qwen 3.6
-//! one with `HIDDEN` doubled from 64 to 128 and nothing else moved -- the
-//! three other column dims (`o_proj`'s `NUM_HEADS * HEAD_DIM`, `down_proj`'s
-//! `INTER`, `out_proj`'s `value_dim`) already came to 128.
-//!
-//! Weights are deterministic but NOT trained: generated tokens are
-//! structurally real and semantically meaningless (AGENTS.md Gotcha 12).
+//! Builds a tiny `qwen3_5` install through the REAL checkpoint repack pipeline.
 
 use compute::{quantize_int1_affine_symmetric, quantize_int2_affine_ternary};
 use model_io::{
@@ -109,12 +77,11 @@ pub fn tiny_qwen_gdn_dense_arch(vocab_size: i64, num_layers: i64) -> ArchConfig 
         hidden_activation: "silu".to_string(),
         family: ModelFamily::QwenGdnDense,
         attn_output_gate: true,
-        // 0.125, not the mathematically-right 32^-0.5, for the reason
-        // `tiny_qwen_gdn_moe_arch` gives: `validate_arch` compares this f64
-        // EXACTLY against the manifest's and serde_json's default parser is
-        // only correct to ~1 ULP, so a scale that is not a binary fraction
-        // cannot survive the round trip (AGENTS.md Gotcha 24). The real
-        // baseline's 0.0625 is a power of two and is unaffected.
+        // 0.125, not the mathematically-right 32^-0.5: `validate_arch`
+        // compares this f64 EXACTLY against the manifest's, and serde_json's
+        // default parser is only correct to ~1 ULP -- so a scale that is not
+        // a binary fraction cannot survive the round trip (AGENTS.md Gotcha
+        // 24). The real baseline's 0.0625 is a power of two and is unaffected.
         attention_scale: 0.125,
         embedding_scaled_by_sqrt_hidden: false,
         router_scaled: false,
@@ -136,20 +103,6 @@ pub fn tiny_qwen_gdn_dense_arch(vocab_size: i64, num_layers: i64) -> ArchConfig 
 /// An UNQUANTIZED vector, F16 like every unquantized tensor in the real
 /// checkpoint -- and unlike the Qwen 3.6 fixture's BF16, which this file was
 /// forked from.
-///
-/// **That difference is the whole reason this helper exists rather than
-/// reusing `bf16_vector`, and it is the second time this fixture has earned
-/// its place.** The 1-bit entry's step 3 got the quantized triple's F16
-/// companions right off the real header and left the RAW tensors at the
-/// sibling's BF16, so the fixture said nothing about a walk that wrote F16
-/// bytes under a dtype tag no reader in `crates/runtime` honours. Every
-/// consumer of an unquantized tensor decodes BF16 off the byte size, so the
-/// install would have opened, decoded, and been wrong by a factor of 2^112 on
-/// every norm.
-///
-/// The values go through F16 rather than being BF16 values relabelled,
-/// because a BF16 value narrows back losslessly and a fixture that cannot
-/// lose a bit cannot exercise `narrow_raw_to_bf16`'s counting at all.
 fn f16_vector(name: &str, n: usize, center: f32, seed: u64) -> Tensor {
     let bits: Vec<u16> = deterministic_row(seed, n)
         .iter()
@@ -165,19 +118,6 @@ fn f16_vector(name: &str, n: usize, center: f32, seed: u64) -> Tensor {
 
 /// One sub-4-bit-affine weight plus its two FP16 companions, at `bits` = 1 or
 /// 2.
-///
-/// The sibling of `int4_triple`, and it differs on all three axes at once:
-/// 32 (or 16) elements per packed `u32` word rather than 8, one companion per
-/// 128 elements rather than per 64, and `F16` rather than `BF16`. The dtype
-/// string is the one that matters here -- `pass_through_packed` requires it
-/// per bit width, and a fixture writing `BF16` would produce an install of
-/// exactly the right size whose scales are wrong by orders of magnitude.
-///
-/// **Parameterized rather than forked, and the parameter is load-bearing.**
-/// The two widths' packed planes differ only in LENGTH, so a 2-bit fixture
-/// built by copying this file and changing a literal would be a second copy of
-/// every dense-path assertion; what actually has to vary is the quantizer and
-/// the word count, both of which fall out of `bits`.
 fn packed_triple(name: &str, rows: usize, cols: usize, seed: u64, bits: u32) -> Vec<Tensor> {
     assert_eq!(
         cols % GROUP,
@@ -233,9 +173,6 @@ fn packed_triple(name: &str, rows: usize, cols: usize, seed: u64, bits: u32) -> 
 
 /// Writes a tiny `qwen3_5` `.gturbo` install and returns the `ArchConfig`
 /// needed to open it.
-///
-/// Takes no `num_experts`: the family is dense and a fixture that could be
-/// asked for experts would be a fixture no real file corresponds to.
 pub fn build_synthetic_qwen_gdn_dense_install(
     dir: &std::path::Path,
     vocab_size: i64,
@@ -248,13 +185,6 @@ pub fn build_synthetic_qwen_gdn_dense_install(
 /// [`build_synthetic_qwen_gdn_dense_install`] at an explicit affine width:
 /// 1 for `prism-ml/Bonsai-27B-mlx-1bit`, 2 for
 /// `prism-ml/Ternary-Bonsai-27B-mlx-2bit` (ROADMAP's ternary entry).
-///
-/// Both real checkpoints are the same architecture at two quantizations, so
-/// ONE fixture serves both and the width is the only argument. Everything the
-/// dense path is checked for -- zero packed-expert files, a quant block that
-/// reaches `validate_quant` at all, the attention slot mirrored into the three
-/// MoE ones -- is exercised identically at either width, which is the point of
-/// not forking the file.
 pub fn build_synthetic_qwen_gdn_dense_install_at_bits(
     dir: &std::path::Path,
     vocab_size: i64,
@@ -270,9 +200,6 @@ pub fn build_synthetic_qwen_gdn_dense_install_at_bits(
     let v_heads = LA_V_HEADS;
 
     let mut ts: Vec<Tensor> = Vec::new();
-    // Untied head, and BOTH quantized -- which is what the real checkpoints'
-    // safetensors headers say (`embed_tokens` and `lm_head` are two of the 498
-    // tensors carrying `.scales`, in the 1-bit file and the 2-bit one alike).
     ts.extend(packed_triple(
         "language_model.model.embed_tokens.weight",
         vocab,
@@ -306,7 +233,6 @@ pub fn build_synthetic_qwen_gdn_dense_install_at_bits(
         }
 
         if is_full {
-            // attn_output_gate: q_proj emits per-head [query; gate] pairs.
             ts.extend(packed_triple(
                 &format!("{p}.self_attn.q_proj.weight"),
                 2 * NUM_HEADS * HEAD_DIM,
@@ -360,8 +286,6 @@ pub fn build_synthetic_qwen_gdn_dense_install_at_bits(
                 LA_CONV_K,
                 seed + 10,
             ));
-            // A_log and dt_bias carry NO `.weight` suffix in the real
-            // checkpoint (AGENTS.md Gotcha 26).
             ts.push(f16_vector(
                 &format!("{p}.linear_attn.A_log"),
                 v_heads,
@@ -382,9 +306,6 @@ pub fn build_synthetic_qwen_gdn_dense_install_at_bits(
             ));
         }
 
-        // THE DENSE FFN, and the whole reason this fixture exists beside the
-        // Qwen 3.6 one: no `mlp.gate`, no `mlp.shared_expert*`, no
-        // `.mlp.switch_mlp.`. Three projections and nothing else.
         for (i, role) in ["gate_proj", "up_proj", "down_proj"].iter().enumerate() {
             let (rows, cols) = if *role == "down_proj" {
                 (HIDDEN, INTER)
@@ -410,8 +331,6 @@ pub fn build_synthetic_qwen_gdn_dense_install_at_bits(
     let blob = assemble_safetensors(&ts);
     let source = MemoryRangeSource::new(&blob);
     let header = parse_header(&blob, crate::safetensors_header::DEFAULT_MAX_HEADER_BYTES)?;
-    // The real checkpoint's `quantization` object, verbatim: two keys and no
-    // per-tensor overrides.
     let quant = Gemma4Quant {
         default_bits: bits,
         group_size: GROUP as u32,
@@ -421,9 +340,6 @@ pub fn build_synthetic_qwen_gdn_dense_install_at_bits(
     Ok(arch)
 }
 
-/// The depthwise conv kernel: BF16, rank 3 `[channels, taps, 1]`, exactly as
-/// the Qwen 3.6 fixture writes it. Unquantized in the real checkpoint too --
-/// its 48 `conv1d` tensors carry no `.scales`.
 fn conv1d_weight(name: &str, channels: usize, taps: usize, seed: u64) -> Tensor {
     let flat = f16_vector(name, channels * taps, 0.0, seed);
     Tensor {

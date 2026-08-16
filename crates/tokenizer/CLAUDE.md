@@ -13,12 +13,24 @@ crates/tokenizer/
 +-- Cargo.toml                      # Crate manifest
 +-- src/
 |   +-- lib.rs                      # Library root re-exporting MfTokenizer and dialect APIs
-|   +-- dialect.rs                  # Resolves dialect special tokens and chat formatting rules
-|   +-- chat_template.rs            # Per-dialect text chat renderers (the FALLBACK path)
+|   +-- dialect/                    # Resolves dialect special tokens and chat formatting rules
+|   |   +-- mod.rs                  # ChatDialect enum & public API
+|   |   +-- config.rs               # DialectConfig table & properties
+|   |   \-- resolve.rs              # Special token probing & dialect resolution
+|   +-- chat_template/              # Per-dialect text chat renderers (the FALLBACK path)
+|   |   +-- mod.rs                  # Entry point & fallback dispatcher
+|   |   +-- chatml.rs               # ChatML chat template renderer
+|   |   +-- deepseek.rs             # DeepSeek chat template & tool call renderer
+|   |   +-- gemma.rs                # Gemma chat template renderer
+|   |   \-- mistral.rs              # Mistral [INST] chat template renderer
 |   +-- jinja_chat_template.rs      # minijinja + pycompat wrapper rendering the checkpoint's own template
 |   +-- detokenizer.rs              # StreamingDetokenizer for incremental UTF-8 token decoding
 |   +-- stop_matcher.rs             # StopMatcher for evaluating stop sequences and EOS token sets
-|   +-- structured_decoder.rs       # StructuredDecoder for streaming JSON / structured output
+|   +-- structured_decoder/         # StructuredDecoder for streaming JSON / structured output
+|   |   +-- mod.rs                  # StructuredDecoder state machine & event types
+|   |   +-- chatml.rs               # ChatML thought & tool parsing
+|   |   +-- deepseek.rs             # DeepSeek tool parsing
+|   |   \-- harmony.rs              # Harmony channel & reasoning parser
 |   +-- json_value.rs               # JSON value helper types for tool parameter encoding
 |   +-- error.rs                    # TokenizerError enum definition
 |   \-- tool_call/                  # Dialect-specific tool call DSL parsers
@@ -45,12 +57,12 @@ crates/tokenizer/
 
 ## Key Modules
 
-- `dialect.rs`: Resolves dialect special tokens and chat formatting rules for supported model families.
-- `chat_template.rs`: Per-dialect text chat rendering, plus DeepSeek's hand-rolled native tool chat. The FALLBACK for a checkpoint that ships no template (see Gotcha 1).
+- `dialect/`: Resolves dialect special tokens and chat formatting rules for supported model families.
+- `chat_template/`: Per-dialect text chat rendering, plus DeepSeek's hand-rolled native tool chat. The FALLBACK for a checkpoint that ships no template (see Gotcha 1).
 - `jinja_chat_template.rs`: Jinja template engine wrapper (`minijinja` + `pycompat`) rendering the checkpoint's own template, for plain text chat as well as tool chat.
 - `detokenizer.rs`: `StreamingDetokenizer` for incremental UTF-8 token decoding.
 - `stop_matcher.rs`: `StopMatcher` for evaluating stop sequences and EOS token sets.
-- `structured_decoder.rs`: `StructuredDecoder`, splitting generated output into visible content, reasoning (Harmony only, see Gotcha 4) and parsed tool calls.
+- `structured_decoder/`: `StructuredDecoder`, splitting generated output into visible content, reasoning (Harmony only, see Gotcha 4) and parsed tool calls.
 - `tool_call/`: Dialect-specific tool call DSL parsers (Gemma, Qwen, DeepSeek).
 
 ## Development & Test Commands
