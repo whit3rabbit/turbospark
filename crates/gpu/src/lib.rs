@@ -46,6 +46,7 @@ mod dequant_1bit_gemv;
 mod dequant_2bit_gemv;
 #[cfg(target_os = "macos")]
 mod dequant_int4_batch;
+#[cfg(target_os = "macos")]
 mod dequant_int4_gemv;
 #[cfg(target_os = "macos")]
 mod dequant_int8_gemv;
