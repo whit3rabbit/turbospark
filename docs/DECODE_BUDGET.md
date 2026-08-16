@@ -67,12 +67,21 @@ not the largest one available, and it should be scoped against 1.09 rather
 than against 5.
 
 The `pread` is the item that is worth a phase, and its cheapest lever needs
-no code at all: slot count. 32 slots buys +28% decode over 8 and +15.7% over
-the default 16, for pinned host memory of `slots x layers x expert_stride`
+no kernel work at all: slot count. 32 slots buys +28% decode over 8 and
++15.7% over 16, for pinned host memory of `slots x layers x expert_stride`
 (AGENTS.md Gotcha 36) -- which is exactly the "adaptive expert-cache slots"
 item, and this is the measurement that prices it. Covering more of the
 exposed `pread` with GPU work is the other direction, and the
 shared-expert overlap is the existing proof that the shape works.
+
+**LANDED 2026-08-16.** `--expert-cache-slots` defaults to `auto` now
+(`crates/runtime/src/expert_cache_policy.rs`): the largest allowed count
+whose slot cache fits a quarter of `physical - resident - 4 GiB`, floored at
+16 so it can only ever climb. On the machine this page was measured on it
+resolves to 32. Every harness keeps its pinned 16 through a separate entry
+point, so the rows above and every row in `docs/BENCHMARKS.md` still
+describe 16 slots and are still reproducible with
+`--expert-cache-slots 16`.
 
 ## Caveats
 

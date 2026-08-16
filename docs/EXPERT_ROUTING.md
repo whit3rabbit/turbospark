@@ -26,8 +26,10 @@ portion" to skip at all.
 In an MoE model there is a real candidate for the region: the routed
 experts. Gemma 4 26B-A4B routes each token through the top 8 of 128
 experts per layer, and this engine already exploits that dynamically --
-routed experts are not resident, `crates/streaming` keeps 16 (default) of
-128 per layer in pinned slots and streams misses by `pread`. The open
+routed experts are not resident, `crates/streaming` keeps 16 of
+128 per layer in pinned slots (more where the machine has memory to spare;
+16 is the floor and what this measurement used) and streams misses by
+`pread`. The open
 question was whether a STATIC, domain-specific expert set could beat that
 dynamic mechanism. That is an empirical question about routing statistics,
 so it was measured before anything was built.

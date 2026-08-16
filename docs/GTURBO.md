@@ -249,7 +249,7 @@ During model execution:
    - `PreadExpertStreamer` checks the in-memory LFU/LRU expert cache.
    - Cache Hits -> Reused directly.
    - Cache Misses -> Asynchronous OS `pread` reads `expertStride` bytes from `layer_NN.bin` directly into pinned Metal buffers.
-4. **Execution Ceiling**: Expert cache size is controlled by `--expert-cache-slots` (default 16 slots). This keeps overall physical RAM footprint capped strictly at **~1.6 GiB (Qwen 3.6)** and **~2.1 GiB (Gemma 4)**.
+4. **Execution Ceiling**: Expert cache size is controlled by `--expert-cache-slots`, which defaults to `auto` and never resolves below 16 slots. At 16 the overall physical RAM footprint is **~1.6 GiB (Qwen 3.6)** and **~2.1 GiB (Gemma 4)** -- the figures every published benchmark is measured at, and the floor `auto` guarantees. A machine with memory to spare climbs to 24 or 32 and trades roughly 1.5 GB of that ceiling for ~16% more decode, because the slot cache is what the decode loop's exposed `pread` is waiting on (`docs/DECODE_BUDGET.md`). Pass `--expert-cache-slots 16` to hold the ceiling exactly.
 
 ---
 

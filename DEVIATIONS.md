@@ -137,7 +137,7 @@ live network).
   | OUT-01 one-pass sampling + Top-64 (0.377 -> 5.86-5.89 tok/s) | production | same bug class found independently 2026-08-07: host full sort 18.9 ms -> `rank_top_k` 2.05 ms, decode 25.5 -> 39.6 tok/s. Host-side; the GPU `sample` kernel stays descoped | parallel finding |
   | PF-02 chunk-128 prefill (121 tok: 15.80 -> 9.34 s) | production | descoped with the tile kernels; the one measured gap (21.4 vs 7.5 ms per prompt token) | descoped |
   | PF-12 staged affine MPP, PF-17 Apple10 TensorOps | production | descoped with the same tile pipeline | descoped |
-  | 24/32 expert-cache slots | conditional (memory cost) | 32 slots: +15% decode for +1.5 GB (`docs/BENCHMARKS.md`) | matches |
+  | 24/32 expert-cache slots | conditional (memory cost) | 32 slots: +15% decode for +1.5 GB (`docs/BENCHMARKS.md`). SINCE 2026-08-16 the condition is evaluated per machine rather than left to the user: `--expert-cache-slots` defaults to `auto` and climbs to 24 or 32 where the memory is there, floored at 16 so it can never cost throughput. Every harness still pins 16. | matches, now automatic |
   | Quantized KV K4/V4 (delta-NLL +0.015197) | rejected (quality) | never attempted; KV stays FP16 | consistent |
   | DEC-03 persistent multi-threadgroup MoE (cb2 239 -> 60 ms) | production | inherited: the vendored `moe.metal` decode pair IS that kernel family | ported |
 

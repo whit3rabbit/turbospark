@@ -65,7 +65,7 @@ ANTHROPIC_BASE_URL=http://127.0.0.1:8080 ANTHROPIC_API_KEY=unused \
 # build decodes far too slowly to be usable). `--model` takes a directory
 # or a `turbospark-model` alias.
 cargo run --release -p turbospark-server --bin turbospark-server -- \
-  --model ~/models/gemma4.gturbo [--port N] [--max-context N] [--expert-cache-slots N] \
+  --model ~/models/gemma4.gturbo [--port N] [--max-context N] [--expert-cache-slots auto|N] \
   [--bind loopback|tailnet] [--power-profile performance|balanced|efficiency] \
   [--max-tokens-per-sec R]
 cargo run --release -p turbospark-server --bin turbospark-server -- --model gemma4

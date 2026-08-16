@@ -3,7 +3,7 @@
 //! loopback, or to this machine's Tailscale IPv4 address. Two modes:
 //!
 //!   turbospark-server --model <install-dir|alias> [--port N] [--max-context N]
-//!                   [--expert-cache-slots N] [--bind loopback|tailnet]
+//!                   [--expert-cache-slots auto|N] [--bind loopback|tailnet]
 //!                   [--power-profile performance|balanced|efficiency]
 //!                   [--max-tokens-per-sec R]
 //!   turbospark-server <tokenizer-dir> [port]
@@ -26,7 +26,7 @@ use std::sync::Arc;
 
 use tokenizer::MfTokenizer;
 
-const USAGE: &str = "usage: turbospark-server --model <install-dir|alias> [--port N] [--max-context N] [--expert-cache-slots N] [--bind loopback|tailnet] [--power-profile performance|balanced|efficiency] [--max-tokens-per-sec R]\n       turbospark-server <tokenizer-dir> [port]\n\n`--model` takes a .gturbo directory or a turbospark-model alias (`turbospark-model list`).";
+const USAGE: &str = "usage: turbospark-server --model <install-dir|alias> [--port N] [--max-context N] [--expert-cache-slots auto|N] [--bind loopback|tailnet] [--power-profile performance|balanced|efficiency] [--max-tokens-per-sec R]\n       turbospark-server <tokenizer-dir> [port]\n\n`--model` takes a .gturbo directory or a turbospark-model alias (`turbospark-model list`).";
 
 /// Interface the server listens on. Resolution fails rather than widening:
 /// there is no path from `Tailnet` to a wildcard or LAN address.

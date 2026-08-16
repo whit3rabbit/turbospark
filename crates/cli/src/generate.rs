@@ -391,7 +391,7 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
 
     // Size the KV cache to the same bound the completion loop admits
     // against, rather than the runner's own 4096-token default, and honor
-    // --expert-cache-slots instead of the runner's default 16.
+    // --expert-cache-slots instead of the runner's own fixed default.
     //
     // The slot POLICY crosses the boundary unresolved, exactly as
     // `--power-profile` does: `crates/invocation` is pure and may not read
