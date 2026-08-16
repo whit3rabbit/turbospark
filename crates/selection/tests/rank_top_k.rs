@@ -76,6 +76,114 @@ fn all_equal_keys_rank_by_ascending_index() {
     assert_eq!(out, want32);
 }
 
+/// The sequential-cut path added 2026-08-15 compares raw `f64` keys with
+/// `>=`, and every fixture above is non-negative because the hot path feeds
+/// it `exp(s - max)`. `keys` is public and documented as "any monotone image
+/// of the probabilities", so a negative, a zero and an infinity all have to
+/// land in the same order the full sort puts them.
+#[test]
+fn mixed_sign_and_infinite_keys_agree_with_the_reference() {
+    let keys = vec![
+        0.0,
+        -1.0,
+        f64::INFINITY,
+        -0.0,
+        5.0,
+        f64::NEG_INFINITY,
+        -1.0,
+        1e-300,
+        -5.0,
+        5.0,
+        0.0,
+        f64::INFINITY,
+    ];
+    let full: Vec<u32> = rank_indices(&keys).into_iter().map(|i| i as u32).collect();
+    let mut out = Vec::new();
+    for k in 0..=keys.len() + 1 {
+        rank_top_k_u32_into(&keys, k, &mut out);
+        let want: Vec<u32> = full.iter().copied().take(k.min(keys.len())).collect();
+        assert_eq!(out, want, "k {k}");
+    }
+}
+
+/// A NaN key used to make the comparator INTRANSITIVE, and Rust's sorts
+/// detect that and abort the process: `partial_cmp(..).unwrap_or(Equal)`
+/// reports NaN equal to every real key, so on `[1.0, NaN, 5.0]` the old rule
+/// gave `0 < 1`, `1 < 2` and `0 > 2` at once. Small inputs merely returned a
+/// scrambled answer; larger ones panicked with "user-provided comparison
+/// function does not correctly implement a total order", which is why this
+/// sat unnoticed in a public API. `select` never reached it -- it rejects a
+/// non-finite score vector first.
+///
+/// NaN now ranks LAST, which is the choice `f64::total_cmp` would have got
+/// wrong for this use: under IEEE totalOrder a positive NaN outranks
+/// infinity, so a NaN score would be selected rather than discarded.
+#[test]
+fn nan_keys_rank_last_and_no_longer_panic() {
+    // The exact intransitivity, now well-defined: 5.0, then 1.0, then NaN.
+    assert_eq!(rank_indices(&[1.0, f64::NAN, 5.0]), vec![2, 0, 1]);
+
+    // An input large enough that the old comparator aborted rather than
+    // merely scrambling. 1366 NaNs of 4096, spread through the domain.
+    let many: Vec<f64> = (0..4096)
+        .map(|i| {
+            if i % 3 == 0 {
+                f64::NAN
+            } else {
+                ((i * 7) % 101) as f64
+            }
+        })
+        .collect();
+    let full = rank_indices(&many);
+    assert_eq!(full.len(), many.len());
+
+    // Every NaN sits after every real key, and the real prefix is exactly
+    // the non-NaN count -- so "last" means last, not merely "somewhere".
+    let first_nan = full
+        .iter()
+        .position(|&i| many[i].is_nan())
+        .expect("the fixture carries NaNs");
+    assert_eq!(first_nan, many.iter().filter(|v| !v.is_nan()).count());
+    assert!(full[first_nan..].iter().all(|&i| many[i].is_nan()));
+
+    // The partial paths agree with the full reference, which is only
+    // possible because both comparators are now the same total order: a
+    // stable and an unstable sort may disagree under a broken one.
+    let want: Vec<u32> = full.iter().map(|&i| i as u32).collect();
+    let mut out = Vec::new();
+    rank_indices_u32_into(&many, &mut out);
+    assert_eq!(out, want, "rank_indices_u32_into");
+    for k in [1usize, 64, first_nan, first_nan + 1, many.len()] {
+        rank_top_k_u32_into(&many, k, &mut out);
+        assert_eq!(out, want[..k.min(many.len())].to_vec(), "k {k}");
+    }
+}
+
+/// The cut admits every tie at the boundary, so when the boundary value is
+/// heavily repeated the admitted set is far larger than `k` and the
+/// truncation after the sort is what makes the answer right. A cut path
+/// that admitted only `k` entries, or compared with `>` instead of `>=`,
+/// would return too few here rather than the wrong ones -- which is the
+/// failure a spot check on distinct values cannot see.
+#[test]
+fn a_heavily_tied_cut_admits_the_ties_and_truncates_after_ordering() {
+    // 4 clear winners, then 200 exact ties straddling any k in 5..205.
+    let mut keys = vec![9.0, 8.0, 7.0, 6.0];
+    keys.extend(std::iter::repeat_n(1.0, 200));
+    keys.push(0.5);
+    let full: Vec<u32> = rank_indices(&keys).into_iter().map(|i| i as u32).collect();
+    let mut out = Vec::new();
+    for k in [4usize, 5, 6, 100, 203, 204, 205] {
+        rank_top_k_u32_into(&keys, k, &mut out);
+        assert_eq!(
+            out.len(),
+            k.min(keys.len()),
+            "k {k} returned the wrong count"
+        );
+        assert_eq!(out, full[..k.min(keys.len())].to_vec(), "k {k}");
+    }
+}
+
 #[test]
 fn keeps_no_more_than_the_domain() {
     let p = probs(5);

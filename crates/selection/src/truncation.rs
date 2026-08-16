@@ -51,15 +51,51 @@ pub fn rank_top_k(probs: &[f64], k: usize) -> Vec<usize> {
     idx
 }
 
+/// Descending key, NaN last, ties by ascending index.
+///
+/// **This must be a TOTAL order and for a long time it was not.** Both
+/// comparators used to read `partial_cmp(..).unwrap_or(Equal).then(index)`,
+/// which makes a NaN compare Equal to every real key and is therefore
+/// intransitive: on `[1.0, NaN, 5.0]` it reports `0 < 1` and `1 < 2` and
+/// `0 > 2`. Rust's sorts detect that and PANIC with "user-provided
+/// comparison function does not correctly implement a total order", so
+/// `rank_indices*` and `rank_top_k*` could abort the process on some
+/// NaN-bearing inputs -- not all, which is why it went unnoticed.
+///
+/// Sorting NaN LAST rather than adopting `f64::total_cmp` is deliberate,
+/// and the reason is behavioural rather than aesthetic. `total_cmp` is the
+/// IEEE totalOrder predicate, under which a positive NaN sits ABOVE
+/// infinity, so a NaN score would become the top-ranked candidate and get
+/// itself selected -- worse than the panic it replaced. It would also
+/// separate `-0.0` from `0.0`, which the old comparator called equal, and
+/// that is a live difference for a public function documented to take "any
+/// monotone image of the probabilities".
+///
+/// So on NaN-free input this is EXACTLY the old comparator (`partial_cmp`
+/// always resolves, `-0.0` and `0.0` stay equal, ties fall to the index),
+/// and nothing any caller in this workspace can reach changes. `select`
+/// rejects a non-finite score vector before ranking, so the hot path was
+/// never exposed either way.
+fn rank_cmp(key_a: f64, key_b: f64, a: usize, b: usize) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    match (key_a.is_nan(), key_b.is_nan()) {
+        (false, false) => key_b
+            .partial_cmp(&key_a)
+            .expect("neither key is NaN in this arm")
+            .then(a.cmp(&b)),
+        // Two NaNs are indistinguishable as keys, so the index alone
+        // orders them -- the same rule ties get everywhere else here.
+        (true, true) => a.cmp(&b),
+        // A NaN ranks after every real key, whichever side it is on.
+        (true, false) => Ordering::Greater,
+        (false, true) => Ordering::Less,
+    }
+}
+
 /// Descending probability, ties by ascending index. Shared so the partial
 /// and full ranking cannot drift apart.
 fn rank_order(probs: &[f64]) -> impl Fn(&usize, &usize) -> std::cmp::Ordering + '_ {
-    |&a: &usize, &b: &usize| {
-        probs[b]
-            .partial_cmp(&probs[a])
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then(a.cmp(&b))
-    }
+    |&a: &usize, &b: &usize| rank_cmp(probs[a], probs[b], a, b)
 }
 
 /// [`rank_indices`] into a reused `u32` scratch buffer: same order, same
@@ -74,11 +110,48 @@ pub fn rank_indices_u32_into(keys: &[f64], out: &mut Vec<u32>) {
 
 /// [`rank_top_k`] into a reused `u32` scratch buffer. See
 /// [`rank_indices_u32_into`] for what `keys` may be.
+///
+/// **This is 70% of the host sampler's cost and the reason is the ACCESS
+/// PATTERN, not the complexity** (measured 2026-08-15, `tests/
+/// host_sampler_cost.rs`: 2.061 ms of `select`'s 2.940 at V=262144). The
+/// obvious implementation -- `select_nth_unstable_by` over the identity
+/// permutation -- is already O(n), but it partitions `u32` INDICES under a
+/// comparator that dereferences `keys[a]` and `keys[b]`, so on a 2 MiB key
+/// array almost every one of the ~n comparisons is a cache miss, and it
+/// writes a 1 MiB identity permutation first.
+///
+/// So this finds the cut with one SEQUENTIAL pass instead, then ranks only
+/// the handful of indices that reach it. The result is identical rather
+/// than merely equivalent: with no NaN present `rank_order_u32` is a total
+/// order (`partial_cmp` always resolves and the index tie-break settles the
+/// rest), the collected set is a superset of the top-`k` because it admits
+/// every tie at the cut, and sorting a superset then truncating yields the
+/// same prefix as sorting the whole domain. `tests/rank_top_k.rs` checks
+/// that against the full-sort reference, ties included.
+///
+/// A NaN key falls back to the old path deliberately. `partial_cmp(..)
+/// .unwrap_or(Equal)` makes NaN compare equal to everything, which is NOT a
+/// total order, so the two routes are entitled to disagree there -- and
+/// `select` cannot reach it (it rejects a non-finite score vector before
+/// ranking), so the fallback is for this function's own public contract.
 pub fn rank_top_k_u32_into(keys: &[f64], k: usize, out: &mut Vec<u32>) {
     let k = k.min(keys.len());
     if k == 0 {
         out.clear();
         return;
+    }
+    if k < keys.len() {
+        if let Some(cut) = kth_largest_value(keys, k) {
+            out.clear();
+            for (i, &v) in keys.iter().enumerate() {
+                if v >= cut {
+                    out.push(i as u32);
+                }
+            }
+            out.sort_unstable_by(rank_order_u32(keys));
+            out.truncate(k);
+            return;
+        }
     }
     fill_identity(out, keys.len());
     if k < out.len() {
@@ -88,6 +161,57 @@ pub fn rank_top_k_u32_into(keys: &[f64], k: usize, out: &mut Vec<u32>) {
         out.truncate(k);
     }
     out.sort_unstable_by(rank_order_u32(keys));
+}
+
+/// The `k`th largest VALUE in `keys`, counting duplicates with
+/// multiplicity, or `None` if any key is NaN.
+///
+/// One sequential pass holding the `k` largest values seen so far in an
+/// unordered array with its minimum tracked. The minimum is recomputed on
+/// each displacement, which is `O(k)` and looks wasteful until it is
+/// counted: a displacement needs a value beating the running `k`th best, so
+/// over a domain of `n` in arbitrary order it happens about `k ln(n / k)`
+/// times -- ~533 times at `n = 262144, k = 64`, against 262144 sequential
+/// comparisons that almost all fail. A heap would improve the term that is
+/// already negligible.
+///
+/// Values, not indices: the caller re-derives the tie-break by sorting the
+/// admitted set with the real comparator, so this deliberately knows
+/// nothing about ordering beyond `>`.
+fn kth_largest_value(keys: &[f64], k: usize) -> Option<f64> {
+    debug_assert!(k > 0 && k <= keys.len());
+    let mut top: Vec<f64> = Vec::with_capacity(k);
+    let mut min = f64::INFINITY;
+    let mut min_at = 0usize;
+    for &v in keys {
+        if v.is_nan() {
+            return None;
+        }
+        if top.len() < k {
+            top.push(v);
+            if top.len() == k {
+                (min_at, min) = argmin(&top);
+            }
+        } else if v > min {
+            // Strictly greater: an equal value leaves `k` values at or
+            // above `min`, so the cut has not moved.
+            top[min_at] = v;
+            (min_at, min) = argmin(&top);
+        }
+    }
+    Some(min)
+}
+
+/// Position and value of the smallest entry. `values` is non-empty and
+/// NaN-free by construction at every call site.
+fn argmin(values: &[f64]) -> (usize, f64) {
+    let mut at = 0usize;
+    for (i, &v) in values.iter().enumerate().skip(1) {
+        if v < values[at] {
+            at = i;
+        }
+    }
+    (at, values[at])
 }
 
 /// The identity permutation `0..len` in `out`, reusing its capacity.
@@ -103,12 +227,7 @@ fn fill_identity(out: &mut Vec<u32>, len: usize) {
 /// [`rank_order`] over `u32` indices. The comparator never returns Equal
 /// for distinct indices, so stable and unstable sorts agree.
 fn rank_order_u32(keys: &[f64]) -> impl Fn(&u32, &u32) -> std::cmp::Ordering + '_ {
-    |&a: &u32, &b: &u32| {
-        keys[b as usize]
-            .partial_cmp(&keys[a as usize])
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then(a.cmp(&b))
-    }
+    |&a: &u32, &b: &u32| rank_cmp(keys[a as usize], keys[b as usize], a as usize, b as usize)
 }
 
 /// Keep the smallest ranked prefix whose cumulative probability mass first
