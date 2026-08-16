@@ -15,3 +15,6 @@ ROADMAP.md
 # scripts/kld_llamacpp.py imports scripts/kld.py, so running it byte-compiles
 # a sibling module here.
 __pycache__/
+
+# Local
+compile_flags.txt

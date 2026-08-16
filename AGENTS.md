@@ -153,7 +153,7 @@ cargo run -p turbospark-bench --bin turbospark-bench -- <tokenizer-dir>
 # install's own family and printed in the header, the same pair the oracles
 # take (`real_model::protocol_parameters`): 4,096/1,024 for gemma4, qwen36
 # and qwen3moe, 8,192/1,024 for the dense `llama` half, 8,192/3,072 for
-# gpt-oss. Read a peak or a tok/s row WITH those two numbers -- a dense
+# gpt-oss, 8,192/2,048 for museGlimmer. Read a peak or a tok/s row WITH those two numbers -- a dense
 # `llama` number taken before 2026-08-12 is at the old shared 4,096, where
 # `long-synthesis` did not fit at all.
 cargo run --release -p turbospark-bench --bin turbospark-bench -- --model ~/models/gemma4.gturbo
@@ -166,6 +166,23 @@ cargo run --release -p turbospark-bench --bin turbospark-bench -- --model ~/mode
 # ~10 minutes. See docs/BENCHMARKING.md.
 TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
   cargo test -p turbospark-bench --test memory_oracle --release -- --ignored --nocapture
+
+# The SEVENTH family's two gates (dense, MLX INT4). Its protocol runs at
+# 8,192 context AND a 2,048 budget, because the model REASONS to a `to=self`
+# message before its `to=user` answer -- the three cases need 1,132 / 1,498 /
+# 1,552 sampled tokens, so the SHORT one already exceeds the shared 1,024.
+# The quality gate needs an ASSISTANT PREFIX (` to=user<|message|>`): the
+# generation prompt ends at `<|start|>assistant` and the model's next
+# emission is a RECIPIENT, so a reference answer spliced in raw lands in no
+# message at all -- gpt-oss's 148,421.76 failure, one family over.
+TURBOSPARK_MUSEGLIMMER_INSTALL_DIR=~/models/museglimmer-30b.gturbo \
+  cargo test -p turbospark-bench --test museglimmer_memory_oracle --release -- --ignored --nocapture
+TURBOSPARK_MUSEGLIMMER_INSTALL_DIR=~/models/museglimmer-30b.gturbo \
+  cargo test -p turbospark-bench --test museglimmer_quality_gate --release -- --ignored --nocapture
+
+# Install it (19.4 GB in, ~15 GB out, ~21 min, never written to disk whole).
+TURBOSPARK_MUSEGLIMMER_INSTALL_DIR=~/models/museglimmer-30b.gturbo \
+  cargo test -p turbospark-repack --test museglimmer_checkpoint_network --release -- --ignored --nocapture
 
 # Same oracle for Qwen 3.6. A SEPARATE target, not a second #[test]: the
 # footprint assertion is a whole-session peak and the two families have
@@ -648,7 +665,8 @@ as it lands, and keep the member list in sync with the directories under
 A `Makefile` wraps the common cases: `make build-debug`, `make
 build-release`, `make test-debug`, `make test-release`, `make fmt`, `make
 fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
-`make clean`.
+`make clean`, `make install` (installs all binaries to `~/.local/bin` by default;
+configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
 
 ## Gotchas
 
@@ -710,7 +728,12 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
    Neither is reachable from any command in the verification policy, which is
    why a cross-target `cargo check` now sits beside them. A platform claim
    nobody runs is a comment, not a gate. Dispatched, parity-tested Metal pipelines
-   (`rmsnorm_no_scale`, `rms_norm_bf16w`, both `_perhead` norm variants,
+   (`rmsnorm_no_scale`, `rms_norm_bf16w`, the port-local
+   `rmsnorm_bf16w_centered` (the `x * (1 + w)` form `muse_glimmer`'s four
+   per-layer norms take; a SEPARATE kernel rather than a function constant
+   on its plain sibling, because that model uses BOTH conventions and a
+   specialization axis missing the pipeline cache's key would silently
+   collapse them -- Gotcha 50), both `_perhead` norm variants,
    `rope_proportional_neox` (which with `rotated_pairs = head_dim/2` IS
    default full-head NeoX -- no separate default-rope wrapper exists),
    the port-local `logit_softcap_fp16`, `dequant_int4_gemv_simd`, `dequant_int8_gemv_simd`
@@ -843,7 +866,13 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     four projections, YaRN rope through a precomputed frequency table,
     ATTENTION SINKS, an alternating 128-token window on the EVEN layers,
     and MXFP4 routed experts carrying a clamped SwiGLU and per-expert
-    biases. A FIFTH FLOW rather than a sixth family on an existing one,
+    biases. A SEVENTH FAMILY AND A SIXTH FLOW landed after it: `MuseGlimmer`
+    builds `RealMuseState` and runs `families/museglimmer/` -- dense GQA
+    with an alternating three-sliding/one-full window, CENTERED per-layer
+    norms (`x * (1 + w)`) against a PLAIN final one, TWO RMS epsilons,
+    NoPE on the full layers, a separate attention output gate, a second Q
+    scale and a logit softcap behind an output multiplier (Gotcha 50).
+    A FIFTH FLOW rather than a sixth family on an existing one,
     because all four of those are inside the layer; every one of them
     produces fluent WRONG output rather than an error if a neighbour's flow
     is used instead. Two of them are not where a reader would look: the
@@ -1193,10 +1222,24 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     on every battery run of both installs (it prefills ~3,000 tokens for
     63-72 s before decoding anything), while the SAME binary running the
     SAME protocol on AC held Nominal on 50 of 50 sampled arms. Then
-    gpt-oss-20b (2026-08-12), the highest-wattage install here at ~36 W
+    gpt-oss-20b (2026-08-12), then the highest-wattage install here at ~36 W
     combined / ~32 W GPU, dropped one of two AC decode windows to Heavy,
     and the throttled arm read 3.7% BETTER J/token than the clean one --
-    the same trap, now reachable on AC. (That ~36 W is itself ~3 W of
+    the same trap, now reachable on AC. **`muse_glimmer` (2026-08-16) is the
+    limit case and takes the wattage record**: ~38 W combined on a quiet
+    machine, and it saturated on EVERY measured arm of three captures, so its
+    governed J/token is all the harness can produce and it wanders 25% run to
+    run. Its one stable reading is the WARMUP window, which the summary
+    excludes by design -- so on a hot enough install the only publishable
+    number is the one the protocol throws away (`docs/POWER_BASELINE.md`).
+    Two further things that capture settled. The governed point is not a
+    fixed discount: six governed decodes ran 18% to 35% below the
+    unconstrained one, so the DIRECTION reproduces and the magnitude does
+    not. And a `--power-profile efficiency` arm on the same install held
+    Nominal on 6 rows of 6 where performance went Heavy on 3 of 3, which
+    inverts the natural guess -- capping the rate keeps a machine OUT of
+    thermal governance, so the cap is sometimes the only way to get a
+    repeatable power number at all. (That ~36 W is itself ~3 W of
     background load; the install's own clean draw is ~33 W. See Gotcha
     43, which is the other half of this one: pressure is not the only
     thing that silently rewrites a power row, and the Nominal check
@@ -1904,6 +1947,141 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
     when two code paths differ only in a STRIDE, a test that perturbs the
     whole tensor cannot tell them apart.
 
+49. **A STREAM DECODER WHOSE TERMINATOR IS A STOP TOKEN CAN NEVER SEE ITS OWN
+    TERMINATOR, AND THE FAILURE IS SILENCE.** `run_raw_completion` breaks out
+    of its loop on a stop token BEFORE the progress callback, deliberately: a
+    stop token is framing, and no consumer wants it in the reply. Harmony ends
+    a tool call with `<|call|>` and `<|call|>` is in `gpt-oss`'s stop set, so
+    `StructuredAssistantDecoder` is handed the whole call and then never told
+    it ended. Every other dialect's tool span closes on an ORDINARY token that
+    either arrived or did not, which is why `finish()` treats an open span as
+    an error for those three and as the normal case for this one.
+    THE PART THAT GENERALISES IS THE FAILURE MODE, not the fix. A consumer
+    driving only `consume` gets no error, no markup on the wire and no
+    truncated output -- just an assistant turn with nothing in it, which reads
+    as a model that declined to answer. `crates/server`'s `stream_blocking` had
+    never called `finish()` at all (nothing had needed it), and `crates/cli`
+    still does not. So when adding a span to a streaming decoder, ask what
+    CLOSES it before asking what parses it, and if the answer is a token the
+    loop swallows, the exit path is part of the feature rather than a tidy-up.
+    A SECOND, SMALLER INSTANCE RODE ALONG in the same item and is the same
+    shape one layer out: `StopReason::ToolCalls` fired on
+    `tokenizer.tool_response_id`, which is Gemma's marker and
+    `NO_SUCH_TOKEN_ID` on every other dialect, so a Harmony call fell through
+    the ladder to `StopReason::Eos` and reached a client as
+    `finish_reason: "stop"` -- WITH a correct `tool_use` block beside it, which
+    is what makes it hard to notice. The field is `tool_call_stop_id` now,
+    because the question the ladder asks ("does this stop token mean the model
+    is invoking something") is not the question a markup id answers, and the
+    two dialects that have one do not spell it with the same kind of token.
+
+50. **A NORMALIZATION CONVENTION IS A PROPERTY OF THE TENSOR, NOT OF THE
+    FAMILY, AND ONE MODEL CAN USE TWO.** `muse_glimmer`'s four per-layer
+    norms are `CenteredRMSNorm` -- the stored weight is an OFFSET FROM UNITY,
+    so the effective scale is `1 + w` -- while its FINAL norm
+    (`model.norm.weight`) is a plain `nn.RMSNorm` at `w`. Both live in one
+    forward pass, so "which norm does this family use" has no answer; only
+    "which norm does this TENSOR use" does. `rmsnorm_bf16w_centered` and
+    `rmsnorm_bf16w` are therefore separate kernels selected per dispatch
+    site, and `families/museglimmer/mod.rs` calls each by name.
+    THREE THINGS THAT FOLLOW, each a decision rather than an observation.
+    **The `+1` is a SEPARATE KERNEL and not a function constant.** A
+    specialization axis whose byte missed `MetalContext::pipeline`'s
+    `constants_key` silently reuses whichever pipeline compiled first
+    (`crates/gpu` Gotcha 1), and here that would make the two norms of one
+    model the same function -- fluent, wrong, and invisible. A distinct
+    kernel name is a distinct pipeline by construction.
+    **The `1 +` is applied on the FP32 accumulator and never baked into the
+    stored weight at repack time.** Baking is the obvious cheaper option and
+    it is lossy where it matters: a centred weight sits near ZERO, BF16's
+    absolute resolution near 1.0 is 2^-8 = 0.0039, so a `w` of 0.01 comes
+    back with ~39% of its own magnitude destroyed -- on the scale of a
+    normalization. Contrast Gotcha 45's F16-to-BF16 narrowing, which IS
+    accepted: that one was measured at 0.0039 worst case on values whose
+    magnitude is ~1, not ~0.01.
+    **Gemma's `+1` was a real candidate and was REFUTED by measurement**
+    (`gguf_norm_convention_probe`: its GGUF and MLX installs' resident cores
+    are bit-identical, and llama.cpp's converter does add 1 to Gemma norms),
+    so `rms_norm` stays the plain form and this is an addition rather than a
+    switch. Do not "unify" them.
+    THE TESTING LESSON IS SEPARATE AND GENERALISES FURTHER. A parity fixture
+    whose norm weights sit near zero CANNOT TELL THE TWO CONVENTIONS APART,
+    because `x * w` and `x * (1 + w)` converge as `w -> 0`.
+    `the_two_norm_conventions_are_different_functions` asserts that the
+    fixture discriminates before the parity case is believed -- the same
+    discipline Gotcha 48 states for sub-4-bit packing, on a third axis.
+
+51. **EVERY TEST IN A PERTURBATION-STYLE FIXTURE FILE CAN BE
+    SELF-RELATIVE, AND THEN THE FILE CATCHES ALMOST NOTHING.** The
+    reachability pattern `docs/NEW_MODEL.md` recommends -- perturb a tensor,
+    require the logits to move -- rebuilds its own baseline inside the same
+    binary. So a mutation that changes the MATH for every arm equally leaves
+    every case green: both the baseline and the perturbed run carry it.
+    Measured on `crates/runtime/tests/real_forward_muse.rs`, 2026-08-15: six
+    mutations, and only ONE reddened (dropping the attention output gate,
+    which makes a tensor unreachable and so breaks a REACHABILITY invariant
+    rather than an arithmetic one). Dropping a Q scale, rotating a NoPE
+    layer, swapping a norm convention, dropping an output multiplier and
+    collapsing two epsilons ALL SURVIVED a file of twelve tests.
+    The fix is one number: a FROZEN DIGEST over a deterministic synthetic
+    install's logits, which is the only assertion in such a file that
+    compares against something computed BEFORE the mutation. It took the
+    same six mutations to five reddening. It is a CHANGE DETECTOR and not a
+    correctness claim -- untrained weights cannot say the arithmetic is
+    right, only that it is what it was -- so re-freezing it needs a stated
+    reason, and a digest updated reflexively protects nothing.
+    ONE MUTATION SURVIVES EVEN THE DIGEST and is worth knowing as a limit:
+    collapsing an RMS epsilon of 1e-5 into 1e-8. At FP16 with `mean_sq` near
+    1 those differ by ~5e-6 relative, an order of magnitude under FP16's
+    resolution. Epsilon VALUES are pinnable offline against the checkpoint's
+    own `config.json`; which epsilon reaches which norm site is a question
+    only a real-model quality gate can answer.
+
+52. **A DIALECT PROBE KEYED ON "SPECIFIC-LOOKING" TOKENS IS A COINCIDENCE
+    WAITING FOR ITS SECOND CHECKPOINT, and the probe that broke had a comment
+    saying so.** `detect_dialect` resolved Harmony on `<|start|>` plus
+    `<|message|>`, reasoning in a comment that two markers are "a far more
+    specific pair than a single `<|im_end|>`" and that Gotcha 41's lesson is
+    that a probe stops being injective when a second checkpoint arrives.
+    `mlx-community/Muse-Glimmer-30B-4bit` carries both and is not Harmony: no
+    `<|channel|>`, no `<|return|>`, no `<|call|>`, no `<|end|>`, no
+    `<|startoftext|>`, and an `<atem:function_calls>` tool DSL instead of a
+    channel recipient.
+    **THE ACTUAL BUG WAS THAT THE PROBE AND THE RESOLVER DISAGREED ABOUT WHAT
+    THE DIALECT IS.** `resolve_harmony` requires six tokens; the probe tested
+    two. Any checkpoint in the gap resolves to a dialect that then fails to
+    load -- which is the good failure mode (it did fail loudly, on
+    `<|startoftext|>`) and is still the wrong answer, because the model is
+    refused rather than run. The fix is to test a token the resolver requires
+    and the impostor lacks (`<|channel|>`, the format's defining feature), not
+    to add an arbitrary third marker. **The general rule: a detection probe
+    must not be able to pass where its own resolver will fail.** Grep for
+    resolvers whose `required_id` set is larger than their probe's.
+
+53. **minijinja REJECTS A CONDITIONAL EXPRESSION AS A KEYWORD ARGUMENT, and
+    real chat templates use one.** `f(k=a if c else d)` is valid Jinja2 and
+    minijinja 2.22.0 (the latest 2.x) answers
+    `syntax error: unexpected identifier, expected ","`. Muse Glimmer's
+    template has `namespace(name=tcid if tcid else '')`, so the WHOLE template
+    failed to parse and `--messages-file` could render no prompt at all.
+    `jinja_chat_template.rs::parenthesize_conditional_kwargs` rewrites
+    `k=EXPR` to `k=(EXPR)` before `add_template`, which is exactly Jinja2's
+    own precedence for a keyword-argument value and therefore changes no
+    semantics by construction.
+    **IT IS A SHIM AND IS MEANT TO BE DELETED.** No stable minijinja has the
+    fix (3.0.0-alpha.0 is untested here and deliberately not taken, and no
+    issue has been filed upstream from this repo); when one does, delete the
+    function and its call site and re-run
+    `tests/jinja_chat_template.rs` -- `a_conditional_keyword_argument_parses`
+    is the test that says whether the engine handles it directly, and
+    `the_shim_is_a_no_op_on_templates_that_do_not_need_it` must pass either
+    way.
+    Two hazards it handles STRUCTURALLY rather than by pattern-matching,
+    because a template is mostly prose: the scan only enters `{{ }}` and
+    `{% %}` blocks (never text, never `{# #}` comments), and a `=` counts only
+    when it is not part of `==`, `!=`, `<=` or `>=`. String literals are
+    tracked so a `,` or `)` inside `'...'` cannot end an argument early.
+
 ## Per-Crate Documentation
 
 When working on code inside a specific crate, refer to that crate's `CLAUDE.md` file for crate-specific architecture, key modules, dev commands, and localized gotchas:
@@ -1992,15 +2170,15 @@ divergence and perplexity functions rather than restating them.
 - `crates/invocation`: pure translation of command-line argument tokens into a validated invocation request (`InvocationRequest`), options definition (`OPTIONS`), diagnostics (`diagnostics.rs`), typed failures (`InvocationFailure`), usage rendering (`render_usage`), and pure outcome-to-exit-status and outcome-to-stream routing decisions. Performs no filesystem, environment, or process I/O. Details in [`crates/invocation/CLAUDE.md`](crates/invocation/CLAUDE.md).
 - `crates/selection`: candidate selection (`select`, `select_from_logits`) from a per-candidate score vector under a validated shaping configuration (temperature, top-k, top-p, repetition penalty, seed), accumulated history, step position, determinism, and distribution guards. Numeric parity with any upstream implementation is out of scope; only the observable contract is exercised. Details in [`crates/selection/CLAUDE.md`](crates/selection/CLAUDE.md).
 - `crates/window-fit`: pure, deterministic conversation-window fitting (`fit_conversation_window`). Drops the oldest eligible turns from a conversation (`FitOutcome`, `DroppedTurn`), using a caller-supplied whole-conversation length measurement, until the measured length is under a caller-supplied bound or nothing eligible remains. An optional leading instruction turn and the newest turn are never removed. Performs no input or output and holds no state between calls. Details in [`crates/window-fit/CLAUDE.md`](crates/window-fit/CLAUDE.md).
-- `crates/tokenizer`: wraps HF `tokenizers` crate (`MfTokenizer`); resolves Gemma 4 / ChatML (Qwen) / DeepSeek-V4 chat dialect from special tokens (`dialect/`); renders text-only chat templates plus DeepSeek's native tool chat (`chat_template/`); generic Jinja-templated tool chat for Gemma/ChatML (`minijinja` + `pycompat`, rendering `chat_template.jinja`); streaming detokenizer (`StreamingDetokenizer`) and stop matcher (`StopMatcher`) (stop set unions dialect stops with `generation_config.json` `eos_token_id` list); Gemma/Qwen/DeepSeek tool-call DSL parsers and streaming structured assistant-output decoder (`structured_decoder/`, which also splits `gpt-oss`'s Harmony channels into content and REASONING -- the one dialect whose thought channel is emitted rather than discarded, and the one whose frame is a header/body triple rather than a bracketing token pair). Details in [`crates/tokenizer/CLAUDE.md`](crates/tokenizer/CLAUDE.md).
+- `crates/tokenizer`: wraps HF `tokenizers` crate (`MfTokenizer`); resolves Gemma 4 / ChatML (Qwen) / DeepSeek-V4 chat dialect from special tokens (`dialect/`); renders text-only chat templates plus DeepSeek's native tool chat (`chat_template/`); generic Jinja-templated tool chat for Gemma/ChatML (`minijinja` + `pycompat`, rendering `chat_template.jinja`); streaming detokenizer (`StreamingDetokenizer`) and stop matcher (`StopMatcher`) (stop set unions dialect stops with `generation_config.json` `eos_token_id` list); Gemma/Qwen/DeepSeek tool-call DSL parsers and streaming structured assistant-output decoder (`structured_decoder/`, which also splits `gpt-oss`'s Harmony channels into content and REASONING -- the one dialect whose thought channel is emitted rather than discarded, and the one whose frame is a header/body triple rather than a bracketing token pair; its TOOL CALLS come out of the same header parser plus `JsonValue::parse`, and out of `finish` rather than a token, since `<|call|>` terminates a call and is a stop -- Gotcha 49). Details in [`crates/tokenizer/CLAUDE.md`](crates/tokenizer/CLAUDE.md).
 - `crates/model-io`: `manifest/` decode and field-by-field validation against a resolved `ArchConfig` (`arch_config/`, with canonical Gemma 4, Qwen 3.6, DeepSeek-V4-Flash and -- ROADMAP's 1-bit entry -- Bonsai-27B `qwen3_5` baselines in `arch_baselines/`), `packed_experts/layout.json` decode (`PackedExpertsLayout`), `model_weights.bin` resident tensor index reader (`ResidentIndex`), `mmap`'d resident-buffer view (`ResidentBuffer`), streaming SHA-256 verification (`sha256.rs`), and trusted install receipt (`InstallReceipt`). Allowed a narrow amount of `unsafe` (the `mmap` call). Details in [`crates/model-io/CLAUDE.md`](crates/model-io/CLAUDE.md).
 - `crates/streaming`: routed-expert `pread` streamer (`PreadExpertStreamer`) with a fixed per-layer slot cache. The LFU/LRU eviction policy (`ExpertCache`) is pure logic, separated from file I/O so it can be tested against access traces without a model install. Cache misses are split into chunks and read on `read_pool`, a process-wide set of parked worker threads, so a layer that misses once still reads at full width (the `pread` is a page-cache memcpy, not disk I/O). `rdadvice` and `read_pool` are the other `unsafe`-carrying modules (macOS `F_RDADVISE`, a documented no-op elsewhere; raw destination pointers across worker threads). Details in [`crates/streaming/CLAUDE.md`](crates/streaming/CLAUDE.md).
 - `crates/gpu`: Metal device/pipeline-cache context (`MetalContext`, `PassEncoder`, `CommittedPass`) and per-kernel dispatch. macOS-only; compiles to nothing elsewhere. Dispatched, parity-tested kernels (`rmsnorm_no_scale`, `rms_norm_bf16w`, both `_perhead` norm variants, `rope_proportional_neox`, `rope_neox_subdim`, `logit_softcap_softmax`, `dequant_int4_gemv_simd`, `dequant_int8_gemv_simd` with resident variants, the port-local GGUF set (`dequant_q8_0_gemv_simd`, `dequant_q4_k_gemv_simd`, `dequant_q6_k_gemv_simd`, `embed_lookup_q8_0`, `embed_lookup_q4_k`, and `moe_gguf/` decode pairs -- ROADMAP Phase G), the port-local sub-4-bit set (`dequant_int1_gemv_simd` and `dequant_int2_gemv_simd`, each with a resident variant, the `+/-1` `dequant_int1_gemv_symmetric_simd`, and `embed_lookup_int1` / `embed_lookup_int2` -- ROADMAP's 1-bit and ternary entries; the 2-bit set is TWO kernels rather than three, because a ternary fast path would reassociate the sum exactly as the 1-bit one does and that one is already reachable from nothing; the general GEMV's resident form and the lookup are dispatched by the `qwen3_5` flow, the `+/-1` one is parity-tested and reachable from no decode path, deliberately), `router_gemv_gemma4_r4`, two-pass split-KV `attention_decode` (multi-chunk, split up to 16 ways by `chunks_for`), `moe_decode` decode pair, `gdn.metal`'s eight gated-DeltaNet kernels, and `utility` elementwise kernels incl. Qwen's three gating kernels) are compiled from MSL source at runtime, vendored from Swift except where marked port-local. `power_state.rs` wraps `NSProcessInfo`'s `thermalState` and `isLowPowerModeEnabled` for ROADMAP Phase P2 (here rather than in `runtime`, which forbids unsafe; nothing GPU about them beyond the `metal::objc` reach). `KvCacheManager` allocates and manages real per-layer Metal KV buffers used by `RealForwardRunner`. `ResidentGpuWeights` wraps resident mmap in zero-copy MTLBuffer. `GdnStateManager` is the Qwen flow's recurrent state; `Dsv4StateManager` allocates real per-layer Metal buffers (unwired kernels); `PrefillChunkScratchLayout`/`PrefillChunkScratchBuffers` size scratch buffers (undispatched tile kernel). The `sample` kernel and fused lm_head are not yet vendored or dispatched. Details in [`crates/gpu/CLAUDE.md`](crates/gpu/CLAUDE.md).
 - `crates/runtime`: power policy for the decode loop (`power.rs`: `PowerProfile`, the `stepped_cap` thermal ladder, `RateControl`, and cfg-paired OS probes; `pacing.rs`: the pure-deadline `Pacer` -- ROADMAP Phase P2), and the raw-completion prefill+decode loop (`run_raw_completion`, `run_raw_completion_chunked`), wiring a `LogitProducer`, the tokenizer's streaming detokenizer and stop matcher, and `selection::select` into one token generation loop. `ScriptedLogitProducer` is what unit tests and `crates/server`'s `ScriptedChatModel` drive the loop with (see Gotcha 10). `RealForwardRunner` (macOS/GPU only, `src/real_forward.rs` plus one `src/families/<family>/` module per flow, each `mod.rs` + `attn.rs` + `moe.rs` + `state.rs`) is a real `LogitProducer`: a genuine transformer forward pass through real GPU kernels (including real GPU decode attention) and real quantized weights, supporting dense and MoE FFN layers. Dense bridges gated FFN on CPU via `turbospark_compute::run_ffn`; MoE runs real GPU router GEMV plus real GPU GEMVs for each selected expert, host-side top-k selection, and CPU-bridged gated activation. Supports synthetic short names, verbatim real Gemma 4 checkpoint names (learned-weight flow), the Qwen hybrid linear/full-attention flow (`src/families/qwen/`), which serves BOTH `qwen36` and -- since ROADMAP's 1-bit entry -- the DENSE, one-bit `qwen3_5`, forking at the FFN alone (`dense.rs`, no new kernel), one plain-GQA flow (`src/families/llama/`) serving BOTH the `llama` and `qwen3moe` families AND both halves of `llama` itself: Mixtral's routed experts and, since ROADMAP M4, the dense gated FFN of Mistral and Llama 2/3.x (`dense.rs`, no new kernel). `llama` and `qwen3moe` differ only in per-head q/k norms and an RMS epsilon. A FIFTH flow (`src/families/gptoss/`, ROADMAP M5) serves `gpt-oss`: the same plain GQA plus a bias on all four projections, YaRN rope off a precomputed frequency table, attention sinks, an alternating window on the EVEN layers, and MXFP4 routed experts carrying a clamped SwiGLU and per-expert biases. See Gotcha 12. Details in [`crates/runtime/CLAUDE.md`](crates/runtime/CLAUDE.md).
-- `crates/catalog`: the model CATALOG (`models.json`, thirteen curated rows, each naming a repository and revision that were streamed and run on real hardware, with the gate targets that assert it), the header-only Hugging Face PROBE (`probe/`: architecture through `repack`'s registry, block types against `model_io::EXECUTABLE_GGUF_TYPES` or the affine `(bits, group)` conjunction, expert-slot arithmetic, tokenizer sidecars -- KB and seconds, never a download), the INSTALL DRIVER (`install.rs`: the shape all thirteen `crates/repack/tests/*_network.rs` files repeat, written once and with the sidecars verified BEFORE any weight byte moves), and the `~/.turbospark` STORE (`store.rs`, `installed.json`, alias-to-path resolution in which an existing directory always wins). Builds on every platform; nothing here decodes. Details in [`crates/catalog/CLAUDE.md`](crates/catalog/CLAUDE.md) and `docs/MODELS.md`.
+- `crates/catalog`: the model CATALOG (`models.json`, fourteen curated rows, each naming a repository and revision that were streamed and run on real hardware, with the gate targets that assert it), the header-only Hugging Face PROBE (`probe/`: architecture through `repack`'s registry, block types against `model_io::EXECUTABLE_GGUF_TYPES` or the affine `(bits, group)` conjunction, expert-slot arithmetic, tokenizer sidecars -- KB and seconds, never a download), the INSTALL DRIVER (`install.rs`: the shape every install-writing `crates/repack/tests/*_network.rs` file repeats, written once and with the sidecars verified BEFORE any weight byte moves), and the `~/.turbospark` STORE (`store.rs`, `installed.json`, alias-to-path resolution in which an existing directory always wins). Builds on every platform; nothing here decodes. Details in [`crates/catalog/CLAUDE.md`](crates/catalog/CLAUDE.md) and `docs/MODELS.md`.
 - `crates/cli`: the `turbospark-check` binary process entry point (see Gotcha 7). Parses `argv`, applies `invocation`'s exit-status and stream-routing decisions, prints the resolved request for a validated invocation, and (macOS, `src/generate.rs`) attempts real generation against `--model` via `RealForwardRunner` (see Gotcha 12) in all three modes: `--prompt` (raw text), `--messages-file` (rendered through chat template), and `--chat` (interactive REPL in `src/chat.rs`, trimming turns with `turbospark-window-fit`). `--model` accepts a catalog ALIAS as well as a path, resolved in `generate.rs` rather than in `invocation` (which is pure and keeps the value an opaque string). A SECOND binary, `turbospark-model` (`src/bin/model.rs` plus `src/bin/model_cmd/`), is the catalog and download surface: `list`, `info`, `probe`, `pull`, `path`, `rm`, with its own small subcommand parser because `invocation` is flat, pure and requires `--model`. Details in [`crates/cli/CLAUDE.md`](crates/cli/CLAUDE.md).
 - `crates/repack`: safetensors header parsing (pure, tested against synthetic fixtures), `RangeSource` trait for ranged reads (`ranged_download/`, HTTP-backed for real installs, in-memory for tests) with two-step header-fetch plan, per-row int4/int8 quantization repack (reusing `turbospark_compute`'s quantizer), byte-exact `.gturbo` directory assembly (`write_gturbo_install`), real named resident-tensor index writer (`write_gturbo_install_with_resident_index`), synthetic install builders (`synthetic_model/`, `synthetic_real.rs`, `synthetic_qwen/` -- with dense taking the affine WIDTH as a parameter, so one dense fixture serves the 1-bit and 2-bit checkpoints), Hugging Face Llama checkpoint repacker (`hf_checkpoint.rs`), Gemma 4 mlx-community checkpoint repacker & streamed pipeline (`gemma4_checkpoint/`, family-parameterized so Qwen 3.6 goes through the same walk), Qwen 3.6 `config.json` parser (`qwen36_config.rs`, the one family-specific piece of that walk), install verifier (`install_verifier.rs`), manifest peeker (`manifest_peek.rs`), and the GGUF intake (`gguf_header/` parser, `gguf_names/` name mapping, `gguf_config/` metadata-to-`ArchConfig`, `gguf_checkpoint/` repack walk (expert bytes verbatim, resident F32 core transcoded to BF16/INT8, Qwen's V-head source convention undone at `v_head_axis`), `synthetic_gguf/` fixture writer -- ROADMAP Phase G; Q8_0, Q4_K and Q6_K installs are executable and Q4_0 is refused, see Gotchas 29 and 33). Details in [`crates/repack/CLAUDE.md`](crates/repack/CLAUDE.md).
-- `crates/server`: HTTP server on loopback (`turbospark-server` binary, axum framework) serving OpenAI `/v1/chat/completions`, Anthropic `/v1/messages`, and `/v1/models`, both generation endpoints supporting full-response (non-streaming) and SSE-streaming responses. The wire types come from `anyllm_translate` (crates.io, default features: pure and IO-free), which also translates an Anthropic request into the OpenAI request the existing path understands and translates the result back, so Anthropic-native clients need no proxy. Tool calling is wired on both endpoints (request `tools` render through the checkpoint's `chat_template.jinja`, generated calls come back through `StructuredAssistantDecoder`); an incoming request's images and `thinking` CONFIG are dropped, some of it reported on an `x-anyllm-degradation` header, but a gpt-oss RESPONSE now carries its reasoning out as OpenAI `reasoning_content` and as an Anthropic `thinking` block. Two backends behind the `ChatModel` trait: `RealChatModel` (macOS, `--model <install-dir>`, one mutex-serialized `RealForwardRunner` per process) and `ScriptedChatModel` (portable, canned completions, what the integration tests drive). Details in [`crates/server/CLAUDE.md`](crates/server/CLAUDE.md).
+- `crates/server`: HTTP server on loopback (`turbospark-server` binary, axum framework) serving OpenAI `/v1/chat/completions`, Anthropic `/v1/messages`, and `/v1/models`, both generation endpoints supporting full-response (non-streaming) and SSE-streaming responses. The wire types come from `anyllm_translate` (crates.io, default features: pure and IO-free), which also translates an Anthropic request into the OpenAI request the existing path understands and translates the result back, so Anthropic-native clients need no proxy. Tool calling is wired on both endpoints (request `tools` render through the checkpoint's `chat_template.jinja`, generated calls come back through `StructuredAssistantDecoder`); an incoming request's images and `thinking` CONFIG are dropped, some of it reported on an `x-anyllm-degradation` header, but a gpt-oss RESPONSE now carries its reasoning out as OpenAI `reasoning_content` and as an Anthropic `thinking` block, and its Harmony tool calls out as `tool_calls` / `tool_use` with the matching finish reason. Two backends behind the `ChatModel` trait: `RealChatModel` (macOS, `--model <install-dir>`, one mutex-serialized `RealForwardRunner` per process) and `ScriptedChatModel` (portable, canned completions, what the integration tests drive). Details in [`crates/server/CLAUDE.md`](crates/server/CLAUDE.md).
 - `crates/bench`: the `turbospark-bench` binary plus benchmark library (`turbospark_bench`). The scripted default (three fixed prompts, fixed seed, discarded warmup) measures loop overhead via `ScriptedLogitProducer`. `--model <install-dir>` (macOS) is the real Swift-comparison mode: frozen community protocol (`protocol.rs`) driven through `RealForwardRunner`, reporting split prefill/decode tok/s and peak `phys_footprint` from the mach sampler (`memory.rs`). `tests/memory_oracle.rs` (`#[ignore]`d, gated on `TURBOSPARK_GEMMA4_INSTALL_DIR`) asserts peak footprint against per-chip baseline rows, plus a steady-state replay guard; each row carries a `source` recording whether it is a Swift parity number or this port's own measurement. The quality axis lives here too, all `#[ignore]`d: `tests/quality_gate.rs` and its Qwen sibling (per-install perplexity plus golden digests), `tests/quality_sensitivity.rs` (proof the perplexity responds to quantization damage), and `tests/logit_dump.rs` (full-vocab logits plus the exact token ids, feeding `scripts/kld.py`'s cross-engine KL against mlx-lm -- the one external reference in the whole quality section). Full details in [`crates/bench/CLAUDE.md`](crates/bench/CLAUDE.md) and `docs/BENCHMARKING.md`.
 - `docs/`: repository documentation directory. `docs/BENCHMARKING.md` details benchmark harness modes, mach memory sampling, and the memory oracle baseline assertions; `docs/POWER_BASELINE.md` records watts and joules-per-token per install plus the power-hygiene audit (ROADMAP Phase P1), and is the one page here measured on BATTERY rather than AC; `docs/TESTING.md` documents test suite organization, macOS and environment-variable gating conventions, and test writing rules; `docs/MODELS.md` documents the model catalog, the header-only probe, `turbospark-model pull`, the `~/.turbospark` store, and the admission rule for adding a catalog row.
 

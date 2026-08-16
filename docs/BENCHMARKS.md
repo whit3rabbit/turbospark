@@ -1444,3 +1444,86 @@ full-walk MoE timing has been taken yet; the 3.4x is measured on the wire.
   what to carry forward.
 - Both engines ran alone (`scripts/parity.sh` refuses to start if another
   model process is up), with no profiler or trace mode active.
+
+### The seventh family: `Muse-Glimmer-30B` (MLX INT4)
+
+`mlx-community/Muse-Glimmer-30B-4bit` @ `3e7677d7`, streamed into a 15 GB
+install (resident region 15,670,395,904 bytes) and run on `families/museglimmer/`,
+the SIXTH decode flow. Apple M4 Max, AC, release, 16 expert-cache slots
+(inert -- the model is dense), 2026-08-15.
+
+**READ THESE WITH THE WINDOW AND THE BUDGET.** This family runs the protocol
+at **8,192 context and a 2,048 generation budget**, not the shared
+4,096/1,024, and it is the second family to move both. It REASONS BEFORE
+ANSWERING: its template writes `Reasoning strength: high.` into the system
+preamble and the model emits a `to=self` message before its `to=user` one, so
+at 1,024 even the SHORT case stops on `maxTokens`. A row at one window says
+nothing about another (`crates/bench` Gotchas 11 and 12).
+
+| case | prompt | new | tok/s | stop |
+|---|---|---|---|---|
+| short-explanation | 102 | 1,132 | 13.291 | endOfTurn |
+| medium-review | 464 | 1,498 | 15.341 | endOfTurn |
+| long-synthesis | 2,820 | 1,552 | 14.483 | endOfTurn |
+
+Peak `phys_footprint` **535 MiB**, replay +1.19 MiB.
+
+**THE 15.7 GB OF RESIDENT WEIGHTS ARE ABSENT FROM THAT PEAK**, which is the
+THIRD independent re-derivation of AGENTS.md Gotcha 40 (Mistral 7B: 4.07 GiB
+of weights, 684 MiB peak; Qwen3.8-27B: 15.1 GB, 660 MiB). The accounting,
+computed from shapes before the run:
+
+| term | value |
+|---|---|
+| KV, 13 full layers x 8,192 | 104.0 MiB |
+| KV, 39 sliding layers x 2,176 (window 2,048 + 128 chunk headroom) | 82.9 MiB |
+| sum | 186.9 MiB |
+
+leaving ~349 MiB of process baseline and host scratch at a 202,048-wide
+vocabulary. Note the KV term is SMALLER than Qwen3.8's 256 MiB despite twice
+the window: 2 kv heads at 128 against 4 at 256, and three quarters of the
+layers ring rather than running the full window. The window alone does not
+tell you the KV bill.
+
+Quality, from TWO fresh processes agreeing to the last digit and the last hex
+character:
+
+| | value |
+|---|---|
+| reference-answer perplexity | 6.2826 |
+| greedy digest | `fc1e4e58a6fd9975...` |
+| sampled digest | `24fe355decf2f389...` |
+| 8-slot digest | EQUAL to the 16-slot one |
+| constrained arm | 1.00x / 0.99x |
+
+The perplexity is the number that says the ASSISTANT PREFIX is right. This
+family's generation prompt ends at `<|start|>assistant` and the model's next
+emission is a recipient, so the reference answer spliced in raw lands in no
+message at all -- the position that made gpt-oss read 148,421.76. A healthy
+single digit beside coherent generations rules that out. It is NOT a ranking
+against the other families: the corpus is the frozen protocol's, chosen for
+Gemma and reused verbatim, and each family's template puts the reference
+answer somewhere different.
+
+The constrained arm reads ~1.00x rather than the MoE families' 0.85-0.94x
+because `--expert-cache-slots` sizes a routed-expert cache and a dense model
+has none; the two arms differ only in noise.
+
+**NOT MEASURED:** no cross-engine KL against mlx-vlm.
+
+**POWER: the unconstrained cost is measured, the sustained cost is not.**
+Three AC captures (2026-08-16, quiet machine, at three starting temperatures)
+agree to 1.5%: decode **37.69-38.24 W at 2.0135-2.0444 J/token** (n=3 across three
+sessions), which is the highest draw recorded in `docs/POWER_BASELINE.md`. That number comes
+from the only Nominal windows either capture produced -- this install
+saturates thermally within ~2 minutes whatever its starting temperature, so
+the harness's measured pairs are all governed and their J/token wanders 10%
+between runs. The governor's own descent is the interesting part: 27.46 W at
+18.347 tok/s against 37.69 W at 18.593, i.e. **26% less energy per token for
+1.3% less throughput**. The `performance,efficiency` A/B this argued for was then RUN and is
+inconclusive: the performance arm throttles on every pair and its 25% spread
+swallows the efficiency arm's. What it did settle is that the rate cap holds
+10.00 tok/s to 0.01% and keeps the machine out of thermal governance
+entirely, where the performance arm never is. Full write-up:
+`docs/POWER_BASELINE.md`.
+

@@ -108,8 +108,9 @@ The right-hand column is arithmetic rather than a measurement. A conventional ru
 | Ternary-Bonsai-27B | MLX affine | 2 | 7.6 GB | ~7.6 GB | ~7.6 GB | **1x** |
 | Bonsai-27B | MLX affine | 1 | 3.9 GB | ~3.9 GB | ~3.9 GB | **1x** |
 | Mistral 7B | GGUF Q4_K_M | 4 | 4.1 GB | ~4.1 GB | ~4.1 GB | **1x** |
+| Muse Glimmer 30B | MLX affine | 4 | 15 GB | ~15 GB | ~15 GB | **1x** |
 
-The four dense rows say 1x on purpose. Their *counted* footprints are 660 MB, 660 MB, not measured, and 1.2 GB respectively, and quoting those as the RAM requirement would be wrong for the reason the caveat above gives. Ratios are rounded, and the ones above 1x are the whole engineering claim of this project.
+The five dense rows say 1x on purpose. Their *counted* footprints are 660 MB, 660 MB, not measured, 1.2 GB and 535 MB respectively, and quoting those as the RAM requirement would be wrong for the reason the caveat above gives. Muse Glimmer is the sharpest illustration: 535 MB counted against 15 GB of weights, because the resident mapping is not charged to the process and three quarters of its layers use a 2,048-token sliding window rather than the full context. Ratios are rounded, and the ones above 1x are the whole engineering claim of this project.
 
 Mixtral is the interesting failure. It is a mixture of experts and it still gets no benefit, because the expert cache is `slots x layers x expert_size` and its 8 experts of ~109 MiB each want 54 GiB at the default 16 slots.
 
@@ -127,7 +128,7 @@ That argument does not extend to two bits. Upstream `mlx` supports `bits=2`, and
 
 **How to read the other columns.** "Power draw" is the engine's own CPU + GPU draw while generating, not the whole machine: the laptop as a whole measured roughly 50 to 70 W under load, most of the difference being the display. "Energy per token" is joules per generated token, so at ~0.4 J a thousand tokens costs about 400 J, roughly 0.1 Wh. Speed and power vary by prompt length, and the ranges span three fixed benchmark prompts of increasing size. Power figures exist for five installs and are simply absent for the rest.
 
-**Memory is compared at a fixed context window.** The MoE rows are at 4,096 tokens. gpt-oss and Mistral run at 8,192, because their tokenizers or their reasoning output need it. A footprint number without its window is not comparable to another one: on a dense model the KV cache is most of what is being measured, and doubling the window roughly doubles the figure.
+**Memory is compared at a fixed context window.** The MoE rows are at 4,096 tokens. gpt-oss, Mistral and Muse Glimmer run at 8,192, because their tokenizers or their reasoning output need it. A footprint number without its window is not comparable to another one: on a dense model the KV cache is most of what is being measured, and doubling the window roughly doubles the figure.
 
 *Why the memory result is about EXPERT SIZE, not about MoE.* The expert cache is `slots x layers x expert_size`, so what matters is how finely the model splits. Gemma 4 has 128 experts of ~3.2 MiB and lands at 2.1 GB. Qwen3-30B-A3B has smaller experts (2.5 MiB) but 48 layers, so it lands at 2.7 GB, and gpt-oss is deeper still and reaches 5.4 GB.
 
@@ -183,7 +184,7 @@ For full binary layouts, header byte specifications, and streaming mechanics, se
 
 ### Supported Models
 
-Six architecture families run end to end, each with a real decode flow rather than a config entry. Every checkpoint named below has been installed from its published bytes and generated text through `turbospark-check` on this machine. None is a projection from a config file.
+Seven architecture families run end to end, each with a real decode flow rather than a config entry. Every checkpoint named below has been installed from its published bytes and generated text through `turbospark-check` on this machine. None is a projection from a config file.
 
 | Family | Checkpoints that run today | Shape |
 | --- | --- | --- |
@@ -193,6 +194,7 @@ Six architecture families run end to end, each with a real decode flow rather th
 | **Qwen3-MoE** (`qwen3moe`) | `Qwen3-30B-A3B` at Q4_K_M GGUF | Plain GQA + 128 streamed experts |
 | **Llama** (`llama`) | Mixtral 8x7B, Mistral 7B, TinyLlama 1.1B | Plain GQA, one architecture string covering a MoE half and a dense half, both running |
 | **gpt-oss** (`gptOss`) | `gpt-oss-20b` MXFP4 | GQA with attention sinks, YaRN rope, Harmony reasoning channels |
+| **Muse Glimmer** (`museGlimmer`) | `Muse-Glimmer-30B` at MLX INT4 | Dense GQA, 3-sliding/1-full window, **NoPE on the full layers**, separate attention output gate, reasons before answering |
 
 DeepSeek-V4-Flash is recognized and refused at open. Its kernels are unported, and the refusal names them rather than reporting the architecture as unknown.
 

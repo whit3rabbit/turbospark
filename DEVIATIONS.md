@@ -938,12 +938,22 @@ live network).
   `anyllm_translate`'s existing mapping, as an Anthropic `thinking` block
   ahead of the text block; `turbospark-check` prints reasoning to STDERR
   and the answer to stdout, and only the answer enters `--chat` history,
-  which is what Harmony's own convention asks for. Harmony TOOL CALLS
-  remain undecoded and are a separate item: a call is framed as a
-  recipient inside the channel header rather than as the bracketing token
-  pair the decoder's tool contract describes, so its `commentary` body
-  comes back as reasoning rather than as a parsed call. What has not
-  changed: there is no fallback chat renderer for the dialect at all;
+  which is what Harmony's own convention asks for. HARMONY TOOL CALLS ARE
+  NOW DECODED TOO (this used to be the other of the two stated
+  limitations). A call is framed as a `to=functions.NAME` recipient inside
+  the channel header rather than as the bracketing token pair the tool
+  contract describes, and its body is raw JSON rather than a DSL, so the
+  decoder reads the recipient off the header it already parses and hands
+  the body to `JsonValue::parse` -- no fourth parser beside the Gemma /
+  Qwen / DeepSeek three. Two things about it are unlike every other
+  dialect. The call is emitted from `finish` rather than on a token,
+  because `<|call|>` terminates it and `<|call|>` is a STOP token that the
+  decoder is therefore structurally unable to see (AGENTS.md Gotcha 49).
+  And a recipient outside the `functions` namespace, or one the caller did
+  not offer, is not an error but an ordinary body reported as reasoning:
+  this decoder is built for every Harmony generation rather than only for
+  requests carrying tools, so failing there would cost a turn.
+  What has not changed: there is no fallback chat renderer for the dialect at all;
   Harmony's real
   template is 17 KB of system preamble, reasoning-effort knob and
   TypeScript tool namespace, so `apply_dialect_chat_template` refuses by
@@ -1421,3 +1431,37 @@ live network).
   `MferenceDecodeProtocol` (app-side XPC), chat-history compression UI
   behavior, and document extraction — permanently out of scope per
   `ROADMAP.md`.
+
+## `muse_glimmer` (the seventh family), deliberately not done
+
+- **The REASONING SPLIT is not wired.** The model frames its turn with
+  recipients -- `to=self` for its reasoning, `to=user` for its answer -- which
+  is structurally what Harmony's channels are, and `StructuredAssistantDecoder`
+  has an arm for Harmony and not for this. So `turbospark-check` and the
+  server currently print the reasoning as ordinary content, exactly as the CLI
+  did for gpt-oss before AGENTS.md Gotcha 44 was fixed. The ceiling is one
+  more `consume_*` arm keyed on the recipient text after `<|start|>assistant`;
+  note it is TEXT rather than a special token, unlike every existing arm,
+  which is why it is not a five-line copy of the Harmony one.
+- **Tool calls are not parsed.** This family frames them as
+  `<atem:function_calls>` plain text rather than special tokens, so every tool
+  marker id is `NO_SUCH_TOKEN_ID` and no parser exists. A fourth DSL parser
+  beside Gemma/Qwen/DeepSeek, plus its allowlist handling.
+- **No cross-engine KL.** `scripts/kld_mlx_affine.py` takes a per-artifact
+  table and this checkpoint is ordinary INT4 affine at group 64, so the driver
+  needs one table entry rather than new code -- but the reference is mlx-VLM
+  rather than mlx-lm, which is a different loader and untested here.
+- **No SUSTAINED power row.** The unconstrained cost IS measured and
+  reproduces (two AC captures 2026-08-16, ~2.02-2.04 J/token at ~38 W, the
+  highest draw in `docs/POWER_BASELINE.md`), but this install saturates
+  thermally within ~2 minutes on this machine whatever its starting
+  temperature, so every measured pair the harness produces is governed and
+  unstable at +/-10%. What is missing is the cost on hardware that can hold
+  Nominal. Its governor also found 26% of energy for 1.3% of throughput
+  involuntarily, which makes it the best candidate in the repo for Phase P2's
+  `ARMS=performance,efficiency` A/B; that is owed.
+- **`reasoning_strength` is not exposed.** The template reads it and defaults
+  to `high`; nothing in this port passes it, so every prompt reasons at full
+  strength. Wiring it is a `render_generic_chat_template` context key and a
+  CLI flag, and it would change every frozen digest above.
+

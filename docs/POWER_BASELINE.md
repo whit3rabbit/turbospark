@@ -295,6 +295,156 @@ engine. Gotcha 28's conclusion -- that thermal saturation here is a
 function of total draw rather than of the power source -- is unchanged;
 the number attached to it is.
 
+## Muse Glimmer 30B: two operating points, and the row is the UNCONSTRAINED one
+
+**This install cannot be characterised by the harness's normal protocol on
+this machine.** It saturates thermally within about two minutes of decoding
+regardless of starting temperature, so the measured pairs the summary is built
+from are all governed rather than free-running. Two captures were needed to
+establish that, and together they give a better answer than one clean run
+would have.
+
+`LABEL=ac MODEL=~/models/museglimmer-30b.gturbo scripts/power.sh 2`, rev
+`c8037b0` dirty. Capture A 2026-08-16T13:31Z, all three cases, machine warm
+from a preceding oracle and two quality gates. Capture B 16:01Z,
+`CASES=short-explanation`, after a 30-minute idle. Every run stops
+`endOfTurn`. Neither capture is contaminated: `cpu_W` reads 0.55-1.28 W on
+capture A's measured rows against the ~4 W that signalled contamination in the
+2026-08-13 gpt-oss capture.
+
+### The unconstrained point, and it REPRODUCES
+
+The only Nominal windows in either capture are the warmups, which the summary
+excludes by design. They agree across THREE sessions and three starting
+temperatures (capture C is the profile A/B below, whose warmup runs
+unconstrained like the others):
+
+| short-explanation, Nominal | A | B | C | spread |
+| --- | ---: | ---: | ---: | ---: |
+| decode W | 38.24 | 37.69 | 38.17 | 1.4% |
+| decode J/token | 2.0444 | 2.0135 | 2.0316 | 1.5% |
+| prefill W | 39.42 | 38.59 | 39.56 | 2.5% |
+| prefill J/token | 1.8445 | 1.8037 | 1.8507 | 2.6% |
+
+**~37.7-38.2 W and ~2.01-2.04 J/token is this install's decode cost**, and it
+is the HIGHEST draw in this document -- above gpt-oss's 29-33 W, which was the
+previous high. The 30-minute idle changed the warmup by 1.4%, which is what
+says the reading is the workload's rather than the session's.
+
+A warmup window is a legitimate measurement here and that is worth stating,
+because elsewhere in this repo a first run is exactly what gets discarded
+(AGENTS.md Gotcha 20, cold GPU at low DVFS clocks reading ~50% slow). It does
+not apply: the model open, the mmap and the Metal pipeline compile all happen
+BEFORE the `[power-window]` markers, and the warmup decodes at 18.53-18.59
+tok/s against the measured arms' 18.35-18.40 -- marginally FASTER, not slower.
+
+### The governed point, and it does NOT reproduce
+
+| short-explanation decode, Heavy | capture A | capture B |
+| --- | ---: | ---: |
+| p1 J/token | 1.4901 | 1.6394 |
+| p2 J/token | 1.4396 | 1.4833 |
+
+p1 moves 10% between captures, and within capture B the two pairs differ by
+10% on byte-identical work where capture A's agreed to 3.5%. That instability
+is the tell: a thermally governed operating point is a control loop's answer,
+not a property of the workload. **Do not publish a J/token row from these**,
+and note the harness's summary is built entirely from them -- 1.4648 in
+capture A, 1.5614 in capture B, for the same case.
+
+### 28% less power for 1.3% less throughput
+
+Same case, same 1,132 tokens, capture B:
+
+| | watts | tok/s | J/token |
+| --- | ---: | ---: | ---: |
+| unconstrained (Nominal) | 37.69 | 18.593 | 2.0135 |
+| governed (Heavy, p2) | 27.46 | 18.347 | 1.4833 |
+
+Giving up **1.3%** of throughput bought **26%** less energy per token. That is
+the sharpest instance in this document of the superlinear effect the thermal
+section below describes -- the Gemma pair gave up 20% of throughput for its
+31% saving, and this one gives up almost nothing.
+
+**THE SIZE OF THAT SAVING IS NOT STABLE, and capture C says so.** Three more
+governed decodes of the same case read 1.3267, 1.4128 and 1.6621 J/token, so
+the governed point ranges from 35% to 18% below the unconstrained one rather
+than sitting at 26%. The DIRECTION is solid across six governed decodes in
+three sessions; the magnitude is a control loop's output and should be quoted
+as a range or not at all.
+
+The reading is that the unconstrained operating point is WASTEFUL for this
+workload: the GPU sits at a voltage and frequency far above what this decode
+needs, and the governor's forced descent costs almost no work. **It is an
+involuntary experiment, not a controlled one**, so it is an observation rather
+than a result -- but it makes this install the strongest candidate in the repo
+for Phase P2's deliberate version, `ARMS=performance,efficiency`, which is the
+same descent chosen rather than imposed. That A/B is owed and would settle it.
+
+### The `performance,efficiency` A/B: the cap works, the comparison does not
+
+Capture C, 2026-08-16T16:23Z, `CASES=short-explanation
+ARMS=performance,efficiency scripts/power.sh 3`. It was run because the
+thermal governor had found 26% of energy for 1.3% of throughput
+involuntarily, and Phase P2's rate cap is the deliberate version of that
+descent.
+
+**THE PREDICTION MADE BEFORE THE RUN WAS WRONG, in the informative
+direction.** It said the efficiency arm's longer window gives it MORE time to
+saturate. The opposite happened: the efficiency arm held Nominal on 6 rows of
+6, and the performance arm went Heavy on 3 decodes of 3. Capping the rate
+keeps the machine out of thermal governance entirely, which is a result about
+the cap rather than about this model.
+
+| decode | pressure | W | tok/s | J/token |
+| --- | --- | ---: | ---: | ---: |
+| unconstrained (warmup) | Nominal | 38.17 | 18.573 | 2.0316 |
+| performance p1/p2/p3 | **Heavy** | 24.31 / 25.78 / 30.45 | ~18.2 | 1.3267 / 1.4128 / **1.6621** |
+| efficiency p1/p2/p3 | Nominal | 16.35 / 16.12 / 15.67 | 10.00 | 1.6258 / 1.6075 / 1.5649 |
+
+**THE A/B IS INCONCLUSIVE ON J/TOKEN AND THE REASON IS IN THE THIRD COLUMN.**
+The performance arm spans 25% across three pairs of byte-identical work
+(1.3267 to 1.6621) and that range SWALLOWS the efficiency arm's (1.5649 to
+1.6258): p1.performance beats every efficiency reading and p3.performance
+loses to every one. A difference cannot be read off arms one of which is
+being driven by a control loop. `scripts/power.sh`'s summary reports
+efficiency 9% WORSE (1.5994 against 1.4672) and that number should not be
+quoted -- it compares a GOVERNED arm against a FREE one, which is not the
+comparison the flag exists to make.
+
+What IS established, and each of these is stable:
+
+- **The rate cap does exactly what it says.** 113.17 s and 10.002 / 10.003 /
+  10.002 tok/s, three times. That is 0.01% reproducibility, tighter than
+  anything else in this document.
+- **The efficiency arm never throttles**, where the performance arm always
+  does. On this install the cap is the difference between a measurable
+  operating point and an unmeasurable one.
+- **Efficiency is stable where performance is not**: 3.9% spread against 25%.
+- **Against the only stable performance reading -- the unconstrained 2.0316 --
+  efficiency saves ~21%** (to ~1.60). That is the comparison with two
+  trustworthy sides, and it is the one worth carrying.
+
+**A FAIR A/B NEEDS HARDWARE THAT CAN HOLD NOMINAL IN PERFORMANCE MODE**, which
+this laptop cannot for a whole case. Until then the flag's value on this
+install is not "it saves 21%" but "it is the only way to get a repeatable
+number out of this model at all".
+
+One ambiguity left open rather than resolved: efficiency PREFILL draws 30.3 W
+against performance prefill's 37.0-38.4 W when the latter is Nominal, on
+identical work at an identical 4.8 s. Prefill is not rate-capped -- both arms
+take the same time -- so either the profile lowers more than the token rate,
+or the efficiency prefill inherits a hot machine from the performance run it
+is interleaved after. The interleaving makes those two indistinguishable
+here, and separating them needs an arm order that is not paired.
+
+### What is NOT established
+
+Nothing here says what this install costs under a sustained load on a machine
+that can hold Nominal. Both points above are this laptop's; a chassis with more
+thermal headroom would likely sit somewhere between them, and forced cooling is
+the only way to find out here.
+
 ## Battery, and what differs
 
 Battery rows are partial: they exclude runs whose thermal pressure left
@@ -350,9 +500,14 @@ pressure, same binary and prompt:
 
 Giving up 20% of throughput bought 31% less energy per token, because
 voltage-frequency scaling is superlinear. **A throttled arm therefore does
-not look broken in a power table, it looks good.** The harness flags every
-non-Nominal run and refuses to average it in; nothing else in this repo
-checks thermal state (AGENTS.md Gotcha 28).
+not look broken in a power table, it looks good.** The harness WARNS on
+every non-Nominal run and its summary still AVERAGES THAT RUN IN --
+exclusion is by hand, from the per-arm rows in `rows.tsv`. This paragraph
+claimed the opposite until 2026-08-16, when the Muse Glimmer captures above
+warned on eight measured arms of eight and printed summaries built entirely
+from them;
+`scripts/power.sh` prints its table before the warnings and drops nothing.
+Nothing else in this repo checks thermal state (AGENTS.md Gotcha 28).
 
 That is also Phase P2's premise measured a phase early: the token-rate
 limiter is a deliberate version of what the thermal governor did here
@@ -530,3 +685,13 @@ a different lever than this one.
   visible where the row is published.
 - **A wall-power number**, which needs an external meter rather than the
   battery gauge.
+- **A SUSTAINED J/token row for Muse Glimmer 30B.** Its unconstrained cost is
+  established (n=2, ~2.02-2.04 J/token) and its governed cost is unstable;
+  what is missing is the cost on a machine that can hold Nominal for a whole
+  case, which needs more thermal headroom than this laptop has.
+- **A FAIR `performance,efficiency` A/B on Muse Glimmer 30B.** Run
+  2026-08-16 and inconclusive: the performance arm throttled on every pair and
+  its 25% spread swallows the efficiency arm's range. Needs hardware that can
+  hold Nominal in performance mode for a whole case. What the run DID settle
+  is that the cap holds 10.00 tok/s to 0.01% and keeps the machine out of
+  thermal governance entirely.

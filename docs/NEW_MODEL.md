@@ -147,6 +147,15 @@ the reference implementation. Every answer becomes a field in `ArchConfig`
       is the point), and its zero/empty-context value. This becomes a
       `LinearAttentionConfig`-shaped block in `ArchConfig`, a state manager
       in `crates/gpu`, and a `reset()` obligation in Phase 3.
+- [ ] **How long does it ANSWER for, not just how long is the prompt?** If
+      the model reasons before answering, the shared 1,024-token budget
+      truncates it and every gate that asserts `endOfTurn` fails. Measure the
+      COMPLETION on the real checkpoint before freezing a row: `muse_glimmer`
+      was put in the shared group on a correct prompt tokenization (46 / 408 /
+      2,764) and a WRONG assumption about output, and needs 1,054 / 1,378 /
+      1,246 greedy and more when sampled. Note also that the rendered prompt
+      is longer than the raw prose tokenizes to -- 102 against 46 here, the
+      difference being the template's system preamble.
 - [ ] **Chat template and EOS set.** From `chat_template.jinja` and
       `generation_config.json`. `eos_token_id` is often a LIST. Dialect
       resolution and the stop set live in `crates/tokenizer`
@@ -687,4 +696,8 @@ byte figure pasted back into the row.
 | Fixed the convention, still gibberish | The fix was scoped to the tensors your probe could reach. A BF16 probe cannot see quantized tensors on the same axis; dequantize a representative row per head and correlate (Gotcha 33) |
 | Perplexity worse than a uniform distribution | Scoring prompt-position tokens on an instruction-tuned checkpoint (Phase 6) |
 | A whole layer kind seems to contribute nothing | Untrained fixture: assert on the block's state, not its output |
+| A perturbation-style fixture file passes every case but a real mutation survives | EVERY test in it is SELF-RELATIVE: each rebuilds its baseline inside the mutated binary, so a change to the MATH leaves them all green. Add ONE frozen digest over a deterministic synthetic install's logits -- it is the only assertion that compares against something computed before the mutation. Measured: six mutations, one reddened before, five after (AGENTS.md Gotcha 51) |
+| The tokenizer refuses to load with "missing required special token" | The DIALECT PROBE resolved a family this checkpoint is not, and the resolver then required a token it lacks. Check whether the probe tests FEWER tokens than its resolver requires; a probe must not be able to pass where its own resolver will fail (Gotcha 52) |
+| The whole chat template fails to parse with "unexpected identifier, expected `,`" | minijinja rejects a conditional expression as a keyword argument (`f(k=a if c else d)`), which Jinja2 accepts. `jinja_chat_template.rs::parenthesize_conditional_kwargs` rewrites it; the shim is meant to be deleted when a stable minijinja handles it (Gotcha 53) |
+| A frozen row's generation stops on `maxTokens` where the prompt clearly fits | The model REASONS before answering and the shared 1,024 budget is too small. Measure the completion, not just the prompt: `protocol_parameters` needs a per-family budget, as gpt-oss and `muse_glimmer` both do |
 | Throughput moved after a decode change | `MFERENCE_PHASES=1` buckets + GPU busy line, interleaved A/B pairs (`AGENTS.md` Gotcha 12); run-to-run spread is wider than most single effects |
