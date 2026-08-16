@@ -87,6 +87,46 @@ pub fn encode_rms_norm_bf16w(
     Ok(())
 }
 
+/// Encoder-level CENTERED scaled RMSNorm (`rmsnorm_bf16w_centered`):
+/// `out[i] = x[i] * rsqrt(mean(x^2) + eps) * (1 + weight[i])`.
+///
+/// The `muse_glimmer` family's four per-layer norms
+/// (`input_layernorm`, `post_attention_layernorm`,
+/// `pre_feedforward_layernorm`, `post_feedforward_layernorm`), whose stored
+/// weights are OFFSETS FROM UNITY. Its contract is
+/// `turbospark_compute::rms_norm_centered`; PORT-LOCAL, since Swift reads no
+/// architecture with this convention.
+///
+/// **Do not reach for this by family.** The same model's FINAL norm
+/// (`model.norm.weight`) is a plain `nn.RMSNorm` and takes
+/// [`encode_rms_norm_bf16w`] instead. Picking one per family rather than per
+/// TENSOR gives a model that decodes and is wrong.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_rms_norm_bf16w_centered(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    x: (&metal::Buffer, u64),
+    weight: (&metal::Buffer, u64),
+    out: (&metal::Buffer, u64),
+    d: u32,
+    eps: f32,
+) -> Result<(), GpuError> {
+    let pipeline = context.pipeline(
+        SOURCE,
+        "rmsnorm_bf16w_centered",
+        &unused_function_constants(),
+        b"",
+    )?;
+    pass.encode_threadgroups(
+        &pipeline,
+        &[(x.0, 0, x.1), (weight.0, 1, weight.1), (out.0, 2, out.1)],
+        &[(u32_bytes(&d), 3), (f32_bytes(&eps), 4)],
+        1,
+        THREADS_PER_GROUP,
+    );
+    Ok(())
+}
+
 /// Encoder-level per-head scaled RMSNorm (`rmsnorm_bf16w_perhead`): `x`
 /// holds `num_heads * head_dim` halfs; each head is normalized
 /// independently and multiplied by the shared `[head_dim]` BF16 weight

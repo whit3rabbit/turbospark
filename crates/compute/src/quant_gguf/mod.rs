@@ -33,10 +33,15 @@
 //! the stored value rather than a per-sub-block min. Qwen 3.6's Q4_K_M ships
 //! exactly one Q6_K tensor (`output.weight`), which is why it is here.
 
+/// Pearson correlation helper for validating dequantized weight similarities.
 pub mod pearson;
+/// Q4_K block quantization (256-element superblocks, 8 sub-blocks, asymmetric 4-bit weights).
 pub mod q4_k;
+/// Q5_K block quantization (256-element superblocks, 8 sub-blocks, 5-bit weights with min scale).
 pub mod q5_k;
+/// Q6_K block quantization (256-element superblocks, 16 sub-blocks, 6-bit weights split into low/high nibbles).
 pub mod q6_k;
+/// Q8_0 block quantization (32-element symmetric blocks with f16 delta scale).
 pub mod q8_0;
 
 pub use pearson::pearson;

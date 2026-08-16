@@ -92,6 +92,54 @@ void rmsnorm_bf16w(
     }
 }
 
+// PORT-LOCAL (not in the Swift rmsnorm.metal): the CENTERED form, whose
+// learned weight is an OFFSET FROM UNITY rather than the scale itself.
+//
+//   y[i] = x[i] * rsqrt(mean(x^2) + eps) * (1 + weight[i])
+//
+// Swift's engine reads no architecture with this convention, so there is no
+// upstream kernel to diff this against; its only contract is
+// `turbospark_compute::rms_norm_centered`.
+//
+// Added for ROADMAP's `muse_glimmer` entry, whose four per-layer norms are
+// `CenteredRMSNorm` in the reference. Note its FINAL norm is a plain
+// `nn.RMSNorm` and therefore uses `rmsnorm_bf16w` above: one model, both
+// conventions, so this is a SEPARATE KERNEL rather than a function constant
+// on that one. A specialization axis whose byte missed the pipeline cache's
+// `constants_key` would silently reuse whichever pipeline was compiled first
+// (crate Gotcha 1), and here that would mean the two norms of one layer
+// quietly becoming the same function -- a wrong model that still decodes.
+// A separate kernel name is a separate pipeline by construction.
+//
+// The `1.0f +` is applied on the FP32 accumulator and never baked into the
+// stored weight: BF16's resolution near 1.0 is 2^-8, so a centred weight of
+// 0.01 would lose ~39% of its magnitude to a repack-time bake.
+[[kernel, max_total_threads_per_threadgroup(256)]]
+void rmsnorm_bf16w_centered(
+    device const half*   x          [[buffer(0)]],   // [D] FP16
+    device const bfloat* weight     [[buffer(1)]],   // [D] BF16, centered at 0
+    device       half*   out        [[buffer(2)]],   // [D] FP16
+    constant     uint&   D          [[buffer(3)]],
+    constant     float&  eps        [[buffer(4)]],
+    uint  lid              [[thread_position_in_threadgroup]],
+    uint  lsize            [[threads_per_threadgroup]],
+    uint  simd_lane_id     [[thread_index_in_simdgroup]],
+    uint  simd_group_id    [[simdgroup_index_in_threadgroup]],
+    uint  simdgroups       [[simdgroups_per_threadgroup]]
+) {
+    threadgroup float partial[kRmsMaxSimdGroups];
+    const uint DD = rms_fc_d(D);
+    const float inv = rms_block_inv(x, DD, eps, lid, lsize,
+                                    simd_lane_id, simd_group_id, simdgroups,
+                                    partial);
+
+    for (uint i = lid; i < DD; i += lsize) {
+        float xv = float(x[i]);
+        float wv = float(weight[i]);
+        out[i] = half(xv * inv * (1.0f + wv));
+    }
+}
+
 // Gemma 4 applies q_norm/k_norm
 // (BF16 weight, shared across heads) and v_norm (no-scale) to each attention
 // head independently. These kernels process all heads in one dispatch, with

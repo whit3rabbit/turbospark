@@ -84,7 +84,7 @@ pub use quant_gguf_mxfp4::{
     dequant_mxfp4_gemv, dequantize_mxfp4, mxfp4_scale, MXFP4_BLOCK_BYTES, MXFP4_BLOCK_ELEMS,
     MXFP4_VALUES,
 };
-pub use rms_norm::rms_norm;
+pub use rms_norm::{rms_norm, rms_norm_centered};
 pub use rope::{rope_neox, rope_neox_subdim, rope_paired, yarn_frequencies, YarnSpec};
 pub use sampling::logit_softcap_softmax;
 pub use tolerance::{bounded_rel_error, max_abs_diff, rel_error, Tolerance};

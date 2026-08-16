@@ -61,6 +61,7 @@ thread_local! {
 /// partly profiled says so instead of quietly under-counting.
 static UNPROFILED_PASSES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+/// Returns true if GPU dispatch profiling is enabled via `MFERENCE_DISPATCH_PROFILE=1`.
 pub fn enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
     *ENABLED.get_or_init(|| std::env::var("MFERENCE_DISPATCH_PROFILE").as_deref() == Ok("1"))
@@ -110,6 +111,7 @@ fn pipeline_key(pipeline: &metal::ComputePipelineStateRef) -> usize {
     pipeline as *const metal::ComputePipelineStateRef as usize
 }
 
+/// Registers the human-readable function name for a compute pipeline state.
 pub fn register_pipeline(pipeline: &metal::ComputePipelineState, function_name: &'static str) {
     if !enabled() {
         return;
@@ -189,6 +191,7 @@ impl PassProfile {
         self.cb_label = cb_label;
     }
 
+    /// Records a buffer resource that must be declared as used for reading on each per-dispatch encoder.
     pub fn note_used_read(&mut self, buffer: &metal::Buffer) {
         self.used_reads.push(buffer.clone());
     }
