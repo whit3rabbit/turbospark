@@ -40,13 +40,17 @@
 // 0's scales for block 1) has somewhere to show up.
 #define N (2 * QK_K)
 
-// Same LCG `ggml_tables.c` uses, for the same reason: the fixture has to be
-// reproducible from the source text alone.
+/**
+ * Deterministic pseudo-random number generator (LCG) for reproducible oracle patterns.
+ */
 static uint32_t lcg(uint32_t *s) {
   *s = *s * 1664525u + 1013904223u;
   return *s;
 }
 
+/**
+ * Main entry point generating Q5_K oracle test bytes and expected floats.
+ */
 int main(void) {
   const enum ggml_type t = GGML_TYPE_Q5_K;
   const size_t block_bytes = ggml_type_size(t);

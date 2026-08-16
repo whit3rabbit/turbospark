@@ -35,20 +35,25 @@
 
 #define QK_K 256
 
-// Block layouts, verbatim from ggml-common.h. Sizes are asserted against
-// `ggml_type_size` below rather than trusted, since a silent mismatch here
-// would make every probe read the wrong bytes and still print a plausible
-// table.
+/**
+ * IQ3_XXS block layout (verbatim from ggml-common.h).
+ */
 typedef struct {
   uint16_t d;
   uint8_t qs[3 * QK_K / 8]; // 64 grid indices, then 8 sign/scale words
 } block_iq3_xxs;
 
+/**
+ * IQ4_NL block layout (verbatim from ggml-common.h).
+ */
 typedef struct {
   uint16_t d;
   uint8_t qs[16];
 } block_iq4_nl;
 
+/**
+ * IQ4_XS block layout (verbatim from ggml-common.h).
+ */
 typedef struct {
   uint16_t d;
   uint16_t scales_h;
@@ -56,7 +61,9 @@ typedef struct {
   uint8_t qs[QK_K / 2];
 } block_iq4_xs;
 
-// Dequantizes blocks of ggml quantization type into float output array.
+/**
+ * Dequantizes blocks of ggml quantization type into float output array.
+ */
 static void dequant(enum ggml_type t, const void *blocks, float *out,
                     int64_t n) {
   const struct ggml_type_traits *tr = ggml_get_type_traits(t);
@@ -67,7 +74,9 @@ static void dequant(enum ggml_type t, const void *blocks, float *out,
   tr->to_float(blocks, out, n);
 }
 
-// Asserts block type size in bytes matches expected structure definition size.
+/**
+ * Asserts block type size in bytes matches expected structure definition size.
+ */
 static void check_size(enum ggml_type t, size_t expect, const char *name) {
   size_t got = ggml_type_size(t);
   if (got != expect) {
@@ -87,7 +96,9 @@ static void check_size(enum ggml_type t, size_t expect, const char *name) {
 
 // ---------------------------------------------------------------- IQ4_NL
 
-// Dumps recovered 16 non-linear reconstruction levels for IQ4_NL quantization.
+/**
+ * Dumps recovered 16 non-linear reconstruction levels for IQ4_NL quantization.
+ */
 static void dump_kvalues_iq4nl(void) {
   printf("/// The 16 non-linear reconstruction levels IQ4_NL and IQ4_XS share,\n");
   printf("/// recovered from ggml by `scripts/ggml_tables.c` rather than\n");
@@ -116,7 +127,9 @@ static void dump_kvalues_iq4nl(void) {
   printf("\n];\n\n");
 }
 
-// Verifies low/high nibble split layout for IQ4_NL bytes.
+/**
+ * Verifies low/high nibble split layout for IQ4_NL bytes.
+ */
 static void check_iq4nl_nibble_split(void) {
   block_iq4_nl b;
   memset(&b, 0, sizeof b);
@@ -140,7 +153,9 @@ static void check_iq4nl_nibble_split(void) {
 
 // --------------------------------------------------------------- IQ3_XXS
 
-// Probes and dumps the 256-entry IQ3_XXS codebook grid table.
+/**
+ * Probes and dumps the 256-entry IQ3_XXS codebook grid table.
+ */
 static void dump_iq3xxs_grid(void) {
   printf("/// The IQ3_XXS codebook: 256 entries of four 8-bit magnitudes.\n");
   printf("/// Recovered from ggml by `scripts/ggml_tables.c`. An IQ3_XXS block\n");
@@ -218,7 +233,9 @@ static void dump_iq3xxs_grid(void) {
   printf("];\n\n");
 }
 
-// Verifies parity rule for the eighth sign bit across all 128 IQ3_XXS indices.
+/**
+ * Verifies parity rule for the eighth sign bit across all 128 IQ3_XXS indices.
+ */
 static void check_iq3xxs_sign_parity(void) {
   for (int idx = 0; idx < 128; ++idx) {
     block_iq3_xxs b;
@@ -255,13 +272,17 @@ static void check_iq3xxs_sign_parity(void) {
 
 // ---------------------------------------------------------------- oracles
 
-// LCG producing deterministic pseudo-random bytes for oracle test patterns.
+/**
+ * LCG producing deterministic pseudo-random bytes for oracle test patterns.
+ */
 static uint32_t lcg(uint32_t *s) {
   *s = *s * 1664525u + 1013904223u;
   return *s;
 }
 
-// Dumps oracle float vectors decoded by ggml for test validation.
+/**
+ * Dumps oracle float vectors decoded by ggml for test validation.
+ */
 static void dump_oracles(void) {
   printf("/// Decoded by ggml (`scripts/ggml_tables.c`) from the byte pattern\n");
   printf("/// `oracle_bytes()` builds. The expected values come from ggml and\n");
@@ -324,6 +345,9 @@ static void dump_oracles(void) {
   }
 }
 
+/**
+ * Main entry point running size checks, table dumpers, and oracle generators.
+ */
 int main(void) {
   check_size(GGML_TYPE_IQ3_XXS, sizeof(block_iq3_xxs), "IQ3_XXS");
   check_size(GGML_TYPE_IQ4_NL, sizeof(block_iq4_nl), "IQ4_NL");

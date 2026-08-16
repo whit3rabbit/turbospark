@@ -49,15 +49,17 @@
 // reason; MXFP4's block is eight times smaller, so it takes more of them.
 #define N (4 * QK_MXFP4)
 
-// Same LCG the two sibling scripts use, so the fixture is reproducible from
-// the source text alone.
+/**
+ * Deterministic pseudo-random number generator (LCG) for reproducible oracle patterns.
+ */
 static uint32_t lcg(uint32_t *s) {
   *s = *s * 1664525u + 1013904223u;
   return *s;
 }
 
-// One block of `bytes`, built by hand: shared exponent `e`, and every one of
-// the 32 elements set to codebook index `idx`.
+/**
+ * Builds one MXFP4 block with given shared exponent and uniform codebook index across all 32 elements.
+ */
 static void build_uniform_block(uint8_t *out, uint8_t e, uint8_t idx) {
   out[0] = e;
   for (int j = 0; j < QK_MXFP4 / 2; ++j) {
@@ -65,6 +67,9 @@ static void build_uniform_block(uint8_t *out, uint8_t e, uint8_t idx) {
   }
 }
 
+/**
+ * Main entry point generating MXFP4 oracle tables, test bytes, and expected floats.
+ */
 int main(void) {
   const enum ggml_type t = GGML_TYPE_MXFP4;
   const size_t block_bytes = ggml_type_size(t);

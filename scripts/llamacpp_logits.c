@@ -32,7 +32,9 @@
 
 #include "llama.h"
 
-// Reads token ID list from binary int32 file into heap-allocated array.
+/**
+ * Reads token ID list from binary int32 file into heap-allocated array.
+ */
 static int32_t *read_ids(const char *path, size_t *count) {
     FILE *f = fopen(path, "rb");
     if (!f) {
@@ -56,6 +58,9 @@ static int32_t *read_ids(const char *path, size_t *count) {
     return ids;
 }
 
+/**
+ * Main entry point for teacher-forcing token IDs through llama.cpp and writing logits.
+ */
 int main(int argc, char **argv) {
     if (argc < 5) {
         fprintf(stderr,
