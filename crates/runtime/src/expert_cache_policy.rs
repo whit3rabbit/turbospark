@@ -122,6 +122,36 @@ mod tests {
         );
     }
 
+    /// **The case that makes this file DISCRIMINATE `HEADROOM_FRACTION` and
+    /// `HEADROOM_RESERVE_BYTES` at all**, and it had to be worked out rather
+    /// than guessed at. Every other case here sits far from a boundary: at
+    /// 36 GiB the budget clears 32 slots by 1.75 GiB and at 16 GiB it clears
+    /// nothing, so doubling the fraction or zeroing the reserve moves neither
+    /// answer and both constants could be silently wrong. A 27 GiB machine
+    /// lands BETWEEN the two rungs -- budget 2.5 GiB against 2.25 for 24 slots
+    /// and 3.0 for 32 -- so it is the one input where either constant changes
+    /// the result. Same discipline AGENTS.md Gotcha 48 states for sub-4-bit
+    /// packing: assert that the fixture can see the property before trusting
+    /// what it says about it.
+    #[test]
+    fn the_budget_constants_decide_the_rung_at_the_boundary() {
+        // (27 - 13 - 4) * 0.25 = 2.5 GiB. 24 slots want 2.25, 32 want 3.0.
+        assert_eq!(
+            auto_slots(27 * GIB, GEMMA4_RESIDENT, GEMMA4_BYTES_PER_SLOT),
+            24
+        );
+        // Just under the 32-slot rung, and just over it: `P - 17 GiB` has to
+        // reach 12 GiB for 3.0 GiB of budget at a quarter.
+        assert_eq!(
+            auto_slots(28 * GIB, GEMMA4_RESIDENT, GEMMA4_BYTES_PER_SLOT),
+            24
+        );
+        assert_eq!(
+            auto_slots(30 * GIB, GEMMA4_RESIDENT, GEMMA4_BYTES_PER_SLOT),
+            32
+        );
+    }
+
     /// The case that made the floor necessary. Budgeting from headroom alone
     /// resolves this machine to 8 slots -- SLOWER than the 16 it gets today,
     /// which would make the feature a regression for exactly the users least
