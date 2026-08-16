@@ -235,6 +235,62 @@ pub fn write_qwen_gdn_dense_install_streamed(
     write_gemma4_install_streamed(dir, arch, model_id, shards, quant, progress)
 }
 
+/// The `muse_glimmer` install writer: the same family guard in front of
+/// [`write_gemma4_install`].
+///
+/// Nothing about this walk is family-specific beyond the guard and the
+/// routed marker, which is the point -- `muse_glimmer`'s TEN differences
+/// from the other families are all in the DECODE FLOW, and none of them is
+/// in how its tensors are named, classified or packed. It is dense, so
+/// `classify_for_family`'s marker never fires and the install carries zero
+/// packed-expert files.
+///
+/// The multimodal tensors (`vision_tower.`, `vision_adapter.`,
+/// `vision_projection.`) are dropped by `classify_for_family`; this port
+/// ingests the text tower only.
+pub fn write_muse_glimmer_install(
+    dir: &Path,
+    arch: &ArchConfig,
+    model_id: &str,
+    header: &SafetensorsHeader,
+    source: &dyn RangeSource,
+    quant: &Gemma4Quant,
+) -> Result<Gemma4RepackOutput, Box<dyn std::error::Error>> {
+    if arch.family != ModelFamily::MuseGlimmer {
+        return Err(Box::new(Gemma4Error::Config(format!(
+            "write_muse_glimmer_install needs arch.family = museGlimmer, got {}",
+            arch.family.as_str()
+        ))));
+    }
+    write_gemma4_install(dir, arch, model_id, header, source, quant)
+}
+
+/// [`write_muse_glimmer_install`] for the real 19.4 GB checkpoint.
+///
+/// As with the dense `qwen3_5` sibling there are no expert layers to stream,
+/// so what this buys is the `progress` callback. Unlike that one, the
+/// narrowing report it carries is expected to be EMPTY: every unquantized
+/// tensor in this checkpoint is already BF16 (read off the shard headers,
+/// not assumed), so `narrow_raw_to_bf16` has nothing lossy to do. A nonzero
+/// count here means the publisher changed the companion dtype, which is
+/// worth noticing rather than absorbing.
+pub fn write_muse_glimmer_install_streamed(
+    dir: &Path,
+    arch: &ArchConfig,
+    model_id: &str,
+    shards: &Gemma4Shards<'_>,
+    quant: &Gemma4Quant,
+    progress: impl FnMut(&str),
+) -> Result<(), Box<dyn std::error::Error>> {
+    if arch.family != ModelFamily::MuseGlimmer {
+        return Err(Box::new(Gemma4Error::Config(format!(
+            "write_muse_glimmer_install_streamed needs arch.family = museGlimmer, got {}",
+            arch.family.as_str()
+        ))));
+    }
+    write_gemma4_install_streamed(dir, arch, model_id, shards, quant, progress)
+}
+
 /// [`write_qwen_gdn_moe_install`] for a real multi-GB checkpoint: the same family
 /// guard in front of [`write_gemma4_install_streamed`].
 pub fn write_qwen_gdn_moe_install_streamed(

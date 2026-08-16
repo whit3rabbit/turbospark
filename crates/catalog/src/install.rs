@@ -246,6 +246,9 @@ fn stream_mlx(
         ModelFamily::QwenGdnDense => {
             repack::parse_qwen_gdn_dense_config(&config_text).map_err(|e| e.to_string())
         }
+        ModelFamily::MuseGlimmer => {
+            repack::parse_muse_glimmer_config(&config_text).map_err(|e| e.to_string())
+        }
         other => Err(format!("{} has no safetensors intake here", other.as_str())),
     }?;
     let quant = repack::parse_gemma4_quantization(&config_text)
@@ -289,6 +292,12 @@ fn stream_mlx(
             dir, &arch, &model_id, &shards, &quant, report,
         ),
         ModelFamily::QwenGdnDense => repack::write_qwen_gdn_dense_install_streamed(
+            dir, &arch, &model_id, &shards, &quant, report,
+        ),
+        // MISSING THIS ARM IS THE WORST OF THE THREE (`docs/NEW_MODEL.md`
+        // Phase 7): the probe would say RUNNABLE, the sidecars would fetch
+        // and verify, and it would die at the top of the stream.
+        ModelFamily::MuseGlimmer => repack::write_muse_glimmer_install_streamed(
             dir, &arch, &model_id, &shards, &quant, report,
         ),
         other => Err(Box::<dyn std::error::Error>::from(format!(

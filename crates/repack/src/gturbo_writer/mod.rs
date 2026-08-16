@@ -14,9 +14,13 @@
 //! still the caller's job; this module is the on-disk assembly step that
 //! sits after it.
 
+/// Layout assembly and disk writing helpers for `.gturbo` model layers.
 pub mod layers;
+/// SHA-256 checksum computation and `manifest.json` serialisation for `.gturbo` installs.
 pub mod manifest;
+/// Streaming writer that emits `.gturbo` layer files directly during download without staging whole weights.
 pub mod streaming;
+/// Core data structures and error types for `.gturbo` repack and install writing.
 pub mod types;
 
 pub use layers::{

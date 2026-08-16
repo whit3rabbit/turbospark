@@ -60,7 +60,7 @@ crates/catalog/
   testable with no network -- which matters because a live probe of a curated
   row takes the accepting path every time, and the refusal paths are where the
   decisions and the wording are.
-- `install.rs`: the shape all thirteen `crates/repack/tests/*_network.rs` files
+- `install.rs`: the shape every install-writing `crates/repack/tests/*_network.rs` file
   repeat, written once, with the step order inverted (see Gotcha 1).
 - `store.rs`: `Store::resolve`'s ORDER is the load-bearing part; see Gotcha 2.
 

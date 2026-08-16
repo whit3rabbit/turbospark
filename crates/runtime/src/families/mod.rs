@@ -3,5 +3,6 @@
 pub(crate) mod gemma4;
 pub(crate) mod gptoss;
 pub(crate) mod llama;
+pub(crate) mod museglimmer;
 pub(crate) mod qwen;
 pub(crate) mod synthetic;

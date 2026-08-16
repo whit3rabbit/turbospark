@@ -92,6 +92,9 @@ pub fn evaluate_config(
         ModelFamily::QwenGdnDense => {
             repack::parse_qwen_gdn_dense_config(config_text).map_err(|e| e.to_string())
         }
+        ModelFamily::MuseGlimmer => {
+            repack::parse_muse_glimmer_config(config_text).map_err(|e| e.to_string())
+        }
         other => Err(format!(
             "model_type resolves to {}, whose safetensors intake is not wired here; \
              this port installs that family from GGUF instead",

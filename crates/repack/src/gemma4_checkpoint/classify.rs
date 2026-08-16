@@ -39,11 +39,17 @@ pub fn routed_marker(family: ModelFamily) -> &'static str {
         // (the GGUF walk maps routed tensors by NAME, in `gguf_names.rs`),
         // and neither has a safetensors path. DeepSeek V4 has no repack path
         // either; Gemma's marker is the default for all of them.
+        // `muse_glimmer` is DENSE too, and unlike `qwen3_5` it has no MoE
+        // sibling whose marker it could borrow, so it takes the default for
+        // the same reason the GGUF-only families do: the marker can never
+        // match, and one that could only ever match the wrong thing is worse
+        // than one that cannot match.
         ModelFamily::Gemma4
         | ModelFamily::DeepseekV4Flash
         | ModelFamily::Llama
         | ModelFamily::Qwen3Moe
-        | ModelFamily::GptOss => ".experts.switch_glu.",
+        | ModelFamily::GptOss
+        | ModelFamily::MuseGlimmer => ".experts.switch_glu.",
     }
 }
 
@@ -68,9 +74,25 @@ pub fn classify_for_family(name: &str, num_layers: usize, family: ModelFamily) -
         }
         return Gemma4Bucket::LmResident;
     }
+    // THIS LIST IS READ OFF REAL CHECKPOINT HEADERS, one prefix per
+    // publisher's naming, and it is not guesswork: an unlisted prefix falls
+    // through to `Gemma4Bucket::Unknown`, which the walk refuses. That is the
+    // right failure mode and it is an EXPENSIVE one to discover, because
+    // nothing sees it until a multi-GB stream reaches the shard the tensor
+    // lives in.
+    //
+    // The last three are `mlx-community/Muse-Glimmer-30B-4bit`'s, enumerated
+    // from its `model.safetensors.index.json` before any bytes moved: it
+    // splits its vision side three ways where Gemma keeps it under one
+    // prefix (806 `vision_tower.` tensors, 6 `vision_adapter.`, 3
+    // `vision_projection.`). `perception_emb_norm` is deliberately NOT here
+    // -- the reference makes it a no-scale RMSNorm, which has no weight, so
+    // it appears in no checkpoint.
     if name.starts_with("vision_tower.")
         || name.starts_with("embed_vision.")
         || name.starts_with("audio_tower.")
+        || name.starts_with("vision_adapter.")
+        || name.starts_with("vision_projection.")
     {
         return Gemma4Bucket::ExcludedMultimodal;
     }

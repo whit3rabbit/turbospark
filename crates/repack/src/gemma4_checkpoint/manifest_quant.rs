@@ -106,6 +106,19 @@ pub fn manifest_quant_for(
             format!("{l0}.mlp.gate_proj"),
             format!("{l0}.experts.switch_glu.gate_proj"),
         ),
+        // `muse_glimmer`'s layer 0 IS a plain attention layer, unlike both
+        // Qwen halves, so the attention probe is the ordinary
+        // `self_attn.q_proj`. It is DENSE, so the router and routed probes
+        // find nothing and fall back to the default bits (the whole model's
+        // width) -- `crates/repack` Gotcha 8. The shared-expert probe names
+        // the DENSE FFN, which exists, so that slot reports a width that was
+        // actually measured rather than a default.
+        ModelFamily::MuseGlimmer => (
+            format!("{l0}.self_attn.q_proj"),
+            format!("{l0}.mlp.gate"),
+            format!("{l0}.mlp.gate_proj"),
+            format!("{l0}.experts.switch_glu.gate_proj"),
+        ),
         // gpt-oss has no safetensors path at all (it is GGUF-only here), so
         // it never reaches this probe; grouped with the families whose names
         // it shares rather than given an arm that cannot run.

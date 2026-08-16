@@ -22,6 +22,7 @@ mod gturbo_writer;
 mod hf_checkpoint;
 mod install_verifier;
 mod manifest_peek;
+mod museglimmer_config;
 mod qwen36_config;
 mod ranged_download;
 mod repack;
@@ -30,6 +31,7 @@ mod safetensors_header;
 mod synthetic_gguf;
 mod synthetic_llama;
 mod synthetic_model;
+mod synthetic_muse;
 mod synthetic_qwen;
 mod synthetic_real;
 
@@ -42,10 +44,11 @@ pub use gemma4_checkpoint::{
     manifest_quant, narrow_raw_to_bf16, orchestrate_gemma4_checkpoint,
     orchestrate_gemma4_checkpoint_sharded, parse_gemma4_config, parse_gemma4_quantization,
     pass_through_packed, write_gemma4_install, write_gemma4_install_streamed,
-    write_qwen_gdn_dense_install, write_qwen_gdn_dense_install_streamed,
-    write_qwen_gdn_moe_install, write_qwen_gdn_moe_install_streamed, Gemma4Bucket, Gemma4Error,
-    Gemma4Quant, Gemma4RepackOutput, Gemma4Shards, NarrowedRaw, AFFINE_1BIT_GROUP_SIZE,
-    AFFINE_2BIT_GROUP_SIZE, AFFINE_GROUP_SIZE, GTURBO_PAGE_BYTES,
+    write_muse_glimmer_install, write_muse_glimmer_install_streamed, write_qwen_gdn_dense_install,
+    write_qwen_gdn_dense_install_streamed, write_qwen_gdn_moe_install,
+    write_qwen_gdn_moe_install_streamed, Gemma4Bucket, Gemma4Error, Gemma4Quant,
+    Gemma4RepackOutput, Gemma4Shards, NarrowedRaw, AFFINE_1BIT_GROUP_SIZE, AFFINE_2BIT_GROUP_SIZE,
+    AFFINE_GROUP_SIZE, GTURBO_PAGE_BYTES,
 };
 pub use gguf_checkpoint::{
     dtype_tag_for_ggml_type, gguf_manifest_quant, orchestrate_gguf_checkpoint,
@@ -68,6 +71,9 @@ pub use gturbo_writer::{
 pub use hf_checkpoint::{orchestrate_llama_checkpoint, LlamaCheckpointDims, OrchestrateError};
 pub use install_verifier::verify_install_full_sha256;
 pub use manifest_peek::peek_manifest_arch;
+pub use museglimmer_config::{
+    muse_glimmer_mask, parse_muse_glimmer_config, parse_muse_glimmer_scalars, MuseGlimmerScalars,
+};
 pub use qwen36_config::{parse_qwen_gdn_dense_config, parse_qwen_gdn_moe_config};
 pub use ranged_download::{
     fetch_gguf_header, fetch_safetensors_header, DownloadError, HttpRangeSource, MemoryRangeSource,
@@ -100,6 +106,7 @@ pub use synthetic_model::{
     expert_up_proj_name, gate_proj_name, k_proj_name, o_proj_name, q_proj_name, router_name,
     tiny_gemma4_arch, up_proj_name,
 };
+pub use synthetic_muse::{build_synthetic_muse_glimmer_install, tiny_muse_glimmer_arch};
 pub use synthetic_qwen::{
     build_synthetic_qwen_gdn_dense_install, build_synthetic_qwen_gdn_dense_install_at_bits,
     build_synthetic_qwen_gdn_moe_install, tiny_qwen_gdn_dense_arch, tiny_qwen_gdn_moe_arch,

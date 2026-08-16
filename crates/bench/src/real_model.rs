@@ -136,6 +136,15 @@ const GPTOSS_MAX_CONTEXT: u32 = 8192;
 /// model's reasoning in an `analysis` channel BEFORE its answer, so the three
 /// cases need 818 / 2,153 / 1,108 sampled tokens to reach `<|return|>`.
 const GPTOSS_MAX_NEW: u32 = 3072;
+/// The `muse_glimmer` window (`museglimmer_memory_oracle.rs`'s). Follows from
+/// the budget below: `long-synthesis` is 2,820 tokens once the template's
+/// system preamble is counted, and `2820 + 2048` does not fit 4,096.
+const MUSE_GLIMMER_MAX_CONTEXT: u32 = 8192;
+/// The `muse_glimmer` budget. The model reasons to a `to=self` message before
+/// its `to=user` answer, so the three cases need 1,054 / 1,378 / 1,246
+/// sampled tokens to reach `<|eot|>` -- the SHORT one already exceeds the
+/// shared 1,024.
+const MUSE_GLIMMER_MAX_NEW: u32 = 2048;
 
 /// Resolve the protocol's two per-family parameters from the install's own
 /// declared family.
@@ -193,6 +202,44 @@ pub const fn protocol_parameters(family: ModelFamily) -> ProtocolParameters {
             family,
             max_context: DENSE_LLAMA_MAX_CONTEXT,
             max_new: PROTOCOL_MAX_NEW,
+        },
+        // THE SECOND FAMILY THAT MOVES BOTH, and it moves them for gpt-oss's
+        // reason: it REASONS BEFORE ANSWERING. `muse_glimmer`'s system
+        // preamble carries `Reasoning strength: high.` and the model emits a
+        // `to=self` message before its `to=user` one, so the shared 1,024
+        // budget truncates the SHORT case, never mind the long one.
+        //
+        // **AN EARLIER DRAFT OF THIS FILE PUT THIS FAMILY IN THE SHARED
+        // GROUP, and the mistake is worth keeping written down.** The prompt
+        // side was measured properly -- the three frozen prompts encode to
+        // 46 / 408 / 2,764 tokens under this checkpoint's own
+        // `tokenizer.json`, so `2764 + 1024` fits 4,096 -- and the OUTPUT
+        // side was assumed, in a comment that said "the model emits no
+        // reasoning channel, so the shared 1,024 budget stands". Measuring
+        // the prompt and assuming the completion is exactly the shape of
+        // AGENTS.md Gotchas 37 to 39: half the question answered from the
+        // file and half from expectation.
+        //
+        // Measured end to end at 8,192 / 3,072, greedy, on the real install
+        // (2026-08-15), all three stopping endOfTurn:
+        //   short-explanation   102 prompt + 1,054 new = 1,156
+        //   medium-review       464 prompt + 1,378 new = 1,842
+        //   long-synthesis    2,820 prompt + 1,246 new = 4,066
+        // Note the prompts are LONGER than the raw prose tokenizes to (102
+        // against 46) because the rendered template adds ~56 tokens of
+        // system preamble, which is the other half of what a raw
+        // tokenization misses.
+        //
+        // 2,048 is 1.49x the largest observed completion, the same margin
+        // gpt-oss's 3,072 takes over its 2,153. The WINDOW has to be 8,192
+        // because `2,820 + 2,048` does not fit 4,096 -- and note the largest
+        // total observed (4,066) fits 4,096 with 30 tokens to spare, which
+        // is exactly the kind of margin that turns a frozen row red on a
+        // checkpoint revision.
+        ModelFamily::MuseGlimmer => ProtocolParameters {
+            family,
+            max_context: MUSE_GLIMMER_MAX_CONTEXT,
+            max_new: MUSE_GLIMMER_MAX_NEW,
         },
         // The only family that moves BOTH.
         ModelFamily::GptOss => ProtocolParameters {

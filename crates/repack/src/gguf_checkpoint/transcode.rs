@@ -30,7 +30,10 @@ fn int8_transcode_targets(family: ModelFamily) -> &'static [&'static str] {
         // safetensors only -- so the GGUF walk never reaches it. Empty
         // rather than Qwen 3.6's list, which would be a claim about bytes
         // that do not exist.
-        ModelFamily::DeepseekV4Flash | ModelFamily::QwenGdnDense => &[],
+        // `muse_glimmer` is MLX-safetensors-only for the same reason, and is
+        // additionally DENSE, so it has no router to transcode even if a
+        // GGUF of it were ever published.
+        ModelFamily::DeepseekV4Flash | ModelFamily::QwenGdnDense | ModelFamily::MuseGlimmer => &[],
     }
 }
 

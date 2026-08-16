@@ -64,10 +64,13 @@ impl<'a> ChannelSplit<'a> {
     fn new(tokenizer: &'a MfTokenizer) -> Self {
         Self {
             decoder: (tokenizer.dialect == ChatDialect::Harmony).then(|| {
-                // No tool names: Harmony frames a call as a channel header
-                // rather than as the bracketing token pair this decoder's
-                // tool contract describes, so it parses none (ROADMAP's
-                // Harmony tool-calling item).
+                // An EMPTY allowlist, and that is what keeps this binary out
+                // of the tool business rather than an accident: the decoder
+                // parses a Harmony call only when the caller offered the tool
+                // by name, so with no tools on offer a `commentary` body
+                // stays reasoning and prints to stderr with the rest of it.
+                // `turbospark-check` has no way to run a tool and no shape to
+                // render one in; the server is where that lives.
                 StructuredAssistantDecoder::new(tokenizer, HashSet::new(), String::new)
             }),
         }

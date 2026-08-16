@@ -86,6 +86,46 @@ pub enum ModelFamily {
     /// Mixtral and Mistral report the SAME string. Strings decide the
     /// variant; flows are shared separately.
     QwenGdnDense,
+    /// The `muse_glimmer` HF architecture (`mlx-community/Muse-Glimmer-30B-4bit`,
+    /// an MLX INT4 conversion of `meta-models/Muse-Glimmer-30B`), the SEVENTH
+    /// family and the SIXTH decode flow.
+    ///
+    /// A dense 52-layer GQA stack (32 q heads over 2 kv, head_dim 128) with an
+    /// alternating three-sliding/one-full window at 2048, sandwich norms and a
+    /// logit softcap of 20. Its closest existing graph is Gemma 4's, and it
+    /// still needs its own flow, because TEN differences are inside the layer
+    /// and every one of them produces fluent WRONG text rather than an error
+    /// if a neighbour's flow is used (the `gpt-oss` precedent, which bought a
+    /// fifth flow with four such differences):
+    ///
+    /// 1. Its four per-layer norms are CENTERED -- the effective scale is
+    ///    `1 + w` -- where every other family here, Gemma included, applies a
+    ///    plain `w`.
+    /// 2. Its FINAL norm is a plain `w`. Two conventions in one model, so
+    ///    this is not a family-wide switch on the norm kernel.
+    /// 3. TWO epsilons: 1e-5 on the input, pre-FFN, q/k and embedding norms,
+    ///    and 1e-8 on the two POST norms.
+    /// 4. NoPE on the thirteen full-attention layers (`layer_rope_theta` is
+    ///    literally 0 there), so the rotation is per layer rather than
+    ///    per model.
+    /// 5. `qk_scale_factor` 3.87 multiplies Q after its norm, separately from
+    ///    the `128^-0.5` attention scale.
+    /// 6. The attention output gate is its OWN tensor, `self_attn.gate_proj`,
+    ///    not Qwen's packing into `q_proj` -- see `muse_glimmer_30b`'s header
+    ///    for why `attn_output_gate` is nonetheless false.
+    /// 7. Its q/k norms are NO-SCALE and per-head; Gemma's and `qwen3moe`'s
+    ///    are learned, and no `q_norm.weight` exists in the checkpoint.
+    /// 8. The embedding row is NORMED (no-scale RMS) where Gemma scales it by
+    ///    `sqrt(hidden)` and `llama` does neither.
+    /// 9. An `output_multiplier` of `26^-0.5` multiplies the logits before
+    ///    the softcap.
+    /// 10. The FFN is dense, so there is no router, no shared expert and no
+    ///     streamed expert blob at all.
+    ///
+    /// It is a VISION-language model and this port ingests the TEXT tower
+    /// only: `vision_tower.`, `vision_adapter.` and `vision_projection.` are
+    /// excluded at repack, as `qwen3_5`'s vision tensors already are.
+    MuseGlimmer,
 }
 
 impl ModelFamily {
@@ -115,6 +155,9 @@ impl ModelFamily {
             ModelFamily::Qwen3Moe => "qwen3moe",
             ModelFamily::GptOss => "gptOss",
             ModelFamily::QwenGdnDense => "qwen35",
+            // A NEW family, so the string is free to match the variant: no
+            // `.gturbo` directory has ever been written with it.
+            ModelFamily::MuseGlimmer => "museGlimmer",
         }
     }
 
@@ -128,6 +171,7 @@ impl ModelFamily {
             "qwen3moe" => Some(ModelFamily::Qwen3Moe),
             "gptOss" => Some(ModelFamily::GptOss),
             "qwen35" => Some(ModelFamily::QwenGdnDense),
+            "museGlimmer" => Some(ModelFamily::MuseGlimmer),
             _ => None,
         }
     }

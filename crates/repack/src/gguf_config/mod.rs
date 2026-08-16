@@ -145,7 +145,10 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
         // Refused rather than defaulted, for the reason DeepSeek is: no
         // `qwen3_5` GGUF exists, so any mask here would be invented. If one
         // is ever published, its mask is Qwen 3.6's at 64 layers.
-        ModelFamily::DeepseekV4Flash | ModelFamily::QwenGdnDense => {
+        // `muse_glimmer` joins them: no GGUF exists, and its `[0,0,0,1]`
+        // mask comes from a `layer_types` ARRAY that no GGUF metadata key
+        // expresses, so a mask here would be doubly invented.
+        ModelFamily::DeepseekV4Flash | ModelFamily::QwenGdnDense | ModelFamily::MuseGlimmer => {
             return Err(GgufConfigError::UnsupportedArchitecture {
                 architecture: architecture.to_string(),
             })

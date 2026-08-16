@@ -115,6 +115,14 @@ const SUPPORTED_HF: &[(&str, ModelFamily)] = &[
     // for exactly this reason (`ModelFamily::QwenGdnDense`'s doc).
     ("qwen3_5", ModelFamily::QwenGdnDense),
     ("qwen3_5_text", ModelFamily::QwenGdnDense),
+    // The SEVENTH family. Read off `mlx-community/Muse-Glimmer-30B-4bit`
+    // @ 3e7677d7a40d348a3daba263a2b1c0aa41910710, whose root `model_type` is
+    // `muse_glimmer` and whose `text_config.model_type` is
+    // `muse_glimmer_text`. Its `architectures` says
+    // `MuseGlimmerForConditionalGeneration`, which is the class-name scheme
+    // this table deliberately does not consult.
+    ("muse_glimmer", ModelFamily::MuseGlimmer),
+    ("muse_glimmer_text", ModelFamily::MuseGlimmer),
 ];
 
 /// GGUF architectures this port recognizes and cannot run.

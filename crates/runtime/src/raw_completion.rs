@@ -232,9 +232,14 @@ fn decode<P: LogitProducer + ?Sized>(
         let is_stop_token = tokenizer.stop_token_ids.contains(&token_id)
             || config.extra_stop_tokens.contains(&token_id);
         if is_stop_token {
+            // `tool_call_stop_id` rather than `tool_response_id`: the two are
+            // the same token on Gemma and are NOT on Harmony, whose
+            // `tool_response_id` is `NO_SUCH_TOKEN_ID` and whose tool stop is
+            // `<|call|>`. Reading the response marker here sent every gpt-oss
+            // tool call to a client as `finish_reason: "stop"`.
             reason = if token_id == tokenizer.end_of_turn_id {
                 StopReason::EndOfTurn
-            } else if token_id == tokenizer.tool_response_id {
+            } else if token_id == tokenizer.tool_call_stop_id {
                 StopReason::ToolCalls
             } else {
                 StopReason::Eos

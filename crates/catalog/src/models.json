@@ -364,6 +364,35 @@
       "status": "caveat",
       "gates": [],
       "notes": "INSTALLS AND RUNS AND CANNOT STREAM USEFULLY. 8 experts of 108.9 MiB means 54.5 GiB of pinned slot cache at the default 16 slots; at slots == experts it pins the whole 27.2 GiB expert table, which is not streaming. Expert GRANULARITY decides what this engine can hold, not model size. Listed so the arithmetic is visible before the 26 GB download rather than after it."
+    },
+    {
+      "alias": "museglimmer",
+      "name": "Muse Glimmer 30B (MLX INT4, group 64)",
+      "family": "museGlimmer",
+      "source": {
+        "kind": "mlx",
+        "repo": "mlx-community/Muse-Glimmer-30B-4bit",
+        "revision": "3e7677d7a40d348a3daba263a2b1c0aa41910710",
+        "file": null
+      },
+      "sidecars": {
+        "repo": null,
+        "revision": null,
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "chat_template.jinja",
+          "generation_config.json"
+        ]
+      },
+      "download_bytes": 19414521856,
+      "install_bytes": 16000000000,
+      "status": "verified",
+      "gates": [
+        "memory_oracle",
+        "quality_gate"
+      ],
+      "notes": "The seventh family and the sixth decode flow: dense 52-layer GQA with a three-sliding/one-full 2048 window, NoPE on the full layers, a separate attention output gate, CENTERED per-layer norms against a PLAIN final one, and a logit softcap behind an output multiplier. It REASONS BEFORE ANSWERING (a to=self message precedes its to=user one), so its protocol runs at 8,192 context and a 2,048 budget rather than the shared 4,096/1,024. A vision-language checkpoint whose text tower alone is ingested; its 815 vision tensors are excluded at repack."
     }
   ]
 }

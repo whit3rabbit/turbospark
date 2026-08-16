@@ -136,6 +136,7 @@ pub struct RealForwardRunner {
     /// differences are inside the layer: a YaRN frequency table, the
     /// per-layer router bias, attention sinks and per-projection biases.
     pub(crate) real_gpt_oss: Option<crate::families::gptoss::RealGptOssState>,
+    pub(crate) real_muse: Option<crate::families::museglimmer::RealMuseState>,
     pub(crate) phases: PhaseCounters,
     /// Whether the shared-expert branch rides its own command buffer so it
     /// overlaps the host's expert `pread` (see `real_forward_gemma4.rs`).
@@ -421,6 +422,7 @@ impl RealForwardRunner {
             real_qwen: None,
             real_llama: None,
             real_gpt_oss: None,
+            real_muse: None,
             phases: PhaseCounters::default(),
             shared_cb_overlap: std::env::var("MFERENCE_SHARED_CB").as_deref() != Ok("0"),
             routed_pipeline: std::env::var("MFERENCE_ROUTED_PIPELINE").as_deref() != Ok("0"),
@@ -481,6 +483,16 @@ impl RealForwardRunner {
                 runner.real_gpt_oss = Some(crate::families::gptoss::RealGptOssState::build(
                     &mut runner.context,
                     &runner.weights,
+                    &runner.index,
+                    &runner.arch,
+                )?);
+            }
+            // A SIXTH FLOW, on the same reasoning `gpt-oss` got the fifth:
+            // ten differences, every one inside the layer. See
+            // `ModelFamily::MuseGlimmer` for the list.
+            model_io::ModelFamily::MuseGlimmer => {
+                runner.real_muse = Some(crate::families::museglimmer::RealMuseState::build(
+                    &mut runner.context,
                     &runner.index,
                     &runner.arch,
                 )?);
