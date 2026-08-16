@@ -151,6 +151,105 @@ fn multi_chunk_reads_reassemble_each_blob_exactly() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// A direct load writes a slot's bytes outside any cache plan, so the
+/// cache must stop believing that slot holds what it held.
+///
+/// Without the invalidation the second request scores a HIT and hands back
+/// the slot the direct load overwrote, so the caller computes with a
+/// different expert's weights and nothing errors -- Gotcha 27's failure
+/// mode reached through the API instead of through dispatch order. The two
+/// paths are never mixed in production today, but both are `pub` and
+/// nothing but this test says they may not be.
+#[test]
+fn a_direct_load_leaves_no_stale_residency_for_the_cache_to_hit_on() {
+    let path = write_layer_file();
+    let mut streamer = PreadExpertStreamer::open(layout(&path), 2, ExpertCachePolicy::Lfu).unwrap();
+
+    let cached = streamer.load_experts_cached(&[0]).unwrap();
+    let slot = cached[0];
+    assert!(streamer.slot_data(slot).iter().all(|&b| b == 0));
+
+    // Overwrite that slot with a different expert, behind the cache's back.
+    streamer.load_expert_into_slot(0, 3, slot).unwrap();
+    assert!(streamer.slot_data(slot).iter().all(|&b| b == 3));
+
+    // Whichever slot the plan picks now, it has to contain expert 0's bytes.
+    let again = streamer.load_experts_cached(&[0]).unwrap();
+    assert!(streamer.slot_data(again[0]).iter().all(|&b| b == 0));
+}
+
+/// A read that fails inside the parallel pool must return an error rather
+/// than hang, and must leave the cache claiming nothing.
+///
+/// This is the only test that drives `read_pool`'s error path at all. The
+/// whole safety argument rests on `run_batch` blocking until every claim
+/// drops and on `Claim`'s `Drop` (not the happy path) signalling
+/// completion, so a failing read that returned early from the worker loop
+/// would deadlock the submitter here. A hang IS this test's failure mode;
+/// there is nothing to assert about it beyond reaching the next line.
+///
+/// The file is truncated AFTER open, because `open` refuses a short file up
+/// front, and the stride is chosen to split into several chunks so the
+/// pool runs rather than `run_batch`'s single-chunk inline shortcut.
+#[test]
+fn a_failed_pooled_read_returns_an_error_and_commits_nothing() {
+    const BIG_STRIDE: u64 = 3 * 1024 * 1024;
+    const EXPERTS: usize = 2;
+
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!(
+        "turbospark-streaming-trunc-{}-{unique}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("layer_00.bin");
+
+    let mut file = std::fs::File::create(&path).unwrap();
+    for e in 0..EXPERTS {
+        file.write_all(&vec![e as u8; BIG_STRIDE as usize]).unwrap();
+    }
+    drop(file);
+
+    let layout = StreamLayout {
+        path: path.display().to_string(),
+        stream_offset: 0,
+        stream_size: BIG_STRIDE * EXPERTS as u64,
+        experts_per_layer: EXPERTS,
+        expert_stride: BIG_STRIDE,
+        expert_offsets: None,
+    };
+    let mut streamer = PreadExpertStreamer::open(layout, 2, ExpertCachePolicy::Lfu).unwrap();
+
+    // Expert 1's blob is now almost entirely past EOF; expert 0's is intact.
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_len(BIG_STRIDE + 8)
+        .unwrap();
+
+    let err = streamer.load_experts_cached(&[1]).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            turbospark_streaming::StreamerError::SizeMismatch { .. }
+                | turbospark_streaming::StreamerError::PreadFailed { .. }
+        ),
+        "unexpected error: {err}"
+    );
+    assert!(
+        !streamer.resident_experts_snapshot().contains(&Some(1)),
+        "a failed read must not commit its plan"
+    );
+
+    // The streamer is still usable, and expert 1 still misses.
+    let intact = streamer.load_experts_cached(&[0]).unwrap();
+    assert!(streamer.slot_data(intact[0]).iter().all(|&b| b == 0));
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// The stream layout takes its stride from the LAYER, not from a caller's
 /// model-wide number (ROADMAP Phase S).
 ///
@@ -183,4 +282,40 @@ fn the_stream_layout_takes_its_stride_from_the_layer() {
     assert_eq!(layout.expert_stride, STRIDE);
     assert_eq!(layout.stream_size, 3 * STRIDE);
     assert_eq!(layout.expert_offset(0, 2), 2 * STRIDE);
+}
+
+/// The window spans the highest OFFSET, not `expert count * stride`.
+///
+/// Every writer to date emits dense `e * stride` offsets, on which the two
+/// formulas are equal -- which is exactly what makes this untestable
+/// against a real install and worth a fixture. The offsets here are
+/// permuted and sparse, as the doc on `from_packed_experts_layer` says a
+/// packed layout may be; under the count-based size the last expert's
+/// bounds check would reject it and blame the offset.
+#[test]
+fn the_stream_window_spans_the_highest_offset_not_the_expert_count() {
+    const STRIDE: u64 = 2048;
+    let offsets = [4 * STRIDE, 0, 2 * STRIDE];
+    let layer = model_io::LayerLayout {
+        layer: 0,
+        file: "layer_00.bin".to_string(),
+        expert_stride: STRIDE,
+        experts: offsets
+            .iter()
+            .enumerate()
+            .map(|(e, &offset)| model_io::ExpertEntry {
+                expert: e,
+                offset,
+                size: STRIDE,
+                sub_tensors: Default::default(),
+            })
+            .collect(),
+    };
+    let layout = StreamLayout::from_packed_experts_layer(&layer, std::path::Path::new("/tmp"));
+
+    assert_eq!(layout.stream_size, 5 * STRIDE);
+    assert_eq!(layout.expert_offset(0, 0), 4 * STRIDE);
+    // The count-based window would have been 3 * STRIDE, i.e. too small for
+    // expert 0 by two whole strides.
+    assert!(layout.expert_offset(0, 0) + STRIDE <= layout.stream_size);
 }

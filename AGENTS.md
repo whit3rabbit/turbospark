@@ -73,6 +73,23 @@ cargo fmt
 # Lint the workspace and its tests (must stay clean).
 cargo clippy --workspace --tests
 
+# Does this still build OFF macOS? Nothing above asks: every command here
+# compiles the macOS arm of every cfg, so a crate can declare a macOS-only
+# DEPENDENCY while calling it unconditionally and stay green forever. Seconds,
+# no download, target already installed. `--workspace` does NOT work: onig_sys
+# (via tokenizer) and other cc-rs build deps need an x86_64-linux-gnu-gcc that
+# is not installed here, so runtime/repack/catalog/server/cli/bench cannot be
+# checked on this machine at all. These seven can, and are green. Run it when
+# touching a cfg, a dependency table, or anything unsafe. See Gotcha 8.
+cargo check --target x86_64-unknown-linux-gnu \
+  -p turbospark-core -p turbospark-compute -p turbospark-model-io \
+  -p turbospark-streaming -p turbospark-selection -p turbospark-invocation \
+  -p turbospark-window-fit
+
+# `-p turbospark-gpu` BELONGS in that list and is RED as of 2026-08-15: one
+# missing `#[cfg(target_os = "macos")]` at `src/lib.rs:49`. Add it there once
+# that lands, since gpu is the crate the platform claim is actually about.
+
 # Run the CLI (validates the invocation; on macOS also attempts real
 # generation against --model in all three modes: --prompt (raw text),
 # --messages-file (JSON conversation, chat template applied), and --chat
@@ -682,9 +699,17 @@ fmt-check`, `make clippy`, `make check` (fmt-check + clippy + test-debug),
    `DEVIATIONS.md`).
 
 8. `crates/gpu` is the one crate with a hard platform gate: everything in
-   `src/` is `#[cfg(target_os = "macos")]`, so `cargo build --workspace` /
-   `cargo test --workspace` succeed on Linux with the crate compiling to
-   (effectively) nothing. Dispatched, parity-tested Metal pipelines
+   `src/` is meant to be `#[cfg(target_os = "macos")]`, so `cargo build
+   --workspace` / `cargo test --workspace` succeed on Linux with the crate
+   compiling to (effectively) nothing. THAT SENTENCE WAS FALSE THE FIRST TIME
+   ANYONE CHECKED IT (2026-08-15), and twice over: `crates/streaming` declared
+   `libc` under `cfg(target_os = "macos")` while calling
+   posix_memalign/free/sysconf unconditionally (4x E0433), and `lib.rs:49`'s
+   `mod dequant_int4_gemv;` lost the gate its ~30 siblings carry (14 errors,
+   E0432 on `metal`/`half` and E0433 on `crate::bytes`/`crate::context`).
+   Neither is reachable from any command in the verification policy, which is
+   why a cross-target `cargo check` now sits beside them. A platform claim
+   nobody runs is a comment, not a gate. Dispatched, parity-tested Metal pipelines
    (`rmsnorm_no_scale`, `rms_norm_bf16w`, both `_perhead` norm variants,
    `rope_proportional_neox` (which with `rotated_pairs = head_dim/2` IS
    default full-head NeoX -- no separate default-rope wrapper exists),

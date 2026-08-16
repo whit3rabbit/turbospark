@@ -53,9 +53,6 @@ const SLOT_ALIGNMENT: usize = 2 * 1024 * 1024;
 /// that already saturates around ~5 concurrent copies.
 const MISS_READ_CHUNK_BYTES: usize = 840 * 1024;
 
-/// Upper bound on chunks per miss, used only to size the chunk vector.
-const MISS_READ_SPLIT: usize = 4;
-
 /// One expert slot's backing memory: page-aligned, page-rounded, allocated
 /// once. Exposes its base pointer so a GPU backend can wrap it no-copy.
 pub struct AlignedSlot {
@@ -80,8 +77,11 @@ impl AlignedSlot {
         #[allow(unsafe_code)]
         let rc = unsafe { libc::posix_memalign(&mut raw, SLOT_ALIGNMENT, rounded.max(page)) };
         if rc != 0 || raw.is_null() {
-            return Err(StreamerError::PreadFailed {
-                detail: format!("posix_memalign failed with {rc}"),
+            return Err(StreamerError::AllocationFailed {
+                detail: format!(
+                    "posix_memalign({SLOT_ALIGNMENT}, {}) failed with {rc}",
+                    rounded.max(page)
+                ),
             });
         }
         // SAFETY: freshly allocated, at least `rounded` bytes.
@@ -169,14 +169,19 @@ impl PreadExpertStreamer {
             path: layout.path.clone(),
             detail: e.to_string(),
         })?;
-        if let Ok(meta) = file.metadata() {
-            let required = layout.stream_offset + layout.stream_size;
-            if meta.len() < required {
-                return Err(StreamerError::SizeMismatch {
-                    expected: required,
-                    actual: meta.len(),
-                });
-            }
+        // Propagated rather than swallowed: an `if let Ok(meta)` here skips
+        // the size check silently on a failing stat, which is the one case
+        // where the file is most likely to be wrong.
+        let meta = file.metadata().map_err(|e| StreamerError::OpenFailed {
+            path: layout.path.clone(),
+            detail: e.to_string(),
+        })?;
+        let required = layout.stream_offset + layout.stream_size;
+        if meta.len() < required {
+            return Err(StreamerError::SizeMismatch {
+                expected: required,
+                actual: meta.len(),
+            });
         }
         let slots = (0..slot_count)
             .map(|_| AlignedSlot::allocate(layout.expert_stride as usize))
@@ -219,7 +224,17 @@ impl PreadExpertStreamer {
         Ok(slot)
     }
 
-    /// Loads an expert directly into a specific target slot index.
+    /// Loads an expert directly into a specific target slot index,
+    /// BYPASSING the cache plan.
+    ///
+    /// The slot's residency record is dropped first, so a later
+    /// [`Self::plan_experts_cached`] re-reads whatever used to live there
+    /// rather than reporting a hit on bytes this call overwrote. Before the
+    /// slot's bytes, not after: a failed read leaves the slot half-written
+    /// too, and a half-written slot is not the expert the cache thinks it
+    /// is either. Mixing this with the cached path was safe only by
+    /// convention, and the failure it invited is Gotcha 27's shape --
+    /// correct-looking output computed from the wrong expert.
     pub fn load_expert_into_slot(
         &mut self,
         layer: usize,
@@ -229,6 +244,7 @@ impl PreadExpertStreamer {
         if slot >= self.slot_count {
             return Err(StreamerError::SlotOutOfRange { slot });
         }
+        self.cache.invalidate_slot(slot);
         let region_offset = self.layout.expert_offset(layer, expert);
         if region_offset + self.layout.expert_stride > self.layout.stream_size {
             return Err(StreamerError::OffsetOutOfRange {
@@ -314,7 +330,11 @@ impl PreadExpertStreamer {
         }
 
         let stride = self.layout.expert_stride as usize;
-        let mut chunks: Vec<ReadChunk> = Vec::with_capacity(plan.misses.len() * MISS_READ_SPLIT);
+        // Derived, not a constant: a fixed 4 is Gemma's stride against this
+        // chunk size and nobody else's. A Mixtral-class 108.9 MiB expert is
+        // 133 chunks (Gotcha 36's granularity axis), which under-reserves.
+        let chunks_per_miss = stride.div_ceil(MISS_READ_CHUNK_BYTES).max(1);
+        let mut chunks: Vec<ReadChunk> = Vec::with_capacity(plan.misses.len() * chunks_per_miss);
         for &index in &plan.misses {
             let file_offset =
                 self.layout.stream_offset + self.layout.expert_offset(0, plan.experts[index]);
@@ -396,6 +416,10 @@ impl PreadExpertStreamer {
         self.advise_ranges(&self.expert_advice_ranges(&misses), misses.len())
     }
 
+    /// Byte ranges to advise for `experts`. Out-of-range experts are
+    /// dropped here, which is why every caller hands the ORIGINAL count to
+    /// [`Self::advise_ranges`] as well: the difference is what gets
+    /// reported as `skipped`.
     fn expert_advice_ranges(&self, experts: &[usize]) -> Vec<(u64, u64)> {
         experts
             .iter()
@@ -431,7 +455,11 @@ impl PreadExpertStreamer {
             failed,
             calls: coalesced.len(),
             bytes,
-            skipped: 0,
+            // Hardcoded 0 before, which made the struct fail to add up:
+            // `expert_advice_ranges` silently drops experts whose blob falls
+            // outside the stream window, so a caller comparing `requested`
+            // against what was covered saw the shortfall attributed nowhere.
+            skipped: requested.saturating_sub(ranges.len()),
             max_call_nanos,
         }
     }

@@ -6,6 +6,10 @@
 //! workspace's cross-cutting rule that `streaming` is one of the few crates
 //! allowed unsafe code and platform `cfg`s.
 
+// Only the macOS arm times anything; the no-op arm reports zero. Gated so
+// a non-macOS build of this crate is warning-clean, which it could not be
+// checked for until `libc` stopped being a macOS-only dependency.
+#[cfg(target_os = "macos")]
 use std::time::Instant;
 
 /// Result of an `F_RDADVISE` readahead call.

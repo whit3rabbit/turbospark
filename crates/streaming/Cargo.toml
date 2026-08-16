@@ -15,6 +15,9 @@ path = "src/lib.rs"
 [dependencies]
 foundation = { package = "turbospark-core", path = "../core", version = "0.1.0" }
 model_io = { package = "turbospark-model-io", path = "../model-io", version = "0.1.0" }
-
-[target.'cfg(target_os = "macos")'.dependencies]
+# Not macOS-gated, though only `rdadvice`'s F_RDADVISE and `read_pool`'s QoS
+# call are: `pread_streamer` reaches for posix_memalign/free/sysconf on every
+# platform, so a `cfg(target_os = "macos")` dependency made the crate fail to
+# resolve `libc` on Linux. The crate is unix-only either way (`std::os::unix`
+# throughout), and libc is available on every unix target.
 libc = "0.2"

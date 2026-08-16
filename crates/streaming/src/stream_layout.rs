@@ -35,7 +35,19 @@ impl StreamLayout {
         let expert_stride = layer.expert_stride;
         let path = layout_dir.join("packed_experts").join(&layer.file);
         let expert_offsets: Vec<u64> = layer.experts.iter().map(|e| e.offset).collect();
-        let stream_size = expert_offsets.len() as u64 * expert_stride;
+        // Spans the HIGHEST offset rather than `count * stride`. The two
+        // agree only while the writer emits dense `e * stride` offsets, and
+        // the paragraph above is explicit that it need not -- which is the
+        // whole reason the offsets are carried. A header, padding, or any
+        // permutation makes the count-based window too small, and what
+        // fails then is `PreadExpertStreamer`'s per-load bounds check
+        // rejecting the last expert: an `OffsetOutOfRange` a long way from
+        // the layout that produced it.
+        let stream_size = expert_offsets
+            .iter()
+            .copied()
+            .max()
+            .map_or(0, |highest| highest + expert_stride);
         Self {
             path: path.display().to_string(),
             stream_offset: 0,

@@ -204,6 +204,19 @@ impl ExpertCache {
         }
     }
 
+    /// Forgets which expert `slot` holds, leaving the LFU counters and the
+    /// use clock alone (nothing was requested, so nothing should shift the
+    /// policy). The streamer calls this from its direct-load path, which
+    /// writes a slot's bytes outside any plan: without it the cache keeps
+    /// the old residency and a later plan scores a HIT on bytes that now
+    /// belong to a different expert -- fluent wrong output, not an error.
+    /// Out-of-range slots are ignored; the caller has already rejected them.
+    pub(crate) fn invalidate_slot(&mut self, slot: usize) {
+        if let Some(entry) = self.slot_expert.get_mut(slot) {
+            *entry = None;
+        }
+    }
+
     /// Reserves slots for a speculative read of `experts` (already filtered
     /// through `non_resident_experts`). Victims are picked with the normal
     /// eviction order but no LFU/clock bookkeeping is written, since an

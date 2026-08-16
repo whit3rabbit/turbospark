@@ -3,6 +3,10 @@
 
 use std::fmt;
 
+// `AllocationFailed` is a slot's page-aligned backing allocation failing at
+// open. It used to be raised as `PreadFailed`, which the two share nothing
+// but the moment to justify: "pread failed: posix_memalign failed with 12"
+// sends the reader looking at the file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StreamerError {
     OpenFailed { path: String, detail: String },
@@ -10,6 +14,7 @@ pub enum StreamerError {
     OffsetOutOfRange { offset: u64 },
     PreadFailed { detail: String },
     SlotOutOfRange { slot: usize },
+    AllocationFailed { detail: String },
 }
 
 impl fmt::Display for StreamerError {
@@ -27,6 +32,9 @@ impl fmt::Display for StreamerError {
             StreamerError::PreadFailed { detail } => write!(f, "pread failed: {detail}"),
             StreamerError::SlotOutOfRange { slot } => {
                 write!(f, "expert cache slot {slot} is out of range")
+            }
+            StreamerError::AllocationFailed { detail } => {
+                write!(f, "expert slot allocation failed: {detail}")
             }
         }
     }
