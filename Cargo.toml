@@ -2,6 +2,27 @@
 resolver = "2"
 members = ["crates/core", "crates/compute", "crates/invocation", "crates/selection", "crates/window-fit", "crates/tokenizer", "crates/model-io", "crates/streaming", "crates/gpu", "crates/runtime", "crates/cli", "crates/repack", "crates/catalog", "crates/server", "crates/bench"]
 
+# NO `[profile.release]`, and that is a MEASURED decision rather than an
+# oversight -- release builds run at cargo's stock opt-level 3, no LTO, 16
+# codegen units.
+#
+# The reasoning for setting one was that the decode loop spends ~4-5 ms per
+# token on the HOST, in small functions across crate boundaries that a
+# 16-unit non-LTO build cannot inline across. Measured 2026-08-15 on the real
+# Gemma 4 install, same code both arms, three interleaved pairs at the CLI's
+# sampled defaults: `lto = "thin"` plus `codegen-units = 1` is worth
+# **+0.27%** decode (44.545 -> 44.667 tok/s) and takes the CLI's release
+# build from 6.9 s to 30.6 s. Every gate in this repo is a release build, so
+# that is 4.5x on the edit-measure loop for a gain inside the run-to-run
+# spread. Not taken.
+#
+# If it is ever reconsidered, `panic = "abort"` must stay off regardless. Two
+# `Drop` impls are load-bearing on the unwind path: `PassEncoder`'s sends
+# `endEncoding` (without it Metal aborts the process from
+# `-[_MTLCommandEncoder dealloc]` while the real error is still travelling up
+# the stack -- AGENTS.md Gotcha 32), and `read_pool`'s `Claim` is what
+# `run_batch` blocks on.
+
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
