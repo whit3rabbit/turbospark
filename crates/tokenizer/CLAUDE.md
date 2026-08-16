@@ -42,7 +42,7 @@ crates/tokenizer/
     +-- chatml_dialect.rs           # ChatML dialect encoding & detokenization unit tests
     +-- deepseek_dialect.rs         # DeepSeek-V4 dialect formatting unit tests
     +-- generation_config_eos.rs    # EOS token array resolution unit tests
-    +-- harmony_channels.rs         # gpt-oss: the channel frame, split into reasoning and answer
+    +-- harmony_channels.rs         # gpt-oss: the channel frame, and the tool call inside its header
     +-- harmony_dialect.rs          # gpt-oss: the three-member stop set, and no fallback renderer
     +-- installed_template.rs       # Checkpoint template beats dialect; per-family agreement guard
     +-- jinja_chat_template.rs      # Jinja template rendering unit tests
@@ -57,9 +57,9 @@ crates/tokenizer/
 
 ## Key Modules
 
-- `dialect/`: Resolves dialect special tokens and chat formatting rules for supported model families.
+- `dialect/`: Resolves dialect special tokens and chat formatting rules for supported model families. **`detect_dialect`'s ORDER is load-bearing and its Harmony arm requires THREE markers, not two** -- see Gotcha 6.
 - `chat_template/`: Per-dialect text chat rendering, plus DeepSeek's hand-rolled native tool chat. The FALLBACK for a checkpoint that ships no template (see Gotcha 1).
-- `jinja_chat_template.rs`: Jinja template engine wrapper (`minijinja` + `pycompat`) rendering the checkpoint's own template, for plain text chat as well as tool chat.
+- `jinja_chat_template.rs`: Jinja template engine wrapper (`minijinja` + `pycompat`) rendering the checkpoint's own template, for plain text chat as well as tool chat. Carries `parenthesize_conditional_kwargs`, a REMOVABLE minijinja compatibility shim (AGENTS.md Gotcha 53).
 - `detokenizer.rs`: `StreamingDetokenizer` for incremental UTF-8 token decoding.
 - `stop_matcher.rs`: `StopMatcher` for evaluating stop sequences and EOS token sets.
 - `structured_decoder/`: `StructuredDecoder`, splitting generated output into visible content, reasoning (Harmony only, see Gotcha 4) and parsed tool calls.
@@ -103,4 +103,27 @@ cargo test -p turbospark-tokenizer
 
 3. **Dynamic Added Token IDs in Test Fixtures**: Vendored test fixtures under `crates/*/tests/fixtures/{ChatMLTokenizer,DeepseekTokenizer}` embed placeholder added token IDs (e.g. `248044`) in their `added_tokens` JSON lists. The `tokenizers` loader renumbers added tokens sequentially starting right after the base vocabulary. NEVER hardcode token IDs by reading fixture JSON directly; always resolve token IDs at runtime from a loaded `MfTokenizer` (e.g., using `token_to_id`, `end_of_turn_id`).
 
-4. **Harmony's frame is a HEADER/BODY pair, not a bracketing token pair, and that is why it has its own arm.** `<|channel|>` opens a header, `<|message|>` ends the header and opens the body, `<|end|>` closes the body: `channel_end_id` is `NO_SUCH_TOKEN_ID` for this dialect precisely so the Gemma-shaped bracketing arm stays unreachable (it would open a channel label on the first `<|channel|>` and never close it, swallowing the whole reply). `message_start_id` / `message_end_id` carry the two ids the state machine needs, and are `NO_SUCH_TOKEN_ID` everywhere else. Three things about `consume_harmony` worth knowing before changing it. It keys on TOKEN IDS, never on text, so it does not care whether the detokenizer renders special tokens or how the header's words tokenize. It EMITS the analysis channel as `StructuredAssistantEvent::Reasoning` where the ChatML and Gemma arms DISCARD their thought channels, which is deliberate and one-directional: turning those into events would change four shipped families' observable output. And anything that is not the `final` channel is reasoning, including an unrecognized name, because a new channel misreported as reasoning shows up in the wrong place while one misreported as the answer corrupts the reply. Harmony TOOL CALLS are still undecoded (a call is a recipient in the header, not a token pair), so a `commentary` body arrives as reasoning.
+4. **Harmony's frame is a HEADER/BODY pair, not a bracketing token pair, and that is why it has its own arm.** `<|channel|>` opens a header, `<|message|>` ends the header and opens the body, `<|end|>` closes the body: `channel_end_id` is `NO_SUCH_TOKEN_ID` for this dialect precisely so the Gemma-shaped bracketing arm stays unreachable (it would open a channel label on the first `<|channel|>` and never close it, swallowing the whole reply). `message_start_id` / `message_end_id` carry the two ids the state machine needs, and are `NO_SUCH_TOKEN_ID` everywhere else. Three things about `consume_harmony` worth knowing before changing it. It keys on TOKEN IDS, never on text, so it does not care whether the detokenizer renders special tokens or how the header's words tokenize. It EMITS the analysis channel as `StructuredAssistantEvent::Reasoning` where the ChatML and Gemma arms DISCARD their thought channels, which is deliberate and one-directional: turning those into events would change four shipped families' observable output. And anything that is not the `final` channel is reasoning, including an unrecognized name, because a new channel misreported as reasoning shows up in the wrong place while one misreported as the answer corrupts the reply.
+
+5. **A HARMONY TOOL CALL COMES OUT OF `finish`, NOT OUT OF `consume`, and every other dialect is the other way round.** Harmony frames a call as a `to=functions.NAME` recipient inside the channel header the state machine already parses, with a raw-JSON body -- so there is no fourth parser beside the Gemma / Qwen / DeepSeek three, just `JsonValue::parse` plus the existing allowed-tools check. What is genuinely different is WHEN it can be emitted: `<|call|>` terminates the call, `<|call|>` is in the dialect's stop set, and `run_raw_completion` breaks before the progress callback, so the decoder never sees the token that ends the span it is parsing. **A consumer that drives only `consume` therefore gets every call silently dropped** -- no error, no markup leaking, just a turn with nothing in it. That is what `crates/server`'s `stream_blocking` did until this landed, and it is why `finish` is now called there. Three smaller decisions worth not re-litigating. Only the `functions` namespace is a caller tool: builtins (`browser`, `python`) live in their own, `python`'s body is source code rather than JSON, and treating one as a call would fail to parse and poison the stream rather than degrade. A recipient the caller did not OFFER is not an error either but an ordinary body, reported by the channel rule -- unlike every other dialect, this decoder is built for every Harmony generation rather than only for requests carrying tools (server crate Gotcha 12), so an empty allowlist is the normal case and failing on it would cost the CLI a turn. And the arguments must parse to an OBJECT, matching what all three DSL parsers build; a truncated body (a generation that hit its token budget mid-JSON) is `Malformed`, which is the same verdict the Gemma arm reaches on an unterminated tool span.
+
+6. **`ChatDialect::Harmony` and `ChatDialect::MuseGlimmer` SHARE `<|start|>`
+   and `<|message|>` and share nothing else, so the probe order and the marker
+   count are both load-bearing** (AGENTS.md Gotcha 52). Harmony is tested
+   first and requires `<|channel|>` as well; Muse Glimmer is tested after it
+   on `<|start|>` plus `<|eot|>`. The third Harmony marker was added because
+   the two-marker probe resolved Muse Glimmer to Harmony and then failed to
+   load on a missing `<|startoftext|>` -- a probe that can pass where its own
+   resolver will fail. Both are checked in each arm rather than one, because a
+   single token decides nothing here: `<|eot|>` alone is a Llama-3-family
+   spelling that says nothing about the frame.
+   Muse Glimmer's frame is `<|start|>role<|message|>content<|eot|>`, with
+   `<|eom|>` for a message that hands off rather than ends the turn -- so
+   `<|eom|>` is NOT in the stop set (stopping on it truncates a turn the model
+   intends to continue) and `message_end_id` carries it instead. Its stop set
+   is `<|end_of_text|>` and `<|eot|>`, which is what `generation_config.json`
+   declares and NOT what `tokenizer_config.json`'s single `eos_token` says.
+   Like Harmony it has NO fallback renderer: its template carries an
+   image/video content macro and an `<atem:function_calls>` tool DSL, and that
+   DSL is PLAIN TEXT rather than special tokens, so no tool-call parsing is
+   wired for it and every tool marker id is `NO_SUCH_TOKEN_ID`.

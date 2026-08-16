@@ -27,7 +27,10 @@ pub struct ParsedToolCall {
 /// `maximumBytes` constants.
 pub const MAXIMUM_BYTES: usize = 256 * 1024;
 
-fn is_valid_function_name(name: &str) -> bool {
+/// The shared name check every dialect applies before emitting a call. Also
+/// read by the Harmony arm of [`crate::structured_decoder`], which resolves a
+/// name out of a namespaced header recipient rather than out of a DSL.
+pub(crate) fn is_valid_function_name(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 64
         && name

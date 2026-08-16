@@ -124,7 +124,7 @@ pub(crate) fn stream_blocking(
     // when it gave up is lost with it.
     let mut degraded = false;
 
-    model.with_producer(&mut |producer| {
+    let result = model.with_producer(&mut |producer| {
         run_raw_completion(
             producer,
             model.tokenizer(),
@@ -149,11 +149,7 @@ pub(crate) fn stream_blocking(
                     Some(decoder) => match decoder.consume(id, &text) {
                         Ok(events) => {
                             for event in events {
-                                on_piece(match event {
-                                    StructuredAssistantEvent::Content(c) => Piece::Text(c),
-                                    StructuredAssistantEvent::Reasoning(r) => Piece::Reasoning(r),
-                                    StructuredAssistantEvent::ToolCall(c) => Piece::Tool(c),
-                                });
+                                on_piece(piece_for(event));
                             }
                         }
                         Err(_) => {
@@ -166,5 +162,31 @@ pub(crate) fn stream_blocking(
                 }
             },
         )
-    })
+    });
+
+    // NOT OPTIONAL, AND NOT SYMMETRIC WITH `consume`. Harmony ends a tool call
+    // with `<|call|>`, which is a stop token, so `run_raw_completion` breaks
+    // before the progress callback and the decoder never sees the token that
+    // terminates the call it is parsing -- `finish` is where that call is
+    // emitted. Its OTHER job is releasing the tail DeepSeek's arm withholds as
+    // a possible tool-marker prefix, which this loop used to drop.
+    //
+    // An error here is the degraded path, not a failed request: the run itself
+    // succeeded, and what a decoder abandons is the markup it could not parse.
+    if result.is_ok() {
+        if let Some(decoder) = decoder.as_mut().filter(|_| !degraded) {
+            for event in decoder.finish().unwrap_or_default() {
+                on_piece(piece_for(event));
+            }
+        }
+    }
+    result
+}
+
+fn piece_for(event: StructuredAssistantEvent) -> Piece {
+    match event {
+        StructuredAssistantEvent::Content(c) => Piece::Text(c),
+        StructuredAssistantEvent::Reasoning(r) => Piece::Reasoning(r),
+        StructuredAssistantEvent::ToolCall(c) => Piece::Tool(c),
+    }
 }

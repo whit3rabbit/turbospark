@@ -17,9 +17,12 @@ mod model;
 mod real_model;
 mod response;
 
+/// Shared application state for request handling.
 pub use handler::AppState;
+/// Trait and canned test backend for chat generation.
 pub use model::{ChatModel, ScriptedChatModel};
 #[cfg(target_os = "macos")]
+/// GPU-backed chat model running real forward passes against `.gturbo` installs.
 pub use real_model::RealChatModel;
 
 // The wire envelopes are `anyllm_translate`'s types, re-exported under the
@@ -33,8 +36,12 @@ pub use anyllm_translate::openai::{
 use axum::routing::{get, post};
 use axum::Router;
 
-/// Builds the router: `POST /v1/chat/completions`, `POST /v1/messages`, and
-/// `GET /v1/models`, all bound to `state`.
+/// Builds the Axum router bound to `state` with the following routes:
+///
+/// - `POST /v1/chat/completions`: OpenAI-compatible chat completion endpoint
+/// - `POST /v1/messages`: Anthropic-compatible messages endpoint
+/// - `GET /v1/models`: OpenAI-compatible list of available models
+/// - `GET /v1/models/:model`: OpenAI-compatible model detail endpoint
 pub fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/v1/chat/completions", post(handler::chat_completions))

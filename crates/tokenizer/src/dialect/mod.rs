@@ -18,7 +18,7 @@ use tokenizers::Tokenizer;
 use self::config::{GenerationConfig, TokenizerConfig};
 pub(crate) use self::resolve::{
     DEEPSEEK_BOS_MARK, DEEPSEEK_EOS_MARK, HARMONY_END_MARK, HARMONY_MESSAGE_MARK,
-    HARMONY_START_MARK,
+    HARMONY_START_MARK, MUSE_EOT_MARK, MUSE_MESSAGE_MARK, MUSE_START_MARK,
 };
 use crate::error::TokenizerError;
 
@@ -47,6 +47,21 @@ pub enum ChatDialect {
     /// checkpoint's version win anyway. This variant therefore exists for
     /// what a dialect IS evidence for -- the ids and the STOP SET.
     Harmony,
+    /// `muse_glimmer`'s frame:
+    /// `<|start|>role<|message|>content<|eot|>`.
+    ///
+    /// **SHARES `<|start|>` AND `<|message|>` WITH HARMONY AND NOTHING
+    /// ELSE**, which is why `detect_dialect` tests Harmony first and why
+    /// Harmony's probe requires `<|channel|>`. This family has no channels,
+    /// no `<|return|>` and no `<|call|>`; it closes a turn with `<|eot|>` and
+    /// a handoff with `<|eom|>`, and frames tool calls as
+    /// `<atem:function_calls>` PLAIN TEXT rather than as special tokens.
+    ///
+    /// Like [`ChatDialect::Harmony`] it has NO fallback renderer: the
+    /// checkpoint's own template carries an image/video content macro and
+    /// the ATEM tool DSL, so this variant exists for what a dialect IS
+    /// evidence for -- the ids and the STOP SET.
+    MuseGlimmer,
 }
 
 /// Sentinel for token roles a dialect frames as plain text rather than a
@@ -63,6 +78,17 @@ pub struct MfTokenizer {
     pub tool_call_end_id: i32,
     pub tool_response_id: i32,
     pub tool_response_end_id: i32,
+    /// The one member of this dialect's STOP SET that means "the model is
+    /// invoking a tool" rather than "the turn is over", or
+    /// [`NO_SUCH_TOKEN_ID`] where the dialect has none.
+    ///
+    /// Read by `run_raw_completion`'s stop ladder, and by nothing else: it
+    /// answers a question about how a generation ENDED, which is separate from
+    /// the markup ids the structured decoder reads. Two dialects have one and
+    /// they are not the same shape of token -- Gemma's is the tool-RESPONSE
+    /// marker it hands over with, Harmony's is `<|call|>` -- which is exactly
+    /// why the ladder cannot derive it from `tool_response_id` alone.
+    pub tool_call_stop_id: i32,
     pub channel_start_id: i32,
     pub channel_end_id: i32,
     /// The token that ends a channel HEADER and opens its body, and the one
@@ -151,6 +177,7 @@ impl MfTokenizer {
             tool_call_end_id: resolved.tool_call_end_id,
             tool_response_id: resolved.tool_response_id,
             tool_response_end_id: resolved.tool_response_end_id,
+            tool_call_stop_id: resolved.tool_call_stop_id,
             channel_start_id: resolved.channel_start_id,
             channel_end_id: resolved.channel_end_id,
             message_start_id: resolved.message_start_id,

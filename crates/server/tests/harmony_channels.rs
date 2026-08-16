@@ -79,6 +79,10 @@ fn steps_for_turn(tok: &MfTokenizer) -> Vec<Vec<foundation::LogitValue>> {
 async fn spawn_server() -> String {
     let tok = load_tokenizer();
     let steps = steps_for_turn(&tok);
+    serve(tok, steps).await
+}
+
+async fn serve(tok: MfTokenizer, steps: Vec<Vec<foundation::LogitValue>>) -> String {
     let model: Arc<dyn turbospark_server::ChatModel> =
         Arc::new(ScriptedChatModel::new(tok, 4096, steps));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -185,6 +189,191 @@ async fn the_streamed_turn_emits_a_thinking_block_before_the_text_block() {
         .filter_map(|e| e["delta"]["thinking"].as_str())
         .collect();
     assert!(thinking.contains(REASONING), "{thinking:?}");
+}
+
+// ---------------------------------------------------------------------------
+// Tool calls (ROADMAP's Harmony tool-calling item).
+// ---------------------------------------------------------------------------
+
+const TOOL: &str = "get_weather";
+const ARGUMENTS: &str = r#"{"city":"Oslo"}"#;
+
+/// The ids of a Harmony tool call, ending at `<|call|>` so the generation stops
+/// the way a real one does.
+///
+/// **`<|call|>` IS THE POINT OF THIS FIXTURE.** It is in the dialect's stop set,
+/// so `run_raw_completion` breaks before the progress callback and the decoder
+/// never sees it: everything downstream depends on the call being emitted from
+/// `finish` instead, and on the stop ladder recognizing this token.
+fn tool_call_turn(tok: &MfTokenizer) -> Vec<i32> {
+    let mark = |name: &str| tok.token_to_id(name).unwrap_or_else(|| panic!("{name}"));
+    let mut ids = vec![tok.channel_start_id];
+    ids.extend(tok.encode(&format!("commentary to=functions.{TOOL} "), false));
+    ids.push(mark("<|constrain|>"));
+    ids.extend(tok.encode("json", false));
+    ids.push(tok.message_start_id);
+    ids.extend(tok.encode(ARGUMENTS, false));
+    ids.push(mark("<|call|>"));
+    ids
+}
+
+fn tool_definition() -> serde_json::Value {
+    serde_json::json!({
+        "type": "function",
+        "function": {
+            "name": TOOL,
+            "description": "Get the current weather in a given city",
+            "parameters": {
+                "type": "object",
+                "properties": {"city": {"type": "string"}},
+                "required": ["city"],
+            },
+        },
+    })
+}
+
+/// A request carrying tools takes the OTHER prompt path (server crate Gotcha
+/// 7), so the prefill offset has to be reconstructed through the same call
+/// `plan` makes rather than through `apply_chat_template`.
+async fn spawn_tool_server() -> String {
+    let tok = load_tokenizer();
+    let tools = vec![tokenizer::FunctionDefinition {
+        name: TOOL.to_string(),
+        description: "Get the current weather in a given city".to_string(),
+        parameters: tokenizer::JsonValue::Null,
+    }];
+    let prompt_ids = tok
+        .encode_generic_tool_chat(&[Message::new(Role::User, USER)], &tools, false)
+        .expect("the fixture ships a template");
+
+    let mut steps = vec![one_hot(tok.vocab_size, 0); prompt_ids.len() - 1];
+    steps.extend(
+        tool_call_turn(&tok)
+            .iter()
+            .map(|&id| one_hot(tok.vocab_size, id as usize)),
+    );
+    serve(tok, steps).await
+}
+
+fn tool_body() -> serde_json::Value {
+    serde_json::json!({
+        "model": "claude-sonnet-4-6",
+        "max_tokens": 200,
+        "temperature": 0.0,
+        "tools": [{
+            "name": TOOL,
+            "description": "Get the current weather in a given city",
+            "input_schema": {
+                "type": "object",
+                "properties": {"city": {"type": "string"}},
+                "required": ["city"],
+            },
+        }],
+        "messages": [{"role": "user", "content": USER}]
+    })
+}
+
+/// THE HEADLINE: a Harmony call reaches an Anthropic client as a `tool_use`
+/// block with `stop_reason: "tool_use"`.
+///
+/// Both halves used to be wrong and in ways that looked like nothing: the call
+/// was never emitted (its terminator is a stop token the decoder cannot see)
+/// and the finish reason fell through to `end_turn`, because the ladder read
+/// Gemma's tool-RESPONSE marker, which this dialect does not have.
+#[tokio::test]
+async fn a_harmony_tool_call_becomes_an_anthropic_tool_use_block() {
+    let base = spawn_tool_server().await;
+    let response = reqwest::Client::new()
+        .post(format!("{base}/v1/messages"))
+        .json(&tool_body())
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body: serde_json::Value = response.json().await.unwrap();
+    let blocks = body["content"].as_array().unwrap();
+    let use_block = blocks
+        .iter()
+        .find(|b| b["type"] == "tool_use")
+        .unwrap_or_else(|| panic!("no tool_use block in {body}"));
+
+    assert_eq!(use_block["name"], TOOL, "the namespace is stripped");
+    assert_eq!(use_block["input"]["city"], "Oslo");
+    assert_eq!(body["stop_reason"], "tool_use", "{body}");
+
+    // The arguments are the model's markup, not its answer: none of the body
+    // may also arrive as text.
+    let text: String = blocks
+        .iter()
+        .filter_map(|b| b["text"].as_str())
+        .collect::<Vec<_>>()
+        .join("");
+    assert!(!text.contains("city"), "the call leaked as text: {text:?}");
+}
+
+/// The same call over the OpenAI endpoint, which is the shape the Anthropic
+/// mapping above is built from. Asserting it directly is what says the two
+/// endpoints agree rather than one of them inventing something.
+#[tokio::test]
+async fn the_openai_endpoint_carries_the_call_and_the_tool_calls_finish_reason() {
+    let base = spawn_tool_server().await;
+    let mut request = tool_body();
+    request["tools"] = serde_json::json!([tool_definition()]);
+    let response = reqwest::Client::new()
+        .post(format!("{base}/v1/chat/completions"))
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body: serde_json::Value = response.json().await.unwrap();
+    let choice = &body["choices"][0];
+    let call = &choice["message"]["tool_calls"][0];
+
+    assert_eq!(call["function"]["name"], TOOL, "{body}");
+    assert_eq!(call["function"]["arguments"], ARGUMENTS);
+    assert_eq!(choice["finish_reason"], "tool_calls", "{body}");
+}
+
+/// A STREAMED call has to arrive BEFORE the finish chunk, which is the one
+/// ordering constraint emitting from `finish` could plausibly have broken: the
+/// call is produced after `run_raw_completion` has already returned.
+#[tokio::test]
+async fn a_streamed_call_arrives_before_the_finish_chunk() {
+    let base = spawn_tool_server().await;
+    let mut request = tool_body();
+    request["tools"] = serde_json::json!([tool_definition()]);
+    request["stream"] = serde_json::Value::Bool(true);
+    let response = reqwest::Client::new()
+        .post(format!("{base}/v1/chat/completions"))
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let raw = response.text().await.unwrap();
+    let payloads: Vec<serde_json::Value> = raw
+        .lines()
+        .filter_map(|l| l.strip_prefix("data:"))
+        .filter_map(|d| serde_json::from_str(d.trim()).ok())
+        .collect();
+
+    let call_at = payloads
+        .iter()
+        .position(|e| e["choices"][0]["delta"]["tool_calls"].is_array())
+        .unwrap_or_else(|| panic!("no tool_call delta in {raw}"));
+    let finish_at = payloads
+        .iter()
+        .position(|e| e["choices"][0]["finish_reason"] == "tool_calls")
+        .unwrap_or_else(|| panic!("no tool_calls finish in {raw}"));
+    assert!(call_at < finish_at, "call after finish chunk: {raw}");
+
+    let call = &payloads[call_at]["choices"][0]["delta"]["tool_calls"][0];
+    assert_eq!(call["function"]["name"], TOOL);
+    assert_eq!(call["function"]["arguments"], ARGUMENTS);
 }
 
 /// The OpenAI endpoint carries the same split as `reasoning_content`, which is

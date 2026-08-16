@@ -16,6 +16,7 @@ mod mistral;
 
 use crate::dialect::{
     ChatDialect, MfTokenizer, HARMONY_END_MARK, HARMONY_MESSAGE_MARK, HARMONY_START_MARK,
+    MUSE_EOT_MARK, MUSE_MESSAGE_MARK, MUSE_START_MARK,
 };
 use crate::error::TokenizerError;
 use crate::json_value::JsonValue;
@@ -150,6 +151,18 @@ impl MfTokenizer {
             ChatDialect::ChatMl => chatml::chatml_chat_template(messages),
             ChatDialect::Deepseek => deepseek::deepseek_chat_template(messages),
             ChatDialect::Mistral => mistral::mistral_chat_template(messages),
+            // NO FALLBACK RENDERER FOR `muse_glimmer` EITHER, and for Harmony's
+            // reason one model over: its template carries an image/video
+            // content macro and an `<atem:function_calls>` tool DSL, so a
+            // hand-rolled version would be framing the model was not trained
+            // on -- fluent output that is not an answer, with no error
+            // anywhere (AGENTS.md Gotcha 41). A real install always ships the
+            // template, so this refusal is what a MALFORMED install gets.
+            ChatDialect::MuseGlimmer => Err(TokenizerError::UnsupportedForDialect(
+                "muse_glimmer has no fallback renderer; the install must carry its own \
+                 chat_template.jinja (or tokenizer_config.json's chat_template key)"
+                    .to_string(),
+            )),
             // NO FALLBACK RENDERER FOR HARMONY, ON PURPOSE (ROADMAP M5).
             //
             // Every other arm here is a handful of markers around the content.
@@ -188,6 +201,14 @@ impl MfTokenizer {
             // generation prompt does.
             ChatDialect::Harmony => format!(
                 "{HARMONY_START_MARK}user{HARMONY_MESSAGE_MARK}{content}{HARMONY_END_MARK}                 {HARMONY_START_MARK}assistant"
+            ),
+            // Writable for Harmony's reason: a continuation is one user turn
+            // plus the opening of an assistant one, with no system preamble
+            // and no channel involved. This family closes a turn with
+            // `<|eot|>` where Harmony uses `<|end|>`.
+            ChatDialect::MuseGlimmer => format!(
+                "{MUSE_START_MARK}user{MUSE_MESSAGE_MARK}{content}{MUSE_EOT_MARK}\
+                 {MUSE_START_MARK}assistant{MUSE_MESSAGE_MARK}"
             ),
         };
         let mut out = vec![self.end_of_turn_id];

@@ -26,6 +26,10 @@ use turbospark_tokenizer::{
     MfTokenizer, StructuredAssistantDecoder, StructuredAssistantEvent as Event,
 };
 
+/// The channel header a real `gpt-oss` tool call opens with. `functions` is
+/// the namespace Harmony renders caller-supplied tools into.
+const HEADER: &str = "commentary to=functions.get_weather ";
+
 fn fixture() -> MfTokenizer {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/HarmonyTokenizer");
     MfTokenizer::load_from_dir(&dir).expect("Harmony fixture loads")
@@ -35,6 +39,13 @@ fn decoder(tok: &MfTokenizer) -> StructuredAssistantDecoder<'_> {
     StructuredAssistantDecoder::new(tok, HashSet::new(), || "toolu_0".to_string())
 }
 
+/// A decoder that has been OFFERED `get_weather`, which is what makes a
+/// `to=functions.get_weather` header a call rather than an ordinary body.
+fn tool_decoder(tok: &MfTokenizer) -> StructuredAssistantDecoder<'_> {
+    let allowed = HashSet::from(["get_weather".to_string()]);
+    StructuredAssistantDecoder::new(tok, allowed, || "toolu_0".to_string())
+}
+
 /// A frame token carries no visible text of its own.
 fn mark(id: i32) -> (i32, &'static str) {
     (id, "")
@@ -42,7 +53,10 @@ fn mark(id: i32) -> (i32, &'static str) {
 
 /// Feeds a whole transcript and returns every event it produced, in order.
 fn run(tok: &MfTokenizer, transcript: &[(i32, &str)]) -> Vec<Event> {
-    let mut decoder = decoder(tok);
+    run_with(decoder(tok), transcript)
+}
+
+fn run_with(mut decoder: StructuredAssistantDecoder<'_>, transcript: &[(i32, &str)]) -> Vec<Event> {
     let mut events = Vec::new();
     for &(id, delta) in transcript {
         events.extend(decoder.consume(id, delta).expect("Harmony never fails"));
@@ -117,34 +131,187 @@ fn a_header_split_across_deltas_still_parses() {
 /// name (`commentary to=functions.get_weather <|constrain|>json`). The channel
 /// is the FIRST word, and `commentary` is not the answer.
 ///
-/// Decoding the call itself is a separate item: Harmony frames it as a header
-/// recipient rather than as the bracketing token pair the decoder's tool
-/// contract describes, which is why `resolve_harmony` leaves every tool id
-/// `NO_SUCH_TOKEN_ID`.
+/// **A CALLER THAT OFFERED NO TOOLS GETS THE BODY AS REASONING**, which is the
+/// direction that matters: this decoder is built for every Harmony generation,
+/// tools or not (server crate Gotcha 12), so failing an unoffered tool here
+/// would turn every CLI tool call into a lost turn. The next test is the same
+/// transcript with the tool offered.
 #[test]
-fn a_commentary_header_with_a_recipient_is_reasoning_not_content() {
+fn a_commentary_body_is_reasoning_when_the_caller_offered_no_tools() {
     let tok = fixture();
-    let t = text_id(&tok);
-    let constrain = tok
-        .token_to_id("<|constrain|>")
-        .expect("<|constrain|> resolves");
 
-    let events = run(
-        &tok,
-        &[
-            mark(tok.channel_start_id),
-            (t, "commentary to=functions.get_weather "),
-            mark(constrain),
-            (t, "json"),
-            mark(tok.message_start_id),
-            (t, r#"{"city":"Oslo"}"#),
-        ],
+    let events = run(&tok, &tool_call_transcript(&tok, HEADER));
+
+    assert_eq!(
+        events,
+        vec![Event::Reasoning(r#"{"city":"Oslo"}"#.to_string())]
+    );
+}
+
+/// THE HEADLINE OF THE TOOL-CALL ITEM, and the assertion is WHEN as much as
+/// what. Harmony ends a call with `<|call|>`, `<|call|>` is in the stop set,
+/// and `run_raw_completion` breaks before the progress callback -- so the
+/// decoder never sees the token that terminates the span it is parsing, and
+/// the call has to come out of `finish`. A consumer that only drives `consume`
+/// sees nothing at all, which is exactly what the server used to do.
+#[test]
+fn a_tool_call_is_emitted_from_finish_because_its_terminator_is_a_stop_token() {
+    let tok = fixture();
+    let mut decoder = tool_decoder(&tok);
+
+    for &(id, delta) in &tool_call_transcript(&tok, HEADER) {
+        assert_eq!(
+            decoder.consume(id, delta).expect("a well-formed call"),
+            Vec::new(),
+            "nothing may be emitted before the span closes"
+        );
+    }
+    assert!(!decoder.has_tool_calls(), "not until finish");
+
+    let events = decoder.finish().expect("a complete body parses");
+    let [Event::ToolCall(call)] = events.as_slice() else {
+        panic!("expected exactly one call, got {events:?}");
+    };
+    assert_eq!(call.name, "get_weather", "the namespace is stripped");
+    assert_eq!(call.id, "toolu_0");
+    assert_eq!(call.arguments_json, r#"{"city":"Oslo"}"#);
+    assert!(decoder.has_tool_calls());
+}
+
+/// A BUILTIN NAMESPACE IS NOT A CALLER TOOL, and the test offers `python` by
+/// name so the allowlist alone cannot be what rejects it. `functions` is the
+/// namespace Harmony renders caller-supplied tools into; `python`'s body is
+/// source code rather than JSON, so treating one as a call would fail to parse
+/// and poison the stream rather than degrade.
+#[test]
+fn a_recipient_outside_the_functions_namespace_is_not_a_call() {
+    let tok = fixture();
+    let allowed = HashSet::from(["python".to_string()]);
+    let decoder = StructuredAssistantDecoder::new(&tok, allowed, || "toolu_0".to_string());
+
+    let events = run_with(
+        decoder,
+        &tool_call_transcript(&tok, "commentary to=python "),
     );
 
     assert_eq!(
         events,
         vec![Event::Reasoning(r#"{"city":"Oslo"}"#.to_string())]
     );
+}
+
+/// A generation that ran out of budget partway through the arguments is a
+/// MALFORMED call rather than a call with odd arguments -- the same verdict
+/// the Gemma arm reaches on an unterminated tool span. Note this is the one
+/// way the Harmony arm can fail at all, which is why `consume_harmony` now
+/// returns a `Result`.
+#[test]
+fn a_body_cut_off_mid_json_is_malformed() {
+    let tok = fixture();
+    let t = text_id(&tok);
+    let mut decoder = tool_decoder(&tok);
+
+    let mut transcript = tool_call_transcript(&tok, HEADER);
+    transcript.pop();
+    transcript.push((t, r#"{"city":"Os"#));
+    for (id, delta) in transcript {
+        decoder.consume(id, delta).expect("no failure until finish");
+    }
+
+    assert!(
+        decoder.finish().is_err(),
+        "half a JSON object is not a call"
+    );
+}
+
+/// The arguments must be an OBJECT. Every wire format this feeds carries them
+/// as one, and every other parser here builds one, so a bare array is a
+/// malformed call rather than a call whose arguments happen to be a list.
+#[test]
+fn a_non_object_body_is_malformed() {
+    let tok = fixture();
+    let t = text_id(&tok);
+    let mut decoder = tool_decoder(&tok);
+
+    let mut transcript = tool_call_transcript(&tok, HEADER);
+    transcript.pop();
+    transcript.push((t, "[1, 2]"));
+    for (id, delta) in transcript {
+        decoder.consume(id, delta).expect("no failure until finish");
+    }
+
+    assert!(decoder.finish().is_err());
+}
+
+/// `<|end|>` closes a tool body too, and the turn carries on afterwards. Not
+/// the shape a real `gpt-oss` turn takes (`<|call|>` ends the generation), but
+/// the emit path is shared with `finish`, so this is what says the two agree.
+#[test]
+fn a_tool_body_closed_by_end_is_a_call_and_the_turn_continues() {
+    let tok = fixture();
+    let t = text_id(&tok);
+    let mut transcript = tool_call_transcript(&tok, HEADER);
+    transcript.extend_from_slice(&[
+        mark(tok.message_end_id),
+        mark(tok.channel_start_id),
+        (t, "final"),
+        mark(tok.message_start_id),
+        (t, "It is cold."),
+    ]);
+
+    let events = run_with(tool_decoder(&tok), &transcript);
+
+    let [Event::ToolCall(call), Event::Content(answer)] = events.as_slice() else {
+        panic!("expected a call then an answer, got {events:?}");
+    };
+    assert_eq!(call.name, "get_weather");
+    assert_eq!(answer, "It is cold.");
+}
+
+/// The recipient is subject to the same split-across-deltas problem the channel
+/// name is: `functions.get_weather` is several tokens, and a parser reading
+/// only the first delta would find `to=funct`.
+#[test]
+fn a_recipient_split_across_deltas_still_resolves() {
+    let tok = fixture();
+    let t = text_id(&tok);
+
+    let events = run_with(
+        tool_decoder(&tok),
+        &[
+            mark(tok.channel_start_id),
+            (t, "commentary to=fun"),
+            (t, "ctions.get_"),
+            (t, "weather"),
+            mark(tok.message_start_id),
+            (t, "{}"),
+        ],
+    );
+
+    let [Event::ToolCall(call)] = events.as_slice() else {
+        panic!("expected one call, got {events:?}");
+    };
+    assert_eq!(call.name, "get_weather");
+    assert_eq!(call.arguments_json, "{}");
+}
+
+/// The transcript a real `gpt-oss` tool call produces, minus its `<|call|>`
+/// terminator, which the decoder never sees. The header is a parameter so a
+/// caller can vary the recipient's NAMESPACE, which is the axis that decides
+/// whether this is a call at all.
+fn tool_call_transcript<'a>(tok: &MfTokenizer, header: &'a str) -> Vec<(i32, &'a str)> {
+    let constrain = tok
+        .token_to_id("<|constrain|>")
+        .expect("<|constrain|> resolves");
+    let t = text_id(tok);
+    vec![
+        mark(tok.channel_start_id),
+        (t, header),
+        mark(constrain),
+        (t, "json"),
+        mark(tok.message_start_id),
+        (t, r#"{"city":"Oslo"}"#),
+    ]
 }
 
 /// AN UNRECOGNIZED CHANNEL IS REASONING, and the direction is the assertion.
@@ -228,4 +395,20 @@ fn the_frame_ids_resolve_and_the_bracketing_pair_does_not() {
     );
     assert_eq!(tok.message_end_id, tok.token_to_id("<|end|>").unwrap());
     assert_eq!(tok.channel_end_id, turbospark_tokenizer::NO_SUCH_TOKEN_ID);
+}
+
+/// `<|call|>` is the member of Harmony's three-token stop set that means the
+/// model is INVOKING something rather than finishing. `run_raw_completion`'s
+/// ladder has no other way to tell -- it is neither the turn end nor the
+/// tool-response marker, and both of those comparisons are asserted here so a
+/// future resolver cannot collapse them and leave the ladder reading `Eos`.
+#[test]
+fn the_tool_call_stop_is_call_and_is_neither_the_turn_end_nor_a_response_marker() {
+    let tok = fixture();
+    let call = tok.token_to_id("<|call|>").expect("<|call|> resolves");
+
+    assert_eq!(tok.tool_call_stop_id, call);
+    assert!(tok.stop_token_ids.contains(&call));
+    assert_ne!(tok.end_of_turn_id, call, "the turn end is <|return|>");
+    assert_eq!(tok.tool_response_id, turbospark_tokenizer::NO_SUCH_TOKEN_ID);
 }
