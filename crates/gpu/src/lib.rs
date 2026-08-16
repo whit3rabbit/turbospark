@@ -97,8 +97,8 @@ pub use bytes::read_f32_buffer;
 #[cfg(target_os = "macos")]
 pub use context::{
     autorelease_pool, dispatch_one_threadgroup_per_row, dispatch_one_threadgroup_per_row_offsets,
-    dispatch_threads_3d, read_buffer_bytes, read_buffer_f16, write_buffer_bytes, CommittedPass,
-    GpuError, MetalContext, PassEncoder,
+    dispatch_threads_3d, read_buffer_bytes, read_buffer_f16, read_buffer_f16_into,
+    write_buffer_bytes, CommittedPass, GpuError, MetalContext, PassEncoder,
 };
 #[cfg(target_os = "macos")]
 pub use dequant_1bit_gemv::{

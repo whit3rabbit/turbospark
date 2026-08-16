@@ -216,15 +216,14 @@ impl RealForwardRunner {
         if self.skip_head {
             return Ok(());
         }
-        let head = gpu::read_buffer_f16(&self.scratch.logits, 0, vocab);
-        if head.len() != logits.len() {
+        if vocab != logits.len() {
             return Err(RealForwardError::Unsupported(format!(
                 "vocab mismatch: model has {}, caller expected {}",
-                head.len(),
+                vocab,
                 logits.len()
             )));
         }
-        logits.copy_from_slice(&head);
+        gpu::read_buffer_f16_into(&self.scratch.logits, 0, logits);
         Ok(())
     }
 }

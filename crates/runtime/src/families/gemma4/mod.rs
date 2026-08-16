@@ -271,15 +271,19 @@ impl RealForwardRunner {
         if self.skip_head {
             return Ok(());
         }
-        let head = gpu::read_buffer_f16(&self.scratch.logits, 0, vocab);
-        if head.len() != logits.len() {
+        // Read the head STRAIGHT into the caller's slice. The owned-`Vec`
+        // form of this cost a 512 KiB allocation and a second 512 KiB copy
+        // per decoded token, outside every profiling bucket in this repo
+        // (AGENTS.md Gotcha 23). The length check moves ahead of the read
+        // because it was only ever comparing `vocab` to `logits.len()`.
+        if vocab != logits.len() {
             return Err(RealForwardError::Unsupported(format!(
                 "vocab mismatch: model has {}, caller expected {}",
-                head.len(),
+                vocab,
                 logits.len()
             )));
         }
-        logits.copy_from_slice(&head);
+        gpu::read_buffer_f16_into(&self.scratch.logits, 0, logits);
         Ok(())
     }
 }

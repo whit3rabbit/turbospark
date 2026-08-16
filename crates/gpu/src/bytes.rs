@@ -50,9 +50,11 @@ pub fn read_half_buffer(buffer: &metal::Buffer, len: usize) -> Vec<f16> {
     // shared storage mode by the caller, and the GPU command buffer that
     // wrote it has already been waited on (`wait_until_completed`), so the
     // CPU-visible contents are complete and valid for `len` `u16` reads.
+    // `f16` is `#[repr(transparent)]` over `u16`, so the element-wise
+    // `from_bits` map this used to do was a memcpy written out longhand.
     #[allow(unsafe_code)]
-    let bits = unsafe { std::slice::from_raw_parts(ptr, len) };
-    bits.iter().map(|&b| f16::from_bits(b)).collect()
+    let values = unsafe { std::slice::from_raw_parts(ptr.cast::<f16>(), len) };
+    values.to_vec()
 }
 
 /// Reads `len` `f32` elements back from a completed Metal CPU/GPU shared buffer.

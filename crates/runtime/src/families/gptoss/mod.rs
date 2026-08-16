@@ -292,15 +292,14 @@ impl RealForwardRunner {
         }
         // Raw logits, never probabilities: `selection::select` softmaxes
         // whatever it is handed (AGENTS.md Gotcha 16). No softcap here either.
-        let head = gpu::read_buffer_f16(&scratch.logits, 0, vocab);
-        if head.len() != logits.len() {
+        if vocab != logits.len() {
             return Err(RealForwardError::Unsupported(format!(
                 "vocab mismatch: model has {}, caller expected {}",
-                head.len(),
+                vocab,
                 logits.len()
             )));
         }
-        logits.copy_from_slice(&head);
+        gpu::read_buffer_f16_into(&scratch.logits, 0, logits);
         Ok(())
     }
 }
