@@ -186,7 +186,7 @@ the reading, so allocator jitter cannot flake it).
 | Qwen 3.6 35B-A3B, MLX INT4 | 18 GB | 4,096 | 1,587 - 1,610 MiB | 1,700 | 32.6 - 38.0 | yes, 256 experts |
 | Qwen3-30B-A3B, Q4_K_M | 17 GB | 4,096 | 2,741 - 2,753 MiB | 2,900 | 16.0 - 28.1 | yes, 128 experts |
 | gpt-oss-20b, MXFP4 | 11 GB | 8,192 | 5,417 - 5,421 MiB | 5,700 | 22.9 - 30.4 | yes, 32 experts |
-| **Qwen3.8-27B, MLX INT4** | 14 GB | 4,096 | **660.0 - 660.3 MiB** | 750 | 16.8 - 19.0 | **no, dense** |
+| **Qwen3.8-27B, MLX INT4** | 14 GB | 4,096 | **660.0 - 660.3 MiB** | 750 | 18.6 - 21.1 | **no, dense** |
 | Mistral 7B, Q4_K_M | 4.1 GB | 8,192 | 1,201 - 1,203 MiB | 1,300 | 16.3 - 30.4 | no, dense |
 | **Ternary-Bonsai-27B, MLX 2-bit** | 7.6 GB | 4,096 | **657.8 - 661.6 MiB** | 750 | 12.5 - 13.9 | **no, dense** |
 | Bonsai-27B, MLX 1-bit | 3.9 GB | -- | not measured | -- | ~18.3 | no, dense |
@@ -1049,6 +1049,20 @@ streamed from `mlx-community/Qwen3.8-27B-4bit` into ~15.1 GB.
 | sampled digest | `f272437c` |
 | greedy at 8 slots | `c3df0095` (equal, as it must be) |
 | replay growth | +0.02 MiB |
+
+**THROUGHPUT RE-MEASURED 2026-08-17** after the INT4 function-constant
+specialization (`46617c6`; see `docs/DECODE_BUDGET.md`, "The dense 27B").
+Quiet unattended capture, AC, two full protocol runs: 20.3 / 19.8 / 18.6
+and 21.1 / 20.7 / 18.7 tok/s (long-synthesis agreeing to 0.7% across
+runs), peak 660.0 MiB both. The change itself was isolated with an
+interleaved paired A/B in the same capture: +8.0 / +8.1 / +8.8% over the
+pre-change binary with all six outputs one md5, so every digest and the
+perplexity above are UNTOUCHED -- this is a throughput-only re-freeze,
+and the summary table's decode range is updated to 18.6 - 21.1. The
+1/2/4-bit triple's INT4 point moves to ~20.7 accordingly; its
+compute-bound reading (decode does not track weight bytes, even
+monotonically) is unchanged, since the 1-bit and 2-bit GEMVs were not
+specialized.
 
 **THIS IS NOT A NEW FAMILY, AND THAT IS THE INTERESTING PART.** Qwen3.8-27B
 and `prism-ml/Bonsai-27B-mlx-1bit` are ONE architecture: their
