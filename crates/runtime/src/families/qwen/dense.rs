@@ -30,16 +30,21 @@
 
 use model_io::ResidentIndex;
 
-use crate::families::qwen::{layer_tensor, RealQwenState};
+use crate::families::qwen::{prefixed_layer_tensor, RealQwenState};
 use crate::real_forward_dispatch::encode_gemv_any;
 use crate::real_forward_types::{DecodeScratch, RealForwardError};
 
 /// Encodes one dense layer's FFN plus its residual add into `pass`.
 ///
-/// `scratch.x` is read as the residual and written back with the FFN output
+/// `residual` is read as the residual and written back with the FFN output
 /// added; `qwen.moe_x` holds the post-attention norm the caller produced and
 /// is the FFN's input, so it must not be the destination of anything encoded
 /// in between.
+///
+/// `residual` is a PARAMETER rather than `scratch.x` for one caller only: the
+/// MTP head runs this same FFN over its own hidden stream
+/// (`docs/MTP_SPECULATIVE.md`), after the trunk's token is complete. The
+/// trunk still passes `scratch.x` and is byte-identical for it.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn encode_qwen_layer_dense(
     context: &mut gpu::MetalContext,
@@ -48,6 +53,8 @@ pub(crate) fn encode_qwen_layer_dense(
     index: &ResidentIndex,
     scratch: &DecodeScratch,
     qwen: &RealQwenState,
+    residual: &gpu::MetalBuffer,
+    prefix: &str,
     layer: usize,
     hidden: usize,
     inter: usize,
@@ -64,7 +71,7 @@ pub(crate) fn encode_qwen_layer_dense(
             pass,
             weights,
             index,
-            &layer_tensor(layer, suffix),
+            &prefixed_layer_tensor(prefix, layer, suffix),
             inter,
             hidden,
             (&qwen.moe_x, 0),
@@ -92,7 +99,7 @@ pub(crate) fn encode_qwen_layer_dense(
         pass,
         weights,
         index,
-        &layer_tensor(layer, "mlp.down_proj.weight"),
+        &prefixed_layer_tensor(prefix, layer, "mlp.down_proj.weight"),
         hidden,
         inter,
         (&scratch.ffn_act, 0),
@@ -103,7 +110,7 @@ pub(crate) fn encode_qwen_layer_dense(
     // the attention output nor the FFN output on the way back into the stream
     // (`ffn_sandwich_norms: false`), and doing so is what took the Qwen 3.6
     // reference perplexity from 6.25 to 255,409 once already.
-    gpu::encode_residual_add(context, pass, (&scratch.x, 0), (&qwen.h2, 0), hidden as u32)
+    gpu::encode_residual_add(context, pass, (residual, 0), (&qwen.h2, 0), hidden as u32)
         .map_err(gpu_err)?;
     Ok(())
 }

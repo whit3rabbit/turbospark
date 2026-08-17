@@ -20,8 +20,26 @@ use crate::real_forward_utils::{entry, norm_view};
 
 pub(crate) const RMS_EPS: f32 = 1e-6;
 
+/// The trunk's tensor-name prefix.
+pub(crate) const TRUNK_PREFIX: &str = "language_model.model";
+
 pub(crate) fn layer_tensor(layer: usize, suffix: &str) -> String {
-    format!("language_model.model.layers.{layer}.{suffix}")
+    prefixed_layer_tensor(TRUNK_PREFIX, layer, suffix)
+}
+
+/// [`layer_tensor`] under an explicit prefix.
+///
+/// The ONLY reason this exists is the multi-token-prediction head
+/// (`docs/MTP_SPECULATIVE.md`), whose single block is shape-identical to a
+/// trunk full-attention layer field for field and so can run the SAME
+/// encoders under `mtp.layers.0.*` -- rather than a second copy of them,
+/// which is what Gotcha 11 is about the cost of.
+///
+/// It is a STRING change and not a flow change: every caller passing
+/// [`TRUNK_PREFIX`] resolves the byte-identical name it resolved before, and
+/// `qwen38_quality_gate` was re-run to say so rather than to hope so.
+pub(crate) fn prefixed_layer_tensor(prefix: &str, layer: usize, suffix: &str) -> String {
+    format!("{prefix}.layers.{layer}.{suffix}")
 }
 
 impl RealForwardRunner {
@@ -156,7 +174,17 @@ impl RealForwardRunner {
                 encode_linear_block(context, &pass, weights, index, arch, qwen, scratch, layer)?;
             } else {
                 encode_full_attention_block(
-                    context, &pass, weights, index, arch, qwen, scratch, kv, layer, position,
+                    context,
+                    &pass,
+                    weights,
+                    index,
+                    arch,
+                    qwen,
+                    scratch,
+                    kv,
+                    TRUNK_PREFIX,
+                    layer,
+                    position,
                 )?;
             }
 
@@ -205,7 +233,18 @@ impl RealForwardRunner {
             // across the whole token.
             if qwen.dense {
                 dense::encode_qwen_layer_dense(
-                    context, &pass, weights, index, scratch, qwen, layer, hidden, inter, use_silu,
+                    context,
+                    &pass,
+                    weights,
+                    index,
+                    scratch,
+                    qwen,
+                    &scratch.x,
+                    TRUNK_PREFIX,
+                    layer,
+                    hidden,
+                    inter,
+                    use_silu,
                 )?;
                 continue;
             }
