@@ -99,7 +99,7 @@ Dense models (no experts to stream) work too, but the memory story is different 
 
 | Model | Size on disk | RAM while generating | Speed | Note |
 | --- | ---: | ---: | ---: | --- |
-| **Qwen3.8-27B** (INT4) | 14 GB | 660 MB counted | 17 to 19 tok/s | see caveat |
+| **Qwen3.8-27B** (INT4) | 14 GB | 660 MB counted | 19 to 21 tok/s | see caveat |
 | **Mistral 7B** (Q4_K_M) | 4.1 GB | 1.2 GB counted | 16 to 30 tok/s | measured at 8k context |
 | **Bonsai-27B** (1-bit) | 3.9 GB | not yet measured | ~18 tok/s | |
 | **Ternary-Bonsai-27B** (2-bit) | 7.6 GB | 660 MB counted | 13 to 14 tok/s | same caveat |
