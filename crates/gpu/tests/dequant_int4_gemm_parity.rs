@@ -55,6 +55,104 @@ fn half_bytes(values: &[f16]) -> Vec<u8> {
         .collect()
 }
 
+/// Builds a weight blob and runs the batched kernel against the GEMV for
+/// every batch in `batches`, asserting bit equality. Shared so the shape
+/// axis below exercises exactly the same comparison.
+fn assert_parity_at(context: &mut MetalContext, rows: usize, cols: usize, batches: &[usize]) {
+    let scales_offset = (rows * cols / 2) as u64;
+    let biases_offset = scales_offset + (rows * cols / 64 * 2) as u64;
+    let total = biases_offset + (rows * cols / 64 * 2) as u64;
+
+    let mut blob = fill(0xD1A5, scales_offset as usize);
+    blob.extend_from_slice(&bf16_small(0xBEEF, rows * cols / 64));
+    blob.extend_from_slice(&bf16_small(0xF00D, rows * cols / 64));
+    assert_eq!(blob.len(), total as usize);
+    let weights = context.new_buffer_with_data(&blob);
+
+    for &batch in batches {
+        let x_values: Vec<f16> = (0..batch * cols)
+            .map(|i| f16::from_f32(((i % 17) as f32 - 8.0) / 32.0))
+            .collect();
+        let x = context.new_buffer_with_data(&half_bytes(&x_values));
+        let y_batched = context.new_output_buffer((batch * rows * 2) as u64);
+        let y_single = context.new_output_buffer((rows * 2) as u64);
+
+        let matrix = || Int4ResidentMatrix {
+            buffer: &weights,
+            weights_offset: 0,
+            scales_offset,
+            biases_offset,
+            rows,
+            cols,
+        };
+
+        autorelease_pool(|| {
+            let pass = context.begin_pass();
+            encode_dequant_int4_gemm_resident(
+                context,
+                &pass,
+                &matrix(),
+                (&x, 0),
+                (&y_batched, 0),
+                batch,
+            )
+            .expect("batched dispatch");
+            pass.commit_and_wait();
+        });
+        let got = turbospark_gpu::read_buffer_f16(&y_batched, 0, batch * rows);
+
+        for b in 0..batch {
+            autorelease_pool(|| {
+                let pass = context.begin_pass();
+                encode_dequant_int4_gemv_resident(
+                    context,
+                    &pass,
+                    &matrix(),
+                    (&x, (b * cols * 2) as u64),
+                    (&y_single, 0),
+                )
+                .expect("single dispatch");
+                pass.commit_and_wait();
+            });
+            let expected = turbospark_gpu::read_buffer_f16(&y_single, 0, rows);
+            let slice = &got[b * rows..(b + 1) * rows];
+            assert_eq!(
+                slice.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                expected.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                "{rows}x{cols} batch {batch}, row {b} differs from the GEMV"
+            );
+            assert!(
+                expected.iter().any(|v| v.to_f32() != 0.0),
+                "fixture produced an all-zero output, so this proves nothing"
+            );
+        }
+    }
+}
+
+/// M, N and B are baked into the pipeline as function constants, and
+/// `MetalContext::pipeline` caches on (source address, name, key). If the
+/// key ever stops carrying all three, the SECOND shape dispatched in a
+/// process silently reuses the FIRST one's pipeline -- and a wrong baked N
+/// reads the wrong fraction of every row while producing finite, plausible
+/// output. That is crate Gotcha 1, and it is exactly the trap
+/// `gemv_bandwidth_bench.rs::baking_m_n_...` fell into on its own first run
+/// (it read +322% from a pipeline baked for a third of the real N).
+///
+/// Four shapes in ONE process, deliberately differing in M alone, in N
+/// alone, and in both, so a key that drops either field is caught. The
+/// batch axis is covered by the case above, which walks four batches at one
+/// shape in one process for the same reason.
+///
+/// Mutation-checked: dropping `n` from the key in `specialized_constants`
+/// reddens the third shape here, and dropping `m` reddens the second.
+#[test]
+fn a_second_shape_in_one_process_does_not_reuse_the_first_shapes_pipeline() {
+    let mut context = MetalContext::new().expect("Metal device");
+    for (rows, cols) in [(128usize, 256usize), (256, 256), (128, 512), (64, 128)] {
+        assert_parity_at(&mut context, rows, cols, &[1, 4]);
+    }
+}
+
 #[test]
 fn batched_gemm_matches_the_gemv_run_once_per_row() {
     let rows = 128usize;

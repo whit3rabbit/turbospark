@@ -46,6 +46,45 @@
 
 constant constexpr uint kMaxBatchRows = 16;
 
+// M, N and B baked per shape, mirroring the GEMV's constants 20-22 next
+// door. Indices 100-103 because 20-26 are that file's and this source is
+// its concatenation.
+//
+// **B IS THE ONE THAT MATTERS HERE, and it is why this was worth doing
+// separately rather than copying the GEMV's pair across.** With B a runtime
+// argument the `for (bi < B)` loops cannot unroll and `acc[]` occupies all
+// sixteen registers whatever the caller asked for, so a B=4 dispatch pays
+// a B=16 register footprint on a kernel whose header already records that
+// the register file is the binding constraint. Baking it sizes the live
+// set to the batch actually in flight.
+//
+// The GEMV took this treatment on 2026-08-16 (`46617c6`) and this kernel
+// did not, which quietly made every `c(M)` number worse: `c(M)` is the
+// ratio of the two arms, so an optimization landing on the sequential one
+// alone moves it the wrong way. See `docs/MTP_SPECULATIVE.md`.
+constant uint FC_GEMM_M      [[function_constant(100)]];
+constant uint FC_GEMM_N      [[function_constant(101)]];
+constant uint FC_GEMM_B      [[function_constant(102)]];
+constant bool FC_GEMM_USE_FC [[function_constant(103)]];
+
+static inline uint gemm_m(constant uint& M) {
+    return (is_function_constant_defined(FC_GEMM_USE_FC) &&
+            FC_GEMM_USE_FC &&
+            is_function_constant_defined(FC_GEMM_M)) ? FC_GEMM_M : M;
+}
+
+static inline uint gemm_n(constant uint& N) {
+    return (is_function_constant_defined(FC_GEMM_USE_FC) &&
+            FC_GEMM_USE_FC &&
+            is_function_constant_defined(FC_GEMM_N)) ? FC_GEMM_N : N;
+}
+
+static inline uint gemm_b(constant uint& B) {
+    return (is_function_constant_defined(FC_GEMM_USE_FC) &&
+            FC_GEMM_USE_FC &&
+            is_function_constant_defined(FC_GEMM_B)) ? FC_GEMM_B : B;
+}
+
 kernel void dequant_int4_gemm_simd(
     device const uint8_t* W      [[buffer(0)]],
     device const bfloat*  scales [[buffer(1)]],
@@ -60,17 +99,24 @@ kernel void dequant_int4_gemm_simd(
     uint                  lane   [[thread_index_in_simdgroup]]
 ) {
     constexpr uint rows_per_tg = 8;
+    const uint m_dim = gemm_m(M);
+    const uint n_dim = gemm_n(N);
+    const uint b_dim = gemm_b(B);
     const uint row = tg_idx * rows_per_tg + sg_idx;
-    if (row >= M) return;
+    if (row >= m_dim) return;
 
-    const uint n_groups  = N / kGroupSize;
-    const uint row_bytes = N / 2;
+    const uint n_groups  = n_dim / kGroupSize;
+    const uint row_bytes = n_dim / 2;
     device const uint8_t* W_row = W      + uint(row) * row_bytes;
     device const bfloat*  s_row = scales + uint(row) * n_groups;
     device const bfloat*  b_row = biases + uint(row) * n_groups;
 
+    // Still declared at the cap, because MSL needs a compile-time bound
+    // here and a function constant is not one. What the baked `b_dim` buys
+    // is that every loop below stops at it, so the unused accumulators are
+    // never written and the optimizer drops them.
     float acc[kMaxBatchRows];
-    for (uint i = 0; i < kMaxBatchRows; ++i) {
+    for (uint i = 0; i < b_dim; ++i) {
         acc[i] = 0.0f;
     }
 
@@ -95,8 +141,31 @@ kernel void dequant_int4_gemm_simd(
         const float q6 = float((w4 >> 24)  & 0x0Fu);
         const float q7 = float(((w4 >> 24) & 0xFFu) >> 4);
 
-        for (uint bi = 0; bi < B; ++bi) {
-            device const half* x_b = x + bi * N;
+        // THE UNROLL FACTOR IS SWEPT, NOT CHOSEN, and 4 is the optimum on
+        // every shape. Baking `b_dim` lets the compiler unroll this loop
+        // FULLY, and full unrolling is the difference between the best and
+        // the worst numbers this kernel has ever produced -- at B=16 it
+        // holds sixteen copies of `e0..e7` live at once, ~128 floats beside
+        // `acc[16]`, and spills. That is note 2's register-blocking failure
+        // arriving through a different door.
+        //
+        // `c(M)` on gate/up 17408x5120, one session, one binary:
+        //
+        //   unroll     M=2    M=4    M=8   M=16
+        //   none      1.04   0.90   0.85   0.83   <- before any of this
+        //   disable   0.95   0.81   0.77   0.73
+        //   count(2)  0.46   0.64   0.59   0.57
+        //   count(4)  0.50   0.55   0.46   0.44   <- shipped
+        //   count(8)  0.51   0.55   0.64   0.89
+        //   full      0.51   0.57   0.65   1.14   <- spilling
+        //
+        // Read the two ends together: the unrolling is what buys the win at
+        // every M, and it is also what destroys M=16 if left unbounded. A
+        // fixed count of 4 keeps ~32 activation floats live regardless of B,
+        // which is what makes the row monotonic in M for the first time.
+        #pragma clang loop unroll_count(4)
+        for (uint bi = 0; bi < b_dim; ++bi) {
+            device const half* x_b = x + bi * n_dim;
             const half4 xa = *((device const half4*)(x_b + elem));
             const half4 xb = *((device const half4*)(x_b + elem + 4u));
             const float e0 = float(xa.x), e1 = float(xa.y), e2 = float(xa.z), e3 = float(xa.w);
@@ -118,8 +187,8 @@ kernel void dequant_int4_gemm_simd(
         const uint8_t byte = W_row[g * (kGroupSize / 2) + lane];
         const float lo = float(uint(byte & 0x0Fu));
         const float hi = float(uint(byte >> 4));
-        for (uint bi = 0; bi < B; ++bi) {
-            device const half* x_b = x + bi * N;
+        for (uint bi = 0; bi < b_dim; ++bi) {
+            device const half* x_b = x + bi * n_dim;
             const float x0 = float(x_b[g * kGroupSize + lane * 2u]);
             const float x1 = float(x_b[g * kGroupSize + lane * 2u + 1u]);
             float dot = fma(lo, x0, 0.0f);
@@ -130,10 +199,10 @@ kernel void dequant_int4_gemm_simd(
         }
     }
 
-    for (uint bi = 0; bi < B; ++bi) {
+    for (uint bi = 0; bi < b_dim; ++bi) {
         const float total = simd_sum(acc[bi]);
         if (lane == 0) {
-            y[bi * M + row] = half(total);
+            y[bi * m_dim + row] = half(total);
         }
     }
 }

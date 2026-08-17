@@ -37,8 +37,8 @@
 
 use metal::{FunctionConstantValues, MTLDataType};
 use turbospark_gpu::{
-    autorelease_pool, encode_dequant_int4_gemm_resident, encode_dequant_int4_gemv_resident,
-    Int4ResidentMatrix, MetalContext, MAX_BATCH_ROWS,
+    autorelease_pool, encode_dequant_int4_gemm_mma_resident, encode_dequant_int4_gemm_resident,
+    encode_dequant_int4_gemv_resident, Int4ResidentMatrix, MetalContext, MAX_BATCH_ROWS,
 };
 
 const INT4_SOURCE: &str = include_str!("../src/shaders/dequant_int4.metal");
@@ -485,8 +485,8 @@ impl MatrixPool {
                 .collect(),
             x: context.new_output_buffer((cols * 2) as u64),
             y: context.new_output_buffer((rows * 2) as u64),
-            x_batch: context.new_output_buffer((MAX_BATCH_ROWS * cols * 2) as u64),
-            y_batch: context.new_output_buffer((MAX_BATCH_ROWS * rows * 2) as u64),
+            x_batch: context.new_output_buffer((64 * cols * 2) as u64),
+            y_batch: context.new_output_buffer((64 * rows * 2) as u64),
             scales_offset,
             biases_offset,
             rows,
@@ -561,6 +561,28 @@ impl MatrixPool {
             let pass = context.begin_pass();
             for group in 0..groups {
                 encode_dequant_int4_gemm_resident(
+                    context,
+                    &pass,
+                    &self.matrix(group),
+                    (&self.x_batch, 0),
+                    (&self.y_batch, 0),
+                    batch,
+                )
+                .unwrap();
+            }
+            pass.commit_and_wait_with_gpu_time()
+        })
+    }
+
+    /// The same, through the MATRIX-hardware kernel. Not interchangeable
+    /// with `time_gemm`: that one is bit-exact against the GEMV and this
+    /// one reassociates the K reduction, so the two answer different
+    /// questions and the ratio between them is the price of the trade.
+    fn time_gemm_mma(&self, context: &mut MetalContext, groups: usize, batch: usize) -> f64 {
+        autorelease_pool(|| {
+            let pass = context.begin_pass();
+            for group in 0..groups {
+                encode_dequant_int4_gemm_mma_resident(
                     context,
                     &pass,
                     &self.matrix(group),
@@ -738,5 +760,126 @@ fn c_of_m_for_the_batched_kernel() {
         "\nMultiply by the 0.75 compute share of a decode step, add 0.25 x the\n\
          expert-union breakeven, and the result is the verify step's cost in\n\
          decode-steps. It pays when the accepted-token count exceeds that.\n"
+    );
+}
+
+/// The same `c(M)`, at the DENSE `qwen3_5` 27B's shapes rather than Qwen
+/// 3.6's (`docs/MTP_SPECULATIVE.md`, stage 0). This is the term that decides
+/// whether an MTP verify pass pays, and it could not be borrowed from the
+/// table above: those shapes are hidden 2048, these are hidden 5120 with a
+/// 17408 FFN, so every matrix here is 4 to 8 times larger.
+///
+/// **THE DIRECTION MATTERS AND IT IS NOT OBVIOUS.**
+/// `docs/SPECULATIVE_DECODING.md` explains its own disappointing `c(M)` by
+/// noting that the SEQUENTIAL arm is not bandwidth-bound either -- a cold
+/// matrix reads at 66 GiB/s against the kernel's 355 GiB/s saturation -- so
+/// batching divides a term that was never the cost. That argument is a
+/// statement about SIZE, not about the kernel: these matrices are tens of
+/// megabytes and cannot sit in any cache, so the sequential arm here should
+/// be closer to bandwidth-bound and `c(M)` correspondingly better. Measured
+/// rather than assumed, because the opposite reading (bigger rows spill more
+/// accumulator state) is equally plausible from the armchair.
+///
+/// The full-vocab head is EXCLUDED and that is a memory limit rather than a
+/// judgement: at 248320x5120 one INT4 matrix plus companions is ~715 MB and
+/// `MatrixPool` insists on at least `max(BATCH_SIZES)` of them, i.e. 11.4 GB
+/// of Metal buffers. It is ~2.8% of profiled decode compute and one dispatch
+/// per token; account for it separately.
+#[test]
+#[ignore = "benchmark: needs a real Metal device, reports rather than asserts"]
+fn c_of_m_at_qwen38_shapes() {
+    let mut context = MetalContext::new().expect("Metal device");
+
+    println!("\nshape                     c(M) per token, against M sequential passes");
+    for (label, rows, cols) in QWEN38_SHAPES {
+        // Skips the head (see the doc above) and keeps the reference row,
+        // which is a saturation control rather than a decode shape but is
+        // cheap and says whether the table was taken at one clock state.
+        if rows > 32768 {
+            println!("{label}    SKIPPED: pool would need 11.4 GB of Metal buffers");
+            continue;
+        }
+        let pool = MatrixPool::new(&context, rows, cols);
+        let dispatches = ((TARGET_BYTES / weight_bytes(rows, cols)).max(64) as usize).max(256);
+
+        pool.time(&mut context, dispatches, 1);
+        let sequential = pool.time(&mut context, dispatches, 1) / dispatches as f64;
+
+        print!("{label}  ");
+        for batch in BATCH_SIZES {
+            let groups = (dispatches / batch).max(1);
+            pool.time_gemm(&mut context, groups, batch);
+            let batched = pool.time_gemm(&mut context, groups, batch) / (groups * batch) as f64;
+            print!("  M={batch} {:>5.2}x", batched / sequential);
+        }
+        println!();
+    }
+    println!(
+        "\nCompose against THIS family's dispatch split, not the MoE one: the\n\
+         INT4/INT2 GEMV is 93.1% of profiled decode compute here against the\n\
+         MoE family's 52.7%, there is no expert-union term at all, and only\n\
+         6.4% (norms, elementwise, the GDN recurrent step) cannot amortize\n\
+         against the MoE family's 19%. Break-even at block M is M x c(M),\n\
+         plus a draft cost of ~0.015 per proposal -- the MTP head is 1.4% of\n\
+         the trunk's weight bytes, which is the whole point of using it.\n"
+    );
+}
+
+/// `c(M)` for the MATRIX-hardware kernel, beside the exact one, on the
+/// dense 27B shapes. This is the measurement that prices
+/// `docs/MTP_SPECULATIVE.md`'s one remaining lever: `simdgroup_matrix` is
+/// the only thing left that can move `c(M)`, and it costs bit-exactness
+/// against a sequential decode (AGENTS.md Gotcha 27), so the question is
+/// not whether it is faster but whether it is faster ENOUGH to buy that.
+///
+/// Both arms are timed in one process against the same matrices, so the
+/// third column is a within-session ratio and is the number to read.
+#[test]
+#[ignore = "benchmark: needs a real Metal device, reports rather than asserts"]
+fn c_of_m_matrix_against_exact_at_qwen38_shapes() {
+    let mut context = MetalContext::new().expect("Metal device");
+
+    println!("\nshape                    M    exact   matrix   matrix/exact");
+    for (label, rows, cols) in QWEN38_SHAPES {
+        if rows > 32768 {
+            continue;
+        }
+        let pool = MatrixPool::new(&context, rows, cols);
+        let dispatches = ((TARGET_BYTES / weight_bytes(rows, cols)).max(64) as usize).max(256);
+
+        pool.time(&mut context, dispatches, 1);
+        let sequential = pool.time(&mut context, dispatches, 1) / dispatches as f64;
+
+        // Past MAX_BATCH_ROWS only the matrix kernel can run, which is the
+        // point of going there: the SIMD kernel's cap is a register-array
+        // limit and this one's accumulators are not a register array.
+        for batch in [2usize, 4, 8, 16, 32, 64] {
+            let groups = (dispatches / batch).max(1);
+            let exact = if batch <= MAX_BATCH_ROWS {
+                pool.time_gemm(&mut context, groups, batch);
+                Some(pool.time_gemm(&mut context, groups, batch) / (groups * batch) as f64)
+            } else {
+                None
+            };
+            pool.time_gemm_mma(&mut context, groups, batch);
+            let mma = pool.time_gemm_mma(&mut context, groups, batch) / (groups * batch) as f64;
+            match exact {
+                Some(e) => println!(
+                    "{label}  {batch:>3}   {:>5.2}x   {:>5.2}x   {:>8.2}x",
+                    e / sequential,
+                    mma / sequential,
+                    mma / e
+                ),
+                None => println!(
+                    "{label}  {batch:>3}       --   {:>5.2}x         --  (past the SIMD cap)",
+                    mma / sequential
+                ),
+            }
+        }
+    }
+    println!(
+        "\nThe third column is what matters. Below 1.00 the matrix kernel is\n\
+         faster and the question is whether the margin buys giving up a\n\
+         provably-lossless verify; at or above 1.00 there is nothing to buy.\n"
     );
 }

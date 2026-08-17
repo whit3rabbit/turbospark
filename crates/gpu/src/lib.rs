@@ -112,7 +112,10 @@ pub use dequant_2bit_gemv::{
     encode_embed_lookup_int2, int2_row_bytes, Int2AffineRowGpu, Int2ResidentMatrix,
 };
 #[cfg(target_os = "macos")]
-pub use dequant_int4_batch::{encode_dequant_int4_gemm_resident, MAX_BATCH_ROWS};
+pub use dequant_int4_batch::{
+    encode_dequant_int4_gemm_mma_resident, encode_dequant_int4_gemm_resident, MAX_BATCH_ROWS,
+    MMA_MAX_BATCH_ROWS,
+};
 #[cfg(target_os = "macos")]
 pub use dequant_int4_gemv::{
     dequant_int4_gemv, dequant_int4_gemv_resident, encode_dequant_int4_gemv_resident,
