@@ -13,6 +13,22 @@ It is specifically designed for **Apple Silicon (macOS Metal)** to execute large
 
 The port is tested against the original rather than assumed compatible. Decode throughput lands within 1% of the Swift engine on the same install, every family carries a memory oracle asserting a peak-footprint ceiling, every family but the dense `llama` one carries a frozen quality gate (teacher-forced perplexity plus output digests), and the numerics are cross-checked against `mlx-lm`, `llama.cpp`, and MLX on identical bytes. What the suite proves is in [`docs/TESTING.md`](docs/TESTING.md), and the frozen numbers are in [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md).
 
+> **Where the low-memory win comes from, and where it does not.** The ~2 GB
+> figures are a property of MIXTURE-OF-EXPERTS models: their routed experts
+> are streamed from SSD through a bounded slot cache instead of being held
+> in RAM. Dense models (Mistral, TinyLlama, Qwen3.8-27B, Bonsai) run
+> correctly on this engine, but they get none of that benefit: a dense
+> token touches every weight once, so the whole mapping is wired for the
+> GPU and the RAM requirement is the install's full size on disk. This was
+> measured, not inferred (the mapping survives critical memory pressure
+> untouched), and no quantization changes it -- a smaller quant only
+> shrinks what gets wired, and "streaming layers" for a dense model is
+> closed by arithmetic (a layer cache has a structural 0% hit rate). The
+> measurements and the closures are in
+> [`docs/DECODE_BUDGET.md`](docs/DECODE_BUDGET.md). Future model support
+> therefore targets fine-grained MoE checkpoints, where one expert is
+> small enough for the slot cache to hold the working set.
+
 ## Table of Contents
 
 - [In a hurry](#in-a-hurry)
