@@ -29,6 +29,25 @@ negative: Muse Glimmer's FFN spreads 95% of its activation mass over 91% of
 its neurons, so PowerInfer-style neuron caching and streaming is a measured
 dead end here -- read it before proposing to shrink a dense model's working
 set by "loading only what the token uses".
+`docs/MTP_SPECULATIVE.md` answers the speculative question for the DENSE
+family, where `docs/SPECULATIVE_DECODING.md` answers it for the MoE one, and
+the two now disagree: on `qwen3_5` a checkpoint's own multi-token-prediction
+head is a nearly free drafter (~1.5% of a pass) against a 6.4%
+un-amortizable floor and no expert-union term, so the ceiling is ~2.07x and
+a good drafter is worth 1.35-1.58x. **It also supersedes that older page's
+`c(M)` table in both directions**: `dequant_int4_gemm_simd` was missing the
+function-constant specialization `46617c6` gave the GEMV, and fixing that
+plus bounding its unroll roughly HALVED `c(M)` on every shape, so the MoE
+verdict is owed a re-derivation nobody has done. Read both before proposing
+MTP, DFlash, EAGLE or Medusa -- and note the reversal recorded at the top of
+the MTP page, where a composite built on an unoptimized kernel measured the
+kernel rather than the question. **`simdgroup_matrix` is CLOSED**, measured
+the same day: built as `dequant_int4_gemm_mma` it loses at every batch width
+and plateaus at ~0.5 past M=16, because a packed INT4 run cannot be
+`simdgroup_load`ed and the dequant-into-threadgroup work that forces is
+independent of B while the MACs matrix hardware accelerates scale with B.
+The exact kernel is both faster and bit-identical, so the losslessness trade
+that lever was priced in does not have to be made.
 
 Do your best to keep code files under 400 lines but it's a suggestion not a hard rule. If over 400, decide if refactoring makes sense.
 
@@ -2192,6 +2211,7 @@ Workspace directory structure and crate layout:
     +-- GTURBO.md      # the .gturbo install format this port reads and writes
     +-- MODELS.md      # the catalog, the probe, `pull`, and how to add a row
     +-- MODEL_FAMILY.md# GGUF `general.architecture` / HF `model_type` tables
+    +-- MTP_SPECULATIVE.md # native MTP heads on the DENSE family; pays, after a c(M) fix
     +-- NEW_MODEL.md   # end-to-end checklist for wiring a new model family
     +-- SPECULATIVE_DECODING.md # DFlash / batched verify, measured marginal
     +-- POWER_BASELINE.md # watts, joules-per-token, hygiene audit (ROADMAP Phase P1)

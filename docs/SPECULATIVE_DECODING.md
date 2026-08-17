@@ -16,6 +16,33 @@ Nothing here refutes DFlash. It is a statement about this engine's verify
 cost, and every number that would have to change for the answer to change
 is named at the bottom.
 
+> **THE `c(M)` TABLE BELOW IS SUPERSEDED, 2026-08-17. Every row of it is now
+> beaten, and this page's verdict is owed a re-derivation it has not had.**
+> See `docs/MTP_SPECULATIVE.md`.
+>
+> `dequant_int4_batch.rs` was missing the function-constant specialization
+> `46617c6` gave the GEMV, and it needed a bounded unroll besides. Fixing
+> both roughly halved `c(M)`. Measured in one session with one binary:
+>
+> | shape | recorded here | after the fix |
+> | --- | ---: | ---: |
+> | expert 512x2048, M=8 | 0.44 | **0.32-0.39** |
+> | expert 512x2048, M=16 | 0.36 | **0.32-0.35** |
+> | o_proj 2048x2048, M=8 | 0.71 | **0.41-0.48** |
+>
+> **What that does NOT do is overturn this page on its own**, which is why
+> the verdict stands until someone re-derives it: the MoE composite is
+> dominated by a 19% un-amortizable floor and by the routed pair, 26% of
+> decode compute with still no batched form at all. A better GEMV moves
+> neither. Item 1 below ("`c(M)`, not the drafter") was the right call and
+> half of it has now been collected.
+>
+> **Item 3, "a dense family", HAS been measured and it pays.** The dense
+> `qwen3_5` 27B has no expert-union term and a 6.4% floor rather than 19%,
+> and after the kernel fix its ceiling is ~2.07x with ~1.35-1.58x at a
+> drafter as good as MTPLX reports. That work is scoped in
+> `docs/MTP_SPECULATIVE.md`, not here.
+
 **DO NOT CARRY THIS VERDICT TO BATCHED PREFILL**, which reuses the same
 `c(M)` and `union(M)` terms and reaches a different answer. A verify pass
 divides its cost by an ACCEPT LENGTH -- most of why 1.1x -- while a prefill
@@ -245,12 +272,17 @@ In order of leverage:
    worth more than any drafter change and lifts every row at once. The first
    target is the MoE phase-1/phase-2 pair: 26% of decode compute with no
    batched form at all.
-2. **`simdgroup_matrix`.** The one remaining lever on the GEMV, and its cost
-   is not effort: matrix hardware reorders accumulation, so the verify pass
-   would stop agreeing bit-for-bit with a sequential decode and speculative
-   output would no longer be provably identical to non-speculative output.
-   That is a design decision, worth taking only if an end-to-end run lands
-   short with the exact path.
+2. ~~**`simdgroup_matrix`.**~~ **MEASURED 2026-08-17 AND CLOSED.** It was
+   built and benched against the exact kernel in one session
+   (`dequant_int4_gemm_mma`, `c_of_m_matrix_against_exact_at_qwen38_shapes`)
+   and it LOSES at every width -- 6.6x slower at M=2, 1.33x at M=16 -- and
+   PLATEAUS at ~0.5 past M=16, worse than what the exact kernel already
+   reaches. A packed INT4 run cannot be `simdgroup_load`ed, so every weight
+   element must be dequantized into threadgroup memory first, and that work
+   is independent of B while the MACs matrix hardware accelerates scale with
+   B. The kernel is dequant-bound and the matrix unit accelerates the wrong
+   term. The good news is that the bit-exactness trade this entry priced
+   does not have to be made at all. Details in `docs/MTP_SPECULATIVE.md`.
 3. **A dense family.** The 19% floor is dominated by MoE-specific work
    (routing, the expert kernels' share, GDN). Meta measured 1.5x for DFlash
    on an M4 Max with the dense Muse-Glimmer-30B, and a dense target here
