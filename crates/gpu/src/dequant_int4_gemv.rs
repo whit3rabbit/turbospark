@@ -21,10 +21,26 @@ const THREADS_PER_GROUP: u64 = 256; // 8 rows/threadgroup * 32 lanes/SIMD group.
 const ROWS_PER_THREADGROUP: u64 = 8;
 
 /// `dequant_int4_gemv_simd` declares function constants `FC_INT4_M` (20,
-/// uint), `FC_INT4_N` (21, uint), and `FC_INT4_USE_FC` (22, bool); setting
-/// `FC_INT4_USE_FC = false` keeps the kernel on its runtime M/N arguments.
-/// The sibling `dequant_int4_qkv_gemv_simd` kernel's own constants (23-26)
+/// uint), `FC_INT4_N` (21, uint), and `FC_INT4_USE_FC` (22, bool). The
+/// sibling `dequant_int4_qkv_gemv_simd` kernel's own constants (23-26)
 /// are not referenced by this one and need no specialization here.
+///
+/// M and N are BAKED per shape since 2026-08-16: with the trip count known
+/// at compile time the inner loop schedules measurably better, worth
+/// +3.0-5.2% cold-DRAM weight-read rate on every qwen38 decode shape
+/// (`gemv_bandwidth_bench.rs::baking_m_n_as_function_constants_is_measured_
+/// not_assumed`, whose warm arms and first buggy run are both cautionary
+/// tales). A model dispatches a handful of distinct (M, N) pairs, so this
+/// costs one pipeline compile per shape at first use.
+///
+/// THE KEY MUST CARRY THE BAKED VALUES. `MetalContext::pipeline` caches on
+/// (source address, name, key); a shared key would silently reuse the
+/// first-compiled shape's pipeline for every later shape, and a wrong
+/// baked N reads the wrong fraction of every row while producing finite,
+/// plausible output (crate Gotcha 1; AGENTS.md Gotchas 18/50).
+/// The unspecialized set, kept for `embed_lookup_int4`, which reads none
+/// of the GEMV's constants (a lookup has no M/N trip count to bake) but
+/// must still set every constant the source file declares.
 fn unused_function_constants() -> FunctionConstantValues {
     let values = FunctionConstantValues::new();
     let zero: u32 = 0;
@@ -33,6 +49,18 @@ fn unused_function_constants() -> FunctionConstantValues {
     values.set_constant_value_at_index((&zero as *const u32).cast(), MTLDataType::UInt, 21);
     values.set_constant_value_at_index((&use_fc as *const bool).cast(), MTLDataType::Bool, 22);
     values
+}
+
+fn specialized_constants(m: u32, n: u32) -> (FunctionConstantValues, [u8; 8]) {
+    let values = FunctionConstantValues::new();
+    let use_fc = true;
+    values.set_constant_value_at_index((&m as *const u32).cast(), MTLDataType::UInt, 20);
+    values.set_constant_value_at_index((&n as *const u32).cast(), MTLDataType::UInt, 21);
+    values.set_constant_value_at_index((&use_fc as *const bool).cast(), MTLDataType::Bool, 22);
+    let mut key = [0u8; 8];
+    key[..4].copy_from_slice(&m.to_le_bytes());
+    key[4..].copy_from_slice(&n.to_le_bytes());
+    (values, key)
 }
 
 /// One row of affine-INT4-packed weights, laid out exactly as
@@ -78,12 +106,8 @@ pub fn dequant_int4_gemv(
 
     let m_u32 = m as u32;
     let n_u32 = n as u32;
-    let pipeline = context.pipeline(
-        SOURCE,
-        "dequant_int4_gemv_simd",
-        &unused_function_constants(),
-        b"",
-    )?;
+    let (constants, key) = specialized_constants(m_u32, n_u32);
+    let pipeline = context.pipeline(SOURCE, "dequant_int4_gemv_simd", &constants, &key)?;
     let threadgroups = m.div_ceil(ROWS_PER_THREADGROUP as usize) as u64;
     dispatch_one_threadgroup_per_row(
         context,
@@ -177,12 +201,8 @@ pub fn encode_dequant_int4_gemv_resident(
     assert!(w.rows > 0);
     let m_u32 = w.rows as u32;
     let n_u32 = w.cols as u32;
-    let pipeline = context.pipeline(
-        SOURCE,
-        "dequant_int4_gemv_simd",
-        &unused_function_constants(),
-        b"",
-    )?;
+    let (constants, key) = specialized_constants(m_u32, n_u32);
+    let pipeline = context.pipeline(SOURCE, "dequant_int4_gemv_simd", &constants, &key)?;
     let threadgroups = w.rows.div_ceil(ROWS_PER_THREADGROUP as usize) as u64;
     pass.encode_threadgroups(
         &pipeline,
@@ -217,12 +237,8 @@ pub fn dequant_int4_gemv_resident(
 
     let m_u32 = w.rows as u32;
     let n_u32 = w.cols as u32;
-    let pipeline = context.pipeline(
-        SOURCE,
-        "dequant_int4_gemv_simd",
-        &unused_function_constants(),
-        b"",
-    )?;
+    let (constants, key) = specialized_constants(m_u32, n_u32);
+    let pipeline = context.pipeline(SOURCE, "dequant_int4_gemv_simd", &constants, &key)?;
     let threadgroups = w.rows.div_ceil(ROWS_PER_THREADGROUP as usize) as u64;
     dispatch_one_threadgroup_per_row_offsets(
         context,

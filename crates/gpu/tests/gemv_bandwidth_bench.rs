@@ -69,6 +69,23 @@ const SHAPES: [(&str, usize, usize); 5] = [
     ("reference  32768x2048", 32768, 2048),
 ];
 
+/// `(label, rows, cols)` for the DENSE `qwen3_5` 27B (Qwen3.8-27B, hidden
+/// 5120, FFN 17408, INT4 group 64). A dense token walks every one of these
+/// once, so together they are ~12.3 GB of the token's weight reads: the
+/// three FFN projections on all 64 layers, the fused GDN in_proj on the 48
+/// linear layers, the packed q (with output gate) on the 16 full layers,
+/// and the full-vocab head once. The reference row is the same kernel past
+/// any cache and past the occupancy limit, as above.
+const QWEN38_SHAPES: [(&str, usize, usize); 7] = [
+    ("gate/up    17408x5120", 17408, 5120),
+    ("down       5120x17408", 5120, 17408),
+    ("gdn_inproj 16480x5120", 16480, 5120),
+    ("packed_q   12288x5120", 12288, 5120),
+    ("o_proj      5120x6144", 5120, 6144),
+    ("head      248320x5120", 248320, 5120),
+    ("reference  32768x5120", 32768, 5120),
+];
+
 /// Weight bytes each timed call must move. Repeats are chosen per shape to
 /// hit it, which is the fix for the second failure this bench had: with a
 /// fixed repeat count the small shapes ran for tens of microseconds and
@@ -207,6 +224,219 @@ fn int4_gemv_headroom_across_decode_shapes() {
          the shape is already bandwidth-bound and batching buys nothing\n\
          there. Both biases above inflate the small shapes, so a headroom\n\
          reading is a LOWER bound.\n"
+    );
+}
+
+/// The same headroom question at the DENSE 27B's shapes (qwen38). Decode
+/// there is ~234 GB/s effective against this kernel's measured saturation,
+/// so the question is which shapes are leaving throughput on the table at
+/// M=1. Ratios only, same discipline as above.
+#[test]
+#[ignore = "benchmark: needs a real Metal device, reports rather than asserts"]
+fn int4_gemv_headroom_at_qwen38_shapes() {
+    let mut context = MetalContext::new().expect("Metal device");
+    let shapes: Vec<ShapeBuffers> = QWEN38_SHAPES
+        .iter()
+        .map(|(_, rows, cols)| ShapeBuffers::new(&context, *rows, *cols))
+        .collect();
+
+    for shape in &shapes {
+        rate(&mut context, shape); // warmup + fault-in, Gotcha 20
+    }
+
+    let mut rounds = vec![Vec::with_capacity(ROUNDS); QWEN38_SHAPES.len()];
+    for _ in 0..ROUNDS {
+        for (i, shape) in shapes.iter().enumerate() {
+            rounds[i].push(rate(&mut context, shape));
+        }
+    }
+
+    let best = |v: &Vec<f64>| v.iter().cloned().fold(f64::MIN, f64::max);
+    let reference = best(&rounds[QWEN38_SHAPES.len() - 1]);
+
+    println!("\nshape                     GiB/s (3 rounds)          of reference");
+    for (i, (label, _, _)) in QWEN38_SHAPES.iter().enumerate() {
+        let r = &rounds[i];
+        println!(
+            "{label}   {:>6.1} {:>6.1} {:>6.1}   {:>6.2}x   {:>5.1}x headroom",
+            r[0],
+            r[1],
+            r[2],
+            best(r) / reference,
+            reference / best(r)
+        );
+    }
+    println!(
+        "\nEvery row here is walked once per dense token, so a shape far under\n\
+         the reference is decode throughput lost to occupancy at M=1, not a\n\
+         batching question. Both header biases apply: small shapes read warm\n\
+         and stall-free, so a low reading is a LOWER bound on the gap.\n"
+    );
+}
+
+/// Does baking M/N in as function constants move the GEMV at all? The
+/// production dispatch always passes `use_fc = false`, so before anyone
+/// specializes a dispatch site (the GDN FC 90-94 item), this asks the
+/// kernel in isolation. A saturated kernel cannot be helped by hoisting
+/// bounds arithmetic, so the expected answer is a null; measured rather
+/// than assumed because the dispatch-site change is hours and this is
+/// seconds. Distinct pipeline-cache keys per arm -- constants that miss
+/// the key silently reuse one pipeline for both (crate Gotcha 1).
+#[test]
+#[ignore = "benchmark: needs a real Metal device, reports rather than asserts"]
+fn baking_m_n_as_function_constants_is_measured_not_assumed() {
+    let mut context = MetalContext::new().expect("Metal device");
+
+    let fc_constants = |rows: u32, cols: u32| {
+        let values = FunctionConstantValues::new();
+        let use_fc = true;
+        values.set_constant_value_at_index((&rows as *const u32).cast(), MTLDataType::UInt, 20);
+        values.set_constant_value_at_index((&cols as *const u32).cast(), MTLDataType::UInt, 21);
+        values.set_constant_value_at_index((&use_fc as *const bool).cast(), MTLDataType::Bool, 22);
+        values
+    };
+
+    let time = |context: &mut MetalContext,
+                shape: &ShapeBuffers,
+                constants: &FunctionConstantValues,
+                key: &[u8]|
+     -> f64 {
+        let seconds = autorelease_pool(|| {
+            let pipeline = context
+                .pipeline(INT4_SOURCE, "dequant_int4_gemv_simd", constants, key)
+                .expect("pipeline");
+            let pass = context.begin_pass();
+            let m = (shape.rows as u32).to_ne_bytes();
+            let n = (shape.cols as u32).to_ne_bytes();
+            for _ in 0..shape.repeats {
+                pass.encode_threadgroups(
+                    &pipeline,
+                    &[
+                        (&shape.weights, 0, 0),
+                        (&shape.weights, 1, shape.scales_offset),
+                        (&shape.weights, 2, shape.biases_offset),
+                        (&shape.x, 3, 0),
+                        (&shape.y, 4, 0),
+                    ],
+                    &[(&m, 5), (&n, 6)],
+                    shape.rows.div_ceil(8) as u64,
+                    256,
+                );
+            }
+            pass.commit_and_wait_with_gpu_time()
+        });
+        gib_per_sec(
+            weight_bytes(shape.rows, shape.cols) * shape.repeats as u64,
+            seconds,
+        )
+    };
+
+    println!("\nshape                     no-FC GiB/s   FC(M,N) GiB/s   delta");
+    for (label, rows, cols) in QWEN38_SHAPES {
+        if rows > 32767 {
+            continue; // head + reference: FC probe reads the per-layer shapes
+        }
+        let shape = ShapeBuffers::new(&context, rows, cols);
+        let plain = int4_constants();
+        let baked = fc_constants(rows as u32, cols as u32);
+        // The key MUST carry the shape: baked M/N differ per shape, and a
+        // shared key silently reuses the first-compiled pipeline for every
+        // later shape -- the first run of this very test did exactly that,
+        // and the wrong-N pipeline read a third of each row and printed
+        // +322% "speedup" (impossible: past DRAM bandwidth). Gotcha 1.
+        let key_on = format!("fc-on-{rows}x{cols}").into_bytes();
+        // Warmup both arms (fault-in + DVFS, Gotcha 20), then interleave.
+        time(&mut context, &shape, &plain, b"fc-off");
+        time(&mut context, &shape, &baked, &key_on);
+        let mut off = f64::MIN;
+        let mut on = f64::MIN;
+        for _ in 0..ROUNDS {
+            off = off.max(time(&mut context, &shape, &plain, b"fc-off"));
+            on = on.max(time(&mut context, &shape, &baked, &key_on));
+        }
+        println!(
+            "{label}   {:>9.1}   {:>11.1}   {:>+6.1}%",
+            off,
+            on,
+            (on / off - 1.0) * 100.0
+        );
+    }
+    println!(
+        "\nWARM arms above repeat one matrix, so anything under ~50 MiB is\n\
+         served from cache and a large delta there is cache bandwidth the\n\
+         dynamic-bounds loop cannot exploit -- NOT a production prediction.\n\
+         Production reads every matrix cold, once per token; the COLD arms\n\
+         below walk a pool past any cache, which is the decision-relevant\n\
+         number for specializing dispatch sites.\n"
+    );
+
+    let time_pool = |context: &mut MetalContext,
+                     pool: &MatrixPool,
+                     constants: &FunctionConstantValues,
+                     key: &[u8],
+                     dispatches: usize|
+     -> f64 {
+        autorelease_pool(|| {
+            let pipeline = context
+                .pipeline(INT4_SOURCE, "dequant_int4_gemv_simd", constants, key)
+                .expect("pipeline");
+            let pass = context.begin_pass();
+            let m = (pool.rows as u32).to_ne_bytes();
+            let n = (pool.cols as u32).to_ne_bytes();
+            for i in 0..dispatches {
+                let matrix = pool.matrix(i);
+                pass.encode_threadgroups(
+                    &pipeline,
+                    &[
+                        (matrix.buffer, 0, 0),
+                        (matrix.buffer, 1, pool.scales_offset),
+                        (matrix.buffer, 2, pool.biases_offset),
+                        (&pool.x, 3, 0),
+                        (&pool.y, 4, 0),
+                    ],
+                    &[(&m, 5), (&n, 6)],
+                    pool.rows.div_ceil(8) as u64,
+                    256,
+                );
+            }
+            pass.commit_and_wait_with_gpu_time()
+        })
+    };
+
+    println!("shape                     COLD no-FC GiB/s   COLD FC GiB/s   delta");
+    for (label, rows, cols) in QWEN38_SHAPES {
+        if rows > 32767 {
+            continue;
+        }
+        let pool = MatrixPool::new(&context, rows, cols);
+        let dispatches = ((TARGET_BYTES / weight_bytes(rows, cols)).max(64) as usize).max(256);
+        let plain = int4_constants();
+        let baked = fc_constants(rows as u32, cols as u32);
+        let key_on = format!("fc-on-{rows}x{cols}").into_bytes(); // per-shape, see above
+        time_pool(&mut context, &pool, &plain, b"fc-off", dispatches);
+        time_pool(&mut context, &pool, &baked, &key_on, dispatches);
+        let mut off = f64::MIN;
+        let mut on = f64::MIN;
+        for _ in 0..ROUNDS {
+            off = off.max(gib_per_sec(
+                weight_bytes(rows, cols) * dispatches as u64,
+                time_pool(&mut context, &pool, &plain, b"fc-off", dispatches),
+            ));
+            on = on.max(gib_per_sec(
+                weight_bytes(rows, cols) * dispatches as u64,
+                time_pool(&mut context, &pool, &baked, &key_on, dispatches),
+            ));
+        }
+        println!(
+            "{label}   {:>14.1}   {:>13.1}   {:>+6.1}%",
+            off,
+            on,
+            (on / off - 1.0) * 100.0
+        );
+    }
+    println!(
+        "\nA cold delta inside the run-to-run spread means specialization\n\
+         cannot pay in production and the dispatch-site FC items stay closed.\n"
     );
 }
 

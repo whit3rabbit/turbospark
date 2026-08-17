@@ -128,7 +128,8 @@ impl GdnShape {
 /// 20-26 and GDN's 90-94. Metal requires all constants a function reads to
 /// be set before a pipeline can be built, and setting the ones it does not
 /// read is harmless -- the same defensive shape the other kernel modules
-/// use. `USE_FC = false` keeps every kernel on its runtime-argument path.
+/// use. `USE_FC = false` keeps a kernel on its runtime-argument path;
+/// `gdn_in_proj_gemv_simd` alone overrides 90-94 via [`in_proj_pipeline`].
 fn gdn_function_constants() -> FunctionConstantValues {
     let values = FunctionConstantValues::new();
     let zero: u32 = 0;
@@ -151,6 +152,35 @@ fn pipeline(
     name: &'static str,
 ) -> Result<metal::ComputePipelineState, GpuError> {
     context.pipeline(SOURCE, name, &gdn_function_constants(), b"")
+}
+
+/// `gdn_in_proj_gemv_simd` with its row counts and N BAKED (constants
+/// 90-94): +3-4% cold weight-read rate at these shapes, same finding and
+/// same date as the plain GEMV's `specialized_constants` (see
+/// `dequant_int4_gemv.rs`). The INT4 constants 20-26 stay unspecialized --
+/// this kernel reads its own 90-93 through `gdn_in_*`, not `int4_fc_*`.
+/// The KEY carries all four baked values, for the reason documented there:
+/// a shared key silently reuses the first-compiled shape's pipeline.
+fn in_proj_pipeline(
+    context: &mut MetalContext,
+    qkv_rows: u32,
+    z_rows: u32,
+    ab_rows: u32,
+    n: u32,
+) -> Result<metal::ComputePipelineState, GpuError> {
+    let values = gdn_function_constants();
+    let use_fc = true;
+    values.set_constant_value_at_index((&qkv_rows as *const u32).cast(), MTLDataType::UInt, 90);
+    values.set_constant_value_at_index((&z_rows as *const u32).cast(), MTLDataType::UInt, 91);
+    values.set_constant_value_at_index((&ab_rows as *const u32).cast(), MTLDataType::UInt, 92);
+    values.set_constant_value_at_index((&n as *const u32).cast(), MTLDataType::UInt, 93);
+    values.set_constant_value_at_index((&use_fc as *const bool).cast(), MTLDataType::Bool, 94);
+    let mut key = [0u8; 16];
+    key[..4].copy_from_slice(&qkv_rows.to_le_bytes());
+    key[4..8].copy_from_slice(&z_rows.to_le_bytes());
+    key[8..12].copy_from_slice(&ab_rows.to_le_bytes());
+    key[12..].copy_from_slice(&n.to_le_bytes());
+    context.pipeline(SOURCE, "gdn_in_proj_gemv_simd", &values, &key)
 }
 
 /// Fused `in_proj_qkv` / `_z` / `_a` / `_b` INT4 GEMV: one dispatch over
@@ -191,9 +221,9 @@ pub fn encode_gdn_in_proj(
         );
     }
 
-    let p = pipeline(context, "gdn_in_proj_gemv_simd")?;
     let (qkv_rows, z_rows, ab_rows, n32) =
         (qkv.rows as u32, z.rows as u32, a.rows as u32, n as u32);
+    let p = in_proj_pipeline(context, qkv_rows, z_rows, ab_rows, n32)?;
     let total_rows = (qkv_rows + z_rows + 2 * ab_rows) as u64;
     let mut buffers: Vec<(&metal::Buffer, u64, u64)> = Vec::with_capacity(17);
     for (slot, m) in [qkv, z, a, b].into_iter().enumerate() {

@@ -114,21 +114,88 @@ layer N-1's CB is still reading them is a data race producing fluent wrong
 text. Covering the bind too needs those double-buffered, which is a
 different and larger change.
 
-**GDN function constants 90-94 are not reachable from a measurable
-install.** The standing item read "declared but never specialized", and
-that is wrong twice. They ARE set (`crates/gpu/src/gdn.rs:132`),
-deliberately to `FC_GDN_IN_USE_FC = false` so every dispatch takes its
-shape at runtime, and the module doc says so. And the kernel they belong
-to, `encode_gdn_in_proj`, is gated on `dtype == 4`
-(`families/qwen/attn.rs:39`): only an INT4 install reaches the fused
-four-way projection, while the sub-4-bit checkpoints take the
-four-separate-GEMV branch. On `ternary27b`, the only GDN install on disk,
-`gdn_in_proj_gemv_simd` does not appear in the dispatch profile at all --
-and all four GDN kernels that DO appear total 2.2% of the sampled buffer,
-against `dequant_int2_gemv_simd` at 93.9%. Specializing a row count inside
-a GEMV that is 2% of the token is not worth the 20-minute install
-re-stream it would take to measure, let alone the pipeline-cache key it
-would need (`crates/gpu` Gotcha 1).
+**GDN function constants 90-94: SUPERSEDED 2026-08-16, and the answer
+inverted when the install that reaches them came back.** The paragraph
+that stood here concluded specialization was not worth measuring, from
+the one GDN install then on disk (`ternary27b`, whose 2-bit branch never
+dispatches the fused kernel). With `qwen38-27b` re-streamed, the fused
+`gdn_in_proj_gemv_simd` is 16.5% of the token and the plain INT4 GEMV
+another 72.3%, and baking M/N in IS worth having -- see "The dense 27B"
+below. The general lesson survives the reversal: the 2%-of-the-token
+reading was correct FOR THE INSTALL THAT PRODUCED IT, and a share
+measured on one family's branch does not transfer to the other branch of
+the same flow.
+
+## The dense 27B (qwen38): profile, the FC win, and two closures
+
+Measured 2026-08-16 on this machine (M4 Max 36 GB, AC, NOT quiet -- the
+session's desktop load was present throughout, so every absolute tok/s
+here is qualified by Gotcha 43; the deltas are interleaved pairs and the
+shares are within-run, which that load does not contaminate). Install:
+the catalog-pulled `qwen38-27b.gturbo`, which reproduced the frozen
+quality row (perplexity 4.9432, both digests) and the memory oracle (660
+MiB of 750, replay +0.00) before anything was measured on it.
+
+**The family's first dispatch profile, and it accounts for the token.**
+One command buffer per token, ~978 dispatches, host encode 0.65 ms/token
+and sampler+detok ~1.0 against a ~49.5 ms GPU wait: the token IS the GPU.
+Within the sampled buffer: `dequant_int4_gemv_simd` 72.3%,
+`gdn_in_proj_gemv_simd` 16.5% (the same GEMV body, fused), norms and
+elementwise ~5.6%, attention plus GDN state ~4.4%. A dense token reads
+~14.4 GB of weights (FFN 9.6 + GDN in_proj 2.3 + out_proj 0.9 +
+attention 0.9 + head 0.7 -- the 12.3 GB figure that circulated undercounts
+by omitting out_proj, attention and the scale/bias planes), which at the
+observed ~50 ms/token is ~290 GB/s effective against the kernel's ~375
+GB/s saturation. The GEMV itself is NOT occupancy-bound at any decode
+shape: `gemv_bandwidth_bench.rs::int4_gemv_headroom_at_qwen38_shapes`
+reads 0.90-1.11x of the same kernel's large-shape reference on every row.
+The residue is the ~11% non-GEMV work plus serial-encoder gaps. There is
+no large hidden lever; there was one small one:
+
+**Baking M/N as function constants: +3.0-5.2% isolated, +4.5-8.4% end to
+end, output byte-identical.** `specialized_constants` in
+`dequant_int4_gemv.rs` and `in_proj_pipeline` in `gdn.rs` bake each
+dispatch's shape and key the pipeline cache on it. Cold-pool isolated
+deltas per shape sit at +3.0-5.2%; three interleaved end-to-end pairs
+read +4.5/+8.4/+7.7% (15.2 -> 16.3 tok/s under load). Every gate held
+without motion: greedy AND sampled stdout byte-identical across the
+pre/post binaries on BOTH families (qwen38 and gemma4 -- the fast-math
+reassociation worry did not materialize), both quality gates exact to
+the last hex character, both memory oracles green. The probe's first run
+is a standing caution, recorded in the bench: a shared pipeline-cache key
+across shapes reused the first-compiled pipeline for every later shape,
+and the wrong-N kernel read a third of each row and printed +322%
+(`crates/gpu` Gotcha 1 -- the key must carry the baked values).
+
+**Mid-token command-buffer split: closed without building it.** Its whole
+ceiling is the 0.65 ms/token of host encode that a split could overlap,
+~1.3% of the token. Under the plan's own 1 ms threshold; skipped.
+
+**Layer streaming: closed by arithmetic, recorded so it is not proposed
+again.** Expert streaming works because a token touches ~8 of 128 experts
+and temporal locality gives the slot cache ~84% hits. A dense token
+touches 100% of the weights once each, so a layer cache smaller than the
+model has a STRUCTURAL 0% hit rate -- each layer is evicted before its
+next use -- and "streaming layers" degenerates to re-reading ~14 GB from
+SSD every token: sub-1 tok/s against the current ~19. There is no cache
+policy that fixes a working set equal to the model.
+
+**The weight mapping is WIRED while the model runs, and that settles the
+small-machine question.** Measured with `vm_stat` across process exit:
+system wired read 17.93 GB while decoding and 3.27 GB the moment the
+process exited -- a 14.7 GB delta that is the resident region plus the
+Metal buffers. Under `memory_pressure -S -l critical` (free pages driven
+to ~140 MB) the process survived and throughput did not move, because
+wired pages cannot be evicted: the OS squeezes everything else. The two
+claims that looked contradictory are BOTH true: `phys_footprint` does not
+COUNT the mapping (the process ledger shows it as 1.4 MB of clean
+"mapped file"; AGENTS.md Gotcha 40), and Metal's `newBufferWithBytesNoCopy`
+WIRES it (`crates/model-io` CLAUDE.md Gotcha 1). "Not counted" never
+meant "reclaimable". Consequence: budget a dense install's full disk size
+in physical RAM -- a 16 GB machine is hard-blocked from this model, not
+gracefully degraded, and the catalog row's "budget its size on disk in
+free RAM" note is the correct guidance. (Whether open() fails cleanly or
+thrashes on a too-small machine is unmeasurable from this 36 GB one.)
 
 ## Caveats
 
