@@ -9,7 +9,7 @@ use model_io::{
 use crate::gemma4_checkpoint::{write_qwen_gdn_dense_install, Gemma4Quant};
 use crate::ranged_download::MemoryRangeSource;
 use crate::safetensors_header::parse_header;
-use crate::synthetic_real::{assemble_safetensors, deterministic_row, u16_le, Tensor};
+use crate::synthetic_real::{assemble_safetensors, bf16_vector, deterministic_row, u16_le, Tensor};
 
 /// 128 rather than the Qwen 3.6 fixture's 64: every quantized tensor's
 /// COLUMN count must be a whole number of 128-element groups.
@@ -171,6 +171,134 @@ fn packed_triple(name: &str, rows: usize, cols: usize, seed: u64, bits: u32) -> 
     ]
 }
 
+/// A BF16 rank-2 matrix, the dtype and rank the MTP head's projections
+/// carry in the official checkpoint.
+///
+/// Rank-2 is the whole discriminator the walk uses to decide "quantize this"
+/// against "narrow this", so a helper that produced rank-1 would silently
+/// route a projection down the norm path.
+fn bf16_matrix(name: &str, rows: usize, cols: usize, seed: u64) -> Tensor {
+    let mut bits: Vec<u16> = Vec::with_capacity(rows * cols);
+    for r in 0..rows {
+        for &j in deterministic_row(seed.wrapping_add(r as u64 * 131 + 1), cols).iter() {
+            bits.push(compute::f32_to_bf16(j * 0.05));
+        }
+    }
+    Tensor {
+        name: name.to_string(),
+        dtype: "BF16",
+        shape: vec![rows as u64, cols as u64],
+        bytes: u16_le(&bits),
+    }
+}
+
+/// The multi-token-prediction head, as `Qwen/Qwen3.8-27B` publishes it:
+/// fifteen tensors, BF16 throughout, name for name against
+/// `crates/repack/tests/mtp_head_network.rs`'s `EXPECTED` table.
+///
+/// **BF16 where the trunk around it is F16-and-packed, and that asymmetry is
+/// the real situation rather than fixture sloppiness.** The trunk install is
+/// streamed from an mlx-community conversion that DROPS `mtp.*` entirely, so
+/// the head can only come from the official checkpoint -- two publishers, two
+/// dtypes, one install. It is also what makes the narrowing assertion mean
+/// something: a BF16 source narrows to BF16 losslessly, so this fixture's
+/// head must report ZERO lossy values while Bonsai's F16 trunk reports many.
+///
+/// Three shapes here are load-bearing and each defeats a mutation that a
+/// tidier fixture would pass:
+///
+/// - `fc` is `[hidden, 2 * hidden]`, the only tensor in the model with that
+///   width. It takes the CONCATENATION of a normalized next-token embedding
+///   and a normalized trunk hidden state, so a fixture with `2 * hidden`
+///   anywhere else could not catch a transposed or half-width read.
+/// - `q_proj` has `2 * num_heads * head_dim` rows while `o_proj`'s INPUT is
+///   the unhalved `num_heads * head_dim`. That asymmetry is `attn_output_gate`
+///   being true; a non-gated head would have the same number on both, so
+///   equal widths would make the gate unobservable.
+/// - the two `pre_fc_norm_*` vectors take DIFFERENT seeds, so swapping them
+///   changes the output. Seeded alike they are interchangeable and the
+///   embedding/hidden ordering is untestable.
+fn mtp_head_tensors() -> Vec<Tensor> {
+    let q_out = NUM_HEADS * HEAD_DIM;
+    let kv_out = NUM_KV_HEADS * HEAD_DIM;
+    let mut ts = vec![
+        // The head's own structure, above the block.
+        bf16_matrix("mtp.fc.weight", HIDDEN, 2 * HIDDEN, 9_100),
+        bf16_vector("mtp.pre_fc_norm_embedding.weight", HIDDEN, 1.0, 9_101),
+        bf16_vector("mtp.pre_fc_norm_hidden.weight", HIDDEN, 1.0, 9_102),
+        bf16_vector("mtp.norm.weight", HIDDEN, 1.0, 9_103),
+    ];
+    // The block: every shape a TRUNK full-attention layer's, which is what
+    // makes the draft step reuse `families/qwen/attn.rs` with no new kernel.
+    ts.push(bf16_vector(
+        "mtp.layers.0.input_layernorm.weight",
+        HIDDEN,
+        1.0,
+        9_110,
+    ));
+    ts.push(bf16_vector(
+        "mtp.layers.0.post_attention_layernorm.weight",
+        HIDDEN,
+        1.0,
+        9_111,
+    ));
+    ts.push(bf16_matrix(
+        "mtp.layers.0.self_attn.q_proj.weight",
+        2 * q_out,
+        HIDDEN,
+        9_120,
+    ));
+    ts.push(bf16_matrix(
+        "mtp.layers.0.self_attn.k_proj.weight",
+        kv_out,
+        HIDDEN,
+        9_121,
+    ));
+    ts.push(bf16_matrix(
+        "mtp.layers.0.self_attn.v_proj.weight",
+        kv_out,
+        HIDDEN,
+        9_122,
+    ));
+    ts.push(bf16_matrix(
+        "mtp.layers.0.self_attn.o_proj.weight",
+        HIDDEN,
+        q_out,
+        9_123,
+    ));
+    ts.push(bf16_vector(
+        "mtp.layers.0.self_attn.q_norm.weight",
+        HEAD_DIM,
+        1.0,
+        9_124,
+    ));
+    ts.push(bf16_vector(
+        "mtp.layers.0.self_attn.k_norm.weight",
+        HEAD_DIM,
+        1.0,
+        9_125,
+    ));
+    ts.push(bf16_matrix(
+        "mtp.layers.0.mlp.gate_proj.weight",
+        INTER,
+        HIDDEN,
+        9_130,
+    ));
+    ts.push(bf16_matrix(
+        "mtp.layers.0.mlp.up_proj.weight",
+        INTER,
+        HIDDEN,
+        9_131,
+    ));
+    ts.push(bf16_matrix(
+        "mtp.layers.0.mlp.down_proj.weight",
+        HIDDEN,
+        INTER,
+        9_132,
+    ));
+    ts
+}
+
 /// Writes a tiny `qwen3_5` `.gturbo` install and returns the `ArchConfig`
 /// needed to open it.
 pub fn build_synthetic_qwen_gdn_dense_install(
@@ -191,6 +319,34 @@ pub fn build_synthetic_qwen_gdn_dense_install_at_bits(
     num_layers: i64,
     model_id: &str,
     bits: u32,
+) -> Result<ArchConfig, Box<dyn std::error::Error>> {
+    build_synthetic_qwen_gdn_dense_install_inner(dir, vocab_size, num_layers, model_id, bits, false)
+}
+
+/// [`build_synthetic_qwen_gdn_dense_install_at_bits`] with the
+/// multi-token-prediction head attached (`docs/MTP_SPECULATIVE.md`, step 1).
+///
+/// A third entry point rather than a widened signature, following this file's
+/// own delegation chain: five callers take the two existing forms and none of
+/// them wants a head, so adding a parameter to those would edit five call
+/// sites to say `false`.
+pub fn build_synthetic_qwen_gdn_dense_install_with_mtp(
+    dir: &std::path::Path,
+    vocab_size: i64,
+    num_layers: i64,
+    model_id: &str,
+    bits: u32,
+) -> Result<ArchConfig, Box<dyn std::error::Error>> {
+    build_synthetic_qwen_gdn_dense_install_inner(dir, vocab_size, num_layers, model_id, bits, true)
+}
+
+fn build_synthetic_qwen_gdn_dense_install_inner(
+    dir: &std::path::Path,
+    vocab_size: i64,
+    num_layers: i64,
+    model_id: &str,
+    bits: u32,
+    with_mtp: bool,
 ) -> Result<ArchConfig, Box<dyn std::error::Error>> {
     let arch = tiny_qwen_gdn_dense_arch(vocab_size, num_layers);
     let vocab = vocab_size as usize;
@@ -327,6 +483,9 @@ pub fn build_synthetic_qwen_gdn_dense_install_at_bits(
         1.0,
         7,
     ));
+    if with_mtp {
+        ts.extend(mtp_head_tensors());
+    }
 
     let blob = assemble_safetensors(&ts);
     let source = MemoryRangeSource::new(&blob);
