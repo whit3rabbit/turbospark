@@ -34,11 +34,27 @@ use metal::{
     CounterSampleBuffer, CounterSampleBufferDescriptor, Device, MTLStorageMode, NSRange, NSUInteger,
 };
 
-/// Samples per profiled command buffer (two per dispatch). cb1 encodes
-/// ~25 dispatches on Gemma 4; anything past this stays unsampled and is
-/// counted under `UNSAMPLED` so an overflow shows up in the report rather
-/// than silently truncating the ranking.
-const MAX_SAMPLES: u64 = 256;
+/// Samples per profiled command buffer (two per dispatch). Anything past
+/// this stays unsampled and is counted under `UNSAMPLED`, so an overflow
+/// shows up in the report rather than silently truncating the ranking.
+///
+/// **SIZE THIS AGAINST THE DEEPEST FAMILY, NOT THE FIRST ONE.** It was 256
+/// (128 dispatches), which was chosen when cb1 on Gemma 4 encoded ~25 and
+/// was a true statement about every family that existed. `qwen3_5` is 64
+/// layers and commits nearly the whole token as ONE buffer -- ~790
+/// dispatches -- so 663 of them landed in `UNSAMPLED` and the ranking
+/// covered about six layers. The overflow row is what made that visible
+/// instead of producing a confident partial answer; do not remove it.
+///
+/// Cost is 8 bytes per sample on ONE pooled, recycled buffer, so 4096 is
+/// ~32 KiB. Over-asking fails safe: `new_sample_buffer` returns `None`,
+/// the pass is counted in `UNPROFILED_PASSES` and decode is unaffected.
+///
+/// 4096 covers `qwen3_5`'s ~1,100 dispatches per token with room; 2048 did
+/// not, and the intermediate reading was the instructive one -- it captured
+/// 447 of 497 INT4/INT2 GEMVs and still reported a ranking that looked
+/// entirely plausible. A truncated profile does not look truncated.
+const MAX_SAMPLES: u64 = 4096;
 
 /// Sentinel Metal writes for a sample it could not resolve.
 const COUNTER_ERROR_VALUE: u64 = u64::MAX;
