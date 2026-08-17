@@ -154,13 +154,55 @@ pub fn pull(
         )));
     }
 
-    let mut progress = |stage: &str| eprintln!("[pull] {stage}");
-    let report =
-        catalog::gate(client, &plan, options.force, &mut progress).map_err(Error::Failed)?;
-    render::report(&report);
+    let pb = if plan.install_bytes > 0 {
+        let pb = indicatif::ProgressBar::new(plan.install_bytes);
+        if let Ok(style) = indicatif::ProgressStyle::with_template(
+            "[{elapsed_precise}] [{bar:40.cyan/blue}] {bytes:>10}/{total_bytes:10} ({bytes_per_sec}, {eta}) {msg}",
+        ) {
+            pb.set_style(style.progress_chars("=>-"));
+        }
+        pb
+    } else {
+        let pb = indicatif::ProgressBar::new_spinner();
+        if let Ok(style) = indicatif::ProgressStyle::with_template(
+            "[{elapsed_precise}] {spinner} {bytes:>10} ({bytes_per_sec}) {msg}",
+        ) {
+            pb.set_style(style.tick_chars("-\\|/"));
+        }
+        pb
+    };
+    pb.enable_steady_tick(std::time::Duration::from_millis(100));
 
-    let installed = catalog::install(&plan, &dir, client, &mut progress).map_err(Error::Failed)?;
+    let pb_for_msg = pb.clone();
+    let mut progress = move |stage: &str| {
+        pb_for_msg.println(format!("[pull] {stage}"));
+    };
+    let report = catalog::gate(client, &plan, options.force, &mut progress).map_err(|e| {
+        pb.finish_and_clear();
+        Error::Failed(e)
+    })?;
+    pb.suspend(|| {
+        render::report(&report);
+    });
+
+    let pb_for_bytes = pb.clone();
+    let byte_callback = std::sync::Arc::new(move |bytes: u64| {
+        pb_for_bytes.inc(bytes);
+    });
+
+    let installed = catalog::install_with_byte_progress(
+        &plan,
+        &dir,
+        client,
+        &mut progress,
+        Some(byte_callback),
+    )
+    .map_err(|e| {
+        pb.finish_and_clear();
+        Error::Failed(e)
+    })?;
     catalog::record(store, &installed).map_err(Error::Failed)?;
+    pb.finish_and_clear();
 
     println!(
         "\ninstalled {} ({}) to {}",

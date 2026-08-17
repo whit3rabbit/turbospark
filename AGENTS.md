@@ -2087,6 +2087,41 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
     when it is not part of `==`, `!=`, `<=` or `>=`. String literals are
     tracked so a `,` or `)` inside `'...'` cannot end an argument early.
 
+54. **A CACHE THAT ALREADY DEDUPLICATES MAKES A "UNION" SAVING VANISH, AND
+    THE TOUCHES-VERSUS-MISSES SLIP READS AS A 3.3x WIN.** The first draft of
+    `docs/BATCHED_PREFILL.md` costed batched prefill's largest term by
+    comparing the DISTINCT experts a 16-token chunk routes to (~38 per
+    layer) against the REQUESTS 16 sequential tokens issue (`16 x top_k` =
+    128), and read a 3.3x cut in expert bytes off the ratio. The sequential
+    arm never paid 128: the slot cache turns those requests into MISSES, and
+    measured on the real install at 32 slots that is 1.507 per layer per
+    token, i.e. 24.1 over the same window. **The union is LARGER than what
+    the engine already loads**, at every M and both slot counts but one.
+    `scripts/router_window.py`'s own docstring says this ("the sequential
+    arm's true cost is misses, not touches") and the doc was written past it.
+    THREE THINGS TO CARRY, because the shape recurs whenever a cache sits
+    under an optimization.
+    **The saving a union can offer is bounded by intra-window EVICTION
+    re-reads, not by the request ratio**, and at a cache big enough to hold
+    the working set there are none: 24.1 loads against 41.5 distinct means
+    most of the window was already resident before the window began.
+    **The one cell where it wins is the cell where it aborts.** At 16 slots
+    and M=16 the union is 41.5 against 48.7 sequential, a real 15% -- and
+    `ExpertCache::plan_if_possible` ASSERTS `experts.len() <= slot_count`,
+    so asking for 41.5 experts against 16 slots kills the process rather
+    than degrading. Legal only at M<=2 (16 slots) or M<=8 (32), where it
+    saves nothing. The mechanism is useful exactly where it is unavailable.
+    **And the borrowed table was a DECODE one.** `union(M)` had only ever
+    been measured with prefill excluded (`router_window.py`'s `skip` is the
+    prompt token count); prefill's own union runs higher, 41.5 against
+    37.8-39.4. That is Gotcha 38's species on a third axis and the same
+    mistake the doc's attention section already warned about two paragraphs
+    up -- a share measured on decode does not transfer to prefill.
+    The driver that landed instead batches the ATTENTION half of a layer and
+    leaves the routed half per token (`crates/runtime` Gotcha 14), measures
+    1.22x, and moves the hit rate from 81.2% to 81.4%, which is what "the
+    union does nothing" looks like from the other side.
+
 ## Per-Crate Documentation
 
 When working on code inside a specific crate, refer to that crate's `CLAUDE.md` file for crate-specific architecture, key modules, dev commands, and localized gotchas:

@@ -99,3 +99,23 @@ printf '[{"role":"user","content":"Explain how coastal wetlands reduce flood dam
    plausible tok/s footer. An unresolvable name is passed through unchanged, so
    a machine with no `HOME` reports the same "no such install" it always did.
    `crates/catalog/tests/store.rs` pins both directions.
+
+7. **`--prefill-chunk` IS PARSED AND WIRED TO NOTHING, DELIBERATELY, and the
+   env seam beside it is the way in.** `stream_turn` routes prefill through
+   `run_raw_completion_chunked` only under `MFERENCE_PREFILL_CHUNK=<tokens>`
+   (`docs/BATCHED_PREFILL.md` step 1, measured 1.22x on the real Gemma 4
+   install). The flag exists in `turbospark-invocation`, validates against
+   `ALLOWED_CHUNK_SIZES` and is printed in the resolved-request block, but
+   consuming it would turn chunked prefill ON BY DEFAULT -- its default is
+   `Fixed(128)`, not "off" -- and today one family has a chunk driver and one
+   install has been measured. Wiring it is a decision about the DEFAULT,
+   which needs a new `PrefillChunk` variant plus `invocation`'s five places
+   (AGENTS.md Gotcha 14), not a one-line read.
+
+   Two consequences while it is a seam. **The env var is an A/B seam and its
+   two arms must produce identical tokens**, like `MFERENCE_SHARED_CB` next
+   door: verified on the real install at chunk spans 32, 128 and 512 against
+   the frozen greedy and sampled digests. And **the resolved-request block
+   already prints `prefill_chunk`**, so a stdout md5 taken across a run with
+   the env var set is unchanged by it -- the seam moves no printed field,
+   unlike the `expert_cache_slots` case in Gotcha 6.

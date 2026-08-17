@@ -92,11 +92,51 @@ pub struct PhaseCounters {
     pub expert_hits: u64,
 }
 
+/// How many prompt tokens a chunked prefill may carry through one layer
+/// together. A scratch bound, not a protocol one: the outer chunk is the
+/// runtime config's (`foundation::ALLOWED_CHUNK_SIZES`, default 128) and
+/// this is how finely the runner micro-batches inside it, on the precedent
+/// of `gpu::dequant_int4_batch`'s `MAX_BATCH_ROWS`. Sixteen rows of a
+/// Gemma 4 hidden state is 80 KiB, which is why it is allocated for every
+/// family rather than only for the ones with a chunk driver.
+pub(crate) const MAX_PREFILL_BATCH: usize = 16;
+
+/// Depth of the routed-expert command-buffer pipeline INSIDE a chunk, and
+/// therefore how many copies exist of the routed resources the HOST writes.
+///
+/// Two, matching the one-layer-deep pipeline the sequential path already
+/// runs (`routed_pipeline`): a layer's routed pass is committed and retired
+/// one token later, so at most two tokens' banks are live at once.
+///
+/// **Only host-written resources are banked, and the distinction is the
+/// whole safety argument.** Command buffers on one queue execute in commit
+/// order, so a GPU-only intermediate (`h1`, `h2`, `moe_acts`, `ffn_normed`)
+/// is safe to reuse across the tokens of a chunk -- token t+1's dispatch
+/// cannot start before token t's finishes. What is NOT safe is the host
+/// writing `routing_w` or rebinding the routed argument buffer while token
+/// t's buffer is in flight reading them, because those writes are not on
+/// the queue at all. That is what these banks are for.
+///
+/// Raising it is not free in the way it looks: every extra bank is another
+/// token whose EXPERT SLOTS must stay resident while its buffer is in
+/// flight, and the slot cache asserts rather than degrades when it cannot
+/// place a plan around them.
+pub(crate) const ROUTED_BANKS: usize = 2;
+
 /// Activation scratch, allocated once at open (the decode hot path never
 /// allocates a Metal buffer): the FP16 residual stream `x`, the normed /
 /// projection / FFN intermediates, the attention partials, and the final
 /// logits+probs. The whole token chains through these on the GPU inside
 /// one (dense) or a few (MoE) command buffers.
+///
+/// `x` holds [`MAX_PREFILL_BATCH`] rows and everything else holds one, and
+/// that split is the whole shape of the chunk driver: `x` is the residual
+/// stream, so it crosses layers and every token in flight needs its own,
+/// while the projection and FFN intermediates are consumed inside the
+/// dispatch run that produced them. A serial compute encoder executes
+/// dispatches in order, so reusing a single-row intermediate across the
+/// tokens of one chunk is correct; it just serializes them, which is the
+/// trade step 1 makes on purpose.
 pub(crate) struct DecodeScratch {
     pub(crate) x: gpu::MetalBuffer,
     pub(crate) normed: gpu::MetalBuffer,
@@ -134,7 +174,7 @@ impl DecodeScratch {
         let vocab = arch.vocab_size as u64;
         let halfs = |n: u64| context.new_output_buffer(n.max(1) * 2);
         Self {
-            x: halfs(hidden),
+            x: halfs(hidden * MAX_PREFILL_BATCH as u64),
             normed: halfs(hidden),
             q: halfs(qk_dim),
             attn_out: halfs(qk_dim),
@@ -159,9 +199,14 @@ impl DecodeScratch {
                 gpu::write_buffer_bytes(&buffer, 0, &vec![0u8; (n * 2) as usize]);
                 buffer
             },
+            // ROUTED_BANKS copies laid end to end. This one is HOST-written
+            // per token, so a chunk's token t+1 would otherwise overwrite
+            // weights token t's in-flight command buffer is still reading.
+            // The sequential path uses bank 0 and is unchanged.
             routing_w: {
-                let buffer = context.new_output_buffer(gpu::MAX_STREAMED_EXPERTS as u64 * 2);
-                gpu::write_buffer_bytes(&buffer, 0, &[0u8; gpu::MAX_STREAMED_EXPERTS * 2]);
+                let n = gpu::MAX_STREAMED_EXPERTS * ROUTED_BANKS;
+                let buffer = context.new_output_buffer(n as u64 * 2);
+                gpu::write_buffer_bytes(&buffer, 0, &vec![0u8; n * 2]);
                 buffer
             },
             zero_hidden: {

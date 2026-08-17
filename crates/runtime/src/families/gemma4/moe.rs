@@ -13,6 +13,36 @@ use crate::real_forward_utils::{f16_slice_to_le_bytes, layer_tensor, norm_view};
 
 const RMS_EPS: f32 = 1e-6;
 
+/// Which token of a prefill micro-batch a routed pass is for, and which
+/// bank of per-token routed resources it may use. Both are 0 on the
+/// sequential decode path, which is why that path's bytes cannot move.
+#[derive(Debug, Clone)]
+pub(crate) struct RoutedSlot {
+    /// Index inside the micro-batch: selects the `x`, `routed_x` and
+    /// router-logits rows.
+    pub(crate) token: usize,
+    /// Index inside [`crate::real_forward_types::ROUTED_BANKS`]: selects
+    /// the two resources the HOST writes per token, `routing_w` and the
+    /// routed argument buffer. The GPU-only intermediates are not banked;
+    /// see `ROUTED_BANKS` for why that is safe and this is not.
+    pub(crate) bank: usize,
+    /// Expert slots a command buffer still in flight is reading, which this
+    /// token's plan may not evict. Empty on the sequential path and for the
+    /// first token of a micro-batch.
+    pub(crate) protect: std::collections::HashSet<usize>,
+}
+
+impl RoutedSlot {
+    /// The sequential decode path: token 0, bank 0, nothing in flight.
+    pub(crate) fn sequential() -> Self {
+        Self {
+            token: 0,
+            bank: 0,
+            protect: std::collections::HashSet::new(),
+        }
+    }
+}
+
 impl RealForwardRunner {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn encode_gemma4_layer_routed_moe(
@@ -25,11 +55,18 @@ impl RealForwardRunner {
         num_experts: usize,
         top_k: usize,
         use_silu: bool,
-    ) -> Result<(), RealForwardError> {
+        slot: &RoutedSlot,
+    ) -> Result<Vec<usize>, RealForwardError> {
         let gpu_err = RealForwardError::Gpu;
+        let x_off = (slot.token * hidden * 2) as u64;
+        let rw_off = slot.bank * gpu::MAX_STREAMED_EXPERTS * 2;
         let t_router = Instant::now();
         let real = self.real.as_ref().expect("real state present");
-        let router_logits = gpu::read_f32_buffer(&real.router_logits_f32, num_experts);
+        let router_logits = gpu::read_f32_buffer_at(
+            &real.router_logits_f32,
+            slot.token * num_experts,
+            num_experts,
+        );
         let (selected, route_weights) =
             router_topk_gemma4(&router_logits, top_k, &real.per_expert_scale[layer]);
         if let Some(hist) = self.router_hist.as_mut() {
@@ -42,7 +79,13 @@ impl RealForwardRunner {
                 "real Gemma 4 layer {layer} has no packed-expert streamer"
             ))
         })?;
-        let plan = streamer.plan_experts_cached(&selected, &std::collections::HashSet::new());
+        // `protect` is empty on the decode path, so this is the same call it
+        // has always made. Inside a chunk it names the slots the previous
+        // token's in-flight command buffer is reading; the cache ASSERTS
+        // rather than degrades when it cannot honour that plus the misses
+        // (`ExpertCache::plan_if_possible`), so the caller has already
+        // ensured the arithmetic works or retired the buffer first.
+        let plan = streamer.plan_experts_cached(&selected, &slot.protect);
         let (requests, hits) = (plan.experts.len() as u64, plan.hits as u64);
         self.phases.expert_requests += requests;
         self.phases.expert_hits += hits;
@@ -60,7 +103,7 @@ impl RealForwardRunner {
         self.phases.expert_io_nanos += t_io.elapsed().as_nanos() as u64;
 
         if !self.shared_cb_overlap {
-            self.encode_shared_expert_branch(layer, hidden, inter, use_silu)?;
+            self.encode_shared_expert_branch(layer, hidden, inter, use_silu, slot)?;
         }
         let real = self.real.as_ref().expect("real state present");
 
@@ -70,21 +113,29 @@ impl RealForwardRunner {
             .map(|&i| (slots[i], route_weights[i]))
             .collect();
         let mut routing16 = vec![f16::from_f32(0.0); gpu::MAX_STREAMED_EXPERTS];
-        for (slot, &(_, weight)) in ordered.iter().enumerate() {
-            routing16[slot] = f16::from_f32(weight);
+        for (dispatch_slot, &(_, weight)) in ordered.iter().enumerate() {
+            routing16[dispatch_slot] = f16::from_f32(weight);
         }
         gpu::write_buffer_bytes(
             &self.scratch.routing_w,
-            0,
+            rw_off,
             &f16_slice_to_le_bytes(&routing16),
         );
 
         let layer_slots = &self.slot_buffers[layer];
         let blob_refs: Vec<(&gpu::MetalBuffer, u64)> = ordered
             .iter()
-            .map(|&(slot, _)| (&layer_slots[slot], 0u64))
+            .map(|&(cache_slot, _)| (&layer_slots[cache_slot], 0u64))
             .collect();
-        let routed = self.routed_blobs.as_ref().ok_or_else(|| {
+        // Selected by FIELD rather than through a `&self` accessor: this
+        // binding is live across `routed.bind(&mut self.context, ..)` and
+        // the two phase encodes, and a method call would borrow all of
+        // `self` for that whole span (crate Gotcha 5's E0502 shape).
+        let routed = match slot.bank {
+            0 => self.routed_blobs.as_ref(),
+            n => self.routed_blobs_banks.get(n - 1),
+        }
+        .ok_or_else(|| {
             RealForwardError::Unsupported("install has no routed-blob buffer".to_string())
         })?;
         let offsets = &self.moe_offsets[layer];
@@ -106,7 +157,7 @@ impl RealForwardRunner {
                 pass,
                 routed,
                 offsets,
-                (&real.routed_x, 0),
+                (&real.routed_x, x_off),
                 (&self.scratch.moe_acts, 0),
                 hidden as u32,
                 moe_inter,
@@ -122,7 +173,7 @@ impl RealForwardRunner {
             routed,
             offsets,
             (&self.scratch.moe_acts, 0),
-            (&self.scratch.routing_w, 0),
+            (&self.scratch.routing_w, rw_off as u64),
             (&self.scratch.zero_hidden, 0),
             (&real.h2, 0),
             hidden as u32,
@@ -174,7 +225,7 @@ impl RealForwardRunner {
         gpu::encode_residual_add(
             &mut self.context,
             pass,
-            (&self.scratch.x, 0),
+            (&self.scratch.x, x_off),
             (&self.scratch.ffn_normed, 0),
             hidden as u32,
         )
@@ -182,12 +233,16 @@ impl RealForwardRunner {
         gpu::encode_scalar_mul(
             &mut self.context,
             pass,
-            (&self.scratch.x, 0),
+            (&self.scratch.x, x_off),
             layer_scalar,
             hidden as u32,
         )
         .map_err(gpu_err)?;
 
-        Ok(())
+        // The cache slots this pass BOUND, so the caller can hand them to
+        // the next token as `RoutedSlot::protect` while this command buffer
+        // is in flight. Returned rather than recomputed because the plan's
+        // assignment is the only thing that knows them.
+        Ok(ordered.iter().map(|&(cache_slot, _)| cache_slot).collect())
     }
 }

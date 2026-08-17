@@ -93,7 +93,7 @@ pub use attention_decode::{
     attention_decode, attention_decode_buffers, encode_attention_decode, AttentionScratch,
 };
 #[cfg(target_os = "macos")]
-pub use bytes::read_f32_buffer;
+pub use bytes::{read_f32_buffer, read_f32_buffer_at};
 #[cfg(target_os = "macos")]
 pub use context::{
     autorelease_pool, dispatch_one_threadgroup_per_row, dispatch_one_threadgroup_per_row_offsets,

@@ -30,7 +30,10 @@ mod store;
 pub use catalog::{Catalog, SCHEMA_VERSION};
 pub use entry::{CatalogEntry, Sidecars, Source, SourceKind, Status};
 pub use hf::{Client, RepoRef};
-pub use install::{gate, human_bytes, install, record, InstallPlan, Installed};
+pub use install::{
+    gate, human_bytes, install, install_with_byte_progress, record, ByteProgressCallback,
+    InstallPlan, Installed,
+};
 pub use probe::{
     evaluate_config, evaluate_gguf, probe, ProbeReport, TypeShare, Verdict, KNOWN_SIDECARS,
 };

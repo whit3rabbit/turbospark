@@ -76,8 +76,8 @@ pub use museglimmer_config::{
 };
 pub use qwen36_config::{parse_qwen_gdn_dense_config, parse_qwen_gdn_moe_config};
 pub use ranged_download::{
-    fetch_gguf_header, fetch_safetensors_header, DownloadError, HttpRangeSource, MemoryRangeSource,
-    RangeSource, GGUF_INITIAL_FETCH_BYTES,
+    fetch_gguf_header, fetch_safetensors_header, ByteProgressCallback, DownloadError,
+    HttpRangeSource, MemoryRangeSource, RangeSource, GGUF_INITIAL_FETCH_BYTES,
 };
 pub use repack::{
     int4_packed_bytes, int8_packed_bytes, quantize_matrix_int4, quantize_matrix_int8, RepackError,

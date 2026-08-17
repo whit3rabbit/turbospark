@@ -29,3 +29,4 @@ repack = { package = "turbospark-repack", path = "../repack", version = "0.1.0" 
 model_io = { package = "turbospark-model-io", path = "../model-io", version = "0.1.0" }
 window_fit = { package = "turbospark-window-fit", path = "../window-fit", version = "0.1.0" }
 serde_json = "1"
+indicatif = "0.18"

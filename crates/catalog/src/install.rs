@@ -94,6 +94,10 @@ pub struct Installed {
     pub arch: ArchConfig,
 }
 
+use std::sync::Arc;
+
+pub use repack::ByteProgressCallback;
+
 /// Install `plan` into `dir`.
 ///
 /// `progress` receives both this driver's stage lines and the repack walk's
@@ -102,7 +106,19 @@ pub fn install(
     plan: &InstallPlan,
     dir: &Path,
     client: &Client,
+    progress: impl FnMut(&str),
+) -> Result<Installed, String> {
+    install_with_byte_progress(plan, dir, client, progress, None)
+}
+
+/// Install `plan` into `dir`, forwarding byte progress updates to `byte_progress`
+/// when provided.
+pub fn install_with_byte_progress(
+    plan: &InstallPlan,
+    dir: &Path,
+    client: &Client,
     mut progress: impl FnMut(&str),
+    byte_progress: Option<ByteProgressCallback>,
 ) -> Result<Installed, String> {
     std::fs::create_dir_all(dir).map_err(|e| format!("creating {}: {e}", dir.display()))?;
 
@@ -119,13 +135,13 @@ pub fn install(
     ));
 
     // Step 1, and it is first on purpose: see the module header.
-    fetch_sidecars(plan, dir, client, &mut progress)?;
+    fetch_sidecars(plan, dir, client, &mut progress, byte_progress.as_ref())?;
     verify_tokenizer(dir, &mut progress)?;
 
     // Step 2: the weights.
     let arch = match plan.kind {
-        SourceKind::Gguf => stream_gguf(plan, dir, &mut progress)?,
-        SourceKind::Mlx => stream_mlx(plan, dir, client, &mut progress)?,
+        SourceKind::Gguf => stream_gguf(plan, dir, &mut progress, byte_progress.as_ref())?,
+        SourceKind::Mlx => stream_mlx(plan, dir, client, &mut progress, byte_progress.as_ref())?,
     };
 
     // Step 3: read it back through the loaders a real run uses. Every
@@ -157,6 +173,7 @@ fn fetch_sidecars(
     dir: &Path,
     client: &Client,
     progress: &mut impl FnMut(&str),
+    byte_progress: Option<&ByteProgressCallback>,
 ) -> Result<(), String> {
     progress(&format!(
         "fetching {} tokenizer sidecar(s) from {}",
@@ -166,6 +183,9 @@ fn fetch_sidecars(
     for name in &plan.sidecar_files {
         let url = plan.sidecars.file_url(name);
         let bytes = client.get(&url)?;
+        if let Some(cb) = byte_progress {
+            cb(bytes.len() as u64);
+        }
         std::fs::write(dir.join(name), bytes)
             .map_err(|e| format!("writing {}: {e}", dir.join(name).display()))?;
     }
@@ -210,12 +230,17 @@ fn stream_gguf(
     plan: &InstallPlan,
     dir: &Path,
     progress: &mut impl FnMut(&str),
+    byte_progress: Option<&ByteProgressCallback>,
 ) -> Result<ArchConfig, String> {
     let file = plan
         .file
         .as_deref()
         .ok_or_else(|| "a gguf install needs a filename".to_string())?;
-    let source = HttpRangeSource::new(plan.weights.file_url(file));
+    let url = plan.weights.file_url(file);
+    let source = match byte_progress {
+        Some(cb) => HttpRangeSource::with_progress(url, Arc::clone(cb)),
+        None => HttpRangeSource::new(url),
+    };
     let header = repack::fetch_gguf_header(&source)
         .map_err(|e| format!("reading the GGUF header of {file}: {e}"))?;
     let model_id = plan.weights.repo.clone();
@@ -230,6 +255,7 @@ fn stream_mlx(
     dir: &Path,
     client: &Client,
     progress: &mut impl FnMut(&str),
+    byte_progress: Option<&ByteProgressCallback>,
 ) -> Result<ArchConfig, String> {
     let config_text = String::from_utf8(client.get(&plan.weights.file_url("config.json"))?)
         .map_err(|e| format!("config.json is not UTF-8: {e}"))?;
@@ -268,7 +294,13 @@ fn stream_mlx(
 
     let sources: Vec<HttpRangeSource> = shard_names
         .iter()
-        .map(|name| HttpRangeSource::new(plan.weights.file_url(name)))
+        .map(|name| {
+            let url = plan.weights.file_url(name);
+            match byte_progress {
+                Some(cb) => HttpRangeSource::with_progress(url, Arc::clone(cb)),
+                None => HttpRangeSource::new(url),
+            }
+        })
         .collect();
     let headers = sources
         .iter()

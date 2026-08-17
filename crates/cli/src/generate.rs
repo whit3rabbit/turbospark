@@ -22,8 +22,8 @@ use std::io::Write;
 
 use invocation::{InvocationRequest, Mode};
 use runtime::{
-    run_raw_completion, GenerationConfig, RateControl, RawDecodeProgress, RawDecodeResult,
-    RealForwardRunner,
+    run_raw_completion, run_raw_completion_chunked, GenerationConfig, RateControl,
+    RawDecodeProgress, RawDecodeResult, RealForwardRunner,
 };
 use selection::ShapingConfig;
 use tokenizer::{
@@ -234,43 +234,68 @@ pub(crate) fn stream_turn(
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
     let mut split = ChannelSplit::new(&session.tokenizer);
-    let result = run_raw_completion(
-        &mut session.runner,
-        &session.tokenizer,
-        prompt_ids,
-        &config,
-        request.max_context,
-        vocab_size,
-        |event| {
-            // Both variants carry visible text: `Tail` is what the stop
-            // matcher withheld, so dropping it truncates the reply.
-            let (id, text) = match event {
-                RawDecodeProgress::Token { id, delta, .. } => (id, delta),
-                // A withheld tail has no token id behind it, which is what
-                // the tokenizer's "no such token" sentinel means.
-                RawDecodeProgress::Tail(tail) => (tokenizer::NO_SUCH_TOKEN_ID, tail),
-                RawDecodeProgress::Prefill { .. } => return,
-            };
-            // NO EARLY RETURN ON EMPTY TEXT. Harmony's frame tokens decode to
-            // nothing at all -- the detokenizer skips special tokens -- so
-            // skipping them here means the state machine never sees a single
-            // `<|channel|>` and the whole turn reads as one run of content.
-            // Every transition this split makes arrives as `(id, "")`.
-            //
-            // Reasoning goes to stderr so redirecting stdout captures the
-            // ANSWER alone, and only the answer becomes the assistant turn.
-            let (answer, reasoning) = split.push(id, &text);
-            if !reasoning.is_empty() {
-                eprint!("{reasoning}");
-            }
-            if answer.is_empty() {
-                return;
-            }
-            let _ = write!(out, "{answer}");
-            let _ = out.flush();
-            reply.push_str(&answer);
-        },
-    )?;
+    let on_progress = |event| {
+        // Both variants carry visible text: `Tail` is what the stop
+        // matcher withheld, so dropping it truncates the reply.
+        let (id, text) = match event {
+            RawDecodeProgress::Token { id, delta, .. } => (id, delta),
+            // A withheld tail has no token id behind it, which is what
+            // the tokenizer's "no such token" sentinel means.
+            RawDecodeProgress::Tail(tail) => (tokenizer::NO_SUCH_TOKEN_ID, tail),
+            RawDecodeProgress::Prefill { .. } => return,
+        };
+        // NO EARLY RETURN ON EMPTY TEXT. Harmony's frame tokens decode to
+        // nothing at all -- the detokenizer skips special tokens -- so
+        // skipping them here means the state machine never sees a single
+        // `<|channel|>` and the whole turn reads as one run of content.
+        // Every transition this split makes arrives as `(id, "")`.
+        //
+        // Reasoning goes to stderr so redirecting stdout captures the
+        // ANSWER alone, and only the answer becomes the assistant turn.
+        let (answer, reasoning) = split.push(id, &text);
+        if !reasoning.is_empty() {
+            eprint!("{reasoning}");
+        }
+        if answer.is_empty() {
+            return;
+        }
+        let _ = write!(out, "{answer}");
+        let _ = out.flush();
+        reply.push_str(&answer);
+    };
+    // `MFERENCE_PREFILL_CHUNK=<tokens>` routes prefill through
+    // `run_raw_completion_chunked` and the runner's chunk driver
+    // (`docs/BATCHED_PREFILL.md` step 1). An A/B SEAM, spelled like the two
+    // decode-path ones beside it (`MFERENCE_SHARED_CB`,
+    // `MFERENCE_ROUTED_PIPELINE`) rather than a flag, for the same reason:
+    // both arms must produce identical tokens, so what it varies is
+    // throughput and nothing a user needs to reach for. Unset, unparsable
+    // or 0 is the sequential path, byte for byte what it always was.
+    let chunk_tokens = std::env::var("MFERENCE_PREFILL_CHUNK")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|&n| n > 0);
+    let result = match chunk_tokens {
+        Some(chunk) => run_raw_completion_chunked(
+            &mut session.runner,
+            &session.tokenizer,
+            prompt_ids,
+            &config,
+            request.max_context,
+            vocab_size,
+            chunk,
+            on_progress,
+        )?,
+        None => run_raw_completion(
+            &mut session.runner,
+            &session.tokenizer,
+            prompt_ids,
+            &config,
+            request.max_context,
+            vocab_size,
+            on_progress,
+        )?,
+    };
     let _ = writeln!(out);
     Ok((reply, result))
 }

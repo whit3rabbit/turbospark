@@ -65,18 +65,18 @@ use crate::real_forward_layout::{
     moe_offsets_from_layout, readable_resident_dtype, routed_layouts_from_layout,
     RoutedLayerLayout, EXECUTABLE_GGUF_DTYPES, GGUF_BLOCK_DTYPES,
 };
-use crate::real_forward_types::DecodeScratch;
 pub use crate::real_forward_types::{dispatch_profile_report, PhaseCounters, RealForwardError};
+use crate::real_forward_types::{DecodeScratch, ROUTED_BANKS};
 
 /// Matches `RuntimeConfig`'s default `expert_cache_slots`; callers that
 /// want another allowed value pass it to `open_with_options`.
 const EXPERT_CACHE_SLOTS: usize = 16;
 /// Mirrors the Swift RuntimeConfiguration default `prefillChunkTokens`
 /// (128). Ring capacity per SWA layer is `min(max_context, sliding_window
-/// plus this)`, i.e. 1152 for real Gemma 4 at the 4096 default -- the
-/// same KV sizing as the Swift runner even though this port's prefill is
-/// still token-at-a-time (see `raw_completion.rs`); the chunk headroom is
-/// reserved for the future chunked-prefill port.
+/// plus this)`, i.e. 1152 for real Gemma 4 at the 4096 default. The chunk
+/// headroom is no longer notional: `ChunkedPrefillRunner` writes M KV rows
+/// before reading any of them back, and this is the budget that guarantees
+/// a sliding-window ring still holds every row the chunk will attend over.
 const MAX_PREFILL_CHUNK_TOKENS: usize = 128;
 const PACKED_LAYOUT_MAX_BYTES: u64 = 64 * 1024 * 1024;
 /// KV capacity when the caller does not say otherwise; matches the CLI's
@@ -116,6 +116,12 @@ pub struct RealForwardRunner {
     /// experts.
     pub(crate) moe_offsets: Vec<gpu::MoeExpertOffsets>,
     pub(crate) routed_blobs: Option<gpu::RoutedBlobsBuffer>,
+    /// Banks 1.. of the routed argument buffer, for the chunked prefill
+    /// driver alone; bank 0 is `routed_blobs` above, which every family
+    /// and the sequential path use. A separate field rather than widening
+    /// `routed_blobs` into a `Vec` because five families read that one and
+    /// none of them has a second bank to choose from.
+    pub(crate) routed_blobs_banks: Vec<gpu::RoutedBlobsBuffer>,
     /// Real-checkpoint (verbatim `language_model.` tensor naming) decode
     /// state: learned norms, INT8 router effective scales, per-expert
     /// scales, layer scalars. `None` for synthetic short-name installs,
@@ -394,15 +400,23 @@ impl RealForwardRunner {
             )?;
 
         let use_silu = expecting.hidden_activation.contains("silu");
-        let (moe_offsets, routed_layouts, routed_blobs) = match &experts_layout {
+        let (moe_offsets, routed_layouts, routed_blobs, routed_blobs_banks) = match &experts_layout
+        {
             Some(layout) => {
                 let offsets = moe_offsets_from_layout(layout)?;
                 let layouts = routed_layouts_from_layout(layout)?;
                 let routed = gpu::RoutedBlobsBuffer::new(&mut context, use_silu)
                     .map_err(RealForwardError::Gpu)?;
-                (offsets, layouts, Some(routed))
+                let mut banks = Vec::with_capacity(ROUTED_BANKS - 1);
+                for _ in 1..ROUTED_BANKS {
+                    banks.push(
+                        gpu::RoutedBlobsBuffer::new(&mut context, use_silu)
+                            .map_err(RealForwardError::Gpu)?,
+                    );
+                }
+                (offsets, layouts, Some(routed), banks)
             }
-            None => (Vec::new(), Vec::new(), None),
+            None => (Vec::new(), Vec::new(), None, Vec::new()),
         };
         drop(experts_layout);
 
@@ -423,6 +437,7 @@ impl RealForwardRunner {
             streamers,
             moe_offsets,
             routed_blobs,
+            routed_blobs_banks,
             real: None,
             real_qwen: None,
             real_llama: None,
@@ -597,5 +612,28 @@ impl LogitProducer for RealForwardRunner {
         let result = self.produce(token, position, scratch);
         self.skip_head = false;
         result
+    }
+}
+
+impl crate::producer::ChunkedPrefillRunner for RealForwardRunner {
+    /// Gemma 4 only, and the refusal is BY NAME rather than a silent
+    /// fallback to the sequential path. A caller that asked for chunked
+    /// prefill and quietly got the token-at-a-time loop would measure the
+    /// old engine and report it as the new one, which is the failure mode
+    /// this whole phase exists to avoid.
+    fn prefill_chunk(
+        &mut self,
+        tokens: &[i32],
+        start_position: usize,
+        logits: &mut [LogitValue],
+    ) -> Result<(), String> {
+        if self.real.is_none() {
+            return Err(format!(
+                "chunked prefill is wired for the real Gemma 4 flow only; this install is {:?}",
+                self.arch.family
+            ));
+        }
+        gpu::autorelease_pool(|| self.prefill_chunk_real_gemma4(tokens, start_position, logits))
+            .map_err(|e| e.to_string())
     }
 }

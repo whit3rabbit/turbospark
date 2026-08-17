@@ -1,9 +1,14 @@
 //! HTTP range download implementation using reqwest.
 
+use std::sync::Arc;
+
 use super::chunks::{
     chunk_ranges, fill_chunks, MAX_RANGE_BYTES, RANGE_ATTEMPTS, RANGE_CONCURRENCY,
 };
 use super::{DownloadError, RangeSource};
+
+/// Callback invoked on each downloaded chunk with the chunk's byte count.
+pub type ByteProgressCallback = Arc<dyn Fn(u64) + Send + Sync>;
 
 /// HTTP-backed [`RangeSource`] using the `blocking` `reqwest` client. Issues
 /// `Range: bytes=start-(end-1)` GETs and requires a `206 Partial Content`
@@ -17,6 +22,7 @@ use super::{DownloadError, RangeSource};
 pub struct HttpRangeSource {
     url: String,
     client: reqwest::blocking::Client,
+    on_bytes: Option<ByteProgressCallback>,
 }
 
 impl HttpRangeSource {
@@ -40,6 +46,20 @@ impl HttpRangeSource {
         Self {
             url: url.into(),
             client,
+            on_bytes: None,
+        }
+    }
+
+    pub fn with_progress(url: impl Into<String>, on_bytes: ByteProgressCallback) -> Self {
+        let client = reqwest::blocking::Client::builder()
+            .http1_only()
+            .pool_max_idle_per_host(RANGE_CONCURRENCY)
+            .build()
+            .expect("blocking HTTP client");
+        Self {
+            url: url.into(),
+            client,
+            on_bytes: Some(on_bytes),
         }
     }
 
@@ -78,6 +98,9 @@ impl HttpRangeSource {
             });
         }
         dst.copy_from_slice(&bytes);
+        if let Some(on_bytes) = &self.on_bytes {
+            on_bytes(bytes.len() as u64);
+        }
         Ok(())
     }
 

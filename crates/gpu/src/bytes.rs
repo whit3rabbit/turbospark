@@ -59,9 +59,22 @@ pub fn read_half_buffer(buffer: &metal::Buffer, len: usize) -> Vec<f16> {
 
 /// Reads `len` `f32` elements back from a completed Metal CPU/GPU shared buffer.
 pub fn read_f32_buffer(buffer: &metal::Buffer, len: usize) -> Vec<f32> {
+    read_f32_buffer_at(buffer, 0, len)
+}
+
+/// [`read_f32_buffer`] starting `first` ELEMENTS in, for a buffer holding
+/// one row per token of a prefill chunk. The offset is in elements rather
+/// than bytes so a caller cannot pass a byte offset by mistake and read a
+/// misaligned window that still returns finite numbers.
+pub fn read_f32_buffer_at(buffer: &metal::Buffer, first: usize, len: usize) -> Vec<f32> {
+    assert!(
+        (first + len) * std::mem::size_of::<f32>() <= buffer.length() as usize,
+        "read_f32_buffer_at reads past the buffer"
+    );
     let ptr = buffer.contents() as *const f32;
-    // SAFETY: same contract as `read_half_buffer`, with 4-byte elements.
+    // SAFETY: same contract as `read_half_buffer`, with 4-byte elements, and
+    // the range is asserted to be inside the allocation above.
     #[allow(unsafe_code)]
-    let values = unsafe { std::slice::from_raw_parts(ptr, len) };
+    let values = unsafe { std::slice::from_raw_parts(ptr.add(first), len) };
     values.to_vec()
 }

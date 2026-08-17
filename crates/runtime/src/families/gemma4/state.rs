@@ -3,7 +3,7 @@
 
 use model_io::{ArchConfig, ResidentIndex};
 
-use crate::real_forward_types::RealForwardError;
+use crate::real_forward_types::{RealForwardError, MAX_PREFILL_BATCH};
 use crate::real_forward_utils::{layer_tensor, read_bf16_host};
 
 /// Per-layer real-checkpoint state built once at open.
@@ -15,12 +15,23 @@ pub(crate) struct RealGemmaState {
     pub(crate) per_expert_scale: Vec<Vec<f32>>,
     /// Decoded `layer_scalar` per layer.
     pub(crate) layer_scalar: Vec<f32>,
-    /// FP32 router logits (the INT8 router kernel writes float).
+    /// FP32 router logits (the INT8 router kernel writes float), one
+    /// `[num_experts]` row per token of a prefill micro-batch. All M rows
+    /// are read back together, after the ONE command buffer that produced
+    /// them; that readback is what the chunk driver exists to amortize.
     pub(crate) router_logits_f32: gpu::MetalBuffer,
-    /// `[hidden]` FP16 branch scratch.
+    /// `[hidden]` FP16 branch scratch, one row per token of a prefill
+    /// micro-batch: both are written in the attention half of a layer and
+    /// read in the routed half, which the driver runs as two separate
+    /// passes over the chunk.
     pub(crate) dense_x: gpu::MetalBuffer,
     pub(crate) routed_x: gpu::MetalBuffer,
+    /// `[hidden]` FP16, ONE row: written and read inside a single token's
+    /// dispatch run, so a serial encoder makes reuse across the chunk safe.
     pub(crate) router_x: gpu::MetalBuffer,
+    /// `[hidden]` FP16, ONE row. The FFN halves are written and read by the
+    /// GPU alone, and command buffers on one queue run in commit order, so
+    /// the tokens of a chunk cannot overlap on them (see `ROUTED_BANKS`).
     pub(crate) h1: gpu::MetalBuffer,
     pub(crate) h2: gpu::MetalBuffer,
 }
@@ -99,9 +110,10 @@ impl RealGemmaState {
 
         let halfs = |n: usize| context.new_output_buffer((n.max(1) * 2) as u64);
         Ok(Self {
-            router_logits_f32: context.new_output_buffer((num_experts * 4) as u64),
-            dense_x: halfs(hidden),
-            routed_x: halfs(hidden),
+            router_logits_f32: context
+                .new_output_buffer((num_experts * 4 * MAX_PREFILL_BATCH) as u64),
+            dense_x: halfs(hidden * MAX_PREFILL_BATCH),
+            routed_x: halfs(hidden * MAX_PREFILL_BATCH),
             router_x: halfs(hidden),
             h1: halfs(hidden),
             h2: halfs(hidden),

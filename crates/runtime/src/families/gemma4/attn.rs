@@ -8,6 +8,11 @@ use crate::real_forward_utils::{entry, layer_tensor, norm_view};
 const RMS_EPS: f32 = 1e-6;
 
 impl RealForwardRunner {
+    /// `slot` is the token's index inside a prefill micro-batch, and 0 for
+    /// the sequential path. It selects the row of every buffer that has to
+    /// outlive this call: the residual stream `x`, the two pre-FFN norms
+    /// the routed half reads back, and the router logits. Everything else
+    /// here is consumed before the next dispatch and stays single-row.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn encode_gemma4_layer_attn_and_router(
         &mut self,
@@ -16,6 +21,7 @@ impl RealForwardRunner {
         position: usize,
         seq_len: u32,
         base: u64,
+        slot: usize,
     ) -> Result<(), RealForwardError> {
         let arch = self.arch.clone();
         let hidden = arch.hidden_size as usize;
@@ -23,6 +29,8 @@ impl RealForwardRunner {
         let num_experts = arch.num_experts as usize;
         let attn_scale = arch.attention_scale as f32;
         let gpu_err = RealForwardError::Gpu;
+        let x_off = (slot * hidden * 2) as u64;
+        let logits_off = (slot * num_experts * 4) as u64;
 
         let is_full = arch.full_attention_layer_mask[layer] == 1;
         let head_dim_l = if is_full {
@@ -47,7 +55,7 @@ impl RealForwardRunner {
         gpu::encode_rms_norm_bf16w(
             &mut self.context,
             pass,
-            (&self.scratch.x, 0),
+            (&self.scratch.x, x_off),
             input_norm,
             (&self.scratch.normed, 0),
             hidden as u32,
@@ -234,7 +242,7 @@ impl RealForwardRunner {
         gpu::encode_residual_add(
             &mut self.context,
             pass,
-            (&self.scratch.x, 0),
+            (&self.scratch.x, x_off),
             (&self.scratch.o_normed, 0),
             hidden as u32,
         )
@@ -244,7 +252,7 @@ impl RealForwardRunner {
         gpu::encode_rms_norm_no_scale(
             &mut self.context,
             pass,
-            (&self.scratch.x, 0),
+            (&self.scratch.x, x_off),
             (&real.router_x, 0),
             hidden as u32,
             RMS_EPS,
@@ -259,9 +267,9 @@ impl RealForwardRunner {
         gpu::encode_rms_norm_bf16w(
             &mut self.context,
             pass,
-            (&self.scratch.x, 0),
+            (&self.scratch.x, x_off),
             pre_ffn,
-            (&real.dense_x, 0),
+            (&real.dense_x, x_off),
             hidden as u32,
             RMS_EPS,
         )
@@ -275,9 +283,9 @@ impl RealForwardRunner {
         gpu::encode_rms_norm_bf16w(
             &mut self.context,
             pass,
-            (&self.scratch.x, 0),
+            (&self.scratch.x, x_off),
             pre_ffn2,
-            (&real.routed_x, 0),
+            (&real.routed_x, x_off),
             hidden as u32,
             RMS_EPS,
         )
@@ -314,7 +322,7 @@ impl RealForwardRunner {
             ),
             (&real.router_x, 0),
             (&real.effective_scale[layer], 0),
-            (&real.router_logits_f32, 0),
+            (&real.router_logits_f32, logits_off),
             num_experts as u32,
             hidden as u32,
         )

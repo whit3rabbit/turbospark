@@ -50,6 +50,16 @@ pub trait LogitProducer {
 /// `Runtime/Generation/LogitProducer.swift`; only the logits-output mode is
 /// ported (the fused-greedy-head shortcut needs a real forward pass to be
 /// meaningful — see `DEVIATIONS.md`).
+///
+/// **The bar an implementor is held to is byte-identity with the sequential
+/// path, not coherence.** A chunk must leave the same logits and the same
+/// engine state (KV rows, position cursor) that `produce_prefill` over the
+/// same tokens would; `crates/runtime/tests/real_forward_gemma4_chunked.rs`
+/// asserts that against a NON-chunked reference, never against a second
+/// chunked run, which agrees with the first whenever both are wrong the
+/// same way. Two implementors today: [`ScriptedLogitProducer`] below and
+/// `RealForwardRunner` on the real Gemma 4 flow (`docs/BATCHED_PREFILL.md`
+/// step 1), which refuses every other family by name.
 pub trait ChunkedPrefillRunner: LogitProducer {
     /// Runs `tokens` (a prefill chunk) starting at `start_position`,
     /// writing the resulting logits into `logits`.
