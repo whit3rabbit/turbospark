@@ -34,7 +34,20 @@ family, where `docs/SPECULATIVE_DECODING.md` answers it for the MoE one, and
 the two now disagree: on `qwen3_5` a checkpoint's own multi-token-prediction
 head is a nearly free drafter (~1.5% of a pass) against a 6.4%
 un-amortizable floor and no expert-union term, so the ceiling is ~2.07x and
-a good drafter is worth 1.35-1.58x. **It also supersedes that older page's
+a good drafter is worth 1.35-1.58x. **`docs/MTP.md` is the FACTS half of that
+pair** -- the head's architecture and every measured number, with nothing
+projected in it; read it before changing the head, and read
+`MTP_SPECULATIVE.md` before re-costing the decision. **MEASURED END TO END
+2026-08-18 AND THE
+SHAPE HELD**: block 2 pays **1.37x**, block 4 1.03x, blocks 8 and 15 lose.
+Single-step acceptance is 0.82 but the CHAIN saturates at ~2.05 accepted, so
+the long blocks underperform the projection and the small-block conclusion
+survives for a second, independent reason. Getting there needed a real fix:
+the head's five whole-vector norms are CENTERED (`x * (1 + w)`) where the
+trunk's are plain, and reading them plainly put the true token at median rank
+248,308 of 248,320. That is Gotcha 50 on a second family; the fix dispatches
+the `rmsnorm_bf16w_centered` kernel that already existed, and took top-1
+agreement from 0/24 to 23/24. **It also supersedes that older page's
 `c(M)` table in both directions**: `dequant_int4_gemm_simd` was missing the
 function-constant specialization `46617c6` gave the GEMV, and fixing that
 plus bounding its unroll roughly HALVED `c(M)` on every shape. **THE MoE
@@ -110,16 +123,12 @@ cargo clippy --workspace --tests
 # no download, target already installed. `--workspace` does NOT work: onig_sys
 # (via tokenizer) and other cc-rs build deps need an x86_64-linux-gnu-gcc that
 # is not installed here, so runtime/repack/catalog/server/cli/bench cannot be
-# checked on this machine at all. These seven can, and are green. Run it when
+# checked on this machine at all. These eight can, and are green. Run it when
 # touching a cfg, a dependency table, or anything unsafe. See Gotcha 8.
 cargo check --target x86_64-unknown-linux-gnu \
   -p turbospark-core -p turbospark-compute -p turbospark-model-io \
   -p turbospark-streaming -p turbospark-selection -p turbospark-invocation \
-  -p turbospark-window-fit
-
-# `-p turbospark-gpu` BELONGS in that list and is RED as of 2026-08-15: one
-# missing `#[cfg(target_os = "macos")]` at `src/lib.rs:49`. Add it there once
-# that lands, since gpu is the crate the platform claim is actually about.
+  -p turbospark-window-fit -p turbospark-gpu
 
 # Run the CLI (validates the invocation; on macOS also attempts real
 # generation against --model in all three modes: --prompt (raw text),
@@ -1542,7 +1551,10 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
     offsets, every transform preserves length, and `open()` runs no receipt
     or SHA-256 check, so patching the install in place turns a 23-minute
     loop into a seconds-long one
-    (`crates/repack/tests/gguf_qwen_convention_patch.rs`).
+    (`crates/repack/tests/gguf_qwen_convention_patch.rs`). Do it as that
+    kind of Rust TEST rather than an ad-hoc script: binary-patching a
+    multi-GB install from a shell one-liner is refused as irreversible local
+    destruction, and rightly.
 
 34. **A cross-engine comparison needs the BACKEND matched, not just the
     bytes, and getting it wrong reads as a defect in your own engine.**
@@ -2333,6 +2345,14 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
     weights: a head that is merely mis-paired peaks positively at some offset,
     and this one was negative at every one (-0.28 / -0.25 / -0.23), which is
     what ruled out the whole class in a single run.
+    **AND A NULL A/B ON TOP OF A DOMINANT DEFECT IS EVIDENCE ABOUT NOTHING.**
+    While that head's norms were wrong, swapping `fc`'s concat order end to
+    end changed nothing and shifting every RoPE position moved the
+    correlation -0.2820 to -0.2818. Both read as "not the cause"; both were
+    really "the output is garbage either way". When an experiment's two arms
+    are equally broken its null result is uninformative, and it does not
+    announce itself -- so establish that the component works AT ALL before
+    A/Bing its conventions.
 
 ## Per-Crate Documentation
 
@@ -2404,6 +2424,7 @@ Workspace directory structure and crate layout:
     +-- GTURBO.md      # the .gturbo install format this port reads and writes
     +-- MODELS.md      # the catalog, the probe, `pull`, and how to add a row
     +-- MODEL_FAMILY.md# GGUF `general.architecture` / HF `model_type` tables
+    +-- MTP.md         # the MTP head: architecture and MEASURED findings only
     +-- MTP_SPECULATIVE.md # native MTP heads on the DENSE family; pays, after a c(M) fix
     +-- NEW_MODEL.md   # end-to-end checklist for wiring a new model family
     +-- SPECULATIVE_DECODING.md # DFlash / batched verify, measured marginal
@@ -2420,6 +2441,24 @@ in `/tmp`). `kld.py` runs mlx-lm under `uv run --with mlx-lm`, an ephemeral
 env, so no Python dependency is installed globally or enters this
 workspace; `kld_llamacpp.py` needs only numpy and reuses `kld.py`'s
 divergence and perplexity functions rather than restating them.
+
+**FINDING A REFERENCE: CHECK mlx-vlm AS WELL AS mlx-lm, AND CHECK WHETHER THE
+COMPONENT SHIPS ALONE.** Every script above uses mlx-lm, which makes it the
+obvious place to look and is not always the right one: mlx-lm 0.31.3 has no
+`qwen3_5_mtp`, while mlx-vlm 0.6.14 implements it at
+`speculative/drafters/qwen3_5_mtp/`. A sub-component may also be published as
+its own checkpoint (`mlx-community/Qwen3.8-27B-MTP-4bit`, 239 MB), far cheaper
+to load than its parent and named by the config's `model_type`. READING a
+reference settles convention questions that measuring them cannot -- 2026-08-14
+for mrope, 2026-08-18 for the MTP head's five design choices. Note
+`safetensors.numpy` CANNOT decode BF16 (`TypeError: data type 'bfloat16' not
+understood`); parse the container directly, which is ~15 lines and keeps the
+decoder independent anyway (Gotcha 48).
+And READ THE PRIOR ART YOUR OWN DOCS NAME. A "take no source" note is a
+LICENSING decision about copying and never an instruction not to look: the MTP
+head's norm convention sat one grep away in the project whose headline result
+`docs/MTP_SPECULATIVE.md`'s first sentence quotes, and was rediscovered by
+two hours of bisection instead.
 
 - `crates/core`: shared primitives (`TokenId`, `LogitValue`, `LogitsView`), error types (`CoreError`), runtime configuration (`RuntimeConfig`, `RuntimeConfigBuilder`), allowed value sets (`ALLOWED_CACHE_SLOTS`, `ALLOWED_CHUNK_SIZES`), automatic chunk-size resolution (`chunk_sizing.rs`), and prefill chunking primitives (`prefill.rs`). Details in [`crates/core/CLAUDE.md`](crates/core/CLAUDE.md).
 - `crates/compute`: CPU reference kernels (RmsNorm, WHT, RoPE incl. Qwen's `rope_neox_subdim`, causal attention, int4/int8 affine quant + GEMV, the sub-4-bit MLX affine references (`quant_1bit.rs` and `quant_2bit.rs`, the second ROADMAP's ternary entry: same container, four elements per byte, a ternary grid MEASURED rather than assumed), the GGUF block-quant reference (`quant_gguf/`: Q8_0 and Q4_K dequant/quant/GEMV plus `pearson`; `quant_gguf_iq.rs` for the IQ codebooks; `quant_gguf_mxfp4.rs` for MXFP4, ROADMAP M5), embedding lookup, MoE FFN, the gated-DeltaNet chain (`gdn.rs`) and Qwen's gating kernels (`gating.rs`), logit softcap-softmax, RelError/tolerance table, sampling helpers) plus destination compute strategy marker type (`ComputeStrategy`). These are the numerical ground truth `crates/gpu`'s Metal kernels are validated against. Details in [`crates/compute/CLAUDE.md`](crates/compute/CLAUDE.md).

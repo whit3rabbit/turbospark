@@ -8,8 +8,13 @@ What the suite covers, how it is gated, and how to run each part.
 cargo test --workspace
 ```
 
-458 tests as of 2026-08-08, all passing, plus 18 that are `#[ignore]`d (see
-below). On macOS this includes every Metal test, which needs a real
+941 tests as of 2026-08-18, all passing, plus 98 that are `#[ignore]`d (see
+below). **RE-COUNT BEFORE QUOTING EITHER NUMBER.** Both were stale by more
+than 2x when this line was last corrected (they read 458 and 18, unchanged
+since 2026-08-08 while eleven families and phases landed), and nothing goes
+red when they rot: a count is prose. The one-liners that produce them are
+`cargo test --workspace` for the first and, for the second,
+`for d in crates/*/tests; do grep -rh '#\[ignore' $d/*.rs; done | wc -l`. On macOS this includes every Metal test, which needs a real
 Metal-capable device and Xcode's `metal` toolchain
 (`xcrun -sdk macosx metal`). On Linux `crates/gpu` compiles to nothing and
 the GPU-dependent test files compile away with it, so the same command
@@ -140,10 +145,10 @@ idiom (real implementation plus a stub that exits 2).
 
 ### Ignored (expensive or needs external data)
 
-Sixteen targets carry `#[ignore]`d tests, 18 functions between them
-(`cargo test --workspace` prints the count; two GGUF network targets carry
-more than one). Each has a reason string and a module doc with the exact
-command. The commands below are the ones that are GATES. The two that are
+58 targets carry `#[ignore]`d tests, 98 functions between them as of
+2026-08-18 (`repack` 27/50, `bench` 23/27, `gpu` 2/9, `selection` 2/4,
+`catalog` 2/3, `tokenizer` 1/3, `server` 1/2). Each has a reason string and
+a module doc with the exact command. The commands below are the ones that are GATES. The two that are
 not are documented in `docs/BENCHMARKS.md` instead: `crates/selection`'s
 `rank_top_k` (a sampler microbenchmark) and `crates/gpu`'s
 `attention_chunk_bench` (the split-KV chunk sweep).
@@ -412,6 +417,17 @@ attention) so it cannot rot silently; only the timings are advisory.
   `real_forward_qwen35_mtp.rs` covers "drafting off" through the open-time
   refusal rather than by unsetting `MFERENCE_MTP_DRAFT` mid-run. Never toggle
   an `MFERENCE_*` var between tests in one file.
+- **A probe that can return a DEGENERATE value has to assert against it, not
+  print it.** `crates/bench/tests/mtp_accept_length_probe.rs` measures the
+  MTP head's accept length and reads zero, because the head is broken rather
+  than weak; a version that merely printed its table would hand a reader a
+  quotable verdict on a question that is still open. It asserts a functional
+  drafter (first proposal accepted above 2%) and FAILS. The bar separates
+  "drafting" from "not drafting", never "pays" from "loses" -- a gate that
+  encoded the interesting threshold would be asserting the answer.
+  `crates/bench/tests/mtp_head_probe.rs` is the paired instrument that says
+  WHY, and `crates/repack/tests/mtp_install_fidelity_network.rs` is the one
+  that cleared the weights (see AGENTS.md Gotcha 57).
 
 ## Benchmarks
 

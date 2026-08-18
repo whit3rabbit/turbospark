@@ -287,8 +287,23 @@ fn mtp_accept_length_against_the_break_even_it_has_to_clear() {
 
         // Speculation must not change the output. Same prompt, same greedy
         // settings, different block size: the token stream has to match.
+        //
+        // On the COMMON PREFIX, because the arms stop at different lengths by
+        // construction: a speculative round commits `accepted + 1` tokens, so
+        // it overshoots `GENERATE`, while the reference commits exactly one
+        // per round and lands on it exactly. Comparing full vectors fails on
+        // a tail the reference never generated, which is a property of the
+        // loop bound and not a divergence. (This only became visible once the
+        // drafter started working: at zero acceptance both arms commit one
+        // token per round and the lengths matched by accident.)
+        let n = plain.len().min(generated.len());
+        assert!(
+            n >= GENERATE.min(plain.len()),
+            "block {block} produced only {n} comparable tokens"
+        );
         assert_eq!(
-            plain, generated,
+            plain[..n],
+            generated[..n],
             "block {block} diverged from the non-speculative greedy stream: \
              speculation is not lossless"
         );

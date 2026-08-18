@@ -242,14 +242,20 @@ cargo test -p turbospark-runtime
     accepted needs a row the proposal-producing steps do not write, and that
     is the case a good drafter hits most often.
 
-    **The head is not producing usable drafts as of 2026-08-18**, and the
-    cause is not in this crate: its installed weights correlate 0.992-0.996
-    with the published checkpoint and its tensors match a trunk
-    full-attention layer exactly, yet its logits are ANTI-aligned with the
-    trunk (true token ranked median 248,308 of 248,320). `fc`'s concat order
-    and the block's position were both tested end to end in both
-    conventions and neither is the fault. See `docs/MTP_SPECULATIVE.md` step
-    3 before touching this path.
+    **THE HEAD'S FIVE WHOLE-VECTOR NORMS ARE CENTERED (`x * (1 + w)`) AND THE
+    TRUNK'S ARE PLAIN.** One model, two conventions -- Gotcha 50's rule
+    arriving on a second family after `muse_glimmer`, so `mtp.rs` dispatches
+    `encode_rms_norm_bf16w_centered` for `pre_fc_norm_embedding`,
+    `pre_fc_norm_hidden`, `input_layernorm`, `post_attention_layernorm` and
+    `mtp.norm`, and the PLAIN kernel for the trunk's own `model.norm` that
+    produces the head's hidden input. Reading them plainly is not a subtle
+    error: it put the true next-next token at median rank 248,308 of 248,320
+    and gave 0 accepted of 7,168 proposals. Corrected, block 2 speculation
+    pays 1.37x. `q_norm`/`k_norm` are centered too and are STILL READ
+    PLAINLY, because `encode_rms_norm_bf16w_perhead` has no centered sibling
+    and the shared attention block resolves them by name; measured cost is
+    small (23/24 top-1) but the accept lengths are a floor until it lands.
+    Facts and instruments: `docs/MTP.md`.
 
     **Two `MTP_PREFIX` constants exist on purpose.** `families/qwen`'s is
     `"mtp"` and BUILDS names through `prefixed_layer_tensor`;

@@ -429,3 +429,42 @@ fn the_installed_heads_bytes_are_its_own() {
     }
     println!("\n  15 head tensors, all distinct, none zero, none copied from trunk layer {full}");
 }
+
+/// Takes ONE draft step at position 0 and lets `MFERENCE_MTP_DUMP` capture it.
+///
+/// Position 0 against an empty head cache is deliberate and is what makes the
+/// dump comparable offline: attention over a single key is a softmax over one
+/// logit, which is exactly 1.0, so the block's output does not depend on RoPE,
+/// on the q/k norms or on any history a script would have to replay. The whole
+/// head becomes a function of `concat` alone, which is the form
+/// `scripts/mtp_bisect.py` recomputes.
+#[test]
+#[ignore = "needs a real MTP install via TURBOSPARK_MTP_INSTALL_DIR"]
+fn dumps_one_draft_step_for_the_bisect() {
+    std::env::set_var("MFERENCE_MTP_DRAFT", "4");
+    let Some(dir) = std::env::var_os("MFERENCE_MTP_DUMP") else {
+        println!("\nMFERENCE_MTP_DUMP unset; nothing to capture. See scripts/mtp_bisect.py\n");
+        return;
+    };
+    let install = std::path::PathBuf::from(
+        std::env::var_os("TURBOSPARK_MTP_INSTALL_DIR").expect("TURBOSPARK_MTP_INSTALL_DIR"),
+    );
+    let (mut runner, _) = open_model_runner(&install, 16).expect("install opens");
+    let vocab = runner.vocab_size();
+
+    let mut logits = vec![LogitValue::from_f32(0.0); vocab];
+    let mut draft = vec![LogitValue::from_f32(0.0); vocab];
+    runner.reset();
+    // One trunk token, so `scratch.x` holds h(0) and the head's cursor is 0.
+    runner.produce(9707, 0, &mut logits).expect("produce");
+    let next = top_k(&logits, 1)[0].0;
+    assert_eq!(runner.mtp_kv_position(), 0, "the head must start empty");
+    runner
+        .mtp_draft_step(next, 0, &mut draft)
+        .expect("draft step");
+    println!(
+        "\nwrote the step to {}\n  fed token {next} at position 0, head top-1 {}\n",
+        std::path::PathBuf::from(&dir).display(),
+        top_k(&draft, 1)[0].0
+    );
+}

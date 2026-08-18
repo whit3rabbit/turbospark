@@ -152,12 +152,14 @@ TURBOSPARK_LOGIT_DUMP_DIR=/tmp/kld/ternary-warm \
 uv run --python 3.12 --with 'mlx-lm==0.31.2' --with numpy \
   scripts/kld_mlx_affine.py /tmp/kld/ternary-warm ternary-2bit
 
-# The MTP head as a drafter (docs/MTP_SPECULATIVE.md step 3). The probe
-# ASSERTS a functional drafter rather than printing an accept length nobody
-# can read: as of 2026-08-18 the head accepts 0 of 7,168 proposals, so it
-# FAILS, and mtp_head_probe is the instrument for why (it reports the rank of
-# the true token in the head's own distribution -- median 248,308 of 248,320,
-# i.e. anti-aligned rather than merely weak).
+# The MTP head as a drafter (docs/MTP.md for the facts, MTP_SPECULATIVE.md
+# for the decision). Block 2 pays 1.37x and block 4 1.03x; 8 and 15 lose
+# because the chain saturates at ~2.05 accepted. The probe ASSERTS a
+# functional drafter and FAILS rather than printing an accept length nobody
+# can read -- its first run read 0 of 7,168 (a centered-norm bug, since
+# fixed) and would otherwise have published a quotable "loses" table.
+# mtp_head_probe is the paired instrument: it reports the rank of the true
+# token in the head's own distribution, which separates broken from weak.
 TURBOSPARK_MTP_INSTALL_DIR=~/models/qwen38-27b-mtp.gturbo \
   cargo test -p turbospark-bench --test mtp_accept_length_probe --release -- --ignored --nocapture
 TURBOSPARK_MTP_INSTALL_DIR=~/models/qwen38-27b-mtp.gturbo \

@@ -62,6 +62,9 @@ const FC: &str = "mtp.fc.weight";
 const PRE_FC_NORM_EMBEDDING: &str = "mtp.pre_fc_norm_embedding.weight";
 const PRE_FC_NORM_HIDDEN: &str = "mtp.pre_fc_norm_hidden.weight";
 const FINAL_NORM: &str = "mtp.norm.weight";
+/// The TRUNK's final norm. The head's hidden input is what this produces,
+/// not the residual stream underneath it; see `mtp_step`.
+const TRUNK_FINAL_NORM: &str = "language_model.model.norm.weight";
 
 /// Every tensor a draft step binds, probed at build so a half-ingested head
 /// fails at open rather than at the first draft.
@@ -178,6 +181,14 @@ impl MtpState {
     pub(crate) fn kv_position(&self) -> usize {
         self.kv.position()
     }
+}
+
+/// Reads `MFERENCE_MTP_DUMP`: a directory to write one draft step's
+/// surviving intermediates into, for `scripts/mtp_bisect.py`. Off by
+/// default, and it OVERWRITES on every step, so a caller that wants a
+/// specific position takes exactly one step with it set.
+pub(crate) fn dump_dir() -> Option<std::path::PathBuf> {
+    std::env::var_os("MFERENCE_MTP_DUMP").map(std::path::PathBuf::from)
 }
 
 /// Reads `MFERENCE_MTP_DRAFT`. Unset, unparsable or 0 is off, matching the
@@ -338,6 +349,44 @@ impl RealForwardRunner {
         //    lands in `scratch.normed` first because a norm reduces before it
         //    writes and reading and writing one buffer in one dispatch is a
         //    property of the kernel rather than of this call site.
+        // THE HIDDEN HALF IS THE TRUNK'S POST-FINAL-NORM STATE, NOT ITS
+        // RESIDUAL STREAM. `scratch.x` carries the residual; the head wants
+        // what the trunk's OWN lm_head consumes, i.e. `model.norm` applied
+        // first. The reference is explicit about this -- mlx-vlm's
+        // `Qwen3_5Model.__call__` returns `self.norm(h)` and that one value
+        // is both what `hidden_states[-1]` hands the drafter and what
+        // `lm_head` reads. Feeding the residual instead is not a scale
+        // error that `pre_fc_norm_hidden` would absorb, because
+        // `model.norm` carries a LEARNED per-channel weight: it is a
+        // different direction, which is why it produced finite,
+        // plausible-looking logits that were ANTI-aligned with the trunk
+        // (docs/MTP_SPECULATIVE.md step 3).
+        //
+        // It goes FIRST because it borrows `scratch.normed` as its
+        // temporary and the embedding below overwrites that buffer.
+        let trunk_norm = norm_view(weights, index, TRUNK_FINAL_NORM, hidden)?;
+        gpu::encode_rms_norm_bf16w(
+            context,
+            &pass,
+            (&scratch.x, 0),
+            trunk_norm,
+            (&scratch.normed, 0),
+            hidden as u32,
+            RMS_EPS,
+        )
+        .map_err(gpu_err)?;
+        let w = norm_view(weights, index, PRE_FC_NORM_HIDDEN, hidden)?;
+        gpu::encode_rms_norm_bf16w_centered(
+            context,
+            &pass,
+            (&scratch.normed, 0),
+            w,
+            (&mtp.concat, hidden as u64 * 2),
+            hidden as u32,
+            RMS_EPS,
+        )
+        .map_err(gpu_err)?;
+
         encode_embed_any(
             context,
             &pass,
@@ -349,22 +398,17 @@ impl RealForwardRunner {
             hidden as u32,
             1.0,
         )?;
-        for (src, name, dst_offset) in [
-            ((&scratch.normed, 0u64), PRE_FC_NORM_EMBEDDING, 0u64),
-            ((&scratch.x, 0u64), PRE_FC_NORM_HIDDEN, hidden as u64 * 2),
-        ] {
-            let w = norm_view(weights, index, name, hidden)?;
-            gpu::encode_rms_norm_bf16w(
-                context,
-                &pass,
-                src,
-                w,
-                (&mtp.concat, dst_offset),
-                hidden as u32,
-                RMS_EPS,
-            )
-            .map_err(gpu_err)?;
-        }
+        let w = norm_view(weights, index, PRE_FC_NORM_EMBEDDING, hidden)?;
+        gpu::encode_rms_norm_bf16w_centered(
+            context,
+            &pass,
+            (&scratch.normed, 0),
+            w,
+            (&mtp.concat, 0),
+            hidden as u32,
+            RMS_EPS,
+        )
+        .map_err(gpu_err)?;
         // `fc` is [hidden, 2 * hidden] and its output IS the head's residual
         // stream, so it overwrites `scratch.x`. Safe only because the trunk's
         // logits for this token were read before the call.
@@ -388,7 +432,7 @@ impl RealForwardRunner {
             &prefixed_layer_tensor(MTP_PREFIX, 0, "input_layernorm.weight"),
             hidden,
         )?;
-        gpu::encode_rms_norm_bf16w(
+        gpu::encode_rms_norm_bf16w_centered(
             context,
             &pass,
             (&scratch.x, 0),
@@ -419,7 +463,7 @@ impl RealForwardRunner {
             &prefixed_layer_tensor(MTP_PREFIX, 0, "post_attention_layernorm.weight"),
             hidden,
         )?;
-        gpu::encode_rms_norm_bf16w(
+        gpu::encode_rms_norm_bf16w_centered(
             context,
             &pass,
             (&scratch.x, 0),
@@ -441,7 +485,7 @@ impl RealForwardRunner {
         //    priming step, which wants only the KV row this block just wrote.
         if logits.is_some() {
             let final_norm = norm_view(weights, index, FINAL_NORM, hidden)?;
-            gpu::encode_rms_norm_bf16w(
+            gpu::encode_rms_norm_bf16w_centered(
                 context,
                 &pass,
                 (&scratch.x, 0),
@@ -471,7 +515,62 @@ impl RealForwardRunner {
         if let Some(out) = logits {
             gpu::read_buffer_f16_into(&self.scratch.logits, 0, out);
         }
+        if let Some(dir) = dump_dir() {
+            self.dump_mtp_stage(&dir, next_token, position, hidden, vocab);
+        }
         Ok(())
+    }
+
+    /// Writes the head's surviving intermediates for `scripts/mtp_bisect.py`.
+    ///
+    /// **Which tensors these are is decided by what OUTLIVES the pass, not by
+    /// what would be nicest to have.** One command buffer runs the whole step,
+    /// so anything overwritten downstream is gone by the time the host can
+    /// read it: `fc`'s raw output is clobbered when the attention residual
+    /// adds into `scratch.x`. That one is recoverable offline -- the script
+    /// recomputes it from `concat` and the `fc` weights -- so nothing is lost
+    /// and the step keeps its single-commit shape. What survives is enough to
+    /// bisect: `concat` is the exact input, `moe_x` is the post-attention
+    /// norm (so it brackets `fc` AND attention), `x` is the block output
+    /// after the FFN residual, and `normed` is after the head's own norm.
+    fn dump_mtp_stage(
+        &self,
+        dir: &std::path::Path,
+        token: i32,
+        position: usize,
+        hidden: usize,
+        vocab: usize,
+    ) {
+        let _ = std::fs::create_dir_all(dir);
+        let qwen = match self.real_qwen.as_ref() {
+            Some(q) => q,
+            None => return,
+        };
+        let mtp = match self.real_mtp.as_ref() {
+            Some(m) => m,
+            None => return,
+        };
+        let write = |name: &str, buf: &gpu::MetalBuffer, len: usize| {
+            let mut host = vec![LogitValue::from_f32(0.0); len];
+            gpu::read_buffer_f16_into(buf, 0, &mut host);
+            let bytes: Vec<u8> = host
+                .iter()
+                .flat_map(|v| v.to_bits().to_le_bytes())
+                .collect();
+            let _ = std::fs::write(dir.join(name), bytes);
+        };
+        write("concat.f16", &mtp.concat, 2 * hidden);
+        write("moe_x.f16", &qwen.moe_x, hidden);
+        write("block_out.f16", &self.scratch.x, hidden);
+        write("post_norm.f16", &self.scratch.normed, hidden);
+        write("logits.f16", &self.scratch.logits, vocab);
+        let _ = std::fs::write(
+            dir.join("meta.json"),
+            format!(
+                "{{\"token\": {token}, \"position\": {position}, \
+                 \"hidden\": {hidden}, \"vocab\": {vocab}}}\n"
+            ),
+        );
     }
 
     /// The configured draft depth, 0 when drafting is off.

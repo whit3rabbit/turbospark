@@ -52,6 +52,23 @@ const DEPTH: &str = "2";
 /// The change detector. Taken from a run of the test that asserts it, over a
 /// deterministic fixture, and frozen. See that test's doc comment before
 /// touching this.
+/// Re-frozen 2026-08-18 a THIRD time, `7323c04a` -> `4406a9e2`, and this one
+/// is the fix that made the head WORK: its norms are CENTERED (`x * (1 + w)`)
+/// where this port was reading them plain. The published checkpoint stores
+/// the offset-from-unity form for the head's five whole-vector norms while
+/// the TRUNK's are plain, which is AGENTS.md Gotcha 50's "one model, two
+/// conventions" on a second family. Measured effect on the real install:
+/// the true next-next token went from median rank 248,308 of 248,320 to
+/// median rank 0, and top-1 agreement from 0/24 to 23/24.
+///
+/// Re-frozen 2026-08-18 a SECOND time, `4a2e6af3` -> `7323c04a`, because the
+/// head's hidden input changed: it is the trunk's POST-final-norm state now,
+/// not its residual stream. That is what mlx-vlm's reference drafter is
+/// handed (`Qwen3_5Model.__call__` returns `self.norm(h)` and the same value
+/// feeds both `hidden_states[-1]` and `lm_head`), so this is a correctness
+/// fix read off the reference rather than a tuning choice. NOTE it did NOT
+/// fix the real head's anti-alignment -- see docs/MTP_SPECULATIVE.md step 3.
+///
 /// Re-frozen 2026-08-18 from `f9ead747`, and the reason is the head's KV.
 /// `trunk_then_draft` now PRIMES every earlier position, so the draft attends
 /// over rows the head actually wrote rather than over rows nobody did -- the
@@ -60,7 +77,7 @@ const DEPTH: &str = "2";
 /// input. Note every reachability case in this file stayed green across that
 /// change, which is Gotcha 51's point restated: this constant was the only
 /// thing that could see it.
-const FROZEN_DRAFT_DIGEST: &str = "4a2e6af3";
+const FROZEN_DRAFT_DIGEST: &str = "4406a9e2";
 
 fn temp_dir(tag: &str) -> std::path::PathBuf {
     let n = COUNTER.fetch_add(1, Ordering::SeqCst);
