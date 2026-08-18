@@ -46,7 +46,9 @@ pub use power::{
 };
 pub use producer::{ChunkedPrefillRunner, LogitProducer, ScriptedLogitProducer};
 pub use raw_completion::{
-    run_raw_completion, run_raw_completion_chunked, RawDecodeProgress, RawDecodeResult, StopReason,
+    run_raw_completion, run_raw_completion_cancellable, run_raw_completion_chunked,
+    run_raw_completion_chunked_cancellable, CancelFlag, RawDecodeProgress, RawDecodeResult,
+    StopReason,
 };
 #[cfg(target_os = "macos")]
 pub use real_forward::{

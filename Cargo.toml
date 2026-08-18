@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/core", "crates/compute", "crates/invocation", "crates/selection", "crates/window-fit", "crates/tokenizer", "crates/model-io", "crates/streaming", "crates/gpu", "crates/runtime", "crates/cli", "crates/repack", "crates/catalog", "crates/server", "crates/bench"]
+members = ["crates/core", "crates/compute", "crates/invocation", "crates/selection", "crates/window-fit", "crates/tokenizer", "crates/model-io", "crates/streaming", "crates/gpu", "crates/runtime", "crates/cli", "crates/repack", "crates/catalog", "crates/server", "crates/bench", "crates/ffi"]
 
 # NO `[profile.release]`, and that is a MEASURED decision rather than an
 # oversight -- release builds run at cargo's stock opt-level 3, no LTO, 16

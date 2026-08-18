@@ -1857,6 +1857,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "turbospark-ffi"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "turbospark-bench",
+ "turbospark-catalog",
+ "turbospark-core",
+ "turbospark-repack",
+ "turbospark-runtime",
+ "turbospark-selection",
+ "turbospark-tokenizer",
+]
+
+[[package]]
 name = "turbospark-gpu"
 version = "0.1.0"
 dependencies = [

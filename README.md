@@ -38,6 +38,7 @@ The port is tested against the original rather than assumed compatible. Decode t
 - [Supported Features & Models](#supported-features--models)
 - [Architecture & Repository Layout](#architecture--repository-layout)
 - [Getting Started](#getting-started)
+- [Swift Bindings](#swift-bindings)
 - [Documentation](#documentation)
 - [License](#license)
 
@@ -439,6 +440,60 @@ The binaries land in `target/release/`, and `cargo run -p turbospark-cli --bin t
 The workspace suite runs on any platform and covers the structural contracts. The heavier proof is env-gated and opt-in, because it needs a real model install: per-family quality gates freeze teacher-forced perplexity plus greedy and sampled output digests, memory oracles assert peak footprint against a per-chip ceiling and re-run a warm case to catch growth, and a determinism probe runs one greedy generation six times and requires exactly one distinct output.
 
 The quality gate is calibrated rather than decorative. Shifting one quantization level in 0.0122% of Gemma 4's expert bytes moves its perplexity +10.5%, so the gate sees damage far below what reads as coherent by eye. Gating conventions and test-writing rules are in [`docs/TESTING.md`](docs/TESTING.md).
+
+---
+
+## Swift Bindings
+
+A C ABI (`crates/ffi`) and a SwiftPM package over it, so a native macOS app
+drives the engine in-process rather than over HTTP. `swift/TurboSparkDemo` is
+a small SwiftUI chat app that exercises the whole thing.
+
+```bash
+make swift-lib                                    # build the staticlib + stage the header
+make swift-demo                                   # run the demo chat app
+make swift-test                                   # ABI checks, no model needed
+make swift-test-real MODEL=~/models/gemma4.gturbo # end to end against a real install
+```
+
+```swift
+let session = try await TurboSparkSession(modelPath: "~/models/gemma4.gturbo")
+
+for try await event in session.generate([ChatMessage(role: .user, content: "Hello")]) {
+    switch event {
+    case .prefill(let done, let total): print("reading prompt \(done)/\(total)")
+    case .content(let text):            print(text, terminator: "")
+    case .reasoning(let text):          print("thinking: \(text)")
+    case .finished(let result):         print("\n\(result.newTokens) tokens, \(result.stopReason)")
+    }
+}
+
+session.cancel()   // safe from any thread, never blocks
+```
+
+Three things about the shape are worth knowing before building on it.
+
+**`cancel()` never blocks.** Generation holds the engine lock for a whole
+turn, so the cancel flag deliberately lives outside it. Put it inside and a
+Stop button only takes effect once the model has finished on its own, which
+a user experiences as a frozen window rather than as a bug. Cancelling is not
+an error: the turn returns normally with `stopReason == .cancelled`, the
+partial text intact, and a KV cache that describes itself honestly, so the
+conversation continues from where it stopped.
+
+**Options and results are JSON across the boundary**, which is what keeps
+`turbospark.h` to about twenty functions and makes adding a knob something
+other than an ABI break. The per-token path carries no JSON: it is a pointer
+and a length.
+
+**Reasoning arrives separately from the reply.** `.content` is the assistant
+turn to keep; `.reasoning` is for display only, because the checkpoints that
+produce it drop prior-turn thinking from their own history and replaying it
+sends the model something it was never trained to read.
+
+Model management (`TurboSparkCatalog`) works on any platform, including ones
+that cannot then run a model. Installs stream gigabytes and **cannot resume**,
+so tell the user before starting rather than after failing.
 
 ---
 

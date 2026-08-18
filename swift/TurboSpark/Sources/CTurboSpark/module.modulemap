@@ -1,0 +1,4 @@
+module CTurboSpark {
+    header "turbospark.h"
+    export *
+}
