@@ -426,9 +426,12 @@ What is established, and each of these is stable:
   trustworthy sides, and it is the one worth carrying.
 
 **A fair A/B needs hardware that can hold Nominal in performance mode**, which
-this laptop cannot for a whole case. Until then the flag's value on this
-install is not "it saves 21%" but "it is the only way to get a repeatable
-number out of this model at all".
+this laptop cannot for a whole case ON ITS OWN FAN CURVE. **RESOLVED
+2026-08-18 by supplying that condition rather than waiting for it**: with fans
+pinned the performance arm holds Nominal 3 of 3 and the A/B completes -- see
+"Forced cooling: the A/B, run" below, which supersedes both the "~21%" here
+and the framing that the flag's only value is repeatability. The measured
+answer is 14.9% for 51.5% of the throughput.
 
 One ambiguity left open rather than resolved: efficiency prefill draws 30.3 W
 against performance prefill's 37.0-38.4 W when the latter is Nominal, on
@@ -438,12 +441,57 @@ or the efficiency prefill inherits a hot machine from the performance run it
 is interleaved after. The interleaving makes those two indistinguishable
 here, and separating them needs an arm order that is not paired.
 
+### Forced cooling: the A/B, run
+
+The paragraph above says forced cooling is the only way to find out here. It
+was run 2026-08-18T19:42Z, and it works. `CASES=short-explanation
+ARMS=performance,efficiency COOLING=max scripts/power.sh 3`, rev `14aa0ce`
+dirty, fans pinned to 5,777 RPM through ThermalForge for the whole capture,
+5,017 samples, drift -0.7 s, every arm `stop=endOfTurn`, `cpu_W` 0.22-0.71
+throughout (so uncontaminated, Gotcha 43).
+
+**Twelve of twelve measured rows held Nominal**, where the same case on the
+same install goes Heavy on every performance decode uncooled. That is the
+missing condition supplied, and the comparison it unblocks:
+
+| decode, 3 pairs | pressure | W | tok/s | J/token | J/token spread |
+| --- | --- | ---: | ---: | ---: | ---: |
+| performance, uncooled (capture C) | **Heavy 3/3** | 24.3-30.5 | ~18.2 | 1.3267 / 1.4128 / 1.6621 | **25%** |
+| performance, pinned | Nominal 3/3 | 31.73 | 19.425 | 1.6338 / 1.6175 / 1.6015 | **2.0%** |
+| efficiency, pinned | Nominal 3/3 | 13.80 | 10.002 | 1.4182 / 1.3502 / 1.3596 | 5.0% |
+
+**The rate cap saves 14.9% of energy per token for 51.5% of the throughput**
+(1.3760 against 1.6176). Both sides are now trustworthy: the performance arm's
+spread falls 25% -> 2.0% and its tok/s reproduces to 0.08% (19.423 / 19.434 /
+19.419). Note this REPLACES the tentative "~21%" the section above offers
+against the unconstrained warmup, and it is a worse trade than that number
+made it look.
+
+**Pinning fans LOWERED J/token, which is the opposite of the prediction made
+before the run.** The prediction was that a cooler chip boosts to a higher V/f
+point and so costs more per token. It reads 1.6176 against the unconstrained
+warmup's 2.0316, at 31.73 W against 38.17 -- 20% less power and 3.7% MORE
+throughput. The reasoning failed because it assumed headroom to boost into:
+both readings are already unconstrained, so frequency was at its ceiling in
+each, and what forced cooling actually removes is LEAKAGE, which climbs
+steeply with die temperature. Same-day same-rev support, uncooled: that
+session's one Nominal performance arm read 1.7876 against 1.60-1.63 pinned.
+
+Read that as the direction plus an order of magnitude, not a coefficient. The
+cooling effect is a CROSS-CAPTURE comparison -- cooling is a property of the
+whole run, so the harness cannot interleave it the way it interleaves arms --
+and cross-capture absolutes are what has repeatedly failed to reproduce here
+(Gotcha 22). What IS interleaved, and therefore what this section actually
+establishes, is the performance-vs-efficiency row.
+
 ### What is not established
 
-Nothing here says what this install costs under a sustained load on a machine
-that can hold Nominal. Both points above are this laptop's; a chassis with more
-thermal headroom would likely sit somewhere between them, and forced cooling is
-the only way to find out here.
+These are still this laptop's numbers with its fans held at maximum, which is
+an upper-headroom operating point and not a shipping one: no user runs this
+way, and the fan power itself is invisible here because `powermetrics`
+Combined Power is CPU+GPU+ANE only. A chassis that holds Nominal on its own
+would land somewhere between these rows and the governed ones. The uncooled
+rows above remain the ones that describe what a user sees.
 
 ## Battery, and what differs
 

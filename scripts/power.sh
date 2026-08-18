@@ -8,7 +8,8 @@
 # Env:   MODEL, RUST_BENCH, OUT, LABEL (ac|battery),
 #        ARMS (comma-separated arms to interleave; see ARMS below),
 #        QOS (the Phase P1 spelling of ARMS, still honored),
-#        CASES (space-separated protocol case ids)
+#        CASES (space-separated protocol case ids),
+#        COOLING (auto|max; see COOLING below)
 #
 # NEEDS SUDO: powermetrics is root-only. It prompts once, up front.
 #
@@ -46,6 +47,32 @@ LABEL="${LABEL:-unlabelled}"
 # QOS is still read so the Phase P1 invocations reproduce unchanged.
 ARMS="${ARMS:-${QOS:-default}}"
 CASES="${CASES:-short-explanation medium-review long-synthesis}"
+# COOLING is an axis ORTHOGONAL to ARMS, and it gets its own column rather
+# than an ARMS token for that reason: ARMS is one column and one comparison,
+# while cooling is a property of the whole capture, like LABEL.
+#   auto  the machine's own fan curve. Every row in docs/POWER_BASELINE.md
+#         published before 2026-08-18 was taken this way.
+#   max   fans pinned to 100% via ThermalForge (MIT, github.com/ProducerGuy/
+#         ThermalForge) for the duration of the capture, restored on exit.
+#
+# WHY: this laptop cannot hold Nominal thermal pressure in performance mode
+# for a whole case, so the Phase P2 performance-vs-efficiency A/B is
+# inconclusive -- the performance arm spans 25% across byte-identical work
+# because it is a thermal control loop's output rather than the workload's
+# (docs/POWER_BASELINE.md, "the comparison does not"). That section names
+# the missing condition outright: "A fair A/B needs hardware that can hold
+# Nominal in performance mode". Pinned fans ARE that condition.
+#
+# WHAT IT DOES NOT DO: save power. Fans cost watts and a cooler chip boosts
+# to a higher V/f point. A COOLING=max row is "energy per token with
+# unlimited cooling", an upper-headroom operating point, NOT what a user on
+# a real machine sees. Publish it beside the auto rows, never instead.
+#
+# The J/token column is unaffected either way: powermetrics Combined Power
+# is CPU+GPU+ANE only, so fan draw never enters it. Fan draw DOES enter
+# wall_W (the battery gauge), which is blank on AC by construction and is
+# already documented as too noisy to publish (sd 20-40% of its own mean).
+COOLING="${COOLING:-auto}"
 
 # powermetrics sample interval. Decode windows are ~26 s and would be
 # fine at any interval; PREFILL is what sets this. The short-explanation
@@ -81,6 +108,21 @@ DRAWING=$(pmset -g ps | head -1)
 case "$LABEL:$DRAWING" in
   ac:*Battery*)    echo "LABEL=ac but $DRAWING -- plug in, or fix LABEL" >&2; exit 2;;
   battery:*AC*)    echo "LABEL=battery but $DRAWING -- unplug, or fix LABEL" >&2; exit 2;;
+esac
+
+# Same reasoning as the LABEL guard immediately above: a capture that SAYS
+# it pinned the fans and did not is worse than no capture, because it reads
+# as a real effect. Refuse rather than fall back to auto.
+case "$COOLING" in
+  auto) ;;
+  max)
+    command -v thermalforge >/dev/null 2>&1 || {
+      echo "COOLING=max needs the thermalforge binary, which is not on PATH" >&2
+      echo "install it (github.com/ProducerGuy/ThermalForge), or use COOLING=auto" >&2
+      exit 2
+    }
+    ;;
+  *) echo "unknown COOLING=$COOLING (want auto|max)" >&2; exit 2;;
 esac
 
 mkdir -p "$OUT"
@@ -119,8 +161,35 @@ cleanup() {
   [ -n "${BATT_PID:-}" ] && kill "$BATT_PID" 2>/dev/null
   [ -n "${KEEPALIVE_PID:-}" ] && kill "$KEEPALIVE_PID" 2>/dev/null
   sudo -n pkill -x powermetrics 2>/dev/null
+  # Restoring the fan curve is the one cleanup step whose omission leaves
+  # the MACHINE in a bad state rather than just a stray process, so it is
+  # gated on a flag set at the pin site: this runs on every exit path,
+  # including the guards above that abort before anything was pinned.
+  if [ -n "${FANS_PINNED:-}" ]; then
+    thermalforge auto >/dev/null 2>&1 \
+      && echo "fans restored to the machine's own curve" \
+      || echo "WARNING could not restore fans; run 'thermalforge auto' by hand" >&2
+    FANS_PINNED=""
+  fi
 }
 trap cleanup EXIT INT TERM
+
+# Pinned AFTER the trap is armed, never before: between the pin and the
+# trap there is no handler, so an interrupt in that window would leave the
+# fans at 100% with nothing left running to put them back.
+if [ "$COOLING" = max ]; then
+  echo "pinning fans to maximum for the capture (COOLING=max)"
+  thermalforge max || { echo "thermalforge max failed" >&2; exit 2; }
+  FANS_PINNED=1
+  # The fans must reach speed before the first sample, or the early arms
+  # are measured mid-ramp and the capture is not the single operating
+  # point it claims to be. MEASURED on Mac16,5 2026-08-18: 1350 -> 5763
+  # and 1451 -> 5689 RPM within 5 s against a 5777 target, so 10 s is
+  # double the observed ramp. Re-measure on other hardware rather than
+  # carrying this constant across (`thermalforge status` reports both
+  # actual and target RPM, so the check is one command).
+  sleep 10
+fi
 
 echo "powermetrics needs root; sudo will prompt once."
 sudo -v || exit 2
@@ -138,6 +207,7 @@ KEEPALIVE_PID=$!
   echo "power        $(pmset -g ps | head -1)"
   echo "label        $LABEL"
   echo "arms         ${ARMS}"
+  echo "cooling      ${COOLING}$([ "$COOLING" = max ] && echo ' (fans pinned; NOT a shipping operating point)')"
   echo "rev          $(git rev-parse --short HEAD)$(git diff --quiet || echo ' (dirty)')"
   echo "install      $MODEL"
   echo "manifest sha $(shasum -a 256 "$MODEL/manifest.json" | cut -d' ' -f1)"
@@ -219,7 +289,8 @@ integrate() {
   local case_id="$1" tag="$2" stop="$3" w0="$4" w1="$5" secs="$6" toks="$7" phase="$8"
   awk -v t0="$PM_T0" -v w0="$w0" -v w1="$w1" -v secs="$secs" -v toks="$toks" \
       -v case_id="$case_id" -v tag="$tag" -v stop="$stop" -v phase="$phase" \
-      -v label="$LABEL" -v qos="${ARM:-default}" -v battf="$OUT/batt.tsv" '
+      -v label="$LABEL" -v qos="${ARM:-default}" -v battf="$OUT/batt.tsv" \
+      -v cooling="$COOLING" '
     function flush_sample() {
       if (!have) return
       mid = t_prev + (t_now - t_prev) / 2
@@ -262,12 +333,17 @@ integrate() {
         split(line, b, "\t")
         if (b[1] >= w0 && b[1] <= w1 && b[2] + 0 > 0) { bw += b[2]; bn++ }
       }
-      printf "%s\t%s\t%s\t%s\t%s\t%.2f\t%s\t%.1f\t%.2f\t%.4f\t%.0f\t%.0f\t%.1f\t%.1f\t%s\t%d\t%s\n",
+      # `cooling` is APPENDED as field 18 rather than slotted in beside
+      # `label`, where it belongs logically: the summary below indexes
+      # $15/$16/$17 positionally, so inserting a column mid-row would move
+      # the thermal and sample-count reads onto the wrong fields and the
+      # warnings would go quiet instead of red.
+      printf "%s\t%s\t%s\t%s\t%s\t%.2f\t%s\t%.1f\t%.2f\t%.4f\t%.0f\t%.0f\t%.1f\t%.1f\t%s\t%d\t%s\t%s\n",
         case_id, label, qos, tag, phase, secs, toks,
         j, j / secs_seen, (toks > 0 ? j / toks : 0),
         cpu / secs_seen, gpu / secs_seen, ecl / secs_seen, pcl / secs_seen,
         (thermal == "" ? "Nominal" : thermal), n,
-        (bn > 0 ? sprintf("%.2f", bw / bn) : "")
+        (bn > 0 ? sprintf("%.2f", bw / bn) : ""), cooling
     }
   ' "$OUT/pm.txt" >> "$OUT/rows.tsv"
 }
@@ -318,7 +394,7 @@ awk -v t0="$PM_T0" -v tend="$PM_T_END" '
 ' "$OUT/pm.txt"
 echo
 
-echo "== measured rows (warmups excluded), $LABEL, arms ${ARMS}"
+echo "== measured rows (warmups excluded), $LABEL, arms ${ARMS}, cooling ${COOLING}"
 awk -F'\t' '
   $4 != "warmup" {
     # Grouped by ARM as well as case and phase: the arms alternate
@@ -352,4 +428,11 @@ awk -F'\t' '
 echo
 echo "watts and J/tok are CPU+GPU+ANE (powermetrics Combined Power), NOT wall."
 echo "wall_W is the battery gauge, which does include DRAM/SSD/display."
+if [ "$COOLING" = max ]; then
+  echo
+  echo "COOLING=max: fans were pinned. These rows are an UPPER-HEADROOM operating"
+  echo "point (energy per token with unlimited cooling), not what a user sees."
+  echo "Publish them BESIDE the COOLING=auto rows, never in place of them."
+  echo "Fan draw is not in the J/tok column above; it lands in wall_W."
+fi
 echo "raw rows: $OUT/rows.tsv   samples: $OUT/pm.txt"

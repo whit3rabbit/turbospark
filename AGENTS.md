@@ -1361,6 +1361,28 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
     run. Its one stable reading is the WARMUP window, which the summary
     excludes by design -- so on a hot enough install the only publishable
     number is the one the protocol throws away (`docs/POWER_BASELINE.md`).
+    **THAT LAST CLAUSE IS NO LONGER TRUE, AND THE FIX IS EXTERNAL TO THIS
+    REPO.** `scripts/power.sh COOLING=max` pins the fans through
+    ThermalForge (MIT, a root LaunchDaemon, not a dependency of this
+    workspace) for the duration of a capture. Measured 2026-08-18 on the
+    same install and case: 12 of 12 measured rows Nominal where every
+    performance decode had gone Heavy, the performance arm's J/token spread
+    25% -> 2.0%, its tok/s reproducing to 0.08%. So a saturating install is
+    a MISSING EXPERIMENTAL CONDITION rather than an unmeasurable one, and
+    the thing to reach for is cooling, not a longer idle (30 minutes of it
+    moved the warmup 1.4%).
+    Two caveats that keep this from being a free upgrade. A pinned-fan row
+    is an UPPER-HEADROOM operating point that no user occupies, so it is
+    published beside the uncooled rows and never instead of them; the
+    `cooling` column in `rows.tsv` and the `system.txt` provenance line
+    exist so no row can silently be one. And cooling cannot be interleaved
+    the way `ARMS` can -- it is a property of the whole capture -- so the
+    cooled-vs-uncooled delta is cross-capture and carries Gotcha 22's
+    caveat, while the arms measured INSIDE one cooled capture do not.
+    Worth recording that pinning fans made J/token BETTER (1.6176 against
+    the unconstrained 2.0316) where the prediction was that it would be
+    worse: "a cooler chip boosts higher" needs headroom to boost into, and
+    at an already-unconstrained point what cooling removes is leakage.
     Two further things that capture settled. The governed point is not a
     fixed discount: six governed decodes ran 18% to 35% below the
     unconstrained one, so the DIRECTION reproduces and the magnitude does
