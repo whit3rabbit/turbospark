@@ -45,7 +45,13 @@ pub(crate) fn status_for(e: &RuntimeError) -> axum::http::StatusCode {
         RuntimeError::EmptyPrompt
         | RuntimeError::ContextOverflow { .. }
         | RuntimeError::Selection(_) => axum::http::StatusCode::BAD_REQUEST,
-        RuntimeError::Producer(_) => axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+        // 500 rather than 400: nothing in the REQUEST asks for speculation
+        // (it is a process-level setting, like the rate cap in Gotcha 10), so
+        // a caller cannot have sent anything to avoid this and must not be
+        // told they did.
+        RuntimeError::Producer(_) | RuntimeError::SpeculationUnavailable(_) => {
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR
+        }
     }
 }
 

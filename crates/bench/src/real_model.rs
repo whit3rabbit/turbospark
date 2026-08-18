@@ -59,6 +59,36 @@ pub fn open_model_runner(
     open_model_runner_with_context(model_dir, slots, PROTOCOL_MAX_CONTEXT)
 }
 
+/// [`open_model_runner`] asking for a speculative drafter.
+///
+/// Every other opener in this crate reaches `open_with_options`, which pins
+/// drafting OFF -- a head allocates its own KV and an M-row verify scratch,
+/// and a frozen footprint row must not acquire either because the install it
+/// happens to point at carries a head. The two MTP probes and the generation
+/// gate are the callers that genuinely want one, so they say so here.
+pub fn open_model_runner_speculative(
+    model_dir: &Path,
+    slots: usize,
+    speculation: runtime::MtpDraftPolicy,
+) -> Result<(RealForwardRunner, MfTokenizer), String> {
+    let arch = repack::peek_manifest_arch(model_dir)?;
+    let tokenizer = MfTokenizer::load_from_dir(model_dir).map_err(|e| {
+        format!(
+            "failed to load a tokenizer from {}: {e}",
+            model_dir.display()
+        )
+    })?;
+    let runner = RealForwardRunner::open_with_options_and_speculation(
+        model_dir,
+        arch,
+        PROTOCOL_MAX_CONTEXT as usize,
+        slots,
+        speculation,
+    )
+    .map_err(|e| e.to_string())?;
+    Ok((runner, tokenizer))
+}
+
 /// [`open_model_runner`] with the KV window named explicitly.
 ///
 /// THE PROTOCOL'S 4K IS A PROPERTY OF THE HARNESS, NOT OF THE PROMPTS, and

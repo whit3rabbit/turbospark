@@ -28,7 +28,13 @@
 use foundation::LogitValue;
 use runtime::LogitProducer;
 use tokenizer::{Message, Role};
-use turbospark_bench::real_model::open_model_runner;
+use turbospark_bench::real_model::open_model_runner_speculative;
+
+/// Draft depth this file asks for. Named here rather than set through
+/// `MFERENCE_MTP_DRAFT` because the policy is now a PARAMETER: an unset
+/// env var means `Auto`, which resolves to a depth too small for the
+/// blocks below and would fail deep in the verify rather than at open.
+const MTP_DEPTH: usize = 4;
 
 const POSITIONS: usize = 24;
 
@@ -68,11 +74,12 @@ fn top_k(logits: &[LogitValue], k: usize) -> Vec<(i32, f32)> {
 #[test]
 #[ignore = "needs a real MTP install via TURBOSPARK_MTP_INSTALL_DIR"]
 fn what_the_mtp_head_predicts() {
-    std::env::set_var("MFERENCE_MTP_DRAFT", "4");
     let dir = std::path::PathBuf::from(
         std::env::var_os("TURBOSPARK_MTP_INSTALL_DIR").expect("TURBOSPARK_MTP_INSTALL_DIR"),
     );
-    let (mut runner, tokenizer) = open_model_runner(&dir, 16).expect("install opens");
+    let (mut runner, tokenizer) =
+        open_model_runner_speculative(&dir, 16, runtime::MtpDraftPolicy::Fixed(MTP_DEPTH))
+            .expect("install opens");
     let vocab = runner.vocab_size();
     assert!(runner.mtp_draft_depth() > 0, "install carries no head");
 
@@ -441,7 +448,6 @@ fn the_installed_heads_bytes_are_its_own() {
 #[test]
 #[ignore = "needs a real MTP install via TURBOSPARK_MTP_INSTALL_DIR"]
 fn dumps_one_draft_step_for_the_bisect() {
-    std::env::set_var("MFERENCE_MTP_DRAFT", "4");
     let Some(dir) = std::env::var_os("MFERENCE_MTP_DUMP") else {
         println!("\nMFERENCE_MTP_DUMP unset; nothing to capture. See scripts/mtp_bisect.py\n");
         return;
@@ -449,7 +455,9 @@ fn dumps_one_draft_step_for_the_bisect() {
     let install = std::path::PathBuf::from(
         std::env::var_os("TURBOSPARK_MTP_INSTALL_DIR").expect("TURBOSPARK_MTP_INSTALL_DIR"),
     );
-    let (mut runner, _) = open_model_runner(&install, 16).expect("install opens");
+    let (mut runner, _) =
+        open_model_runner_speculative(&install, 16, runtime::MtpDraftPolicy::Fixed(MTP_DEPTH))
+            .expect("install opens");
     let vocab = runner.vocab_size();
 
     let mut logits = vec![LogitValue::from_f32(0.0); vocab];

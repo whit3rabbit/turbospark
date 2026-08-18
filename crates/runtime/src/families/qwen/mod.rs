@@ -10,7 +10,8 @@ mod mtp;
 mod state;
 
 pub(crate) use attn::{encode_full_attention_block, encode_linear_block, QkNormConvention};
-pub(crate) use mtp::{draft_depth_from_env, MtpState};
+pub(crate) use mtp::MtpState;
+pub use mtp::{install_has_mtp_head, MtpDraftPolicy};
 pub(crate) use state::RealQwenState;
 
 use std::time::Instant;

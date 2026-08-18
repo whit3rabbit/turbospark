@@ -13,6 +13,13 @@ pub enum RuntimeError {
     },
     Selection(selection::SelectionError),
     Producer(String),
+    /// Speculative decoding was asked for under a configuration it cannot
+    /// serve losslessly. REFUSED rather than silently falling back to the
+    /// sequential loop: a caller that asked for speculation and quietly got
+    /// none would measure the non-speculative engine and report it as the
+    /// speculative one (AGENTS.md Gotcha 35, and `crates/runtime`'s own
+    /// argument for `MFERENCE_MTP_DRAFT` erroring on a headless install).
+    SpeculationUnavailable(String),
 }
 
 impl fmt::Display for RuntimeError {
@@ -29,6 +36,9 @@ impl fmt::Display for RuntimeError {
             ),
             RuntimeError::Selection(e) => write!(f, "{e}"),
             RuntimeError::Producer(detail) => write!(f, "logit producer failed: {detail}"),
+            RuntimeError::SpeculationUnavailable(detail) => {
+                write!(f, "speculative decoding unavailable: {detail}")
+            }
         }
     }
 }

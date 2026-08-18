@@ -11,7 +11,7 @@
 //! ordering, history bookkeeping) be exercised and tested independently of
 //! the kernel stack, exactly as the upstream design intends.
 
-use foundation::LogitValue;
+use foundation::{LogitValue, TokenId};
 
 /// Produces next-token logits for the generation loop.
 pub trait LogitProducer {
@@ -67,6 +67,69 @@ pub trait ChunkedPrefillRunner: LogitProducer {
         &mut self,
         tokens: &[i32],
         start_position: usize,
+        logits: &mut [LogitValue],
+    ) -> Result<(), String>;
+}
+
+/// A [`LogitProducer`] that can also DRAFT tokens ahead of itself and VERIFY
+/// a block of them in one pass, which is what [`crate::run_raw_completion_speculative`]
+/// drives (`docs/MTP.md`; measured 1.44x at block 2 on the `qwen3_5` MTP head).
+///
+/// Deliberately NOT object-safe: `Checkpoint` is an associated type because
+/// what a rollback has to restore is the producer's business. On the one real
+/// implementor it is a whole gated-DeltaNet snapshot, which is also why
+/// [`Self::rollback`] is the expensive call in the round and why the block
+/// size that pays is small.
+///
+/// **Every method here is about the DRAFTER except [`Self::verify`], which is
+/// the target model.** Conflating the two is the mistake the shape guards
+/// against: the drafter and the target keep separate caches at separate
+/// cursors, and a round advances them to DIFFERENT positions -- the target
+/// goes back to where the block started and replays, while the drafter goes
+/// to where the accepted prefix ended and continues, because it cannot
+/// recompute rows whose hidden states the replay has overwritten.
+pub trait SpeculativeProducer: LogitProducer {
+    /// What [`Self::rollback`] restores.
+    type Checkpoint;
+
+    /// Advance the drafter over a known pair without producing logits: the
+    /// prompt walk. `next` is the token at `position + 1`, which during a
+    /// prompt is known rather than guessed.
+    ///
+    /// **Skipping this is not a soft failure.** A drafter whose cache was
+    /// never primed attends over rows nobody wrote: no error, finite logits,
+    /// plausible tokens, and a depressed accept length that reads as a
+    /// verdict about speculation rather than as a bug.
+    fn prime_drafter(&mut self, next: TokenId, position: usize) -> Result<(), String>;
+
+    /// One drafting step. Writes the DRAFTER's logits, so the caller samples
+    /// with the same shaping the target is sampled with and, once rejection
+    /// sampling lands, still has the proposal distribution it needs.
+    fn draft_step(
+        &mut self,
+        token: TokenId,
+        position: usize,
+        logits: &mut [LogitValue],
+    ) -> Result<(), String>;
+
+    /// Move the drafter's cursor to `position`, where the accepted prefix
+    /// ended.
+    fn rewind_drafter(&mut self, position: usize) -> Result<(), String>;
+
+    /// Capture enough target state to undo an over-long verify.
+    fn checkpoint(&mut self) -> Self::Checkpoint;
+
+    /// Restore the target to `point`. The drafter is NOT rewound by this;
+    /// see the trait note.
+    fn rollback(&mut self, point: &Self::Checkpoint);
+
+    /// Run `feed.len()` positions through the TARGET starting at `base`,
+    /// writing one full-vocab row per fed token. Row `i` predicts the token
+    /// after `feed[i]`.
+    fn verify(
+        &mut self,
+        feed: &[TokenId],
+        base: usize,
         logits: &mut [LogitValue],
     ) -> Result<(), String>;
 }

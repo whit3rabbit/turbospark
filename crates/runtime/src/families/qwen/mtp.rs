@@ -52,7 +52,7 @@ use model_io::{ArchConfig, ResidentIndex};
 
 use crate::families::qwen::{
     dense, encode_full_attention_block, prefixed_layer_tensor, QkNormConvention, MTP_PREFIX,
-    RMS_EPS,
+    RMS_EPS, TRUNK_PREFIX,
 };
 use crate::real_forward::{RealForwardError, RealForwardRunner};
 use crate::real_forward_dispatch::{encode_embed_any, encode_gemv_any};
@@ -124,20 +124,36 @@ impl MtpState {
         index: &ResidentIndex,
         arch: &ArchConfig,
         max_context: usize,
-        depth: usize,
+        policy: MtpDraftPolicy,
         gdn_shape: gpu::GdnShape,
     ) -> Result<Option<Self>, RealForwardError> {
-        if depth == 0 {
-            return Ok(None);
-        }
-        if !index.entries.contains_key(FC) {
-            return Err(RealForwardError::Unsupported(format!(
-                "MFERENCE_MTP_DRAFT={depth} asks for speculative drafting, but this install \
-                 carries no multi-token-prediction head ({FC} is not in the resident index). \
-                 The mlx-community conversion drops `mtp.*`; stream an install that adds the \
-                 official checkpoint's last shard (docs/MTP_SPECULATIVE.md)."
-            )));
-        }
+        // The two conditions answer different questions and the ORDER used to
+        // hide the detection entirely: `depth == 0` returned before anything
+        // looked at the index, so the presence check below existed only to
+        // word an error, and an install that HAD a head decoded sequentially
+        // and silently unless an operator happened to set the env var.
+        let depth = match policy {
+            MtpDraftPolicy::Off => return Ok(None),
+            MtpDraftPolicy::Auto => {
+                if !install_has_mtp_head(index) {
+                    return Ok(None);
+                }
+                MtpDraftPolicy::AUTO_DEPTH
+            }
+            MtpDraftPolicy::Fixed(depth) => {
+                if !install_has_mtp_head(index) {
+                    // Still an ERROR under an explicit request, and only under
+                    // one: the caller named something this install cannot do.
+                    return Err(RealForwardError::Unsupported(format!(
+                        "MFERENCE_MTP_DRAFT={depth} asks for speculative drafting, but this \
+                         install carries no multi-token-prediction head ({FC} is not in the \
+                         resident index). The mlx-community conversion drops `mtp.*`; stream an \
+                         install that adds the official checkpoint's last shard (docs/MTP.md)."
+                    )));
+                }
+                depth
+            }
+        };
         for name in REQUIRED {
             entry(index, name)?;
         }
@@ -184,6 +200,86 @@ impl MtpState {
         self.kv.reset();
     }
 
+    /// The dtype tag [`crate::real_forward_dispatch::encode_gemm_any`] accepts.
+    /// A LITERAL, mirroring that function's own arm for the reason its comment
+    /// gives: spelling it as a named constant there becomes a catch-all
+    /// binding rather than a comparison.
+    const BATCHED_GEMM_DTYPE: u8 = 4;
+
+    /// Why a speculative round could not run on this install, or `None` if it
+    /// can. Checked at OPEN, so a caller learns before generating rather than
+    /// part-way through a round.
+    ///
+    /// **A head is necessary and not sufficient, and that gap is a latent bug
+    /// this function exists to close.** Drafting needs `mtp.fc.weight`;
+    /// VERIFYING needs `produce_batched`, whose refusals are narrower --
+    /// dense only, because the routed pair has no batched kernel, and INT4
+    /// only, because `encode_gemm_any` has no other arm. So a 1-bit, 2-bit or
+    /// MoE checkpoint that happened to carry a head would pass a
+    /// head-presence check, enable speculation, and then fail at the first
+    /// verify with the generation already under way.
+    ///
+    /// Note this says nothing about whether a model DECODES: every one of
+    /// those installs decodes normally, and the batched pass is used by
+    /// speculation alone.
+    pub(crate) fn speculation_blocker(
+        index: &ResidentIndex,
+        arch: &ArchConfig,
+        has_head: bool,
+    ) -> Option<String> {
+        // THE ARCHITECTURAL CHECKS COME FIRST, and the order is a choice about
+        // which reason is more useful. A MoE or sub-4-bit install cannot
+        // speculate whatever head it acquires, so naming the head as the
+        // obstacle would send a reader looking for a checkpoint that does not
+        // help. It also makes these two arms reachable on the fixtures that
+        // exist, which a head-first order does not.
+        if arch.num_experts != 0 {
+            return Some(format!(
+                "the batched verify is dense-only and this install routes to \
+                 {} experts; the routed pair has no batched kernel",
+                arch.num_experts
+            ));
+        }
+        // The batched GEMM has one arm. Read off a tensor the verify really
+        // dispatches rather than off the manifest, so a hand-edited manifest
+        // cannot talk its way past it.
+        //
+        // THE FIRST FULL-ATTENTION LAYER, not layer 0. This architecture is
+        // three linear layers to one full, so layer 0 has no `self_attn.*` at
+        // all -- probing it reports "not in the resident index" on a perfectly
+        // good install, which is a wrong answer dressed as a cautious one.
+        let full = (0..arch.num_layers as usize).find(|&l| !arch.layer_is_linear(l));
+        let Some(full) = full else {
+            return Some(
+                "the batched verify needs a full-attention layer to probe and this \
+                 install declares none"
+                    .to_string(),
+            );
+        };
+        let probe = prefixed_layer_tensor(TRUNK_PREFIX, full, "self_attn.q_proj.weight");
+        match index.entries.get(&probe) {
+            None => Some(format!(
+                "cannot tell whether the batched verify can run: {probe} is not in \
+                 the resident index"
+            )),
+            Some(e) if e.dtype != Self::BATCHED_GEMM_DTYPE => Some(format!(
+                "the batched verify is INT4-only and this install's {probe} is dtype {} \
+                 (the 1-bit and 2-bit checkpoints of this architecture have no batched \
+                 kernel); the model decodes normally, only speculation is unavailable",
+                e.dtype
+            )),
+            Some(_) => {
+                if !has_head {
+                    return Some(format!(
+                        "this install carries no multi-token-prediction head \
+                         ({FC} is not in the resident index)"
+                    ));
+                }
+                None
+            }
+        }
+    }
+
     /// How many head positions have been written: the head's KV covers
     /// `[0, kv_position())`, so the next step must be taken AT that position.
     ///
@@ -206,14 +302,63 @@ pub(crate) fn dump_dir() -> Option<std::path::PathBuf> {
     std::env::var_os("MFERENCE_MTP_DUMP").map(std::path::PathBuf::from)
 }
 
-/// Reads `MFERENCE_MTP_DRAFT`. Unset, unparsable or 0 is off, matching the
-/// `MFERENCE_PREFILL_CHUNK` seam next door rather than inventing a third
-/// convention for the same shape of switch.
-pub(crate) fn draft_depth_from_env() -> usize {
-    std::env::var("MFERENCE_MTP_DRAFT")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .unwrap_or(0)
+/// What a caller asked for, which is NOT the same question as whether the
+/// install can serve it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum MtpDraftPolicy {
+    /// Build a head iff the install carries one. An install without one is
+    /// not an error: nobody asked for anything this install cannot do.
+    Auto,
+    /// Never build one, whatever the install carries. What every MEASURING
+    /// caller passes, for AGENTS.md Gotcha 35's reason -- a harness that
+    /// sensed the environment would let a frozen footprint row acquire the
+    /// head's allocation without saying so.
+    Off,
+    /// Build one at this depth, and ERROR if the install has no head.
+    Fixed(usize),
+}
+
+impl MtpDraftPolicy {
+    /// The depth `Auto` resolves to. A round of block B takes `B + 1` draft
+    /// steps and verifies `B + 1` rows, so this is the largest block the
+    /// resolved state can serve; block 2 is the measured optimum
+    /// (`docs/MTP.md`), and a caller wanting more asks for it explicitly.
+    pub const AUTO_DEPTH: usize = 2;
+
+    /// Reads `MFERENCE_MTP_DRAFT`.
+    pub fn from_env() -> Self {
+        Self::from_env_value(std::env::var("MFERENCE_MTP_DRAFT").ok().as_deref())
+    }
+
+    /// The mapping [`Self::from_env`] applies, as a pure function of the
+    /// string, so it can be tested without a process-global write that would
+    /// race every other test in the binary.
+    ///
+    /// **UNSET is `Auto`, and that one line is what turned this feature from
+    /// opt-in into detected.** An explicit 0 is still off, and any other
+    /// parsable number is still an explicit depth, so nothing that used to
+    /// work reads differently. An UNPARSABLE value is `Auto` rather than off,
+    /// matching the unset case: a typo should not silently disable a feature
+    /// the install can serve.
+    pub fn from_env_value(raw: Option<&str>) -> Self {
+        match raw.and_then(|v| v.trim().parse::<usize>().ok()) {
+            None => MtpDraftPolicy::Auto,
+            Some(0) => MtpDraftPolicy::Off,
+            Some(n) => MtpDraftPolicy::Fixed(n),
+        }
+    }
+}
+
+/// Whether this install carries a multi-token-prediction head.
+///
+/// **This is read off the RESIDENT INDEX and there is no manifest field, by
+/// design** (`crates/repack/CLAUDE.md`): the answer is the bytes, so nothing
+/// can claim a head the install does not have, and a hand-edited manifest
+/// cannot lie about it. It is also the whole of the detection story -- the
+/// head's other tensors are checked in [`MtpState::build`], where a partial
+/// head is an error rather than a reason to decline.
+pub fn install_has_mtp_head(index: &ResidentIndex) -> bool {
+    index.entries.contains_key(FC)
 }
 
 impl RealForwardRunner {
@@ -605,6 +750,13 @@ impl RealForwardRunner {
     }
 
     /// The configured draft depth, 0 when drafting is off.
+    /// Why speculative decoding cannot run on this runner, or `None` if it
+    /// can. See [`MtpState::speculation_blocker`]; this is the reachable form,
+    /// answering for the install actually open.
+    pub fn speculation_blocker(&self) -> Option<String> {
+        MtpState::speculation_blocker(&self.index, &self.arch, self.real_mtp.is_some())
+    }
+
     pub fn mtp_draft_depth(&self) -> usize {
         self.real_mtp.as_ref().map_or(0, |m| m.depth)
     }
