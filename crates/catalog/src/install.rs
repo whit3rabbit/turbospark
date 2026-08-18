@@ -244,10 +244,34 @@ fn stream_gguf(
     let header = repack::fetch_gguf_header(&source)
         .map_err(|e| format!("reading the GGUF header of {file}: {e}"))?;
     let model_id = plan.weights.repo.clone();
-    repack::write_gguf_install_streamed(dir, &header, &source, &model_id, |stage| {
+    let arch = repack::write_gguf_install_streamed(dir, &header, &source, &model_id, |stage| {
         progress(&format!("[repack] {stage}"))
     })
-    .map_err(|e| format!("streaming {file}: {e}"))
+    .map_err(|e| format!("streaming {file}: {e}"))?;
+    record_trained_context(
+        dir,
+        repack::trained_context_meta::from_gguf(&header),
+        progress,
+    );
+    Ok(arch)
+}
+
+/// Annotate the freshly written install with the checkpoint's own context
+/// length, so `--max-context auto` has a ceiling to resolve against.
+///
+/// **Never fatal.** The install is complete and correct without it; all
+/// that is lost is the model-side half of the context policy, which falls
+/// back to the documented default exactly as it does for every install
+/// written before the field existed. Failing a 20-minute stream over an
+/// advisory number would be the wrong trade.
+fn record_trained_context(dir: &Path, trained: Option<u32>, progress: &mut impl FnMut(&str)) {
+    match trained {
+        Some(n) => match repack::trained_context_meta::record(dir, n) {
+            Ok(()) => progress(&format!("trained context {n} recorded")),
+            Err(e) => progress(&format!("could not record the trained context: {e}")),
+        },
+        None => progress("the checkpoint declares no trained context"),
+    }
 }
 
 fn stream_mlx(
@@ -338,6 +362,11 @@ fn stream_mlx(
         ))),
     }
     .map_err(|e| format!("streaming {}: {e}", plan.weights))?;
+    record_trained_context(
+        dir,
+        repack::trained_context_meta::from_config_json(&config_text),
+        progress,
+    );
     Ok(arch)
 }
 

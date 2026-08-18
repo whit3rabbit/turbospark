@@ -8,9 +8,9 @@
 use crate::failure::ParseFailure;
 use crate::options::OPTIONS;
 use crate::request::{
-    ExpertCacheSlots, InvocationRequest, Mode, PowerProfile, PrefillChunk, ReadAheadMode,
-    DEFAULT_MAX_CONTEXT, DEFAULT_MAX_NEW, DEFAULT_REPETITION_PENALTY, DEFAULT_TEMPERATURE,
-    DEFAULT_TOP_K, DEFAULT_TOP_P, MAX_TOP_K,
+    ExpertCacheSlots, InvocationRequest, MaxContext, Mode, PowerProfile, PrefillChunk,
+    ReadAheadMode, DEFAULT_MAX_NEW, DEFAULT_REPETITION_PENALTY, DEFAULT_TEMPERATURE, DEFAULT_TOP_K,
+    DEFAULT_TOP_P, MAX_TOP_K,
 };
 use foundation::runtime_config::{ALLOWED_CACHE_SLOTS, ALLOWED_CHUNK_SIZES};
 
@@ -22,6 +22,12 @@ pub enum ParseOutcome {
     Success(InvocationRequest),
     /// A help short-circuit. Carries no invocation value.
     Help,
+    /// A version short-circuit. Carries no invocation value.
+    ///
+    /// A sibling of [`Self::Help`] rather than a variant of it: both exit 0
+    /// on stdout, but a caller printing usage where a version was asked for
+    /// is a different wrong answer than either.
+    Version,
     /// One of six distinguishable typed parsing failures.
     Failure(ParseFailure),
 }
@@ -42,7 +48,7 @@ pub fn parse(tokens: &[String]) -> ParseOutcome {
     let mut chat = false;
     let mut system_parts: Vec<String> = Vec::new();
     let mut max_new = DEFAULT_MAX_NEW;
-    let mut max_context = DEFAULT_MAX_CONTEXT;
+    let mut max_context = MaxContext::default();
     let mut temperature = DEFAULT_TEMPERATURE;
     let mut top_k = DEFAULT_TOP_K;
     let mut top_p = DEFAULT_TOP_P;
@@ -66,6 +72,12 @@ pub fn parse(tokens: &[String]) -> ParseOutcome {
         // runs at all.
         if token == "--help" {
             return ParseOutcome::Help;
+        }
+        // Same rule as `--help`, one line down so help wins when both are
+        // present: whichever is reached FIRST short-circuits, which is the
+        // documented left-to-right scan rather than a precedence.
+        if token == "--version" {
+            return ParseOutcome::Version;
         }
 
         let Some(decl) = OPTIONS.iter().find(|o| o.flag == token) else {
@@ -97,10 +109,16 @@ pub fn parse(tokens: &[String]) -> ParseOutcome {
                 Ok(n) if n > 0 => max_new = n,
                 _ => return invalid("--max-new", value),
             },
-            "--max-context" => match value.parse::<u32>() {
-                Ok(n) if n > 0 => max_context = n,
-                _ => return invalid("--max-context", value),
-            },
+            "--max-context" => {
+                if value == "auto" {
+                    max_context = MaxContext::Auto;
+                } else {
+                    match value.parse::<u32>() {
+                        Ok(n) if n > 0 => max_context = MaxContext::Fixed(n),
+                        _ => return invalid("--max-context", value),
+                    }
+                }
+            }
             "--temperature" => match value.parse::<f64>() {
                 Ok(t) if t.is_finite() && t >= 0.0 => temperature = t,
                 _ => return invalid("--temperature", value),

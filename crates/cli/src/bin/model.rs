@@ -45,6 +45,7 @@ OPTIONS:
     --force                     install past a probe refusal
     --yes                       do not prompt before deleting
     --help                      print this text
+    --version                   print the version
 
 ENVIRONMENT:
     TURBOSPARK_HOME             the store root (default ~/.turbospark)
@@ -108,6 +109,14 @@ fn run(args: &[String]) -> Result<(), Error> {
     };
     if command == "--help" || command == "-h" || command == "help" {
         println!("{USAGE}");
+        return Ok(());
+    }
+    // Ahead of `parse`, which would report it as an unknown command. Same
+    // string as the other two binaries, from cargo rather than a literal:
+    // every crate here inherits `version.workspace = true`, so this is the
+    // version of whichever binary printed it.
+    if command == "--version" || command == "-V" || command == "version" {
+        println!("turbospark {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
 

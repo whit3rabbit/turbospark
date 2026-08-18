@@ -2,11 +2,13 @@
 //! `/v1/chat/completions`, Anthropic `/v1/messages`, and `/v1/models`) to
 //! loopback, or to this machine's Tailscale IPv4 address. Two modes:
 //!
-//!   turbospark-server --model <install-dir|alias> [--port N] [--max-context N]
-//!                   [--expert-cache-slots auto|N] [--bind loopback|tailnet]
+//!   turbospark-server --model <install-dir|alias> [--port N]
+//!                   [--max-context N|auto] [--expert-cache-slots auto|N]
+//!                   [--bind loopback|tailnet]
 //!                   [--power-profile performance|balanced|efficiency]
 //!                   [--max-tokens-per-sec R]
 //!   turbospark-server <tokenizer-dir> [port]
+//!   turbospark-server --help | --version
 //!
 //! The first serves real generation from a `.gturbo` install through
 //! `RealForwardRunner` (macOS only; one runner per process, requests
@@ -26,7 +28,7 @@ use std::sync::Arc;
 
 use tokenizer::MfTokenizer;
 
-const USAGE: &str = "usage: turbospark-server --model <install-dir|alias> [--port N] [--max-context N] [--expert-cache-slots auto|N] [--bind loopback|tailnet] [--power-profile performance|balanced|efficiency] [--max-tokens-per-sec R]\n       turbospark-server <tokenizer-dir> [port]\n\n`--model` takes a .gturbo directory or a turbospark-model alias (`turbospark-model list`).";
+const USAGE: &str = "usage: turbospark-server --model <install-dir|alias> [--port N] [--max-context N|auto] [--expert-cache-slots auto|N] [--bind loopback|tailnet] [--power-profile performance|balanced|efficiency] [--max-tokens-per-sec R]\n       turbospark-server <tokenizer-dir> [port]\n       turbospark-server --help | --version\n\noptions:\n  --model              a .gturbo directory or a turbospark-model alias (`turbospark-model list`)\n  --port               listen port (default 8080)\n  --max-context        context window in tokens, or auto (default auto: the\n                       checkpoint's trained context, capped by what memory\n                       holds, and 4096 when the install declares none)\n  --expert-cache-slots routed-cache slots per layer: auto or 8/16/24/32 (default auto)\n  --bind               loopback or tailnet (default loopback; tailnet is NOT auth)\n  --power-profile      performance, balanced or efficiency\n  --max-tokens-per-sec decode rate cap, greater than 0\n  --help               print this text and exit\n  --version            print the version and exit";
 
 /// Interface the server listens on. Resolution fails rather than widening:
 /// there is no path from `Tailnet` to a wildcard or LAN address.
@@ -109,10 +111,16 @@ fn tailscale_ipv4_output() -> Result<String, String> {
         .map_err(|_| "tailscale ip -4 returned non-UTF-8 output".to_string())
 }
 
+#[derive(Debug)]
 struct ModelArgs {
     model: String,
     port: u16,
-    max_context: u32,
+    /// `None` is `auto`, which is also the default -- resolved against the
+    /// checkpoint's trained context and this machine's memory at open.
+    /// Spelled as an `Option` rather than reusing `invocation`'s enum for the
+    /// reason `expert_cache_slots` is: this binary has its own flat parser
+    /// and does not depend on that crate.
+    max_context: Option<u32>,
     /// `None` is `auto`, which is also the default -- the slot count is
     /// sized against this machine and this install at open. Spelled as an
     /// `Option` rather than reusing `invocation`'s enum because this binary
@@ -126,16 +134,24 @@ struct ModelArgs {
 }
 
 /// Parses the `--model` mode's flags. Returns `Ok(None)` when the first
-/// argument is not `--model`, leaving the caller on the legacy positional
-/// path.
+/// argument is not an OPTION at all, leaving the caller on the legacy
+/// positional path.
+///
+/// **The test used to be `args[0] == "--model"`, and that is why
+/// `turbospark-server --port 8080 --model X` died with "failed to load
+/// tokenizer".** Any flag-led invocation whose first token was not exactly
+/// `--model` fell through to the scripted mode, which read that flag as a
+/// tokenizer DIRECTORY and reported a filesystem error about a path nobody
+/// had typed. Anything starting with `-` is now handled here, so a
+/// mis-ordered or misspelled flag gets the usage text.
 fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
-    if args.first().map(String::as_str) != Some("--model") {
+    if !args.first().is_some_and(|a| a.starts_with('-')) {
         return Ok(None);
     }
     let mut parsed = ModelArgs {
         model: String::new(),
         port: 8080,
-        max_context: 4096,
+        max_context: None,
         expert_cache_slots: None,
         bind: BindMode::Loopback,
         power_profile: None,
@@ -151,7 +167,17 @@ fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
         match flag {
             "--model" => parsed.model = value.clone(),
             "--port" => parsed.port = value.parse::<u16>().map_err(|e| format!("--port: {e}"))?,
-            "--max-context" => parsed.max_context = number()?,
+            "--max-context" => {
+                parsed.max_context = if value == "auto" {
+                    None
+                } else {
+                    let n = number()?;
+                    if n == 0 {
+                        return Err("--max-context must be auto or greater than 0".to_string());
+                    }
+                    Some(n)
+                }
+            }
             "--expert-cache-slots" => {
                 parsed.expert_cache_slots = if value == "auto" {
                     None
@@ -234,12 +260,27 @@ fn open_real_model(args: &ModelArgs) -> Result<Arc<dyn turbospark_server::ChatMo
         args.expert_cache_slots,
         rate,
     )?;
-    // The slot count is the RESOLVED one, never `args`: under `auto` the
-    // request carries no number, and the figure has to be readable beside
-    // any throughput or footprint the operator goes on to measure.
+    // Both sized figures are the RESOLVED ones, never `args`: under `auto`
+    // the request carries no number, and each has to be readable beside any
+    // throughput or footprint the operator goes on to measure. The context
+    // line additionally names the checkpoint's own trained window, which is
+    // what explains an `auto` of 4,096 on a machine with room for more.
+    let context = model.context_plan();
     eprintln!(
-        "model open (max_context {}, {} expert cache slots{}, {} profile, rate cap {})",
-        args.max_context,
+        "model open (max_context {}{} [{}, {:.0} MiB of KV, suggested {}], \
+         {} expert cache slots{}, {} profile, rate cap {})",
+        context.resolved,
+        if args.max_context.is_none() {
+            " (auto)"
+        } else {
+            ""
+        },
+        match context.trained {
+            Some(t) => format!("model {t}"),
+            None => "model declares none".to_string(),
+        },
+        context.kv_bytes as f64 / (1024.0 * 1024.0),
+        context.suggested,
         model.expert_cache_slots(),
         if args.expert_cache_slots.is_none() {
             " (auto)"
@@ -272,12 +313,37 @@ fn open_scripted(tokenizer_dir: &str) -> Result<Arc<dyn turbospark_server::ChatM
     )))
 }
 
+/// Text a `--help` or `--version` token short-circuits to, whichever is
+/// reached FIRST in a left-to-right scan.
+///
+/// Handled ahead of [`parse_model_args`] because both take no value, and
+/// that loop advances two tokens per flag: reaching them there would consume
+/// whatever followed as a value. Mirrors `turbospark-check`, where
+/// `crates/invocation`'s scan returns at the token for the same reason.
+fn short_circuit(args: &[String]) -> Option<String> {
+    args.iter().find_map(|arg| match arg.as_str() {
+        "--help" | "-h" => Some(format!("{USAGE}\n")),
+        // From cargo, not a literal, and deliberately NOT by depending on
+        // `turbospark-invocation` for its `render_version`: every crate here
+        // inherits `version.workspace = true`, so this env var is the same
+        // string that crate would return, and a dependency edge added for
+        // one format string is the wrong trade. The two spellings are
+        // pinned against each other by `the_version_line_matches_the_clis`.
+        "--version" | "-V" => Some(format!("turbospark {}\n", env!("CARGO_PKG_VERSION"))),
+        _ => None,
+    })
+}
+
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.is_empty() {
         eprintln!("{USAGE}");
         return std::process::ExitCode::from(2);
+    }
+    if let Some(text) = short_circuit(&args) {
+        print!("{text}");
+        return std::process::ExitCode::SUCCESS;
     }
 
     let (model, port, bind) = match parse_model_args(&args) {
@@ -427,11 +493,13 @@ mod tests {
     #[test]
     fn model_mode_defaults_and_overrides() {
         let d = parse(&["--model", "/tmp/m"]).unwrap().unwrap();
-        // Slots default to `None`, i.e. `auto`: sized at open against this
-        // machine and this install, never below the shipped 16.
+        // BOTH sized knobs default to `None`, i.e. `auto`: the slot count is
+        // sized against this machine and this install and never drops below
+        // the shipped 16, and the context window is sized against the
+        // checkpoint's trained context and what memory holds.
         assert_eq!(
             (d.port, d.max_context, d.expert_cache_slots),
-            (8080, 4096, None)
+            (8080, None, None)
         );
         let o = parse(&[
             "--model",
@@ -447,7 +515,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             (o.port, o.max_context, o.expert_cache_slots),
-            (9, 1024, Some(32))
+            (9, Some(1024), Some(32))
         );
         // `auto` is accepted by name as well as by omission, and is the one
         // value the allowed-set check must not reject.
@@ -456,6 +524,69 @@ mod tests {
             .unwrap();
         assert_eq!(a.expert_cache_slots, None);
         assert!(parse(&["--model", "/tmp/m", "--expert-cache-slots", "20"]).is_err());
+
+        // The context window takes the same `auto`-or-a-number grammar, and
+        // unlike the slot count it has no allowed set to check against: every
+        // positive value is a legal KV allocation.
+        let c = parse(&["--model", "/tmp/m", "--max-context", "auto"])
+            .unwrap()
+            .unwrap();
+        assert_eq!(c.max_context, None);
+        // Zero is refused rather than read as `auto`: a window of zero admits
+        // no prompt, and the flag already has a spelling for "you decide".
+        assert!(parse(&["--model", "/tmp/m", "--max-context", "0"]).is_err());
+        assert!(parse(&["--model", "/tmp/m", "--max-context", "lots"]).is_err());
+    }
+
+    /// **A flag-led invocation must not fall through to the scripted mode.**
+    /// The mode test used to be `args[0] == "--model"`, so
+    /// `--port 8080 --model X` was read as a positional TOKENIZER DIRECTORY
+    /// named `--port` and died with a filesystem error about a path nobody
+    /// typed. Anything starting with `-` belongs to this parser.
+    #[test]
+    fn a_flag_in_any_position_stays_out_of_the_scripted_mode() {
+        // Mis-ordered but complete: parsed, not mistaken for a directory.
+        let ordered = parse(&["--port", "9", "--model", "/tmp/m"])
+            .unwrap()
+            .unwrap();
+        assert_eq!((ordered.port, ordered.model.as_str()), (9, "/tmp/m"));
+        // A misspelled flag gets the usage text rather than a tokenizer error.
+        let err = parse(&["--modle", "/tmp/m"]).unwrap_err();
+        assert!(err.contains("unknown option"), "{err}");
+        // And a real positional path still reaches the scripted mode.
+        assert!(parse(&["/tmp/tokenizer-dir"]).unwrap().is_none());
+    }
+
+    /// `--help` and `--version` are handled ahead of the flag loop, because
+    /// that loop advances two tokens per flag and would eat what follows.
+    /// Whichever is reached first in a left-to-right scan wins.
+    #[test]
+    fn help_and_version_short_circuit_before_anything_is_parsed() {
+        assert!(super::short_circuit(&owned(&["--help"]))
+            .unwrap()
+            .contains("usage:"));
+        assert!(super::short_circuit(&owned(&["-h"]))
+            .unwrap()
+            .contains("usage:"));
+        // Reachable past other flags, and NOT consuming a value.
+        assert!(super::short_circuit(&owned(&["--model", "/tmp/m", "--help"])).is_some());
+        assert!(super::short_circuit(&owned(&["--model", "/tmp/m"])).is_none());
+        assert!(super::short_circuit(&owned(&["/tmp/dir"])).is_none());
+    }
+
+    /// The version line matches `turbospark-check`'s to the character. The
+    /// two are produced independently (this binary reads `CARGO_PKG_VERSION`
+    /// directly rather than depending on the parser crate for one format
+    /// string), so nothing but this pins them together.
+    #[test]
+    fn the_version_line_matches_the_clis() {
+        let ours = super::short_circuit(&owned(&["--version"])).unwrap();
+        assert_eq!(ours, format!("turbospark {}\n", env!("CARGO_PKG_VERSION")));
+        assert!(super::short_circuit(&owned(&["-V"])).unwrap() == ours);
+    }
+
+    fn owned(items: &[&str]) -> Vec<String> {
+        items.iter().map(|s| s.to_string()).collect()
     }
 
     #[test]

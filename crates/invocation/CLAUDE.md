@@ -51,7 +51,36 @@ cargo test -p turbospark-invocation
    5. `tests/usage_and_status.rs`'s hardcoded option-count assertion.
    *Note: Because parser matches end in `unreachable!`, missing a match arm results in a runtime panic rather than a compile error.*
 
-2. **Two flags take an `auto` keyword, and only one of them defaults to it.** `--prefill-chunk` parses `auto` into `PrefillChunk::Auto` but defaults to `Fixed(DEFAULT_CHUNK_SIZE)`; `--expert-cache-slots` parses `auto` into `ExpertCacheSlots::Auto` and **defaults to it**, because a slot count that is right for one machine is wrong for the next and this crate may not look at either the machine or the install. Both enums cross into `crates/runtime` unresolved, which is the same division `PowerProfile` takes -- and note that enum is DUPLICATED rather than shared (this crate depends only on `foundation`, so `crates/cli` maps between the two spellings). Adding a third such flag means a third mapping, not a new dependency edge.
+2b. **`--version` is a THIRD parse outcome, not a variant of `Help`.** Both
+   exit 0 on the primary stream, but a caller printing the usage table where a
+   version was asked for is its own wrong answer, so `ParseOutcome::Version`
+   is a sibling and `stream_routing` gives it `render_version()`. It
+   short-circuits at the token it is reached at, exactly as `--help` does, so
+   whichever comes FIRST wins and neither needs `--model` to be present. The
+   string comes from `CARGO_PKG_VERSION` through `usage::VERSION`: every crate
+   here inherits `version.workspace = true`, which is what lets one pure
+   library answer `--version` for all three binaries. A hand-maintained
+   constant would be a second place to forget on a release, and the failure
+   mode is a binary confidently reporting the wrong version.
+
+2. **THREE flags take an `auto` keyword, and two of them default to it.** `--prefill-chunk` parses `auto` into `PrefillChunk::Auto` but defaults to `Fixed(DEFAULT_CHUNK_SIZE)`; `--expert-cache-slots` parses `auto` into `ExpertCacheSlots::Auto` and **defaults to it**, because a slot count that is right for one machine is wrong for the next and this crate may not look at either the machine or the install. Both enums cross into `crates/runtime` unresolved, which is the same division `PowerProfile` takes -- and note that enum is DUPLICATED rather than shared (this crate depends only on `foundation`, so `crates/cli` maps between the two spellings). Adding a third such flag means a third mapping, not a new dependency edge.
+
+   `--max-context` is the third, and it also defaults to `Auto`. It differs
+   from the other two in taking an arbitrary positive integer rather than a
+   member of a published allowed set: a context window is a per-token KV
+   allocation, so every positive value is legal and the only real bound is
+   what memory holds. Zero is refused rather than read as `auto`, since the
+   flag already has a spelling for "you decide" and a window of zero admits
+   no prompt.
+
+   **This is the first `auto` on an axis that is NOT throughput-only.** The
+   slot count cannot move a digest (output is byte-identical across
+   8/16/24/32 since AGENTS.md Gotcha 27's fix), where a context window
+   decides how much KV is allocated and how long a prompt is admitted. What
+   licenses the sensing default anyway is the resolver's rule that an install
+   declaring no trained context resolves to `DEFAULT_MAX_CONTEXT` -- which is
+   every install written before that field existed, so nothing already on
+   disk moves. `crates/runtime/src/context_policy.rs` owns it.
 
    The consequence for a test: `request_defaults.rs` asserts `ExpertCacheSlots::Auto`, not a number, so the documented default is a POLICY. What that policy resolves to, and the floor guaranteeing it never resolves below the count that used to be hardcoded here, live in `crates/runtime/src/expert_cache_policy.rs`.
 

@@ -34,6 +34,7 @@ mod synthetic_model;
 mod synthetic_muse;
 mod synthetic_qwen;
 mod synthetic_real;
+mod trained_context;
 
 pub use arch_registry::{
     config_json_family, describe_gguf_architecture, gguf_arch_support, hf_family_for_model_type,
@@ -112,6 +113,12 @@ pub use synthetic_qwen::{
     build_synthetic_qwen_gdn_moe_install, tiny_qwen_gdn_dense_arch, tiny_qwen_gdn_moe_arch,
 };
 pub use synthetic_real::build_synthetic_gemma4_real_install;
+/// The checkpoint's own trained context length: read it out of either
+/// intake format, record it in an install, read it back. See the module
+/// docs for why this is install metadata rather than an `ArchConfig` field.
+pub mod trained_context_meta {
+    pub use crate::trained_context::{from_config_json, from_gguf, peek, record};
+}
 
 // Token id width consumed from the core primitives, keeping the dependency
 // edge live and documenting the interchange type this crate uses throughout.

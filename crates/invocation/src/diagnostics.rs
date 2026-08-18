@@ -44,7 +44,9 @@ pub struct StreamRouting {
 /// status.
 pub fn exit_status(outcome: &ParseOutcome) -> ExitStatus {
     match outcome {
-        ParseOutcome::Success(_) | ParseOutcome::Help => ExitStatus::Success,
+        ParseOutcome::Success(_) | ParseOutcome::Help | ParseOutcome::Version => {
+            ExitStatus::Success
+        }
         ParseOutcome::Failure(_) => ExitStatus::InvalidInvocation,
     }
 }
@@ -63,6 +65,10 @@ pub fn stream_routing(outcome: &ParseOutcome) -> StreamRouting {
         },
         ParseOutcome::Help => StreamRouting {
             primary: Some(render_usage()),
+            diagnostic: None,
+        },
+        ParseOutcome::Version => StreamRouting {
+            primary: Some(crate::usage::render_version()),
             diagnostic: None,
         },
         ParseOutcome::Failure(failure) => StreamRouting {

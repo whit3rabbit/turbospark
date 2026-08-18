@@ -120,6 +120,22 @@ cargo check --target x86_64-unknown-linux-gnu \
 # (interactive REPL). See DEVIATIONS.md for scope.
 cargo run -p turbospark-cli --bin turbospark-check -- --model /path/to/model --prompt "hi"
 
+# `--help` lists every flag with its default; `--version` prints the
+# workspace version. Both short-circuit at the token they are reached at, so
+# neither needs `--model`, and `turbospark-server` answers both too.
+cargo run -p turbospark-cli --bin turbospark-check -- --help
+cargo run -p turbospark-cli --bin turbospark-check -- --version
+
+# `--max-context` defaults to `auto`: the checkpoint's own trained context
+# (`arch.trainedContext` in the install's manifest), capped by what memory
+# holds, and 4,096 when the install declares none -- which is every install
+# written before that field existed, so nothing on disk changed footprint.
+# The startup line prints the resolved window, the model's own, the KV bytes
+# and what `auto` would have chosen. Exceeding the trained context WARNS;
+# exceeding what memory holds is REFUSED with the subtraction (Gotcha 55).
+cargo run --release -p turbospark-cli --bin turbospark-check -- \
+  --model gemma4 --messages-file /tmp/p.json --max-context auto
+
 # Find, inspect and install models (docs/MODELS.md). `--model` above takes an
 # ALIAS as well as a path, resolved against the store; an existing directory
 # always wins, so nothing that used to work changes.
@@ -2140,6 +2156,71 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
     leaves the routed half per token (`crates/runtime` Gotcha 14), measures
     1.22x, and moves the hit rate from 81.2% to 81.4%, which is what "the
     union does nothing" looks like from the other side.
+
+55. **THE CHECKPOINT'S TRAINED CONTEXT IS INSTALL METADATA, NOT AN
+    `ArchConfig` FIELD, AND THAT IS A DECISION ABOUT WHAT VALIDATION IS FOR.**
+    `--max-context` defaults to `auto` since 2026-08-17, resolving to
+    `min(trained context, largest window fitting a quarter of the memory
+    pool)`. The trained context comes from `max_position_embeddings`
+    (safetensors, read from `text_config` before the root -- the multimodal
+    wrappers nest the text model and put a VISION config beside it) or
+    `<arch>.context_length` (GGUF), and lands in `manifest.json` as
+    `arch.trainedContext`, written by `catalog::install` after the walk.
+
+    **It is deliberately not in `ArchConfig`**, even though it looks like one
+    of that struct's shape fields, and the reason is that `arch_validation`
+    compares one field by field against a per-FAMILY baseline while a trained
+    context is per-CHECKPOINT: a YaRN-extended release declares a longer one
+    than the base it was built from. Putting it there would make every such
+    pair a baseline mismatch, would need a per-checkpoint claim inside a
+    per-architecture table, and would redden the whole-struct
+    `assert_eq!(derived, baseline)` comparisons in
+    `gguf_checkpoint_network.rs`. It is also read by no kernel. The cost of
+    keeping it out was measured before choosing: the field would have touched
+    26 full `ArchConfig` literals, and threading it through the walk instead
+    would have touched ~60 call sites across 28 files, so the third option --
+    annotate the manifest after the walk, in the ONE place both intake formats
+    meet -- is what landed.
+
+    **THREE DEFAULTS HERE ARE CLAIMS ABOUT WHAT SILENCE MEANS** (Gotcha 39's
+    rule, three times in one feature). An install declaring NO trained context
+    resolves `auto` to `DEFAULT_MAX_CONTEXT` and never to what memory allows:
+    that is every install written before the field existed, and sizing from
+    free RAM alone would take a 13 GB install from its documented 4,096 to
+    ~250,000 the first time anyone re-ran the same command. A declared value of
+    ZERO is what a missing key looks like after a cast and reads as unknown,
+    never as a window of zero. And `physical_memory()` answering 0 means the
+    PROBE is unavailable (it does, off macOS) rather than that the machine has
+    no memory -- reading it as an empty budget would refuse every explicit
+    window and resolve every `auto` to a context of zero.
+
+    **The two failure modes are different kinds of thing on purpose.** Past
+    the trained context WARNS (RoPE extrapolates rather than failing, some
+    checkpoints carry YaRN scaling meant to exceed it, and the check cannot
+    apply at all to an install that declares none, so refusing would be
+    enforced on some installs and not others). Past what memory holds is
+    REFUSED with the whole subtraction shown, because `KvCacheManager::new`
+    allocates every layer up front and its failure is a Metal allocation error
+    with no number in it naming the flag. Measured on the real ternary 27B:
+    `--max-context 1000000 needs 61.0 GiB of KV cache; 25.0 GiB available
+    (36.0 GiB physical - 7.0 GiB weights and expert cache - 4.0 GiB reserve).
+    Largest context that fits: 408576`.
+
+    Two arithmetic traps in estimating the KV, both of which make an estimate
+    wrong by a factor rather than a margin. A sliding-window layer is a RING
+    capped at `sliding_window + 128`, so past that cap it stops growing and a
+    model's per-token cost is its FULL layers alone -- Gemma 4 is 5 of 30 and
+    costs 20 KiB/token where a dense 7B costs 128, and a per-token model that
+    misses this is 6x high on Gemma. And `committed_bytes` is NOT the weight
+    file's size: Gemma's `model_weights.bin` is 1.26 GiB while its expert
+    table is 12 GB, of which the slot cache pins ~3.0 GiB at 32 slots, so
+    counting the mapped file alone lets an explicit window claim memory the
+    slot cache is about to take.
+
+    The estimate is cross-checked against the one KV figure in this repo
+    measured on two independent counters: 32 layers at 8,192 comes out to
+    exactly the 1,024 MiB of the 1,201 MiB `mistral_memory_oracle` peak that
+    Gotcha 40 attributes to KV.
 
 ## Per-Crate Documentation
 

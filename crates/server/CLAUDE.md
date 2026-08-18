@@ -65,7 +65,7 @@ ANTHROPIC_BASE_URL=http://127.0.0.1:8080 ANTHROPIC_API_KEY=unused \
 # build decodes far too slowly to be usable). `--model` takes a directory
 # or a `turbospark-model` alias.
 cargo run --release -p turbospark-server --bin turbospark-server -- \
-  --model ~/models/gemma4.gturbo [--port N] [--max-context N] [--expert-cache-slots auto|N] \
+  --model ~/models/gemma4.gturbo [--port N] [--max-context N|auto] [--expert-cache-slots auto|N] \
   [--bind loopback|tailnet] [--power-profile performance|balanced|efficiency] \
   [--max-tokens-per-sec R]
 cargo run --release -p turbospark-server --bin turbospark-server -- --model gemma4
@@ -98,6 +98,40 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
    ```
    Feed the result back as a `tool_result` block to check the other half: that turn only renders correctly because `plan` carries `tool_call_id` across.
 10. **Rate control is process-level, and that is a decision rather than an omission.** `--power-profile` / `--max-tokens-per-sec` are resolved ONCE in `main.rs` (which is also the only place this process asks the OS about Low Power Mode) and reach `GenerationConfig` through `ChatModel::rate_control`, applied in `plan` after `build_config`. There is deliberately no per-request field: there is one runner per process, a power setting is a property of the machine rather than of a caller's prompt, and a request that could pick its own rate would let any client opt out of the machine's power policy. The consequence to know is that a cap lengthens the runner mutex hold in proportion, so a capped server queues concurrent requests for longer -- acceptable only because Gotcha 1's queue is already serial.
+
+15. **`--help` and `--version` are handled BEFORE the flag loop, and a
+   flag-led invocation can no longer fall through to the scripted mode.** Both
+   short-circuits take no value while that loop advances two tokens per flag,
+   so reaching them there would consume whatever followed. The mode test was
+   also `args[0] == "--model"` exactly, which meant
+   `turbospark-server --port 8080 --model X` was read as a positional
+   TOKENIZER DIRECTORY named `--port` and died with
+   `failed to load tokenizer: ... No such file or directory` -- a filesystem
+   error about a path nobody typed. Anything starting with `-` now belongs to
+   `parse_model_args`, so a mis-ordered or misspelled flag gets the usage
+   text. `a_flag_in_any_position_stays_out_of_the_scripted_mode` pins both
+   directions, including that a real positional path still reaches the
+   scripted mode.
+
+   The version string comes from `CARGO_PKG_VERSION` rather than from
+   depending on `turbospark-invocation` for its `render_version`: every crate
+   inherits `version.workspace = true`, so the two are the same string, and
+   `the_version_line_matches_the_clis` is what keeps them spelled the same.
+
+16. **`--max-context` defaults to `auto`, and what makes an
+   environment-sensing default safe is that an install declaring no trained
+   context resolves to 4,096.** `RealChatModel::open` takes it as a POLICY
+   (`Option<u32>`, `None` meaning auto) exactly as it takes the slot count,
+   resolves it through `runtime::resolve_max_context` BEFORE allocating, and
+   exposes the result as `context_plan()` for the startup line. Two failure
+   modes are deliberately different: past the checkpoint's trained context is
+   a WARNING at startup (RoPE extrapolates rather than failing, and an install
+   written before that field existed declares none, so refusing would be
+   enforced on some installs and not others), while past what memory holds is
+   a REFUSAL carrying the whole subtraction -- otherwise it surfaces as a
+   Metal allocation failure with no number in it pointing at the flag.
+   `tests/real_backend.rs` pins BOTH sized knobs rather than letting either
+   sense the machine, for AGENTS.md Gotcha 35's reason.
 
 11. **`--bind tailnet` fails rather than widening, and is not authentication.** It binds only the single address `tailscale ip -4` reports, and only when that address is a dotted-quad inside 100.64.0.0/10; zero, several, IPv6, out-of-range, or malformed output is an error, never a fall back to loopback or a wildcard. Every device the Tailnet ACL admits gets unauthenticated access to the full API (no auth, no TLS). The flag exists only in `--model` mode; the scripted `<tokenizer-dir>` mode always binds loopback.
 

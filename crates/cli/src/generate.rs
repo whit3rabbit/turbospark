@@ -41,6 +41,14 @@ pub(crate) struct Session {
     /// Power Mode toggling mid-chat change the pace for reasons the caller
     /// never asked about.
     pub(crate) rate: RateControl,
+    /// The RESOLVED context window, never `request.max_context`.
+    ///
+    /// Under `auto` the request carries no number, and every consumer of
+    /// this value -- the KV cache the runner already allocated, the
+    /// admission check, the per-turn budget -- has to agree with what was
+    /// allocated rather than with what was asked for. Reading the request
+    /// downstream of `open_session` is how those two come apart.
+    pub(crate) max_context: u32,
 }
 
 /// Splits a generated token's text into the answer and the reasoning that
@@ -126,7 +134,7 @@ fn run_prompt(request: &InvocationRequest, prompt: &str) {
     // Clamp rather than let `check_admission` refuse the whole run: a long
     // raw prompt generates into whatever room is left, the same as the other
     // two modes.
-    let max_new = match clamp_max_new(request, prompt_ids.len()) {
+    let max_new = match clamp_max_new(&session, request, prompt_ids.len()) {
         Ok(n) => n,
         Err(e) => {
             eprintln!("note: not attempting real generation: {e}");
@@ -170,7 +178,7 @@ fn run_messages_file(request: &InvocationRequest, path: &str) {
             return;
         }
     };
-    let max_new = match clamp_max_new(request, prompt_ids.len()) {
+    let max_new = match clamp_max_new(&session, request, prompt_ids.len()) {
         Ok(n) => n,
         Err(e) => {
             eprintln!("note: not attempting real generation: {e}");
@@ -202,14 +210,22 @@ pub(crate) fn render_prompt(
 
 /// The per-turn generation budget: never more than `--max-new`, never more
 /// than the context leaves room for.
-pub(crate) fn clamp_max_new(request: &InvocationRequest, prompt_len: usize) -> Result<u32, String> {
-    if prompt_len >= request.max_context as usize {
+///
+/// Takes the window from the SESSION rather than the request, because under
+/// `--max-context auto` the request carries no number and the KV cache has
+/// already been allocated at the resolved one.
+pub(crate) fn clamp_max_new(
+    session: &Session,
+    request: &InvocationRequest,
+    prompt_len: usize,
+) -> Result<u32, String> {
+    if prompt_len >= session.max_context as usize {
         return Err(format!(
             "context overflow: prompt {prompt_len} reaches max_context {}",
-            request.max_context
+            session.max_context
         ));
     }
-    let room = request.max_context - prompt_len as u32;
+    let room = session.max_context - prompt_len as u32;
     Ok(request.max_new.min(room))
 }
 
@@ -281,7 +297,7 @@ pub(crate) fn stream_turn(
             &session.tokenizer,
             prompt_ids,
             &config,
-            request.max_context,
+            session.max_context,
             vocab_size,
             chunk,
             on_progress,
@@ -291,7 +307,7 @@ pub(crate) fn stream_turn(
             &session.tokenizer,
             prompt_ids,
             &config,
-            request.max_context,
+            session.max_context,
             vocab_size,
             on_progress,
         )?,
@@ -417,6 +433,46 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
         )
     })?;
 
+    // Resolve the context window BEFORE opening, because the failure this
+    // catches is an allocation: `KvCacheManager::new` sizes every layer's K
+    // and V buffers up front, so a window that does not fit is a Metal
+    // allocation error or a swapping machine, with no number in either
+    // pointing back at `--max-context`.
+    //
+    // The three inputs are the ones neither `crates/invocation` (pure) nor
+    // the policy module (portable) may read for itself: the checkpoint's own
+    // trained context out of the install, the mapped weight region, and this
+    // machine's memory.
+    let trained = repack::trained_context_meta::peek(model_dir);
+    let plan = runtime::resolve_max_context(
+        match request.max_context {
+            invocation::MaxContext::Auto => runtime::MaxContext::Auto,
+            invocation::MaxContext::Fixed(n) => runtime::MaxContext::Fixed(n),
+        },
+        &arch,
+        trained,
+        invocation::request::DEFAULT_MAX_CONTEXT,
+        runtime::physical_memory(),
+        runtime::committed_bytes(model_dir),
+    )
+    .map_err(|e| e.to_string())?;
+
+    if !request.quiet {
+        report_context(&plan, request.max_context);
+    }
+    // Past the checkpoint's trained context is a QUALITY warning and never an
+    // error: RoPE extrapolates rather than failing, and an install written
+    // before the trained context was recorded declares none at all, so
+    // refusing would be enforced on some installs and not others.
+    if plan.past_trained {
+        eprintln!(
+            "warning: --max-context {} exceeds the checkpoint's trained context of {}; \
+             output quality degrades past that point",
+            plan.resolved,
+            plan.trained.unwrap_or(0)
+        );
+    }
+
     // Size the KV cache to the same bound the completion loop admits
     // against, rather than the runner's own 4096-token default, and honor
     // --expert-cache-slots instead of the runner's own fixed default.
@@ -428,7 +484,7 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
     let runner = RealForwardRunner::open_with_slot_policy(
         model_dir,
         arch,
-        request.max_context as usize,
+        plan.resolved as usize,
         match request.expert_cache_slots {
             invocation::ExpertCacheSlots::Auto => runtime::ExpertCacheSlots::Auto,
             invocation::ExpertCacheSlots::Fixed(n) => runtime::ExpertCacheSlots::Fixed(n as usize),
@@ -471,7 +527,35 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
         runner,
         shaping,
         rate,
+        max_context: plan.resolved,
     })
+}
+
+/// The resolved context window and the arithmetic behind it.
+///
+/// Reports the SUGGESTION even when the caller named a number, for the same
+/// reason the expert-cache line reports the resolved slot count: a window is
+/// most of the KV footprint, and a reader comparing a peak or a prompt
+/// refusal against another run needs to see both what was asked for and what
+/// the machine and the checkpoint would have allowed.
+fn report_context(plan: &runtime::ContextPlan, requested: invocation::MaxContext) {
+    let trained = match plan.trained {
+        Some(t) => format!("model {t}"),
+        // Worth naming rather than omitting: it is why an old install's
+        // `auto` reads 4,096 on a machine with room for far more.
+        None => "model declares none".to_string(),
+    };
+    eprintln!(
+        "context: {} tokens{} ({}, {:.0} MiB of KV; suggested {})",
+        plan.resolved,
+        match requested {
+            invocation::MaxContext::Auto => " (auto)",
+            invocation::MaxContext::Fixed(_) => "",
+        },
+        trained,
+        plan.kv_bytes as f64 / (1024.0 * 1024.0),
+        plan.suggested,
+    );
 }
 
 /// The two crates declare their own profile enums on purpose: `invocation`

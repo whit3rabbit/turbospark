@@ -105,7 +105,10 @@ fn take_turn(
     let fitted = window_fit::fit_conversation_window(
         turn,
         has_leading_instruction,
-        request.max_context as u64,
+        // The RESOLVED window, not the request: window fitting has to agree
+        // with the KV cache that was actually allocated, and under
+        // `--max-context auto` the request carries no number at all.
+        session.max_context as u64,
         measure,
     );
     if !fitted.has_room_for_generation() {
@@ -120,7 +123,7 @@ fn take_turn(
             "error: message needs {} tokens and does not fit max_context {}; \
              shorten it or raise --max-context",
             fitted.measured_length(),
-            request.max_context
+            session.max_context
         ));
     }
     if fitted.removed_turn_count() > 0 {
@@ -136,7 +139,7 @@ fn take_turn(
     let fitted_history = fitted.retained_turns().to_vec();
 
     let prompt_ids = render_prompt(&session.tokenizer, &fitted_history)?;
-    let max_new = clamp_max_new(request, prompt_ids.len())?;
+    let max_new = clamp_max_new(session, request, prompt_ids.len())?;
     let (reply, result) =
         stream_turn(session, request, &prompt_ids, max_new).map_err(|e| format!("error: {e}"))?;
     print_footer(&result, request.quiet);

@@ -49,6 +49,28 @@ fn help_prints_usage() {
     }
 }
 
+/// All three spellings print the version, and the string matches the other
+/// two binaries' to the character -- each reads `CARGO_PKG_VERSION` itself
+/// rather than sharing a helper, so nothing but a test pins them together.
+/// It also has to be handled AHEAD of the subcommand match, which would
+/// otherwise report `--version` as an unknown command.
+#[test]
+fn version_prints_the_workspace_version() {
+    for flag in ["--version", "-V", "version"] {
+        let (code, stdout, _) = run(&[flag]);
+        assert_eq!(code, 0, "{flag}");
+        assert_eq!(
+            stdout.trim(),
+            format!("turbospark {}", env!("CARGO_PKG_VERSION")),
+            "{flag}"
+        );
+        assert!(
+            !stdout.contains("USAGE"),
+            "{flag} must not print the usage table: {stdout}"
+        );
+    }
+}
+
 /// The usage text has to warn about the thing a user cannot discover any
 /// other way until it costs them twenty minutes.
 #[test]

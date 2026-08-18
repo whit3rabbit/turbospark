@@ -23,7 +23,8 @@ use crate::model::ChatModel;
 pub struct RealChatModel {
     tokenizer: MfTokenizer,
     runner: Mutex<RealForwardRunner>,
-    max_context: u32,
+    /// The RESOLVED window and the arithmetic behind it, never the request.
+    context: runtime::ContextPlan,
     vocab_size: usize,
     expert_cache_slots: usize,
     model_id: String,
@@ -35,17 +36,48 @@ impl RealChatModel {
     /// architecture comes from the install's own `manifest.json` and the
     /// tokenizer is expected to be bundled in the same directory.
     ///
-    /// `expert_cache_slots` is a POLICY rather than a count: `None` means
-    /// `auto`, sized against this machine and this install at open. Read the
-    /// count back with [`Self::expert_cache_slots`] -- under `auto` the
-    /// request says nothing about what was allocated.
+    /// `expert_cache_slots` and `max_context` are both POLICIES rather than
+    /// counts: `None` means `auto`, sized against this machine and this
+    /// install at open. Read each back with [`Self::expert_cache_slots`] and
+    /// [`Self::context_plan`] -- under `auto` the request says nothing about
+    /// what was allocated.
+    ///
+    /// A context window too large for the machine is refused HERE, before
+    /// the KV buffers are allocated, because `KvCacheManager::new` sizes
+    /// every layer up front and its failure is a Metal allocation error with
+    /// no number in it pointing back at the flag.
     pub fn open(
         model_dir: &Path,
-        max_context: u32,
+        max_context: Option<u32>,
         expert_cache_slots: Option<u32>,
         rate: RateControl,
     ) -> Result<Self, String> {
         let arch = repack::peek_manifest_arch(model_dir)?;
+        let context = runtime::resolve_max_context(
+            match max_context {
+                Some(n) => runtime::MaxContext::Fixed(n),
+                None => runtime::MaxContext::Auto,
+            },
+            &arch,
+            repack::trained_context_meta::peek(model_dir),
+            foundation::runtime_config::DEFAULT_MAX_CONTEXT,
+            runtime::physical_memory(),
+            runtime::committed_bytes(model_dir),
+        )
+        .map_err(|e| e.to_string())?;
+        // A quality warning and never an error: RoPE extrapolates rather
+        // than failing, and an install written before the trained context
+        // was recorded declares none, so refusing would apply to some
+        // installs and not others. A server runs unattended, so this goes
+        // out at startup where an operator sees it once.
+        if context.past_trained {
+            eprintln!(
+                "warning: max_context {} exceeds the checkpoint's trained context of {}; \
+                 output quality degrades past that point",
+                context.resolved,
+                context.trained.unwrap_or(0)
+            );
+        }
         let tokenizer = MfTokenizer::load_from_dir(model_dir).map_err(|e| {
             format!(
                 "failed to load a tokenizer from {}: {e}",
@@ -62,7 +94,7 @@ impl RealChatModel {
         let runner = RealForwardRunner::open_with_slot_policy(
             model_dir,
             arch,
-            max_context as usize,
+            context.resolved as usize,
             match expert_cache_slots {
                 Some(n) => runtime::ExpertCacheSlots::Fixed(n as usize),
                 None => runtime::ExpertCacheSlots::Auto,
@@ -76,7 +108,7 @@ impl RealChatModel {
         Ok(Self {
             tokenizer,
             runner: Mutex::new(runner),
-            max_context,
+            context,
             vocab_size,
             expert_cache_slots,
             model_id,
@@ -88,6 +120,13 @@ impl RealChatModel {
     /// with, for the startup line to report.
     pub fn expert_cache_slots(&self) -> usize {
         self.expert_cache_slots
+    }
+
+    /// The resolved context window and the arithmetic behind it, for the
+    /// startup line. Under `auto` the request carries no number, so a line
+    /// echoing the argument would describe nothing.
+    pub fn context_plan(&self) -> &runtime::ContextPlan {
+        &self.context
     }
 }
 
@@ -101,7 +140,7 @@ impl ChatModel for RealChatModel {
     }
 
     fn max_context(&self) -> u32 {
-        self.max_context
+        self.context.resolved
     }
 
     fn model_id(&self) -> &str {

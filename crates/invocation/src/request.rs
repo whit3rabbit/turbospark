@@ -8,7 +8,12 @@ use foundation::runtime_config::DEFAULT_CHUNK_SIZE;
 /// Documented default generated-token limit.
 pub const DEFAULT_MAX_NEW: u32 = 1024;
 /// Documented default context-size limit.
-pub const DEFAULT_MAX_CONTEXT: u32 = 4096;
+///
+/// Re-exported from `foundation` rather than restated: `crates/runtime`'s
+/// context policy resolves `auto` against the same number, and two copies
+/// would let the parser's documented default and the resolver's fallback
+/// drift apart silently.
+pub const DEFAULT_MAX_CONTEXT: u32 = foundation::runtime_config::DEFAULT_MAX_CONTEXT;
 /// Documented default sampling temperature.
 pub const DEFAULT_TEMPERATURE: f64 = 0.2;
 /// Documented default rank-based candidate count. Zero means the rank-based
@@ -137,6 +142,31 @@ pub enum ExpertCacheSlots {
     Auto,
 }
 
+/// Context-window sizing: a fixed token count, or automatic sizing against
+/// the checkpoint and the machine.
+///
+/// The THIRD flag here to take an `auto` keyword and the second to default
+/// to it, following [`ExpertCacheSlots`]. Resolution needs the install's
+/// trained context, its per-layer KV strides and the machine's memory --
+/// none of which this pure crate may look at -- so `Auto` crosses into
+/// `crates/runtime` unresolved, the same division [`PowerProfile`] takes.
+///
+/// Unlike the slot count, this axis is NOT throughput-only: it decides how
+/// much KV is allocated and how long a prompt is admitted. What makes an
+/// environment-sensing default safe anyway is the resolver's rule that an
+/// install declaring no trained context resolves to [`DEFAULT_MAX_CONTEXT`]
+/// -- which is every install written before that field existed, so nothing
+/// already on disk moves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MaxContext {
+    /// Exactly this many tokens, whatever the checkpoint and the machine
+    /// look like. Refused only when the machine cannot hold it.
+    Fixed(u32),
+    /// Automatic sizing, selected with the "auto" keyword and the default.
+    #[default]
+    Auto,
+}
+
 /// A fully populated, validated invocation.
 #[derive(Debug, Clone, PartialEq)]
 pub struct InvocationRequest {
@@ -148,8 +178,8 @@ pub struct InvocationRequest {
     pub system: Option<String>,
     /// The generated-token limit.
     pub max_new: u32,
-    /// The context-size limit.
-    pub max_context: u32,
+    /// The context-size limit, or `Auto` to size it at open.
+    pub max_context: MaxContext,
     /// The sampling temperature.
     pub temperature: f64,
     /// The rank-based candidate count; zero means disabled.

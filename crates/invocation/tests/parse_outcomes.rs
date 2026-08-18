@@ -5,7 +5,8 @@
 
 use foundation::runtime_config::{ALLOWED_CACHE_SLOTS, ALLOWED_CHUNK_SIZES};
 use turbospark_invocation::{
-    parse, ExpertCacheSlots, InvocationRequest, Mode, ParseOutcome, PowerProfile, PrefillChunk,
+    parse, ExpertCacheSlots, InvocationRequest, MaxContext, Mode, ParseOutcome, PowerProfile,
+    PrefillChunk,
 };
 
 fn tok(items: &[&str]) -> Vec<String> {
@@ -56,7 +57,7 @@ fn explicit_generation_and_sampling_values_round_trip() {
         "--quiet",
     ])));
     assert_eq!(req.max_new, 50);
-    assert_eq!(req.max_context, 2048);
+    assert_eq!(req.max_context, MaxContext::Fixed(2048));
     assert_eq!(req.temperature, 0.7);
     assert_eq!(req.top_k, 10);
     assert_eq!(req.top_p, 1.0);
@@ -151,6 +152,47 @@ fn every_documented_slot_count_is_accepted_and_auto_is_a_value() {
         "auto",
     ])));
     assert_eq!(req.expert_cache_slots, ExpertCacheSlots::Auto);
+}
+
+/// The THIRD flag on the `auto`-or-a-value grammar, and the second whose
+/// `auto` is the default. Unlike the slot count, this one takes an arbitrary
+/// positive integer rather than a member of a published set: a context window
+/// is a per-token allocation, so there is no allowed set to check against and
+/// the only real bound is what memory holds -- which this pure crate cannot
+/// look at, and `crates/runtime`'s policy checks instead.
+#[test]
+fn the_context_window_takes_a_count_or_the_auto_keyword() {
+    for tokens in [4096u32, 1, 131_072] {
+        let req = expect_success(parse(&tok(&[
+            "--model",
+            "m",
+            "--chat",
+            "--max-context",
+            &tokens.to_string(),
+        ])));
+        assert_eq!(req.max_context, MaxContext::Fixed(tokens));
+    }
+    let req = expect_success(parse(&tok(&[
+        "--model",
+        "m",
+        "--chat",
+        "--max-context",
+        "auto",
+    ])));
+    assert_eq!(req.max_context, MaxContext::Auto);
+}
+
+/// Zero is refused rather than treated as `auto`. A window of zero admits no
+/// prompt at all, and the flag already has a spelling for "you decide".
+#[test]
+fn a_zero_or_unparsable_context_window_is_refused() {
+    for bad in ["0", "-1", "many", "4096tokens", ""] {
+        let outcome = parse(&tok(&["--model", "m", "--chat", "--max-context", bad]));
+        assert!(
+            matches!(outcome, ParseOutcome::Failure(_)),
+            "--max-context {bad:?} should be refused"
+        );
+    }
 }
 
 #[test]

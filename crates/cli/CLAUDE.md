@@ -119,3 +119,30 @@ printf '[{"role":"user","content":"Explain how coastal wetlands reduce flood dam
    already prints `prefill_chunk`**, so a stdout md5 taken across a run with
    the env var set is unchanged by it -- the seam moves no printed field,
    unlike the `expert_cache_slots` case in Gotcha 6.
+
+8. **`--max-context` DEFAULTS TO `auto`, and the resolved number lives on
+   `Session`, never on the request.** `open_session` resolves the window
+   before opening (the failure it catches is an allocation), stores
+   `plan.resolved` on the session, and every downstream consumer -- the
+   admission check in `clamp_max_new`, `run_raw_completion`'s bound,
+   `chat.rs`'s window fitting -- reads THAT. Under `auto` the request carries
+   no number at all, so a consumer reading `request.max_context` would be
+   fitting a conversation against a window the KV cache was not allocated at.
+
+   Two consequences for reading a run. **The stdout md5 moves and the
+   generated text does not**, exactly as it did when the slot default changed
+   (Gotcha 6): the resolved-request block now prints `max_context: Auto`
+   instead of `4096`, so `sed 's/max_context: Auto/max_context: 4096/;
+   s/Fixed(16)/16/'` over the full stdout is what reproduces the standing
+   references. Both were re-derived that way when this landed and are
+   UNMOVED (`67a23bb5...` greedy, `ebfba17a...` sampled). And **an install
+   that declares no trained context resolves to 4,096**, which is every
+   install written before that field existed -- so nothing already on disk
+   changed footprint, and a `context:` line reading 4,096 on a machine with
+   room for far more is the install's silence, not a cap.
+
+   The startup line reports the resolved window, the checkpoint's own trained
+   context, the KV bytes and what `auto` would have chosen, for the reason the
+   expert-cache line reports the resolved slot count: the window is most of
+   the KV footprint, so no peak or prompt refusal is comparable across runs
+   without it.

@@ -65,7 +65,7 @@ fn print_resolved_request(request: &InvocationRequest) {
     let _ = writeln!(out, "  model: {}", request.model);
     let _ = writeln!(out, "  mode: {:?}", request.mode);
     let _ = writeln!(out, "  max_new: {}", request.max_new);
-    let _ = writeln!(out, "  max_context: {}", request.max_context);
+    let _ = writeln!(out, "  max_context: {:?}", request.max_context);
     let _ = writeln!(out, "  temperature: {}", request.temperature);
     let _ = writeln!(out, "  top_k: {}", request.top_k);
     let _ = writeln!(out, "  top_p: {}", request.top_p);

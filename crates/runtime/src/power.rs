@@ -132,6 +132,28 @@ pub fn low_power_mode_enabled() -> bool {
     false
 }
 
+/// Installed physical memory in bytes, for the two sizing policies
+/// ([`crate::ExpertCacheSlots`] and [`crate::MaxContext`]).
+///
+/// Here rather than in either policy module for the reason the two probes
+/// above are: those modules are portable and take the machine as a
+/// PARAMETER, so their whole test suites run anywhere. This is the one
+/// place that asks the OS.
+#[cfg(target_os = "macos")]
+pub fn physical_memory() -> u64 {
+    gpu::physical_memory()
+}
+
+/// Installed physical memory in bytes.
+///
+/// Off macOS there is no probe here and no `RealForwardRunner` to size
+/// anything for, so this answers 0 -- which makes every budget empty and
+/// every `Auto` fall back to its floor, rather than inventing a machine.
+#[cfg(not(target_os = "macos"))]
+pub fn physical_memory() -> u64 {
+    0
+}
+
 /// An explicit profile wins; otherwise Low Power Mode selects
 /// `efficiency` and its absence selects `performance`.
 ///

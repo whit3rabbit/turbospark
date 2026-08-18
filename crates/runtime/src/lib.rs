@@ -5,6 +5,7 @@
 #![forbid(unsafe_code)]
 
 mod config;
+mod context_policy;
 mod error;
 mod expert_cache_policy;
 #[cfg(target_os = "macos")]
@@ -31,12 +32,17 @@ mod real_forward_utils;
 mod router_hist;
 
 pub use config::GenerationConfig;
+pub use context_policy::{
+    committed_bytes, kv_bytes_for_context, largest_context_within, resolve_max_context,
+    ContextPlan, ContextTooLarge, MaxContext, CONTEXT_BUDGET_FRACTION, CONTEXT_GRANULARITY,
+    CONTEXT_RESERVE_BYTES, MAX_SUPPORTED_CONTEXT,
+};
 pub use error::RuntimeError;
 pub use expert_cache_policy::{ExpertCacheSlots, HEADROOM_FRACTION, HEADROOM_RESERVE_BYTES};
 pub use power::{
-    low_power_mode_enabled, rate_control_for, resolve_profile, stepped_cap, thermal_level,
-    PowerProfile, RateControl, ThermalLevel, CRITICAL_TOK_PER_SEC, READING_SPEED_TOK_PER_SEC,
-    SERIOUS_TOK_PER_SEC,
+    low_power_mode_enabled, physical_memory, rate_control_for, resolve_profile, stepped_cap,
+    thermal_level, PowerProfile, RateControl, ThermalLevel, CRITICAL_TOK_PER_SEC,
+    READING_SPEED_TOK_PER_SEC, SERIOUS_TOK_PER_SEC,
 };
 pub use producer::{ChunkedPrefillRunner, LogitProducer, ScriptedLogitProducer};
 pub use raw_completion::{

@@ -88,9 +88,58 @@ fn usage_text_enumerates_every_declared_option_with_a_default_or_allowed_value_d
     );
     let other_options = OPTIONS.len() - required_and_mode_options.len();
     assert_eq!(
-        other_options, 16,
-        "expected sixteen remaining documented options"
+        other_options, 17,
+        "expected seventeen remaining documented options"
     );
+}
+
+/// `--version` short-circuits exactly as `--help` does: it wins over a
+/// missing `--model`, over an unknown option AFTER it, and over the
+/// mode-selection check -- because the scan returns at the token rather than
+/// completing and then reporting. What it must NOT do is print usage.
+#[test]
+fn version_short_circuits_the_scan_and_prints_a_version_rather_than_usage() {
+    for tokens in [
+        vec!["--version"],
+        vec!["--version", "--nope"],
+        vec!["--model", "m", "--version"],
+    ] {
+        let outcome = parse(&tok(&tokens));
+        assert_eq!(outcome, ParseOutcome::Version, "{tokens:?}");
+        assert_eq!(exit_status(&outcome), ExitStatus::Success);
+        assert_eq!(exit_status(&outcome).code(), 0);
+
+        let routing = stream_routing(&outcome);
+        let primary = routing
+            .primary
+            .expect("a version goes to the primary stream");
+        assert!(
+            primary.contains(turbospark_invocation::VERSION),
+            "{primary}"
+        );
+        assert!(
+            !primary.contains("--model"),
+            "a version request must not print the usage table: {primary}"
+        );
+        assert_eq!(routing.diagnostic, None);
+    }
+}
+
+/// The version is cargo's, not a literal. A hand-maintained copy is a second
+/// place to forget on a release, and the failure is a binary confidently
+/// reporting the wrong number.
+#[test]
+fn the_version_comes_from_cargo() {
+    assert_eq!(turbospark_invocation::VERSION, env!("CARGO_PKG_VERSION"));
+    assert!(!turbospark_invocation::VERSION.is_empty());
+}
+
+/// Whichever short-circuit is reached FIRST wins, which is the documented
+/// left-to-right scan rather than a precedence between the two.
+#[test]
+fn the_first_short_circuit_reached_is_the_one_taken() {
+    assert_eq!(parse(&tok(&["--help", "--version"])), ParseOutcome::Help);
+    assert_eq!(parse(&tok(&["--version", "--help"])), ParseOutcome::Version);
 }
 
 #[test]

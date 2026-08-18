@@ -6,7 +6,8 @@
 
 use foundation::runtime_config::DEFAULT_CHUNK_SIZE;
 use turbospark_invocation::{
-    parse, ExpertCacheSlots, Mode, ParseFailure, ParseOutcome, PrefillChunk, ReadAheadMode,
+    parse, ExpertCacheSlots, MaxContext, Mode, ParseFailure, ParseOutcome, PrefillChunk,
+    ReadAheadMode,
 };
 
 fn tok(items: &[&str]) -> Vec<String> {
@@ -23,7 +24,13 @@ fn documented_defaults_are_applied() {
     assert_eq!(req.mode, Mode::Prompt("hi".to_string()));
     assert_eq!(req.system, None);
     assert_eq!(req.max_new, 1024);
-    assert_eq!(req.max_context, 4096);
+    // `Auto`, for the same reason `expert_cache_slots` is and one this crate
+    // is even less able to answer: the ceiling is the CHECKPOINT's trained
+    // context, which lives in the install's manifest. What keeps the sensing
+    // default safe is the resolver's rule that an install declaring none
+    // resolves to 4,096, which is every install written before that field
+    // existed.
+    assert_eq!(req.max_context, MaxContext::Auto);
     assert_eq!(req.temperature, 0.2);
     assert_eq!(req.top_k, 64);
     assert_eq!(req.top_p, 0.95);

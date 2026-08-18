@@ -21,7 +21,9 @@ pub struct OptionDecl {
     pub usage_hint: &'static str,
 }
 
-/// The complete, ordered set of eighteen recognized option spellings.
+/// The complete, ordered set of recognized option spellings. The count is
+/// asserted in `tests/usage_and_status.rs`, which is the fifth of the five
+/// places adding a flag touches (see the crate's `CLAUDE.md` Gotcha 1).
 pub const OPTIONS: &[OptionDecl] = &[
     OptionDecl {
         flag: "--model",
@@ -70,7 +72,7 @@ pub const OPTIONS: &[OptionDecl] = &[
         takes_value: true,
         is_required: false,
         is_mode_selecting: false,
-        usage_hint: "context-size limit, positive integer (default 4096)",
+        usage_hint: "context-size limit, positive integer, or auto (default auto: the checkpoint's trained context, capped by what memory holds, and 4096 when the install declares none)",
     },
     OptionDecl {
         flag: "--temperature",
@@ -162,5 +164,12 @@ pub const OPTIONS: &[OptionDecl] = &[
         is_required: false,
         is_mode_selecting: false,
         usage_hint: "print usage text and exit",
+    },
+    OptionDecl {
+        flag: "--version",
+        takes_value: false,
+        is_required: false,
+        is_mode_selecting: false,
+        usage_hint: "print the version and exit",
     },
 ];

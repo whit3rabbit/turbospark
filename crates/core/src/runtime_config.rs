@@ -17,6 +17,20 @@ pub const ALLOWED_CHUNK_SIZES: [u32; 8] = [32, 64, 128, 256, 512, 1024, 2048, 40
 /// Documented default prompt-processing chunk size.
 pub const DEFAULT_CHUNK_SIZE: u32 = 128;
 
+/// Documented default context window, in tokens.
+///
+/// Has NO allowed set beside it, unlike the two knobs above: a context
+/// window is a per-token KV allocation, so every positive value is legal and
+/// the only real bound is what memory holds -- which `crates/runtime`'s
+/// context policy checks, since it needs the machine and the install.
+///
+/// This is also what an `auto` window falls back to when the install
+/// declares no trained context, which is every install written before that
+/// field existed. Three crates read it (the argument parser, the context
+/// policy, and the server's own flat parser), so it lives here rather than
+/// as a literal in each.
+pub const DEFAULT_MAX_CONTEXT: u32 = 4096;
+
 /// Cache replacement policy. Variant names are destination-selected and do
 /// not mirror any source token; whether they are user-visible config keys is
 /// an open decision.

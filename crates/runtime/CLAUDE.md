@@ -83,6 +83,12 @@ crates/runtime/
 - `config.rs`: Runtime generation configuration and runner settings.
 - `power.rs`: ROADMAP Phase P2's policy: `PowerProfile`, `ThermalLevel`, the `stepped_cap` ladder, `RateControl`, and the two cfg-paired OS probes (`thermal_level`, `low_power_mode_enabled`) that call `crates/gpu`'s `NSProcessInfo` wrappers on macOS and return constants elsewhere.
 - `pacing.rs`: the `Pacer`, pure absolute-deadline arithmetic. Reads no clock of its own (every method takes `now`), so it is testable at full speed.
+- `context_policy.rs`: `MaxContext` and how `Auto` resolves, plus
+  `kv_bytes_for_context`, which mirrors `KvCacheManager::new`'s allocation
+  exactly. Portable for the same reason its sibling is -- every input is a
+  parameter, so the whole policy is unit-tested anywhere. The one exception is
+  `committed_bytes`, which reads the INSTALL (not the machine) to add the
+  worst-case slot cache to the mapped weight region. See Gotcha 15.
 - `expert_cache_policy.rs`: `ExpertCacheSlots` and how `Auto` resolves. Portable on purpose -- no `gpu`, no `cfg`, no probe of its own; `resolve` takes the machine's memory as a parameter, so its whole test suite runs on any platform rather than needing a Mac with an install on disk. See Gotcha 13.
 - `error.rs`: `RuntimeError` enum.
 
@@ -137,3 +143,44 @@ cargo test -p turbospark-runtime
     **Pipelining the routed buffers costs a plan that must AVOID the in-flight token's expert slots**, which is what `RoutedSlot::protect` carries and what `ExpertCache::plan`'s `avoiding_slots` was always for. Below `2 * top_k` slots the cache cannot guarantee room for those plus this token's misses, and it ASSERTS rather than degrading, so the driver falls back to retiring before it encodes. That fallback is a throughput choice and must stay a numerics no-op; `a_cache_too_small_to_pipeline_still_reproduces_the_sequential_logits` pins it.
 
     **Do not reach for the expert-union plan.** An earlier design had one `plan_experts_cached` over the chunk's union replacing M per-token plans, worth "25.2% of prefill cut 3.3x". Measured, prefill's union is 41.5 distinct experts per layer at M=16 against the 24.1 the sequential path already loads at 32 slots, so it saves nothing -- and 41.5 requests against 32 slots trips the assert above. The hit rate before and after the driver landed reads 81.2% against 81.4%, which is the third independent confirmation. See AGENTS.md Gotcha 54.
+
+15. **The context window is sized by a POLICY too, and its two failure modes
+    are deliberately different kinds of thing.** `MaxContext::Auto` is the
+    default, and `resolve_max_context` answers it with
+    `min(trained context, largest window fitting a quarter of the pool)`. Past
+    the checkpoint's TRAINED context is a warning: RoPE extrapolates rather
+    than failing, some checkpoints carry YaRN scaling meant to exceed it, and
+    an install written before the trained context was recorded declares none
+    at all, so refusing would be enforced on some installs and not others.
+    Past what MEMORY holds is a refusal carrying the whole subtraction,
+    because `KvCacheManager::new` allocates every layer up front and its
+    failure is a Metal allocation error with no number in it naming the flag.
+
+    **`kv_bytes_for_context` has to mirror that constructor, and the term that
+    is easy to get wrong is the ring.** A sliding-window layer's capacity is
+    `min(context, sliding_window + MAX_PREFILL_CHUNK_TOKENS)`, so past the cap
+    it stops growing -- which means a model's per-token KV cost is decided by
+    its FULL layers alone. Gemma 4 is 5 full layers of 30 and costs 20 KiB per
+    token; a dense 7B costs 128. Get the ring wrong and the estimate is 6x
+    high on Gemma. A linear layer contributes nothing at all (its history
+    lives in `GdnStateManager`), and a compressed-attention install gives
+    EVERY layer a placeholder rather than only its compressed ones. The
+    dense-7B arm is cross-checked against the one measured KV figure in the
+    repo: 32 layers at 8,192 comes out to exactly the 1,024 MiB
+    `mistral_memory_oracle` records (AGENTS.md Gotcha 40).
+
+    **`committed_bytes` is not the weight file's size**, and on a streamed MoE
+    install the difference is most of the answer: Gemma 4's
+    `model_weights.bin` is 1.26 GiB while its expert table is 12 GB, of which
+    the slot cache pins `slots x sum(expert_stride)` -- about 3.0 GiB at the
+    top of `ALLOWED_CACHE_SLOTS`. It adds the WORST case rather than the
+    resolved count, because the slot policy resolves inside `open` and this
+    has to decide first. Per-layer strides summed, never `layers x
+    max(stride)`, for `model-io` Gotcha 2's reason.
+
+    **`physical_memory()` answering 0 means the probe is unavailable, not that
+    the machine has no memory.** That is what it returns off macOS, and
+    reading it as an empty budget would refuse every explicit window and
+    resolve every `Auto` to a context of ZERO -- which admits no prompt at
+    all, on no information. An unknown machine imposes no bound, exactly as an
+    unknown trained context imposes no ceiling.
