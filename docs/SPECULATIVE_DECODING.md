@@ -5,12 +5,12 @@ decoding, specifically DFlash -- a small block-diffusion drafter proposes a
 whole block of tokens in one parallel forward pass, the target verifies the
 block in one batched pass, and the longest correct prefix is accepted?
 
-Answer, measured 2026-08-10 on the real Qwen 3.6 35B-A3B install and
+The answer, measured 2026-08-10 on the real Qwen 3.6 35B-A3B install and
 re-derived unchanged 2026-08-18 after a kernel fix that halved the largest
-term: **about 1.1x at best, at a small block size, and only once a batched
-MoE kernel exists that does not yet.** Not the 3.6x DFlash reaches at
+term, is about 1.1x at best, at a small block size, and only once a batched
+MoE kernel exists that does not yet. Not the 3.6x DFlash reaches at
 concurrency 1 on datacenter GPUs, and not the 1.5x Meta measured for it on
-an M4 Max with a DENSE model. Recorded here so the arithmetic is not
+an M4 Max with a dense model. Recorded here so the arithmetic is not
 re-derived; it also appears in ROADMAP under the speculative-decoding item.
 
 Nothing here refutes DFlash. It is a statement about this engine's verify
@@ -46,11 +46,11 @@ is named at the bottom.
 > disagree, and the disagreement is the finding**: one kernel fix, two
 > families, and it is decisive on the dense one and inert on this one.
 
-**DO NOT CARRY THIS VERDICT TO BATCHED PREFILL**, which reuses the same
+**Do not carry this verdict to batched prefill**, which reuses the same
 `c(M)` and `union(M)` terms and reaches a different answer. A verify pass
-divides its cost by an ACCEPT LENGTH -- most of why 1.1x -- while a prefill
+divides its cost by an accept length (most of why 1.1x), while a prefill
 chunk keeps every one of its M tokens, so its divisor is M with no
-probability in it. The compute split below is also DECODE's, where
+probability in it. The compute split below is also decode's, where
 attention is 2.3%; in prefill it is 22.3%. See `docs/BATCHED_PREFILL.md`.
 The kernel facts here (the `c(M)` table, `union(M)`, and the two
 register-file dead ends) transfer; the conclusion does not.
@@ -71,7 +71,7 @@ Read off the Qwen drafter's safetensors header (7 KB of ranged reads, no
 download): 6 layers, hidden 2048 matching the target's, `fc.weight`
 [2048, 16384] projecting eight concatenated target hidden states down to
 one, `block_size` 16, tapping target layers 1/6/11/16/22/27/32/37 of 40.
-It carries NO embedding table and NO LM head -- it reuses the target's, both
+It carries no embedding table and no LM head; it reuses the target's, both
 already resident here. That is a genuine simplification and it is why the
 file is 0.4B parameters rather than 1.5B.
 
@@ -143,21 +143,21 @@ identity check on the analysis.
 The first draft of this measurement asked whether a kernel was needed at
 all, and eliminated the two cheaper options by measurement:
 
-- B dispatches of the existing GEMV over ONE matrix cost 0.65B, not ~1 --
+- B dispatches of the existing GEMV over one matrix cost 0.65B, not ~1:
   the weights do not stay cached across them;
-- encoding those into a CONCURRENT compute encoder rather than the engine's
+- encoding those into a concurrent compute encoder rather than the engine's
   serial one recovers only 1.07-1.40x, and 8 x the resulting rate lands on
   the ~355 GiB/s the kernel saturates at, which is the proof the hardware
   genuinely moved the weight bytes eight times.
 
 So `dequant_int4_gemm_simd` exists: one dispatch, each packed nibble read
 once and multiplied into B accumulators. Parity against B separate GEMV
-calls is EXACT, not tolerant, and mutation-checked three ways.
+calls is exact, not tolerant, and mutation-checked three ways.
 
 ### c(M), re-measured
 
 `c_of_m_for_the_batched_kernel`, 2026-08-18, same machine, AC, after
-`46617c6`'s specialization reached this kernel. Three WARM rounds with the
+`46617c6`'s specialization reached this kernel. Three warm rounds with the
 cold first run discarded (Gotcha 20), `--test-threads=1` because the two
 `c_of_m` tests contend for the GPU otherwise. Ranges, not point values:
 **this bench's per-cell spread is up to 0.13**, which is wide enough that
@@ -176,7 +176,7 @@ For comparison, the pre-fix table these replace, same order: expert
 M=2 is no longer worse than not batching at all**, which it was on three of
 four shapes before.
 
-**Read the `expert 512x2048` row as what it is: a PROXY.** It is a resident
+**Read the `expert 512x2048` row as what it is: a proxy.** It is a resident
 INT4 GEMV at a routed expert's shape, not the routed pair, which has no
 batched form to measure. The other three rows are the resident projections
 and are what the 52.7% GEMV share below is made of.
@@ -240,7 +240,7 @@ Nobody has built it, so neither column is a measurement of it.
 
 **`c(8) = 0.572` against the 0.67 this page used to state**, and against
 the 0.557 its break-even column already implied. The fresh measurement
-agrees with the TABLE to 3% and not with the prose, which is why the
+agrees with the table to 3% and not with the prose, which is why the
 verdict below barely moves: the reading was computed from something close
 to the right number all along.
 
@@ -258,7 +258,7 @@ Two sources, and they agree on the shape.
 greedy, 300 tokens per arm, sequential verify because only the ratio
 matters): it fires on 10-11% of rounds and reaches 2.46 / 2.76 / 2.76
 accepted-plus-bonus at blocks 4 / 8 / 16. **Refuted**, and the shape says
-why: its accept length SATURATES -- block 16 accepts exactly what block 8
+why: its accept length saturates: block 16 accepts exactly what block 8
 does, because the matched continuation runs out long before the block does.
 Both failure modes are specific to copying earlier text, and neither
 afflicts a trained drafter, which always fires and predicts rather than
@@ -293,7 +293,7 @@ That is the re-derivation's actual result and it is worth stating as
 plainly as the improvement was: **halving `c(M)` on the GEMV did not rescue
 this family.**
 
-**On this engine the optimum is a SMALL block and the win is about 1.1x**,
+**On this engine the optimum is a small block and the win is about 1.1x**,
 which inverts the datacenter result. There verify is nearly free, so a
 bigger block is always better; here verify cost scales almost linearly in M
 -- 19% of compute cannot amortize and the expert union grows with the block
@@ -310,12 +310,12 @@ acceptance curve untouched.
 size produces a token stream byte-identical to the same generation with
 speculation switched off, so the accept walk and the rollback are lossless
 in practice and not only by construction. The reference arm is a
-NON-SPECULATIVE run rather than the other block sizes: comparing speculative
+non-speculative run rather than the other block sizes: comparing speculative
 arms against each other passes even when all of them are wrong the same way.
 
 ## Standing decision
 
-**Do not build it for 1.14x. UNCHANGED by the 2026-08-18 re-derivation**,
+**Do not build it for 1.14x. Unchanged by the 2026-08-18 re-derivation**,
 which is the answer to the question the correction block at the top used to
 be asking. Three caveats all point the same way and the margin is inside
 the composite's error bar:
@@ -324,7 +324,7 @@ the composite's error bar:
   one, every row loses;
 - the per-position curve is published for Qwen3-4B rather than this target,
   and the 35B drafter is a later retrain;
-- `c(M)` for the unbuilt MoE kernel is estimated, not measured -- and the
+- `c(M)` for the unbuilt MoE kernel is estimated, not measured, and the
   re-derivation reports both grants precisely because that estimate, not
   the GEMV, is now the largest soft term in the answer.
 
@@ -335,7 +335,7 @@ cannot amortize at all and a further 26% is a kernel nobody has written.
 Amdahl, restated for anyone about to optimize the same arm again: this
 family's ceiling is set by the two terms the GEMV work does not touch, and
 `docs/MTP_SPECULATIVE.md` reaches the opposite conclusion on the dense
-family because THOSE terms are 6.4% and zero there. Check which term a
+family because those terms are 6.4% and zero there. Check which term a
 proposed optimization moves against this split before costing it.
 
 What was built along the way is kept, because it is all independently
@@ -349,11 +349,11 @@ is a standing correctness test whatever happens to this phase.
 
 In order of leverage:
 
-1. **The ROUTED PAIR, and no longer `c(M)` in general.** This entry used to
+1. **The routed pair, and no longer `c(M)` in general.** This entry used to
    read "`c(M)`, not the drafter", and half of it has now been collected and
    spent: the GEMV arm was improved ~2x and bought two points (see "The
    composite, written out"). What is left is the specific term that
-   improvement could not reach -- `moe_phase1_gate_up_act_u16load` and
+   improvement could not reach: `moe_phase1_gate_up_act_u16load` and
    `moe_phase2_down_reduce_k8`, 26% of decode compute, still with no batched
    form at all. Both grants in the composite are guesses about it, and the
    spread between them (0.95x against 1.00x at block 8) is the whole
@@ -361,11 +361,11 @@ In order of leverage:
    even the optimistic grant leaves block 8 at 1.00x, because the 19% floor
    does not move either. `docs/BATCHED_PREFILL.md` steps 2 and 3 specify
    these two kernels for a different reason and would answer this for free.
-2. ~~**`simdgroup_matrix`.**~~ **MEASURED 2026-08-17 AND CLOSED.** It was
+2. ~~**`simdgroup_matrix`.**~~ **Measured 2026-08-17 and closed.** It was
    built and benched against the exact kernel in one session
    (`dequant_int4_gemm_mma`, `c_of_m_matrix_against_exact_at_qwen38_shapes`)
-   and it LOSES at every width -- 6.6x slower at M=2, 1.33x at M=16 -- and
-   PLATEAUS at ~0.5 past M=16, worse than what the exact kernel already
+   and it loses at every width (6.6x slower at M=2, 1.33x at M=16) and
+   plateaus at ~0.5 past M=16, worse than what the exact kernel already
    reaches. A packed INT4 run cannot be `simdgroup_load`ed, so every weight
    element must be dequantized into threadgroup memory first, and that work
    is independent of B while the MACs matrix hardware accelerates scale with

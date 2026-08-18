@@ -3,7 +3,7 @@
 Watts and joules-per-token for both real installs, over the frozen
 community protocol, on AC and on battery. ROADMAP Phase P1.
 
-This is NOT a parity claim. Swift was never measured for power, here or
+This is not a parity claim. Swift was never measured for power, here or
 upstream, so there is no second engine in any table below; this is the
 port measuring itself, like the quality gates. `docs/BENCHMARKS.md` holds
 the Swift comparison and a summary of these numbers;
@@ -40,7 +40,7 @@ summary, so mixing them would compare two different seams under one label.
 | Protocol | frozen `real-generation-v1`, seeds 20260721-23, temp 0.2, top-k 64, top-p 0.95, 1024 new-token budget, 4K context |
 
 The last row is this table's own scope. The context window and the
-generation budget became PER-FAMILY on 2026-08-12, resolved by
+generation budget became per-family on 2026-08-12, resolved by
 `turbospark-bench --model` from the install's manifest, so the gpt-oss
 section below is measured at 8,192/3,072 and its rows are not comparable
 to a 4,096/1,024 row of another install without saying so.
@@ -72,7 +72,7 @@ total. Decode divides by generated tokens, prefill by prompt tokens.
 ## AC: the baseline
 
 **Use these rows.** Every run of both installs stayed at Nominal thermal
-pressure -- 50 of 50 sampled arms -- so nothing here is filtered and every
+pressure (50 of 50 sampled arms), so nothing here is filtered and every
 row is n=2.
 
 Decode:
@@ -134,12 +134,12 @@ Prefill:
 | Gemma 4 IQ3_XXS/IQ4_NL | long-synthesis | 30.15 | 0.9449 |
 
 **Against the incumbent INT4 install's AC rows above, decode
-joules-per-token roughly DOUBLES: 2.0x to 2.4x across the three cases**
+joules-per-token roughly doubles: 2.0x to 2.4x across the three cases**
 (0.925-0.996 against 0.384-0.498). Prefill is the same story at
 2.2-2.4x. The attribution is clean and entirely GPU-side: gpu W nearly
-doubles (22.8-25.0 against 12.3-13.6) while cpu W FALLS (2.6 against
+doubles (22.8-25.0 against 12.3-13.6) while cpu W falls (2.6 against
 4.2-4.6), so the codebook dequant is burning the power, not the host.
-The install draws more watts AND runs 35% slower, and J/token compounds
+The install draws more watts and runs 35% slower, and J/token compounds
 the two.
 
 This settles the phase's motivating axis, negatively. Fewer expert bytes
@@ -241,7 +241,7 @@ here.** ~29-33 W combined and ~28-31 W GPU, against Gemma's 16.7-17.8,
 Qwen 3.6's 13.8-14.9, Qwen3-30B-A3B's 19.8-22.0 and the 3-bit install's
 25.4-27.7. Unlike `qwen3moe`, whose 2x J/token came from the tok/s
 denominator, gpt-oss decodes at a healthy 30 tok/s and its ~1.1 J/token
-comes from the WATTS numerator. The attribution is GPU-side (cpu W is
+comes from the watts numerator. The attribution is GPU-side (cpu W is
 1.5-1.7), consistent with MXFP4 dequant running in every routed expert
 the way the IQ install's codebooks did -- but no interleaved A/B isolates
 that here, so read it as a shape, not a proof.
@@ -295,7 +295,7 @@ engine. Gotcha 28's conclusion -- that thermal saturation here is a
 function of total draw rather than of the power source -- is unchanged;
 the number attached to it is.
 
-## Muse Glimmer 30B: two operating points, and the row is the UNCONSTRAINED one
+## Muse Glimmer 30B: two operating points, and the row is the unconstrained one
 
 **This install cannot be characterised by the harness's normal protocol on
 this machine.** It saturates thermally within about two minutes of decoding
@@ -312,10 +312,10 @@ from a preceding oracle and two quality gates. Capture B 16:01Z,
 capture A's measured rows against the ~4 W that signalled contamination in the
 2026-08-13 gpt-oss capture.
 
-### The unconstrained point, and it REPRODUCES
+### The unconstrained point, and it reproduces
 
 The only Nominal windows in either capture are the warmups, which the summary
-excludes by design. They agree across THREE sessions and three starting
+excludes by design. They agree across three sessions and three starting
 temperatures (capture C is the profile A/B below, whose warmup runs
 unconstrained like the others):
 
@@ -327,7 +327,7 @@ unconstrained like the others):
 | prefill J/token | 1.8445 | 1.8037 | 1.8507 | 2.6% |
 
 **~37.7-38.2 W and ~2.01-2.04 J/token is this install's decode cost**, and it
-is the HIGHEST draw in this document -- above gpt-oss's 29-33 W, which was the
+is the highest draw in this document, above gpt-oss's 29-33 W, which was the
 previous high. The 30-minute idle changed the warmup by 1.4%, which is what
 says the reading is the workload's rather than the session's.
 
@@ -335,10 +335,10 @@ A warmup window is a legitimate measurement here and that is worth stating,
 because elsewhere in this repo a first run is exactly what gets discarded
 (AGENTS.md Gotcha 20, cold GPU at low DVFS clocks reading ~50% slow). It does
 not apply: the model open, the mmap and the Metal pipeline compile all happen
-BEFORE the `[power-window]` markers, and the warmup decodes at 18.53-18.59
-tok/s against the measured arms' 18.35-18.40 -- marginally FASTER, not slower.
+before the `[power-window]` markers, and the warmup decodes at 18.53-18.59
+tok/s against the measured arms' 18.35-18.40, marginally faster, not slower.
 
-### The governed point, and it does NOT reproduce
+### The governed point, and it does not reproduce
 
 | short-explanation decode, Heavy | capture A | capture B |
 | --- | ---: | ---: |
@@ -366,14 +366,14 @@ the sharpest instance in this document of the superlinear effect the thermal
 section below describes -- the Gemma pair gave up 20% of throughput for its
 31% saving, and this one gives up almost nothing.
 
-**THE SIZE OF THAT SAVING IS NOT STABLE, and capture C says so.** Three more
+**The size of that saving is not stable, and capture C says so.** Three more
 governed decodes of the same case read 1.3267, 1.4128 and 1.6621 J/token, so
 the governed point ranges from 35% to 18% below the unconstrained one rather
-than sitting at 26%. The DIRECTION is solid across six governed decodes in
+than sitting at 26%. The direction is solid across six governed decodes in
 three sessions; the magnitude is a control loop's output and should be quoted
 as a range or not at all.
 
-The reading is that the unconstrained operating point is WASTEFUL for this
+The reading is that the unconstrained operating point is wasteful for this
 workload: the GPU sits at a voltage and frequency far above what this decode
 needs, and the governor's forced descent costs almost no work. **It is an
 involuntary experiment, not a controlled one**, so it is an observation rather
@@ -389,8 +389,8 @@ thermal governor had found 26% of energy for 1.3% of throughput
 involuntarily, and Phase P2's rate cap is the deliberate version of that
 descent.
 
-**THE PREDICTION MADE BEFORE THE RUN WAS WRONG, in the informative
-direction.** It said the efficiency arm's longer window gives it MORE time to
+**The prediction made before the run was wrong, in the informative
+direction.** It said the efficiency arm's longer window gives it more time to
 saturate. The opposite happened: the efficiency arm held Nominal on 6 rows of
 6, and the performance arm went Heavy on 3 decodes of 3. Capping the rate
 keeps the machine out of thermal governance entirely, which is a result about
@@ -402,17 +402,17 @@ the cap rather than about this model.
 | performance p1/p2/p3 | **Heavy** | 24.31 / 25.78 / 30.45 | ~18.2 | 1.3267 / 1.4128 / **1.6621** |
 | efficiency p1/p2/p3 | Nominal | 16.35 / 16.12 / 15.67 | 10.00 | 1.6258 / 1.6075 / 1.5649 |
 
-**THE A/B IS INCONCLUSIVE ON J/TOKEN AND THE REASON IS IN THE THIRD COLUMN.**
+**The A/B is inconclusive on J/token and the reason is in the third column.**
 The performance arm spans 25% across three pairs of byte-identical work
-(1.3267 to 1.6621) and that range SWALLOWS the efficiency arm's (1.5649 to
+(1.3267 to 1.6621) and that range swallows the efficiency arm's (1.5649 to
 1.6258): p1.performance beats every efficiency reading and p3.performance
 loses to every one. A difference cannot be read off arms one of which is
 being driven by a control loop. `scripts/power.sh`'s summary reports
-efficiency 9% WORSE (1.5994 against 1.4672) and that number should not be
-quoted -- it compares a GOVERNED arm against a FREE one, which is not the
+efficiency 9% worse (1.5994 against 1.4672) and that number should not be
+quoted: it compares a governed arm against a free one, which is not the
 comparison the flag exists to make.
 
-What IS established, and each of these is stable:
+What is established, and each of these is stable:
 
 - **The rate cap does exactly what it says.** 113.17 s and 10.002 / 10.003 /
   10.002 tok/s, three times. That is 0.01% reproducibility, tighter than
@@ -425,20 +425,20 @@ What IS established, and each of these is stable:
   efficiency saves ~21%** (to ~1.60). That is the comparison with two
   trustworthy sides, and it is the one worth carrying.
 
-**A FAIR A/B NEEDS HARDWARE THAT CAN HOLD NOMINAL IN PERFORMANCE MODE**, which
+**A fair A/B needs hardware that can hold Nominal in performance mode**, which
 this laptop cannot for a whole case. Until then the flag's value on this
 install is not "it saves 21%" but "it is the only way to get a repeatable
 number out of this model at all".
 
-One ambiguity left open rather than resolved: efficiency PREFILL draws 30.3 W
+One ambiguity left open rather than resolved: efficiency prefill draws 30.3 W
 against performance prefill's 37.0-38.4 W when the latter is Nominal, on
-identical work at an identical 4.8 s. Prefill is not rate-capped -- both arms
-take the same time -- so either the profile lowers more than the token rate,
+identical work at an identical 4.8 s. Prefill is not rate-capped (both arms
+take the same time), so either the profile lowers more than the token rate,
 or the efficiency prefill inherits a hot machine from the performance run it
 is interleaved after. The interleaving makes those two indistinguishable
 here, and separating them needs an arm order that is not paired.
 
-### What is NOT established
+### What is not established
 
 Nothing here says what this install costs under a sustained load on a machine
 that can hold Nominal. Both points above are this laptop's; a chassis with more
@@ -464,18 +464,18 @@ than a measured effect: the same binary had never been run on both power
 sources.** It now has, and the answer has two halves.
 
 **Energy is not the axis that moves.** Watts and joules-per-token differ
-by a few percent with NO consistent sign: Gemma `short-explanation` is
+by a few percent with no consistent sign: Gemma `short-explanation` is
 3.7% worse on AC, Qwen `medium-review` 5.9% better. That is the size of
 ordinary cross-session drift in this repo, so the precaution is still the
 right policy, but nobody should expect a large power-source correction.
 
 **Thermal headroom is the axis that moves, and it is decisive.** On AC,
 50 of 50 arms stayed Nominal. On battery, `long-synthesis` left Nominal on
-every run of BOTH installs, and `medium-review` (Gemma) and
+every run of both installs, and `medium-review` (Gemma) and
 `short-explanation` (Qwen) each lost one of two runs. That is why the
 battery column above has holes and the AC column does not.
 
-Throughput was 2.2-2.8% LOWER on AC across all four comparable cases
+Throughput was 2.2-2.8% lower on AC across all four comparable cases
 (Gemma short-explanation 41.80 -> 40.70 tok/s, Qwen medium-review 38.84 ->
 37.76). The direction is consistent, but this is a cross-session
 comparison of absolute numbers, which this repo's own record says
@@ -500,8 +500,8 @@ pressure, same binary and prompt:
 
 Giving up 20% of throughput bought 31% less energy per token, because
 voltage-frequency scaling is superlinear. **A throttled arm therefore does
-not look broken in a power table, it looks good.** The harness WARNS on
-every non-Nominal run and its summary still AVERAGES THAT RUN IN --
+not look broken in a power table, it looks good.** The harness warns on
+every non-Nominal run and its summary still averages that run in;
 exclusion is by hand, from the per-arm rows in `rows.tsv`. This paragraph
 claimed the opposite until 2026-08-16, when the Muse Glimmer captures above
 warned on eight measured arms of eight and printed summaries built entirely
@@ -541,17 +541,17 @@ is a GPU- and I/O-bound decoder.
 **Do not draw conclusions from the E-cluster residency column.** It is
 system-wide rather than per-process, and it is not stable across
 invocations: the identical Gemma `short-explanation` decode, in the same
-battery session at the same settings, read 70.4 / 71.2 in one invocation
+battery session at the same settings, read 70.4 / 71.2 in one run
 of the harness and 87.3 / 87.1 / 87.6 in another. A 16-point swing on
 identical work means the column cannot support a claim about where this
-process runs. It is reported for context only. (M4 Max also has TWO
+process runs. It is reported for context only. (M4 Max also has two
 performance clusters, P0 and P1, which the harness averages into one P
 column.)
 
 ## The efficiency profile: measured, and it works
 
 ROADMAP Phase P2's gate. Gemma, `short-explanation`, AC, 3 pairs, arms
-alternating WITHIN each pair. Every arm held Nominal thermal pressure, so
+alternating within each pair. Every arm held Nominal thermal pressure, so
 nothing is filtered. `performance` is the shipped default (no cap, no
 thermal stepping); `efficiency` caps decode at reading speed, 10 tok/s.
 
@@ -562,7 +562,7 @@ thermal stepping); `efficiency` caps decode at reading speed, 10 tok/s.
 | 3 | 0.3798 | 0.2248 | -40.8% |
 
 **Decode energy per token falls by a third to a half for a 4.1x slowdown**
-(41.1 -> 10.0 tok/s). Read the WORST pair, -35.5%: pair 1's
+(41.1 -> 10.0 tok/s). Read the worst pair, -35.5%: pair 1's
 `performance` arm is a high outlier (0.4593 against 0.3616/0.3798, and
 39.02 tok/s against 41.09/41.12), which is the first measured process of
 the session paying a DVFS ramp the per-process warmup does not cover.
@@ -576,18 +576,18 @@ of the energy win.
 
 **No `performance`-mode regression.** Its clean pairs read 0.3616 and
 0.3798 (mean 0.3707) against the 0.3838 frozen above, and 41.09/41.12
-tok/s against 40.70. That comparison is cross-session AND cross-binary,
-though -- Phase G, Phase S and the Gotcha 27 determinism fix all landed
-between the two captures -- so it is corroboration, not proof. The proof
+tok/s against 40.70. That comparison is cross-session and cross-binary,
+though (Phase G, Phase S and the Gotcha 27 determinism fix all landed
+between the two captures), so it is corroboration, not proof. The proof
 that the default path is unchanged is structural: `RateControl::default()`
 leaves both fields `None`, `RateControl::is_active` is false, and the
 loop executes the identical statement sequence.
 
-**DO NOT QUOTE THIS RUN'S PREFILL ROWS.** The summary reports
+**Do not quote this run's prefill rows.** The summary reports
 `efficiency` prefill at 0.2497 J/token against `performance`'s 0.3870,
 which reads like a 35% prefill win and is an artifact. Prefill is not
-paced at all -- the `Pacer` is constructed inside `decode`, after prefill
-has finished -- and the measurement agrees: prefill takes the same 1.3-1.6
+paced at all (the `Pacer` is constructed inside `decode`, after prefill
+has finished), and the measurement agrees: prefill takes the same 1.3-1.6
 s over the same 61 tokens in both arms. Same work in the same time cannot
 cost less energy. What happens instead is window attribution: the
 prefill/decode boundary is computed arithmetically from the footer's
@@ -599,14 +599,14 @@ both sides of the boundary draw about the same. The tell that these rows
 are noise regardless: `performance` prefill alone ranges 0.3011 to 0.5143
 across three pairs, a 71% spread.
 
-## Read-pool QoS: measured, and NOT wired
+## Read-pool QoS: measured, and not wired
 
 Rust std threads carry no QoS class at all, while Swift's I/O pool runs at
 `.utility` on E-cores. `MFERENCE_READ_QOS=utility`
 (`crates/streaming/src/read_pool.rs`) puts the 8 `read_pool` workers on
 `QOS_CLASS_UTILITY`. It is off by default.
 
-Gemma, `short-explanation`, 3 pairs, arms alternating WITHIN each pair
+Gemma, `short-explanation`, 3 pairs, arms alternating within each pair
 rather than as two consecutive batches:
 
 | pair | J/token, AC | decode s, AC | J/token, battery | decode s, battery |
@@ -616,7 +616,7 @@ rather than as two consecutive batches:
 | 3 | 0.3753 -> 0.3724 (-0.8%) | +0.08% | 0.3937 -> 0.4283 (+8.8%) | +2.34% |
 
 **On AC this is a null result, and the AC session is the one to believe.**
-Energy changes by +1.0% / +0.9% / -0.8% -- the sign flips, so the effect
+Energy changes by +1.0% / +0.9% / -0.8%; the sign flips, so the effect
 is not distinguishable from noise. Decode time is +0.08% in all three
 pairs, which is 0.01 s on 12.5 s: consistently non-negative, and at the
 resolution floor.
@@ -633,7 +633,7 @@ structural, not measured: these threads sit on the decode critical path
 (`run_batch` blocks until every claim drops) doing a page-cache memcpy
 that measured 32 GiB/s, so there is no idle to reclaim and the upside was
 always going to be small. An earlier draft of this page claimed the
-E-residency column showed UTILITY failing to obtain E-cores; that claim is
+E-residency column showed utility failing to obtain E-cores; that claim is
 withdrawn, because the column is too unstable to support it (above).
 
 The seam stays in the tree, off, as a documented dead end so that Phase P2
@@ -673,7 +673,7 @@ a different lever than this one.
   is also how one battery row was caught and dropped by hand rather than
   by the thermal flag: Qwen `long-synthesis` p1 reported `cpu_W = 18.40`
   against roughly 4.3 W everywhere else, which is a competing process.
-  **That refusal only covers OTHER MODEL processes, and the gpt-oss
+  **That refusal only covers other model processes, and the gpt-oss
   capture of 2026-08-13 shows what the gap costs**: an ordinary desktop
   UI, well under the 18.40 W that made the Qwen row obvious, moved a
   decode row 37% with every arm Nominal. See the gpt-oss section and
@@ -685,13 +685,13 @@ a different lever than this one.
   visible where the row is published.
 - **A wall-power number**, which needs an external meter rather than the
   battery gauge.
-- **A SUSTAINED J/token row for Muse Glimmer 30B.** Its unconstrained cost is
+- **A sustained J/token row for Muse Glimmer 30B.** Its unconstrained cost is
   established (n=2, ~2.02-2.04 J/token) and its governed cost is unstable;
   what is missing is the cost on a machine that can hold Nominal for a whole
   case, which needs more thermal headroom than this laptop has.
-- **A FAIR `performance,efficiency` A/B on Muse Glimmer 30B.** Run
+- **A fair `performance,efficiency` A/B on Muse Glimmer 30B.** Run
   2026-08-16 and inconclusive: the performance arm throttled on every pair and
   its 25% spread swallows the efficiency arm's range. Needs hardware that can
-  hold Nominal in performance mode for a whole case. What the run DID settle
+  hold Nominal in performance mode for a whole case. What the run did settle
   is that the cap holds 10.00 tok/s to 0.01% and keeps the machine out of
   thermal governance entirely.

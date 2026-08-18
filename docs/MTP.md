@@ -5,7 +5,7 @@ every number that was actually measured. All figures are from this machine
 (Apple M4 Max, 36 GB, macOS 26.5.2) against `~/models/qwen38-27b-mtp.gturbo`
 unless stated.
 
-**This page holds facts. `docs/MTP_SPECULATIVE.md` holds the DECISION** --
+**This page holds facts. `docs/MTP_SPECULATIVE.md` holds the decision:**
 the cost model, `c(M)`, the composed break-even table, and the record of the
 two times that page reached the wrong conclusion. Nothing projected or
 borrowed appears here; where a number came from a model rather than from a
@@ -27,7 +27,7 @@ header, ~114 KB of ranged reads, no download.
 
 Its block is a trunk full-attention layer's shape field for field, which is
 what lets a draft step reuse `families/qwen/attn.rs` and `dense.rs` with no
-new Metal kernel and no new dispatch shape. Verified against the INSTALLED
+new Metal kernel and no new dispatch shape. Verified against the installed
 bytes rather than only the published header
 (`mtp_head_probe.rs::the_heads_tensors_match_a_trunk_full_attention_layers`);
 `hidden` 5120, 24 q heads over 4 kv at `head_dim` 256, `intermediate` 17408:
@@ -64,18 +64,18 @@ position `i`. So a call takes the token the trunk just produced and drafts the
 one after it, and the head's rows land contiguously from 0 with no unwritten
 row, because `h_0` exists.
 
-**`h_i` is the trunk's POST-final-norm state, not its residual stream.** It is
+**`h_i` is the trunk's post-final-norm state, not its residual stream.** It is
 what the trunk's own `lm_head` consumes. The distinction is not a scale that
 `pre_fc_norm_hidden` would absorb, because `model.norm` carries a learned
 per-channel weight.
 
-Every line above was confirmed by READING the reference implementation rather
+Every line above was confirmed by reading the reference implementation rather
 than inferred: concat order (embedding first), the pairing, positions from 0,
 `full_attention_interval=1` at `layer_idx=0`, and the target's `lm_head`.
 
-## THE NORM CONVENTION, which is the finding that made it work
+## The norm convention, which is the finding that made it work
 
-**The head's five whole-vector norms are CENTERED**: the checkpoint stores an
+**The head's five whole-vector norms are centered**: the checkpoint stores an
 offset from unity and the effective scale is `1 + w`. **The trunk's are
 plain.** One model, two conventions, which is AGENTS.md Gotcha 50 arriving on
 a second family after `muse_glimmer`.
@@ -93,7 +93,7 @@ The first row is BF16 rounding and nothing else, and it is the proof. The
 second assigns blame: the repack is correct and copies verbatim, and it is
 mlx-vlm's converter that bakes the `+1` into its published weights.
 
-**The magnitude tell in rows three and four is worth knowing AND worth not
+**The magnitude tell in rows three and four is worth knowing and worth not
 trusting alone.** It is striking for four of the five norms, which sit near
 zero where the trunk's sit near one -- and it is actively misleading for
 `mtp.norm`, whose 1.252 lands inside the trunk's own 0.893 to 1.249 band. A
@@ -102,7 +102,7 @@ just as centered as its four siblings. The elementwise difference is what
 settles every one of them at once.
 
 **Read plainly, this put the true next-next token at median rank 248,308 of
-248,320** -- last, not random. The fix dispatches
+248,320**, last, not random. The fix dispatches
 `gpu::encode_rms_norm_bf16w_centered`, which already existed for
 `muse_glimmer`. The `1 +` is applied on the FP32 accumulator and never baked
 into the stored weight: these weights sit near zero and BF16's resolution near
@@ -126,15 +126,15 @@ oracle asserts against. About 4 KiB per token here, 16 MiB at a 4,096 window.
 
 **Three invariants, each of which failed silently before it was enforced:**
 
-1. **The cache must be PRIMED over the prompt.**
+1. **The cache must be primed over the prompt.**
    `encode_full_attention_block` derives its attention span from the
-   `position` ARGUMENT (`position + 1`), never from the cursor, so a draft at
+   `position` argument (`position + 1`), never from the cursor, so a draft at
    decode position P off an empty head attends over P rows nobody wrote. No
    error, finite logits, plausible tokens. `mtp_prime_step` is the draft step
    without the full-vocab head, run once per prompt token.
-2. **A step must be taken AT the cursor.** Past it reads unwritten rows;
+2. **A step must be taken at the cursor.** Past it reads unwritten rows;
    behind it silently re-drafts history. `mtp_draft_step` refuses both.
-3. **The head must be REWOUND after a rejected draft**, and to a different
+3. **The head must be rewound after a rejected draft**, and to a different
    target than the trunk: the trunk rolls back to where the block STARTED and
    replays, while the head goes to where the accepted prefix ENDED and
    continues, because it cannot recompute those rows (the trunk's replay has
@@ -191,7 +191,7 @@ position  0     1     2     3     4     5     6     7
 accept    0.82  0.76  0.49  0.54  0.50  0.43  0.33  0.00
 ```
 
-**Single-step acceptance is 0.82 and the CHAIN saturates at ~2.05.** Blocks 8
+**Single-step acceptance is 0.82 and the chain saturates at ~2.05.** Blocks 8
 and 15 read identically, which is the same statement twice: past roughly the
 sixth proposal this head contributes nothing. Committed-per-round is the
 accepted prefix plus the bonus token every verify yields for free.
@@ -205,11 +205,11 @@ reproduces reference-answer perplexity 4.9432 and both frozen digests exactly.
 
 ## What is still deviating
 
-**`q_norm` and `k_norm` are centered too and are still read PLAINLY.**
+**`q_norm` and `k_norm` are centered too and are still read plainly.**
 `encode_rms_norm_bf16w_perhead` has no centered sibling, and the shared
 attention block resolves those weights by name, so overriding them needs a
 parameter on a function the trunk also calls. At 23/24 top-1 the cost is
-measurably small, but the accept lengths above are a FLOOR until it lands.
+measurably small, but the accept lengths above are a floor until it lands.
 
 Nothing else in the head is known to deviate.
 
@@ -237,7 +237,7 @@ MFERENCE_MTP_DUMP=/tmp/mtp-dump TURBOSPARK_MTP_INSTALL_DIR=~/models/qwen38-27b-m
 uv run --python 3.12 --with numpy scripts/mtp_bisect.py /tmp/mtp-dump ~/models/qwen38-mtp-ref
 ```
 
-**The accept-length probe ASSERTS a functional drafter and fails rather than
+**The accept-length probe asserts a functional drafter and fails rather than
 reporting.** Its first run read 0 accepted of 7,168 proposals and would have
 printed a tidy table saying "loses", which is a quotable verdict on a question
 that was actually a bug. The bar separates drafting from not drafting, never
@@ -247,7 +247,7 @@ pays from loses.
 dequantizer.** `safetensors.numpy` cannot decode BF16, and borrowing mlx's
 loader would weaken the independence the comparison rests on (Gotcha 48). Its
 dequantizer was validated against `mx.dequantize` at max absolute difference
-9.8e-4 and pearson 0.9999987 BEFORE its verdict was believed.
+9.8e-4 and pearson 0.9999987 before its verdict was believed.
 
 **The dump is taken at position 0 against an empty head cache on purpose.** A
 softmax over one key is exactly 1.0, so the block has no RoPE, q/k-norm or
@@ -276,18 +276,18 @@ independently, which is what makes this confirmation rather than coincidence:
 | raw low-set norms | "below 0.5" | 0.082, 0.166, 0.206, 0.461 |
 
 **It also covers what this port still does not.** Its `_RMSNORM_SUFFIXES` lists
-all SEVEN norms including `q_norm`, `k_norm` and `norm.weight`, so the per-head
+all seven norms including `q_norm`, `k_norm` and `norm.weight`, so the per-head
 pair left open above is a real requirement and not optional polish. MTPLX
 restores them by baking `+1.0` into the loaded weights, which is evidence that
 baking into a small owned buffer is an acceptable route for those two
 specifically -- their weights sit near 0.78, not near zero, so Gotcha 50's
 precision objection is weak there.
 
-**"TAKE NO MTPLX SOURCE" IS A LICENSING DECISION AND NOT AN INSTRUCTION NOT TO
-READ IT.** `docs/MTP_SPECULATIVE.md` records that decision (Apache-2.0 NOTICE
+**"TAKE NO MTPLX SOURCE" is a licensing decision, not an instruction not
+to read it.** `docs/MTP_SPECULATIVE.md` records that decision (Apache-2.0 NOTICE
 obligations in a uniformly MIT repo) and it stands: no code from that project
-is in this one, and none is needed, because what was required was a FACT ABOUT
-THE CHECKPOINT rather than any expression of it. Conflating the two cost this
+is in this one, and none is needed, because what was required was a fact about
+the checkpoint rather than any expression of it. Conflating the two cost this
 port roughly two hours of bisection to rediscover a convention that was one
 grep away in the repository whose result the page's first sentence quotes.
 Read the prior art; copy none of it.

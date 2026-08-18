@@ -49,36 +49,36 @@ naming schemes genuinely differ and none is derivable from another: Qwen 3.6 is
 - **GGUF Checkpoints**: `turbospark-repack` fetches the initial ~512 KB metadata header via `HttpRangeSource` and inspects `general.architecture`:
   - `"gemma4"` -> `ModelFamily::Gemma4`
   - `"qwen35moe"` -> `ModelFamily::QwenGdnMoe`
-  - `"llama"` -> `ModelFamily::Llama`, and PARTIALLY: this string is both
+  - `"llama"` -> `ModelFamily::Llama`, and partially: this string is both
     Mixtral and dense Llama, only the MoE half has a decode flow, and the
     refusal for the dense half therefore lives at `RealForwardRunner::open`
     rather than here (nothing in the string says which half a file is)
-  - `"qwen3moe"` -> `ModelFamily::Qwen3Moe`, which runs through the SAME
+  - `"qwen3moe"` -> `ModelFamily::Qwen3Moe`, which runs through the same
     decode flow as `Llama`: the layer graph is identical, and the two
     differences (per-head q/k norms, RMS epsilon 1e-6 against 1e-5) are
     keyed on the family inside that flow rather than given a fourth copy
     of it
   - anything else -> refused, with a message that says whether the string is
     *recognized but unported* (and what it would need) or *unknown*.
-- **Hugging Face Safetensors**: the family is chosen by the CALLER, which picks
+- **Hugging Face Safetensors**: the family is chosen by the caller, which picks
   `write_gemma4_install` or `write_qwen_gdn_moe_install`. `config.json`'s `model_type`
-  is a GUARD on that choice rather than a dispatcher: each parser refuses a
+  is a guard on that choice rather than a dispatcher: each parser refuses a
   config that positively claims another family, since without it the wrong
   parser silently produces an `ArchConfig` labelled with the family it
   hardcodes. A config claiming nothing recognized is accepted.
   - `"gemma4"` / `"gemma4_text"` -> `ModelFamily::Gemma4`
   - `"qwen3_5_moe"` / `"qwen3_5_moe_text"` -> `ModelFamily::QwenGdnMoe`
-  - `"qwen3_5"` / `"qwen3_5_text"` -> `ModelFamily::QwenGdnDense` (the DENSE
+  - `"qwen3_5"` / `"qwen3_5_text"` -> `ModelFamily::QwenGdnDense` (the dense
     sibling). **The lookup is exact equality and not a prefix match, and
     these two rows are why**: `qwen3_5` and `qwen3_5_moe` are one suffix
     apart, so a prefix match resolves every dense checkpoint to the MoE
     family -- a baseline with 256 experts and a decode flow with a router in
-    it, i.e. fluent WRONG output rather than an error. THREE published
+    it, i.e. fluent wrong output rather than an error. Three published
     checkpoints report `qwen3_5`: `prism-ml/Bonsai-27B-mlx-1bit`,
     `Qwen/Qwen3.8-27B` and `prism-ml/Ternary-Bonsai-27B-mlx-2bit`, at 1, 4
     and 2 bits, and they share one `ArchConfig` exactly. The last two needed
-    no field, no kernel-independent change and no decode flow -- only their
-    own affine WIDTH.
+    no field, no kernel-independent change and no decode flow, only their
+    own affine width.
   - The `_text` spellings are what the multimodal checkpoints' `text_config`
     carries. `architectures` (class names like
     `Gemma4ForConditionalGeneration`) is deliberately not consulted: it is a
@@ -91,18 +91,18 @@ naming schemes genuinely differ and none is derivable from another: Qwen 3.6 is
 The table below provides a comprehensive list of all major LLM architectures supported across `llama.cpp`, `mlx-lm`, `turbo-fieldfare`, and `turbospark`.
 
 **Read the footprint column as an MoE result, not a general one.** The
-~1.6-2.2 GiB figures come from STREAMING routed experts: only the resident core
+~1.6-2.2 GiB figures come from streaming routed experts: only the resident core
 is mapped, and its mapped weights are pinned by `newBufferWithBytesNoCopy`
 (AGENTS.md Gotcha 19), so those rows are `resident core + KV + slot cache`.
-The slot term is `slots x layers x expert_stride` and it DOMINATES them, which
+The slot term is `slots x layers x expert_stride` and it dominates them, which
 is why `qwen3moe` sits at 2.7 GiB and `gpt-oss` at 5.4 rather than inside the
 band (Gotcha 36).
 
-**The DENSE rows are low for an entirely different reason, and an earlier
+**The dense rows are low for an entirely different reason, and an earlier
 version of this note had it backwards.** It said a dense family sits near its
 own on-disk size "by construction", reasoning from Gotcha 19 that every mapped
 byte is counted. Measured, that is false: a dense install's resident weights do
-NOT appear in `phys_footprint` at all (AGENTS.md Gotcha 40, on Mistral 7B --
+not appear in `phys_footprint` at all (AGENTS.md Gotcha 40, on Mistral 7B --
 4.07 GiB of weights against a 684 MiB peak, agreeing on two independent
 counters). Re-derived 2026-08-14 on a dense install four times that size,
 Qwen3.8-27B: 15.1 GB of resident weights, 660 MiB of counted peak. So a dense
@@ -117,7 +117,7 @@ expresses its MoE through `llama.expert_count = 8`. The two halves need very
 different work, so they are two rows below even though they are one string.
 Rows marked *Registered, planned* have had their architecture string read
 off a real published file and carry a row in `arch_registry.rs`. On every other
-row the parenthesised string is llama.cpp's naming, unconfirmed here and NOT in
+row the parenthesised string is llama.cpp's naming, unconfirmed here and not in
 the registry -- pointing a checkpoint at one of those gets the "not in this
 port's registry" message rather than the "recognized, needs X" one.
 
@@ -162,10 +162,10 @@ port's registry" message rather than the "recognized, needs X" one.
 
 ### How `turbospark` Implements This Strategy
 `turbospark` follows a clean, strongly-typed Rust implementation of the same pattern:
-- **Architecture Registry** (`crates/repack/src/arch_registry.rs`): the string tables, split into what RUNS and what is merely recognized. llama.cpp's `llm_arch` enum conflates the two because every variant it names has a graph builder; here they are separate, so a recognized-but-unported architecture is a better error rather than a half-wired family.
+- **Architecture Registry** (`crates/repack/src/arch_registry.rs`): the string tables, split into what runs and what is merely recognized. llama.cpp's `llm_arch` enum conflates the two because every variant it names has a graph builder; here they are separate, so a recognized-but-unported architecture is a better error rather than a half-wired family.
 - **`ModelFamily` Enum** (`crates/model-io/src/arch_config.rs`): Defines supported discriminators (`Gemma4`, `QwenGdnMoe`, `Llama`, `DeepseekV4Flash`).
 
-**One architecture string can cover two models, and support is then PARTIAL in a way no table column expresses.** `llama` is both Mixtral and dense Llama; only the MoE half has a decode flow, and nothing in the architecture string says which half a file is -- only `expert_count` does. So the registry calls `llama` supported, and `RealForwardRunner::open` refuses the dense half by name. A parity matrix row per MODEL rather than per string is the honest rendering, which is why the two rows above are split.
+**One architecture string can cover two models, and support is then partial in a way no table column expresses.** `llama` is both Mixtral and dense Llama; only the MoE half has a decode flow, and nothing in the architecture string says which half a file is -- only `expert_count` does. So the registry calls `llama` supported, and `RealForwardRunner::open` refuses the dense half by name. A parity matrix row per MODEL rather than per string is the honest rendering, which is why the two rows above are split.
 - **Baseline Specifications** (`crates/model-io/src/arch_baselines.rs`): Provides compile-time defaults for behavioral architecture flags missing from GGUF metadata.
 - **Tensor Mapping Engine** (`crates/repack/src/gguf_names.rs`): Maps GGUF tensor naming conventions to canonical parameter names.
 - **Dedicated Metal Forward Passes** (`crates/runtime/src/real_forward_*.rs`): Each family owns an optimized Metal execution flow tuned for its layer graph.
@@ -199,7 +199,7 @@ cheaper of the two.
 **Being MoE turned out to be necessary and not sufficient, and the correction
 is what chose the family after it.** The slot cache is
 `slots x layers x expert_stride`, so what decides whether a checkpoint streams
-here is how FINELY it splits its experts, not how big it is: Mixtral 8x7B is 8
+here is how finely it splits its experts, not how big it is: Mixtral 8x7B is 8
 experts of 108.9 MiB and wants 54.5 GiB at 16 slots, while Gemma 4 is 128 of
 ~3.2 MiB and wants 1.5. Mixtral runs, is correct, and cannot stream usefully.
 `qwen3moe` (Qwen3-30B-A3B) was picked next for exactly that reason -- 128

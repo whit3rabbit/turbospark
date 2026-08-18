@@ -19,10 +19,10 @@ wrong answer twice.
 > attention section already warns about: a share measured on decode does
 > not transfer to prefill.
 
-Read this before proposing work on prefill throughput. It says which
-kernels are actually needed (two, not ten), why the descoped tile pipeline
-is **not** a prerequisite, and why the arithmetic that made speculative
-decoding marginal does not carry over to this.
+If you are about to propose work on prefill throughput, read this first.
+It says which kernels are actually needed (two, not ten), why the descoped
+tile pipeline is **not** a prerequisite, and why the arithmetic that made
+speculative decoding marginal does not carry over to this.
 
 ## The gap
 
@@ -50,12 +50,12 @@ It is not a scaling problem: split-KV made prefill nearly flat in context
 (cb1 5.39 ms at 21 tokens against 6.28 averaged over a 2,252-token prompt),
 so the 64.6 s is 3,015 x a fixed cost, not a curve.
 
-**It IS substantially attention, and the number every other page here would
+**It is substantially attention, and the number every other page here would
 give you is the wrong one.** The dispatch ranking in
 `docs/SPECULATIVE_DECODING.md` puts attention at 2.3% of GPU busy; that is
-a DECODE ranking taken at short context. Measured for prefill below, it is
+a decode ranking taken at short context. Measured for prefill below, it is
 22.3% and the single largest dispatch. Do not carry a decode share into a
-prefill argument -- this document's first draft did, and reached the
+prefill argument: this document's first draft did, and reached the
 opposite conclusion about what to build.
 
 ## What already exists
@@ -100,7 +100,7 @@ type, exactly as they were added in the first place.
 and `dsv4_prefill_moe_reduce_pairs_k6` (`moe.metal:1138-1227`). Read their
 signatures before designing a new one. The idea worth stealing is
 `DSV4PrefillRoute`: a flat `(token, rank, local_slot)` route list with a
-`route_start`/`route_count` window, so the kernel iterates ROUTES rather
+`route_start`/`route_count` window, so the kernel iterates routes rather
 than tokens and a chunk's ragged routing becomes one dense dispatch. That
 is the whole reason a chunk of M tokens does not need M x top_k separate
 launches.
@@ -108,7 +108,7 @@ launches.
 **Read `dequant_int4_batch.rs`'s header before writing either.** Two
 optimizations were tried on the batched GEMV and both lost on every shape:
 threadgroup staging of `x` (expert shape 0.36 -> 0.55 at M=16) and register
-blocking over rows (0.44 -> 0.79 at M=8). One finding twice -- the register
+blocking over rows (0.44 -> 0.79 at M=8). One finding twice: the register
 file cannot hold an M-wide activation tile and threadgroup barriers cost
 more than they save. `MAX_BATCH_ROWS = 16` is a register-file limit, not a
 clamp.
@@ -148,9 +148,9 @@ and 38 against `16 x 8 = 128` looks like a 3.3x cut.
 **128 is requests, not reads.** The slot cache already deduplicates them,
 and `scripts/router_window.py`'s own docstring says so in as many words
 ("the sequential arm's true cost is misses, not touches"). Measured, same
-runs as the table above (misses per layer per token, and prefill's OWN
+runs as the table above (misses per layer per token, and prefill's own
 union from `MFERENCE_ROUTER_TRACE=1` analysed at `skip=0` so prefill is
-INCLUDED -- the script's default excludes it):
+included; the script's default excludes it):
 
 | | M=2 | M=4 | M=8 | M=16 |
 | --- | ---: | ---: | ---: | ---: |
@@ -158,13 +158,13 @@ INCLUDED -- the script's default excludes it):
 | sequential loads over the window, 32 slots (1.507/layer/token) | 3.0 | 6.0 | 12.1 | 24.1 |
 | sequential loads over the window, 16 slots (3.044/layer/token) | 6.1 | 12.2 | 24.4 | 48.7 |
 
-The sequential arm is already BELOW the union in seven of eight cells. The
+The sequential arm is already below the union in seven of eight cells. The
 union can only ever recover intra-chunk eviction re-reads, and at 32 slots
 there are none to recover: 24.1 loads against 41.5 distinct means most of
 the window's experts were resident before the window began.
 
 The one cell where the union wins is 16 slots at M=16, 41.5 against 48.7,
-a 15% saving -- and `ExpertCache::plan_if_possible` **asserts**
+a 15% saving. And `ExpertCache::plan_if_possible` **asserts**
 `experts.len() <= slot_count`, so requesting 41.5 experts against 16 slots
 aborts the process. The mechanism is legal only where it is useless:
 
@@ -173,7 +173,7 @@ aborts the process. The mechanism is legal only where it is useless:
 | 16 | 2 | none (13.2 against 6.1) |
 | 32 | 8 | none (29.9 against 12.1) |
 
-Prefill's union also runs ABOVE decode's (41.5 against 37.8-39.4 at M=16),
+Prefill's union also runs above decode's (41.5 against 37.8-39.4 at M=16),
 which is the second half of the same lesson: the decode table was borrowed
 into a prefill argument, exactly as the 2.3% attention share was.
 
@@ -199,7 +199,7 @@ is kept, and the divisor is exactly M. The two share `c(M)` and `union(M)`
 and nothing else.
 
 The second difference is the workload. That page's compute split is
-DECODE's, where attention is 2.3% and there is nothing to amortize across
+decode's, where attention is 2.3% and there is nothing to amortize across
 tokens that the slot cache is not already amortizing. Prefill's own split
 is below, and attention alone is ten times larger in it.
 
@@ -243,7 +243,7 @@ never how the column below was actually computed -- the old `fully batched`
 figures imply ~0.52 to 0.54, not 0.6.
 
 Batched prefill is capped at `MAX_BATCH_ROWS = 16`, so M=16 is the column
-that matters. Weighting the fresh numbers by prefill's OWN dispatch ranking
+that matters. Weighting the fresh numbers by prefill's own dispatch ranking
 rather than by a single flat factor:
 
 | | share of prefill GPU | `c(16)` |
@@ -289,10 +289,10 @@ where step 1's pair 3 reads 3.10, on the same install at the same slot
 count, on a machine that was not quiet (Gotcha 43). Read 1.55x to 1.97x as
 the honest band and note which bucket it turns on.
 
-Two terms are soft, both in the OPTIMISTIC direction, and the re-weighting
-did not fix either -- it only made them easier to see.
+Two terms are soft, both in the optimistic direction, and the re-weighting
+did not fix either; it only made them easier to see.
 
-**The routed pair's 0.287 is a PROXY.** It is a resident INT4 GEMV measured
+**The routed pair's 0.287 is a proxy.** It is a resident INT4 GEMV measured
 at a routed expert's shape, because `moe_phase1_gate_up_act_u16load` and
 `moe_phase2_down_reduce_k8` have no batched form to measure. That row is
 now the single largest saving in the `fully batched` column (16.4% to
@@ -313,7 +313,7 @@ is no longer soft -- the driver measured it, and it over-delivered.
 Landed and measured 2026-08-16, same day as the correction above. Real
 Gemma 4 install, `long-synthesis` (3,015 prompt tokens), `--max-new 8`, 32
 slots, `MFERENCE_PREFILL_CHUNK=128`, three interleaved pairs after a
-discarded warmup on a machine that was NOT quiet (Gotcha 43):
+discarded warmup on a machine that was not quiet (Gotcha 43):
 
 | pair | sequential | chunked | |
 | ---: | ---: | ---: | ---: |
@@ -321,7 +321,7 @@ discarded warmup on a machine that was NOT quiet (Gotcha 43):
 | 2 | 57.48 s | 49.55 s | 1.160x |
 | 3 | 56.12 s | 44.41 s | 1.264x |
 
-Pair 2 is slower on BOTH arms and is the contention outlier; pairs 1 and 3
+Pair 2 is slower on both arms and is the contention outlier; pairs 1 and 3
 agree to 1.3%. Call it **1.22x mean, 1.25x on the two clean pairs.**
 
 Where it came from, pair 3, ms per prompt token:
@@ -409,8 +409,8 @@ So this is one phase followed by an optional one, rather than a fork:
 
 - **Phase A**, per-token attention inside a batched chunk. ~1.4x. No new
   attention kernel, no touching the descoped pipeline.
-- **Phase B**, batched attention. Takes ~1.4x to ~1.5x. And it does NOT
-  need `prefill.metal`'s 16-kernel tile pipeline -- what it needs is one
+- **Phase B**, batched attention. Takes ~1.4x to ~1.5x. And it does not
+  need `prefill.metal`'s 16-kernel tile pipeline: what it needs is one
   kernel where M queries share a KV read, which is a natural widening of
   `attention_decode_partial`'s existing split-KV structure (it already
   reads KV in chunks; the change is to hold M query rows per chunk instead
@@ -423,7 +423,7 @@ So this is one phase followed by an optional one, rather than a fork:
 0. ~~Measure prefill's own dispatch ranking.~~ **Done, 2026-08-16**; it is
    the table above, and it moved the design (attention 22.3%, not 2.3%).
 
-1. ~~**`RealForwardRunner: ChunkedPrefillRunner`, looping the EXISTING
+1. ~~**`RealForwardRunner: ChunkedPrefillRunner`, looping the existing
    per-token kernels inside each layer.**~~ **Done, 2026-08-16, measured at
    1.22x** (see "Step 1, measured"). Gemma 4 only; every other family is
    refused by name rather than falling back to the sequential loop, because
@@ -446,9 +446,9 @@ So this is one phase followed by an optional one, rather than a fork:
    sequential by definition and steps M times inside the chunk.
 
    **Split the layer at the point the flow already commits, and batch only
-   the first half.** Phase A -- norms, q/k/v/o GEMVs, per-head norms, RoPE,
-   attention, the residual adds, the pre-FFN norms and the router GEMV --
-   is encoded for all M tokens into ONE command buffer per layer, so the
+   the first half.** Phase A (norms, q/k/v/o GEMVs, per-head norms, RoPE,
+   attention, the residual adds, the pre-FFN norms and the router GEMV)
+   is encoded for all M tokens into one command buffer per layer, so the
    per-layer blocking wait is paid once per chunk instead of once per
    token. Phase B -- router readback, host top-k, plan, `pread`, bind,
    phase 1/2, sandwich norms, `layer_scalar` -- stays per token, because
@@ -457,7 +457,7 @@ So this is one phase followed by an optional one, rather than a fork:
    command buffer there without M copies of all three AND all M tokens'
    experts resident at once.
 
-   **The expert `pread` union is NOT the mechanism.** An earlier draft of
+   **The expert `pread` union is not the mechanism.** An earlier draft of
    this list had one `plan_experts_cached` over the chunk's union replacing
    M per-token plans, worth "25.2% of prefill cut by 3.3x". Measured, it is
    worth nothing at 32 slots and aborts the process at M=16 (see "The
@@ -465,7 +465,7 @@ So this is one phase followed by an optional one, rather than a fork:
    scheduling gap and the per-token commit overhead, ~9% of prefill.
 
    Only M-row buffers are needed: `x`, `router_logits_f32`, `dense_x` and
-   `routed_x`. Every other scratch stays single-row -- a serial compute
+   `routed_x`. Every other scratch stays single-row: a serial compute
    encoder runs dispatches in order, so reuse inside a chunk is correct.
    That deliberately forgoes GPU parallelism across tokens in phase A;
    the parallelism arrives with the M-row kernels in steps 2 to 4.
@@ -505,7 +505,7 @@ is a numerics change however carefully it is written.
 - **Byte-identity is the bar, not coherence.** A chunked prefill must
   produce the same tokens as the sequential one; `accept_length_probe.rs`
   established the shape of that check for speculative decoding (compare
-  against a NON-chunked reference run, never two chunked runs against each
+  against a non-chunked reference run, never two chunked runs against each
   other, which passes when both are wrong the same way).
 - Chunk size must not change the output. If it does, the reduce order in
   step 3 is wrong.
@@ -516,7 +516,7 @@ is a numerics change however carefully it is written.
 
 `gemma4` first: it is the only MoE install on disk, it is the pinned one,
 and it is where the 21.4 ms was measured. `ternary27b` and
-`museglimmer-30b` are DENSE -- the MoE pair does not apply to them at all,
+`museglimmer-30b` are dense: the MoE pair does not apply to them at all,
 their prefill lever is the plain GEMV alone, and steps 2 and 3 above buy
 them nothing. Every other family needs a 5 to 25 minute re-stream before it
 can be gated (`docs/MODELS.md`).

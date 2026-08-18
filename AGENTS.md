@@ -2466,6 +2466,7 @@ Workspace directory structure and crate layout:
     +-- MTP_SPECULATIVE.md # native MTP heads on the DENSE family; pays, after a c(M) fix
     +-- NEW_MODEL.md   # end-to-end checklist for wiring a new model family
     +-- SPECULATIVE_DECODING.md # DFlash / batched verify, measured marginal
+    +-- SWIFT_BINDINGS.md # the C ABI and the Swift package: examples, contract, limits
     +-- POWER_BASELINE.md # watts, joules-per-token, hygiene audit (ROADMAP Phase P1)
     \-- TESTING.md     # test suite organization, platform gating & testing rules
 ```

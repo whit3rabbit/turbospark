@@ -1,13 +1,14 @@
 # Expert Routing: Domain Concentration (Measured Negative)
 
-The question this page answers: can a domain-restricted expert set --
-profile which experts a CODING corpus routes to, then prune the cold ones
-from the install or pin the hot ones in the cache -- save memory or win
-throughput over the streaming expert cache that already ships?
+The question this page answers: can a domain-restricted expert set,
+profiling which experts a coding corpus routes to and then pruning the
+cold ones from the install or pinning the hot ones in the cache, save
+memory or win throughput over the streaming expert cache that already
+ships?
 
-Answer, measured 2026-08-08 on the real Gemma 4 26B-A4B install: **no**.
-Routing under a coding workload is domain-TILTED but nowhere near
-domain-CONCENTRATED, and both halves of the idea (pruned install, pinned
+The answer, measured 2026-08-08 on the real Gemma 4 26B-A4B install, is
+no. Routing under a coding workload is tilted by domain but nowhere near
+concentrated by it, and both halves of the idea (pruned install, pinned
 warm set) lose to the existing LFU cache. Recorded here so the idea is not
 re-derived from first principles; it also appears as ROADMAP dead end 11
 and in DEVIATIONS.md's MoE entry next to the Swift prefetch dead end.
@@ -25,12 +26,12 @@ portion" to skip at all.
 
 In an MoE model there is a real candidate for the region: the routed
 experts. Gemma 4 26B-A4B routes each token through the top 8 of 128
-experts per layer, and this engine already exploits that dynamically --
+experts per layer, and this engine already exploits that dynamically:
 routed experts are not resident, `crates/streaming` keeps 16 of
 128 per layer in pinned slots (more where the machine has memory to spare;
 16 is the floor and what this measurement used) and streams misses by
 `pread`. The open
-question was whether a STATIC, domain-specific expert set could beat that
+question was whether a static, domain-specific expert set could beat that
 dynamic mechanism. That is an empirical question about routing statistics,
 so it was measured before anything was built.
 
@@ -75,9 +76,9 @@ the first and last layers, lowest mid-stack).
 ## Reading
 
 - **Not concentrated.** 95% of routed mass needs ~52% of the expert table,
-  on BOTH corpora. There is no small "coding region" to keep.
+  on both corpora. There is no small "coding region" to keep.
 - **Tilted, though.** Jaccard 0.455 between two ~67-expert sets is real
-  divergence -- coding routes DIFFERENTLY, just not NARROWLY. The union of
+  divergence: coding routes differently, just not narrowly. The union of
   the two hot sets is ~92 of 128 experts.
 - **A pinned coding set loses to the cache.** A static 95%-mass set is ~67
   slots per layer; the LFU cache reads ~84% hit rate from 32 slots by
@@ -85,7 +86,7 @@ the first and last layers, lowest mid-stack).
   statistics cannot see.
 - **A pruned install loses worse.** The 5% tail is whole experts of routed
   mass. The quality gate's sensitivity curve reads +10.5% perplexity from
-  flipping one quantization level in 0.0122% of expert BYTES
+  flipping one quantization level in 0.0122% of expert bytes
   (`docs/BENCHMARKS.md`); zeroing entire routed experts is orders of
   magnitude more damage than its detection floor.
 - **Corpus-size caveat, bounded.** ~920 passes per side is small; the

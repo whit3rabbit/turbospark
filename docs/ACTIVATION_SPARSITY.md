@@ -1,18 +1,18 @@
 # Dense-FFN activation sparsity: measured negative
 
 The question: could Muse Glimmer 30B (or any dense checkpoint here) run in
-less memory through CONTEXTUAL ACTIVATION SPARSITY -- the Deja Vu /
+less memory through contextual activation sparsity, the Deja Vu /
 PowerInfer / LLM-in-a-Flash family of techniques, where only the FFN
 neurons a token actually activates are kept in memory, hot rows cached and
 cold rows streamed, the dense analog of this engine's expert cache?
 
-The answer, measured 2026-08-16 on the real install: **no. The activation
+The answer, measured 2026-08-16 on the real install, is no: the activation
 mass is spread across ~90% of the FFN, there is no hot set, and the
-temporal locality a neuron cache would need does not exist.** This is the
+temporal locality a neuron cache would need does not exist. This is the
 same shape of result as `docs/EXPERT_ROUTING.md`'s (routing is spread, not
-domain-concentrated), one architecture class over. Read both before
-proposing weight streaming or pruning keyed on what a token "actually
-uses".
+domain-concentrated), one architecture class over. If you are about to
+propose weight streaming or pruning keyed on what a token "actually
+uses", read both pages first.
 
 ## The instrument
 
@@ -70,8 +70,8 @@ this is not a domain artifact.
 ## The reading
 
 1. **There is no hot set.** 95% of the activation mass needs 91% of the
-   neurons. Even a PERFECT n95 working set would keep 9.9 of the FFN's
-   10.9 GB resident -- a ~1 GB saving on a 15.7 GB install, before any
+   neurons. Even a perfect n95 working set would keep 9.9 of the FFN's
+   10.9 GB resident, a ~1 GB saving on a 15.7 GB install, before any
    quality cost and before building a row-granular streamer.
 2. **The locality is real and useless.** Overlap runs ~9x chance at
    K = 512, so consecutive tokens do activate alike -- but at 0.24 against
@@ -89,11 +89,11 @@ this is not a domain artifact.
 
 ## What this closes, and what remains
 
-CLOSED: PowerInfer / LLM-in-a-Flash-style neuron streaming, neuron caches,
-activation-threshold FFN skipping, and any "load only what the token uses"
-scheme for this checkpoint. Do not re-derive without a census reading that
-contradicts this one; the instrument is standing and a run costs ~a minute
-per prompt.
+**Closed:** PowerInfer / LLM-in-a-Flash-style neuron streaming, neuron
+caches, activation-threshold FFN skipping, and any "load only what the
+token uses" scheme for this checkpoint. Do not re-derive this without a
+census reading that contradicts this one; the instrument is standing and a
+run costs ~a minute per prompt.
 
 Muse Glimmer's memory and power cost is what dense 30B costs. The levers
 that actually exist are recorded elsewhere: `--power-profile efficiency`
@@ -106,5 +106,5 @@ binds harder than power, a sub-4-bit GGUF intake for the family
 The capture generalizes to the other dense families for the price of the
 same redirect in their flows (`families/llama/dense.rs`,
 `families/qwen/dense.rs`); none has been measured, and this result does
-not automatically transfer -- but every one of them is SiLU too, so the
-prior is the same.
+not automatically transfer. Every one of them is SiLU too, so the prior
+is the same.

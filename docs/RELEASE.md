@@ -9,7 +9,7 @@ executable version of this document and should never drift from it.
 
 Every crate under `crates/` shares one version number
 (`workspace.package.version` in the root `Cargo.toml`). All of them publish
-to crates.io except `turbospark-bench` (`publish = false` — it's a dev
+to crates.io except `turbospark-bench` (`publish = false`; it's a dev
 harness that reads local model installs, no use off this machine).
 
 Publish order matters: `cargo publish` refuses a crate until every internal
@@ -18,20 +18,20 @@ live on the registry at that exact version. The order below is the one
 `cargo publish --workspace --dry-run` itself resolved when this doc was
 written (verified locally, not assumed):
 
-1. `turbospark-core` — no internal deps
-2. `turbospark-window-fit` — no internal deps
-3. `turbospark-compute` — needs core
-4. `turbospark-invocation` — needs core
-5. `turbospark-model-io` — needs core
-6. `turbospark-selection` — needs core
-7. `turbospark-tokenizer` — needs core
-8. `turbospark-repack` — needs core, compute, model-io
-9. `turbospark-catalog` — needs core, model-io, repack, tokenizer
-10. `turbospark-streaming` — needs core, model-io
-11. `turbospark-gpu` — needs core; macOS target-deps on model-io
-12. `turbospark-runtime` — needs core, selection, tokenizer; macOS target-deps on gpu, model-io, compute, streaming
-13. `turbospark-cli` — needs invocation, runtime, selection, tokenizer, repack, model-io, window-fit
-14. `turbospark-server` — needs core, runtime, selection, tokenizer; macOS target-deps on repack
+1. `turbospark-core`: no internal deps
+2. `turbospark-window-fit`: no internal deps
+3. `turbospark-compute`: needs core
+4. `turbospark-invocation`: needs core
+5. `turbospark-model-io`: needs core
+6. `turbospark-selection`: needs core
+7. `turbospark-tokenizer`: needs core
+8. `turbospark-repack`: needs core, compute, model-io
+9. `turbospark-catalog`: needs core, model-io, repack, tokenizer
+10. `turbospark-streaming`: needs core, model-io
+11. `turbospark-gpu`: needs core; macOS target-deps on model-io
+12. `turbospark-runtime`: needs core, selection, tokenizer; macOS target-deps on gpu, model-io, compute, streaming
+13. `turbospark-cli`: needs invocation, runtime, selection, tokenizer, repack, model-io, window-fit
+14. `turbospark-server`: needs core, runtime, selection, tokenizer; macOS target-deps on repack
 
 `.github/workflows/release.yml`'s `publish-crates` job hardcodes this same
 order and publishes one crate at a time (`cargo publish -p <crate>`) rather
@@ -53,10 +53,10 @@ internal dependency, update this list AND the `ORDER` array in
 cargo publish --workspace --dry-run --allow-dirty
 ```
 
-(dry-run only actually resolves interdependencies once earlier crates are
-really on the registry — on a clean, nothing-published-yet repo it will
-fail partway through; on this repo, with everything already published,
-it's the authoritative check).
+A dry run only actually resolves interdependencies once earlier crates
+are really on the registry. On a clean, nothing-published-yet repo it
+will fail partway through; on this repo, with everything already
+published, it is the authoritative check.
 
 ## Cutting a release
 
@@ -64,41 +64,41 @@ it's the authoritative check).
    new `## [X.Y.Z] - YYYY-MM-DD` section, dated the day you're releasing.
    Leave a fresh empty `## [Unreleased]` section above it for the next
    round of changes. CI enforces that this section exists and matches the
-   tag (`check-version` job) — a release cannot ship without it.
+   tag (`check-version` job); a release cannot ship without it.
 2. **Bump the version.** Edit `workspace.package.version` in the root
    `Cargo.toml` to `X.Y.Z`, matching the changelog heading. Then bump every
    internal path dependency's `version = "..."` field in every crate's
-   `Cargo.toml` to the same `X.Y.Z` — `check-version` asserts this too
+   `Cargo.toml` to the same `X.Y.Z`; `check-version` asserts this too
    (`grep -n 'path = "\.\./' crates/*/Cargo.toml`, checked against the tag).
    A `cargo build --workspace` after the bump will fail loudly if any
    `version.workspace = true` reference was missed.
 3. **Commit and merge to `main`**, e.g. `chore(release): vX.Y.Z`.
 4. **Tag it**: `git tag vX.Y.Z && git push origin vX.Y.Z`. The tag is what
-   triggers `release.yml` (`on.push.tags: ['v[0-9]*']`) — nothing runs on
+   triggers `release.yml` (`on.push.tags: ['v[0-9]*']`); nothing runs on
    the commit itself.
 5. **Watch the Actions run.** In order: `check-version` (fails fast if the
-   tag, the workspace version, or the changelog entry disagree) →
-   `build-macos` (release binaries, zipped) → `release` (GitHub Release,
+   tag, the workspace version, or the changelog entry disagree) ->
+   `build-macos` (release binaries, zipped) -> `release` (GitHub Release,
    with the changelog section for this version as the body and
    `generate_release_notes: true` appending the auto-generated PR/commit
-   list below it) → `publish-crates` (crates.io, skipped with a notice if
-   `CARGO_REGISTRY_TOKEN` isn't set) → `update-homebrew-cask` (skipped with
+   list below it) -> `publish-crates` (crates.io, skipped with a notice if
+   `CARGO_REGISTRY_TOKEN` isn't set) -> `update-homebrew-cask` (skipped with
    a notice if `HOMEBREW_TAP_TOKEN` isn't set).
 
 ## Prerequisites
 
 - **Local cargo >= 1.90** if you ever want to run `cargo publish
-  --workspace` by hand outside CI — multi-package publishing stabilized in
+  --workspace` by hand outside CI. Multi-package publishing stabilized in
   Cargo 1.90 (2025-09-18). `rust-toolchain.toml` here pins `channel =
   "stable"`, so a `rustup update` keeps you current; the workspace's
   declared `rust-version = "1.82"` is the MSRV floor for *consumers*
   compiling this code, not the cargo binary you invoke `publish` with.
-- **`CARGO_REGISTRY_TOKEN`** repo secret — a crates.io API token
+- **`CARGO_REGISTRY_TOKEN`** repo secret: a crates.io API token
   (`cargo login` locally, or generate one at
   https://crates.io/settings/tokens). Without it, `publish-crates` no-ops
   with a `::notice::` rather than failing, so a release can still ship
   binaries and a GitHub Release without touching crates.io.
-- **`HOMEBREW_TAP_TOKEN`** repo secret — a PAT with push access to
+- **`HOMEBREW_TAP_TOKEN`** repo secret: a PAT with push access to
   `whit3rabbit/homebrew-tap`, only needed for the cask update. Same
   no-op-with-notice behavior when unset.
 - **`cargo login`** if publishing manually (not through CI): the token
@@ -111,7 +111,7 @@ it's the authoritative check).
 `update-homebrew-cask` is the last job in `release.yml`. It runs after
 `release` (needs the GitHub Release's zip asset to already exist) and is
 gated on the `HOMEBREW_TAP_TOKEN` repo secret exactly like `publish-crates`
-is gated on `CARGO_REGISTRY_TOKEN` — set, it pushes; unset, it no-ops with
+is gated on `CARGO_REGISTRY_TOKEN`. Set, it pushes; unset, it no-ops with
 `::notice::` and the rest of the release still ships.
 
 Confirmed by reading the job, not assumed: **the CLI is one of the three
@@ -122,7 +122,7 @@ crate, so `cargo build -p turbospark-cli` produces both) plus
 Release asset; `update-homebrew-cask` downloads that exact asset, hashes
 it, and writes a cask with a `binary` stanza for each of the three.
 `brew install --cask turbospark` (from `whit3rabbit/homebrew-tap`)
-therefore puts all three on `PATH`. There's no separate per-binary cask —
+therefore puts all three on `PATH`. There is no separate per-binary cask:
 one cask, one zip, every binary.
 
 This is Apple-Silicon-only by construction: `build-macos` builds only
@@ -134,14 +134,14 @@ second `sha256`/`url` stanza in the cask (Homebrew casks support per-arch
 
 The generated cask is checked for Ruby syntax validity
 (`ruby -c homebrew-tap/Casks/turbospark.rb`) before commit, but not for
-Homebrew's own `brew audit`/`brew style` conventions — those need `brew`
+Homebrew's own `brew audit`/`brew style` conventions; those need `brew`
 installed, which this job doesn't do. Worth adding if the cask ever grows
 past this template, not urgent while it's five static lines plus two
 interpolated values.
 
 ## Local dry run before tagging
 
-Do this before pushing a tag, not after — a bad tag is cheap to delete, a
+Do this before pushing a tag, not after. A bad tag is cheap to delete; a
 half-published crates.io chain is not:
 
 ```sh
@@ -169,7 +169,7 @@ everything (the changelog move, the version bump) before tagging.
   problem, re-tag. Nothing downstream ran, so this is fully reversible.
 - **`publish-crates` partially failed** (say, crate 6 of 14 failed for a
   transient registry reason): fix the cause if it's a real error, then
-  re-run the same workflow run (or push the same tag's SHA again — tags
+  re-run the same workflow run (or push the same tag's SHA again; tags
   are immutable once other jobs succeeded, so re-triggering `release.yml`
   needs a `workflow_dispatch` re-run of the failed job from the Actions
   UI). The per-crate loop treats every already-published crate as a

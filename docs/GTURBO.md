@@ -1,6 +1,6 @@
 # The .gturbo Model Installation Specification
 
-This document provides a comprehensive specification of the `.gturbo` model installation directory format, its binary layout, streaming mechanics, and compatibility with the upstream [turbo-fieldfare](https://github.com/drumih/turbo-fieldfare) (Mference) inference engine.
+This document specifies the `.gturbo` model installation directory format, its binary layout, streaming mechanics, and compatibility with the upstream [turbo-fieldfare](https://github.com/drumih/turbo-fieldfare) (Mference) inference engine.
 
 ---
 
@@ -103,8 +103,8 @@ router slot is the exception and says `affine`/8/group-64, because the repack
 transcodes GGUF's F32 router to INT8 and the manifest has to describe the
 bytes on disk rather than the source.
 
-A slot carrying MORE THAN ONE block type -- which a mixed sub-4-bit routed
-slot does -- adds an array beside it:
+A slot carrying more than one block type (which a mixed sub-4-bit routed
+slot does) adds an array beside it:
 
 ```json
 "routedExpert": {
@@ -117,7 +117,7 @@ slot does -- adds an array beside it:
 
 `ggmlTypes` is sorted by descending tensor count, so `ggmlType` stays the
 dominant type and a hand-read of the manifest is still informative. The loader
-checks EVERY member against the executable set. Checking only the dominant one
+checks every member against the executable set. Checking only the dominant one
 would admit an install on the strength of its majority and then fail at a
 dispatch deep in the model. The array is omitted entirely when a slot carries
 one type, so a uniform install's manifest is unchanged.
@@ -165,7 +165,7 @@ four fields are zero and must not be dereferenced.
 | 6 / 7 / 8 / 9 | GGUF Q8_0 / Q4_K / Q6_K / Q4_0 | inline |
 | 10 / 11 / 12 | GGUF IQ3_XXS / IQ4_NL / IQ4_XS | inline |
 
-A tag is NOT permission to run. The repack walk writes an install for every
+A tag is not permission to run. The repack walk writes an install for every
 block type it can parse, and whether that install opens is decided separately
 per type, at load, by name: Q4_0 has a tag and no kernel and is refused.
 
@@ -217,9 +217,9 @@ layer_00.bin:
 +-------------------------------+-------------------------------+-- ...
 ```
 
-- **Fixed Expert Stride, PER LAYER**: Every expert blob within one layer occupies exactly that layer's `expertStride` bytes. If the sum of an expert's sub-tensors is less than the stride, it is zero-padded to the stride boundary.
+- **Fixed expert stride, per layer**: Every expert blob within one layer occupies exactly that layer's `expertStride` bytes. If the sum of an expert's sub-tensors is less than the stride, it is zero-padded to the stride boundary.
 - **O(1) Direct Seeking**: Because the stride is fixed within a layer, the byte offset for `expert_id` inside `layer_NN.bin` is simply `expert_id * expert_stride`. The streamer can immediately execute an OS `pread` at that exact file offset without scanning.
-- **Two levels of `expertStride`, and they mean different things.** The top-level value is the model-wide MAXIMUM; each layer object carries its own, which is what that layer's file is actually padded to. Address or size a layer with the layer's value, never the top-level one. A layer declaring a stride ABOVE the top-level maximum is rejected at load, since consumers size a slot from the maximum.
+- **Two levels of `expertStride`, and they mean different things.** The top-level value is the model-wide MAXIMUM; each layer object carries its own, which is what that layer's file is actually padded to. Address or size a layer with the layer's value, never the top-level one. A layer declaring a stride above the top-level maximum is rejected at load, since consumers size a slot from the maximum.
 - **Why per layer.** Until sub-4-bit intake, every install was uniform across layers and one number said everything. A mixed checkpoint is not: `unsloth/gemma-4-26B-A4B-it-UD-Q3_K_M` carries IQ3_XXS gate/up over IQ4_NL down on twenty-nine layers and IQ4_XS over Q8_0 on the thirtieth, whose blob is 4,212,736 bytes against the others' 2,632,960. Padding all thirty to that maximum would write 16.23 GB of experts where 10.33 is needed, and inflate every cache miss on twenty-nine of thirty layers by the same 1.6x. Nothing about the output would change, because a zero-padded blob decodes correctly.
 - **Backwards compatible**: a layer object without its own `expertStride` inherits the top-level value, which is every install written before per-layer striding.
 
@@ -236,7 +236,7 @@ The `repack` module converts upstream Safetensors or published GGUF checkpoints 
    - Layer Norms -> Transcoded to BF16 / FP16.
    - Router Projections -> Transcoded to INT8 affine quantization.
    - Linear Attention State & Embeddings -> Formatted into `model_weights.bin`.
-4. **Expert Layer Repacking**: Expert weights are sliced by layer, quantized (or kept verbatim in native GGUF block types Q8_0, Q4_K, Q6_K, IQ3_XXS, IQ4_NL, IQ4_XS), formatted into fixed-stride blobs, and written incrementally into `packed_experts/layer_NN.bin`. Each layer is padded to its OWN stride, and the manifest's `expertStride` records the model-wide maximum.
+4. **Expert Layer Repacking**: Expert weights are sliced by layer, quantized (or kept verbatim in native GGUF block types Q8_0, Q4_K, Q6_K, IQ3_XXS, IQ4_NL, IQ4_XS), formatted into fixed-stride blobs, and written incrementally into `packed_experts/layer_NN.bin`. Each layer is padded to its own stride, and the manifest's `expertStride` records the model-wide maximum.
 
 ---
 
@@ -249,7 +249,7 @@ During model execution:
    - `PreadExpertStreamer` checks the in-memory LFU/LRU expert cache.
    - Cache Hits -> Reused directly.
    - Cache Misses -> Asynchronous OS `pread` reads `expertStride` bytes from `layer_NN.bin` directly into pinned Metal buffers.
-4. **Execution Ceiling**: Expert cache size is controlled by `--expert-cache-slots`, which defaults to `auto` and never resolves below 16 slots. At 16 the overall physical RAM footprint is **~1.6 GiB (Qwen 3.6)** and **~2.1 GiB (Gemma 4)** -- the figures every published benchmark is measured at, and the floor `auto` guarantees. A machine with memory to spare climbs to 24 or 32 and trades roughly 1.5 GB of that ceiling for ~16% more decode, because the slot cache is what the decode loop's exposed `pread` is waiting on (`docs/DECODE_BUDGET.md`). Pass `--expert-cache-slots 16` to hold the ceiling exactly.
+4. **Execution Ceiling**: Expert cache size is controlled by `--expert-cache-slots`, which defaults to `auto` and never resolves below 16 slots. At 16 the overall physical RAM footprint is **~1.6 GiB (Qwen 3.6)** and **~2.1 GiB (Gemma 4)**, the figures every published benchmark is measured at and the floor `auto` guarantees. A machine with memory to spare climbs to 24 or 32 and trades roughly 1.5 GB of that ceiling for ~16% more decode, because the slot cache is what the decode loop's exposed `pread` is waiting on (`docs/DECODE_BUDGET.md`). Pass `--expert-cache-slots 16` to hold the ceiling exactly.
 
 ---
 

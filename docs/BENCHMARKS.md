@@ -175,7 +175,7 @@ transferable to those rows.
 ### Every install, side by side
 
 The table the README's summary is drawn from. All M4 Max, AC, release, 16
-expert-cache slots; each row is the SESSION PEAK its memory oracle asserts,
+expert-cache slots; each row is the session peak its memory oracle asserts,
 and the ceiling beside it is that oracle's bound (deliberately ~8-13% above
 the reading, so allocator jitter cannot flake it).
 
@@ -191,7 +191,7 @@ the reading, so allocator jitter cannot flake it).
 | **Ternary-Bonsai-27B, MLX 2-bit** | 7.6 GB | 4,096 | **657.8 - 661.6 MiB** | 750 | 12.5 - 13.9 | **no, dense** |
 | Bonsai-27B, MLX 1-bit | 3.9 GB | -- | not measured | -- | ~18.3 | no, dense |
 
-**READ THE `Streams?` COLUMN BEFORE COMPARING ANY TWO ROWS**, because the
+**Read the `Streams?` column before comparing any two rows**, because the
 two groups are measuring different things and only one of them is a result
 about this engine.
 
@@ -285,8 +285,8 @@ frozen protocol, AC, release, 16 slots, all three cases stopping endOfTurn:
 | reference-answer perplexity | 14.7576 |
 | replay growth | +0.23 MiB |
 
-**READ THE FOOTPRINT AS ARITHMETIC, NOT AS A REGRESSION, AND NOTE THAT IT
-LEAVES THE PUBLISHED BAND.** At 2.75 GiB this checkpoint sits above the
+**Read the footprint as arithmetic, not as a regression, and note that it
+leaves the published band.** At 2.75 GiB this checkpoint sits above the
 ~1.6-2.2 GiB the other two families hold, because the slot term is
 `slots x layers x expert_stride` and depth counts as much as expert size: 48
 layers at ~2.9 MiB is 2,094 MiB of slot capacity at 16 slots, against Gemma's
@@ -311,7 +311,7 @@ before Phase S touches quantization.
 
 Read the sections below in two groups. The perplexity, the digests, the
 constrained-cache arm, and the sensitivity curve are all this port measured
-against ITS OWN PAST -- regression sentinels, and no row in them is or can
+against its own past, regression sentinels, and no row in them is or can
 be a parity claim. The cross-engine section at the end is the exception and
 the only external reference in this document's Quality half: it compares
 this port against mlx-lm on the same quantized bytes.
@@ -541,7 +541,7 @@ the INT4 install sits 6.2% away from both. The distribution says the same
 thing an order of magnitude more sharply: 0.00845 nats between the two
 engines against 0.57748 for a genuine weight difference, 68x.
 
-**MATCH THE BACKEND, NOT JUST THE BYTES.** This was first measured against
+**Match the backend, not just the bytes.** This was first measured against
 llama.cpp on CPU, because a 26.9 GB model looks like it will not fit under
 a 36 GB machine's Metal wired limit (it does, and runs 5x faster there).
 That reading was **0.05838** nats at 95.1% top-1, which is 40x the shape
@@ -820,7 +820,7 @@ is 72 s and 271 MiB.
 
 ### Sub-4-bit candidate survey (ROADMAP Phase S)
 
-NOT A MEASUREMENT OF THIS PORT. This port cannot ingest IQ3_XXS, so there
+This is not a measurement of this port. This port cannot ingest IQ3_XXS, so there
 is no arm for it here; llama.cpp runs the candidate and this port's frozen
 dumps stand in for the two quantizations it does run. What the section
 answers is whether a 3-bit checkpoint is worth building kernels FOR, which
@@ -880,11 +880,11 @@ than a true 3-bit 7 GiB.
 ### The 3-bit install, measured (ROADMAP Phase S)
 
 The section above measured llama.cpp on the candidate, because this port
-could not ingest it. It can now. Everything below is THIS PORT's own IQ3_XXS
+could not ingest it. It can now. Everything below is this port's own IQ3_XXS
 and IQ4_NL kernels, on an install streamed from the identical file, measured
 2026-08-08 on AC, same machine, same 550 ids, same corpus.
 
-**Is the decode faithful?** Against llama.cpp on the SAME BYTES, both Metal,
+**Is the decode faithful?** Against llama.cpp on the same bytes, both Metal,
 both cached:
 
 | Comparison | Mean KL | Top-1 agree |
@@ -925,9 +925,9 @@ configuration measured here. All three protocol cases stop at `endOfTurn`.
 | **IQ3_XXS / IQ4_NL** | **1,850 MiB** | **22.874 - 25.410 tok/s** |
 
 The footprint drop is smaller than the 20% disk drop, and that is the
-accounting working as documented: only the RESIDENT weights are mapped, and
+accounting working as documented: only the resident weights are mapped, and
 `phys_footprint` also carries KV, the expert slot capacity and the process
-baseline. The expert cache holds a fixed SLOT COUNT, so slots shrink with the
+baseline. The expert cache holds a fixed slot count, so slots shrink with the
 blob but do not disappear.
 
 That -20% is the phase's premise and it is not automatic. Layer 29's expert
@@ -961,7 +961,7 @@ at this size. Full rows and the cross-session caveat:
 
 ### The sixth family: `gpt-oss-20b` MXFP4 (ROADMAP M5)
 
-NOT A PARITY CLAIM. Swift has no GGUF intake, so every number here is this
+Not a parity claim. Swift has no GGUF intake, so every number here is this
 port measuring itself. Measured 2026-08-12 on AC, release, 16 expert-cache
 slots, against `~/models/gptoss-20b.gturbo` streamed from
 `ggml-org/gpt-oss-20b-GGUF`.
@@ -975,8 +975,8 @@ slots, against `~/models/gptoss-20b.gturbo` streamed from
 | decode, protocol cases | 31.343 / 26.710 / 23.472 tok/s |
 | constrained (8 slots) | 0.83x, digest byte-identical |
 
-**THE FOOTPRINT IS THE HIGHEST OF ANY FAMILY HERE AND IT IS ARITHMETIC, NOT
-A REGRESSION.** `slots x layers x expert_stride` is 4,854 MiB of slot
+**The footprint is the highest of any family here and it is arithmetic, not
+a regression.** `slots x layers x expert_stride` is 4,854 MiB of slot
 capacity on its own, against Qwen3-30B-A3B's 2,094 and Gemma 4's ~1,500, so
 this install sits far above the 1.6-2.2 GiB band the README quotes. It is
 still STREAMING, which is the whole reason the family was chosen: the expert
@@ -984,19 +984,19 @@ table is 9.5 GiB and only 4.7 of it is ever resident, where Mixtral's
 108.9 MiB experts wanted 54.5 GiB and could not run here at all (AGENTS.md
 Gotcha 36).
 
-**ITS ROW MOVES TWO PROTOCOL PARAMETERS AND BOTH ARE FORCED**, so it is
+**Its row moves two protocol parameters and both are forced**, so it is
 comparable to no other row without reading them. The budget is 3,072 new
 tokens rather than 1,024 because Harmony puts the model's reasoning in an
 `analysis` channel BEFORE its answer: the three cases need 818 / 2,153 /
 1,108 tokens to reach `<|return|>`, and at the shared budget two of three
 stop on `maxTokens`, which the validity gate refuses. The window is 8,192
 rather than 4,096 because `2839 + 3072` does not fit. Worth carrying: a
-budget derived from a GREEDY probe understated it (that read 1,780 for
+budget derived from a greedy probe understated it (that read 1,780 for
 `medium-review` against the protocol's sampled 2,153) -- a reasoning model's
 answer length is a distribution, and it lengthens under sampling.
 
-**THE PERPLEXITY NEEDED A FAMILY-SPECIFIC ASSISTANT PREFIX AND THE RAW
-NUMBER LOOKED LIKE A BROKEN MODEL.** Harmony's generation prompt ends at
+**The perplexity needed a family-specific assistant prefix, and the raw
+number looked like a broken model.** Harmony's generation prompt ends at
 `<|start|>assistant`, where the next token must be `<|channel|>`; splicing
 the reference answer's prose straight in scores the model's surprise at
 prose-instead-of-marker and reads **148,421.76**, against 6-38 for every
@@ -1009,7 +1009,7 @@ predict) arriving from a direction that gotcha did not anticipate: not the
 wrong tokens, but the right tokens in a position the family's framing does
 not put them in.
 
-**THE GATE PINS A DATE.** Harmony's template writes `Current date: ` into
+**The gate pins a date.** Harmony's template writes `Current date: ` into
 its system preamble via transformers' `strftime_now`, so this is the first
 gate here whose prompt reads a clock; without the pin both digests would
 expire at midnight and read as a numerics regression the next morning. The
@@ -1032,7 +1032,7 @@ reading: `docs/POWER_BASELINE.md`, "gpt-oss-20b".
 
 ### The seventh checkpoint, and the first controlled quantization pair: `Qwen/Qwen3.8-27B`
 
-NOT A PARITY CLAIM. Swift has no `qwen3_5` support at all, so every number
+Not a parity claim. Swift has no `qwen3_5` support at all, so every number
 here is this port measuring itself.
 
 Measured 2026-08-14 on the machine in the provenance table, on AC, release,
@@ -1050,7 +1050,7 @@ streamed from `mlx-community/Qwen3.8-27B-4bit` into ~15.1 GB.
 | greedy at 8 slots | `c3df0095` (equal, as it must be) |
 | replay growth | +0.02 MiB |
 
-**THROUGHPUT RE-MEASURED 2026-08-17** after the INT4 function-constant
+**Throughput re-measured 2026-08-17** after the INT4 function-constant
 specialization (`46617c6`; see `docs/DECODE_BUDGET.md`, "The dense 27B").
 Quiet unattended capture, AC, two full protocol runs: 20.3 / 19.8 / 18.6
 and 21.1 / 20.7 / 18.7 tok/s (long-synthesis agreeing to 0.7% across
@@ -1064,7 +1064,7 @@ compute-bound reading (decode does not track weight bytes, even
 monotonically) is unchanged, since the 1-bit and 2-bit GEMVs were not
 specialized.
 
-**THIS IS NOT A NEW FAMILY, AND THAT IS THE INTERESTING PART.** Qwen3.8-27B
+**This is not a new family, and that is the interesting part.** Qwen3.8-27B
 and `prism-ml/Bonsai-27B-mlx-1bit` are ONE architecture: their
 `text_config`s agree on 33 of 35 keys, both have 2,180 tensors and 333
 `vision_tower.` tensors, and both parse to the same `ArchConfig`
@@ -1110,7 +1110,7 @@ even though this checkpoint's assistant slot is structured -- its template
 opens a `<think>` block, which is exactly the shape that made gpt-oss read
 148,421.76 without one. It needs none because `apply_chat_template` renders
 with `enable_thinking: false` and this template's non-thinking branch emits
-a CLOSED, EMPTY block (`<think>\n\n</think>\n\n`), so the reference answer
+a closed, empty block (`<think>\n\n</think>\n\n`), so the reference answer
 already lands in the answer position. Splicing a `</think>` in would have
 written a second close and measured the model's surprise at that: the same
 error as omitting one, from the other side.
@@ -1123,7 +1123,7 @@ cases stop `endOfTurn` with 3,577 of 4,096 used.
 
 ### The eighth checkpoint, and the ternary operating point: `prism-ml/Ternary-Bonsai-27B-mlx-2bit`
 
-NOT A PARITY CLAIM. Swift has no `qwen3_5` support at all, so every number
+Not a parity claim. Swift has no `qwen3_5` support at all, so every number
 here is this port measuring itself.
 
 Measured 2026-08-15 on the machine in the provenance table, on AC, release,
@@ -1145,7 +1145,7 @@ resident weights, in 13.8 minutes.
 | decode, short / medium / long | 13.8 / 13.6 / 12.7 tok/s |
 | replay growth | +0.00 / +0.02 MiB |
 
-**THE THIRD CHECKPOINT OF ONE ARCHITECTURE, and it needed no `ArchConfig`
+**The third checkpoint of one architecture, and it needed no `ArchConfig`
 field, no baseline, no parser and no decode flow.** Its `text_config` is
 Bonsai-27B's to the KEY -- the same `eos_token_id` 248046 and all -- so the
 two files differ in their `quantization` object alone, which is a stronger
@@ -1256,7 +1256,7 @@ elements a byte against eight, and no `+/-1` shortcut).
 
 ## Batched verify and speculative decoding
 
-NOT A PARITY CLAIM. Swift has no speculative decoding. **Full write-up,
+Not a parity claim. Swift has no speculative decoding. **Full write-up,
 method, every measurement and the standing decision:
 `docs/SPECULATIVE_DECODING.md`.** Summarized here because it is a
 throughput result and this is where throughput results are indexed.
@@ -1287,7 +1287,7 @@ speculation switched off.
 
 ## Power
 
-NOT A PARITY CLAIM. Swift was never measured for power, here or upstream;
+Not a parity claim. Swift was never measured for power, here or upstream;
 this is this port measuring itself, like the Quality section above.
 
 **Full write-up, method, hygiene audit and caveats: `docs/POWER_BASELINE.md`.**
@@ -1317,8 +1317,8 @@ already does on memory. Energy per token grows with context on both.
 Four results worth carrying, each detailed in `docs/POWER_BASELINE.md`:
 
 - **AC vs battery answers AGENTS.md Gotcha 22, which had stood unmeasured.**
-  Energy is NOT the axis that moves: watts and J/token differ by a few
-  percent with no consistent sign. THERMAL HEADROOM is: on AC 50 of 50
+  Energy is not the axis that moves: watts and J/token differ by a few
+  percent with no consistent sign. Thermal headroom is: on AC 50 of 50
   arms held Nominal, while on battery `long-synthesis` left Nominal on
   every run of both installs and two further runs were lost the same way,
   so the battery column has holes the AC column does not.
@@ -1463,13 +1463,13 @@ full-walk MoE timing has been taken yet; the 3.4x is measured on the wire.
 
 `mlx-community/Muse-Glimmer-30B-4bit` @ `3e7677d7`, streamed into a 15 GB
 install (resident region 15,670,395,904 bytes) and run on `families/museglimmer/`,
-the SIXTH decode flow. Apple M4 Max, AC, release, 16 expert-cache slots
+the sixth decode flow. Apple M4 Max, AC, release, 16 expert-cache slots
 (inert -- the model is dense), 2026-08-15.
 
-**READ THESE WITH THE WINDOW AND THE BUDGET.** This family runs the protocol
+**Read these with the window and the budget.** This family runs the protocol
 at **8,192 context and a 2,048 generation budget**, not the shared
-4,096/1,024, and it is the second family to move both. It REASONS BEFORE
-ANSWERING: its template writes `Reasoning strength: high.` into the system
+4,096/1,024, and it is the second family to move both. It reasons before
+answering: its template writes `Reasoning strength: high.` into the system
 preamble and the model emits a `to=self` message before its `to=user` one, so
 at 1,024 even the SHORT case stops on `maxTokens`. A row at one window says
 nothing about another (`crates/bench` Gotchas 11 and 12).
@@ -1482,7 +1482,7 @@ nothing about another (`crates/bench` Gotchas 11 and 12).
 
 Peak `phys_footprint` **535 MiB**, replay +1.19 MiB.
 
-**THE 15.7 GB OF RESIDENT WEIGHTS ARE ABSENT FROM THAT PEAK**, which is the
+**The 15.7 GB of resident weights are absent from that peak**, which is the
 THIRD independent re-derivation of AGENTS.md Gotcha 40 (Mistral 7B: 4.07 GiB
 of weights, 684 MiB peak; Qwen3.8-27B: 15.1 GB, 660 MiB). The accounting,
 computed from shapes before the run:
@@ -1510,7 +1510,7 @@ character:
 | 8-slot digest | EQUAL to the 16-slot one |
 | constrained arm | 1.00x / 0.99x |
 
-The perplexity is the number that says the ASSISTANT PREFIX is right. This
+The perplexity is the number that says the assistant prefix is right. This
 family's generation prompt ends at `<|start|>assistant` and the model's next
 emission is a recipient, so the reference answer spliced in raw lands in no
 message at all -- the position that made gpt-oss read 148,421.76. A healthy
@@ -1523,7 +1523,7 @@ The constrained arm reads ~1.00x rather than the MoE families' 0.85-0.94x
 because `--expert-cache-slots` sizes a routed-expert cache and a dense model
 has none; the two arms differ only in noise.
 
-**NOT MEASURED:** no cross-engine KL against mlx-vlm.
+**Not measured:** no cross-engine KL against mlx-vlm.
 
 **POWER: the unconstrained cost is measured, the sustained cost is not.**
 Three AC captures (2026-08-16, quiet machine, at three starting temperatures)

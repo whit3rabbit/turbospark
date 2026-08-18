@@ -75,15 +75,15 @@ both engines run the identical workload:
   `gpt-oss`; 8,192 / 2,048 for `muse_glimmer`. Neither is a knob, and both are the same numbers the memory
   oracles freeze their rows at (the oracle targets assert the agreement at
   compile time). Why they differ is the point: the protocol freezes the
-  PROSE, so its token count belongs to the checkpoint's tokenizer
+  prose, so its token count belongs to the checkpoint's tokenizer
   (`long-synthesis` is 3,444 tokens under Mistral's 32k vocab and does not
   fit 4,096 at all), and how many tokens a model spends answering is the
-  MODEL's property (Harmony puts gpt-oss's reasoning in an `analysis`
+  model's property (Harmony puts gpt-oss's reasoning in an `analysis`
   channel before its answer, so two of three cases stop on `maxTokens` at
   1,024). Raising the shared constants was not an option in either
   direction: KV is sized at open, so a wider window moves every already
   frozen peak, and a larger budget lets every other family generate further.
-- **Read a peak or a tok/s row WITH the window and the budget.** The same
+- **Read a peak or a tok/s row with the window and the budget.** The same
   Mistral install reads 684 MiB at 4,096 and ~1,200 MiB at 8,192, because on
   a dense install KV is nearly all of the counted footprint. Any dense
   `llama` bench number taken before 2026-08-12 is at the old shared 4,096.
@@ -127,7 +127,7 @@ scripts/parity.sh [pairs]        # default 2 measured pairs per case
 ```
 
 Runs the protocol through `../Mference/.build/release/MferenceCLI` and
-this port's `turbospark-bench --case`, against the SAME install directory,
+this port's `turbospark-bench --case`, against the same install directory,
 one fresh process per run, arms interleaved pair by pair. Discards a
 warmup per engine per case, rejects any run that does not stop
 `endOfTurn`, refuses to start if another model process is up, and records
@@ -176,7 +176,7 @@ deliberate and is the same rule AGENTS.md Gotcha 35 states for the power
 profile: a harness that measures a knob is exactly the caller that must not
 sense it, because a frozen footprint row taken at whatever the machine felt
 like that morning is not a row. The consequence for a reader: a figure here
-is NOT what the CLI will print on a machine with memory to spare, which
+is not what the CLI will print on a machine with memory to spare, which
 climbs to 24 or 32 slots and trades roughly 1.5 GB of peak for 16% of decode
 (`docs/DECODE_BUDGET.md` has the sweep). Reproduce a row with
 `--expert-cache-slots 16`.
@@ -223,7 +223,7 @@ printed on every run and quoted in the failure message, so a red build
 says which kind of number it broke. Replace both with Swift's if that run
 ever happens; a real parity number would very likely be tighter.
 
-Its ceiling (2,300 MiB) lands ABOVE the generic 2,250 default rather than
+Its ceiling (2,300 MiB) lands above the generic 2,250 default rather than
 below it, because the measured peak spread on that machine is 77 MiB of
 expert-slot warming and a 2,250 ceiling would flake on the spread alone.
 Its floor sits about 25 percent under the slowest measured case, covering
@@ -342,14 +342,14 @@ slots. Three traps that shaped it, all measured rather than reasoned:
   16-slot one instead of freezing one per count. Before then the Gemma
   flow dispatched routed slots misses-first, which made phase 2's reduce
   order follow expert-cache state (AGENTS.md Gotcha 27).
-- **Hand the second engine TOKEN IDS, never prose.** A tokenizer or
+- **Hand the second engine token ids, never prose.** A tokenizer or
   chat-template difference would surface as a divergence and read as a
   numerics gap. `meta.json` carries the exact sequence this port walked.
 - **Measure a floor in the same run.** A cross-engine KL has no natural
   scale, so `kld.py` also runs mlx-lm against itself in its two forward
   shapes (batched vs token-by-token through a cache). Measured, that
-  intra-engine floor is LARGER than the cross-engine number.
-- **The assistant-slot rule does NOT carry over.** It exists because SFT
+  intra-engine floor is larger than the cross-engine number.
+- **The assistant-slot rule does not carry over.** It exists because SFT
   masks prompt loss; a distribution comparison between two engines is
   valid at every position, and prompt positions are free.
 

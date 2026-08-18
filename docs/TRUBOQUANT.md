@@ -6,14 +6,14 @@ quantization in the shape of `sharpner/turboquant-mlx`
 Google's 2025 TurboQuant paper on Apple Silicon, and if not, are any of
 its ideas worth taking anyway?
 
-Answer, assessed 2026-08-15 by reading their README against this port's
+The answer, assessed 2026-08-15 by reading their README against this port's
 own recorded measurements (no code was run and nothing here is a new
-measurement): **implementable, but it does not pay on this engine today.**
+measurement): implementable, but it does not pay on this engine today.
 KV is not the dominant memory term for any family that is near a memory
 ceiling, attention is a single-digit share of decode at this port's 4-8K
 contexts, and the one thing that makes turboquant-mlx fast (MLX's fused
 `quantized_matmul`) is exactly the kernel this port would have to write
-itself. What IS worth keeping is their negative results and one favorable
+itself. What is worth keeping is their negative results and one favorable
 datapoint about Gemma's head dimensions, all recorded below with explicit
 revisit triggers.
 
@@ -26,7 +26,7 @@ comparison here.
 ## What turboquant-mlx is
 
 A proof of concept of the TurboQuant paper (Google, 2025): quantize the
-attention KV CACHE to 2-4 bits so long contexts fit in memory and the
+attention KV cache to 2-4 bits so long contexts fit in memory and the
 attention pass reads fewer bytes. Weights are untouched. This is entirely
 orthogonal to the weight quantization this port already does everywhere.
 
@@ -35,7 +35,7 @@ Two implementation paths:
 - **V2 (affine, hardware-accelerated):** K/V quantized through
   `mx.quantize` and consumed by `mx.quantized_matmul`, MLX's fused
   dequant-inside-the-matmul Metal kernel. Variants add a random QR
-  ROTATION before quantizing (distributes outlier channels so the values
+  rotation before quantizing (distributes outlier channels so the values
   are closer to iid Gaussian) and a 1-bit QJL residual (a
   Johnson-Lindenstrauss sign-bit correction to attention scores).
 - **V3 (Lloyd-Max codebooks, paper-correct):** optimal centroids at 2-4
@@ -80,7 +80,7 @@ Four findings worth extracting:
 
 1. **4-bit affine KV is near-lossless and near-free** (when a fused
    kernel exists). V2 4-bit runs -0.8% to +2.9% perplexity at ~105% of
-   fp16 speed at 8K (the compressed cache reads fewer bytes, so it WINS
+   fp16 speed at 8K (the compressed cache reads fewer bytes, so it wins
    at long context).
 2. **Below 4 bits there is a quality cliff.** 3-bit costs 5-9% on
    D=128 models, and 2-bit costs 19-65% everywhere. Consistent with this
@@ -88,14 +88,14 @@ Four findings worth extracting:
    codebooks (Phase S) or QAT (the ternary family), neither of which
    their V3 software path could afford at speed.
 3. **The paper's QJL residual is a measured negative in practice.**
-   Their own explanation: the correction is linear in attention SCORES,
+   Their own explanation: the correction is linear in attention scores,
    and softmax amplifies score errors exponentially, so (b-1)-bit MSE
    plus a 1-bit residual loses to plain b-bit. A residual-correction
    scheme for KV should not be built here without a number that
    contradicts theirs.
 4. **Head dimension decides quantization tolerance.** D=256 (their
    Gemma 3) quantizes far better than D=128 (their Llamas): rot+QJL at
-   3 bits even BEAT fp16 on Gemma (-1.1%, a regularizer effect). More
+   3 bits even beat fp16 on Gemma (-1.1%, a regularizer effect). More
    coordinates per head means outliers average out.
 
 And one about cost: **V3, the path with no fused kernel, runs at ~16%
@@ -119,8 +119,8 @@ A V2-shaped 4-bit KV would need:
   Cheap either way: one row per layer per token.
 - **A read-side FUSED dequant inside `attention.metal`**, in both
   places attention touches KV: the QK^T score loop of
-  `attention_decode_partial` and the AV accumulation. This is the whole
-  ballgame. turboquant-mlx never wrote this kernel: `mx.quantized_matmul`
+  `attention_decode_partial` and the AV accumulation. This is the hard
+  part. turboquant-mlx never wrote this kernel: `mx.quantized_matmul`
   is MLX's, and their V3 numbers (16% of fp16) show what happens without
   it. This port has no equivalent to borrow. The existing dequant GEMVs
   (INT4/INT8/Q8_0/...) are weight-matrix kernels with the wrong
@@ -174,7 +174,7 @@ at all (30 of 40 layers on qwen36, 36 of 48 on the dense 27B).
 **Throughput.** Post-split-KV, `attention_decode_partial` is 13-19% of
 cb1's GPU busy time (CLAUDE.local.md, 2026-08-07 dispatch ranking),
 which is single-digit percent of a whole decode token. Reading 4x fewer
-KV bytes cannot buy much from a term that small. Their V2 speed WIN
+KV bytes cannot buy much from a term that small. Their V2 speed win
 appears at 8K+ context on a model whose attention share is large. This
 port's protocol runs at 4,096-8,192 by design, and at those windows
 attention is already flat and cheap here.
@@ -204,14 +204,14 @@ Knowledge, mostly. In order of value:
    their V3 codebook path shows the kernel cost of fancier schemes.
    Skip fractional rates, skip Lloyd-Max, skip 2-bit.
 3. **Gemma is the pilot family.** Its head dims (256 SWA / 512 full) sit
-   in the regime their data says is MOST quantization-tolerant: their
+   in the regime their data says is most quantization-tolerant: their
    D=256 model was the one where quantized KV matched or beat fp16.
    The D=128 families (llama, qwen3moe, gpt-oss) are where the quality
    risk concentrates.
 4. **Random-rotation preprocessing is a real quality lever** (their
    rotated variants beat plain at every width). It is not specific to
    KV (it is the QuaRot family of tricks) and could matter to future
-   WEIGHT quantization work here, but nothing current asks for it: the
+   weight quantization work here, but nothing current asks for it: the
    incumbent MLX INT4 installs are already the best-measured
    quantizations in `docs/BENCHMARKS.md`.
 5. **Norm-baking** (fold L2 norms into the quant scales so dequant needs
@@ -228,7 +228,7 @@ allocate-once-at-construction design does not have), ring buffers,
 Named so the next reader does not re-derive this page:
 
 - **Long-context support landing.** If the protocol context ever moves
-  to 32K+, KV becomes the growing term for every family (it is the ONLY
+  to 32K+, KV becomes the growing term for every family (it is the only
   per-token term on dense families, per Gotcha 40's accounting) and 4-bit
   affine KV with a fused dequant attention kernel becomes the design to
   reach for. V2-shaped: affine, 4-bit, optional baked rotation, no QJL,

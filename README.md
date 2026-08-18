@@ -495,6 +495,10 @@ Model management (`TurboSparkCatalog`) works on any platform, including ones
 that cannot then run a model. Installs stream gigabytes and **cannot resume**,
 so tell the user before starting rather than after failing.
 
+The full API, the C ABI for non-Swift hosts, the threading contract, and the
+list of what is deliberately not supported are in
+[`docs/SWIFT_BINDINGS.md`](docs/SWIFT_BINDINGS.md).
+
 ---
 
 ## Documentation
@@ -508,6 +512,7 @@ so tell the user before starting rather than after failing.
 - [`docs/POWER_BASELINE.md`](docs/POWER_BASELINE.md): Power metrics (Watts, Joules/token).
 - [`docs/SPECULATIVE_DECODING.md`](docs/SPECULATIVE_DECODING.md): DFlash and batched verify, measured marginal (~1.1x, small blocks only), and why it is not shipped.
 - [`docs/EXPERT_ROUTING.md`](docs/EXPERT_ROUTING.md): Domain-restricted expert sets, measured negative.
+- [`docs/SWIFT_BINDINGS.md`](docs/SWIFT_BINDINGS.md): Driving the engine from a native app: the Swift API, the C ABI, threading, and what is not supported.
 
 
 

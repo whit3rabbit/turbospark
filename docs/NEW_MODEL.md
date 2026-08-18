@@ -19,16 +19,16 @@ Every command a gate below names in prose is spelled out in `AGENTS.md`:
 "Build, test, dev commands" for the per-crate tests and the memory oracle,
 "Real-model smoke" for the two 400-token runs Phase 3 and Phase 4 gate on.
 
-**A new SOURCE is a different axis from a new FAMILY, and this file is about
+**A new source is a different axis from a new family, and this file is about
 the family axis.** Bringing GGUF in (ROADMAP Phase G) changed Phase 1,
 Phase 2 and Phase 7's probe, and touched nothing in Phases 3 to 6: the
 decode flow, the head, the memory model and the quality gates do not know
 where the bytes came from.
 So if you are adding a source rather than an architecture, read Phase 1,
-Phase 2 and Phase 7 and skip the rest. The differences are marked "SOURCE:" below, and
+Phase 2 and Phase 7 and skip the rest. The differences are marked "source:" below, and
 the record is `crates/repack/CLAUDE.md` Gotchas 4 to 7 plus `AGENTS.md`
 Gotchas 29, 30 and 33. The one thing that axis adds and this one does not
-have is that a source can be RIGHT about every name and still WRONG about
+have is that a source can be right about every name and still wrong about
 what a tensor means (Gotcha 33).
 
 ---
@@ -40,18 +40,18 @@ the reference implementation. Every answer becomes a field in `ArchConfig`
 (`crates/model-io/src/arch_config.rs`; family baselines in
 `crates/model-io/src/arch_baselines.rs`) or a reason to stop.
 
-- [ ] **SOURCE: where does `ArchConfig` come from, and how is the family
+- [ ] **Source: where does `ArchConfig` come from, and how is the family
       identified?** A safetensors checkpoint answers both from
       `config.json`. A GGUF has no `config.json`: the values come from
       metadata keys under an architecture prefix (`gguf_config.rs`), and
-      several behavioural fields are simply ABSENT because llama.cpp
+      several behavioural fields are simply absent because llama.cpp
       hardcodes them in its graph builder, so the derivation starts from
       `known_architecture(family)` and overrides only what the file really
-      determines. Worse, `general.architecture` is the CONVERTER's name and
+      determines. Worse, `general.architecture` is the converter's name and
       not the family's -- Qwen 3.6 GGUFs say `qwen35moe` -- so deriving it
       from `ModelFamily::as_str()` recognizes no real file. Whatever the
       source, the strongest available check is the same: assert the derived
-      `ArchConfig` EQUALS the one an independently produced install of the
+      `ArchConfig` equals the one an independently produced install of the
       same model declares (`gguf_checkpoint_network.rs`). The two sides
       share no code and no input.
 
@@ -68,7 +68,7 @@ the reference implementation. Every answer becomes a field in `ArchConfig`
 - [ ] **Three one-line flags that each change the layer graph**, all
       manifest fields with a Gemma fallback, so all three must be answered
       even when the answer is "same as Gemma". `attention_k_eq_v`: Gemma's
-      full layers take V from the K PROJECTION (`crates/runtime/src/families/gemma4/mod.rs`
+      full layers take V from the K projection (`crates/runtime/src/families/gemma4/mod.rs`
       still writes and per-head-norms a separate V row from those weights;
       the short-name flow in `real_forward.rs` goes further and binds the
       K buffer directly as V, so its V buffers are never written and its
@@ -84,12 +84,12 @@ the reference implementation. Every answer becomes a field in `ArchConfig`
       not from the formula you remember.
 - [ ] **RoPE convention, both halves of it.** "Partial rotary" names at
       least two different transforms and this port ships both. Gemma's
-      `rope_proportional_neox` rotates a PREFIX OF THE PAIRS across the
+      `rope_proportional_neox` rotates a prefix of the pairs across the
       full head, pairing `(i, head_dim/2 + i)`, dividing frequencies by
-      `head_dim`. Qwen's `rope_neox_subdim` rotates ALL the pairs of a
-      PREFIX OF THE HEAD, pairing `(i, rotary_dim/2 + i)`, dividing by
+      `head_dim`. Qwen's `rope_neox_subdim` rotates all the pairs of a
+      prefix of the head, pairing `(i, rotary_dim/2 + i)`, dividing by
       `rotary_dim`. Same `partial_rotary_factor`, different element sets
-      AND different angles. Pin the pair partner and the divisor from the
+      and different angles. Pin the pair partner and the divisor from the
       reference implementation, separately, and parity-test that elements
       past `rotary_dim` come back untouched.
 - [ ] **Packed projections.** Does any projection emit more rows than its
@@ -100,30 +100,30 @@ the reference implementation. Every answer becomes a field in `ArchConfig`
       at `num_heads * head_dim` reads half the rows and silently drops the
       gate.
 - [ ] **Normalization inventory.** Learned vs no-scale, per-head vs
-      per-tensor, pre- vs post- vs sandwich. Count how many DISTINCT norms
+      per-tensor, pre- vs post- vs sandwich. Count how many distinct norms
       feed the FFN branches: Gemma 4 splits three ways (no-scale for the
       router, `pre_feedforward_layernorm` for the shared expert,
       `pre_feedforward_layernorm_2` for the routed ones), Qwen 3.6 feeds
       all three from one `post_attention_layernorm`. Also count what the
-      attention side normalizes: Gemma norms q, k AND v per head; Qwen
+      attention side normalizes: Gemma norms q, k and v per head; Qwen
       norms q and k only. Adding a v norm "by analogy" is silent. Write
       the layer flow out as pseudocode before implementing it;
       `crates/runtime/src/families/qwen/mod.rs`'s module header is the
       format to copy.
 - [ ] **Output head.** Tied embeddings? Logit softcap? What does the
-      reference's `forward()` RETURN - raw logits, capped logits, or
+      reference's `forward()` returns raw logits, capped logits, or
       probabilities? (See Phase 4; this is the single highest-risk line.)
 - [ ] **MoE shape.** Expert count, top-k, router quantization, per-expert
       scales, shared expert, routed-weight normalization (softmax over
       top-k vs softmax over all then renormalize - these differ and both
-      exist in the wild). Two absences count as answers: Qwen has NEITHER
-      `router.scale` NOR `router.per_expert_scale`, so the INT8 router
+      exist in the wild). Two absences count as answers: Qwen has neither
+      `router.scale` nor `router.per_expert_scale`, so the INT8 router
       kernel (which takes an effective-scale vector regardless) gets a
       buffer of ones and the top-k reduces to softmax-over-the-selected.
-      And is the shared expert GATED? Qwen's output is scaled by
+      And is the shared expert gated? Qwen's output is scaled by
       `sigmoid(shared_expert_gate(x))`, one scalar logit from its own
       1-row GEMV.
-- [ ] **EXPERT GRANULARITY, which is one multiplication and decides whether
+- [ ] **Expert granularity, which is one multiplication and decides whether
       the checkpoint fits this engine at all.** The slot cache is
       `slots x layers x expert_stride`, so what matters is the size of ONE
       expert, not the size of the model: `3 x moe_intermediate x hidden`
@@ -133,10 +133,10 @@ the reference implementation. Every answer becomes a field in `ArchConfig`
       the header (`expert_count`, `feed_forward_length`) before any
       download. Do this here, next to the layer graph -- ROADMAP Phase M2
       did not, and spent a 26 GB download finding out. AGENTS.md Gotcha 36.
-      **COMPUTE THE WHOLE PRODUCT, NOT THE EXPERT SIZE.** `num_layers` is
+      **Compute the whole product, not the expert size.** `num_layers` is
       the factor that is easy to skip because it is not about experts at
-      all, and it is the one that moved next: Qwen3-30B-A3B has a SMALLER
-      expert than Gemma 4 (~2.9 MiB against ~3.2) and a LARGER working set
+      all, and it is the one that moved next: Qwen3-30B-A3B has a smaller
+      expert than Gemma 4 (~2.9 MiB against ~3.2) and a larger working set
       (2,094 MiB against ~1,500), because it is 48 layers deep against 30.
       It streams and it is a good fit; it just does not land in the
       1.6-2.2 GiB band, and a bring-up should say which of those two
@@ -147,21 +147,21 @@ the reference implementation. Every answer becomes a field in `ArchConfig`
       is the point), and its zero/empty-context value. This becomes a
       `LinearAttentionConfig`-shaped block in `ArchConfig`, a state manager
       in `crates/gpu`, and a `reset()` obligation in Phase 3.
-- [ ] **How long does it ANSWER for, not just how long is the prompt?** If
+- [ ] **How long does it answer for, not just how long is the prompt?** If
       the model reasons before answering, the shared 1,024-token budget
       truncates it and every gate that asserts `endOfTurn` fails. Measure the
-      COMPLETION on the real checkpoint before freezing a row: `muse_glimmer`
+      completion on the real checkpoint before freezing a row: `muse_glimmer`
       was put in the shared group on a correct prompt tokenization (46 / 408 /
-      2,764) and a WRONG assumption about output, and needs 1,054 / 1,378 /
+      2,764) and a wrong assumption about output, and needs 1,054 / 1,378 /
       1,246 greedy and more when sampled. Note also that the rendered prompt
       is longer than the raw prose tokenizes to -- 102 against 46 here, the
       difference being the template's system preamble.
 - [ ] **Chat template and EOS set.** From `chat_template.jinja` and
-      `generation_config.json`. `eos_token_id` is often a LIST. Dialect
+      `generation_config.json`. `eos_token_id` is often a list. Dialect
       resolution and the stop set live in `crates/tokenizer`
       (`MfTokenizer`, `StopMatcher`), and the dialect is resolved from the
-      checkpoint's SPECIAL TOKENS, not from the family name. The tokenizer
-      files ship INSIDE the install directory: `open_session`
+      checkpoint's special tokens, not from the family name. The tokenizer
+      files ship inside the install directory: `open_session`
       (`crates/cli/src/generate.rs`) calls
       `MfTokenizer::load_from_dir(model_dir)` on the same path it peeks the
       manifest from, so the repack has to copy them across (or the caller
@@ -181,26 +181,26 @@ looking anything up.
       marker plus four quant probe names, not a new file). Keep the
       source's verbatim naming. Two traps that cost real time on Qwen 3.6:
       a routed-expert marker the classifier does not recognize makes every
-      expert a RESIDENT tensor (loads fine, generates fine, footprint
+      expert a resident tensor (loads fine, generates fine, footprint
       explodes -- test it explicitly), and some parameters carry no
       `.weight` suffix at all (`linear_attn.A_log`, `linear_attn.dt_bias`).
-- [ ] If this checkpoint comes from a DIFFERENT PRODUCER than the one the
+- [ ] If this checkpoint comes from a different producer than the one the
       flow was written against (a GGUF where the port was built on
-      mlx-community, say), budget a pass for SOURCE CONVENTIONS before
+      mlx-community, say), budget a pass for source conventions before
       trusting any output. A name mapping being right does not mean a
-      tensor MEANS the same thing: llama.cpp interleaves Qwen's V heads and
+      tensor means the same thing: llama.cpp interleaves Qwen's V heads and
       stores `-exp(A_log)` where the MLX checkpoint stores `A_log`. Undo it
       at repack time, keyed by canonical name, never at runtime and never
       in a kernel (`gguf_checkpoint/transcode.rs::v_head_axis`). Enumerate by the
-      DIMENSION the convention indexes, not by the tensors you can most
+      dimension the convention indexes, not by the tensors you can most
       easily compare -- that mistake made this eight tensors instead of
       three and cost a whole session (AGENTS.md Gotcha 33). Verify by
-      patching a built install IN PLACE rather than repacking per attempt;
+      patching a built install in place rather than repacking per attempt;
       `open()` runs no checksum, so it is seconds against ~21 minutes.
 - [ ] Write the manifest's `arch` object with every shape field explicit
-      AND every family-extension field explicit.
+      and every family-extension field explicit.
       `crates/model-io/src/arch_validation.rs` resolves omitted optional
-      fields against the GEMMA baseline whatever family the manifest
+      fields against the Gemma baseline whatever family the manifest
       claims, so an install that omits them can never validate. That is
       why `gturbo_writer.rs::build_manifest_json` writes all of them
       unconditionally; do not make any conditional.
@@ -230,7 +230,7 @@ exists nobody can repack the real checkpoint.
 For the first, there are two models to copy and they differ in almost every
 key name, which is the point: `parse_gemma4_config`
 (`crates/repack/src/gemma4_checkpoint/config.rs`) and `parse_qwen_gdn_moe_config`
-(`crates/repack/src/qwen36_config.rs`). Read BOTH before assuming a key
+(`crates/repack/src/qwen36_config.rs`). Read both before assuming a key
 generalizes. Only one thing was common to them: the `text_config` wrapper,
 and that is a multimodal-checkpoint convention, not a universal one.
 Everything else moved -- `hidden_act` vs `hidden_activation`,
@@ -251,29 +251,29 @@ implementation rather than a formula: `attention_scale` (mlx-lm's
 `Qwen3NextAttention.__init__` sets `head_dim ** -0.5`; see Phase 0) and
 the family-constant booleans (`router_scaled`, `ffn_sandwich_norms`,
 `rope_neox_subdim`, ...). Validate the derived rotary dimension while you
-are there: `partial_rotary_factor * head_dim` must be a positive EVEN
+are there: `partial_rotary_factor * head_dim` must be a positive even
 integer, since the NeoX sub-dimension RoPE rotates half that many pairs and
 an odd value silently drops a channel.
 
 The rest of this phase only bites on a real download:
 
-- [ ] **Quantization widths are validated per SLOT and the allowed sets
+- [ ] **Quantization widths are validated per slot and the allowed sets
       are narrow.** `validate_quant` (`crates/model-io/src/manifest.rs`)
       accepts embedding 4, attention 4, router 8, sharedExpert 4 or 8,
       routedExpert 2 or 4, and demands `affine` / bf16 scales / bf16
       biases / group size exactly 64 on every one. A family whose router
       ships INT4, or whose checkpoint uses a group size other than 64, is
       rejected at load, not at repack.
-      **SOURCE: a block-quantized slot is validated as a different SHAPE,
+      **Source: a block-quantized slot is validated as a different shape,
       not by widening that table.** A GGUF slot carries no weight bits and
       no group size (the scale lives inside the block), so it is accepted
       as `scheme` plus `ggmlType` against `model_io::EXECUTABLE_GGUF_TYPES`.
       Two independent gates gate it and they must move together or
       `crates/runtime/tests/gguf_install_refused.rs` reddens: that one on
-      the manifest's CLAIM, and `RealForwardRunner::open` on the resident
-      index's dtype TAGS, which believes the bytes. And what is executable
-      is decided per BLOCK TYPE, not per format: a type needs a resident
-      GEMV, an embedding lookup AND a routed-expert decode pair before an
+      the manifest's claim, and `RealForwardRunner::open` on the resident
+      index's dtype tags, which believes the bytes. And what is executable
+      is decided per block type, not per format: a type needs a resident
+      GEMV, an embedding lookup and a routed-expert decode pair before an
       install runs, so widening the set means landing kernels rather than
       editing a list. Read the checkpoint's
       `config.json -> quantization` first (`parse_gemma4_quantization`,
@@ -291,7 +291,7 @@ The rest of this phase only bites on a real download:
       list.
 - [ ] **Use the streaming writer for anything multi-GB.**
       `write_gemma4_install_streamed` computes the expert stride from
-      shard HEADERS alone, writes the resident region once, then downloads
+      shard headers alone, writes the resident region once, then downloads
       / writes / drops one layer's expert blobs at a time, so peak memory
       is one layer rather than the whole model. The in-memory
       `write_gemma4_install` goes through the same `StreamingGturboWriter`
@@ -301,7 +301,7 @@ The rest of this phase only bites on a real download:
       kernels.** Nine sub-tensors per expert, `gate, gate_scales,
       gate_biases, up, ..., down, ...` back to back; one page-rounded
       (16 KiB) `expert_stride` for the WHOLE model, computed as the max
-      across layers; and `down`'s blob offset MUST be 4-byte aligned
+      across layers; and `down`'s blob offset must be 4-byte aligned
       because the phase-2 row helper reads its weights with `uint` loads
       (the writer checks and errors). The manifest's `expertStride` is
       separately validated as 4 KiB-aligned at load.
@@ -318,7 +318,7 @@ opens through `RealForwardRunner::open` without touching decode.
 ## Phase 2 - Kernels, each parity-tested in isolation
 
 - [ ] For each new kernel, vendor the MSL under `crates/gpu/src/shaders/`
-      BYTE-FOR-BYTE (`diff` it against the Swift original and keep the
+      byte-for-byte (`diff` it against the Swift original and keep the
       diff empty; a port-local edit belongs in a separate, commented
       kernel) and write a CPU reference in
       `crates/compute` if one does not exist. A kernel with no reference is
@@ -327,7 +327,7 @@ opens through `RealForwardRunner::open` without touching decode.
 - [ ] Add a parity test in `crates/gpu/tests/` against that reference on
       real hardware. Cover the saturating / wrapping / edge inputs, not
       just the middle of the range.
-- [ ] **MUTATION-CHECK the parity test before trusting it.** Break the
+- [ ] **Mutation-check the parity test before trusting it.** Break the
       kernel in the way you most fear (a sign, a stride, a hoisted scale)
       and confirm the suite goes red, then restore. A parity test written
       from the same mental model as the kernel can agree with it while
@@ -339,7 +339,7 @@ opens through `RealForwardRunner::open` without touching decode.
       and `logit_softcap_fp16` (both in `crates/gpu/src/shaders/utility.metal`)
       are two - but the shader comment must say
       so and say why the fused upstream form does not fit. A whole
-      port-local FILE is also fine when there is no upstream at all to
+      port-local file is also fine when there is no upstream at all to
       diff against: `shaders/dequant_q8_0.metal` is the precedent, since
       Swift has no GGUF intake. Say that in the header, and name the CPU
       reference that is then the kernel's only contract.
@@ -350,17 +350,17 @@ opens through `RealForwardRunner::open` without touching decode.
       for every later one. `encode_attention_decode`
       (`crates/gpu/src/attention_decode.rs`) keys on both `scale`
       and `ring_capacity`.
-- [ ] Watch for constants the shader checks UNCONDITIONALLY (no
+- [ ] Watch for constants the shader checks unconditionally (no
       `is_function_constant_defined` gate). Specializing those with a dummy
       value silently overrides the runtime buffer argument.
-- [ ] **A kernel that calls a helper defined in ANOTHER shader file needs
+- [ ] **A kernel that calls a helper defined in another shader file needs
       the two concatenated.** The Swift build links every module into one
       library; this port compiles one library per file. The fix is a single
       `concat!(include_str!(a), "\n", include_str!(b))` constant --
       `crates/gpu/src/gdn.rs`'s `SOURCE` is the example -- which keeps one
       stable address for the address-keyed pipeline cache. Cost: the
       helper's own kernels compile twice. Prove the fused path is
-      BIT-identical to the separate one before relying on it.
+      bit-identical to the separate one before relying on it.
 - [ ] **A fixed threadgroup size can be a correctness contract, not a
       tuning knob.** `gdn_qk_norm` and `gdn_gated_norm` reduce their SIMD
       partials with a hardcoded `for (i = 0; i < 4; ++i)`: at anything but
@@ -373,7 +373,7 @@ opens through `RealForwardRunner::open` without touching decode.
       GEMV must be byte-identical to the dispatches it replaces, since
       greedy output depends on it) and **chunk-equals-N-steps** (a prefill
       kernel over `T` rows must match `T` sequential decode steps,
-      INCLUDING the carried state and the `T < history` tail path). See
+      including the carried state and the `T < history` tail path). See
       `crates/gpu/tests/gdn_parity.rs`.
 
 Gate: `cargo test -p turbospark-gpu` passes on the Metal device.
@@ -464,10 +464,10 @@ perfect under greedy decoding is quietly broken.
       collapse to the lowest index. Gemma 4's peak around 34-38 caps to
       ~24.5, comfortably clear.
 - [ ] Resolve the full EOS set from `generation_config.json` (it is a
-      list), and confirm generation actually STOPS. `stop reason
+      list), and confirm generation actually stops. `stop reason
       MaxTokens` on a short question is a symptom, not a setting.
 
-Gate: SAMPLED generation at the CLI defaults stays coherent for 400 tokens,
+Gate: sampled generation at the CLI defaults stays coherent for 400 tokens,
 and a short question terminates with `EndOfTurn`. Run this even when greedy
 already looks perfect - especially then.
 
@@ -482,13 +482,13 @@ already looks perfect - especially then.
       large ones: Qwen 3.6 35B is 2 MiB of delta-rule state x 30 linear
       layers = 60 MiB, plus 48 KiB of conv tail each, none of it growing
       with context. Layers that carry it carry NO KV rows in exchange.
-- [ ] The resident weight mapping COUNTS in `phys_footprint`. A plain
+- [ ] The resident weight mapping counts in `phys_footprint`. A plain
       read-only `mmap` would not, but `newBufferWithBytesNoCopy` pins it.
 - [ ] Give the family its OWN oracle target next to
       `crates/bench/tests/memory_oracle.rs` and `qwen36_memory_oracle.rs`
       (`#[ignore]`d, gated on its own `TURBOSPARK_<FAMILY>_INSTALL_DIR` env
       var; the mach sampler is `crates/bench/src/memory.rs`). A separate
-      test TARGET, not a second `#[test]` in an existing one: the
+      test target, not a second `#[test]` in an existing one: the
       footprint assertion is a whole-session peak, and two families with
       different ceilings cannot share one process. What it asserts, per
       its per-chip baseline rows (each labelled with a `source`: a published
@@ -522,19 +522,19 @@ quantization change looks like when it is subtly wrong rather than broken.
 - [ ] Give the family its own quality-gate target next to
       `crates/bench/tests/quality_gate.rs`, sharing `quality_common`.
       Separate target, same one-model-per-process rule as the oracle.
-- [ ] **Score only ASSISTANT-position tokens.** An instruction-tuned
+- [ ] **Score only assistant-position tokens.** An instruction-tuned
       checkpoint is never trained to predict the prompt, so teacher-forcing
       prompt text measures nothing: on Gemma 4 it read 15.3 nats against a
       uniform-distribution bound of 12.5, worse than guessing, while
       assistant-side tokens in the same sequence scored 0.000. The corpus is
-      a fixed reference ANSWER placed in the assistant slot.
-- [ ] Expect the perplexity to be NOT COMPARABLE to the other families'.
+      a fixed reference answer placed in the assistant slot.
+- [ ] Expect the perplexity to be not comparable to the other families'.
       Gemma's template opens a `<|channel>thought` block before the
       assistant slot and Qwen's does not, which is most of 37.31 against
       6.25 on the same passage. Each row is a sentinel against its own past.
 - [ ] Freeze a greedy and a sampled digest.
-- [ ] **Dispatch a layer's routed slots in the ROUTER'S RANKING, and assert
-      the 8-slot digest EQUALS the 16-slot one.** Phase 2 reduces in slot
+- [ ] **Dispatch a layer's routed slots in the router's ranking, and assert
+      the 8-slot digest equals the 16-slot one.** Phase 2 reduces in slot
       order and FP addition is not associative, so the slot order is the
       summation order: order it by anything the cache can reach and the
       same prompt decodes to different text run to run (AGENTS.md Gotcha
@@ -566,14 +566,14 @@ sharp:
   `install.rs::stream_gguf` calls the one `write_gguf_install_streamed`
   whatever family came back. The `arch_registry.rs` row Phase 1 already
   wrote is the whole wiring. Skip to the catalog row.
-- **A safetensors / MLX family has THREE `match family` sites**, and they
+- **A safetensors / MLX family has three `match family` sites**, and they
   are the same shape as `crates/invocation`'s two parser matches
   (AGENTS.md Gotcha 14): every one ends in an `other =>` arm that returns
   an error, so a missing arm is a refusal at runtime rather than a compile
   failure.
 
 - [ ] **`crates/catalog/src/probe/safetensors.rs::evaluate_config`** - the
-      parser behind the VERDICT. Until the family has an arm here, `probe`
+      parser behind the verdict. Until the family has an arm here, `probe`
       answers `REFUSED` with "whose safetensors intake is not wired here",
       and `pull` refuses before downloading anything, which is the correct
       behavior and is indistinguishable from the family not existing.
@@ -583,9 +583,9 @@ sharp:
       `write_<family>_install_streamed` call. Miss this one and the failure
       lands in the worst place of the three: the probe says `RUNNABLE`, the
       sidecars fetch and verify, and it dies at the top of the stream.
-- [ ] **A new affine WIDTH is a fourth site**, and it is a conjunction
+- [ ] **A new affine width is a fourth site**, and it is a conjunction
       rather than a list: `repack::is_supported_affine_shape(bits, group)`
-      checks the `(bits, group_size)` PAIR, because the cross-products are
+      checks the `(bits, group_size)` pair, because the cross-products are
       combinations no published file has. The probe reports the pair it
       found either way, so a refusal here names the shape rather than
       saying "unsupported quantization".
@@ -596,11 +596,11 @@ a code change:
 - [ ] **A row exists only if that exact repository and revision were
       streamed and run here** - the same rule `arch_registry.rs` states for
       its architecture strings. A model you expect to work is not a row.
-      Install it with `pull --repo ... --alias ...` FIRST, generate with
+      Install it with `pull --repo ... --alias ...` first, generate with
       it, then add the row to `crates/catalog/src/models.json`.
 - [ ] Pin a commit sha where the publisher offers one. Where they do not
       (every GGUF publisher here), the row floats at `main` and
-      `download_bytes` is the ONLY fingerprint that would notice a
+      `download_bytes` is the only fingerprint that would notice a
       re-upload, so take that figure from the network guard rather than
       from a listing page. The guard's tolerance is 2%: an earlier draft
       carried round numbers at 10%, under which `mixtral`'s recorded
@@ -625,13 +625,13 @@ a code change:
       `Qwen3.8-27B` ships its merges inside `tokenizer.json` where
       `Bonsai-27B` ships `merges.txt`, and the copied list 404s.
 
-**Model SELECTION needs nothing family-specific, and that is worth knowing
+**Model selection needs nothing family-specific, and that is worth knowing
 so you do not go looking.** `catalog::resolve_model_arg` maps a `--model`
 string to a path with no reference to the family, and `open_session`
 (`crates/cli/src/generate.rs`) then goes through `peek_manifest_arch`,
 which Phase 1 already extended. An existing directory always wins over an
 alias, deliberately: a bare name that silently preferred an alias would run
-a DIFFERENT model than the one on the command line, fluently and with no
+a different model than the one on the command line, fluently and with no
 error. So the moment the row exists, `--model <alias>` works for
 `turbospark-check` and `turbospark-server` alike.
 

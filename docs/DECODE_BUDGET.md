@@ -5,9 +5,10 @@ Measured 2026-08-16 on this machine (Apple M4 Max, AC, quiet), real Gemma 4
 divisor is decode (AGENTS.md Gotcha 21). Two unprofiled runs agreed within 1%
 on every bucket.
 
-Read this before proposing work on the command-buffer scheduling gap or on
-the decode loop's host/GPU overlap. It refutes the "~5 ms/token scheduling
-gap" figure that had been circulating, and it relocates the lever.
+If you are about to propose work on the command-buffer scheduling gap or on
+the decode loop's host/GPU overlap, read this first. It refutes the "~5
+ms/token scheduling gap" figure that had been circulating, and it relocates
+the lever.
 
 ## The sweep
 
@@ -40,11 +41,11 @@ whole.** Every millisecond taken out of it is a millisecond off the token.
 The shared-expert command buffer already covers ~1.73 ms/token of it by
 design (`MFERENCE_SHARED_CB`); the remainder is not covered by anything.
 
-**3. THE COMMAND-BUFFER SCHEDULING GAP IS ~1.1 ms/token, NOT ~5.** At 32
+**3. The command-buffer scheduling gap is ~1.1 ms/token, not ~5.** At 32
 slots the `gpu wait (layer cb1)` bucket reads 11.74 ms/token while the three
 buffers executing inside that window -- `cb1` 5.19, `routed` 3.73, shared
 1.73 -- total 10.65. The bucket is ~91% real device time. The earlier ~5 ms
-figure came from comparing the wait bucket against `cb1` ALONE, which omits
+figure came from comparing the wait bucket against `cb1` alone, which omits
 the routed and shared buffers that are queued on the same queue and must
 drain before the wait returns.
 
@@ -60,8 +61,8 @@ At 32 slots, against a 19.54 ms token:
 | command-buffer scheduling gap | 1.09 | 5.6% |
 | routed bind + upload | 0.74 | 3.8% |
 
-An `MTLSharedEvent` passive-wait rewrite -- the named tool for the
-scheduling gap -- is therefore chasing at most 5.6%, and only if the gap
+An `MTLSharedEvent` passive-wait rewrite, the named tool for the
+scheduling gap, is therefore chasing at most 5.6%, and only if the gap
 goes to zero, which it will not. That is a real but ordinary optimization,
 not the largest one available, and it should be scoped against 1.09 rather
 than against 5.
@@ -94,7 +95,7 @@ describe 16 slots and are still reproducible with
 Both were "measure before believing" items left open by the session above.
 Both came back null, and both are recorded here so nobody re-derives them.
 
-**The routed command buffer's retire does NOT hide a `pread` overlap.**
+**The routed command buffer's retire does not hide a `pread` overlap.**
 `families/gemma4/mod.rs` retires layer N-1's routed CB before encoding
 layer N's routed MoE, which contains the expert `pread` -- so moving the
 retire past the `pread` looks like free overlap. The bucket that bounds it
@@ -114,21 +115,21 @@ layer N-1's CB is still reading them is a data race producing fluent wrong
 text. Covering the bind too needs those double-buffered, which is a
 different and larger change.
 
-**GDN function constants 90-94: SUPERSEDED 2026-08-16, and the answer
+**GDN function constants 90-94: superseded 2026-08-16, and the answer
 inverted when the install that reaches them came back.** The paragraph
 that stood here concluded specialization was not worth measuring, from
 the one GDN install then on disk (`ternary27b`, whose 2-bit branch never
 dispatches the fused kernel). With `qwen38-27b` re-streamed, the fused
 `gdn_in_proj_gemv_simd` is 16.5% of the token and the plain INT4 GEMV
-another 72.3%, and baking M/N in IS worth having -- see "The dense 27B"
+another 72.3%, and baking M/N in is worth having; see "The dense 27B"
 below. The general lesson survives the reversal: the 2%-of-the-token
-reading was correct FOR THE INSTALL THAT PRODUCED IT, and a share
+reading was correct for the install that produced it, and a share
 measured on one family's branch does not transfer to the other branch of
 the same flow.
 
 ## The dense 27B (qwen38): profile, the FC win, and two closures
 
-Measured 2026-08-16 on this machine (M4 Max 36 GB, AC, NOT quiet -- the
+Measured 2026-08-16 on this machine (M4 Max 36 GB, AC, not quiet; the
 session's desktop load was present throughout, so every absolute tok/s
 here is qualified by Gotcha 43; the deltas are interleaved pairs and the
 shares are within-run, which that load does not contaminate). Install:
@@ -138,7 +139,7 @@ MiB of 750, replay +0.00) before anything was measured on it.
 
 **The family's first dispatch profile, and it accounts for the token.**
 One command buffer per token, ~978 dispatches, host encode 0.65 ms/token
-and sampler+detok ~1.0 against a ~49.5 ms GPU wait: the token IS the GPU.
+and sampler+detok ~1.0 against a ~49.5 ms GPU wait: the token is the GPU.
 Within the sampled buffer: `dequant_int4_gemv_simd` 72.3%,
 `gdn_in_proj_gemv_simd` 16.5% (the same GEMV body, fused), norms and
 elementwise ~5.6%, attention plus GDN state ~4.4%. A dense token reads
@@ -146,7 +147,7 @@ elementwise ~5.6%, attention plus GDN state ~4.4%. A dense token reads
 attention 0.9 + head 0.7 -- the 12.3 GB figure that circulated undercounts
 by omitting out_proj, attention and the scale/bias planes), which at the
 observed ~50 ms/token is ~290 GB/s effective against the kernel's ~375
-GB/s saturation. The GEMV itself is NOT occupancy-bound at any decode
+GB/s saturation. The GEMV itself is not occupancy-bound at any decode
 shape: `gemv_bandwidth_bench.rs::int4_gemv_headroom_at_qwen38_shapes`
 reads 0.90-1.11x of the same kernel's large-shape reference on every row.
 The residue is the ~11% non-GEMV work plus serial-encoder gaps. There is
@@ -158,8 +159,8 @@ end, output byte-identical.** `specialized_constants` in
 dispatch's shape and key the pipeline cache on it. Cold-pool isolated
 deltas per shape sit at +3.0-5.2%; three interleaved end-to-end pairs
 read +4.5/+8.4/+7.7% (15.2 -> 16.3 tok/s under load). Every gate held
-without motion: greedy AND sampled stdout byte-identical across the
-pre/post binaries on BOTH families (qwen38 and gemma4 -- the fast-math
+without motion: greedy and sampled stdout byte-identical across the
+pre/post binaries on both families (qwen38 and gemma4 -- the fast-math
 reassociation worry did not materialize), both quality gates exact to
 the last hex character, both memory oracles green. The probe's first run
 is a standing caution, recorded in the bench: a shared pipeline-cache key
@@ -175,22 +176,22 @@ ceiling is the 0.65 ms/token of host encode that a split could overlap,
 again.** Expert streaming works because a token touches ~8 of 128 experts
 and temporal locality gives the slot cache ~84% hits. A dense token
 touches 100% of the weights once each, so a layer cache smaller than the
-model has a STRUCTURAL 0% hit rate -- each layer is evicted before its
+model has a structural 0% hit rate (each layer is evicted before its
 next use -- and "streaming layers" degenerates to re-reading ~14 GB from
 SSD every token: sub-1 tok/s against the current ~19. There is no cache
 policy that fixes a working set equal to the model.
 
-**The weight mapping is WIRED while the model runs, and that settles the
+**The weight mapping is wired while the model runs, and that settles the
 small-machine question.** Measured with `vm_stat` across process exit:
 system wired read 17.93 GB while decoding and 3.27 GB the moment the
 process exited -- a 14.7 GB delta that is the resident region plus the
 Metal buffers. Under `memory_pressure -S -l critical` (free pages driven
 to ~140 MB) the process survived and throughput did not move, because
 wired pages cannot be evicted: the OS squeezes everything else. The two
-claims that looked contradictory are BOTH true: `phys_footprint` does not
-COUNT the mapping (the process ledger shows it as 1.4 MB of clean
+claims that looked contradictory are both true: `phys_footprint` does not
+count the mapping (the process ledger shows it as 1.4 MB of clean
 "mapped file"; AGENTS.md Gotcha 40), and Metal's `newBufferWithBytesNoCopy`
-WIRES it (`crates/model-io` CLAUDE.md Gotcha 1). "Not counted" never
+wires it (`crates/model-io` CLAUDE.md Gotcha 1). "Not counted" never
 meant "reclaimable". Consequence: budget a dense install's full disk size
 in physical RAM -- a 16 GB machine is hard-blocked from this model, not
 gracefully degraded, and the catalog row's "budget its size on disk in
@@ -207,7 +208,7 @@ the unprofiled `cb1`). **The conclusion is insensitive to that
 correction**: taking 1.990 verbatim makes the scheduling gap 0.83 ms/token
 instead of 1.09, and taking 0 makes it 2.82 -- still nowhere near 5.
 
-Every number is this machine's. The RATIOS transfer; the absolutes do not
+Every number is this machine's. The ratios transfer; the absolutes do not
 (CLAUDE.local.md's standing rule). Reproduce with:
 
 ```sh

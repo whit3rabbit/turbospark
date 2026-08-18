@@ -50,18 +50,18 @@ that ports. Three ideas do, and none of them is code:
    (Leviathan et al., arXiv 2211.17192; Chen et al., arXiv 2302.01318).
 3. **Draft-depth auto-tuning.**
 
-**Take no MTPLX source.** Its LICENSE is verified stock Apache-2.0, so
+**Take no MTPLX source.** Its license is verified stock Apache-2.0, so
 inclusion is legal but adds NOTICE obligations to a repo that is uniformly
 MIT. The head architecture comes from the safetensors header and the
 acceptance algorithm from the papers.
 
-**THIS IS A COPYING DECISION, NOT A READING ONE, AND CONFLATING THEM COST
-ABOUT TWO HOURS.** `mtplx/mtp_patch.py` documents the delta-encoded MTP norms
+**This is a copying decision, not a reading one, and conflating them cost
+about two hours.** `mtplx/mtp_patch.py` documents the delta-encoded MTP norms
 that `docs/MTP.md` rediscovered by bisection -- `_heal_raw_delta_mtp_norms`,
 whose docstring says such a sidecar "poisons every draft" -- and states three
 more of this port's hard-won conventions as plain `MTPContract` fields
 (`hidden_variant: "post_norm"`, `concat_order: "embedding_hidden"`,
-`mtp_quant_group_size: 64`). A convention is a FACT ABOUT THE CHECKPOINT and
+`mtp_quant_group_size: 64`). A convention is a fact about the checkpoint and
 is nobody's copyrightable expression. Read the prior art; copy none of it.
 
 ## The head, off real bytes
@@ -98,8 +98,8 @@ decode-steps. That is the entire appeal of MTP over a separate drafter.
 
 ## The dense compute split
 
-`MFERENCE_PHASES=1 MFERENCE_DISPATCH_PROFILE=1` on `~/models/ternary27b.gturbo`
--- the same architecture and the same decode flow as `qwen38`, and on disk.
+`MFERENCE_PHASES=1 MFERENCE_DISPATCH_PROFILE=1` on `~/models/ternary27b.gturbo`,
+the same architecture and the same decode flow as `qwen38`, and on disk.
 Warmup discarded. 1,138.3 dispatches per token, and every count reconciles
 against the layer graph (496 GEMVs = 16 full x 4 + 48 linear x 5 + 64 x 3
 MLP + 1 head; 128 norms = 64 x 2; 16 `attention_decode_partial` = 16 full
@@ -179,7 +179,7 @@ already recorded in that kernel's header arriving through a different door.
 A fixed count of 4 keeps ~32 activation floats live regardless of B, and is
 what makes the row monotonic in M for the first time.
 
-**Parity is still EXACT**, not tolerant: `dequant_int4_gemm_parity.rs` compares
+**Parity is still exact**, not tolerant: `dequant_int4_gemm_parity.rs` compares
 the batched kernel bit-for-bit against B separate GEMV calls, which is the
 property that makes speculative output provably identical to non-speculative
 output. Specialization does not reorder any sum.
@@ -222,8 +222,8 @@ widths this engine has, the kernel is dequant-bound, and the matrix unit is
 accelerating the term that is not the cost. Fixing it would take weights
 already in a loadable format, not a better tiling.
 
-So the exact kernel wins on both axes -- faster AND bit-identical to a
-sequential decode -- and the trade `docs/SPECULATIVE_DECODING.md` worried
+So the exact kernel wins on both axes, faster and bit-identical to a
+sequential decode, and the trade `docs/SPECULATIVE_DECODING.md` worried
 about does not have to be made. **Treat "use simdgroup_matrix" as closed.**
 The kernel and its bench are kept precisely so it is not re-proposed; the
 tolerance-based parity test beside it (`dequant_int4_mma_parity.rs`) also
@@ -239,12 +239,12 @@ Re-run in the same session with the same binary:
 | expert 512x2048, M=16 | 0.36 | 0.54-0.55 | **0.32-0.35** |
 | o_proj 2048x2048, M=8 | 0.71 | 0.75-0.76 | **0.41-0.48** |
 
-So that page's table was stale in BOTH directions at different times, and is
+So that page's table was stale in both directions at different times, and is
 now beaten.
 
 **Its verdict was re-derived on 2026-08-18 and did not move**: block 4 pays
 1.14-1.19x, block 8 is 0.95-1.00x, block 16 loses, against a recorded
-1.14 / 0.97 / 0.87. The prediction made here held exactly -- the MoE
+1.14 / 0.97 / 0.87. The prediction made here held exactly: the MoE
 composite is dominated by a 19% un-amortizable floor and by the routed pair,
 26% of decode compute with still no batched form, and a better GEMV fixes
 neither. **The pair of pages is now the useful artifact rather than either
@@ -276,7 +276,7 @@ plus M drafts), yields the accepted prefix plus a free bonus token, and costs
 The asymptotic ceiling is `1 / c(inf)` = **2.07x**, and unlike the first
 pass's 1.19x that is a number worth chasing.
 
-Two readings. **The optimum is a SMALL block**, which still inverts the
+Two readings. **The optimum is a small block**, which still inverts the
 datacenter result and for the same reason: verify cost here scales close to
 linearly in M while acceptance probability decays, so extra proposals cost
 nearly a full step each. And **the drafter's quality is now the binding
@@ -297,14 +297,14 @@ a 17-position verify does not fit. Block 15 is the largest legal one.
    `narrow_raw_to_bf16`. `manifest.json` gains an optional `mtpHead` block
    where absent means "no head" (Gotcha 39's rule). **Fixture before
    download**, per `crates/repack/CLAUDE.md` Gotcha 8.
-   **DONE.** With one correction worth carrying: the ingest landed in the
-   NON-streamed writer alone, and every real install goes through the
+   **Done.** With one correction worth carrying: the ingest landed in the
+   non-streamed writer alone, and every real install goes through the
    streamed one. The first stream that asked for a head wrote a
-   byte-identical HEADLESS install -- 851 resident tensors, a
-   15,132,916,736-byte region, no error and nothing in the progress log --
-   because `write_gemma4_install_streamed` classified `mtp.*` correctly into
+   byte-identical headless install (851
+   resident tensors, a 15,132,916,736-byte region, no error and nothing in
+   the progress log), because `write_gemma4_install_streamed` classified `mtp.*` correctly into
    `plan.mtp_bases` and then never read it. Every fixture took the other
-   path. **A fixture has to exercise the WRITER the download will use**, not
+   path. **A fixture has to exercise the writer the download will use**, not
    just the walk they share; `both_writers_carry_the_mtp_head` is that test
    and is the only one of fourteen that reddens without the fix. Also no
    `mtpHead` manifest block: the resident index already answers the question
@@ -315,31 +315,31 @@ a 17-position verify does not fit. Block 15 is the largest legal one.
    family's oracle peak is frozen. Off by default behind
    `MFERENCE_MTP_DRAFT=<depth>`.
 
-   **DONE.** `~/models/qwen38-27b-mtp.gturbo` is the install (14 GB;
+   **Done.** `~/models/qwen38-27b-mtp.gturbo` is the install (14 GB;
    resident region 15,371,847,680 bytes, 228 MiB more than the headless
-   one). With drafting OFF the flow is provably inert: `qwen38_quality_gate`
-   reproduces perplexity 4.9432 and BOTH frozen digests exactly, and
+   one). With drafting off the flow is provably inert: `qwen38_quality_gate`
+   reproduces perplexity 4.9432 and both frozen digests exactly, and
    `qwen38_memory_oracle` reads 659.5 MiB against the headless install's
-   recorded 659.4 -- so the head's 228 MiB of weights are not counted, which
+   recorded 659.4, so the head's 228 MiB of weights are not counted, which
    is AGENTS.md Gotcha 40 holding a fourth time. Both smokes stay coherent.
-   With drafting ON the head opens and drafts; a headless install is refused
+   With drafting on the head opens and drafts; a headless install is refused
    at open by name.
 3. **Accept length, sequential verify.** `accept_length_probe.rs`'s shape
    with the MTP head in place of the n-gram drafter. Keep both of its
    disciplines: verify one `produce` at a time (only the ratio matters), and
-   gate against a NON-speculative reference run.
+   gate against a non-speculative reference run.
 
-   **DONE 2026-08-18, and it took finding a real defect first.** The probe is
+   **Done 2026-08-18, and it took finding a real defect first.** The probe is
    `crates/bench/tests/mtp_accept_length_probe.rs`; the numbers are in the box
-   at the top of this page. It asserts a FUNCTIONAL drafter (first-proposal
+   at the top of this page. It asserts a functional drafter (first-proposal
    acceptance above 2%) rather than printing whatever it measures, because
    its first run read **0 accepted of 7,168 proposals** and a table saying
-   "loses" would have closed this question with the wrong answer -- the same
+   "loses" would have closed this question with the wrong answer, the same
    failure the reversal box above records, one level up.
 
-   **THE BUG WAS A NORM CONVENTION.** The head's five whole-vector norms are
-   CENTERED -- the checkpoint stores an offset from unity and the effective
-   scale is `1 + w` -- while the TRUNK's are plain. This port read them
+   **The bug was a norm convention.** The head's five whole-vector norms are
+   centered (the checkpoint stores an offset from unity and the effective
+   scale is `1 + w`) while the trunk's are plain. This port read them
    plainly, so every norm in the head scaled by ~0 instead of ~1. That is
    AGENTS.md Gotcha 50's "one model, two conventions" arriving on a second
    family, and the fix was to dispatch the `rmsnorm_bf16w_centered` kernel
@@ -351,32 +351,32 @@ a 17-position verify does not fit. Block 15 is the largest legal one.
    | top-1 agreement | 0/24 | **23/24** |
    | pearson vs the trunk | -0.28 | **+0.60** |
 
-   **WHAT FOUND IT WAS THE REFERENCE, AND THE ROUTE TO IT IS THE REUSABLE
-   PART.** The drafter ships standalone as
+   **What found it was the reference, and the route to it is the reusable
+   part.** The drafter ships standalone as
    `mlx-community/Qwen3.8-27B-MTP-4bit` (31 tensors, 239 MB, INT4 affine
    group 64 -- the same scheme this port writes), and the implementation is
-   `mlx-vlm`, NOT `mlx-lm`, at
-   `mlx_vlm/speculative/drafters/qwen3_5_mtp/qwen3_5_mtp.py`. READING it
+   `mlx-vlm`, not `mlx-lm`, at
+   `mlx_vlm/speculative/drafters/qwen3_5_mtp/qwen3_5_mtp.py`. Reading it
    confirmed five choices at zero cost (concat order `[embedding, hidden]`,
    the `(h_i, t_{i+1})` pairing, positions from 0, `full_attention_interval=1`,
    the target's `lm_head`) and independently confirmed that the head must be
-   PRIMED over the prompt. COMPARING against it (`scripts/mtp_bisect.py`)
+   primed over the prompt. Comparing against it (`scripts/mtp_bisect.py`)
    localized the fault to the first stage, and the norm magnitudes fell out
    of that.
 
    Two earlier fixes were real and neither was the cause, which is worth
    knowing before reading the diff: the head's KV had never been primed
-   (`encode_full_attention_block` takes its span from the `position` ARGUMENT,
+   (`encode_full_attention_block` takes its span from the `position` argument,
    so a draft at position P attended over P rows nobody wrote) and was never
    rewound after a rejected draft. Both are errors now rather than silence.
-   A third, the hidden input being the trunk's POST-final-norm state rather
+   A third, the hidden input being the trunk's post-final-norm state rather
    than its residual, is also correct-per-the-reference and also did not move
    the symptom.
 
-   **STILL OPEN, and small:** the head's per-head `q_norm`/`k_norm` are
+   **Still open, and small:** the head's per-head `q_norm`/`k_norm` are
    centered too and are still read plainly, because
    `encode_rms_norm_bf16w_perhead` has no centered sibling and the weights
-   are resolved by NAME inside the shared attention block. At 23/24 top-1 it
+   are resolved by name inside the shared attention block. At 23/24 top-1 it
    is evidently not costing much, but it is a known deviation and the accept
    length above is a floor until it lands.
 
@@ -390,13 +390,13 @@ a 17-position verify does not fit. Block 15 is the largest legal one.
 here**: at M=16 the resident projections read 0.447 and the routed-expert
 proxy 0.287, which is `c(16) = 0.399` over the 78.8% of prefill GPU work
 that batches, and the whole-program projection went from ~1.5x to a
-1.55-1.97x band. Its step 1 result (1.22x measured) is unaffected -- it
+1.55-1.97x band. Its step 1 result (1.22x measured) is unaffected: it
 batches command buffers, not math.
 
 **The contrast with the MoE speculative page is the reusable part.** One
 kernel fix, one week, three composites: decisive on the dense family here,
 worth ~0.4x of extra prefill speedup there, and worth two points on the MoE
-verify. What separates them is not the kernel but what each divides by --
+verify. What separates them is not the kernel but what each divides by:
 a verify pass divides by an accept length and keeps only the accepted
 prefix, a prefill chunk keeps all M of its tokens, and a dense decode has
 no un-amortizable expert term to begin with.

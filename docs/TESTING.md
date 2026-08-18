@@ -9,7 +9,7 @@ cargo test --workspace
 ```
 
 941 tests as of 2026-08-18, all passing, plus 98 that are `#[ignore]`d (see
-below). **RE-COUNT BEFORE QUOTING EITHER NUMBER.** Both were stale by more
+below). **Re-count before quoting either number.** Both were stale by more
 than 2x when this line was last corrected (they read 458 and 18, unchanged
 since 2026-08-08 while eleven families and phases landed), and nothing goes
 red when they rot: a count is prose. The one-liners that produce them are
@@ -67,12 +67,12 @@ which is exactly the failure a new family risks.
 | `runtime/tests/gguf_install_refused.rs` | that an MXFP4 install opens and decodes, and that the SAME type is refused as a resident tensor -- the two executable-type gates disagreeing on purpose. |
 | `repack/tests/gguf_checkpoint_network.rs` (ignored) | that all 459 real tensor names map and the derived `ArchConfig` equals the baseline, off the header and before any download. |
 
-**Two mutations in this set are documented as UNOBSERVABLE rather than
+**Two mutations in this set are documented as unobservable rather than
 claimed**, which is the honest form when a test cannot see something.
 Dropping MXFP4's subnormal-exponent branch leaves everything green because
 `e = 0` and `e = 1` stand for ~1e-39, which cannot survive a dot product
 rounded to FP16 (the `compute` oracle is what pins those two). And omitting
-the attention sink from the running maximum is a numerical-STABILITY guard,
+the attention sink from the running maximum is a numerical-stability guard,
 not a correctness one -- softmax is invariant to the choice of maximum, and
 wherever the omission would overflow, the sink already dominates and both
 answers are ~0.
@@ -88,12 +88,12 @@ stay separate at the expensive one. Four levels, and the split between them is
 what keeps the expensive ones rare:
 
 - `crates/runtime/tests/real_forward_llama.rs` (default suite, macOS): builds a
-  tiny Mixtral-shaped install through the REAL repack pipeline and decodes on
+  tiny Mixtral-shaped install through the real repack pipeline and decodes on
   real Metal. Covers determinism across expert-cache state, prefill/produce
   agreement, the no-allocation-per-token rule, the slot-count cap, and the
   dense-half refusal.
 - `crates/runtime/tests/real_forward_qwen3moe.rs` (default suite, macOS): the
-  SAME flow under the other family tag. Its reason to exist is one test --
+  same flow under the other family tag. Its reason to exist is one test:
   two installs of identical weights differing only in `ArchConfig.family`
   must decode differently, because one norms q and k per head and the other
   does not. Read at a context of 4 rather than at position 0, where a softmax
@@ -106,7 +106,7 @@ what keeps the expensive ones rare:
   which is the diagnostic loop AGENTS.md Gotcha 33 prescribes -- seconds per
   hypothesis instead of a 35-minute repack.
 - `crates/repack/tests/gguf_mixtral_install_network.rs` (`#[ignore]`d): the
-  real published Mixtral Q4_K_M streamed into an install, plus a CHEAP dense
+  real published Mixtral Q4_K_M streamed into an install, plus a cheap dense
   walk (TinyLlama 1.1B Q6_K, 0.84 GiB, ~3 min) that exercises the half of the
   name table Mixtral never reaches. Prefer the dense one when the question is
   about names or the dense branch; it is 30x cheaper.
@@ -115,7 +115,7 @@ what keeps the expensive ones rare:
   fine-grained checkpoint the Mixtral granularity finding asked for, so it is
   also the only one of the two whose memory oracle and quality gate mean
   anything (2.5 MiB per expert against 108.9). It asserts the granularity on
-  the ARTIFACT'S own layout rather than as arithmetic on a model card.
+  the artifact's own layout rather than as arithmetic on a model card.
 
 The streamed walk resumes: a layer file already on disk at the size the walk
 would write is adopted without a network read, so a transport failure costs
@@ -148,7 +148,7 @@ idiom (real implementation plus a stub that exits 2).
 58 targets carry `#[ignore]`d tests, 98 functions between them as of
 2026-08-18 (`repack` 27/50, `bench` 23/27, `gpu` 2/9, `selection` 2/4,
 `catalog` 2/3, `tokenizer` 1/3, `server` 1/2). Each has a reason string and
-a module doc with the exact command. The commands below are the ones that are GATES. The two that are
+a module doc with the exact command. The commands below are the ones that are gates. The two that are
 not are documented in `docs/BENCHMARKS.md` instead: `crates/selection`'s
 `rank_top_k` (a sampler microbenchmark) and `crates/gpu`'s
 `attention_chunk_bench` (the split-KV chunk sweep).
@@ -413,16 +413,16 @@ attention) so it cannot rot silently; only the timings are advisory.
   Each `tests/*.rs` is its own binary, but its `#[test]`s run as threads
   inside it, so `std::env::set_var` is global to the file and there is no
   ordering guarantee between cases. A file covering an env-gated feature has
-  every test ask for the SAME setting and reaches the off path another way --
+  every test ask for the same setting and reaches the off path another way:
   `real_forward_qwen35_mtp.rs` covers "drafting off" through the open-time
   refusal rather than by unsetting `MFERENCE_MTP_DRAFT` mid-run. Never toggle
   an `MFERENCE_*` var between tests in one file.
-- **A probe that can return a DEGENERATE value has to assert against it, not
+- **A probe that can return a degenerate value has to assert against it, not
   print it.** `crates/bench/tests/mtp_accept_length_probe.rs` measures the
   MTP head's accept length and reads zero, because the head is broken rather
   than weak; a version that merely printed its table would hand a reader a
   quotable verdict on a question that is still open. It asserts a functional
-  drafter (first proposal accepted above 2%) and FAILS. The bar separates
+  drafter (first proposal accepted above 2%) and fails. The bar separates
   "drafting" from "not drafting", never "pays" from "loses" -- a gate that
   encoded the interesting threshold would be asserting the answer.
   `crates/bench/tests/mtp_head_probe.rs` is the paired instrument that says

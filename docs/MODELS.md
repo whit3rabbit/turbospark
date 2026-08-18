@@ -4,10 +4,10 @@
 answer two different questions, and knowing which one you are asking saves a
 lot of time:
 
-- **The catalog** says what has been RUN here. Thirteen rows, each naming a
+- **The catalog** says what has been run here. Thirteen rows, each naming a
   repository and a revision that were streamed and generated on real hardware,
   with the gate targets that assert it.
-- **The probe** says what COULD be run here. It reads headers, costs KB and
+- **The probe** says what could be run here. It reads headers, costs KB and
   seconds, and decides: architecture, block types or affine width, expert
   granularity, tokenizer sidecars. This is the half that scales past the
   table.
@@ -46,7 +46,7 @@ Adding resume is a change to the walks in `crates/repack`, not to
 | installs | `$ROOT/models/<alias>.gturbo`, or wherever `--out` says |
 | record | `$ROOT/installed.json` |
 
-`--model <name>` takes a path OR an alias, on **both** `turbospark-check` and
+`--model <name>` takes a path or an alias, on **both** `turbospark-check` and
 `turbospark-server`; the two call one `resolve_model_arg`, so an install has
 one name whichever binary opens it. **An existing directory always wins.** A
 bare name that silently preferred an alias would run a different model than
@@ -55,7 +55,7 @@ applies to a string that is not a directory. The server prints the resolved
 directory beside the alias at startup, because it is the one of the two that
 runs unattended.
 
-`turbospark-model path <alias>` prints the directory and FAILS if the model is
+`turbospark-model path <alias>` prints the directory and fails if the model is
 not installed. `--model <alias>` is the shorter form; reach for `path` in a
 script that would rather fail before starting than serve the wrong model, and
 note `--model $(turbospark-model path x)` cannot quietly expand to
@@ -103,7 +103,7 @@ RUNNABLE  mradermacher/Mixtral-8x7B-Instruct-v0.1-GGUF@main
 Four things to read, in this order:
 
 1. **The verdict.** `RUNNABLE` or `REFUSED` with a reason. A refusal names the
-   FIRST gate that failed, which is the most fundamental one -- a later gate
+   first gate that failed, which is the most fundamental one; a later gate
    overwriting it produces messages that are true and useless.
 2. **The block types.** `transcoded at repack` is not the same claim as `has
    kernels`: F32/F16/BF16 are narrowed at install time and reach no dispatch
@@ -140,7 +140,7 @@ The order is the design, and it inverts how the `crates/repack/tests/*_network.r
 tests do it:
 
 1. Probe, and refuse on a red verdict.
-2. **Fetch the tokenizer sidecars and verify them** -- load them with
+2. **Fetch the tokenizer sidecars and verify them**: load them with
    `MfTokenizer`, render a one-turn conversation, encode it. A few MB and
    milliseconds.
 3. Stream the weights through the repack walk.
@@ -161,7 +161,7 @@ architecture strings: **a row exists only if that exact repository and
 revision were streamed and run here.** A model somebody expects to work is not
 a row; a model somebody ran is.
 
-If the model is a new ARCHITECTURE rather than another checkpoint of one that
+If the model is a new architecture rather than another checkpoint of one that
 already runs, the row is the last step rather than the first: see
 [`NEW_MODEL.md`](NEW_MODEL.md) Phase 7, which lists the probe and install-driver
 match sites a new family has to be wired into before `pull` can reach it at
@@ -171,7 +171,7 @@ are family-agnostic and read `arch_registry.rs`.
 1. Install it with `pull --repo ... --alias ...` and generate with it.
 2. Add the row to `crates/catalog/src/models.json`. Pin a commit sha where the
    publisher offers one. Take `download_bytes` from the network guard rather
-   than from a listing page -- see below.
+   than from a listing page; see below.
 3. Run the offline tests: `cargo test -p turbospark-catalog`.
 4. Run the guard: `cargo test -p turbospark-catalog --test catalog_network
    --release -- --ignored --nocapture`, and paste its published byte figure
@@ -218,10 +218,10 @@ a bug here.
 
 ## See also
 
-- [`MODEL_FAMILY.md`](MODEL_FAMILY.md) -- which architectures run, which are
+- [`MODEL_FAMILY.md`](MODEL_FAMILY.md): which architectures run, which are
   recognized and refused, and the parity matrix
-- [`NEW_MODEL.md`](NEW_MODEL.md) -- the bring-up checklist for an architecture
+- [`NEW_MODEL.md`](NEW_MODEL.md): the bring-up checklist for an architecture
   the probe refuses
-- [`GTURBO.md`](GTURBO.md) -- the install format `pull` writes
-- [`BENCHMARKS.md`](BENCHMARKS.md) -- the frozen rows a `verified` status
+- [`GTURBO.md`](GTURBO.md): the install format `pull` writes
+- [`BENCHMARKS.md`](BENCHMARKS.md): the frozen rows a `verified` status
   refers to
