@@ -188,3 +188,183 @@ pub fn report(report: &ProbeReport) {
     }
     println!();
 }
+
+/// The ranked table, then the rows that need explaining.
+///
+/// **The two size columns are the whole point and they are not the same
+/// question.** ALLOCS is what the engine allocates -- the expert-cache slots
+/// and the KV -- so exceeding memory there is a failed open. ON DISK is the
+/// whole install, and exceeding memory there is the streaming this engine is
+/// built around. A single "size" column would either call a 13 GB install on
+/// a 16 GB machine impossible (it runs) or call a 27 GB one comfortable (it
+/// thrashes).
+///
+/// The `*` and `~` prefixes on ALLOCS are load-bearing rather than
+/// decoration: `*` is a measurement from `models.json` and `~` an estimate
+/// from the checkpoint's shape, and a reader who cannot tell them apart
+/// cannot tell which numbers a test can go red over.
+pub fn recommendations(rows: &[catalog::Recommendation], machine: &catalog::Machine, context: u32) {
+    println!(
+        "machine: {} of memory{}{}",
+        human_bytes(machine.physical_bytes),
+        if machine.chip.is_empty() {
+            String::new()
+        } else {
+            format!(" on {}", machine.chip)
+        },
+        match machine.working_set_bytes {
+            Some(ws) => format!(", {} of Metal working set", human_bytes(ws)),
+            None => String::new(),
+        }
+    );
+    println!("fitting against a {context}-token context\n");
+
+    if rows.is_empty() {
+        println!("nothing to rank");
+        return;
+    }
+
+    let width = rows
+        .iter()
+        .map(|r| r.origin.install_target().len())
+        .max()
+        .unwrap_or(8)
+        .clamp(8, 40);
+    println!(
+        "  {:<width$}  {:<9}  {:>10}  {:>9}  {:>9}  VERDICT",
+        "MODEL",
+        "EVIDENCE",
+        "ALLOCS",
+        "ON DISK",
+        "TOK/S",
+        width = width
+    );
+    for row in rows {
+        let target = row.origin.install_target();
+        println!(
+            "  {:<width$}  {:<9}  {:>10}  {:>9}  {:>9}  {}",
+            truncate(&target, width),
+            row.evidence.as_str(),
+            counted_column(&row.fit),
+            human_bytes(row.fit.mapped),
+            tok_s_column(row),
+            verdict_column(row),
+            width = width
+        );
+    }
+
+    println!(
+        "\nallocs: what the engine allocates and phys_footprint charges for \
+         (expert-cache slots + KV). on disk: the whole install, weights included -- \
+         those STREAM, so they need not fit."
+    );
+    println!(
+        "tok/s: measured on this chip, never estimated -- decode rate does not track \
+         weight bytes here. A dash means nobody has measured it."
+    );
+    println!("allocs: * measured, ~ estimated from the checkpoint's shape, ? not read yet.");
+
+    let unknowns = rows
+        .iter()
+        .filter(|r| r.fit.counted_source == catalog::CountedSource::Unknown)
+        .count();
+    if unknowns > 0 {
+        println!(
+            "\n{unknowns} row(s) report `unknown`: nothing has read their headers, so the \
+             slot cache and the KV cannot be computed. `recommend --probe` reads them \
+             (one header per row) and `probe <repo>` reads one."
+        );
+    }
+
+    print_notes(rows);
+}
+
+/// Per-row notes, with anything said about more than one row lifted into a
+/// single line.
+///
+/// Without this the common caveats drown the table they annotate: on this
+/// machine every measured row carries the same sentence about the slot count
+/// its peak was taken at, which is worth reading ONCE and is eight paragraphs
+/// of noise repeated per row.
+fn print_notes(rows: &[catalog::Recommendation]) {
+    let mut counts: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+    for row in rows {
+        for note in &row.notes {
+            *counts.entry(note.as_str()).or_default() += 1;
+        }
+    }
+    let shared: Vec<&str> = counts
+        .iter()
+        .filter(|(_, &n)| n > 1)
+        .map(|(note, _)| *note)
+        .collect();
+    if !shared.is_empty() {
+        println!();
+        for note in &shared {
+            // The COUNT, not "all rows": these notes are shared by several
+            // and true of none of the others, and a reader who takes an
+            // architecture refusal as applying to the whole table has been
+            // told something false.
+            println!("{} rows: {note}", counts[note]);
+        }
+    }
+    for row in rows {
+        let own: Vec<&String> = row
+            .notes
+            .iter()
+            .filter(|n| !shared.contains(&n.as_str()))
+            .collect();
+        if own.is_empty() {
+            continue;
+        }
+        println!("\n{}", row.origin.install_target());
+        for note in own {
+            println!("  - {note}");
+        }
+    }
+}
+
+/// The counted column, which is blank rather than zero when it is unknown.
+///
+/// A zero here would sort and read as the CHEAPEST option for the model about
+/// which the least is known, which is the inverse of its real rank -- the same
+/// inversion an unsized ggml type once produced when it was printed as 0 bytes.
+fn counted_column(fit: &catalog::Fit) -> String {
+    match fit.counted_source {
+        catalog::CountedSource::Unknown => "?".to_string(),
+        catalog::CountedSource::Measured => format!("{}*", human_bytes(fit.counted)),
+        catalog::CountedSource::Estimated => format!("~{}", human_bytes(fit.counted)),
+    }
+}
+
+/// The verdict, plus the one flag that overrides everything above it.
+///
+/// `suspicious` is computed in the ranking and sinks a row to the bottom;
+/// without printing it, a reader sees a 27B model at 600 MB sitting last for
+/// no stated reason. `prism-ml/Bonsai-27B-gguf` is that row on this machine
+/// today.
+fn verdict_column(row: &catalog::Recommendation) -> String {
+    if row.suspicious {
+        format!(
+            "{} -- far smaller than its name claims",
+            row.fit.verdict.as_str()
+        )
+    } else {
+        row.fit.verdict.as_str().to_string()
+    }
+}
+
+fn tok_s_column(row: &catalog::Recommendation) -> String {
+    match &row.measured {
+        Some(m) => format!("{:.0}-{:.0}", m.decode_tok_s_min, m.decode_tok_s_max),
+        None => "-".to_string(),
+    }
+}
+
+fn truncate(text: &str, width: usize) -> String {
+    if text.len() <= width {
+        text.to_string()
+    } else {
+        format!("{}...", &text[..width.saturating_sub(3)])
+    }
+}

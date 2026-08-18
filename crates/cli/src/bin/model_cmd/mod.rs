@@ -1,4 +1,4 @@
-//! The six subcommands, each a print of something `turbospark-catalog`
+//! The seven subcommands, each a print of something `turbospark-catalog`
 //! computed.
 //!
 //! **Nothing here decides anything.** The catalog crate resolves rows, the
@@ -283,5 +283,103 @@ fn unknown_alias(catalog: &Catalog, alias: &str) -> String {
             "no model named {alias:?}. Did you mean: {}?",
             near.join(", ")
         )
+    }
+}
+
+/// What this machine should run, ranked.
+///
+/// Three sources of shape, cheapest first, and the output says which one each
+/// row used. Offline, a curated row is described by its size and by the
+/// `measured` block in `models.json` if this chip has one. `--probe` reads
+/// every row's header, which is what turns the slot cache and the KV from
+/// unknowns into arithmetic. `--discover` adds Hugging Face at large, filtered
+/// through the same probe.
+pub fn recommend(catalog: &Catalog, client: &Client, options: &Options) -> Result<(), Error> {
+    let machine = machine(options);
+    if machine.physical_bytes == 0 {
+        return Err(Error::Failed(
+            "no memory probe on this platform and no --budget given, so there is no \
+             machine to fit against. Pass --budget 36GiB."
+                .to_string(),
+        ));
+    }
+    let context = options.context.unwrap_or(DEFAULT_RECOMMEND_CONTEXT);
+
+    let entries: Vec<&catalog::CatalogEntry> = catalog.entries().collect();
+    let mut rows: Vec<catalog::Recommendation> = if options.probe {
+        entries
+            .iter()
+            .map(|entry| {
+                // A probe failure is not a refusal: the row still has its
+                // size and its evidence, and losing it entirely because a
+                // header read timed out would be the worse answer.
+                let report = catalog::probe_entry(client, entry).ok();
+                catalog::from_entry(entry, &machine, context, report.as_ref())
+            })
+            .collect()
+    } else {
+        catalog::recommend_catalog(&entries, &machine, context)
+    };
+
+    if let Some(scan) = options.discover {
+        eprintln!("scanning the {scan} most-downloaded GGUF repositories ...");
+        let found = catalog::discover(
+            client,
+            &machine,
+            &catalog::DiscoverOptions {
+                scan,
+                context,
+                ..Default::default()
+            },
+        )?;
+        rows.extend(found);
+    }
+    // **Ranked ONCE, here, over everything.** Ranking inside each arm is what
+    // the first draft did and it left `--probe` unsorted entirely, because
+    // that arm builds its rows with a `map` and only the offline arm went
+    // through `recommend_catalog`. One call over the concatenation is also
+    // the only ordering that can interleave a discovered row with a curated
+    // one, which is the whole point of the evidence tier.
+    catalog::rank_recommendations(&mut rows);
+    render::recommendations(&rows, &machine, context);
+    Ok(())
+}
+
+/// The protocol's shared window, and what `recommend` fits against unless
+/// told otherwise. Deliberately not `MaxContext::Auto`'s answer: `auto`
+/// resolves per install, and this has to compare rows against ONE window or
+/// the column means something different in every line.
+const DEFAULT_RECOMMEND_CONTEXT: u32 = 4096;
+
+/// Read the machine, or take `--budget` for it.
+///
+/// **THE CHIP COMES FROM THE METAL DEVICE NAME AND THE ORACLES TAKE IT FROM
+/// `sysctl machdep.cpu.brand_string`.** Two probes for one fact, which is
+/// worth stating because it looks like an oversight. On Apple silicon both
+/// answer the chip's marketing name ("Apple M4 Max"), and `measured_for`
+/// matches by SUBSTRING, so the two agree for every row in `models.json`.
+/// The alternative was a dependency on `turbospark-bench` -- a benchmark
+/// harness -- from the model-management binary, to reach one `sysctl` call.
+/// If they ever disagree, the symptom is a measured row not matching, which
+/// prints as `unknown` rather than as a wrong number.
+#[cfg(target_os = "macos")]
+fn machine(options: &Options) -> catalog::Machine {
+    let (working_set, chip) = match runtime::recommended_max_working_set() {
+        Some((bytes, name)) => (Some(bytes), name),
+        None => (None, String::new()),
+    };
+    catalog::Machine {
+        physical_bytes: options.budget.unwrap_or_else(runtime::physical_memory),
+        working_set_bytes: working_set,
+        chip,
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn machine(options: &Options) -> catalog::Machine {
+    catalog::Machine {
+        physical_bytes: options.budget.unwrap_or(0),
+        working_set_bytes: None,
+        chip: String::new(),
     }
 }
