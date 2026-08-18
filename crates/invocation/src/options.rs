@@ -131,6 +131,14 @@ pub const OPTIONS: &[OptionDecl] = &[
         usage_hint: "routed-cache slot count, allowed 8/16/24/32, or auto (default auto, which never resolves below 16)",
     },
     OptionDecl {
+        flag: "--speculative",
+        takes_value: true,
+        is_required: false,
+        is_mode_selecting: false,
+        usage_hint: "speculative decoding: auto, off, or a block size 1-15 \
+                     (default auto; a named block FAILS if the model cannot serve it)",
+    },
+    OptionDecl {
         flag: "--prefill-chunk",
         takes_value: true,
         is_required: false,

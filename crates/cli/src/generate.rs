@@ -22,8 +22,8 @@ use std::io::Write;
 
 use invocation::{InvocationRequest, Mode};
 use runtime::{
-    run_raw_completion, run_raw_completion_chunked, GenerationConfig, RateControl,
-    RawDecodeProgress, RawDecodeResult, RealForwardRunner,
+    run_raw_completion, run_raw_completion_chunked, run_raw_completion_speculative,
+    GenerationConfig, RateControl, RawDecodeProgress, RawDecodeResult, RealForwardRunner,
 };
 use selection::ShapingConfig;
 use tokenizer::{
@@ -50,6 +50,9 @@ pub(crate) struct Session {
     /// allocated rather than with what was asked for. Reading the request
     /// downstream of `open_session` is how those two come apart.
     pub(crate) max_context: u32,
+    /// Whether this session drafts ahead, resolved once at open against the
+    /// install and the sampling settings. See [`resolve_speculation`].
+    pub(crate) speculation: SpeculationPlan,
 }
 
 /// Splits a generated token's text into the answer and the reasoning that
@@ -332,29 +335,107 @@ pub(crate) fn stream_turn(
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
         .filter(|&n| n > 0);
-    let result = match chunk_tokens {
-        Some(chunk) => run_raw_completion_chunked(
+    let result = match (&session.speculation, chunk_tokens) {
+        // Speculation wins over the chunked-prefill seam when both are on:
+        // the speculative loop has its own prefill (it primes the drafter as
+        // it walks) and no chunked variant. They are not composable today and
+        // pretending otherwise would silently run one of them.
+        (SpeculationPlan::Enabled { block }, _) => run_raw_completion_speculative(
             &mut session.runner,
             &session.tokenizer,
             prompt_ids,
             &config,
             session.max_context,
             vocab_size,
-            chunk,
+            *block,
             on_progress,
         )?,
-        None => run_raw_completion(
-            &mut session.runner,
-            &session.tokenizer,
-            prompt_ids,
-            &config,
-            session.max_context,
-            vocab_size,
-            on_progress,
-        )?,
+        (SpeculationPlan::Disabled { .. }, chunk_tokens) => match chunk_tokens {
+            Some(chunk) => run_raw_completion_chunked(
+                &mut session.runner,
+                &session.tokenizer,
+                prompt_ids,
+                &config,
+                session.max_context,
+                vocab_size,
+                chunk,
+                on_progress,
+            )?,
+            None => run_raw_completion(
+                &mut session.runner,
+                &session.tokenizer,
+                prompt_ids,
+                &config,
+                session.max_context,
+                vocab_size,
+                on_progress,
+            )?,
+        },
     };
     let _ = writeln!(out);
     Ok((reply, result))
+}
+
+/// What `open_session` decided about speculative decoding, resolved once.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SpeculationPlan {
+    Enabled {
+        block: usize,
+    },
+    /// `reason` is `Some` when the user might have expected otherwise, and
+    /// `None` when they asked for `off` and got it.
+    Disabled {
+        reason: Option<String>,
+    },
+}
+
+/// Decides speculation from the request and what the install turned out to
+/// be. Pure, so the hard-fail/warn split is testable without a 14 GB model.
+///
+/// **THE TWO OUTCOMES DIFFER BY WHO ASKED.** A named block is a promise the
+/// caller made to themselves -- they are measuring, or they have read
+/// `docs/MTP.md` and chosen 2 -- so failing to keep it is an ERROR carrying
+/// the reason. `auto` asked for "speculate if you can", so the same condition
+/// is a warning and the run continues. Silently doing neither is what the
+/// engine did before the head was detected at all.
+///
+/// The sampled case is a refusal on BOTH paths rather than a quiet downgrade
+/// to greedy: acceptance is `argmax(target) == proposal`, which is exact only
+/// at temperature 0. Approximating it would change what the model writes
+/// while reporting success.
+pub(crate) fn resolve_speculation(
+    requested: invocation::Speculation,
+    engine_blocker: Option<String>,
+    deterministic: bool,
+) -> Result<SpeculationPlan, String> {
+    let unavailable = if let Some(blocker) = engine_blocker {
+        Some(blocker)
+    } else if !deterministic {
+        Some(
+            "acceptance is exact only at --temperature 0, and this run samples; \
+             sampled speculation needs rejection sampling with residual correction, \
+             which is not implemented"
+                .to_string(),
+        )
+    } else {
+        None
+    };
+
+    match (requested, unavailable) {
+        (invocation::Speculation::Off, _) => Ok(SpeculationPlan::Disabled { reason: None }),
+        (invocation::Speculation::Auto, Some(reason)) => Ok(SpeculationPlan::Disabled {
+            reason: Some(reason),
+        }),
+        (invocation::Speculation::Auto, None) => Ok(SpeculationPlan::Enabled {
+            block: runtime::DEFAULT_SPECULATION_BLOCK,
+        }),
+        (invocation::Speculation::Block(_), Some(reason)) => Err(format!(
+            "--speculative was asked for but cannot be served: {reason}"
+        )),
+        (invocation::Speculation::Block(n), None) => {
+            Ok(SpeculationPlan::Enabled { block: n as usize })
+        }
+    }
 }
 
 /// The Swift original's `MFERENCE_PHASES=1` breakdown: where the wall
@@ -522,13 +603,18 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
     // `--power-profile` does: `crates/invocation` is pure and may not read
     // the machine's memory or the install's expert stride, and both are
     // needed to size the cache.
-    let runner = RealForwardRunner::open_with_slot_policy(
+    let runner = RealForwardRunner::open_with_slot_policy_and_speculation(
         model_dir,
         arch,
         plan.resolved as usize,
         match request.expert_cache_slots {
             invocation::ExpertCacheSlots::Auto => runtime::ExpertCacheSlots::Auto,
             invocation::ExpertCacheSlots::Fixed(n) => runtime::ExpertCacheSlots::Fixed(n as usize),
+        },
+        match request.speculation {
+            invocation::Speculation::Off => runtime::MtpDraftPolicy::Off,
+            invocation::Speculation::Auto => runtime::MtpDraftPolicy::Auto,
+            invocation::Speculation::Block(n) => runtime::MtpDraftPolicy::Fixed(n as usize),
         },
     )
     .map_err(|e| e.to_string())?;
@@ -558,6 +644,35 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
     )
     .map_err(|e| e.to_string())?;
 
+    // Decided ONCE, here, and not per turn: both inputs are fixed for the
+    // process, and a `--chat` session that started speculating must not stop
+    // silently three turns in.
+    // `speculation_blocker` and not `mtp_draft_depth() > 0`: a head is
+    // NECESSARY and not sufficient. The batched verify is dense-only and
+    // INT4-only, so a 1-bit, 2-bit or MoE install carrying a head would pass
+    // a head-presence check and then fail at the first verify with the
+    // generation already under way. The runner owns that list because the
+    // runner owns the refusals it mirrors.
+    let speculation = resolve_speculation(
+        request.speculation,
+        runner.speculation_blocker(),
+        shaping.is_deterministic(),
+    )?;
+    if !request.quiet {
+        match &speculation {
+            SpeculationPlan::Enabled { block } => {
+                eprintln!("speculative decoding: on, block {block}");
+            }
+            // A WARNING and not silence. An install carrying a drafter and
+            // decoding one token at a time with nothing said is the exact
+            // failure this feature was built to end.
+            SpeculationPlan::Disabled { reason: Some(why) } => {
+                eprintln!("speculative decoding: off ({why})");
+            }
+            SpeculationPlan::Disabled { reason: None } => {}
+        }
+    }
+
     // ROADMAP Phase P2. `resolve_profile` is where the OS gets asked about
     // Low Power Mode, and it is asked exactly once per process.
     let profile = runtime::resolve_profile(request.power_profile.map(map_power_profile));
@@ -567,6 +682,7 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
         tokenizer,
         runner,
         shaping,
+        speculation,
         rate,
         max_context: plan.resolved,
     })
@@ -671,5 +787,100 @@ pub(crate) fn role_name(role: Role) -> &'static str {
         Role::User => "user",
         Role::Assistant => "assistant",
         Role::Tool => "tool",
+    }
+}
+
+/// The hard-fail / warn split, which is the whole contract of
+/// `--speculative`. Pure, so it needs no install: the two inputs are "does
+/// this install carry a head" and "is this run deterministic", and every
+/// interesting combination is reachable as a pair of booleans.
+#[cfg(test)]
+mod speculation_policy {
+    use super::{resolve_speculation, SpeculationPlan};
+    use invocation::Speculation;
+
+    // Verbatim shapes of what `RealForwardRunner::speculation_blocker`
+    // returns. The CLI does not construct these -- it forwards whatever the
+    // engine says -- so what these fixtures pin is the ROUTING, not the text.
+    const NO_HEAD: &str = "this install carries no multi-token-prediction head \
+                           (mtp.fc.weight is not in the resident index)";
+    const NOT_INT4: &str = "the batched verify is INT4-only and this install's \
+                            ...q_proj.weight is dtype 16";
+    const MOE: &str = "the batched verify is dense-only and this install routes to 128 experts";
+
+    #[test]
+    fn a_named_block_fails_hard_when_it_cannot_be_served() {
+        // No head. The caller named a block, so this is an ERROR: they are
+        // measuring or have chosen deliberately, and a run that quietly did
+        // not speculate would be recorded as the speculative number.
+        let err = resolve_speculation(Speculation::Block(2), Some(NO_HEAD.to_string()), true)
+            .expect_err("a named block on a headless install must fail");
+        assert!(err.contains("no multi-token-prediction head"), "got: {err}");
+
+        // Sampled. Refused rather than downgraded to greedy, which would
+        // change what the model writes while reporting success.
+        let err = resolve_speculation(Speculation::Block(2), None, false)
+            .expect_err("a named block on a sampled run must fail");
+        assert!(err.contains("temperature 0"), "got: {err}");
+    }
+
+    #[test]
+    fn auto_warns_and_continues_where_a_named_block_fails() {
+        let cases = [
+            (Some(NO_HEAD.to_string()), true),
+            (None, false),
+            (Some(NOT_INT4.to_string()), true),
+            (Some(MOE.to_string()), false),
+        ];
+        for (blocker, deterministic) in cases {
+            let plan = resolve_speculation(Speculation::Auto, blocker, deterministic)
+                .expect("auto never fails; it declines");
+            match plan {
+                SpeculationPlan::Disabled { reason: Some(_) } => {}
+                other => panic!("auto must warn and continue, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn auto_speculates_when_the_install_and_the_settings_allow_it() {
+        let plan = resolve_speculation(Speculation::Auto, None, true).expect("serviceable");
+        assert_eq!(
+            plan,
+            SpeculationPlan::Enabled {
+                block: runtime::DEFAULT_SPECULATION_BLOCK
+            }
+        );
+    }
+
+    #[test]
+    fn off_is_silent_even_where_speculation_would_have_worked() {
+        // No warning: the caller asked for off and got off. A warning here
+        // would train people to ignore the one that matters.
+        //
+        // THE UNSERVICEABLE CASES ARE THE DISCRIMINATING ONES. With a head
+        // present and a deterministic run there is no reason to leak in the
+        // first place, so a fixture built only from that combination passes
+        // against an `Off` arm that forwards whatever reason it was handed.
+        for (blocker, deterministic) in [
+            (None, true),
+            (Some(NO_HEAD.to_string()), true),
+            (None, false),
+            (Some(NOT_INT4.to_string()), false),
+        ] {
+            let plan = resolve_speculation(Speculation::Off, blocker.clone(), deterministic)
+                .expect("off never fails");
+            assert_eq!(
+                plan,
+                SpeculationPlan::Disabled { reason: None },
+                "off must stay silent at blocker={blocker:?} deterministic={deterministic}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_named_block_is_honoured_rather_than_replaced_by_the_default() {
+        let plan = resolve_speculation(Speculation::Block(7), None, true).expect("serviceable");
+        assert_eq!(plan, SpeculationPlan::Enabled { block: 7 });
     }
 }
