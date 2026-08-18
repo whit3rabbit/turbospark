@@ -53,9 +53,9 @@ pub use model_io::{
 
 pub use error::RuntimeError;
 pub use power::{
-    low_power_mode_enabled, physical_memory, rate_control_for, resolve_profile, stepped_cap,
-    thermal_level, PowerProfile, RateControl, ThermalLevel, CRITICAL_TOK_PER_SEC,
-    READING_SPEED_TOK_PER_SEC, SERIOUS_TOK_PER_SEC,
+    low_power_mode_enabled, physical_memory, rate_control_for, recommended_max_working_set,
+    resolve_profile, stepped_cap, thermal_level, PowerProfile, RateControl, ThermalLevel,
+    CRITICAL_TOK_PER_SEC, READING_SPEED_TOK_PER_SEC, SERIOUS_TOK_PER_SEC,
 };
 pub use producer::{ChunkedPrefillRunner, LogitProducer, ScriptedLogitProducer};
 pub use raw_completion::{

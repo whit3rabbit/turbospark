@@ -154,6 +154,30 @@ pub fn physical_memory() -> u64 {
     0
 }
 
+/// What the Metal device says it will hold, and its name.
+///
+/// **Advisory only, and deliberately not what anything budgets from.** Both
+/// sizing policies take [`physical_memory`], so this exists to report the
+/// gap rather than to close it: on a unified-memory Mac the working set is
+/// around 75% of installed RAM, and a machine where it sits below
+/// `physical - CONTEXT_RESERVE_BYTES` is one whose binding constraint is the
+/// driver rather than the arithmetic. Sizing from it instead would make a
+/// recommendation disagree with the `open()` that follows it.
+#[cfg(target_os = "macos")]
+pub fn recommended_max_working_set() -> Option<(u64, String)> {
+    gpu::recommended_max_working_set()
+}
+
+/// What the GPU says it will hold, and its name.
+///
+/// Off macOS there is no device to ask, so this answers `None` -- absent
+/// rather than zero, since zero is a claim about a machine and this is the
+/// absence of a probe.
+#[cfg(not(target_os = "macos"))]
+pub fn recommended_max_working_set() -> Option<(u64, String)> {
+    None
+}
+
 /// An explicit profile wins; otherwise Low Power Mode selects
 /// `efficiency` and its absence selects `performance`.
 ///
