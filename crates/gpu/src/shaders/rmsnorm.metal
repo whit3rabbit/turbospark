@@ -172,6 +172,52 @@ void rmsnorm_bf16w_perhead(
     }
 }
 
+// PORT-LOCAL: the CENTERED form of the per-head norm above, whose learned
+// weight is an OFFSET FROM UNITY rather than the scale itself.
+//
+//   y[i] = x[i] * rsqrt(mean(x^2) + eps) * (1 + weight[i])
+//
+// `rmsnorm_bf16w_centered` is this same `1 +` over a whole vector; this one
+// exists because the `qwen3_5` MTP head's per-head `q_norm`/`k_norm` carry the
+// convention too, while the TRUNK's per-head norms of the same names do not.
+// So the choice is per TENSOR and not per family, and for the same reason the
+// whole-vector pair is two kernels this is a separate kernel rather than a
+// function constant on its plain sibling: a specialization axis whose byte
+// missed `MetalContext::pipeline`'s `constants_key` would silently reuse
+// whichever pipeline compiled first, making the two conventions one function
+// (crate Gotcha 1, and AGENTS.md Gotcha 50).
+//
+// The `1.0f +` is applied on the FP32 accumulator and never baked into the
+// stored weight. These weights read ~0.78, so a bake is less destructive here
+// than for the near-zero whole-vector norms, but it still halves the effective
+// resolution: BF16's quantum near 0.78 is 2^-8 and near 1.78 it is 2^-7.
+[[kernel, max_total_threads_per_threadgroup(256)]]
+void rmsnorm_bf16w_perhead_centered(
+    device const half*   x          [[buffer(0)]],   // [numHeads * headDim] FP16
+    device const bfloat* weight     [[buffer(1)]],   // [headDim] BF16, centered at 0
+    device       half*   out        [[buffer(2)]],   // [numHeads * headDim] FP16
+    constant     uint&   headDim    [[buffer(3)]],
+    constant     float&  eps        [[buffer(4)]],
+    uint  head             [[threadgroup_position_in_grid]],
+    uint  lid              [[thread_position_in_threadgroup]],
+    uint  lsize            [[threads_per_threadgroup]],
+    uint  simd_lane_id     [[thread_index_in_simdgroup]],
+    uint  simd_group_id    [[simdgroup_index_in_threadgroup]],
+    uint  simdgroups       [[simdgroups_per_threadgroup]]
+) {
+    threadgroup float partial[kRmsMaxSimdGroups];
+    const uint HD = rms_fc_d(headDim);
+    device const half* xh = x   + head * HD;
+    device       half* oh = out + head * HD;
+    const float inv = rms_block_inv(xh, HD, eps, lid, lsize,
+                                    simd_lane_id, simd_group_id, simdgroups, partial);
+    for (uint i = lid; i < HD; i += lsize) {
+        float xv = float(xh[i]);
+        float wv = float(weight[i]);
+        oh[i] = half(xv * inv * (1.0f + wv));
+    }
+}
+
 [[kernel, max_total_threads_per_threadgroup(256)]]
 void rmsnorm_no_scale_perhead(
     device const half*  x          [[buffer(0)]],   // [numHeads * headDim] FP16

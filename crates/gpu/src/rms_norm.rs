@@ -158,6 +158,43 @@ pub fn encode_rms_norm_bf16w_perhead(
     Ok(())
 }
 
+/// Encoder-level CENTERED per-head scaled RMSNorm
+/// (`rmsnorm_bf16w_perhead_centered`): [`encode_rms_norm_bf16w_perhead`] with
+/// the effective scale `(1 + weight[i])`, for a per-head norm whose stored
+/// weight is an OFFSET FROM UNITY.
+///
+/// The `qwen3_5` MTP head's `q_norm`/`k_norm`. **Do not reach for this by
+/// family**: the TRUNK's per-head norms of the same names, in the same model,
+/// are plain and take [`encode_rms_norm_bf16w_perhead`]. That is the same
+/// per-TENSOR rule the whole-vector pair carries (AGENTS.md Gotcha 50), and
+/// picking one per family gives a model that decodes and is wrong.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_rms_norm_bf16w_perhead_centered(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    x: (&metal::Buffer, u64),
+    weight: (&metal::Buffer, u64),
+    out: (&metal::Buffer, u64),
+    num_heads: u32,
+    head_dim: u32,
+    eps: f32,
+) -> Result<(), GpuError> {
+    let pipeline = context.pipeline(
+        SOURCE,
+        "rmsnorm_bf16w_perhead_centered",
+        &unused_function_constants(),
+        b"",
+    )?;
+    pass.encode_threadgroups(
+        &pipeline,
+        &[(x.0, 0, x.1), (weight.0, 1, weight.1), (out.0, 2, out.1)],
+        &[(u32_bytes(&head_dim), 3), (f32_bytes(&eps), 4)],
+        num_heads as u64,
+        THREADS_PER_GROUP.min(head_dim.max(1) as u64),
+    );
+    Ok(())
+}
+
 /// Encoder-level per-head no-scale RMSNorm (`rmsnorm_no_scale_perhead`):
 /// Gemma 4's v_norm. One threadgroup per head.
 pub fn encode_rms_norm_no_scale_perhead(

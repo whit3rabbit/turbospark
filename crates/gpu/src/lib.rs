@@ -192,8 +192,9 @@ pub use resident_metal::{wrap_page_aligned_no_copy, ResidentGpuWeights};
 #[cfg(target_os = "macos")]
 pub use rms_norm::{
     encode_rms_norm_bf16w, encode_rms_norm_bf16w_centered, encode_rms_norm_bf16w_perhead,
-    encode_rms_norm_no_scale, encode_rms_norm_no_scale_perhead, rms_norm_bf16w_perhead,
-    rms_norm_no_scale, rms_norm_no_scale_perhead,
+    encode_rms_norm_bf16w_perhead_centered, encode_rms_norm_no_scale,
+    encode_rms_norm_no_scale_perhead, rms_norm_bf16w_perhead, rms_norm_no_scale,
+    rms_norm_no_scale_perhead,
 };
 #[cfg(target_os = "macos")]
 pub use rope::{
