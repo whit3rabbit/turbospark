@@ -263,6 +263,92 @@ fn a_user_override_replaces_a_row_and_is_validated() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// **A row written before `measured` existed must still load.** The field is
+/// additive and defaults, which is why the schema version did not move -- and
+/// a user override on disk is exactly the file that was written against the
+/// older shape. This is spelled out rather than left to
+/// `a_user_override_replaces_a_row_and_is_validated` to imply, because that
+/// test would keep passing if somebody made the field required and only
+/// updated the fixture beside it.
+#[test]
+fn a_row_written_before_measured_existed_still_loads() {
+    let dir = std::env::temp_dir().join(format!("turbospark-catalog-old-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("models.json"),
+        r#"{"schema_version": 1, "models": [{
+            "alias": "tinyllama",
+            "name": "written before the measured field existed",
+            "family": "llama",
+            "source": {"kind": "gguf", "repo": "me/mine", "revision": "main",
+                       "file": "mine.gguf"},
+            "sidecars": {"repo": "me/tokenizer", "revision": "main",
+                         "files": ["tokenizer.json"]},
+            "download_bytes": 1, "install_bytes": 1, "status": "runs"
+        }]}"#,
+    )
+    .unwrap();
+    let catalog = Catalog::load(&dir).expect("a row with no measured block loads");
+    let row = catalog.get("tinyllama").unwrap();
+    assert!(row.measured.is_empty());
+    assert!(
+        row.measured_for("Apple M4 Max").is_none(),
+        "no rows means no match, not a panic"
+    );
+
+    // And a malformed one fails at LOAD, like every other structural check
+    // here. `min` above `max` is the specific mistake the worst-observed
+    // convention invites: a bench footer prints the cases in protocol order,
+    // not in speed order.
+    std::fs::write(
+        dir.join("models.json"),
+        r#"{"schema_version": 1, "models": [{
+            "alias": "backwards",
+            "name": "min above max",
+            "family": "llama",
+            "source": {"kind": "gguf", "repo": "me/mine", "revision": "main",
+                       "file": "mine.gguf"},
+            "sidecars": {"repo": "me/tokenizer", "revision": "main",
+                         "files": ["tokenizer.json"]},
+            "download_bytes": 1, "install_bytes": 1, "status": "runs",
+            "measured": [{"chip": "Apple M4 Max", "context": 4096,
+                          "expert_cache_slots": 16, "peak_footprint_mib": 100,
+                          "decode_tok_s_min": 40.0, "decode_tok_s_max": 20.0,
+                          "measured_on": "2026-08-18", "source": "made up"}]
+        }]}"#,
+    )
+    .unwrap();
+    let err = Catalog::load(&dir).expect_err("a backwards measured row is refused");
+    assert!(err.contains("above max"), "unhelpful message: {err}");
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// **Every row whose gates include a memory oracle carries the evidence that
+/// oracle was calibrated against.** This is the catalog half of the link;
+/// `oracle_common::assert_agrees_with_catalog` is the other half and checks
+/// the numbers agree. Without this one a row could quietly drop its measured
+/// block and the oracle-side check would have nothing to compare against and
+/// pass -- which is the shape of failure a paired test invites.
+#[test]
+fn every_row_with_a_memory_oracle_gate_records_what_that_oracle_measured() {
+    let catalog = Catalog::embedded().expect("the embedded catalog parses");
+    for entry in catalog.entries() {
+        if !entry.gates.iter().any(|g| g.contains("memory_oracle")) {
+            continue;
+        }
+        let m = entry
+            .measured_for("Apple M4 Max")
+            .unwrap_or_else(|| panic!("{}: names a memory oracle gate but records no measured row for the machine those gates were run on", entry.alias));
+        assert!(
+            m.context == 4096 || m.context == 8192,
+            "{}: measured at {} context, which is neither protocol window",
+            entry.alias,
+            m.context
+        );
+    }
+}
+
 /// A missing override is not an error; the curated table is the whole answer.
 #[test]
 fn a_missing_user_override_is_not_an_error() {

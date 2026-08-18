@@ -28,7 +28,7 @@ mod probe;
 mod store;
 
 pub use catalog::{Catalog, SCHEMA_VERSION};
-pub use entry::{CatalogEntry, Sidecars, Source, SourceKind, Status};
+pub use entry::{CatalogEntry, Measured, Sidecars, Source, SourceKind, Status};
 pub use hf::{Client, RepoRef};
 pub use install::{
     gate, human_bytes, install, install_with_byte_progress, record, ByteProgressCallback,
