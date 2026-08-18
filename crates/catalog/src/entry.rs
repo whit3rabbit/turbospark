@@ -114,8 +114,67 @@ pub struct Sidecars {
     pub files: Vec<String>,
 }
 
+/// What this artifact actually did on one machine.
+///
+/// **These are OBSERVATIONS, and the ceilings and floors that guard them stay
+/// in the oracle targets.** The two are different kinds of statement: a
+/// `ChipBaseline` is an assertion with a per-row margin and a paragraph of
+/// provenance explaining that margin, and JSON has nowhere to put the
+/// paragraph. What lives here is the evidence those margins were chosen
+/// against, so a recommendation can quote a number instead of estimating one.
+/// `oracle_common::assert_agrees_with_catalog` ties the two together and
+/// reddens in `cargo test --workspace` -- no install, no GPU -- if either
+/// side moves without the other.
+///
+/// **THE CONVENTION IS WORST-OBSERVED, and it is not decoration.** A protocol
+/// run produces three cases and usually several readings of each; what goes
+/// in here is the SLOWEST reading of the slowest case, the FASTEST reading of
+/// the fastest case, and the HIGHEST peak. So the pair brackets what a user
+/// should expect rather than advertising a best case, and
+/// [`Self::decode_tok_s_min`] is comparable with the oracle's floor by
+/// construction. Pasting a favourable number in here would silently loosen
+/// that cross-check.
+///
+/// Note the two tok/s fields are NOT "short case" and "long case".
+/// `muse_glimmer` decodes its short case SLOWEST of the three (13.291 against
+/// 15.341 and 14.483), so a schema keyed on case names would have to encode
+/// which case is which; a min and a max do not care.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Measured {
+    /// The chip's brand string, as `sysctl machdep.cpu.brand_string` reports
+    /// it and as `bench::memory::chip_brand_string` reads it. The oracle
+    /// matches its own `brand_substr` against this by substring, so
+    /// "Apple M4 Max" here is found by a row spelled "Apple M4 Max" and by
+    /// one spelled "Apple M4".
+    pub chip: String,
+    /// The context window the run opened. **Every footprint is a footprint at
+    /// one window** and on a dense install the window is most of what is
+    /// being reported (AGENTS.md Gotcha 40), so a row without this says
+    /// nothing.
+    pub context: u32,
+    /// Expert-cache slots the run pinned. Inert on a dense install, and the
+    /// dominant term on a streamed MoE one (Gotcha 36).
+    pub expert_cache_slots: u32,
+    /// Highest whole-session peak `phys_footprint` observed, in MiB.
+    pub peak_footprint_mib: u64,
+    /// Slowest reading of the slowest protocol case, in tokens per second.
+    pub decode_tok_s_min: f64,
+    /// Fastest reading of the fastest protocol case.
+    pub decode_tok_s_max: f64,
+    /// ISO date of the session these came from. Cross-session absolutes here
+    /// have repeatedly failed to reproduce (AGENTS.md Gotcha 22), so a row
+    /// that cannot be dated cannot be compared with another one.
+    pub measured_on: String,
+    /// Machine state and provenance, in the same spirit as the oracle's own
+    /// `source` field: power source, and whether anything else was running.
+    pub source: String,
+}
+
 /// One curated model.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// Not `Eq`: [`Measured`] carries `f64` throughput readings. Nothing keys a
+/// map on a whole entry, so the bound was never load-bearing.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CatalogEntry {
     /// The short name a user types. Unique across the table.
     pub alias: String,
@@ -139,6 +198,11 @@ pub struct CatalogEntry {
     /// test name, so a reader can run them.
     #[serde(default)]
     pub gates: Vec<String>,
+    /// What this artifact measured, one row per chip. Empty for a row nobody
+    /// has taken through an oracle, which is a fact about the evidence rather
+    /// than about the model -- see [`Measured`].
+    #[serde(default)]
+    pub measured: Vec<Measured>,
     #[serde(default)]
     pub notes: Option<String>,
 }
@@ -163,6 +227,22 @@ impl CatalogEntry {
             (None, None) => &self.source.revision,
             (Some(_), None) => "main",
         }
+    }
+
+    /// The measured row for a chip, matched the way the oracle matches its
+    /// own baselines: by substring, most specific first, so "Apple M4 Max"
+    /// finds a row recorded as "Apple M4 Max" and a hypothetical bare
+    /// "Apple M4" row finds it too.
+    ///
+    /// Takes the LONGEST matching chip string rather than the first, because
+    /// unlike the oracle's hand-ordered table this vector's order is whatever
+    /// the JSON happened to list. Ordering that mattered but was invisible in
+    /// the file is a trap this does not need to inherit.
+    pub fn measured_for(&self, brand: &str) -> Option<&Measured> {
+        self.measured
+            .iter()
+            .filter(|m| brand.contains(&m.chip))
+            .max_by_key(|m| m.chip.len())
     }
 
     /// Structural checks that hold for every row, applied at load so a
@@ -203,6 +283,63 @@ impl CatalogEntry {
             return Err(format!(
                 "{}: sidecars.files must include tokenizer.json",
                 self.alias
+            ));
+        }
+        for m in &self.measured {
+            m.validate(&self.alias)?;
+        }
+        Ok(())
+    }
+}
+
+impl Measured {
+    /// The same load-time discipline the rest of the row gets. Every check
+    /// here is one that would otherwise surface as a wrong RECOMMENDATION
+    /// rather than as an error: a zero context makes a footprint
+    /// uninterpretable, a slot count outside the allowed set describes a run
+    /// this engine cannot reproduce, and a min above a max means somebody
+    /// filled the two fields in the order they appear in a bench footer
+    /// rather than by the worst-observed convention.
+    pub fn validate(&self, alias: &str) -> Result<(), String> {
+        if self.chip.trim().is_empty() {
+            return Err(format!("{alias}: a measured row needs a chip"));
+        }
+        if self.context == 0 {
+            return Err(format!(
+                "{alias}: measured row for {:?} has no context; every footprint \
+                 is a footprint at one window",
+                self.chip
+            ));
+        }
+        if !foundation::runtime_config::ALLOWED_CACHE_SLOTS.contains(&self.expert_cache_slots) {
+            return Err(format!(
+                "{alias}: measured row for {:?} pins {} expert-cache slots, \
+                 outside the allowed {:?}",
+                self.chip,
+                self.expert_cache_slots,
+                foundation::runtime_config::ALLOWED_CACHE_SLOTS
+            ));
+        }
+        if self.decode_tok_s_min <= 0.0
+            || self.decode_tok_s_max <= 0.0
+            || self.decode_tok_s_min.is_nan()
+            || self.decode_tok_s_max.is_nan()
+        {
+            return Err(format!(
+                "{alias}: measured row for {:?} has a non-positive decode rate",
+                self.chip
+            ));
+        }
+        if self.decode_tok_s_min > self.decode_tok_s_max {
+            return Err(format!(
+                "{alias}: measured row for {:?} has min {} above max {}",
+                self.chip, self.decode_tok_s_min, self.decode_tok_s_max
+            ));
+        }
+        if self.peak_footprint_mib == 0 {
+            return Err(format!(
+                "{alias}: measured row for {:?} has a zero peak footprint",
+                self.chip
             ));
         }
         Ok(())

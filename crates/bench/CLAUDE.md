@@ -200,3 +200,27 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
     **THE VARIANCE IS PER CASE, AND THE CASE THAT SETS THE FLOOR IS USUALLY THE NOISIEST ONE.** One floor is asserted against every case, so the binding constraint is the slowest case's WORST reading -- and on Gemma 4, four readings on one day put `short-explanation` at a 3.8% spread, `medium-review` at 2.6%, and `long-synthesis` at **14.0%** (33.039 to 37.559). That is structural: `long-synthesis` prefills 3,015 tokens for ~67 s and decodes only 599, so a short decode window sits downstream of a long hot prefill. Two readings of the WHOLE protocol is therefore the minimum and not obviously enough; sample the governing case specifically before tightening a floor, and treat a single favourable reading of it as the least trustworthy number in the run. This is also why the Gemma floor stayed at 25.0 when a handoff proposed raising it against a 38.2 reading of that case -- see the row's comment block.
 
 16. **`turbospark-bench --model` RESOLVES both per-family parameters from the install's own manifest, and the resolver's match is exhaustive on purpose.** `real_model::protocol_parameters` is the one table; `open_model_runner_for_protocol` returns it beside the runner, so the window used at OPEN and the window used at RUN cannot diverge (they are the same value, and a divergence is silent -- opening at 8,192 and running at 4,096 refuses the long case with nothing pointing at the mismatch). The header prints `family=`, `context=`, `max_new=` and `expert_cache_slots=` for the reason Gotchas 11 and 12 give. THREE THINGS TO CARRY. The match has NO wildcard arm, which is the actual guard: a `_ =>` would let a seventh family silently inherit Gemma's window and budget, the shape of AGENTS.md Gotchas 24/37/39. The two moved rows' numbers stay LOCAL to `mistral_memory_oracle.rs` and `gptoss_memory_oracle.rs` (they carry the row's provenance) with a `const` block asserting they equal the resolver's -- a BUILD failure, not a runtime one in an `#[ignore]`d target that almost never runs; both mutations were checked and both redden. And **a dense `llama` bench number taken before 2026-08-12 is at a different window**: the binary used to run that install at 4,096, so `long-synthesis` did not fit and the peak read ~684 MiB, where the resolved 8,192 gives 1,196.5 MiB and all three cases complete. That is the binary catching up to its own oracle row (1,201-1,203 MiB), not a regression. The four unmoved families are byte-for-byte unaffected: Gemma re-ran at 61 prompt / 505 new tokens, endOfTurn, peak 2,186 MiB. VERIFIED ON GPT-OSS the same day: all three cases endOfTurn (926 / 2,597 / 1,303 new tokens) where two of three used to stop on `maxTokens`, session peak 5,420.2 MiB against the oracle's own 5,417-5,421 -- which is the cross-check that says the binary and the oracle now run one workload.
+
+17. **EVERY SELF-MEASURED `ChipBaseline` IS CHECKED AGAINST `models.json`, AND
+   THAT CHECK IS NOT `#[ignore]`d.** A baseline row is an ASSERTION -- a
+   ceiling and a floor with a per-row margin and a paragraph justifying it --
+   while the catalog's `measured` block is the OBSERVATION that margin was
+   chosen from, and `turbospark-model recommend` quotes the latter. Two files
+   describing one run, with nothing structural keeping them in step, is the
+   count-that-rots shape. `oracle_common::assert_agrees_with_catalog(alias,
+   BASELINES, context, slots)` is the tie, called from a three-line `#[test]`
+   in each of the eight oracle targets: it needs no install and no GPU, so a
+   contradiction reddens on the edit rather than the next time somebody has a
+   13 GB install on disk.
+
+   Two things it deliberately does not do. It skips rows whose `source` is
+   not this port's own measurement -- `memory_oracle.rs` carries Swift-sourced
+   rows for chips nothing here has ever run on, and demanding a catalog row
+   for those would mean inventing numbers. And it asserts the ceiling is
+   within 1.5x its own evidence as well as above it, because a ceiling that
+   has drifted far above the peak it was calibrated from has stopped being a
+   guard.
+
+   **When you re-freeze a row, move BOTH sides.** The catalog convention is
+   worst-observed: slowest reading of the slowest case, fastest of the
+   fastest, highest peak, plus the context and slot count they were taken at.

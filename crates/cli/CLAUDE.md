@@ -18,7 +18,7 @@ crates/cli/
 |   \-- bin/
 |       +-- model.rs        # turbospark-model: argv, subcommand parse, exit codes
 |       \-- model_cmd/
-|           +-- mod.rs      # The six subcommands
+|           +-- mod.rs      # The seven subcommands
 |           \-- render.rs   # Printing. No decisions.
 \-- tests/
     +-- mference_check.rs   # CLI flag parse & exit status integration tests
@@ -32,7 +32,7 @@ crates/cli/
 - `generate.rs`: Coordinates tokenizer loading, chat template rendering, prefill chunking, and GPU decode generation loops. `open_session` resolves `--model` through `catalog::resolve_model_arg` first (see Gotcha 5).
 - `chat.rs`: Interactive REPL loop maintaining user/assistant turn history and applying `fit_conversation_window` to manage context window bounds.
 - `bin/model.rs`: `turbospark-model`'s argv parse and exit-code mapping. **A second binary rather than subcommands on `turbospark-check`, and that is a decision**: `turbospark-invocation` is a pure, flat option parser whose contract is "`--model` is required and exactly one mode flag is set", with a five-place rule for every new flag and a hardcoded option-count assertion. A subcommand grammar does not belong in it, and bending it into one would put a required `--model` in front of a command whose entire job is that there is no model yet. Two exit codes, and a script doing `probe X && pull X` depends on the difference: 2 for a malformed invocation, 1 for a run that was asked for correctly and did not work.
-- `bin/model_cmd/`: the six subcommands (`list`, `info`, `probe`, `pull`, `path`, `rm`). **Nothing here decides anything** -- `turbospark-catalog` resolves rows, reaches verdicts and runs the walk; this module chooses column widths. Same split `main.rs` has with `invocation`, and it is what lets the verdict logic be tested without a terminal.
+- `bin/model_cmd/`: the seven subcommands (`list`, `info`, `probe`, `recommend`, `pull`, `path`, `rm`). **Nothing here decides anything** -- `turbospark-catalog` resolves rows, reaches verdicts and runs the walk; this module chooses column widths. Same split `main.rs` has with `invocation`, and it is what lets the verdict logic be tested without a terminal.
 
 ## Development & Test Commands
 

@@ -266,3 +266,96 @@ pub fn run_oracle_with_budget(
         }
     }
 }
+
+/// **THE CATALOG AND THE ORACLES HAVE TO AGREE, AND NOTHING ELSE MAKES THEM.**
+///
+/// `models.json` carries a `measured` block per row: the OBSERVATIONS a
+/// recommendation quotes. A `ChipBaseline` carries a ceiling and a floor:
+/// ASSERTIONS with a per-row margin, plus the paragraph of provenance that
+/// justifies the margin, which is why the two are not one table (JSON has
+/// nowhere to put the paragraph, and each margin is a judgement --
+/// `memory_oracle.rs` takes peak +5% and `qwen38_memory_oracle.rs` +13%,
+/// and both say why).
+///
+/// What that leaves is two numbers describing one run in two files, which is
+/// the shape of every count this repo has watched rot. This is the tie: it
+/// runs in `cargo test --workspace` with no install and no GPU, so an edit to
+/// either side that contradicts the other fails on the edit rather than the
+/// next time somebody happens to have a 13 GB install on disk.
+///
+/// **ONLY SELF-MEASURED ROWS ARE CHECKED.** `memory_oracle.rs` carries rows
+/// sourced from the Swift engine's own published numbers for chips nothing
+/// here has ever run on (M5 Pro, M2). Requiring a catalog row for those would
+/// mean inventing measurements this machine never took, which is the exact
+/// failure the `source` field exists to prevent.
+///
+/// `allow(dead_code)` for the reason `run_oracle` has it: every oracle target
+/// compiles its own copy of this module.
+#[allow(dead_code)]
+pub fn assert_agrees_with_catalog(
+    alias: &str,
+    baselines: &[ChipBaseline],
+    context: u32,
+    slots: u32,
+) {
+    let catalog = turbospark_catalog::Catalog::embedded().expect("the embedded catalog parses");
+    let entry = catalog
+        .get(alias)
+        .unwrap_or_else(|| panic!("{alias}: this oracle asserts an install with no catalog row"));
+
+    for row in baselines {
+        if !row.source.contains("this port") {
+            continue;
+        }
+        let m = entry.measured_for(row.brand_substr).unwrap_or_else(|| {
+            panic!(
+                "{alias}: the {} baseline is this port's own measurement and models.json \
+                 records nothing for that chip. The ceiling and floor beside it were \
+                 calibrated from numbers that now live nowhere.",
+                row.brand_substr
+            )
+        });
+
+        assert_eq!(
+            m.context, context,
+            "{alias}: models.json records a peak at {} context and this oracle runs at \
+             {context}. Every footprint is a footprint at one window.",
+            m.context
+        );
+        assert_eq!(
+            m.expert_cache_slots, slots,
+            "{alias}: models.json records {} expert-cache slots and this oracle pins \
+             {slots}. On a streamed MoE that term is the dominant one.",
+            m.expert_cache_slots
+        );
+        assert!(
+            row.footprint_ceiling_mib >= m.peak_footprint_mib,
+            "{alias}: the {} ceiling is {} MiB, UNDER the {} MiB peak models.json records. \
+             One of the two moved without the other.",
+            row.brand_substr,
+            row.footprint_ceiling_mib,
+            m.peak_footprint_mib
+        );
+        // A ceiling far above its own evidence has stopped being a guard. The
+        // widest margin any row takes today is qwen38's +13%; 50% is loose
+        // enough never to flake on a re-freeze and tight enough that a
+        // doubling cannot hide.
+        assert!(
+            row.footprint_ceiling_mib <= m.peak_footprint_mib * 3 / 2,
+            "{alias}: the {} ceiling is {} MiB against a measured {} MiB peak, over 1.5x \
+             its own evidence. A ceiling that loose cannot catch a regression.",
+            row.brand_substr,
+            row.footprint_ceiling_mib,
+            m.peak_footprint_mib
+        );
+        assert!(
+            row.tok_s_floor <= m.decode_tok_s_min,
+            "{alias}: the {} floor is {} tok/s, ABOVE the {} tok/s slowest reading \
+             models.json records -- this oracle cannot pass on the machine it was \
+             calibrated on.",
+            row.brand_substr,
+            row.tok_s_floor,
+            m.decode_tok_s_min
+        );
+    }
+}

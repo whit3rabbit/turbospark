@@ -29,6 +29,7 @@ COMMANDS:
     info <ALIAS>                one model in full, with its gate targets
     probe <REPO>[@REV]          what this engine makes of a Hugging Face repo,
                                 reading headers only: no download
+    recommend                   what this machine should run, ranked
     pull <ALIAS>                install a curated model
     pull --repo <REPO>[@REV]    install any repo the probe accepts
     path <ALIAS>                print an install directory, for scripts
@@ -42,6 +43,13 @@ OPTIONS:
                                 carries llama.cpp's tokenizer, not an HF
                                 tokenizer.json, so a GGUF pull needs this
     --filter <TEXT>             substring match for `list`
+    --context <N>               window to fit against for `recommend` (4096)
+    --budget <BYTES>            override the memory probe for `recommend`
+    --discover [N]              also rank the N most-downloaded GGUF repos on
+                                Hugging Face, filtered through the probe
+    --probe                     read every curated row's header too, which is
+                                what turns `recommend`'s unknowns into
+                                arithmetic. Slower: one header per row
     --force                     install past a probe refusal
     --yes                       do not prompt before deleting
     --help                      print this text
@@ -91,6 +99,10 @@ impl From<String> for Error {
 #[derive(Debug, Default)]
 pub struct Options {
     pub out: Option<String>,
+    pub context: Option<u32>,
+    pub budget: Option<u64>,
+    pub discover: Option<usize>,
+    pub probe: bool,
     pub alias: Option<String>,
     pub file: Option<String>,
     pub sidecar_repo: Option<String>,
@@ -143,6 +155,15 @@ fn run(args: &[String]) -> Result<(), Error> {
             let sidecars = parse_sidecar_repo(&options)?;
             model_cmd::probe(&client, &repo, options.file.as_deref(), sidecars.as_ref())
         }
+        "recommend" => {
+            options.reject_unused(&["context", "budget", "discover", "probe"])?;
+            if !positionals.is_empty() {
+                return Err(Error::Usage(
+                    "recommend takes no arguments; it describes this machine".to_string(),
+                ));
+            }
+            model_cmd::recommend(&catalog, &client, &options)
+        }
         "pull" => model_cmd::pull(&catalog, &store, &client, &positionals, &options),
         "path" => {
             options.reject_unused(&[])?;
@@ -156,6 +177,34 @@ fn run(args: &[String]) -> Result<(), Error> {
         }
         other => Err(Error::Usage(format!("unknown command {other:?}"))),
     }
+}
+
+/// How many popular repositories a bare `--discover` scans.
+const DEFAULT_DISCOVER_SCAN: usize = 20;
+
+/// `36`, `36G`, `36GB`, `36GiB` -- all the same number, because the flag
+/// exists to be typed by hand. A bare number is BYTES rather than gigabytes:
+/// every other size in this tool's output is in bytes, and guessing the unit
+/// on `--budget 36` would be a factor of a billion in whichever direction the
+/// guess was wrong.
+fn parse_bytes(text: &str) -> Option<u64> {
+    let trimmed = text.trim();
+    let digits_end = trimmed
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(trimmed.len());
+    if digits_end == 0 {
+        return None;
+    }
+    let (number, suffix) = trimmed.split_at(digits_end);
+    let value: u64 = number.parse().ok()?;
+    let scale: u64 = match suffix.trim().to_ascii_lowercase().as_str() {
+        "" => 1,
+        "k" | "kb" | "kib" => 1024,
+        "m" | "mb" | "mib" => 1024 * 1024,
+        "g" | "gb" | "gib" => 1024 * 1024 * 1024,
+        _ => return None,
+    };
+    value.checked_mul(scale)
 }
 
 fn parse_sidecar_repo(options: &Options) -> Result<Option<RepoRef>, Error> {
@@ -220,6 +269,41 @@ fn parse(args: &[String]) -> Result<(Vec<String>, Options), Error> {
                 // two forms one code path.
                 let value = value_for(&mut index, "--repo")?;
                 positionals.push(format!("--repo={value}"));
+            }
+            "--context" => {
+                let value = value_for(&mut index, "--context")?;
+                options.context =
+                    Some(value.parse().map_err(|_| {
+                        Error::Usage(format!("--context {value:?} is not a number"))
+                    })?);
+                seen.push("context");
+            }
+            "--budget" => {
+                let value = value_for(&mut index, "--budget")?;
+                options.budget =
+                    Some(parse_bytes(&value).ok_or_else(|| {
+                        Error::Usage(format!("--budget {value:?} is not a size"))
+                    })?);
+                seen.push("budget");
+            }
+            "--discover" => {
+                // The count is OPTIONAL, so a bare `--discover` has to not
+                // swallow the next token. Nothing else in this parser has an
+                // optional value, which is why it is spelled out here rather
+                // than going through `value_for`.
+                let count = match args.get(index + 1) {
+                    Some(next) if next.parse::<usize>().is_ok() => {
+                        index += 1;
+                        next.parse().expect("checked")
+                    }
+                    _ => DEFAULT_DISCOVER_SCAN,
+                };
+                options.discover = Some(count);
+                seen.push("discover");
+            }
+            "--probe" => {
+                options.probe = true;
+                seen.push("probe");
             }
             "--force" => {
                 options.force = true;

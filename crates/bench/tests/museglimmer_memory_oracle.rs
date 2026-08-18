@@ -131,3 +131,18 @@ fn real_muse_glimmer_install_peak_footprint_and_throughput_hold() {
         MUSE_MAX_NEW,
     );
 }
+
+/// The catalog half of this row, checked offline on every `cargo test`.
+///
+/// NOT `#[ignore]`d and needs no install: it asserts that the ceiling and
+/// floor above still agree with the `measured` block in `models.json` they
+/// were calibrated from. See `oracle_common::assert_agrees_with_catalog`.
+#[test]
+fn the_baselines_agree_with_the_catalogs_measured_rows() {
+    oracle_common::assert_agrees_with_catalog(
+        "museglimmer",
+        BASELINES,
+        MUSE_MAX_CONTEXT,
+        turbospark_bench::protocol::PROTOCOL_EXPERT_CACHE_SLOTS as u32,
+    );
+}

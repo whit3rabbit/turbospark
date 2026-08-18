@@ -283,7 +283,7 @@ The workspace is organized into modular Rust crates:
 - **`crates/streaming`**: SSD streamer for routed expert weights with LFU/LRU caching.
 - **`crates/model-io`**: Model manifest parsing, tensor indexes, and file verification.
 - **`crates/repack`**: GGUF/Safetensors intake and transcode pipeline into `.gturbo`.
-- **`crates/catalog`**: The curated model table, the header-only Hugging Face probe, and the install driver behind `turbospark-model`.
+- **`crates/catalog`**: The curated model table, the header-only Hugging Face probe, the fit-and-evidence recommendation engine, and the install driver behind `turbospark-model`.
 - **`crates/tokenizer`**: Fast tokenization, chat template application, streaming detokenizer, and tool-call parsing.
 - **`crates/runtime`**: Core execution engine for prefill and decode loops.
 - **`crates/server`**: Local OpenAI and Anthropic compatible HTTP server (`turbospark-server`).
@@ -330,6 +330,21 @@ However you installed it, this should now print the model catalog:
 turbospark-model list
 ```
 
+And this ranks it for the machine you are sitting at:
+
+```sh
+turbospark-model recommend
+```
+
+Two size columns, because they fail differently: **ALLOCS** is what the engine
+allocates up front (expert-cache slots plus KV) and blowing that is a failed
+open, while **ON DISK** is the whole install -- which for a mixture-of-experts
+model *streams*, so it need not fit at all. A 13 GB install runs on a 16 GB
+machine; a 27 GB one can still be refused, on its slot cache rather than its
+size. Rows that have been through a memory oracle here quote what it measured;
+rows that have not say so rather than guessing. Add `--discover` to rank the
+most-downloaded GGUF repositories on Hugging Face through the same gates.
+
 ### 2. Pull a model
 
 ```sh
@@ -345,6 +360,7 @@ Two things worth knowing before you start it:
 
 ```sh
 turbospark-model list             # the whole table, and what each row's numbers are backed by
+turbospark-model recommend        # ...ranked for this machine, with the fit arithmetic
 turbospark-model info qwen38-27b  # one row in full
 turbospark-model path qwen38-27b  # where it landed
 ```

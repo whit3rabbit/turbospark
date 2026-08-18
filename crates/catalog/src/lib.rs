@@ -25,17 +25,23 @@ mod entry;
 mod hf;
 mod install;
 mod probe;
+mod recommend;
 mod store;
 
 pub use catalog::{Catalog, SCHEMA_VERSION};
-pub use entry::{CatalogEntry, Sidecars, Source, SourceKind, Status};
-pub use hf::{Client, RepoRef};
+pub use entry::{CatalogEntry, Measured, Sidecars, Source, SourceKind, Status};
+pub use hf::{Client, PopularRepo, RepoFile, RepoRef};
 pub use install::{
     gate, human_bytes, install, install_with_byte_progress, record, ByteProgressCallback,
     InstallPlan, Installed,
 };
 pub use probe::{
     evaluate_config, evaluate_gguf, probe, ProbeReport, TypeShare, Verdict, KNOWN_SIDECARS,
+};
+pub use recommend::{
+    discover, fit, from_entry, name_params_hint, probe_entry, rank_recommendations,
+    recommend_catalog, CountedSource, DiscoverOptions, Evidence, Fit, FitVerdict, Machine, Origin,
+    Recommendation, Shape,
 };
 pub use store::{default_root, directory_bytes, resolve_model_arg, InstalledModel, Store};
 

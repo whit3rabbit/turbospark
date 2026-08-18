@@ -84,13 +84,18 @@ crates/runtime/
 - `config.rs`: Runtime generation configuration and runner settings.
 - `power.rs`: ROADMAP Phase P2's policy: `PowerProfile`, `ThermalLevel`, the `stepped_cap` ladder, `RateControl`, and the two cfg-paired OS probes (`thermal_level`, `low_power_mode_enabled`) that call `crates/gpu`'s `NSProcessInfo` wrappers on macOS and return constants elsewhere.
 - `pacing.rs`: the `Pacer`, pure absolute-deadline arithmetic. Reads no clock of its own (every method takes `now`), so it is testable at full speed.
-- `context_policy.rs`: `MaxContext` and how `Auto` resolves, plus
-  `kv_bytes_for_context`, which mirrors `KvCacheManager::new`'s allocation
-  exactly. Portable for the same reason its sibling is -- every input is a
-  parameter, so the whole policy is unit-tested anywhere. The one exception is
-  `committed_bytes`, which reads the INSTALL (not the machine) to add the
-  worst-case slot cache to the mapped weight region. See Gotcha 15.
-- `expert_cache_policy.rs`: `ExpertCacheSlots` and how `Auto` resolves. Portable on purpose -- no `gpu`, no `cfg`, no probe of its own; `resolve` takes the machine's memory as a parameter, so its whole test suite runs on any platform rather than needing a Mac with an install on disk. See Gotcha 13.
+- **The two sizing policies LIVE IN `crates/model-io` and are re-exported
+  here.** `context_policy.rs` (`MaxContext`, `kv_bytes_for_context`,
+  `largest_context_within`, `committed_bytes`) and `expert_cache_policy.rs`
+  (`ExpertCacheSlots`) moved there when `crates/catalog` needed the same
+  arithmetic to answer "would this install fit" BEFORE the install exists.
+  Both are pure functions of an `ArchConfig` and a machine size and neither
+  touches `gpu`, so the move cost nothing; `runtime::MaxContext` and
+  `runtime::ExpertCacheSlots` still resolve, and Gotchas 13 and 15 below are
+  still where their behaviour is documented, because this is the crate that
+  consumes them. `power.rs` keeps the two OS probes (`physical_memory`,
+  `recommended_max_working_set`) -- those are the one place that asks the
+  machine, and the policies take the answer as a parameter.
 - `error.rs`: `RuntimeError` enum.
 
 ## Development & Test Commands

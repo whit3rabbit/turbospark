@@ -4,16 +4,20 @@
 answer two different questions, and knowing which one you are asking saves a
 lot of time:
 
-- **The catalog** says what has been run here. Thirteen rows, each naming a
+- **The catalog** says what has been run here. Fourteen rows, each naming a
   repository and a revision that were streamed and generated on real hardware,
   with the gate targets that assert it.
 - **The probe** says what could be run here. It reads headers, costs KB and
   seconds, and decides: architecture, block types or affine width, expert
   granularity, tokenizer sidecars. This is the half that scales past the
   table.
+- **`recommend`** puts the two together and asks the question you probably
+  came with: what should *this* machine run? See
+  [below](#what-should-this-machine-run).
 
 ```sh
 turbospark-model list                    # the catalog
+turbospark-model recommend               # ...ranked for this machine
 turbospark-model info gemma4             # one row in full
 turbospark-model pull gemma4             # install it
 turbospark-check --model gemma4 --messages-file /tmp/p.json
@@ -80,6 +84,84 @@ the smaller model by parameter count than several rows that run fine. What
 decides whether a model fits this engine is how finely it splits its experts,
 not how big it is, and that number is one multiplication off the header
 (AGENTS.md Gotcha 36). `probe` prints it.
+
+---
+
+## What should *this* machine run?
+
+```
+turbospark-model recommend
+turbospark-model recommend --context 8192
+turbospark-model recommend --probe          # reads every row's header, ~60 s
+turbospark-model recommend --discover 20    # and Hugging Face at large
+```
+
+```
+machine: 36.0 GiB of memory on Apple M4 Max, 28.1 GiB of Metal working set
+fitting against a 4096-token context
+
+  MODEL        EVIDENCE       ALLOCS    ON DISK      TOK/S  VERDICT
+  gemma4       verified     ~3.3 GiB   12.1 GiB      33-46  fits, fully resident
+  qwen36       verified     ~2.2 GiB   16.8 GiB      33-38  fits, fully resident
+  ...
+  mixtral      caveat      ~55.0 GiB   27.0 GiB          -  does not fit
+```
+
+**The two size columns answer different questions and that is the point.**
+
+- **ALLOCS** is what the engine allocates and what `phys_footprint` charges
+  for: the expert-cache slot cache plus the KV cache. Exceeding memory here
+  is a failed `open()`.
+- **ON DISK** is the whole install, weights included. Exceeding memory here is
+  not an error at all -- it is the streaming this engine is built around, and
+  it costs throughput rather than correctness.
+
+A single "size" column would have to be wrong for one of the two: a 13 GB
+install on a 16 GB machine *runs* (it streams), and a 27 GB one that "fits" by
+file size can still be refused on its slot cache. `mixtral` above is refused
+at 55 GiB of ALLOCS against 27 GiB on disk, which is AGENTS.md Gotcha 36 in
+one line.
+
+The marker on ALLOCS says where the number came from: `*` measured on this
+chip, `~` estimated from the checkpoint's shape, `?` nothing has read the
+header yet. **TOK/S is only ever quoted, never estimated** -- decode rate does
+not track weight bytes on this engine (one architecture reads 18.3 / 14.2 /
+19.0 tok/s at 1 / 2 / 4 bits), so a row nobody has measured shows a dash
+rather than a guess.
+
+Ordering is: it fits, then how much is known about it, then its measured rate,
+then its size. **A discovered repository never outranks a curated row that
+fits**, however big or popular, because nothing here has run it.
+
+### What the default arm cannot tell you
+
+Offline, a row that has been through a memory oracle carries its measured
+peak and gets an exact answer; a row that has not reports `unknown`. The gap
+is not laziness -- the slot cache and the KV are functions of the
+checkpoint's **shape**, and nothing offline knows it. Filling it from the
+family's baseline would be wrong: one architecture string covers several
+checkpoints, `llama` alone covers Mixtral 8x7B, Mistral 7B and TinyLlama
+1.1B, and reading a baseline as a checkpoint's own shape is what once shipped
+a `head_dim` of 128 to a model with 64. `--probe` reads the real header.
+
+A measured peak is also a peak at **one context and one slot count**, so it
+is reported rather than applied when either differs, with a line saying which
+one. Gemma 4 is 2,175 MiB at 4,096/16 and 3,654 MiB at 4,096/32; quoting the
+first for the second is not an approximation.
+
+### Discovery
+
+`--discover N` pulls the N most-downloaded GGUF text-generation repositories
+and puts each through the **same probe** the command above uses, so a
+discovered row is refused in the same words and for the same reasons. Where a
+repository publishes ten quantizations it picks the largest whose block types
+have kernels here; the name is only a pre-filter, and the header decides. A
+sharded GGUF is skipped rather than partially installed.
+
+The usual reason a plausible repository still cannot be installed is the
+tokenizer: a GGUF carries llama.cpp's representation and this port loads an HF
+`tokenizer.json`, so discovery reads the card's `base_model` and, failing
+that, tells you to pass `--sidecar-repo`.
 
 ---
 
@@ -151,6 +233,41 @@ Step 2 comes before step 3 because `Qwen3.8-27B`'s bring-up failed on a 404
 for `merges.txt` **after** a 20-minute stream had written a perfectly good
 install (AGENTS.md Gotcha 47). By the time a byte of weight data moves, the
 install is known to have a tokenizer that loads and a template that renders.
+
+---
+
+## The `measured` block
+
+Eight rows carry one, and it is what `recommend` quotes:
+
+```json
+"measured": [{
+  "chip": "Apple M4 Max", "context": 4096, "expert_cache_slots": 16,
+  "peak_footprint_mib": 2175,
+  "decode_tok_s_min": 33.039, "decode_tok_s_max": 45.648,
+  "measured_on": "2026-08-16", "source": "this port, four readings, ..."
+}]
+```
+
+**These are observations; the ceilings and floors that guard them stay in the
+oracle targets**, with the paragraph of provenance that justifies each margin
+(JSON has nowhere to put a paragraph, and the margins differ per row on
+purpose). The two are tied together by
+`oracle_common::assert_agrees_with_catalog`, which is NOT `#[ignore]`d and
+needs no install: edit either side into disagreement and `cargo test
+--workspace` fails on the edit.
+
+The convention is **worst-observed**: the slowest reading of the slowest
+protocol case, the fastest of the fastest, and the highest peak. So the pair
+brackets what to expect rather than advertising a best case, and
+`decode_tok_s_min` is comparable with the oracle's floor by construction.
+Pasting a favourable number in silently loosens that check.
+
+Two fields look redundant and are not. `context` is there because every
+footprint is a footprint at one window -- on a dense install the window is
+most of it. `expert_cache_slots` is there because on a streamed MoE the slot
+cache is the dominant term, and `--expert-cache-slots auto` may well resolve
+to a different one on your machine than the protocol pinned.
 
 ---
 

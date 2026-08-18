@@ -61,6 +61,8 @@ mod dequant_q6_k_gemv;
 #[cfg(target_os = "macos")]
 mod dequant_q8_0_gemv;
 #[cfg(target_os = "macos")]
+mod device_memory;
+#[cfg(target_os = "macos")]
 mod dispatch_profile;
 #[cfg(target_os = "macos")]
 mod dsv4_state;
@@ -155,6 +157,8 @@ pub use dequant_q8_0_gemv::{
     encode_embed_lookup_q8_0, q8_0_row_bytes, Q8_0ResidentMatrix, Q8_0_BLOCK_BYTES,
     Q8_0_BLOCK_ELEMS,
 };
+#[cfg(target_os = "macos")]
+pub use device_memory::recommended_max_working_set;
 #[cfg(target_os = "macos")]
 pub use dispatch_profile::{report as dispatch_profile_report, reset as dispatch_profile_reset};
 #[cfg(target_os = "macos")]

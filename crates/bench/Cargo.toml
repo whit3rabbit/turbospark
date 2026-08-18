@@ -30,3 +30,9 @@ model_io = { package = "turbospark-model-io", path = "../model-io", version = "0
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 # phys_footprint sampling for tests/memory_oracle.rs (proc_pid_rusage).
 libc = "0.2"
+# `oracle_common::assert_agrees_with_catalog`: every self-measured
+# `ChipBaseline` row is checked against the `measured` block in
+# `models.json` that it was calibrated from. Offline, no install, and NOT
+# `#[ignore]`d -- the whole point is that it reddens on the edit rather than
+# the next time somebody has a 13 GB install on disk.
+turbospark-catalog = { path = "../catalog", version = "0.1.0" }

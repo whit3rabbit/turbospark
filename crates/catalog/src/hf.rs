@@ -67,6 +67,16 @@ impl RepoRef {
             self.repo, self.revision
         )
     }
+
+    /// The same URL with `?blobs=true`, which adds a `size` to every sibling.
+    ///
+    /// One request for every file's length, where [`Client::content_length`]
+    /// is one request per file. That difference decides whether ranking a
+    /// repository's ten published quantizations is one round trip or ten, and
+    /// [`crate::recommend`] does it across twenty repositories at once.
+    pub fn api_url_with_sizes(&self) -> String {
+        format!("{}?blobs=true", self.api_url())
+    }
 }
 
 impl std::fmt::Display for RepoRef {
@@ -78,12 +88,54 @@ impl std::fmt::Display for RepoRef {
 #[derive(Debug, Deserialize)]
 struct Sibling {
     rfilename: String,
+    /// Present only under `?blobs=true`.
+    #[serde(default)]
+    size: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
 struct RepoInfo {
     #[serde(default)]
     siblings: Vec<Sibling>,
+}
+
+/// One row of the popular-models listing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PopularRepo {
+    /// `owner/name`.
+    pub id: String,
+    pub downloads: u64,
+    /// The checkpoint this artifact was converted from, when the card names
+    /// one. **A GGUF repository carries no `tokenizer.json`**, so without
+    /// this a discovered candidate has nowhere to get its sidecars and is
+    /// refused for a reason that has nothing to do with whether it would run
+    /// (`crates/catalog/CLAUDE.md` Gotcha 4).
+    pub base_model: Option<String>,
+}
+
+/// A file in a repository, with its length when the listing carried one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepoFile {
+    pub name: String,
+    pub size: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CardData {
+    /// Either a bare string or a list; the API is not consistent about which,
+    /// and a caller that expects one gets `None` for half of Hugging Face.
+    #[serde(default)]
+    base_model: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ListedModel {
+    id: String,
+    #[serde(default)]
+    downloads: Option<u64>,
+    #[serde(default)]
+    #[serde(rename = "cardData")]
+    card_data: Option<CardData>,
 }
 
 /// A blocking HTTP client for the small-file endpoints.
@@ -186,6 +238,56 @@ impl Client {
         Ok(names)
     }
 
+    /// Every filename in the repository, with its length.
+    ///
+    /// The names come back sorted like [`Self::file_list`]'s, so the two are
+    /// interchangeable where only names are wanted. `size` is `None` for a
+    /// sibling the API listed without one rather than 0, because a zero-byte
+    /// file and an unreported length are different facts and only one of them
+    /// should sort to the bottom of a size ranking (the same reasoning the
+    /// probe's unsized ggml types get -- `crates/catalog/CLAUDE.md`).
+    pub fn file_list_with_sizes(&self, repo: &RepoRef) -> Result<Vec<RepoFile>, String> {
+        let body = self.get(&repo.api_url_with_sizes())?;
+        let info: RepoInfo = serde_json::from_slice(&body)
+            .map_err(|e| format!("parsing the file list for {repo}: {e}"))?;
+        let mut files: Vec<RepoFile> = info
+            .siblings
+            .into_iter()
+            .map(|s| RepoFile {
+                name: s.rfilename,
+                size: s.size,
+            })
+            .collect();
+        files.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(files)
+    }
+
+    /// The most-downloaded GGUF text-generation repositories.
+    ///
+    /// The entry point for [`crate::recommend::discover`], and the one call in
+    /// this module that does not start from a repository the caller already
+    /// named. Adapted from shoehorn's `popular_gguf_repos` (see `NOTICE`); the
+    /// changes are that it goes through this module's client rather than
+    /// shelling out to `curl`, and that it asks for `cardData` so the
+    /// sidecar repository comes back in the same request.
+    pub fn popular_gguf_repos(&self, limit: usize) -> Result<Vec<PopularRepo>, String> {
+        let url = format!(
+            "https://huggingface.co/api/models?filter=gguf&pipeline_tag=text-generation\
+             &sort=downloads&direction=-1&cardData=true&limit={limit}"
+        );
+        let body = self.get(&url)?;
+        let listed: Vec<ListedModel> = serde_json::from_slice(&body)
+            .map_err(|e| format!("parsing the popular-model listing: {e}"))?;
+        Ok(listed
+            .into_iter()
+            .map(|m| PopularRepo {
+                id: m.id,
+                downloads: m.downloads.unwrap_or(0),
+                base_model: m.card_data.and_then(|c| c.base_model).and_then(base_model),
+            })
+            .collect())
+    }
+
     /// The `Content-Length` of a file, without fetching it.
     ///
     /// `probe` reports this and `tests/catalog_network.rs` asserts it, which
@@ -210,5 +312,50 @@ impl Client {
                 .and_then(|v| v.parse::<u64>().ok())
         };
         Ok(read("x-linked-size").or_else(|| read("content-length")))
+    }
+}
+
+/// Read `cardData.base_model`, which the API spells as either a string or a
+/// list of them and which a caller that assumed one shape gets `None` for
+/// half the time. A list means the artifact was merged or converted from
+/// several; the FIRST is the one whose tokenizer a conversion carries.
+fn base_model(value: serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::String(s) if !s.trim().is_empty() => Some(s),
+        serde_json::Value::Array(items) => items.into_iter().find_map(|v| match v {
+            serde_json::Value::String(s) if !s.trim().is_empty() => Some(s),
+            _ => None,
+        }),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::base_model;
+
+    /// Both shapes the API actually returns. Measured live 2026-08-18:
+    /// `unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF` answers a one-element
+    /// LIST and `antirez/deepseek-v4-gguf` answers a bare STRING, so a reader
+    /// written against either one alone is wrong about real repositories
+    /// rather than about a hypothetical.
+    #[test]
+    fn a_base_model_is_read_from_a_string_or_a_list() {
+        assert_eq!(
+            base_model(serde_json::json!("deepseek-ai/DeepSeek-V4-Flash")),
+            Some("deepseek-ai/DeepSeek-V4-Flash".to_string())
+        );
+        assert_eq!(
+            base_model(serde_json::json!(["Qwen/Qwen3-Coder-30B-A3B-Instruct"])),
+            Some("Qwen/Qwen3-Coder-30B-A3B-Instruct".to_string())
+        );
+        assert_eq!(base_model(serde_json::json!(null)), None);
+        assert_eq!(base_model(serde_json::json!([])), None);
+        // Blank is absent, not a repository named "".
+        assert_eq!(base_model(serde_json::json!("  ")), None);
+        assert_eq!(
+            base_model(serde_json::json!(["", "owner/real"])),
+            Some("owner/real".to_string())
+        );
     }
 }

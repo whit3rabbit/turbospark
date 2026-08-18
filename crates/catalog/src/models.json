@@ -30,6 +30,18 @@
         "quality_sensitivity",
         "logit_dump + scripts/kld.py"
       ],
+      "measured": [
+        {
+          "chip": "Apple M4 Max",
+          "context": 4096,
+          "expert_cache_slots": 16,
+          "peak_footprint_mib": 2175,
+          "decode_tok_s_min": 33.039,
+          "decode_tok_s_max": 45.648,
+          "measured_on": "2026-08-16",
+          "source": "this port, four readings, one on battery and three on AC; long-synthesis spans 14% here and is what sets the oracle floor"
+        }
+      ],
       "notes": "The install every frozen Gemma 4 row in docs/BENCHMARKS.md is measured against, and the one the sensitivity proof and the mlx-lm cross-engine KL run on. If you install one model, install this one."
     },
     {
@@ -59,6 +71,18 @@
         "qwen36_quality_gate",
         "qwen36_memory_oracle"
       ],
+      "measured": [
+        {
+          "chip": "Apple M4 Max",
+          "context": 4096,
+          "expert_cache_slots": 16,
+          "peak_footprint_mib": 1610,
+          "decode_tok_s_min": 32.647,
+          "decode_tok_s_max": 37.993,
+          "measured_on": "2026-08-07",
+          "source": "this port, two readings, AC; the slowest case agrees to 0.13 tok/s across them"
+        }
+      ],
       "notes": "Gated-DeltaNet linear attention on 30 of 40 layers. One of the two gated rows with NO cross-engine KL number (qwen38-27b is the other): scripts/kld.py is still pinned to a Gemma reference repo, so nothing external has checked this family's numerics."
     },
     {
@@ -86,6 +110,18 @@
         "qwen3moe_quality_gate",
         "qwen3moe_memory_oracle",
         "logit_dump + scripts/kld_llamacpp.py"
+      ],
+      "measured": [
+        {
+          "chip": "Apple M4 Max",
+          "context": 4096,
+          "expert_cache_slots": 16,
+          "peak_footprint_mib": 2748,
+          "decode_tok_s_min": 16.036,
+          "decode_tok_s_max": 27.335,
+          "measured_on": "2026-08-10",
+          "source": "this port, one oracle reading, AC"
+        }
       ],
       "notes": "128 experts of 2.5 MiB, so it streams. Peak footprint 2.7 GiB rather than the README band: 48 layers deep, and the slot cache is slots x layers x expert_stride."
     },
@@ -115,6 +151,18 @@
         "gptoss_memory_oracle",
         "gptoss_quality_gate",
         "logit_dump + scripts/kld_llamacpp.py"
+      ],
+      "measured": [
+        {
+          "chip": "Apple M4 Max",
+          "context": 8192,
+          "expert_cache_slots": 16,
+          "peak_footprint_mib": 5422,
+          "decode_tok_s_min": 23.371,
+          "decode_tok_s_max": 31.343,
+          "measured_on": "2026-08-12",
+          "source": "this port, two readings, AC; the first had a release build running beside it and is ~7% low on the shortest case"
+        }
       ],
       "notes": "Harmony puts reasoning in an analysis channel BEFORE the answer, so turbospark-check prints the answer on stdout and the reasoning on stderr. Needs an 8192 context AND a 3072-token budget: its three protocol cases take 818 / 2153 / 1108 tokens to reach the stop token. Peak footprint 5,421 MiB, most of it expert-slot cache."
     },
@@ -147,6 +195,18 @@
         "ternary_memory_oracle",
         "logit_dump + scripts/kld_mlx_affine.py"
       ],
+      "measured": [
+        {
+          "chip": "Apple M4 Max",
+          "context": 4096,
+          "expert_cache_slots": 16,
+          "peak_footprint_mib": 662,
+          "decode_tok_s_min": 12.545,
+          "decode_tok_s_max": 13.864,
+          "measured_on": "2026-08-15",
+          "source": "this port, three readings, AC"
+        }
+      ],
       "notes": "Dense, so it streams nothing and its counted footprint is 661.6 MiB on 7.6 GB of weights -- but a dense model's weights are mapped and NOT counted, so budget its size on disk in free RAM. Ships merges.txt and NO generation_config.json, the exact inverse of qwen38-27b."
     },
     {
@@ -176,6 +236,18 @@
       "gates": [
         "qwen38_memory_oracle",
         "qwen38_quality_gate"
+      ],
+      "measured": [
+        {
+          "chip": "Apple M4 Max",
+          "context": 4096,
+          "expert_cache_slots": 16,
+          "peak_footprint_mib": 661,
+          "decode_tok_s_min": 16.764,
+          "decode_tok_s_max": 19.041,
+          "measured_on": "2026-08-14",
+          "source": "this port, three readings, AC; two from turbospark-bench and one from the oracle"
+        }
       ],
       "notes": "Same architecture as ternary27b and bonsai27b, at a third quantization. Renders in NON-THINKING mode, so the shared 1024-token budget is enough. No merges.txt: this conversion embeds the merges in tokenizer.json. Has no cross-engine KL number (see qwen36)."
     },
@@ -315,6 +387,18 @@
       "gates": [
         "mistral_memory_oracle"
       ],
+      "measured": [
+        {
+          "chip": "Apple M4 Max",
+          "context": 8192,
+          "expert_cache_slots": 16,
+          "peak_footprint_mib": 1203,
+          "decode_tok_s_min": 16.338,
+          "decode_tok_s_max": 30.447,
+          "measured_on": "2026-08-10",
+          "source": "this port, two readings, AC; the slowest case moved 12.5% between them, which is why the floor came off the slower"
+        }
+      ],
       "notes": "Dense, so nothing streams and there are zero packed-expert files. Its oracle runs at 8192 context, not the shared 4096: the protocol's long case is 3444 tokens under Mistral's 32k vocab and does not fit otherwise. Counted footprint 1,201 MiB at 8192 and 684 at 4096, of which KV is most -- the 4.07 GiB of weights are not counted, so budget disk size in free RAM."
     },
     {
@@ -391,6 +475,18 @@
       "gates": [
         "memory_oracle",
         "quality_gate"
+      ],
+      "measured": [
+        {
+          "chip": "Apple M4 Max",
+          "context": 8192,
+          "expert_cache_slots": 16,
+          "peak_footprint_mib": 536,
+          "decode_tok_s_min": 13.291,
+          "decode_tok_s_max": 15.341,
+          "measured_on": "2026-08-15",
+          "source": "this port, one reading, AC; this install draws ~38 W and saturates thermally within ~2 minutes, so its rate is governed (AGENTS.md Gotcha 28)"
+        }
       ],
       "notes": "The seventh family and the sixth decode flow: dense 52-layer GQA with a three-sliding/one-full 2048 window, NoPE on the full layers, a separate attention output gate, CENTERED per-layer norms against a PLAIN final one, and a logit softcap behind an output multiplier. It REASONS BEFORE ANSWERING (a to=self message precedes its to=user one), so its protocol runs at 8,192 context and a 2,048 budget rather than the shared 4,096/1,024. A vision-language checkpoint whose text tower alone is ingested; its 815 vision tensors are excluded at repack."
     }

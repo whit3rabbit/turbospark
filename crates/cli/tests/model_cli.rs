@@ -213,3 +213,103 @@ fn a_malformed_repo_reference_is_a_usage_error() {
         );
     }
 }
+
+/// `recommend` is offline by DEFAULT, which is what makes it testable here at
+/// all -- `--discover` and `--probe` are the two arms that reach the network
+/// and neither is exercised in this file.
+///
+/// `--budget` is what lets the case run on any machine: without it the answer
+/// depends on how much memory the test runner has, which is a test that passes
+/// or fails on the hardware rather than on the code.
+#[test]
+fn recommend_ranks_the_catalog_against_a_named_budget() {
+    let (code, stdout, _) = run(&["recommend", "--budget", "36GiB"]);
+    assert_eq!(code, 0, "{stdout}");
+    assert!(stdout.contains("36.0 GiB of memory"), "{stdout}");
+    assert!(stdout.contains("4096-token context"), "{stdout}");
+    // The two size columns are the point of the table; a single one would be
+    // wrong for one of the two shapes this engine has.
+    assert!(
+        stdout.contains("ALLOCS") && stdout.contains("ON DISK"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("gemma4"), "{stdout}");
+}
+
+/// **The budget is a MEMORY size and a bare number is bytes.** Guessing
+/// gigabytes on `--budget 36` would be wrong by a factor of a billion in
+/// whichever direction the guess missed, and the failure would be silent: a
+/// 36-byte budget refuses everything and a 36 GiB one fits everything, both
+/// plausibly.
+#[test]
+fn the_budget_flag_reads_sizes_and_refuses_nonsense() {
+    let (code, stdout, _) = run(&["recommend", "--budget", "38654705664"]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("36.0 GiB of memory"), "{stdout}");
+
+    for bad in ["thirty-six", "36 furlongs", "-1", ""] {
+        let (code, _, stderr) = run(&["recommend", "--budget", bad]);
+        assert_eq!(code, 2, "{bad:?} should be a usage error");
+        assert!(stderr.contains("is not a size"), "{bad:?}: {stderr}");
+    }
+}
+
+/// A window is a parameter because a footprint is a footprint at one window
+/// (AGENTS.md Gotcha 40), and the table has to say which one it used.
+#[test]
+fn recommend_fits_against_the_named_context() {
+    let (code, stdout, _) = run(&["recommend", "--budget", "36GiB", "--context", "8192"]);
+    assert_eq!(code, 0, "{stdout}");
+    assert!(stdout.contains("8192-token context"), "{stdout}");
+    // gemma4's measured peak was taken at 4,096, so at 8,192 it must be
+    // reported rather than applied -- silently quoting it would understate KV.
+    assert!(
+        stdout.contains("taken at 4096 context, not 8192"),
+        "{stdout}"
+    );
+}
+
+/// `recommend` describes the machine, so a positional argument is a
+/// misunderstanding worth naming rather than ignoring.
+#[test]
+fn recommend_takes_no_positional_argument() {
+    let (code, _, stderr) = run(&["recommend", "gemma4"]);
+    assert_eq!(code, 2);
+    assert!(stderr.contains("takes no arguments"), "{stderr}");
+}
+
+/// Every other command refuses the flags it does not read, and these are no
+/// exception: `--context` on a `pull` would read as a considered-and-ignored
+/// option rather than as a mistake.
+#[test]
+fn the_recommend_flags_do_not_apply_to_other_commands() {
+    for (command, flag) in [
+        ("list", "--context"),
+        ("info", "--budget"),
+        ("list", "--probe"),
+    ] {
+        let (code, _, stderr) = run(&[command, flag, "4096"]);
+        assert_eq!(code, 2, "{command} {flag}");
+        assert!(
+            stderr.contains("does not apply to this command"),
+            "{command} {flag}: {stderr}"
+        );
+    }
+}
+
+/// A bare `--discover` must not swallow the next token. Nothing else in this
+/// parser has an optional value, so the case is worth pinning: `--discover
+/// --budget 36GiB` has to mean the default scan and a 36 GiB budget, not a
+/// scan of `--budget`.
+#[test]
+fn a_bare_discover_does_not_swallow_the_next_flag() {
+    // Parse only: `--budget 1` makes every row refuse, so nothing reaches the
+    // network before the table is printed... except discovery itself, which
+    // does. So this asserts the PARSE via the usage path instead.
+    let (code, _, stderr) = run(&["list", "--discover", "--filter", "gemma"]);
+    assert_eq!(code, 2, "{stderr}");
+    assert!(
+        stderr.contains("--discover does not apply"),
+        "the flag parsed as a flag rather than eating --filter: {stderr}"
+    );
+}

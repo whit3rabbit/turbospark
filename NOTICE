@@ -1,0 +1,43 @@
+# Third-party material
+
+This workspace is MIT licensed (see `LICENSE`). The files listed here were
+adapted from other MIT-licensed projects rather than written here, and each
+one repeats this provenance in its own module doc so a reader who opens the
+file learns it without finding this page first.
+
+## shoehorn
+
+<https://github.com/notactuallytreyanastasio/shoehorn>, commit `17af0207e8b8`,
+MIT licensed:
+
+    MIT License
+    Copyright (c) 2026 shoehorn contributors
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE.
+
+| here | upstream | what changed |
+|---|---|---|
+| `crates/gpu/src/device_memory.rs` | `src/vram.rs` | Metal arm only; the NVML and `rocm-smi` arms dropped, since this crate compiles to nothing off macOS |
+| `crates/catalog/src/recommend/rank.rs` | `src/discover.rs` | the tier/verdict and repo-name-hint shape; bits-per-weight replaced by this engine's working-set model, since this port installs published artifacts rather than re-quantizing |
+
+**`src/solver.rs` was read and deliberately not taken.** Its multiple-choice
+knapsack solves a per-tensor mixed-precision assignment, which is a decision
+this port does not make: it chooses among the quantizations a repository
+already publishes. See `docs/MODELS.md` for the reasoning and for the
+measurements that argue against acquiring that decision.
