@@ -55,8 +55,21 @@ impl<'a> StructuredAssistantDecoder<'a> {
             self.channel = Channel::Visible;
             return Ok(Vec::new());
         }
+        // THE THOUGHT CHANNEL IS EMITTED, NOT DISCARDED, and this arm used to
+        // do the opposite. Discarding was right while nothing could turn
+        // thinking on: `apply_chat_template` hardcoded `enable_thinking:
+        // false`, so this checkpoint's generation prompt ended in a
+        // pre-closed `<think>\n\n</think>\n\n` and a `<think>` body was
+        // unreachable in practice. `--reasoning` makes it reachable, and a
+        // caller who asked to see the model think should not have the answer
+        // silently thrown away. The Gemma arm emits its own labelled thought
+        // channel for the same reason and in the same commit.
         if self.channel == Channel::Thought {
-            return Ok(Vec::new());
+            return Ok(if delta.is_empty() {
+                Vec::new()
+            } else {
+                vec![StructuredAssistantEvent::Reasoning(delta.to_string())]
+            });
         }
         if delta.is_empty() {
             Ok(Vec::new())

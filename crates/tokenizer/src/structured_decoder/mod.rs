@@ -190,7 +190,22 @@ impl<'a> StructuredAssistantDecoder<'a> {
             return Ok(Vec::new());
         }
         match self.channel {
-            Channel::Thought => Ok(Vec::new()),
+            // EMITTED, NOT DISCARDED, for the reason the ChatML arm's
+            // `<think>` body is: a caller that asked for reasoning must be
+            // able to see it, and the alternative is not "hidden" but
+            // "destroyed". Discarding was right while no knob could turn
+            // thinking on; `--reasoning` / `reasoning_effort` is that knob.
+            //
+            // The CHANNEL LABEL is still swallowed either way (it is parsed
+            // in the `Label` arm and never emitted), which is what stops a
+            // bare `thought` appearing in the stream -- the exact leak this
+            // arm's caller produced the first time a level was asked for on
+            // a real Gemma install.
+            Channel::Thought => Ok(if delta.is_empty() {
+                Vec::new()
+            } else {
+                vec![StructuredAssistantEvent::Reasoning(delta.to_string())]
+            }),
             Channel::Visible => {
                 if delta.is_empty() {
                     Ok(Vec::new())

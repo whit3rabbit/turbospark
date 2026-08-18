@@ -27,7 +27,8 @@ use runtime::{
 };
 use selection::ShapingConfig;
 use tokenizer::{
-    ChatDialect, Message, MfTokenizer, Role, StructuredAssistantDecoder, StructuredAssistantEvent,
+    ChatDialect, Message, MfTokenizer, ReasoningEffort, ReasoningSupport, Role,
+    StructuredAssistantDecoder, StructuredAssistantEvent,
 };
 
 /// Everything a generating mode needs: the loaded model, its tokenizer, and
@@ -54,24 +55,45 @@ pub(crate) struct Session {
 /// Splits a generated token's text into the answer and the reasoning that
 /// preceded it.
 ///
-/// `gpt-oss` is the only family here that separates the two: Harmony puts the
-/// model's reasoning in an `analysis` channel BEFORE its answer, so without
-/// this the reasoning and the frame markup print as the reply. For every other
-/// dialect [`Self::push`] is the identity and no decoder is built at all, so
-/// five families' output is byte-identical to what it was.
+/// THREE dialects reach this, for two different reasons, and the difference
+/// decides when a decoder is built at all.
+///
+/// `gpt-oss` ALWAYS needs one: Harmony puts the model's reasoning in an
+/// `analysis` channel before its answer whatever the caller asked for, so
+/// without this the reasoning and the frame markup print as the reply.
+///
+/// ChatML (Qwen) and Gemma need one only when `--reasoning` asked for
+/// thinking. Their thought channels are unreachable otherwise -- ChatML's
+/// rendered generation prompt closes its `<think>` block immediately
+/// (`<think>\n\n</think>`) and Gemma's template never opens one -- so building
+/// a decoder unconditionally would route shipped families through a state
+/// machine with nothing to do, and route a spontaneous `<tool_call>` into a
+/// parser this binary has no allowlist for. Keyed on the REQUEST, so every
+/// existing invocation takes the identity path it always took.
+///
+/// **SKIPPING EITHER IS NOT A COSMETIC LOSS**, which is why this list is not
+/// just Harmony's. Measured on the real Gemma 4 install the first time a
+/// level was asked for: the reply began with a bare `thought`, then the
+/// model's scratch work, then its answer, all as one run of content. The
+/// frame tokens render to the empty string, so a caller cannot tell where
+/// one ends and the other starts.
 ///
 /// **The ANSWER is what a caller accumulates as the assistant turn**, not the
 /// pair. Harmony's own convention drops the analysis channel from prior turns,
-/// so feeding it back into `--chat` history would send the model something it
-/// was never trained to read.
+/// and Qwen's template drops `<think>` blocks from prior turns for the same
+/// reason, so feeding either back into `--chat` history would send the model
+/// something it was never trained to read.
 struct ChannelSplit<'a> {
     decoder: Option<StructuredAssistantDecoder<'a>>,
 }
 
 impl<'a> ChannelSplit<'a> {
-    fn new(tokenizer: &'a MfTokenizer) -> Self {
+    fn new(tokenizer: &'a MfTokenizer, reasoning: ReasoningEffort) -> Self {
+        let wanted = tokenizer.dialect == ChatDialect::Harmony
+            || (reasoning != ReasoningEffort::Off
+                && matches!(tokenizer.dialect, ChatDialect::ChatMl | ChatDialect::Gemma));
         Self {
-            decoder: (tokenizer.dialect == ChatDialect::Harmony).then(|| {
+            decoder: wanted.then(|| {
                 // An EMPTY allowlist, and that is what keeps this binary out
                 // of the tool business rather than an accident: the decoder
                 // parses a Harmony call only when the caller offered the tool
@@ -171,7 +193,11 @@ fn run_messages_file(request: &InvocationRequest, path: &str) {
         }
     };
 
-    let prompt_ids = match render_prompt(&session.tokenizer, &messages) {
+    let prompt_ids = match render_prompt(
+        &session.tokenizer,
+        &messages,
+        map_reasoning_effort(request.reasoning),
+    ) {
         Ok(ids) => ids,
         Err(e) => {
             eprintln!("note: not attempting real generation: {e}");
@@ -198,12 +224,27 @@ fn run_messages_file(request: &InvocationRequest, path: &str) {
 ///
 /// `add_bos` is false on purpose: the Gemma template emits the literal
 /// `<bos>` mark itself, so encoding with a BOS prefix would double it.
+///
+/// **A LEVEL THIS CHECKPOINT CANNOT SPELL IS REPORTED, NOT SWALLOWED.** A
+/// template with no effort key still honours `enable_thinking`, so the
+/// request is half-served and the half that was dropped is invisible in the
+/// output -- exactly the silent no-op `--reasoning` exists to avoid being.
 pub(crate) fn render_prompt(
     tokenizer: &MfTokenizer,
     messages: &[Message],
+    reasoning: ReasoningEffort,
 ) -> Result<Vec<i32>, String> {
+    if reasoning != ReasoningEffort::Off
+        && tokenizer.reasoning_support() == ReasoningSupport::ToggleOnly
+    {
+        eprintln!(
+            "note: this checkpoint's chat template has no reasoning-effort knob, so \
+             --reasoning {} turns thinking ON but sets no level",
+            reasoning.as_str()
+        );
+    }
     let rendered = tokenizer
-        .apply_chat_template(messages)
+        .apply_chat_template_with_reasoning(messages, reasoning)
         .map_err(|e| format!("chat template: {e}"))?;
     Ok(tokenizer.encode(&rendered, false))
 }
@@ -249,7 +290,7 @@ pub(crate) fn stream_turn(
     let mut reply = String::new();
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
-    let mut split = ChannelSplit::new(&session.tokenizer);
+    let mut split = ChannelSplit::new(&session.tokenizer, map_reasoning_effort(request.reasoning));
     let on_progress = |event| {
         // Both variants carry visible text: `Tail` is what the stop
         // matcher withheld, so dropping it truncates the reply.
@@ -566,6 +607,18 @@ fn map_power_profile(profile: invocation::PowerProfile) -> runtime::PowerProfile
         invocation::PowerProfile::Performance => runtime::PowerProfile::Performance,
         invocation::PowerProfile::Balanced => runtime::PowerProfile::Balanced,
         invocation::PowerProfile::Efficiency => runtime::PowerProfile::Efficiency,
+    }
+}
+
+/// The third of these mappings, for the reason [`map_power_profile`] is the
+/// first: the parser crate may not depend on `tokenizer` either.
+pub(crate) fn map_reasoning_effort(effort: invocation::ReasoningEffort) -> ReasoningEffort {
+    match effort {
+        invocation::ReasoningEffort::Off => ReasoningEffort::Off,
+        invocation::ReasoningEffort::Low => ReasoningEffort::Low,
+        invocation::ReasoningEffort::Medium => ReasoningEffort::Medium,
+        invocation::ReasoningEffort::High => ReasoningEffort::High,
+        invocation::ReasoningEffort::XHigh => ReasoningEffort::XHigh,
     }
 }
 

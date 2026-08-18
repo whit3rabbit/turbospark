@@ -9,8 +9,8 @@ use crate::failure::ParseFailure;
 use crate::options::OPTIONS;
 use crate::request::{
     ExpertCacheSlots, InvocationRequest, MaxContext, Mode, PowerProfile, PrefillChunk,
-    ReadAheadMode, DEFAULT_MAX_NEW, DEFAULT_REPETITION_PENALTY, DEFAULT_TEMPERATURE, DEFAULT_TOP_K,
-    DEFAULT_TOP_P, MAX_TOP_K,
+    ReadAheadMode, ReasoningEffort, DEFAULT_MAX_NEW, DEFAULT_REPETITION_PENALTY,
+    DEFAULT_TEMPERATURE, DEFAULT_TOP_K, DEFAULT_TOP_P, MAX_TOP_K,
 };
 use foundation::runtime_config::{ALLOWED_CACHE_SLOTS, ALLOWED_CHUNK_SIZES};
 
@@ -61,6 +61,7 @@ pub fn parse(tokens: &[String]) -> ParseOutcome {
     let mut prefill_chunk = PrefillChunk::default();
     let mut power_profile: Option<PowerProfile> = None;
     let mut max_tokens_per_sec: Option<f64> = None;
+    let mut reasoning = ReasoningEffort::default();
     let mut quiet = false;
 
     let mut i = 0;
@@ -179,6 +180,10 @@ pub fn parse(tokens: &[String]) -> ParseOutcome {
                 Ok(r) if r.is_finite() && r > 0.0 => max_tokens_per_sec = Some(r),
                 _ => return invalid("--max-tokens-per-sec", value),
             },
+            "--reasoning" => match ReasoningEffort::parse(value) {
+                Some(level) => reasoning = level,
+                None => return invalid("--reasoning", value),
+            },
             other => unreachable!("value-taking option {other} not handled"),
         }
 
@@ -264,6 +269,7 @@ pub fn parse(tokens: &[String]) -> ParseOutcome {
         prefill_chunk,
         power_profile,
         max_tokens_per_sec,
+        reasoning,
         quiet,
     })
 }

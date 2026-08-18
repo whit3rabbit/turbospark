@@ -20,6 +20,7 @@ use crate::dialect::{
 };
 use crate::error::TokenizerError;
 use crate::json_value::JsonValue;
+use crate::reasoning::ReasoningEffort;
 
 /// Message sender role discriminator for chat templates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -128,14 +129,48 @@ impl MfTokenizer {
     /// match, and its output is fluent -- the whole failure mode above.
     /// A visible error is the better of the two.
     pub fn apply_chat_template(&self, messages: &[Message]) -> Result<String, TokenizerError> {
+        self.apply_chat_template_with_reasoning(messages, ReasoningEffort::default())
+    }
+
+    /// [`Self::apply_chat_template`], asking the checkpoint's own template for
+    /// a reasoning level.
+    ///
+    /// At [`ReasoningEffort::Off`] -- the default, and what
+    /// `apply_chat_template` passes -- this renders the same bytes it always
+    /// did, which is what leaves `crates/bench`'s frozen digests alone.
+    ///
+    /// **A LEVEL IS REFUSED RATHER THAN IGNORED when the checkpoint ships no
+    /// template**, because the per-dialect fallback renderers below are fixed
+    /// strings with no reasoning knob in them: honouring the request is
+    /// impossible and dropping it silently would give a fluent answer that
+    /// simply did not think, with nothing anywhere saying so. A template that
+    /// exists but names no effort key is NOT refused -- see
+    /// [`ReasoningSupport::ToggleOnly`], where thinking is still a real
+    /// effect and only the level is unexpressible; that case is the caller's
+    /// to warn about.
+    ///
+    /// [`ReasoningSupport::ToggleOnly`]: crate::ReasoningSupport::ToggleOnly
+    pub fn apply_chat_template_with_reasoning(
+        &self,
+        messages: &[Message],
+        reasoning: ReasoningEffort,
+    ) -> Result<String, TokenizerError> {
         if self.chat_template_source.is_some() {
             return crate::jinja_chat_template::render_generic_chat_template(
                 self,
                 messages,
                 &[],
                 true,
-                false,
+                reasoning,
             );
+        }
+        if reasoning.enable_thinking() {
+            return Err(TokenizerError::UnsupportedForDialect(format!(
+                "reasoning effort {} was requested, but this checkpoint ships no chat template \
+                 and the {:?} fallback renderer has no reasoning knob to set",
+                reasoning.as_str(),
+                self.dialect
+            )));
         }
         self.apply_dialect_chat_template(messages)
     }

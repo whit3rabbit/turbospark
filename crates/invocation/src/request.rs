@@ -101,6 +101,62 @@ impl PowerProfile {
     }
 }
 
+/// How hard the model is asked to think before it answers.
+///
+/// Declared here rather than reused from the tokenizer crate for the reason
+/// [`PowerProfile`] is: this crate is pure and depends only on `foundation`.
+/// `crates/cli`'s `map_reasoning_effort` pins the two spellings against each
+/// other, which is the third such mapping (see this crate's Gotcha 2).
+///
+/// **THE SET IS A UNION AND NO CHECKPOINT ACCEPTS ALL OF IT.** Qwen 3.8 takes
+/// `xhigh`/`medium`/`low` and rejects `high`; Harmony and Muse Glimmer take
+/// `high`/`medium`/`low`. This crate may not look at the install, so it
+/// cannot know which -- the checkpoint's own template validates and names its
+/// own set in the error. Rejecting the union here would refuse a spelling
+/// some future checkpoint accepts; accepting anything at all would let a typo
+/// through to a Jinja error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ReasoningEffort {
+    /// Thinking disabled. The default, and what every release before this
+    /// flag rendered.
+    #[default]
+    Off,
+    /// Brief, focused thinking.
+    Low,
+    /// The middle setting.
+    Medium,
+    /// Harmony's and Muse Glimmer's top setting.
+    High,
+    /// Qwen 3.8's top setting.
+    XHigh,
+}
+
+impl ReasoningEffort {
+    /// Parse a level from its documented spelling. Returns `None` for any
+    /// text outside the fixed set.
+    pub fn parse(text: &str) -> Option<Self> {
+        match text {
+            "off" => Some(Self::Off),
+            "low" => Some(Self::Low),
+            "medium" => Some(Self::Medium),
+            "high" => Some(Self::High),
+            "xhigh" => Some(Self::XHigh),
+            _ => None,
+        }
+    }
+
+    /// The inverse of [`Self::parse`].
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::XHigh => "xhigh",
+        }
+    }
+}
+
 /// Prompt-processing chunk-size tuning: a fixed token count drawn from the
 /// foundation-published allowed set, or automatic sizing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -204,6 +260,9 @@ pub struct InvocationRequest {
     /// The explicit decode rate cap in tokens per second, or `None` to
     /// take whatever the resolved profile carries.
     pub max_tokens_per_sec: Option<f64>,
+    /// How hard the model is asked to think, rendered into the prompt by the
+    /// checkpoint's own chat template.
+    pub reasoning: ReasoningEffort,
     /// Whether incidental output is suppressed.
     pub quiet: bool,
 }

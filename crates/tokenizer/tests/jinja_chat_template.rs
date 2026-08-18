@@ -4,7 +4,9 @@
 
 use std::path::PathBuf;
 
-use turbospark_tokenizer::{render_generic_chat_template, Message, MfTokenizer, Role};
+use turbospark_tokenizer::{
+    render_generic_chat_template, Message, MfTokenizer, ReasoningEffort, Role,
+};
 
 fn load() -> MfTokenizer {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ChatMLTokenizer");
@@ -15,7 +17,8 @@ fn load() -> MfTokenizer {
 fn renders_a_single_user_turn_with_generation_prompt() {
     let tok = load();
     let messages = vec![Message::new(Role::User, "hi")];
-    let rendered = render_generic_chat_template(&tok, &messages, &[], true, false).unwrap();
+    let rendered =
+        render_generic_chat_template(&tok, &messages, &[], true, ReasoningEffort::Off).unwrap();
 
     assert!(rendered.contains("<|im_start|>user\nhi<|im_end|>\n"));
     assert!(rendered.ends_with("<|im_start|>assistant\n<think>\n\n</think>\n\n"));
@@ -28,7 +31,8 @@ fn renders_system_then_user_turn() {
         Message::new(Role::System, "be nice"),
         Message::new(Role::User, "hi"),
     ];
-    let rendered = render_generic_chat_template(&tok, &messages, &[], true, false).unwrap();
+    let rendered =
+        render_generic_chat_template(&tok, &messages, &[], true, ReasoningEffort::Off).unwrap();
 
     assert!(rendered.starts_with("<|im_start|>system\nbe nice<|im_end|>\n"));
     assert!(rendered.contains("<|im_start|>user\nhi<|im_end|>\n"));
@@ -37,7 +41,7 @@ fn renders_system_then_user_turn() {
 #[test]
 fn rejects_empty_messages_via_raise_exception() {
     let tok = load();
-    let err = render_generic_chat_template(&tok, &[], &[], true, false).unwrap_err();
+    let err = render_generic_chat_template(&tok, &[], &[], true, ReasoningEffort::Off).unwrap_err();
     let message = err.to_string();
     assert!(
         message.contains("No messages provided"),
@@ -49,7 +53,9 @@ fn rejects_empty_messages_via_raise_exception() {
 fn encode_generic_tool_chat_tokenizes_the_rendered_text() {
     let tok = load();
     let messages = vec![Message::new(Role::User, "hi")];
-    let ids = tok.encode_generic_tool_chat(&messages, &[], false).unwrap();
+    let ids = tok
+        .encode_generic_tool_chat(&messages, &[], ReasoningEffort::Off)
+        .unwrap();
     assert!(!ids.is_empty());
     let decoded = tok.decode(&ids, false);
     assert!(decoded.contains("hi"));
@@ -64,7 +70,8 @@ fn tools_branch_renders_the_tools_system_preamble() {
         description: "Get the weather".to_string(),
         parameters: turbospark_tokenizer::JsonValue::Object(std::collections::BTreeMap::new()),
     }];
-    let rendered = render_generic_chat_template(&tok, &messages, &tools, true, false).unwrap();
+    let rendered =
+        render_generic_chat_template(&tok, &messages, &tools, true, ReasoningEffort::Off).unwrap();
     assert!(rendered.contains("# Tools"));
     assert!(rendered.contains("get_weather"));
 }
@@ -97,7 +104,7 @@ fn tokenizer_with_template(name: &str, template: &str) -> MfTokenizer {
 fn render_with(name: &str, template: &str) -> String {
     let tok = tokenizer_with_template(name, template);
     let messages = vec![Message::new(Role::User, "hi")];
-    render_generic_chat_template(&tok, &messages, &[], true, false)
+    render_generic_chat_template(&tok, &messages, &[], true, ReasoningEffort::Off)
         .unwrap_or_else(|e| panic!("{name}: {e}"))
 }
 

@@ -1,0 +1,35 @@
+{#-
+    The reasoning-effort gate of `mlx-community/Qwen3.8-27B-4bit`'s real
+    `chat_template.jinja`, reduced to the part under test and NOTHING else:
+    the `enable_thinking is undefined or is true` gate around the effort key,
+    the `|default('xhigh')` that is where the model card's "xhigh by default"
+    claim comes from, the `raise_exception` on a level this checkpoint does
+    not accept (`high` is real elsewhere and rejected HERE, which is what
+    makes it worth testing), and the pre-closed `<think>` block the
+    non-thinking branch emits.
+
+    The token table beside it is ChatML's, so this fixture resolves to the
+    same dialect a real Qwen checkpoint does.
+-#}
+{%- set reasoning_instructions = '' %}
+{%- if enable_thinking is undefined or enable_thinking is true %}
+    {%- set resolved_reasoning_effort = reasoning_effort|default('xhigh') %}
+    {%- if resolved_reasoning_effort not in ('xhigh', 'medium', 'low') %}
+        {{- raise_exception('Unexpected reasoning effort ' ~ resolved_reasoning_effort ~ '. Supported types are xhigh (default), medium, and low.') }}
+    {%- endif %}
+    {%- set reasoning_instructions = 'Reasoning effort is set to ' ~ resolved_reasoning_effort ~ '.' %}
+{%- endif %}
+{%- if reasoning_instructions %}
+    {{- '<|im_start|>system\n' + reasoning_instructions + '<|im_end|>\n' }}
+{%- endif %}
+{%- for message in messages %}
+    {{- '<|im_start|>' + message.role + '\n' + message.content + '<|im_end|>\n' }}
+{%- endfor %}
+{%- if add_generation_prompt %}
+    {{- '<|im_start|>assistant\n' }}
+    {%- if enable_thinking is defined and enable_thinking is false %}
+        {{- '<think>\n\n</think>\n\n' }}
+    {%- else %}
+        {{- '<think>\n' }}
+    {%- endif %}
+{%- endif %}

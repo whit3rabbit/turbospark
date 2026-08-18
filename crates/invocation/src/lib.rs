@@ -25,6 +25,6 @@ pub use options::{OptionDecl, OPTIONS};
 pub use parser::{parse, ParseOutcome};
 pub use request::{
     ExpertCacheSlots, InvocationRequest, MaxContext, Mode, PowerProfile, PrefillChunk,
-    ReadAheadMode,
+    ReadAheadMode, ReasoningEffort,
 };
 pub use usage::{render_usage, render_version, VERSION};

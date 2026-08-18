@@ -5,7 +5,9 @@ use std::collections::HashSet;
 use runtime::{
     run_raw_completion, GenerationConfig, RawDecodeProgress, RawDecodeResult, RuntimeError,
 };
-use tokenizer::{ParsedToolCall, StructuredAssistantDecoder, StructuredAssistantEvent};
+use tokenizer::{
+    ParsedToolCall, ReasoningEffort, StructuredAssistantDecoder, StructuredAssistantEvent,
+};
 
 use super::plan::AppState;
 
@@ -37,19 +39,37 @@ pub(crate) struct Generated {
 /// Whether this generation's output has to go through
 /// [`StructuredAssistantDecoder`] rather than straight to the caller.
 ///
-/// TWO INDEPENDENT REASONS, and keeping them independent is the point. Tools
-/// need the decoder because the tool-chat generation prompt opens a thought
-/// channel and the calls arrive as markup. Harmony needs it because
+/// THREE INDEPENDENT REASONS, and keeping them independent is the point.
+/// Tools need the decoder because the tool-chat generation prompt opens a
+/// thought channel and the calls arrive as markup. Harmony needs it because
 /// `gpt-oss` writes its reasoning into an `analysis` channel BEFORE its
 /// answer, so without decoding the reasoning and the frame markup reach the
-/// caller as the reply.
+/// caller as the reply. A ChatML or Gemma request that ASKED for reasoning
+/// needs it because the thought channel it just enabled would otherwise
+/// arrive as the reply: the frame tokens render to the empty string, so the
+/// client gets the model's scratch work run together with its answer and no
+/// way to tell them apart. Measured on the real Gemma 4 install, where it
+/// also prepends a bare `thought` -- the channel label as prose.
+///
+/// The third condition is keyed on the REQUEST rather than the dialect,
+/// unlike Harmony's, and that asymmetry is the whole reason it is safe: with
+/// no level asked for, `plan` renders a pre-closed `<think></think>` (ChatML)
+/// or no thought channel at all (Gemma), so every existing request keeps the
+/// pass-through path it has always had.
 ///
 /// **The prompt path in `plan` stays keyed on `tools` ALONE** (crate Gotcha
-/// 7). Those two conditions used to be the same expression, and widening this
-/// one is exactly the change that could couple them again: rendering the tool
+/// 7). Those conditions used to be the same expression, and widening this one
+/// is exactly the change that could couple them again: rendering the tool
 /// template for a request with no tools would change every Harmony prompt.
-fn needs_decoder(model: &AppState, tools: &HashSet<String>) -> bool {
-    !tools.is_empty() || model.tokenizer().dialect == tokenizer::ChatDialect::Harmony
+fn needs_decoder(model: &AppState, tools: &HashSet<String>, reasoning: ReasoningEffort) -> bool {
+    let dialect = model.tokenizer().dialect;
+    !tools.is_empty()
+        || dialect == tokenizer::ChatDialect::Harmony
+        || (reasoning != ReasoningEffort::Off
+            && matches!(
+                dialect,
+                tokenizer::ChatDialect::ChatMl | tokenizer::ChatDialect::Gemma
+            ))
 }
 
 /// Runs a generation to completion.
@@ -58,25 +78,24 @@ pub(crate) async fn run_full(
     prompt_ids: Vec<foundation::TokenId>,
     config: GenerationConfig,
     tools: HashSet<String>,
+    effort: ReasoningEffort,
 ) -> Result<Generated, GenError> {
-    let joined = tokio::task::spawn_blocking(move || {
-        let mut text = String::new();
-        let mut reasoning = String::new();
-        let mut calls = Vec::new();
-        let result = stream_blocking(
-            &model,
-            &prompt_ids,
-            &config,
-            &tools,
-            &mut |piece| match piece {
-                Piece::Text(delta) => text.push_str(&delta),
-                Piece::Reasoning(delta) => reasoning.push_str(&delta),
-                Piece::Tool(call) => calls.push(call),
-            },
-        );
-        (result, text, reasoning, calls)
-    })
-    .await;
+    let joined =
+        tokio::task::spawn_blocking(move || {
+            let mut text = String::new();
+            let mut reasoning = String::new();
+            let mut calls = Vec::new();
+            let result =
+                stream_blocking(&model, &prompt_ids, &config, &tools, effort, &mut |piece| {
+                    match piece {
+                        Piece::Text(delta) => text.push_str(&delta),
+                        Piece::Reasoning(delta) => reasoning.push_str(&delta),
+                        Piece::Tool(call) => calls.push(call),
+                    }
+                });
+            (result, text, reasoning, calls)
+        })
+        .await;
 
     match joined {
         Ok((Ok(decode), text, reasoning, calls)) => Ok(Generated {
@@ -105,6 +124,7 @@ pub(crate) fn stream_blocking(
     prompt_ids: &[foundation::TokenId],
     config: &GenerationConfig,
     tools: &HashSet<String>,
+    effort: ReasoningEffort,
     on_piece: &mut dyn FnMut(Piece),
 ) -> Result<RawDecodeResult, RuntimeError> {
     // Ids only have to be unique within one assistant turn: a `tool` turn is
@@ -112,7 +132,7 @@ pub(crate) fn stream_blocking(
     // never against an earlier turn's. A counter is enough, and keeps
     // responses reproducible.
     let mut next_id = 0usize;
-    let mut decoder = needs_decoder(model, tools).then(|| {
+    let mut decoder = needs_decoder(model, tools, effort).then(|| {
         StructuredAssistantDecoder::new(model.tokenizer(), tools.clone(), move || {
             next_id += 1;
             format!("toolu_{}", next_id - 1)

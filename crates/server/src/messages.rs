@@ -38,9 +38,11 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use futures::stream::{Stream, StreamExt};
 use runtime::GenerationConfig;
+use tokenizer::ReasoningEffort;
 
 use crate::handler::{
-    now_unix, plan, run_full, status_for, stream_blocking, tool_names, AppState, GenError, Piece,
+    now_unix, plan, reasoning_effort, run_full, status_for, stream_blocking, tool_names, AppState,
+    GenError, Piece,
 };
 use crate::response::{
     completion_chunk, completion_response, finish_reason, reasoning_delta, role_delta, text_delta,
@@ -110,6 +112,8 @@ pub async fn messages(
     };
 
     let tools = tool_names(&openai);
+    // See the OpenAI handler: `plan` has already rejected a bad value.
+    let effort = reasoning_effort(&openai).unwrap_or_default();
     let streaming = request.stream.unwrap_or(false);
     let mut response = if streaming {
         stream_response(
@@ -117,6 +121,7 @@ pub async fn messages(
             prompt_ids,
             config,
             tools,
+            effort,
             openai.model,
             request.model,
         )
@@ -126,6 +131,7 @@ pub async fn messages(
             prompt_ids,
             config,
             tools,
+            effort,
             openai.model,
             request.model,
         )
@@ -143,6 +149,7 @@ async fn full_response(
     prompt_ids: Vec<foundation::TokenId>,
     config: GenerationConfig,
     tools: HashSet<String>,
+    effort: ReasoningEffort,
     backend_model: String,
     // The model name the client asked for, echoed into the Anthropic
     // response. Translation maps it to `backend_model` on the way in, and
@@ -150,7 +157,7 @@ async fn full_response(
     // rather than derived.
     client_model: String,
 ) -> Response {
-    let generated = match run_full(model, prompt_ids, config, tools).await {
+    let generated = match run_full(model, prompt_ids, config, tools, effort).await {
         Ok(r) => r,
         Err(e) => return gen_error_body(e),
     };
@@ -174,6 +181,7 @@ fn stream_response(
     prompt_ids: Vec<foundation::TokenId>,
     config: GenerationConfig,
     tools: HashSet<String>,
+    effort: ReasoningEffort,
     backend_model: String,
     client_model: String,
 ) -> Response {
@@ -208,7 +216,7 @@ fn stream_response(
         );
 
         let mut call_index = 0u32;
-        let result = stream_blocking(&model, &prompt_ids, &config, &tools, &mut |piece| {
+        let result = stream_blocking(&model, &prompt_ids, &config, &tools, effort, &mut |piece| {
             let delta = match piece {
                 Piece::Text(text) => text_delta(text),
                 // The translator turns this into a `thinking` content block,
