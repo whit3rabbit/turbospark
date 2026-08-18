@@ -149,6 +149,8 @@ info.expertCacheSlots   // the RESOLVED slot count
 info.trainedContext     // the checkpoint's own, or nil
 info.pastTrainedContext // true when the window exceeds it
 info.family             // "gemma4", "qwen36", "llama", ...
+info.vocabSize          // token count in vocabulary
+info.dialect            // chat template dialect ("harmony", "qwen", ...)
 info.reasoningSupport   // .level | .toggleOnly | .none
 ```
 
