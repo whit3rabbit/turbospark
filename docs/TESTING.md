@@ -404,6 +404,14 @@ attention) so it cannot rot silently; only the timings are advisory.
   Swift original runs `swift test --no-parallel` for the same reason. If a
   GPU test starts flaking under parallelism, that is the first thing to
   suspect.
+- **Integration tests in one file share a process and its environment.**
+  Each `tests/*.rs` is its own binary, but its `#[test]`s run as threads
+  inside it, so `std::env::set_var` is global to the file and there is no
+  ordering guarantee between cases. A file covering an env-gated feature has
+  every test ask for the SAME setting and reaches the off path another way --
+  `real_forward_qwen35_mtp.rs` covers "drafting off" through the open-time
+  refusal rather than by unsetting `MFERENCE_MTP_DRAFT` mid-run. Never toggle
+  an `MFERENCE_*` var between tests in one file.
 
 ## Benchmarks
 
