@@ -25,6 +25,11 @@ crates/catalog/
 |   |   +-- mod.rs          # Types, the dispatcher, the sidecar check
 |   |   +-- gguf.rs         # The GGUF gates: architecture, block types, expert stride
 |   |   \-- safetensors.rs  # The MLX gates: model_type, affine width, expert stride
+|   +-- recommend/
+|   |   +-- mod.rs          # Machine, Recommendation, the catalog arm
+|   |   +-- fit.rs          # counted vs mapped: does it fit, and how much context
+|   |   +-- rank.rs         # the ordering (vendored shape; see NOTICE)
+|   |   \-- discover.rs     # popular HF repos, filtered through the probe
 |   +-- install.rs              # The walk driver: plan -> .gturbo install
 |   \-- store.rs                # ~/.turbospark layout, installed.json, alias resolution
 \-- tests/
@@ -60,6 +65,13 @@ crates/catalog/
   testable with no network -- which matters because a live probe of a curated
   row takes the accepting path every time, and the refusal paths are where the
   decisions and the wording are.
+- `recommend/`: what this machine should run. `fit.rs` is the arithmetic and
+  reuses `model_io`'s two sizing policies rather than restating them -- the
+  same `ExpertCacheSlots::resolve` and `kv_bytes_for_context` `open()` calls,
+  which is what stops a recommendation promising a configuration the engine
+  then declines. `rank.rs` and the tiering shape in it are adapted from
+  shoehorn (`NOTICE`); `discover.rs` is the network arm and gates every
+  candidate through `probe/` unchanged. See Gotchas 8-10.
 - `install.rs`: the shape every install-writing `crates/repack/tests/*_network.rs` file
   repeat, written once, with the step order inverted (see Gotcha 1).
 - `store.rs`: `Store::resolve`'s ORDER is the load-bearing part; see Gotcha 2.
@@ -157,3 +169,56 @@ cargo run --release -p turbospark-cli --bin turbospark-model -- pull tinyllama
    `two_checkpoints_of_one_architecture_have_different_sidecar_lists` ever goes
    green because the two lists became identical, somebody has copied one to
    the other and a 20-minute stream is about to fail at the end.
+
+8. **`counted` AND `mapped` ARE DIFFERENT QUESTIONS AND A FIT MODEL NEEDS
+   BOTH.** `counted` is what the engine ALLOCATES -- the expert-cache slot
+   cache plus the KV -- so exceeding memory there is a failed `open()`.
+   `mapped` is the install on disk, and exceeding memory there is the
+   STREAMING this engine is built around: it costs throughput, not
+   correctness. Collapsing them into one boolean gets a 13 GB install on a
+   16 GB machine wrong in one direction (it runs, and the slot policy's floor
+   exists for exactly that machine) or a 27 GB one wrong in the other.
+
+   **The resident core is in `mapped`, which contradicts AGENTS.md Gotcha 19
+   and matches every frozen peak.** That gotcha says
+   `newBufferWithBytesNoCopy` pins the mapped range into `phys_footprint`;
+   Gemma 4 reads 2,175 MiB against a 1.26 GiB core plus 1.5 GiB of slot cache
+   plus 320 MiB of KV, and the core is absent. `gptoss_memory_oracle.rs` says
+   the same in its own words, and Gotcha 40 says it outright for the dense
+   case. Putting the core in `counted` would make the estimate incomparable
+   with the rows it is checked against, and would read museGlimmer's 15 GB of
+   dense weights as 15 GB of allocation against a measured 536 MiB.
+
+9. **A MEASURED PEAK APPLIES AT ONE CONTEXT AND ONE SLOT COUNT AND NOWHERE
+   ELSE.** Both terms it is made of move with those: KV is a pure function of
+   the window, and the slot cache is `slots x layers x expert_stride`. Gemma 4
+   is 2,175 MiB at 4,096/16 and 3,654 at 4,096/32. Quoting the first against
+   an 8,192/32 request is not an approximation, it is a different
+   measurement, so `from_entry` reports it instead of applying it and says
+   which term disagreed.
+
+   **The trap underneath is that an UNPROBED row resolves 16 slots by
+   ignorance**, not by arithmetic: with no `ArchConfig` there is no expert
+   stride, so `Auto` divides by nothing and returns `DEFAULT_CACHE_SLOTS`,
+   which happens to be the 16 the protocol pins. So the two look like
+   agreement. An unprobed row therefore takes the measurement AT ITS OWN
+   STATED CONFIGURATION and says so, rather than claiming to describe the one
+   `open()` would choose. That distinction is also why `fit()` takes the slot
+   policy as a PARAMETER: the accuracy gate has to pin what the protocol
+   pinned, and passing `Auto` there reads as a 55% overestimate.
+
+10. **THE FAMILY BASELINE IS NOT A SUBSTITUTE FOR A CHECKPOINT'S OWN SHAPE.**
+    `known_architecture(family)` is right there and would turn every offline
+    `unknown` into a number, and it is wrong for the same reason AGENTS.md
+    Gotcha 39 records: one architecture string covers several checkpoints.
+    `llama` alone is Mixtral 8x7B, Mistral 7B and TinyLlama 1.1B, whose head
+    dimensions and layer counts differ -- reading a baseline as a checkpoint's
+    own shape is what shipped a `head_dim` of 128 to a model with 64.
+    `recommend --probe` reads the real header instead, and an unread row
+    reports `unknown` rather than a plausible wrong number.
+
+11. **`models.json` round-trips byte-identically through Python's
+    `json.dumps(obj, indent=2, ensure_ascii=False) + "\n"`**, so a bulk row
+    edit can be scripted without reformatting the file. Verify the round trip
+    before writing (`json.dumps(json.loads(raw), ...) == raw`), because the
+    day it stops being true the diff is the whole table.

@@ -34,6 +34,7 @@ MIT licensed:
 | here | upstream | what changed |
 |---|---|---|
 | `crates/gpu/src/device_memory.rs` | `src/vram.rs` | Metal arm only; the NVML and `rocm-smi` arms dropped, since this crate compiles to nothing off macOS |
+| `crates/catalog/src/recommend/rank.rs` | `src/discover.rs` | the tier/verdict and repo-name-hint shape; bits-per-weight replaced by this engine's working-set model, since this port installs published artifacts rather than re-quantizing |
 
 **`src/solver.rs` was read and deliberately not taken.** Its multiple-choice
 knapsack solves a per-tensor mixed-precision assignment, which is a decision
