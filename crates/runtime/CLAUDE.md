@@ -41,6 +41,7 @@ crates/runtime/
 |   |   |   \-- state.rs        # RealLlamaState & the dense/MoE split
 |   |   +-- qwen/               # Qwen 3.6 + dense `qwen3_5` decode flow
 |   |   |   +-- mod.rs          # Entry point & layer loop
+|   |   |   +-- batched.rs      # The M-ROW forward behind the MTP verify (step 4)
 |   |   |   +-- attn.rs         # Gated DeltaNet & gated full attention blocks
 |   |   |   +-- dense.rs        # Dense gated FFN (`qwen3_5`, ROADMAP's 1-bit entry)
 |   |   |   +-- moe.rs          # Shared + routed MoE pass encoding
@@ -256,11 +257,17 @@ cargo test -p turbospark-runtime
     produces the head's hidden input. Reading them plainly is not a subtle
     error: it put the true next-next token at median rank 248,308 of 248,320
     and gave 0 accepted of 7,168 proposals. Corrected, block 2 speculation
-    pays 1.37x. `q_norm`/`k_norm` are centered too and are STILL READ
-    PLAINLY, because `encode_rms_norm_bf16w_perhead` has no centered sibling
-    and the shared attention block resolves them by name; measured cost is
-    small (23/24 top-1) but the accept lengths are a floor until it lands.
-    Facts and instruments: `docs/MTP.md`.
+    pays 1.66x. **ALL SEVEN of the head's norms are centered, the per-head
+    `q_norm`/`k_norm` included**, and that pair took a second pass because
+    `encode_rms_norm_bf16w_perhead` had no centered sibling and the shared
+    attention block resolves both by NAME -- the TRUNK's tensors of those
+    exact names, at that exact shape, through that exact call, are plain.
+    `QkNormConvention::{Plain, Centered}` is the parameter that lets the two
+    call sites disagree; an enum rather than a bool so the call site states
+    which question it is answering. **Deferring that pair on the strength of
+    23/24 top-1 cost 21 to 75 percent of the speedup** and put two claims into
+    `docs/MTP_SPECULATIVE.md` that were about the deviation rather than about
+    the head. Facts and instruments: `docs/MTP.md`.
 
     **Two `MTP_PREFIX` constants exist on purpose.** `families/qwen`'s is
     `"mtp"` and BUILDS names through `prefixed_layer_tensor`;
@@ -328,3 +335,40 @@ cargo test -p turbospark-runtime
     makes a mid-chunk bail unreachable, so a cancel lands on a chunk boundary
     -- on a 128-token chunk that is a longer wait than a caller might assume.
 
+
+19. **The M-row batched forward is the MTP verify's engine, and both of its
+    hazards are SILENT ONES that the losslessness gate cannot see.**
+    `families/qwen/batched.rs` runs `tokens.len()` positions through the trunk
+    in one pass (`docs/MTP_SPECULATIVE.md` step 4; measured 1.44x at block 2).
+    Every GEMV becomes a GEMM through `encode_gemm_any`; norms, RoPE,
+    attention and the recurrent step loop per token, which is what the
+    measured compute split already assumes rather than a first cut. The
+    multi-row GDN kernels (`gdn_conv_mix_prefill`, `gdn_delta_step_prefill`,
+    and the `rows` argument on both GDN norms) already existed and were
+    dispatched by nothing but `gdn_parity.rs`.
+
+    **THE LAST ROW'S RESIDUAL MUST LAND AT ROW 0 OF `scratch.x`.** That is
+    where a sequential run of the same tokens leaves it and where
+    `mtp_draft_step` reads `h_t`. Get it wrong and the TRUNK is still
+    perfectly correct -- the committed stream stays byte-identical to a
+    non-speculative run and every losslessness assertion passes -- while the
+    HEAD drafts off the first token of the block instead of the last. What
+    moves is accept length alone: measured on the real install, 1.84 accepted
+    per round fell to 1.10 and rollbacks went from 9 of 90 rounds to 62 of
+    123, which reads as a verdict about MTP rather than as a bug in the pass.
+
+    **A ROLLBACK IS NOT FREE HERE AND NO COMPOSITE MODELS IT.** A sequential
+    verify stops at the first rejection, so it has absorbed exactly the
+    committed tokens and never rewinds. A batched pass cannot stop early, so a
+    REJECTED round restores the whole gated-DeltaNet snapshot and replays the
+    accepted prefix as a second batched pass. The probability of paying that
+    rises with the block (10% at 2, 84% at 8, 98% at 15), which is why
+    batching beats sequential at block 2 and LOSES to it at 8 and 15.
+
+    Three refusals, all by name and none of them temporary: dense only (no
+    batched routed pair, and the expert union is larger than what the slot
+    cache already loads), INT4 only (enforced in `encode_gemm_any`; the 1-bit
+    and 2-bit checkpoints of this same architecture have no batched kernel),
+    and no KV wrap inside a block. A sequential fallback for any of them
+    would be numerically identical and would make a "batched" verify measure
+    the unbatched engine -- AGENTS.md Gotcha 35 one layer down.

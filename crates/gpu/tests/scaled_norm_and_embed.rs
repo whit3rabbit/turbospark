@@ -186,6 +186,143 @@ fn the_two_norm_conventions_are_different_functions() {
     );
 }
 
+/// Runs one PER-HEAD norm kernel over `x` (`num_heads * head_dim` halfs) with
+/// the shared `[head_dim]` BF16 weight `w_bits`, returning FP32. `centered`
+/// picks `rmsnorm_bf16w_perhead_centered` over `rmsnorm_bf16w_perhead`.
+fn run_perhead_norm(
+    context: &mut MetalContext,
+    x16: &[f16],
+    w_bits: &[u16],
+    num_heads: u32,
+    eps: f32,
+    centered: bool,
+) -> Vec<f32> {
+    let head_dim = w_bits.len();
+    let total = x16.len();
+    assert_eq!(total, num_heads as usize * head_dim);
+    let x_buf = context.new_buffer_with_data(&to_le(x16));
+    let w_bytes: Vec<u8> = w_bits.iter().flat_map(|b| b.to_le_bytes()).collect();
+    let w_buf = context.new_buffer_with_data(&w_bytes);
+    let out_buf = context.new_output_buffer((total * 2) as u64);
+
+    let pass = context.begin_pass();
+    let encode = if centered {
+        turbospark_gpu::encode_rms_norm_bf16w_perhead_centered
+    } else {
+        turbospark_gpu::encode_rms_norm_bf16w_perhead
+    };
+    encode(
+        context,
+        &pass,
+        (&x_buf, 0),
+        (&w_buf, 0),
+        (&out_buf, 0),
+        num_heads,
+        head_dim as u32,
+        eps,
+    )
+    .expect("encode");
+    pass.commit_and_wait();
+    read_halfs(&out_buf, total)
+}
+
+/// A per-head weight vector in the band the REAL tensors occupy.
+///
+/// The `qwen3_5` MTP head's `q_norm`/`k_norm` read mean |w| 0.780 and 0.797
+/// stored, i.e. an effective scale near 1.78 once the `+1` lands, which is
+/// why this fixture sits at 0.78 +/- 0.15 rather than near zero like its
+/// whole-vector sibling above. Near zero the two conventions converge and a
+/// parity test on such a fixture passes against either kernel;
+/// `the_two_perhead_conventions_are_different_functions` asserts that this
+/// one does not.
+fn perhead_weight_bits(head_dim: usize) -> Vec<u16> {
+    (0..head_dim)
+        .map(|i| f32_to_bf16_bits(0.78 + 0.15 * ((i as f32) * 0.37).sin()))
+        .collect()
+}
+
+/// The MTP head's `q_norm`/`k_norm`, against the CPU reference applied one
+/// head at a time.
+///
+/// **Every head gets DIFFERENT activations while sharing one weight vector**,
+/// which is the kernel's actual contract and also what makes a head-stride
+/// bug visible: a kernel that mis-derived `x + head * head_dim` would read
+/// another head's rows and disagree here, where a fixture repeating one row
+/// across heads could not tell.
+#[test]
+fn rmsnorm_bf16w_perhead_centered_matches_cpu_reference() {
+    let mut context = MetalContext::new().expect("Metal device");
+    let num_heads = 4u32;
+    let head_dim = 64usize;
+    let eps = 1e-6f32;
+    // Head h's rows are phase-shifted by h, so no two heads share a row.
+    let x16: Vec<f16> = (0..num_heads as usize * head_dim)
+        .map(|i| {
+            let head = (i / head_dim) as f32;
+            let lane = (i % head_dim) as f32;
+            f16::from_f32((lane * 0.23 + head * 1.7).sin())
+        })
+        .collect();
+    let w_bits = perhead_weight_bits(head_dim);
+
+    // The reference reads the BF16-rounded weights the kernel actually sees.
+    let w_rounded: Vec<f32> = w_bits
+        .iter()
+        .map(|&b| f32::from_bits((b as u32) << 16))
+        .collect();
+
+    let got = run_perhead_norm(&mut context, &x16, &w_bits, num_heads, eps, true);
+    for head in 0..num_heads as usize {
+        let lo = head * head_dim;
+        let x32: Vec<f32> = x16[lo..lo + head_dim].iter().map(|v| v.to_f32()).collect();
+        let expected = turbospark_compute::rms_norm_centered(&x32, &w_rounded, eps);
+        for i in 0..head_dim {
+            let diff = (got[lo + i] - expected[i]).abs();
+            assert!(
+                diff <= 2e-3_f32.max(expected[i].abs() * 1e-2),
+                "head={head} i={i}: got {} want {}",
+                got[lo + i],
+                expected[i]
+            );
+        }
+    }
+}
+
+/// THE PER-HEAD FIXTURE MUST DISCRIMINATE TOO.
+///
+/// Sibling of `the_two_norm_conventions_are_different_functions`, and the
+/// case for it is stronger here: the `qwen3_5` trunk and its MTP head both
+/// carry tensors literally NAMED `q_norm`/`k_norm`, at the same shape,
+/// resolved through the same `encode_full_attention_block` -- and the trunk's
+/// are plain while the head's are centered. So the failure to defend against
+/// is not a wrong kernel but two kernels that are the same function, which on
+/// weights near zero they nearly are.
+#[test]
+fn the_two_perhead_conventions_are_different_functions() {
+    let mut context = MetalContext::new().expect("Metal device");
+    let num_heads = 4u32;
+    let head_dim = 64usize;
+    let eps = 1e-6f32;
+    let x16: Vec<f16> = (0..num_heads as usize * head_dim)
+        .map(|i| f16::from_f32(((i as f32) * 0.23).sin()))
+        .collect();
+    let w_bits = perhead_weight_bits(head_dim);
+
+    let plain = run_perhead_norm(&mut context, &x16, &w_bits, num_heads, eps, false);
+    let centered = run_perhead_norm(&mut context, &x16, &w_bits, num_heads, eps, true);
+
+    let max_gap = plain
+        .iter()
+        .zip(&centered)
+        .map(|(a, b)| (a - b).abs())
+        .fold(0.0f32, f32::max);
+    assert!(
+        max_gap > 0.5,
+        "the fixture cannot tell the two per-head conventions apart (max gap \
+         {max_gap}); a parity test on it would pass against either kernel"
+    );
+}
+
 /// The `+1` is exactly a `+1`: at a stored weight of ZERO the centered form
 /// must reproduce the plain form at a stored weight of ONE.
 ///

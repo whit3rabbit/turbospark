@@ -51,7 +51,8 @@ use foundation::LogitValue;
 use model_io::{ArchConfig, ResidentIndex};
 
 use crate::families::qwen::{
-    dense, encode_full_attention_block, prefixed_layer_tensor, MTP_PREFIX, RMS_EPS,
+    dense, encode_full_attention_block, prefixed_layer_tensor, QkNormConvention, MTP_PREFIX,
+    RMS_EPS,
 };
 use crate::real_forward::{RealForwardError, RealForwardRunner};
 use crate::real_forward_dispatch::{encode_embed_any, encode_gemv_any};
@@ -98,6 +99,14 @@ pub(crate) struct MtpState {
     pub(crate) concat: gpu::MetalBuffer,
     /// How many tokens a round proposes, from `MFERENCE_MTP_DRAFT`.
     pub(crate) depth: usize,
+    /// The M-row buffers the batched verify pass runs on (step 4).
+    ///
+    /// It lives HERE rather than beside `DecodeScratch` for the same reason
+    /// the rest of this state does: `MFERENCE_MTP_DRAFT` unset must allocate
+    /// nothing at all, which is what lets `qwen38_memory_oracle`'s frozen row
+    /// keep describing the pre-MTP engine. Sized for `depth + 1` rows,
+    /// because a round verifies the confirmed token plus `depth` proposals.
+    pub(crate) batched: super::batched::BatchedScratch,
 }
 
 impl MtpState {
@@ -116,6 +125,7 @@ impl MtpState {
         arch: &ArchConfig,
         max_context: usize,
         depth: usize,
+        gdn_shape: gpu::GdnShape,
     ) -> Result<Option<Self>, RealForwardError> {
         if depth == 0 {
             return Ok(None);
@@ -157,10 +167,15 @@ impl MtpState {
         .map_err(RealForwardError::Gpu)?;
 
         let hidden = arch.hidden_size as u64;
+        // `depth + 1`: a round verifies the confirmed token plus `depth`
+        // proposals, so the widest pass is one row wider than the block.
+        let batched =
+            super::batched::BatchedScratch::new(context, arch, gdn_shape, depth.saturating_add(1));
         Ok(Some(Self {
             kv,
             concat: context.new_output_buffer(2 * hidden * 2),
             depth,
+            batched,
         }))
     }
 
@@ -442,8 +457,24 @@ impl RealForwardRunner {
             RMS_EPS,
         )
         .map_err(gpu_err)?;
+        // CENTERED, unlike the trunk's tensors of the same names one call
+        // site over. The head's `q_norm`/`k_norm` store an offset from unity
+        // exactly as its five whole-vector norms do; MTPLX's
+        // `_RMSNORM_SUFFIXES` lists all seven, and the raw means here read
+        // 0.780 and 0.797 against its "healthy >= 1.74" threshold.
         encode_full_attention_block(
-            context, &pass, weights, index, &arch, qwen, scratch, &mtp.kv, MTP_PREFIX, 0, position,
+            context,
+            &pass,
+            weights,
+            index,
+            &arch,
+            qwen,
+            scratch,
+            &mtp.kv,
+            MTP_PREFIX,
+            0,
+            position,
+            QkNormConvention::Centered,
         )?;
         // RAW residual add. This family has `ffn_sandwich_norms: false`, and
         // normalizing here is the mutation that took the Qwen 3.6 reference

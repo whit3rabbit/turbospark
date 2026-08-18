@@ -32,6 +32,36 @@ const LA_CONV_K: usize = 4;
 /// fixture states the shape it is building.
 const GROUP: usize = 128;
 
+/// The group size each width is published at, which is a TABLE of what real
+/// checkpoints carry rather than a rule about narrow quantization.
+///
+/// `config.rs`'s `is_supported_affine_shape` accepts `(1, 128)`, `(2, 128)`
+/// and `(4|8, 64)` as one conjunction, so the cross-products are refused at
+/// open -- a 4-bit fixture at 128 is not a slightly-off fixture, it is an
+/// install that cannot load.
+fn group_for(bits: u32) -> usize {
+    match bits {
+        1 | 2 => GROUP,
+        // `compute::quant::GROUP_SIZE`, which that crate does not re-export.
+        // Stated rather than imported for the reason GROUP above is: the
+        // fixture declares the shape it builds, and `quantize_int4_affine`
+        // asserts the row is a multiple of it, so a disagreement is a
+        // panic in the fixture rather than a wrong install.
+        _ => 64,
+    }
+}
+
+/// The companion dtype each width is published at, and the axis that fails
+/// SILENTLY: the two are the same width and share no exponent field, so
+/// accepting either produces an install of exactly the right size whose
+/// scales are wrong by orders of magnitude.
+fn companion_dtype(bits: u32) -> &'static str {
+    match bits {
+        1 | 2 => "F16",
+        _ => "BF16",
+    }
+}
+
 fn linear_attention() -> LinearAttentionConfig {
     LinearAttentionConfig {
         num_k_heads: LA_K_HEADS as i64,
@@ -119,10 +149,11 @@ fn f16_vector(name: &str, n: usize, center: f32, seed: u64) -> Tensor {
 /// One sub-4-bit-affine weight plus its two FP16 companions, at `bits` = 1 or
 /// 2.
 fn packed_triple(name: &str, rows: usize, cols: usize, seed: u64, bits: u32) -> Vec<Tensor> {
+    let group = group_for(bits);
     assert_eq!(
-        cols % GROUP,
+        cols % group,
         0,
-        "{name}: {cols} columns is not a whole number of {GROUP}-element groups"
+        "{name}: {cols} columns is not a whole number of {group}-element groups"
     );
     let base = name.strip_suffix(".weight").unwrap();
     let mut packed = Vec::new();
@@ -142,13 +173,23 @@ fn packed_triple(name: &str, rows: usize, cols: usize, seed: u64, bits: u32) -> 
                 let q = quantize_int2_affine_ternary(&row, GROUP);
                 (q.packed, q.scales, q.biases)
             }
-            other => panic!("this fixture builds 1- or 2-bit installs, not {other}"),
+            // The width the REAL `Qwen/Qwen3.8-27B` install carries, and the
+            // only one with a batched GEMM (`docs/MTP_SPECULATIVE.md` step
+            // 4). Its quantizer takes no group argument because `compute`
+            // fixes INT4 at `GROUP_SIZE`, which is exactly why `group_for`
+            // has to agree with it rather than with the constant above.
+            4 => {
+                let q = compute::quantize_int4_affine(&row);
+                (q.packed, q.scales, q.biases)
+            }
+            other => panic!("this fixture builds 1-, 2- or 4-bit installs, not {other}"),
         };
         packed.extend_from_slice(&p);
         scales.extend_from_slice(&s);
         biases.extend_from_slice(&b);
     }
-    let groups = cols / GROUP;
+    let groups = cols / group;
+    let companion = companion_dtype(bits);
     vec![
         Tensor {
             name: name.to_string(),
@@ -158,13 +199,13 @@ fn packed_triple(name: &str, rows: usize, cols: usize, seed: u64, bits: u32) -> 
         },
         Tensor {
             name: format!("{base}.scales"),
-            dtype: "F16",
+            dtype: companion,
             shape: vec![rows as u64, groups as u64],
             bytes: u16_le(&scales),
         },
         Tensor {
             name: format!("{base}.biases"),
-            dtype: "F16",
+            dtype: companion,
             shape: vec![rows as u64, groups as u64],
             bytes: u16_le(&biases),
         },
@@ -520,7 +561,7 @@ fn build_synthetic_qwen_gdn_dense_install_inner(
     let header = parse_header(&blob, crate::safetensors_header::DEFAULT_MAX_HEADER_BYTES)?;
     let quant = Gemma4Quant {
         default_bits: bits,
-        group_size: GROUP as u32,
+        group_size: group_for(bits) as u32,
         bits_overrides: std::collections::HashMap::new(),
     };
     if streamed {

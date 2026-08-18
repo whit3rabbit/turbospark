@@ -39,15 +39,29 @@ pair** -- the head's architecture and every measured number, with nothing
 projected in it; read it before changing the head, and read
 `MTP_SPECULATIVE.md` before re-costing the decision. **MEASURED END TO END
 2026-08-18 AND THE
-SHAPE HELD**: block 2 pays **1.37x**, block 4 1.03x, blocks 8 and 15 lose.
-Single-step acceptance is 0.82 but the CHAIN saturates at ~2.05 accepted, so
-the long blocks underperform the projection and the small-block conclusion
-survives for a second, independent reason. Getting there needed a real fix:
-the head's five whole-vector norms are CENTERED (`x * (1 + w)`) where the
-trunk's are plain, and reading them plainly put the true token at median rank
-248,308 of 248,320. That is Gotcha 50 on a second family; the fix dispatches
-the `rmsnorm_bf16w_centered` kernel that already existed, and took top-1
-agreement from 0/24 to 23/24. **It also supersedes that older page's
+SHAPE HELD**: block 2 pays **1.66x**, block 4 1.47x, block 8 1.17x, block 15
+loses. Single-step acceptance is 0.94, and the projected 1.35-1.58x band is
+cleared everywhere below block 15; the small-block conclusion survives because
+verify cost scales close to linearly in M while acceptance decays.
+**THE BATCHED VERIFY THOSE RATIOS PROJECT WAS THEN BUILT AND CLOCKED, AND IT
+PAYS 1.44x AT BLOCK 2 RATHER THAN 1.66x.** The 13% is a term no composite on
+either page has: a rejected batched round cannot stop early, so on a family
+with a recurrent half it restores a whole gated-DeltaNet snapshot and replays
+the accepted prefix, and the odds of paying that rise with the block (10% at
+2, 84% at 8, 98% at 15). So batching BEATS a sequential verify at block 2 and
+LOSES to it at 8 and 15, which inverts the projection's shape and gives the
+small-block answer a third independent leg. Add a rollback term before
+trusting any block-size table on a recurrent architecture. Getting
+there needed a real fix, twice over: ALL SEVEN of the head's norms are
+CENTERED (`x * (1 + w)`) where the trunk's are plain, and reading them plainly
+put the true token at median rank 248,308 of 248,320. That is Gotcha 50 on a
+second family; the fix dispatches `rmsnorm_bf16w_centered`, which already
+existed, plus `rmsnorm_bf16w_perhead_centered`, which did not, and took top-1
+agreement from 0/24 to 24/24. **The per-head pair was deferred for a session
+on the strength of 23/24 top-1 and was worth 21 to 75 percent of the
+speedup** -- a saturated scalar cannot bound a curve, and the earlier reading
+of "the chain saturates at ~2.05" was an artifact of that deviation rather
+than a property of the head. **It also supersedes that older page's
 `c(M)` table in both directions**: `dequant_int4_gemm_simd` was missing the
 function-constant specialization `46617c6` gave the GEMV, and fixing that
 plus bounding its unroll roughly HALVED `c(M)` on every shape. **THE MoE
@@ -853,7 +867,10 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
    per-layer norms take; a SEPARATE kernel rather than a function constant
    on its plain sibling, because that model uses BOTH conventions and a
    specialization axis missing the pipeline cache's key would silently
-   collapse them -- Gotcha 50), both `_perhead` norm variants,
+   collapse them -- Gotcha 50), its per-head sibling
+   `rmsnorm_bf16w_perhead_centered` (the `qwen3_5` MTP head's
+   `q_norm`/`k_norm`, where the TRUNK's tensors of the same names through the
+   same call are plain), all three `_perhead` norm variants,
    `rope_proportional_neox` (which with `rotated_pairs = head_dim/2` IS
    default full-head NeoX -- no separate default-rope wrapper exists),
    the port-local `logit_softcap_fp16`, `dequant_int4_gemv_simd`, `dequant_int8_gemv_simd`
@@ -2174,6 +2191,31 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
     `the_two_norm_conventions_are_different_functions` asserts that the
     fixture discriminates before the parity case is believed -- the same
     discipline Gotcha 48 states for sub-4-bit packing, on a third axis.
+    **A SECOND INSTANCE LANDED 2026-08-18 AND IT IS THE SHARPER FORM OF THE
+    RULE.** `muse_glimmer`'s two conventions sit on tensors with DIFFERENT
+    names (per-layer against final), so a reader can at least tell them apart
+    by sight. The `qwen3_5` family's do not: its trunk and its
+    multi-token-prediction head both carry `self_attn.q_norm.weight` and
+    `self_attn.k_norm.weight`, at the same shape, resolved by the same
+    `norm_view` call inside the same `encode_full_attention_block` -- and the
+    head's are centered while the trunk's are plain, because mlx-vlm's
+    converter bakes the `+1` into the published trunk weights and leaves the
+    head's alone. So the convention is not even a property of the NAME; it is
+    a property of the tensor at a call site, and `QkNormConvention::{Plain,
+    Centered}` is a parameter on that shared function rather than anything
+    derivable from the prefix. `rmsnorm_bf16w_perhead_centered` is the kernel.
+    Two further things this instance settled, both against the grain of the
+    paragraphs above. **The near-zero argument against baking does NOT apply
+    to every centered tensor**: these two weights read 0.780 and 0.797, so
+    baking would cost a factor of two in resolution rather than 39% of the
+    magnitude, and MTPLX does bake them. A separate kernel was still taken,
+    on exactness and on the smaller API, but the objection has to be re-argued
+    per tensor rather than quoted. And **"the deviation is measurably small"
+    needs the measurement that would be SENSITIVE to it**: this pair was
+    deferred a session on the strength of 23/24 top-1 agreement, a scalar
+    already saturated at the top of the curve, and it was worth 21 to 75
+    percent of the speculative speedup once per-position acceptance -- the
+    metric that could see it -- was read instead (`docs/MTP.md`).
 
 51. **EVERY TEST IN A PERTURBATION-STYLE FIXTURE FILE CAN BE
     SELF-RELATIVE, AND THEN THE FILE CATCHES ALMOST NOTHING.** The
@@ -2200,6 +2242,23 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
     resolution. Epsilon VALUES are pinnable offline against the checkpoint's
     own `config.json`; which epsilon reaches which norm site is a question
     only a real-model quality gate can answer.
+    **CONFIRMED ON A SECOND FILE 2026-08-18, and this time the file had NO
+    digest at all.** `real_forward_qwen35.rs` (the dense `qwen3_5` trunk) was
+    seven reachability cases and nothing else, so flipping that flow's q/k
+    norms to the CENTERED convention -- a wrong model that still decodes --
+    left it green, left `real_forward_qwen.rs`'s eight green, and was caught
+    only by `qwen38_quality_gate` on a real 14 GB install two minutes away.
+    `the_dense_trunk_logits_have_a_frozen_digest` closes it in 0.2 s.
+    **AND ITS POSITION MATTERS, WHICH IS A TRAP THE DIGEST PATTERN DOES NOT
+    WARN ABOUT.** The obvious implementation reuses the file's existing
+    `first_logits` helper, which produces at position 0 -- where a softmax over
+    one key is exactly 1.0, so attention returns V alone and NO q/k transform
+    is observable. Measured: cut to a single position, the correct model and
+    the flipped one digest IDENTICALLY (`312e17a0`); over eight positions they
+    differ. That is the same blindness that made `qwen3moe`'s divergence test
+    measure nothing until it was moved off position 0, arriving inside a change
+    detector instead. A digest is only a change detector for changes its
+    inputs can reach.
 
 52. **A DIALECT PROBE KEYED ON "SPECIFIC-LOOKING" TOKENS IS A COINCIDENCE
     WAITING FOR ITS SECOND CHECKPOINT, and the probe that broke had a comment

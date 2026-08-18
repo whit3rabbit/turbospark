@@ -490,12 +490,22 @@ impl RealForwardRunner {
                 // byte-identical and footprint-identical to one that does
                 // not until someone turns drafting on
                 // (`docs/MTP_SPECULATIVE.md`, step 2).
+                // The GDN shape comes from the state built immediately above:
+                // step 4's batched scratch needs the recurrent widths, and
+                // deriving them a second time here would be a second place
+                // for them to be wrong.
+                let gdn_shape = runner
+                    .real_qwen
+                    .as_ref()
+                    .expect("real Qwen state built above")
+                    .shape;
                 runner.real_mtp = crate::families::qwen::MtpState::build(
                     &mut runner.context,
                     &runner.index,
                     &runner.arch,
                     max_context,
                     crate::families::qwen::draft_depth_from_env(),
+                    gdn_shape,
                 )?;
             }
             // One flow for both: `qwen3moe` is the same layer graph, and

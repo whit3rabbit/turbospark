@@ -3,12 +3,13 @@
 //! one, which differ in their FFN half and in nothing else.
 
 mod attn;
+mod batched;
 mod dense;
 mod moe;
 mod mtp;
 mod state;
 
-pub(crate) use attn::{encode_full_attention_block, encode_linear_block};
+pub(crate) use attn::{encode_full_attention_block, encode_linear_block, QkNormConvention};
 pub(crate) use mtp::{draft_depth_from_env, MtpState};
 pub(crate) use state::RealQwenState;
 
@@ -196,6 +197,9 @@ impl RealForwardRunner {
                     TRUNK_PREFIX,
                     layer,
                     position,
+                    // The TRUNK's q/k norms are plain. Its MTP head's, which
+                    // carry the same names through the same call, are not.
+                    QkNormConvention::Plain,
                 )?;
             }
 

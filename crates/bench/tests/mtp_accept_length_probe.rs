@@ -91,6 +91,11 @@ struct Stats {
     /// cannot say whether a longer block would have paid.
     offered: Vec<usize>,
     matched: Vec<usize>,
+    /// Rounds that had to rewind the trunk. Batched-verify only, and it is
+    /// the cost the composed break-even column never modelled: a rejected
+    /// batched pass has absorbed positions it must give back, and the gated-
+    /// DeltaNet state can only be restored wholesale.
+    rollbacks: usize,
 }
 
 /// Walks the prompt through the trunk, priming the head as it goes.
@@ -110,17 +115,41 @@ fn prefill(runner: &mut RealForwardRunner, prompt: &[i32], logits: &mut [LogitVa
     }
 }
 
+/// How a round's proposals are checked against the trunk.
+///
+/// The two arms must produce an IDENTICAL token stream -- this is an A/B
+/// seam, not a feature flag -- so the losslessness gate covers both.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Verify {
+    /// One `produce` per position, stopping at the first rejection. Needs no
+    /// batched kernel, which is why step 3 could measure the accept length
+    /// before step 4 existed.
+    Sequential,
+    /// One `produce_batched` over the confirmed token plus every proposal
+    /// (`docs/MTP_SPECULATIVE.md` step 4). This is what the break-even
+    /// column was always a projection OF.
+    Batched,
+}
+
 /// `block == 0` is the non-speculative reference: plain greedy, no head.
+///
+/// Returns the stats, the generated stream, and the DECODE wall clock. The
+/// clock excludes prefill and the reset, so the arms differ only in how a
+/// round is verified.
 fn run_block(
     runner: &mut RealForwardRunner,
     prompt: &[i32],
     vocab: usize,
     block: usize,
-) -> (Stats, Vec<i32>) {
+    verify: Verify,
+) -> (Stats, Vec<i32>, f64) {
     let mut logits = vec![LogitValue::from_f32(0.0); vocab];
     let mut draft_logits = vec![LogitValue::from_f32(0.0); vocab];
+    // `block + 1` rows: the confirmed token plus every proposal.
+    let mut batch_logits = vec![LogitValue::from_f32(0.0); (block + 1).max(1) * vocab];
     runner.reset();
     prefill(runner, prompt, &mut logits, block > 0);
+    let started = std::time::Instant::now();
 
     let mut history: Vec<i32> = prompt.to_vec();
     let mut next = argmax(&logits);
@@ -164,47 +193,87 @@ fn run_block(
         }
         stats.proposed += proposals.len();
 
-        // -- Verify, one position at a time. Position p's logits predict
-        //    p + 1, so `next`'s logits are checked against proposals[0].
-        let point = runner.checkpoint();
+        // -- Verify. Position p's logits predict p + 1, so `next`'s logits
+        //    are checked against proposals[0] and the row after the last
+        //    accepted proposal carries the free bonus token.
+        //
+        //    NEITHER ARM ROLLS BACK ON THE COMMON PATH, and working out why
+        //    is what makes the wall-clock comparison mean anything. A round
+        //    commits `next` plus its accepted proposals, and BOTH arms leave
+        //    the engine having absorbed exactly those: the sequential loop
+        //    stops at the first rejection, and a fully-accepted batched pass
+        //    fed exactly the committed tokens. Only a batched pass with a
+        //    REJECTION has absorbed positions that are about to be dropped,
+        //    and only that case pays a rollback. The trunk's `rollback` is
+        //    the expensive half -- `checkpoint` copies the whole gated-
+        //    DeltaNet state, because a recurrent layer cannot be rewound
+        //    incrementally the way a KV cursor can.
         let mut accepted = 0usize;
-        let mut bonus = None;
-        let mut token = next;
-        for (i, &proposal) in proposals.iter().enumerate() {
-            runner
-                .produce(token, base + i, &mut logits)
-                .expect("produce");
-            let target = argmax(&logits);
-            stats.offered[i] += 1;
-            if target != proposal {
-                bonus = Some(target);
-                break;
+        let bonus;
+        match verify {
+            Verify::Sequential => {
+                let mut stop = None;
+                let mut token = next;
+                for (i, &proposal) in proposals.iter().enumerate() {
+                    runner
+                        .produce(token, base + i, &mut logits)
+                        .expect("produce");
+                    let target = argmax(&logits);
+                    stats.offered[i] += 1;
+                    if target != proposal {
+                        stop = Some(target);
+                        break;
+                    }
+                    stats.matched[i] += 1;
+                    accepted += 1;
+                    token = proposal;
+                }
+                bonus = match stop {
+                    Some(target) => target,
+                    None => {
+                        // Every proposal matched; the last position still
+                        // yields a free token, which is the block's bonus.
+                        runner
+                            .produce(token, base + proposals.len(), &mut logits)
+                            .expect("produce");
+                        argmax(&logits)
+                    }
+                };
             }
-            stats.matched[i] += 1;
-            accepted += 1;
-            token = proposal;
-        }
-        if bonus.is_none() {
-            // Every proposal matched; the last position still yields a free
-            // token, which is the block's bonus.
-            runner
-                .produce(token, base + proposals.len(), &mut logits)
-                .expect("produce");
-            bonus = Some(argmax(&logits));
+            Verify::Batched => {
+                let feed: Vec<i32> = std::iter::once(next)
+                    .chain(proposals.iter().copied())
+                    .collect();
+                let point = runner.checkpoint();
+                runner
+                    .produce_batched(&feed, base, &mut batch_logits[..feed.len() * vocab])
+                    .expect("batched verify");
+                for (i, &proposal) in proposals.iter().enumerate() {
+                    let row = &batch_logits[i * vocab..(i + 1) * vocab];
+                    stats.offered[i] += 1;
+                    if argmax(row) != proposal {
+                        break;
+                    }
+                    stats.matched[i] += 1;
+                    accepted += 1;
+                }
+                bonus = argmax(&batch_logits[accepted * vocab..(accepted + 1) * vocab]);
+                if accepted < proposals.len() {
+                    stats.rollbacks += 1;
+                    runner.rollback(&point);
+                    let keep = accepted + 1;
+                    runner
+                        .produce_batched(&feed[..keep], base, &mut batch_logits[..keep * vocab])
+                        .expect("replay the accepted prefix");
+                }
+            }
         }
         stats.accepted += accepted;
 
-        // -- Commit the accepted prefix. The trunk rewinds to where the block
-        //    STARTED and replays; the head rewinds to where the block ENDED
-        //    and continues. Two different targets, which is why one call
-        //    cannot do both (`mtp_rewind_to`'s doc comment).
-        runner.rollback(&point);
-        let keep: Vec<i32> = std::iter::once(next)
-            .chain(proposals.iter().copied().take(accepted))
-            .collect();
-        for (i, &t) in keep.iter().enumerate() {
-            runner.produce(t, base + i, &mut logits).expect("replay");
-        }
+        // -- The head rewinds to where the block ENDED and continues, where
+        //    the trunk (when it rewinds at all) goes back to where the block
+        //    STARTED. Two different targets, which is why one call cannot do
+        //    both (`mtp_rewind_to`'s doc comment).
         runner
             .mtp_rewind_to(base + accepted)
             .expect("rewind the head to the accepted end");
@@ -212,9 +281,9 @@ fn run_block(
             history.push(t);
             generated.push(t);
         }
-        next = bonus.expect("bonus token");
+        next = bonus;
     }
-    (stats, generated)
+    (stats, generated, started.elapsed().as_secs_f64())
 }
 
 #[test]
@@ -248,84 +317,110 @@ fn mtp_accept_length_against_the_break_even_it_has_to_clear() {
 
     // Ground truth FIRST: the same greedy generation with the head switched
     // off entirely. Every arm below is asserted against this stream.
-    let (_, plain) = run_block(&mut runner, &prompt, vocab, 0);
+    //
+    // Run TWICE, and the second reading is the reference clock. The first
+    // decode of the process is on a cold GPU at low DVFS clocks, which is
+    // worth up to 53% (AGENTS.md Gotcha 20) and would land entirely on the
+    // denominator of every speedup below.
+    let (_, _, _) = run_block(&mut runner, &prompt, vocab, 0, Verify::Sequential);
+    let (_, plain, plain_secs) = run_block(&mut runner, &prompt, vocab, 0, Verify::Sequential);
 
     println!(
         "\nprompt {} tokens, generating {GENERATE}, greedy\n",
         prompt.len()
     );
     println!(
-        " block  rounds  proposed/rd  accepted/rd  committed/rd  break-even  speedup  verdict"
+        "reference (no head): {plain_secs:.2} s for {} tokens, {:.2} tok/s\n",
+        plain.len(),
+        plain.len() as f64 / plain_secs
+    );
+    println!(
+        " block  verify      rounds  accepted/rd  committed/rd  rollbacks  seconds  MEASURED  projected"
     );
     let mut curves: Vec<(usize, Vec<f64>)> = Vec::new();
     for block in BLOCKS {
-        let (s, generated) = run_block(&mut runner, &prompt, vocab, block);
-        let per_round = s.accepted as f64 / s.rounds.max(1) as f64;
-        // Committed per round: the accepted prefix plus the bonus token every
-        // verify yields for free.
-        let committed = per_round + 1.0;
-        let target = break_even(block);
-        let speedup = committed / target;
-        println!(
-            "{block:>6}  {:>6}  {:>11.2}  {:>11.2}  {:>12.2}  {:>10.2}  {:>6.2}x  {}",
-            s.rounds,
-            s.proposed as f64 / s.rounds.max(1) as f64,
-            per_round,
-            committed,
-            target,
-            speedup,
-            if speedup > 1.0 { "PAYS" } else { "loses" }
-        );
-        curves.push((
-            block,
-            s.offered
-                .iter()
-                .zip(&s.matched)
-                .map(|(o, m)| if *o == 0 { 0.0 } else { *m as f64 / *o as f64 })
-                .collect(),
-        ));
+        for verify in [Verify::Sequential, Verify::Batched] {
+            let (s, generated, secs) = run_block(&mut runner, &prompt, vocab, block, verify);
+            let per_round = s.accepted as f64 / s.rounds.max(1) as f64;
+            // Committed per round: the accepted prefix plus the bonus token every
+            // verify yields for free.
+            let committed = per_round + 1.0;
+            let target = break_even(block);
+            // THE MEASURED SPEEDUP IS WALL CLOCK, and it is what step 4 exists to
+            // produce. `projected` is the step-3 column: committed tokens against
+            // a COMPOSED verify cost. The two answer different questions, and
+            // where they disagree the measurement wins -- the projection has no
+            // term for the rollback a rejected batched round pays, and none for
+            // the per-round cost of snapshotting the recurrent state.
+            let measured = plain_secs / secs;
+            let projected = committed / target;
+            println!(
+                "{block:>6}  {:<10}  {:>6}  {:>11.2}  {:>12.2}  {:>9}  {:>7.2}  {:>7.2}x  {:>8.2}x",
+                format!("{verify:?}"),
+                s.rounds,
+                per_round,
+                committed,
+                s.rollbacks,
+                secs,
+                measured,
+                projected,
+            );
+            // Once per block, not once per arm: the two verify strategies are
+            // lossless against each other, so their curves are identical by
+            // construction and the assertion below is what proves it.
+            if verify == Verify::Batched {
+                curves.push((
+                    block,
+                    s.offered
+                        .iter()
+                        .zip(&s.matched)
+                        .map(|(o, m)| if *o == 0 { 0.0 } else { *m as f64 / *o as f64 })
+                        .collect(),
+                ));
+            }
 
-        // Speculation must not change the output. Same prompt, same greedy
-        // settings, different block size: the token stream has to match.
-        //
-        // On the COMMON PREFIX, because the arms stop at different lengths by
-        // construction: a speculative round commits `accepted + 1` tokens, so
-        // it overshoots `GENERATE`, while the reference commits exactly one
-        // per round and lands on it exactly. Comparing full vectors fails on
-        // a tail the reference never generated, which is a property of the
-        // loop bound and not a divergence. (This only became visible once the
-        // drafter started working: at zero acceptance both arms commit one
-        // token per round and the lengths matched by accident.)
-        let n = plain.len().min(generated.len());
-        assert!(
-            n >= GENERATE.min(plain.len()),
-            "block {block} produced only {n} comparable tokens"
-        );
-        assert_eq!(
-            plain[..n],
-            generated[..n],
-            "block {block} diverged from the non-speculative greedy stream: \
+            // Speculation must not change the output. Same prompt, same greedy
+            // settings, different block size: the token stream has to match.
+            //
+            // On the COMMON PREFIX, because the arms stop at different lengths by
+            // construction: a speculative round commits `accepted + 1` tokens, so
+            // it overshoots `GENERATE`, while the reference commits exactly one
+            // per round and lands on it exactly. Comparing full vectors fails on
+            // a tail the reference never generated, which is a property of the
+            // loop bound and not a divergence. (This only became visible once the
+            // drafter started working: at zero acceptance both arms commit one
+            // token per round and the lengths matched by accident.)
+            let n = plain.len().min(generated.len());
+            assert!(
+                n >= GENERATE.min(plain.len()),
+                "block {block} produced only {n} comparable tokens"
+            );
+            assert_eq!(
+                plain[..n],
+                generated[..n],
+                "block {block} diverged from the non-speculative greedy stream: \
              speculation is not lossless"
-        );
+            );
 
-        // THE DRAFTER HAS TO BE FUNCTIONAL BEFORE ITS ACCEPT LENGTH MEANS
-        // ANYTHING. A weak drafter still lands common tokens, so a rate at or
-        // near zero is a broken head rather than a verdict about MTP -- and
-        // reported as a verdict it would close the question this page exists
-        // to keep open, which is precisely the mistake recorded at the top of
-        // docs/MTP_SPECULATIVE.md. The bar is deliberately far below any
-        // interesting threshold: it separates "drafting" from "not drafting",
-        // not "pays" from "loses", and the table above is printed either way.
-        let first = s.matched[0] as f64 / s.offered[0].max(1) as f64;
-        assert!(
-            first > 0.02,
-            "block {block}: the head's FIRST proposal was accepted {}/{} times \
+            // THE DRAFTER HAS TO BE FUNCTIONAL BEFORE ITS ACCEPT LENGTH MEANS
+            // ANYTHING. A weak drafter still lands common tokens, so a rate at or
+            // near zero is a broken head rather than a verdict about MTP -- and
+            // reported as a verdict it would close the question this page exists
+            // to keep open, which is precisely the mistake recorded at the top of
+            // docs/MTP_SPECULATIVE.md. The bar is deliberately far below any
+            // interesting threshold: it separates "drafting" from "not drafting",
+            // not "pays" from "loses", and the table above is printed either way.
+            let first = s.matched[0] as f64 / s.offered[0].max(1) as f64;
+            assert!(
+                first > 0.02,
+                "block {block}: the head's FIRST proposal was accepted {}/{} times \
              ({first:.4}). That is a broken drafter, not a low accept length -- \
              run `mtp_head_probe` (it reports the rank of the true token in the \
              head's own distribution) before reading any row above as a result.",
-            s.matched[0],
-            s.offered[0]
-        );
+                s.matched[0],
+                s.offered[0]
+            );
+        }
     }
 
     println!("\nper-position acceptance (share of rounds reaching position d that accept it):");

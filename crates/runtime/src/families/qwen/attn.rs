@@ -141,6 +141,28 @@ pub(crate) fn encode_linear_block(
     )
 }
 
+/// Which convention this block's per-head `q_norm`/`k_norm` are stored in.
+///
+/// **This is a property of the TENSOR, not of the family** (AGENTS.md Gotcha
+/// 50). The `qwen3_5` trunk and its multi-token-prediction head both carry
+/// tensors named `self_attn.q_norm.weight` and `self_attn.k_norm.weight`, at
+/// the same shape, resolved by the same code below -- and the trunk's are
+/// plain (`x * w`) while the head's store an OFFSET FROM UNITY (`x * (1 + w)`),
+/// because mlx-vlm's converter bakes the `+1` into its published trunk weights
+/// and leaves the head's centered. Reading the head's plainly is not a subtle
+/// error: it put the true next-next token at median rank 248,308 of 248,320
+/// (`docs/MTP.md`).
+///
+/// An enum rather than a bool so the call site states which question it is
+/// answering; a bare `true` two frames from the dispatch says nothing.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum QkNormConvention {
+    /// `x * w`. The trunk's, and every other family's.
+    Plain,
+    /// `x * (1 + w)`. The MTP head's.
+    Centered,
+}
+
 /// Mask-1 layer: gated full attention.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn encode_full_attention_block(
@@ -155,6 +177,7 @@ pub(crate) fn encode_full_attention_block(
     prefix: &str,
     layer: usize,
     position: usize,
+    qk_norms: QkNormConvention,
 ) -> Result<(), RealForwardError> {
     let gpu_err = RealForwardError::Gpu;
     let hidden = arch.hidden_size as usize;
@@ -205,15 +228,18 @@ pub(crate) fn encode_full_attention_block(
         )?;
     }
 
+    // Per TENSOR, never per family: see `QkNormConvention`.
+    let encode_qk_norm = match qk_norms {
+        QkNormConvention::Plain => gpu::encode_rms_norm_bf16w_perhead,
+        QkNormConvention::Centered => gpu::encode_rms_norm_bf16w_perhead_centered,
+    };
     for (suffix, data, heads) in [
         ("q_norm.weight", (&scratch.q, 0u64), num_heads),
         ("k_norm.weight", (k_buf, k_off as u64), num_kv),
     ] {
         let weight = norm_view(weights, index, &name(suffix), head_dim as usize)?;
-        gpu::encode_rms_norm_bf16w_perhead(
-            context, pass, data, weight, data, heads, head_dim, RMS_EPS,
-        )
-        .map_err(gpu_err)?;
+        encode_qk_norm(context, pass, data, weight, data, heads, head_dim, RMS_EPS)
+            .map_err(gpu_err)?;
     }
 
     let theta = arch.full_rope_theta as f32;

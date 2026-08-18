@@ -52,6 +52,20 @@ const DEPTH: &str = "2";
 /// The change detector. Taken from a run of the test that asserts it, over a
 /// deterministic fixture, and frozen. See that test's doc comment before
 /// touching this.
+/// Re-frozen 2026-08-18 a FOURTH time, `4406a9e2` -> `fd43a56b`, finishing
+/// what the third one started. The head's per-head `q_norm`/`k_norm` are
+/// centered too and were still being read plainly, because
+/// `encode_rms_norm_bf16w_perhead` had no centered sibling and
+/// `encode_full_attention_block` resolves those two by NAME for the trunk and
+/// the head alike. Now `gpu::encode_rms_norm_bf16w_perhead_centered` exists
+/// and the convention is a parameter on that shared function
+/// (`QkNormConvention`), so the trunk keeps the plain form and only the head
+/// moved. MTPLX's `_RMSNORM_SUFFIXES` lists all seven norms, so this closes
+/// the set rather than adding to it; the raw means here read 0.780 and 0.797
+/// against its "healthy >= 1.74" threshold. Every reachability case in this
+/// file stayed green again, which is the evidence the change is arithmetic
+/// inside the head and reaches nothing else.
+///
 /// Re-frozen 2026-08-18 a THIRD time, `7323c04a` -> `4406a9e2`, and this one
 /// is the fix that made the head WORK: its norms are CENTERED (`x * (1 + w)`)
 /// where this port was reading them plain. The published checkpoint stores
@@ -77,7 +91,7 @@ const DEPTH: &str = "2";
 /// input. Note every reachability case in this file stayed green across that
 /// change, which is Gotcha 51's point restated: this constant was the only
 /// thing that could see it.
-const FROZEN_DRAFT_DIGEST: &str = "4406a9e2";
+const FROZEN_DRAFT_DIGEST: &str = "fd43a56b";
 
 fn temp_dir(tag: &str) -> std::path::PathBuf {
     let n = COUNTER.fetch_add(1, Ordering::SeqCst);
@@ -583,4 +597,204 @@ fn a_rewound_head_and_a_rolled_back_trunk_redraft_the_same_logits() {
     runner
         .mtp_rewind_to(9)
         .expect_err("rewinding forwards must be refused");
+}
+
+/// STEP 4's WHOLE CONTRACT: one batched pass is BIT-IDENTICAL to the same
+/// tokens run one at a time (`docs/MTP_SPECULATIVE.md`).
+///
+/// This is what makes speculative output provably identical to
+/// non-speculative output, and it is asserted with `==` rather than a
+/// tolerance because the batched kernel does not reassociate any sum -- each
+/// output row keeps its own accumulator, exactly as B separate GEMV calls
+/// would (`crates/gpu/tests/dequant_int4_gemm_parity.rs`).
+///
+/// A 4-BIT install, unlike every other case in this file. The batched GEMM
+/// exists at INT4 alone, so a 1- or 2-bit fixture cannot reach this path at
+/// all -- which is its own test, immediately below.
+///
+/// **IT RUNS TWO TOKENS PAST THE BATCH, and that is not thoroughness, it is
+/// the only way half the state is observable.** A batch that starts at
+/// position 0 begins from an empty gated-DeltaNet conv tail, and
+/// `gdn_conv_mix_prefill` reconstructs every intra-batch row's history from
+/// the batch itself -- so the batch's OWN logits are identical whether or
+/// not the layer's tail is advanced afterwards. Dropping
+/// `encode_gdn_conv_tail_update` reddens nothing until a token is produced
+/// after the batch and reads the stale tail. Found by mutation, not review.
+#[test]
+fn a_batched_pass_is_bit_identical_to_the_same_tokens_run_sequentially() {
+    ask_for_drafts();
+    let dir = temp_dir("batched-parity");
+    build_synthetic_qwen_gdn_dense_install_with_mtp(&dir, VOCAB, LAYERS, "mtp-int4", 4)
+        .expect("a 4-bit dense install with a head builds");
+    let mut runner = open(&dir);
+    let vocab = VOCAB as usize;
+    let tokens = [5i32, 9, 3, 7, 2];
+    /// Rows the batched arm takes in one pass; the rest it produces one at a
+    /// time, so the comparison covers the state the batch LEFT as well as
+    /// the logits it produced.
+    const BATCH: usize = 3;
+
+    runner.reset();
+    let mut sequential: Vec<f16> = Vec::with_capacity(tokens.len() * vocab);
+    let mut row = vec![f16::from_f32(0.0); vocab];
+    for (position, &token) in tokens.iter().enumerate() {
+        runner
+            .produce(token, position, &mut row)
+            .expect("sequential produce");
+        sequential.extend_from_slice(&row);
+    }
+    let sequential_cursor = runner.checkpoint().position();
+
+    runner.reset();
+    let mut batched = vec![f16::from_f32(0.0); BATCH * vocab];
+    runner
+        .produce_batched(&tokens[..BATCH], 0, &mut batched)
+        .expect("batched pass");
+    for (offset, &token) in tokens[BATCH..].iter().enumerate() {
+        runner
+            .produce(token, BATCH + offset, &mut row)
+            .expect("produce after the batch");
+        batched.extend_from_slice(&row);
+    }
+
+    assert_eq!(
+        sequential, batched,
+        "the batched pass diverged from sequential produce: a speculative \
+         verify built on this would not be lossless"
+    );
+    // The cursor has to land where the same tokens run one at a time leave
+    // it, or `rollback` would need a batched variant and every position
+    // downstream would be off by the block size.
+    assert_eq!(
+        sequential_cursor,
+        runner.checkpoint().position(),
+        "the batched pass left the KV cursor somewhere else"
+    );
+}
+
+/// The refusal that keeps the measurement honest (AGENTS.md Gotcha 35 one
+/// layer down).
+///
+/// A sequential fallback here would be NUMERICALLY IDENTICAL, so it would
+/// pass the parity case above and the end-to-end losslessness gate too --
+/// and a "batched" verify would then measure the sequential engine and
+/// report its cost as the batched one. The 1-bit and 2-bit checkpoints of
+/// this same architecture have no batched kernel, so this is a live case and
+/// not a hypothetical.
+#[test]
+fn a_sub_4_bit_install_is_refused_by_the_batched_path_rather_than_looped() {
+    ask_for_drafts();
+    let dir = temp_dir("batched-refuse-1bit");
+    build_with_head(&dir);
+    let mut runner = open(&dir);
+    let vocab = VOCAB as usize;
+    let tokens = [5i32, 9];
+
+    runner.reset();
+    let mut batched = vec![f16::from_f32(0.0); tokens.len() * vocab];
+    let err = runner
+        .produce_batched(&tokens, 0, &mut batched)
+        .expect_err("a 1-bit install has no batched kernel");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("BATCHED") && msg.contains("INT4-affine"),
+        "the refusal must name the dtype and say it is not looped, got: {msg}"
+    );
+}
+
+/// A block wider than the scratch is an error rather than an overrun, and a
+/// block wider than the kernel's register file is an error here rather than
+/// an `assert!` inside the dispatch.
+#[test]
+fn a_batch_beyond_the_scratch_is_refused() {
+    ask_for_drafts();
+    let dir = temp_dir("batched-too-wide");
+    build_synthetic_qwen_gdn_dense_install_with_mtp(&dir, VOCAB, LAYERS, "mtp-int4-wide", 4)
+        .expect("a 4-bit dense install with a head builds");
+    let mut runner = open(&dir);
+    let vocab = VOCAB as usize;
+
+    // DEPTH is "2", so the scratch holds DEPTH + 1 = 3 rows.
+    let tokens = [5i32, 9, 3, 7];
+    runner.reset();
+    let mut batched = vec![f16::from_f32(0.0); tokens.len() * vocab];
+    let err = runner
+        .produce_batched(&tokens, 0, &mut batched)
+        .expect_err("4 rows against scratch sized for 3");
+    assert!(
+        format!("{err}").contains("scratch sized for 3"),
+        "the refusal must name both widths, got: {err}"
+    );
+}
+
+/// A batched pass has to leave the DRAFTER's input where a sequential run of
+/// the same tokens leaves it.
+///
+/// `mtp_draft_step` reads `h_t` from `scratch.x` at offset 0, and a batched
+/// pass writes `batch` rows there. Leaving row 0 as the FIRST token's
+/// residual makes the head draft off the wrong hidden state -- and nothing
+/// else can see it: the trunk is untouched, so the committed stream stays
+/// byte-identical to a non-speculative run and the end-to-end losslessness
+/// gate passes. Only the accept LENGTH moves, which reads as a verdict about
+/// MTP rather than as a bug (measured on the real install: 1.84 accepted per
+/// round to 1.10).
+///
+/// Both arms prime the head identically and draft at the SAME position with
+/// the same head KV, so the only variable is what the trunk left in
+/// `scratch.x`. The draft position does not correspond to the hidden state
+/// being fed, deliberately: this is a test about buffer plumbing, and
+/// requiring the two to agree would need a head cursor the batched arm
+/// cannot reach.
+#[test]
+fn a_batched_pass_leaves_the_drafters_hidden_state_where_sequential_does() {
+    ask_for_drafts();
+    let dir = temp_dir("batched-draft-input");
+    build_synthetic_qwen_gdn_dense_install_with_mtp(&dir, VOCAB, LAYERS, "mtp-int4-draft", 4)
+        .expect("a 4-bit dense install with a head builds");
+    let mut runner = open(&dir);
+    let vocab = VOCAB as usize;
+    let tokens = [5i32, 9, 3, 7];
+
+    // Walk the first two tokens sequentially in BOTH arms, priming the head
+    // to cursor 2 so a draft at position 2 is legal either way.
+    let prime_prefix = |runner: &mut RealForwardRunner| {
+        runner.reset();
+        let mut row = vec![f16::from_f32(0.0); vocab];
+        for position in 0..2 {
+            runner
+                .produce(tokens[position], position, &mut row)
+                .expect("prefix produce");
+            runner
+                .mtp_prime_step(tokens[position + 1], position)
+                .expect("prime");
+        }
+    };
+
+    prime_prefix(&mut runner);
+    let mut row = vec![f16::from_f32(0.0); vocab];
+    for (position, &token) in tokens.iter().enumerate().skip(2) {
+        runner
+            .produce(token, position, &mut row)
+            .expect("sequential tail");
+    }
+    let mut sequential_draft = vec![f16::from_f32(0.0); vocab];
+    runner
+        .mtp_draft_step(11, 2, &mut sequential_draft)
+        .expect("draft after the sequential tail");
+
+    prime_prefix(&mut runner);
+    let mut batched = vec![f16::from_f32(0.0); 2 * vocab];
+    runner
+        .produce_batched(&tokens[2..], 2, &mut batched)
+        .expect("batched tail");
+    let mut batched_draft = vec![f16::from_f32(0.0); vocab];
+    runner
+        .mtp_draft_step(11, 2, &mut batched_draft)
+        .expect("draft after the batched tail");
+
+    assert_eq!(
+        sequential_draft, batched_draft,
+        "the head drafted off a different hidden state after the batched \
+         pass: the batch's LAST row has to land at row 0 of scratch.x"
+    );
 }
