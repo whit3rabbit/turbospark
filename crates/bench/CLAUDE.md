@@ -153,8 +153,8 @@ uv run --python 3.12 --with 'mlx-lm==0.31.2' --with numpy \
   scripts/kld_mlx_affine.py /tmp/kld/ternary-warm ternary-2bit
 
 # The MTP head as a drafter (docs/MTP.md for the facts, MTP_SPECULATIVE.md
-# for the decision). Block 2 pays 1.37x and block 4 1.03x; 8 and 15 lose
-# because the chain saturates at ~2.05 accepted. The probe ASSERTS a
+# for the decision). Block 2 pays 1.66x, block 4 1.47x and block 8 1.17x;
+# only block 15 loses. The probe ASSERTS a
 # functional drafter and FAILS rather than printing an accept length nobody
 # can read -- its first run read 0 of 7,168 (a centered-norm bug, since
 # fixed) and would otherwise have published a quotable "loses" table.

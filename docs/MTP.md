@@ -75,10 +75,15 @@ than inferred: concat order (embedding first), the pairing, positions from 0,
 
 ## THE NORM CONVENTION, which is the finding that made it work
 
-**The head's five whole-vector norms are CENTERED**: the checkpoint stores an
+**All SEVEN of the head's norms are CENTERED**: the checkpoint stores an
 offset from unity and the effective scale is `1 + w`. **The trunk's are
 plain.** One model, two conventions, which is AGENTS.md Gotcha 50 arriving on
 a second family after `muse_glimmer`.
+
+The five whole-vector norms landed first and the per-head `q_norm`/`k_norm`
+followed on 2026-08-18, once `rmsnorm_bf16w_perhead_centered` existed to
+dispatch. **The pair was worth far more than the 23/24 top-1 suggested**, and
+that misreading is recorded below under "What the per-head pair was worth".
 
 Established two ways that are decisive, and one that is only suggestive:
 
@@ -103,16 +108,34 @@ settles every one of them at once.
 
 **Read plainly, this put the true next-next token at median rank 248,308 of
 248,320** -- last, not random. The fix dispatches
-`gpu::encode_rms_norm_bf16w_centered`, which already existed for
-`muse_glimmer`. The `1 +` is applied on the FP32 accumulator and never baked
-into the stored weight: these weights sit near zero and BF16's resolution near
-1.0 is 2^-8, so baking would destroy a large fraction of a 0.08 offset.
+`gpu::encode_rms_norm_bf16w_centered` for the five whole-vector norms and
+`gpu::encode_rms_norm_bf16w_perhead_centered` for `q_norm`/`k_norm`. The first
+already existed for `muse_glimmer`; the second is its per-head sibling, added
+2026-08-18. The `1 +` is applied on the FP32 accumulator and never baked into
+the stored weight: the whole-vector weights sit near zero and BF16's
+resolution near 1.0 is 2^-8, so baking would destroy a large fraction of a
+0.08 offset.
 
-| | plain | centered |
-| --- | ---: | ---: |
-| rank of true `t[i+2]`, of 248,320 | median 248,308 | median **0** |
-| top-1 agreement with the trunk | 0/24 | **23/24** |
-| pearson against the trunk's distribution | -0.28 | **+0.60** |
+| | plain | 5 centered | all 7 centered |
+| --- | ---: | ---: | ---: |
+| rank of true `t[i+2]`, of 248,320 | median 248,308 | median 0 | median **0**, worst **0** |
+| top-1 agreement with the trunk | 0/24 | 23/24 | **24/24** |
+| pearson against the trunk's distribution | -0.28 | +0.60 | **+0.6453** |
+
+**Baking IS defensible for the per-head pair specifically, and was still not
+taken.** Those two weights sit near 0.78 rather than near zero, so the
+precision objection above is weak for them; MTPLX bakes `+1.0` into its loaded
+weights and is right to. A separate kernel was taken anyway because it is
+exact, because it is a 25-line copy of a sibling that already existed, and
+because the alternative API -- two optional weight-buffer overrides threaded
+through a function the TRUNK also calls -- is larger than the one-enum
+parameter the kernel needs.
+
+That parameter is `QkNormConvention::{Plain, Centered}` on
+`encode_full_attention_block`. It has exactly two call sites and they
+disagree, which is the whole point: the trunk's `self_attn.q_norm.weight` and
+the head's are the same name at the same shape resolved by the same code, and
+only one of them is centered.
 
 ## How this port wires it
 
@@ -175,26 +198,59 @@ real agreement rather than a coincidence: same 15 tensors, same affine scheme,
 same group size.
 
 **Accept length**, real install, greedy, 256 generated tokens per arm, verified
-lossless against a non-speculative reference stream on every block:
+lossless against a non-speculative reference stream on every block. Measured
+2026-08-18 ON AC with all seven norms centered:
 
 | block | accepted/round | committed/round | break-even | speedup |
 | ---: | ---: | ---: | ---: | ---: |
-| 2 | 1.35 | 2.35 | 1.71 | **1.37x** |
-| 4 | 1.94 | 2.94 | 2.86 | **1.03x** |
-| 8 | 2.05 | 3.05 | 4.53 | 0.67x |
-| 15 | 2.05 | 3.05 | 7.96 | 0.38x |
+| 2 | 1.84 | 2.84 | 1.71 | **1.66x** |
+| 4 | 3.20 | 4.20 | 2.86 | **1.47x** |
+| 8 | 4.29 | 5.29 | 4.53 | **1.17x** |
+| 15 | 4.29 | 5.29 | 7.96 | 0.66x |
 
 Per-position acceptance, block 8:
 
 ```text
 position  0     1     2     3     4     5     6     7
-accept    0.82  0.76  0.49  0.54  0.50  0.43  0.33  0.00
+accept    0.92  1.00  0.93  0.64  0.67  0.83  0.67  0.80
 ```
 
-**Single-step acceptance is 0.82 and the CHAIN saturates at ~2.05.** Blocks 8
-and 15 read identically, which is the same statement twice: past roughly the
-sixth proposal this head contributes nothing. Committed-per-round is the
-accepted prefix plus the bonus token every verify yields for free.
+**Single-step acceptance is 0.94.** Committed-per-round is the accepted prefix
+plus the bonus token every verify yields for free. Blocks 8 and 15 still read
+identically, so the chain does still die -- around position 8 now rather than
+around position 2 -- and the mechanism is presumably the chaining
+approximation the flow is built on (a drafted step past the first feeds the
+HEAD's own residual stream in place of a trunk hidden state it cannot have).
+Not chased: block 2 is the optimum either way.
+
+### What the per-head pair was worth
+
+`q_norm`/`k_norm` were left plain for one session, on the reasoning that 23/24
+top-1 meant the cost was small. **The measured cost was 21 to 75 percent of
+the speedup**, and the "small" reading came from a metric that was already
+saturated:
+
+| block | accepted/rd, 5 centered | 7 centered | speedup then | now |
+| ---: | ---: | ---: | ---: | ---: |
+| 2 | 1.35 | **1.84** | 1.37x | **1.66x** |
+| 4 | 1.94 | **3.20** | 1.03x | **1.47x** |
+| 8 | 2.05 | **4.29** | 0.67x | **1.17x** |
+
+Two claims this refutes, both of which were written down as findings:
+
+- **"The chain saturates at ~2.05, so past roughly the sixth proposal this
+  head contributes nothing."** That was an artifact of the deviation, not a
+  property of the head. The chain now reaches 4.29.
+- **"Block 8 loses."** It pays 1.17x.
+
+The reusable part is the metric, not the number. Top-1 agreement over 24
+positions cannot distinguish a good drafter from a very good one -- it was
+already 23/24 -- while the thing that actually decides the question is
+acceptance at positions 3 through 7, which the head-probe's single-step view
+never looks at. **A drafter's quality is a CURVE, and a scalar taken at the
+top of it saturates before the curve does.** Where a deviation is known to
+exist, "measurably small" needs the measurement that would be sensitive to
+it, and per-position acceptance was that measurement all along.
 
 **Footprint.** 659.5 MiB against the headless install's 659.4, so the head's
 228 MiB of resident weights are not counted. That is AGENTS.md Gotcha 40
@@ -205,13 +261,14 @@ reproduces reference-answer perplexity 4.9432 and both frozen digests exactly.
 
 ## What is still deviating
 
-**`q_norm` and `k_norm` are centered too and are still read PLAINLY.**
-`encode_rms_norm_bf16w_perhead` has no centered sibling, and the shared
-attention block resolves those weights by name, so overriding them needs a
-parameter on a function the trunk also calls. At 23/24 top-1 the cost is
-measurably small, but the accept lengths above are a FLOOR until it lands.
+**Nothing known.** All seven norms take the convention the checkpoint stores
+them in, and MTPLX's `_RMSNORM_SUFFIXES` -- the only independent enumeration
+of that set -- lists exactly those seven.
 
-Nothing else in the head is known to deviate.
+What is UNMEASURED is different from what is deviating, and two things are:
+there is no cross-engine KL for the head against mlx-vlm's drafter (the bisect
+compares stage by stage on one step, which is not the same claim), and the
+chain's death around position 8 has a plausible cause and no evidence for it.
 
 ## Instruments
 
@@ -275,13 +332,15 @@ independently, which is what makes this confirmation rather than coincidence:
 | healthy q/k norm mean | ">= 1.74" | 1.779, 1.791 |
 | raw low-set norms | "below 0.5" | 0.082, 0.166, 0.206, 0.461 |
 
-**It also covers what this port still does not.** Its `_RMSNORM_SUFFIXES` lists
-all SEVEN norms including `q_norm`, `k_norm` and `norm.weight`, so the per-head
-pair left open above is a real requirement and not optional polish. MTPLX
-restores them by baking `+1.0` into the loaded weights, which is evidence that
-baking into a small owned buffer is an acceptable route for those two
-specifically -- their weights sit near 0.78, not near zero, so Gotcha 50's
-precision objection is weak there.
+**Its `_RMSNORM_SUFFIXES` is what said the set was SEVEN**, including
+`q_norm`, `k_norm` and `norm.weight`, at a point when this port had centered
+five and was reading the per-head pair plainly on the grounds that 23/24 top-1
+made it cheap. That list is the reason the pair was treated as a real
+requirement rather than as polish, and the measurement above is what settled
+how expensive it had been. MTPLX restores all seven by baking `+1.0` into its
+loaded weights; this port dispatches a centered kernel instead, for the reasons
+in the norm section, but the bake is a legitimate route for those two
+specifically and the disagreement is about exactness rather than correctness.
 
 **"TAKE NO MTPLX SOURCE" IS A LICENSING DECISION AND NOT AN INSTRUCTION NOT TO
 READ IT.** `docs/MTP_SPECULATIVE.md` records that decision (Apache-2.0 NOTICE

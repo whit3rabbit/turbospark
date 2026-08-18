@@ -9,24 +9,29 @@ Answer, measured 2026-08-17 on this machine: **yes, at a small block size,
 worth roughly 1.35x to 1.58x with a drafter as good as MTPLX reports.** The
 ceiling over all possible drafters is ~2.07x.
 
-> **MEASURED END TO END 2026-08-18 AND THE SHAPE HELD: block 2 pays 1.37x.**
+> **MEASURED END TO END 2026-08-18 AND THE SHAPE HELD: block 2 pays 1.66x.**
 > This target's own accept length is no longer borrowed. Real numbers, real
 > install, greedy, lossless against a non-speculative reference:
 >
 > | block | accepted/round | committed/round | break-even | speedup |
 > | ---: | ---: | ---: | ---: | ---: |
-> | 2 | 1.35 | 2.35 | 1.71 | **1.37x** |
-> | 4 | 1.94 | 2.94 | 2.86 | **1.03x** |
-> | 8 | 2.05 | 3.05 | 4.53 | 0.67x |
-> | 15 | 2.05 | 3.05 | 7.96 | 0.38x |
+> | 2 | 1.84 | 2.84 | 1.71 | **1.66x** |
+> | 4 | 3.20 | 4.20 | 2.86 | **1.47x** |
+> | 8 | 4.29 | 5.29 | 4.53 | **1.17x** |
+> | 15 | 4.29 | 5.29 | 7.96 | 0.66x |
 >
-> Per-position acceptance is 0.82 / 0.76 / 0.49 / 0.54 / 0.50 / 0.43 / 0.33,
-> so single-step acceptance lands near MTPLX's reported ~90% while the CHAIN
-> saturates at ~2.05 accepted -- blocks 8 and 15 read identically. That is the
-> one place the projection was optimistic: it assumed 6.13 accepted at block
-> 8 and the real chain gives a third of that, which is why the long blocks
-> lose here and the SMALL-block conclusion survives for a second, independent
-> reason. The ~2.07x ceiling stands as a ceiling.
+> Per-position acceptance is 0.92 / 1.00 / 0.93 / 0.64 / 0.67 / 0.83 / 0.67 /
+> 0.80, so single-step acceptance is 0.94, slightly ABOVE MTPLX's reported
+> ~90%, and the projected 1.35-1.58x band is cleared at every block below 15.
+> The SMALL-block conclusion survives: block 2 is still the optimum, because
+> verify cost scales close to linearly in M while acceptance decays. The
+> ~2.07x ceiling stands as a ceiling, and block 2 is now at 80% of it.
+>
+> **An earlier version of this box read 1.37x and reported that the chain
+> "saturates at ~2.05 accepted", blaming the projection for assuming 6.13.**
+> Both were artifacts of a norm deviation (step 3 below), not properties of
+> the head, and both are withdrawn. The projection was closer to right than
+> the measurement that appeared to correct it.
 
 > **THIS PAGE REACHED THE OPPOSITE CONCLUSION FIRST, AND THE REVERSAL IS THE
 > MOST USEFUL THING ON IT.** The first pass measured `c(M)` at 0.82-0.89 at
@@ -38,6 +43,17 @@ ceiling over all possible drafters is ~2.07x.
 > halved `c(M)`. **A composite built on an unoptimized kernel measures the
 > kernel, not the question** -- and the tell was available before the
 > measurement, in the form of a known deficiency in one of the two arms.
+>
+> **IT THEN HAPPENED A THIRD TIME, one level further out, and the tell was
+> again a known deficiency in one arm.** The first end-to-end accept length
+> was taken while the head's per-head `q_norm`/`k_norm` were still read
+> plainly -- a deviation this page had itself recorded, and dismissed as
+> "small" on the strength of 23/24 top-1. It was worth 21 to 75 percent of the
+> speedup, and the numbers it produced were quoted here as two findings about
+> the head that were really findings about the deviation. The pattern across
+> all three: **a measurement taken with a known defect in one arm measures the
+> defect, and the phrase that licenses it every time is an estimate of how
+> much the defect costs, made without measuring it.**
 
 ## What MTP is worth taking
 
@@ -373,15 +389,58 @@ a 17-position verify does not fit. Block 15 is the largest legal one.
    than its residual, is also correct-per-the-reference and also did not move
    the symptom.
 
-   **STILL OPEN, and small:** the head's per-head `q_norm`/`k_norm` are
-   centered too and are still read plainly, because
-   `encode_rms_norm_bf16w_perhead` has no centered sibling and the weights
-   are resolved by NAME inside the shared attention block. At 23/24 top-1 it
-   is evidently not costing much, but it is a known deviation and the accept
-   length above is a floor until it lands.
+   **CLOSED 2026-08-18, and the floor was much lower than "small" implied.**
+   The head's per-head `q_norm`/`k_norm` are centered too and were still read
+   plainly, because `encode_rms_norm_bf16w_perhead` had no centered sibling
+   and both norms are resolved by NAME inside the shared attention block. The
+   fix is that sibling (`rmsnorm_bf16w_perhead_centered`) plus a
+   `QkNormConvention` parameter on `encode_full_attention_block`, so the two
+   call sites -- trunk and head -- can disagree about tensors of the same name.
+
+   | block | accepted/rd, 5 centered | 7 centered | speedup then | now |
+   | ---: | ---: | ---: | ---: | ---: |
+   | 2 | 1.35 | **1.84** | 1.37x | **1.66x** |
+   | 4 | 1.94 | **3.20** | 1.03x | **1.47x** |
+   | 8 | 2.05 | **4.29** | 0.67x | **1.17x** |
+
+   Single-step acceptance 0.82 -> 0.94, top-1 23/24 -> 24/24, pearson +0.60 ->
+   +0.6453. `qwen38_quality_gate` reproduces perplexity 4.9432 and both frozen
+   digests exactly, which is what says the TRUNK did not move with it.
+
+   **THIS PAGE RECORDED TWO THINGS AS FINDINGS THAT WERE ARTIFACTS OF THAT
+   DEVIATION**, and both are withdrawn: that "the chain saturates at ~2.05",
+   and that block 8 loses. The chain reaches 4.29 and block 8 pays 1.17x.
+   Reading "23/24 top-1, so the cost is measurably small" as licence to defer
+   is the mistake to carry forward -- top-1 over 24 positions was ALREADY
+   saturated and could not have moved much whatever happened, while the
+   quantity that decides the question is acceptance at positions 3 through 7.
+   A scalar taken at the top of a curve cannot bound the curve.
 
 4. **Only then the batched verify**, if step 3 clears the table above.
-   **Blocked on step 3**, which has not produced a number.
+   **UNBLOCKED**: step 3 clears it at blocks 2, 4 and 8, with block 2 the
+   optimum at 1.66x. Note the `break_even` column those ratios are read
+   against is still a PROJECTION of what a batched verify would cost; step 4
+   is what turns it into a measurement, and its target is M+1 = 3 rows.
+
+   **RE-DERIVED AGAINST THE MEASURED CURVE, and the useful reading is against
+   the CEILING column rather than the break-even one.** Break-even itself did
+   not move -- `3 x c(3) + 0.03 = 1.71` needs `c(3) = 0.56`, consistent with
+   the tabulated 0.54 and 0.58 -- so the whole change is on the accept side.
+   Measured committed-per-round against each block's own maximum:
+
+   | block | committed | ceiling for that block | at |
+   | ---: | ---: | ---: | ---: |
+   | 2 | 2.84 of 3 | 1.75x | **95%** |
+   | 4 | 4.20 of 5 | 1.75x | 84% |
+   | 8 | 5.29 of 9 | 1.99x | 59% |
+
+   **Block 2 is at 95% of everything it can ever be worth**, so no drafter
+   improvement can add more than 5% there and the remaining lever at that
+   block is `c(M)` alone. The 2.07x asymptote lives at LONG blocks, and long
+   blocks are gated on the chain surviving past position 8, which it does not.
+   Whoever picks this up should build the verify at block 2 for the 1.66x that
+   is already earned, and treat "why does the chain die at 8" as the separate
+   question that owns the gap between 1.66x and 2.07x.
 
 ## What this changes elsewhere
 

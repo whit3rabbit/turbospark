@@ -1472,14 +1472,13 @@ live network).
   asked for here still prints its reasoning as ordinary content.
 
 
-## The MTP head: drafting, and worth 1.37x at block 2
+## The MTP head: drafting, and worth 1.66x at block 2
 
 `docs/MTP_SPECULATIVE.md` steps 1-3 are done. A `qwen3_5` install can carry
 the checkpoint's own multi-token-prediction head, `mtp_draft_step` runs it
 behind `MFERENCE_MTP_DRAFT`, and the measured accept length clears break-even
-at small block sizes: **1.37x at block 2 and 1.03x at block 4**, with blocks
-8 and 15 losing because the chain saturates at ~2.05 accepted tokens.
-Lossless against a non-speculative reference stream on every block.
+at every block below 15: **1.66x at block 2, 1.47x at block 4, 1.17x at block
+8**. Lossless against a non-speculative reference stream on every block.
 
 Getting there needed three fixes, and the third is the one that mattered:
 
@@ -1487,14 +1486,19 @@ Getting there needed three fixes, and the third is the one that mattered:
   rows nobody wrote (`encode_full_attention_block` takes its span from the
   `position` argument, not from the cursor) -- silent, finite, plausible;
 - it was never REWOUND after a rejected draft;
-- **its five whole-vector norms are CENTERED** (`x * (1 + w)`) where the
-  trunk's are plain, and reading them plainly left the true next-next token
-  at median rank 248,308 of 248,320. AGENTS.md Gotcha 50, second family.
+- **all SEVEN of its norms are CENTERED** (`x * (1 + w)`) where the trunk's
+  are plain, and reading them plainly left the true next-next token at median
+  rank 248,308 of 248,320. AGENTS.md Gotcha 50, second family.
 
-WHAT IS STILL DEVIATING: the head's per-head `q_norm` / `k_norm` are centered
-too and are still read PLAINLY, because `encode_rms_norm_bf16w_perhead` has
-no centered sibling and the shared attention block resolves those weights by
-name. At 23/24 top-1 it is measurably not costing much, but the accept
-lengths above are a floor until it lands. Step 4 (batched verify) is
-unstarted.
+NOTHING KNOWN IS STILL DEVIATING. The five whole-vector norms landed first and
+the per-head `q_norm`/`k_norm` followed, needing a kernel
+(`rmsnorm_bf16w_perhead_centered`) and a `QkNormConvention` parameter so the
+trunk and the head can disagree about tensors of the SAME NAME through the
+same call. **That pair was deferred for one session on the strength of 23/24
+top-1 and was worth 21 to 75 percent of the speedup** (block 2 1.37x -> 1.66x,
+block 8 0.67x -> 1.17x), which retired two claims this file used to carry:
+that the chain saturates at ~2.05 accepted, and that the long blocks lose.
+Both were properties of the deviation. Step 4 (batched verify) is unstarted;
+note the break-even column those ratios are read against is still a projection
+of what a batched verify would cost, and step 4 is what measures it.
 
