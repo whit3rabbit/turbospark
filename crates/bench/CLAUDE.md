@@ -153,8 +153,16 @@ uv run --python 3.12 --with 'mlx-lm==0.31.2' --with numpy \
   scripts/kld_mlx_affine.py /tmp/kld/ternary-warm ternary-2bit
 
 # The MTP head as a drafter (docs/MTP.md for the facts, MTP_SPECULATIVE.md
-# for the decision). Block 2 pays 1.66x, block 4 1.47x and block 8 1.17x;
-# only block 15 loses. The probe ASSERTS a
+# for the decision). It runs BOTH verify strategies per block and reports
+# WALL CLOCK against a non-speculative reference, which is the number step 4
+# exists to produce; the `projected` column beside it is step 3's composed
+# break-even and the two disagree on purpose. Measured: block 2 batched pays
+# 1.44x against a 1.66x projection, and batching LOSES to a sequential verify
+# at blocks 8 and 15 because a rejected batched round restores the whole
+# gated-DeltaNet snapshot and replays -- a term no composite here models.
+# The two arms' round and accept counts come out identical at every block,
+# which is the equivalence check the losslessness gate cannot make on its
+# own. The probe ASSERTS a
 # functional drafter and FAILS rather than printing an accept length nobody
 # can read -- its first run read 0 of 7,168 (a centered-norm bug, since
 # fixed) and would otherwise have published a quotable "loses" table.

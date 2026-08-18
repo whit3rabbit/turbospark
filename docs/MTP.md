@@ -223,6 +223,62 @@ approximation the flow is built on (a drafted step past the first feeds the
 HEAD's own residual stream in place of a trunk hidden state it cannot have).
 Not chased: block 2 is the optimum either way.
 
+### The batched verify, measured end to end
+
+Step 4 replaces the sequential verify with ONE `produce_batched` over the
+confirmed token plus every proposal. Measured 2026-08-18 ON AC, same install,
+same prompt, 256 generated tokens per arm, reference clock taken from a
+SECOND non-speculative run so the cold-GPU pass lands on nobody's denominator
+(AGENTS.md Gotcha 20). Reference: 11.49 s, 22.28 tok/s.
+
+| block | verify | rounds | accepted/rd | rollbacks | seconds | MEASURED | projected |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 2 | sequential | 90 | 1.84 | 0 | 12.27 | 0.94x | 1.66x |
+| 2 | **batched** | 90 | 1.84 | 9 | 7.95 | **1.44x** | 1.66x |
+| 4 | sequential | 61 | 3.20 | 0 | 12.37 | 0.93x | 1.47x |
+| 4 | batched | 61 | 3.20 | 28 | 11.15 | 1.03x | 1.47x |
+| 8 | sequential | 49 | 4.29 | 0 | 12.92 | 0.89x | 1.17x |
+| 8 | batched | 49 | 4.29 | 41 | 16.20 | 0.71x | 1.17x |
+| 15 | sequential | 49 | 4.29 | 0 | 13.95 | 0.82x | 0.66x |
+| 15 | batched | 49 | 4.29 | 48 | 26.02 | 0.44x | 0.66x |
+
+**Block 2 pays 1.44x on the clock.** That is the deliverable, and it is 13%
+under the projection.
+
+**THE ROUNDS AND ACCEPT COUNTS ARE IDENTICAL BETWEEN THE TWO ARMS AT EVERY
+BLOCK**, which is stronger evidence of equivalence than the losslessness gate
+alone: a batched pass that computed anything different would accept a
+different number of proposals long before it changed a committed token.
+
+**The projection is optimistic and it gets worse with the block, which
+inverts its shape.** The composite costs a round as one verify pass and has
+no term for what a REJECTED round costs. On this family that is not a
+rounding error: the gated-DeltaNet state cannot be rewound incrementally, so
+a rejection restores a whole-state snapshot and then REPLAYS the accepted
+prefix as a second batched pass. The rollback rate is what the block size
+really buys:
+
+| block | rounds with a rejection |
+| ---: | ---: |
+| 2 | 9 of 90 (10%) |
+| 4 | 28 of 61 (46%) |
+| 8 | 41 of 49 (84%) |
+| 15 | 48 of 49 (98%) |
+
+At block 15 essentially every round pays verify(16 rows) plus replay(~5 rows)
+for 5.29 committed tokens, against a sequential arm that does 5.29 rows and
+never rolls back at all. That is why batching is WORSE than sequential at
+blocks 8 and 15 while being much better at 2.
+
+**The sequential arm never rolls back, and that is structural rather than
+lucky**: its loop stops at the first rejection, so it has absorbed exactly
+the committed tokens when it stops. Only a batched pass can overshoot. Nobody
+had modelled that asymmetry either.
+
+So the small-block conclusion now rests on three independent legs: verify
+cost scales nearly linearly in M, the accept chain decays, and the rollback
+probability rises.
+
 ### What the per-head pair was worth
 
 `q_norm`/`k_norm` were left plain for one session, on the reasoning that 23/24

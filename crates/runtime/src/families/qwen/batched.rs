@@ -354,6 +354,26 @@ impl RealForwardRunner {
         for _ in 0..batch {
             kv.advance();
         }
+        // THE LAST ROW'S RESIDUAL HAS TO LAND AT ROW 0, because that is where
+        // a SEQUENTIAL run of the same tokens leaves it and because
+        // `mtp_draft_step` reads `h_t` from `scratch.x` at offset 0.
+        //
+        // Without this the head drafts off the FIRST token of the block
+        // instead of the last, and the failure is invisible in every place
+        // one would look: the trunk is untouched, so the committed stream
+        // stays byte-identical to a non-speculative run and the losslessness
+        // gate passes. What moves is the DRAFTER's quality -- measured on the
+        // real install, accept length fell from 1.84 to 1.10 per round and
+        // rollbacks went from 0 to 62 of 123 rounds, which reads as a verdict
+        // about MTP rather than as a bug in the pass.
+        //
+        // A host copy rather than a blit: `commit_and_wait` has already run,
+        // it is `hidden` halfs (10 KiB here), and it needs no kernel.
+        if batch > 1 {
+            let row = hidden * 2;
+            let last = gpu::read_buffer_bytes(&scratch.x, (batch - 1) * row, row);
+            gpu::write_buffer_bytes(&scratch.x, 0, &last);
+        }
         gpu::read_buffer_f16_into(
             &self
                 .real_mtp

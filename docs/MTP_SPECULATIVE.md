@@ -442,6 +442,33 @@ a 17-position verify does not fit. Block 15 is the largest legal one.
    is already earned, and treat "why does the chain die at 8" as the separate
    question that owns the gap between 1.66x and 2.07x.
 
+   **BUILT AND MEASURED 2026-08-18. BLOCK 2 PAYS 1.44x ON THE CLOCK**, against
+   the 1.66x projected here. Numbers, rollback rates and the per-arm table are
+   in `docs/MTP.md` ("The batched verify, measured end to end"); the accept
+   counts come out IDENTICAL between the sequential and batched arms at every
+   block, which is what says the two are the same computation.
+
+   **THE PROJECTION WAS OPTIMISTIC BY 13% AT BLOCK 2 AND BY MUCH MORE ABOVE
+   IT, AND THE MISSING TERM IS THE ROLLBACK.** Every composite on this page
+   costs a round as one verify pass. On a family with a recurrent half that is
+   wrong whenever a proposal is rejected: the gated-DeltaNet state cannot be
+   rewound incrementally, so the round restores a whole-state snapshot and
+   replays the accepted prefix as a SECOND batched pass. The probability of
+   paying that rises with the block -- 10% at block 2, 84% at block 8, 98% at
+   block 15 -- so batching is worse than a sequential verify at blocks 8 and
+   15 while being much better at 2. A sequential verify never rolls back at
+   all, because it stops at the first rejection having absorbed exactly the
+   committed tokens.
+
+   Two consequences for anyone re-costing this. **Add a rollback term before
+   trusting any block-size table on a recurrent architecture**, and note it is
+   a function of the per-position acceptance curve rather than of the mean.
+   And the small-block answer now has three independent legs instead of two:
+   verify cost scales nearly linearly in M, the accept chain decays, and the
+   rollback probability rises.
+
+   The remaining lever at block 2 is still `c(M)` alone.
+
 ## What this changes elsewhere
 
 `docs/BATCHED_PREFILL.md` composed its "fully batched" column at

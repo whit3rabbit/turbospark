@@ -42,7 +42,16 @@ projected in it; read it before changing the head, and read
 SHAPE HELD**: block 2 pays **1.66x**, block 4 1.47x, block 8 1.17x, block 15
 loses. Single-step acceptance is 0.94, and the projected 1.35-1.58x band is
 cleared everywhere below block 15; the small-block conclusion survives because
-verify cost scales close to linearly in M while acceptance decays. Getting
+verify cost scales close to linearly in M while acceptance decays.
+**THE BATCHED VERIFY THOSE RATIOS PROJECT WAS THEN BUILT AND CLOCKED, AND IT
+PAYS 1.44x AT BLOCK 2 RATHER THAN 1.66x.** The 13% is a term no composite on
+either page has: a rejected batched round cannot stop early, so on a family
+with a recurrent half it restores a whole gated-DeltaNet snapshot and replays
+the accepted prefix, and the odds of paying that rise with the block (10% at
+2, 84% at 8, 98% at 15). So batching BEATS a sequential verify at block 2 and
+LOSES to it at 8 and 15, which inverts the projection's shape and gives the
+small-block answer a third independent leg. Add a rollback term before
+trusting any block-size table on a recurrent architecture. Getting
 there needed a real fix, twice over: ALL SEVEN of the head's norms are
 CENTERED (`x * (1 + w)`) where the trunk's are plain, and reading them plainly
 put the true token at median rank 248,308 of 248,320. That is Gotcha 50 on a

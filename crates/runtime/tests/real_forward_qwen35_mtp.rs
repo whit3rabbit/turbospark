@@ -726,3 +726,75 @@ fn a_batch_beyond_the_scratch_is_refused() {
         "the refusal must name both widths, got: {err}"
     );
 }
+
+/// A batched pass has to leave the DRAFTER's input where a sequential run of
+/// the same tokens leaves it.
+///
+/// `mtp_draft_step` reads `h_t` from `scratch.x` at offset 0, and a batched
+/// pass writes `batch` rows there. Leaving row 0 as the FIRST token's
+/// residual makes the head draft off the wrong hidden state -- and nothing
+/// else can see it: the trunk is untouched, so the committed stream stays
+/// byte-identical to a non-speculative run and the end-to-end losslessness
+/// gate passes. Only the accept LENGTH moves, which reads as a verdict about
+/// MTP rather than as a bug (measured on the real install: 1.84 accepted per
+/// round to 1.10).
+///
+/// Both arms prime the head identically and draft at the SAME position with
+/// the same head KV, so the only variable is what the trunk left in
+/// `scratch.x`. The draft position does not correspond to the hidden state
+/// being fed, deliberately: this is a test about buffer plumbing, and
+/// requiring the two to agree would need a head cursor the batched arm
+/// cannot reach.
+#[test]
+fn a_batched_pass_leaves_the_drafters_hidden_state_where_sequential_does() {
+    ask_for_drafts();
+    let dir = temp_dir("batched-draft-input");
+    build_synthetic_qwen_gdn_dense_install_with_mtp(&dir, VOCAB, LAYERS, "mtp-int4-draft", 4)
+        .expect("a 4-bit dense install with a head builds");
+    let mut runner = open(&dir);
+    let vocab = VOCAB as usize;
+    let tokens = [5i32, 9, 3, 7];
+
+    // Walk the first two tokens sequentially in BOTH arms, priming the head
+    // to cursor 2 so a draft at position 2 is legal either way.
+    let prime_prefix = |runner: &mut RealForwardRunner| {
+        runner.reset();
+        let mut row = vec![f16::from_f32(0.0); vocab];
+        for position in 0..2 {
+            runner
+                .produce(tokens[position], position, &mut row)
+                .expect("prefix produce");
+            runner
+                .mtp_prime_step(tokens[position + 1], position)
+                .expect("prime");
+        }
+    };
+
+    prime_prefix(&mut runner);
+    let mut row = vec![f16::from_f32(0.0); vocab];
+    for position in 2..tokens.len() {
+        runner
+            .produce(tokens[position], position, &mut row)
+            .expect("sequential tail");
+    }
+    let mut sequential_draft = vec![f16::from_f32(0.0); vocab];
+    runner
+        .mtp_draft_step(11, 2, &mut sequential_draft)
+        .expect("draft after the sequential tail");
+
+    prime_prefix(&mut runner);
+    let mut batched = vec![f16::from_f32(0.0); 2 * vocab];
+    runner
+        .produce_batched(&tokens[2..], 2, &mut batched)
+        .expect("batched tail");
+    let mut batched_draft = vec![f16::from_f32(0.0); vocab];
+    runner
+        .mtp_draft_step(11, 2, &mut batched_draft)
+        .expect("draft after the batched tail");
+
+    assert_eq!(
+        sequential_draft, batched_draft,
+        "the head drafted off a different hidden state after the batched \
+         pass: the batch's LAST row has to land at row 0 of scratch.x"
+    );
+}
