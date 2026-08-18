@@ -1805,6 +1805,7 @@ name = "turbospark-bench"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "turbospark-catalog",
  "turbospark-core",
  "turbospark-model-io",
  "turbospark-repack",
