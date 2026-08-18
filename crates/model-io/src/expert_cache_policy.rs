@@ -12,9 +12,15 @@
 //! 20% smaller experts decoded SLOWER at 2.0-2.4x the energy).
 //!
 //! Deliberately portable -- no `gpu`, no `#[cfg(target_os = "macos")]`, and
-//! no clock or OS probe of its own. [`resolve`] takes the machine's memory as
-//! a parameter, so every case below is a unit test that runs on any platform
-//! rather than something only observable on a Mac with an install on disk.
+//! no clock or OS probe of its own. [`ExpertCacheSlots::resolve`] takes the
+//! machine's memory as a parameter, so every case below is a unit test that
+//! runs on any platform rather than something only observable on a Mac with
+//! an install on disk.
+//!
+//! Here rather than in `crates/runtime`, where it was written, for the reason
+//! [`crate::context_policy`] gives: `crates/catalog` needs the same
+//! arithmetic BEFORE an install exists, and it builds on platforms `runtime`
+//! does not. `runtime` re-exports both.
 
 use foundation::runtime_config::{ALLOWED_CACHE_SLOTS, DEFAULT_CACHE_SLOTS};
 
@@ -30,7 +36,7 @@ pub const HEADROOM_RESERVE_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 /// the size of this engine can run beside it without the machine swapping.
 pub const HEADROOM_FRACTION: f64 = 0.25;
 
-/// Routed-expert cache sizing, as it reaches [`crate::RealForwardRunner`].
+/// Routed-expert cache sizing, as it reaches `runtime::RealForwardRunner`.
 ///
 /// The mirror of `turbospark_invocation::ExpertCacheSlots`, spelled again
 /// here for the reason `PowerProfile` is: this crate does not depend on the

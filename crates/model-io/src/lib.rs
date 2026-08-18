@@ -11,7 +11,9 @@
 mod arch_baselines;
 mod arch_config;
 mod arch_validation;
+mod context_policy;
 mod error;
+mod expert_cache_policy;
 mod install_receipt;
 mod manifest;
 mod packed_experts_layout;
@@ -28,7 +30,13 @@ pub use arch_config::{
     ArchConfig, CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig,
     ModelFamily, RopeScalingConfig,
 };
+pub use context_policy::{
+    committed_bytes, kv_bytes_for_context, largest_context_within, resolve_max_context,
+    ContextPlan, ContextTooLarge, MaxContext, CONTEXT_BUDGET_FRACTION, CONTEXT_GRANULARITY,
+    CONTEXT_RESERVE_BYTES, MAX_SUPPORTED_CONTEXT,
+};
 pub use error::ModelError;
+pub use expert_cache_policy::{ExpertCacheSlots, HEADROOM_FRACTION, HEADROOM_RESERVE_BYTES};
 pub use install_receipt::{
     load as load_install_receipt, validate as validate_install_receipt,
     validate_manifest_binding as validate_install_receipt_manifest_binding,

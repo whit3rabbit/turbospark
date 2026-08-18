@@ -59,7 +59,6 @@ use std::path::Path;
 use foundation::LogitValue;
 use model_io::{ArchConfig, ResidentBuffer, ResidentIndex};
 
-use crate::expert_cache_policy::ExpertCacheSlots;
 use crate::producer::LogitProducer;
 use crate::real_forward_layout::{
     moe_offsets_from_layout, readable_resident_dtype, routed_layouts_from_layout,
@@ -67,6 +66,7 @@ use crate::real_forward_layout::{
 };
 pub use crate::real_forward_types::{dispatch_profile_report, PhaseCounters, RealForwardError};
 use crate::real_forward_types::{DecodeScratch, ROUTED_BANKS};
+use model_io::ExpertCacheSlots;
 
 /// Matches `RuntimeConfig`'s default `expert_cache_slots`; callers that
 /// want another allowed value pass it to `open_with_options`.

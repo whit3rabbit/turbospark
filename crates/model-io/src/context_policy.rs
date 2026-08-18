@@ -15,10 +15,21 @@
 //! `gpu`, no `#[cfg(target_os = "macos")]`, and no OS probe of its own.
 //! Every input arrives as a parameter, so the whole policy is unit-tested on
 //! any platform rather than needing a Mac with an install on disk.
+//!
+//! **HERE RATHER THAN IN `crates/runtime`, WHERE IT WAS WRITTEN.** It moved
+//! when `crates/catalog` needed the same arithmetic to answer "would this fit
+//! before I spend twenty minutes streaming it": that crate builds on every
+//! platform and `runtime` does not (its `model_io` dependency is macOS-only),
+//! so a `runtime` dependency would have made a portable question answerable
+//! only on a Mac. The alternative was a second copy of
+//! [`kv_bytes_for_context`] in a crate that could not see this one, which is
+//! precisely the rot AGENTS.md Gotcha 38 is about -- and the formula's own
+//! doc explains why a second copy would get the ring wrong. `runtime`
+//! re-exports every name here, so `runtime::MaxContext` still resolves.
 
 use std::path::Path;
 
-use model_io::ArchConfig;
+use crate::ArchConfig;
 
 /// Bytes per FP16 KV element. `KvCacheManager` stores K and V as FP16.
 const FP16_SIZE: u64 = 2;
@@ -38,7 +49,7 @@ const MAX_PREFILL_CHUNK_TOKENS: u64 = 128;
 /// the slot cache was the only thing being sized and KV was a fixed cost.
 /// It is now the other sized term, so the two share the reserve rather than
 /// each subtracting one.
-pub const CONTEXT_RESERVE_BYTES: u64 = crate::HEADROOM_RESERVE_BYTES;
+pub const CONTEXT_RESERVE_BYTES: u64 = crate::expert_cache_policy::HEADROOM_RESERVE_BYTES;
 
 /// The share of the remaining pool that `Auto` will spend on KV.
 ///
@@ -51,10 +62,10 @@ pub const CONTEXT_RESERVE_BYTES: u64 = crate::HEADROOM_RESERVE_BYTES;
 /// work at all.
 pub const CONTEXT_BUDGET_FRACTION: f64 = 0.25;
 
-/// Context sizing, as it reaches [`crate::RealForwardRunner`].
+/// Context sizing, as it reaches `runtime::RealForwardRunner`.
 ///
 /// The mirror of `turbospark_invocation::MaxContext`, spelled again here
-/// for the reason [`crate::ExpertCacheSlots`] and [`crate::PowerProfile`]
+/// for the reason [`crate::ExpertCacheSlots`] and `runtime::PowerProfile`
 /// are: this crate does not depend on the pure argument parser, and
 /// `crates/cli` maps between the two.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -225,7 +236,7 @@ pub fn resolve_max_context(
     committed: u64,
 ) -> Result<ContextPlan, ContextTooLarge> {
     // **`physical == 0` means the probe is unavailable, not that the machine
-    // has no memory**, which is what [`crate::physical_memory`] answers off
+    // has no memory**, which is what `runtime::physical_memory` answers off
     // macOS. Reading it as an empty budget would refuse every explicit
     // window and resolve every `Auto` to a context of ZERO -- a plan that
     // admits no prompt at all, arrived at with no information. An unknown
@@ -307,9 +318,9 @@ pub fn committed_bytes(model_dir: &Path) -> u64 {
     // `expert_cache_policy` sums them too: a mixed sub-4-bit install has one
     // layer 1.6x its siblings, and the model-wide maximum over-states a
     // slot's cost by 35% (`model-io` Gotcha 2).
-    let slot_cache = model_io::load_packed_experts_layout(
+    let slot_cache = crate::load_packed_experts_layout(
         model_dir,
-        model_io::PACKED_EXPERTS_LAYOUT_DEFAULT_MAX_BYTES,
+        crate::PACKED_EXPERTS_LAYOUT_DEFAULT_MAX_BYTES,
     )
     .map(|layout| {
         layout
@@ -331,7 +342,7 @@ fn gib(bytes: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use model_io::{known_architecture, ModelFamily};
+    use crate::{known_architecture, ModelFamily};
 
     const GIB: u64 = 1024 * 1024 * 1024;
     const DEFAULT: u32 = 4096;

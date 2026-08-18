@@ -5,8 +5,8 @@ use std::path::Path;
 
 use model_io::ArchConfig;
 
-use crate::expert_cache_policy::ExpertCacheSlots;
 use crate::real_forward_types::RealForwardError;
+use model_io::ExpertCacheSlots;
 
 pub(crate) fn validate_arch_config(expecting: &ArchConfig) -> Result<(), RealForwardError> {
     let max_kind = expecting
