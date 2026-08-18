@@ -182,6 +182,22 @@ cargo run --release -p turbospark-cli --bin turbospark-check -- \
 cargo run -p turbospark-cli --bin turbospark-model -- list
 cargo run -p turbospark-cli --bin turbospark-model -- info gemma4
 
+# What should THIS machine run? Ranks the curated table by whether it fits
+# here and by how much is known about it. Offline by default: a row with a
+# frozen `measured` block in models.json gets that peak, a row without one
+# reports `unknown` rather than a guess. Two size columns, and they answer
+# different questions -- ALLOCS is what `open()` allocates (slot cache + KV,
+# what phys_footprint charges for) and ON DISK is the whole install, which
+# STREAMS on an MoE and need not fit. See Gotcha 58.
+cargo run -p turbospark-cli --bin turbospark-model -- recommend --context 8192
+
+# `--probe` reads every row's header (~60 s, no weights), which is what turns
+# the unknowns into arithmetic. `--discover` adds the most-downloaded GGUF
+# repositories on Hugging Face, each gated through the SAME probe, so a
+# discovered row is refused in the same words `probe` would use.
+cargo run --release -p turbospark-cli --bin turbospark-model -- recommend --probe
+cargo run --release -p turbospark-cli --bin turbospark-model -- recommend --discover 20
+
 # The header-only probe: what this engine makes of an arbitrary HF repo,
 # reading KB rather than GB. Reports the architecture verdict (with the
 # registry's own `needs` clause for a recognized-but-unported one), the block
@@ -823,7 +839,15 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
    E0432 on `metal`/`half` and E0433 on `crate::bytes`/`crate::context`).
    Neither is reachable from any command in the verification policy, which is
    why a cross-target `cargo check` now sits beside them. A platform claim
-   nobody runs is a comment, not a gate. Dispatched, parity-tested Metal pipelines
+   nobody runs is a comment, not a gate.
+   **AND THE DEPENDENCY TABLE IS WHERE PORTABILITY IS REALLY DECIDED**, not the
+   `cfg`s in `src/`: `crates/runtime` declares `model_io`, `gpu`, `compute` and
+   `streaming` under `[target.'cfg(target_os = "macos")'.dependencies]`, so it
+   is macOS-only however portable its source reads, and any crate taking a
+   dependency on it inherits that. Read the target's `[target.'cfg(...)']`
+   block before adding a cross-crate edge -- this is what forced the two
+   sizing policies down into `model-io` rather than letting `catalog` reach up.
+   Dispatched, parity-tested Metal pipelines
    (`rmsnorm_no_scale`, `rms_norm_bf16w`, the port-local
    `rmsnorm_bf16w_centered` (the `x * (1 + w)` form `muse_glimmer`'s four
    per-layer norms take; a SEPARATE kernel rather than a function constant
@@ -2387,6 +2411,39 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
     announce itself -- so establish that the component works AT ALL before
     A/Bing its conventions.
 
+58. **A NUMBER MEASURED IN ONE FILE AND ASSERTED IN ANOTHER IS A COUNT THAT
+    ROTS, AND THE TIE HAS TO RUN OFFLINE.** `turbospark-model recommend`
+    quotes what the memory oracles measured, so those numbers now live in
+    `models.json` as `measured` blocks -- OBSERVATIONS -- while the oracles
+    keep their ceilings and floors, which are ASSERTIONS with a per-row margin
+    and a paragraph justifying it. Two files, one run, and nothing structural
+    keeping them in step; that is exactly the shape commit `186d295`'s audit
+    went looking for. `oracle_common::assert_agrees_with_catalog` is the tie,
+    and the load-bearing part is that it is NOT `#[ignore]`d and needs no
+    install: a contradiction fails on the edit rather than the next time
+    somebody happens to have a 13 GB install on disk. It checks only rows
+    whose `source` says "this port" -- requiring a catalog row for the Swift
+    rows on chips nothing here has ever run would mean inventing measurements.
+
+    **THE TRAP UNDERNEATH IT IS THAT A FROZEN PEAK IS A PEAK AT ONE CONTEXT
+    AND ONE SLOT COUNT.** Both of its terms move with those: KV is a pure
+    function of the window (Gotcha 40) and the slot cache is
+    `slots x layers x expert_stride` (Gotcha 36). Gemma 4 reads 2,175 MiB at
+    4,096/16 and 3,654 at 4,096/32, and `Auto` resolves 32 on this machine
+    while the protocol pins 16 -- so an estimate at `Auto` compared against a
+    frozen row reads as a 55% overestimate and is really two configurations
+    being compared. Any function that computes a footprint therefore takes the
+    slot policy as a PARAMETER, and any caller comparing against a measurement
+    pins what the measurement pinned.
+
+    **And a shape nobody has read resolves 16 slots BY IGNORANCE.** With no
+    `ArchConfig` there is no expert stride, `Auto` divides by nothing and
+    returns `DEFAULT_CACHE_SLOTS`, which is the same 16 the protocol pins --
+    so the two look like agreement and a measured row looks applicable when
+    nothing has established that it is. Reporting a measurement AT ITS OWN
+    STATED CONFIGURATION is honest; reporting it as this machine's answer is
+    not, and the difference is invisible without the check.
+
 ## Per-Crate Documentation
 
 When working on code inside a specific crate, refer to that crate's `CLAUDE.md` file for crate-specific architecture, key modules, dev commands, and localized gotchas:
@@ -2420,6 +2477,7 @@ Workspace directory structure and crate layout:
 +-- CLAUDE.local.md    # local developer notes (gitignored)
 +-- DEVIATIONS.md      # scaffolded vs fully wired feature inventory
 +-- LICENSE            # MIT license
++-- NOTICE             # third-party material: what was vendored, from where
 +-- Makefile           # build, test, fmt, clippy wrapper targets
 +-- README.md          # repository overview and quickstart
 +-- ROADMAP.md         # forward roadmap + descope record (gitignored)
@@ -2510,7 +2568,7 @@ two hours of bisection instead.
 - `crates/ffi`: the C ABI a native GUI drives the engine through (`staticlib` plus a hand-written `include/turbospark.h`), and the third crate carrying `unsafe`. An opaque session handle over a `Mutex<RealForwardRunner>`, a streaming event callback, JSON options and telemetry, and the catalog/probe/install surface. **The cancel flag lives OUTSIDE the session mutex**, which is the whole design: a GUI generates on a background thread and presses Stop on the main one, so a flag behind the lock would make Stop wait for the generation it is stopping. `swift/TurboSpark` wraps it and `swift/TurboSparkDemo` is a SwiftUI app proving the stack end to end. Details in [`crates/ffi/CLAUDE.md`](crates/ffi/CLAUDE.md).
 - `crates/gpu`: Metal device/pipeline-cache context (`MetalContext`, `PassEncoder`, `CommittedPass`) and per-kernel dispatch. macOS-only; compiles to nothing elsewhere. Dispatched, parity-tested kernels (`rmsnorm_no_scale`, `rms_norm_bf16w`, both `_perhead` norm variants, `rope_proportional_neox`, `rope_neox_subdim`, `logit_softcap_softmax`, `dequant_int4_gemv_simd`, `dequant_int8_gemv_simd` with resident variants, the port-local GGUF set (`dequant_q8_0_gemv_simd`, `dequant_q4_k_gemv_simd`, `dequant_q6_k_gemv_simd`, `embed_lookup_q8_0`, `embed_lookup_q4_k`, and `moe_gguf/` decode pairs -- ROADMAP Phase G), the port-local sub-4-bit set (`dequant_int1_gemv_simd` and `dequant_int2_gemv_simd`, each with a resident variant, the `+/-1` `dequant_int1_gemv_symmetric_simd`, and `embed_lookup_int1` / `embed_lookup_int2` -- ROADMAP's 1-bit and ternary entries; the 2-bit set is TWO kernels rather than three, because a ternary fast path would reassociate the sum exactly as the 1-bit one does and that one is already reachable from nothing; the general GEMV's resident form and the lookup are dispatched by the `qwen3_5` flow, the `+/-1` one is parity-tested and reachable from no decode path, deliberately), `router_gemv_gemma4_r4`, two-pass split-KV `attention_decode` (multi-chunk, split up to 16 ways by `chunks_for`), `moe_decode` decode pair, `gdn.metal`'s eight gated-DeltaNet kernels, and `utility` elementwise kernels incl. Qwen's three gating kernels) are compiled from MSL source at runtime, vendored from Swift except where marked port-local. `power_state.rs` wraps `NSProcessInfo`'s `thermalState` and `isLowPowerModeEnabled` for ROADMAP Phase P2 (here rather than in `runtime`, which forbids unsafe; nothing GPU about them beyond the `metal::objc` reach). `KvCacheManager` allocates and manages real per-layer Metal KV buffers used by `RealForwardRunner`. `ResidentGpuWeights` wraps resident mmap in zero-copy MTLBuffer. `GdnStateManager` is the Qwen flow's recurrent state; `Dsv4StateManager` allocates real per-layer Metal buffers (unwired kernels); `PrefillChunkScratchLayout`/`PrefillChunkScratchBuffers` size scratch buffers (undispatched tile kernel). The `sample` kernel and fused lm_head are not yet vendored or dispatched. Details in [`crates/gpu/CLAUDE.md`](crates/gpu/CLAUDE.md).
 - `crates/runtime`: power policy for the decode loop (`power.rs`: `PowerProfile`, the `stepped_cap` thermal ladder, `RateControl`, and cfg-paired OS probes; `pacing.rs`: the pure-deadline `Pacer` -- ROADMAP Phase P2), and the raw-completion prefill+decode loop (`run_raw_completion`, `run_raw_completion_chunked`), wiring a `LogitProducer`, the tokenizer's streaming detokenizer and stop matcher, and `selection::select` into one token generation loop. `ScriptedLogitProducer` is what unit tests and `crates/server`'s `ScriptedChatModel` drive the loop with (see Gotcha 10). `RealForwardRunner` (macOS/GPU only, `src/real_forward.rs` plus one `src/families/<family>/` module per flow, each `mod.rs` + `attn.rs` + `moe.rs` + `state.rs`) is a real `LogitProducer`: a genuine transformer forward pass through real GPU kernels (including real GPU decode attention) and real quantized weights, supporting dense and MoE FFN layers. Dense bridges gated FFN on CPU via `turbospark_compute::run_ffn`; MoE runs real GPU router GEMV plus real GPU GEMVs for each selected expert, host-side top-k selection, and CPU-bridged gated activation. Supports synthetic short names, verbatim real Gemma 4 checkpoint names (learned-weight flow), the Qwen hybrid linear/full-attention flow (`src/families/qwen/`), which serves BOTH `qwen36` and -- since ROADMAP's 1-bit entry -- the DENSE, one-bit `qwen3_5`, forking at the FFN alone (`dense.rs`, no new kernel), one plain-GQA flow (`src/families/llama/`) serving BOTH the `llama` and `qwen3moe` families AND both halves of `llama` itself: Mixtral's routed experts and, since ROADMAP M4, the dense gated FFN of Mistral and Llama 2/3.x (`dense.rs`, no new kernel). `llama` and `qwen3moe` differ only in per-head q/k norms and an RMS epsilon. A FIFTH flow (`src/families/gptoss/`, ROADMAP M5) serves `gpt-oss`: the same plain GQA plus a bias on all four projections, YaRN rope off a precomputed frequency table, attention sinks, an alternating window on the EVEN layers, and MXFP4 routed experts carrying a clamped SwiGLU and per-expert biases. See Gotcha 12. Details in [`crates/runtime/CLAUDE.md`](crates/runtime/CLAUDE.md).
-- `crates/catalog`: the model CATALOG (`models.json`, fourteen curated rows, each naming a repository and revision that were streamed and run on real hardware, with the gate targets that assert it), the header-only Hugging Face PROBE (`probe/`: architecture through `repack`'s registry, block types against `model_io::EXECUTABLE_GGUF_TYPES` or the affine `(bits, group)` conjunction, expert-slot arithmetic, tokenizer sidecars -- KB and seconds, never a download), the INSTALL DRIVER (`install.rs`: the shape every install-writing `crates/repack/tests/*_network.rs` file repeats, written once and with the sidecars verified BEFORE any weight byte moves), and the `~/.turbospark` STORE (`store.rs`, `installed.json`, alias-to-path resolution in which an existing directory always wins). Builds on every platform; nothing here decodes. Details in [`crates/catalog/CLAUDE.md`](crates/catalog/CLAUDE.md) and `docs/MODELS.md`.
+- `crates/catalog`: the model CATALOG (`models.json`, fourteen curated rows, each naming a repository and revision that were streamed and run on real hardware, with the gate targets that assert it, and for the eight that have been through an oracle a `measured` block carrying the peak and decode range that oracle was calibrated from), the RECOMMENDATION engine (`recommend/`: does this fit THIS machine, at what context, ranked by evidence -- reusing `model_io`'s two sizing policies rather than restating them, and gating discovered Hugging Face repositories through the probe; shape adapted from shoehorn, see `NOTICE`), the header-only Hugging Face PROBE (`probe/`: architecture through `repack`'s registry, block types against `model_io::EXECUTABLE_GGUF_TYPES` or the affine `(bits, group)` conjunction, expert-slot arithmetic, tokenizer sidecars -- KB and seconds, never a download), the INSTALL DRIVER (`install.rs`: the shape every install-writing `crates/repack/tests/*_network.rs` file repeats, written once and with the sidecars verified BEFORE any weight byte moves), and the `~/.turbospark` STORE (`store.rs`, `installed.json`, alias-to-path resolution in which an existing directory always wins). Builds on every platform; nothing here decodes. Details in [`crates/catalog/CLAUDE.md`](crates/catalog/CLAUDE.md) and `docs/MODELS.md`.
 - `crates/cli`: the `turbospark-check` binary process entry point (see Gotcha 7). Parses `argv`, applies `invocation`'s exit-status and stream-routing decisions, prints the resolved request for a validated invocation, and (macOS, `src/generate.rs`) attempts real generation against `--model` via `RealForwardRunner` (see Gotcha 12) in all three modes: `--prompt` (raw text), `--messages-file` (rendered through chat template), and `--chat` (interactive REPL in `src/chat.rs`, trimming turns with `turbospark-window-fit`). `--model` accepts a catalog ALIAS as well as a path, resolved in `generate.rs` rather than in `invocation` (which is pure and keeps the value an opaque string). A SECOND binary, `turbospark-model` (`src/bin/model.rs` plus `src/bin/model_cmd/`), is the catalog and download surface: `list`, `info`, `probe`, `pull`, `path`, `rm`, with its own small subcommand parser because `invocation` is flat, pure and requires `--model`. Details in [`crates/cli/CLAUDE.md`](crates/cli/CLAUDE.md).
 - `crates/repack`: safetensors header parsing (pure, tested against synthetic fixtures), `RangeSource` trait for ranged reads (`ranged_download/`, HTTP-backed for real installs, in-memory for tests) with two-step header-fetch plan, per-row int4/int8 quantization repack (reusing `turbospark_compute`'s quantizer), byte-exact `.gturbo` directory assembly (`write_gturbo_install`), real named resident-tensor index writer (`write_gturbo_install_with_resident_index`), synthetic install builders (`synthetic_model/`, `synthetic_real.rs`, `synthetic_qwen/` -- with dense taking the affine WIDTH as a parameter, so one dense fixture serves the 1-bit and 2-bit checkpoints), Hugging Face Llama checkpoint repacker (`hf_checkpoint.rs`), Gemma 4 mlx-community checkpoint repacker & streamed pipeline (`gemma4_checkpoint/`, family-parameterized so Qwen 3.6 goes through the same walk), Qwen 3.6 `config.json` parser (`qwen36_config.rs`, the one family-specific piece of that walk), install verifier (`install_verifier.rs`), manifest peeker (`manifest_peek.rs`), and the GGUF intake (`gguf_header/` parser, `gguf_names/` name mapping, `gguf_config/` metadata-to-`ArchConfig`, `gguf_checkpoint/` repack walk (expert bytes verbatim, resident F32 core transcoded to BF16/INT8, Qwen's V-head source convention undone at `v_head_axis`), `synthetic_gguf/` fixture writer -- ROADMAP Phase G; Q8_0, Q4_K and Q6_K installs are executable and Q4_0 is refused, see Gotchas 29 and 33). Details in [`crates/repack/CLAUDE.md`](crates/repack/CLAUDE.md).
 - `crates/server`: HTTP server on loopback (`turbospark-server` binary, axum framework) serving OpenAI `/v1/chat/completions`, Anthropic `/v1/messages`, and `/v1/models`, both generation endpoints supporting full-response (non-streaming) and SSE-streaming responses. The wire types come from `anyllm_translate` (crates.io, default features: pure and IO-free), which also translates an Anthropic request into the OpenAI request the existing path understands and translates the result back, so Anthropic-native clients need no proxy. Tool calling is wired on both endpoints (request `tools` render through the checkpoint's `chat_template.jinja`, generated calls come back through `StructuredAssistantDecoder`); an incoming request's images and `thinking` CONFIG are dropped, some of it reported on an `x-anyllm-degradation` header, but a gpt-oss RESPONSE now carries its reasoning out as OpenAI `reasoning_content` and as an Anthropic `thinking` block, and its Harmony tool calls out as `tool_calls` / `tool_use` with the matching finish reason. Two backends behind the `ChatModel` trait: `RealChatModel` (macOS, `--model <install-dir>`, one mutex-serialized `RealForwardRunner` per process) and `ScriptedChatModel` (portable, canned completions, what the integration tests drive). Details in [`crates/server/CLAUDE.md`](crates/server/CLAUDE.md).
