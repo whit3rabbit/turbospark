@@ -1460,8 +1460,14 @@ live network).
   Nominal. Its governor also found 26% of energy for 1.3% of throughput
   involuntarily, which makes it the best candidate in the repo for Phase P2's
   `ARMS=performance,efficiency` A/B; that is owed.
-- **`reasoning_strength` is not exposed.** The template reads it and defaults
-  to `high`; nothing in this port passes it, so every prompt reasons at full
-  strength. Wiring it is a `render_generic_chat_template` context key and a
-  CLI flag, and it would change every frozen digest above.
+- **`reasoning_strength` IS exposed now** (`--reasoning`, and
+  `reasoning_effort` on either server endpoint). The render sets both that
+  spelling and `reasoning_effort`, since a template reads the one it knows;
+  `tests/installed_template.rs` confirms against the real install that this
+  family resolves `ReasoningSupport::Level` and that two levels render
+  differently. The frozen digests above are UNMOVED: the default is
+  `ReasoningEffort::Off`, which renders the bytes every earlier release did.
+  What is still missing for this family is the presentation half -- its
+  `to=self` reasoning has no `StructuredAssistantDecoder` arm, so a level
+  asked for here still prints its reasoning as ordinary content.
 

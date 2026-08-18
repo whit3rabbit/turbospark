@@ -18,7 +18,9 @@
 
 use std::path::{Path, PathBuf};
 
-use turbospark_tokenizer::{ChatDialect, Message, MfTokenizer, Role};
+use turbospark_tokenizer::{
+    ChatDialect, Message, MfTokenizer, ReasoningEffort, ReasoningSupport, Role,
+};
 
 /// THE EXACT BYTES the frozen digests are taken over, included from
 /// `crates/bench`'s protocol rather than retyped, because retyping it is
@@ -126,6 +128,98 @@ const GATED_INSTALLS: &[GatedInstall] = &[
         trims: true,
     },
 ];
+
+/// Every real install this machine can see, for the reasoning half below.
+/// A superset of `GATED_INSTALLS`: that table is about the trim and needs a
+/// `trims` answer per family, this one only needs the path.
+const REASONING_INSTALLS: &[&str] = &[
+    "TURBOSPARK_GEMMA4_INSTALL_DIR",
+    "TURBOSPARK_QWEN36_INSTALL_DIR",
+    "TURBOSPARK_QWEN3MOE_INSTALL_DIR",
+    "TURBOSPARK_QWEN38_INSTALL_DIR",
+    "TURBOSPARK_TERNARY_INSTALL_DIR",
+    "TURBOSPARK_MUSEGLIMMER_INSTALL_DIR",
+    "TURBOSPARK_GPTOSS_INSTALL_DIR",
+    "TURBOSPARK_GEMMA4_IQ_INSTALL_DIR",
+];
+
+/// THE DIGEST-SAFETY PROOF FOR `--reasoning`, and the coverage the fixture
+/// half structurally cannot give.
+///
+/// Two claims, per real install, and each is worth a different thing.
+///
+/// **`Off` renders the frozen bytes.** Every quality-gate digest in
+/// `crates/bench` was taken through `apply_chat_template`, which now
+/// delegates; if the delegation moved a byte, every row moves. Asserted
+/// against the same protocol prose the digests were taken over, not a tidy
+/// string -- the mistake that cost a red gate the last time this file was
+/// written (see `PROTOCOL_TURN`).
+///
+/// **A level does something, or says it cannot.** This is the half no
+/// fixture reaches: `muse_glimmer` spells the key `reasoning_strength`
+/// where Qwen 3.8 and Harmony spell it `reasoning_effort`, and the render
+/// path sets BOTH precisely so one table does not have to know which family
+/// is which. On a `Level` install the render MUST move; on `ToggleOnly` it
+/// must move for the toggle and not for the level; there is no third
+/// outcome that is not a silent no-op.
+#[test]
+#[ignore = "needs a real install; set the TURBOSPARK_*_INSTALL_DIR vars"]
+fn a_reasoning_level_reaches_every_installed_template_that_can_express_one() {
+    let mut checked = 0usize;
+    for var in REASONING_INSTALLS {
+        let Ok(dir) = std::env::var(var) else {
+            println!("{var}: unset, skipping");
+            continue;
+        };
+        let tok = MfTokenizer::load_from_dir(Path::new(&dir)).expect("install tokenizer loads");
+        let turn = [Message::new(Role::User, PROTOCOL_TURN)];
+
+        let off = tok
+            .apply_chat_template_with_reasoning(&turn, ReasoningEffort::Off)
+            .expect("off must render on every install");
+        assert_eq!(
+            off,
+            tok.apply_chat_template(&turn).unwrap(),
+            "{var}: the default render moved, which moves this family's frozen digest"
+        );
+
+        let support = tok.reasoning_support();
+        // `high` is rejected by Qwen 3.8 and accepted by Harmony and Muse
+        // Glimmer; `low` is the one spelling all three take, so it is what
+        // a cross-family probe has to use.
+        let low = tok.apply_chat_template_with_reasoning(&turn, ReasoningEffort::Low);
+        let medium = tok.apply_chat_template_with_reasoning(&turn, ReasoningEffort::Medium);
+
+        match support {
+            ReasoningSupport::Level => {
+                let low = low.expect("a Level install must render a level");
+                let medium = medium.expect("a Level install must render a level");
+                assert_ne!(off, low, "{var}: --reasoning low changed nothing");
+                assert_ne!(
+                    low, medium,
+                    "{var}: two DIFFERENT levels rendered the same bytes, so the level \
+                     is being dropped even though the template names a key for it"
+                );
+            }
+            ReasoningSupport::ToggleOnly => {
+                let low = low.expect("a ToggleOnly install still renders the toggle");
+                let medium = medium.expect("a ToggleOnly install still renders the toggle");
+                assert_ne!(off, low, "{var}: the thinking toggle changed nothing");
+                assert_eq!(
+                    low, medium,
+                    "{var}: reported ToggleOnly but the level moved the render, so the \
+                     support probe is reading the template wrong"
+                );
+            }
+            // A real install always ships a template, so this is a
+            // malformed one rather than a family shape.
+            ReasoningSupport::None => panic!("{var}: a real install ships a chat template"),
+        }
+        println!("{var}: dialect {:?}, support {support:?}", tok.dialect);
+        checked += 1;
+    }
+    println!("checked {checked} install(s)");
+}
 
 #[test]
 #[ignore = "needs a real install; set the TURBOSPARK_*_INSTALL_DIR vars"]

@@ -6,6 +6,7 @@
 use foundation::runtime_config::{ALLOWED_CACHE_SLOTS, ALLOWED_CHUNK_SIZES};
 use turbospark_invocation::{
     parse, ExpertCacheSlots, InvocationRequest, Mode, ParseOutcome, PowerProfile, PrefillChunk,
+    ReasoningEffort,
 };
 
 fn tok(items: &[&str]) -> Vec<String> {
@@ -151,6 +152,50 @@ fn every_documented_slot_count_is_accepted_and_auto_is_a_value() {
         "auto",
     ])));
     assert_eq!(req.expert_cache_slots, ExpertCacheSlots::Auto);
+}
+
+/// Every documented level round-trips, and the default is the one that
+/// changes no rendered byte.
+///
+/// The UNION is accepted here on purpose, `high` and `xhigh` both, even
+/// though no single checkpoint takes both: this crate may not look at the
+/// install, and the template that can validate says so by name. A typo is
+/// still rejected, which is the line between "not this crate's question" and
+/// "no question at all".
+#[test]
+fn reasoning_levels_translate_to_their_validated_values() {
+    let req = expect_success(parse(&tok(&["--model", "m", "--chat"])));
+    assert_eq!(
+        req.reasoning,
+        ReasoningEffort::Off,
+        "the default must be the level that renders what every earlier release rendered"
+    );
+
+    for spelling in ["off", "low", "medium", "high", "xhigh"] {
+        let req = expect_success(parse(&tok(&[
+            "--model",
+            "m",
+            "--chat",
+            "--reasoning",
+            spelling,
+        ])));
+        assert_eq!(
+            req.reasoning.as_str(),
+            spelling,
+            "reasoning spelling must round-trip"
+        );
+    }
+
+    assert!(matches!(
+        parse(&tok(&["--model", "m", "--chat", "--reasoning", "maximum"])),
+        ParseOutcome::Failure(_)
+    ));
+    // `true` reads like a plausible spelling for a knob that used to be a
+    // boolean everywhere upstream, and is not one here.
+    assert!(matches!(
+        parse(&tok(&["--model", "m", "--chat", "--reasoning", "true"])),
+        ParseOutcome::Failure(_)
+    ));
 }
 
 #[test]

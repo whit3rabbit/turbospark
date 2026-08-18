@@ -9,7 +9,9 @@ use anyllm_translate::openai::{
 };
 use runtime::GenerationConfig;
 use selection::ShapingConfig;
-use tokenizer::{FunctionDefinition, HistoricalToolCall, JsonValue, Message, Role};
+use tokenizer::{
+    FunctionDefinition, HistoricalToolCall, JsonValue, Message, ReasoningEffort, Role,
+};
 
 use crate::model::ChatModel;
 
@@ -170,6 +172,31 @@ pub(crate) fn tool_names(request: &ChatCompletionRequest) -> HashSet<String> {
     }
 }
 
+/// The reasoning level this request asked for.
+///
+/// **`reasoning_effort` HAS NO FIELD ON THE OpenAI REQUEST TYPE; it lands in
+/// the `extra` flatten map**, the same place `seed` does (Gotcha 5), because
+/// `anyllm_translate` gives explicit fields only to what needs translating.
+/// So it arrives as a string here and a misspelling has to be REFUSED rather
+/// than ignored: a request asking to think harder that quietly does not is a
+/// wrong answer no client can see.
+///
+/// Per-REQUEST, unlike the rate control resolved once per process beside it
+/// (Gotcha 10), and the contrast is the point: a power setting is a property
+/// of the machine, while how hard to think is a property of the caller's
+/// task. It is also what OpenAI's own API does with this field.
+pub(crate) fn reasoning_effort(request: &ChatCompletionRequest) -> Result<ReasoningEffort, String> {
+    let Some(value) = request.extra.get("reasoning_effort") else {
+        return Ok(ReasoningEffort::Off);
+    };
+    let Some(text) = value.as_str() else {
+        return Err(format!("reasoning_effort must be a string, got {value}"));
+    };
+    ReasoningEffort::parse(text).ok_or_else(|| {
+        format!("unknown reasoning_effort {text:?}: expected off, low, medium, high or xhigh")
+    })
+}
+
 /// Renders the chat template, encodes it, and resolves the shaping config.
 pub(crate) fn plan(
     model: &AppState,
@@ -202,10 +229,11 @@ pub(crate) fn plan(
     // renderer that can express them (it already speaks OpenAI's shape:
     // `tool_calls` on an assistant turn, a forward scan of `tool` turns).
     // Without them, the text-only path stays exactly as it was.
+    let reasoning = reasoning_effort(request)?;
     let prompt_ids = if tools.is_empty() {
         let prompt = model
             .tokenizer()
-            .apply_chat_template(&messages)
+            .apply_chat_template_with_reasoning(&messages, reasoning)
             .map_err(|e| e.to_string())?;
         // `add_bos` is false on purpose: the Gemma template emits the literal
         // `<bos>` mark itself, so encoding with a BOS prefix would double it
@@ -214,7 +242,7 @@ pub(crate) fn plan(
     } else {
         model
             .tokenizer()
-            .encode_generic_tool_chat(&messages, &tools, false)
+            .encode_generic_tool_chat(&messages, &tools, reasoning)
             .map_err(|e| e.to_string())?
     };
 

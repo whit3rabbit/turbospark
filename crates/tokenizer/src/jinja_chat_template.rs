@@ -21,6 +21,7 @@ use serde_json::{json, Value as JsonValue};
 use crate::chat_template::{FunctionDefinition, HistoricalToolCall, Message};
 use crate::dialect::MfTokenizer;
 use crate::error::TokenizerError;
+use crate::reasoning::ReasoningEffort;
 
 fn raise_exception(message: String) -> Result<String, minijinja::Error> {
     Err(minijinja::Error::new(ErrorKind::InvalidOperation, message))
@@ -201,12 +202,18 @@ fn tool_to_json(tool: &FunctionDefinition) -> JsonValue {
 /// it does upstream), `add_generation_prompt`, `enable_thinking`,
 /// `bos_token`, `eos_token`, and `add_vision_id` (always `false` — this
 /// port has no vision input path).
+///
+/// `reasoning` adds the two effort keys ON TOP of that shape, and only when
+/// a level is asked for: at [`ReasoningEffort::Off`] the context is exactly
+/// what it was before this parameter existed, which is what keeps every
+/// frozen digest in `crates/bench` where it is. See `reasoning.rs` for why
+/// a level also flips `enable_thinking` and why both spellings are set.
 pub fn render_generic_chat_template(
     tokenizer: &MfTokenizer,
     messages: &[Message],
     tools: &[FunctionDefinition],
     add_generation_prompt: bool,
-    enable_thinking: bool,
+    reasoning: ReasoningEffort,
 ) -> Result<String, TokenizerError> {
     let source = tokenizer.chat_template_source.as_deref().ok_or_else(|| {
         TokenizerError::InvalidChatTemplate(
@@ -243,7 +250,18 @@ pub fn render_generic_chat_template(
         "add_generation_prompt".to_string(),
         json!(add_generation_prompt),
     );
-    context.insert("enable_thinking".to_string(), json!(enable_thinking));
+    context.insert(
+        crate::reasoning::THINKING_KEY.to_string(),
+        json!(reasoning.enable_thinking()),
+    );
+    // ABSENT rather than null when no level is asked for: a template resolves
+    // its key with `|default('xhigh')`, and a present-but-null key defeats
+    // that default instead of taking it.
+    if let Some(level) = reasoning.level() {
+        for key in crate::reasoning::EFFORT_KEYS {
+            context.insert(key.to_string(), json!(level));
+        }
+    }
     context.insert("add_vision_id".to_string(), json!(false));
     context.insert(
         "bos_token".to_string(),
@@ -273,9 +291,9 @@ impl MfTokenizer {
         &self,
         messages: &[Message],
         tools: &[FunctionDefinition],
-        enable_thinking: bool,
+        reasoning: ReasoningEffort,
     ) -> Result<Vec<i32>, TokenizerError> {
-        let rendered = render_generic_chat_template(self, messages, tools, true, enable_thinking)?;
+        let rendered = render_generic_chat_template(self, messages, tools, true, reasoning)?;
         Ok(self.encode(&rendered, false))
     }
 }

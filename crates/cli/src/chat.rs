@@ -8,11 +8,11 @@
 use std::io::BufRead;
 
 use invocation::InvocationRequest;
-use tokenizer::{Message, MfTokenizer, Role};
+use tokenizer::{Message, MfTokenizer, ReasoningEffort, Role};
 
 use crate::generate::{
-    clamp_max_new, open_session, print_footer, print_phases, render_prompt, role_name, stream_turn,
-    Session,
+    clamp_max_new, map_reasoning_effort, open_session, print_footer, print_phases, render_prompt,
+    role_name, stream_turn, Session,
 };
 
 pub fn run(request: &InvocationRequest) {
@@ -101,7 +101,11 @@ fn take_turn(
     has_leading_instruction: bool,
     history: &mut Vec<Message>,
 ) -> Result<(), String> {
-    let measure = |messages: &[Message]| measure_prompt(&session.tokenizer, messages);
+    // The SAME reasoning level the turn will actually render with. A level
+    // adds a system-preamble sentence, so measuring without it under-counts
+    // the prompt this window fit is deciding about.
+    let reasoning = map_reasoning_effort(request.reasoning);
+    let measure = |messages: &[Message]| measure_prompt(&session.tokenizer, messages, reasoning);
     let fitted = window_fit::fit_conversation_window(
         turn,
         has_leading_instruction,
@@ -135,7 +139,7 @@ fn take_turn(
     // which some dialects (Mistral's `[INST]`) render as a malformed prompt.
     let fitted_history = fitted.retained_turns().to_vec();
 
-    let prompt_ids = render_prompt(&session.tokenizer, &fitted_history)?;
+    let prompt_ids = render_prompt(&session.tokenizer, &fitted_history, reasoning)?;
     let max_new = clamp_max_new(request, prompt_ids.len())?;
     let (reply, result) =
         stream_turn(session, request, &prompt_ids, max_new).map_err(|e| format!("error: {e}"))?;
@@ -151,8 +155,12 @@ fn take_turn(
 /// renders to, generation prompt included. A render failure measures as
 /// "does not fit", which drops the oldest turn and re-measures rather than
 /// aborting the REPL.
-fn measure_prompt(tokenizer: &MfTokenizer, messages: &[Message]) -> u64 {
-    match render_prompt(tokenizer, messages) {
+fn measure_prompt(
+    tokenizer: &MfTokenizer,
+    messages: &[Message],
+    reasoning: ReasoningEffort,
+) -> u64 {
+    match render_prompt(tokenizer, messages, reasoning) {
         Ok(ids) => ids.len() as u64,
         Err(_) => u64::MAX,
     }

@@ -7,6 +7,7 @@
 use foundation::runtime_config::DEFAULT_CHUNK_SIZE;
 use turbospark_invocation::{
     parse, ExpertCacheSlots, Mode, ParseFailure, ParseOutcome, PrefillChunk, ReadAheadMode,
+    ReasoningEffort,
 };
 
 fn tok(items: &[&str]) -> Vec<String> {
@@ -44,6 +45,11 @@ fn documented_defaults_are_applied() {
     // asked, and this crate performs no I/O.
     assert_eq!(req.power_profile, None);
     assert_eq!(req.max_tokens_per_sec, None);
+    // Off rather than a level, and this one is not a "resolved downstream"
+    // default like the two above: it is the value that renders the exact
+    // bytes every release before the flag rendered, which is what keeps
+    // `crates/bench`'s frozen digests where they are.
+    assert_eq!(req.reasoning, ReasoningEffort::Off);
 }
 
 #[test]

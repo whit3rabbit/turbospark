@@ -21,7 +21,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use tokenizer::{Message, MfTokenizer, Role};
+use tokenizer::{Message, MfTokenizer, ReasoningEffort, Role};
 use turbospark_server::{build_router, ScriptedChatModel};
 
 const REASONING: &str = "user asks about the sky";
@@ -243,7 +243,11 @@ async fn spawn_tool_server() -> String {
         parameters: tokenizer::JsonValue::Null,
     }];
     let prompt_ids = tok
-        .encode_generic_tool_chat(&[Message::new(Role::User, USER)], &tools, false)
+        .encode_generic_tool_chat(
+            &[Message::new(Role::User, USER)],
+            &tools,
+            ReasoningEffort::Off,
+        )
         .expect("the fixture ships a template");
 
     let mut steps = vec![one_hot(tok.vocab_size, 0); prompt_ids.len() - 1];

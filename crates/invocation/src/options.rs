@@ -21,7 +21,7 @@ pub struct OptionDecl {
     pub usage_hint: &'static str,
 }
 
-/// The complete, ordered set of eighteen recognized option spellings.
+/// The complete, ordered set of twenty-one recognized option spellings.
 pub const OPTIONS: &[OptionDecl] = &[
     OptionDecl {
         flag: "--model",
@@ -141,6 +141,13 @@ pub const OPTIONS: &[OptionDecl] = &[
         is_required: false,
         is_mode_selecting: false,
         usage_hint: "power profile: performance, balanced, efficiency (default performance, or efficiency under Low Power Mode)",
+    },
+    OptionDecl {
+        flag: "--reasoning",
+        takes_value: true,
+        is_required: false,
+        is_mode_selecting: false,
+        usage_hint: "reasoning effort: off, low, medium, high, xhigh (default off; the accepted set is the checkpoint's, not this one)",
     },
     OptionDecl {
         flag: "--max-tokens-per-sec",

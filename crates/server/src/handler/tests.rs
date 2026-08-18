@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyllm_translate::openai::ChatCompletionRequest;
-use tokenizer::MfTokenizer;
+use tokenizer::{MfTokenizer, ReasoningEffort};
 
 use super::*;
 use crate::model::ScriptedChatModel;
@@ -84,6 +84,66 @@ fn tools_are_rendered_into_the_prompt() {
     assert!(with.contains("get_weather"), "{with}");
     assert!(with.contains("Look up the weather"), "{with}");
     assert!(with.contains("city"), "{with}");
+}
+
+/// `reasoning_effort` arrives in the flatten map (it has no field on the
+/// OpenAI request type) and reaches the rendered prompt from there.
+///
+/// The fixture's template is `ToggleOnly`, so what moves is the pre-closed
+/// `<think>` block rather than a level -- which is the point: the assertion
+/// is that the request-side value reaches the RENDER, not that this
+/// particular checkpoint can spell a level.
+#[test]
+fn reasoning_effort_arrives_in_extra_and_reaches_the_prompt() {
+    let model = state();
+    let plain = prompt(
+        &model,
+        serde_json::json!({"model": "m", "messages": [{"role": "user", "content": "hi"}]}),
+    );
+    let thinking = prompt(
+        &model,
+        serde_json::json!({
+            "model": "m",
+            "messages": [{"role": "user", "content": "hi"}],
+            "reasoning_effort": "low",
+        }),
+    );
+    assert_ne!(
+        plain, thinking,
+        "reasoning_effort reached no part of the prompt"
+    );
+    assert!(
+        plain.contains("<think>\n\n</think>"),
+        "the default must stay the pre-closed branch: {plain:?}"
+    );
+    assert!(!thinking.contains("<think>\n\n</think>"));
+}
+
+/// AN ABSENT KEY IS THE DEFAULT AND A MISSPELLED ONE IS A 400.
+///
+/// The flatten map swallows anything it does not recognize, so the failure
+/// this guards is specific: a client sending `reasoning_effort: "xhi"` (or
+/// `true`, the shape it is upstream on some APIs) would otherwise get a
+/// perfectly good answer that did not think, with nothing on the wire saying
+/// the request was dropped.
+#[test]
+fn a_misspelled_reasoning_effort_is_refused_rather_than_ignored() {
+    let model = state();
+    let base = serde_json::json!({"model": "m", "messages": [{"role": "user", "content": "hi"}]});
+    assert_eq!(
+        reasoning_effort(&request(base.clone())).unwrap(),
+        ReasoningEffort::Off,
+        "an absent key is the default, not an error"
+    );
+
+    for bad in [serde_json::json!("xhi"), serde_json::json!(true)] {
+        let mut body = base.clone();
+        body["reasoning_effort"] = bad.clone();
+        assert!(
+            plan(&model, &request(body)).is_err(),
+            "{bad} should be refused"
+        );
+    }
 }
 
 #[test]
@@ -170,6 +230,7 @@ fn a_generated_tool_call_is_decoded_out_of_the_stream() {
         &prompt_ids,
         &config,
         &tool_names(&request),
+        ReasoningEffort::Off,
         &mut |piece| pieces.push(piece),
     )
     .expect("generation should succeed");

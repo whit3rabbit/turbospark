@@ -514,7 +514,10 @@ cargo test -p turbospark-repack --test gguf_checkpoint_network --release -- \
   --ignored --nocapture scopes_the_dense_llama_candidates
 
 # The cheapest gate in the repo and the one to run BEFORE the quality gates
-# whenever prompt rendering moves. It asserts that each family's own chat
+# whenever prompt rendering moves. Its second case is the same guard for
+# `--reasoning` (Gotcha 55): that `off` renders the frozen bytes on every
+# install, and that a level either MOVES the render or is refused -- there is
+# no third outcome that is not a silent no-op. It asserts that each family's own chat
 # template differs from the per-dialect renderer by nothing but `trim`, and
 # pins per family WHETHER that template trims -- which is the axis that
 # decides whether the frozen digests move, and the one that already moved
@@ -662,6 +665,14 @@ printf '[{"role":"user","content":"Explain how coastal wetlands reduce flood dam
 
 A bare `--prompt` on an instruction-tuned model babbles: that is the chat
 template missing, not a decode bug. `--messages-file` applies it for you.
+
+`--reasoning off|low|medium|high|xhigh` (default `off`) asks the checkpoint's
+own template to think first; on a dialect whose reasoning is separable the
+ANSWER goes to stdout and the REASONING to stderr, so `>/dev/null` keeps the
+reasoning and `2>/dev/null` keeps the answer. Read Gotcha 55 before reading a
+level as a model property: `off` is not "the model's default", it is thinking
+disabled, and the vendor's advertised default is what a caller gets by
+sending nothing at all.
 
 Add each new crate directory to the `members` list in the root `Cargo.toml`
 as it lands, and keep the member list in sync with the directories under
@@ -2122,6 +2133,66 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
     1.22x, and moves the hit rate from 81.2% to 81.4%, which is what "the
     union does nothing" looks like from the other side.
 
+55. **A REASONING LEVEL IS A PROMPT PROPERTY, IT LIVES IN THE CHECKPOINT'S
+    TEMPLATE, AND THE DEFAULT YOU INHERIT DEPENDS ON WHAT YOU DO NOT SEND.**
+    `Qwen/Qwen3.8-27B`'s model card says it reasons at `xhigh` by default, and
+    that is true of transformers and mlx-lm and was never true here. Its
+    template reads
+
+    ```jinja
+    {%- if enable_thinking is undefined or enable_thinking is true %}
+        {%- set resolved_reasoning_effort = reasoning_effort|default('xhigh') %}
+    ```
+
+    so `xhigh` is what a caller gets by leaving BOTH keys undefined. This port
+    passed `enable_thinking: false` on every render, which closes that gate:
+    it took neither the default nor a level, and its generation prompt ended
+    in a pre-closed `<think>\n\n</think>`. Not a bug -- it is why the shared
+    1,024-token budget suffices for that family -- but "the model card says
+    xhigh" was evidence about upstream's call site, not about this one.
+    `--reasoning off|low|medium|high|xhigh` (and `reasoning_effort` on both
+    server endpoints) is the knob; `Off` is the default and renders the exact
+    bytes every earlier release did, which is what leaves every frozen digest
+    where it is.
+
+    FOUR THINGS THAT FOLLOW, each a decision rather than an observation.
+
+    **A LEVEL IMPLIES `enable_thinking: true`.** Every template that has both
+    reads the effort key INSIDE the thinking gate, so setting one without the
+    other is a flag that renders nothing, reports nothing and looks like it
+    worked.
+
+    **BOTH SPELLINGS ARE SET.** Qwen 3.8 and Harmony say `reasoning_effort`,
+    `muse_glimmer` says `reasoning_strength`. A template reads the one it
+    knows and ignores the other, so setting both costs nothing and avoids a
+    per-family table that rots on the next checkpoint.
+
+    **THE ACCEPTED SET IS THE CHECKPOINT'S, NOT THIS PORT'S.** The union is
+    accepted at the CLI and the template validates: Qwen 3.8 takes
+    `xhigh`/`medium`/`low` and RAISES on `high`, which the other two accept.
+    A per-family allowlist here would be a second, staler copy of a set the
+    checkpoint already states by name in its own error.
+
+    **A TEMPLATE THAT CANNOT EXPRESS A LEVEL IS THREE CASES, NOT TWO**
+    (`MfTokenizer::reasoning_support`): `Level` (an effort key), `ToggleOnly`
+    (`enable_thinking` alone -- Qwen3.5-era and Gemma 4, where thinking still
+    turns on and the LEVEL is dropped, so the CLI warns), and `None` (no
+    template at all, where a level is REFUSED rather than dropped). Silence
+    was the failure mode to avoid; each of the three says something different.
+
+    THE TRAP THAT REACHED A REAL MODEL, and it is Gotcha 44's shape one layer
+    up: turning thinking on is only half the feature, because the reasoning
+    then has to be SEPARATED from the answer. `StructuredAssistantDecoder`
+    emitted Harmony's `analysis` channel as `Reasoning` and DISCARDED ChatML's
+    `<think>` body and Gemma's labelled thought channel -- correct while no
+    knob could turn those on, and wrong the moment one could. Both now emit
+    `Reasoning`, and both callers (`ChannelSplit`, `needs_decoder`) build a
+    decoder for those dialects when a level was asked for. Skipping it is not
+    cosmetic: measured on the real Gemma 4 install, the first `--reasoning
+    low` run printed a bare `thought` (the channel LABEL, as prose), then the
+    model's scratch work, then its answer, all as one run of content, because
+    the frame tokens render to the empty string.
+
 ## Per-Crate Documentation
 
 When working on code inside a specific crate, refer to that crate's `CLAUDE.md` file for crate-specific architecture, key modules, dev commands, and localized gotchas:
@@ -2213,7 +2284,7 @@ divergence and perplexity functions rather than restating them.
 - `crates/invocation`: pure translation of command-line argument tokens into a validated invocation request (`InvocationRequest`), options definition (`OPTIONS`), diagnostics (`diagnostics.rs`), typed failures (`InvocationFailure`), usage rendering (`render_usage`), and pure outcome-to-exit-status and outcome-to-stream routing decisions. Performs no filesystem, environment, or process I/O. Details in [`crates/invocation/CLAUDE.md`](crates/invocation/CLAUDE.md).
 - `crates/selection`: candidate selection (`select`, `select_from_logits`) from a per-candidate score vector under a validated shaping configuration (temperature, top-k, top-p, repetition penalty, seed), accumulated history, step position, determinism, and distribution guards. Numeric parity with any upstream implementation is out of scope; only the observable contract is exercised. Details in [`crates/selection/CLAUDE.md`](crates/selection/CLAUDE.md).
 - `crates/window-fit`: pure, deterministic conversation-window fitting (`fit_conversation_window`). Drops the oldest eligible turns from a conversation (`FitOutcome`, `DroppedTurn`), using a caller-supplied whole-conversation length measurement, until the measured length is under a caller-supplied bound or nothing eligible remains. An optional leading instruction turn and the newest turn are never removed. Performs no input or output and holds no state between calls. Details in [`crates/window-fit/CLAUDE.md`](crates/window-fit/CLAUDE.md).
-- `crates/tokenizer`: wraps HF `tokenizers` crate (`MfTokenizer`); resolves Gemma 4 / ChatML (Qwen) / DeepSeek-V4 chat dialect from special tokens (`dialect/`); renders text-only chat templates plus DeepSeek's native tool chat (`chat_template/`); generic Jinja-templated tool chat for Gemma/ChatML (`minijinja` + `pycompat`, rendering `chat_template.jinja`); streaming detokenizer (`StreamingDetokenizer`) and stop matcher (`StopMatcher`) (stop set unions dialect stops with `generation_config.json` `eos_token_id` list); Gemma/Qwen/DeepSeek tool-call DSL parsers and streaming structured assistant-output decoder (`structured_decoder/`, which also splits `gpt-oss`'s Harmony channels into content and REASONING -- the one dialect whose thought channel is emitted rather than discarded, and the one whose frame is a header/body triple rather than a bracketing token pair; its TOOL CALLS come out of the same header parser plus `JsonValue::parse`, and out of `finish` rather than a token, since `<|call|>` terminates a call and is a stop -- Gotcha 49). Details in [`crates/tokenizer/CLAUDE.md`](crates/tokenizer/CLAUDE.md).
+- `crates/tokenizer`: wraps HF `tokenizers` crate (`MfTokenizer`); resolves Gemma 4 / ChatML (Qwen) / DeepSeek-V4 chat dialect from special tokens (`dialect/`); renders text-only chat templates plus DeepSeek's native tool chat (`chat_template/`); generic Jinja-templated tool chat for Gemma/ChatML (`minijinja` + `pycompat`, rendering `chat_template.jinja`); streaming detokenizer (`StreamingDetokenizer`) and stop matcher (`StopMatcher`) (stop set unions dialect stops with `generation_config.json` `eos_token_id` list); Gemma/Qwen/DeepSeek tool-call DSL parsers and streaming structured assistant-output decoder (`structured_decoder/`, which also splits `gpt-oss`'s Harmony channels into content and REASONING -- the one dialect whose frame is a header/body triple rather than a bracketing token pair, and, since `--reasoning` landed, no longer the only one whose thought channel is emitted rather than discarded (Gotcha 55); its TOOL CALLS come out of the same header parser plus `JsonValue::parse`, and out of `finish` rather than a token, since `<|call|>` terminates a call and is a stop -- Gotcha 49). Details in [`crates/tokenizer/CLAUDE.md`](crates/tokenizer/CLAUDE.md).
 - `crates/model-io`: `manifest/` decode and field-by-field validation against a resolved `ArchConfig` (`arch_config/`, with canonical Gemma 4, Qwen 3.6, DeepSeek-V4-Flash and -- ROADMAP's 1-bit entry -- Bonsai-27B `qwen3_5` baselines in `arch_baselines/`), `packed_experts/layout.json` decode (`PackedExpertsLayout`), `model_weights.bin` resident tensor index reader (`ResidentIndex`), `mmap`'d resident-buffer view (`ResidentBuffer`), streaming SHA-256 verification (`sha256.rs`), and trusted install receipt (`InstallReceipt`). Allowed a narrow amount of `unsafe` (the `mmap` call). Details in [`crates/model-io/CLAUDE.md`](crates/model-io/CLAUDE.md).
 - `crates/streaming`: routed-expert `pread` streamer (`PreadExpertStreamer`) with a fixed per-layer slot cache. The LFU/LRU eviction policy (`ExpertCache`) is pure logic, separated from file I/O so it can be tested against access traces without a model install. Cache misses are split into chunks and read on `read_pool`, a process-wide set of parked worker threads, so a layer that misses once still reads at full width (the `pread` is a page-cache memcpy, not disk I/O). `rdadvice` and `read_pool` are the other `unsafe`-carrying modules (macOS `F_RDADVISE`, a documented no-op elsewhere; raw destination pointers across worker threads). Details in [`crates/streaming/CLAUDE.md`](crates/streaming/CLAUDE.md).
 - `crates/gpu`: Metal device/pipeline-cache context (`MetalContext`, `PassEncoder`, `CommittedPass`) and per-kernel dispatch. macOS-only; compiles to nothing elsewhere. Dispatched, parity-tested kernels (`rmsnorm_no_scale`, `rms_norm_bf16w`, both `_perhead` norm variants, `rope_proportional_neox`, `rope_neox_subdim`, `logit_softcap_softmax`, `dequant_int4_gemv_simd`, `dequant_int8_gemv_simd` with resident variants, the port-local GGUF set (`dequant_q8_0_gemv_simd`, `dequant_q4_k_gemv_simd`, `dequant_q6_k_gemv_simd`, `embed_lookup_q8_0`, `embed_lookup_q4_k`, and `moe_gguf/` decode pairs -- ROADMAP Phase G), the port-local sub-4-bit set (`dequant_int1_gemv_simd` and `dequant_int2_gemv_simd`, each with a resident variant, the `+/-1` `dequant_int1_gemv_symmetric_simd`, and `embed_lookup_int1` / `embed_lookup_int2` -- ROADMAP's 1-bit and ternary entries; the 2-bit set is TWO kernels rather than three, because a ternary fast path would reassociate the sum exactly as the 1-bit one does and that one is already reachable from nothing; the general GEMV's resident form and the lookup are dispatched by the `qwen3_5` flow, the `+/-1` one is parity-tested and reachable from no decode path, deliberately), `router_gemv_gemma4_r4`, two-pass split-KV `attention_decode` (multi-chunk, split up to 16 ways by `chunks_for`), `moe_decode` decode pair, `gdn.metal`'s eight gated-DeltaNet kernels, and `utility` elementwise kernels incl. Qwen's three gating kernels) are compiled from MSL source at runtime, vendored from Swift except where marked port-local. `power_state.rs` wraps `NSProcessInfo`'s `thermalState` and `isLowPowerModeEnabled` for ROADMAP Phase P2 (here rather than in `runtime`, which forbids unsafe; nothing GPU about them beyond the `metal::objc` reach). `KvCacheManager` allocates and manages real per-layer Metal KV buffers used by `RealForwardRunner`. `ResidentGpuWeights` wraps resident mmap in zero-copy MTLBuffer. `GdnStateManager` is the Qwen flow's recurrent state; `Dsv4StateManager` allocates real per-layer Metal buffers (unwired kernels); `PrefillChunkScratchLayout`/`PrefillChunkScratchBuffers` size scratch buffers (undispatched tile kernel). The `sample` kernel and fused lm_head are not yet vendored or dispatched. Details in [`crates/gpu/CLAUDE.md`](crates/gpu/CLAUDE.md).

@@ -367,6 +367,15 @@ turbospark-check --model qwen38-27b --messages-file /tmp/p.json
 
 Use `--messages-file` or `--chat` rather than `--prompt` on an instruction-tuned model. `--prompt` sends raw text with no chat framing, which makes these checkpoints babble; that is the template missing, not a decode bug.
 
+```sh
+# Ask the model to think first. Default is off.
+turbospark-check --model qwen38-27b --messages-file /tmp/p.json --reasoning xhigh
+```
+
+`--reasoning off|low|medium|high|xhigh` is rendered into the prompt by the checkpoint's own chat template, so the levels a model accepts are its own: Qwen 3.8 takes `xhigh`/`medium`/`low`, gpt-oss and Muse Glimmer take `high`/`medium`/`low`, and a checkpoint whose template has only an on/off switch (Gemma 4, the Qwen3.5-era 27Bs) turns thinking on and says so. Where the reasoning can be separated from the answer, the **answer goes to stdout and the reasoning to stderr**, so `2>/dev/null` leaves you the answer alone. Servers take the same thing as OpenAI's `reasoning_effort` field on either endpoint, and hand the reasoning back as `reasoning_content` / an Anthropic `thinking` block.
+
+The default is `off` rather than whatever the vendor advertises, and the difference is worth knowing: a model card's "reasons at xhigh by default" describes what you get by sending no setting at all, which is not what this engine has ever sent.
+
 ### 4. Serve it
 
 ```sh

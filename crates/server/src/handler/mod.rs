@@ -22,6 +22,7 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use futures::stream::{Stream, StreamExt};
 use runtime::{GenerationConfig, RuntimeError};
+use tokenizer::ReasoningEffort;
 
 pub(crate) use exec::*;
 pub use plan::AppState;
@@ -107,6 +108,11 @@ pub async fn chat_completions(
     };
 
     let tools = tool_names(&request);
+    // Re-read rather than threaded out of `plan`: `plan` already REFUSED an
+    // unparseable value, so this cannot fail by the time it is reached, and
+    // the pairing with `tool_names` above keeps both request-derived inputs
+    // to the decoder in one place.
+    let effort = reasoning_effort(&request).unwrap_or_default();
     let include_usage = request
         .stream_options
         .as_ref()
@@ -119,12 +125,13 @@ pub async fn chat_completions(
             prompt_ids,
             config,
             tools,
+            effort,
             request.model,
             include_usage,
         );
     }
 
-    let generated = match run_full(model, prompt_ids, config, tools).await {
+    let generated = match run_full(model, prompt_ids, config, tools, effort).await {
         Ok(r) => r,
         Err(e) => return gen_error_response(e),
     };
@@ -148,6 +155,7 @@ fn stream_response(
     prompt_ids: Vec<foundation::TokenId>,
     config: GenerationConfig,
     tools: HashSet<String>,
+    effort: ReasoningEffort,
     model_name: String,
     include_usage: bool,
 ) -> Response {
@@ -169,7 +177,7 @@ fn stream_response(
         ));
 
         let mut call_index = 0u32;
-        let result = stream_blocking(&model, &prompt_ids, &config, &tools, &mut |piece| {
+        let result = stream_blocking(&model, &prompt_ids, &config, &tools, effort, &mut |piece| {
             let delta = match piece {
                 Piece::Text(text) => text_delta(text),
                 Piece::Reasoning(text) => reasoning_delta(text),
