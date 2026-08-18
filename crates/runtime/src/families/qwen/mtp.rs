@@ -51,7 +51,8 @@ use foundation::LogitValue;
 use model_io::{ArchConfig, ResidentIndex};
 
 use crate::families::qwen::{
-    dense, encode_full_attention_block, prefixed_layer_tensor, MTP_PREFIX, RMS_EPS,
+    dense, encode_full_attention_block, prefixed_layer_tensor, QkNormConvention, MTP_PREFIX,
+    RMS_EPS,
 };
 use crate::real_forward::{RealForwardError, RealForwardRunner};
 use crate::real_forward_dispatch::{encode_embed_any, encode_gemv_any};
@@ -442,8 +443,24 @@ impl RealForwardRunner {
             RMS_EPS,
         )
         .map_err(gpu_err)?;
+        // CENTERED, unlike the trunk's tensors of the same names one call
+        // site over. The head's `q_norm`/`k_norm` store an offset from unity
+        // exactly as its five whole-vector norms do; MTPLX's
+        // `_RMSNORM_SUFFIXES` lists all seven, and the raw means here read
+        // 0.780 and 0.797 against its "healthy >= 1.74" threshold.
         encode_full_attention_block(
-            context, &pass, weights, index, &arch, qwen, scratch, &mtp.kv, MTP_PREFIX, 0, position,
+            context,
+            &pass,
+            weights,
+            index,
+            &arch,
+            qwen,
+            scratch,
+            &mtp.kv,
+            MTP_PREFIX,
+            0,
+            position,
+            QkNormConvention::Centered,
         )?;
         // RAW residual add. This family has `ffn_sandwich_norms: false`, and
         // normalizing here is the mutation that took the Qwen 3.6 reference

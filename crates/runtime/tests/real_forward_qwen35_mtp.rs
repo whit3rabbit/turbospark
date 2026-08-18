@@ -52,6 +52,20 @@ const DEPTH: &str = "2";
 /// The change detector. Taken from a run of the test that asserts it, over a
 /// deterministic fixture, and frozen. See that test's doc comment before
 /// touching this.
+/// Re-frozen 2026-08-18 a FOURTH time, `4406a9e2` -> `fd43a56b`, finishing
+/// what the third one started. The head's per-head `q_norm`/`k_norm` are
+/// centered too and were still being read plainly, because
+/// `encode_rms_norm_bf16w_perhead` had no centered sibling and
+/// `encode_full_attention_block` resolves those two by NAME for the trunk and
+/// the head alike. Now `gpu::encode_rms_norm_bf16w_perhead_centered` exists
+/// and the convention is a parameter on that shared function
+/// (`QkNormConvention`), so the trunk keeps the plain form and only the head
+/// moved. MTPLX's `_RMSNORM_SUFFIXES` lists all seven norms, so this closes
+/// the set rather than adding to it; the raw means here read 0.780 and 0.797
+/// against its "healthy >= 1.74" threshold. Every reachability case in this
+/// file stayed green again, which is the evidence the change is arithmetic
+/// inside the head and reaches nothing else.
+///
 /// Re-frozen 2026-08-18 a THIRD time, `7323c04a` -> `4406a9e2`, and this one
 /// is the fix that made the head WORK: its norms are CENTERED (`x * (1 + w)`)
 /// where this port was reading them plain. The published checkpoint stores
@@ -77,7 +91,7 @@ const DEPTH: &str = "2";
 /// input. Note every reachability case in this file stayed green across that
 /// change, which is Gotcha 51's point restated: this constant was the only
 /// thing that could see it.
-const FROZEN_DRAFT_DIGEST: &str = "4406a9e2";
+const FROZEN_DRAFT_DIGEST: &str = "fd43a56b";
 
 fn temp_dir(tag: &str) -> std::path::PathBuf {
     let n = COUNTER.fetch_add(1, Ordering::SeqCst);

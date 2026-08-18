@@ -251,11 +251,17 @@ cargo test -p turbospark-runtime
     produces the head's hidden input. Reading them plainly is not a subtle
     error: it put the true next-next token at median rank 248,308 of 248,320
     and gave 0 accepted of 7,168 proposals. Corrected, block 2 speculation
-    pays 1.37x. `q_norm`/`k_norm` are centered too and are STILL READ
-    PLAINLY, because `encode_rms_norm_bf16w_perhead` has no centered sibling
-    and the shared attention block resolves them by name; measured cost is
-    small (23/24 top-1) but the accept lengths are a floor until it lands.
-    Facts and instruments: `docs/MTP.md`.
+    pays 1.66x. **ALL SEVEN of the head's norms are centered, the per-head
+    `q_norm`/`k_norm` included**, and that pair took a second pass because
+    `encode_rms_norm_bf16w_perhead` had no centered sibling and the shared
+    attention block resolves both by NAME -- the TRUNK's tensors of those
+    exact names, at that exact shape, through that exact call, are plain.
+    `QkNormConvention::{Plain, Centered}` is the parameter that lets the two
+    call sites disagree; an enum rather than a bool so the call site states
+    which question it is answering. **Deferring that pair on the strength of
+    23/24 top-1 cost 21 to 75 percent of the speedup** and put two claims into
+    `docs/MTP_SPECULATIVE.md` that were about the deviation rather than about
+    the head. Facts and instruments: `docs/MTP.md`.
 
     **Two `MTP_PREFIX` constants exist on purpose.** `families/qwen`'s is
     `"mtp"` and BUILDS names through `prefixed_layer_tensor`;

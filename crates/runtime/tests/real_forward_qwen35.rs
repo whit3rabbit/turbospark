@@ -407,6 +407,69 @@ fn patch_region(
     touched
 }
 
+/// The dense trunk's change detector, over a deterministic fixture.
+///
+/// **PAST POSITION 0, and that is the whole design of it.** A softmax over one
+/// key is exactly 1.0 whatever the score, so attention at position 0 returns V
+/// alone and NO q/k transform is observable there -- which makes
+/// [`first_logits`] structurally blind to the per-head `q_norm`/`k_norm`, the
+/// same way `qwen3moe`'s divergence test was until it was moved off position
+/// 0. This walks eight positions and digests the last.
+///
+/// MEASURED, not reasoned: cut to a single position, the correct model and
+/// one with the trunk flipped to `Centered` both digest to `312e17a0`. The
+/// same pair over eight positions differs. A change detector on this flow has
+/// to attend over a real span or it silently detects nothing.
+///
+/// It exists because every other case in this file is self-relative:
+/// each rebuilds its own baseline inside the mutated binary, so a change to
+/// the MATH that applies equally to both arms leaves all of them green
+/// (AGENTS.md Gotcha 51). Demonstrated rather than assumed: pointing
+/// `families/qwen/mod.rs`'s `encode_full_attention_block` call at
+/// `QkNormConvention::Centered` -- a wrong model that still decodes -- left
+/// this file's seven cases and `real_forward_qwen.rs`'s eight ALL green, and
+/// was caught only by `qwen38_quality_gate` on a real 14 GB install two
+/// minutes away. This constant catches it in 0.2 seconds.
+///
+/// Re-freezing it needs a stated reason. It is a change DETECTOR and not a
+/// correctness claim: the fixture's weights are untrained, so it can say the
+/// arithmetic moved and never that it is right.
+const FROZEN_DENSE_TRUNK_DIGEST: &str = "9ce8b693";
+
+#[test]
+fn the_dense_trunk_logits_have_a_frozen_digest() {
+    let dir = temp_dir("qwen35-dense-digest");
+    build(&dir);
+    let arch = turbospark_repack::peek_manifest_arch(&dir).expect("peeks");
+    let mut runner = RealForwardRunner::open(&dir, arch).expect("opens");
+    runner.reset();
+    let mut head = vec![f16::from_f32(0.0); VOCAB as usize];
+    // Eight positions, so the full-attention layer attends over a real span
+    // rather than over a single key. The fixture's mask is
+    // `qwen_hybrid_layer_mask(4)`, so layer 3 is the full-attention one.
+    for position in 0..8usize {
+        runner
+            .produce(
+                ((position * 7) % VOCAB as usize) as i32,
+                position,
+                &mut head,
+            )
+            .expect("produces");
+    }
+    let bytes: Vec<u8> = head
+        .iter()
+        .flat_map(|v| v.to_bits().to_le_bytes())
+        .collect();
+    let got = model_io::hash_data(&bytes)[..8].to_string();
+    println!("dense trunk digest = {got}");
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(
+        got, FROZEN_DENSE_TRUNK_DIGEST,
+        "the dense trunk logits moved; see this constant's doc comment before \
+         re-freezing"
+    );
+}
+
 fn first_logits(dir: &std::path::Path) -> Vec<u16> {
     let arch = turbospark_repack::peek_manifest_arch(dir).expect("peeks");
     let mut runner = RealForwardRunner::open(dir, arch).expect("opens");
