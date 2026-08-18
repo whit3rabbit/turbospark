@@ -9,6 +9,13 @@ Answer, measured 2026-08-17 on this machine: **yes, at a small block size,
 worth roughly 1.35x to 1.58x with a drafter as good as MTPLX reports.** The
 ceiling over all possible drafters is ~2.07x.
 
+> **THAT REMAINS A PROJECTION. THIS TARGET'S OWN ACCEPT LENGTH IS STILL
+> UNMEASURED**, because the head as wired drafts nothing at all: 0 accepted of
+> 7,168 proposals, with the true token ranked last rather than randomly. The
+> cost model is unaffected -- every term in it was measured independently of
+> the head -- but the "at DFlash" and "at MTP" columns below are still
+> borrowed accept lengths and not this checkpoint's. See step 3.
+
 > **THIS PAGE REACHED THE OPPOSITE CONCLUSION FIRST, AND THE REVERSAL IS THE
 > MOST USEFUL THING ON IT.** The first pass measured `c(M)` at 0.82-0.89 at
 > M=8, computed a ceiling of 1.16x, and closed the question. That was a true
@@ -300,7 +307,75 @@ a 17-position verify does not fit. Block 15 is the largest legal one.
    with the MTP head in place of the n-gram drafter. Keep both of its
    disciplines: verify one `produce` at a time (only the ratio matters), and
    gate against a NON-speculative reference run.
+
+   **BUILT, AND IT CAME BACK BLOCKED: the head as wired drafts NOTHING, and
+   the number it produces is not a verdict about MTP.**
+   `crates/bench/tests/mtp_accept_length_probe.rs` reads **0 accepted of
+   7,168 proposals** across blocks 2, 4, 8 and 15 on
+   `~/models/qwen38-27b-mtp.gturbo`. A weak drafter still lands common
+   tokens, so exactly zero is a bug. Reported as a result it would close
+   this question the same way the first `c(M)` pass did -- see the box at
+   the top of this page -- so the probe now ASSERTS a functional drafter
+   (first-proposal acceptance above 2%) and fails rather than printing a
+   table someone could quote.
+
+   `crates/bench/tests/mtp_head_probe.rs` is the instrument that localizes
+   it, and what it says is sharper than "bad drafter":
+
+   | | |
+   | --- | --- |
+   | rank of the true `t[i+2]` in the head's distribution | median **248,308 of 248,320** |
+   | | best 244,191, worst 248,319 (last) |
+   | a random direction would rank it near | 124,160 |
+   | pearson(head draft, trunk logits) for the same position | **-0.28** (min -0.39, max -0.13) |
+   | same, against `p+3` and `p+4` | -0.25, -0.23 |
+
+   **The head is ANTI-aligned, not misaligned.** It ranks the correct token
+   dead last and correlates negatively with the trunk at every offset, so
+   there is no pairing that rescues it. Ruled out, each by measurement
+   rather than by reading:
+
+   - **Its weights are right.** `mtp_install_fidelity_network.rs`
+     dequantizes the INSTALLED rows exactly as `dequant_int4_gemv_simd`
+     does and correlates them against the published BF16 shard: **0.992 to
+     0.996** on `fc`, `q_proj`, `gate_proj` and `down_proj`. This is the
+     check `mtp_quantize_network.rs` does NOT make -- that one quantizes a
+     freshly-fetched row and dequantizes it with its own helper, which is
+     self-consistent and passes whenever writer and reader share a mistake
+     (Gotcha 48).
+   - **Its bytes are its own**: 15 tensors, all distinct, none zero, none a
+     copy of the trunk full-attention layer they are shaped like.
+   - **Its shapes are right**: every block tensor matches trunk layer 3's
+     size and dtype exactly, checked against the INSTALL rather than
+     against the published header.
+   - **`fc`'s concat order is not the fault.** Both orders were run end to
+     end; both read 0 accepted. (The shape `[hidden, 2 * hidden]` is
+     symmetric in its halves, so `mtp_head_network.rs`'s "fc must take
+     [embedding, hidden]" is a comment and not an assertion.)
+   - **The block's position is not the fault.** Running the block at the
+     fed token's position instead of the hidden state's moved the
+     correlation from -0.2820 to -0.2818. That near-null is itself a
+     finding: **attention is contributing almost nothing** to the head's
+     output, which is where to look next.
+
+   Two head-KV bugs WERE found and fixed on the way, and neither explains
+   the anti-alignment. `encode_full_attention_block` takes its span from
+   the `position` argument (`position + 1`) and never from the head's
+   cursor, so a draft at decode position `P` off an unprimed head attended
+   over `P` rows nobody wrote -- silently, with finite logits.
+   `mtp_prime_step` fills them across the prompt, `mtp_rewind_to` follows
+   the trunk back after a rejected draft, and `mtp_draft_step` now REFUSES
+   a step off its own cursor in either direction. That re-froze
+   `real_forward_qwen35_mtp.rs`'s digest (`f9ead747` -> `4a2e6af3`) with
+   every reachability case in the file staying green, which is Gotcha 51
+   again: the digest was the only thing that could see it.
+
+   What is left is a reference comparison of the head's INTERMEDIATE
+   activations -- `fc` output, block output, post-norm -- against
+   transformers or mlx running the same head on the same input. Every
+   cheaper hypothesis is now closed by measurement.
 4. **Only then the batched verify**, if step 3 clears the table above.
+   **Blocked on step 3**, which has not produced a number.
 
 ## What this changes elsewhere
 

@@ -186,6 +186,19 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
   cargo test -p turbospark-repack --test gguf_iq_network --release -- --ignored --nocapture
 ```
 
+## The MTP head's fidelity check
+
+`tests/mtp_install_fidelity_network.rs` correlates the INSTALLED head against
+the published BF16 shard, dequantizing exactly as `dequant_int4_gemv_simd`
+does (0.992-0.996 on 2026-08-18). It exists because
+`tests/mtp_quantize_network.rs` answers a narrower question than its name
+suggests: it quantizes a freshly-fetched row and dequantizes it with its OWN
+helper, so it validates the quantizer against itself and passes whenever the
+writer and the reader share a mistake (AGENTS.md Gotcha 48). Only a check
+against an independent source can see a walk that wrote well-formed,
+distinct, non-zero bytes that are not the RIGHT bytes -- which is the shape of
+the failure this head has already had once.
+
 ## Crate Gotchas
 
 1. **Synthetic Model Weight Meaning**: Synthetic models built by `build_synthetic_gemma4_install` use deterministic pseudo-random numbers rather than trained weights. Generated text on synthetic installs is structurally valid but semantically gibberish (and short generations may yield empty strings).

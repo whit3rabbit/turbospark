@@ -213,6 +213,44 @@ cargo test -p turbospark-runtime
     trunk's reset does not reach it, which is Gotcha 4's leak shape one
     cache over.
 
+    **THAT CACHE HAS TO BE PRIMED, AND NOTHING ABOUT IT FAILS IF IT IS
+    NOT.** `encode_full_attention_block` derives its attention span from the
+    `position` ARGUMENT (`position + 1`) and never from the cursor, so a
+    draft taken at decode position `P` off an empty head attends over `P`
+    rows nobody ever wrote: no error, finite logits, plausible tokens, and a
+    depressed accept length that reads as a verdict about MTP rather than as
+    a bug. `mtp_prime_step` is the fix -- the draft step without the
+    full-vocab head, run once per prompt token, which is affordable for the
+    same reason `produce_prefill` skips the head. Two consequences. The
+    head's pair at `position` is `(h_position, token_at_position+1)`, and
+    during a PROMPT both are known, so priming is the decode-time call with
+    the guesswork removed and its rows land contiguously from 0 with no
+    unwritten row (`h_0` exists, so row 0 does). And `mtp_draft_step` now
+    REFUSES a step off the cursor in either direction, because a step past
+    it reads unwritten rows while a step behind it silently re-drafts
+    history, and both otherwise look like a working drafter.
+
+    **`mtp_rewind_to` is the head's half of a speculative rollback and is
+    deliberately NOT reached by `rollback`.** The two restore different
+    things to different targets: the trunk goes back to where the block
+    STARTED and replays the accepted prefix, while the head goes to where
+    the accepted prefix ENDED and continues, because it cannot recompute
+    those rows -- each needs the `scratch.x` that the trunk's replay has
+    already overwritten. Only the caller knows both targets. A round should
+    also take `depth + 1` head steps for `depth` proposals: the extra one is
+    taken for its KV row alone, since a round where EVERY proposal is
+    accepted needs a row the proposal-producing steps do not write, and that
+    is the case a good drafter hits most often.
+
+    **The head is not producing usable drafts as of 2026-08-18**, and the
+    cause is not in this crate: its installed weights correlate 0.992-0.996
+    with the published checkpoint and its tensors match a trunk
+    full-attention layer exactly, yet its logits are ANTI-aligned with the
+    trunk (true token ranked median 248,308 of 248,320). `fc`'s concat order
+    and the block's position were both tested end to end in both
+    conventions and neither is the fault. See `docs/MTP_SPECULATIVE.md` step
+    3 before touching this path.
+
     **Two `MTP_PREFIX` constants exist on purpose.** `families/qwen`'s is
     `"mtp"` and BUILDS names through `prefixed_layer_tensor`;
     `repack::classify`'s is `"mtp."` and MATCHES them with `starts_with`.
@@ -228,3 +266,11 @@ cargo test -p turbospark-runtime
     halves, and pointing the final norm at the wrong tensor) reddened the
     digest ALONE and every reachability case stayed green. Gotcha 51,
     demonstrated rather than cited.
+
+17. **`expect_err` DOES NOT WORK ON `open()`.** Clippy flags `.err().expect()`
+    and suggests `expect_err`, which requires the OK type to be `Debug` -- and
+    `RealForwardRunner` does not implement it. Every test asserting that an
+    install is refused at open hits this, and the suggestion does not compile.
+    Use `let Err(err) = RealForwardRunner::open(..) else { panic!(..) };`,
+    which satisfies the lint and needs no `Debug`. The 29 existing
+    `expect_err` call sites are all on `Result<(), E>`, where it is fine.

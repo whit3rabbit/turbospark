@@ -32,7 +32,9 @@ crates/bench/
 |   +-- qwen38_memory_oracle.rs # Memory oracle for Qwen3.8-27B (`qwen35`), the family's FIRST
 |   +-- qwen38_quality_gate.rs  # Quality gate for Qwen3.8-27B; no assistant prefix, and see its header for why
 |   +-- ternary_quality_gate.rs # Quality gate for Ternary-Bonsai-27B (2-bit), the same family's third checkpoint
-|   \-- ternary_memory_oracle.rs # Its oracle; the peak is Qwen3.8's on HALF the weights (Gotcha 40)
+|   +-- ternary_memory_oracle.rs # Its oracle; the peak is Qwen3.8's on HALF the weights (Gotcha 40)
+|   +-- mtp_accept_length_probe.rs # MTP head as drafter: accepted vs the block table's break-even
+|   \-- mtp_head_probe.rs    # What the head predicts, when the probe above reads zero
 \-- prompts/
     +-- quality-v1/         # Quality gate reference prompt fixtures
     |   \-- assistant-reference.txt
@@ -149,6 +151,17 @@ TURBOSPARK_LOGIT_DUMP_DIR=/tmp/kld/ternary-warm \
   cargo test -p turbospark-bench --test logit_dump --release -- --ignored --nocapture
 uv run --python 3.12 --with 'mlx-lm==0.31.2' --with numpy \
   scripts/kld_mlx_affine.py /tmp/kld/ternary-warm ternary-2bit
+
+# The MTP head as a drafter (docs/MTP_SPECULATIVE.md step 3). The probe
+# ASSERTS a functional drafter rather than printing an accept length nobody
+# can read: as of 2026-08-18 the head accepts 0 of 7,168 proposals, so it
+# FAILS, and mtp_head_probe is the instrument for why (it reports the rank of
+# the true token in the head's own distribution -- median 248,308 of 248,320,
+# i.e. anti-aligned rather than merely weak).
+TURBOSPARK_MTP_INSTALL_DIR=~/models/qwen38-27b-mtp.gturbo \
+  cargo test -p turbospark-bench --test mtp_accept_length_probe --release -- --ignored --nocapture
+TURBOSPARK_MTP_INSTALL_DIR=~/models/qwen38-27b-mtp.gturbo \
+  cargo test -p turbospark-bench --test mtp_head_probe --release -- --ignored --nocapture
 
 # Sensitivity proof for the gate above: APFS-clone the install, shift one
 # quantization level in a strided subset of the routed experts, re-measure.

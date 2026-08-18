@@ -734,6 +734,11 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
    dependency (`compute`, `selection`, `tokenizer`, `model_io`, `runtime`,
    `invocation`) so the alias, not the crate's real package name, is what
    integration tests and downstream `src/` code import by.
+   **BUT THE ALIAS IS PER CRATE, AND DEV-DEPENDENCIES ARE THE EXCEPTION.**
+   `crates/bench` aliases repack to `repack` while `crates/runtime`'s
+   dev-dependency is unaliased, so its tests import `turbospark_repack` --
+   22 call sites to bench's 3. Read the crate's own `Cargo.toml` rather than
+   carrying a name across from the file you were just in.
 
 2. Runtime configuration numeric setters abort construction by panicking when a
    value is outside its documented allowed set. This is an intentional fatal
@@ -2310,6 +2315,25 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
     model's scratch work, then its answer, all as one run of content, because
     the frame tokens render to the empty string.
 
+57. **A DEGENERATE MEASUREMENT MUST FAIL, NOT PRINT -- AND "RANK OF THE TRUTH"
+    IS WHAT SEPARATES BROKEN FROM WEAK.** `mtp_accept_length_probe.rs` read 0
+    accepted of 7,168 proposals and printed a tidy `loses` table anyone could
+    quote as a verdict on MTP. A weak drafter still lands common tokens, so
+    exactly zero is a bug; the probe now ASSERTS a functional drafter (first
+    proposal accepted above 2%) and fails rather than reporting. That is the
+    same failure the top of `docs/MTP_SPECULATIVE.md` records one level up --
+    a composite built on a broken arm measures the arm, not the question.
+    THE INSTRUMENT THAT CLASSIFIED IT IN ONE NUMBER: rank the EXPECTED output
+    in the component's own distribution and read it against the random
+    baseline (`vocab/2`). Three diagnoses rather than two -- near the top is
+    WEAK, near `vocab/2` is UNRELATED, and near LAST is ANTI-ALIGNED, which no
+    pairing or position fix rescues (the MTP head reads median 248,308 of
+    248,320, i.e. ~11th from the top under negation). Pair it with a
+    correlation against a working reference at SEVERAL offsets before hunting
+    weights: a head that is merely mis-paired peaks positively at some offset,
+    and this one was negative at every one (-0.28 / -0.25 / -0.23), which is
+    what ruled out the whole class in a single run.
+
 ## Per-Crate Documentation
 
 When working on code inside a specific crate, refer to that crate's `CLAUDE.md` file for crate-specific architecture, key modules, dev commands, and localized gotchas:
@@ -2472,6 +2496,13 @@ conventions and the test-writing rules (never hardcode a fixture token
 id, never assert generated text, prefer exact assertions over
 thresholds); `docs/BENCHMARKING.md` documents the benchmark modes and
 baselines.
+
+Every new test is MUTATION-CHECKED before it is believed, and the loop is
+seconds: `cp f /tmp/f.bak`, mutate with `perl -0pi -e 's/A/B/' f`, run that
+one target, `cp /tmp/f.bak f`. Assert each mutation reddens ONLY its own
+case. One that reddens everything is not a failure of the test -- it usually
+means an INVARIANT is doing the work, which is its own finding and worth
+recording rather than tuning away.
 
 See `DEVIATIONS.md` for the full list of what this port scaffolds versus
 fully implements, `ROADMAP.md` for the forward roadmap and descope

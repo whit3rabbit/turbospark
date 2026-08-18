@@ -165,6 +165,19 @@ impl MtpState {
     pub(crate) fn reset(&mut self) {
         self.kv.reset();
     }
+
+    /// How many head positions have been written: the head's KV covers
+    /// `[0, kv_position())`, so the next step must be taken AT that position.
+    ///
+    /// This is a real invariant rather than bookkeeping, because
+    /// `encode_full_attention_block` derives its attention span from the
+    /// `position` ARGUMENT (`position + 1`) and never from this cursor. A step
+    /// taken PAST the cursor attends over rows nobody has written; a step
+    /// taken BEHIND it silently re-drafts history. Neither is an error on its
+    /// own, which is why [`RealForwardRunner::mtp_step`] checks it.
+    pub(crate) fn kv_position(&self) -> usize {
+        self.kv.position()
+    }
 }
 
 /// Reads `MFERENCE_MTP_DRAFT`. Unset, unparsable or 0 is off, matching the
@@ -180,23 +193,87 @@ pub(crate) fn draft_depth_from_env() -> usize {
 impl RealForwardRunner {
     /// Encodes ONE draft step and returns its logits.
     ///
-    /// `next_token` is the token the trunk just committed and `position` is
-    /// the position that token occupies, so the draft predicts `position +
-    /// 1`. `h_t` is read from `scratch.x`, which still holds the trunk's
-    /// final hidden state for this token -- **so this must be called after
-    /// the trunk's logits are read and before the next `produce`**, which is
-    /// the window the module header's buffer argument is about.
+    /// **`position` is where the HIDDEN STATE came from, not where
+    /// `next_token` sits.** The head's input pair is `(h_i, emb(t_{i+1}))`
+    /// and it predicts `t_{i+2}`, so a call at `position = i` takes the token
+    /// occupying `i + 1` and drafts the one occupying `i + 2`. That is the
+    /// published MTP shift (a module reads the trunk's hidden at `i` beside
+    /// the token that FOLLOWS it), and it is what makes the head's rows land
+    /// contiguously at 0, 1, 2, ... with no unwritten row: `h_0` exists, so
+    /// row 0 does too.
     ///
-    /// Depth beyond one is the CALLER's loop: it feeds the drafted token
-    /// back as `next_token` at `position + 1`, and the head's KV advances
-    /// once per call. That keeps the recurrence visible at the call site
-    /// rather than buried here, and it is what lets the accept-length probe
-    /// stop early on a rejection.
+    /// `h_t` is read from `scratch.x`, which still holds the trunk's final
+    /// hidden state for `position` -- **so this must be called after the
+    /// trunk's logits are read and before the next `produce`**, which is the
+    /// window the module header's buffer argument is about.
+    ///
+    /// Depth beyond one is the CALLER's loop: it feeds the drafted token back
+    /// as `next_token` at `position + 1`, where `scratch.x` now holds the
+    /// HEAD's own residual stream standing in for `h_{i+1}`. That chaining
+    /// approximation is inherent to drafting more than one token from a
+    /// single module, and it is one of the two things the accept length
+    /// measures. Keeping the loop at the call site is also what lets the
+    /// probe stop early on a rejection.
     pub fn mtp_draft_step(
         &mut self,
         next_token: i32,
         position: usize,
         logits: &mut [LogitValue],
+    ) -> Result<(), RealForwardError> {
+        self.mtp_step(next_token, position, Some(logits))
+    }
+
+    /// A step taken for its KV ROW alone, skipping the full-vocab head.
+    ///
+    /// This is how the head is primed over a prompt. Without it a draft at
+    /// decode position `P` attends over `P` rows the head never wrote, which
+    /// is not an error and does not look like one -- it just quietly costs
+    /// accept length, which is the number the whole exercise is trying to
+    /// measure. The trunk's own `produce_prefill` skips the head for the same
+    /// reason and the saving is the same one: a full-vocab GEMV per prompt
+    /// token, and nobody reads the result.
+    pub fn mtp_prime_step(
+        &mut self,
+        next_token: i32,
+        position: usize,
+    ) -> Result<(), RealForwardError> {
+        self.mtp_step(next_token, position, None)
+    }
+
+    /// Drops head rows at `[position, cursor)`, so the head can follow the
+    /// trunk back after a rejected draft.
+    ///
+    /// The trunk's [`Self::rollback`] deliberately does NOT reach this. A
+    /// speculative round rewinds the trunk to where the block STARTED and
+    /// then replays the accepted prefix, but the head has already written
+    /// correct rows for that prefix and cannot recompute them (the trunk's
+    /// `produce` has overwritten the `scratch.x` each one needs). So the head
+    /// rewinds to the accepted end rather than to the checkpoint, which is a
+    /// different target, and only the caller knows it.
+    pub fn mtp_rewind_to(&mut self, position: usize) -> Result<(), RealForwardError> {
+        let mtp = self.real_mtp.as_mut().ok_or_else(|| {
+            RealForwardError::Unsupported("no MTP head state to rewind".to_string())
+        })?;
+        let cursor = mtp.kv.position();
+        if position > cursor {
+            return Err(RealForwardError::Unsupported(format!(
+                "MTP rewind target {position} is ahead of the head's cursor {cursor}"
+            )));
+        }
+        mtp.kv.rewind_by(cursor - position);
+        Ok(())
+    }
+
+    /// The head's KV cursor; see [`MtpState::kv_position`].
+    pub fn mtp_kv_position(&self) -> usize {
+        self.real_mtp.as_ref().map_or(0, |m| m.kv_position())
+    }
+
+    fn mtp_step(
+        &mut self,
+        next_token: i32,
+        position: usize,
+        logits: Option<&mut [LogitValue]>,
     ) -> Result<(), RealForwardError> {
         let arch = self.arch.clone();
         let hidden = arch.hidden_size as usize;
@@ -216,10 +293,24 @@ impl RealForwardRunner {
                 "draft token id {next_token} outside vocab {vocab}"
             )));
         }
-        if vocab != logits.len() {
+        if let Some(out) = logits.as_ref() {
+            if vocab != out.len() {
+                return Err(RealForwardError::Unsupported(format!(
+                    "vocab mismatch: model has {vocab}, caller expected {}",
+                    out.len()
+                )));
+            }
+        }
+        // The head's KV covers [0, cursor) and this block will attend over
+        // [0, position]. Off by either sign the step still runs, still
+        // returns finite logits and still looks exactly like a working
+        // drafter; see `MtpState::kv_position`.
+        let cursor = self.real_mtp.as_ref().expect("checked above").kv_position();
+        if position != cursor {
             return Err(RealForwardError::Unsupported(format!(
-                "vocab mismatch: model has {vocab}, caller expected {}",
-                logits.len()
+                "MTP step at position {position} but the head's KV covers [0, {cursor}): \
+                 prime the head over the prompt with mtp_prime_step, and rewind it with \
+                 mtp_rewind_to after a rejected draft (docs/MTP_SPECULATIVE.md)"
             )));
         }
 
@@ -346,33 +437,40 @@ impl RealForwardRunner {
         )?;
 
         // 3. The head's own final norm, then the TRUNK's lm_head: the head
-        //    has no output projection of its own.
-        let final_norm = norm_view(weights, index, FINAL_NORM, hidden)?;
-        gpu::encode_rms_norm_bf16w(
-            context,
-            &pass,
-            (&scratch.x, 0),
-            final_norm,
-            (&scratch.normed, 0),
-            hidden as u32,
-            RMS_EPS,
-        )
-        .map_err(gpu_err)?;
-        encode_gemv_any(
-            context,
-            &pass,
-            weights,
-            index,
-            &head_name,
-            vocab,
-            hidden,
-            (&scratch.normed, 0),
-            (&scratch.logits, 0),
-        )?;
+        //    has no output projection of its own. Both are skipped on a
+        //    priming step, which wants only the KV row this block just wrote.
+        if logits.is_some() {
+            let final_norm = norm_view(weights, index, FINAL_NORM, hidden)?;
+            gpu::encode_rms_norm_bf16w(
+                context,
+                &pass,
+                (&scratch.x, 0),
+                final_norm,
+                (&scratch.normed, 0),
+                hidden as u32,
+                RMS_EPS,
+            )
+            .map_err(gpu_err)?;
+            encode_gemv_any(
+                context,
+                &pass,
+                weights,
+                index,
+                &head_name,
+                vocab,
+                hidden,
+                (&scratch.normed, 0),
+                (&scratch.logits, 0),
+            )?;
+        }
 
+        // The wait is NOT conditional: a priming step exists for its KV row,
+        // and the row is not written until the GPU has run this block.
         pass.commit_and_wait();
         self.real_mtp.as_mut().expect("checked above").kv.advance();
-        gpu::read_buffer_f16_into(&self.scratch.logits, 0, logits);
+        if let Some(out) = logits {
+            gpu::read_buffer_f16_into(&self.scratch.logits, 0, out);
+        }
         Ok(())
     }
 

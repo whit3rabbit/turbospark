@@ -52,7 +52,15 @@ const DEPTH: &str = "2";
 /// The change detector. Taken from a run of the test that asserts it, over a
 /// deterministic fixture, and frozen. See that test's doc comment before
 /// touching this.
-const FROZEN_DRAFT_DIGEST: &str = "f9ead747";
+/// Re-frozen 2026-08-18 from `f9ead747`, and the reason is the head's KV.
+/// `trunk_then_draft` now PRIMES every earlier position, so the draft attends
+/// over rows the head actually wrote rather than over rows nobody did -- the
+/// block's span is `[0, position]` and the head's cache used to start empty.
+/// The step's arithmetic and dispatch order are untouched; what moved is its
+/// input. Note every reachability case in this file stayed green across that
+/// change, which is Gotcha 51's point restated: this constant was the only
+/// thing that could see it.
+const FROZEN_DRAFT_DIGEST: &str = "4a2e6af3";
 
 fn temp_dir(tag: &str) -> std::path::PathBuf {
     let n = COUNTER.fetch_add(1, Ordering::SeqCst);
@@ -82,12 +90,20 @@ fn open(dir: &std::path::Path) -> RealForwardRunner {
     RealForwardRunner::open(dir, peeked).expect("install opens")
 }
 
-/// Walks a few trunk tokens, then takes one draft off the last one.
+/// Walks a few trunk tokens, PRIMING the head as it goes, then takes one
+/// draft off the last one.
 ///
-/// The ORDER is the contract: `mtp_draft_step` reads the trunk's hidden
-/// state out of `scratch.x`, which the next `produce` overwrites from the
-/// embedding, so a draft has to be taken between the trunk's readback and
-/// the next token.
+/// Two contracts, and the second was added after the first shipped. The ORDER
+/// is one: `mtp_draft_step` reads the trunk's hidden state out of
+/// `scratch.x`, which the next `produce` overwrites from the embedding, so a
+/// draft has to be taken between the trunk's readback and the next token.
+///
+/// The other is that the head's KV has to COVER the span the draft will
+/// attend over. The block attends `[0, position]`, so a draft at `steps - 1`
+/// off an empty head reads `steps - 1` rows nobody wrote. Priming every
+/// earlier position is what fills them, and it is free of any ordering
+/// question because the token at `position + 1` is exactly what the trunk
+/// just predicted.
 fn trunk_then_draft(runner: &mut RealForwardRunner, steps: usize) -> Vec<f16> {
     runner.reset();
     let mut token = 5i32;
@@ -97,6 +113,14 @@ fn trunk_then_draft(runner: &mut RealForwardRunner, steps: usize) -> Vec<f16> {
             .produce(token, position, &mut head)
             .expect("trunk produce succeeds");
         token = argmax(&head);
+        // `token` now occupies `position + 1`, which is the head's input pair
+        // at `position`. The LAST position's row is written by the draft
+        // itself, so it is not primed here.
+        if position + 1 < steps {
+            runner
+                .mtp_prime_step(token, position)
+                .expect("prime step succeeds");
+        }
     }
     let mut draft = vec![f16::from_f32(0.0); VOCAB as usize];
     runner
@@ -196,6 +220,9 @@ fn a_draft_chain_advances_the_heads_own_kv() {
     for position in 0..3usize {
         runner.produce(token, position, &mut head).expect("produce");
         token = argmax(&head);
+        if position + 1 < 3 {
+            runner.mtp_prime_step(token, position).expect("prime");
+        }
     }
     let mut draft = vec![f16::from_f32(0.0); VOCAB as usize];
     for depth in 0..DEPTH.parse::<usize>().unwrap() {
@@ -205,6 +232,14 @@ fn a_draft_chain_advances_the_heads_own_kv() {
         assert!(draft.iter().all(|v| v.to_f32().is_finite()));
         token = argmax(&draft);
     }
+    // Each step wrote exactly one row, so the cursor is the last drafted
+    // position plus one. A chain that silently stopped advancing would still
+    // return finite logits at every depth.
+    assert_eq!(
+        runner.mtp_kv_position(),
+        2 + DEPTH.parse::<usize>().unwrap(),
+        "the head's KV should advance once per draft step"
+    );
 }
 
 // -- The change detector ---------------------------------------------------
@@ -355,9 +390,11 @@ fn an_install_without_a_head_refuses_a_draft_depth() {
         .expect("a headless dense install builds");
 
     let peeked = turbospark_repack::peek_manifest_arch(&dir).expect("manifest peeks");
-    let err = RealForwardRunner::open(&dir, peeked)
-        .err()
-        .expect("a headless install must refuse a draft depth");
+    // `err().expect()` rather than `expect_err`: the Ok type is a runner and
+    // does not implement Debug.
+    let Err(err) = RealForwardRunner::open(&dir, peeked) else {
+        panic!("a headless install must refuse a draft depth");
+    };
     let msg = err.to_string();
     assert!(
         msg.contains("mtp.fc.weight"),
@@ -367,4 +404,166 @@ fn an_install_without_a_head_refuses_a_draft_depth() {
         msg.contains("MFERENCE_MTP_DRAFT"),
         "the refusal must name the knob that asked for it, got: {msg}"
     );
+}
+
+// -- The head's KV cursor --------------------------------------------------
+
+/// A step off the head's cursor is REFUSED, in both directions.
+///
+/// This is the guard the accept-length probe is built on. The block attends
+/// `[0, position]` and derives that span from its ARGUMENT, never from the
+/// cursor, so a step past the cursor reads rows nobody wrote and a step
+/// behind it silently re-drafts history. Both still return finite,
+/// plausible-looking logits, which is why neither can be left to be noticed.
+#[test]
+fn a_step_off_the_heads_cursor_is_refused_in_both_directions() {
+    ask_for_drafts();
+    let dir = temp_dir("cursor");
+    build_with_head(&dir);
+    let mut runner = open(&dir);
+
+    runner.reset();
+    let mut head = vec![f16::from_f32(0.0); VOCAB as usize];
+    runner.produce(5, 0, &mut head).expect("produce");
+    let token = argmax(&head);
+    assert_eq!(runner.mtp_kv_position(), 0, "a reset head covers nothing");
+
+    let mut draft = vec![f16::from_f32(0.0); VOCAB as usize];
+    // AHEAD: position 3 against a cursor of 0 would attend over three
+    // unwritten rows.
+    let msg = runner
+        .mtp_draft_step(token, 3, &mut draft)
+        .expect_err("a step ahead of the cursor must be refused")
+        .to_string();
+    assert!(
+        msg.contains('3') && msg.contains("0"),
+        "the refusal must carry both the position and the cursor, got: {msg}"
+    );
+
+    // The legal step, which also moves the cursor.
+    runner
+        .mtp_draft_step(token, 0, &mut draft)
+        .expect("a step AT the cursor is the legal one");
+    assert_eq!(runner.mtp_kv_position(), 1);
+
+    // BEHIND: position 0 again would rewrite a row the head has moved past.
+    runner
+        .mtp_draft_step(token, 0, &mut draft)
+        .expect_err("a step behind the cursor must be refused");
+}
+
+/// The primed rows are READ by a later draft, which is what makes priming
+/// worth its dispatches.
+///
+/// Asserted as a DISCRIMINATING pair rather than as "priming runs": prime the
+/// same positions with two different tokens and require the draft to move. A
+/// test that only checked the cursor advanced would pass against a step that
+/// wrote no row at all.
+#[test]
+fn the_primed_rows_reach_a_later_draft() {
+    ask_for_drafts();
+    let dir = temp_dir("primed");
+    build_with_head(&dir);
+    let mut runner = open(&dir);
+
+    let draft_after_priming_with = |runner: &mut RealForwardRunner, primer: i32| -> String {
+        runner.reset();
+        let mut head = vec![f16::from_f32(0.0); VOCAB as usize];
+        let mut token = 5i32;
+        for position in 0..4usize {
+            runner.produce(token, position, &mut head).expect("produce");
+            token = argmax(&head);
+            if position + 1 < 4 {
+                // The primer stands in for the token the trunk predicted.
+                // Only the head's rows change; the trunk's walk is identical.
+                runner.mtp_prime_step(primer, position).expect("prime");
+            }
+        }
+        let mut draft = vec![f16::from_f32(0.0); VOCAB as usize];
+        runner.mtp_draft_step(token, 3, &mut draft).expect("draft");
+        digest(&draft)
+    };
+
+    let a = draft_after_priming_with(&mut runner, 1);
+    let b = draft_after_priming_with(&mut runner, 7);
+    assert_ne!(
+        a, b,
+        "the draft is blind to the head's own KV rows: priming wrote nothing a draft reads"
+    );
+}
+
+/// Rewinding the head, PAIRED with the trunk's rollback, returns a whole
+/// speculative round to where it started.
+///
+/// The two are exercised together because neither is sufficient, and the
+/// first draft of this test got that wrong: rewinding the head alone does not
+/// reproduce a draft, because `h_t` is not the head's state at all. It is read
+/// out of the trunk's `scratch.x`, which the chained draft steps overwrite, so
+/// restoring it means replaying the trunk. That asymmetry is the whole reason
+/// `rollback` does not simply reach into the head -- they restore different
+/// things, and only the caller knows both targets.
+#[test]
+fn a_rewound_head_and_a_rolled_back_trunk_redraft_the_same_logits() {
+    ask_for_drafts();
+    let dir = temp_dir("rewind");
+    build_with_head(&dir);
+    let mut runner = open(&dir);
+
+    runner.reset();
+    let mut head = vec![f16::from_f32(0.0); VOCAB as usize];
+    let mut token = 5i32;
+    // Positions 0 and 1, priming the head's row 0 as it goes.
+    for position in 0..2usize {
+        runner.produce(token, position, &mut head).expect("produce");
+        token = argmax(&head);
+        if position + 1 < 2 {
+            runner.mtp_prime_step(token, position).expect("prime");
+        }
+    }
+    // The block starts here: everything after this point is speculative.
+    let point = runner.checkpoint();
+    runner.mtp_prime_step(token, 1).expect("prime");
+    runner.produce(token, 2, &mut head).expect("produce");
+    let at_three = argmax(&head);
+
+    let mut first = vec![f16::from_f32(0.0); VOCAB as usize];
+    runner
+        .mtp_draft_step(at_three, 2, &mut first)
+        .expect("draft");
+    // Walk the head forward as a rejected draft would.
+    let mut scratch = vec![f16::from_f32(0.0); VOCAB as usize];
+    let mut chained = argmax(&first);
+    for depth in 0..2usize {
+        runner
+            .mtp_draft_step(chained, 3 + depth, &mut scratch)
+            .expect("chained draft");
+        chained = argmax(&scratch);
+    }
+    assert_eq!(runner.mtp_kv_position(), 5);
+
+    // Undo the round on BOTH sides and replay it.
+    runner.rollback(&point);
+    runner.mtp_rewind_to(2).expect("rewind");
+    assert_eq!(runner.mtp_kv_position(), 2, "rewind must move the cursor");
+    runner.produce(token, 2, &mut head).expect("replay");
+    assert_eq!(
+        at_three,
+        argmax(&head),
+        "the trunk did not replay to the same token"
+    );
+
+    let mut again = vec![f16::from_f32(0.0); VOCAB as usize];
+    runner
+        .mtp_draft_step(at_three, 2, &mut again)
+        .expect("redraft");
+    assert_eq!(
+        digest(&first),
+        digest(&again),
+        "a rewound head did not reproduce the draft it had already taken"
+    );
+
+    // A target ahead of the cursor is a caller error, not a silent clamp.
+    runner
+        .mtp_rewind_to(9)
+        .expect_err("rewinding forwards must be refused");
 }
