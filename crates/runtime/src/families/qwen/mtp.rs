@@ -99,6 +99,14 @@ pub(crate) struct MtpState {
     pub(crate) concat: gpu::MetalBuffer,
     /// How many tokens a round proposes, from `MFERENCE_MTP_DRAFT`.
     pub(crate) depth: usize,
+    /// The M-row buffers the batched verify pass runs on (step 4).
+    ///
+    /// It lives HERE rather than beside `DecodeScratch` for the same reason
+    /// the rest of this state does: `MFERENCE_MTP_DRAFT` unset must allocate
+    /// nothing at all, which is what lets `qwen38_memory_oracle`'s frozen row
+    /// keep describing the pre-MTP engine. Sized for `depth + 1` rows,
+    /// because a round verifies the confirmed token plus `depth` proposals.
+    pub(crate) batched: super::batched::BatchedScratch,
 }
 
 impl MtpState {
@@ -117,6 +125,7 @@ impl MtpState {
         arch: &ArchConfig,
         max_context: usize,
         depth: usize,
+        gdn_shape: gpu::GdnShape,
     ) -> Result<Option<Self>, RealForwardError> {
         if depth == 0 {
             return Ok(None);
@@ -158,10 +167,15 @@ impl MtpState {
         .map_err(RealForwardError::Gpu)?;
 
         let hidden = arch.hidden_size as u64;
+        // `depth + 1`: a round verifies the confirmed token plus `depth`
+        // proposals, so the widest pass is one row wider than the block.
+        let batched =
+            super::batched::BatchedScratch::new(context, arch, gdn_shape, depth.saturating_add(1));
         Ok(Some(Self {
             kv,
             concat: context.new_output_buffer(2 * hidden * 2),
             depth,
+            batched,
         }))
     }
 

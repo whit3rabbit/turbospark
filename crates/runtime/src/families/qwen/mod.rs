@@ -3,6 +3,7 @@
 //! one, which differ in their FFN half and in nothing else.
 
 mod attn;
+mod batched;
 mod dense;
 mod moe;
 mod mtp;

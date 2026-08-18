@@ -416,6 +416,72 @@ pub(crate) fn encode_gemv_any(
     }
 }
 
+/// [`encode_gemv_any`] at `batch` rows: `y[b, m] = sum_n W[m, n] * x[b, n]`.
+///
+/// `x` holds `batch * cols` halfs and `y` `batch * rows`, both TOKEN-MAJOR,
+/// so one token's slice of either stays contiguous and can be handed to a
+/// per-token kernel unchanged. That is what lets the batched verify pass
+/// batch its GEMVs while leaving norms, RoPE, attention and the recurrent
+/// step looping per token, which is exactly the split
+/// `docs/MTP_SPECULATIVE.md`'s composite assumes.
+///
+/// **EVERY DTYPE BUT INT4-AFFINE IS REFUSED BY NAME, NEVER LOOPED.** A
+/// fallback of `batch` sequential GEMVs is numerically identical, so it
+/// would pass every parity and losslessness test there is -- while making a
+/// "batched" verify measure the SEQUENTIAL engine and report its cost as the
+/// batched one. That is AGENTS.md Gotcha 35's failure (a measurement tool
+/// must not inherit a silent default) one layer down, and it would corrupt
+/// the only number step 4 exists to produce. The refusal is not a temporary
+/// gap either: the 1-bit and 2-bit checkpoints of this same architecture and
+/// every GGUF block type have no batched kernel at all.
+///
+/// The batch bound is an `Err` here and an `assert!` inside
+/// `encode_dequant_int4_gemm_resident`. Exceeding `MAX_BATCH_ROWS` is a
+/// call-site bug and the kernel is right to abort on it, but a runtime path
+/// that can be reached with a caller-chosen block size should say so
+/// without killing the process.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn encode_gemm_any(
+    context: &mut gpu::MetalContext,
+    pass: &gpu::PassEncoder,
+    weights: &gpu::ResidentGpuWeights,
+    index: &ResidentIndex,
+    name: &str,
+    rows: usize,
+    cols: usize,
+    x: (&gpu::MetalBuffer, u64),
+    y: (&gpu::MetalBuffer, u64),
+    batch: usize,
+) -> Result<(), RealForwardError> {
+    if !(1..=gpu::MAX_BATCH_ROWS).contains(&batch) {
+        return Err(RealForwardError::Unsupported(format!(
+            "tensor {name}: batch {batch} outside 1..={} (the batched INT4 kernel's \
+             accumulators are a per-thread register array, so the cap is the register \
+             file rather than a tuning choice)",
+            gpu::MAX_BATCH_ROWS
+        )));
+    }
+    let e = entry(index, name)?;
+    match e.dtype {
+        // A LITERAL, matching `encode_gemv_any`'s arm above, because INT4
+        // and INT8 have no named constants the way the GGUF and sub-4-bit
+        // tags do. Spelling it `DTYPE_INT4_AFFINE` here does not fail to
+        // compile -- it becomes a catch-all BINDING that matches every
+        // dtype and routes a Q4_K tensor into the INT4 kernel. The compiler
+        // warns; nothing else would.
+        4 => {
+            let w = resident_matrix(weights, index, name, rows, cols)?;
+            gpu::encode_dequant_int4_gemm_resident(context, pass, &w, x, y, batch)
+                .map_err(RealForwardError::Gpu)
+        }
+        other => Err(RealForwardError::Unsupported(format!(
+            "tensor {name}: dtype {other} has no BATCHED kernel; only INT4-affine (4) \
+             does. Refused rather than looped: a sequential fallback here is \
+             numerically identical and would silently measure the unbatched engine"
+        ))),
+    }
+}
+
 /// The `router_topk_select_k8` kernel's semantics on the host: top-`k` by
 /// score with ties preferring the lower expert index, softmax over the
 /// selected scores only, each weight multiplied by that expert's

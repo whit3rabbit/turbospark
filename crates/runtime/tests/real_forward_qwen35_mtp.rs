@@ -598,3 +598,131 @@ fn a_rewound_head_and_a_rolled_back_trunk_redraft_the_same_logits() {
         .mtp_rewind_to(9)
         .expect_err("rewinding forwards must be refused");
 }
+
+/// STEP 4's WHOLE CONTRACT: one batched pass is BIT-IDENTICAL to the same
+/// tokens run one at a time (`docs/MTP_SPECULATIVE.md`).
+///
+/// This is what makes speculative output provably identical to
+/// non-speculative output, and it is asserted with `==` rather than a
+/// tolerance because the batched kernel does not reassociate any sum -- each
+/// output row keeps its own accumulator, exactly as B separate GEMV calls
+/// would (`crates/gpu/tests/dequant_int4_gemm_parity.rs`).
+///
+/// A 4-BIT install, unlike every other case in this file. The batched GEMM
+/// exists at INT4 alone, so a 1- or 2-bit fixture cannot reach this path at
+/// all -- which is its own test, immediately below.
+///
+/// **IT RUNS TWO TOKENS PAST THE BATCH, and that is not thoroughness, it is
+/// the only way half the state is observable.** A batch that starts at
+/// position 0 begins from an empty gated-DeltaNet conv tail, and
+/// `gdn_conv_mix_prefill` reconstructs every intra-batch row's history from
+/// the batch itself -- so the batch's OWN logits are identical whether or
+/// not the layer's tail is advanced afterwards. Dropping
+/// `encode_gdn_conv_tail_update` reddens nothing until a token is produced
+/// after the batch and reads the stale tail. Found by mutation, not review.
+#[test]
+fn a_batched_pass_is_bit_identical_to_the_same_tokens_run_sequentially() {
+    ask_for_drafts();
+    let dir = temp_dir("batched-parity");
+    build_synthetic_qwen_gdn_dense_install_with_mtp(&dir, VOCAB, LAYERS, "mtp-int4", 4)
+        .expect("a 4-bit dense install with a head builds");
+    let mut runner = open(&dir);
+    let vocab = VOCAB as usize;
+    let tokens = [5i32, 9, 3, 7, 2];
+    /// Rows the batched arm takes in one pass; the rest it produces one at a
+    /// time, so the comparison covers the state the batch LEFT as well as
+    /// the logits it produced.
+    const BATCH: usize = 3;
+
+    runner.reset();
+    let mut sequential: Vec<f16> = Vec::with_capacity(tokens.len() * vocab);
+    let mut row = vec![f16::from_f32(0.0); vocab];
+    for (position, &token) in tokens.iter().enumerate() {
+        runner
+            .produce(token, position, &mut row)
+            .expect("sequential produce");
+        sequential.extend_from_slice(&row);
+    }
+    let sequential_cursor = runner.checkpoint().position();
+
+    runner.reset();
+    let mut batched = vec![f16::from_f32(0.0); BATCH * vocab];
+    runner
+        .produce_batched(&tokens[..BATCH], 0, &mut batched)
+        .expect("batched pass");
+    for (offset, &token) in tokens[BATCH..].iter().enumerate() {
+        runner
+            .produce(token, BATCH + offset, &mut row)
+            .expect("produce after the batch");
+        batched.extend_from_slice(&row);
+    }
+
+    assert_eq!(
+        sequential, batched,
+        "the batched pass diverged from sequential produce: a speculative \
+         verify built on this would not be lossless"
+    );
+    // The cursor has to land where the same tokens run one at a time leave
+    // it, or `rollback` would need a batched variant and every position
+    // downstream would be off by the block size.
+    assert_eq!(
+        sequential_cursor,
+        runner.checkpoint().position(),
+        "the batched pass left the KV cursor somewhere else"
+    );
+}
+
+/// The refusal that keeps the measurement honest (AGENTS.md Gotcha 35 one
+/// layer down).
+///
+/// A sequential fallback here would be NUMERICALLY IDENTICAL, so it would
+/// pass the parity case above and the end-to-end losslessness gate too --
+/// and a "batched" verify would then measure the sequential engine and
+/// report its cost as the batched one. The 1-bit and 2-bit checkpoints of
+/// this same architecture have no batched kernel, so this is a live case and
+/// not a hypothetical.
+#[test]
+fn a_sub_4_bit_install_is_refused_by_the_batched_path_rather_than_looped() {
+    ask_for_drafts();
+    let dir = temp_dir("batched-refuse-1bit");
+    build_with_head(&dir);
+    let mut runner = open(&dir);
+    let vocab = VOCAB as usize;
+    let tokens = [5i32, 9];
+
+    runner.reset();
+    let mut batched = vec![f16::from_f32(0.0); tokens.len() * vocab];
+    let err = runner
+        .produce_batched(&tokens, 0, &mut batched)
+        .expect_err("a 1-bit install has no batched kernel");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("BATCHED") && msg.contains("INT4-affine"),
+        "the refusal must name the dtype and say it is not looped, got: {msg}"
+    );
+}
+
+/// A block wider than the scratch is an error rather than an overrun, and a
+/// block wider than the kernel's register file is an error here rather than
+/// an `assert!` inside the dispatch.
+#[test]
+fn a_batch_beyond_the_scratch_is_refused() {
+    ask_for_drafts();
+    let dir = temp_dir("batched-too-wide");
+    build_synthetic_qwen_gdn_dense_install_with_mtp(&dir, VOCAB, LAYERS, "mtp-int4-wide", 4)
+        .expect("a 4-bit dense install with a head builds");
+    let mut runner = open(&dir);
+    let vocab = VOCAB as usize;
+
+    // DEPTH is "2", so the scratch holds DEPTH + 1 = 3 rows.
+    let tokens = [5i32, 9, 3, 7];
+    runner.reset();
+    let mut batched = vec![f16::from_f32(0.0); tokens.len() * vocab];
+    let err = runner
+        .produce_batched(&tokens, 0, &mut batched)
+        .expect_err("4 rows against scratch sized for 3");
+    assert!(
+        format!("{err}").contains("scratch sized for 3"),
+        "the refusal must name both widths, got: {err}"
+    );
+}
