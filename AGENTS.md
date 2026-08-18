@@ -37,8 +37,15 @@ un-amortizable floor and no expert-union term, so the ceiling is ~2.07x and
 a good drafter is worth 1.35-1.58x. **It also supersedes that older page's
 `c(M)` table in both directions**: `dequant_int4_gemm_simd` was missing the
 function-constant specialization `46617c6` gave the GEMV, and fixing that
-plus bounding its unroll roughly HALVED `c(M)` on every shape, so the MoE
-verdict is owed a re-derivation nobody has done. Read both before proposing
+plus bounding its unroll roughly HALVED `c(M)` on every shape. **THE MoE
+VERDICT WAS RE-DERIVED 2026-08-18 AND DID NOT MOVE** (block 4 pays
+1.14-1.19x, block 8 is 0.95-1.00x, block 16 loses, against a recorded
+1.14 / 0.97 / 0.87), which makes the PAIR of pages the thing to read: one
+kernel fix, measured the same week, is decisive on the dense family and
+worth about two points on the MoE one, because the GEMV it improves is
+52.7% of MoE decode compute while 19% cannot amortize at all and a further
+26% is a kernel nobody has written. Cost an optimization by the terms it
+does NOT touch. Read both before proposing
 MTP, DFlash, EAGLE or Medusa -- and note the reversal recorded at the top of
 the MTP page, where a composite built on an unoptimized kernel measured the
 kernel rather than the question. **`simdgroup_matrix` is CLOSED**, measured
@@ -1300,8 +1307,18 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
     the per-run rows in `rows.tsv` (this sentence used to claim the
     script excludes it, which its own awk refutes); `scripts/parity.sh`
     and the oracles do not even warn, so a surprising throughput row from
-    a long session on either power source is worth checking against
-    `pmset -g therm` before it is believed. The
+    a long session on either power source is worth checking against the
+    pressure level before it is believed. **`pmset -g therm` is NOT that
+    check and never was**: it reports thermal WARNING LEVELS, and on this
+    machine it prints three `Note: No ... has been recorded` lines and
+    nothing containing the word "pressure", so a
+    `pmset -g therm | grep -i pressure` matches nothing and reads as a
+    clean run rather than as an absent instrument (it did exactly that
+    through every run of the 2026-08-17 qwen38 capture). The two real
+    sources are `powermetrics -s thermal`'s `Current pressure level:`
+    line, which is what `scripts/power.sh` already parses and which needs
+    sudo, and `runtime::power::thermal_level`'s four-level
+    `NSProcessInfo` enum, which does not. The
     corollary for A/B work is stronger than "prefer AC": an effect
     smaller than a few percent CANNOT be measured on battery at all. The
     read-pool QoS seam read as a clear loss on battery (one pair at +8.8%

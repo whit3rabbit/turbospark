@@ -235,36 +235,78 @@ two points apart, which is the reason to believe either.
 
 ### Composing it
 
-`c(M)` is measured for the GEMV shapes (`docs/SPECULATIVE_DECODING.md`):
-0.36 on the expert shape at M=16, 0.67 to 0.78 on the big projections; call
-it 0.6 weighted. At 32 slots, as a fraction of the 22.95 ms per prompt
-token measured above:
+**Re-weighted 2026-08-18** against a fresh `c(M)` measurement, after
+`46617c6`'s function-constant specialization reached `dequant_int4_batch.rs`
+and roughly halved it (`docs/SPECULATIVE_DECODING.md`, "c(M), re-measured").
+This paragraph used to read "call it 0.6 weighted", which was both stale and
+never how the column below was actually computed -- the old `fully batched`
+figures imply ~0.52 to 0.54, not 0.6.
+
+Batched prefill is capped at `MAX_BATCH_ROWS = 16`, so M=16 is the column
+that matters. Weighting the fresh numbers by prefill's OWN dispatch ranking
+rather than by a single flat factor:
+
+| | share of prefill GPU | `c(16)` |
+| --- | ---: | ---: |
+| attention | 22.3% | 0.447 (held at the GEMV rate; see below) |
+| resident GEMV | 29.7% | 0.447 |
+| routed pair | 23.5% | 0.287 (**proxy**, see below) |
+| router GEMV | 3.3% | 0.447 |
+| norms + elementwise | 21.2% | **1.0 -- nothing to amortize** |
+
+That is `c(16) = 0.399` over the 78.8% that batches, and a whole-GPU
+multiplier of **0.526**. At 32 slots, as a fraction of the 22.95 ms per
+prompt token measured above:
 
 | term | now | after step 1 | fully batched |
 | --- | ---: | ---: | ---: |
 | expert `pread` | 32.3% | 32.3% | 32.3% |
-| GPU device time, cb1 (attention, GEMV, norms, router) | 28.5% | 28.5% | ~15.5% |
-| GPU device time, routed pair | 16.4% | 16.4% | ~8.5% |
+| GPU device time, cb1 (attention, GEMV, norms, router) | 28.5% | 28.5% | ~17.1% |
+| GPU device time, routed pair | 16.4% | 16.4% | ~4.7% |
 | host scheduling gap | 13.7% | ~5% | ~5% |
 | encode + logit readback | 5.9% | ~5% | ~5% |
 | bind + retire + router readback | 4.2% | ~3.5% | ~0.5% |
-| **total** | **100%** | **~91%** | **~67%** |
+| **total** | **100%** | **~91%** | **~65%** |
 
-**Predicted: step 1 alone about 1.1x, the whole program about 1.5x**,
-landing near 15 ms per prompt token against Swift's 7.5. Parity would need
-3.06x and is not reachable while the `pread` bucket is a third of prefill
-and does not batch.
+**Predicted: step 1 alone about 1.1x, the whole program about 1.55x on this
+base**, landing near 14.8 ms per prompt token against Swift's 7.5. The
+routed-pair row is where the fresh measurement lands (16.4% to 4.7%, where
+0.6 flat gave 9.8%); cb1 barely moves and goes the *wrong* way, because
+holding its norms at 1.0 rather than batching them with everything else is
+the correction the old column skipped.
+
+**Parity is still not reachable**, and no `c(M)` can make it so: it needs
+3.06x while the `pread` bucket is a third of prefill and does not batch at
+all. A better kernel divides the 45% that is GPU device time and nothing
+else.
 
 **Step 1 then measured 1.22x, and the column above is wrong in an
-instructive direction. See "Step 1, measured" below.**
+instructive direction. See "Step 1, measured" below**, whose extrapolation
+starts from a measured run rather than from this composite and lands
+higher, at ~1.97x. **The two bracket rather than agree, and the spread is
+not `c(M)`**: this table's base run reads 7.41 ms/token of expert `pread`
+where step 1's pair 3 reads 3.10, on the same install at the same slot
+count, on a machine that was not quiet (Gotcha 43). Read 1.55x to 1.97x as
+the honest band and note which bucket it turns on.
 
-Three terms are soft, and the direction of each is worth knowing. `c(M)`
-for the routed pair is extrapolated from the INT4 GEMV proxy (the real
-phase-1/phase-2 kernels have no batched form to measure). Attention's share
-of cb1 is folded in at the doc's earlier 22.3% dispatch ranking rather than
-measured again per arm. And the step-1 column assumes the scheduling gap is
-mostly phase A's, which the driver's own measurement will settle -- that is
-why step 1 exists before any kernel.
+Two terms are soft, both in the OPTIMISTIC direction, and the re-weighting
+did not fix either -- it only made them easier to see.
+
+**The routed pair's 0.287 is a PROXY.** It is a resident INT4 GEMV measured
+at a routed expert's shape, because `moe_phase1_gate_up_act_u16load` and
+`moe_phase2_down_reduce_k8` have no batched form to measure. That row is
+now the single largest saving in the `fully batched` column (16.4% to
+4.7%), so the projection rests hardest on the number with the least
+evidence behind it. Steps 2 and 3 exist to replace it with a measurement.
+
+**Attention is held at the GEMV rate**, which is conservative rather than
+optimistic: M queries genuinely share one KV read, so a batched attention
+should beat a batched GEMV. It is not measured because no such kernel
+exists (step 4), and its 22.3% share is the doc's earlier dispatch ranking
+rather than a per-arm re-measurement.
+
+The step-1 column's assumption that the scheduling gap is mostly phase A's
+is no longer soft -- the driver measured it, and it over-delivered.
 
 ### Step 1, measured
 
@@ -317,19 +359,35 @@ honest saving is the total row, 3.87 ms/token.
 cache hit rate is 81.2% sequential against 81.4% chunked, on identical
 routes. Batching tokens did not deduplicate one expert read.
 
-Extrapolating the rest from here rather than from the original composite:
-10.11 of the remaining 14.70 ms/token is GPU device time, ~21% of which is
-norms and elementwise with nothing to amortize. Taking the rest at
-`c(M) ~ 0.6` puts the fully batched figure near 12 ms/token, i.e. **~1.5x
-against the sequential baseline** -- unchanged from the corrected composite,
-by coincidence rather than by construction, since step 1 over-delivered and
-the kernels have correspondingly less left to take.
+Extrapolating the rest from here rather than from the original composite,
+and **re-weighted 2026-08-18** with the fresh `c(16)`: 10.11 of the
+remaining 14.70 ms/token is GPU device time, split 6.25 cb1 and 3.86 routed.
+Within cb1, 27.7% is norms and elementwise with nothing to amortize and the
+rest goes at 0.447, giving 3.75; the routed pair goes at its 0.287 proxy,
+giving 1.11. With the 4.59 ms/token that is not GPU device time at all, the
+fully batched figure is **~9.5 ms/token, i.e. ~1.97x against the sequential
+baseline** -- against ~12 ms and ~1.5x at the old `c(M) ~ 0.6`.
 
-**A note on why this is still worth building at ~1.5x.** Prefill is the
+**That is the largest thing the kernel fix bought anywhere in this
+document**, and it is worth contrasting with where it bought nothing:
+`docs/SPECULATIVE_DECODING.md`'s MoE verdict moved two points on the same
+re-measurement, because a verify pass divides its cost by an accept length
+and a prefill chunk keeps all M of its tokens. Same kernel, same week, and
+the divisor is the whole difference.
+
+Read it against the composite's 1.55x rather than instead of it. The two
+differ almost entirely in the expert `pread` bucket (3.10 against 7.41
+ms/token on two runs of the same install at the same slot count), which is
+the bucket that does not batch and therefore sets the ceiling for both.
+
+**A note on why this is worth building at 1.55x to 1.97x.** Prefill is the
 only measured gap against Swift, it is 86% of a long prompt's joules
-(`docs/POWER_BASELINE.md`), and 1.5x on the 69.3 s this prompt spends in
-prefill is 23 s of wall clock. What it is NOT is a path to parity, and the
-first draft's 2.1x implied one.
+(`docs/POWER_BASELINE.md`), and even the low end of that band is 24 s of
+wall clock off the 69.3 s this prompt spends in prefill. What it is NOT is
+a path to parity, and the first draft's 2.1x implied one -- note the
+re-weighted high end now brushes that number while still not reaching
+parity, which is the reason to state the `pread` ceiling every time rather
+than the multiplier alone.
 
 ## The attention fork
 
@@ -340,9 +398,12 @@ The question is whether a chunk needs the descoped tile kernels
 
 **It can run per token, and it should, first** -- but for a weaker reason
 than a 2.3% share would have given. Attention is 22.3% of prefill GPU work
-and batching it is worth ~7 points of the ~33 the whole change is worth.
-That is real and it is not a prerequisite: a chunk whose attention is still
-per-token gets ~1.4x, and steps 2 to 4 below are independent of it.
+and batching it is worth ~5 points of the ~35 the whole change is worth on
+the composite's base (it was ~7 of ~33 before the 2026-08-18 re-weighting;
+a cheaper `c(M)` shrinks every batchable term's share of the saving, not
+just this one). That is real and it is not a prerequisite: a chunk whose
+attention is still per-token gets ~1.44x, and steps 2 to 4 below are
+independent of it.
 
 So this is one phase followed by an optional one, rather than a fork:
 

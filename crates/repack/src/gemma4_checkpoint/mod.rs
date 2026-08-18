@@ -59,7 +59,26 @@ pub fn write_gemma4_install_streamed(
         plan.routed.len(),
     ));
 
-    let resident = orchestrate::read_resident_entries(shards, &plan.resident_bases, quant)?;
+    let mut resident = orchestrate::read_resident_entries(shards, &plan.resident_bases, quant)?;
+    // THE MTP HEAD, and this arm has to exist HERE as well as in
+    // `orchestrate_gemma4_checkpoint_sharded` -- which is the whole reason it
+    // is worth a comment. Every REAL install goes through this streamed
+    // writer and every fixture went through the other one, so step 1's head
+    // ingest was gated by a test that could not reach the code path any real
+    // checkpoint takes: the first stream that asked for a head produced a
+    // byte-identical HEADLESS install, 851 resident tensors and all, with no
+    // error anywhere. `crates/repack` Gotcha 8 says to build the fixture
+    // before the download; the lesson this adds is that the fixture has to
+    // exercise the WRITER the download will use.
+    if !plan.mtp_bases.is_empty() {
+        let head = mtp::read_mtp_entries(shards, &plan.mtp_bases)?;
+        progress(&format!(
+            "ingested a {}-tensor multi-token-prediction head",
+            head.entries.len()
+        ));
+        resident.entries.extend(head.entries);
+        resident.lossy_narrowing.extend(head.lossy_narrowing);
+    }
     let resident_bytes =
         crate::resident_writer::build_resident_weights_bin_mixed(&resident.entries);
     // Reported rather than merely counted, on the streamed path especially:

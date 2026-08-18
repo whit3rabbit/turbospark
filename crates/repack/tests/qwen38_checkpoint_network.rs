@@ -41,20 +41,27 @@
 //! second one. That is what licenses the pinned constants above being a
 //! fingerprint of the RESULT and not just of the download.
 //!
-//! Note what this checkpoint does NOT bring, so nobody goes looking: the
-//! official `Qwen/Qwen3.8-27B` carries 15 `mtp.*` tensors (a multi-token
-//! prediction head nothing here implements), and the mlx-community
-//! conversion drops them. Only `language_model.` and `vision_tower.` survive,
-//! so there is no new exclusion rule -- the walk sees the same two prefixes
-//! Bonsai showed it. `mtp.*` becomes live only if the bf16 checkpoint is ever
-//! repacked directly.
+//! Note what this checkpoint does NOT bring: the official `Qwen/Qwen3.8-27B`
+//! carries 15 `mtp.*` tensors (a multi-token prediction head) and the
+//! mlx-community conversion drops them, so only `language_model.` and
+//! `vision_tower.` survive and the walk sees the same two prefixes Bonsai
+//! showed it. The FIRST test below is that install and has no drafter.
+//!
+//! **The SECOND test builds the same trunk WITH the head**, by handing
+//! `Gemma4Shards` a fourth `(header, source)` pair pointing at the official
+//! repository's last shard (`docs/MTP_SPECULATIVE.md`, step 1). The two are
+//! separate targets writing separate directories on purpose: the headless
+//! one is the CONTROL that says the head's mere presence moves no number,
+//! which no single-install run can show, and it is what the pinned
+//! `model_weights.bin` SHA-256 above describes.
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use turbospark_repack::{
     fetch_safetensors_header, parse_gemma4_quantization, parse_qwen_gdn_dense_config,
-    write_qwen_gdn_dense_install_streamed, Gemma4Shards, HttpRangeSource,
+    write_qwen_gdn_dense_install_streamed, Gemma4Shards, HttpRangeSource, RangeSource,
+    SafetensorsHeader,
 };
 
 const REPO_BASE: &str = "https://huggingface.co/mlx-community/Qwen3.8-27B-4bit/resolve/3e6447f082e89cc7f0bc6e5441afd38dfce760ff";
@@ -71,9 +78,39 @@ const SHARD_BYTES: [u64; 3] = [5_343_268_662, 5_354_185_130, 5_357_087_557];
 /// private, so it is restated rather than imported; 15 would be Bonsai's
 /// 1-bit tag and 1 is raw BF16.
 const DTYPE_INT4_AFFINE: u8 = 4;
+/// Raw BF16, which every unquantized tensor in a written install carries
+/// (Gotcha 45: the walk narrows rather than tagging, so there is no other).
+const DTYPE_BF16: u8 = 1;
+
+// -- The official BF16 checkpoint, for the MTP head alone -------------------
+
+/// `Qwen/Qwen3.8-27B`, pinned at a REVISION rather than `resolve/main`.
+/// `tests/mtp_head_network.rs` reads this repo at `main` and that is fine for
+/// a header probe; an install test writes 14 GB off these bytes and has to
+/// name which ones.
+const OFFICIAL_BASE: &str =
+    "https://huggingface.co/Qwen/Qwen3.8-27B/resolve/1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0";
+/// Its own index, which is NOT the mlx one: 1,199 tensors under
+/// `model.language_model.`, `lm_head.` and `mtp.`, where the conversion
+/// re-spells the first two and drops the third.
+const OFFICIAL_INDEX_SHA256: &str =
+    "77042094076611b69791a610065f28b7013b8c621795fa86ddccc8bac7d1b9df";
+/// The one shard the index maps every `mtp.*` tensor to.
+const MTP_SHARD: &str = "model-00018-of-00018.safetensors";
+/// Its published size. **3.39 GB, and only 849 MB of that is the head** --
+/// the shard also holds a BF16 `lm_head.weight`, which is why the filter
+/// below exists. The walk reads RANGES, so the extra 2.54 GB never moves.
+const MTP_SHARD_BYTES: u64 = 3_392_197_344;
+/// The 15 `mtp.*` tensors' own byte total, cross-checked against
+/// `tests/mtp_head_network.rs`, which derives the same figure from shapes.
+const MTP_TENSOR_BYTES: u64 = 849_398_784;
 
 fn get(path: &str) -> Vec<u8> {
-    let url = format!("{REPO_BASE}/{path}");
+    get_from(REPO_BASE, path)
+}
+
+fn get_from(base: &str, path: &str) -> Vec<u8> {
+    let url = format!("{base}/{path}");
     let response = reqwest::blocking::Client::builder()
         .timeout(None)
         .build()
@@ -90,15 +127,18 @@ fn get(path: &str) -> Vec<u8> {
 }
 
 fn install_dir() -> PathBuf {
-    match std::env::var_os("TURBOSPARK_QWEN38_INSTALL_DIR") {
+    install_dir_from("TURBOSPARK_QWEN38_INSTALL_DIR", "turbospark-qwen38-real")
+}
+
+fn install_dir_from(var: &str, slug: &str) -> PathBuf {
+    match std::env::var_os(var) {
         Some(dir) => {
             let dir = PathBuf::from(dir);
             std::fs::create_dir_all(&dir).expect("create install dir");
             dir
         }
         None => {
-            let dir =
-                std::env::temp_dir().join(format!("turbospark-qwen38-real-{}", std::process::id()));
+            let dir = std::env::temp_dir().join(format!("{slug}-{}", std::process::id()));
             std::fs::create_dir_all(&dir).unwrap();
             dir
         }
@@ -290,6 +330,299 @@ fn repacks_the_real_qwen38_27b_checkpoint() {
         "SUCCESS: real Qwen3.8-27B repacked into {}, run \
          `cargo run -p turbospark-cli --bin turbospark-check --release -- --model {} --messages-file /tmp/p.json`",
         dir.display(),
+        dir.display()
+    );
+}
+
+// -- The same trunk, WITH the multi-token-prediction head -------------------
+
+/// The 15 tensors the head is made of, in the shard's own order. Restated
+/// here rather than imported from `tests/mtp_head_network.rs` (integration
+/// tests are separate binaries), and that duplication is deliberate: this
+/// list is what the FILTER below is checked against, so a head that grew a
+/// tensor has to redden both files rather than silently widen this one.
+const MTP_TENSORS: [&str; 15] = [
+    "mtp.fc.weight",
+    "mtp.layers.0.input_layernorm.weight",
+    "mtp.layers.0.mlp.down_proj.weight",
+    "mtp.layers.0.mlp.gate_proj.weight",
+    "mtp.layers.0.mlp.up_proj.weight",
+    "mtp.layers.0.post_attention_layernorm.weight",
+    "mtp.layers.0.self_attn.k_norm.weight",
+    "mtp.layers.0.self_attn.k_proj.weight",
+    "mtp.layers.0.self_attn.o_proj.weight",
+    "mtp.layers.0.self_attn.q_norm.weight",
+    "mtp.layers.0.self_attn.q_proj.weight",
+    "mtp.layers.0.self_attn.v_proj.weight",
+    "mtp.norm.weight",
+    "mtp.pre_fc_norm_embedding.weight",
+    "mtp.pre_fc_norm_hidden.weight",
+];
+
+/// The head's SEVEN rank-1 tensors, which `mtp::read_mtp_entries` narrows to
+/// BF16 where it quantizes the eight rank-2 ones. That module splits by RANK
+/// and not by a name list, so this is the list that says the split landed
+/// where the published shapes put it: five `[5120]` norms plus the two
+/// `[256]` per-head ones. The other eight (`fc`, q/k/v/o and the three MLP
+/// projections) are matrices and are asserted as the complement below, so
+/// the two lists cannot drift apart or both grow.
+const MTP_NORMS: [&str; 7] = [
+    "mtp.layers.0.input_layernorm.weight",
+    "mtp.layers.0.post_attention_layernorm.weight",
+    "mtp.layers.0.self_attn.k_norm.weight",
+    "mtp.layers.0.self_attn.q_norm.weight",
+    "mtp.norm.weight",
+    "mtp.pre_fc_norm_embedding.weight",
+    "mtp.pre_fc_norm_hidden.weight",
+];
+
+/// Restricts a shard header to the head's tensors, and asserts what it drops.
+///
+/// **`Gemma4Shards::new` merges every shard's registry, so a fourth pair
+/// contributes ALL of its names**, and the official `model-00018-of-00018`
+/// holds a 2.54 GB BF16 `lm_head.weight` beside the head. That name matches
+/// no prefix `classify_for_family` knows -- the official repo spells its
+/// trunk `model.language_model.` where the conversion spells it
+/// `language_model.model.` -- so it would classify `Unknown` and the walk
+/// would refuse the whole install by name, twenty minutes in.
+///
+/// Dropping it is correct rather than convenient: the install already
+/// carries the conversion's INT4 `language_model.lm_head.weight`, and the
+/// BF16 one is a second copy under a name no decode flow resolves.
+///
+/// Filtering the map cannot move a byte offset. `absolute_range` is
+/// `data_region_start() + data_offsets`, and `data_region_start()` is
+/// `8 + header_len` read off the file's length prefix, not derived from the
+/// map's contents.
+fn head_only(mut header: SafetensorsHeader) -> SafetensorsHeader {
+    let before = header.tensors.len();
+    let dropped: Vec<String> = header
+        .tensors
+        .keys()
+        .filter(|k| !k.starts_with("mtp."))
+        .cloned()
+        .collect();
+    // Named, not counted. A shard that grows a second non-head tensor is a
+    // checkpoint change worth failing on, and `before - 15` would hide it.
+    assert_eq!(
+        dropped,
+        vec!["lm_head.weight".to_string()],
+        "{MTP_SHARD} no longer holds exactly the head plus a bare lm_head"
+    );
+    header.tensors.retain(|k, _| k.starts_with("mtp."));
+    assert_eq!(header.tensors.len(), MTP_TENSORS.len());
+    assert_eq!(before, MTP_TENSORS.len() + 1);
+    header
+}
+
+#[test]
+#[ignore = "streams the 16 GB mlx trunk plus the official checkpoint's 849 MB MTP head"]
+fn repacks_the_real_qwen38_27b_checkpoint_with_its_mtp_head() {
+    // 1. The trunk's index, at the same pins the headless test asserts.
+    let index_bytes = get("model.safetensors.index.json");
+    assert_eq!(
+        model_io::hash_data(&index_bytes),
+        PINNED_INDEX_SHA256,
+        "model.safetensors.index.json does not match the pinned fingerprint"
+    );
+    let index: serde_json::Value = serde_json::from_slice(&index_bytes).expect("index json");
+    let weight_map = index["weight_map"].as_object().expect("weight_map");
+    let shard_names: BTreeSet<String> = weight_map
+        .values()
+        .map(|v| v.as_str().expect("shard name").to_string())
+        .collect();
+    assert_eq!(shard_names.len(), 3);
+    // The conversion still has no head of its own. If this fires, the trunk
+    // and the official shard would both supply `mtp.*` and the merged
+    // registry would silently prefer one -- so it is a precondition of the
+    // fourth pair meaning anything, not a repeat of the other test.
+    assert!(
+        !weight_map.keys().any(|n| n.starts_with("mtp.")),
+        "the mlx artifact grew an mtp head; the fourth pair would now collide"
+    );
+
+    // 2. The OFFICIAL index, which is a different repository and a different
+    //    naming convention. Pinned separately for the same reason.
+    let official_bytes = get_from(OFFICIAL_BASE, "model.safetensors.index.json");
+    assert_eq!(
+        model_io::hash_data(&official_bytes),
+        OFFICIAL_INDEX_SHA256,
+        "the official checkpoint's index does not match its pinned fingerprint"
+    );
+    let official: serde_json::Value =
+        serde_json::from_slice(&official_bytes).expect("official index json");
+    let official_map = official["weight_map"].as_object().expect("weight_map");
+    for name in MTP_TENSORS {
+        assert_eq!(
+            official_map.get(name).and_then(|v| v.as_str()),
+            Some(MTP_SHARD),
+            "{name} is not in the shard this test reads"
+        );
+    }
+    assert_eq!(
+        official_map
+            .keys()
+            .filter(|n| n.starts_with("mtp."))
+            .count(),
+        MTP_TENSORS.len(),
+        "the head's inventory moved"
+    );
+
+    // 3. Config and quantization come from the CONVERSION, not the official
+    //    repo: the head is quantized here at repack time and the trunk's
+    //    `quantization` block describes the trunk's own packed bytes.
+    let config = String::from_utf8(get("config.json")).expect("config utf8");
+    let arch = parse_qwen_gdn_dense_config(&config).expect("config parses");
+    assert_eq!(arch, model_io::qwen_gdn_dense_27b());
+    let quant = parse_gemma4_quantization(&config).expect("quantization parses");
+
+    // 4. Four sources: three trunk shards, then the official head shard.
+    let mut sources: Vec<HttpRangeSource> = shard_names
+        .iter()
+        .map(|name| HttpRangeSource::new(format!("{REPO_BASE}/{name}")))
+        .collect();
+    sources.push(HttpRangeSource::new(format!("{OFFICIAL_BASE}/{MTP_SHARD}")));
+
+    let mut headers: Vec<SafetensorsHeader> = sources
+        .iter()
+        .map(|s| fetch_safetensors_header(s).expect("shard header"))
+        .collect();
+    for (i, (name, header)) in shard_names.iter().zip(headers.iter()).enumerate() {
+        let declared: u64 = header
+            .tensors
+            .values()
+            .map(|t| t.data_offsets.1)
+            .max()
+            .expect("tensors")
+            + header.data_region_start();
+        assert_eq!(declared, SHARD_BYTES[i], "{name}: published size moved");
+    }
+    // The head shard's size is checked BEFORE the filter, because the filter
+    // removes the tensor that ends the file.
+    let head_header = headers.pop().expect("head shard header");
+    let declared = head_header
+        .tensors
+        .values()
+        .map(|t| t.data_offsets.1)
+        .max()
+        .expect("tensors")
+        + head_header.data_region_start();
+    assert_eq!(
+        declared, MTP_SHARD_BYTES,
+        "{MTP_SHARD}: published size moved"
+    );
+    let head_header = head_only(head_header);
+    // Only 849 MB of that 3.39 GB shard is ever read, because the walk reads
+    // per-tensor RANGES. Asserted so the cost claim in the module header is
+    // derived rather than remembered.
+    let head_bytes: u64 = head_header
+        .tensors
+        .values()
+        .map(|t| t.data_offsets.1 - t.data_offsets.0)
+        .sum();
+    assert_eq!(head_bytes, MTP_TENSOR_BYTES, "the head's byte total moved");
+    headers.push(head_header);
+
+    let shards = Gemma4Shards::new(
+        headers
+            .iter()
+            .zip(sources.iter())
+            .map(|(h, s)| (h, s as &dyn RangeSource))
+            .collect(),
+    );
+
+    let dir = install_dir_from("TURBOSPARK_QWEN38_MTP_INSTALL_DIR", "turbospark-qwen38-mtp");
+    eprintln!("installing to {}", dir.display());
+    write_qwen_gdn_dense_install_streamed(&dir, &arch, MODEL_ID, &shards, &quant, |stage| {
+        eprintln!("[repack] {stage}");
+    })
+    .expect("streamed install");
+
+    for name in [
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "chat_template.jinja",
+        "generation_config.json",
+        "vocab.json",
+    ] {
+        std::fs::write(dir.join(name), get(name)).expect("tokenizer sidecar");
+    }
+
+    // 5. Read it back. The head is the only thing this test asserts that the
+    //    headless one does not, so everything else is a one-line control.
+    model_io::load_manifest(&dir, &arch, model_io::DEFAULT_MAX_BYTES)
+        .expect("manifest validates against the production baseline");
+    let resident_index =
+        model_io::load_resident_index(&dir.join("model_weights.bin")).expect("resident index");
+
+    // Every head tensor is present and nothing else `mtp.`-prefixed is.
+    for name in MTP_TENSORS {
+        assert!(
+            resident_index.entries.contains_key(name),
+            "resident index is missing {name}"
+        );
+    }
+    assert_eq!(
+        resident_index
+            .entries
+            .keys()
+            .filter(|k| k.starts_with("mtp."))
+            .count(),
+        MTP_TENSORS.len(),
+        "the install grew an mtp tensor the source does not have"
+    );
+
+    // **THIS IS THE WHOLE "does this install have a drafter" QUESTION.**
+    // There is no manifest field and no flag, deliberately, so nothing can
+    // disagree with the bytes.
+    let fc = resident_index
+        .entries
+        .get("mtp.fc.weight")
+        .expect("fc is resident");
+    assert_eq!(
+        fc.dtype, DTYPE_INT4_AFFINE,
+        "the head's projections must be quantized: this engine dispatches no \
+         unquantized GEMV, so a BF16 head fails at the first draft dispatch"
+    );
+    // Rank 2 quantizes, rank 1 narrows. Checked as the SPLIT rather than as
+    // two independent facts, because the classifier keys on rank and a rank
+    // it read wrong would move a tensor from one list to the other.
+    for name in MTP_NORMS {
+        let e = &resident_index.entries[name];
+        assert_eq!(e.dtype, DTYPE_BF16, "{name} should be a narrowed norm");
+        assert_eq!(e.scale_size, 0, "{name} carries quantization companions");
+    }
+    for name in MTP_TENSORS.iter().filter(|n| !MTP_NORMS.contains(n)) {
+        let e = &resident_index.entries[*name];
+        assert_eq!(e.dtype, DTYPE_INT4_AFFINE, "{name} should be quantized");
+        assert!(e.scale_size > 0, "{name} has no scale plane");
+    }
+
+    // The bare `lm_head.weight` the filter dropped did NOT reach the install.
+    assert!(
+        !resident_index.entries.contains_key("lm_head.weight"),
+        "the official shard's BF16 lm_head leaked in beside the INT4 one"
+    );
+    assert!(resident_index
+        .entries
+        .contains_key("language_model.lm_head.weight"));
+
+    // The trunk is unchanged: still dense, still no vision tower.
+    for marker in [".mlp.gate.weight", ".mlp.shared_expert", ".switch_mlp."] {
+        assert!(!resident_index.entries.keys().any(|k| k.contains(marker)));
+    }
+    assert!(!resident_index
+        .entries
+        .keys()
+        .any(|k| k.starts_with("vision_tower.")));
+    let layout =
+        model_io::load_packed_experts_layout(&dir, 64 * 1024 * 1024).expect("experts layout");
+    assert_eq!(layout.layers.len(), 0, "a dense model streams nothing");
+
+    eprintln!(
+        "SUCCESS: Qwen3.8-27B + MTP head repacked into {}\n\
+         The headless install is the CONTROL: run qwen38_quality_gate against \
+         BOTH and require the same perplexity and digests.",
         dir.display()
     );
 }

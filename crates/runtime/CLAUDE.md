@@ -44,6 +44,7 @@ crates/runtime/
 |   |   |   +-- attn.rs         # Gated DeltaNet & gated full attention blocks
 |   |   |   +-- dense.rs        # Dense gated FFN (`qwen3_5`, ROADMAP's 1-bit entry)
 |   |   |   +-- moe.rs          # Shared + routed MoE pass encoding
+|   |   |   +-- mtp.rs          # The MTP head's draft step (MtpState, its own one-layer KV)
 |   |   |   \-- state.rs        # RealQwenState & the dense/MoE split
 |   |   \-- synthetic/          # Synthetic fallback decode flow
 |   |       +-- mod.rs          # Synthetic entry point & host MoE FFN
@@ -114,6 +115,7 @@ cargo test -p turbospark-runtime
    - `MFERENCE_ROUTER_HIST=/path.json`: Dumps a per-layer expert-selection histogram on runner drop (`router_hist.rs`, analyzed by `scripts/router_hist.py`). Diagnostic only; the 2026-08-08 measurement it exists for (domain-concentrated routing) came back negative, see `docs/EXPERT_ROUTING.md`.
    - `MFERENCE_ROUTER_TRACE=1`: adds the top-k ids IN PASS ORDER to that same file (`scripts/router_window.py` analyzes it). The counts cannot answer ROADMAP's speculative-decoding question, because a batched verify of M tokens reads the UNION of their routes and a histogram has already discarded which pass each selection came from.
    - `MFERENCE_FFN_HIST=/path.json`: dense-FFN activation census on runner drop (`ffn_hist.rs`, analyzed by `scripts/ffn_sparsity.py`; museGlimmer only, the one flow that feeds its capture). Redirects `silu_mul` into a per-layer capture buffer, so it changes no math and no output bytes; costs ~30% of decode throughput while on. The 2026-08-16 measurement it exists for (a PowerInfer-style neuron cache) came back negative, see `docs/ACTIVATION_SPARSITY.md`.
+   - `MFERENCE_MTP_DRAFT=<depth>`: builds `families/qwen/mtp.rs`'s `MtpState` and lets `RealForwardRunner::mtp_draft_step` run (`docs/MTP_SPECULATIVE.md`, step 2; `qwen3_5` only). Unset, unparsable or 0 allocates NOTHING and encodes nothing, so the off path is identical in bytes and in footprint to the engine that shipped before the module existed -- which is what lets `qwen38_memory_oracle`'s frozen row stand rather than needing a new one. A depth asked for on an install with no head is an ERROR at open naming `mtp.fc.weight`, never a silent no-op: a caller that asked for speculation and quietly got none would measure the non-speculative engine and report it as the speculative one (Gotcha 14's argument, one feature over).
    - `MFERENCE_PREFILL_CHUNK=<tokens>`: routes prefill through `run_raw_completion_chunked` and `RealForwardRunner`'s chunk driver (Gotcha 14). An A/B seam like the two above it, not a feature flag: both arms must produce identical tokens. Unset, unparsable or 0 is the sequential path. `--prefill-chunk` exists in `crates/invocation`, is validated against `ALLOWED_CHUNK_SIZES`, and is wired to NOTHING on purpose -- it defaults to `Fixed(128)`, so wiring it turns chunked prefill on by default, which this phase has not earned across families yet.
 8. **A layer's routed slots are dispatched in the ROUTER'S RANKING, and that is a correctness constraint, not a style choice.** Phase 2 reduces `blob[slot] * routing_w[slot]` in slot-index order and FP addition is not associative, so the slot order is the summation order. The Gemma flow used to order slots misses-first so the resident hits' phase-1 GEMV could ride its own command buffer (`MFERENCE_HIT_CB`, now removed); because the hit/miss split follows CACHE STATE rather than the prompt, the same prompt could decode to different text across warm runs in one process. Measured 2026-08-08: 4 distinct outputs in 6 runs on a Q8_0 GGUF install at 16 slots, 2 in 6 on the MLX install at 32. Both families are now byte-identical across 8/16/32 slots and cold vs warm. Before adding a decode-path optimization that reorders slots, ask what its ordering is a function of. See AGENTS.md Gotcha 27.
 9. **The one `thread::sleep` in this crate is in `decode`, and where it sits is load-bearing.** ROADMAP Phase P2's rate cap paces AFTER the loop has decided to continue and BEFORE the next `produce`. After, so the final token of a generation never pays a sleep nobody waits through, and the stop branches break out above it. Before `produce`, so the idle window falls between forward passes rather than inside one, which is the entire point on the energy axis: the GPU has to be idle during it. It is also strictly downstream of `selection::select`, `history.push` and the progress callback, which is why pacing cannot move a token and why no quality gate is needed for a change to it (`raw_completion.rs`'s `pacing_polls_thermal_pressure_without_changing_the_tokens` is the guard). `RateControl::is_active` gates the whole block, so the default config executes the identical statement sequence it did before the feature existed. A timing test on this may only assert a LOWER bound: a cap is a floor on spacing, never a promise about the ceiling.
@@ -184,3 +186,45 @@ cargo test -p turbospark-runtime
     resolve every `Auto` to a context of ZERO -- which admits no prompt at
     all, on no information. An unknown machine imposes no bound, exactly as an
     unknown trained context imposes no ceiling.
+
+16. **The MTP head runs on the trunk's encoders under a different tensor
+    prefix, and everything it needs of its own is TWO buffers.** The draft
+    step (`families/qwen/mtp.rs`, `docs/MTP_SPECULATIVE.md` step 2) calls
+    `attn.rs`'s `encode_full_attention_block` and `dense.rs`'s
+    `encode_qwen_layer_dense` with `MTP_PREFIX` in place of `TRUNK_PREFIX`,
+    because the published head's single block is a trunk full-attention
+    layer's shape field for field. No new kernel, no new dispatch shape.
+
+    **Reusing the trunk's scratch is safe for exactly one reason and it is
+    an ORDERING one.** `scratch.x` is re-initialised from the embedding at
+    the top of every token, so clobbering it AFTER the trunk's logits have
+    been read cannot affect anything -- which is also why
+    `mtp_draft_step` must be called between the trunk's readback and the
+    next `produce`, and why it reads `h_t` straight out of `scratch.x`
+    rather than needing a copy. Move the call outside that window and the
+    head silently drafts off the wrong hidden state.
+
+    **Its KV is its own one-layer `KvCacheManager`, built from a CLONED
+    `ArchConfig` at `num_layers: 1` and `full_attention_layer_mask:
+    vec![1]`.** Widening the trunk's is not available: that one's sizing is
+    what every family's frozen oracle peak is asserted against (Gotcha 15).
+    The clone reuses the whole constructor and allocates about 4 KiB per
+    token on this architecture. Note `reset()` has to rewind it too -- the
+    trunk's reset does not reach it, which is Gotcha 4's leak shape one
+    cache over.
+
+    **Two `MTP_PREFIX` constants exist on purpose.** `families/qwen`'s is
+    `"mtp"` and BUILDS names through `prefixed_layer_tensor`;
+    `repack::classify`'s is `"mtp."` and MATCHES them with `starts_with`.
+    Sharing one would be wrong at whichever site it was not written for.
+
+    What a synthetic fixture can prove here is bounded, and
+    `tests/real_forward_qwen35_mtp.rs` states the bound: untrained weights
+    make a drafted token meaningless, so it asserts the step RUNS, that it
+    reads the head's tensors and not trunk layer 0's (as a discriminating
+    PAIR -- perturbing an `mtp.layers.0.*` tensor must move the draft and
+    must not move the trunk), and a FROZEN DIGEST. That digest is not
+    decoration: of four mutations checked, two (swapping `fc`'s input
+    halves, and pointing the final norm at the wrong tensor) reddened the
+    digest ALONE and every reachability case stayed green. Gotcha 51,
+    demonstrated rather than cited.

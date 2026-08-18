@@ -23,7 +23,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use turbospark_repack::{
     build_synthetic_qwen_gdn_dense_install, build_synthetic_qwen_gdn_dense_install_at_bits,
-    build_synthetic_qwen_gdn_dense_install_with_mtp, tiny_qwen_gdn_dense_arch,
+    build_synthetic_qwen_gdn_dense_install_with_mtp,
+    build_synthetic_qwen_gdn_dense_install_with_mtp_streamed, tiny_qwen_gdn_dense_arch,
 };
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -554,4 +555,74 @@ fn the_head_is_absent_unless_asked_for() {
         !index.entries.keys().any(|k| k.starts_with("mtp.")),
         "the default dense fixture grew an MTP head"
     );
+}
+
+/// **THE STREAMED WRITER CARRIES THE HEAD TOO, and this test exists because
+/// its absence shipped a bug.**
+///
+/// Step 1's ingest landed in `orchestrate_gemma4_checkpoint_sharded`, which
+/// is the NON-streamed path. Every fixture above goes through that one; every
+/// REAL install goes through `write_gemma4_install_streamed`, which
+/// classified `mtp.*` correctly and then never read `plan.mtp_bases`. So the
+/// first real stream that asked for a head produced a byte-identical HEADLESS
+/// install -- same 851 resident tensors, same 15,132,916,736-byte region --
+/// with no error, no warning and nothing in the progress log to say so. It
+/// cost a 15-minute stream to find and would have cost another to re-find.
+///
+/// `crates/repack` Gotcha 8 says build the fixture before the download. The
+/// clause this adds: the fixture has to exercise the WRITER the download will
+/// use. Two entry points differing only in which writer they call is the
+/// cheapest way to say that, and asserting the two agree is what keeps them
+/// from drifting again.
+#[test]
+fn both_writers_carry_the_mtp_head() {
+    let streamed_dir = temp_dir();
+    build_synthetic_qwen_gdn_dense_install_with_mtp_streamed(
+        &streamed_dir,
+        VOCAB,
+        LAYERS,
+        "mtp-toy",
+        1,
+    )
+    .expect("the streamed writer builds a dense install with an MTP head");
+
+    let streamed = model_io::load_resident_index(&streamed_dir.join("model_weights.bin"))
+        .expect("resident index");
+    let head: Vec<&String> = streamed
+        .entries
+        .keys()
+        .filter(|k| k.starts_with("mtp."))
+        .collect();
+    assert_eq!(
+        head.len(),
+        15,
+        "the STREAMED writer dropped the head: {head:?}"
+    );
+    assert!(streamed.entries.contains_key("mtp.fc.weight"));
+
+    // And it agrees with the non-streamed writer tensor for tensor. The two
+    // are documented to produce an identical install for a dense model, so a
+    // divergence here is a real fork rather than a formatting difference.
+    let (plain_dir, _) = build_with_mtp();
+    let plain = model_io::load_resident_index(&plain_dir.join("model_weights.bin")).expect("index");
+    let names = |i: &model_io::ResidentIndex| -> Vec<String> {
+        let mut v: Vec<String> = i.entries.keys().cloned().collect();
+        v.sort();
+        v
+    };
+    assert_eq!(
+        names(&streamed),
+        names(&plain),
+        "the two writers disagree about what a dense install contains"
+    );
+    for name in names(&plain) {
+        assert_eq!(
+            streamed.entries[&name].dtype, plain.entries[&name].dtype,
+            "{name}: the two writers disagree about its dtype"
+        );
+        assert_eq!(
+            streamed.entries[&name].size_bytes, plain.entries[&name].size_bytes,
+            "{name}: the two writers disagree about its size"
+        );
+    }
 }

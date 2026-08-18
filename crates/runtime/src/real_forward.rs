@@ -134,6 +134,12 @@ pub struct RealForwardRunner {
     /// `Option` rather than folded into an enum so the Gemma path's borrow
     /// shape is untouched.
     pub(crate) real_qwen: Option<crate::families::qwen::RealQwenState>,
+    /// The multi-token-prediction head's draft state, for the dense
+    /// `qwen3_5` family (`docs/MTP_SPECULATIVE.md`, step 2). `None` unless
+    /// `MFERENCE_MTP_DRAFT` asked for a depth AND the install carries a
+    /// head, which is read off the resident index rather than a manifest
+    /// field so nothing can disagree with the bytes.
+    pub(crate) real_mtp: Option<crate::families::qwen::MtpState>,
     /// Present for a `llama`-architecture install (ROADMAP Phase M2), which
     /// is Mixtral-style MoE only; a dense one is refused at build.
     pub(crate) real_llama: Option<crate::families::llama::RealLlamaState>,
@@ -440,6 +446,7 @@ impl RealForwardRunner {
             routed_blobs_banks,
             real: None,
             real_qwen: None,
+            real_mtp: None,
             real_llama: None,
             real_gpt_oss: None,
             real_muse: None,
@@ -478,6 +485,18 @@ impl RealForwardRunner {
                     &runner.index,
                     &runner.arch,
                 )?);
+                // The speculative drafter, and it builds NOTHING unless a
+                // depth was asked for -- so an install that has a head is
+                // byte-identical and footprint-identical to one that does
+                // not until someone turns drafting on
+                // (`docs/MTP_SPECULATIVE.md`, step 2).
+                runner.real_mtp = crate::families::qwen::MtpState::build(
+                    &mut runner.context,
+                    &runner.index,
+                    &runner.arch,
+                    max_context,
+                    crate::families::qwen::draft_depth_from_env(),
+                )?;
             }
             // One flow for both: `qwen3moe` is the same layer graph, and
             // `RealLlamaState` carries the two differences (per-head q/k
@@ -589,6 +608,12 @@ impl LogitProducer for RealForwardRunner {
         self.kv.reset();
         if let Some(qwen) = self.real_qwen.as_mut() {
             qwen.reset();
+        }
+        // The head keeps its OWN KV, so the trunk's reset leaves it holding
+        // the previous generation's context -- the same shape of leak
+        // Gotcha 4 records for the GDN recurrent state, one cache over.
+        if let Some(mtp) = self.real_mtp.as_mut() {
+            mtp.reset();
         }
     }
 

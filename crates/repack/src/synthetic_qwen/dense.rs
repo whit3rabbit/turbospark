@@ -320,7 +320,9 @@ pub fn build_synthetic_qwen_gdn_dense_install_at_bits(
     model_id: &str,
     bits: u32,
 ) -> Result<ArchConfig, Box<dyn std::error::Error>> {
-    build_synthetic_qwen_gdn_dense_install_inner(dir, vocab_size, num_layers, model_id, bits, false)
+    build_synthetic_qwen_gdn_dense_install_inner(
+        dir, vocab_size, num_layers, model_id, bits, false, false,
+    )
 }
 
 /// [`build_synthetic_qwen_gdn_dense_install_at_bits`] with the
@@ -337,9 +339,34 @@ pub fn build_synthetic_qwen_gdn_dense_install_with_mtp(
     model_id: &str,
     bits: u32,
 ) -> Result<ArchConfig, Box<dyn std::error::Error>> {
-    build_synthetic_qwen_gdn_dense_install_inner(dir, vocab_size, num_layers, model_id, bits, true)
+    build_synthetic_qwen_gdn_dense_install_inner(
+        dir, vocab_size, num_layers, model_id, bits, true, false,
+    )
 }
 
+/// The same install through the STREAMED writer, which is the one every real
+/// checkpoint takes.
+///
+/// **This entry point exists because its absence shipped a bug.** The head's
+/// ingest landed in `orchestrate_gemma4_checkpoint_sharded` alone, every
+/// fixture went through that non-streamed path, and
+/// `write_gemma4_install_streamed` classified `mtp.*` correctly and then
+/// never read it -- so the first real stream that asked for a head wrote a
+/// byte-identical HEADLESS install and said nothing. A fixture has to
+/// exercise the WRITER the download will use, not just the walk it shares.
+pub fn build_synthetic_qwen_gdn_dense_install_with_mtp_streamed(
+    dir: &std::path::Path,
+    vocab_size: i64,
+    num_layers: i64,
+    model_id: &str,
+    bits: u32,
+) -> Result<ArchConfig, Box<dyn std::error::Error>> {
+    build_synthetic_qwen_gdn_dense_install_inner(
+        dir, vocab_size, num_layers, model_id, bits, true, true,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
 fn build_synthetic_qwen_gdn_dense_install_inner(
     dir: &std::path::Path,
     vocab_size: i64,
@@ -347,6 +374,7 @@ fn build_synthetic_qwen_gdn_dense_install_inner(
     model_id: &str,
     bits: u32,
     with_mtp: bool,
+    streamed: bool,
 ) -> Result<ArchConfig, Box<dyn std::error::Error>> {
     let arch = tiny_qwen_gdn_dense_arch(vocab_size, num_layers);
     let vocab = vocab_size as usize;
@@ -495,7 +523,19 @@ fn build_synthetic_qwen_gdn_dense_install_inner(
         group_size: GROUP as u32,
         bits_overrides: std::collections::HashMap::new(),
     };
-    write_qwen_gdn_dense_install(dir, &arch, model_id, &header, &source, &quant)?;
+    if streamed {
+        let shards = crate::gemma4_checkpoint::Gemma4Shards::single(&header, &source);
+        crate::gemma4_checkpoint::write_qwen_gdn_dense_install_streamed(
+            dir,
+            &arch,
+            model_id,
+            &shards,
+            &quant,
+            |_| {},
+        )?;
+    } else {
+        write_qwen_gdn_dense_install(dir, &arch, model_id, &header, &source, &quant)?;
+    }
     Ok(arch)
 }
 

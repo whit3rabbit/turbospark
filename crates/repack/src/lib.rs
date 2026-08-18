@@ -110,7 +110,8 @@ pub use synthetic_model::{
 pub use synthetic_muse::{build_synthetic_muse_glimmer_install, tiny_muse_glimmer_arch};
 pub use synthetic_qwen::{
     build_synthetic_qwen_gdn_dense_install, build_synthetic_qwen_gdn_dense_install_at_bits,
-    build_synthetic_qwen_gdn_dense_install_with_mtp, build_synthetic_qwen_gdn_moe_install,
+    build_synthetic_qwen_gdn_dense_install_with_mtp,
+    build_synthetic_qwen_gdn_dense_install_with_mtp_streamed, build_synthetic_qwen_gdn_moe_install,
     tiny_qwen_gdn_dense_arch, tiny_qwen_gdn_moe_arch,
 };
 pub use synthetic_real::build_synthetic_gemma4_real_install;

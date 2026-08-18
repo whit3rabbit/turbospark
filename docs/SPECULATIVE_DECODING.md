@@ -5,9 +5,10 @@ decoding, specifically DFlash -- a small block-diffusion drafter proposes a
 whole block of tokens in one parallel forward pass, the target verifies the
 block in one batched pass, and the longest correct prefix is accepted?
 
-Answer, measured 2026-08-10 on the real Qwen 3.6 35B-A3B install:
-**about 1.1x at best, at a small block size, and only once a batched MoE
-kernel exists that does not yet.** Not the 3.6x DFlash reaches at
+Answer, measured 2026-08-10 on the real Qwen 3.6 35B-A3B install and
+re-derived unchanged 2026-08-18 after a kernel fix that halved the largest
+term: **about 1.1x at best, at a small block size, and only once a batched
+MoE kernel exists that does not yet.** Not the 3.6x DFlash reaches at
 concurrency 1 on datacenter GPUs, and not the 1.5x Meta measured for it on
 an M4 Max with a DENSE model. Recorded here so the arithmetic is not
 re-derived; it also appears in ROADMAP under the speculative-decoding item.
@@ -16,32 +17,34 @@ Nothing here refutes DFlash. It is a statement about this engine's verify
 cost, and every number that would have to change for the answer to change
 is named at the bottom.
 
-> **THE `c(M)` TABLE BELOW IS SUPERSEDED, 2026-08-17. Every row of it is now
-> beaten, and this page's verdict is owed a re-derivation it has not had.**
-> See `docs/MTP_SPECULATIVE.md`.
+> **THE `c(M)` TABLE BELOW IS SUPERSEDED, 2026-08-17, AND THE VERDICT IT
+> SUPPORTS IS NOT. Re-derived 2026-08-18: the reading is unchanged.**
 >
 > `dequant_int4_batch.rs` was missing the function-constant specialization
 > `46617c6` gave the GEMV, and it needed a bounded unroll besides. Fixing
-> both roughly halved `c(M)`. Measured in one session with one binary:
+> both roughly halved `c(M)` (`docs/MTP_SPECULATIVE.md`). That is a large
+> improvement to the largest single term here and it moves this page's
+> answer by about two points, because **the term it improves is 52.7% of
+> decode compute and the two terms that dominate the composite are
+> untouched**: a 19% un-amortizable floor that no kernel moves, and the
+> routed pair, 26% of decode compute with still no batched form at all.
+> The fresh numbers are in "c(M), re-measured" and "Reading" below.
 >
-> | shape | recorded here | after the fix |
-> | --- | ---: | ---: |
-> | expert 512x2048, M=8 | 0.44 | **0.32-0.39** |
-> | expert 512x2048, M=16 | 0.36 | **0.32-0.35** |
-> | o_proj 2048x2048, M=8 | 0.71 | **0.41-0.48** |
->
-> **What that does NOT do is overturn this page on its own**, which is why
-> the verdict stands until someone re-derives it: the MoE composite is
-> dominated by a 19% un-amortizable floor and by the routed pair, 26% of
-> decode compute with still no batched form at all. A better GEMV moves
-> neither. Item 1 below ("`c(M)`, not the drafter") was the right call and
-> half of it has now been collected.
+> **The one thing the re-derivation did overturn is a number on this page,
+> not a conclusion.** The prose under "The compute split" claimed
+> `c(8) ~ 0.67`. The break-even column in "Reading" implies 0.557, the
+> fresh measurement reads 0.572, and those two agree to 3%. So the reading
+> table was right and its stated `c(8)` was wrong -- an inconsistency that
+> survived because nobody had recomputed one from the other. Corrected in
+> place.
 >
 > **Item 3, "a dense family", HAS been measured and it pays.** The dense
 > `qwen3_5` 27B has no expert-union term and a 6.4% floor rather than 19%,
 > and after the kernel fix its ceiling is ~2.07x with ~1.35-1.58x at a
 > drafter as good as MTPLX reports. That work is scoped in
-> `docs/MTP_SPECULATIVE.md`, not here.
+> `docs/MTP_SPECULATIVE.md`, not here. **That page and this one now
+> disagree, and the disagreement is the finding**: one kernel fix, two
+> families, and it is decisive on the dense one and inert on this one.
 
 **DO NOT CARRY THIS VERDICT TO BATCHED PREFILL**, which reuses the same
 `c(M)` and `union(M)` terms and reaches a different answer. A verify pass
@@ -151,14 +154,32 @@ So `dequant_int4_gemm_simd` exists: one dispatch, each packed nibble read
 once and multiplied into B accumulators. Parity against B separate GEMV
 calls is EXACT, not tolerant, and mutation-checked three ways.
 
+### c(M), re-measured
+
+`c_of_m_for_the_batched_kernel`, 2026-08-18, same machine, AC, after
+`46617c6`'s specialization reached this kernel. Three WARM rounds with the
+cold first run discarded (Gotcha 20), `--test-threads=1` because the two
+`c_of_m` tests contend for the GPU otherwise. Ranges, not point values:
+**this bench's per-cell spread is up to 0.13**, which is wide enough that
+only the shape of the table should be read, never a single cell.
+
 | shape | M=2 | M=4 | M=8 | M=16 |
 | --- | ---: | ---: | ---: | ---: |
-| expert 512x2048 | 0.77 | 0.55 | 0.44 | 0.36 |
-| o_proj 2048x2048 | 1.01 | 0.80 | 0.71 | 0.67 |
-| q_proj 4096x2048 | 1.01 | 0.82 | 0.78 | 0.75 |
-| stacked 8192x2048 | 1.03 | 0.87 | 0.79 | 0.78 |
+| expert 512x2048 | 0.48-0.64 | 0.32-0.40 | 0.32-0.39 | 0.23-0.33 |
+| o_proj 2048x2048 | 0.56-0.65 | 0.46-0.57 | 0.41-0.49 | 0.35-0.40 |
+| q_proj 4096x2048 | 0.55-0.66 | 0.58-0.67 | 0.41-0.49 | 0.38-0.51 |
+| stacked 8192x2048 | 0.53-0.64 | 0.58-0.66 | 0.41-0.56 | 0.45-0.54 |
 
-Nothing below M=4 is worth batching at all.
+For comparison, the pre-fix table these replace, same order: expert
+0.77/0.55/0.44/0.36, o_proj 1.01/0.80/0.71/0.67, q_proj
+1.01/0.82/0.78/0.75, stacked 1.03/0.87/0.79/0.78. **Every cell improved and
+M=2 is no longer worse than not batching at all**, which it was on three of
+four shapes before.
+
+**Read the `expert 512x2048` row as what it is: a PROXY.** It is a resident
+INT4 GEMV at a routed expert's shape, not the routed pair, which has no
+batched form to measure. The other three rows are the resident projections
+and are what the 52.7% GEMV share below is made of.
 
 **Two optimizations were tried on this kernel and both lost.** Staging `x`
 in threadgroup memory removes the per-batch device reads and is slower on
@@ -191,8 +212,43 @@ transfer.
 **Nineteen percent of decode compute is per-token work with no weights to
 amortize.** That is a floor under `c(M)` no kernel can move, and it is the
 structural reason this engine cannot reach the near-free verify a
-datacenter GPU gets. Granting a batched MoE at ~0.5, `c(8)` lands near 0.67
-and a verify pass is about 1.8x cheaper than eight sequential passes.
+datacenter GPU gets.
+
+### The composite, written out
+
+The 2026-08-18 re-derivation, spelled out because the version it replaces
+was not reproducible from what this page states -- its prose said
+`c(8) ~ 0.67` while its own break-even column implied 0.557, and nothing
+here let a reader tell which was load-bearing.
+
+`c(M)` is the share-weighted mean over the five rows of the split above.
+The GEMV term is the mean of `o_proj`, `q_proj` and `stacked` from the
+table above; norms, elementwise and GDN enter at 1.0 because they do not
+batch; attention enters at `1/M`. The routed pair is **granted**, not
+measured, and both grants are reported:
+
+| M | GEMV mean | `c(M)`, pair granted 0.5 | `c(M)`, pair at its GEMV proxy |
+| ---: | ---: | ---: | ---: |
+| 2 | 0.604 | 0.650 | 0.664 |
+| 4 | 0.599 | 0.641 | 0.608 |
+| 8 | 0.473 | **0.572** | **0.535** |
+| 16 | 0.447 | 0.557 | 0.501 |
+
+The second grant is the optimistic one: it assumes a batched routed pair
+would reach whatever the INT4 GEMV reaches at a routed expert's shape.
+Nobody has built it, so neither column is a measurement of it.
+
+**`c(8) = 0.572` against the 0.67 this page used to state**, and against
+the 0.557 its break-even column already implied. The fresh measurement
+agrees with the TABLE to 3% and not with the prose, which is why the
+verdict below barely moves: the reading was computed from something close
+to the right number all along.
+
+Note the floor doing its work at the bottom of the range. At M=16 the
+un-amortizable 19% plus the 0.5 grant on the routed pair contribute 0.32 of
+the 0.557 between them, so **a perfect GEMV could not take `c(16)` below
+~0.33** and no amount of kernel work on this arm reaches the dense family's
+numbers.
 
 ### Accept length
 
@@ -218,12 +274,24 @@ whose prefix sums give the shorter blocks.
 
 ## Reading
 
-| block | DFlash accept length | break-even here | verdict |
-| ---: | ---: | ---: | --- |
-| 4 | 2.96 | 2.6 | **pays, 1.14x** |
-| 8 | 4.26 | 4.4 | loses, 0.97x |
-| 16 | 6.49 (mean) | 7.5 | loses, 0.87x |
-| 16 | 7.87 (best task) | 7.5 | pays, 1.05x |
+`verify(M) = 0.75 x M x c(M) + 0.25 x union(M)`, the formula at the top of
+this page with the decode step's own 75/25 compute/expert-io split, `c(M)`
+from the composite above and `union(M)` at the midpoint of its two-prompt
+range. Speedup is DFlash's published accept length over that.
+
+| block | DFlash accept length | break-even, pair granted 0.5 | verdict | at the optimistic grant |
+| ---: | ---: | ---: | --- | ---: |
+| 4 | 2.96 | 2.59 | **pays, 1.14x** | 1.19x |
+| 8 | 4.26 | 4.49 | loses, 0.95x | 1.00x |
+| 16 | 6.49 (mean) | 8.33 | loses, 0.78x | 0.85x |
+| 16 | 7.87 (best task) | 8.33 | loses, 0.94x | 1.03x |
+
+**Recorded before the kernel fix: 1.14x / 0.97x / 0.87x / 1.05x.** So the
+whole table moved by at most a few points and not one verdict changed sign
+except block 16's best-task row, which changed sign AGAINST speculation.
+That is the re-derivation's actual result and it is worth stating as
+plainly as the improvement was: **halving `c(M)` on the GEMV did not rescue
+this family.**
 
 **On this engine the optimum is a SMALL block and the win is about 1.1x**,
 which inverts the datacenter result. There verify is nearly free, so a
@@ -247,14 +315,28 @@ arms against each other passes even when all of them are wrong the same way.
 
 ## Standing decision
 
-**Do not build it for 1.14x.** Three caveats all point the same way and the
-margin is inside the composite's error bar:
+**Do not build it for 1.14x. UNCHANGED by the 2026-08-18 re-derivation**,
+which is the answer to the question the correction block at the top used to
+be asking. Three caveats all point the same way and the margin is inside
+the composite's error bar:
 
 - the break-even column assumes a batched MoE that does not exist; without
   one, every row loses;
 - the per-position curve is published for Qwen3-4B rather than this target,
   and the 35B drafter is a later retrain;
-- `c(M)` for the unbuilt MoE kernel is estimated, not measured.
+- `c(M)` for the unbuilt MoE kernel is estimated, not measured -- and the
+  re-derivation reports both grants precisely because that estimate, not
+  the GEMV, is now the largest soft term in the answer.
+
+**The generalisable part is why a real 2x on the biggest term bought
+nothing.** `c(M)` improved from 0.67 to 0.572 at M=8 and the speedup moved
+0.97x to 0.95x, because the improved term is 52.7% of compute while 19%
+cannot amortize at all and a further 26% is a kernel nobody has written.
+Amdahl, restated for anyone about to optimize the same arm again: this
+family's ceiling is set by the two terms the GEMV work does not touch, and
+`docs/MTP_SPECULATIVE.md` reaches the opposite conclusion on the dense
+family because THOSE terms are 6.4% and zero there. Check which term a
+proposed optimization moves against this split before costing it.
 
 What was built along the way is kept, because it is all independently
 useful: `dequant_int4_gemm_simd` and its exact parity test, the four
@@ -267,11 +349,18 @@ is a standing correctness test whatever happens to this phase.
 
 In order of leverage:
 
-1. **`c(M)`, not the drafter.** At `c(8) = 0.67` block 8 reads 0.97x, at
-   0.60 it reads 1.05x, at 0.55 it reads 1.11x. An 18% kernel improvement is
-   worth more than any drafter change and lifts every row at once. The first
-   target is the MoE phase-1/phase-2 pair: 26% of decode compute with no
-   batched form at all.
+1. **The ROUTED PAIR, and no longer `c(M)` in general.** This entry used to
+   read "`c(M)`, not the drafter", and half of it has now been collected and
+   spent: the GEMV arm was improved ~2x and bought two points (see "The
+   composite, written out"). What is left is the specific term that
+   improvement could not reach -- `moe_phase1_gate_up_act_u16load` and
+   `moe_phase2_down_reduce_k8`, 26% of decode compute, still with no batched
+   form at all. Both grants in the composite are guesses about it, and the
+   spread between them (0.95x against 1.00x at block 8) is the whole
+   remaining uncertainty on this axis. **Note it is not enough on its own**:
+   even the optimistic grant leaves block 8 at 1.00x, because the 19% floor
+   does not move either. `docs/BATCHED_PREFILL.md` steps 2 and 3 specify
+   these two kernels for a different reason and would answer this for free.
 2. ~~**`simdgroup_matrix`.**~~ **MEASURED 2026-08-17 AND CLOSED.** It was
    built and benched against the exact kernel in one session
    (`dequant_int4_gemm_mma`, `c_of_m_matrix_against_exact_at_qwen38_shapes`)

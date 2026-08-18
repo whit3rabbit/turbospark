@@ -5,9 +5,11 @@
 mod attn;
 mod dense;
 mod moe;
+mod mtp;
 mod state;
 
 pub(crate) use attn::{encode_full_attention_block, encode_linear_block};
+pub(crate) use mtp::{draft_depth_from_env, MtpState};
 pub(crate) use state::RealQwenState;
 
 use std::time::Instant;
@@ -22,6 +24,15 @@ pub(crate) const RMS_EPS: f32 = 1e-6;
 
 /// The trunk's tensor-name prefix.
 pub(crate) const TRUNK_PREFIX: &str = "language_model.model";
+
+/// The multi-token-prediction head's, for `prefixed_layer_tensor`.
+///
+/// **No trailing dot**, unlike `repack`'s `classify::MTP_PREFIX`. The two
+/// answer different questions and are deliberately not shared: that one
+/// MATCHES a name (`name.starts_with("mtp.")`) and this one BUILDS one
+/// (`format!("{prefix}.layers.{layer}.{suffix}")`), so a single constant
+/// would be wrong at one of the two sites.
+pub(crate) const MTP_PREFIX: &str = "mtp";
 
 pub(crate) fn layer_tensor(layer: usize, suffix: &str) -> String {
     prefixed_layer_tensor(TRUNK_PREFIX, layer, suffix)

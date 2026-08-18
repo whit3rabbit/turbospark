@@ -212,10 +212,18 @@ Re-run in the same session with the same binary:
 | o_proj 2048x2048, M=8 | 0.71 | 0.75-0.76 | **0.41-0.48** |
 
 So that page's table was stale in BOTH directions at different times, and is
-now beaten. **Its verdict is owed a re-derivation** and this page does not
-attempt one: the MoE composite is dominated by a 19% un-amortizable floor and
-by the routed pair, which is 26% of decode compute and still has no batched
-form at all. A better GEMV does not fix either.
+now beaten.
+
+**Its verdict was re-derived on 2026-08-18 and did not move**: block 4 pays
+1.14-1.19x, block 8 is 0.95-1.00x, block 16 loses, against a recorded
+1.14 / 0.97 / 0.87. The prediction made here held exactly -- the MoE
+composite is dominated by a 19% un-amortizable floor and by the routed pair,
+26% of decode compute with still no batched form, and a better GEMV fixes
+neither. **The pair of pages is now the useful artifact rather than either
+one**: the same kernel fix, measured the same week, is worth 1.35-1.58x on
+the dense family here and about two points on the MoE one there, because
+that family's corresponding terms are 6.4% and zero. Read both before
+costing an optimization by the size of the term it improves.
 
 ## Composing it
 
@@ -261,11 +269,33 @@ a 17-position verify does not fit. Block 15 is the largest legal one.
    `narrow_raw_to_bf16`. `manifest.json` gains an optional `mtpHead` block
    where absent means "no head" (Gotcha 39's rule). **Fixture before
    download**, per `crates/repack/CLAUDE.md` Gotcha 8.
+   **DONE.** With one correction worth carrying: the ingest landed in the
+   NON-streamed writer alone, and every real install goes through the
+   streamed one. The first stream that asked for a head wrote a
+   byte-identical HEADLESS install -- 851 resident tensors, a
+   15,132,916,736-byte region, no error and nothing in the progress log --
+   because `write_gemma4_install_streamed` classified `mtp.*` correctly into
+   `plan.mtp_bases` and then never read it. Every fixture took the other
+   path. **A fixture has to exercise the WRITER the download will use**, not
+   just the walk they share; `both_writers_carry_the_mtp_head` is that test
+   and is the only one of fourteen that reddens without the fix. Also no
+   `mtpHead` manifest block: the resident index already answers the question
+   and cannot drift from the bytes.
 2. **The draft step.** `crates/runtime/src/families/qwen/mtp.rs` plus an
    `MtpState` owning its own one-layer KV rather than widening
    `KvCacheManager`, whose sizing is driven by `ArchConfig` and whose every
    family's oracle peak is frozen. Off by default behind
    `MFERENCE_MTP_DRAFT=<depth>`.
+
+   **DONE.** `~/models/qwen38-27b-mtp.gturbo` is the install (14 GB;
+   resident region 15,371,847,680 bytes, 228 MiB more than the headless
+   one). With drafting OFF the flow is provably inert: `qwen38_quality_gate`
+   reproduces perplexity 4.9432 and BOTH frozen digests exactly, and
+   `qwen38_memory_oracle` reads 659.5 MiB against the headless install's
+   recorded 659.4 -- so the head's 228 MiB of weights are not counted, which
+   is AGENTS.md Gotcha 40 holding a fourth time. Both smokes stay coherent.
+   With drafting ON the head opens and drafts; a headless install is refused
+   at open by name.
 3. **Accept length, sequential verify.** `accept_length_probe.rs`'s shape
    with the MTP head in place of the n-gram drafter. Keep both of its
    disciplines: verify one `produce` at a time (only the ratio matters), and
@@ -274,10 +304,21 @@ a 17-position verify does not fit. Block 15 is the largest legal one.
 
 ## What this changes elsewhere
 
-`docs/BATCHED_PREFILL.md` composes its "fully batched" column at
-`c(M) ~ 0.6`. The GEMV term is now ~0.46 at M=8, so that projection is
-conservative and its steps 2-4 are worth more than it says. Its step 1 result
-(1.22x measured) is unaffected -- it batches command buffers, not math.
+`docs/BATCHED_PREFILL.md` composed its "fully batched" column at
+`c(M) ~ 0.6`. **Re-weighted 2026-08-18 and it moved the most of anything
+here**: at M=16 the resident projections read 0.447 and the routed-expert
+proxy 0.287, which is `c(16) = 0.399` over the 78.8% of prefill GPU work
+that batches, and the whole-program projection went from ~1.5x to a
+1.55-1.97x band. Its step 1 result (1.22x measured) is unaffected -- it
+batches command buffers, not math.
+
+**The contrast with the MoE speculative page is the reusable part.** One
+kernel fix, one week, three composites: decisive on the dense family here,
+worth ~0.4x of extra prefill speedup there, and worth two points on the MoE
+verify. What separates them is not the kernel but what each divides by --
+a verify pass divides by an accept length and keeps only the accepted
+prefix, a prefill chunk keeps all M of its tokens, and a dense decode has
+no un-amortizable expert term to begin with.
 
 ## Sources
 
