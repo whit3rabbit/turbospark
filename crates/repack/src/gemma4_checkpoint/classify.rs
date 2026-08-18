@@ -16,9 +16,15 @@ pub enum Gemma4Bucket {
     },
     /// Multimodal vision or audio tensor excluded from the text language model.
     ExcludedMultimodal,
+    /// A multi-token-prediction head tensor (`mtp.*`), ingested as a
+    /// speculative drafter (`docs/MTP_SPECULATIVE.md`).
+    MtpHead,
     /// Tensor not matching known language model or multimodal patterns.
     Unknown,
 }
+
+/// The prefix the multi-token-prediction head's tensors carry.
+pub const MTP_PREFIX: &str = "mtp.";
 
 /// Extracts the layer index from a layer-scoped tensor name (e.g. `...layers.12...`).
 pub fn layer_index(name: &str) -> Option<usize> {
@@ -73,6 +79,17 @@ pub fn classify_for_family(name: &str, num_layers: usize, family: ModelFamily) -
             }
         }
         return Gemma4Bucket::LmResident;
+    }
+    // THE MULTI-TOKEN-PREDICTION HEAD, and it is gated on the family rather
+    // than accepted everywhere. Exactly one published checkpoint carries
+    // these -- `Qwen/Qwen3.8-27B`, whose `mtp_num_hidden_layers` is 1 -- and
+    // the mlx-community conversion this family's trunk is normally streamed
+    // from DROPS them, so no existing install grows a head by this arm
+    // existing. An `mtp.` tensor under any other family is a checkpoint this
+    // walk has never seen, and falling through to `Unknown` refuses it by
+    // name rather than ingesting a head no decode flow would look for.
+    if name.starts_with(MTP_PREFIX) && family == ModelFamily::QwenGdnDense {
+        return Gemma4Bucket::MtpHead;
     }
     // THIS LIST IS READ OFF REAL CHECKPOINT HEADERS, one prefix per
     // publisher's naming, and it is not guesswork: an unlisted prefix falls

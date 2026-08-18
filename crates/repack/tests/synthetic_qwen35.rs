@@ -23,7 +23,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use turbospark_repack::{
     build_synthetic_qwen_gdn_dense_install, build_synthetic_qwen_gdn_dense_install_at_bits,
-    tiny_qwen_gdn_dense_arch,
+    build_synthetic_qwen_gdn_dense_install_with_mtp, tiny_qwen_gdn_dense_arch,
 };
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -366,4 +366,192 @@ fn the_writer_refuses_a_mislabelled_arch() {
         Ok(_) => panic!("a qwen36-tagged arch must be refused"),
         Err(err) => assert!(format!("{err}").contains("qwen35"), "{err}"),
     }
+}
+
+// -- The multi-token-prediction head (`docs/MTP_SPECULATIVE.md`, step 1) ----
+//
+// The head ships only in the OFFICIAL `Qwen/Qwen3.8-27B`; the mlx-community
+// conversion the trunk install is streamed from drops it. So a real ingest
+// reads TWO repositories at two dtypes, and the cheapest place to find out
+// what that costs is here rather than twenty minutes into a stream.
+
+fn build_with_mtp() -> (PathBuf, model_io::ArchConfig) {
+    let dir = temp_dir();
+    let arch = build_synthetic_qwen_gdn_dense_install_with_mtp(&dir, VOCAB, LAYERS, "mtp-toy", 1)
+        .expect("the dense install with an MTP head writes");
+    (dir, arch)
+}
+
+fn resident(dir: &std::path::Path) -> model_io::ResidentIndex {
+    model_io::load_resident_index(&dir.join("model_weights.bin"))
+        .expect("the resident index parses")
+}
+
+/// The walk ingests `mtp.*` and QUANTIZES it, rather than refusing it as an
+/// unknown prefix or passing it through raw.
+///
+/// Both wrong answers are reachable and only one is loud. Refusing is what
+/// the unmodified classifier does (`Gemma4Bucket::Unknown`), and it at least
+/// fails by name. Passing the matrices through as raw BF16 is the quiet one:
+/// the install would be well-formed, four times larger than it needs to be,
+/// and would die at the first draft dispatch -- this port dispatches no
+/// unquantized GEMV, which is exactly why `mtp_head_network.rs` bothers to
+/// assert the head's source dtype.
+#[test]
+fn the_mtp_head_installs_quantized_beside_the_trunk() {
+    let (dir, arch) = build_with_mtp();
+    let manifest = model_io::load_manifest(&dir, &arch, 4 * 1024 * 1024)
+        .expect("a head does not stop the manifest loading");
+    assert_eq!(
+        manifest.num_layers, 0,
+        "the head is not a packed-expert layer"
+    );
+
+    let index = resident(&dir);
+    let mtp: Vec<&String> = index
+        .entries
+        .keys()
+        .filter(|k| k.starts_with("mtp."))
+        .collect();
+    assert_eq!(mtp.len(), 15, "the head's inventory moved: {mtp:?}");
+
+    // The eight MATRICES are INT4-affine (tag 4): not raw BF16 (tag 1), and
+    // not the trunk's 1-bit tag (15). Tag 4 regardless of the trunk's width
+    // is the point -- the head is quantized BY THIS WALK from BF16, where the
+    // trunk is passed through at whatever its publisher chose.
+    for name in [
+        "mtp.fc.weight",
+        "mtp.layers.0.self_attn.q_proj.weight",
+        "mtp.layers.0.self_attn.k_proj.weight",
+        "mtp.layers.0.self_attn.v_proj.weight",
+        "mtp.layers.0.self_attn.o_proj.weight",
+        "mtp.layers.0.mlp.gate_proj.weight",
+        "mtp.layers.0.mlp.up_proj.weight",
+        "mtp.layers.0.mlp.down_proj.weight",
+    ] {
+        let e = index
+            .entries
+            .get(name)
+            .unwrap_or_else(|| panic!("{name} is not resident"));
+        assert_eq!(e.dtype, 4, "{name} is not tagged INT4 affine");
+        assert!(
+            e.scale_size > 0 && e.bias_size == e.scale_size,
+            "{name} lost a companion plane"
+        );
+    }
+
+    // The seven NORMS stay unquantized BF16 (tag 1). Quantizing a norm to
+    // INT4 is what `hf_checkpoint.rs` does, and its own header calls that out
+    // as not how a production repacker would treat them.
+    for name in [
+        "mtp.pre_fc_norm_embedding.weight",
+        "mtp.pre_fc_norm_hidden.weight",
+        "mtp.norm.weight",
+        "mtp.layers.0.input_layernorm.weight",
+        "mtp.layers.0.post_attention_layernorm.weight",
+        "mtp.layers.0.self_attn.q_norm.weight",
+        "mtp.layers.0.self_attn.k_norm.weight",
+    ] {
+        let e = index
+            .entries
+            .get(name)
+            .unwrap_or_else(|| panic!("{name} is not resident"));
+        assert_eq!(e.dtype, 1, "{name} should stay unquantized BF16");
+        assert_eq!(e.scale_size, 0, "{name} grew a companion plane");
+    }
+}
+
+/// `fc` is the one tensor in the model whose INPUT is `2 * hidden`, and the
+/// install records that width rather than transposing it.
+///
+/// The failure this catches is an axis swap. `fc` takes a CONCATENATION of
+/// two `[hidden]` vectors, so a walk that recorded `[2 * hidden, hidden]`
+/// would produce an entry of exactly the right BYTE COUNT with its axes
+/// exchanged, and the draft step would then read the embedding half as the
+/// hidden half.
+///
+/// **The byte count is therefore the wrong instrument, and this fixture
+/// proves it rather than leaving it as a caution**: `fc` is `[128, 256]` and
+/// `q_proj` is `[256, 128]`, the same 32,768 elements. The first draft of
+/// this test asserted a size and its own uniqueness guard caught it. The real
+/// head has no such collision (`fc` is 52.4M elements against `q_proj`'s
+/// 62.9M), which is exactly how a fixture built to the real one's proportions
+/// would have hidden the problem.
+#[test]
+fn the_mtp_fc_records_its_doubled_input_width() {
+    let (dir, _) = build_with_mtp();
+    let index = resident(&dir);
+    let hidden = 128u32;
+
+    let fc = index.entries.get("mtp.fc.weight").expect("fc is resident");
+    let (r, c, _, _) = fc.shape;
+    assert_eq!(
+        (r, c),
+        (hidden, 2 * hidden),
+        "fc is not [hidden, 2*hidden]; a transposed read looks identical by size"
+    );
+
+    // The guard that makes the assertion above discriminating: at least one
+    // other head tensor has fc's byte count, so a size check could not have
+    // distinguished them and the SHAPE check is doing real work.
+    let same_size: Vec<&String> = index
+        .entries
+        .iter()
+        .filter(|(k, v)| {
+            k.starts_with("mtp.") && v.size_bytes == fc.size_bytes && k.as_str() != "mtp.fc.weight"
+        })
+        .map(|(k, _)| k)
+        .collect();
+    assert!(
+        !same_size.is_empty(),
+        "no other head tensor shares fc's byte count, so this fixture cannot \
+         demonstrate why the shape check is needed"
+    );
+}
+
+/// The head's attention block is GATED, and `q_proj` against `o_proj` is
+/// where that shows.
+///
+/// `q_proj` emits `2 * num_heads * head_dim` because half of it is the gate;
+/// `o_proj` consumes the unhalved `num_heads * head_dim`. A head read as
+/// non-gated would give both the same width, so a fixture with equal widths
+/// could not see the difference -- which is why the real probe checks the
+/// same pair off the published header.
+#[test]
+fn the_mtp_block_is_gated_like_the_trunks_full_layers() {
+    let (dir, arch) = build_with_mtp();
+    assert!(arch.attn_output_gate, "this check assumes a gated family");
+    let index = resident(&dir);
+
+    let q = index
+        .entries
+        .get("mtp.layers.0.self_attn.q_proj.weight")
+        .expect("q_proj is resident");
+    let o = index
+        .entries
+        .get("mtp.layers.0.self_attn.o_proj.weight")
+        .expect("o_proj is resident");
+    // q_proj is [2 * q_out, hidden]; o_proj is [hidden, q_out]. So q_proj is
+    // exactly twice o_proj's packed size, and equal sizes would mean the gate
+    // half went missing.
+    assert_eq!(
+        q.size_bytes,
+        2 * o.size_bytes,
+        "q_proj is not carrying the output gate"
+    );
+}
+
+/// An install built WITHOUT the head has no `mtp.` tensors at all.
+///
+/// The guard is against a head that leaks into every install: it would be
+/// dead weight in four checkpoints that have no drafter, and the manifest's
+/// "absent means no head" rule would never be exercised.
+#[test]
+fn the_head_is_absent_unless_asked_for() {
+    let (dir, _) = build();
+    let index = resident(&dir);
+    assert!(
+        !index.entries.keys().any(|k| k.starts_with("mtp.")),
+        "the default dense fixture grew an MTP head"
+    );
 }

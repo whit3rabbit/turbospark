@@ -13,6 +13,7 @@ mod classify;
 mod config;
 mod expert_blobs;
 mod manifest_quant;
+mod mtp;
 mod narrow;
 mod orchestrate;
 mod shards;

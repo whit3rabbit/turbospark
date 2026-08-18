@@ -49,7 +49,17 @@ pub fn orchestrate_gemma4_checkpoint_sharded(
     quant: &Gemma4Quant,
 ) -> Result<Gemma4RepackOutput, Gemma4Error> {
     let plan = classify_all(shards, arch)?;
-    let resident = read_resident_entries(shards, &plan.resident_bases, quant)?;
+    let mut resident = read_resident_entries(shards, &plan.resident_bases, quant)?;
+    // The head is APPENDED, after `lm_head` and after the trunk's own
+    // ordering has been settled. Absent from the checkpoint means absent from
+    // the install, with no flag and no manifest field to disagree with the
+    // bytes: whether an install has a drafter is answered by whether
+    // `mtp.fc.weight` is in the resident index.
+    if !plan.mtp_bases.is_empty() {
+        let head = super::mtp::read_mtp_entries(shards, &plan.mtp_bases)?;
+        resident.entries.extend(head.entries);
+        resident.lossy_narrowing.extend(head.lossy_narrowing);
+    }
     let expert_stride = expert_stride_from_headers(shards, arch, quant, &plan.routed)?;
     let mut layers = Vec::new();
     if !plan.routed.is_empty() {
@@ -71,6 +81,18 @@ pub struct ClassifiedNames<'a> {
     pub resident_bases: Vec<&'a str>,
     pub routed: BTreeMap<usize, BTreeMap<&'static str, &'a str>>,
     pub excluded: Vec<String>,
+    /// The multi-token-prediction head's tensors, kept OUT of
+    /// `resident_bases` rather than merged into it.
+    ///
+    /// Two reasons, and the second is the one that bites. The head takes a
+    /// quantizing arm no trunk tensor takes (`mtp::read_mtp_entries`), so
+    /// merging would mean `read_resident_entries` deciding per tensor which
+    /// of three paths a name wants. And `lm_order_key` sorts on
+    /// `layer_index`, which finds `.layers.` inside `mtp.layers.0.*` and
+    /// would interleave the head's block with TRUNK LAYER 0's tensors --
+    /// harmless for a name-keyed index, but it puts an unrelated model's
+    /// weights in the middle of a layer group for every future reader.
+    pub mtp_bases: Vec<&'a str>,
 }
 
 pub fn classify_all<'a>(
@@ -80,6 +102,7 @@ pub fn classify_all<'a>(
     let num_layers = arch.num_layers as usize;
     let mut resident_bases: Vec<&str> = Vec::new();
     let mut excluded: Vec<String> = Vec::new();
+    let mut mtp_bases: Vec<&str> = Vec::new();
     let mut routed: BTreeMap<usize, BTreeMap<&'static str, &str>> = BTreeMap::new();
 
     for name in shards.names() {
@@ -102,15 +125,22 @@ pub fn classify_all<'a>(
                 }
             }
             Gemma4Bucket::ExcludedMultimodal => excluded.push(name.clone()),
+            Gemma4Bucket::MtpHead => mtp_bases.push(name),
             Gemma4Bucket::Unknown => return Err(Gemma4Error::UnknownTensor(name.clone())),
         }
     }
     resident_bases.sort_by(|a, b| lm_order_key(a).cmp(&lm_order_key(b)));
     excluded.sort();
+    // Plain lexicographic, which puts `mtp.fc` and the three structural norms
+    // ahead of `mtp.layers.0.*`. There is exactly one block, so no
+    // layer-aware ordering is owed; `lm_order_key` is deliberately not reused
+    // here (see `ClassifiedNames::mtp_bases`).
+    mtp_bases.sort_unstable();
     Ok(ClassifiedNames {
         resident_bases,
         routed,
         excluded,
+        mtp_bases,
     })
 }
 

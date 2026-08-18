@@ -2,7 +2,7 @@
 
 use model_io::{ArchConfig, ResidentIndex};
 
-use crate::families::qwen::{layer_tensor, RealQwenState, RMS_EPS};
+use crate::families::qwen::{layer_tensor, prefixed_layer_tensor, RealQwenState, RMS_EPS};
 use crate::real_forward::RealForwardError;
 use crate::real_forward_dispatch::encode_gemv_any;
 use crate::real_forward_types::DecodeScratch;
@@ -152,6 +152,7 @@ pub(crate) fn encode_full_attention_block(
     qwen: &RealQwenState,
     scratch: &DecodeScratch,
     kv: &gpu::KvCacheManager,
+    prefix: &str,
     layer: usize,
     position: usize,
 ) -> Result<(), RealForwardError> {
@@ -162,7 +163,7 @@ pub(crate) fn encode_full_attention_block(
     let head_dim = arch.full_head_dim as u32;
     let q_dim = (num_heads * head_dim) as usize;
     let kv_dim = (num_kv * head_dim) as usize;
-    let name = |suffix: &str| layer_tensor(layer, &format!("self_attn.{suffix}"));
+    let name = |suffix: &str| prefixed_layer_tensor(prefix, layer, &format!("self_attn.{suffix}"));
 
     let (k_buf, k_off) = kv.k_slot(layer, position);
     let (v_buf, v_off) = kv.v_slot(layer, position);
