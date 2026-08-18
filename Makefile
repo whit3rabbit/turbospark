@@ -1,4 +1,4 @@
-.PHONY: all build build-debug build-release test test-debug test-release fmt fmt-check clippy check catalog-guard clean install uninstall
+.PHONY: all build build-debug build-release test test-debug test-release fmt fmt-check clippy check catalog-guard swift-lib swift-test swift-demo clean install uninstall
 
 PREFIX ?= $(HOME)/.local
 BINDIR ?= $(PREFIX)/bin
@@ -51,6 +51,32 @@ check: fmt-check clippy test-debug
 catalog-guard:
 	cargo test -p turbospark-catalog --test catalog_network --release -- --ignored --nocapture
 
+# --- Swift bindings (macOS) -------------------------------------------------
+#
+# `swift-lib` MUST run before either target below: it builds crates/ffi and
+# copies the archive plus the header into the SwiftPM package, which cannot
+# reach outside its own directory to find them.
+
+swift-lib:
+	./scripts/swift-lib.sh
+
+# The test target that proves the HAND-WRITTEN header matches the Rust side.
+# Nothing else can: the Rust tests call the same function bodies through the
+# rlib, so they would pass against a wrong declaration.
+swift-test: swift-lib
+	cd swift/TurboSpark && swift test
+
+# The same suite plus the end-to-end arm, which needs a real install and
+# takes minutes. Without the variable those cases SKIP with a note.
+swift-test-real: swift-lib
+	cd swift/TurboSpark && TURBOSPARK_TEST_MODEL=$(MODEL) swift test
+
+swift-demo: swift-lib
+	cd swift/TurboSparkDemo && swift run TurboSparkDemo
+
 clean:
 	cargo clean
+	rm -rf swift/TurboSpark/.build swift/TurboSparkDemo/.build
+	rm -f swift/TurboSpark/Sources/CTurboSpark/libturbospark_ffi.a
+	rm -f swift/TurboSpark/Sources/CTurboSpark/turbospark.h
 

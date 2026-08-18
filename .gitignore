@@ -18,3 +18,9 @@ __pycache__/
 
 # Local
 compile_flags.txt
+# Build products the SwiftPM package needs beside its module map. Both are
+# COPIED there by `scripts/swift-lib.sh`; the canonical header is
+# crates/ffi/include/turbospark.h and the archive is a cargo artifact.
+/swift/TurboSpark/Sources/CTurboSpark/libturbospark_ffi.a
+/swift/TurboSpark/Sources/CTurboSpark/turbospark.h
+/swift/*/.build

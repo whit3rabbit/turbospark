@@ -274,3 +274,46 @@ cargo test -p turbospark-runtime
     Use `let Err(err) = RealForwardRunner::open(..) else { panic!(..) };`,
     which satisfies the lint and needs no `Debug`. The 29 existing
     `expect_err` call sites are all on `Result<(), E>`, where it is fine.
+
+18. **Cancellation is a PARAMETER on two new functions, not a field on
+    `GenerationConfig`, and the shape is what keeps it free.**
+    `run_raw_completion_cancellable` and its chunked sibling take a
+    `cancel: &dyn Fn() -> bool`; the two original entry points delegate to
+    them passing a predicate that is always false. `GenerationConfig` has no
+    `Default` and is built as a struct literal in over twenty places across
+    thirteen files, so a field there would touch every one of them to buy
+    nothing, while an extra parameter costs the existing call sites exactly
+    zero. What licenses the claim that nothing moved is structural rather
+    than hopeful: the added branch is `false` on every pre-existing path, so
+    those functions execute the statement sequence they always did. Measured
+    anyway, because that is the house rule -- greedy output on the real
+    Gemma 4 install is md5-identical across pre- and post-change binaries
+    (`b2f16611...`), as is the sampled arm (`0c383ac0...`).
+
+    **THE CANCEL POLL SITS BESIDE `hit_stop_string || hit_max`, NOT AT THE
+    TOP OF THE LOOP**, and moving it is the mistake to avoid. A cancelled
+    run has to take the SAME exit path the other stop reasons take, because
+    that path flushes the stop matcher's withheld tail. Break out early
+    instead and whatever the matcher was holding back is silently dropped --
+    the caller gets a truncated reply rather than a cancelled one, with
+    nothing to say so. `cancelling_during_decode_still_flushes_the_withheld_tail`
+    is the guard, and the mutation that breaks early reddens it.
+
+    Cancellation is LAST in precedence: a run that would have stopped on its
+    own terms this token reports why it really stopped, so a Stop pressed as
+    the model finishes does not relabel a complete turn as a truncated one.
+    Both halves are pinned (`a_real_stop_reason_wins_over_a_simultaneous_cancel`,
+    `max_tokens_wins_over_a_simultaneous_cancel`).
+
+    `StopReason::Cancelled` carries an ORDINARY `RawDecodeResult`: the tail
+    is flushed and `kv_position` / `kv_backed_token_ids` describe the cache
+    honestly, so a caller may keep the partial turn and continue from it. A
+    cancel observed during PREFILL yields zero new tokens and a
+    `decode_seconds` of exactly 0.0 rather than an unmeasured value, so
+    nothing can plot a rate that was never measured.
+
+    The chunked path's granularity is coarser BY CONSTRUCTION: a chunk is one
+    indivisible `prefill_chunk` call and `PrefillChunkCommitState::require_clean`
+    makes a mid-chunk bail unreachable, so a cancel lands on a chunk boundary
+    -- on a 128-token chunk that is a longer wait than a caller might assume.
+

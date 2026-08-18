@@ -94,6 +94,30 @@ cargo test -p turbospark-repack
 cargo test -p turbospark-catalog
 cargo test -p turbospark-server
 cargo test -p turbospark-bench
+cargo test -p turbospark-ffi
+
+# The Swift bindings (macOS). `swift-lib` builds crates/ffi as a staticlib
+# and copies it plus the canonical header into the SwiftPM package, which
+# cannot reach outside its own directory to find either; both `swift test`
+# targets below FAIL with a missing-header error without it having run.
+make swift-lib
+
+# Proves the HAND-WRITTEN turbospark.h matches the Rust side. Nothing else
+# can: crates/ffi's own tests reach the same function bodies through the
+# `rlib`, so they pass even against a wrong declaration in the header. It
+# has already caught one real drift (the catalog's on-disk rows are
+# snake_case where this binding's own wire shapes are camelCase).
+make swift-test
+
+# The same, plus the end-to-end arm against a real install: open, stream,
+# cancel mid-generation, read the phase counters. Minutes. Without MODEL the
+# real cases SKIP with a note rather than failing.
+make swift-test-real MODEL=~/models/gemma4.gturbo
+
+# The demo chat app. Model picker, streaming transcript with collapsible
+# reasoning, a Stop button, and a status footer. Deliberately minimal: it
+# exists to verify the binding, not to be a product.
+make swift-demo
 
 # Formatting check (must stay clean; enforced in verification).
 cargo fmt --check
@@ -873,12 +897,21 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
    (`logit.metal`) was deliberately left unported rather than shipped without a
    way to verify it.
 
-9. `crates/model-io` and `crates/streaming` are the two crates that
-   intentionally carry unsafe code and platform `cfg`s (mmap in
+9. `crates/model-io`, `crates/streaming` and `crates/ffi` are the three
+   crates that intentionally carry unsafe code and platform `cfg`s (mmap in
    `model-io::resident_buffer`, the macOS `F_RDADVISE` `fcntl` in
    `streaming::rdadvice`, and the raw destination pointers plus borrowed
    `RawFd` that `streaming::read_pool`'s parked worker threads use --
-   sound only because `run_batch` blocks until every claim is dropped). `compute`, `repack`, `runtime`, and `tokenizer`
+   sound only because `run_batch` blocks until every claim is dropped).
+   **`crates/ffi` is unsafe by definition rather than by exception**: it IS
+   the C ABI, so every entry point takes raw pointers, and the rule that
+   keeps it honest is that each `extern "C"` body is a call to `abi::guard`
+   and nothing else. Unwinding across the FFI boundary is undefined
+   behaviour and this workspace cannot opt out of unwinding (the root
+   `Cargo.toml` records why `panic = "abort"` must stay off: two `Drop`
+   impls are load-bearing on the unwind path), so a panic that escapes
+   `catch_unwind` there is a real hazard rather than a theoretical one.
+   `compute`, `repack`, `runtime`, and `tokenizer`
    have `#![forbid(unsafe_code)]`. `core`, `gpu`, `invocation`, `selection`,
    `server`, `window-fit`, `cli`, and `bench` currently have no such
    attribute and no workspace-level lint enforces it, so unsafe code is not
@@ -2343,6 +2376,7 @@ When working on code inside a specific crate, refer to that crate's `CLAUDE.md` 
 - [`crates/cli/CLAUDE.md`](crates/cli/CLAUDE.md): CLI binaries (`turbospark-check`, `turbospark-model`), process entry point, real model smoke tests, interactive chat REPL.
 - [`crates/compute/CLAUDE.md`](crates/compute/CLAUDE.md): CPU reference kernels (RmsNorm, RoPE, Attention, Quant), numerical ground truth for GPU tests.
 - [`crates/core/CLAUDE.md`](crates/core/CLAUDE.md): Shared primitives (`TokenId`, `LogitValue`), runtime configuration, allowed sets, chunk sizing.
+- [`crates/ffi/CLAUDE.md`](crates/ffi/CLAUDE.md): the C ABI for native GUI hosts, its ownership and threading contract, and the Swift package over it.
 - [`crates/gpu/CLAUDE.md`](crates/gpu/CLAUDE.md): macOS Metal context, pipeline caches, MSL shaders, KV cache, zero-copy weights, profiling flags.
 - [`crates/invocation/CLAUDE.md`](crates/invocation/CLAUDE.md): Pure CLI argument parser, `InvocationRequest`, 5-place rule for adding new flags.
 - [`crates/model-io/CLAUDE.md`](crates/model-io/CLAUDE.md): Manifest validation, architecture baselines, packed expert layout, mmap resident weight index.
@@ -2383,9 +2417,13 @@ Workspace directory structure and crate layout:
 |   +-- runtime        # raw-completion prefill+decode loop & RealForwardRunner (macOS)
 |   +-- selection      # token sampling (temperature, top-k, top-p, repetition penalty, choose)
 |   +-- server         # OpenAI-compatible Chat Completions HTTP server (axum)
+|   +-- ffi            # C ABI over the engine for a native GUI host (staticlib + turbospark.h)
 |   +-- streaming      # pread-based expert streamer, LFU/LRU slot cache & read pool
 |   +-- tokenizer      # tokenizer wrapper, chat templates (text/Jinja), stop matcher, DSL parser
 |   \-- window-fit     # deterministic conversation-window fitting & turn dropping
++-- swift
+|   +-- TurboSpark     # SwiftPM package wrapping crates/ffi (session actor, AsyncStream, catalog)
+|   \-- TurboSparkDemo # minimal SwiftUI chat app; verifies the binding end to end
 +-- scripts
 |   +-- kld.py         # cross-engine KL vs mlx-lm (reads tests/logit_dump.rs's output)
 |   +-- kld_llamacpp.py# the same, vs llama.cpp on the same GGUF bytes (Gotcha 34)
@@ -2429,6 +2467,7 @@ divergence and perplexity functions rather than restating them.
 - `crates/tokenizer`: wraps HF `tokenizers` crate (`MfTokenizer`); resolves Gemma 4 / ChatML (Qwen) / DeepSeek-V4 chat dialect from special tokens (`dialect/`); renders text-only chat templates plus DeepSeek's native tool chat (`chat_template/`); generic Jinja-templated tool chat for Gemma/ChatML (`minijinja` + `pycompat`, rendering `chat_template.jinja`); streaming detokenizer (`StreamingDetokenizer`) and stop matcher (`StopMatcher`) (stop set unions dialect stops with `generation_config.json` `eos_token_id` list); Gemma/Qwen/DeepSeek tool-call DSL parsers and streaming structured assistant-output decoder (`structured_decoder/`, which also splits `gpt-oss`'s Harmony channels into content and REASONING -- the one dialect whose frame is a header/body triple rather than a bracketing token pair, and, since `--reasoning` landed, no longer the only one whose thought channel is emitted rather than discarded (Gotcha 55); its TOOL CALLS come out of the same header parser plus `JsonValue::parse`, and out of `finish` rather than a token, since `<|call|>` terminates a call and is a stop -- Gotcha 49). Details in [`crates/tokenizer/CLAUDE.md`](crates/tokenizer/CLAUDE.md).
 - `crates/model-io`: `manifest/` decode and field-by-field validation against a resolved `ArchConfig` (`arch_config/`, with canonical Gemma 4, Qwen 3.6, DeepSeek-V4-Flash and -- ROADMAP's 1-bit entry -- Bonsai-27B `qwen3_5` baselines in `arch_baselines/`), `packed_experts/layout.json` decode (`PackedExpertsLayout`), `model_weights.bin` resident tensor index reader (`ResidentIndex`), `mmap`'d resident-buffer view (`ResidentBuffer`), streaming SHA-256 verification (`sha256.rs`), and trusted install receipt (`InstallReceipt`). Allowed a narrow amount of `unsafe` (the `mmap` call). Details in [`crates/model-io/CLAUDE.md`](crates/model-io/CLAUDE.md).
 - `crates/streaming`: routed-expert `pread` streamer (`PreadExpertStreamer`) with a fixed per-layer slot cache. The LFU/LRU eviction policy (`ExpertCache`) is pure logic, separated from file I/O so it can be tested against access traces without a model install. Cache misses are split into chunks and read on `read_pool`, a process-wide set of parked worker threads, so a layer that misses once still reads at full width (the `pread` is a page-cache memcpy, not disk I/O). `rdadvice` and `read_pool` are the other `unsafe`-carrying modules (macOS `F_RDADVISE`, a documented no-op elsewhere; raw destination pointers across worker threads). Details in [`crates/streaming/CLAUDE.md`](crates/streaming/CLAUDE.md).
+- `crates/ffi`: the C ABI a native GUI drives the engine through (`staticlib` plus a hand-written `include/turbospark.h`), and the third crate carrying `unsafe`. An opaque session handle over a `Mutex<RealForwardRunner>`, a streaming event callback, JSON options and telemetry, and the catalog/probe/install surface. **The cancel flag lives OUTSIDE the session mutex**, which is the whole design: a GUI generates on a background thread and presses Stop on the main one, so a flag behind the lock would make Stop wait for the generation it is stopping. `swift/TurboSpark` wraps it and `swift/TurboSparkDemo` is a SwiftUI app proving the stack end to end. Details in [`crates/ffi/CLAUDE.md`](crates/ffi/CLAUDE.md).
 - `crates/gpu`: Metal device/pipeline-cache context (`MetalContext`, `PassEncoder`, `CommittedPass`) and per-kernel dispatch. macOS-only; compiles to nothing elsewhere. Dispatched, parity-tested kernels (`rmsnorm_no_scale`, `rms_norm_bf16w`, both `_perhead` norm variants, `rope_proportional_neox`, `rope_neox_subdim`, `logit_softcap_softmax`, `dequant_int4_gemv_simd`, `dequant_int8_gemv_simd` with resident variants, the port-local GGUF set (`dequant_q8_0_gemv_simd`, `dequant_q4_k_gemv_simd`, `dequant_q6_k_gemv_simd`, `embed_lookup_q8_0`, `embed_lookup_q4_k`, and `moe_gguf/` decode pairs -- ROADMAP Phase G), the port-local sub-4-bit set (`dequant_int1_gemv_simd` and `dequant_int2_gemv_simd`, each with a resident variant, the `+/-1` `dequant_int1_gemv_symmetric_simd`, and `embed_lookup_int1` / `embed_lookup_int2` -- ROADMAP's 1-bit and ternary entries; the 2-bit set is TWO kernels rather than three, because a ternary fast path would reassociate the sum exactly as the 1-bit one does and that one is already reachable from nothing; the general GEMV's resident form and the lookup are dispatched by the `qwen3_5` flow, the `+/-1` one is parity-tested and reachable from no decode path, deliberately), `router_gemv_gemma4_r4`, two-pass split-KV `attention_decode` (multi-chunk, split up to 16 ways by `chunks_for`), `moe_decode` decode pair, `gdn.metal`'s eight gated-DeltaNet kernels, and `utility` elementwise kernels incl. Qwen's three gating kernels) are compiled from MSL source at runtime, vendored from Swift except where marked port-local. `power_state.rs` wraps `NSProcessInfo`'s `thermalState` and `isLowPowerModeEnabled` for ROADMAP Phase P2 (here rather than in `runtime`, which forbids unsafe; nothing GPU about them beyond the `metal::objc` reach). `KvCacheManager` allocates and manages real per-layer Metal KV buffers used by `RealForwardRunner`. `ResidentGpuWeights` wraps resident mmap in zero-copy MTLBuffer. `GdnStateManager` is the Qwen flow's recurrent state; `Dsv4StateManager` allocates real per-layer Metal buffers (unwired kernels); `PrefillChunkScratchLayout`/`PrefillChunkScratchBuffers` size scratch buffers (undispatched tile kernel). The `sample` kernel and fused lm_head are not yet vendored or dispatched. Details in [`crates/gpu/CLAUDE.md`](crates/gpu/CLAUDE.md).
 - `crates/runtime`: power policy for the decode loop (`power.rs`: `PowerProfile`, the `stepped_cap` thermal ladder, `RateControl`, and cfg-paired OS probes; `pacing.rs`: the pure-deadline `Pacer` -- ROADMAP Phase P2), and the raw-completion prefill+decode loop (`run_raw_completion`, `run_raw_completion_chunked`), wiring a `LogitProducer`, the tokenizer's streaming detokenizer and stop matcher, and `selection::select` into one token generation loop. `ScriptedLogitProducer` is what unit tests and `crates/server`'s `ScriptedChatModel` drive the loop with (see Gotcha 10). `RealForwardRunner` (macOS/GPU only, `src/real_forward.rs` plus one `src/families/<family>/` module per flow, each `mod.rs` + `attn.rs` + `moe.rs` + `state.rs`) is a real `LogitProducer`: a genuine transformer forward pass through real GPU kernels (including real GPU decode attention) and real quantized weights, supporting dense and MoE FFN layers. Dense bridges gated FFN on CPU via `turbospark_compute::run_ffn`; MoE runs real GPU router GEMV plus real GPU GEMVs for each selected expert, host-side top-k selection, and CPU-bridged gated activation. Supports synthetic short names, verbatim real Gemma 4 checkpoint names (learned-weight flow), the Qwen hybrid linear/full-attention flow (`src/families/qwen/`), which serves BOTH `qwen36` and -- since ROADMAP's 1-bit entry -- the DENSE, one-bit `qwen3_5`, forking at the FFN alone (`dense.rs`, no new kernel), one plain-GQA flow (`src/families/llama/`) serving BOTH the `llama` and `qwen3moe` families AND both halves of `llama` itself: Mixtral's routed experts and, since ROADMAP M4, the dense gated FFN of Mistral and Llama 2/3.x (`dense.rs`, no new kernel). `llama` and `qwen3moe` differ only in per-head q/k norms and an RMS epsilon. A FIFTH flow (`src/families/gptoss/`, ROADMAP M5) serves `gpt-oss`: the same plain GQA plus a bias on all four projections, YaRN rope off a precomputed frequency table, attention sinks, an alternating window on the EVEN layers, and MXFP4 routed experts carrying a clamped SwiGLU and per-expert biases. See Gotcha 12. Details in [`crates/runtime/CLAUDE.md`](crates/runtime/CLAUDE.md).
 - `crates/catalog`: the model CATALOG (`models.json`, fourteen curated rows, each naming a repository and revision that were streamed and run on real hardware, with the gate targets that assert it), the header-only Hugging Face PROBE (`probe/`: architecture through `repack`'s registry, block types against `model_io::EXECUTABLE_GGUF_TYPES` or the affine `(bits, group)` conjunction, expert-slot arithmetic, tokenizer sidecars -- KB and seconds, never a download), the INSTALL DRIVER (`install.rs`: the shape every install-writing `crates/repack/tests/*_network.rs` file repeats, written once and with the sidecars verified BEFORE any weight byte moves), and the `~/.turbospark` STORE (`store.rs`, `installed.json`, alias-to-path resolution in which an existing directory always wins). Builds on every platform; nothing here decodes. Details in [`crates/catalog/CLAUDE.md`](crates/catalog/CLAUDE.md) and `docs/MODELS.md`.

@@ -69,6 +69,12 @@ pub fn swift_reason_name(reason: StopReason) -> &'static str {
         StopReason::Eos => "eos",
         StopReason::StopString => "stopString",
         StopReason::MaxTokens => "maxTokens",
+        // The Swift engine has no such case, so there is no spelling to be
+        // byte-parity WITH. Unreachable here in any event: this crate never
+        // calls the cancellable entry points, and the protocol's validity
+        // gate demands `endOfTurn` on every case, so a cancelled run could
+        // not be a protocol result even if one could occur.
+        StopReason::Cancelled => "cancelled",
     }
 }
 

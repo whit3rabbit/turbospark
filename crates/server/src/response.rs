@@ -24,9 +24,15 @@ pub fn finish_reason(reason: runtime::StopReason) -> FinishReason {
     match reason {
         runtime::StopReason::MaxTokens => FinishReason::Length,
         runtime::StopReason::ToolCalls => FinishReason::ToolCalls,
+        // `Cancelled` is `stop` because OpenAI has no other spelling for it,
+        // and it is UNREACHABLE from this server today: nothing here calls
+        // the cancellable entry points, so no generation this crate drives
+        // can produce it. Named rather than left to a wildcard so a future
+        // per-request cancel has to come past this line and decide.
         runtime::StopReason::EndOfTurn
         | runtime::StopReason::Eos
-        | runtime::StopReason::StopString => FinishReason::Stop,
+        | runtime::StopReason::StopString
+        | runtime::StopReason::Cancelled => FinishReason::Stop,
     }
 }
 
