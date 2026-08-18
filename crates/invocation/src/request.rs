@@ -198,6 +198,42 @@ pub enum ExpertCacheSlots {
     Auto,
 }
 
+/// Speculative decoding: whether to draft ahead with the checkpoint's own
+/// multi-token-prediction head, and what to do when it cannot be served.
+///
+/// The three values are not a spectrum, they are three different answers to
+/// "what happens if this install cannot speculate":
+///
+/// - [`Speculation::Auto`] WARNS on stderr and decodes sequentially. The
+///   default, because most installs carry no head and a hard error would make
+///   the common case a failure.
+/// - [`Speculation::Off`] never drafts and never warns.
+/// - [`Speculation::Block`] HARD FAILS. A caller who named a block size is
+///   measuring or benchmarking, and the failure mode this avoids is the one
+///   `crates/runtime`'s own gotchas keep naming: a run that quietly did not
+///   speculate, reported success, and got recorded as the speculative number.
+///
+/// **The warning is not decoration.** Silence here would be the same bug the
+/// engine had until the head was detected at all -- an install with a
+/// drafter decoding one token at a time and nothing saying so.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Speculation {
+    /// Draft if the install can, warn and continue if it cannot.
+    #[default]
+    Auto,
+    /// Never draft.
+    Off,
+    /// Draft this many tokens per round, or fail naming the reason.
+    Block(u32),
+}
+
+/// The blocks a caller may name. The upper bound is the batched verify's
+/// register-bound row cap (a round of block B verifies `B + 1` rows against
+/// `MAX_BATCH_ROWS = 16`); the measured optimum is 2 and everything above 4
+/// loses on this engine (`docs/MTP.md`), so the range is deliberately wider
+/// than the useful part rather than pretending to be a recommendation.
+pub const ALLOWED_SPECULATION_BLOCKS: std::ops::RangeInclusive<u32> = 1..=15;
+
 /// Context-window sizing: a fixed token count, or automatic sizing against
 /// the checkpoint and the machine.
 ///
@@ -252,6 +288,8 @@ pub struct InvocationRequest {
     pub rdadvise: ReadAheadMode,
     /// The routed-cache slot count, or `Auto` to size it at open.
     pub expert_cache_slots: ExpertCacheSlots,
+    /// Speculative decoding policy; see [`Speculation`].
+    pub speculation: Speculation,
     /// The prompt-processing chunk-size tuning.
     pub prefill_chunk: PrefillChunk,
     /// The power profile, or `None` for automatic (which resolves against

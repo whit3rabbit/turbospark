@@ -28,6 +28,7 @@ mod real_forward_types;
 mod real_forward_utils;
 #[cfg(target_os = "macos")]
 mod router_hist;
+mod speculative;
 
 pub use config::GenerationConfig;
 // The two sizing policies LIVE IN `model_io` and are re-exported here.
@@ -52,12 +53,16 @@ pub use model_io::{
 };
 
 pub use error::RuntimeError;
+#[cfg(target_os = "macos")]
+pub use families::qwen::{install_has_mtp_head, MtpDraftPolicy};
 pub use power::{
     low_power_mode_enabled, physical_memory, rate_control_for, recommended_max_working_set,
     resolve_profile, stepped_cap, thermal_level, PowerProfile, RateControl, ThermalLevel,
     CRITICAL_TOK_PER_SEC, READING_SPEED_TOK_PER_SEC, SERIOUS_TOK_PER_SEC,
 };
-pub use producer::{ChunkedPrefillRunner, LogitProducer, ScriptedLogitProducer};
+pub use producer::{
+    ChunkedPrefillRunner, LogitProducer, ScriptedLogitProducer, SpeculativeProducer,
+};
 pub use raw_completion::{
     run_raw_completion, run_raw_completion_cancellable, run_raw_completion_chunked,
     run_raw_completion_chunked_cancellable, CancelFlag, RawDecodeProgress, RawDecodeResult,
@@ -66,6 +71,10 @@ pub use raw_completion::{
 #[cfg(target_os = "macos")]
 pub use real_forward::{
     dispatch_profile_report, PhaseCounters, RealForwardError, RealForwardRunner, RollbackPoint,
+};
+pub use speculative::{
+    run_raw_completion_speculative, run_raw_completion_speculative_cancellable,
+    DEFAULT_SPECULATION_BLOCK,
 };
 
 // Token id width consumed from the core primitives, keeping the dependency

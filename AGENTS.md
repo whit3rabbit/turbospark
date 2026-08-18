@@ -1134,7 +1134,12 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
 13. `st` (the ripgrep-alike used here) skips gitignored files, so it finds
     NOTHING in `ROADMAP.md` -- that file is gitignored on purpose (see
     Gotcha 5's sibling note about local-only edits). Read or `grep` it
-    directly.
+    directly. **And in a WORKTREE it does not exist at all**, because
+    gitignored files are not carried into one: `ROADMAP.md` and
+    `CLAUDE.local.md` live only in the main checkout, so edit them at that
+    path rather than relative to the worktree you are working in. `st` also
+    needs a per-tree index, so a fresh worktree answers every query with
+    "no index found" until `st index` has run once.
 
 14. Adding one flag to `crates/invocation` touches five places, two of them
     non-obvious: the `OPTIONS` table, BOTH parser dispatch `match`es (each
@@ -2721,6 +2726,15 @@ one target, `cp /tmp/f.bak f`. Assert each mutation reddens ONLY its own
 case. One that reddens everything is not a failure of the test -- it usually
 means an INVARIANT is doing the work, which is its own finding and worth
 recording rather than tuning away.
+
+**ASSERT THE MUTATION APPLIED, or a survivor is meaningless.** `cargo fmt`
+wraps and re-indents match arms and long calls, so a `perl -0pi -e` pattern
+written from the source you drafted stops matching the source on disk --
+silently, since perl reports nothing when a substitution finds no target.
+Three mutations "survived" in one sitting that way and read as three weak
+tests; two were fine and one was a real gap. Substitute through a helper that
+fails when the old text is absent (`assert old in s` in a two-line python
+heredoc), and prefer patterns short enough to survive reformatting.
 
 See `DEVIATIONS.md` for the full list of what this port scaffolds versus
 fully implements, `ROADMAP.md` for the forward roadmap and descope

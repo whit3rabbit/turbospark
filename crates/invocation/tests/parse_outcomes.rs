@@ -6,7 +6,7 @@
 use foundation::runtime_config::{ALLOWED_CACHE_SLOTS, ALLOWED_CHUNK_SIZES};
 use turbospark_invocation::{
     parse, ExpertCacheSlots, InvocationRequest, MaxContext, Mode, ParseOutcome, PowerProfile,
-    PrefillChunk, ReasoningEffort,
+    PrefillChunk, ReasoningEffort, Speculation,
 };
 
 fn tok(items: &[&str]) -> Vec<String> {
@@ -277,6 +277,55 @@ fn power_profile_and_rate_cap_translate_to_their_validated_values() {
             req.power_profile.map(PowerProfile::as_str),
             Some(spelling),
             "profile spelling must round-trip"
+        );
+    }
+}
+
+/// `--speculative`, and the three values are three different ANSWERS rather
+/// than a spectrum: see `Speculation`'s doc comment. What this pins is the
+/// spelling and the default; what a named block does when the model cannot
+/// serve it belongs to `crates/cli`, which is the layer that can see an
+/// install.
+#[test]
+fn a_speculation_policy_parses_from_its_three_spellings() {
+    let spec = |v: &str| {
+        expect_success(parse(&tok(&[
+            "--model",
+            "m",
+            "--prompt",
+            "p",
+            "--speculative",
+            v,
+        ])))
+        .speculation
+    };
+    assert_eq!(spec("auto"), Speculation::Auto);
+    assert_eq!(spec("off"), Speculation::Off);
+    assert_eq!(spec("2"), Speculation::Block(2));
+    // The bound is the batched verify's row cap: a round of block B verifies
+    // B + 1 rows against MAX_BATCH_ROWS = 16.
+    assert_eq!(spec("15"), Speculation::Block(15));
+
+    // And the DEFAULT is Auto, which is the value that decides whether an
+    // install carrying a head speculates without anyone asking.
+    let default = expect_success(parse(&tok(&["--model", "m", "--prompt", "p"])));
+    assert_eq!(default.speculation, Speculation::Auto);
+}
+
+#[test]
+fn an_out_of_range_or_misspelled_speculation_block_is_refused() {
+    for bad in ["0", "16", "99", "yes", "on", "-1", ""] {
+        let outcome = parse(&tok(&[
+            "--model",
+            "m",
+            "--prompt",
+            "p",
+            "--speculative",
+            bad,
+        ]));
+        assert!(
+            !matches!(outcome, ParseOutcome::Success(_)),
+            "--speculative {bad} must be refused rather than silently defaulted"
         );
     }
 }

@@ -298,3 +298,30 @@ fn linear_layers_advance_a_non_zero_recurrent_state() {
         assert_eq!(runner.gdn_state_abs_max(layer), Some(0.0));
     }
 }
+
+/// The MoE half of the speculation capability gate.
+///
+/// `produce_batched` refuses `num_experts != 0` by name, so a MoE install can
+/// never run a speculative verify however good a drafter it acquires -- the
+/// routed pair has no batched kernel and the expert union of M tokens is
+/// larger than what the slot cache already loads (AGENTS.md Gotcha 54). The
+/// blocker has to say THAT rather than "no head": a reader told the head is
+/// missing would go looking for a checkpoint that carries one, which on this
+/// family would not help.
+///
+/// Note this says nothing about decoding. The same install decodes throughout
+/// this file; only the batched verify is dense-only.
+#[test]
+fn a_moe_install_reports_the_architectural_blocker_and_not_the_missing_head() {
+    let dir = temp_dir();
+    let runner = open_runner(&dir, VOCAB);
+
+    let blocker = runner
+        .speculation_blocker()
+        .expect("a MoE install cannot run the batched verify");
+    assert!(
+        blocker.contains("dense-only"),
+        "the reason must name the architecture rather than the head, got: {blocker}"
+    );
+    assert_eq!(runner.mtp_draft_depth(), 0);
+}

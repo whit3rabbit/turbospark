@@ -104,12 +104,14 @@ fn temp_dir(tag: &str) -> std::path::PathBuf {
     dir
 }
 
-/// Idempotent, and called by every test rather than once in a fixture: there
-/// is no ordering guarantee between tests in a binary, so the var has to be
-/// set before whichever one runs first reaches `open`.
-fn ask_for_drafts() {
-    std::env::set_var("MFERENCE_MTP_DRAFT", DEPTH);
-}
+/// Kept as a no-op so the call sites still read as "this test wants drafts".
+///
+/// The depth used to arrive through `MFERENCE_MTP_DRAFT` and now arrives as a
+/// PARAMETER (`open` below). The env var still works and still means what it
+/// did, but an UNSET one is now `Auto` rather than off, and `Auto` resolves to
+/// a depth smaller than these tests need -- so passing it explicitly is both
+/// clearer and immune to whatever another test in this binary set first.
+fn ask_for_drafts() {}
 
 fn build_with_head(dir: &std::path::Path) {
     build_synthetic_qwen_gdn_dense_install_with_mtp(dir, VOCAB, LAYERS, "mtp-toy", BITS)
@@ -118,7 +120,21 @@ fn build_with_head(dir: &std::path::Path) {
 
 fn open(dir: &std::path::Path) -> RealForwardRunner {
     let peeked = turbospark_repack::peek_manifest_arch(dir).expect("manifest peeks");
-    RealForwardRunner::open(dir, peeked).expect("install opens")
+    open_at_depth(dir, peeked).expect("install opens")
+}
+
+/// The fallible form, for the cases that assert a REFUSAL.
+fn open_at_depth(
+    dir: &std::path::Path,
+    peeked: model_io::ArchConfig,
+) -> Result<RealForwardRunner, turbospark_runtime::RealForwardError> {
+    RealForwardRunner::open_with_options_and_speculation(
+        dir,
+        peeked,
+        4096,
+        16,
+        turbospark_runtime::MtpDraftPolicy::Fixed(DEPTH.parse().expect("DEPTH parses")),
+    )
 }
 
 /// Walks a few trunk tokens, PRIMING the head as it goes, then takes one
@@ -423,8 +439,8 @@ fn an_install_without_a_head_refuses_a_draft_depth() {
     let peeked = turbospark_repack::peek_manifest_arch(&dir).expect("manifest peeks");
     // `err().expect()` rather than `expect_err`: the Ok type is a runner and
     // does not implement Debug.
-    let Err(err) = RealForwardRunner::open(&dir, peeked) else {
-        panic!("a headless install must refuse a draft depth");
+    let Err(err) = open_at_depth(&dir, peeked) else {
+        panic!("a headless install must refuse an EXPLICIT draft depth");
     };
     let msg = err.to_string();
     assert!(
@@ -434,6 +450,85 @@ fn an_install_without_a_head_refuses_a_draft_depth() {
     assert!(
         msg.contains("MFERENCE_MTP_DRAFT"),
         "the refusal must name the knob that asked for it, got: {msg}"
+    );
+}
+
+/// The other half of the same rule, and the half that was missing while
+/// detection was wired backwards.
+///
+/// An EXPLICIT depth on a headless install is an error (above): the caller
+/// named something the install cannot do. `Auto` on the same install is NOT,
+/// because nobody named anything -- it is the detection answering "no head
+/// here" rather than a request failing. Getting these two the same way round
+/// is the whole difference between a knob and a detected capability.
+#[test]
+fn auto_declines_a_headless_install_and_builds_a_head_where_there_is_one() {
+    let headless = temp_dir("auto-headless");
+    build_synthetic_qwen_gdn_dense_install(&headless, VOCAB, LAYERS, "no-head")
+        .expect("a headless dense install builds");
+    let peeked = turbospark_repack::peek_manifest_arch(&headless).expect("manifest peeks");
+    let runner = RealForwardRunner::open_with_options_and_speculation(
+        &headless,
+        peeked,
+        4096,
+        16,
+        turbospark_runtime::MtpDraftPolicy::Auto,
+    )
+    .expect("Auto must not refuse an install that simply has no head");
+    assert_eq!(
+        runner.mtp_draft_depth(),
+        0,
+        "no head means no drafter, and no allocation"
+    );
+
+    let with_head = temp_dir("auto-head");
+    build_with_head(&with_head);
+    let peeked = turbospark_repack::peek_manifest_arch(&with_head).expect("manifest peeks");
+    let runner = RealForwardRunner::open_with_options_and_speculation(
+        &with_head,
+        peeked,
+        4096,
+        16,
+        turbospark_runtime::MtpDraftPolicy::Auto,
+    )
+    .expect("install opens");
+    // THE POINT OF THE CHANGE: an install carrying a head gets a drafter
+    // without anyone having set an environment variable. Before this, the
+    // presence check ran only to word the error above, and this install
+    // decoded sequentially and silently.
+    assert_eq!(
+        runner.mtp_draft_depth(),
+        turbospark_runtime::MtpDraftPolicy::AUTO_DEPTH,
+        "a head in the resident index must be detected and built"
+    );
+}
+
+/// `Off` is `Off` even where a head exists, which is what every measuring
+/// caller relies on: `open_with_options` pins it, so no frozen footprint row
+/// can acquire the head's KV and M-row scratch by detection.
+#[test]
+fn off_declines_an_install_that_does_carry_a_head() {
+    let dir = temp_dir("explicit-off");
+    build_with_head(&dir);
+    let peeked = turbospark_repack::peek_manifest_arch(&dir).expect("manifest peeks");
+    let runner = RealForwardRunner::open_with_options_and_speculation(
+        &dir,
+        peeked,
+        4096,
+        16,
+        turbospark_runtime::MtpDraftPolicy::Off,
+    )
+    .expect("install opens");
+    assert_eq!(runner.mtp_draft_depth(), 0);
+
+    // And the measuring entry point pins it without being asked.
+    let peeked = turbospark_repack::peek_manifest_arch(&dir).expect("manifest peeks");
+    let pinned = RealForwardRunner::open_with_options(&dir, peeked, 4096, 16)
+        .expect("install opens through the measuring form");
+    assert_eq!(
+        pinned.mtp_draft_depth(),
+        0,
+        "open_with_options is the measuring form and must never sense a head"
     );
 }
 
@@ -797,4 +892,62 @@ fn a_batched_pass_leaves_the_drafters_hidden_state_where_sequential_does() {
         "the head drafted off a different hidden state after the batched \
          pass: the batch's LAST row has to land at row 0 of scratch.x"
     );
+}
+
+/// The env mapping, as a pure function, because `from_env` reads a
+/// process-global that every other test in this binary shares.
+///
+/// The load-bearing row is the FIRST one. Unset used to mean off, and that is
+/// what made an install carrying a head decode sequentially unless somebody
+/// knew to set a variable that is documented in one crate's gotcha list.
+#[test]
+fn the_env_mapping_treats_unset_as_auto_and_zero_as_off() {
+    use turbospark_runtime::MtpDraftPolicy as P;
+    assert_eq!(P::from_env_value(None), P::Auto);
+    assert_eq!(P::from_env_value(Some("0")), P::Off);
+    assert_eq!(P::from_env_value(Some("2")), P::Fixed(2));
+    assert_eq!(P::from_env_value(Some("16")), P::Fixed(16));
+    // A typo must not silently disable a feature the install can serve.
+    assert_eq!(P::from_env_value(Some("yes")), P::Auto);
+    assert_eq!(P::from_env_value(Some("")), P::Auto);
+    assert_eq!(P::from_env_value(Some(" 4 ")), P::Fixed(4));
+}
+
+/// A HEAD IS NOT ENOUGH, and this is the case that says so.
+///
+/// The synthetic dense install is built at `BITS = 1`, so its projections are
+/// dtype 15 and `encode_gemm_any` has no arm for them. It carries a real head,
+/// so a head-presence check passes -- and speculation would then die at the
+/// first batched verify, mid-generation. `speculation_blocker` is what turns
+/// that into an answer available at open.
+///
+/// This is also the honest statement of what is and is not blocked: the same
+/// install DECODES perfectly well below, which is the whole point. Only the
+/// batched verify is INT4-only.
+#[test]
+fn a_sub_4_bit_install_with_a_head_reports_why_it_cannot_speculate() {
+    ask_for_drafts();
+    let dir = temp_dir("sub4bit-head");
+    build_with_head(&dir);
+    let runner = open(&dir);
+
+    assert!(
+        runner.mtp_draft_depth() > 0,
+        "the fixture is built with a head; without one this test proves nothing"
+    );
+    let blocker = runner
+        .speculation_blocker()
+        .expect("a 1-bit install cannot run the batched verify");
+    assert!(
+        blocker.contains("INT4-only"),
+        "the reason must name the real blocker rather than the head, got: {blocker}"
+    );
+
+    // And the model still decodes. The blocker is about speculation alone.
+    let mut runner = runner;
+    let mut logits = vec![half::f16::from_f32(0.0); VOCAB as usize];
+    runner
+        .produce(1, 0, &mut logits)
+        .expect("a 1-bit install decodes normally");
+    assert!(logits.iter().all(|v| v.to_f32().is_finite()));
 }

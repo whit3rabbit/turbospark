@@ -278,6 +278,36 @@ impl RealForwardRunner {
             max_context,
             ExpertCacheSlots::Fixed(expert_cache_slots),
             None,
+            // Pinned OFF, for the same reason this form takes a slot COUNT:
+            // every caller that measures something reaches the engine through
+            // here, and speculation allocates a head KV plus an M-row scratch.
+            // A frozen footprint row must not acquire either by detection.
+            // `open_with_options_and_speculation` is the explicit way in.
+            crate::families::qwen::MtpDraftPolicy::Off,
+        )
+    }
+
+    /// [`RealForwardRunner::open_with_options`] with the drafting policy
+    /// named, for the two MTP probes and the speculative generation gate.
+    ///
+    /// Separate from `open_with_options` for AGENTS.md Gotcha 35's reason and
+    /// separate from `open_with_slot_policy` because a probe pins its slot
+    /// count while asking for a drafter, which is neither of the other two
+    /// combinations.
+    pub fn open_with_options_and_speculation(
+        dir: &Path,
+        expecting: ArchConfig,
+        max_context: usize,
+        expert_cache_slots: usize,
+        speculation: crate::families::qwen::MtpDraftPolicy,
+    ) -> Result<Self, RealForwardError> {
+        Self::open_inner(
+            dir,
+            expecting,
+            max_context,
+            ExpertCacheSlots::Fixed(expert_cache_slots),
+            None,
+            speculation,
         )
     }
 
@@ -298,7 +328,30 @@ impl RealForwardRunner {
         max_context: usize,
         slots: ExpertCacheSlots,
     ) -> Result<Self, RealForwardError> {
-        Self::open_inner(dir, expecting, max_context, slots, None)
+        Self::open_inner(
+            dir,
+            expecting,
+            max_context,
+            slots,
+            None,
+            crate::families::qwen::MtpDraftPolicy::from_env(),
+        )
+    }
+
+    /// [`RealForwardRunner::open_with_slot_policy`] with the drafting policy
+    /// named rather than read from the environment.
+    ///
+    /// What `turbospark-check` and `turbospark-server` call, because
+    /// `--speculative` is a FLAG and a flag that lost to an environment
+    /// variable would be a knob that silently does nothing.
+    pub fn open_with_slot_policy_and_speculation(
+        dir: &Path,
+        expecting: ArchConfig,
+        max_context: usize,
+        slots: ExpertCacheSlots,
+        speculation: crate::families::qwen::MtpDraftPolicy,
+    ) -> Result<Self, RealForwardError> {
+        Self::open_inner(dir, expecting, max_context, slots, None, speculation)
     }
 
     /// [`RealForwardRunner::open_with_options`] with an explicit SWA ring
@@ -319,6 +372,7 @@ impl RealForwardRunner {
             max_context,
             ExpertCacheSlots::Fixed(expert_cache_slots),
             fp16_ring_capacity_override,
+            crate::families::qwen::MtpDraftPolicy::Off,
         )
     }
 
@@ -328,6 +382,7 @@ impl RealForwardRunner {
         max_context: usize,
         expert_cache_slots: ExpertCacheSlots,
         fp16_ring_capacity_override: Option<usize>,
+        speculation: crate::families::qwen::MtpDraftPolicy,
     ) -> Result<Self, RealForwardError> {
         if expert_cache_slots == ExpertCacheSlots::Fixed(0) {
             return Err(RealForwardError::Unsupported(
@@ -504,7 +559,7 @@ impl RealForwardRunner {
                     &runner.index,
                     &runner.arch,
                     max_context,
-                    crate::families::qwen::draft_depth_from_env(),
+                    speculation,
                     gdn_shape,
                 )?;
             }
@@ -647,6 +702,59 @@ impl LogitProducer for RealForwardRunner {
         let result = self.produce(token, position, scratch);
         self.skip_head = false;
         result
+    }
+}
+
+/// The MTP head as a drafter and the M-row pass as the verify
+/// (`docs/MTP.md`). Every method here is a thin forward to an inherent one
+/// that already existed and was reachable only from
+/// `crates/bench/tests/mtp_accept_length_probe.rs`; the trait is what lets
+/// `run_raw_completion_speculative` drive them.
+///
+/// The three refusals the pieces carry are NOT re-stated here, deliberately.
+/// `mtp_draft_step` errors on an install with no head or a step off the
+/// drafter's cursor, and `produce_batched` refuses a non-dense, non-INT4 or
+/// KV-wrapping block by name. Restating them would be a second copy of a
+/// condition that has to agree with the first, and the failure mode of
+/// disagreeing is a refusal message that names the wrong cause.
+impl crate::producer::SpeculativeProducer for RealForwardRunner {
+    type Checkpoint = RollbackPoint;
+
+    fn prime_drafter(&mut self, next: i32, position: usize) -> Result<(), String> {
+        self.mtp_prime_step(next, position)
+            .map_err(|e| e.to_string())
+    }
+
+    fn draft_step(
+        &mut self,
+        token: i32,
+        position: usize,
+        logits: &mut [LogitValue],
+    ) -> Result<(), String> {
+        self.mtp_draft_step(token, position, logits)
+            .map_err(|e| e.to_string())
+    }
+
+    fn rewind_drafter(&mut self, position: usize) -> Result<(), String> {
+        self.mtp_rewind_to(position).map_err(|e| e.to_string())
+    }
+
+    fn checkpoint(&mut self) -> RollbackPoint {
+        RealForwardRunner::checkpoint(self)
+    }
+
+    fn rollback(&mut self, point: &RollbackPoint) {
+        RealForwardRunner::rollback(self, point)
+    }
+
+    fn verify(
+        &mut self,
+        feed: &[i32],
+        base: usize,
+        logits: &mut [LogitValue],
+    ) -> Result<(), String> {
+        self.produce_batched(feed, base, logits)
+            .map_err(|e| e.to_string())
     }
 }
 

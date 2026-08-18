@@ -42,7 +42,13 @@
 use foundation::LogitValue;
 use runtime::{LogitProducer, RealForwardRunner};
 use tokenizer::{Message, Role};
-use turbospark_bench::real_model::open_model_runner;
+use turbospark_bench::real_model::open_model_runner_speculative;
+
+/// Draft depth this file asks for. Named here rather than set through
+/// `MFERENCE_MTP_DRAFT` because the policy is now a PARAMETER: an unset
+/// env var means `Auto`, which resolves to a depth too small for the
+/// blocks below and would fail deep in the verify rather than at open.
+const MTP_DEPTH: usize = 16;
 
 /// Proposals per speculative round. These are the rows of the block table in
 /// `docs/MTP_SPECULATIVE.md`; 15 is the largest legal one, because a batched
@@ -291,12 +297,13 @@ fn run_block(
 fn mtp_accept_length_against_the_break_even_it_has_to_clear() {
     // Read at `open`, so it has to be set before the runner is built.
     // `BLOCKS`'s largest plus the extra KV-row step.
-    std::env::set_var("MFERENCE_MTP_DRAFT", "16");
 
     let dir = std::path::PathBuf::from(
         std::env::var_os("TURBOSPARK_MTP_INSTALL_DIR").expect("TURBOSPARK_MTP_INSTALL_DIR"),
     );
-    let (mut runner, tokenizer) = open_model_runner(&dir, SLOTS).expect("install opens");
+    let (mut runner, tokenizer) =
+        open_model_runner_speculative(&dir, SLOTS, runtime::MtpDraftPolicy::Fixed(MTP_DEPTH))
+            .expect("install opens");
     assert!(
         runner.mtp_draft_depth() > 0,
         "this install carries no MTP head; the probe would measure nothing"
