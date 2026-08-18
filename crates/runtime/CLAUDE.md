@@ -269,6 +269,25 @@ cargo test -p turbospark-runtime
     `docs/MTP_SPECULATIVE.md` that were about the deviation rather than about
     the head. Facts and instruments: `docs/MTP.md`.
 
+    **DETECTION PLACED AFTER AN OPT-IN GATE IS NOT DETECTION, AND A HEAD IS
+    NECESSARY WITHOUT BEING SUFFICIENT.** `MtpState::build` used to return on
+    `depth == 0` BEFORE looking at the index, so its `mtp.fc.weight` check only
+    ever ran to word an error: an install that HAD a drafter decoded
+    sequentially and silently unless an operator knew an env var.
+    `MtpDraftPolicy` inverts that -- unset is `Auto`, which builds a head iff
+    one is present, while an explicit `Fixed(n)` on a headless install stays an
+    error because the caller named something this install cannot do. The second
+    half is `speculation_blocker`: drafting needs a head, but VERIFYING needs
+    `produce_batched`, which is dense-only and INT4-only, so a MoE or sub-4-bit
+    install carrying a head would pass a head-presence check and then die at
+    the first verify with generation under way. It reports the ARCHITECTURAL
+    blocker before the missing head -- on a MoE install "no head" is true and
+    useless, since no checkpoint would help. Two traps in writing such a probe:
+    read a tensor the batched path really dispatches rather than the manifest,
+    and do NOT probe layer 0 -- this architecture is three linear layers to one
+    full, so layer 0 has no `self_attn.*` and probing it reports "not in the
+    resident index" on a healthy install.
+
     **Two `MTP_PREFIX` constants exist on purpose.** `families/qwen`'s is
     `"mtp"` and BUILDS names through `prefixed_layer_tensor`;
     `repack::classify`'s is `"mtp."` and MATCHES them with `starts_with`.

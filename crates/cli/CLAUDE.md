@@ -146,3 +146,31 @@ printf '[{"role":"user","content":"Explain how coastal wetlands reduce flood dam
    expert-cache line reports the resolved slot count: the window is most of
    the KV footprint, so no peak or prompt refusal is comparable across runs
    without it.
+
+9. **This crate has TWO binaries and NO lib target, so `tests/*.rs` cannot
+   reach anything in `src/`.** An integration test may only drive the built
+   binaries as processes (`mference_check.rs`, `model_cli.rs` do). Logic worth
+   unit-testing -- `resolve_speculation`, `map_power_profile` -- takes a
+   `#[cfg(test)] mod` inside its own module instead. Adding a lib target to
+   avoid that would put every private helper on a public surface.
+
+10. **`--speculative` decides ONCE, in `open_session`, and the hard-fail/warn
+   split is the whole contract.** Both of its inputs (does the install carry a
+   usable drafter, is this run deterministic) are fixed for the process, and a
+   `--chat` session that started speculating must not stop silently three turns
+   in. `Speculation::Block(n)` is an ERROR when it cannot be served -- a caller
+   who named a block is measuring, and a run that quietly did not speculate is
+   the number that ends up in a table -- while `auto` WARNS on stderr and
+   decodes sequentially, because most installs carry no head and a hard error
+   would make the common case a failure. `off` is silent, deliberately: a
+   warning there would train people to ignore the one that matters.
+
+   Two things not to re-derive. The reason string comes from
+   `RealForwardRunner::speculation_blocker()` and is never rebuilt here -- the
+   engine owns the conditions it refuses on, and a second copy in the CLI would
+   name the wrong cause the first time they disagree. And the SAMPLED case is
+   refused rather than downgraded to greedy: acceptance is
+   `argmax(target) == proposal`, exact only at temperature 0, so approximating
+   it would change what the model writes while reporting success. That makes
+   `--speculative` unreachable at this binary's own defaults (T=0.2) until
+   rejection sampling lands.
