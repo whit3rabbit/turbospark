@@ -301,9 +301,12 @@ fn mtp_accept_length_against_the_break_even_it_has_to_clear() {
     let dir = std::path::PathBuf::from(
         std::env::var_os("TURBOSPARK_MTP_INSTALL_DIR").expect("TURBOSPARK_MTP_INSTALL_DIR"),
     );
-    let (mut runner, tokenizer) =
-        open_model_runner_speculative(&dir, SLOTS, runtime::MtpDraftPolicy::Fixed(MTP_DEPTH))
-            .expect("install opens");
+    let (mut runner, tokenizer) = open_model_runner_speculative(
+        &dir,
+        SLOTS,
+        runtime::DraftPolicies::mtp(runtime::MtpDraftPolicy::Fixed(MTP_DEPTH)),
+    )
+    .expect("install opens");
     assert!(
         runner.mtp_draft_depth() > 0,
         "this install carries no MTP head; the probe would measure nothing"

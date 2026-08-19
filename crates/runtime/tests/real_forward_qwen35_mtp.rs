@@ -133,7 +133,9 @@ fn open_at_depth(
         peeked,
         4096,
         16,
-        turbospark_runtime::MtpDraftPolicy::Fixed(DEPTH.parse().expect("DEPTH parses")),
+        turbospark_runtime::DraftPolicies::mtp(turbospark_runtime::MtpDraftPolicy::Fixed(
+            DEPTH.parse().expect("DEPTH parses"),
+        )),
     )
 }
 
@@ -472,7 +474,7 @@ fn auto_declines_a_headless_install_and_builds_a_head_where_there_is_one() {
         peeked,
         4096,
         16,
-        turbospark_runtime::MtpDraftPolicy::Auto,
+        turbospark_runtime::DraftPolicies::mtp(turbospark_runtime::MtpDraftPolicy::Auto),
     )
     .expect("Auto must not refuse an install that simply has no head");
     assert_eq!(
@@ -489,7 +491,7 @@ fn auto_declines_a_headless_install_and_builds_a_head_where_there_is_one() {
         peeked,
         4096,
         16,
-        turbospark_runtime::MtpDraftPolicy::Auto,
+        turbospark_runtime::DraftPolicies::mtp(turbospark_runtime::MtpDraftPolicy::Auto),
     )
     .expect("install opens");
     // THE POINT OF THE CHANGE: an install carrying a head gets a drafter
@@ -516,7 +518,7 @@ fn off_declines_an_install_that_does_carry_a_head() {
         peeked,
         4096,
         16,
-        turbospark_runtime::MtpDraftPolicy::Off,
+        turbospark_runtime::DraftPolicies::off(),
     )
     .expect("install opens");
     assert_eq!(runner.mtp_draft_depth(), 0);

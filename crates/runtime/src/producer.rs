@@ -112,6 +112,36 @@ pub trait SpeculativeProducer: LogitProducer {
         logits: &mut [LogitValue],
     ) -> Result<(), String>;
 
+    /// Whether this producer drafts a whole block in ONE pass, driving
+    /// [`Self::draft_block`] instead of [`Self::draft_step`]. The loop asks
+    /// once per round and branches on the answer, so a step-wise drafter
+    /// never sees `draft_block` and a block drafter never sees `draft_step`.
+    ///
+    /// A method rather than data on the request because it is a property of
+    /// the PRODUCER (which drafter is open), not of the caller's shaping.
+    fn drafts_block_passes(&self) -> bool {
+        false
+    }
+
+    /// One whole-block draft: `block` proposals for positions `base + 1 ..=
+    /// base + block`, written in order into `proposals` (cleared first).
+    ///
+    /// `anchor` is the token occupying `base` -- the last committed token,
+    /// whose embedding is a block drafter's bonus row and whose id seeds
+    /// its selector. Step-wise drafters never reach here; the default
+    /// errors rather than silently drafting one token, which would pass
+    /// every losslessness gate while proposing a block of one.
+    fn draft_block(
+        &mut self,
+        anchor: TokenId,
+        base: usize,
+        block: usize,
+        proposals: &mut Vec<TokenId>,
+    ) -> Result<(), String> {
+        let _ = (anchor, base, block, proposals);
+        Err("this drafter is step-wise; drive it with draft_step".to_string())
+    }
+
     /// Move the drafter's cursor to `position`, where the accepted prefix
     /// ended.
     fn rewind_drafter(&mut self, position: usize) -> Result<(), String>;

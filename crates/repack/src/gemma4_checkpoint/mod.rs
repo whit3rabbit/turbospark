@@ -11,6 +11,7 @@
 
 mod classify;
 mod config;
+mod dflash;
 mod expert_blobs;
 mod manifest_quant;
 mod mtp;
@@ -18,7 +19,7 @@ mod narrow;
 mod orchestrate;
 mod shards;
 
-pub use classify::{classify_for_family, classify_gemma4, Gemma4Bucket};
+pub use classify::{classify_for_family, classify_gemma4, Gemma4Bucket, DFLASH_PREFIX};
 pub use config::{
     is_supported_affine_shape, parse_gemma4_config, parse_gemma4_quantization, Gemma4Error,
     Gemma4Quant, AFFINE_1BIT_GROUP_SIZE, AFFINE_2BIT_GROUP_SIZE, AFFINE_GROUP_SIZE,
@@ -78,6 +79,22 @@ pub fn write_gemma4_install_streamed(
         ));
         resident.entries.extend(head.entries);
         resident.lossy_narrowing.extend(head.lossy_narrowing);
+    }
+    // THE DFLASH2 DRAFTER, and this arm exists HERE for the same reason the
+    // head's does one block up: every real install takes this streamed
+    // writer and every fixture used to take the other one, and the head's
+    // first real stream wrote a headless install because this function
+    // classified its names and never read them (`both_writers_carry_the_
+    // mtp_head` is the test that caught it). The drafter gets its arm in
+    // both writers from day one and the same shape of test.
+    if !plan.dflash_bases.is_empty() {
+        let drafter = dflash::read_dflash_entries(shards, &plan.dflash_bases)?;
+        progress(&format!(
+            "ingested a {}-tensor DFlash2 drafter",
+            drafter.entries.len()
+        ));
+        resident.entries.extend(drafter.entries);
+        resident.lossy_narrowing.extend(drafter.lossy_narrowing);
     }
     let resident_bytes =
         crate::resident_writer::build_resident_weights_bin_mixed(&resident.entries);

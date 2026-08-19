@@ -160,16 +160,23 @@ impl RealForwardRunner {
                 "batched forward needs at least one token".to_string(),
             ));
         }
-        let Some(state) = self.real_mtp.as_ref() else {
-            return Err(RealForwardError::Unsupported(
-                "no batched scratch; set MFERENCE_MTP_DRAFT=<depth> before opening the model"
-                    .to_string(),
-            ));
-        };
-        if batch > state.batched.batch {
+        // A DFlash2 install carries no MTP head but needs the SAME verify
+        // pass, so its state owns a BatchedScratch of its own and either
+        // drafter's scratch serves.
+        let batched =
+            match (&self.real_mtp, &self.real_dflash) {
+                (Some(m), _) => &m.batched,
+                (None, Some(d)) => &d.batched,
+                (None, None) => return Err(RealForwardError::Unsupported(
+                    "no batched scratch; set MFERENCE_MTP_DRAFT or MFERENCE_DFLASH_DRAFT before \
+                     opening the model"
+                        .to_string(),
+                )),
+            };
+        if batch > batched.batch {
             return Err(RealForwardError::Unsupported(format!(
                 "batched forward of {batch} rows against scratch sized for {}",
-                state.batched.batch
+                batched.batch
             )));
         }
         if start_position != self.kv.position() {
@@ -213,7 +220,7 @@ impl RealForwardRunner {
 
         let embed_name = "language_model.model.embed_tokens.weight";
         let pass = self.context.begin_pass_labeled("batched verify");
-        let (context, weights, index, scratch, qwen, kv, batched) = (
+        let (context, weights, index, scratch, qwen, kv, dflash) = (
             &mut self.context,
             &self.weights,
             &self.index,
@@ -222,7 +229,7 @@ impl RealForwardRunner {
                 .as_ref()
                 .ok_or_else(|| RealForwardError::Unsupported("not a Qwen install".to_string()))?,
             &mut self.kv,
-            &self.real_mtp.as_ref().expect("checked above").batched,
+            self.real_dflash.as_ref(),
         );
 
         // An embedding lookup has no trip count to amortize, so it loops for
@@ -317,6 +324,25 @@ impl RealForwardRunner {
                 context, &pass, weights, index, scratch, batched, layer, hidden, inter, use_silu,
                 batch,
             )?;
+
+            // THE DFLASH2 AUX CAPTURE at M rows: the residual rows this
+            // layer just produced, into the fc input's layout. Same point
+            // as the per-token hook (`families/qwen/mod.rs`), same zero
+            // dispatches when no drafter is open.
+            if let Some(d) = dflash {
+                if let Some(aux) = d.aux_slot(layer) {
+                    gpu::encode_dflash_copy_rows(
+                        context,
+                        &pass,
+                        (&scratch.x, 0),
+                        (&d.capture, (aux * hidden) as u64 * 2),
+                        batch as u32,
+                        hidden as u32,
+                        (d.shape.aux_count * hidden) as u32,
+                    )
+                    .map_err(gpu_err)?;
+                }
+            }
         }
 
         let final_norm = norm_view(weights, index, "language_model.model.norm.weight", hidden)?;
@@ -374,16 +400,14 @@ impl RealForwardRunner {
             let last = gpu::read_buffer_bytes(&scratch.x, (batch - 1) * row, row);
             gpu::write_buffer_bytes(&scratch.x, 0, &last);
         }
-        gpu::read_buffer_f16_into(
-            &self
-                .real_mtp
-                .as_ref()
-                .expect("checked above")
-                .batched
-                .logits,
-            0,
-            logits,
-        );
+        gpu::read_buffer_f16_into(&batched.logits, 0, logits);
+        // The dflash capture's bookkeeping, last so it cannot alias the
+        // scratch borrow above: `batch` rows whose positions start at
+        // `start_position`, ready for the next round's context write over
+        // the accepted prefix.
+        if let Some(d) = self.real_dflash.as_mut() {
+            d.note_capture(start_position, batch);
+        }
         Ok(())
     }
 }

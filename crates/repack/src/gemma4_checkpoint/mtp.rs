@@ -144,7 +144,14 @@ pub fn read_mtp_entries(
 /// head is BF16 throughout and asserted to be; accepting F16 here would mean
 /// guessing which of two same-width encodings a future publisher chose, which
 /// is `crates/repack` Gotcha 9's silent failure exactly.
-fn decode_bf16(tensor: &str, dtype: &str, bytes: Vec<u8>) -> Result<Vec<f32>, Gemma4Error> {
+///
+/// Shared with `dflash.rs`, whose drafter is BF16 for the same reason and
+/// narrows through the same rule.
+pub(super) fn decode_bf16(
+    tensor: &str,
+    dtype: &str,
+    bytes: Vec<u8>,
+) -> Result<Vec<f32>, Gemma4Error> {
     match dtype {
         "BF16" => Ok(bytes
             .chunks_exact(2)

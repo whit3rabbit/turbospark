@@ -34,6 +34,31 @@ pub(crate) struct RealGemmaState {
     /// the tokens of a chunk cannot overlap on them (see `ROUTED_BANKS`).
     pub(crate) h1: gpu::MetalBuffer,
     pub(crate) h2: gpu::MetalBuffer,
+    /// Batched routed-expert scratch (`docs/BATCHED_PREFILL.md` steps 2
+    /// and 3), all sized for [`MAX_PREFILL_BATCH`] rows and used only by
+    /// the chunk driver's batched routed half:
+    /// - `batch_acts`: `[M * top_k, moe_inter]` FP16, written by the
+    ///   route-list phase 1;
+    /// - `batch_y`: `[M, hidden]` FP16, the fused phase-2 output the
+    ///   sandwich tail reads per token;
+    /// - `batch_h1`: `[M, hidden]` FP16, the shared-expert branch's
+    ///   output rows (the batched tail consumes all M tokens' shared
+    ///   outputs after they have all run, so the single-row `h1` above
+    ///   cannot be reused per token the way the per-token path does);
+    /// - `batch_routing_w`: `[M * top_k]` FP16, one HOST write per layer;
+    /// - `batch_routes`: the encoded route list, likewise host-written.
+    ///   Both are single-banked: the driver retires the previous layer's
+    ///   routed command buffer before this layer's routed half begins,
+    ///   so no in-flight dispatch reads them while they are rewritten.
+    pub(crate) batch_acts: gpu::MetalBuffer,
+    pub(crate) batch_y: gpu::MetalBuffer,
+    pub(crate) batch_h1: gpu::MetalBuffer,
+    pub(crate) batch_routing_w: gpu::MetalBuffer,
+    pub(crate) batch_routes: gpu::MetalBuffer,
+    /// The wide expert-blob argument buffer the batched pair reads
+    /// through (up to [`gpu::MAX_PREFILL_EXPERT_BINDINGS`] pointers, one
+    /// per cache slot, bound once per layer).
+    pub(crate) wide_blobs: gpu::RoutedBlobsWideBuffer,
 }
 
 impl RealGemmaState {
@@ -108,7 +133,13 @@ impl RealGemmaState {
             })?);
         }
 
+        let use_silu = arch.hidden_activation.contains("silu");
+        let wide_blobs =
+            gpu::RoutedBlobsWideBuffer::new(context, use_silu).map_err(RealForwardError::Gpu)?;
         let halfs = |n: usize| context.new_output_buffer((n.max(1) * 2) as u64);
+        let top_k = arch.top_k_experts as usize;
+        let moe_inter = arch.moe_intermediate_size.max(1) as usize;
+        let batch_rows = |per_token: usize| halfs(MAX_PREFILL_BATCH * per_token);
         Ok(Self {
             router_logits_f32: context
                 .new_output_buffer((num_experts * 4 * MAX_PREFILL_BATCH) as u64),
@@ -117,6 +148,14 @@ impl RealGemmaState {
             router_x: halfs(hidden),
             h1: halfs(hidden),
             h2: halfs(hidden),
+            batch_acts: batch_rows(top_k * moe_inter),
+            batch_y: batch_rows(hidden),
+            batch_h1: batch_rows(hidden),
+            batch_routing_w: batch_rows(top_k),
+            // 16 bytes per encoded route (token, rank, slot, reserved),
+            // matching `MoePrefillRoute::bytes` and the shader struct.
+            batch_routes: context.new_output_buffer((MAX_PREFILL_BATCH * top_k * 16) as u64),
+            wide_blobs,
             effective_scale,
             per_expert_scale,
             layer_scalar,

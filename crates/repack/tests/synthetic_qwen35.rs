@@ -23,6 +23,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use turbospark_repack::{
     build_synthetic_qwen_gdn_dense_install, build_synthetic_qwen_gdn_dense_install_at_bits,
+    build_synthetic_qwen_gdn_dense_install_with_dflash,
+    build_synthetic_qwen_gdn_dense_install_with_dflash_streamed,
     build_synthetic_qwen_gdn_dense_install_with_mtp,
     build_synthetic_qwen_gdn_dense_install_with_mtp_streamed, tiny_qwen_gdn_dense_arch,
 };
@@ -625,4 +627,168 @@ fn both_writers_carry_the_mtp_head() {
             "{name}: the two writers disagree about its size"
         );
     }
+}
+
+// -- The DFlash2 drafter -------------------------------------------------------
+//
+// The second drafter (`docs/DFLASH2.md`), ingested under a `dflash.`
+// namespace the CALLER puts there: the published repository spells its
+// tensors bare, so the fixture (and the network test) write the prefixed
+// names directly, exactly as a header-renaming caller would hand them to
+// the walk.
+
+fn build_with_dflash() -> (PathBuf, model_io::ArchConfig) {
+    let dir = temp_dir();
+    let arch =
+        build_synthetic_qwen_gdn_dense_install_with_dflash(&dir, VOCAB, LAYERS, "dflash-toy", 1)
+            .expect("the dense install with a DFlash2 drafter writes");
+    (dir, arch)
+}
+
+/// The drafter's dtype split is by NAME as well as rank, and the codebooks
+/// are where that is observable: they are rank 2 like every projection, and
+/// only their suffix keeps them raw. A rank-only rule would quantize them;
+/// a name-only rule would miss the rank-3 base kernels. This test pins the
+/// conjunction.
+#[test]
+fn the_drafter_splits_codebooks_from_projections_by_name() {
+    let (dir, _) = build_with_dflash();
+    let index = resident(&dir);
+
+    // The codebooks: rank 2, raw BF16, no companions.
+    for name in [
+        "dflash.candidate_selector.predecessor_codebook",
+        "dflash.candidate_selector.successor_codebook",
+    ] {
+        let e = index
+            .entries
+            .get(name)
+            .unwrap_or_else(|| panic!("{name} is not resident; the drafter did not ingest"));
+        assert_eq!(e.dtype, 1, "{name} should be raw BF16");
+        assert_eq!(
+            e.scale_size, 0,
+            "{name} must not carry quantization companions"
+        );
+    }
+    // A rank-2 projection beside them, quantized: the NAME is the only
+    // difference between it and a codebook.
+    let proj = index
+        .entries
+        .get("dflash.candidate_selector.hidden_projection.weight")
+        .expect("hidden_projection is resident");
+    assert_eq!(proj.dtype, 4, "hidden_projection should be INT4-affine");
+    assert!(proj.scale_size > 0, "hidden_projection has no scale plane");
+
+    // The rank-3 conv taps, raw BF16: the only rank-3 tensors in any
+    // install this walk writes.
+    let kernel = index
+        .entries
+        .get("dflash.layers.0.attention_conv.base_kernel")
+        .expect("base_kernel is resident");
+    assert_eq!(kernel.dtype, 1, "base_kernel should be raw BF16");
+    // shape4 records the rank: dims 0..2 are [2, 2, hidden] and dim 3 is 0.
+    assert_eq!(
+        (kernel.shape.0, kernel.shape.1, kernel.shape.2),
+        (2, 2, 128),
+        "base_kernel is not [2, 2, hidden]"
+    );
+
+    // The norms narrow, like every norm in every install.
+    for name in [
+        "dflash.hidden_norm.weight",
+        "dflash.norm.weight",
+        "dflash.layers.0.input_layernorm.weight",
+        "dflash.layers.0.self_attn.q_norm.weight",
+    ] {
+        assert_eq!(
+            index.entries[name].dtype, 1,
+            "{name} should be a narrowed norm"
+        );
+    }
+    // And the backbone projections quantize.
+    for name in [
+        "dflash.fc.weight",
+        "dflash.layers.0.self_attn.q_proj.weight",
+        "dflash.layers.0.mlp.down_proj.weight",
+        "dflash.layers.0.attention_conv.kernel_projection.weight",
+    ] {
+        let e = &index.entries[name];
+        assert_eq!(e.dtype, 4, "{name} should be INT4-affine");
+        assert!(e.scale_size > 0, "{name} has no scale plane");
+    }
+}
+
+/// The drafter's `fc` records its five-state input width, the install-side
+/// half of the aux-capture contract: `fc.cols == 5 * hidden` is what lets a
+/// runtime cross-check its captured-state count against the bytes.
+#[test]
+fn the_drafter_fc_records_its_aux_state_count() {
+    let (dir, _) = build_with_dflash();
+    let index = resident(&dir);
+    let fc = index
+        .entries
+        .get("dflash.fc.weight")
+        .expect("fc is resident");
+    assert_eq!(
+        (fc.shape.0, fc.shape.1),
+        (128, 5 * 128),
+        "fc is not [hidden, 5 * hidden]"
+    );
+}
+
+/// **THE STREAMED WRITER CARRIES THE DRAFTER TOO**, for the head's reason
+/// verbatim: the head's ingest once landed in the non-streamed writer
+/// alone and the first real stream wrote a drafterless install silently.
+/// Same test shape, second drafter.
+#[test]
+fn both_writers_carry_the_dflash_drafter() {
+    let streamed_dir = temp_dir();
+    build_synthetic_qwen_gdn_dense_install_with_dflash_streamed(
+        &streamed_dir,
+        VOCAB,
+        LAYERS,
+        "dflash-toy",
+        1,
+    )
+    .expect("the streamed writer builds a dense install with a DFlash2 drafter");
+
+    let streamed = resident(&streamed_dir);
+    let drafter: Vec<&String> = streamed
+        .entries
+        .keys()
+        .filter(|k| k.starts_with("dflash."))
+        .collect();
+    // 6 top-level tensors plus 15 per layer over 5 layers.
+    assert_eq!(
+        drafter.len(),
+        81,
+        "the STREAMED writer dropped part of the drafter: {drafter:?}"
+    );
+
+    // And the two writers agree tensor for tensor.
+    let (plain_dir, _) = build_with_dflash();
+    let plain = resident(&plain_dir);
+    for name in drafter {
+        assert_eq!(
+            streamed.entries[name].dtype, plain.entries[name].dtype,
+            "{name}: the two writers disagree about its dtype"
+        );
+        assert_eq!(
+            streamed.entries[name].size_bytes, plain.entries[name].size_bytes,
+            "{name}: the two writers disagree about its size"
+        );
+    }
+}
+
+/// An install built WITHOUT the drafter has no `dflash.` tensors, so the
+/// "does this install have a DFlash2 drafter" question stays answered by
+/// the bytes alone.
+#[test]
+fn the_drafter_is_absent_unless_asked_for() {
+    let (dir, _) = build();
+    let index = resident(&dir);
+    assert!(
+        !index.entries.keys().any(|k| k.starts_with("dflash.")),
+        "the default dense fixture grew a DFlash2 drafter"
+    );
 }

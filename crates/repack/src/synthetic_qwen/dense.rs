@@ -340,6 +340,173 @@ fn mtp_head_tensors() -> Vec<Tensor> {
     ts
 }
 
+/// The DFlash2 drafter's conv taps: rank 3, `[2 sides, 2 taps, hidden]`,
+/// which no other tensor in any checkpoint here is. The rank is the whole
+/// point of the helper -- a rank-2 stand-in would route down the projection
+/// arm and the fixture could not see the rank-3 ingest at all.
+fn bf16_base_kernel(name: &str, seed: u64) -> Tensor {
+    let flat = bf16_vector(name, 2 * 2 * HIDDEN, 1.0, seed);
+    Tensor {
+        name: flat.name,
+        dtype: flat.dtype,
+        shape: vec![2, 2, HIDDEN as u64],
+        bytes: flat.bytes,
+    }
+}
+
+/// The DFlash2 drafter at toy scale, name for name and rank for rank against
+/// the published 81-tensor inventory (`docs/DFLASH2.md`): 6 top-level
+/// tensors plus 15 per layer over `DFLASH_LAYERS` layers.
+///
+/// Three shape asymmetries are load-bearing, each defeating a mutation a
+/// tidier fixture would pass:
+///
+/// - the drafter's `q_proj` is UNGATED (`num_heads * head_dim` rows, not the
+///   trunk's doubled `2 * ...`), while its `o_proj` input is that same
+///   unhalved width. Equal q/o widths here would make the drafter's missing
+///   output gate unobservable, and reading it as gated is exactly the kind
+///   of neighbour-flow error that decodes fluently and wrongly.
+/// - `fc` is `[hidden, DFLASH_LAYERS * hidden]`, as wide as the five aux
+///   states it fuses; at any other width the capture arithmetic cannot be
+///   cross-checked against the install.
+/// - the selector codebooks are `[vocab, DFLASH_RANK]` rank 2 like every
+///   projection, so ONLY the name suffix keeps them out of the quantizing
+///   arm -- which is the split this fixture exists to pin.
+const DFLASH_LAYERS: usize = 5;
+const DFLASH_RANK: usize = 32;
+
+fn dflash_drafter_tensors(vocab: usize) -> Vec<Tensor> {
+    let q_out = NUM_HEADS * HEAD_DIM;
+    let kv_out = NUM_KV_HEADS * HEAD_DIM;
+    let groups = HIDDEN / 16;
+    let conv_rows = 2 * 2 * groups;
+    let mut ts: Vec<Tensor> = Vec::with_capacity(6 + 15 * DFLASH_LAYERS);
+
+    ts.push(bf16_matrix(
+        "dflash.candidate_selector.hidden_projection.weight",
+        DFLASH_RANK,
+        HIDDEN,
+        20_000,
+    ));
+    ts.push(bf16_matrix(
+        "dflash.candidate_selector.predecessor_codebook",
+        vocab,
+        DFLASH_RANK,
+        20_001,
+    ));
+    ts.push(bf16_matrix(
+        "dflash.candidate_selector.successor_codebook",
+        vocab,
+        DFLASH_RANK,
+        20_002,
+    ));
+    ts.push(bf16_matrix(
+        "dflash.fc.weight",
+        HIDDEN,
+        DFLASH_LAYERS * HIDDEN,
+        20_003,
+    ));
+    ts.push(bf16_vector(
+        "dflash.hidden_norm.weight",
+        HIDDEN,
+        1.0,
+        20_004,
+    ));
+    ts.push(bf16_vector("dflash.norm.weight", HIDDEN, 1.0, 20_005));
+
+    for l in 0..DFLASH_LAYERS {
+        let p = format!("dflash.layers.{l}");
+        let seed = 21_000 + 100 * l as u64;
+        ts.push(bf16_base_kernel(
+            &format!("{p}.attention_conv.base_kernel"),
+            seed,
+        ));
+        ts.push(bf16_matrix(
+            &format!("{p}.attention_conv.kernel_projection.weight"),
+            conv_rows,
+            HIDDEN,
+            seed + 1,
+        ));
+        ts.push(bf16_vector(
+            &format!("{p}.input_layernorm.weight"),
+            HIDDEN,
+            1.0,
+            seed + 2,
+        ));
+        ts.push(bf16_matrix(
+            &format!("{p}.mlp.down_proj.weight"),
+            HIDDEN,
+            INTER,
+            seed + 3,
+        ));
+        ts.push(bf16_matrix(
+            &format!("{p}.mlp.gate_proj.weight"),
+            INTER,
+            HIDDEN,
+            seed + 4,
+        ));
+        ts.push(bf16_matrix(
+            &format!("{p}.mlp.up_proj.weight"),
+            INTER,
+            HIDDEN,
+            seed + 5,
+        ));
+        ts.push(bf16_base_kernel(
+            &format!("{p}.mlp_conv.base_kernel"),
+            seed + 6,
+        ));
+        ts.push(bf16_matrix(
+            &format!("{p}.mlp_conv.kernel_projection.weight"),
+            conv_rows,
+            HIDDEN,
+            seed + 7,
+        ));
+        ts.push(bf16_vector(
+            &format!("{p}.post_attention_layernorm.weight"),
+            HIDDEN,
+            1.0,
+            seed + 8,
+        ));
+        ts.push(bf16_vector(
+            &format!("{p}.self_attn.k_norm.weight"),
+            HEAD_DIM,
+            1.0,
+            seed + 9,
+        ));
+        ts.push(bf16_matrix(
+            &format!("{p}.self_attn.k_proj.weight"),
+            kv_out,
+            HIDDEN,
+            seed + 10,
+        ));
+        ts.push(bf16_matrix(
+            &format!("{p}.self_attn.o_proj.weight"),
+            HIDDEN,
+            q_out,
+            seed + 11,
+        ));
+        ts.push(bf16_vector(
+            &format!("{p}.self_attn.q_norm.weight"),
+            HEAD_DIM,
+            1.0,
+            seed + 12,
+        ));
+        ts.push(bf16_matrix(
+            &format!("{p}.self_attn.q_proj.weight"),
+            q_out,
+            HIDDEN,
+            seed + 13,
+        ));
+        ts.push(bf16_matrix(
+            &format!("{p}.self_attn.v_proj.weight"),
+            kv_out,
+            HIDDEN,
+            seed + 14,
+        ));
+    }
+    ts
+}
+
 /// Writes a tiny `qwen3_5` `.gturbo` install and returns the `ArchConfig`
 /// needed to open it.
 pub fn build_synthetic_qwen_gdn_dense_install(
@@ -362,7 +529,7 @@ pub fn build_synthetic_qwen_gdn_dense_install_at_bits(
     bits: u32,
 ) -> Result<ArchConfig, Box<dyn std::error::Error>> {
     build_synthetic_qwen_gdn_dense_install_inner(
-        dir, vocab_size, num_layers, model_id, bits, false, false,
+        dir, vocab_size, num_layers, model_id, bits, false, false, false,
     )
 }
 
@@ -381,7 +548,7 @@ pub fn build_synthetic_qwen_gdn_dense_install_with_mtp(
     bits: u32,
 ) -> Result<ArchConfig, Box<dyn std::error::Error>> {
     build_synthetic_qwen_gdn_dense_install_inner(
-        dir, vocab_size, num_layers, model_id, bits, true, false,
+        dir, vocab_size, num_layers, model_id, bits, true, false, false,
     )
 }
 
@@ -403,7 +570,37 @@ pub fn build_synthetic_qwen_gdn_dense_install_with_mtp_streamed(
     bits: u32,
 ) -> Result<ArchConfig, Box<dyn std::error::Error>> {
     build_synthetic_qwen_gdn_dense_install_inner(
-        dir, vocab_size, num_layers, model_id, bits, true, true,
+        dir, vocab_size, num_layers, model_id, bits, true, true, false,
+    )
+}
+
+/// [`build_synthetic_qwen_gdn_dense_install`] with the DFlash2 drafter
+/// attached (`docs/DFLASH2.md`), through the NON-streamed writer.
+pub fn build_synthetic_qwen_gdn_dense_install_with_dflash(
+    dir: &std::path::Path,
+    vocab_size: i64,
+    num_layers: i64,
+    model_id: &str,
+    bits: u32,
+) -> Result<ArchConfig, Box<dyn std::error::Error>> {
+    build_synthetic_qwen_gdn_dense_install_inner(
+        dir, vocab_size, num_layers, model_id, bits, false, false, true,
+    )
+}
+
+/// The same drafter through the STREAMED writer, which is the one the real
+/// download takes. Exists for the head's reason verbatim: a drafter arm
+/// that only the non-streamed path read would stream a drafterless install
+/// and say nothing (see `both_writers_carry_the_mtp_head`'s header).
+pub fn build_synthetic_qwen_gdn_dense_install_with_dflash_streamed(
+    dir: &std::path::Path,
+    vocab_size: i64,
+    num_layers: i64,
+    model_id: &str,
+    bits: u32,
+) -> Result<ArchConfig, Box<dyn std::error::Error>> {
+    build_synthetic_qwen_gdn_dense_install_inner(
+        dir, vocab_size, num_layers, model_id, bits, false, true, true,
     )
 }
 
@@ -416,6 +613,7 @@ fn build_synthetic_qwen_gdn_dense_install_inner(
     bits: u32,
     with_mtp: bool,
     streamed: bool,
+    with_dflash: bool,
 ) -> Result<ArchConfig, Box<dyn std::error::Error>> {
     let arch = tiny_qwen_gdn_dense_arch(vocab_size, num_layers);
     let vocab = vocab_size as usize;
@@ -554,6 +752,9 @@ fn build_synthetic_qwen_gdn_dense_install_inner(
     ));
     if with_mtp {
         ts.extend(mtp_head_tensors());
+    }
+    if with_dflash {
+        ts.extend(dflash_drafter_tensors(vocab));
     }
 
     let blob = assemble_safetensors(&ts);

@@ -140,6 +140,7 @@ pub struct RealForwardRunner {
     /// head, which is read off the resident index rather than a manifest
     /// field so nothing can disagree with the bytes.
     pub(crate) real_mtp: Option<crate::families::qwen::MtpState>,
+    pub(crate) real_dflash: Option<crate::families::qwen::DflashState>,
     /// Present for a `llama`-architecture install (ROADMAP Phase M2), which
     /// is Mixtral-style MoE only; a dense one is refused at build.
     pub(crate) real_llama: Option<crate::families::llama::RealLlamaState>,
@@ -163,6 +164,17 @@ pub struct RealForwardRunner {
     /// uncommitted into the next layer's first command buffer: same
     /// kernels, same order, identical output, different overlap.
     pub(crate) routed_pipeline: bool,
+    /// Whether the chunked-prefill driver runs each layer's routed half
+    /// as ONE batched dispatch pair over a route list
+    /// (`docs/BATCHED_PREFILL.md` steps 2 and 3) instead of per token.
+    /// `MFERENCE_ROUTED_BATCH=1` turns it on; UNSET keeps the per-token
+    /// path, so the seam A/Bs the two halves of the chunk driver the way
+    /// `MFERENCE_SHARED_CB` A/Bs decode overlap. Output is byte-identical
+    /// either way (the batched kernels are bit-exact against M decode
+    /// passes), so this is a throughput axis only. INT4-affine blobs
+    /// only: a GGUF install is refused by layout when the seam is on,
+    /// never silently looped.
+    pub(crate) routed_batch_prefill: bool,
     /// Which layout each layer's routed expert blobs use, PER PHASE.
     pub(crate) routed_layouts: Vec<RoutedLayerLayout>,
     /// Per-layer expert-selection histogram, `None` unless
@@ -248,6 +260,14 @@ impl RealForwardRunner {
         self.routed_pipeline = on;
     }
 
+    /// Sibling of [`Self::set_shared_cb_overlap`] for
+    /// `MFERENCE_ROUTED_BATCH` (the chunked-prefill driver's batched
+    /// routed half).
+    #[doc(hidden)]
+    pub fn set_routed_batch_prefill(&mut self, on: bool) {
+        self.routed_batch_prefill = on;
+    }
+
     /// [`RealForwardRunner::open`] with an explicit KV capacity: the
     /// per-layer K/V buffers are sized `max_context * kv_stride` up front
     /// (the decode hot path never allocates), so generation past
@@ -283,7 +303,7 @@ impl RealForwardRunner {
             // here, and speculation allocates a head KV plus an M-row scratch.
             // A frozen footprint row must not acquire either by detection.
             // `open_with_options_and_speculation` is the explicit way in.
-            crate::families::qwen::MtpDraftPolicy::Off,
+            crate::families::qwen::DraftPolicies::off(),
         )
     }
 
@@ -299,7 +319,7 @@ impl RealForwardRunner {
         expecting: ArchConfig,
         max_context: usize,
         expert_cache_slots: usize,
-        speculation: crate::families::qwen::MtpDraftPolicy,
+        speculation: crate::families::qwen::DraftPolicies,
     ) -> Result<Self, RealForwardError> {
         Self::open_inner(
             dir,
@@ -334,7 +354,7 @@ impl RealForwardRunner {
             max_context,
             slots,
             None,
-            crate::families::qwen::MtpDraftPolicy::from_env(),
+            crate::families::qwen::DraftPolicies::from_env(),
         )
     }
 
@@ -349,7 +369,7 @@ impl RealForwardRunner {
         expecting: ArchConfig,
         max_context: usize,
         slots: ExpertCacheSlots,
-        speculation: crate::families::qwen::MtpDraftPolicy,
+        speculation: crate::families::qwen::DraftPolicies,
     ) -> Result<Self, RealForwardError> {
         Self::open_inner(dir, expecting, max_context, slots, None, speculation)
     }
@@ -372,7 +392,7 @@ impl RealForwardRunner {
             max_context,
             ExpertCacheSlots::Fixed(expert_cache_slots),
             fp16_ring_capacity_override,
-            crate::families::qwen::MtpDraftPolicy::Off,
+            crate::families::qwen::DraftPolicies::off(),
         )
     }
 
@@ -382,7 +402,7 @@ impl RealForwardRunner {
         max_context: usize,
         expert_cache_slots: ExpertCacheSlots,
         fp16_ring_capacity_override: Option<usize>,
-        speculation: crate::families::qwen::MtpDraftPolicy,
+        speculation: crate::families::qwen::DraftPolicies,
     ) -> Result<Self, RealForwardError> {
         if expert_cache_slots == ExpertCacheSlots::Fixed(0) {
             return Err(RealForwardError::Unsupported(
@@ -502,12 +522,14 @@ impl RealForwardRunner {
             real: None,
             real_qwen: None,
             real_mtp: None,
+            real_dflash: None,
             real_llama: None,
             real_gpt_oss: None,
             real_muse: None,
             phases: PhaseCounters::default(),
             shared_cb_overlap: std::env::var("MFERENCE_SHARED_CB").as_deref() != Ok("0"),
             routed_pipeline: std::env::var("MFERENCE_ROUTED_PIPELINE").as_deref() != Ok("0"),
+            routed_batch_prefill: std::env::var("MFERENCE_ROUTED_BATCH").as_deref() == Ok("1"),
             routed_layouts,
             router_hist,
             ffn_hist,
@@ -554,12 +576,56 @@ impl RealForwardRunner {
                     .as_ref()
                     .expect("real Qwen state built above")
                     .shape;
+                // AT MOST ONE DRAFTER IS EVER OPEN, and this is where that
+                // is decided rather than assumed. A round drafts with one
+                // model: `drafts_block_passes` and the priming/rewind pair
+                // answer for the DFlash2 drafter while `produce_batched`
+                // takes the MTP head's scratch, so a runner holding both
+                // verifies a block of 9 against a scratch sized 3 and dies
+                // mid-generation. Two explicit asks is a CALLER error and
+                // is named as one; one explicit ask beats a bare `Auto`,
+                // which is what the walk's ability to ingest both drafters
+                // into a single install makes reachable with no env var
+                // set at all (`open_with_slot_policy`, hence the server
+                // and the FFI).
+                use crate::families::qwen::{DflashDraftPolicy, MtpDraftPolicy};
+                let (mtp_policy, dflash_policy) = match (speculation.mtp, speculation.dflash) {
+                    (MtpDraftPolicy::Fixed(_), DflashDraftPolicy::Fixed(_)) => {
+                        return Err(RealForwardError::Unsupported(
+                            "both the multi-token-prediction head and the DFlash2 drafter \
+                                 were asked for by name; a speculative round drafts with ONE \
+                                 model, so name exactly one (MFERENCE_MTP_DRAFT or \
+                                 MFERENCE_DFLASH_DRAFT; --speculative-drafter on the CLI)"
+                                .to_string(),
+                        ))
+                    }
+                    (mtp @ MtpDraftPolicy::Fixed(_), _) => (mtp, DflashDraftPolicy::Off),
+                    (mtp, dflash) => (mtp, dflash),
+                };
+                // The SECOND drafter, same doctrine: builds nothing unless
+                // asked for at open, so an install that carries one is
+                // byte- and footprint-identical to one that does not until
+                // a caller turns it on (`docs/DFLASH2.md`). Built FIRST so
+                // the head can yield to it when neither was named.
+                runner.real_dflash = crate::families::qwen::DflashState::build(
+                    &mut runner.context,
+                    &runner.index,
+                    &runner.arch,
+                    max_context,
+                    dflash_policy,
+                    gdn_shape,
+                )?;
+                let mtp_policy = if runner.real_dflash.is_some() {
+                    MtpDraftPolicy::Off
+                } else {
+                    mtp_policy
+                };
                 runner.real_mtp = crate::families::qwen::MtpState::build(
                     &mut runner.context,
                     &runner.index,
                     &runner.arch,
                     max_context,
-                    speculation,
+                    mtp_policy,
                     gdn_shape,
                 )?;
             }
@@ -680,6 +746,10 @@ impl LogitProducer for RealForwardRunner {
         if let Some(mtp) = self.real_mtp.as_mut() {
             mtp.reset();
         }
+        // And the drafter its own, one cache over again.
+        if let Some(dflash) = self.real_dflash.as_mut() {
+            dflash.reset();
+        }
     }
 
     fn produce(
@@ -720,9 +790,20 @@ impl LogitProducer for RealForwardRunner {
 impl crate::producer::SpeculativeProducer for RealForwardRunner {
     type Checkpoint = RollbackPoint;
 
+    // WHICH DRAFTER answers is a property of the open state, and at most
+    // one is ever open in practice: the CLI refuses a request that names
+    // both. If both somehow are, the BLOCK drafter wins here, which keeps
+    // `drafts_block_passes` and the priming/rewind pair in one branch.
     fn prime_drafter(&mut self, next: i32, position: usize) -> Result<(), String> {
-        self.mtp_prime_step(next, position)
-            .map_err(|e| e.to_string())
+        if self.real_dflash.is_some() {
+            // The DFlash2 context write needs only the captured states for
+            // `position`; `next` is an MTP-head input it has no use for.
+            self.dflash_prime_from_capture(position)
+                .map_err(|e| e.to_string())
+        } else {
+            self.mtp_prime_step(next, position)
+                .map_err(|e| e.to_string())
+        }
     }
 
     fn draft_step(
@@ -735,8 +816,45 @@ impl crate::producer::SpeculativeProducer for RealForwardRunner {
             .map_err(|e| e.to_string())
     }
 
+    fn drafts_block_passes(&self) -> bool {
+        self.real_dflash.is_some()
+    }
+
+    fn draft_block(
+        &mut self,
+        anchor: i32,
+        base: usize,
+        block: usize,
+        proposals: &mut Vec<i32>,
+    ) -> Result<(), String> {
+        let want = self.real_dflash.as_ref().map_or(0, |d| d.block);
+        // A SHORTER round is the normal end of a run, not a caller error:
+        // `run_raw_completion_speculative` shrinks `round_block` against
+        // the generation budget and the context window, so every capped
+        // run passes through 1..want-1 on its way to 0. The drafter always
+        // runs its own `want + 1` rows; the loop reads the first `block`
+        // proposals and the rows above them are rewritten before anything
+        // reads them again (`families/qwen/dflash.rs`'s cursor rules). A
+        // LONGER one really is a caller error -- there is no forward to
+        // take those proposals from.
+        if block == 0 || block > want {
+            return Err(format!(
+                "the open DFlash2 drafter proposes at most {want} tokens, and the loop asked for \
+                 {block}; open it at or above the block the loop is running"
+            ));
+        }
+        self.dflash_draft_block(anchor, base, proposals)
+            .map_err(|e| e.to_string())?;
+        proposals.truncate(block);
+        Ok(())
+    }
+
     fn rewind_drafter(&mut self, position: usize) -> Result<(), String> {
-        self.mtp_rewind_to(position).map_err(|e| e.to_string())
+        if self.real_dflash.is_some() {
+            self.dflash_rewind_to(position).map_err(|e| e.to_string())
+        } else {
+            self.mtp_rewind_to(position).map_err(|e| e.to_string())
+        }
     }
 
     fn checkpoint(&mut self) -> RollbackPoint {

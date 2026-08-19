@@ -110,7 +110,30 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
     };
 
     let mut arch = model_io::known_architecture(family);
-    let num_layers = m.i64("block_count")?;
+    // `block_count` COUNTS THE MULTI-TOKEN-PREDICTION BLOCK, and this port's
+    // `num_layers` is the trunk alone. llama.cpp writes the head as one more
+    // `blk.<n>.` block and declares how many of the trailing ones are hers in
+    // `nextn_predict_layers`; `Ornith-1.5-35B-A3B` reads 41 and 1 for a
+    // 40-layer model. Taking `block_count` verbatim there derives a 41-layer
+    // config whose mask marks index 40 LINEAR -- the head is full attention --
+    // which validates structurally and runs the wrong block.
+    //
+    // Absent means 0 (AGENTS.md Gotcha 39: the default belongs to the FORMAT).
+    // Every GGUF this port installed before Ornith omits the key, so their
+    // derivations are unchanged.
+    let mtp_blocks = m.opt_i64("nextn_predict_layers").unwrap_or(0);
+    let block_count = m.i64("block_count")?;
+    // Guarded only when the key is PRESENT and positive. A file that declares
+    // no head is left exactly as it was before this subtraction existed,
+    // including the degenerate zero-block fixtures whose block count this
+    // function has never had an opinion about.
+    if mtp_blocks < 0 || (mtp_blocks > 0 && mtp_blocks >= block_count) {
+        return Err(GgufConfigError::BadValue {
+            key: m.key("nextn_predict_layers"),
+            detail: format!("{mtp_blocks} of {block_count} blocks leaves no trunk"),
+        });
+    }
+    let num_layers = block_count - mtp_blocks;
     arch.num_layers = num_layers;
     arch.hidden_size = m.i64("embedding_length")?;
     arch.num_heads = m.i64("attention.head_count")?;
@@ -134,7 +157,14 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
 
     arch.full_attention_layer_mask = match family {
         ModelFamily::Gemma4 => gemma4_layer_mask(&m, num_layers as usize)?,
-        ModelFamily::QwenGdnMoe => qwen_gdn_moe_layer_mask(&m, num_layers as usize)?,
+        // ONE builder for both halves, because both publish the same
+        // `full_attention_interval` key and the same every-fourth-layer rule.
+        // The dense half was refused here until `ornith-ai/Ornith-1.5-9B-GGUF`
+        // became the first published `qwen35` file; before it the mask would
+        // have been invented, which is why the refusal was right at the time.
+        ModelFamily::QwenGdnMoe | ModelFamily::QwenGdnDense => {
+            qwen_gdn_moe_layer_mask(&m, num_layers as usize)?
+        }
         // Every layer is full attention: neither a dense Llama nor a Mixtral
         // publishes `attention.sliding_window`, and Mistral 7B's window is a
         // property of that model rather than of the architecture.
@@ -142,13 +172,11 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
         // the published file, every layer full attention.
         ModelFamily::Llama | ModelFamily::Qwen3Moe => vec![1u8; num_layers as usize],
         ModelFamily::GptOss => gpt_oss_layer_mask(&m, num_layers as usize)?,
-        // Refused rather than defaulted, for the reason DeepSeek is: no
-        // `qwen3_5` GGUF exists, so any mask here would be invented. If one
-        // is ever published, its mask is Qwen 3.6's at 64 layers.
-        // `muse_glimmer` joins them: no GGUF exists, and its `[0,0,0,1]`
-        // mask comes from a `layer_types` ARRAY that no GGUF metadata key
-        // expresses, so a mask here would be doubly invented.
-        ModelFamily::DeepseekV4Flash | ModelFamily::QwenGdnDense | ModelFamily::MuseGlimmer => {
+        // Refused rather than defaulted: no GGUF exists for either, so any
+        // mask here would be invented. `muse_glimmer`'s is doubly so -- its
+        // `[0,0,0,1]` window comes from a `layer_types` ARRAY that no GGUF
+        // metadata key expresses.
+        ModelFamily::DeepseekV4Flash | ModelFamily::MuseGlimmer => {
             return Err(GgufConfigError::UnsupportedArchitecture {
                 architecture: architecture.to_string(),
             })
@@ -219,7 +247,20 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
         };
     }
 
-    if family == ModelFamily::QwenGdnMoe {
+    // BOTH Qwen halves, because both run the gated-DeltaNet block and both
+    // publish the same `ssm.*` keys.
+    //
+    // **THE DENSE HALF WAS MISSING HERE AND THE BUG WAS INVISIBLE ON THE MoE
+    // ONE**, which is AGENTS.md Gotcha 37's shape: a fallback is correct for
+    // exactly as long as one checkpoint exercises it. `qwen_gdn_moe_35b_a3b()`
+    // declares `num_v_heads: 32` and the real file says 32, so the MoE half
+    // read the right answer from the BASELINE whether or not this line ran.
+    // `qwen_gdn_dense_27b()` declares 48 (Bonsai-27B's), so the first dense
+    // GGUF derived `qkv_dim` = 2*2048 + 48*128 = 10240 against a real 8192 and
+    // failed at the first linear layer's GEMV -- loudly, but four layers from
+    // the cause, and only after a 5-minute stream. `ornith_gguf_network.rs`
+    // asserts the linear block field by field now, which is a header read.
+    if matches!(family, ModelFamily::QwenGdnMoe | ModelFamily::QwenGdnDense) {
         arch.linear_attention = linear_attention(&m)?;
         // Qwen's key/value length are per-head and equal on both paths.
         if let Some(k) = m.opt_i64("attention.key_length") {

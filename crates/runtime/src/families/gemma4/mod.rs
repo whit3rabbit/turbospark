@@ -2,6 +2,7 @@
 
 mod attn;
 mod moe;
+mod moe_batch;
 mod state;
 
 pub(crate) use state::RealGemmaState;
@@ -23,8 +24,11 @@ impl RealForwardRunner {
     /// encoded into its own command buffer and committed without waiting.
     ///
     /// `slot` names which token of a prefill micro-batch this is; it reads
-    /// that token's `dense_x` row and writes the single-row `h1` the routed
-    /// pass immediately below it consumes.
+    /// that token's `dense_x` row. `h1_out` is the row the down
+    /// projection and `post_feedforward_layernorm_1` write into: the
+    /// single-row `h1` on every existing path, and `batch_h1[t]` on the
+    /// batched routed path, whose tail consumes all M tokens' shared
+    /// outputs only after they have all been produced.
     pub(crate) fn encode_shared_expert_branch(
         &mut self,
         layer: usize,
@@ -32,6 +36,7 @@ impl RealForwardRunner {
         inter: usize,
         use_silu: bool,
         slot: &moe::RoutedSlot,
+        h1_out: (&gpu::MetalBuffer, u64),
     ) -> Result<(), RealForwardError> {
         let gpu_err = RealForwardError::Gpu;
         let x_off = (slot.token * hidden * 2) as u64;
@@ -79,7 +84,6 @@ impl RealForwardRunner {
             inter as u32,
         )
         .map_err(gpu_err)?;
-        let real = self.real.as_ref().expect("real state present");
         encode_gemv_any(
             &mut self.context,
             &shared_pass,
@@ -89,7 +93,7 @@ impl RealForwardRunner {
             hidden,
             inter,
             (&self.scratch.ffn_act, 0),
-            (&real.h1, 0),
+            h1_out,
         )?;
         let post_ffn1 = norm_view(
             &self.weights,
@@ -100,9 +104,9 @@ impl RealForwardRunner {
         gpu::encode_rms_norm_bf16w(
             &mut self.context,
             &shared_pass,
-            (&real.h1, 0),
+            h1_out,
             post_ffn1,
-            (&real.h1, 0),
+            h1_out,
             hidden as u32,
             RMS_EPS,
         )
@@ -145,13 +149,15 @@ impl RealForwardRunner {
     /// One micro-batch: every layer runs its attention-and-router half for
     /// ALL `tokens` into ONE command buffer, so the per-layer blocking wait
     /// is paid once per micro-batch instead of once per token, and then its
-    /// routed half per token as the sequential path does.
+    /// routed half -- per token by default, or as one route-list dispatch
+    /// pair per union-bounded sub-batch when `MFERENCE_ROUTED_BATCH=1`
+    /// (`docs/BATCHED_PREFILL.md` steps 2 and 3, `moe_batch.rs`).
     ///
-    /// The routed half stays per token because the two things it needs from
-    /// the host -- the routing weights and the argument buffer naming this
-    /// token's eight expert slots -- are written outside the command queue,
-    /// and because batching it is what the batched MoE pair
-    /// (`docs/BATCHED_PREFILL.md` steps 2 and 3) is for.
+    /// The default keeps the routed half per token because the two things
+    /// it needs from the host -- the routing weights and the argument
+    /// buffer naming this token's eight expert slots -- are written
+    /// outside the command queue, and because the batched pair is what
+    /// the route-list kernels were built for.
     fn prefill_micro_batch_gemma4(
         &mut self,
         tokens: &[i32],
@@ -259,23 +265,13 @@ impl RealForwardRunner {
             // previous layer could have its slots evicted under it.
             self.retire_routed(&mut pending_routed);
 
-            let mut previous_slots: std::collections::HashSet<usize> =
-                std::collections::HashSet::new();
-            for t in 0..m {
-                if banks == 1 {
-                    self.retire_routed(&mut pending_routed);
-                }
-                let slot = moe::RoutedSlot {
-                    token: t,
-                    bank: t % banks,
-                    protect: previous_slots.clone(),
-                };
-                if self.shared_cb_overlap {
-                    self.encode_shared_expert_branch(layer, hidden, inter, use_silu, &slot)?;
-                }
-                let routed_pass = self.context.begin_pass_labeled("routed cb");
-                let used = self.encode_gemma4_layer_routed_moe(
-                    &routed_pass,
+            if self.routed_batch_prefill {
+                // Steps 2 and 3: the whole layer's routed half as one
+                // route-list dispatch pair per union-bounded sub-batch
+                // (`docs/BATCHED_PREFILL.md`). Same retire discipline as
+                // the per-token path: committed here, retired after the
+                // NEXT layer's router wait.
+                pending_routed = Some(self.encode_gemma4_layer_routed_moe_batched(
                     layer,
                     hidden,
                     inter,
@@ -283,14 +279,50 @@ impl RealForwardRunner {
                     num_experts,
                     top_k,
                     use_silu,
-                    &slot,
-                )?;
-                if banks > 1 {
-                    self.retire_routed(&mut pending_routed);
+                    m,
+                )?);
+            } else {
+                let mut previous_slots: std::collections::HashSet<usize> =
+                    std::collections::HashSet::new();
+                let h1 = self.real.as_ref().expect("real state present").h1.clone();
+                for t in 0..m {
+                    if banks == 1 {
+                        self.retire_routed(&mut pending_routed);
+                    }
+                    let slot = moe::RoutedSlot {
+                        token: t,
+                        bank: t % banks,
+                        protect: previous_slots.clone(),
+                    };
+                    if self.shared_cb_overlap {
+                        self.encode_shared_expert_branch(
+                            layer,
+                            hidden,
+                            inter,
+                            use_silu,
+                            &slot,
+                            (&h1, 0),
+                        )?;
+                    }
+                    let routed_pass = self.context.begin_pass_labeled("routed cb");
+                    let used = self.encode_gemma4_layer_routed_moe(
+                        &routed_pass,
+                        layer,
+                        hidden,
+                        inter,
+                        moe_inter,
+                        num_experts,
+                        top_k,
+                        use_silu,
+                        &slot,
+                    )?;
+                    if banks > 1 {
+                        self.retire_routed(&mut pending_routed);
+                    }
+                    debug_assert!(pending_routed.is_none(), "routed pipeline depth is 1");
+                    pending_routed = Some(routed_pass.commit());
+                    previous_slots = used.into_iter().collect();
                 }
-                debug_assert!(pending_routed.is_none(), "routed pipeline depth is 1");
-                pending_routed = Some(routed_pass.commit());
-                previous_slots = used.into_iter().collect();
             }
 
             pass = self.context.begin_pass_labeled("chunk cb1 (attn+router)");
@@ -442,12 +474,20 @@ impl RealForwardRunner {
         let mut pending_routed: Option<gpu::CommittedPass> = None;
 
         let sequential = moe::RoutedSlot::sequential();
+        let h1 = self.real.as_ref().expect("real state present").h1.clone();
         for layer in 0..arch.num_layers as usize {
             self.encode_gemma4_layer_attn_and_router(&pass, layer, position, seq_len, base, 0)?;
 
             let cb1 = pass.commit();
             if self.shared_cb_overlap {
-                self.encode_shared_expert_branch(layer, hidden, inter, use_silu, &sequential)?;
+                self.encode_shared_expert_branch(
+                    layer,
+                    hidden,
+                    inter,
+                    use_silu,
+                    &sequential,
+                    (&h1, 0),
+                )?;
             }
 
             let t_wait = Instant::now();

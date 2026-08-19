@@ -497,6 +497,30 @@ live network).
   would actually read and write through these buffers — nothing dispatches
   against them yet, so this closes the "scratch-space accounting" half of
   the gap, not the "kernel that uses it" half.
+- **The chunked-prefill driver and its batched routed half are port-local,
+  not Swift's tile pipeline (steps 1-3 of `docs/BATCHED_PREFILL.md`,
+  2026-08-16/18).** Swift's chunked prefill runs `prefill.metal`'s
+  16-kernel chunk pipeline; this port's step 1 batches COMMAND BUFFERS
+  only (`prefill_chunk_real_gemma4`: one attention+router command buffer
+  per layer per micro-batch of up to 16 tokens, routed half per token,
+  measured 1.22x, env seam `MFERENCE_PREFILL_CHUNK`), and steps 2-3 add
+  the port-local batched routed pair: `moe.metal` + `moe_prefill_batch.metal`'s
+  `moe_prefill_phase1_routes_int4` (route-list iteration, Swift's
+  `DSV4PrefillRoute` idea) and `moe_prefill_phase2_fused_int4` (the decode
+  phase-2 kernel with a token axis, rank-ordered per token), reading
+  expert blobs through a 32-pointer `RoutedBlobsWide` argument buffer
+  instead of Swift's 8-expert tiles, bit-exact against M sequential
+  decode-pair calls (`crates/gpu/tests/moe_prefill_batch_parity.rs`,
+  mutation-checked). Routed sub-batches are capped at
+  `union <= slot_count` (near M=8 at 32 slots, M=2 at 16) and each
+  sub-batch commits its own command buffer — a later sub-batch's `pread`
+  evicts slots an earlier one's dispatches still name, and host-side
+  `pread`s are not ordered by the queue. Reachable via
+  `MFERENCE_ROUTED_BATCH=1` (unset keeps step 1's per-token routed half);
+  INT4-affine blobs only, GGUF layouts refused by name. The
+  `prefill_scratch.rs` buffers above remain undispatched by all of this —
+  the batched half added its own M-row scratch to `RealGemmaState`
+  instead, sized by `MAX_PREFILL_BATCH` rather than the chunk span.
 
 ## Phase 7 (runtime, CLI)
 

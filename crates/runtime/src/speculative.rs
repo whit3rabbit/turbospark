@@ -221,26 +221,42 @@ pub fn run_raw_completion_speculative_cancellable<P: SpeculativeProducer>(
             continue;
         }
 
-        // -- Draft. `round_block + 1` steps for `round_block` proposals: the
-        //    last one is taken for its cache ROW alone, because a round where
-        //    every proposal is accepted needs a drafter row at
-        //    `base + round_block` that the proposal-producing steps do not
-        //    write. Without it the fully-accepted case is the one that
-        //    desyncs, which is the case a good drafter hits most often.
+        // -- Draft. Two shapes, and the producer says which it is:
+        //
+        //    A STEP-WISE drafter (the MTP head) takes `round_block + 1`
+        //    steps for `round_block` proposals: the last one is taken for
+        //    its cache ROW alone, because a round where every proposal is
+        //    accepted needs a drafter row at `base + round_block` that the
+        //    proposal-producing steps do not write. Without it the
+        //    fully-accepted case is the one that desyncs, which is the case
+        //    a good drafter hits most often.
+        //
+        //    A BLOCK drafter (DFlash2) proposes the whole block in ONE
+        //    pass, its bonus row carrying the anchor's embedding and its
+        //    mask rows carrying the proposals. Its own state management --
+        //    the context-KV write for the accepted prefix, its cache cursor
+        //    -- happens inside the call, from the capture the previous
+        //    verify filled.
         proposals.clear();
-        let mut chained = next;
-        for d in 0..=round_block {
+        if producer.drafts_block_passes() {
             producer
-                .draft_step(chained, base - 1 + d, &mut draft_logits)
+                .draft_block(next, base, round_block, &mut proposals)
                 .map_err(RuntimeError::Producer)?;
-            chained = select(
-                LogitsView::new(&draft_logits),
-                &config.shaping,
-                &sink.history,
-                sink.generated as u64,
-            )?;
-            if d < round_block {
-                proposals.push(chained);
+        } else {
+            let mut chained = next;
+            for d in 0..=round_block {
+                producer
+                    .draft_step(chained, base - 1 + d, &mut draft_logits)
+                    .map_err(RuntimeError::Producer)?;
+                chained = select(
+                    LogitsView::new(&draft_logits),
+                    &config.shaping,
+                    &sink.history,
+                    sink.generated as u64,
+                )?;
+                if d < round_block {
+                    proposals.push(chained);
+                }
             }
         }
 

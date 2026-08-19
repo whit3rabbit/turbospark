@@ -60,6 +60,15 @@ pub fn orchestrate_gemma4_checkpoint_sharded(
         resident.entries.extend(head.entries);
         resident.lossy_narrowing.extend(head.lossy_narrowing);
     }
+    // The DFlash2 drafter, APPENDED after the head for the same reason the
+    // head is appended after the trunk: it is a separate model sharing one
+    // resident region, and its names keep to their own `dflash.` group
+    // rather than interleaving with any layer's.
+    if !plan.dflash_bases.is_empty() {
+        let drafter = super::dflash::read_dflash_entries(shards, &plan.dflash_bases)?;
+        resident.entries.extend(drafter.entries);
+        resident.lossy_narrowing.extend(drafter.lossy_narrowing);
+    }
     let expert_stride = expert_stride_from_headers(shards, arch, quant, &plan.routed)?;
     let mut layers = Vec::new();
     if !plan.routed.is_empty() {
@@ -93,6 +102,10 @@ pub struct ClassifiedNames<'a> {
     /// harmless for a name-keyed index, but it puts an unrelated model's
     /// weights in the middle of a layer group for every future reader.
     pub mtp_bases: Vec<&'a str>,
+    /// The DFlash2 drafter's tensors, kept out of `resident_bases` for the
+    /// head's two reasons plus a third of its own: the drafter also has
+    /// rank-3 tensors (`base_kernel`), which no trunk arm accepts at all.
+    pub dflash_bases: Vec<&'a str>,
 }
 
 pub fn classify_all<'a>(
@@ -103,6 +116,7 @@ pub fn classify_all<'a>(
     let mut resident_bases: Vec<&str> = Vec::new();
     let mut excluded: Vec<String> = Vec::new();
     let mut mtp_bases: Vec<&str> = Vec::new();
+    let mut dflash_bases: Vec<&str> = Vec::new();
     let mut routed: BTreeMap<usize, BTreeMap<&'static str, &str>> = BTreeMap::new();
 
     for name in shards.names() {
@@ -126,6 +140,7 @@ pub fn classify_all<'a>(
             }
             Gemma4Bucket::ExcludedMultimodal => excluded.push(name.clone()),
             Gemma4Bucket::MtpHead => mtp_bases.push(name),
+            Gemma4Bucket::DflashDrafter => dflash_bases.push(name),
             Gemma4Bucket::Unknown => return Err(Gemma4Error::UnknownTensor(name.clone())),
         }
     }
@@ -136,11 +151,15 @@ pub fn classify_all<'a>(
     // layer-aware ordering is owed; `lm_order_key` is deliberately not reused
     // here (see `ClassifiedNames::mtp_bases`).
     mtp_bases.sort_unstable();
+    // Plain lexicographic again: one name group, and the drafter's own
+    // `layers.N` ordering inside it is lexicographic's natural order.
+    dflash_bases.sort_unstable();
     Ok(ClassifiedNames {
         resident_bases,
         routed,
         excluded,
         mtp_bases,
+        dflash_bases,
     })
 }
 

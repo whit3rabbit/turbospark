@@ -25,9 +25,30 @@ pub struct Plan<'a> {
     pub ignored: Vec<String>,
 }
 
+/// The block index of a `blk.<n>.` tensor that sits ABOVE the trunk, or
+/// `None` for anything the trunk owns.
+///
+/// `arch_from_gguf` subtracts `nextn_predict_layers` from `block_count`,
+/// because this port's `num_layers` is the trunk alone and llama.cpp writes
+/// a multi-token-prediction head as one more `blk.` block. That subtraction
+/// has to reach the WALK too: without it the head's tensors map through the
+/// trunk table into a phantom `layers.<num_layers>` group (silently, on a
+/// dense file) or hit `Unmapped` on a head-only suffix and abort a multi-GB
+/// stream naming the tensor rather than the head.
+///
+/// A file declaring no head has `num_layers == block_count`, so this is
+/// `None` for every tensor of every GGUF this port installed before the key
+/// was read.
+fn head_block_index(name: &str, num_layers: usize) -> Option<usize> {
+    let (idx, _) = name.strip_prefix("blk.")?.split_once('.')?;
+    let layer: usize = idx.parse().ok()?;
+    (layer >= num_layers).then_some(layer)
+}
+
 pub fn classify<'a>(
     header: &'a GgufHeader,
     family: ModelFamily,
+    num_layers: usize,
 ) -> Result<Plan<'a>, GgufRepackError> {
     let mut plan = Plan {
         resident: Vec::new(),
@@ -35,6 +56,14 @@ pub fn classify<'a>(
         ignored: Vec::new(),
     };
     for name in header.tensors.keys() {
+        if let Some(layer) = head_block_index(name, num_layers) {
+            plan.ignored.push(format!(
+                "{name} (block {layer} is above the {num_layers}-block trunk: a \
+                 multi-token-prediction head, which this port ingests from the safetensors \
+                 checkpoint rather than from a GGUF)"
+            ));
+            continue;
+        }
         match map_gguf_name(name, family)? {
             GgufMapping::Resident(_) => plan.resident.push(name.as_str()),
             GgufMapping::Routed { layer, role } => {

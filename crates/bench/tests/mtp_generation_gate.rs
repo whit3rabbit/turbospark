@@ -89,9 +89,12 @@ fn the_wired_speculative_loop_reproduces_the_sequential_stream() {
     let dir = std::path::PathBuf::from(
         std::env::var_os("TURBOSPARK_MTP_INSTALL_DIR").expect("TURBOSPARK_MTP_INSTALL_DIR"),
     );
-    let (mut runner, tokenizer) =
-        open_model_runner_speculative(&dir, SLOTS, runtime::MtpDraftPolicy::Fixed(MTP_DEPTH))
-            .expect("install opens");
+    let (mut runner, tokenizer) = open_model_runner_speculative(
+        &dir,
+        SLOTS,
+        runtime::DraftPolicies::mtp(runtime::MtpDraftPolicy::Fixed(MTP_DEPTH)),
+    )
+    .expect("install opens");
     assert!(
         runner.mtp_draft_depth() > 0,
         "this install carries no MTP head; the gate would compare a run against itself"
@@ -215,9 +218,12 @@ fn a_sampled_request_is_refused_on_the_real_install() {
     let dir = std::path::PathBuf::from(
         std::env::var_os("TURBOSPARK_MTP_INSTALL_DIR").expect("TURBOSPARK_MTP_INSTALL_DIR"),
     );
-    let (mut runner, tokenizer) =
-        open_model_runner_speculative(&dir, SLOTS, runtime::MtpDraftPolicy::Fixed(MTP_DEPTH))
-            .expect("install opens");
+    let (mut runner, tokenizer) = open_model_runner_speculative(
+        &dir,
+        SLOTS,
+        runtime::DraftPolicies::mtp(runtime::MtpDraftPolicy::Fixed(MTP_DEPTH)),
+    )
+    .expect("install opens");
     let vocab = runner.vocab_size();
 
     let config = GenerationConfig {

@@ -53,7 +53,20 @@ struct VHeadAxis {
 }
 
 fn v_head_axis(canonical: &str, arch: &ArchConfig) -> Option<VHeadAxis> {
-    if arch.family != ModelFamily::QwenGdnMoe {
+    // BOTH Qwen halves. The convention belongs to llama.cpp's CONVERTER and
+    // to the gated-DeltaNet block, and the two halves share both -- the dense
+    // one is the same `linear_attn.*` inventory with a different FFN below it.
+    //
+    // **THE DENSE HALF WAS EXCLUDED AND IT FAILED EXACTLY AS Gotcha 33 SAYS
+    // THIS CLASS FAILS**: the first `qwen35` install loaded, decoded, never
+    // errored, and produced word salad. Nothing upstream can see it -- every
+    // name mapped, every shape checked out, the manifest validated. Only
+    // running the model does, which is why the convention check is a Phase 1
+    // gate rather than a tidy-up.
+    if !matches!(
+        arch.family,
+        ModelFamily::QwenGdnMoe | ModelFamily::QwenGdnDense
+    ) {
         return None;
     }
     let la = &arch.linear_attention;

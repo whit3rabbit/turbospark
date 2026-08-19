@@ -139,6 +139,14 @@ pub const OPTIONS: &[OptionDecl] = &[
                      (default auto; a named block FAILS if the model cannot serve it)",
     },
     OptionDecl {
+        flag: "--speculative-drafter",
+        takes_value: true,
+        is_required: false,
+        is_mode_selecting: false,
+        usage_hint: "drafter --speculative drives: mtp or dflash (default mtp; dflash needs \
+                     dflash.* tensors in the install)",
+    },
+    OptionDecl {
         flag: "--prefill-chunk",
         takes_value: true,
         is_required: false,

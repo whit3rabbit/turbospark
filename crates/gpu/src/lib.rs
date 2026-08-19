@@ -63,6 +63,8 @@ mod dequant_q8_0_gemv;
 #[cfg(target_os = "macos")]
 mod device_memory;
 #[cfg(target_os = "macos")]
+mod dflash_conv;
+#[cfg(target_os = "macos")]
 mod dispatch_profile;
 #[cfg(target_os = "macos")]
 mod dsv4_state;
@@ -78,6 +80,8 @@ mod logit_softmax;
 mod moe_decode;
 #[cfg(target_os = "macos")]
 mod moe_gguf;
+#[cfg(target_os = "macos")]
+mod moe_prefill_batch;
 #[cfg(target_os = "macos")]
 mod power_state;
 #[cfg(target_os = "macos")]
@@ -160,6 +164,10 @@ pub use dequant_q8_0_gemv::{
 #[cfg(target_os = "macos")]
 pub use device_memory::recommended_max_working_set;
 #[cfg(target_os = "macos")]
+pub use dflash_conv::{
+    encode_dflash_copy_rows, encode_dflash_grouped_conv, DFLASH_GROUP_SIZE, DFLASH_TAPS,
+};
+#[cfg(target_os = "macos")]
 pub use dispatch_profile::{report as dispatch_profile_report, reset as dispatch_profile_reset};
 #[cfg(target_os = "macos")]
 pub use dsv4_state::{Dsv4StateManager, LayerCounters};
@@ -186,6 +194,11 @@ pub use moe_gguf::{
     encode_moe_phase1_q4_k, encode_moe_phase1_q8_0, encode_moe_phase2_iq4_nl,
     encode_moe_phase2_mxfp4, encode_moe_phase2_q4_k, encode_moe_phase2_q6_k,
     encode_moe_phase2_q8_0, mxfp4_row_bytes, Mxfp4Activation, MXFP4_BLOCK_BYTES, MXFP4_BLOCK_ELEMS,
+};
+#[cfg(target_os = "macos")]
+pub use moe_prefill_batch::{
+    encode_moe_prefill_phase1, encode_moe_prefill_phase2_fused, MoePrefillRoute,
+    RoutedBlobsWideBuffer, MAX_PREFILL_EXPERT_BINDINGS,
 };
 #[cfg(target_os = "macos")]
 pub use power_state::{low_power_mode_enabled, physical_memory, thermal_state_raw};

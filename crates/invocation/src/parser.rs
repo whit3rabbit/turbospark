@@ -9,8 +9,9 @@ use crate::failure::ParseFailure;
 use crate::options::OPTIONS;
 use crate::request::{
     ExpertCacheSlots, InvocationRequest, MaxContext, Mode, PowerProfile, PrefillChunk,
-    ReadAheadMode, ReasoningEffort, Speculation, ALLOWED_SPECULATION_BLOCKS, DEFAULT_MAX_NEW,
-    DEFAULT_REPETITION_PENALTY, DEFAULT_TEMPERATURE, DEFAULT_TOP_K, DEFAULT_TOP_P, MAX_TOP_K,
+    ReadAheadMode, ReasoningEffort, Speculation, SpeculativeDrafter, ALLOWED_SPECULATION_BLOCKS,
+    DEFAULT_MAX_NEW, DEFAULT_REPETITION_PENALTY, DEFAULT_TEMPERATURE, DEFAULT_TOP_K, DEFAULT_TOP_P,
+    MAX_TOP_K,
 };
 use foundation::runtime_config::{ALLOWED_CACHE_SLOTS, ALLOWED_CHUNK_SIZES};
 
@@ -59,6 +60,7 @@ pub fn parse(tokens: &[String]) -> ParseOutcome {
     let mut rdadvise = ReadAheadMode::default();
     let mut expert_cache_slots = ExpertCacheSlots::default();
     let mut speculation = Speculation::default();
+    let mut speculative_drafter = SpeculativeDrafter::default();
     let mut prefill_chunk = PrefillChunk::default();
     let mut power_profile: Option<PowerProfile> = None;
     let mut max_tokens_per_sec: Option<f64> = None;
@@ -171,6 +173,11 @@ pub fn parse(tokens: &[String]) -> ParseOutcome {
                     _ => return invalid("--speculative", value),
                 },
             },
+            "--speculative-drafter" => match value.as_str() {
+                "mtp" => speculative_drafter = SpeculativeDrafter::Mtp,
+                "dflash" => speculative_drafter = SpeculativeDrafter::Dflash,
+                _ => return invalid("--speculative-drafter", value),
+            },
             "--prefill-chunk" => {
                 if value == "auto" {
                     prefill_chunk = PrefillChunk::Auto;
@@ -278,6 +285,7 @@ pub fn parse(tokens: &[String]) -> ParseOutcome {
         rdadvise,
         expert_cache_slots,
         speculation,
+        speculative_drafter,
         prefill_chunk,
         power_profile,
         max_tokens_per_sec,

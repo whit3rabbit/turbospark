@@ -103,7 +103,8 @@ impl RealForwardRunner {
         self.phases.expert_io_nanos += t_io.elapsed().as_nanos() as u64;
 
         if !self.shared_cb_overlap {
-            self.encode_shared_expert_branch(layer, hidden, inter, use_silu, slot)?;
+            let h1 = self.real.as_ref().expect("real state present").h1.clone();
+            self.encode_shared_expert_branch(layer, hidden, inter, use_silu, slot, (&h1, 0))?;
         }
         let real = self.real.as_ref().expect("real state present");
 

@@ -66,10 +66,13 @@ pub fn open_model_runner(
 /// and a frozen footprint row must not acquire either because the install it
 /// happens to point at carries a head. The two MTP probes and the generation
 /// gate are the callers that genuinely want one, so they say so here.
+///
+/// Takes the FULL policy pair so a DFlash2 probe asks through the same
+/// door; `DraftPolicies::mtp` wraps the MTP-only callers.
 pub fn open_model_runner_speculative(
     model_dir: &Path,
     slots: usize,
-    speculation: runtime::MtpDraftPolicy,
+    speculation: runtime::DraftPolicies,
 ) -> Result<(RealForwardRunner, MfTokenizer), String> {
     let arch = repack::peek_manifest_arch(model_dir)?;
     let tokenizer = MfTokenizer::load_from_dir(model_dir).map_err(|e| {

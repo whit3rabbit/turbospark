@@ -234,6 +234,19 @@ pub enum Speculation {
 /// than the useful part rather than pretending to be a recommendation.
 pub const ALLOWED_SPECULATION_BLOCKS: std::ops::RangeInclusive<u32> = 1..=15;
 
+/// Which drafter `--speculative` drives. The two drafters are ALTERNATIVES
+/// (`docs/MTP_SPECULATIVE.md`, `docs/DFLASH2.md`): the checkpoint's own MTP
+/// head drafts a token at a time, the DFlash2 block-diffusion drafter
+/// proposes a whole block in one pass. A third value is not a spectrum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SpeculativeDrafter {
+    /// The checkpoint's own multi-token-prediction head (`mtp.*` tensors).
+    #[default]
+    Mtp,
+    /// The DFlash2 block-diffusion drafter (`dflash.*` tensors).
+    Dflash,
+}
+
 /// Context-window sizing: a fixed token count, or automatic sizing against
 /// the checkpoint and the machine.
 ///
@@ -290,6 +303,8 @@ pub struct InvocationRequest {
     pub expert_cache_slots: ExpertCacheSlots,
     /// Speculative decoding policy; see [`Speculation`].
     pub speculation: Speculation,
+    /// Which drafter that policy drives; see [`SpeculativeDrafter`].
+    pub speculative_drafter: SpeculativeDrafter,
     /// The prompt-processing chunk-size tuning.
     pub prefill_chunk: PrefillChunk,
     /// The power profile, or `None` for automatic (which resolves against

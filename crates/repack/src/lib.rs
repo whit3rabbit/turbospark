@@ -49,7 +49,7 @@ pub use gemma4_checkpoint::{
     write_qwen_gdn_dense_install_streamed, write_qwen_gdn_moe_install,
     write_qwen_gdn_moe_install_streamed, Gemma4Bucket, Gemma4Error, Gemma4Quant,
     Gemma4RepackOutput, Gemma4Shards, NarrowedRaw, AFFINE_1BIT_GROUP_SIZE, AFFINE_2BIT_GROUP_SIZE,
-    AFFINE_GROUP_SIZE, GTURBO_PAGE_BYTES,
+    AFFINE_GROUP_SIZE, DFLASH_PREFIX, GTURBO_PAGE_BYTES,
 };
 pub use gguf_checkpoint::{
     dtype_tag_for_ggml_type, gguf_manifest_quant, orchestrate_gguf_checkpoint,
@@ -110,6 +110,8 @@ pub use synthetic_model::{
 pub use synthetic_muse::{build_synthetic_muse_glimmer_install, tiny_muse_glimmer_arch};
 pub use synthetic_qwen::{
     build_synthetic_qwen_gdn_dense_install, build_synthetic_qwen_gdn_dense_install_at_bits,
+    build_synthetic_qwen_gdn_dense_install_with_dflash,
+    build_synthetic_qwen_gdn_dense_install_with_dflash_streamed,
     build_synthetic_qwen_gdn_dense_install_with_mtp,
     build_synthetic_qwen_gdn_dense_install_with_mtp_streamed, build_synthetic_qwen_gdn_moe_install,
     tiny_qwen_gdn_dense_arch, tiny_qwen_gdn_moe_arch,

@@ -70,7 +70,7 @@ More than a reader expects, and the missing piece is narrower than
 | the producer trait | `runtime::ChunkedPrefillRunner` | defined |
 | scratch sizing + allocation | `crates/gpu/src/prefill_scratch.rs` | done, allocates real buffers, undispatched |
 | batched INT4 GEMM | `crates/gpu/src/dequant_int4_batch.rs` | done, parity-tested, M <= 16 |
-| batched MoE pair | -- | **missing** |
+| batched MoE pair | `crates/gpu/src/moe_prefill_batch.rs` | **done 2026-08-18 (steps 2+3), bit-exact against M decode passes; see "Steps 2 and 3, measured"** |
 | `RealForwardRunner: ChunkedPrefillRunner` | `families/gemma4/mod.rs` | done 2026-08-16, Gemma 4 only |
 
 `ScriptedLogitProducer` was the trait's only implementor until step 1
@@ -104,6 +104,44 @@ signatures before designing a new one. The idea worth stealing is
 than tokens and a chunk's ragged routing becomes one dense dispatch. That
 is the whole reason a chunk of M tokens does not need M x top_k separate
 launches.
+
+**What steps 2 and 3 actually shipped (2026-08-18) takes the route list
+and drops the tiling.** `crates/gpu/src/shaders/moe_prefill_batch.metal`
+(port-local, concatenated after `moe.metal` so it calls the same INT4 row
+helpers the decode pair calls) binds a 32-POINTER argument buffer --
+`RoutedBlobsWide`, one entry per cache slot -- where Swift's tiles bound
+eight, because this port's slot cache already holds a sub-batch's whole
+union resident (`union(M) <= slot_count` is the sub-batch bound). That
+buys two simplifications over the DSV4 trio: ONE dense dispatch per
+kernel instead of per-tile windows, and a FUSED phase 2 --
+`moe_prefill_phase2_fused_int4` is decode's
+`moe_phase2_down_reduce_k8` with a token axis (one threadgroup per
+`(token, d)`, SIMD group r owning rank r), so the rank-ordered reduce
+that Gotcha 27 makes a correctness constraint holds by construction and
+the DSV4 down/reduce split (which existed only to fit eight pointers)
+has no reason to exist here. Parity is BIT-EXACT against M sequential
+decode-pair calls, mutation-checked
+(`crates/gpu/tests/moe_prefill_batch_parity.rs`); the hand mutation
+that reversed the reduce order flipped exactly one bit in the
+real-shape case and nothing in the small ones, so the real-shape case
+is the order-sensitivity sentinel.
+
+Two things the landing taught that no table above predicted:
+
+- **A sub-batch must COMMIT ITS OWN command buffer, and the next
+  sub-batch must WAIT for it before planning.** The first cut used one
+  command buffer per layer; a later sub-batch's `pread` then evicted
+  experts from slots an earlier sub-batch's dispatches still named, and
+  because `pread`s are host-side work the queue's commit order says
+  nothing about them. The 8-slot runtime byte-identity test caught it
+  as fluent wrong logits -- union-of-micro-batch > slots is exactly
+  what forces a second sub-batch. The LAST sub-batch stays in flight
+  for the driver to retire after the next layer's router wait, so the
+  cross-layer pipelining step 1 measured survives.
+- **Routes stay in PAIR order, not slot-sorted.** The fused phase 2
+  looks its routes up BY PAIR (`routes[token * top_k + rank]`), so a
+  blob-locality sort would break it -- and at ~3.2 MiB per blob against
+  caches far smaller, the sort would buy nothing anyway.
 
 **Read `dequant_int4_batch.rs`'s header before writing either.** Two
 optimizations were tried on the batched GEMV and both lost on every shape:
@@ -292,12 +330,27 @@ the honest band and note which bucket it turns on.
 Two terms are soft, both in the optimistic direction, and the re-weighting
 did not fix either; it only made them easier to see.
 
-**The routed pair's 0.287 is a proxy.** It is a resident INT4 GEMV measured
-at a routed expert's shape, because `moe_phase1_gate_up_act_u16load` and
-`moe_phase2_down_reduce_k8` have no batched form to measure. That row is
-now the single largest saving in the `fully batched` column (16.4% to
-4.7%), so the projection rests hardest on the number with the least
-evidence behind it. Steps 2 and 3 exist to replace it with a measurement.
+**The routed pair's 0.287 was a proxy, and the measurement came in
+worse.** It was a resident INT4 GEMV measured at a routed expert's
+shape, taken because `moe_phase1_gate_up_act_u16load` and
+`moe_phase2_down_reduce_k8` had no batched form to measure. Steps 2 and
+3 (landed 2026-08-18) measured the real pair
+(`crates/gpu/tests/moe_prefill_batch_bench.rs`, arms interleaved at the
+round level after back-to-back runs showed clock wander moving c(2) from
+0.44 to 1.07): **c(2) = 0.77, c(4) = 0.68, c(8) = 0.66** at the real
+D=2816 F=704 shape with ragged routes at the measured union sizes. The
+proxy was optimistic by 2.3x, and the reason is structural: a GEMV
+amortizes one matrix across rows, while the routed pair's batched form
+reads the SAME per-use expert bytes the sequential form reads (the union
+only dedupes traffic a ~32 MiB L2 can hold, and 3.2 MiB blobs at a
+union of 30 do not fit), so the win is occupancy and dispatch count,
+not weight amortization. Re-weighting with 0.66: the composite's
+whole-GPU multiplier moves from 0.526 to **0.614**, the whole-program
+projection from ~1.55x to **~1.41x**, and the step-1-based
+extrapolation from ~1.97x to **~1.71x** (14.70 ms/token of step-1 base:
+cb1 3.75 + routed 2.55 + non-GPU 4.59 = 10.89). The honest band for the
+whole program is **1.4x to 1.7x**, and the end-to-end rows below are
+the arbiters.
 
 **Attention is held at the GEMV rate**, which is conservative rather than
 optimistic: M queries genuinely share one KV read, so a batched attention
@@ -389,6 +442,54 @@ re-weighted high end now brushes that number while still not reaching
 parity, which is the reason to state the `pread` ceiling every time rather
 than the multiplier alone.
 
+### Steps 2 and 3, measured
+
+Landed and measured 2026-08-18, real Gemma 4 install, the frozen
+`long-synthesis` prompt (3,015 tokens), `--max-new 8`, 32 slots (auto),
+AC, three interleaved A/B/C rounds after a discarded warmup of each arm.
+Prefill seconds from the `[stop=...]` footer:
+
+| round | sequential | chunked (step 1) | + batched routed (2+3) |
+| ---: | ---: | ---: | ---: |
+| 1 | 58.90 | 46.69 | 38.98 |
+| 2 | 61.10 | 46.38 | 38.64 |
+| 3 | 59.16 | 45.45 | 38.46 |
+| mean | 59.72 | 46.17 | **38.69** |
+| ms/token | 19.8 | 15.3 | **12.8** |
+
+**Steps 2+3 buy 1.19x on top of step 1's chunking (46.17 -> 38.69), and
+1.54x over the sequential path** -- mid-band of the 1.41x-1.71x the
+measured `c(8) = 0.66` predicts above, and against Swift's 27.5 s for
+this prompt the gap narrows from 2.17x to 1.41x. Step 1 alone measured
+1.29x today against its 1.22x on 2026-08-16, which is ordinary
+cross-session machine state and one more reason the INTERLEAVED 1.19x
+is the number to quote for steps 2+3 rather than a difference of
+cross-session totals. Within-arm spread is under 1% on the two chunked
+arms.
+
+Kernel-level, the pair's own `c(M)` (interleaved arms,
+`crates/gpu/tests/moe_prefill_batch_bench.rs`, real D=2816 F=704 shape,
+ragged routes at the measured union sizes): **c(2) = 0.77, c(4) = 0.68,
+c(8) = 0.66**. M=16 is unreachable by construction -- the engine caps a
+routed sub-batch at `union <= slot_count <= 32`, and the measured
+union(16) is 41.5. The end-to-end 1.19x beats what 0.66 on a 16.4%
+device-share term alone would suggest because the batched half also
+collapses the HOST work per layer: one router readback, one plan, one
+`pread` burst, one bind and one routed command buffer per sub-batch
+instead of per token, and the shared-expert branches all commit before
+the pread instead of interleaving with it.
+
+Gates paid: byte-identity against the sequential path on the synthetic
+real-named install (ten cases in `real_forward_gemma4_chunked.rs`,
+including the 8-slot union-shrink case that caught the sub-batch
+eviction bug), greedy and sampled smokes byte-identical on the real
+install at chunk spans 32/128/512, the memory oracle green at a 2,187
+MiB peak against the 2,300 ceiling (the batched scratch is ~0.4 MiB),
+and the quality gate's frozen digests unchanged. The power capture the
+Definition of Done asks for remains owed with the others in
+`ROADMAP.md`'s table: `scripts/power.sh` needs sudo and cannot run
+non-interactively.
+
 ## The attention fork
 
 The question is whether a chunk needs the descoped tile kernels
@@ -476,14 +577,18 @@ So this is one phase followed by an optional one, rather than a fork:
    install the greedy and sampled smokes reproduce their frozen digests
    (`b2f16611...`, `0c383ac0...`) at chunk spans 32, 128 and 512.
 
-2. **Batched `moe_phase1_gate_up_act_u16load`**, against
+2. ~~**Batched `moe_phase1_gate_up_act_u16load`**, against
    `dsv4_prefill_moe_phase1_pairs_int2`'s route-list shape. Parity must be
-   EXACT against M separate calls, mutation-checked, per this repo's habit.
-3. **Batched `moe_phase2_down_reduce_k8`.** The reduce order is a
+   EXACT against M separate calls, mutation-checked, per this repo's habit.~~
+   **Done 2026-08-18** as `moe_prefill_phase1_routes_int4` (see "What
+   steps 2 and 3 actually shipped" above).
+3. ~~**Batched `moe_phase2_down_reduce_k8`.** The reduce order is a
    correctness constraint, not a style choice (AGENTS.md Gotcha 27): a
    batched phase 2 must reduce each token's slots in the router's ranking,
    independently per token, or output becomes a function of the chunk
-   boundary.
+   boundary.~~ **Done 2026-08-18** as the FUSED
+   `moe_prefill_phase2_fused_int4` -- rank-ordered per token by
+   construction, which is what makes the Gotcha 27 proof trivial.
 4. **Batched attention** (Phase B above), if the measured 1.4x is not
    enough. One kernel, widening `attention_decode_partial` to hold M query
    rows per KV chunk. Not the descoped tile pipeline.

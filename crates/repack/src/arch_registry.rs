@@ -72,6 +72,19 @@ const SUPPORTED_GGUF: &[(&str, ModelFamily)] = &[
     // llama.cpp named Qwen 3.6's converter after the 3.5 series it shares a
     // graph with; a real Qwen 3.6 GGUF says this, not "qwen36".
     ("qwen35moe", ModelFamily::QwenGdnMoe),
+    // The DENSE half of that same architecture. Read off
+    // `ornith-ai/Ornith-1.5-9B-GGUF/Ornith-1.5-9B-Q4_K_M.gguf`, the first
+    // published `qwen35` file: 427 tensors, `block_count 32`, all types
+    // already executable (Q4_K / Q6_K / F32).
+    //
+    // **NOTE HOW CLOSE THIS IS TO THE ROW ABOVE, and that the lookup is exact
+    // equality rather than a prefix match** -- the same trap the two HF rows
+    // carry, one table down. `qwen35` under a `starts_with` would resolve
+    // every dense file to `QwenGdnMoe`: a baseline with 256 experts and a
+    // decode flow with a router in it, i.e. fluent wrong output rather than
+    // an error. `the_two_qwen_gguf_architectures_do_not_collapse_into_one_family`
+    // pins both directions.
+    ("qwen35", ModelFamily::QwenGdnDense),
     // Promoted out of the planned table after Mixtral showed that the memory
     // ceiling needs FINE-GRAINED MoE rather than merely MoE (AGENTS.md
     // Gotcha 36). Shares the `llama` decode flow; see `ModelFamily::Qwen3Moe`

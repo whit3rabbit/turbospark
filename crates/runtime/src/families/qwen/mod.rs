@@ -5,14 +5,56 @@
 mod attn;
 mod batched;
 mod dense;
+mod dflash;
+mod dflash_draft;
 mod moe;
 mod mtp;
 mod state;
 
 pub(crate) use attn::{encode_full_attention_block, encode_linear_block, QkNormConvention};
+pub(crate) use dflash::DflashState;
+pub use dflash::{install_has_dflash, DflashDraftPolicy, DFLASH_BLOCK};
 pub(crate) use mtp::MtpState;
 pub use mtp::{install_has_mtp_head, MtpDraftPolicy};
 pub(crate) use state::RealQwenState;
+
+/// Both drafters a speculative caller can ask for at open, as ONE argument
+/// so the opener signatures do not grow a parameter per future drafter.
+///
+/// At most one is ever non-`Off` in practice -- a round drafts with one
+/// model -- but nothing here enforces that, because the interesting
+/// failure (both asked for) is better refused where the drafter is chosen,
+/// with the caller's names in the message.
+#[derive(Clone, Copy, Debug)]
+pub struct DraftPolicies {
+    pub mtp: MtpDraftPolicy,
+    pub dflash: DflashDraftPolicy,
+}
+
+impl DraftPolicies {
+    pub fn off() -> Self {
+        Self {
+            mtp: MtpDraftPolicy::Off,
+            dflash: DflashDraftPolicy::Off,
+        }
+    }
+
+    /// Both from the environment, for `open_with_slot_policy`.
+    pub fn from_env() -> Self {
+        Self {
+            mtp: MtpDraftPolicy::from_env(),
+            dflash: DflashDraftPolicy::from_env(),
+        }
+    }
+
+    /// Only the MTP head asked for; what every existing MTP probe passes.
+    pub fn mtp(policy: MtpDraftPolicy) -> Self {
+        Self {
+            mtp: policy,
+            dflash: DflashDraftPolicy::Off,
+        }
+    }
+}
 
 use std::time::Instant;
 
@@ -141,6 +183,7 @@ impl RealForwardRunner {
             scratch,
             kv,
             qwen,
+            dflash,
             streamers,
             slot_buffers,
             routed_blobs,
@@ -156,6 +199,7 @@ impl RealForwardRunner {
             &self.scratch,
             &mut self.kv,
             self.real_qwen.as_ref().expect("checked above"),
+            self.real_dflash.as_ref(),
             &mut self.streamers,
             &self.slot_buffers,
             &self.routed_blobs,
@@ -262,6 +306,27 @@ impl RealForwardRunner {
                     inter,
                     use_silu,
                 )?;
+                // THE DFLASH2 AUX CAPTURE, at the one point where this
+                // layer's OUTPUT exists: the residual stream after the FFN
+                // join. `docs/DFLASH2.md` pins which boundary "layer 5"
+                // means (the OUTPUT of layer 5), and the capture lands in
+                // the fc input's own layout. Zero dispatches when no
+                // drafter is open; five small strided copies per token when
+                // one is.
+                if let Some(d) = dflash {
+                    if let Some(aux) = d.aux_slot(layer) {
+                        gpu::encode_dflash_copy_rows(
+                            context,
+                            &pass,
+                            (&scratch.x, 0),
+                            (&d.capture, (aux * hidden) as u64 * 2),
+                            1,
+                            hidden as u32,
+                            (d.shape.aux_count * hidden) as u32,
+                        )
+                        .map_err(gpu_err)?;
+                    }
+                }
                 continue;
             }
 
@@ -364,6 +429,11 @@ impl RealForwardRunner {
         phases.final_cb_gpu_nanos += (pass.commit_and_wait_with_gpu_time() * 1e9) as u64;
         phases.final_wait_nanos += t_wait.elapsed().as_nanos() as u64;
         self.kv.advance();
+        // The capture's bookkeeping, after the pass that filled it: one row
+        // at this position, ready for a prime or a context write.
+        if let Some(d) = self.real_dflash.as_mut() {
+            d.note_capture(position, 1);
+        }
 
         if self.skip_head {
             return Ok(());

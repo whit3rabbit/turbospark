@@ -54,7 +54,10 @@ pub use model_io::{
 
 pub use error::RuntimeError;
 #[cfg(target_os = "macos")]
-pub use families::qwen::{install_has_mtp_head, MtpDraftPolicy};
+pub use families::qwen::{
+    install_has_dflash, install_has_mtp_head, DflashDraftPolicy, DraftPolicies, MtpDraftPolicy,
+    DFLASH_BLOCK,
+};
 pub use power::{
     low_power_mode_enabled, physical_memory, rate_control_for, recommended_max_working_set,
     resolve_profile, stepped_cap, thermal_level, PowerProfile, RateControl, ThermalLevel,

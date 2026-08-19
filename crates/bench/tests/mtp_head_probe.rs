@@ -77,9 +77,12 @@ fn what_the_mtp_head_predicts() {
     let dir = std::path::PathBuf::from(
         std::env::var_os("TURBOSPARK_MTP_INSTALL_DIR").expect("TURBOSPARK_MTP_INSTALL_DIR"),
     );
-    let (mut runner, tokenizer) =
-        open_model_runner_speculative(&dir, 16, runtime::MtpDraftPolicy::Fixed(MTP_DEPTH))
-            .expect("install opens");
+    let (mut runner, tokenizer) = open_model_runner_speculative(
+        &dir,
+        16,
+        runtime::DraftPolicies::mtp(runtime::MtpDraftPolicy::Fixed(MTP_DEPTH)),
+    )
+    .expect("install opens");
     let vocab = runner.vocab_size();
     assert!(runner.mtp_draft_depth() > 0, "install carries no head");
 
@@ -455,9 +458,12 @@ fn dumps_one_draft_step_for_the_bisect() {
     let install = std::path::PathBuf::from(
         std::env::var_os("TURBOSPARK_MTP_INSTALL_DIR").expect("TURBOSPARK_MTP_INSTALL_DIR"),
     );
-    let (mut runner, _) =
-        open_model_runner_speculative(&install, 16, runtime::MtpDraftPolicy::Fixed(MTP_DEPTH))
-            .expect("install opens");
+    let (mut runner, _) = open_model_runner_speculative(
+        &install,
+        16,
+        runtime::DraftPolicies::mtp(runtime::MtpDraftPolicy::Fixed(MTP_DEPTH)),
+    )
+    .expect("install opens");
     let vocab = runner.vocab_size();
 
     let mut logits = vec![LogitValue::from_f32(0.0); vocab];

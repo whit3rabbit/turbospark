@@ -19,12 +19,27 @@ pub enum Gemma4Bucket {
     /// A multi-token-prediction head tensor (`mtp.*`), ingested as a
     /// speculative drafter (`docs/MTP_SPECULATIVE.md`).
     MtpHead,
+    /// A DFlash2 block-diffusion drafter tensor (`dflash.*`), the second
+    /// speculative drafter this walk knows (`docs/DFLASH2.md`).
+    DflashDrafter,
     /// Tensor not matching known language model or multimodal patterns.
     Unknown,
 }
 
 /// The prefix the multi-token-prediction head's tensors carry.
 pub const MTP_PREFIX: &str = "mtp.";
+
+/// The prefix a DFlash2 drafter's tensors carry once they reach a walk.
+///
+/// **The published repository spells its tensors BARE** (`layers.0.*`,
+/// `fc.weight`, `candidate_selector.*`), which no `classify_for_family` arm
+/// could ever match: the CALLER renames the shard header's names onto this
+/// prefix before handing the pair to `Gemma4Shards`, for the same reason the
+/// official Qwen shard's `model.language_model.` spelling is renamed by being
+/// read through the conversion instead. Keeping the namespace HERE rather
+/// than classifying bare names is what keeps `fc.weight` -- a name any model
+/// could carry -- from colliding with a future trunk tensor.
+pub const DFLASH_PREFIX: &str = "dflash.";
 
 /// Extracts the layer index from a layer-scoped tensor name (e.g. `...layers.12...`).
 pub fn layer_index(name: &str) -> Option<usize> {
@@ -90,6 +105,14 @@ pub fn classify_for_family(name: &str, num_layers: usize, family: ModelFamily) -
     // name rather than ingesting a head no decode flow would look for.
     if name.starts_with(MTP_PREFIX) && family == ModelFamily::QwenGdnDense {
         return Gemma4Bucket::MtpHead;
+    }
+    // THE DFLASH2 DRAFTER, gated the same way and for the same reason: the
+    // one published checkpoint (`incoai/Qwen3.8-27B-DFlash2`) targets this
+    // family's 27B model, and a `dflash.` tensor under any other family is a
+    // pairing this walk has never seen, which `Unknown` refuses by name
+    // rather than ingesting a drafter no decode flow would look for.
+    if name.starts_with(DFLASH_PREFIX) && family == ModelFamily::QwenGdnDense {
+        return Gemma4Bucket::DflashDrafter;
     }
     // THIS LIST IS READ OFF REAL CHECKPOINT HEADERS, one prefix per
     // publisher's naming, and it is not guesswork: an unlisted prefix falls

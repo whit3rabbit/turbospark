@@ -28,7 +28,7 @@ pub fn orchestrate_gguf_checkpoint(
             family: arch.family.as_str(),
         });
     }
-    let plan = plan::classify(header, arch.family)?;
+    let plan = plan::classify(header, arch.family, arch.num_layers as usize)?;
     let stride = plan::expert_stride(header, &arch, &plan)?;
     let (resident, lossy_narrowing) =
         transcode::resident_entries(header, source, &arch, &plan.resident)?;
@@ -64,7 +64,7 @@ pub fn write_gguf_install_streamed(
             family: arch.family.as_str(),
         });
     }
-    let plan = plan::classify(header, arch.family)?;
+    let plan = plan::classify(header, arch.family, arch.num_layers as usize)?;
     let stride = plan::expert_stride(header, &arch, &plan)?;
     progress(&format!(
         "classified {} resident tensors, {} routed layers, expert stride {stride}",

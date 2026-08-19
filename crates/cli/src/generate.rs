@@ -405,6 +405,7 @@ pub(crate) enum SpeculationPlan {
 /// while reporting success.
 pub(crate) fn resolve_speculation(
     requested: invocation::Speculation,
+    drafter: invocation::SpeculativeDrafter,
     engine_blocker: Option<String>,
     deterministic: bool,
 ) -> Result<SpeculationPlan, String> {
@@ -421,14 +422,20 @@ pub(crate) fn resolve_speculation(
         None
     };
 
+    // `auto` resolves to the drafter's own default block, which is not one
+    // number: the MTP head's measured optimum is 2 (`docs/MTP.md`) and the
+    // DFlash2 drafter's trained block is 8 (`docs/DFLASH2.md`).
+    let auto_block = match drafter {
+        invocation::SpeculativeDrafter::Mtp => runtime::DEFAULT_SPECULATION_BLOCK,
+        invocation::SpeculativeDrafter::Dflash => runtime::DFLASH_BLOCK,
+    };
+
     match (requested, unavailable) {
         (invocation::Speculation::Off, _) => Ok(SpeculationPlan::Disabled { reason: None }),
         (invocation::Speculation::Auto, Some(reason)) => Ok(SpeculationPlan::Disabled {
             reason: Some(reason),
         }),
-        (invocation::Speculation::Auto, None) => Ok(SpeculationPlan::Enabled {
-            block: runtime::DEFAULT_SPECULATION_BLOCK,
-        }),
+        (invocation::Speculation::Auto, None) => Ok(SpeculationPlan::Enabled { block: auto_block }),
         (invocation::Speculation::Block(_), Some(reason)) => Err(format!(
             "--speculative was asked for but cannot be served: {reason}"
         )),
@@ -611,10 +618,27 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
             invocation::ExpertCacheSlots::Auto => runtime::ExpertCacheSlots::Auto,
             invocation::ExpertCacheSlots::Fixed(n) => runtime::ExpertCacheSlots::Fixed(n as usize),
         },
-        match request.speculation {
-            invocation::Speculation::Off => runtime::MtpDraftPolicy::Off,
-            invocation::Speculation::Auto => runtime::MtpDraftPolicy::Auto,
-            invocation::Speculation::Block(n) => runtime::MtpDraftPolicy::Fixed(n as usize),
+        // The drafter the flag named owns the request; the other is pinned
+        // OFF so a dflash-carrying install never silently opens BOTH
+        // drafters' state.
+        match request.speculative_drafter {
+            invocation::SpeculativeDrafter::Mtp => {
+                runtime::DraftPolicies::mtp(match request.speculation {
+                    invocation::Speculation::Off => runtime::MtpDraftPolicy::Off,
+                    invocation::Speculation::Auto => runtime::MtpDraftPolicy::Auto,
+                    invocation::Speculation::Block(n) => runtime::MtpDraftPolicy::Fixed(n as usize),
+                })
+            }
+            invocation::SpeculativeDrafter::Dflash => runtime::DraftPolicies {
+                mtp: runtime::MtpDraftPolicy::Off,
+                dflash: match request.speculation {
+                    invocation::Speculation::Off => runtime::DflashDraftPolicy::Off,
+                    invocation::Speculation::Auto => runtime::DflashDraftPolicy::Auto,
+                    invocation::Speculation::Block(n) => {
+                        runtime::DflashDraftPolicy::Fixed(n as usize)
+                    }
+                },
+            },
         },
     )
     .map_err(|e| e.to_string())?;
@@ -655,7 +679,11 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
     // runner owns the refusals it mirrors.
     let speculation = resolve_speculation(
         request.speculation,
-        runner.speculation_blocker(),
+        request.speculative_drafter,
+        match request.speculative_drafter {
+            invocation::SpeculativeDrafter::Mtp => runner.speculation_blocker(),
+            invocation::SpeculativeDrafter::Dflash => runner.dflash_speculation_blocker(),
+        },
         shaping.is_deterministic(),
     )?;
     if !request.quiet {
@@ -797,7 +825,7 @@ pub(crate) fn role_name(role: Role) -> &'static str {
 #[cfg(test)]
 mod speculation_policy {
     use super::{resolve_speculation, SpeculationPlan};
-    use invocation::Speculation;
+    use invocation::{Speculation, SpeculativeDrafter};
 
     // Verbatim shapes of what `RealForwardRunner::speculation_blocker`
     // returns. The CLI does not construct these -- it forwards whatever the
@@ -813,13 +841,18 @@ mod speculation_policy {
         // No head. The caller named a block, so this is an ERROR: they are
         // measuring or have chosen deliberately, and a run that quietly did
         // not speculate would be recorded as the speculative number.
-        let err = resolve_speculation(Speculation::Block(2), Some(NO_HEAD.to_string()), true)
-            .expect_err("a named block on a headless install must fail");
+        let err = resolve_speculation(
+            Speculation::Block(2),
+            SpeculativeDrafter::Mtp,
+            Some(NO_HEAD.to_string()),
+            true,
+        )
+        .expect_err("a named block on a headless install must fail");
         assert!(err.contains("no multi-token-prediction head"), "got: {err}");
 
         // Sampled. Refused rather than downgraded to greedy, which would
         // change what the model writes while reporting success.
-        let err = resolve_speculation(Speculation::Block(2), None, false)
+        let err = resolve_speculation(Speculation::Block(2), SpeculativeDrafter::Mtp, None, false)
             .expect_err("a named block on a sampled run must fail");
         assert!(err.contains("temperature 0"), "got: {err}");
     }
@@ -833,8 +866,13 @@ mod speculation_policy {
             (Some(MOE.to_string()), false),
         ];
         for (blocker, deterministic) in cases {
-            let plan = resolve_speculation(Speculation::Auto, blocker, deterministic)
-                .expect("auto never fails; it declines");
+            let plan = resolve_speculation(
+                Speculation::Auto,
+                SpeculativeDrafter::Mtp,
+                blocker,
+                deterministic,
+            )
+            .expect("auto never fails; it declines");
             match plan {
                 SpeculationPlan::Disabled { reason: Some(_) } => {}
                 other => panic!("auto must warn and continue, got {other:?}"),
@@ -844,7 +882,8 @@ mod speculation_policy {
 
     #[test]
     fn auto_speculates_when_the_install_and_the_settings_allow_it() {
-        let plan = resolve_speculation(Speculation::Auto, None, true).expect("serviceable");
+        let plan = resolve_speculation(Speculation::Auto, SpeculativeDrafter::Mtp, None, true)
+            .expect("serviceable");
         assert_eq!(
             plan,
             SpeculationPlan::Enabled {
@@ -868,8 +907,13 @@ mod speculation_policy {
             (None, false),
             (Some(NOT_INT4.to_string()), false),
         ] {
-            let plan = resolve_speculation(Speculation::Off, blocker.clone(), deterministic)
-                .expect("off never fails");
+            let plan = resolve_speculation(
+                Speculation::Off,
+                SpeculativeDrafter::Mtp,
+                blocker.clone(),
+                deterministic,
+            )
+            .expect("off never fails");
             assert_eq!(
                 plan,
                 SpeculationPlan::Disabled { reason: None },
@@ -880,7 +924,8 @@ mod speculation_policy {
 
     #[test]
     fn a_named_block_is_honoured_rather_than_replaced_by_the_default() {
-        let plan = resolve_speculation(Speculation::Block(7), None, true).expect("serviceable");
+        let plan = resolve_speculation(Speculation::Block(7), SpeculativeDrafter::Mtp, None, true)
+            .expect("serviceable");
         assert_eq!(plan, SpeculationPlan::Enabled { block: 7 });
     }
 }

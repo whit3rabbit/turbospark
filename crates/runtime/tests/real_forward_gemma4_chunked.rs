@@ -1,8 +1,11 @@
 #![cfg(target_os = "macos")]
 //! Chunked prefill on the real-checkpoint Gemma 4 flow
-//! (`docs/BATCHED_PREFILL.md` step 1): a whole chunk of prompt tokens runs
-//! its attention-and-router half for every token into ONE command buffer
-//! per layer, and its routed half per token.
+//! (`docs/BATCHED_PREFILL.md` step 1, and steps 2-3's batched routed
+//! half): a whole chunk of prompt tokens runs its attention-and-router
+//! half for every token into ONE command buffer per layer, and its
+//! routed half either per token (step 1) or as one route-list dispatch
+//! pair per union-bounded sub-batch (steps 2 and 3, the
+//! `set_routed_batch_prefill` cases below).
 //!
 //! **The bar is byte-identity against the SEQUENTIAL path, not coherence.**
 //! Two chunked runs agree with each other whenever both are wrong the same
@@ -211,4 +214,113 @@ fn a_chunk_starting_off_the_kv_cursor_is_refused() {
         .prefill_chunk(&PROMPT, 4, &mut logits)
         .expect_err("a chunk must start where the KV cache is");
     assert!(err.contains("non-sequential"), "unexpected message: {err}");
+}
+
+// --- The batched routed half (`docs/BATCHED_PREFILL.md` steps 2 and 3) ---
+//
+// Same bar as above -- byte-identity against the SEQUENTIAL path -- with
+// the route-list dispatch pair replacing the per-token routed loop. The
+// setter is the `MFERENCE_ROUTED_BATCH` seam; setting the env var instead
+// would race the other test threads in this process.
+
+#[test]
+fn a_batched_routed_chunked_prefill_is_byte_identical_to_the_sequential_one() {
+    let dir = temp_dir();
+    let arch = build_install(&dir, 16);
+    let mut runner = RealForwardRunner::open_with_options(&dir, arch, 4096, 16)
+        .expect("real-naming install opens");
+    runner.set_routed_batch_prefill(true);
+
+    let expected = sequential_prefill(&mut runner, &PROMPT);
+    assert!(
+        expected.iter().all(|v| v.is_finite()),
+        "the reference itself must be finite before anything is compared to it"
+    );
+    // The same discriminating-fixture guard the step-1 case carries: a
+    // constant reference vector compares equal to itself under any driver.
+    assert!(
+        expected.iter().any(|&v| v != expected[0]),
+        "degenerate reference logits: this fixture cannot discriminate"
+    );
+    let actual = chunked_prefill(&mut runner, &PROMPT, PROMPT.len());
+    assert_eq!(
+        actual, expected,
+        "batched routed prefill must reproduce the sequential logits exactly"
+    );
+}
+
+#[test]
+fn the_chunk_boundary_does_not_move_the_logits_under_the_batched_routed_half() {
+    // The Gotcha 27 question at chunk scale: the fused phase 2 reduces
+    // per token in router-rank order, so no span may move the answer --
+    // and every span must still agree with the SEQUENTIAL reference,
+    // never just with another batched run.
+    let dir = temp_dir();
+    let arch = build_install(&dir, 16);
+    let mut runner = RealForwardRunner::open_with_options(&dir, arch, 4096, 16)
+        .expect("real-naming install opens");
+    runner.set_routed_batch_prefill(true);
+
+    let expected = sequential_prefill(&mut runner, &PROMPT);
+    for chunk in [1usize, 2, 3, 5, 11] {
+        let actual = chunked_prefill(&mut runner, &PROMPT, chunk);
+        assert_eq!(
+            actual, expected,
+            "chunk span {chunk} changed the logits under the batched routed half"
+        );
+    }
+}
+
+#[test]
+fn a_small_cache_shrinks_the_batched_sub_batches_without_moving_the_logits() {
+    // Eight slots against a fixture whose union across the micro-batch
+    // can exceed it: the driver must shrink the sub-batch (the greedy
+    // union bound) rather than hand `ExpertCache::plan` more experts
+    // than it has slots, which asserts rather than degrades.
+    let dir = temp_dir();
+    let arch = build_install(&dir, 16);
+    let mut runner = RealForwardRunner::open_with_options(&dir, arch, 4096, 8)
+        .expect("real-naming install opens");
+    runner.set_routed_batch_prefill(true);
+
+    let expected = sequential_prefill(&mut runner, &PROMPT);
+    let actual = chunked_prefill(&mut runner, &PROMPT, PROMPT.len());
+    assert_eq!(
+        actual, expected,
+        "the union-bounded sub-batch shrink must be a throughput choice only"
+    );
+}
+
+#[test]
+fn decoding_continues_correctly_after_a_batched_routed_prefill() {
+    let dir = temp_dir();
+    let arch = build_install(&dir, 16);
+    let mut runner = RealForwardRunner::open_with_options(&dir, arch, 4096, 16)
+        .expect("real-naming install opens");
+
+    let mut sequential = Vec::new();
+    sequential_prefill(&mut runner, &PROMPT);
+    for (step, &token) in [3i32, 7, 2].iter().enumerate() {
+        let mut logits = vec![f16::from_f32(0.0); VOCAB as usize];
+        runner
+            .produce(token, PROMPT.len() + step, &mut logits)
+            .expect("decode after sequential prefill succeeds");
+        sequential.push(logits.iter().map(|v| v.to_f32()).collect::<Vec<_>>());
+    }
+
+    runner.set_routed_batch_prefill(true);
+    let mut batched = Vec::new();
+    chunked_prefill(&mut runner, &PROMPT, 4);
+    for (step, &token) in [3i32, 7, 2].iter().enumerate() {
+        let mut logits = vec![f16::from_f32(0.0); VOCAB as usize];
+        runner
+            .produce(token, PROMPT.len() + step, &mut logits)
+            .expect("decode after batched chunked prefill succeeds");
+        batched.push(logits.iter().map(|v| v.to_f32()).collect::<Vec<_>>());
+    }
+
+    assert_eq!(
+        batched, sequential,
+        "decode diverged after a batched routed prefill"
+    );
 }
