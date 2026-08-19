@@ -164,7 +164,13 @@ fn main() -> std::process::ExitCode {
             }
         }
         let rate = rate_control_for(power_profile, max_tokens_per_sec);
-        return run_model_mode(&install_dir, case_filter.as_deref(), slots, rate);
+        return run_model_mode(
+            &install_dir,
+            case_filter.as_deref(),
+            slots,
+            power_profile,
+            rate,
+        );
     }
     let tokenizer_dir = first;
     let real_mode = args.next().as_deref() == Some("--real");
@@ -382,6 +388,7 @@ fn run_model_mode(
     install_dir: &str,
     case_filter: Option<&str>,
     slots: usize,
+    profile: PowerProfile,
     rate: RateControl,
 ) -> std::process::ExitCode {
     use turbospark_bench::memory::AppMemorySampler;
@@ -439,6 +446,23 @@ fn run_model_mode(
         params.max_context,
         params.max_new,
         slots
+    );
+    // The RESOLVED power pair, for the same reason and one worse: an arm of
+    // a `scripts/power.sh` A/B is named entirely outside this process, so
+    // without this line a `--power-profile efficiency` run and an uncapped
+    // one differ only in the tok/s column -- a label with no tell in the
+    // artifact it labels. That is how `COOLING=max` was once passed to a
+    // script that ignored it and reported success. BOTH values are printed
+    // because neither implies the other: an explicit `--max-tokens-per-sec`
+    // overrides the profile's own cap without changing whether the thermal
+    // ladder runs, so `performance` at 15 tok/s and `efficiency` at 15
+    // tok/s are different runs that agree on every other column.
+    println!(
+        "  power_profile={} max_tok_s={} thermal_stepping={}",
+        profile.as_str(),
+        rate.max_tokens_per_sec
+            .map_or_else(|| "-".to_string(), |r| format!("{r}")),
+        rate.thermal_probe.is_some()
     );
     println!(
         "{:<18} {:>10} {:>10} {:>8} {:>9} {:>8} {:>9}",

@@ -36,15 +36,34 @@ MODEL="${MODEL:-$HOME/models/gemma4.gturbo}"
 RUST_BENCH="${RUST_BENCH:-./target/release/turbospark-bench}"
 OUT="${OUT:-/tmp/mference-power}"
 LABEL="${LABEL:-unlabelled}"
-# ARMS names the comparison axis, comma separated. Two kinds of token are
-# understood and they can NOT be mixed in one run, because the arm name is
-# a single column in rows.tsv:
+# ARMS names the comparison axis, comma separated. THREE kinds of token are
+# understood, because the arm name is a single column in rows.tsv:
 #   default, utility                        -> MFERENCE_READ_QOS (Phase P1)
 #   performance, balanced, efficiency       -> --power-profile   (Phase P2)
+#   a bare number, e.g. 30 or 12.5          -> --max-tokens-per-sec
 # "default" means "vary nothing", spelled as a token rather than as the
 # empty string: macOS ships bash 3.2, where `read -ra` on an empty line
 # leaves a ZERO-element array and indexing it under `set -u` aborts.
 # QOS is still read so the Phase P1 invocations reproduce unchanged.
+#
+# THE QoS AXIS MAY NOT BE MIXED WITH THE OTHER TWO, and that is refused
+# below rather than left to this comment: `utility` sets an environment
+# variable where the others pass a flag, so a run containing both varies
+# two things at once and the single arm column cannot say which.
+#
+# THE NUMERIC ARMS ARE THE RATE-CAP SWEEP (`ARMS=default,30,20,15,10`), and
+# `default` doubles as their uncapped reference, so they need no new token.
+# What makes them a clean axis is that the bench's profile stays at its
+# `performance` default, and `runtime::rate_control_for` then builds a cap
+# with NO thermal probe -- a numeric arm measures pacing alone, with the
+# ladder out of the picture. They exist because the shipped `efficiency`
+# cap of 10 tok/s measured 14.9% of the energy for 51.5% of the throughput
+# and there were only TWO points on that curve to place it against
+# (docs/POWER_BASELINE.md, "Forced cooling: the A/B, run").
+#
+# One cosmetic wart: the summary at the bottom pipes through `sort`, which
+# orders the arm column lexically. Caps of equal digit width therefore read
+# in ascending order and a run mixing `5` with `30` does not.
 ARMS="${ARMS:-${QOS:-default}}"
 CASES="${CASES:-short-explanation medium-review long-synthesis}"
 # COOLING is an axis ORTHOGONAL to ARMS, and it gets its own column rather
@@ -87,6 +106,69 @@ COOLING="${COOLING:-auto}"
 # small sampler overhead. Do not compare these watts to a figure taken at
 # a different interval.
 INTERVAL_MS=200
+
+# Classifies one ARMS token. ONE function, called by both the guard below
+# and `run_arm`'s dispatch, because a guard that classifies differently
+# from the code it guards is not a guard -- it would admit a token the
+# dispatcher goes on to refuse, mid-capture and after the fan pin.
+arm_kind() {
+  case "$1" in
+    default)                             echo neutral ;;
+    utility)                             echo qos ;;
+    performance | balanced | efficiency) echo profile ;;
+    *)
+      # A bare number is a --max-tokens-per-sec cap. `=~` rather than a
+      # `*[!0-9.]*` glob, which would accept "1.2.3"; bash 3.2 has `=~`
+      # and needs the pattern UNQUOTED. The awk test is what rejects 0,
+      # 0.0 and 00 alike, and it mirrors the bench's own `is_finite() &&
+      # > 0.0` rather than inventing a second rule.
+      if [[ $1 =~ ^[0-9]+([.][0-9]+)?$ ]] &&
+         awk -v v="$1" 'BEGIN { exit !(v > 0) }'; then
+        echo cap
+      else
+        echo unknown
+      fi
+      ;;
+  esac
+}
+
+# ARMS is validated HERE -- before `sudo -v`, before the fans are pinned,
+# and before a single token is generated.
+#
+# It used to be validated only inside `run_arm`, which echoes and returns 1
+# on an unknown arm; the loop at the bottom ignores that return, so a typo
+# produced a capture that ran for twenty minutes, exited 0, printed a
+# summary, and was silently missing one arm of the comparison. A result
+# that reads as complete and is not is worse than a failure, and it is the
+# same species as a COOLING=max that pinned nothing: the guard has to sit
+# where the mistake is made, not where its consequence shows up.
+#
+# It also sits AHEAD of the binary and install checks below, which is not
+# the obvious order. Those probe the ENVIRONMENT; this validates an env var
+# the caller typed, and needs nothing built to do it. Keeping it first is
+# what makes `ARMS=bogus scripts/power.sh` a one-second test on any
+# checkout -- and a guard nobody can cheaply exercise is how this class of
+# bug survives in the first place.
+IFS=',' read -ra ARM_LIST <<< "$ARMS"
+SAW_QOS=""
+SAW_FLAG=""
+for arm in "${ARM_LIST[@]}"; do
+  case "$(arm_kind "$arm")" in
+    neutral) ;;
+    qos) SAW_QOS=1 ;;
+    profile | cap) SAW_FLAG=1 ;;
+    *)
+      echo "unknown arm '$arm' in ARMS=$ARMS" >&2
+      echo "want default|utility|performance|balanced|efficiency, or a positive number" >&2
+      exit 2
+      ;;
+  esac
+done
+if [ -n "$SAW_QOS" ] && [ -n "$SAW_FLAG" ]; then
+  echo "ARMS=$ARMS mixes the QoS axis (utility) with a profile or a rate cap" >&2
+  echo "one axis per capture: the arm is a single column in rows.tsv" >&2
+  exit 2
+fi
 
 [ -x "$RUST_BENCH" ] || { echo "missing or not executable: $RUST_BENCH" >&2; exit 2; }
 [ -d "$MODEL" ] || { echo "missing install: $MODEL" >&2; exit 2; }
@@ -237,12 +319,17 @@ run_arm() {
   # default, so "default" runs the binary exactly as it ships.
   local qos_env=""
   local arm_args=()
-  case "$ARM" in
-    default) ;;
-    utility) qos_env="utility" ;;
-    performance | balanced | efficiency) arm_args=(--power-profile "$ARM") ;;
+  case "$(arm_kind "$ARM")" in
+    neutral) ;;
+    qos) qos_env="utility" ;;
+    profile) arm_args=(--power-profile "$ARM") ;;
+    cap) arm_args=(--max-tokens-per-sec "$ARM") ;;
     *)
-      echo "  unknown arm $ARM (want default|utility|performance|balanced|efficiency)"
+      # Unreachable: the guard above refuses an unknown arm before the
+      # capture starts. Kept as a backstop rather than deleted, because
+      # its absence is what let a bad token get this far in the first
+      # place -- but it must never be how a typo is DISCOVERED.
+      echo "  unknown arm $ARM reached run_arm; the ARMS guard did not fire"
       return 1
       ;;
   esac
@@ -349,12 +436,11 @@ integrate() {
 }
 
 # ARMS may name SEVERAL arms, comma separated
-# (`ARMS=performance,efficiency`). They alternate WITHIN each pair rather
-# than running as two consecutive batches, because consecutive batches
-# carry thermal drift and the paired delta is the only comparison worth
-# making (CLAUDE.local.md).
-IFS=',' read -ra ARM_LIST <<< "$ARMS"
-
+# (`ARMS=performance,efficiency`, `ARMS=default,30,20,15,10`). They
+# alternate WITHIN each pair rather than running as two consecutive
+# batches, because consecutive batches carry thermal drift and the paired
+# delta is the only comparison worth making (CLAUDE.local.md). ARM_LIST was
+# split and validated up at the guards, before anything was pinned.
 for case_id in $CASES; do
   echo "== $case_id"
   # One discarded arm per case. The bench warms the GPU inside its own

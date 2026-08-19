@@ -733,13 +733,24 @@ a different lever than this one.
   visible where the row is published.
 - **A wall-power number**, which needs an external meter rather than the
   battery gauge.
-- **A sustained J/token row for Muse Glimmer 30B.** Its unconstrained cost is
-  established (n=2, ~2.02-2.04 J/token) and its governed cost is unstable;
-  what is missing is the cost on a machine that can hold Nominal for a whole
-  case, which needs more thermal headroom than this laptop has.
-- **A fair `performance,efficiency` A/B on Muse Glimmer 30B.** Run
-  2026-08-16 and inconclusive: the performance arm throttled on every pair and
-  its 25% spread swallows the efficiency arm's range. Needs hardware that can
-  hold Nominal in performance mode for a whole case. What the run did settle
-  is that the cap holds 10.00 tok/s to 0.01% and keeps the machine out of
-  thermal governance entirely.
+- **A rate-cap SWEEP.** `READING_SPEED_TOK_PER_SEC` is 10.0 and the A/B above
+  prices it at 14.9% of the energy for 51.5% of the throughput, which is a
+  poor trade -- but whether the cap is badly PLACED or the idea is badly
+  SHAPED cannot be told from two points on a curve. `scripts/power.sh` takes
+  numeric arms since 2026-08-18 (`ARMS=default,30,20,15,10`), so the sweep is
+  one interleaved capture under pinned fans. Run it on `gemma4` rather than
+  Muse Glimmer: the constant is global and gemma4 decodes ~44 tok/s, so the
+  arms span 4.4x against 1.9x. `SERIOUS_TOK_PER_SEC` and
+  `CRITICAL_TOK_PER_SEC` are a THERMAL ladder and this does not settle them --
+  their job is shedding heat, not saving joules, and Gotcha 28's trap means an
+  energy curve cannot be read as a ladder placement.
+
+Two entries were retired here on 2026-08-18 rather than left standing, because
+the cooled A/B answered both and a "still owed" item that has quietly been
+paid is the rot mode this repo has already audited for once. **A sustained
+J/token row for Muse Glimmer 30B** and **a fair `performance,efficiency` A/B
+on it** both named the same missing condition -- hardware that can hold
+Nominal in performance mode for a whole case -- and forced cooling supplied
+it. See "Forced cooling: the A/B, run" above. What remains genuinely open on
+that install is a row on a chassis that holds Nominal on its OWN, since a
+pinned-fan row is an upper-headroom operating point no user occupies.

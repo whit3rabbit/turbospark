@@ -409,12 +409,16 @@ LABEL=battery OUT=/tmp/power-gemma MODEL=~/models/gemma4.gturbo scripts/power.sh
 
 # Same harness driving an interleaved A/B. Arms alternate WITHIN each
 # pair, not as two consecutive batches, because consecutive batches carry
-# thermal drift. `ARMS` names the axis and understands two kinds of token,
-# which may NOT be mixed in one run (the arm is one column of rows.tsv):
-# `default`/`utility` set MFERENCE_READ_QOS (Phase P1, measured and
+# thermal drift. `ARMS` names the axis and understands THREE kinds of
+# token: `default`/`utility` set MFERENCE_READ_QOS (Phase P1, measured and
 # rejected -- it loses on both joules and tok/s, kept as a documented dead
-# end), and `performance`/`balanced`/`efficiency` pass --power-profile
-# (Phase P2). `QOS` is still read as the old spelling of `ARMS`.
+# end), `performance`/`balanced`/`efficiency` pass --power-profile
+# (Phase P2), and a BARE NUMBER passes --max-tokens-per-sec. The QoS axis
+# may not be mixed with the other two and the script refuses it (the arm is
+# one column of rows.tsv, so a run varying two things cannot say which).
+# An unknown arm is refused UP FRONT, before sudo and before the fans are
+# pinned: `ARMS=bogus scripts/power.sh` is a one-second test that needs
+# nothing built. `QOS` is still read as the old spelling of `ARMS`.
 LABEL=battery MODEL=~/models/gemma4.gturbo CASES=short-explanation \
   ARMS=default,utility scripts/power.sh 3
 
@@ -424,6 +428,19 @@ LABEL=battery MODEL=~/models/gemma4.gturbo CASES=short-explanation \
 # several times longer than a performance arm's.
 LABEL=ac MODEL=~/models/gemma4.gturbo CASES=short-explanation \
   ARMS=performance,efficiency scripts/power.sh 3
+
+# The rate-cap SWEEP, which is what the numeric arms are for. That gate
+# above measured the shipped `efficiency` cap of 10 tok/s at 14.9% of the
+# energy for 51.5% of the throughput -- a poor trade, and unplaceable with
+# only two points on the curve. `default` is the uncapped reference arm.
+# Run it under COOLING=max: a governed arm's J/token is a thermal control
+# loop's output rather than the cap's (Gotcha 28). gemma4 rather than a
+# bigger install because the constants in `crates/runtime/src/power.rs` are
+# GLOBAL and this one decodes ~44 tok/s, so the arms span a 4.4x range
+# instead of museGlimmer's 1.9x. ~20 min; note each run pays the cap twice,
+# since the discarded warmup is paced with the same RateControl.
+LABEL=ac MODEL=~/models/gemma4.gturbo CASES=short-explanation COOLING=max \
+  ARMS=default,30,20,15,10 OUT=/tmp/power-cap-sweep scripts/power.sh 3
 
 # GGUF intake (ROADMAP Phase G). Reads only the HEADER of the real
 # published GGUFs -- a few MB off a 20-27 GB file, ~4 s each -- and checks it
