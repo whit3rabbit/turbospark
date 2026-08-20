@@ -34,7 +34,9 @@ crates/bench/
 |   +-- ternary_quality_gate.rs # Quality gate for Ternary-Bonsai-27B (2-bit), the same family's third checkpoint
 |   +-- ternary_memory_oracle.rs # Its oracle; the peak is Qwen3.8's on HALF the weights (Gotcha 40)
 |   +-- mtp_accept_length_probe.rs # MTP head as drafter: accepted vs the block table's break-even
-|   \-- mtp_head_probe.rs    # What the head predicts, when the probe above reads zero
+|   +-- mtp_head_probe.rs    # What the head predicts, when the probe above reads zero
+|   +-- dflash2_accept_length_probe.rs # The BLOCK drafter's sweep, plus the losslessness floor
+|   \-- dflash2_bisect_probe.rs # Localizes a broken drafter; one runner, one variable
 \-- prompts/
     +-- quality-v1/         # Quality gate reference prompt fixtures
     |   \-- assistant-reference.txt
@@ -172,6 +174,29 @@ TURBOSPARK_MTP_INSTALL_DIR=~/models/qwen38-27b-mtp.gturbo \
   cargo test -p turbospark-bench --test mtp_accept_length_probe --release -- --ignored --nocapture
 TURBOSPARK_MTP_INSTALL_DIR=~/models/qwen38-27b-mtp.gturbo \
   cargo test -p turbospark-bench --test mtp_head_probe --release -- --ignored --nocapture
+
+# The BLOCK drafter's equivalent (docs/DFLASH2.md). ~4.5 min: four blocks on
+# a code prompt plus a prose arm on the serving block. It sweeps WALL CLOCK
+# beside the deterministic columns, and only the latter are quotable -- the
+# accept lengths and rollback counts reproduce to the last digit across runs
+# while the speedup column moves with desktop load (Gotcha 3).
+#
+# TWO ASSERTIONS RATHER THAN THE BYTE-IDENTITY ONE IT USED TO MAKE. Every
+# block size must generate IDENTICAL text to every other, which is strictly
+# stronger and has no length below which it stops looking; and each arm must
+# match the SEQUENTIAL stream for a floor of 64 tokens, printing where it
+# actually diverged. Byte-identity to sequential is measured FALSE past a few
+# hundred tokens (the batched verify runs a different kernel from a decode
+# step), so a floor is what is true -- and the floor is 64 against an observed
+# 154 because the divergence point is data dependent.
+#
+# It samples through `selection::select` under the same greedy ShapingConfig
+# `real_model.rs` builds, not a local argmax, so a sampler regression is
+# visible to it. Routing it there moved no deterministic column.
+TURBOSPARK_DFLASH2_INSTALL_DIR=~/models/qwen38-27b-dflash2.gturbo \
+  cargo test -p turbospark-bench --test dflash2_accept_length_probe --release -- --ignored --nocapture
+TURBOSPARK_DFLASH2_INSTALL_DIR=~/models/qwen38-27b-dflash2.gturbo \
+  cargo test -p turbospark-bench --test dflash2_bisect_probe --release -- --ignored --nocapture
 
 # Sensitivity proof for the gate above: APFS-clone the install, shift one
 # quantization level in a strided subset of the routed experts, re-measure.

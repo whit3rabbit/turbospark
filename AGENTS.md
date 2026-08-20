@@ -437,7 +437,12 @@ LABEL=ac MODEL=~/models/gemma4.gturbo CASES=short-explanation \
 # script refuses it by name. A greedy row is NOT comparable to the sampled
 # rows in docs/POWER_BASELINE.md; it is comparable to the other arm of its
 # own capture, which is the whole point. Needs an install carrying a drafter
-# (`mtp.*` or `dflash.*`); `--speculative auto` reads the index and picks.
+# (`mtp.*` or `dflash.*`). NOTE `turbospark-bench`'s `--speculative auto`
+# reads the index and drives whichever drafter it finds, which is NOT what
+# `turbospark-check` does since 2026-08-20: there `auto` enables an MTP head
+# and only REPORTS a DFlash2 one, because that drafter measures 0.88x on
+# prose (Gotcha 35's rule -- a harness that MEASURES a knob must not sense
+# it, and here the harness is the arm that has to be able to turn it on).
 LABEL=ac MODEL=~/models/qwen38-27b-dflash2.gturbo CASES=short-explanation \
   COOLING=max ARMS=nospec,spec scripts/power.sh 2
 

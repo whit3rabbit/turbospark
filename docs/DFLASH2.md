@@ -217,7 +217,12 @@ Built:
   the branch in `speculative.rs`, so a block drafter never sees
   `draft_step`.
 - *Surface*: `--speculative-drafter mtp|dflash`, `auto` resolving to each
-  drafter's own default block.
+  drafter's own default block. **`auto` DETECTS this drafter and does not
+  ENABLE it** (section 8): it resolves to `mtp` even on a DFlash2-only
+  install and reports a note naming the flag, so DFlash2 needs
+  `--speculative-drafter dflash`. `turbospark-bench`'s own `--speculative`
+  is the exception and drives whichever drafter the index carries, because
+  it is the harness that has to be able to turn it on.
 - *Artifact*: `~/models/qwen38-27b-dflash2.gturbo` (mlx trunk from
   `mlx-community/Qwen3.8-27B-4bit`, drafter from
   `incoai/Qwen3.8-27B-DFlash2` at a pinned revision), written by

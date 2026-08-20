@@ -1522,7 +1522,51 @@ same call. **That pair was deferred for one session on the strength of 23/24
 top-1 and was worth 21 to 75 percent of the speedup** (block 2 1.37x -> 1.66x,
 block 8 0.67x -> 1.17x), which retired two claims this file used to carry:
 that the chain saturates at ~2.05 accepted, and that the long blocks lose.
-Both were properties of the deviation. Step 4 (batched verify) is unstarted;
-note the break-even column those ratios are read against is still a projection
-of what a batched verify would cost, and step 4 is what measures it.
+Both were properties of the deviation.
+
+**STEP 4 (THE BATCHED VERIFY) IS BUILT AND CLOCKED, and it pays 1.44x at
+block 2 rather than the projected 1.66x.** The 13% is a term no composite on
+either page had: a rejected batched round cannot stop early, so on a family
+with a recurrent half it restores a whole gated-DeltaNet snapshot and replays
+the accepted prefix, and the odds of paying that rise with the block (10% at
+2, 84% at 8, 98% at 15). So batching BEATS a sequential verify at block 2 and
+LOSES to it at 8 and 15, which inverts the projection's shape. Any block-size
+table on a recurrent architecture needs a rollback term before it is believed.
+
+## The DFlash2 block drafter: shipped, and OPT-IN because it is 0.88x on prose
+
+`docs/DFLASH2.md`. The second drafter for this family and the first BLOCK
+drafter in the engine: it proposes a whole block in ONE forward pass rather
+than a token at a time. It runs, it is lossless in the sense that matters
+(a proposal is kept only when it equals the target's own argmax), and it is
+**not enabled by default**.
+
+That last part is the deviation worth stating. `--speculative auto` DETECTS
+the drafter off the resident index and reports it, naming
+`--speculative-drafter dflash`, but resolves to the MTP path and allocates no
+DFlash2 state. Measured through the shipped generation loop over 600-token
+generations on `Qwen3.8-27B`: block 2 runs **1.30-1.47x on a predictable code
+prompt and 0.88-0.97x on prose**, and the trained block of 8 runs 0.84x and
+0.48x. A default that makes the common workload slower and costs +17.4%
+J/token has to be asked for. The MTP head keeps its `auto`; its measurement is
+the opposite way up. `turbospark-bench`'s own `--speculative` is the exception
+and drives whichever drafter the index carries, because the harness that
+measures a knob is the one caller that must be able to turn it on.
+
+**IT IS NOT BIT-IDENTICAL TO A SEQUENTIAL DECODE OVER A LONG GENERATION, and
+that claim used to be made.** A batched verify runs `dequant_int4_gemm_simd`
+where a decode step runs `dequant_int4_gemv_simd`; the two accumulate
+differently, so at a near-tie the argmax falls the other way and the streams
+part -- measured at 154 tokens on the protocol's prose case. Every BLOCK SIZE
+still produces identical text to every other, which is what says the kernel
+pair rather than the batch width is the variable. Both streams are the model's
+own greedy output and neither is degraded; a caller needing a stream
+reproducible token-for-token against non-speculative decoding leaves
+speculation off.
+
+Server wiring is absent (`turbospark-server` exposes no speculation at all),
+and one review finding stays unfixed: the unconditional batched-prefill
+scratch in `RealGemmaState`. Its sibling, the per-prompt-token
+`commit_and_wait` in the drafter's priming, was measured on a 2,940-token
+prompt at 0.96x prefill and closed.
 

@@ -379,6 +379,22 @@ cargo test -p turbospark-runtime
     per round fell to 1.10 and rollbacks went from 9 of 90 rounds to 62 of
     123, which reads as a verdict about MTP rather than as a bug in the pass.
 
+    **THE DFLASH2 AUX CAPTURE IN THIS PASS HAS THE SAME SHAPE AND IS NOW
+    PINNED.** The hook copies M residual rows into the drafter's capture and
+    calls `note_capture(start_position, batch)`; a wrong aux column, row
+    stride or base still fills the buffer with plausible residuals, leaves the
+    trunk correct, and moves only the DRAFTER's quality.
+    `the_batched_capture_writes_what_the_per_token_hook_writes`
+    (`tests/real_forward_qwen35_dflash.rs`) drafts off a cache filled two ways
+    -- all per-token primes, against a tail written by this hook -- and
+    requires the draft logits to agree. It is a TOLERANCE with a
+    discriminating arm beside it, not an equality: on the real install the
+    batched and sequential kernels do not agree to the bit, and on this
+    fixture they happen to agree exactly, so the wrong-rows arm is what gives
+    the bound teeth. All three mutations above redden it and NOTHING else in
+    the file -- the losslessness case and the frozen digest stay green under
+    every one, which is this hazard demonstrated rather than asserted.
+
     **A ROLLBACK IS NOT FREE HERE AND NO COMPOSITE MODELS IT.** A sequential
     verify stops at the first rejection, so it has absorbed exactly the
     committed tokens and never rewinds. A batched pass cannot stop early, so a
