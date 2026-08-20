@@ -540,16 +540,22 @@ and applies them if present, which for this checkpoint are 1.0 / 1.0 / none
 
 Items 1-5 of this list are DONE (section 6). What remains:
 
-1. **A quiet-machine throughput row.** The wall-clock numbers in section 6
-   were taken while an interactive session was rendering on the same
-   machine, which AGENTS.md Gotcha 43 measured as an 11% error on a
-   published power row and a 37% spread between identical arms. The
-   acceptance figures are deterministic and need no re-run; the seconds do,
-   and the block ORDERING cannot be called until they are.
-2. **`scripts/power.sh`.** Needs sudo and a quiet machine, so the owner runs
-   it. The interesting question is specific to this drafter: it adds a
-   5-layer forward per round, so it should cost watts per token even where
-   it saves them per token committed.
+1. **A quiet-machine row for the BLOCK ORDERING specifically.** Partly
+   answered already: the power A/B above is a quiet, fan-pinned capture and
+   reproduces tok/s to 0.2%, so `nospec` against `spec` AT BLOCK 2 is
+   settled (22.31 against 19.71). What it does not cover is the four-block
+   sweep, whose seconds still come from the probe on a machine rendering an
+   interactive session -- an 11% error on a published power row and a 37%
+   spread between identical arms, by Gotcha 43. The acceptance and rollback
+   columns are deterministic and need no re-run; only the ordering of 7 / 8 /
+   4 / 2 by wall clock is still uncalled.
+2. ~~**`scripts/power.sh`.**~~ DONE, and its table is in section 6 above:
+   0.88x throughput at +17.4% J/token on prose, watts moving only 3.5%, so
+   the energy penalty is the TIME penalty. It is what priced the opt-in
+   default. (This entry said "the owner runs it" for a while after the owner
+   had run it -- a hedge that outlives its own resolution is worse than a
+   wrong number, because nobody re-checks a sentence that admits
+   uncertainty.)
 3. **A second workload.** Every acceptance figure here is one greedy prose
    prompt whose per-position acceptance is 0.93-1.00, well above the
    published GSM8K numbers. Both the block-8-beats-block-7 result and the
