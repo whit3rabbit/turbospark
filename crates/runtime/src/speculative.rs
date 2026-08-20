@@ -185,6 +185,19 @@ pub fn run_raw_completion_speculative_cancellable<P: SpeculativeProducer>(
         sink.generated as u64,
     )?;
 
+    // THE ACCEPTANCE COUNTER, off by default and env-gated like every other
+    // diagnostic here (`MFERENCE_PHASES`, `MFERENCE_ROUTER_HIST`). It exists
+    // because nothing else can see this loop's acceptance: both probes
+    // hand-roll their own round, so a drafter that measures 7.09 of 8 in
+    // `dflash2_accept_length_probe` and 0 here reads as a THROUGHPUT
+    // mystery rather than as the acceptance gap it is.
+    let stats = std::env::var("MFERENCE_SPEC_STATS").as_deref() == Ok("1");
+    let mut stat_rounds = 0usize;
+    let mut stat_accepted = 0usize;
+    let mut stat_offered = vec![0usize; block];
+    let mut stat_matched = vec![0usize; block];
+    let mut stat_rollbacks = 0usize;
+
     'rounds: loop {
         // `next` was sampled but not yet fed. Committing it first is what
         // makes the invariant below hold: after every round,
@@ -279,6 +292,7 @@ pub fn run_raw_completion_speculative_cancellable<P: SpeculativeProducer>(
         //    step-dependent shaping rule sees the same inputs on both paths.
         let mut accepted = 0usize;
         let mut stopped: Option<StopReason> = None;
+        stat_rounds += 1;
         for (i, &proposal) in proposals.iter().enumerate() {
             let row = &batch_logits[i * vocab_size..(i + 1) * vocab_size];
             let target = select(
@@ -287,8 +301,14 @@ pub fn run_raw_completion_speculative_cancellable<P: SpeculativeProducer>(
                 &sink.history,
                 sink.generated as u64,
             )?;
+            if stats {
+                stat_offered[i] += 1;
+            }
             if target != proposal {
                 break;
+            }
+            if stats {
+                stat_matched[i] += 1;
             }
             accepted += 1;
             if let Some(stop) = sink.commit(proposal, cancel, &mut on_progress) {
@@ -296,6 +316,7 @@ pub fn run_raw_completion_speculative_cancellable<P: SpeculativeProducer>(
                 break;
             }
         }
+        stat_accepted += accepted;
         // What the engine has absorbed beyond the committed stream. A
         // committed proposal advanced `history`; a rejected or unreached one
         // did not, and neither did a proposal that stopped the run.
@@ -310,6 +331,7 @@ pub fn run_raw_completion_speculative_cancellable<P: SpeculativeProducer>(
         //    whole gated-DeltaNet state, because a recurrent layer cannot be
         //    rewound incrementally the way a KV cursor can.
         if committed < proposals.len() {
+            stat_rollbacks += 1;
             producer.rollback(&point);
             let keep = committed + 1;
             producer
@@ -339,6 +361,27 @@ pub fn run_raw_completion_speculative_cancellable<P: SpeculativeProducer>(
             &sink.history,
             sink.generated as u64,
         )?;
+    }
+
+    if stats {
+        let per_round = stat_accepted as f64 / stat_rounds.max(1) as f64;
+        eprintln!(
+            "[spec-stats] rounds={stat_rounds} accepted/round={per_round:.2} \
+             committed/round={:.2} rollbacks={stat_rollbacks}",
+            per_round + 1.0
+        );
+        let curve: Vec<String> = stat_offered
+            .iter()
+            .zip(&stat_matched)
+            .map(|(o, m)| {
+                if *o == 0 {
+                    "-".to_string()
+                } else {
+                    format!("{:.2}", *m as f64 / *o as f64)
+                }
+            })
+            .collect();
+        eprintln!("[spec-stats] per-position acceptance: {}", curve.join(" "));
     }
 
     Ok(RawDecodeResult {

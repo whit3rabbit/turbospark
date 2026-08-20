@@ -11,8 +11,8 @@ use std::path::Path;
 
 use model_io::{ArchConfig, ModelFamily};
 use runtime::{
-    run_raw_completion, GenerationConfig, RateControl, RawDecodeProgress, RealForwardRunner,
-    StopReason,
+    run_raw_completion, run_raw_completion_speculative, GenerationConfig, RateControl,
+    RawDecodeProgress, RealForwardRunner, StopReason,
 };
 use selection::ShapingConfig;
 use tokenizer::{Message, MfTokenizer, Role};
@@ -296,9 +296,40 @@ pub fn open_model_runner_for_protocol(
     model_dir: &Path,
     slots: usize,
 ) -> Result<(RealForwardRunner, MfTokenizer, ProtocolParameters), String> {
+    open_model_runner_for_protocol_speculative(model_dir, slots, runtime::DraftPolicies::off())
+}
+
+/// [`open_model_runner_for_protocol`] with a drafter.
+///
+/// A SEPARATE entry point rather than a parameter on the one above, for the
+/// reason `RealForwardRunner::open_with_options` is separate from
+/// `open_with_slot_policy` (AGENTS.md Gotcha 35 and crate Gotcha 5): every
+/// MEASURING caller -- both memory oracles, all four quality gates -- goes
+/// through the plain one and therefore cannot acquire a drafter by
+/// inheriting a default. A frozen peak or a frozen digest that silently
+/// gained a speculative decode would be a different measurement wearing the
+/// old row's name.
+pub fn open_model_runner_for_protocol_speculative(
+    model_dir: &Path,
+    slots: usize,
+    speculation: runtime::DraftPolicies,
+) -> Result<(RealForwardRunner, MfTokenizer, ProtocolParameters), String> {
     let arch = repack::peek_manifest_arch(model_dir)?;
     let params = protocol_parameters(arch.family);
-    let (runner, tokenizer) = open_with_arch(model_dir, arch, slots, params.max_context)?;
+    let tokenizer = MfTokenizer::load_from_dir(model_dir).map_err(|e| {
+        format!(
+            "failed to load a tokenizer from {}: {e}",
+            model_dir.display()
+        )
+    })?;
+    let runner = RealForwardRunner::open_with_options_and_speculation(
+        model_dir,
+        arch,
+        params.max_context as usize,
+        slots,
+        speculation,
+    )
+    .map_err(|e| e.to_string())?;
     Ok((runner, tokenizer, params))
 }
 
@@ -368,6 +399,68 @@ pub fn run_protocol_case_with_budget(
     max_context: u32,
     max_new: u32,
 ) -> Result<CaseResult, String> {
+    run_protocol_case_speculating(
+        runner,
+        tokenizer,
+        case,
+        sampler,
+        rate,
+        max_context,
+        max_new,
+        ProtocolShaping::Sampled,
+        None,
+    )
+}
+
+/// How a protocol case shapes its sampling.
+///
+/// A SEPARATE axis from speculation, and separating them is the whole point:
+/// `Greedy` alone is a valid arm, so a speculation A/B can hold shaping
+/// FIXED and vary one thing. Folding greedy into `--speculative` (which the
+/// first draft of this did) makes `spec` against `nospec` a two-variable
+/// comparison whose delta nobody can attribute.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProtocolShaping {
+    /// The frozen protocol's own: temperature 0.2, top-k 64, top-p 0.95, a
+    /// seed per case. Every published row is this.
+    Sampled,
+    /// Temperature EXACTLY 0. The only shaping speculation can serve.
+    Greedy,
+}
+
+/// [`run_protocol_case_with_budget`] with the shaping and an optional
+/// speculative block spelled out.
+///
+/// **`Greedy` IS A DIFFERENT WORKLOAD from the frozen protocol**, not a
+/// switch flipped on it: it changes the token stream, the stop points and
+/// therefore the token count, so its joules-per-token is NOT comparable to
+/// any row in `docs/POWER_BASELINE.md`. It is comparable to ANOTHER greedy
+/// arm in the same capture, which is what a drafter A/B needs.
+///
+/// Speculation with `Sampled` is REFUSED rather than promoted to greedy.
+/// Acceptance here is `argmax(target) == proposal`, exact only at
+/// temperature 0; `run_raw_completion_speculative` refuses it too, and
+/// silently changing the caller's shaping to make their flag work is how a
+/// measurement harness reports one workload under another's name.
+#[allow(clippy::too_many_arguments)]
+pub fn run_protocol_case_speculating(
+    runner: &mut RealForwardRunner,
+    tokenizer: &MfTokenizer,
+    case: &ProtocolCase,
+    sampler: &mut AppMemorySampler,
+    rate: RateControl,
+    max_context: u32,
+    max_new: u32,
+    shaping_mode: ProtocolShaping,
+    speculative_block: Option<usize>,
+) -> Result<CaseResult, String> {
+    if speculative_block.is_some() && shaping_mode != ProtocolShaping::Greedy {
+        return Err(
+            "speculative decoding needs greedy shaping (acceptance is exact only at \
+             temperature 0); pass --shaping greedy alongside --speculative"
+                .to_string(),
+        );
+    }
     // Chat-format exactly as the CLI does: the dialect template renders
     // the turn markup (and its own <bos>, hence add_bos false).
     let messages = [Message::new(Role::User, case.content)];
@@ -376,15 +469,21 @@ pub fn run_protocol_case_with_budget(
         .map_err(|e| format!("chat template: {e}"))?;
     let prompt_ids = tokenizer.encode(&rendered, false);
 
-    let config = GenerationConfig {
-        shaping: ShapingConfig::new(
+    let shaping = match shaping_mode {
+        ProtocolShaping::Sampled => ShapingConfig::new(
             PROTOCOL_TEMPERATURE,
             PROTOCOL_TOP_K,
             Some(PROTOCOL_TOP_P),
             1.0,
             Some(case.seed),
-        )
-        .map_err(|e| e.to_string())?,
+        ),
+        // EXACTLY 0.0 and not the smoke's 0.0001: `is_deterministic`
+        // compares against zero, so 0.0001 walks the full sampler and the
+        // speculative loop refuses it.
+        ProtocolShaping::Greedy => ShapingConfig::new(0.0, 1, None, 1.0, Some(case.seed)),
+    };
+    let config = GenerationConfig {
+        shaping: shaping.map_err(|e| e.to_string())?,
         max_new_tokens: max_new,
         stop_strings: Vec::new(),
         extra_stop_tokens: Vec::new(),
@@ -395,22 +494,42 @@ pub fn run_protocol_case_with_budget(
     // the tokenizer dialect's (`RealForwardRunner::vocab_size`).
     let vocab_size = runner.vocab_size();
     sampler.sample();
-    let result = run_raw_completion(
-        runner,
-        tokenizer,
-        &prompt_ids,
-        &config,
-        max_context,
-        vocab_size,
-        |event| {
-            // The Swift runtime samples every 8th decoded token.
-            if let RawDecodeProgress::Token { index, .. } = event {
-                if index % 8 == 0 {
-                    sampler.sample();
-                }
+    // The Swift runtime samples every 8th decoded token. Shared by both
+    // loops so the memory sampling cadence is not an axis of the A/B.
+    let progress = |event: RawDecodeProgress| {
+        if let RawDecodeProgress::Token { index, .. } = event {
+            if index % 8 == 0 {
+                sampler.sample();
             }
-        },
-    )
+        }
+    };
+    let result = match speculative_block {
+        None => run_raw_completion(
+            runner,
+            tokenizer,
+            &prompt_ids,
+            &config,
+            max_context,
+            vocab_size,
+            progress,
+        ),
+        // REFUSES rather than falling back when the install cannot serve a
+        // drafter, which is the same contract `--speculative` gives on the
+        // CLI: a power capture that quietly measured the non-speculative
+        // engine and reported it under a `spec` arm label is the exact
+        // failure `scripts/power.sh`'s resolved-parameter header exists to
+        // prevent.
+        Some(block) => run_raw_completion_speculative(
+            runner,
+            tokenizer,
+            &prompt_ids,
+            &config,
+            max_context,
+            vocab_size,
+            block,
+            progress,
+        ),
+    }
     .map_err(|e| e.to_string())?;
     sampler.sample();
 

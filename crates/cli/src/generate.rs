@@ -376,6 +376,43 @@ pub(crate) fn stream_turn(
     Ok((reply, result))
 }
 
+/// Which drafter an install actually carries, for
+/// [`invocation::SpeculativeDrafter::Auto`].
+///
+/// Reads the resident INDEX -- the leading index region of
+/// `model_weights.bin`, kilobytes, not the weights -- and asks the same two
+/// presence predicates `RealForwardRunner::open` asks. It is deliberately a
+/// presence check and NOT a can-it-run check: whether the verify pass can
+/// serve this install is `speculation_blocker`'s question, asked after the
+/// open with the full architecture in hand, and answering it twice in two
+/// places is how the two answers drift apart.
+///
+/// An install with BOTH resolves to `Mtp`, which is what the default was
+/// before `Auto` existed, so no run that worked changes. An install with
+/// NEITHER also resolves to `Mtp`, so the "no drafter" message a user sees
+/// is the one they have always seen; the DFlash2 message would name a
+/// tensor they have never heard of.
+///
+/// An unreadable index resolves to `Mtp` rather than failing: this function
+/// picks a drafter, and `open` is entitled to be the one that refuses a
+/// broken install.
+fn resolve_drafter(
+    requested: invocation::SpeculativeDrafter,
+    model_dir: &std::path::Path,
+) -> invocation::SpeculativeDrafter {
+    if requested != invocation::SpeculativeDrafter::Auto {
+        return requested;
+    }
+    let Ok(index) = model_io::load_resident_index(&model_dir.join("model_weights.bin")) else {
+        return invocation::SpeculativeDrafter::Mtp;
+    };
+    if !runtime::install_has_mtp_head(&index) && runtime::install_has_dflash(&index) {
+        invocation::SpeculativeDrafter::Dflash
+    } else {
+        invocation::SpeculativeDrafter::Mtp
+    }
+}
+
 /// What `open_session` decided about speculative decoding, resolved once.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SpeculationPlan {
@@ -426,8 +463,11 @@ pub(crate) fn resolve_speculation(
     // number: the MTP head's measured optimum is 2 (`docs/MTP.md`) and the
     // DFlash2 drafter's trained block is 8 (`docs/DFLASH2.md`).
     let auto_block = match drafter {
-        invocation::SpeculativeDrafter::Mtp => runtime::DEFAULT_SPECULATION_BLOCK,
-        invocation::SpeculativeDrafter::Dflash => runtime::DFLASH_BLOCK,
+        invocation::SpeculativeDrafter::Dflash => runtime::DFLASH_SERVING_BLOCK,
+        // `Auto` is resolved to a concrete drafter by `resolve_drafter`
+        // before this is called; it shares MTP's block if one ever arrives
+        // here, which is the block this engine defaulted to before DFlash2.
+        _ => runtime::DEFAULT_SPECULATION_BLOCK,
     };
 
     match (requested, unavailable) {
@@ -610,6 +650,14 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
     // `--power-profile` does: `crates/invocation` is pure and may not read
     // the machine's memory or the install's expert stride, and both are
     // needed to size the cache.
+    //
+    // THE DRAFTER IS RESOLVED FIRST, because the policies below name exactly
+    // one and the wrong one is indistinguishable from an install with no
+    // drafter at all: pinned at `Mtp`, a DFlash2 install reported "carries no
+    // multi-token-prediction head" and decoded sequentially with a working
+    // drafter on disk. `Auto` reads the resident index, which is the index
+    // region alone and not the weights.
+    let drafter = resolve_drafter(request.speculative_drafter, model_dir);
     let runner = RealForwardRunner::open_with_slot_policy_and_speculation(
         model_dir,
         arch,
@@ -621,7 +669,7 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
         // The drafter the flag named owns the request; the other is pinned
         // OFF so a dflash-carrying install never silently opens BOTH
         // drafters' state.
-        match request.speculative_drafter {
+        match drafter {
             invocation::SpeculativeDrafter::Mtp => {
                 runtime::DraftPolicies::mtp(match request.speculation {
                     invocation::Speculation::Off => runtime::MtpDraftPolicy::Off,
@@ -629,16 +677,19 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
                     invocation::Speculation::Block(n) => runtime::MtpDraftPolicy::Fixed(n as usize),
                 })
             }
-            invocation::SpeculativeDrafter::Dflash => runtime::DraftPolicies {
-                mtp: runtime::MtpDraftPolicy::Off,
-                dflash: match request.speculation {
-                    invocation::Speculation::Off => runtime::DflashDraftPolicy::Off,
-                    invocation::Speculation::Auto => runtime::DflashDraftPolicy::Auto,
-                    invocation::Speculation::Block(n) => {
-                        runtime::DflashDraftPolicy::Fixed(n as usize)
-                    }
-                },
-            },
+            // `Auto` is resolved above and cannot reach here.
+            invocation::SpeculativeDrafter::Auto | invocation::SpeculativeDrafter::Dflash => {
+                runtime::DraftPolicies {
+                    mtp: runtime::MtpDraftPolicy::Off,
+                    dflash: match request.speculation {
+                        invocation::Speculation::Off => runtime::DflashDraftPolicy::Off,
+                        invocation::Speculation::Auto => runtime::DflashDraftPolicy::Auto,
+                        invocation::Speculation::Block(n) => {
+                            runtime::DflashDraftPolicy::Fixed(n as usize)
+                        }
+                    },
+                }
+            }
         },
     )
     .map_err(|e| e.to_string())?;
@@ -679,17 +730,28 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
     // runner owns the refusals it mirrors.
     let speculation = resolve_speculation(
         request.speculation,
-        request.speculative_drafter,
-        match request.speculative_drafter {
-            invocation::SpeculativeDrafter::Mtp => runner.speculation_blocker(),
+        // The RESOLVED drafter, because `auto` takes its block from the
+        // drafter's own default and the two differ: 2 for the MTP head, 8
+        // for DFlash2.
+        drafter,
+        match drafter {
             invocation::SpeculativeDrafter::Dflash => runner.dflash_speculation_blocker(),
+            _ => runner.speculation_blocker(),
         },
         shaping.is_deterministic(),
     )?;
     if !request.quiet {
         match &speculation {
             SpeculationPlan::Enabled { block } => {
-                eprintln!("speculative decoding: on, block {block}");
+                // The DRAFTER is named, not just the block. Two drafters
+                // serve this family and they have different shapes and
+                // different measured optima, so a throughput number from
+                // this run is unreadable without knowing which one ran.
+                let which = match drafter {
+                    invocation::SpeculativeDrafter::Dflash => "dflash2 (block drafter)",
+                    _ => "mtp head (step drafter)",
+                };
+                eprintln!("speculative decoding: on, {which}, block {block}");
             }
             // A WARNING and not silence. An install carrying a drafter and
             // decoding one token at a time with nothing said is the exact
@@ -824,8 +886,76 @@ pub(crate) fn role_name(role: Role) -> &'static str {
 /// interesting combination is reachable as a pair of booleans.
 #[cfg(test)]
 mod speculation_policy {
-    use super::{resolve_speculation, SpeculationPlan};
+    use super::{resolve_drafter, resolve_speculation, SpeculationPlan};
     use invocation::{Speculation, SpeculativeDrafter};
+
+    /// `auto` takes its block from the drafter's OWN default, and the two
+    /// differ: 2 for the MTP head (`docs/MTP.md`'s measured optimum) and 8
+    /// for DFlash2 (its trained block).
+    ///
+    /// What this pins is the MAPPING, and it asserts the two blocks differ so
+    /// the fixture can see a drafter that was never resolved. It does NOT
+    /// cover the CALL SITE, which needs a runner -- and the call site is
+    /// exactly where this went wrong for one build: `open_session` passed the
+    /// unresolved `Auto` and the CLI printed "dflash2 (block drafter), block
+    /// 2", a shape neither drafter was measured at. Only a real-model run
+    /// catches that one.
+    #[test]
+    fn auto_takes_each_drafters_own_block() {
+        let block_of = |d| match resolve_speculation(Speculation::Auto, d, None, true) {
+            Ok(SpeculationPlan::Enabled { block }) => block,
+            other => panic!("expected an enabled plan, got {other:?}"),
+        };
+        assert_eq!(
+            block_of(SpeculativeDrafter::Mtp),
+            runtime::DEFAULT_SPECULATION_BLOCK
+        );
+        assert_eq!(
+            block_of(SpeculativeDrafter::Dflash),
+            runtime::DFLASH_SERVING_BLOCK
+        );
+        // THE TWO SERVING DEFAULTS NOW AGREE AT 2, independently measured:
+        // the MTP head's optimum (`docs/MTP.md`) and DFlash2's two-workload
+        // sweep (`DFLASH_SERVING_BLOCK`) landed on the same number, because
+        // what decides both is this engine's rollback cost rather than
+        // either drafter. So this test pins the MAPPING and can NO LONGER
+        // see an unresolved drafter by its block alone; `resolve_drafter`
+        // below covers that, and only a real-model run covers the call
+        // site. Asserted as an equality so the day they diverge is the day
+        // the discriminating check can come back, rather than a day nobody
+        // notices.
+        assert_eq!(
+            runtime::DEFAULT_SPECULATION_BLOCK,
+            runtime::DFLASH_SERVING_BLOCK,
+            "the serving defaults diverged; restore a discriminating assertion here"
+        );
+    }
+
+    /// An EXPLICIT drafter is passed through untouched, because it is a
+    /// promise the caller made to themselves: `--speculative-drafter mtp` on
+    /// a DFlash2 install must reach the MTP blocker and hard-fail there,
+    /// never be silently rerouted to the drafter that happens to be present.
+    #[test]
+    fn an_explicit_drafter_is_never_re_resolved() {
+        let missing = std::path::Path::new("/nonexistent/turbospark/install");
+        for named in [SpeculativeDrafter::Mtp, SpeculativeDrafter::Dflash] {
+            assert_eq!(resolve_drafter(named, missing), named);
+        }
+    }
+
+    /// An install whose index cannot be read resolves to `Mtp` rather than
+    /// failing: this function picks a drafter, and `open` is entitled to be
+    /// the one that refuses a broken install.
+    #[test]
+    fn an_unreadable_index_resolves_to_the_pre_existing_default() {
+        assert_eq!(
+            resolve_drafter(
+                SpeculativeDrafter::Auto,
+                std::path::Path::new("/nonexistent/turbospark/install")
+            ),
+            SpeculativeDrafter::Mtp
+        );
+    }
 
     // Verbatim shapes of what `RealForwardRunner::speculation_blocker`
     // returns. The CLI does not construct these -- it forwards whatever the

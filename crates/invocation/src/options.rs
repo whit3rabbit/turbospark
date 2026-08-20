@@ -143,8 +143,8 @@ pub const OPTIONS: &[OptionDecl] = &[
         takes_value: true,
         is_required: false,
         is_mode_selecting: false,
-        usage_hint: "drafter --speculative drives: mtp or dflash (default mtp; dflash needs \
-                     dflash.* tensors in the install)",
+        usage_hint: "drafter --speculative drives: auto, mtp or dflash (default auto, \
+                     which reads the install's own index and prefers mtp if it has both)",
     },
     OptionDecl {
         flag: "--prefill-chunk",

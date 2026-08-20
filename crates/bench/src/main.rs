@@ -125,6 +125,12 @@ fn main() -> std::process::ExitCode {
         // the A/B exists to measure.
         let mut power_profile = PowerProfile::Performance;
         let mut max_tokens_per_sec: Option<f64> = None;
+        // `None` is off; `Some(0)` is "the drafter's own default block".
+        let mut speculative: Option<usize> = None;
+        // `None` reads the install's index; `Some(true)` forces dflash.
+        let mut drafter: Option<bool> = None;
+        // A SEPARATE axis from speculation, so a spec A/B holds it fixed.
+        let mut shaping = turbospark_bench::real_model::ProtocolShaping::Sampled;
         while let Some(flag) = args.next() {
             match flag.as_str() {
                 "--case" => match args.next() {
@@ -150,6 +156,48 @@ fn main() -> std::process::ExitCode {
                         return std::process::ExitCode::from(2);
                     }
                 },
+                // DEFAULTS OFF, EXPLICITLY. AGENTS.md Gotcha 35's rule, and
+                // the reason is sharper here than for the power profile: a
+                // drafter changes the shaping to greedy (see
+                // `run_protocol_case_speculating`), so a bench that
+                // speculated by default would silently retire every sampled
+                // row this harness has ever produced.
+                "--speculative" => match args.next().as_deref() {
+                    Some("off") => speculative = None,
+                    Some("auto") => speculative = Some(0),
+                    Some(v) => match v.parse::<usize>() {
+                        Ok(n) if n > 0 => speculative = Some(n),
+                        _ => {
+                            eprintln!("--speculative needs off, auto or a block above 0");
+                            return std::process::ExitCode::from(2);
+                        }
+                    },
+                    None => {
+                        eprintln!("--speculative needs off, auto or a block above 0");
+                        return std::process::ExitCode::from(2);
+                    }
+                },
+                "--shaping" => match args.next().as_deref() {
+                    Some("protocol") => {
+                        shaping = turbospark_bench::real_model::ProtocolShaping::Sampled
+                    }
+                    Some("greedy") => {
+                        shaping = turbospark_bench::real_model::ProtocolShaping::Greedy
+                    }
+                    _ => {
+                        eprintln!("--shaping needs protocol or greedy");
+                        return std::process::ExitCode::from(2);
+                    }
+                },
+                "--speculative-drafter" => match args.next().as_deref() {
+                    Some("auto") => drafter = None,
+                    Some("mtp") => drafter = Some(false),
+                    Some("dflash") => drafter = Some(true),
+                    _ => {
+                        eprintln!("--speculative-drafter needs auto, mtp or dflash");
+                        return std::process::ExitCode::from(2);
+                    }
+                },
                 "--max-tokens-per-sec" => match args.next().map(|v| v.parse::<f64>()) {
                     Some(Ok(r)) if r.is_finite() && r > 0.0 => max_tokens_per_sec = Some(r),
                     _ => {
@@ -170,6 +218,9 @@ fn main() -> std::process::ExitCode {
             slots,
             power_profile,
             rate,
+            speculative,
+            drafter,
+            shaping,
         );
     }
     let tokenizer_dir = first;
@@ -384,17 +435,21 @@ fn run_real_mode(_tok: &MfTokenizer) -> std::process::ExitCode {
 /// the process peak under the whole workload, which is what the Swift
 /// baselines report.
 #[cfg(target_os = "macos")]
+#[allow(clippy::too_many_arguments)]
 fn run_model_mode(
     install_dir: &str,
     case_filter: Option<&str>,
     slots: usize,
     profile: PowerProfile,
     rate: RateControl,
+    speculative: Option<usize>,
+    drafter: Option<bool>,
+    shaping: turbospark_bench::real_model::ProtocolShaping,
 ) -> std::process::ExitCode {
     use turbospark_bench::memory::AppMemorySampler;
     use turbospark_bench::protocol::{swift_footer, PROTOCOL_CASES};
     use turbospark_bench::real_model::{
-        open_model_runner_for_protocol, run_protocol_case_with_budget,
+        open_model_runner_for_protocol_speculative, run_protocol_case_speculating,
     };
 
     // `--case` runs exactly one case in this process, which is the frozen
@@ -421,14 +476,52 @@ fn run_model_mode(
     // install's own manifest rather than taken from the shared constants:
     // `gpt-oss` stops two of three cases on maxTokens at 1,024, and the dense
     // `llama` half cannot fit `long-synthesis` in 4,096 at all.
-    let (mut runner, tok, params) =
-        match open_model_runner_for_protocol(std::path::Path::new(install_dir), slots) {
-            Ok(triple) => triple,
-            Err(e) => {
-                eprintln!("failed to open {install_dir}: {e}");
-                return std::process::ExitCode::from(1);
-            }
-        };
+    // REFUSED BEFORE THE OPEN, not at the first case. The open is ~20 s on
+    // a real install and the answer does not depend on it, so checking late
+    // spends that for a message it already had -- `scripts/power.sh`
+    // validates ARMS before `sudo` for the same reason.
+    if speculative.is_some() && shaping != turbospark_bench::real_model::ProtocolShaping::Greedy {
+        eprintln!(
+            "--speculative needs --shaping greedy: acceptance is exact only at temperature 0, \
+             and the frozen protocol samples (temperature 0.2, top-k 64, top-p 0.95)"
+        );
+        return std::process::ExitCode::from(2);
+    }
+
+    // Which drafter, resolved the way the CLI resolves it: an explicit
+    // `--speculative-drafter` is a promise, and `auto` reads the install's
+    // own resident index rather than guessing. Both are decided BEFORE the
+    // open, because the policies name exactly one drafter and opening two is
+    // the bug that verified a 9-row block against a 3-row scratch.
+    let use_dflash = drafter.unwrap_or_else(|| {
+        model_io::load_resident_index(&std::path::Path::new(install_dir).join("model_weights.bin"))
+            .map(|ix| !runtime::install_has_mtp_head(&ix) && runtime::install_has_dflash(&ix))
+            .unwrap_or(false)
+    });
+    let policies = match (speculative, use_dflash) {
+        (None, _) => runtime::DraftPolicies::off(),
+        (Some(0), true) => runtime::DraftPolicies {
+            mtp: runtime::MtpDraftPolicy::Off,
+            dflash: runtime::DflashDraftPolicy::Auto,
+        },
+        (Some(0), false) => runtime::DraftPolicies::mtp(runtime::MtpDraftPolicy::Auto),
+        (Some(n), true) => runtime::DraftPolicies {
+            mtp: runtime::MtpDraftPolicy::Off,
+            dflash: runtime::DflashDraftPolicy::Fixed(n),
+        },
+        (Some(n), false) => runtime::DraftPolicies::mtp(runtime::MtpDraftPolicy::Fixed(n)),
+    };
+    let (mut runner, tok, params) = match open_model_runner_for_protocol_speculative(
+        std::path::Path::new(install_dir),
+        slots,
+        policies,
+    ) {
+        Ok(triple) => triple,
+        Err(e) => {
+            eprintln!("failed to open {install_dir}: {e}");
+            return std::process::ExitCode::from(1);
+        }
+    };
     if let Some(brand) = turbospark_bench::memory::chip_brand_string() {
         println!("turbospark-bench: real install {install_dir} on {brand}, frozen protocol real-generation-v1");
     } else {
@@ -457,6 +550,41 @@ fn run_model_mode(
     // overrides the profile's own cap without changing whether the thermal
     // ladder runs, so `performance` at 15 tok/s and `efficiency` at 15
     // tok/s are different runs that agree on every other column.
+    // The RESOLVED speculation, for exactly the reason the power pair below
+    // is printed: an arm of a `scripts/power.sh` A/B is named outside this
+    // process, and a `spec` arm that silently ran non-speculative would
+    // differ from `nospec` only in the tok/s column. `auto` also carries no
+    // number, and the two drafters' defaults differ (2 against 8).
+    //
+    // THE SHAPING IS ON THIS LINE and not implied, because a speculative run
+    // is GREEDY where the frozen protocol samples: its joules-per-token is
+    // not comparable to any published row, and the line that says so has to
+    // be in the artifact rather than in a doc.
+    let resolved_block = speculative.map(|n| {
+        if n > 0 {
+            n
+        } else if use_dflash {
+            runtime::DFLASH_SERVING_BLOCK
+        } else {
+            runtime::DEFAULT_SPECULATION_BLOCK
+        }
+    });
+    let shaping_name = match shaping {
+        turbospark_bench::real_model::ProtocolShaping::Sampled => "protocol-sampled",
+        // Flagged in the artifact, not just in a doc: a greedy row's
+        // joules-per-token is not comparable to any published row, all of
+        // which are sampled.
+        turbospark_bench::real_model::ProtocolShaping::Greedy => {
+            "GREEDY (not the frozen protocol; not comparable to docs/POWER_BASELINE.md)"
+        }
+    };
+    match resolved_block {
+        None => println!("  speculative=off shaping={shaping_name}"),
+        Some(block) => println!(
+            "  speculative=on drafter={} block={block} shaping={shaping_name}",
+            if use_dflash { "dflash2" } else { "mtp" },
+        ),
+    }
     println!(
         "  power_profile={} max_tok_s={} thermal_stepping={}",
         profile.as_str(),
@@ -472,7 +600,7 @@ fn run_model_mode(
     let mut sampler = AppMemorySampler::new();
     for case in cases {
         // Discarded warmup, then the measured run (frozen protocol).
-        if let Err(e) = run_protocol_case_with_budget(
+        if let Err(e) = run_protocol_case_speculating(
             &mut runner,
             &tok,
             case,
@@ -480,6 +608,8 @@ fn run_model_mode(
             rate,
             params.max_context,
             params.max_new,
+            shaping,
+            resolved_block,
         ) {
             eprintln!("{} warmup failed: {e}", case.id);
             return std::process::ExitCode::from(1);
@@ -497,7 +627,7 @@ fn run_model_mode(
             case.id,
             unix_millis()
         );
-        let measured = run_protocol_case_with_budget(
+        let measured = run_protocol_case_speculating(
             &mut runner,
             &tok,
             case,
@@ -505,6 +635,8 @@ fn run_model_mode(
             rate,
             params.max_context,
             params.max_new,
+            shaping,
+            resolved_block,
         );
         eprintln!(
             "[power-window case={} phase=end unix_ms={}]",
@@ -553,11 +685,16 @@ fn run_model_mode(
 }
 
 #[cfg(not(target_os = "macos"))]
+#[allow(clippy::too_many_arguments)]
 fn run_model_mode(
     _install_dir: &str,
     _case_filter: Option<&str>,
     _slots: usize,
+    _profile: PowerProfile,
     _rate: RateControl,
+    _speculative: Option<usize>,
+    _drafter: Option<bool>,
+    _shaping: turbospark_bench::real_model::ProtocolShaping,
 ) -> std::process::ExitCode {
     eprintln!("--model requires macOS (Metal)");
     std::process::ExitCode::from(2)

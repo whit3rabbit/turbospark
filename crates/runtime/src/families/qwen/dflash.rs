@@ -46,8 +46,45 @@ use crate::real_forward_utils::entry;
 /// The drafter's tensor-name prefix, matching the repack walk's.
 pub(crate) const DFLASH_PREFIX: &str = "dflash";
 
-/// The published drafter's block: 8 proposals plus the bonus row.
+/// The published drafter's TRAINED block: 8 proposals plus the bonus row,
+/// and the widest this port will build. Not the serving default -- see
+/// [`DFLASH_SERVING_BLOCK`].
 pub const DFLASH_BLOCK: usize = 8;
+
+/// What `auto` actually serves, and it is 2 rather than the trained 8.
+///
+/// **MEASURED THROUGH THE REAL GENERATION LOOP ON TWO WORKLOADS**, which is
+/// the comparison that matters and the one a single-prompt probe cannot
+/// make. `Qwen3.8-27B` + DFlash2, 200 greedy tokens, against a ~22.1 tok/s
+/// non-speculative arm:
+///
+/// | prompt | block 2 | block 4 | block 8 |
+/// | --- | ---: | ---: | ---: |
+/// | code (acceptance 0.93-0.98) | 1.47x | - | 1.34x |
+/// | prose (acceptance 0.66-0.83) | 0.97x | 0.73x | 0.48x |
+///
+/// Block 2 wins on BOTH and its downside is bounded; block 8 is better only
+/// where acceptance is already near 1 and is catastrophic where it is not.
+/// The mechanism is the rollback term `docs/MTP_SPECULATIVE.md` names: a
+/// rejected batched round on this recurrent family restores a whole
+/// gated-DeltaNet snapshot and replays the accepted prefix, and the odds of
+/// paying it rose 9% -> 27% -> 98% across those blocks. So the trained block
+/// is the wrong SERVING block, and the same 2 the MTP head already defaults
+/// to (`DEFAULT_SPECULATION_BLOCK`) is the right one -- two drafters, two
+/// architectures, one answer, which is what makes it a property of this
+/// engine rather than of either drafter.
+///
+/// A caller who has measured their own workload names a block explicitly;
+/// `auto` is for the caller who has not.
+pub const DFLASH_SERVING_BLOCK: usize = 2;
+
+// The serving block is what `Auto` BUILDS at and the trained block bounds
+// every block a caller may name, so the first can never exceed the second.
+// A `const` block rather than a test: this is a relationship between two
+// literals in one file, and a divergence should fail the BUILD rather than
+// wait for whichever target happens to assert it (the same reasoning the
+// oracles' protocol-parameter drift guard uses).
+const _: () = assert!(DFLASH_SERVING_BLOCK <= DFLASH_BLOCK && DFLASH_SERVING_BLOCK > 0);
 
 /// The trunk layers whose OUTPUT residual streams the drafter conditions
 /// on. A property of the training run, read off the checkpoint's
@@ -293,7 +330,7 @@ impl DflashState {
                 if !install_has_dflash(index) {
                     return Ok(None);
                 }
-                DFLASH_BLOCK
+                DFLASH_SERVING_BLOCK
             }
             DflashDraftPolicy::Fixed(block) => {
                 if !install_has_dflash(index) {

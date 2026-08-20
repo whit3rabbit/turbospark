@@ -240,8 +240,17 @@ pub const ALLOWED_SPECULATION_BLOCKS: std::ops::RangeInclusive<u32> = 1..=15;
 /// proposes a whole block in one pass. A third value is not a spectrum.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SpeculativeDrafter {
-    /// The checkpoint's own multi-token-prediction head (`mtp.*` tensors).
+    /// Whichever drafter the INSTALL carries, read off its resident index.
+    ///
+    /// The default, because the alternative is a default that is wrong for
+    /// half the installs: pinned at `Mtp`, a DFlash2-carrying install
+    /// reported "this install carries no multi-token-prediction head" and
+    /// decoded sequentially with a working drafter on disk. An install
+    /// carrying BOTH resolves to `Mtp`, so nothing that worked before this
+    /// existed changes.
     #[default]
+    Auto,
+    /// The checkpoint's own multi-token-prediction head (`mtp.*` tensors).
     Mtp,
     /// The DFlash2 block-diffusion drafter (`dflash.*` tensors).
     Dflash,

@@ -174,6 +174,7 @@ pub fn parse(tokens: &[String]) -> ParseOutcome {
                 },
             },
             "--speculative-drafter" => match value.as_str() {
+                "auto" => speculative_drafter = SpeculativeDrafter::Auto,
                 "mtp" => speculative_drafter = SpeculativeDrafter::Mtp,
                 "dflash" => speculative_drafter = SpeculativeDrafter::Dflash,
                 _ => return invalid("--speculative-drafter", value),

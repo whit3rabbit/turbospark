@@ -56,7 +56,7 @@ pub use error::RuntimeError;
 #[cfg(target_os = "macos")]
 pub use families::qwen::{
     install_has_dflash, install_has_mtp_head, DflashDraftPolicy, DraftPolicies, MtpDraftPolicy,
-    DFLASH_BLOCK,
+    DFLASH_BLOCK, DFLASH_SERVING_BLOCK,
 };
 pub use power::{
     low_power_mode_enabled, physical_memory, rate_control_for, recommended_max_working_set,

@@ -6,7 +6,8 @@
 #
 # Usage: scripts/power.sh [pairs]        (default 2 measured pairs per case)
 # Env:   MODEL, RUST_BENCH, OUT, LABEL (ac|battery),
-#        ARMS (comma-separated arms to interleave; see ARMS below),
+#        ARMS (comma-separated arms to interleave; see ARMS below;
+#              `nospec,spec` prices a speculative drafter, both arms greedy),
 #        QOS (the Phase P1 spelling of ARMS, still honored),
 #        CASES (space-separated protocol case ids),
 #        COOLING (auto|max; see COOLING below)
@@ -116,6 +117,7 @@ arm_kind() {
     default)                             echo neutral ;;
     utility)                             echo qos ;;
     performance | balanced | efficiency) echo profile ;;
+    nospec | spec)                       echo spec ;;
     *)
       # A bare number is a --max-tokens-per-sec cap. `=~` rather than a
       # `*[!0-9.]*` glob, which would accept "1.2.3"; bash 3.2 has `=~`
@@ -152,14 +154,18 @@ arm_kind() {
 IFS=',' read -ra ARM_LIST <<< "$ARMS"
 SAW_QOS=""
 SAW_FLAG=""
+SAW_SPEC=""
+SAW_OTHER=""
 for arm in "${ARM_LIST[@]}"; do
   case "$(arm_kind "$arm")" in
-    neutral) ;;
-    qos) SAW_QOS=1 ;;
-    profile | cap) SAW_FLAG=1 ;;
+    neutral) SAW_OTHER=1 ;;
+    qos) SAW_QOS=1; SAW_OTHER=1 ;;
+    profile | cap) SAW_FLAG=1; SAW_OTHER=1 ;;
+    spec) SAW_SPEC=1 ;;
     *)
       echo "unknown arm '$arm' in ARMS=$ARMS" >&2
-      echo "want default|utility|performance|balanced|efficiency, or a positive number" >&2
+      echo "want default|utility|performance|balanced|efficiency|nospec|spec," >&2
+      echo "or a positive number" >&2
       exit 2
       ;;
   esac
@@ -167,6 +173,19 @@ done
 if [ -n "$SAW_QOS" ] && [ -n "$SAW_FLAG" ]; then
   echo "ARMS=$ARMS mixes the QoS axis (utility) with a profile or a rate cap" >&2
   echo "one axis per capture: the arm is a single column in rows.tsv" >&2
+  exit 2
+fi
+# THE SPECULATION AXIS IS EXCLUSIVE OF EVERY OTHER ARM, `default` INCLUDED,
+# and that last clause is the one worth stating. `nospec` is not `default`:
+# both spec arms run `--shaping greedy`, because acceptance is exact only at
+# temperature 0 and the frozen protocol samples at 0.2. So `ARMS=default,spec`
+# would vary the SHAPING and the SPECULATION together and produce a delta
+# nobody can attribute -- which is the same mistake, one layer up, as folding
+# greedy into `--speculative` itself.
+if [ -n "$SAW_SPEC" ] && [ -n "$SAW_OTHER" ]; then
+  echo "ARMS=$ARMS mixes the speculation axis (nospec|spec) with another arm" >&2
+  echo "the spec arms run --shaping greedy and the others do not, so pairing" >&2
+  echo "them varies two things; use ARMS=nospec,spec on its own" >&2
   exit 2
 fi
 
@@ -324,6 +343,16 @@ run_arm() {
     qos) qos_env="utility" ;;
     profile) arm_args=(--power-profile "$ARM") ;;
     cap) arm_args=(--max-tokens-per-sec "$ARM") ;;
+    # BOTH arms are greedy; only `--speculative` differs. The bench refuses
+    # `--speculative` without `--shaping greedy` up front, so a drifted
+    # invocation here fails in a second rather than after a 20 s open.
+    spec)
+      if [ "$ARM" = "spec" ]; then
+        arm_args=(--shaping greedy --speculative auto)
+      else
+        arm_args=(--shaping greedy)
+      fi
+      ;;
     *)
       # Unreachable: the guard above refuses an unknown arm before the
       # capture starts. Kept as a backstop rather than deleted, because
