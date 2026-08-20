@@ -76,12 +76,13 @@ pub const DFLASH_AUX_LAYERS: [usize; 5] = [5, 19, 33, 47, 61];
 /// exponent.
 ///
 /// **The eps is what makes that true, and it is easy to miss.** RMS norm is
-/// only scale-invariant where `eps` is negligible: `(x/S) / sqrt(mean(x^2)/S^2
-/// + eps)` equals `x / sqrt(mean(x^2) + eps * S^2)`, so an unscaled eps acts
-/// as if it were `S^2` times larger. On the EMBEDDING row, whose mean square
-/// is ~4e-4, that is not a rounding difference but a factor of ten. Every
-/// norm that reads `x` therefore takes [`DFLASH_RESIDUAL_EPS`], and the
-/// identity is exact rather than approximate.
+/// only scale-invariant where `eps` is negligible: dividing the input by `S`
+/// turns `eps` into an effective `eps * S^2`, because
+/// `(x/S) / sqrt(mean(x^2)/S^2 + eps)` is `x / sqrt(mean(x^2) + eps * S^2)`.
+/// On the EMBEDDING row, whose mean square is ~4e-4, that is not a rounding
+/// difference but a factor of ten. Every norm that reads `x` therefore takes
+/// [`DFLASH_RESIDUAL_EPS`], and the identity is exact rather than
+/// approximate.
 ///
 /// 2^3 leaves 4.6x of headroom over the measured peak while keeping the
 /// embedding's elements inside FP16's NORMAL range (a larger scale pushes

@@ -202,6 +202,14 @@ fn true_token_rank_in_the_drafters_own_distribution() {
 /// and which then makes `score > best_score` false at every candidate so
 /// the walk keeps `cand[0]`) from "it computed something and the selector
 /// chose badly".
+/// One arm of the single-variable experiment below.
+struct Arm {
+    name: &'static str,
+    proposals: Vec<i32>,
+    row1: Vec<LogitValue>,
+    stats: Vec<RowStats>,
+}
+
 struct RowStats {
     min: f32,
     max: f32,
@@ -283,7 +291,7 @@ fn the_context_write_is_the_only_variable() {
 
     let mut row = vec![LogitValue::from_f32(0.0); vocab];
     let mut proposals = Vec::new();
-    let mut arms: Vec<(&str, Vec<i32>, Vec<LogitValue>, Vec<RowStats>)> = Vec::new();
+    let mut arms: Vec<Arm> = Vec::new();
     for name in ["C1 (with the context write)", "C2 (write already consumed)"] {
         runner
             .dflash_draft_block(anchor, base, &mut proposals)
@@ -301,7 +309,12 @@ fn the_context_write_is_the_only_variable() {
         for (buf, nans, min, max) in runner.dflash_probe_buffers() {
             println!("  {buf:>13}: nan {nans:>7}  min {min:>12.4}  max {max:>12.4}");
         }
-        arms.push((name, proposals.clone(), row.clone(), stats));
+        arms.push(Arm {
+            name,
+            proposals: proposals.clone(),
+            row1: row.clone(),
+            stats,
+        });
     }
 
     // The truth, taken AFTER both arms so the produce cannot refresh the
@@ -310,14 +323,14 @@ fn the_context_write_is_the_only_variable() {
     let true_next = argmax(&logits);
 
     println!("\nprompt {base} tokens, anchor {anchor}, true next {true_next}, block {BLOCK}");
-    for (name, props, row1, stats) in &arms {
-        println!("\n{name}");
-        println!("  proposals: {props:?}");
+    for arm in &arms {
+        println!("\n{}", arm.name);
+        println!("  proposals: {:?}", arm.proposals);
         println!(
             "  rank of the true next token in row 1: {}",
-            rank_of(row1, true_next)
+            rank_of(&arm.row1, true_next)
         );
-        for (r, s) in stats.iter().enumerate() {
+        for (r, s) in arm.stats.iter().enumerate() {
             println!(
                 "  row {r}: min {:>10.4}  max {:>10.4}  nan {:>6}  argmax {}",
                 s.min, s.max, s.nans, s.argmax

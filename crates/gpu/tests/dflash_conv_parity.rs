@@ -283,3 +283,76 @@ fn the_two_sides_are_distinct() {
         rows * hidden
     );
 }
+
+/// `out_scale` multiplies the result and nothing else. It is how the draft
+/// pass keeps a residual stream whose true peak is 113,920 inside FP16's
+/// 65,504 ceiling (`DFLASH_RESIDUAL_SCALE`): the `finish` call sites divide
+/// their output by a power of two, and the RMS norms that read the stream
+/// take a correspondingly divided eps, so the scale cancels.
+///
+/// A POWER OF TWO is asserted EXACTLY rather than within a tolerance,
+/// because that is the property the residual scaling claims: scaling by
+/// 2^-3 shifts the exponent and leaves the mantissa alone, so the stored
+/// halves must be bit-for-bit the unscaled ones at another exponent. A
+/// tolerance here would pass for a scale that quietly rounded.
+#[test]
+fn the_output_scale_is_an_exact_power_of_two_shift() {
+    let rows = 9usize;
+    let hidden = 256usize;
+    let groups = hidden / GROUP_SIZE;
+    let mut rng = XorShift(0x5eed_2b17_u64);
+    let x = rng.halves(rows * hidden);
+    let delta = rng.halves(rows * 2 * DFLASH_TAPS as usize * groups);
+    let base = rng.floats(2 * DFLASH_TAPS as usize * hidden);
+
+    let mut context = MetalContext::new().expect("Metal device");
+    let x_buf = context.new_buffer_with_data(&to_le(&x));
+    let delta_buf = context.new_buffer_with_data(&to_le(&delta));
+    let base_buf = context.new_buffer_with_data(&bf16_le(&base));
+    let out_buf = context.new_output_buffer((rows * hidden * 2) as u64);
+
+    let mut outs = Vec::new();
+    for scale in [1.0f32, 0.125] {
+        let pass = context.begin_pass();
+        encode_dflash_grouped_conv(
+            &mut context,
+            &pass,
+            (&x_buf, 0),
+            (&delta_buf, 0),
+            (&base_buf, 0),
+            (&out_buf, 0),
+            rows as u32,
+            hidden as u32,
+            1,
+            scale,
+        )
+        .expect("encode");
+        pass.commit_and_wait();
+        outs.push(read_halfs(&out_buf, rows * hidden));
+    }
+
+    let mut moved = 0usize;
+    for (i, (plain, scaled)) in outs[0].iter().zip(outs[1].iter()).enumerate() {
+        let plain = plain.to_f32();
+        // Subnormals lose the exponent room a power-of-two shift needs, so
+        // they are excluded from the exactness claim rather than weakening
+        // it for every element.
+        if plain == 0.0 || plain.abs() < 1e-3 {
+            continue;
+        }
+        assert_eq!(
+            scaled.to_f32(),
+            plain * 0.125,
+            "element {i}: scaling by 2^-3 must be exact, got {} against {}",
+            scaled.to_f32(),
+            plain * 0.125
+        );
+        moved += 1;
+    }
+    assert!(
+        moved > rows * hidden / 4,
+        "only {moved} of {} elements were large enough to check; this fixture \
+         cannot see the scale",
+        rows * hidden
+    );
+}

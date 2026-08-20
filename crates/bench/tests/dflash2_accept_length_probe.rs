@@ -19,10 +19,16 @@ use runtime::{DflashDraftPolicy, DraftPolicies, LogitProducer, MtpDraftPolicy, R
 use tokenizer::{Message, Role};
 use turbospark_bench::real_model::open_model_runner_speculative;
 
-/// The blocks worth a row, TRAINED BLOCK FIRST: the drafter was trained at
-/// block_size 8 and the smaller blocks are a serving-time deviation from
-/// it, so 8 is the shape to trust before any other is read.
-const BLOCKS: [usize; 3] = [8, 4, 2];
+/// The blocks worth a row, TRAINED WIDTH FIRST. The checkpoint's
+/// `block_size: 8` bounds the drafter's ROW count, not its proposal count
+/// (llama.cpp clamps at `min(tokens_per_block, dflash_block_size)` and emits
+/// proposals for rows `1 ..= block_size - 1`; vLLM quotes its headline "at 7
+/// draft tokens" and sizes its conv at `1 + num_speculative_tokens`), so 7
+/// proposals plus the bonus row IS the trained shape and 8 is one row past
+/// it. That extra row is off-distribution twice over: the drafter never saw
+/// it, and the reference's conv masks tap 1 there (its tap mask is `position
+/// % block_size >= tap`, which wraps at row 8) where this port applies it.
+const BLOCKS: [usize; 4] = [7, 8, 4, 2];
 const GENERATE: usize = 256;
 const SLOTS: usize = 16;
 

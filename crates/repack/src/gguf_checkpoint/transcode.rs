@@ -231,6 +231,7 @@ fn apply_source_convention_bytes(
     canonical: &str,
     arch: &ArchConfig,
     (rows, cols): (usize, usize),
+    ggml_type: u32,
     bytes: &mut [u8],
 ) -> Result<(), GgufRepackError> {
     if needs_rotary_unpermute(canonical, arch) {
@@ -262,6 +263,38 @@ fn apply_source_convention_bytes(
     if !axis.columns {
         permute_v_heads(bytes, axis.base * row_bytes, axis.span * row_bytes, heads);
         return Ok(());
+    }
+    // **WHOLE BLOCKS, NOT MERELY WHOLE BYTES.** A byte-divisibility check is
+    // necessary and NOT sufficient, and the gap is not hypothetical: on a
+    // Q4_K `out_proj` at 4096 columns a 128-column head is 72 bytes, which
+    // divides evenly and is HALF a 144-byte superblock. Permuting at that
+    // granularity cuts through the packed 6-bit scale header, so the tensor
+    // dequantizes to non-finite values -- an install that writes, validates,
+    // opens, and dies at the sampler with "score vector must not contain a
+    // non-finite entry", four layers from the cause.
+    //
+    // The condition is on ELEMENTS: a head must be a whole number of blocks.
+    // Q8_0's block is 32 elements and 128 is a multiple of it, which is why
+    // every Qwen install before Ornith passed -- `Q4_K_M` puts Q8_0 on the
+    // attention and gated-DeltaNet tensors (AGENTS.md Gotcha 29) and only
+    // Ornith's converter put `ssm_out` at Q4_K. Same trap as Gotcha 37: a
+    // check that is correct for exactly as long as one file exercises it.
+    //
+    // REFUSED rather than shuffled in halves, which is what Gotcha 7 already
+    // says this case must do. The de-interleave maps output heads `2k` and
+    // `2k+1` from source heads `k` and `k + H/2`, so one output superblock
+    // draws on two DIFFERENT source superblocks -- there is no byte-level
+    // rearrangement that fixes it, only dequantizing and requantizing.
+    let block_elements = crate::gguf_header::ggml_type_block(ggml_type)
+        .map(|(elements, _)| elements as usize)
+        .unwrap_or(1);
+    if block_elements > 1 && axis.span % block_elements != 0 {
+        return Err(shape_err(format!(
+            "a {}-column V head is not a whole number of {block_elements}-element \
+             blocks, so the de-interleave would split one: dequantizing is the only \
+             way to permute this tensor, and this walk copies bytes",
+            axis.span
+        )));
     }
     if row_bytes * axis.span % cols != 0 {
         return Err(shape_err(format!(
@@ -421,7 +454,14 @@ pub fn resident_entries(
             continue;
         }
         let mut bytes = bytes;
-        apply_source_convention_bytes(name, &canonical, arch, row_and_col(&info.dims), &mut bytes)?;
+        apply_source_convention_bytes(
+            name,
+            &canonical,
+            arch,
+            row_and_col(&info.dims),
+            info.ggml_type,
+            &mut bytes,
+        )?;
         out.push(ResidentEntrySpec::Raw(RawTensorSpec {
             name: canonical,
             dtype,

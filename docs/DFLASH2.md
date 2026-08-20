@@ -191,8 +191,8 @@ concat.
 
 ## 6. Where this port is, 2026-08-19
 
-**BUILT, UNCOMMITTED, AND BLOCKED.** Everything below sits in the working
-tree; `ROADMAP.md` section 3 carries the same state as a work item.
+**BUILT AND WORKING.** Everything below sits in the working tree;
+`ROADMAP.md` section 3 carries the same state as a work item.
 
 Built:
 
@@ -224,29 +224,106 @@ Built:
   `crates/repack/tests/dflash2_checkpoint_network.rs`.
 
 **MEASURED ON THE REAL INSTALL, 2026-08-19.** The acceptance figures are
-deterministic (greedy, fixed prompt, fixed weights) and reproduced exactly
-across two builds; the seconds are NOT baselines and the power source was
-not recorded (AGENTS.md Gotcha 22).
+deterministic (greedy, fixed prompt, fixed weights); the seconds are NOT
+baselines -- the machine was running an interactive session throughout
+(AGENTS.md Gotcha 43) and the power source was not recorded (Gotcha 22).
+Every arm is asserted BYTE-IDENTICAL to the same generation with
+speculation off, so the drafter is lossless in practice and not only by
+construction.
 
-| instrument | result |
-| --- | --- |
-| `dflash2_accept_length_probe`, block 8 | **0 of 256** first-proposal accepts, per-position acceptance 0.00 x8, 256 rollbacks of 256 rounds, **0.16x** against a 22.33 tok/s reference |
-| what the drafter proposes | `[0, 0, 0, 0, 0, 0, 0, 0]` every round, from round 1 (base 32, anchor 71093) |
-| `dflash2_bisect_probe`, 48 teacher-forced steps | true token at **median rank 0, top-1 48/48** on all three alignments, and the walk's first proposal equals the row-1 argmax **48/48** |
+`dflash2_accept_length_probe`, 32-token prompt, 256 greedy tokens, 16 slots,
+against a ~21-22 tok/s non-speculative reference:
 
-The probe's own functional-drafter guard (AGENTS.md Gotcha 57) is what
-catches this; it fires rather than publishing a tidy `loses` table.
+| block | accepted/round | committed/round | rollbacks | per-position acceptance |
+| ---: | ---: | ---: | ---: | --- |
+| 8 | 7.09 | 8.09 | 6 of 32 | 0.97 0.97 1.00 0.93 1.00 0.96 1.00 0.96 |
+| 7 | 6.22 | 7.22 | 6 of 36 | 0.94 1.00 0.94 1.00 0.97 1.00 0.97 |
+| 4 | 3.62 | 4.62 | 7 of 56 | 0.93 1.00 0.96 0.98 |
+| 2 | 1.88 | 2.88 | 6 of 89 | 0.94 0.99 |
 
-**WHAT THE PAIR ELIMINATES.** Under the bisect's driving the walk proposes
-the true token 48 times out of 48, so the backbone, the aux capture, `fc`,
-the norms, the RoPE, the conv and the SELECTOR are all right. The fault is
-in how the LOOP drives the drafter. It is also not the M-row capture hook
-in `batched.rs` on its own: round 1 already proposes zeros, and round 1's
-capture comes from the prefill's per-token `produce`. Eight identical zero
-proposals for 256 consecutive rounds is the signature of a CONSTANT logits
-row (`top_k` then returns candidates 0..15 with equal unary scores and
-`score > best_score` keeps the first), which is a far narrower claim than
-"the drafter is weak".
+Wall-clock on that run read 1.47x / 1.42x / 1.42x / 1.54x, but the arms sit
+inside each other's noise on a busy machine and the ORDERING should not be
+read off them. The acceptance column is the deterministic half and the one
+to quote.
+
+**THE ACCEPT LENGTH IS ABOVE THE PUBLISHED ONES AND THAT IS THE PROMPT, NOT
+THIS PORT.** 8.09 committed per round at block 8 against vLLM's 5.34 at 7
+draft tokens and llama.cpp's 4.92-5.08: those are GSM8K at temperature 1.0
+and this is one greedy prose answer whose continuation is unusually
+predictable. Do not carry this number to another workload.
+
+**THE ROW COUNT: 8 PROPOSALS BEAT THE TRAINED 7.** `block_size: 8` bounds
+ROWS, so the trained shape is 7 proposals plus the bonus row (section 7),
+and the ninth row this port runs is off-distribution twice over -- the
+drafter never saw it, and the reference's conv masks tap 1 there where this
+port applies it. Measured, it earns its place anyway: position 7 is accepted
+0.96 of the time and block 8 commits 8.09 against block 7's 7.22.
+`DFLASH_BLOCK` stays 8. One prompt, and the margin would narrow on a
+distribution where acceptance is not already ~0.95 everywhere.
+
+### What was wrong, and why every instrument said it was fine
+
+The drafter proposed token id 0 at every position of every round (0 of 256
+accepts, 0.16x). The cause was NOT the loop, the context write, the aux
+capture, `fc`, the RoPE, the conv or the selector -- all of which the first
+day of work cleared, correctly.
+
+**THE DRAFT PASS OVERFLOWED FP16.** This drafter's residual stream peaks at
+113,920 on the real install, against FP16's largest finite value of 65,504.
+Measured by capping the drafter at N layers and scanning its buffers: the
+embedding is +/-0.08, layer 1 takes the residual to 51,808, layer 2 to
+65,152 -- where the first `inf` appears -- and by layer 3 every one of the
+46,080 elements of `x` is NaN. Both references are BF16 throughout, whose
+range is 3e38, and neither ever approaches a ceiling.
+
+The fix is `DFLASH_RESIDUAL_SCALE`: the embedding rows and every `finish`
+conv output are divided by 8, so the stream is held in a scaled
+representation, and the norms that read it take a correspondingly divided
+eps. It is a change of STORAGE and not of arithmetic -- `x` is read only by
+RMS norms and by the residual add whose addend is scaled at the conv that
+produces it, and a power of two shifts the exponent while leaving the
+mantissa alone.
+
+**THE EPS IS THE HALF THAT IS EASY TO GET WRONG, and this session got it
+wrong first.** RMS norm is scale-invariant only where `eps` is negligible:
+`(x/S) / sqrt(mean(x^2)/S^2 + eps)` equals `x / sqrt(mean(x^2) + eps*S^2)`,
+so an unscaled eps acts as if it were `S^2` larger. On the EMBEDDING row,
+whose mean square is ~4e-4, that is not a rounding difference. With S = 256
+and the eps left alone the pass was finite and WRONG -- the true next token
+sat at rank 13,202. With the eps scaled it sits at rank 0.
+`crates/gpu/tests/rms_norm_parity.rs` pins the identity, and pins that its
+own fixture can tell the two spellings apart.
+
+**WHY NOTHING CAUGHT IT, which is the part worth carrying.** NaN is not a
+loud value in this code path; it is a value every instrument scored as
+PERFECT.
+
+- `top_k` admits on `v <= val[k-1]`, and every comparison against NaN is
+  false, so a NaN row is admitted at all 16 candidates; then `score >
+  best_score` is false at each, the walk keeps `cand[0]`, and `cand` was
+  initialized to zeros. Hence eight identical proposals of token id 0, with
+  no error anywhere.
+- The bisect probe's `rank_of` counts `v.to_f32() > target`, which NaN also
+  fails, so an all-NaN row ranks the true token FIRST. Its reported "median
+  rank 0, top-1 48/48" was not evidence that the backbone was right; it was
+  the instrument reading its best possible value on garbage. That reading is
+  withdrawn.
+
+Both are the shape AGENTS.md Gotcha 30 records for `pearson` on a constant
+input and Gotcha 57 for a degenerate accept-length table, with one turn of
+the screw: those instruments return a NEUTRAL value on degenerate input,
+where these return the BEST one, and nobody investigates a perfect score.
+`dflash_select` now REFUSES a non-finite row by name.
+
+**A SECOND BUG SAT BEHIND THE FIRST and could not be reached until it was
+fixed.** `dflash_rewind_to` refused a target ahead of its cursor, and the
+loop rewinds to `base + accepted`. While acceptance was zero that was
+exactly the cursor and the arm never ran; the first round that accepted
+anything failed with "rewind target 40 is ahead of the cache cursor 32".
+The refusal was wrong for this drafter: unlike the step-wise MTP head, its
+cursor is advanced only by the context write at the START of the next round,
+so between the two it legitimately lags the accepted end. It is a no-op
+forward now.
 
 ## 7. Against the two references
 
@@ -289,8 +366,8 @@ three corrections below.
 
 | axis | both references | this port | status |
 | --- | --- | --- | --- |
-| attention inside the draft block | NON-causal (`llama_set_causal_attn(ctx_dft, false)`, "DFlash needs non-causal attention"); the masks are denoised jointly | strictly causal: `dflash_forward_block` runs `encode_attention_decode` per row at `seq_len = position + 1`, so row `r` cannot see rows `> r` | **REAL GAP.** Bounds acceptance past position 1 by construction: rows 2..N are conditioned on mask embeddings alone where the reference conditions them on the whole block. Does not explain the zero proposals (the bisect shows row 1, the one row causality cannot affect, is correct). |
-| block width | `block_size = 8` bounds ROWS; llama.cpp emits proposals for rows `1 .. min(rows, block_size)`, so at most 7; vLLM quotes "7 draft tokens" | `DFLASH_BLOCK = 8` means 8 PROPOSALS, so the forward runs 9 rows | **CHECK.** Row 8 is one past what the config bounds and is off-distribution for the trained drafter. Cheap to test: open at `Fixed(7)`. |
+| attention inside the draft block | NON-causal (`llama_set_causal_attn(ctx_dft, false)`, "DFlash needs non-causal attention"); the masks are denoised jointly | NON-causal since 2026-08-19: every row runs at `seq_len = base + rows`, and the per-row k-norm and RoPE were hoisted above the attention loop so row 0 reads an already-rotated row 8 | **CLOSED.** Worth +0.24 accepted per round at block 8 (6.85 -> 7.09) and a wash at block 2, which is what the mechanism predicts: causality only ever bound rows 2 and up. This engine has no mask to flip -- causality here IS the span a row is given. |
+| block width | `block_size = 8` bounds ROWS; llama.cpp emits proposals for rows `1 .. min(rows, block_size)`, so at most 7; vLLM quotes "7 draft tokens" and sizes its conv at `1 + num_speculative_tokens` | `DFLASH_BLOCK = 8` means 8 PROPOSALS, so the forward runs 9 rows | **MEASURED, KEPT.** Row 8 is off-distribution and the reference's conv would mask its tap 1 (that mask is `position % block_size >= tap`, which wraps at row 8). It is accepted 0.96 of the time anyway, and block 8 commits 8.09 per round against block 7's 7.22. Section 6. |
 | selector location | in-graph on the GPU (llama.cpp `build_post_sampling`), or a Triton program per request (vLLM) | on the HOST, top-16 linear scan plus 17 codebook row gathers per step | **BY DESIGN.** Both references serve many concurrent requests; this engine serves one, and the selector is microseconds beside a pass that reads a gigabyte. Keep it. |
 | selector walk state | a SLOT INDEX into the previous row's top-k, against a precomputed `K x K` score block | the previous step's TOKEN ID, re-gathering its codebook row | **EQUIVALENT.** Same function, different memoization. |
 | context KV write | a second graph MODE on the same model, keyed on batch type (`embd` batch injects, `token` batch drafts) | `dflash_context_write` and `dflash_forward_block`, two functions | **EQUIVALENT.** |
@@ -305,45 +382,31 @@ and applies them if present, which for this checkpoint are 1.0 / 1.0 / none
 
 ## 8. How to work on this next
 
-In cost order. The first three are minutes each and need no download.
+Items 1-5 of this list are DONE (section 6). What remains:
 
-1. **Isolate the driving.** The bisect probe's loop-alignment arm calls
-   `produce(anchor, pos)` BEFORE drafting; the real loop does not (the
-   trunk absorbs the anchor in `verify`, afterwards). Add a third arm to
-   `crates/bench/tests/dflash2_bisect_probe.rs` that drafts WITHOUT that
-   preceding produce, and print row-1 rank plus `proposals[0]`. If it
-   proposes 0, the cause is the capture or context state at draft time; if
-   it still proposes the true token, the cause is
-   `run_raw_completion_speculative`'s own bookkeeping (base, anchor, rewind
-   order) rather than anything under `dflash*.rs`.
-2. **Confirm the constant-row signature.** Call `dflash_probe_logits(1, ..)`
-   inside a failing accept-probe round and check whether the row is
-   constant. That separates "the block forward wrote nothing" from "the
-   selector picked wrong", and the two lead opposite ways.
-3. **Cover the untested path.** Nothing exercises the M-row capture hook in
-   `families/qwen/batched.rs` (the bisect only ever uses per-token
-   `produce`). It cannot explain round 1, but it is the one dispatch in
-   this feature with no test at all, and rounds 2 onward read what it
-   writes.
-4. **Close the causality gap** (section 7). The block's rows must attend
-   each other, not just their prefix. In this engine that means the draft
-   forward stops calling the per-row decode-attention kernel and runs a
-   block-wide attention over `[context window] + [all block rows]`, or a
-   per-row call whose span is the whole block rather than `position + 1`.
-   Expect this to be what moves acceptance from "position 1 only" to the
-   references' 5.0.
-5. **Try the trained width.** Open at `DflashDraftPolicy::Fixed(7)` and see
-   whether the ninth row was costing anything.
-6. **Then the gates**, before this can be called landed: the three
-   real-model gates for `qwen3_5` (greedy plus sampled smoke, memory
-   oracle) and `qwen38_quality_gate`, none of which this work has run; a
-   frozen accept-length and speedup row in `docs/BENCHMARKS.md` with the
-   measured numbers written back into section 6 here; a `scripts/power.sh`
-   capture on a quiet machine (Gotcha 43); server wiring, which DFlash2
-   inherits from the MTP follow-up list; and a decision on the two review
-   findings deliberately left unfixed (the per-prompt-token
+1. **A quiet-machine throughput row.** The wall-clock numbers in section 6
+   were taken while an interactive session was rendering on the same
+   machine, which AGENTS.md Gotcha 43 measured as an 11% error on a
+   published power row and a 37% spread between identical arms. The
+   acceptance figures are deterministic and need no re-run; the seconds do,
+   and the block ORDERING cannot be called until they are.
+2. **`scripts/power.sh`.** Needs sudo and a quiet machine, so the owner runs
+   it. The interesting question is specific to this drafter: it adds a
+   5-layer forward per round, so it should cost watts per token even where
+   it saves them per token committed.
+3. **A second workload.** Every acceptance figure here is one greedy prose
+   prompt whose per-position acceptance is 0.93-1.00, well above the
+   published GSM8K numbers. Both the block-8-beats-block-7 result and the
+   accept lengths could narrow on a harder distribution, and neither has
+   been asked.
+4. **Server wiring**, which DFlash2 inherits from the MTP follow-up list.
+5. **The two review findings left unfixed**: the per-prompt-token
    `commit_and_wait` in `dflash_prime_from_capture`, and the unconditional
-   batched-prefill scratch in `RealGemmaState`).
+   batched-prefill scratch in `RealGemmaState`.
+6. **The M-row capture hook** in `families/qwen/batched.rs` still has no
+   test of its own. It is now exercised in anger -- every round after the
+   first reads what it writes, and the accept lengths say it writes the
+   right thing -- but nothing pins it.
 
 **A NOTE ON WHAT A COMPARISON CAN AND CANNOT SETTLE.** Sections 1-4 are
 facts about the model and both references agree on them, so a disagreement
@@ -351,6 +414,9 @@ between this port and both of them is this port's bug. Section 7's
 divergences were found by READING, which is the cheap instrument
 (AGENTS.md's "READ THE PRIOR ART YOUR OWN DOCS NAME" -- the MTP head's norm
 convention sat one grep away and was rediscovered by two hours of bisection
-instead). But reading cannot say which divergence causes the measured zero,
-and the bisect already rules out the two most inviting suspects. Run
-experiment 1 before fixing anything in section 7.
+instead). But reading cannot say which divergence CAUSES a measured
+failure, and in the event neither of them did: the zero proposals were an
+FP16 overflow, which no comparison against a BF16 reference could have
+surfaced, because it is a property of this port's storage rather than of
+the model. Read the references to learn what the semantics ARE; measure to
+learn which of your deviations is biting.

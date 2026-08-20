@@ -25,7 +25,7 @@ use foundation::{LogitValue, TokenId};
 use model_io::ResidentIndex;
 
 use super::dflash::{
-    DFLASH_MASK_TOKEN, DFLASH_RESIDUAL_SCALE, DFLASH_TOP_K, DFLASH_WINDOW,
+    DFLASH_MASK_TOKEN, DFLASH_RESIDUAL_EPS, DFLASH_RESIDUAL_SCALE, DFLASH_TOP_K, DFLASH_WINDOW,
 };
 use super::RMS_EPS;
 use crate::real_forward::{RealForwardError, RealForwardRunner};
@@ -248,6 +248,23 @@ impl RealForwardRunner {
     /// move. Rows past the target are stale by construction and always
     /// rewritten before anything reads them again (the context write for
     /// committed positions, fresh query rows above the cursor).
+    ///
+    /// **A target AHEAD of the cursor is the normal case here, and that is
+    /// the difference between a block drafter and a step-wise one.** The MTP
+    /// head advances its cache as it drafts, so the loop's
+    /// `rewind_drafter(base + accepted)` genuinely walks it BACK to the
+    /// accepted end. This drafter's cursor is advanced only by
+    /// `dflash_context_write`, which runs at the START of the next round --
+    /// so between the two, the accepted prefix's slots still hold the
+    /// DRAFT-written KV the block forward put there from mask embeddings,
+    /// and the cursor legitimately lags. Advancing it here would claim
+    /// those rows are target-derived when the pass that makes them so has
+    /// not run.
+    ///
+    /// Refusing instead was unreachable for as long as acceptance was zero
+    /// (`base + 0` is exactly the cursor), so this arm went unexercised
+    /// until the FP16 overflow above it was fixed and the first round
+    /// accepted all eight proposals.
     pub fn dflash_rewind_to(&mut self, position: usize) -> Result<(), RealForwardError> {
         let Some(d) = self.real_dflash.as_mut() else {
             return Err(RealForwardError::Unsupported(
@@ -255,10 +272,8 @@ impl RealForwardRunner {
             ));
         };
         let cursor = d.kv.position();
-        if position > cursor {
-            return Err(RealForwardError::Unsupported(format!(
-                "DFlash2 rewind target {position} is ahead of the cache cursor {cursor}"
-            )));
+        if position >= cursor {
+            return Ok(());
         }
         if cursor - position > d.kv.max_safe_rewind() {
             return Err(RealForwardError::Unsupported(format!(
@@ -535,14 +550,7 @@ impl RealForwardRunner {
             )?;
         }
 
-        // TEMPORARY DIAGNOSTIC (docs/DFLASH2.md section 8 item 1): run only
-        // the first N drafter layers, so `dflash_probe_buffers` can say
-        // which stage first goes non-finite.
-        let layer_cap = std::env::var("MFERENCE_DFLASH_LAYERS")
-            .ok()
-            .and_then(|v| v.trim().parse::<usize>().ok())
-            .unwrap_or(s.layers);
-        for layer in 0..s.layers.min(layer_cap) {
+        for layer in 0..s.layers {
             let name = |sfx: &str| format!("dflash.layers.{layer}.{sfx}");
             let input_norm = norm_view(weights, index, &name("input_layernorm.weight"), hidden)?;
             let post_norm = norm_view(
@@ -574,7 +582,7 @@ impl RealForwardRunner {
                     input_norm,
                     (&dflash.normed, row),
                     hidden as u32,
-                    RMS_EPS,
+                    DFLASH_RESIDUAL_EPS,
                 )
                 .map_err(gpu_err)?;
             }
@@ -654,11 +662,16 @@ impl RealForwardRunner {
                     )?;
                 }
             }
+            // The per-row norms and RoPE run in their OWN loop, ahead of any
+            // attention, because the attention below is NON-CAUSAL: row 0
+            // reads row 8's key, so every row's key must already be normed
+            // and rotated when the first row's attention is encoded. Folded
+            // into one loop (which is what a causal block can do) row `r`
+            // would read raw projections for every row above it.
             for r in 0..rows {
                 let position = base + r;
                 let q_row = (r * q_dim) as u64 * 2;
                 let (k_buf, k_off) = dflash.kv.k_slot(layer, position);
-                let v_buf = dflash.kv.v_slot(layer, position).0;
                 let k_row = k_off as u64;
                 gpu::encode_rms_norm_bf16w_perhead(
                     context,
@@ -698,10 +711,30 @@ impl RealForwardRunner {
                     )
                     .map_err(gpu_err)?;
                 }
-                let seq_len = (position + 1) as u32;
-                let kv_start = seq_len.saturating_sub(DFLASH_WINDOW as u32);
-                let ring = dflash.kv.ring_capacity(layer) as u32;
-                let active_ring = if ring > 0 && seq_len > ring { ring } else { 0 };
+            }
+            // ATTENTION INSIDE THE DRAFT BLOCK IS NON-CAUSAL, which is the
+            // block-diffusion semantics and not an optimization: the mask
+            // rows are denoised JOINTLY, so every row sees every other row
+            // as well as the committed context. Both references say so
+            // outright -- llama.cpp calls `llama_set_causal_attn(ctx_dft,
+            // false)` with the comment "DFlash needs non-causal attention",
+            // and vLLM builds the block's attention the same way.
+            //
+            // This engine has no mask argument to flip: causality here IS
+            // the span each row is given, so a whole-block span is the whole
+            // change. Every row runs at `seq_len = base + rows` rather than
+            // its own `position + 1`.
+            let seq_len = (base + rows) as u32;
+            let kv_start = seq_len.saturating_sub(DFLASH_WINDOW as u32);
+            let ring = dflash.kv.ring_capacity(layer) as u32;
+            let active_ring = if ring > 0 && seq_len > ring { ring } else { 0 };
+            // One buffer per layer, so the slot's POSITION picks an offset
+            // this call does not take: the kernel addresses the whole cache
+            // itself, from `kv_start` and `active_ring`.
+            let k_buf = dflash.kv.k_slot(layer, base).0;
+            let v_buf = dflash.kv.v_slot(layer, base).0;
+            for r in 0..rows {
+                let q_row = (r * q_dim) as u64 * 2;
                 gpu::encode_attention_decode(
                     context,
                     &pass,
@@ -763,7 +796,7 @@ impl RealForwardRunner {
                     post_norm,
                     (&dflash.normed, row),
                     hidden as u32,
-                    RMS_EPS,
+                    DFLASH_RESIDUAL_EPS,
                 )
                 .map_err(gpu_err)?;
             }
@@ -878,7 +911,7 @@ impl RealForwardRunner {
                 final_norm,
                 (&dflash.normed, row),
                 hidden as u32,
-                RMS_EPS,
+                DFLASH_RESIDUAL_EPS,
             )
             .map_err(gpu_err)?;
         }

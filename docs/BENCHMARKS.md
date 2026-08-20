@@ -1285,6 +1285,42 @@ Losslessness is settled independently of the economics: every block size
 produces a token stream byte-identical to the same generation with
 speculation switched off.
 
+### DFlash2, the block drafter, measured 2026-08-19
+
+Not a parity claim, and not the same question as the row above: that one
+prices a drafter this port did not have, from published accept lengths. This
+one runs a real one. Install `~/models/qwen38-27b-dflash2.gturbo` (the dense
+`qwen3_5` trunk plus `incoai/Qwen3.8-27B-DFlash2`), 32-token prompt, 256
+greedy tokens, 16 slots, against a ~21-22 tok/s non-speculative reference.
+Full write-up: `docs/DFLASH2.md`.
+
+**The acceptance column is deterministic** (greedy, fixed prompt, fixed
+weights); the seconds are NOT, and are omitted here on purpose -- the
+machine was running an interactive session throughout, which Gotcha 43
+measured as an 11% error on a published row.
+
+| block | accepted/round | committed/round | rollbacks | per-position acceptance |
+| ---: | ---: | ---: | ---: | --- |
+| 8 | 7.09 | 8.09 | 6 of 32 | 0.97 0.97 1.00 0.93 1.00 0.96 1.00 0.96 |
+| 7 | 6.22 | 7.22 | 6 of 36 | 0.94 1.00 0.94 1.00 0.97 1.00 0.97 |
+| 4 | 3.62 | 4.62 | 7 of 56 | 0.93 1.00 0.96 0.98 |
+| 2 | 1.88 | 2.88 | 6 of 89 | 0.94 0.99 |
+
+Every arm is byte-identical to the same generation with speculation off.
+
+**READ THE ACCEPT LENGTH AGAINST ITS PROMPT.** 8.09 committed per round
+beats vLLM's published 5.34 and llama.cpp's 4.92-5.08, and that is the
+workload rather than the port: those are GSM8K at temperature 1.0, this is
+one greedy prose answer whose continuation is unusually predictable. A
+second workload is owed before any of these numbers travel.
+
+**This drafter does NOT show the small-block inversion the row above
+predicts for the MoE family.** Its per-position acceptance is still 0.96 at
+position 7, so a wide block keeps paying; the ninth row this port runs (one
+past the checkpoint's `block_size: 8`, which bounds ROWS) is accepted 0.96
+of the time and beats the trained 7-proposal shape. The wall clock did not
+separate the blocks on a busy machine, so which block is fastest is OPEN.
+
 ## Power
 
 Not a parity claim. Swift was never measured for power, here or upstream;

@@ -276,3 +276,93 @@ fn the_round_runs_at_the_trained_block() {
         accepted.len()
     );
 }
+
+/// Every other test in this file is SELF-RELATIVE: each rebuilds its own
+/// baseline inside the same binary, so a change to the draft pass's
+/// arithmetic moves both arms equally and none of them reddens. AGENTS.md
+/// Gotcha 51 measured that shape on `real_forward_muse.rs` -- six mutations,
+/// one caught -- and the remedy is one frozen digest, the only assertion in
+/// such a file compared against something computed BEFORE the change.
+///
+/// It is a CHANGE DETECTOR and not a correctness claim: the fixture's
+/// weights are untrained, so this cannot say the arithmetic is right, only
+/// that it is what it was. It covers, among others, the three things this
+/// file could not otherwise see: the conv's `out_scale`, the SCALED RMS eps
+/// the residual norms take (`DFLASH_RESIDUAL_EPS` -- swapping it back for
+/// the plain `RMS_EPS` is invisible to every perturbation test here), and
+/// the non-causal span the block's attention runs at.
+///
+/// Re-freezing needs a stated reason. Legitimate ones: the fixture's weights
+/// change, or the draft pass's dispatch order changes in a way whose reduce
+/// order legitimately moves. "The test went red" is not one.
+const FROZEN_DRAFT_DIGEST: &str = "1f5f8c090997e0ed";
+
+fn digest(values: &[LogitValue]) -> String {
+    let bytes: Vec<u8> = values
+        .iter()
+        .flat_map(|v| v.to_bits().to_le_bytes())
+        .collect();
+    model_io::hash_data(&bytes)[..16].to_string()
+}
+
+/// Prefills, primes and drafts once, returning EVERY row's logits -- rows
+/// `1..=block` because those carry the proposals, and row 0 because it is
+/// the bonus row whose embedding is the anchor's and whose arithmetic no
+/// proposal would otherwise cover.
+fn prefill_then_draft(runner: &mut RealForwardRunner, block: usize) -> Vec<LogitValue> {
+    let vocab = VOCAB as usize;
+    let mut logits = vec![LogitValue::from_f32(0.0); vocab];
+    for (i, &token) in PROMPT.iter().enumerate() {
+        runner.produce(token, i, &mut logits).expect("produce");
+        if i + 1 < PROMPT.len() {
+            runner.prime_drafter(PROMPT[i + 1], i).expect("prime");
+        }
+    }
+    let next = argmax(&logits);
+    let mut proposals = Vec::new();
+    runner
+        .dflash_draft_block(next, PROMPT.len(), &mut proposals)
+        .expect("the draft block runs");
+    let mut row = vec![LogitValue::from_f32(0.0); vocab];
+    let mut all = Vec::with_capacity((block + 1) * vocab);
+    for r in 0..=block {
+        runner.dflash_probe_logits(r, &mut row).expect("probe");
+        all.extend_from_slice(&row);
+    }
+    all
+}
+
+#[test]
+fn the_draft_logits_have_a_frozen_digest() {
+    let dir = build();
+    let block = 8usize;
+    let mut runner = open(&dir, block);
+    let draft = prefill_then_draft(&mut runner, block);
+
+    // Determinism first: a digest frozen over a value that moves between two
+    // walks in one process is worse than no digest at all.
+    let mut again_runner = open(&dir, block);
+    let again = prefill_then_draft(&mut again_runner, block);
+    assert_eq!(
+        digest(&draft),
+        digest(&again),
+        "the draft pass is not deterministic across two runners on one fixture"
+    );
+
+    // Non-finite is its own failure and must not reach the digest: an FP16
+    // overflow in this pass reads as NaN, and NaN hashes as stably as any
+    // other bit pattern, so a digest alone would freeze a broken drafter.
+    // (That is not hypothetical -- it is exactly what shipped, and what
+    // `dflash_select` now refuses.)
+    assert!(
+        draft.iter().all(|v| v.to_f32().is_finite()),
+        "the draft pass produced non-finite logits"
+    );
+
+    println!("draft digest = {}", digest(&draft));
+    assert_eq!(
+        digest(&draft),
+        FROZEN_DRAFT_DIGEST,
+        "the draft logits moved; see this test's doc comment before re-freezing"
+    );
+}

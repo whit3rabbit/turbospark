@@ -2553,6 +2553,62 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
     STATED CONFIGURATION is honest; reporting it as this machine's answer is
     not, and the difference is invisible without the check.
 
+59. **NaN SCORES A PERFECT RESULT ON A RANK OR TOP-K INSTRUMENT, because
+    every comparison against NaN is false.** Gotchas 30 and 57 record
+    instruments that return a NEUTRAL value on degenerate input (`pearson`
+    is 0.0 on a constant, a rank sits at `vocab/2` when unrelated). This is
+    the turn of the screw past both: two instruments read their BEST
+    POSSIBLE value on an all-NaN row, and nobody investigates a perfect
+    score.
+    Measured 2026-08-19 on the DFlash2 drafter, whose draft pass overflowed
+    FP16 and returned 248,320 NaNs per row for the life of the feature.
+    - `dflash_select`'s top-16 scan admits on `v <= val[k - 1]`, which NaN
+      fails, so a NaN row was admitted at every candidate; then `score >
+      best_score` was false at each, so the walk kept `cand[0]`, and `cand`
+      was initialized to zeros. The drafter proposed token id 0 eight times
+      a round for 256 rounds, with no error anywhere, and the accept-length
+      table printed 0.16x -- which reads as a WEAK DRAFTER and sent a day of
+      work at the loop, the context write, `fc`, the RoPE and the selector.
+    - `dflash2_bisect_probe`'s `rank_of` counts `logits[i] > logits[token]`,
+      which NaN also fails, so it ranked the true token FIRST on every one
+      of 48 teacher-forced steps. Its "median rank 0, top-1 48/48" was
+      written down as proof that the backbone, the aux capture, the norms,
+      the conv and the selector were all correct. It was the instrument
+      reading its ceiling on garbage.
+    THE CHEAP DEFENCE is a finiteness assertion at the point a measurement
+    is TAKEN, not at the point it is used: three characters of `is_finite`
+    ahead of any argmax, rank or top-k over model output. `dflash_select`
+    now refuses a non-finite row by name, and the drafter's frozen-digest
+    test asserts finiteness BEFORE comparing the digest, because NaN hashes
+    as stably as any other bit pattern and a digest alone would have frozen
+    the broken drafter.
+
+60. **A RESIDUAL STREAM'S DYNAMIC RANGE IS A PORTING AXIS WHEN THE REFERENCE
+    IS BF16 AND THIS PORT IS FP16.** Every family here holds activations in
+    FP16, whose largest finite value is 65,504; BF16 reaches 3e38. That
+    difference is invisible on the five families brought up before DFlash2,
+    whose residuals sit in the hundreds, and it is fatal on a drafter whose
+    residual peaks at 113,920 -- a conv with coefficients running to ~10
+    multiplying sublayer outputs in the thousands, which is the
+    checkpoint's own design and not a bug to find. The overflow presents as
+    NaN, i.e. as Gotcha 59, i.e. as anything but an overflow.
+    CHECK THE MAGNITUDE, not just the block layout, when porting a new
+    component: dequantize a few rows and look at the scale the arithmetic
+    will run at. This is the fixture-dynamic-range trap (Phase G's `inf`
+    logits, Phase S's squared MoE chain) arriving in the STORAGE WIDTH of a
+    real model rather than in a test's inputs.
+    THE FIX NEED NOT BE A WIDER BUFFER. Where the stream is read only by
+    RMS norms and by its own residual add, a power-of-two scale is exact and
+    costs one kernel argument: `rms_norm` is scale-invariant, so dividing
+    the stream and every addend by `S` cancels at the next norm, and a power
+    of two shifts the exponent while leaving the mantissa alone. BUT THE EPS
+    MUST BE DIVIDED BY `S * S` -- `(x/S) / sqrt(mean(x^2)/S^2 + eps)` equals
+    `x / sqrt(mean(x^2) + eps*S^2)`, so an unscaled eps behaves as if it
+    were `S^2` larger, which on an embedding row (mean square ~4e-4) is a
+    factor of ten rather than a rounding difference. Getting that wrong is
+    the worst outcome available: finite, plausible, and wrong -- it put the
+    true token at rank 13,202 where the corrected pass puts it at 0.
+
 ## Per-Crate Documentation
 
 When working on code inside a specific crate, refer to that crate's `CLAUDE.md` file for crate-specific architecture, key modules, dev commands, and localized gotchas:
