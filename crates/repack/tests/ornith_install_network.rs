@@ -10,7 +10,21 @@
 //!
 //! Neither checkpoint is materialized locally: `write_gguf_install_streamed`
 //! reads it a layer at a time through `HttpRangeSource`, so the only disk
-//! either needs is its install (~6 GB and ~21 GB).
+//! either needs is its install (~9 GB and ~35 GB).
+//!
+//! **Q8_0, NOT `Q4_K_M`, AND THAT IS FORCED RATHER THAN PREFERRED.** The
+//! V-head de-interleave for `linear_attn.out_proj` runs on COLUMNS, and a
+//! 128-column head has to be a whole number of blocks (`crates/repack`
+//! Gotcha 7). Q8_0's block is 32 elements and 128 is four of them; Q4_K's and
+//! Q6_K's are 256, so a head is HALF a superblock and the permutation cuts
+//! through the packed 6-bit scale header. `Q4_K_M` puts `ssm_out` at Q4_K on
+//! every layer of both models, so both are refused by name in seconds --
+//! `ornith_gguf_network.rs` reads that type off the real header, which is
+//! where the evidence for this paragraph lives.
+//!
+//! Nothing is given up by taking Q8_0. Both published Q8_0 files are Q8_0 and
+//! F32 THROUGHOUT (no K-quant anywhere), so every block type already has the
+//! kernels its slot needs and neither install needs a line of new code.
 //!
 //! **RUN THE 9B FIRST.** It is a quarter of the wall clock and it exercises
 //! the path with no prior coverage at all -- `qwen35` dense, whose name table
@@ -32,8 +46,21 @@ use turbospark_repack::{fetch_gguf_header, write_gguf_install_streamed, HttpRang
 
 /// Pinned by revision. `curl -sI` on a `resolve/main` URL returns
 /// `x-repo-commit`, which costs no bytes (repack Gotcha 5).
-const MOE_Q4_K_M: &str = "https://huggingface.co/ornith-ai/Ornith-1.5-35B-A3B-GGUF/resolve/5ae357e3eaf951ae221e8d784c71a8a3cdb6aa5f/Ornith-1.5-35B-Q4_K_M.gguf";
-const DENSE_Q4_K_M: &str = "https://huggingface.co/ornith-ai/Ornith-1.5-9B-GGUF/resolve/0677a38f331a214c4e5e7bd07ecab04c14ac52f1/Ornith-1.5-9B-Q4_K_M.gguf";
+const MOE_Q8_0: &str = "https://huggingface.co/ornith-ai/Ornith-1.5-35B-A3B-GGUF/resolve/5ae357e3eaf951ae221e8d784c71a8a3cdb6aa5f/Ornith-1.5-35B-Q8_0.gguf";
+const DENSE_Q8_0: &str = "https://huggingface.co/ornith-ai/Ornith-1.5-9B-GGUF/resolve/0677a38f331a214c4e5e7bd07ecab04c14ac52f1/Ornith-1.5-9B-Q8_0.gguf";
+
+/// The published byte sizes, from `x-linked-size` on a HEAD of the URLs above.
+///
+/// **`x-linked-etag` on the same HEAD is the file's SHA-256** and is pinned
+/// beside them (AGENTS.md Gotcha 46 records finding that and declining to use
+/// it; this is the occasion, because a size alone cannot tell a re-quantized
+/// file of the same shape from the one these numbers were measured against).
+/// Neither costs a byte, and the walk reads the header before it reads a
+/// weight, so a moved file is caught in seconds rather than at some offset.
+const MOE_BYTES: u64 = 37_802_149_120;
+const DENSE_BYTES: u64 = 9_527_501_248;
+const MOE_SHA256: &str = "854cf83f80cd37a061ed86df1fa7201162e4e1fb820b91068cc12a11d2746c9e";
+const DENSE_SHA256: &str = "6874eeb25c71081dc8f0bbe88f3ebb786312447132745371cd980bce95d259b9";
 
 const MOE_MODEL_ID: &str = "ornith-ai/Ornith-1.5-35B-A3B-GGUF";
 const DENSE_MODEL_ID: &str = "ornith-ai/Ornith-1.5-9B-GGUF";
@@ -76,6 +103,44 @@ fn get(url: &str) -> Vec<u8> {
     response.bytes().expect("body").to_vec()
 }
 
+/// Asserts the published file is still the one these constants were measured
+/// against, from HEADERS alone: `x-linked-size` is its byte length and
+/// `x-linked-etag` is its SHA-256.
+///
+/// Run BEFORE the walk. The revision pin already prevents the repository from
+/// moving under us; what this catches is the case a revision cannot, which is
+/// a file re-uploaded at the same path with the same shape and different
+/// bytes. Costs one round trip against a ~35 GB stream.
+fn assert_published_file(url: &str, bytes: u64, sha256: &str) {
+    let response = reqwest::blocking::Client::builder()
+        .timeout(None)
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .expect("client")
+        .head(url)
+        .send()
+        .unwrap_or_else(|e| panic!("HEAD {url}: {e}"));
+    let header = |name: &str| {
+        response
+            .headers()
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v.trim_matches('"').to_string())
+            .unwrap_or_else(|| panic!("HEAD {url}: no {name} header"))
+    };
+    assert_eq!(
+        header("x-linked-size").parse::<u64>().expect("size"),
+        bytes,
+        "{url}: published size moved"
+    );
+    assert_eq!(
+        header("x-linked-etag"),
+        sha256,
+        "{url}: published bytes moved"
+    );
+    eprintln!("pinned: {bytes} bytes, sha256 {sha256}");
+}
+
 fn install_dir(env: &str, fallback: &str) -> PathBuf {
     let dir = match std::env::var_os(env) {
         Some(dir) => PathBuf::from(dir),
@@ -94,9 +159,10 @@ fn fetch_sidecars(dir: &std::path::Path, base: &str, names: &[&str]) {
 
 /// The DENSE half, and the first `qwen35` GGUF this port has ever installed.
 #[test]
-#[ignore = "network: streams the real 5.6 GB Ornith-1.5-9B Q4_K_M GGUF and writes a ~6 GB install"]
+#[ignore = "network: streams the real 9.5 GB Ornith-1.5-9B Q8_0 GGUF and writes a ~9 GB install"]
 fn installs_the_real_ornith_9b() {
-    let source = HttpRangeSource::new(DENSE_Q4_K_M);
+    assert_published_file(DENSE_Q8_0, DENSE_BYTES, DENSE_SHA256);
+    let source = HttpRangeSource::new(DENSE_Q8_0);
     let header = fetch_gguf_header(&source).expect("fetch GGUF header");
     // The converter's name, not the family's (AGENTS.md Gotcha 29). Note it
     // is a PREFIX of the MoE half's `qwen35moe`, which is why the registry
@@ -125,7 +191,7 @@ fn installs_the_real_ornith_9b() {
     fetch_sidecars(&dir, DENSE_SIDECAR_BASE, DENSE_SIDECARS);
 
     model_io::load_manifest(&dir, &arch, model_io::DEFAULT_MAX_BYTES)
-        .expect("manifest validates: q4_k and q6_k are both executable block types");
+        .expect("manifest validates: q8_0 is an executable block type");
     let resident =
         model_io::load_resident_index(&dir.join("model_weights.bin")).expect("resident index");
 
@@ -183,9 +249,10 @@ fn installs_the_real_ornith_9b() {
 /// The MoE half, and the first install whose source declares a
 /// multi-token-prediction block.
 #[test]
-#[ignore = "network: streams the real 21.7 GB Ornith-1.5-35B-A3B Q4_K_M GGUF and writes a ~21 GB install"]
+#[ignore = "network: streams the real 37.8 GB Ornith-1.5-35B-A3B Q8_0 GGUF and writes a ~35 GB install"]
 fn installs_the_real_ornith_35b() {
-    let source = HttpRangeSource::new(MOE_Q4_K_M);
+    assert_published_file(MOE_Q8_0, MOE_BYTES, MOE_SHA256);
+    let source = HttpRangeSource::new(MOE_Q8_0);
     let header = fetch_gguf_header(&source).expect("fetch GGUF header");
     assert_eq!(header.architecture(), Some("qwen35moe"));
     eprintln!(
@@ -212,7 +279,7 @@ fn installs_the_real_ornith_35b() {
     fetch_sidecars(&dir, MOE_SIDECAR_BASE, MOE_SIDECARS);
 
     model_io::load_manifest(&dir, &arch, model_io::DEFAULT_MAX_BYTES)
-        .expect("manifest validates: q4_k and q6_k are both executable block types");
+        .expect("manifest validates: q8_0 is an executable block type");
     let resident =
         model_io::load_resident_index(&dir.join("model_weights.bin")).expect("resident index");
 

@@ -29,6 +29,13 @@ use turbospark_repack::{
 const MOE_Q4_K_M: &str = "https://huggingface.co/ornith-ai/Ornith-1.5-35B-A3B-GGUF/resolve/5ae357e3eaf951ae221e8d784c71a8a3cdb6aa5f/Ornith-1.5-35B-Q4_K_M.gguf";
 const DENSE_Q4_K_M: &str = "https://huggingface.co/ornith-ai/Ornith-1.5-9B-GGUF/resolve/0677a38f331a214c4e5e7bd07ecab04c14ac52f1/Ornith-1.5-9B-Q4_K_M.gguf";
 
+/// The files this port actually INSTALLS, at the same two revisions.
+///
+/// Q8_0 rather than `Q4_K_M`, and `the_q8_0_files_are_the_installable_ones`
+/// below is where the reason is asserted rather than asserted about.
+const MOE_Q8_0: &str = "https://huggingface.co/ornith-ai/Ornith-1.5-35B-A3B-GGUF/resolve/5ae357e3eaf951ae221e8d784c71a8a3cdb6aa5f/Ornith-1.5-35B-Q8_0.gguf";
+const DENSE_Q8_0: &str = "https://huggingface.co/ornith-ai/Ornith-1.5-9B-GGUF/resolve/0677a38f331a214c4e5e7bd07ecab04c14ac52f1/Ornith-1.5-9B-Q8_0.gguf";
+
 fn fetch(url: &str) -> GgufHeader {
     let source = HttpRangeSource::new(url);
     fetch_gguf_header(&source).expect("fetch GGUF header")
@@ -307,5 +314,109 @@ fn the_dense_header_derives_the_published_9b_shape() {
             matches!(name, "F32" | "Q4_K" | "Q6_K"),
             "unexpected block type {name}"
         );
+    }
+}
+
+/// **WHY Q8_0 IS THE INSTALLABLE QUANTIZATION AND `Q4_K_M` IS NOT**, asserted
+/// off the real headers rather than argued in prose.
+///
+/// `linear_attn.out_proj` is the one tensor whose V-head de-interleave runs on
+/// COLUMNS, so a 128-column head must be a whole number of blocks
+/// (`crates/repack` Gotcha 7). Q8_0's block is 32 elements, and 128 is four of
+/// them. Q4_K's and Q6_K's are 256, so a head is HALF a superblock and the
+/// permutation would cut through the packed 6-bit scale header -- which is not
+/// recoverable by any byte rearrangement, because output heads `2k` and `2k+1`
+/// come from source heads `k` and `k + H/2`, i.e. two different superblocks.
+///
+/// Both halves are checked because a one-sided version proves nothing: the
+/// Q8_0 arm alone cannot show that the block size is what decides, and the
+/// Q4_K arm alone reads as an arbitrary exclusion.
+#[test]
+#[ignore = "network: reads a few MB off four remote checkpoints"]
+fn the_q8_0_files_are_the_installable_ones() {
+    // The V-head span, which both models share: 32 value heads of 128.
+    const HEAD_ELEMENTS: u64 = 128;
+
+    for (label, q8, q4, family) in [
+        (
+            "Ornith-1.5-35B-A3B",
+            MOE_Q8_0,
+            MOE_Q4_K_M,
+            ModelFamily::QwenGdnMoe,
+        ),
+        (
+            "Ornith-1.5-9B",
+            DENSE_Q8_0,
+            DENSE_Q4_K_M,
+            ModelFamily::QwenGdnDense,
+        ),
+    ] {
+        println!("== {label} ==");
+
+        let h8 = fetch(q8);
+        let arch = arch_from_gguf(&h8).expect("arch derives from the Q8_0 header");
+
+        // The SAME derivation from a second quantization of the same model.
+        // Metadata is the converter's, not the quantizer's, so this must not
+        // move -- and it is a real cross-check rather than a restatement,
+        // because these are different bytes written in a different run.
+        let q4_arch = arch_from_gguf(&fetch(q4)).expect("arch derives from the Q4_K_M header");
+        assert_eq!(
+            arch, q4_arch,
+            "{label}: the derived ArchConfig must not depend on the quantization"
+        );
+
+        // NO K-QUANT ANYWHERE, which is what makes a Q8_0 install need no new
+        // kernels: F32 is transcoded at repack (Gotcha 6) and Q8_0 has the
+        // full trio (resident GEMV, embedding lookup, routed pair).
+        for ty in report_block_types(&h8) {
+            let name = ggml_type_name(ty).unwrap_or("?");
+            assert!(
+                matches!(name, "F32" | "Q8_0"),
+                "{label} Q8_0: unexpected block type {name}"
+            );
+        }
+
+        // THE TENSOR THAT DECIDES IT, in both files.
+        let out_proj = "blk.0.ssm_out.weight";
+        let block_of = |h: &GgufHeader| -> (&'static str, u64) {
+            let t = h
+                .tensors
+                .get(out_proj)
+                .unwrap_or_else(|| panic!("{label}: {out_proj} missing"));
+            let name = ggml_type_name(t.ggml_type).unwrap_or("?");
+            let (elements, _) = ggml_type_block(t.ggml_type)
+                .unwrap_or_else(|| panic!("{label}: {name} has no block row"));
+            (name, elements)
+        };
+
+        let (q8_name, q8_block) = block_of(&h8);
+        assert_eq!(q8_name, "Q8_0", "{label}: Q8_0 file's out_proj");
+        assert_eq!(
+            HEAD_ELEMENTS % q8_block,
+            0,
+            "{label}: a {HEAD_ELEMENTS}-element V head must be whole {q8_name} blocks"
+        );
+
+        let h4 = fetch(q4);
+        let (q4_name, q4_block) = block_of(&h4);
+        assert_eq!(
+            q4_name, "Q4_K",
+            "{label}: the Q4_K_M file puts out_proj at Q4_K -- if this ever \
+             changes, the refusal below stops being the reason it is refused"
+        );
+        assert_ne!(
+            HEAD_ELEMENTS % q4_block,
+            0,
+            "{label}: a {HEAD_ELEMENTS}-element V head is not whole {q4_name} \
+             blocks, which is exactly why the walk refuses this file"
+        );
+
+        println!(
+            "   out_proj: {q8_name} (block {q8_block}, head is {} blocks) installable; \
+             {q4_name} (block {q4_block}) refused",
+            HEAD_ELEMENTS / q8_block
+        );
+        assert_every_trunk_name_maps(&h8, family, arch.num_layers as usize);
     }
 }
