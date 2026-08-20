@@ -1163,6 +1163,12 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
     path rather than relative to the worktree you are working in. `st` also
     needs a per-tree index, so a fresh worktree answers every query with
     "no index found" until `st index` has run once.
+    **AND NEITHER IS UNCOMMITTED WORK.** A worktree opened for a task whose
+    subject sits unstaged in the main checkout starts EMPTY at HEAD, with
+    none of the code the task describes -- which reads like the task being
+    wrong rather than the tree being empty. Run `git status` in the MAIN
+    checkout before accepting a worktree, and work there when the subject
+    is uncommitted.
 
 14. Adding one flag to `crates/invocation` touches five places, two of them
     non-obvious: the `OPTIONS` table, BOTH parser dispatch `match`es (each
@@ -2609,6 +2615,31 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
     the worst outcome available: finite, plausible, and wrong -- it put the
     true token at rank 13,202 where the corrected pass puts it at 0.
 
+61. **THE SECOND HALF OF A SHARED ARCHITECTURE IS NOT COVERED BY THE FIRST
+    HALF'S TESTS, AND THREE SEPARATE `== ModelFamily::QwenGdnMoe` CONDITIONS
+    PROVED IT IN ONE SESSION.** `qwen35` (dense) and `qwen35moe` share a
+    baseline's every behavioural field, one decode flow, one name table and
+    one GGUF converter -- so a condition naming only the MoE half reads as
+    correct and is a latent bug for exactly as long as no dense checkpoint
+    exists. Bringing up `ornith-ai/Ornith-1.5-9B` found all three:
+    `arch_from_gguf` assigned `linear_attention` for the MoE half alone (the
+    dense file kept `qwen_gdn_dense_27b()`'s `num_v_heads: 48` against a real
+    32, deriving `qkv_dim` 10240 for an 8192-row tensor); `v_head_axis`
+    returned `None` for it (no de-interleave, so Gotcha 33's fluent word
+    salad); and `gguf_config`'s mask arm refused it outright.
+    **THE FIRST IS THE ONE TO INTERNALISE, because the MoE half CANNOT SEE
+    IT**: `qwen_gdn_moe_35b_a3b()` declares 32 and the real file says 32, so
+    the missing assignment read the right answer from the baseline either
+    way. Gotcha 37's shape, with the injective mapping being one family to
+    one checkpoint. GREP FOR THE FAMILY NAME before adding a checkpoint of a
+    shared architecture's other half, and prefer `matches!(family, A | B)`
+    over `== A` wherever the two share the code below it.
+    A COROLLARY FOR DIAGNOSTICS: a probe that RANKS tensors must sort NaN
+    rather than `.expect("finite")`. A non-finite score is the most
+    informative outcome available and a panicking comparator destroys it --
+    Gotcha 59's rule (NaN reads as a perfect score) arriving one layer out,
+    where NaN instead reads as no score at all.
+
 ## Per-Crate Documentation
 
 When working on code inside a specific crate, refer to that crate's `CLAUDE.md` file for crate-specific architecture, key modules, dev commands, and localized gotchas:
@@ -2760,6 +2791,13 @@ picked up a Gemma sandwich norm on the way, and shipped a Qwen whose
 reference perplexity read 255,409 against a frozen 6.2536, with the whole
 workspace suite green (`crates/runtime/CLAUDE.md` Gotcha 11). Run the gates
 per FAMILY the change touches, not once for the workspace.
+
+**A COMPILE ERROR IN A CRATE YOU DID NOT TOUCH IS PROBABLY NOT YOURS.** This
+tree is routinely worked by more than one session at once, and the failure
+arrives as a normal-looking build break minutes after your own suite went
+green. Check mtimes before debugging it, and do not "fix" another session's
+half-finished edit. The same applies to `git add`: re-run `git status`
+immediately before staging.
 
 1. greedy generation stays coherent (catches broken math),
 2. SAMPLED generation stays coherent (catches distribution bugs that greedy
