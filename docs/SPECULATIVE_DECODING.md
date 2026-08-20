@@ -309,9 +309,16 @@ acceptance curve untouched.
 **Losslessness is settled, and separately from the economics.** Every block
 size produces a token stream byte-identical to the same generation with
 speculation switched off, so the accept walk and the rollback are lossless
-in practice and not only by construction. The reference arm is a
+in practice and not only by construction.
+
+**QUALIFIED 2026-08-20, ON A DIFFERENT DRAFTER AND FAMILY.** That claim is this probe's, at ITS generation length, and the DFlash2 work found the limit it cannot see: byte-identity to a sequential decode holds for a few hundred tokens and then fails, because a batched verify and a decode step run DIFFERENT KERNELS (`dequant_int4_gemm_simd` against `dequant_int4_gemv_simd`) whose accumulation orders differ, so the streams part at the first near-tie. Nobody has re-run THIS probe long enough to say whether the same happens here; the mechanism is shared, so assume it does until measured. What survives exactly either way is that every BLOCK SIZE produces the same text. See `docs/DFLASH2.md`.
+
+The reference arm is a
 non-speculative run rather than the other block sizes: comparing speculative
 arms against each other passes even when all of them are wrong the same way.
+That reasoning is only sharpened by the finding above: the block sizes agree
+with each other EXACTLY and still leave the sequential stream, so an
+arms-against-each-other check would have called this lossless forever.
 
 ## Standing decision
 

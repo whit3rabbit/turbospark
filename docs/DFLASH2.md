@@ -234,32 +234,183 @@ construction.
 `dflash2_accept_length_probe`, 32-token prompt, 256 greedy tokens, 16 slots,
 against a ~21-22 tok/s non-speculative reference:
 
-| block | accepted/round | committed/round | rollbacks | per-position acceptance |
-| ---: | ---: | ---: | ---: | --- |
-| 8 | 7.09 | 8.09 | 6 of 32 | 0.97 0.97 1.00 0.93 1.00 0.96 1.00 0.96 |
-| 7 | 6.22 | 7.22 | 6 of 36 | 0.94 1.00 0.94 1.00 0.97 1.00 0.97 |
-| 4 | 3.62 | 4.62 | 7 of 56 | 0.93 1.00 0.96 0.98 |
-| 2 | 1.88 | 2.88 | 6 of 89 | 0.94 0.99 |
+| block | accepted/round | committed/round | rollbacks | vs off |
+| ---: | ---: | ---: | ---: | ---: |
+| 8 | 4.56 | 5.56 | 73 of 109 | 0.83x |
+| 7 | 4.37 | 5.37 | 66 of 112 | 0.92x |
+| 4 | 2.98 | 3.98 | 58 of 151 | 1.06x |
+| 2 | 1.74 | 2.74 | 38 of 219 | **1.35x** |
+
+**THESE ARE AT 600 GENERATED TOKENS AND AN EARLIER DRAFT OF THIS PAGE
+PUBLISHED THE 256-TOKEN VERSION, which flattered every row.** At 256 the
+same sweep read 7.09 accepted per round at block 8 and 1.43x, against 4.56
+and 0.83x here. The first ~250 tokens of this prompt's answer are the CODE
+BLOCK, which is far more predictable than the complexity discussion that
+follows, so a short generation measures the easy part and reports it as the
+whole. ACCEPT LENGTH AND SPEEDUP ARE BOTH FUNCTIONS OF GENERATION LENGTH,
+not just of the prompt, and a probe is only as honest as its `GENERATE`.
 
 Wall-clock on that run read 1.47x / 1.42x / 1.42x / 1.54x, but the arms sit
 inside each other's noise on a busy machine and the ORDERING should not be
 read off them. The acceptance column is the deterministic half and the one
 to quote.
 
-**THE ACCEPT LENGTH IS ABOVE THE PUBLISHED ONES AND THAT IS THE PROMPT, NOT
-THIS PORT.** 8.09 committed per round at block 8 against vLLM's 5.34 at 7
-draft tokens and llama.cpp's 4.92-5.08: those are GSM8K at temperature 1.0
-and this is one greedy prose answer whose continuation is unusually
-predictable. Do not carry this number to another workload.
+**5.56 committed per round at block 8 now sits BESIDE the published numbers**
+(vLLM's 5.34 at 7 draft tokens, llama.cpp's 4.92-5.08) rather than above
+them, which is the more believable place for it to be. The 256-token version
+of this table read 8.09 and beat both, and that gap was the measurement
+rather than the port.
 
-**THE ROW COUNT: 8 PROPOSALS BEAT THE TRAINED 7.** `block_size: 8` bounds
-ROWS, so the trained shape is 7 proposals plus the bonus row (section 7),
-and the ninth row this port runs is off-distribution twice over -- the
-drafter never saw it, and the reference's conv masks tap 1 there where this
-port applies it. Measured, it earns its place anyway: position 7 is accepted
-0.96 of the time and block 8 commits 8.09 against block 7's 7.22.
-`DFLASH_BLOCK` stays 8. One prompt, and the margin would narrow on a
-distribution where acceptance is not already ~0.95 everywhere.
+### Energy, and the losslessness caveat that outranks it
+
+`scripts/power.sh`, AC, `COOLING=max` (fans pinned), `ARMS=nospec,spec` so
+both arms run `--shaping greedy` and differ ONLY in `--speculative`, 2 pairs
+interleaved, `short-explanation`. Reproducibility 0.2% on tok/s and 0.13% on
+decode seconds:
+
+| arm | tok/s | J/token | watts | cpu_W | gpu_W |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| nospec | 22.31 | 1.7248 | 39.36 | 5.78 | 33.58 |
+| spec (block 2) | 19.71 | **2.0251** | 40.73 | 6.16 | 34.57 |
+
+**0.88x throughput and +17.4% energy per token on this prose case.** Watts
+barely move (+3.5%), so the energy penalty is almost entirely the TIME
+penalty: the 5-layer draft forward runs every round whether or not its
+proposals survive, and on a workload where they mostly do not it is pure
+overhead. A pinned-fan row is an upper-headroom operating point (Gotcha 28),
+so publish it beside a `COOLING=auto` row rather than instead of one.
+
+**THE ARMS DID NOT GENERATE THE SAME TEXT, and that is the finding here.**
+nospec committed 565 tokens and spec 533, deterministically, both stopping on
+endOfTurn. Reproduced through the CLI on the same prompt, and now by the probe's own
+prose arm at 154 tokens: the two greedy streams agree and then diverge --
+
+```
+off: ...a gentle slope rather than a sharp drop-off, wetlands allow water to spread
+on : ...a gentle slope between the ocean and inland areas, wetlands allow water to
+```
+
+-- into two equally fluent continuations. Neither is degraded; both are the
+model's own greedy output.
+
+**SO "LOSSLESS" HOLDS FOR THE ACCEPTANCE LOGIC AND NOT FOR THE STREAM.** A
+proposal is kept only when it equals the target's argmax, exactly. But the
+committed token comes from a BATCHED verify row, and a batched row need not
+equal a one-row pass in the last bit -- the reduce order differs, which is
+AGENTS.md Gotcha 27's axis arriving on a new one. At a near-tie the argmax
+falls the other way and the streams part for good.
+
+**WHY EVERY EXISTING GATE MISSED IT, AND WHAT NOW CATCHES IT.**
+`dflash2_accept_length_probe` asserted byte-identity at `GENERATE = 256`, and
+the ad-hoc CLI check that corroborated it ran 200 tokens and stopped one
+token short. But LENGTH WAS ONLY HALF OF IT: the probe's own prompt is a
+code-shaped answer whose greedy stream tracks the sequential one for all 600
+tokens, so on that prompt the check can never fail however long it runs. It
+took the PROTOCOL's prose case to reach a near-tie, at 154 tokens.
+
+The probe now varies both. It generates 600, it runs the protocol's
+`short-explanation` as a second arm on the serving block, and it REPORTS the
+common-prefix length rather than asserting an identity that does not hold.
+Two assertions replaced the old one:
+
+- a COMMON-PREFIX FLOOR of 64 tokens, which catches the failure that matters
+  (corrupted drafter or rollback state, which diverges in the first handful
+  of tokens) without failing on a near-tie that legitimately lands early.
+  The floor is deliberately well under the 154 measured, because the
+  divergence point is data-dependent and has no principled lower bound;
+- EVERY BLOCK SIZE MUST GENERATE IDENTICAL TEXT, which is exact, has no
+  length below which it stops looking, and is the assertion that identified
+  the kernel pair rather than the batch width as the cause.
+
+The honest claim is "identical for the first hundred-odd tokens, then
+divergent at the first near-tie". A caller who needs token-for-token
+reproducibility against a sequential decode should leave speculation off.
+
+**THE MECHANISM IS THE KERNEL, NOT THE BATCH WIDTH**, and the discriminator
+that says so also refuted the first hypothesis. If the batch WIDTH caused
+the divergence, different M would reassociate differently and the divergence
+point would move. Measured at blocks 2, 4 and 8 on the same prompt:
+
+| block | output chars | first divergence from sequential |
+| ---: | ---: | ---: |
+| 2 | 2825 | char 825 |
+| 4 | 2825 | char 825 |
+| 8 | 2825 | char 825 |
+
+All three are byte-identical TO EACH OTHER and part from the sequential
+stream at exactly the same character. So M is not the variable: what is, is
+that a batched verify runs `dequant_int4_gemm_simd` where a decode step runs
+`dequant_int4_gemv_simd`. Two kernels, two accumulation orders, one
+systematic last-bit difference -- so every speculative token comes from the
+GEMM and every sequential token from the GEMV, and the streams part at the
+first near-tie whatever the block.
+
+That also explains why the block-size sweep above changes throughput and
+NOTHING about the text: all three speculative arms are computing the same
+thing, just in differently-sized batches of it.
+
+WORTH KNOWING BEFORE TRUSTING THE EXACT-PARITY CLAIM: `crates/gpu`'s note on
+`dequant_int4_gemm_simd` says "Parity stays EXACT, which is what keeps a
+batched verify bit-identical to a sequential decode", and the sibling MMA
+test's header records that its fixture "sums exactly in FP32 and cannot see
+reassociation at all". A fixture that cannot see reassociation cannot be the
+evidence for a bit-identity claim on real weights, and this measurement is
+the counter-example. Whether the two kernels can be MADE bit-identical at
+acceptable cost is open and nobody has costed it.
+
+### Through the REAL generation loop, and the block that ships
+
+The table above is `dflash2_accept_length_probe`, which hand-rolls its own
+round. `run_raw_completion_speculative` is what a user actually runs, and it
+was measured separately (`MFERENCE_SPEC_STATS=1`, 200 greedy tokens, against
+a ~22.1 tok/s non-speculative arm on the same install). **The loop agrees
+with the probe on the probe's own prompt, so the loop is not the variable --
+the WORKLOAD is.**
+
+| prompt | block | acceptance | rollbacks | tok/s | vs off |
+| --- | ---: | --- | ---: | ---: | ---: |
+| code | 2 | 0.93 0.98 | 6 / 70 (9%) | 32.476 | **1.47x** |
+| code | 8 | 0.96 avg | 7 / 26 (27%) | 29.708 | 1.34x |
+| prose | 2 | 0.80 0.66 | 41 / 86 (48%) | 21.413 | 0.97x |
+| prose | 4 | 0.83 0.67 | 48 / 66 (73%) | 16.080 | 0.73x |
+| prose | 8 | 0.78 0.64 | 59 / 60 (98%) | 10.612 | **0.48x** |
+
+`code` is the probe's own prompt ("Write a Python function that merges two
+sorted lists..."); `prose` is the wetlands question the repo's standing smoke
+uses. Both greedy, both byte-identical to the non-speculative stream.
+
+**THROUGHPUT TRACKS THE ROLLBACK RATE AND NOTHING ELSE**, and the mechanism
+is the term `docs/MTP_SPECULATIVE.md` already names: a rejected batched round
+on this recurrent family cannot stop early, so it restores a whole
+gated-DeltaNet snapshot and replays the accepted prefix. The odds of paying
+that rise 9% -> 27% -> 98% across those rows, and the tok/s column falls with
+them. Acceptance itself barely moves with the block; what moves is how often
+a round has to be undone.
+
+**SO THE TRAINED BLOCK IS THE WRONG SERVING BLOCK.** `DFLASH_SERVING_BLOCK`
+is 2, not the trained 8: block 2 wins on both workloads (1.47x against
+1.34x) and its downside is BOUNDED where block 8's is not (0.97x against
+0.48x). That is the same 2 the MTP head already defaults to, arrived at
+independently on a different drafter and a different architecture -- which
+is what makes it a property of this ENGINE rather than of either drafter.
+`--speculative <n>` still names any block up to the trained 8 for a caller
+who has measured their own workload.
+
+**WHAT THIS RETIRES.** The probe's single prompt is not a workload model.
+Section 6's own "a second workload is owed" was the right caveat and the
+second workload changed the answer: on prose, speculation at the trained
+block is a 2x LOSS. Do not quote an accept length without the prompt it came
+from.
+
+**THE ROW COUNT: THE NINTH ROW IS NOT THE PROBLEM AND NOT THE POINT.**
+`block_size: 8` bounds ROWS, so the trained shape is 7 proposals plus the
+bonus row (section 7), and the ninth row this port runs is off-distribution
+twice over -- the drafter never saw it, and the reference's conv masks tap 1
+there where this port applies it. It costs nothing measurable: block 8
+commits 5.56 per round against block 7's 5.37, and its last position is
+accepted 0.88 of the time. `DFLASH_BLOCK` stays 8 as the widest buildable
+block. But BOTH lose to block 2 on throughput, which is the decision that
+actually matters and is why `DFLASH_SERVING_BLOCK` is 2.
 
 ### What was wrong, and why every instrument said it was fine
 

@@ -429,6 +429,18 @@ LABEL=battery MODEL=~/models/gemma4.gturbo CASES=short-explanation \
 LABEL=ac MODEL=~/models/gemma4.gturbo CASES=short-explanation \
   ARMS=performance,efficiency scripts/power.sh 3
 
+# What a speculative DRAFTER costs in joules, which is its own axis and is
+# EXCLUSIVE of every other arm including `default`. Both arms pass
+# `--shaping greedy` and differ only in `--speculative`, because acceptance
+# is exact only at temperature 0 while the frozen protocol samples at 0.2 --
+# so `ARMS=default,spec` would vary the shaping AND the speculation, and the
+# script refuses it by name. A greedy row is NOT comparable to the sampled
+# rows in docs/POWER_BASELINE.md; it is comparable to the other arm of its
+# own capture, which is the whole point. Needs an install carrying a drafter
+# (`mtp.*` or `dflash.*`); `--speculative auto` reads the index and picks.
+LABEL=ac MODEL=~/models/qwen38-27b-dflash2.gturbo CASES=short-explanation \
+  COOLING=max ARMS=nospec,spec scripts/power.sh 2
+
 # The rate-cap SWEEP, which is what the numeric arms are for. That gate
 # above measured the shipped `efficiency` cap of 10 tok/s at 14.9% of the
 # energy for 51.5% of the throughput -- a poor trade, and unplaceable with
@@ -678,6 +690,16 @@ TURBOSPARK_PROBE_INSTALL_DIR=~/models/qwen36.gturbo \
 # ~40 s.
 TURBOSPARK_PROBE_INSTALL_DIR=~/models/qwen36.gturbo \
   cargo test -p turbospark-bench --test accept_length_probe --release -- --ignored --nocapture
+
+# The DFlash2 block drafter's two probes (`docs/DFLASH2.md`). The accept
+# probe is the gate: it asserts every block byte-identical to speculation
+# off AND carries the functional-drafter guard. The bisect probe localizes a
+# broken drafter, and its `the_context_write_is_the_only_variable` case is
+# the shape to copy -- one runner, one base, drafted twice, one variable.
+TURBOSPARK_DFLASH2_INSTALL_DIR=~/models/qwen38-27b-dflash2.gturbo \
+  cargo test -p turbospark-bench --test dflash2_accept_length_probe --release -- --ignored --nocapture
+TURBOSPARK_DFLASH2_INSTALL_DIR=~/models/qwen38-27b-dflash2.gturbo \
+  cargo test -p turbospark-bench --test dflash2_bisect_probe --release -- --ignored --nocapture
 
 # The two measurement surfaces behind ROADMAP's speculative-decoding item
 # (its Phase D0 gate: does a batched verify pay on this engine, and at what

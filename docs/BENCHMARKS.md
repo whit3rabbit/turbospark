@@ -1285,6 +1285,8 @@ Losslessness is settled independently of the economics: every block size
 produces a token stream byte-identical to the same generation with
 speculation switched off.
 
+**QUALIFIED 2026-08-20, ON A DIFFERENT DRAFTER AND FAMILY.** That claim is this probe's, at ITS generation length, and the DFlash2 work found the limit it cannot see: byte-identity to a sequential decode holds for a few hundred tokens and then fails, because a batched verify and a decode step run DIFFERENT KERNELS (`dequant_int4_gemm_simd` against `dequant_int4_gemv_simd`) whose accumulation orders differ, so the streams part at the first near-tie. Nobody has re-run THIS probe long enough to say whether the same happens here; the mechanism is shared, so assume it does until measured. What survives exactly either way is that every BLOCK SIZE produces the same text. See `docs/DFLASH2.md`.
+
 ### DFlash2, the block drafter, measured 2026-08-19
 
 Not a parity claim, and not the same question as the row above: that one
@@ -1299,27 +1301,53 @@ weights); the seconds are NOT, and are omitted here on purpose -- the
 machine was running an interactive session throughout, which Gotcha 43
 measured as an 11% error on a published row.
 
-| block | accepted/round | committed/round | rollbacks | per-position acceptance |
-| ---: | ---: | ---: | ---: | --- |
-| 8 | 7.09 | 8.09 | 6 of 32 | 0.97 0.97 1.00 0.93 1.00 0.96 1.00 0.96 |
-| 7 | 6.22 | 7.22 | 6 of 36 | 0.94 1.00 0.94 1.00 0.97 1.00 0.97 |
-| 4 | 3.62 | 4.62 | 7 of 56 | 0.93 1.00 0.96 0.98 |
-| 2 | 1.88 | 2.88 | 6 of 89 | 0.94 0.99 |
+| block | accepted/round | committed/round | rollbacks | vs off |
+| ---: | ---: | ---: | ---: | ---: |
+| 8 | 4.56 | 5.56 | 73 of 109 | 0.83x |
+| 7 | 4.37 | 5.37 | 66 of 112 | 0.92x |
+| 4 | 2.98 | 3.98 | 58 of 151 | 1.06x |
+| 2 | 1.74 | 2.74 | 38 of 219 | **1.35x** |
 
-Every arm is byte-identical to the same generation with speculation off.
+**AT 600 GENERATED TOKENS. The 256-token version of this table, published
+here for a day, read 8.09 committed per round at block 8 and 1.43x** -- the
+first ~250 tokens of that answer are a code block, far more predictable than
+the prose that follows, so a short generation measures the easy part and
+reports it as the whole. Accept length and speedup are functions of
+GENERATION LENGTH as well as of the prompt.
 
-**READ THE ACCEPT LENGTH AGAINST ITS PROMPT.** 8.09 committed per round
-beats vLLM's published 5.34 and llama.cpp's 4.92-5.08, and that is the
-workload rather than the port: those are GSM8K at temperature 1.0, this is
-one greedy prose answer whose continuation is unusually predictable. A
-second workload is owed before any of these numbers travel.
+**NOT byte-identical to a non-speculative decode over a long generation**, which an earlier draft of this row claimed. Acceptance is exact -- a proposal is kept only when it equals the target's argmax -- but the committed token comes from a BATCHED verify row, and `dequant_int4_gemm_simd` accumulates differently from the decode path's `dequant_int4_gemv_simd`, so at the first near-tie the streams part. Measured: they agree for ~200 tokens on the protocol prompt, then take different but equally fluent continuations, both stopping on endOfTurn. Every BLOCK SIZE does produce identical text to every other, which is the exact invariant that survives and is what identifies the kernel pair rather than the batch width as the cause. `docs/DFLASH2.md` carries the measurement.
 
-**This drafter does NOT show the small-block inversion the row above
-predicts for the MoE family.** Its per-position acceptance is still 0.96 at
-position 7, so a wide block keeps paying; the ninth row this port runs (one
-past the checkpoint's `block_size: 8`, which bounds ROWS) is accepted 0.96
-of the time and beats the trained 7-proposal shape. The wall clock did not
-separate the blocks on a busy machine, so which block is fastest is OPEN.
+**READ THE ACCEPT LENGTH AGAINST ITS PROMPT AND ITS LENGTH.** 5.56 committed
+per round now sits beside vLLM's published 5.34 and llama.cpp's 4.92-5.08
+rather than above them. The second workload that was owed here has since
+been run and it lands the other way: on the protocol's prose case the same
+drafter at block 2 measures 0.88x throughput and +17.4% J/token
+(`docs/DFLASH2.md`). Speculation on this engine pays on predictable
+continuations and costs on ordinary prose.
+
+**Measured through the REAL generation loop, which is what a user runs**
+(`MFERENCE_SPEC_STATS=1`, 200 greedy tokens, ~22.1 tok/s non-speculative
+arm, same install). The probe above hand-rolls its own round; this is
+`run_raw_completion_speculative`:
+
+| prompt | block | acceptance | rollbacks | vs off |
+| --- | ---: | --- | ---: | ---: |
+| code | 2 | 0.93 0.98 | 9% | **1.47x** |
+| code | 8 | 0.96 avg | 27% | 1.34x |
+| prose | 2 | 0.80 0.66 | 48% | 0.97x |
+| prose | 4 | 0.83 0.67 | 73% | 0.73x |
+| prose | 8 | 0.78 0.64 | 98% | **0.48x** |
+
+The loop reproduces the probe on the probe's own prompt, so the spread is the
+WORKLOAD and not the loop. Throughput tracks the ROLLBACK RATE: a rejected
+batched round on this recurrent family restores a gated-DeltaNet snapshot and
+replays, and that is what a bigger block buys more of. Small blocks win here
+too, and this drafter's serving default is therefore 2 rather than its
+trained 8 -- the same number the MTP head reached independently.
+
+**Do not quote an accept length without its prompt.** The 8.09 committed per
+round above is one predictable prose answer; on the standing smoke's prompt
+the same drafter at the same block is a 2x loss.
 
 ## Power
 
