@@ -64,17 +64,41 @@ const GENERATE: usize = 600;
 const COMMON_PREFIX_FLOOR: usize = 64;
 const SLOTS: usize = 16;
 
-fn argmax(logits: &[LogitValue]) -> i32 {
-    let mut best = 0usize;
-    let mut best_v = f32::NEG_INFINITY;
-    for (i, v) in logits.iter().enumerate() {
-        let f = v.to_f32();
-        if f > best_v {
-            best_v = f;
-            best = i;
-        }
-    }
-    best as i32
+/// The shaping the shipped loop runs under, character for character
+/// `real_model.rs`'s `ProtocolShaping::Greedy`: temperature EXACTLY 0.0 (not
+/// the smoke's 0.0001 -- `is_deterministic` compares against zero, and the
+/// speculative loop REFUSES anything else).
+fn greedy_shaping() -> selection::ShapingConfig {
+    selection::ShapingConfig::new(0.0, 1, None, 1.0, Some(1)).expect("greedy shaping is valid")
+}
+
+/// Picks a token the way `run_raw_completion_speculative` picks one.
+///
+/// **THIS USED TO BE A LOCAL `argmax` AND THAT WAS A REAL GAP.** The shipped
+/// loop calls `selection::select` for the draft chain, for the acceptance
+/// comparison and for the bonus row; a probe that argmaxed directly agreed
+/// with it at temperature 0 and could not see a regression anywhere in the
+/// sampler -- repetition penalty, the top-k path, the deterministic fast
+/// path's own guard. Routing through `select` costs nothing here (at
+/// temperature 0 it takes that fast path) and makes the probe's acceptance
+/// the acceptance a user gets rather than one that resembles it.
+///
+/// `history` and `generated` are passed rather than stubbed for the same
+/// reason: they are what a step-dependent rule would read, so handing it
+/// empties would restore exactly the blindness this replaces.
+fn pick(
+    logits: &[LogitValue],
+    shaping: &selection::ShapingConfig,
+    history: &[i32],
+    generated: usize,
+) -> i32 {
+    selection::select(
+        foundation::LogitsView::new(logits),
+        shaping,
+        history,
+        generated as u64,
+    )
+    .expect("selection")
 }
 
 #[derive(Default)]
@@ -108,8 +132,9 @@ fn run_dflash(
     }
     let started = std::time::Instant::now();
 
+    let shaping = greedy_shaping();
     let mut history: Vec<i32> = prompt.to_vec();
-    let mut next = argmax(&logits);
+    let mut next = pick(&logits, &shaping, &history, 0);
     let mut stats = Stats {
         offered: vec![0; block],
         matched: vec![0; block],
@@ -145,20 +170,28 @@ fn run_dflash(
         for (i, &proposal) in proposals.iter().enumerate() {
             stats.offered[i] += 1;
             let row = &batch_logits[i * vocab..(i + 1) * vocab];
+            // The history the SHIPPED loop would have here: it commits each
+            // accepted proposal before sampling the next row, so row `i` is
+            // picked against the prefix plus the `i` already accepted.
+            let target = pick(row, &shaping, &history, generated.len() + i);
             if stats.rounds <= 3 {
                 eprintln!(
-                    "[round {}] row {i} argmax {} vs proposal {proposal}",
-                    stats.rounds,
-                    argmax(row)
+                    "[round {}] row {i} target {target} vs proposal {proposal}",
+                    stats.rounds
                 );
             }
-            if argmax(row) != proposal {
+            if target != proposal {
                 break;
             }
             stats.matched[i] += 1;
             accepted += 1;
         }
-        let bonus = argmax(&batch_logits[accepted * vocab..(accepted + 1) * vocab]);
+        let bonus = pick(
+            &batch_logits[accepted * vocab..(accepted + 1) * vocab],
+            &shaping,
+            &history,
+            generated.len() + accepted,
+        );
         if accepted < proposals.len() {
             stats.rollbacks += 1;
             runner.rollback(&point);
@@ -188,14 +221,21 @@ fn run_plain(runner: &mut RealForwardRunner, prompt: &[i32], vocab: usize) -> (V
         runner.produce(token, i, &mut logits).expect("produce");
     }
     let started = std::time::Instant::now();
+    let shaping = greedy_shaping();
+    let mut history: Vec<i32> = prompt.to_vec();
     let mut generated = Vec::new();
-    let mut next = argmax(&logits);
+    let mut next = pick(&logits, &shaping, &history, 0);
     while generated.len() < GENERATE {
         generated.push(next);
+        history.push(next);
         runner
             .produce(next, prompt.len() + generated.len() - 1, &mut logits)
             .expect("produce");
-        next = argmax(&logits);
+        // The REFERENCE arm goes through the same sampler as the speculative
+        // ones. Leaving it on a bare argmax would make the byte-identity gate
+        // compare two different sampling rules and call the difference a
+        // speculation bug.
+        next = pick(&logits, &shaping, &history, generated.len());
     }
     (generated, started.elapsed().as_secs_f64())
 }

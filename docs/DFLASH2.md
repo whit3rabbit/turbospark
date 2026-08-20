@@ -551,13 +551,76 @@ Items 1-5 of this list are DONE (section 6). What remains:
    accept lengths could narrow on a harder distribution, and neither has
    been asked.
 4. **Server wiring**, which DFlash2 inherits from the MTP follow-up list.
-5. **The two review findings left unfixed**: the per-prompt-token
-   `commit_and_wait` in `dflash_prime_from_capture`, and the unconditional
-   batched-prefill scratch in `RealGemmaState`.
-6. **The M-row capture hook** in `families/qwen/batched.rs` still has no
-   test of its own. It is now exercised in anger -- every round after the
-   first reads what it writes, and the accept lengths say it writes the
-   right thing -- but nothing pins it.
+5. **One review finding left unfixed**: the unconditional batched-prefill
+   scratch in `RealGemmaState`. Its sibling, the per-prompt-token
+   `commit_and_wait` in `dflash_prime_from_capture`, was MEASURED AND
+   CLOSED -- see below.
+6. ~~**The M-row capture hook** in `families/qwen/batched.rs` has no test.~~
+   DONE 2026-08-20. `the_batched_capture_writes_what_the_per_token_hook_writes`
+   (`crates/runtime/tests/real_forward_qwen35_dflash.rs`) drafts off a
+   drafter cache filled two ways -- all per-token primes, against a tail
+   written by the M-row hook -- and requires the draft logits to agree. It
+   is a TOLERANCE with a discriminating check beside it rather than an
+   equality, because on the real install the batched and sequential kernels
+   do not agree to the bit (on this fixture they happen to, at exactly
+   0.000000, which is why the discriminating arm is what gives the bound
+   teeth). Three mutations -- wrong aux column, wrong row stride, wrong
+   capture base -- redden it and NOTHING else in the file, which is the
+   point: the losslessness case and the frozen digest stay green under all
+   three, exactly as the hazard predicts.
+7. ~~**The probe cannot see a sampler regression.**~~ DONE 2026-08-20.
+   `dflash2_accept_length_probe` argmaxed directly where the shipped loop
+   calls `selection::select` for the draft chain, the acceptance comparison
+   and the bonus row; it now routes all four through `select` under the same
+   greedy `ShapingConfig` `real_model.rs` builds, passing the real history
+   and step counter. Every deterministic column reproduced exactly
+   (accepted/round 4.37 / 4.56 / 2.98 / 1.74 and rollbacks 66 / 73 / 58 / 38
+   at blocks 7 / 8 / 4 / 2, and the prose divergence still at 154 tokens),
+   which is what says the change was a coverage fix rather than a numerics
+   one -- at temperature 0 `select` takes its argmax fast path.
+
+### The priming cost on a long prompt, measured 2026-08-20
+
+The review finding was that `dflash_prime_from_capture` calls
+`dflash_context_write`, which ends in a blocking `commit_and_wait`, ONCE PER
+PROMPT TOKEN. Every prompt measured when that was written was 22-62 tokens,
+so the worry was a ~3,000-token prompt paying ~3,000 blocking GPU passes
+before decode starts. **It does not happen.** `long-synthesis` (2,940 prompt
+tokens) on the real install, both arms `--shaping greedy` so speculation is
+the only variable:
+
+| arm | prefill | decode | peak |
+| --- | ---: | ---: | ---: |
+| sequential | 159.59 s | 36.77 s | 660.4 MiB |
+| speculative, block 2 | 153.11 s | 38.92 s | 873.2 MiB |
+
+Prefill is **0.96x** -- inside this machine's run-to-run spread, and nowhere
+near the feared 2x. So the per-token `commit_and_wait` does not dominate,
+and BATCHING THE PRIMING WRITES IS NOT WORTH DOING. Read the ratio, not the
+sign: the arms differ in two ways, not one (the speculative prefill also
+pays a full-vocab head per prompt token, where the sequential path's
+`produce_prefill` skips it), so a 4% difference cannot be attributed to
+either term, and the honest statement is that the two roughly cancel.
+
+Bounding arithmetic, since the null result invites suspicion that the
+priming never ran: it did (the header reads `speculative=on drafter=dflash2
+block=2`, and the +212.8 MiB of peak IS the DFlash2 state), so 2,939
+blocking passes cost at most the observed difference plus whatever the head
+cost, i.e. well under 10 ms each and plausibly 1-2.
+
+The peak column is the other reason this measurement was worth taking: it
+is what priced the opt-in default below at 213 MiB as well as at 0.88x.
+
+**THE DEFAULT IS OPT-IN SINCE 2026-08-20, AND DETECTION IS NOT ENABLEMENT.**
+`SpeculativeDrafter::Auto` reads the install's resident index and, on an
+install whose only drafter is this one, resolves to `Mtp` anyway --
+allocating no DFlash2 state -- while reporting a note that names
+`--speculative-drafter dflash`. Enabling it by default would have been
+0.88x throughput and +17.4% J/token on prose for anyone running greedy on
+such an install, which is not a default anyone would choose if asked. The
+MTP head keeps its `auto` because its measurement is the opposite way up.
+`crates/cli`'s `resolve_drafter` owns the split and
+`crates/cli/CLAUDE.md` Gotcha 10 states the contract.
 
 **A NOTE ON WHAT A COMPARISON CAN AND CANNOT SETTLE.** Sections 1-4 are
 facts about the model and both references agree on them, so a disagreement

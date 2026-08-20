@@ -332,6 +332,129 @@ fn prefill_then_draft(runner: &mut RealForwardRunner, block: usize) -> Vec<Logit
     all
 }
 
+/// Drafts at `base = PROMPT.len()` off a drafter whose cache was filled two
+/// different ways, and returns the draft's row 0 logits.
+///
+/// `split` is where the SEQUENTIAL priming stops and the BATCHED capture
+/// takes over: `PROMPT.len()` is all-sequential, and anything less leaves
+/// `PROMPT.len() - split` rows to the M-row hook in `families/qwen/batched.rs`.
+/// Both walks leave the drafter's cursor at `PROMPT.len()` with every row
+/// written once, so the only thing that varies is WHICH code path wrote the
+/// tail.
+fn draft_after_capture(runner: &mut RealForwardRunner, tokens: &[i32], split: usize) -> Vec<f32> {
+    let vocab = VOCAB as usize;
+    let mut logits = vec![LogitValue::from_f32(0.0); vocab];
+    for (i, &token) in tokens.iter().take(split).enumerate() {
+        runner.produce(token, i, &mut logits).expect("produce");
+        // The last prompt token's capture is left for the DRAFT's own context
+        // write, exactly as the shipped prefill loop leaves it. In the
+        // batched arm `split < tokens.len()`, so every iteration here primes
+        // and the tail is the batched pass's to capture.
+        if i + 1 < tokens.len() {
+            runner.prime_drafter(tokens[i + 1], i).expect("prime");
+        }
+    }
+    if split < tokens.len() {
+        let rows = tokens.len() - split;
+        let mut batch = vec![LogitValue::from_f32(0.0); rows * vocab];
+        runner
+            .verify(&tokens[split..], split, &mut batch)
+            .expect("the batched pass runs");
+    }
+    // A FIXED anchor in both arms: the token the draft embeds must not be a
+    // second thing that varies, or a difference in the logits says nothing
+    // about the capture.
+    const ANCHOR: i32 = 21;
+    let mut proposals = Vec::new();
+    runner
+        .dflash_draft_block(ANCHOR, tokens.len(), &mut proposals)
+        .expect("the draft block runs");
+    let mut row = vec![LogitValue::from_f32(0.0); vocab];
+    runner.dflash_probe_logits(0, &mut row).expect("probe");
+    row.iter().map(|v| v.to_f32()).collect()
+}
+
+fn max_abs_diff(a: &[f32], b: &[f32]) -> f32 {
+    a.iter()
+        .zip(b)
+        .map(|(x, y)| (x - y).abs())
+        .fold(0.0f32, f32::max)
+}
+
+/// **THE M-ROW AUX CAPTURE WRITES THE SAME ROWS THE PER-TOKEN HOOK DOES.**
+///
+/// `families/qwen/batched.rs` copies M residual rows into the drafter's
+/// capture and calls `note_capture(start_position, batch)`; every round after
+/// the first reads what it writes, and until this test nothing pinned it. The
+/// failure it is aimed at is silent in the usual way: a wrong row offset or a
+/// wrong stride still fills the buffer with plausible residuals, the trunk is
+/// untouched so the committed stream stays byte-identical to a sequential
+/// decode, and only the drafter's QUALITY moves -- which reads as a verdict
+/// about DFlash2 rather than as a bug in the pass. That is the same shape as
+/// the last-row-at-row-0 hazard one file over (`crates/runtime` Gotcha 19).
+///
+/// **A TOLERANCE RATHER THAN EQUALITY, THOUGH THIS FIXTURE MEASURES ZERO.**
+/// The batched pass runs `dequant_int4_gemm_simd` where the sequential one
+/// runs `dequant_int4_gemv_simd`, and on the REAL install the two accumulate
+/// differently -- that is why a greedy speculative stream eventually parts
+/// from a greedy sequential one (`docs/DFLASH2.md`). Here the gap comes out
+/// at exactly 0.000000, the same blindness `dequant_int4_gemm_parity`'s
+/// fixture has: these shapes and values sum exactly, so the fixture cannot
+/// see reassociation at all. Asserting equality would therefore pin a
+/// property of the FIXTURE and redden on any legitimate reduce-order change,
+/// so the bound stays a tolerance and the discriminating check below is what
+/// gives it teeth.
+#[test]
+fn the_batched_capture_writes_what_the_per_token_hook_writes() {
+    let dir = build();
+    let block = 2usize;
+    let n = PROMPT.len();
+
+    let mut seq_runner = open(&dir, block);
+    let sequential = draft_after_capture(&mut seq_runner, &PROMPT, n);
+
+    // The batched scratch is sized for a round's `block + 1` rows and REFUSES
+    // anything wider, so that is the widest capture reachable here -- take it,
+    // since a 1-row batch would not exercise the row stride at all.
+    let rows = block + 1;
+    let mut batched_runner = open(&dir, block);
+    let batched = draft_after_capture(&mut batched_runner, &PROMPT, n - rows);
+
+    assert!(
+        sequential.iter().chain(&batched).all(|v| v.is_finite()),
+        "a non-finite draft row makes every comparison below meaningless"
+    );
+
+    // THE FIXTURE HAS TO DISCRIMINATE BEFORE THE AGREEMENT MEANS ANYTHING.
+    // A capture of the WRONG rows must land outside whatever tolerance the
+    // right rows land inside; without this, a hook that wrote garbage of the
+    // right magnitude would pass (AGENTS.md Gotchas 48 and 50).
+    let mut wrong: [i32; 8] = PROMPT;
+    for (k, slot) in wrong[n - rows..].iter_mut().enumerate() {
+        *slot = 101 + 2 * k as i32;
+    }
+    let mut wrong_runner = open(&dir, block);
+    let wrong_rows = draft_after_capture(&mut wrong_runner, &wrong, n - rows);
+
+    let agree = max_abs_diff(&sequential, &batched);
+    let differ = max_abs_diff(&sequential, &wrong_rows);
+    println!("batched vs sequential: {agree:.6}; wrong rows vs sequential: {differ:.6}");
+    assert!(
+        differ > 10.0 * agree.max(1e-4),
+        "the fixture cannot tell a right capture from a wrong one \
+         (agree={agree:.6}, differ={differ:.6}); the assertion below proves nothing"
+    );
+
+    // The tolerance is the reduce-order gap, set an order of magnitude above
+    // what the two paths measure and two orders below what a wrong capture
+    // costs, so it is a real interval rather than a fitted number.
+    assert!(
+        agree < 0.05,
+        "the M-row capture disagrees with the per-token hook by {agree}, \
+         which is a wrong row or a wrong stride rather than reduce order"
+    );
+}
+
 #[test]
 fn the_draft_logits_have_a_frozen_digest() {
     let dir = build();
