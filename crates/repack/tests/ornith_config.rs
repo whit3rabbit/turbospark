@@ -32,7 +32,10 @@
 //! field reaches the text path) and `mtp_num_hidden_layers`, which is the
 //! subject of its own trap below.
 
-use turbospark_repack::{parse_qwen_gdn_dense_config, parse_qwen_gdn_moe_config};
+use turbospark_repack::{
+    is_supported_affine_shape, parse_gemma4_quantization, parse_qwen_gdn_dense_config,
+    parse_qwen_gdn_moe_config,
+};
 
 /// Gated-DeltaNet everywhere except every 4th layer, which is what both
 /// checkpoints' own `layer_types` lists spell out at their own depths.
@@ -288,4 +291,100 @@ fn the_two_ornith_checkpoints_do_not_parse_as_each_other() {
         "config.json invalid: model_type says qwen35, not qwen36",
         "the refusal must name what it found and what it wanted"
     );
+}
+
+/// The MLX 4-BIT CONVERSION's `config.json`, which is the artifact an INT4
+/// install is streamed from.
+///
+/// `ornith-ai` publishes it themselves (`Ornith-1.5-35B-A3B-MLX-4bit`,
+/// 19.51 GB against the BF16 repo's 71.90). Its `text_config` is the BF16
+/// repo's on EVERY key, with one exception that reaches nothing: the rope
+/// object spells its kind `type` where the BF16 file spells it `rope_type`,
+/// and `parse_qwen_gdn_moe_config` reads only `rope_theta` and
+/// `partial_rotary_factor` out of that object. So this body is
+/// `moe_text_config()` with that one key swapped, rather than a second
+/// 30-key copy that could drift against it.
+fn mlx4_config_json() -> String {
+    let mut text = moe_text_config();
+    let rope = text["rope_parameters"]
+        .as_object_mut()
+        .expect("rope object");
+    let kind = rope.remove("rope_type").expect("rope_type");
+    rope.insert("type".to_string(), kind);
+    serde_json::json!({
+        "architectures": ["Qwen3_5MoeForConditionalGeneration"],
+        "model_type": "qwen3_5_moe",
+        "text_config": text,
+        // `mode` and the two defaults, plus the 80 per-tensor overrides the
+        // real file carries. Two per layer, both 8-bit at the same group.
+        "quantization": mlx4_quantization(),
+        "vision_config": {"depth": 27, "model_type": "qwen3_5_moe_vision"}
+    })
+    .to_string()
+}
+
+/// The real `quantization` block: affine 4-bit group 64, with the ROUTER and
+/// the SHARED-EXPERT GATE lifted to 8 bits on all 40 layers.
+///
+/// Those two are the same pair Qwen 3.6's own MLX conversion lifts, which is
+/// what makes this a retrain of that checkpoint on the quantization axis too.
+fn mlx4_quantization() -> serde_json::Value {
+    let mut q = serde_json::Map::new();
+    q.insert("mode".into(), "affine".into());
+    q.insert("bits".into(), 4.into());
+    q.insert("group_size".into(), 64.into());
+    for layer in 0..40 {
+        for tail in ["mlp.gate", "mlp.shared_expert_gate"] {
+            q.insert(
+                format!("language_model.model.layers.{layer}.{tail}"),
+                serde_json::json!({"bits": 8, "group_size": 64}),
+            );
+        }
+    }
+    serde_json::Value::Object(q)
+}
+
+/// **THE GATE BEFORE THE 19.5 GB STREAM.**
+///
+/// The INT4 install exists to clear the dtype half of
+/// `MtpState::speculation_blocker`, which requires MLX affine at 4 bits --
+/// so the two things worth failing in a millisecond are that the config
+/// still derives the pinned baseline and that its quantization is a shape
+/// `pass_through_packed` accepts. Both were true of the real file when this
+/// was written; a re-quantization at a different width reddens here rather
+/// than at some tensor offset twenty minutes in.
+#[test]
+fn the_mlx_4bit_conversion_parses_to_the_same_baseline_and_a_supported_shape() {
+    let arch = parse_qwen_gdn_moe_config(&mlx4_config_json()).expect("config parses");
+    assert_eq!(
+        arch,
+        model_io::qwen_gdn_moe_35b_a3b(),
+        "the MLX 4-bit conversion must derive the same ArchConfig as the BF16 repo"
+    );
+
+    let quant = parse_gemma4_quantization(&mlx4_config_json()).expect("quantization parses");
+    assert_eq!(quant.default_bits, 4, "the batched verify is INT4-only");
+    assert_eq!(quant.group_size, 64);
+    assert!(
+        is_supported_affine_shape(quant.default_bits, quant.group_size),
+        "affine 4/64 must be a shape this port has kernels for"
+    );
+
+    // The ROUTED experts take the default, which is what decides whether the
+    // walk can pass them through: `plan_one_expert_layer` refuses anything
+    // but 4-bit by name. Read through `bits_for` rather than the raw map,
+    // because that is the function the walk asks.
+    assert_eq!(
+        quant.bits_for("language_model.model.layers.0.mlp.switch_mlp.gate_proj"),
+        4,
+        "routed experts must be 4-bit"
+    );
+
+    // The two lifted tensors, on a layer that is not layer 0 -- an override
+    // table built by a resolve-once bug would take layer 0's answer.
+    for tail in ["mlp.gate", "mlp.shared_expert_gate"] {
+        let name = format!("language_model.model.layers.39.{tail}");
+        assert_eq!(quant.bits_for(&name), 8, "{name} is lifted to 8 bits");
+        assert!(is_supported_affine_shape(8, quant.group_size));
+    }
 }
