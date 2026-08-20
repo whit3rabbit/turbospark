@@ -144,7 +144,8 @@ pub const OPTIONS: &[OptionDecl] = &[
         is_required: false,
         is_mode_selecting: false,
         usage_hint: "drafter --speculative drives: auto, mtp or dflash (default auto, \
-                     which reads the install's own index and prefers mtp if it has both)",
+                     which enables an mtp head but only REPORTS a dflash one -- \
+                     dflash is 0.88x on prose, so name it to run it)",
     },
     OptionDecl {
         flag: "--prefill-chunk",

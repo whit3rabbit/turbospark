@@ -165,6 +165,28 @@ printf '[{"role":"user","content":"Explain how coastal wetlands reduce flood dam
    would make the common case a failure. `off` is silent, deliberately: a
    warning there would train people to ignore the one that matters.
 
+   **`auto` DETECTS BOTH DRAFTERS AND ENABLES ONLY ONE.** `resolve_drafter`
+   reads the resident index (kilobytes, before the open) and returns a
+   `DrafterChoice`: an MTP head resolves to `Mtp` and is switched on, while a
+   DFlash2-only install ALSO resolves to `Mtp` -- so `open` allocates no
+   DFlash2 state -- carrying a `note` that names `--speculative-drafter
+   dflash`. The asymmetry is measured, not stylistic: through the shipped
+   loop the head pays 1.44-1.66x while DFlash2 reads 1.47x on code and 0.88x
+   throughput at +17.4% J/token on PROSE, so enabling it by default makes the
+   common workload slower and hungrier without being asked. Resolving to
+   `Mtp` also saves 213 MiB of peak footprint, measured as the gap between
+   the two arms of one protocol case on the real 27B.
+
+   The note OUTRANKS the engine's own blocker as the disabled reason. Both
+   are true of such an install -- it has no MTP head, and its DFlash2 drafter
+   was deliberately left off -- and only one names something the caller can
+   act on. Under a NAMED block the same note becomes the hard error, which is
+   right: `--speculative 2` does not say which drafter, and the message says
+   which flag would. An install carrying BOTH gets no note, because the head
+   is being used and there is nothing to explain; that case is the only input
+   on which the rule differs from the weaker "does it have dflash", which is
+   why `crates/repack` grew a both-drafters fixture to pin it.
+
    Two things not to re-derive. The reason string comes from
    `RealForwardRunner::speculation_blocker()` and is never rebuilt here -- the
    engine owns the conditions it refuses on, and a second copy in the CLI would

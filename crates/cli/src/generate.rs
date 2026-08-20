@@ -376,6 +376,18 @@ pub(crate) fn stream_turn(
     Ok((reply, result))
 }
 
+/// What [`resolve_drafter`] decided: the drafter to open, and a NOTE for the
+/// case where `auto` FOUND a drafter and deliberately did not enable it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DrafterChoice {
+    pub(crate) drafter: invocation::SpeculativeDrafter,
+    /// `Some` only for a DFlash2-carrying install under `auto`. Preferred
+    /// over the engine's own blocker as the disabled reason, because that
+    /// one would say "carries no multi-token-prediction head" -- true, and
+    /// the wrong thing to tell someone holding a drafter this port can run.
+    pub(crate) note: Option<String>,
+}
+
 /// Which drafter an install actually carries, for
 /// [`invocation::SpeculativeDrafter::Auto`].
 ///
@@ -387,11 +399,22 @@ pub(crate) fn stream_turn(
 /// open with the full architecture in hand, and answering it twice in two
 /// places is how the two answers drift apart.
 ///
+/// **DETECTION IS NOT ENABLEMENT, AND THAT SPLIT IS THE WHOLE POINT OF THIS
+/// FUNCTION.** `auto` resolves to `Mtp` even on an install whose only
+/// drafter is DFlash2, and returns a note naming the flag that would run it.
+/// The measurement is why: through the shipped loop on the real install,
+/// DFlash2 reads 1.47x on a code prompt and **0.88x throughput at +17.4%
+/// J/token on prose** (`docs/DFLASH2.md`), so a default that switched it on
+/// would make the common workload slower and hungrier without being asked.
+/// The MTP head is the opposite case (1.44-1.66x) and keeps its `auto`.
+/// Resolving to `Mtp` also means `open` allocates no DFlash2 state, which is
+/// 213 MiB of peak footprint on the real 27B install -- measured, as the gap
+/// between the two arms of the same protocol case.
+///
 /// An install with BOTH resolves to `Mtp`, which is what the default was
 /// before `Auto` existed, so no run that worked changes. An install with
-/// NEITHER also resolves to `Mtp`, so the "no drafter" message a user sees
-/// is the one they have always seen; the DFlash2 message would name a
-/// tensor they have never heard of.
+/// NEITHER also resolves to `Mtp` with no note, so the "no drafter" message
+/// a user sees is the one they have always seen.
 ///
 /// An unreadable index resolves to `Mtp` rather than failing: this function
 /// picks a drafter, and `open` is entitled to be the one that refuses a
@@ -399,18 +422,29 @@ pub(crate) fn stream_turn(
 fn resolve_drafter(
     requested: invocation::SpeculativeDrafter,
     model_dir: &std::path::Path,
-) -> invocation::SpeculativeDrafter {
+) -> DrafterChoice {
+    let plain = |drafter| DrafterChoice {
+        drafter,
+        note: None,
+    };
     if requested != invocation::SpeculativeDrafter::Auto {
-        return requested;
+        return plain(requested);
     }
     let Ok(index) = model_io::load_resident_index(&model_dir.join("model_weights.bin")) else {
-        return invocation::SpeculativeDrafter::Mtp;
+        return plain(invocation::SpeculativeDrafter::Mtp);
     };
     if !runtime::install_has_mtp_head(&index) && runtime::install_has_dflash(&index) {
-        invocation::SpeculativeDrafter::Dflash
-    } else {
-        invocation::SpeculativeDrafter::Mtp
+        return DrafterChoice {
+            drafter: invocation::SpeculativeDrafter::Mtp,
+            note: Some(
+                "this install carries a DFlash2 drafter, which auto leaves OFF: measured \
+                 0.88x throughput and +17.4% J/token on prose against 1.47x on code, so it \
+                 is opt-in. Pass --speculative-drafter dflash to use it"
+                    .to_string(),
+            ),
+        };
     }
+    plain(invocation::SpeculativeDrafter::Mtp)
 }
 
 /// What `open_session` decided about speculative decoding, resolved once.
@@ -657,7 +691,10 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
     // multi-token-prediction head" and decoded sequentially with a working
     // drafter on disk. `Auto` reads the resident index, which is the index
     // region alone and not the weights.
-    let drafter = resolve_drafter(request.speculative_drafter, model_dir);
+    let DrafterChoice {
+        drafter,
+        note: drafter_note,
+    } = resolve_drafter(request.speculative_drafter, model_dir);
     let runner = RealForwardRunner::open_with_slot_policy_and_speculation(
         model_dir,
         arch,
@@ -673,6 +710,17 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
             invocation::SpeculativeDrafter::Mtp => {
                 runtime::DraftPolicies::mtp(match request.speculation {
                     invocation::Speculation::Off => runtime::MtpDraftPolicy::Off,
+                    // A NOTE MEANS THE DECISION IS ALREADY MADE, so do not
+                    // ask the open for a head we know is not there. Without
+                    // this, `--speculative 2` on a DFlash2-only install
+                    // fails at OPEN with `MtpDraftPolicy::Fixed`'s message --
+                    // "this install carries no multi-token-prediction head
+                    // ... stream an install that adds the official
+                    // checkpoint's last shard" -- which sends someone who is
+                    // holding a working drafter off to download a different
+                    // one. `Off` lets the open succeed so `resolve_speculation`
+                    // below can refuse with the note, which names the flag.
+                    _ if drafter_note.is_some() => runtime::MtpDraftPolicy::Off,
                     invocation::Speculation::Auto => runtime::MtpDraftPolicy::Auto,
                     invocation::Speculation::Block(n) => runtime::MtpDraftPolicy::Fixed(n as usize),
                 })
@@ -736,7 +784,14 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
         drafter,
         match drafter {
             invocation::SpeculativeDrafter::Dflash => runner.dflash_speculation_blocker(),
-            _ => runner.speculation_blocker(),
+            // THE NOTE WINS WHERE THERE IS ONE. Both reasons are true of a
+            // DFlash2-only install under `auto` -- it has no MTP head, and
+            // its DFlash2 drafter was deliberately not enabled -- and only
+            // one of them names something the caller can act on. Under a
+            // NAMED block this is what turns into the hard error, which is
+            // right: `--speculative 2` alone does not say which drafter, and
+            // the message says which flag would.
+            _ => drafter_note.or_else(|| runner.speculation_blocker()),
         },
         shaping.is_deterministic(),
     )?;
@@ -935,26 +990,123 @@ mod speculation_policy {
     /// promise the caller made to themselves: `--speculative-drafter mtp` on
     /// a DFlash2 install must reach the MTP blocker and hard-fail there,
     /// never be silently rerouted to the drafter that happens to be present.
+    /// It also carries no note -- a note is `auto` explaining a choice it
+    /// made, and here it made none.
     #[test]
     fn an_explicit_drafter_is_never_re_resolved() {
         let missing = std::path::Path::new("/nonexistent/turbospark/install");
         for named in [SpeculativeDrafter::Mtp, SpeculativeDrafter::Dflash] {
-            assert_eq!(resolve_drafter(named, missing), named);
+            let choice = resolve_drafter(named, missing);
+            assert_eq!(choice.drafter, named);
+            assert_eq!(choice.note, None, "an explicit ask needs no explanation");
         }
     }
 
     /// An install whose index cannot be read resolves to `Mtp` rather than
     /// failing: this function picks a drafter, and `open` is entitled to be
-    /// the one that refuses a broken install.
+    /// the one that refuses a broken install. No note either, so the message
+    /// such a caller sees is the engine's own.
     #[test]
     fn an_unreadable_index_resolves_to_the_pre_existing_default() {
-        assert_eq!(
-            resolve_drafter(
-                SpeculativeDrafter::Auto,
-                std::path::Path::new("/nonexistent/turbospark/install")
-            ),
-            SpeculativeDrafter::Mtp
+        let choice = resolve_drafter(
+            SpeculativeDrafter::Auto,
+            std::path::Path::new("/nonexistent/turbospark/install"),
         );
+        assert_eq!(choice.drafter, SpeculativeDrafter::Mtp);
+        assert_eq!(choice.note, None);
+    }
+
+    /// **DFLASH2 IS DETECTED AND DELIBERATELY NOT ENABLED**, which is the
+    /// asymmetry this whole function exists for. Through the shipped loop it
+    /// reads 0.88x throughput at +17.4% J/token on prose, so `auto` must not
+    /// switch it on; but silence would be the bug the feature was built to
+    /// end, so the note names the flag that would.
+    ///
+    /// The fixture is a real synthetic install carrying `dflash.*` and no
+    /// `mtp.*`, because the whole decision is a read of the resident index
+    /// and a hand-made directory would not exercise it.
+    #[test]
+    fn auto_detects_dflash_but_leaves_it_off() {
+        let dir = std::env::temp_dir().join(format!(
+            "turbospark-drafter-choice-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        // Small and shallow on purpose: this reads the resident INDEX and
+        // never runs a forward pass, so the fixture only has to carry the
+        // tensor NAMES.
+        repack::build_synthetic_qwen_gdn_dense_install_with_dflash(&dir, 512, 4, "drafter-toy", 4)
+            .expect("synthetic dflash install");
+
+        let index = model_io::load_resident_index(&dir.join("model_weights.bin"))
+            .expect("the fixture's resident index");
+        // ASSERT THE FIXTURE DISCRIMINATES before believing the case: an
+        // install carrying BOTH drafters, or neither, resolves to `Mtp` with
+        // no note by other branches, so a fixture that was not
+        // dflash-only-shaped would pass this test against any of them.
+        assert!(
+            runtime::install_has_dflash(&index) && !runtime::install_has_mtp_head(&index),
+            "the fixture must be dflash-only or it cannot see this branch"
+        );
+
+        let choice = resolve_drafter(SpeculativeDrafter::Auto, &dir);
+        assert_eq!(
+            choice.drafter,
+            SpeculativeDrafter::Mtp,
+            "auto must not enable dflash: it is 0.88x on prose"
+        );
+        let note = choice.note.expect("a detected drafter must be reported");
+        assert!(
+            note.contains("--speculative-drafter dflash"),
+            "the note must name the flag that runs it, got: {note}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// An install carrying BOTH drafters takes the MTP head SILENTLY, and
+    /// that silence is the assertion.
+    ///
+    /// This is the only input on which "no MTP head AND a DFlash2 one" and
+    /// the weaker "a DFlash2 one" differ, so it is the only fixture that can
+    /// see the first clause -- dropping it leaves every dflash-only case
+    /// green (verified: that mutation survived until this test existed). The
+    /// consequence of dropping it is not cosmetic either: the note OUTRANKS
+    /// the engine's blocker, so a spurious note would report speculation off
+    /// on an install whose MTP head works, silently giving up 1.44-1.66x.
+    #[test]
+    fn an_install_with_both_drafters_keeps_the_mtp_head_and_says_nothing() {
+        let dir = std::env::temp_dir().join(format!(
+            "turbospark-drafter-both-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        repack::build_synthetic_qwen_gdn_dense_install_with_both_drafters(
+            &dir,
+            512,
+            4,
+            "drafter-toy-both",
+            4,
+        )
+        .expect("synthetic install with both drafters");
+
+        let index = model_io::load_resident_index(&dir.join("model_weights.bin"))
+            .expect("the fixture's resident index");
+        assert!(
+            runtime::install_has_dflash(&index) && runtime::install_has_mtp_head(&index),
+            "the fixture must carry BOTH or it cannot see this branch"
+        );
+
+        let choice = resolve_drafter(SpeculativeDrafter::Auto, &dir);
+        assert_eq!(choice.drafter, SpeculativeDrafter::Mtp);
+        assert_eq!(
+            choice.note, None,
+            "the MTP head is being used, so there is nothing to explain"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     // Verbatim shapes of what `RealForwardRunner::speculation_blocker`

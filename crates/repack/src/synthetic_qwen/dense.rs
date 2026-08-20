@@ -588,6 +588,27 @@ pub fn build_synthetic_qwen_gdn_dense_install_with_dflash(
     )
 }
 
+/// BOTH drafters in one install, which no real checkpoint ships and which
+/// exists to make a DISAMBIGUATING fixture possible.
+///
+/// `crates/cli`'s `resolve_drafter` picks between them off the resident
+/// index, and the clause that matters is that an install carrying both keeps
+/// the pre-existing MTP behaviour with no DFlash2 note. A dflash-only
+/// fixture cannot see that clause: drop it and the dflash-only case still
+/// passes, so the mutation survives and the test reads stronger than it is.
+/// The install this builds is the only input on which the two rules differ.
+pub fn build_synthetic_qwen_gdn_dense_install_with_both_drafters(
+    dir: &std::path::Path,
+    vocab_size: i64,
+    num_layers: i64,
+    model_id: &str,
+    bits: u32,
+) -> Result<ArchConfig, Box<dyn std::error::Error>> {
+    build_synthetic_qwen_gdn_dense_install_inner(
+        dir, vocab_size, num_layers, model_id, bits, true, false, true,
+    )
+}
+
 /// The same drafter through the STREAMED writer, which is the one the real
 /// download takes. Exists for the head's reason verbatim: a drafter arm
 /// that only the non-streamed path read would stream a drafterless install

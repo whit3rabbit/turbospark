@@ -248,6 +248,14 @@ pub enum SpeculativeDrafter {
     /// decoded sequentially with a working drafter on disk. An install
     /// carrying BOTH resolves to `Mtp`, so nothing that worked before this
     /// existed changes.
+    ///
+    /// **DETECTING A DRAFTER IS NOT ENABLING IT, and the two drafters differ
+    /// on exactly that.** An MTP head is switched on (1.44-1.66x); a DFlash2
+    /// drafter is REPORTED and left off, because through the shipped loop it
+    /// reads 0.88x throughput at +17.4% J/token on prose against 1.47x on
+    /// code, and a default that makes the common workload slower has to be
+    /// asked for. `crates/cli`'s `resolve_drafter` owns that split -- this
+    /// crate is pure and may not read an install.
     #[default]
     Auto,
     /// The checkpoint's own multi-token-prediction head (`mtp.*` tensors).

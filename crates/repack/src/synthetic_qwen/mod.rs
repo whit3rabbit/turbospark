@@ -5,6 +5,7 @@ mod moe;
 
 pub use dense::{
     build_synthetic_qwen_gdn_dense_install, build_synthetic_qwen_gdn_dense_install_at_bits,
+    build_synthetic_qwen_gdn_dense_install_with_both_drafters,
     build_synthetic_qwen_gdn_dense_install_with_dflash,
     build_synthetic_qwen_gdn_dense_install_with_dflash_streamed,
     build_synthetic_qwen_gdn_dense_install_with_mtp,
