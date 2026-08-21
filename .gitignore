@@ -12,6 +12,8 @@ ROADMAP.md
 .agent-config-mcp.json
 .claude/
 .synrepo/
+.zcode/
+
 # scripts/kld_llamacpp.py imports scripts/kld.py, so running it byte-compiles
 # a sibling module here.
 __pycache__/
