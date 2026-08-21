@@ -14,6 +14,7 @@ crates/streaming/
 +-- src/
 |   +-- lib.rs              # Library root
 |   +-- pread_streamer.rs   # PreadExpertStreamer for on-demand expert weight reading
+|   +-- aligned_slot.rs     # AlignedSlot page-aligned buffer for slot streaming
 |   +-- expert_cache.rs     # ExpertCache implementing pure LFU/LRU eviction policy
 |   +-- read_pool.rs        # Process-wide pool of parked reader threads for parallel pread
 |   +-- rdadvice.rs         # macOS F_RDADVISE kernel hint wrapper (unsafe)

@@ -31,6 +31,7 @@ crates/model-io/
 |   |   \-- qwen.rs             # Qwen 3.6 & Qwen 3.5 baselines
 |   +-- arch_validation.rs      # Structural validation rules for architecture configs
 |   +-- context_policy.rs       # MaxContext, kv_bytes_for_context, largest_context_within
+|   +-- context_policy_tests.rs # Unit tests for context policy resolution
 |   +-- expert_cache_policy.rs  # ExpertCacheSlots and how Auto resolves
 |   +-- packed_experts_layout.rs# Decodes packed_experts/layout.json for streamed MoE
 |   +-- resident_index.rs       # Reads tensor index entries from model_weights.bin

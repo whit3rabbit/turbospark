@@ -4,18 +4,21 @@
 
 mod attn;
 mod batched;
+mod batched_layers;
 mod dense;
 mod dflash;
 mod dflash_draft;
+mod dflash_state;
 mod moe;
 mod mtp;
+mod mtp_state;
 mod state;
 
 pub(crate) use attn::{encode_full_attention_block, encode_linear_block, QkNormConvention};
 pub(crate) use dflash::DflashState;
-pub use dflash::{install_has_dflash, DflashDraftPolicy, DFLASH_BLOCK, DFLASH_SERVING_BLOCK};
-pub(crate) use mtp::MtpState;
-pub use mtp::{install_has_mtp_head, MtpDraftPolicy};
+pub use dflash_state::{install_has_dflash, DflashDraftPolicy, DFLASH_BLOCK, DFLASH_SERVING_BLOCK};
+pub(crate) use mtp_state::MtpState;
+pub use mtp_state::{install_has_mtp_head, MtpDraftPolicy};
 pub(crate) use state::RealQwenState;
 
 /// Both drafters a speculative caller can ask for at open, as ONE argument

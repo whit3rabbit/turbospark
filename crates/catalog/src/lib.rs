@@ -27,6 +27,7 @@ mod install;
 mod probe;
 mod recommend;
 mod store;
+mod stream;
 
 pub use catalog::{Catalog, SCHEMA_VERSION};
 pub use entry::{CatalogEntry, Measured, Sidecars, Source, SourceKind, Status};

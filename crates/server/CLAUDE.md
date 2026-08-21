@@ -17,6 +17,8 @@ crates/server/
 +-- Cargo.toml                  # Crate manifest
 +-- src/
 |   +-- main.rs                 # Binary entry point for turbospark-server
+|   +-- args.rs                 # Command line parsing and host binding resolution
+|   +-- main_tests.rs           # Unit tests for CLI args and host binding
 |   +-- lib.rs                  # Library root: router, re-exported wire types
 |   +-- handler/                # /v1/chat/completions + /v1/models, and the shared generation core
 |   |   +-- mod.rs              # The two Axum handlers and the router wiring

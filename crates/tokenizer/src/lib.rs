@@ -9,6 +9,8 @@ mod detokenizer;
 mod dialect;
 mod error;
 mod jinja_chat_template;
+mod jinja_compat;
+mod jinja_date;
 mod json_value;
 mod reasoning;
 mod stop_matcher;

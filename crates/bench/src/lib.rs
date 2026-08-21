@@ -12,3 +12,5 @@ pub mod memory;
 /// Real model benchmark harness and case execution.
 #[cfg(target_os = "macos")]
 pub mod real_model;
+/// Real model protocol parameters.
+pub mod real_model_params;

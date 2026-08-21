@@ -14,14 +14,21 @@ mod pacing;
 mod power;
 mod producer;
 mod raw_completion;
+mod raw_completion_chunked;
 #[cfg(target_os = "macos")]
 mod real_forward;
 #[cfg(target_os = "macos")]
 mod real_forward_dispatch;
 #[cfg(target_os = "macos")]
+mod real_forward_dispatch_moe;
+#[cfg(target_os = "macos")]
 mod real_forward_init;
 #[cfg(target_os = "macos")]
 mod real_forward_layout;
+#[cfg(target_os = "macos")]
+mod real_forward_open;
+#[cfg(target_os = "macos")]
+mod real_forward_rollback;
 #[cfg(target_os = "macos")]
 mod real_forward_types;
 #[cfg(target_os = "macos")]
@@ -29,6 +36,7 @@ mod real_forward_utils;
 #[cfg(target_os = "macos")]
 mod router_hist;
 mod speculative;
+mod token_sink;
 
 pub use config::GenerationConfig;
 // The two sizing policies LIVE IN `model_io` and are re-exported here.

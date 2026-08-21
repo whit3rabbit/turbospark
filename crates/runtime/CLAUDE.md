@@ -15,8 +15,13 @@ crates/runtime/
 |   +-- lib.rs                  # Library root
 |   +-- producer.rs             # LogitProducer trait & ScriptedLogitProducer mock
 |   +-- raw_completion.rs       # Generation loops (run_raw_completion & run_raw_completion_chunked)
+|   +-- raw_completion_chunked.rs # Chunked generation loop implementation
+|   +-- token_sink.rs           # TokenSink abstractions for streaming completion tokens
 |   +-- real_forward.rs         # RealForwardRunner struct, constructor, and dispatch
+|   +-- real_forward_open.rs    # RealForwardRunner open_inner implementation
+|   +-- real_forward_rollback.rs# RollbackPoint state capture and rewind methods
 |   +-- real_forward_dispatch.rs# Dynamic Metal kernel dispatch helpers
+|   +-- real_forward_dispatch_moe.rs # MoE Phase 1 and Phase 2 dispatch helpers
 |   +-- real_forward_init.rs    # Open-time arch vetting and expert streamer setup
 |   +-- real_forward_layout.rs  # Quantization dtypes and MoE offset calculations
 |   +-- real_forward_types.rs   # RealForwardError, PhaseCounters, DecodeScratch
@@ -27,6 +32,7 @@ crates/runtime/
 |   |   |   +-- mod.rs          # Gemma 4 entry point & shared expert branch
 |   |   |   +-- attn.rs         # Attention block & router GEMV pass
 |   |   |   +-- moe.rs          # Routed MoE pass encoding
+|   |   |   +-- prefill.rs      # Gemma 4 chunked prefill encoders
 |   |   |   \-- state.rs        # RealGemmaState initialization
 |   |   +-- gptoss/             # `gpt-oss` decode flow (biases, sinks, YaRN, MXFP4 experts)
 |   |   |   +-- mod.rs          # Entry point & layer loop
@@ -42,11 +48,14 @@ crates/runtime/
 |   |   +-- qwen/               # Qwen 3.6 + dense `qwen3_5` decode flow
 |   |   |   +-- mod.rs          # Entry point & layer loop
 |   |   |   +-- batched.rs      # The M-ROW forward behind the MTP verify (step 4)
+|   |   |   +-- batched_layers.rs # Batched attention, linear, and dense layer encoders
 |   |   |   +-- attn.rs         # Gated DeltaNet & gated full attention blocks
 |   |   |   +-- dense.rs        # Dense gated FFN (`qwen3_5`, ROADMAP's 1-bit entry)
 |   |   |   +-- moe.rs          # Shared + routed MoE pass encoding
-|   |   |   +-- mtp.rs          # The MTP head's draft step (MtpState, its own one-layer KV)
-|   |   |   +-- dflash.rs       # DFlash2 BLOCK drafter: state, shape derivation, policy
+|   |   |   +-- mtp.rs          # The MTP head's draft step
+|   |   |   +-- mtp_state.rs    # MTP state and policy definitions
+|   |   |   +-- dflash.rs       # DFlash2 BLOCK drafter execution
+|   |   |   +-- dflash_state.rs # DFlash2 state, shape derivation, policy definitions
 |   |   |   +-- dflash_draft/   # DFlash2 draft passes and candidate selection
 |   |   |   |   +-- mod.rs      # Draft round orchestration, cursor rewind, probe methods
 |   |   |   |   +-- context_kv.rs # Context-KV projection pass

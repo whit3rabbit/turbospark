@@ -10,9 +10,12 @@ crates/bench/
 +-- src/
 |   +-- lib.rs              # Library entry point (turbospark_bench)
 |   +-- main.rs             # Binary entry point (turbospark-bench)
+|   +-- model_mode.rs       # Real install benchmark mode runner
+|   +-- scripted.rs         # Scripted and synthetic real benchmark mode runners
 |   +-- memory.rs           # Mach memory sampler for physical footprint tracking
 |   +-- protocol.rs         # Frozen community benchmark protocol definitions
-|   \-- real_model.rs       # Real model benchmark runner driving RealForwardRunner
+|   +-- real_model.rs       # Real model benchmark runner driving RealForwardRunner
+|   \-- real_model_params.rs# Protocol parameters resolution per model family
 +-- tests/
 |   +-- logit_dump.rs       # Full-vocab logit dump for the cross-engine KLD (scripts/kld{,_llamacpp,_mlx_affine}.py)
 |   +-- memory_oracle.rs    # Memory oracle asserting peak footprint ceiling & steady state (Gemma 4)

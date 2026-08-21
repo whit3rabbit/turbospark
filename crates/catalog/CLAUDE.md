@@ -28,9 +28,11 @@ crates/catalog/
 |   +-- recommend/
 |   |   +-- mod.rs          # Machine, Recommendation, the catalog arm
 |   |   +-- fit.rs          # counted vs mapped: does it fit, and how much context
+|   |   +-- fit_tests.rs    # Unit tests for fit and memory sizing
 |   |   +-- rank.rs         # the ordering (vendored shape; see NOTICE)
 |   |   \-- discover.rs     # popular HF repos, filtered through the probe
 |   +-- install.rs              # The walk driver: plan -> .gturbo install
+|   +-- stream.rs               # GGUF and MLX streaming and shard writing helpers
 |   \-- store.rs                # ~/.turbospark layout, installed.json, alias resolution
 \-- tests/
     +-- catalog.rs              # The embedded table's structural invariants

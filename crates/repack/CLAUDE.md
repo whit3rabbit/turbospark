@@ -36,6 +36,7 @@ crates/repack/
 |   +-- synthetic_qwen/             # Real-named synthetic Qwen generators (MoE and dense)
 |   |   +-- mod.rs                  # Re-exports synthetic Qwen builders
 |   |   +-- dense.rs                # Dense sub-4-bit Qwen generator (build_synthetic_qwen_gdn_dense_install)
+|   |   +-- dense_tensors.rs        # Synthetic tensor fixture construction helpers for dense Qwen
 |   |   \-- moe.rs                  # MoE Qwen 3.6 generator (build_synthetic_qwen_gdn_moe_install)
 |   +-- gemma4_checkpoint/          # Gemma 4 / Qwen 3.6 mlx-community safetensors converter & streamer
 |   |   +-- mod.rs                  # Module root and install writer entrypoints

@@ -24,6 +24,8 @@ crates/tokenizer/
 |   |   +-- gemma.rs                # Gemma chat template renderer
 |   |   \-- mistral.rs              # Mistral [INST] chat template renderer
 |   +-- jinja_chat_template.rs      # minijinja + pycompat wrapper rendering the checkpoint's own template
+|   +-- jinja_compat.rs             # Jinja compatibility syntax rewriter
+|   +-- jinja_date.rs               # Standalone pure-ASCII UTC date formatting algorithms
 |   +-- detokenizer.rs              # StreamingDetokenizer for incremental UTF-8 token decoding
 |   +-- stop_matcher.rs             # StopMatcher for evaluating stop sequences and EOS token sets
 |   +-- structured_decoder/         # StructuredDecoder for streaming JSON / structured output

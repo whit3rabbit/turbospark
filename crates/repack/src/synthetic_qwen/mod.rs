@@ -1,6 +1,7 @@
 //! Synthetic Qwen model fixture generators (MoE and Dense).
 
 mod dense;
+mod dense_tensors;
 mod moe;
 
 pub use dense::{
