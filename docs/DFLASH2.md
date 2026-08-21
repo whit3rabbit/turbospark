@@ -572,34 +572,45 @@ and applies them if present, which for this checkpoint are 1.0 / 1.0 / none
 
 Items 1-5 of this list are DONE (section 6). What remains:
 
-1. **The BLOCK ORDERING, now supported three ways but still not from a quiet
-   machine.** Two runs at different desktop load, 2026-08-21:
+1. ~~**A quiet-machine row for the BLOCK ORDERING specifically.**~~ ANSWERED
+   2026-08-21, and by a CONTROL rather than by a quieter machine. Three runs:
 
-   | run | ref tok/s | code (2/4/7/8) | math | prose |
-   | --- | ---: | --- | --- | --- |
-   | 1 | 20.16 | 1.43 / 1.14 / 0.97 / 0.90 | 1.50 / 1.31 / 1.17 / 1.10 | 0.96 at 2 |
-   | 2 | 15.95 | 1.86 / 1.20 / 0.98 / 0.93 | 2.07 / 1.47 / 1.28 / 1.21 | 1.26 / 0.68 / 0.51 / 0.47 |
+   | run | block order | ref tok/s | code (2/4/7/8) | math | prose |
+   | --- | --- | ---: | --- | --- | --- |
+   | 1 | 7,8,4,2 | 20.16 | 1.43 / 1.14 / 0.97 / 0.90 | 1.50 / 1.31 / 1.17 / 1.10 | 0.96 at 2 |
+   | 2 | 7,8,4,2 | 15.95 | 1.86 / 1.20 / 0.98 / 0.93 | 2.07 / 1.47 / 1.28 / 1.21 | 1.26 / 0.68 / 0.51 / 0.47 |
+   | 3 | **2,4,8,7** | 22.47 | 1.32 / 1.05 / 0.89 / 0.81 | 1.46 / 1.28 / 1.16 / 1.06 | 0.90 / 0.60 / 0.46 / 0.42 |
 
    **The ordering is monotone decreasing in the block on every workload of
-   both runs**, and the absolute ratios moved while it did not -- the shape
-   this repo expects, and the reason only the ordering is quoted.
+   every run: 2, then 4, then 7, then 8.**
 
-   **ONE CONFOUND, stated because it is not visible in the table.** `BLOCKS`
-   is swept in the fixed order 7, 8, 4, 2, so block 2 always runs LAST; run 2
-   got quieter as it went (its early arms were competing with a compile), so
-   a monotone load trend aliases exactly with the block ordering there. What
-   keeps the conclusion standing is that the alias is broken three
-   independent ways: run 1 had far less load variation and gives the same
-   ordering; the rollback RATES are deterministic and predict this ordering
-   with no timing input at all (52-96% at blocks 4-8 on prose against 17-52%
-   at 2); and prose block 8 reads 0.47x, which is not a number any load story
-   produces from a 1.0x baseline. A genuinely idle capture would still be
-   worth taking. Note the obvious structural fix -- interleave the blocks
-   instead of sweeping them -- is NOT cheap here: the DFlash2 block is fixed
-   at OPEN, so an interleaved arm costs a model open (~20 s on this install)
-   every time the block changes, which is why the sweep is ordered in the
-   first place. Running the sweep twice with `BLOCKS` reversed is the cheap
-   version of the same control.
+   THE CONFOUND WAS REAL AND IS NOW MEASURED RATHER THAN ARGUED AWAY. `BLOCKS`
+   is swept in a fixed order, so block 2 always ran LAST in runs 1 and 2 --
+   and run 2 got quieter as it went, which aliases a monotone load trend
+   exactly with the block ordering. Run 3 reverses the sweep so block 2 runs
+   FIRST. Two things fall out:
+
+   - **The position effect is real**: block 2 on code reads 1.86x from last
+     position in run 2 and 1.32x from first position in run 3. Anyone quoting
+     an absolute ratio off this probe is quoting the position as much as the
+     block.
+   - **The ordering is not the position**: it survives the reversal intact on
+     all three workloads. Had the ordering been an artifact of when each arm
+     ran, reversing the sweep would have reversed or scrambled it.
+
+   Two further legs, independent of any clock: the rollback RATES are
+   deterministic and predict this ordering with no timing input (52-96% at
+   blocks 4-8 on prose against 17-52% at 2), and prose block 8 reads 0.42-0.47x
+   across runs, which is not a number a load story produces from a 1.0x
+   baseline. The accepted-per-round and rollback columns reproduced to the
+   last digit in all THREE runs.
+
+   So the ratios are still not baselines and the ordering now is. The cheap
+   control to repeat if this is ever re-opened is the reversal, not a quieter
+   machine: interleaving the blocks properly is expensive here, because the
+   DFlash2 block is fixed at OPEN and an interleaved arm costs a ~20 s model
+   open every time it changes.
+
 2. ~~**`scripts/power.sh`.**~~ DONE, and its table is in section 6 above:
    0.88x throughput at +17.4% J/token on prose, watts moving only 3.5%, so
    the energy penalty is the TIME penalty. It is what priced the opt-in

@@ -11,8 +11,8 @@
 //!
 //! THREE WORKLOADS, each swept across every block, because a serving default
 //! read off one distribution is a default that has not been tested. Measured
-//! per-position acceptance spans **prose 0.65-0.74, code 0.84-0.94, math
-//! 0.88-0.98**, so the three bracket the range this checkpoint produces
+//! per-position acceptance spans **prose 0.53-0.81, code 0.84-0.94, math
+//! 0.86-0.98**, so the three bracket the range this checkpoint produces
 //! rather than sampling one corner of it.
 //!
 //! `prose` is the one that DECIDES. It has the lowest acceptance, it is the
