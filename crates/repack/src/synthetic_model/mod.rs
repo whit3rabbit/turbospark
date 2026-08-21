@@ -10,8 +10,11 @@
 //! canonical baseline value (`turbospark_model_io::gemma4_26b_a4b`): this is
 //! honestly a tiny Gemma-4-architecture model, not an invented one.
 
+/// Architecture definitions and tensor naming helpers for synthetic models.
 pub mod arch;
+/// Synthetic dense Gemma 4 model builder.
 pub mod dense;
+/// Synthetic Mixture-of-Experts (MoE) Gemma 4 model builder.
 pub mod moe;
 
 pub use arch::{

@@ -16,7 +16,8 @@ crates/tokenizer/
 |   +-- dialect/                    # Resolves dialect special tokens and chat formatting rules
 |   |   +-- mod.rs                  # ChatDialect enum & public API
 |   |   +-- config.rs               # DialectConfig table & properties
-|   |   \-- resolve.rs              # Special token probing & dialect resolution
+|   |   +-- resolve.rs              # Special token probing & dialect resolution
+|   |   \-- resolvers.rs            # Per-dialect token resolution routines
 |   +-- chat_template/              # Per-dialect text chat renderers (the FALLBACK path)
 |   |   +-- mod.rs                  # Entry point & fallback dispatcher
 |   |   +-- chatml.rs               # ChatML chat template renderer

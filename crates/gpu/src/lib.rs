@@ -71,9 +71,13 @@ mod dsv4_state;
 #[cfg(target_os = "macos")]
 mod gdn;
 #[cfg(target_os = "macos")]
+mod gdn_shape;
+#[cfg(target_os = "macos")]
 mod gdn_state;
 #[cfg(target_os = "macos")]
 mod kv_cache;
+#[cfg(target_os = "macos")]
+mod kv_cache_mem;
 #[cfg(target_os = "macos")]
 mod logit_softmax;
 #[cfg(target_os = "macos")]

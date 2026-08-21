@@ -52,6 +52,7 @@ pub struct MoePrefillRoute {
 }
 
 impl MoePrefillRoute {
+    /// Serializes a slice of prefill routes into little-endian byte representation.
     pub fn bytes(routes: &[MoePrefillRoute]) -> Vec<u8> {
         let mut out = Vec::with_capacity(routes.len() * 16);
         for r in routes {
@@ -78,6 +79,7 @@ pub struct RoutedBlobsWideBuffer {
 }
 
 impl RoutedBlobsWideBuffer {
+    /// Creates a new wide routed-blobs argument buffer.
     pub fn new(context: &mut MetalContext, use_silu: bool) -> Result<Self, GpuError> {
         let encoder = context.argument_encoder(
             SOURCE,
@@ -121,6 +123,7 @@ impl RoutedBlobsWideBuffer {
         Ok(())
     }
 
+    /// Returns a reference to the underlying Metal argument buffer.
     pub fn buffer(&self) -> &metal::Buffer {
         &self.buffer
     }

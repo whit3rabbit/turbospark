@@ -13,7 +13,10 @@ crates/cli/
 +-- Cargo.toml              # Crate manifest, declaring BOTH binaries
 +-- src/
 |   +-- main.rs             # turbospark-check process entry point
-|   +-- generate.rs         # Non-interactive text & chat template generation driver
+|   +-- generate/           # Non-interactive text & chat template generation driver
+|   |   +-- mod.rs          # Generation loop coordination and session management
+|   |   +-- speculation.rs  # Speculative decoding resolution and policies
+|   |   \-- speculation_tests.rs # Unit tests for speculative decoding resolution
 |   +-- chat.rs             # Interactive REPL session runner using window-fit
 |   \-- bin/
 |       +-- model.rs        # turbospark-model: argv, subcommand parse, exit codes
@@ -29,7 +32,7 @@ crates/cli/
 ## Key Modules
 
 - `main.rs`: Reads command-line arguments, delegates parsing to `turbospark-invocation`, prints resolved requests, and routes execution to generation routines.
-- `generate.rs`: Coordinates tokenizer loading, chat template rendering, prefill chunking, and GPU decode generation loops. `open_session` resolves `--model` through `catalog::resolve_model_arg` first (see Gotcha 5).
+- `generate/`: Coordinates tokenizer loading, chat template rendering, prefill chunking, GPU decode generation loops, and speculative decoding resolution (`speculation.rs`). `open_session` resolves `--model` through `catalog::resolve_model_arg` first (see Gotcha 5).
 - `chat.rs`: Interactive REPL loop maintaining user/assistant turn history and applying `fit_conversation_window` to manage context window bounds.
 - `bin/model.rs`: `turbospark-model`'s argv parse and exit-code mapping. **A second binary rather than subcommands on `turbospark-check`, and that is a decision**: `turbospark-invocation` is a pure, flat option parser whose contract is "`--model` is required and exactly one mode flag is set", with a five-place rule for every new flag and a hardcoded option-count assertion. A subcommand grammar does not belong in it, and bending it into one would put a required `--model` in front of a command whose entire job is that there is no model yet. Two exit codes, and a script doing `probe X && pull X` depends on the difference: 2 for a malformed invocation, 1 for a run that was asked for correctly and did not work.
 - `bin/model_cmd/`: the seven subcommands (`list`, `info`, `probe`, `recommend`, `pull`, `path`, `rm`). **Nothing here decides anything** -- `turbospark-catalog` resolves rows, reaches verdicts and runs the walk; this module chooses column widths. Same split `main.rs` has with `invocation`, and it is what lets the verdict logic be tested without a terminal.

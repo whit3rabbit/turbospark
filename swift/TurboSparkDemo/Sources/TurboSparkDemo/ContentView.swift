@@ -1,6 +1,7 @@
 import SwiftUI
 import TurboSpark
 
+/// Main application window view for the TurboSpark demo chat app.
 struct ContentView: View {
     @StateObject private var model = ChatModel()
     @State private var showingInstall = false
@@ -126,6 +127,7 @@ struct ContentView: View {
     }
 }
 
+/// Renders a single conversation turn with optional reasoning disclosure.
 private struct TurnView: View {
     let turn: ChatModel.Turn
 
@@ -172,6 +174,7 @@ private struct TurnView: View {
     }
 }
 
+/// Status footer displaying active context, cache slots, decode speed, and memory footprint.
 private struct StatusBar: View {
     @ObservedObject var model: ChatModel
 
@@ -211,6 +214,7 @@ private struct StatusBar: View {
         .background(.quaternary.opacity(0.4))
     }
 
+    /// Helper view displaying a labelled key-value metric.
     private func label(_ name: String, _ value: String) -> some View {
         HStack(spacing: 4) {
             Text(name).foregroundStyle(.secondary)

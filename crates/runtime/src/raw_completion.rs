@@ -24,12 +24,18 @@ pub use crate::raw_completion_chunked::{
 };
 pub(crate) use crate::token_sink::TokenSink;
 
+/// Reason why generation stopped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StopReason {
+    /// Natural end-of-turn token encountered.
     EndOfTurn,
+    /// Tool call invocation token encountered.
     ToolCalls,
+    /// End-of-sequence token encountered.
     Eos,
+    /// Configured stop string matched.
     StopString,
+    /// Generation hit the configured max_new_tokens limit.
     MaxTokens,
     /// The caller's `cancel` predicate returned true. Only reachable from
     /// [`run_raw_completion_cancellable`] and its chunked sibling; the two
@@ -43,28 +49,45 @@ pub enum StopReason {
     Cancelled,
 }
 
+/// Progress event emitted during prefill and decoding.
 #[derive(Debug, Clone, PartialEq)]
 pub enum RawDecodeProgress {
+    /// Prefill progress showing processed vs total prompt tokens.
     Prefill {
+        /// Number of prompt tokens processed so far.
         done: usize,
+        /// Total number of prompt tokens to prefill.
         total: usize,
     },
+    /// A single decoded token.
     Token {
+        /// 0-indexed generation step.
         index: usize,
+        /// Sampled token ID.
         id: TokenId,
+        /// Detokenized text delta.
         delta: String,
     },
+    /// Flushed trailing text from the stop matcher.
     Tail(String),
 }
 
+/// Summary result of a completed raw generation run.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RawDecodeResult {
+    /// Number of prompt tokens processed during prefill.
     pub prompt_tokens: usize,
+    /// Number of newly generated tokens decoded.
     pub new_tokens: usize,
+    /// Wall-clock prefill duration in seconds.
     pub prefill_seconds: f64,
+    /// Wall-clock decode duration in seconds.
     pub decode_seconds: f64,
+    /// The condition that caused generation to terminate.
     pub reason: StopReason,
+    /// Final KV cache write cursor position.
     pub kv_position: usize,
+    /// List of token IDs currently resident in the KV cache.
     pub kv_backed_token_ids: Vec<TokenId>,
 }
 

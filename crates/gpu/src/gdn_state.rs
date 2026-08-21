@@ -18,15 +18,19 @@ pub struct GdnSnapshot {
     layers: Vec<Option<(Vec<u8>, Vec<u8>)>>,
 }
 
+/// Manages fixed-size recurrent state buffers for gated-DeltaNet linear attention layers.
 pub struct GdnStateManager {
     /// `Some` only at indices whose layer mask is 2 (linear attention).
     state_buffers: Vec<Option<metal::Buffer>>,
     conv_tail_buffers: Vec<Option<metal::Buffer>>,
+    /// Number of bytes allocated for the delta-rule state per linear layer.
     pub state_bytes_per_layer: usize,
+    /// Number of bytes allocated for the conv tail buffer per linear layer.
     pub conv_tail_bytes_per_layer: usize,
 }
 
 impl GdnStateManager {
+    /// Allocates and initializes recurrent state and conv tail buffers for all linear layers.
     pub fn new(device: &Device, config: &ArchConfig) -> Self {
         let la = &config.linear_attention;
         let state_bytes = la.num_v_heads as usize
@@ -84,6 +88,7 @@ impl GdnStateManager {
             .expect("layer is not a linear-attention layer")
     }
 
+    /// Returns true if the layer at `layer` index is a linear-attention layer.
     pub fn is_linear(&self, layer: usize) -> bool {
         self.state_buffers[layer].is_some()
     }

@@ -16,6 +16,7 @@ import XCTest
 /// Minutes, not seconds: opening maps gigabytes and compiles pipelines.
 final class RealModelTests: XCTestCase {
 
+    /// Resolves the test model path from the environment or skips if unset.
     private func modelPath() throws -> String {
         guard let raw = ProcessInfo.processInfo.environment["TURBOSPARK_TEST_MODEL"],
             !raw.isEmpty
@@ -28,6 +29,7 @@ final class RealModelTests: XCTestCase {
         return raw
     }
 
+    /// Tests opening a real model and inspecting its resolved session parameters.
     func testOpensAndDescribesItself() async throws {
         let session = try await TurboSparkSession(modelPath: try modelPath())
         // The RESOLVED values. Under automatic sizing nothing was asked for,
@@ -40,6 +42,7 @@ final class RealModelTests: XCTestCase {
                 + "slots=\(session.info.expertCacheSlots) vocab=\(session.info.vocabSize)")
     }
 
+    /// Tests streaming generation of coherent text against a real model.
     func testGeneratesCoherentTextAndStreamsIt() async throws {
         let session = try await TurboSparkSession(modelPath: try modelPath())
         var options = GenerateOptions()
@@ -119,6 +122,7 @@ final class RealModelTests: XCTestCase {
                 + String(format: "%.1fs", Date().timeIntervalSince(started)))
     }
 
+    /// Tests reading phase metrics after completing a generation request.
     func testPhasesAreReadableAfterAGeneration() async throws {
         let session = try await TurboSparkSession(modelPath: try modelPath())
         var options = GenerateOptions()

@@ -13,18 +13,24 @@ use std::collections::BTreeMap;
 
 use serde::Deserialize;
 
+/// Shape, data type, and byte range metadata for one tensor in a safetensors file.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TensorInfo {
+    /// Data type string (e.g. "F32", "BF16", "U32").
     pub dtype: String,
+    /// Tensor dimensions.
     pub shape: Vec<u64>,
     /// Byte offsets relative to the start of the data region (i.e.
     /// relative to file byte `8 + header_len`), not to the file start.
     pub data_offsets: (u64, u64),
 }
 
+/// Parsed safetensors file header containing tensor descriptors and metadata.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SafetensorsHeader {
+    /// Map of tensor names to their descriptors.
     pub tensors: BTreeMap<String, TensorInfo>,
+    /// Optional metadata key-value map.
     pub metadata: Option<BTreeMap<String, String>>,
     /// Byte length of the header JSON, as read from the file's leading
     /// 8-byte length prefix.
@@ -46,11 +52,16 @@ impl SafetensorsHeader {
     }
 }
 
+/// Errors encountered while parsing a safetensors header.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SafetensorsHeaderError {
+    /// The buffer is too short to contain the 8-byte length prefix.
     TooShort,
+    /// The declared header length exceeds the safety cap.
     HeaderTooLarge { header_len: u64, max_bytes: u64 },
+    /// The header JSON is not valid UTF-8.
     InvalidUtf8,
+    /// The header JSON failed to parse.
     InvalidJson(String),
 }
 

@@ -1,5 +1,6 @@
 //! The GGUF repack walk: a GGUF file in, a `.gturbo` install out.
 
+mod conventions;
 mod manifest;
 mod plan;
 mod transcode;

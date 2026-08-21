@@ -23,6 +23,7 @@
 
 mod context_kv;
 mod forward;
+mod layer;
 mod select;
 
 pub(crate) use select::read_f16_rows;

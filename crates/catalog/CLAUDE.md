@@ -27,6 +27,7 @@ crates/catalog/
 |   |   \-- safetensors.rs  # The MLX gates: model_type, affine width, expert stride
 |   +-- recommend/
 |   |   +-- mod.rs          # Machine, Recommendation, the catalog arm
+|   |   +-- tests.rs        # Unit tests for recommendation formatting and filtering
 |   |   +-- fit.rs          # counted vs mapped: does it fit, and how much context
 |   |   +-- fit_tests.rs    # Unit tests for fit and memory sizing
 |   |   +-- rank.rs         # the ordering (vendored shape; see NOTICE)

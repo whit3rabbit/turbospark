@@ -86,9 +86,13 @@ pub fn orchestrate_gemma4_checkpoint_sharded(
     })
 }
 
+/// Classified tensor names partitioned by structural role.
 pub struct ClassifiedNames<'a> {
+    /// Base names for resident language-model weights.
     pub resident_bases: Vec<&'a str>,
+    /// Routed expert tensors grouped by layer index and role.
     pub routed: BTreeMap<usize, BTreeMap<&'static str, &'a str>>,
+    /// Multimodal or non-LM tensor names excluded from the repack.
     pub excluded: Vec<String>,
     /// The multi-token-prediction head's tensors, kept OUT of
     /// `resident_bases` rather than merged into it.
@@ -108,6 +112,7 @@ pub struct ClassifiedNames<'a> {
     pub dflash_bases: Vec<&'a str>,
 }
 
+/// Classifies all tensor names in the shards into their respective roles.
 pub fn classify_all<'a>(
     shards: &Gemma4Shards<'a>,
     arch: &ArchConfig,
@@ -172,6 +177,7 @@ pub struct ResidentRead {
     pub lossy_narrowing: Vec<(String, usize)>,
 }
 
+/// Reads resident weight and norm entries for the classified base names.
 pub fn read_resident_entries(
     shards: &Gemma4Shards<'_>,
     resident_bases: &[&str],

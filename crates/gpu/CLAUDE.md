@@ -16,7 +16,9 @@ crates/gpu/
 |   +-- lib.rs                      # Library root
 |   +-- context/                    # MetalContext, PassEncoder, CommittedPass, errors, buffer IO
 |   +-- kv_cache.rs                 # KvCacheManager managing per-layer Metal KV buffers
+|   +-- kv_cache_mem.rs             # Memory allocation and POSIX advice helpers for KV cache
 |   +-- attention_decode.rs         # Split-KV decode attention dispatch
+|   +-- attention_decode_tests.rs   # Unit tests for attention decode dispatch
 |   +-- moe_decode.rs               # MoE router, phase 1 GEMV, phase 2 down-reduce dispatches
 |   +-- rms_norm.rs                 # RMSNorm dispatches (no-scale, BF16, per-head)
 |   +-- rope.rs                     # RoPE positional embedding dispatch
@@ -39,6 +41,7 @@ crates/gpu/
 |   +-- logit_softmax.rs            # Softcap and logit softmax helpers
 |   +-- bytes.rs                    # Metal buffer byte alignment utilities
 |   +-- gdn.rs                      # Gated-DeltaNet kernel dispatches (8 kernels)
+|   +-- gdn_shape.rs                # GdnShape layout and validation
 |   +-- gdn_state.rs                # GDN recurrent state buffers (Qwen flow's)
 |   +-- dsv4_state.rs               # DSV4 Metal buffer allocation (unwired)
 |   +-- prefill_scratch.rs          # Chunked prefill scratch buffer layout (undispatched)

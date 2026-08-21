@@ -20,6 +20,7 @@ crates/runtime/
 |   +-- real_forward.rs         # RealForwardRunner struct, constructor, and dispatch
 |   +-- real_forward_open.rs    # RealForwardRunner open_inner implementation
 |   +-- real_forward_rollback.rs# RollbackPoint state capture and rewind methods
+|   +-- real_forward_traits.rs  # LogitProducer, SpeculativeProducer, ChunkedPrefillRunner impls
 |   +-- real_forward_dispatch.rs# Dynamic Metal kernel dispatch helpers
 |   +-- real_forward_dispatch_moe.rs # MoE Phase 1 and Phase 2 dispatch helpers
 |   +-- real_forward_init.rs    # Open-time arch vetting and expert streamer setup
@@ -46,13 +47,16 @@ crates/runtime/
 |   |   |   +-- moe.rs          # Routed MoE pass (no shared expert)
 |   |   |   \-- state.rs        # RealLlamaState & the dense/MoE split
 |   |   +-- qwen/               # Qwen 3.6 + dense `qwen3_5` decode flow
-|   |   |   +-- mod.rs          # Entry point & layer loop
+|   |   |   +-- mod.rs          # Entry point & DraftPolicies
+|   |   |   +-- produce.rs      # Forward pass token decode (produce_real_qwen)
 |   |   |   +-- batched.rs      # The M-ROW forward behind the MTP verify (step 4)
+|   |   |   +-- batched_scratch.rs # Metal scratch buffer allocations for batched verify
 |   |   |   +-- batched_layers.rs # Batched attention, linear, and dense layer encoders
 |   |   |   +-- attn.rs         # Gated DeltaNet & gated full attention blocks
 |   |   |   +-- dense.rs        # Dense gated FFN (`qwen3_5`, ROADMAP's 1-bit entry)
 |   |   |   +-- moe.rs          # Shared + routed MoE pass encoding
 |   |   |   +-- mtp.rs          # The MTP head's draft step
+|   |   |   +-- mtp_dump.rs     # Debug intermediate dump helper for MTP
 |   |   |   +-- mtp_state.rs    # MTP state and policy definitions
 |   |   |   +-- dflash.rs       # DFlash2 BLOCK drafter execution
 |   |   |   +-- dflash_state.rs # DFlash2 state, shape derivation, policy definitions
@@ -60,6 +64,7 @@ crates/runtime/
 |   |   |   |   +-- mod.rs      # Draft round orchestration, cursor rewind, probe methods
 |   |   |   |   +-- context_kv.rs # Context-KV projection pass
 |   |   |   |   +-- forward.rs  # One-pass block forward pass
+|   |   |   |   +-- layer.rs    # Sublayer attention and MLP encoders for DFlash
 |   |   |   |   \-- select.rs   # Host candidate selection & codebook helpers
 |   |   |   \-- state.rs        # RealQwenState & the dense/MoE split
 |   |   \-- synthetic/          # Synthetic fallback decode flow

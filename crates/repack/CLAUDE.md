@@ -36,6 +36,7 @@ crates/repack/
 |   +-- synthetic_qwen/             # Real-named synthetic Qwen generators (MoE and dense)
 |   |   +-- mod.rs                  # Re-exports synthetic Qwen builders
 |   |   +-- dense.rs                # Dense sub-4-bit Qwen generator (build_synthetic_qwen_gdn_dense_install)
+|   |   +-- dense_arch.rs           # Architecture definitions and shapes for dense Qwen fixtures
 |   |   +-- dense_tensors.rs        # Synthetic tensor fixture construction helpers for dense Qwen
 |   |   \-- moe.rs                  # MoE Qwen 3.6 generator (build_synthetic_qwen_gdn_moe_install)
 |   +-- gemma4_checkpoint/          # Gemma 4 / Qwen 3.6 mlx-community safetensors converter & streamer
@@ -70,11 +71,13 @@ crates/repack/
 |   |   +-- types.rs                # Error types & ggml dtype mappings
 |   |   +-- plan.rs                 # Tensor classification & layer planning
 |   |   +-- transcode.rs            # Resident F32 transcode & V-head conventions
+|   |   +-- conventions.rs          # V-head layout conventions and RoPE unpermutation
 |   |   \-- manifest.rs             # GGUF manifest quantization spec generator
 |   +-- synthetic_gguf/             # In-memory GGUF writer for fixtures
 |   |   +-- mod.rs                  # Module root and re-exports
 |   |   +-- builder/                # GgufBuilder and GGUF value serialization
 |   |   +-- gemma4.rs               # SyntheticGgufShape, QuantMix & build_synthetic_gemma4_gguf
+|   |   +-- gemma4_shape.rs         # SyntheticGgufShape and QuantMix helper types
 |   |   \-- gptoss.rs               # SyntheticGptOssShape: the M5 layer's SHAPE, not just its types
 |   +-- qwen36_config.rs            # Qwen 3.6 config.json -> ArchConfig (parse_qwen_gdn_moe_config)
 |   +-- hf_checkpoint.rs            # Hugging Face Llama checkpoint converter

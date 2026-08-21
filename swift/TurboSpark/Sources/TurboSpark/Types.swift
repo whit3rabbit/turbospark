@@ -3,14 +3,19 @@ import Foundation
 // The Rust side emits camelCase, so every type here decodes with no
 // `CodingKeys` and the two definitions cannot drift over a spelling.
 
+/// A single message in a conversation.
 public struct ChatMessage: Codable, Sendable, Equatable {
+    /// The sender role of the message.
     public enum Role: String, Codable, Sendable {
         case system, developer, user, assistant, tool
     }
 
+    /// The role of the message sender.
     public var role: Role
+    /// The message text content.
     public var content: String
 
+    /// Creates a new chat message with the given role and content.
     public init(role: Role, content: String) {
         self.role = role
         self.content = content
@@ -44,6 +49,7 @@ public struct OpenOptions: Encodable, Sendable {
     public var powerProfile: PowerProfile?
     public var maxTokensPerSec: Double?
 
+    /// Creates options for opening a model session.
     public init(
         maxContext: Sizing? = nil,
         expertCacheSlots: Sizing? = nil,
@@ -80,6 +86,7 @@ public struct GenerateOptions: Encodable, Sendable {
 
 /// What a finished turn reports.
 public struct GenerationResult: Decodable, Sendable, Equatable {
+    /// The condition that terminated text generation.
     public enum StopReason: String, Decodable, Sendable {
         case endOfTurn, toolCalls, eos, stopString, maxTokens
         /// The caller pressed Stop. The partial turn in `content` is valid

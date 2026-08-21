@@ -3,8 +3,11 @@
 //! type, dimensions, and offset within the data region that follows. See
 //! <https://github.com/ggml-org/ggml/blob/master/docs/gguf.md> for the spec.
 
+/// GGML tensor types, quantization formats, and block size helpers.
 pub mod ggml;
+/// Binary parser for GGUF headers and key-value metadata.
 pub mod parser;
+/// Data types and structures representing parsed GGUF metadata and tensors.
 pub mod types;
 
 pub use ggml::{ggml_type_block, ggml_type_name};

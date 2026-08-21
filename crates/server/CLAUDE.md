@@ -28,7 +28,8 @@ crates/server/
 |   +-- messages.rs             # Anthropic /v1/messages: translate in, generate, translate out
 |   +-- model.rs                # ChatModel trait and the ScriptedChatModel backend
 |   +-- real_model.rs           # RealChatModel: RealForwardRunner backend (macOS only)
-|   \-- response.rs             # Constructors for the OpenAI response & SSE chunk envelopes
+|   +-- response.rs             # Constructors for the OpenAI response & SSE chunk envelopes
+|   \-- response_tests.rs       # Unit tests for response and chunk serialization
 \-- tests/
     +-- chat_completions.rs     # Integration tests for the OpenAI endpoint
     +-- messages.rs             # Integration tests for /v1/messages, /v1/models, wider OpenAI shapes

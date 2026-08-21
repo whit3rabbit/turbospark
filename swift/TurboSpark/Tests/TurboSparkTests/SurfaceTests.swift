@@ -13,6 +13,7 @@ import XCTest
 /// question here is whether the two sides agree on the ABI.
 final class SurfaceTests: XCTestCase {
 
+    /// Tests that the embedded catalog decodes cleanly into Swift types.
     func testTheCatalogDecodesIntoSwiftTypes() throws {
         let rows = try TurboSparkCatalog.available()
         XCTAssertFalse(rows.isEmpty, "the embedded catalog should not be empty")
@@ -25,6 +26,7 @@ final class SurfaceTests: XCTestCase {
         XCTAssertGreaterThan(first.downloadBytes, 0)
     }
 
+    /// Tests that install and download costs are reported for a catalog entry.
     func testInstallCostIsReportedForACatalogRow() throws {
         let alias = try XCTUnwrap(TurboSparkCatalog.available().first).alias
         let cost = try TurboSparkCatalog.cost(of: alias)
@@ -32,6 +34,7 @@ final class SurfaceTests: XCTestCase {
         XCTAssertGreaterThan(cost.installBytes, 0)
     }
 
+    /// Tests that structured error codes and messages cross the FFI boundary.
     func testAnErrorCrossesTheBoundaryWithItsMessage() throws {
         // A malformed repository is refused by a shape check BEFORE any
         // network call, which is what makes this safe in a standing suite.
@@ -47,6 +50,7 @@ final class SurfaceTests: XCTestCase {
         }
     }
 
+    /// Tests that attempting to open a nonexistent model path throws a descriptive error.
     func testOpeningAMissingModelFailsWithAReadableMessage() async throws {
         do {
             _ = try await TurboSparkSession(modelPath: "/nonexistent/model.gturbo")
@@ -59,6 +63,7 @@ final class SurfaceTests: XCTestCase {
         }
     }
 
+    /// Tests consistency between installed models and catalog availability flags.
     func testCatalogRowsKnowWhetherTheyAreInstalled() throws {
         // Cross-checks the two calls against each other: every alias the
         // store reports must be flagged installed in the catalog listing, or
@@ -72,6 +77,7 @@ final class SurfaceTests: XCTestCase {
             "catalog flagged \(flagged.subtracting(installed)) as installed, store disagrees")
     }
 
+    /// Tests that the session peak memory footprint counter can be read.
     func testPeakFootprintIsReadable() throws {
         // Zero means the counter is unavailable, which on macOS it is not.
         let peak = try XCTUnwrap(TurboSparkSession.peakFootprintBytes)

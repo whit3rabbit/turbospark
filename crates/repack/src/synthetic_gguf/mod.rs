@@ -16,6 +16,7 @@
 
 mod builder;
 mod gemma4;
+mod gemma4_shape;
 mod gptoss;
 
 pub use builder::{GgufBuilder, GgufFileAndRanges};

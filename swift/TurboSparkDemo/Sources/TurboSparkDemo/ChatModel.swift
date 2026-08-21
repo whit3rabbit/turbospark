@@ -11,6 +11,7 @@ import TurboSpark
 @MainActor
 final class ChatModel: ObservableObject {
 
+    /// Represents a single turn in the conversation transcript.
     struct Turn: Identifiable, Equatable {
         let id = UUID()
         var role: ChatMessage.Role
@@ -57,6 +58,7 @@ final class ChatModel: ObservableObject {
         info?.reasoningSupport != SessionInfo.ReasoningSupport.none
     }
 
+    /// Refreshes installed and catalog models from disk.
     func refreshModels() {
         do {
             installed = try TurboSparkCatalog.installed()
@@ -67,6 +69,7 @@ final class ChatModel: ObservableObject {
         }
     }
 
+    /// Opens a new session for the specified installed model.
     func open(_ model: InstalledModel) async {
         opening = true
         error = nil
@@ -88,6 +91,7 @@ final class ChatModel: ObservableObject {
         }
     }
 
+    /// Sends the current user draft message to the active session.
     func send() {
         guard let session, !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return
@@ -144,6 +148,7 @@ final class ChatModel: ObservableObject {
         session?.cancel()
     }
 
+    /// Clears the current conversation transcript and last result.
     func clear() {
         turns = []
         lastResult = nil

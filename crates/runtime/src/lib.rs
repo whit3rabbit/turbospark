@@ -30,6 +30,8 @@ mod real_forward_open;
 #[cfg(target_os = "macos")]
 mod real_forward_rollback;
 #[cfg(target_os = "macos")]
+mod real_forward_traits;
+#[cfg(target_os = "macos")]
 mod real_forward_types;
 #[cfg(target_os = "macos")]
 mod real_forward_utils;

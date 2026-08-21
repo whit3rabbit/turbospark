@@ -13,15 +13,21 @@ pub const FIXED_PROMPTS: [&str; 3] = [
     "Write a short story about a lighthouse keeper.",
     "Summarize the plot of a three-act play in one paragraph.",
 ];
+/// Fixed RNG seed used across benchmark runs for deterministic sampling.
 pub const FIXED_SEED: u64 = 42;
+/// Fixed generation budget for each bench prompt in scripted mode.
 pub const FIXED_MAX_NEW_TOKENS: u32 = 64;
 
+/// Measurement stats for one bench generation run.
 pub struct RunStats {
+    /// Number of generated new tokens.
     pub tokens: usize,
+    /// Wall-clock decode duration in seconds.
     pub decode_seconds: f64,
 }
 
 impl RunStats {
+    /// Generated tokens per second of decode time.
     pub fn tokens_per_second(&self) -> f64 {
         if self.decode_seconds <= 0.0 {
             0.0
@@ -31,6 +37,7 @@ impl RunStats {
     }
 }
 
+/// Runs the benchmark harness in scripted mode against fixed prompts.
 pub fn run_scripted_mode(tok: &MfTokenizer) -> std::process::ExitCode {
     println!(
         "turbospark-bench: {} fixed prompts, seed {FIXED_SEED}, scripted producer (see module docs)",
@@ -118,6 +125,7 @@ fn run_once(tok: &MfTokenizer, prompt: &str) -> Result<RunStats, String> {
     })
 }
 
+/// Runs the benchmark harness in real mode using a synthetic model on Metal.
 #[cfg(target_os = "macos")]
 pub fn run_real_mode(tok: &MfTokenizer) -> std::process::ExitCode {
     let dir = std::env::temp_dir().join(format!("turbospark-bench-real-{}", std::process::id()));
@@ -218,6 +226,7 @@ fn run_once_real(
     })
 }
 
+/// Stub for real mode on non-macOS platforms.
 #[cfg(not(target_os = "macos"))]
 pub fn run_real_mode(_tok: &MfTokenizer) -> std::process::ExitCode {
     eprintln!("--real requires macOS (Metal)");

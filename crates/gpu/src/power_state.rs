@@ -18,13 +18,13 @@ use metal::objc::{class, msg_send, sel, sel_impl};
 #[link(name = "Foundation", kind = "framework")]
 extern "C" {}
 
+// The allow is for objc's `sel_impl!`, whose expansion carries a
+// `cfg(feature = "cargo-clippy")` this crate does not declare.
+#[allow(unexpected_cfgs)]
 /// `NSProcessInfo.processInfo.thermalState`, raw: 0 nominal, 1 fair,
 /// 2 serious, 3 critical. Returned unmapped so the meaning of each level
 /// is decided in one place (`runtime::ThermalLevel::from_raw`) rather than
 /// twice.
-// The allow is for objc's `sel_impl!`, whose expansion carries a
-// `cfg(feature = "cargo-clippy")` this crate does not declare.
-#[allow(unexpected_cfgs)]
 pub fn thermal_state_raw() -> i64 {
     // SAFETY: `+[NSProcessInfo processInfo]` returns the process-wide
     // singleton, which is neither autoreleased nor null once Foundation is
@@ -37,6 +37,8 @@ pub fn thermal_state_raw() -> i64 {
     }
 }
 
+// See `thermal_state_raw` for the allow.
+#[allow(unexpected_cfgs)]
 /// `NSProcessInfo.processInfo.physicalMemory`, in bytes.
 ///
 /// Backs the routed-expert cache's automatic slot sizing, which lives in
@@ -53,8 +55,6 @@ pub fn thermal_state_raw() -> i64 {
 /// different slot count on each open and no two runs would be comparable.
 /// A stable over-estimate that the caller discounts beats an accurate number
 /// that is never the same twice.
-// See `thermal_state_raw` for the allow.
-#[allow(unexpected_cfgs)]
 pub fn physical_memory() -> u64 {
     // SAFETY: same singleton as above; `physicalMemory` is a documented
     // no-argument `unsigned long long` property on it.
@@ -65,9 +65,9 @@ pub fn physical_memory() -> u64 {
     }
 }
 
-/// `NSProcessInfo.processInfo.isLowPowerModeEnabled`.
 // See `thermal_state_raw` for the allow.
 #[allow(unexpected_cfgs)]
+/// `NSProcessInfo.processInfo.isLowPowerModeEnabled`.
 pub fn low_power_mode_enabled() -> bool {
     // SAFETY: same singleton as above; `isLowPowerModeEnabled` is a
     // documented no-argument `BOOL` property on it.

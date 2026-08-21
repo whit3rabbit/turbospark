@@ -9,6 +9,7 @@
 
 mod config;
 mod resolve;
+mod resolvers;
 
 use std::collections::BTreeSet;
 use std::path::Path;

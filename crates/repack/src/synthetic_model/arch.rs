@@ -12,8 +12,11 @@ use crate::resident_writer::ResidentTensorSpec;
 /// smallest value satisfying `turbospark_compute::quant::GROUP_SIZE`'s
 /// multiple-of-64 requirement on every GEMV's contraction dimension.
 pub const HIDDEN_SIZE: i64 = 64;
+/// Number of attention heads in the synthetic model.
 pub const NUM_HEADS: i64 = 2;
-pub const FULL_HEAD_DIM: i64 = 32; // NUM_HEADS * FULL_HEAD_DIM == HIDDEN_SIZE
+/// Dimension per attention head (NUM_HEADS * FULL_HEAD_DIM == HIDDEN_SIZE).
+pub const FULL_HEAD_DIM: i64 = 32;
+/// Intermediate hidden dimension for the feed-forward network.
 pub const INTERMEDIATE_SIZE: i64 = 64;
 
 /// A tiny, dense (no MoE, no sliding-window/linear/compressed layers)
