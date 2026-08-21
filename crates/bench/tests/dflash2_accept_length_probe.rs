@@ -9,6 +9,21 @@
 //! on a drafter-off open of its own, dropped before the block arms so peak
 //! memory is one runner at a time).
 //!
+//! THREE WORKLOADS, each swept across every block, because a serving default
+//! read off one distribution is a default that has not been tested. Measured
+//! per-position acceptance spans **prose 0.65-0.74, code 0.84-0.94, math
+//! 0.88-0.98**, so the three bracket the range this checkpoint produces
+//! rather than sampling one corner of it.
+//!
+//! `prose` is the one that DECIDES. It has the lowest acceptance, it is the
+//! only workload on which the serving block does not pay, and it is where a
+//! large block is catastrophic rather than merely worse -- so
+//! `DFLASH_SERVING_BLOCK`'s justification rests on its row, and it is swept
+//! here so that row is reproducible from this repo rather than from a CLI
+//! measurement in a gitignored file. It is also the only prompt whose greedy
+//! stream leaves the sequential one at all, which is what makes the
+//! common-prefix floor a live check rather than a decoration.
+//!
 //! ```sh
 //! TURBOSPARK_DFLASH2_INSTALL_DIR=~/models/qwen38-27b-dflash2.gturbo \
 //!   cargo test -p turbospark-bench --test dflash2_accept_length_probe --release -- --ignored --nocapture
@@ -108,6 +123,19 @@ struct Stats {
     offered: Vec<usize>,
     matched: Vec<usize>,
     rollbacks: usize,
+}
+
+/// One workload's sequential reference: the stream every speculative arm on
+/// that prompt is compared against, and the decode clock its speedup column
+/// is read against.
+///
+/// Per workload rather than one shared clock, because the speedup a block
+/// pays is a ratio against the SAME prompt decoded sequentially. Reading a
+/// math arm against the code prompt's reference would compare two different
+/// generations and call the difference speculation.
+struct Reference {
+    stream: Vec<i32>,
+    secs: f64,
 }
 
 /// One block arm: prefill priming the drafter, then rounds of
@@ -240,6 +268,100 @@ fn run_plain(runner: &mut RealForwardRunner, prompt: &[i32], vocab: usize) -> (V
     (generated, started.elapsed().as_secs_f64())
 }
 
+/// Prints one arm's row and its acceptance curve, reports how far it tracked
+/// the sequential stream, and makes the two assertions every arm owes.
+///
+/// Factored out because there are three workloads now and the assertions are
+/// the interesting part: a per-arm copy is a per-arm opportunity for one of
+/// them to be dropped, and the one that would go unnoticed is the
+/// functional-drafter guard, which is silent on a healthy run.
+fn report_arm(
+    label: &str,
+    block: usize,
+    s: &Stats,
+    generated: &[i32],
+    secs: f64,
+    reference: &Reference,
+) {
+    let per_round = s.accepted as f64 / s.rounds.max(1) as f64;
+    println!(
+        "{label:>6}  {block:>5}  {:>6}  {:>11.2}  {:>12.2}  {:>9}  {:>7.2}  {:>7.2}x",
+        s.rounds,
+        per_round,
+        per_round + 1.0,
+        s.rollbacks,
+        secs,
+        reference.secs / secs,
+    );
+    let curve: Vec<String> = s
+        .offered
+        .iter()
+        .zip(&s.matched)
+        .map(|(o, m)| format!("{:.2}", if *o == 0 { 0.0 } else { *m as f64 / *o as f64 }))
+        .collect();
+    println!("        per-position acceptance: {}", curve.join(" "));
+
+    // How far this arm tracks the sequential stream, REPORTED rather than
+    // assumed. A round overshoots GENERATE by construction, so the comparison
+    // is over the common length.
+    let n = reference.stream.len().min(generated.len());
+    let prefix = (0..n)
+        .take_while(|&i| reference.stream[i] == generated[i])
+        .count();
+    if prefix == n {
+        println!("        matches the sequential stream for all {n} compared tokens");
+    } else {
+        println!(
+            "        matches the sequential stream for {prefix} of {n} tokens, then \
+             diverges (expected; see docs/DFLASH2.md)"
+        );
+    }
+    assert!(
+        prefix >= COMMON_PREFIX_FLOOR.min(n),
+        "{label} block {block} left the sequential greedy stream after only \
+         {prefix} tokens, under the {COMMON_PREFIX_FLOOR} floor. Late divergence \
+         is expected (the batched verify and the decode GEMV accumulate \
+         differently); divergence THIS early is a corrupted drafter or rollback, \
+         not reassociation"
+    );
+
+    // The functional-drafter guard, the MTP probe's own: near-zero
+    // first-proposal acceptance is a broken drafter (a convention read wrongly
+    // somewhere in the port), not a verdict about DFlash2.
+    let first = s.matched[0] as f64 / s.offered[0].max(1) as f64;
+    assert!(
+        first > 0.02,
+        "{label} block {block}: the drafter's FIRST proposal was accepted {}/{} \
+         times ({first:.4}). That is a broken port, not a low accept length -- the \
+         published drafter's first-position acceptance is ~0.9 (docs/DFLASH2.md)",
+        s.matched[0],
+        s.offered[0]
+    );
+}
+
+/// Every block size must generate IDENTICAL text to every other, on one
+/// workload. Strictly stronger than byte-identity against a sequential decode
+/// (which is measured FALSE) and, unlike it, has no length below which it
+/// stops looking.
+fn assert_blocks_agree(label: &str, streams: &[(usize, Vec<i32>)]) {
+    for pair in streams.windows(2) {
+        let (a_block, a) = &pair[0];
+        let (b_block, b) = &pair[1];
+        let n = a.len().min(b.len());
+        assert_eq!(
+            a[..n],
+            b[..n],
+            "{label}: blocks {a_block} and {b_block} generated different text; the \
+             block size must change throughput and nothing else"
+        );
+    }
+    println!(
+        "all {} block sizes generated identical {label} text; the divergence from \
+         the sequential stream is the batched kernel, not the block",
+        streams.len()
+    );
+}
+
 #[test]
 #[ignore = "needs a real DFlash2 install via TURBOSPARK_DFLASH2_INSTALL_DIR"]
 fn dflash2_accept_length_and_speedup() {
@@ -250,7 +372,7 @@ fn dflash2_accept_length_and_speedup() {
     // Reference first, on its own open, dropped before the block arms so
     // the peak is one runner at a time. Run TWICE and take the second
     // clock: the first decode of a process is a cold GPU (Gotcha 20).
-    let (plain, plain_secs, plain_prose) = {
+    let (code_ref, prose_ref, math_ref) = {
         let (mut runner, tokenizer) = open_model_runner_speculative(
             &dir,
             SLOTS,
@@ -263,24 +385,40 @@ fn dflash2_accept_length_and_speedup() {
         let vocab = runner.vocab_size();
         let prompt = protocol_prompt(&tokenizer);
         let _ = run_plain(&mut runner, &prompt, vocab);
-        let out = run_plain(&mut runner, &prompt, vocab);
-        // The prose reference rides the SAME open, which is why the second
-        // prompt costs a decode and not a model load.
-        let prose = run_plain(&mut runner, &prose_prompt(&tokenizer), vocab).0;
+        let (stream, secs) = run_plain(&mut runner, &prompt, vocab);
+        // The other two references ride the SAME open, which is why each
+        // costs a decode and not a model load. They need no warmup of their
+        // own: the GPU is warm by the time they run.
+        let (prose_stream, prose_secs) = run_plain(&mut runner, &prose_prompt(&tokenizer), vocab);
+        let (math_stream, math_secs) = run_plain(&mut runner, &math_prompt(&tokenizer), vocab);
         println!(
-            "\nprompt {} tokens, generating {GENERATE}, greedy",
+            "\ncode prompt {} tokens, generating {GENERATE}, greedy",
             prompt.len()
         );
         println!(
-            "reference (no drafter): {:.2} s, {:.2} tok/s\n",
-            out.1,
-            GENERATE as f64 / out.1
+            "reference (no drafter): code {:.2} s ({:.2} tok/s), prose {:.2} s, math {:.2} s\n",
+            secs,
+            GENERATE as f64 / secs,
+            prose_secs,
+            math_secs
         );
-        (out.0, out.1, prose)
+        (
+            Reference { stream, secs },
+            Reference {
+                stream: prose_stream,
+                secs: prose_secs,
+            },
+            Reference {
+                stream: math_stream,
+                secs: math_secs,
+            },
+        )
     };
 
-    println!(" block  rounds  accepted/rd  committed/rd  rollbacks  seconds  MEASURED");
+    println!("prompt  block  rounds  accepted/rd  committed/rd  rollbacks  seconds  MEASURED");
     let mut streams: Vec<(usize, Vec<i32>)> = Vec::new();
+    let mut math_streams: Vec<(usize, Vec<i32>)> = Vec::new();
+    let mut prose_streams: Vec<(usize, Vec<i32>)> = Vec::new();
     for block in BLOCKS {
         let (mut runner, tokenizer) = open_model_runner_speculative(
             &dir,
@@ -292,91 +430,43 @@ fn dflash2_accept_length_and_speedup() {
         )
         .expect("install opens with the drafter at the block");
         let vocab = runner.vocab_size();
+
         let prompt = protocol_prompt(&tokenizer);
         let (s, generated, secs) = run_dflash(&mut runner, &prompt, vocab, block);
-        // THE PROSE ARM, on the serving block and on the runner already
-        // open. This is the losslessness check with teeth: the sweep's own
-        // prompt tracks the sequential stream for all 600 tokens whatever
-        // the engine does, so a floor asserted there is a decoration. This
-        // prompt parts from it at ~200 (`docs/DFLASH2.md`), which means the
-        // floor is measuring something.
-        if block == runtime::DFLASH_SERVING_BLOCK {
-            let prose = prose_prompt(&tokenizer);
-            let (_, prose_gen, _) = run_dflash(&mut runner, &prose, vocab, block);
-            let n = plain_prose.len().min(prose_gen.len());
-            let prefix = (0..n)
-                .take_while(|&i| plain_prose[i] == prose_gen[i])
-                .count();
-            println!(
-                "\nprose case (protocol short-explanation), block {block}: matches the \
-                 sequential stream for {prefix} of {n} tokens"
-            );
-            assert!(
-                prefix >= COMMON_PREFIX_FLOOR.min(n),
-                "the prose arm left the sequential greedy stream after only {prefix} \
-                 tokens, under the {COMMON_PREFIX_FLOOR} floor. Divergence in the \
-                 low hundreds is expected (the batched verify and the decode GEMV \
-                 accumulate differently); divergence this early is corrupted state"
-            );
-        }
+        report_arm("code", block, &s, &generated, secs, &code_ref);
+        streams.push((block, generated));
+
+        // THE MATH ARM, swept at every block, and that is what makes this
+        // file able to re-open the block choice rather than only re-check it.
+        // The two workloads the serving default was set from are a code-shaped
+        // answer accepting 0.93-0.98 and prose accepting 0.66-0.83, both well
+        // above the GSM8K figures vLLM and llama.cpp publish for this drafter
+        // -- so the ordering could have been an artifact of two easy
+        // distributions. Multi-step arithmetic is the cheap third opinion:
+        // its numeric tokens are the least predictable this checkpoint emits.
+        let math = math_prompt(&tokenizer);
+        let (ms, math_gen, math_secs) = run_dflash(&mut runner, &math, vocab, block);
+        report_arm("math", block, &ms, &math_gen, math_secs, &math_ref);
+        math_streams.push((block, math_gen));
+
+        // THE PROSE ARM, and it is SWEPT rather than run at the serving block
+        // alone, because it is the workload that decides the default. Its
+        // acceptance is the lowest of the three, it is the only one on which
+        // the serving block does not pay, and it is where a large block is
+        // catastrophic rather than merely worse -- so the const's
+        // justification rests on THIS row, and until it was swept here that
+        // row existed only in a CLI measurement nothing in the repo could
+        // reproduce.
+        //
+        // It doubles as the losslessness check with teeth: the other two
+        // prompts track the sequential stream for all 600 tokens whatever the
+        // engine does, so a floor asserted on them alone is a decoration.
+        // This one parts from it at ~150 (`docs/DFLASH2.md`).
+        let prose = prose_prompt(&tokenizer);
+        let (ps, prose_gen, prose_secs) = run_dflash(&mut runner, &prose, vocab, block);
+        report_arm("prose", block, &ps, &prose_gen, prose_secs, &prose_ref);
+        prose_streams.push((block, prose_gen));
         drop(runner);
-
-        let per_round = s.accepted as f64 / s.rounds.max(1) as f64;
-        let committed = per_round + 1.0;
-        let measured = plain_secs / secs;
-        println!(
-            "{block:>6}  {:>6}  {:>11.2}  {:>12.2}  {:>9}  {:>7.2}  {:>7.2}x",
-            s.rounds, per_round, committed, s.rollbacks, secs, measured,
-        );
-        let curve: Vec<f64> = s
-            .offered
-            .iter()
-            .zip(&s.matched)
-            .map(|(o, m)| if *o == 0 { 0.0 } else { *m as f64 / *o as f64 })
-            .collect();
-        println!(
-            "        per-position acceptance: {}",
-            curve
-                .iter()
-                .map(|p| format!("{p:.2}"))
-                .collect::<Vec<_>>()
-                .join(" ")
-        );
-
-        // How far this arm tracks the sequential stream, REPORTED rather
-        // than assumed. A round overshoots GENERATE by construction, so the
-        // comparison is over the common length.
-        let n = plain.len().min(generated.len());
-        let prefix = (0..n).take_while(|&i| plain[i] == generated[i]).count();
-        if prefix == n {
-            println!("        matches the sequential stream for all {n} compared tokens");
-        } else {
-            println!(
-                "        matches the sequential stream for {prefix} tokens, then                  diverges (expected past ~200; see docs/DFLASH2.md)"
-            );
-        }
-        assert!(
-            prefix >= COMMON_PREFIX_FLOOR.min(n),
-            "block {block} left the sequential greedy stream after only {prefix} \
-             tokens, under the {COMMON_PREFIX_FLOOR} floor. Late divergence is \
-             expected (the batched verify and the decode GEMV accumulate \
-             differently); divergence THIS early is a corrupted drafter or \
-             rollback, not reassociation"
-        );
-        streams.push((block, generated.clone()));
-
-        // The functional-drafter guard, the MTP probe's own: near-zero
-        // first-proposal acceptance is a broken drafter (a convention read
-        // wrongly somewhere in the port), not a verdict about DFlash2.
-        let first = s.matched[0] as f64 / s.offered[0].max(1) as f64;
-        assert!(
-            first > 0.02,
-            "block {block}: the drafter's FIRST proposal was accepted {}/{} times \
-             ({first:.4}). That is a broken port, not a low accept length -- the \
-             published drafter's first-position acceptance is ~0.9 (docs/DFLASH2.md)",
-            s.matched[0],
-            s.offered[0]
-        );
     }
 
     // THE BLOCK IS A THROUGHPUT KNOB AND NOT A MATH KNOB, and unlike
@@ -390,22 +480,28 @@ fn dflash2_accept_length_and_speedup() {
     // It is the strongest exact assertion this file can make, and it is
     // strictly stronger than what the old `GENERATE = 256` byte-identity
     // check was really testing: this one has no length below which it stops
-    // looking.
-    for pair in streams.windows(2) {
-        let (a_block, a) = &pair[0];
-        let (b_block, b) = &pair[1];
-        let n = a.len().min(b.len());
-        assert_eq!(
-            a[..n],
-            b[..n],
-            "blocks {a_block} and {b_block} generated different text; the block \
-             size must change throughput and nothing else"
-        );
-    }
-    println!(
-        "\nall {} block sizes generated identical text; the divergence from the \
-         sequential stream is the batched kernel, not the block",
-        streams.len()
+    // looking. Asserted on BOTH swept workloads, because a batch-width
+    // dependence that happened to be invisible on one prompt is exactly the
+    // kind of thing one prompt cannot rule out.
+    println!();
+    assert_blocks_agree("code", &streams);
+    assert_blocks_agree("math", &math_streams);
+    assert_blocks_agree("prose", &prose_streams);
+
+    // ASSERT THE THIRD WORKLOAD DISCRIMINATES, before any row above is
+    // believed. `math_prompt` is one careless edit away from rendering what
+    // `protocol_prompt` renders, and if it did, every assertion in this file
+    // would still pass while the "third opinion" was the first one twice --
+    // the same hazard Gotchas 48, 50 and 51 record on three other axes. Two
+    // streams from one model at temperature 0 are equal only if their prompts
+    // were.
+    let code_first = &streams[0].1;
+    let math_first = &math_streams[0].1;
+    assert_ne!(
+        code_first[..code_first.len().min(math_first.len())],
+        math_first[..code_first.len().min(math_first.len())],
+        "the math arm generated the code arm's text, so the two prompts are the \
+         same and this file measures one workload three times"
     );
 }
 
@@ -426,6 +522,53 @@ fn prose_prompt(tokenizer: &tokenizer::MfTokenizer) -> Vec<i32> {
         .expect("the protocol carries short-explanation");
     let rendered = tokenizer
         .apply_chat_template(&[Message::new(Role::User, case.content)])
+        .expect("chat template renders");
+    tokenizer.encode(&rendered, false)
+}
+
+/// A THIRD prompt: multi-step arithmetic.
+///
+/// **IT WAS CHOSEN AS THE HARD CASE AND MEASURED AS THE EASY ONE.** The
+/// reasoning was that a drafter predicts a NUMBER far worse than it predicts
+/// the next word of an explanation, so a chain of arithmetic should be where
+/// a block ordering set on easy text comes apart. Measured per-position
+/// acceptance says otherwise: **math 0.88-0.98, code 0.84-0.94, prose
+/// 0.65-0.74**. Arithmetic working is the most TEMPLATED thing this
+/// checkpoint writes -- `Monday's revenue:`, `120 x $3.25 = $390.00`,
+/// restated totals -- and the few genuinely unpredictable digits sit in a
+/// large majority of scaffolding the drafter gets right.
+///
+/// So this arm's value is not the one it was added for. It is a third
+/// independent workload that AGREES, and it widened the measured acceptance
+/// band rather than extending it downward: `prose` was and remains the hard
+/// case, and the one the serving default rests on.
+///
+/// Kept, and kept honest, rather than swapped for something harder. A
+/// workload that confirms is evidence; a doc comment that still predicted
+/// what this one refuted would be the hedge that outlives its own
+/// resolution, which `docs/DFLASH2.md` section 8 already complains about
+/// once.
+///
+/// Written here rather than added to `PROTOCOL_CASES`: a case there is
+/// frozen protocol, and adding one would move published rows in every family
+/// (`crates/bench/CLAUDE.md` Gotcha 11). Note this checkpoint renders with
+/// `enable_thinking: false` (AGENTS.md Gotcha 56), so the working is the
+/// ANSWER rather than a `<think>` channel, and every token of it counts
+/// toward the sweep.
+fn math_prompt(tokenizer: &tokenizer::MfTokenizer) -> Vec<i32> {
+    let rendered = tokenizer
+        .apply_chat_template(&[Message::new(
+            Role::User,
+            "A bakery sells croissants at $3.25, muffins at $2.40, and loaves at \
+             $5.75. On Monday it sold 120 croissants, 96 muffins, and 54 loaves. \
+             On Tuesday croissant sales rose 15%, muffin sales fell by 12, and \
+             loaf sales doubled. Ingredients cost 38% of revenue, and wages are \
+             $420 per day. Showing every step: compute Monday's revenue, \
+             Tuesday's revenue, the two-day total, the two-day ingredient cost, \
+             and the two-day profit after wages. Then work out how many extra \
+             loaves Tuesday would have needed for the two-day profit to reach \
+             $1,500.",
+        )])
         .expect("chat template renders");
     tokenizer.encode(&rendered, false)
 }

@@ -13,6 +13,47 @@ pub(crate) const DFLASH_PREFIX: &str = "dflash";
 pub const DFLASH_BLOCK: usize = 8;
 
 /// What `auto` actually serves, and it is 2 rather than the trained 8.
+///
+/// **MEASURED ON THREE WORKLOADS THROUGH `dflash2_accept_length_probe`**,
+/// 600 greedy tokens each, `Qwen3.8-27B` + DFlash2. The accepted-per-round
+/// and rollback columns are deterministic and reproduce to the last digit
+/// across runs; the wall clock is not and is read for ORDERING only:
+///
+/// | workload | per-position acceptance | block 2 | 4 | 7 | 8 |
+/// | --- | --- | ---: | ---: | ---: | ---: |
+/// | prose | 0.53-0.81 | 1.23 | 1.60 | 1.85 | 1.84 |
+/// | code | 0.84-0.94 | 1.74 | 2.98 | 4.37 | 4.56 |
+/// | math | 0.86-0.98 | 1.89 | 3.49 | 5.59 | 5.67 |
+///
+/// (accepted per round; a bigger block always accepts more per round and
+/// that is not the question.) The rollback RATE is:
+///
+/// | workload | block 2 | 4 | 7 | 8 |
+/// | --- | ---: | ---: | ---: | ---: |
+/// | prose | 52% | 84% | 94% | 96% |
+/// | code | 17% | 38% | 59% | 67% |
+/// | math | 8% | 20% | 37% | 45% |
+///
+/// **Block 2 is fastest on all three, and the ordering is monotone in the
+/// block on all three.** The mechanism is the rollback term
+/// `docs/MTP_SPECULATIVE.md` names: a rejected batched round on this
+/// recurrent family restores a whole gated-DeltaNet snapshot and replays the
+/// accepted prefix, and a block of B needs ALL B proposals to land, so even
+/// per-position acceptance of 0.93 compounds to a ~45% rollback rate at 8.
+/// So the trained block is the wrong SERVING block, and the same 2 the MTP
+/// head already defaults to (`DEFAULT_SPECULATION_BLOCK`) is the right one --
+/// two drafters, two architectures, one answer, which is what makes it a
+/// property of this engine rather than of either drafter.
+///
+/// **A LARGE BLOCK IS NOT RESCUED BY HIGH ACCEPTANCE, which the two-workload
+/// version of this table could still be read as implying.** `math` accepts
+/// 0.86-0.98 per position -- higher than `code` -- and block 8 still loses to
+/// block 2 there. Acceptance decides whether speculation pays AT ALL (prose
+/// loses at every block but 2); the BLOCK is decided by compounding and
+/// rollback cost, nearly independently of it.
+///
+/// A caller who has measured their own workload names a block explicitly;
+/// `auto` is for the caller who has not.
 pub const DFLASH_SERVING_BLOCK: usize = 2;
 
 const _: () = assert!(DFLASH_SERVING_BLOCK <= DFLASH_BLOCK && DFLASH_SERVING_BLOCK > 0);

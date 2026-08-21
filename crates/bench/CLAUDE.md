@@ -193,11 +193,25 @@ TURBOSPARK_MTP_INSTALL_DIR=~/models/qwen38-27b-mtp.gturbo \
 TURBOSPARK_MTP_INSTALL_DIR=~/models/qwen38-27b-mtp.gturbo \
   cargo test -p turbospark-bench --test mtp_head_probe --release -- --ignored --nocapture
 
-# The BLOCK drafter's equivalent (docs/DFLASH2.md). ~4.5 min: four blocks on
-# a code prompt plus a prose arm on the serving block. It sweeps WALL CLOCK
+# The BLOCK drafter's equivalent (docs/DFLASH2.md). ~12 min: THREE workloads
+# (code, math, prose), each swept across all four blocks. It sweeps WALL CLOCK
 # beside the deterministic columns, and only the latter are quotable -- the
 # accept lengths and rollback counts reproduce to the last digit across runs
 # while the speedup column moves with desktop load (Gotcha 3).
+#
+# THE THREE WORKLOADS DO DIFFERENT JOBS and span per-position acceptance 0.53
+# to 0.98. `prose` is the one that DECIDES: lowest acceptance, the only one on
+# which the serving block does not pay, and where a large block is
+# catastrophic rather than merely worse -- so DFLASH_SERVING_BLOCK's
+# justification rests on its rows, and it is swept here so they are
+# reproducible from this repo. `math` was added as the expected HARD case and
+# measured as the easiest; that is recorded rather than tidied away, because
+# the refuted prediction is what sharpened the mechanism (block choice turns
+# on compounding and rollback cost, not on acceptance).
+#
+# One confound to know before quoting the seconds: `BLOCKS` is swept 7, 8, 4,
+# 2, so block 2 always runs LAST and a monotone load trend aliases with the
+# block ordering. Interleaving the blocks would remove it.
 #
 # TWO ASSERTIONS RATHER THAN THE BYTE-IDENTITY ONE IT USED TO MAKE. Every
 # block size must generate IDENTICAL text to every other, which is strictly
