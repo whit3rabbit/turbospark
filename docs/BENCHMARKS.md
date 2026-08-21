@@ -744,6 +744,110 @@ Caveats, the same ones as the two sections above. One corpus, one family,
 one machine, one llama.cpp build; nothing here says how far MXFP4 sits from
 the unquantized model.
 
+### Cross-engine: llama.cpp on the same GGUF, `qwen35`
+
+The Ornith-1.5 family's FIRST external check, and until this ran it had none:
+three installs with four frozen gate rows, every one of them a perplexity and
+two digests compared against this port's own past.
+`crates/repack/tests/ornith_tensor_probe.rs` correlates every installed tensor
+against the published BF16 checkpoint at 0.998-1.000 (`linear_attn.out_proj`
+at 0.99998), which is a strong STATIC check and is blind to how the runtime
+USES those tensors.
+
+It is aimed at the newest and least-verified code in the family -- the
+`qwen35` DENSE GGUF path, whose name table, `SUPPORTED_GGUF` row and V-head
+de-interleave are all new, and whose bring-up found three real bugs of exactly
+one kind (AGENTS.md Gotcha 61). Three things belong here or nowhere: the
+**V-head de-interleave on the dense half** (`transcode.rs::v_head_axis`), the
+**order of the per-head q/k norms relative to RoPE**, and the **RMS epsilon**.
+
+`scripts/kld_llamacpp.py` replays this port's own id sequence through
+llama.cpp **b10470** on `ornith-ai/Ornith-1.5-9B-GGUF`'s `Q8_0` file, the
+exact 9,527,501,248 bytes `~/models/ornith9b.gturbo` was streamed from
+(SHA-256 verified against the `DENSE_SHA256` its install test already pins).
+573 positions, 16 expert-cache slots, 2026-08-20, on AC.
+
+| Comparison | Mean KL | Median | p99 | Max | Top-1 agree |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| llama.cpp batched vs cached, both Metal (shape floor) | 0.0000024 | 0.0000008 | 0.000013 | 0.00037 | 99.65% |
+| **this port vs llama.cpp, same bytes, both Metal, both cached** | **0.000138** | **0.000039** | **0.00041** | **0.0397** | **99.65%** |
+| llama.cpp Metal vs llama.cpp CPU, both cached (backend floor) | 0.00202 | 0.00083 | 0.0149 | 0.118 | 98.25% |
+
+| Reading | Perplexity |
+| --- | ---: |
+| **this port, Q8_0 GGUF install** | **6.0503** |
+| llama.cpp, same GGUF, Metal, cached | 6.0449 |
+| llama.cpp, same GGUF, Metal, batched | 6.0459 |
+| llama.cpp, same GGUF, CPU, cached | 6.0301 |
+
+**The headline is 15x BELOW the backend floor**, at 6.8% of it -- the tightest
+of the five llama.cpp comparisons here (IQ3 11.8%, Gemma 15.3%, `qwen3moe`
+32.4%, `gpt-oss` 82.8%). In absolute terms 0.000138 nats is 61x smaller than Gemma's
+0.00845 and 23x smaller than `qwen3moe`'s 0.00320. The perplexity says it on a
+different axis: 6.0503 against the reference's 6.0449 is 0.089% apart, against
+the 0.245% by which llama.cpp's own Metal and CPU paths disagree on these same
+bytes. **That settles all three questions above.** None is a rounding-scale
+effect -- a de-interleave applied to the wrong axis, a norm on the wrong side
+of RoPE, or an epsilon off by a factor of ten perturbs every one of 32 layers
+systematically, and nothing of that shape fits 15x under a backend floor.
+
+**READ THE BACKEND FLOOR, NOT THE SHAPE FLOOR, ON A DENSE MODEL, and the
+shape-floor ratio here is the worst on record for a reason that is not a
+defect.** At 58x its shape floor this looks worse than Gemma's 6.3x or
+`qwen3moe`'s 2.4x -- but the denominator collapsed rather than the numerator
+growing. A shape floor is batched-vs-cached on ONE engine, and on an MoE model
+most of that gap is expert routing and reduce order; a dense model has neither,
+so the two arms are nearly the same computation. Corroborated independently:
+the dense 27B `qwen3_5` family reads a shape floor of 0.0000074 against the
+MoE families' ~0.00135, three orders of magnitude apart on the same axis. The
+RATIO transfers between families and the ABSOLUTES do not (`crates/bench`
+Gotcha 8), and on a dense model the shape floor is close to a degenerate
+scale.
+
+**The two top-1 figures being EQUAL to sixteen digits is a coincidence, and it
+was checked rather than published.** Both read exactly 571/573, which looks
+like a driver reading one array twice. It is not: the headline disagrees at
+rows {206, 402} and the shape floor at {402, 570} -- different sets, the same
+count -- and all three rows are near-ties, with llama.cpp top-2 gaps of
+0.0103, 0.0014 and 0.0053 nats. The backend floor's ten disagreements are a
+superset of both. Quantization only ever resolved ties it could not see, which
+is the same shape the router transcode measured in Gotcha 29.
+
+The two KL directions differ by 16% on the headline (reverse means, in table
+order, 0.0000024 / 0.000160 / 0.00194), which changes no conclusion; quote the
+direction anyway.
+
+Everything here is deterministic, like the other quality numbers and unlike
+any tok/s figure: this port's dump is SHA-256 `bf922257...` and llama.cpp's
+Metal cached arm `936d54cc...`. Treat movement as a real change.
+
+**Warm and cold are BYTE-IDENTICAL on this family** (`bf922257...` both ways),
+which is stronger than the warm-equals-cold perplexity the MoE families
+report, and it is structural: a dense install has no expert cache to warm at
+all. What it does check for free is that `reset()` rewinds the gated-DeltaNet
+recurrent state and conv tail -- `crates/runtime` Gotcha 4's leak would make
+the second walk start with the first one's history and could not survive a
+byte comparison. The COLD dump separately reproduces
+`ornith9b_quality_gate.rs`'s frozen 6.0503 exactly, which is what says the
+dump walks the ids the gate scores.
+
+Cost, for planning: all three arms plus the one-time harness build finished in
+**under 90 s**, and the two dumps are 27 s and 45 s. **The backend floor is
+cheap here and should not inherit the dense 27B's exemption** -- that family's
+CPU arm reads 24.8B backbone weights per token and `scripts/kld_mlx_affine.py`
+reports the string instead of the number; a 9B reads a third of that and
+llama.cpp's CPU walk is no slower than its Metal one at this size. Add ~5 min
+for the 9.5 GB download, which is the whole expense: llama.cpp cannot stream
+the file the way the repack walk did (Gotcha 34).
+
+Caveats, the same ones as the three sections above. One corpus, one family,
+one machine, one llama.cpp build. This says the two engines agree on these
+bytes; it does not say either is close to the unquantized model, which still
+needs a bf16 reference nobody has run here. It says nothing about the two
+35B installs, whose own cross-engine checks are unrun -- the INT4 one is one
+`logit_dump.rs` arm and one `kld_mlx_affine.py` table entry away, since
+mlx-lm 0.31.3 carries `qwen3_5_moe`.
+
 ### Cross-engine: MLX on the same bytes, the 1-BIT family
 
 The seventh family (ROADMAP's 1-bit entry, `prism-ml/Bonsai-27B-mlx-1bit`)
@@ -771,19 +875,28 @@ API level rather than merely lacking a Metal kernel ("The supported bits are
 | MLX, same bytes, Metal, cached | 8.3587 |
 | MLX, same bytes, Metal, batched | 8.3576 |
 
-**The headline is 2.1x the shape floor and ~200x SMALLER in absolute terms
-than any other family's** (Gemma 0.00845, `qwen3moe` 0.00320, gpt-oss
-0.00978, IQ3 0.00440). Top-1 agreement is 100.0% on all 573 positions,
-where every other family reads 97.5-98.2%. Perplexity agrees to 0.04%, and
+**The headline is 2.1x the shape floor and the SMALLEST in absolute terms of
+any family's** (Gemma 0.00845, `qwen3moe` 0.00320, gpt-oss 0.00978, IQ3
+0.00440, `qwen35` 0.000138). Note the margin is a factor of ~200 against the
+MoE families and only 8.8x against `qwen35`, which is the other DENSE
+checkpoint measured here -- consistent with the paragraph below, since that
+is the axis this is really reading. Top-1 agreement is 100.0% on all 573
+positions, where the MoE families read 97.5-98.2% and dense `qwen35` reads
+99.65%. Perplexity agrees to 0.04%, and
 max |logit| is 28.171875 on BOTH sides -- the same value to the last bit.
 
 **Both numbers being tiny is the reading, and it is consistent rather than
-suspicious.** The other families' floors are dominated by MoE: batched and
+suspicious.** The MoE families' floors are dominated by MoE: batched and
 cached passes route and reduce experts differently, and FP addition is not
 associative. This model is DENSE with 75% linear attention, so its shape
 floor has almost nothing to be made of -- which is why the floor is ~5,000x
 smaller than Gemma's mlx-self floor (0.0352) and the headline shrinks with
 it. The RATIO is what transfers between families; the absolutes do not.
+**Independently corroborated 2026-08-20 by the dense `qwen35` 9B**, whose
+shape floor reads 0.0000024 against the MoE families' ~0.00135 -- a second
+dense checkpoint, a different reference engine (llama.cpp rather than MLX)
+and a different quantization, landing three orders of magnitude below them on
+the same axis. Two points make it the model shape rather than the artifact.
 
 **What it settles.** Three things this port assumed and could not otherwise
 check. The **mrope reduction** -- though the reference SOURCE had already

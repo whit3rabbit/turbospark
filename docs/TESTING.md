@@ -314,6 +314,24 @@ TURBOSPARK_LOGIT_DUMP_DIR=/tmp/kld/gguf-warm \
 uv run --python 3.12 --with numpy scripts/kld_llamacpp.py \
   ~/models/gguf-ref/gemma-4-26B-A4B-it-Q8_0.gguf /tmp/kld/gguf-warm
 
+# The same again for the DENSE `qwen35` half (Ornith-1.5-9B), which is worth
+# running as its own example for two reasons. It was the family's FIRST
+# external check of any kind -- its four frozen gate rows are all
+# self-referential, and the per-tensor probe beside them is a STATIC check
+# that cannot see how the runtime USES the tensors it validates. And READING
+# it needs the backend floor rather than the shape floor: a dense model's
+# batched and cached passes are nearly the same computation, so that floor
+# collapses (0.0000024 here against the MoE families' ~0.00135) and a ratio
+# against it means little, while the headline still sits 15x BELOW the
+# backend floor. All three arms finish in ~90 s at this size, so unlike the
+# dense 27B -- where `kld_mlx_affine.py` reports a string instead of the
+# backend floor -- there is no reason to skip one.
+TURBOSPARK_ORNITH9B_INSTALL_DIR=~/models/ornith9b.gturbo \
+TURBOSPARK_LOGIT_DUMP_DIR=/tmp/kld/ornith9b-warm \
+  cargo test -p turbospark-bench --test logit_dump --release -- --ignored --nocapture
+uv run --python 3.12 --with numpy scripts/kld_llamacpp.py \
+  ~/models/gguf-ref/Ornith-1.5-9B-Q8_0.gguf /tmp/kld/ornith9b-warm
+
 # The same driver also answers questions about checkpoints this port CANNOT
 # RUN, which is how ROADMAP Phase S was quality-gated before a kernel
 # existed: point it at a candidate GGUF and pass this port's existing dumps

@@ -110,6 +110,25 @@ fn resolve_target() -> Option<DumpTarget> {
         // one architecture at a third quantization, so nothing about the
         // FRAMING moves and only the install does.
         .or_else(|| plain("TURBOSPARK_TERNARY_INSTALL_DIR"))
+        // Ornith-1.5-9B, and a plain arm for the same two reasons as the
+        // three above it: ChatML opens an assistant turn and then says words
+        // (so no structured slot to prefix, Gotcha 13) and its template reads
+        // no clock (so nothing to pin, Gotcha 14).
+        //
+        // WHAT IT IS FOR IS THE ONE THING THIS FAMILY HAS NEVER HAD. Its four
+        // frozen gate rows are all self-referential -- a perplexity and two
+        // digests compared against this port's own past -- and
+        // `ornith_tensor_probe.rs`, which correlates every installed tensor
+        // against the published BF16 checkpoint at 0.998-1.000, is a STATIC
+        // check that cannot see how the runtime USES those tensors. A KL
+        // against llama.cpp on the identical Q8_0 bytes can, and it is the
+        // only instrument that reaches the three things a fixture with
+        // untrained weights records itself as blind to: the V-head
+        // de-interleave on the DENSE half (`transcode.rs::v_head_axis`, and
+        // this is the newest code in the family), the per-head q/k norms'
+        // order relative to RoPE, and the RMS epsilon. Each perturbs every
+        // layer systematically, which is what makes them visible here.
+        .or_else(|| plain("TURBOSPARK_ORNITH9B_INSTALL_DIR"))
         .or_else(|| {
             env_dir("TURBOSPARK_GPTOSS_INSTALL_DIR").map(|install| DumpTarget {
                 install,
@@ -126,7 +145,8 @@ fn dump_reference_logits() {
         eprintln!(
             "logit_dump: needs TURBOSPARK_GEMMA4_INSTALL_DIR (or \
              TURBOSPARK_QWEN36_INSTALL_DIR, TURBOSPARK_QWEN3MOE_INSTALL_DIR, \
-             TURBOSPARK_QWEN35_INSTALL_DIR, TURBOSPARK_TERNARY_INSTALL_DIR, or \
+             TURBOSPARK_QWEN35_INSTALL_DIR, TURBOSPARK_TERNARY_INSTALL_DIR, \
+             TURBOSPARK_ORNITH9B_INSTALL_DIR, or \
              TURBOSPARK_GPTOSS_INSTALL_DIR) and \
              TURBOSPARK_LOGIT_DUMP_DIR; skipping."
         );

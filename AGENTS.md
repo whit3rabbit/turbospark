@@ -800,6 +800,27 @@ TURBOSPARK_ORNITH35B_INSTALL_DIR=~/models/ornith35b.gturbo \
 TURBOSPARK_ORNITH35B_INSTALL_DIR=~/models/ornith35b.gturbo \
   cargo test -p turbospark-bench --test ornith35b_memory_oracle --release -- --ignored --nocapture
 
+# The family's FIRST external check, and until it ran its four gate rows were
+# all self-referential. Aimed at the NEWEST code in it -- the `qwen35` dense
+# GGUF path, whose name table, `SUPPORTED_GGUF` row and V-head de-interleave
+# are all new and whose bring-up found three bugs of one kind (Gotcha 61). It
+# is the only instrument that reaches the de-interleave on the DENSE half,
+# the per-head q/k norms' ORDER relative to RoPE, and the RMS epsilon. Reads
+# 0.000138 mean nats at 99.65% top-1, FIFTEEN TIMES BELOW its 0.00202 backend
+# floor. Metal, not CPU (Gotcha 34). ~90 s for all three arms plus ~5 min to
+# fetch the 9.5 GB GGUF, which is not on disk by default (the install was
+# STREAMED from it). READ ITS BACKEND FLOOR AND NOT ITS SHAPE FLOOR: a dense
+# model's batched and cached passes are nearly the same computation, so that
+# floor collapses to 0.0000024 and a ratio against it means little
+# (docs/BENCHMARKS.md).
+TURBOSPARK_ORNITH9B_INSTALL_DIR=~/models/ornith9b.gturbo \
+TURBOSPARK_LOGIT_DUMP_DIR=/tmp/kld/ornith9b-warm \
+  cargo test -p turbospark-bench --test logit_dump --release -- --ignored --nocapture
+hf download ornith-ai/Ornith-1.5-9B-GGUF Ornith-1.5-9B-Q8_0.gguf \
+  --revision 0677a38f331a214c4e5e7bd07ecab04c14ac52f1 --local-dir ~/models/gguf-ref
+uv run --python 3.12 --with numpy scripts/kld_llamacpp.py \
+  ~/models/gguf-ref/Ornith-1.5-9B-Q8_0.gguf /tmp/kld/ornith9b-warm
+
 
 # Its cross-engine KL, through the SAME driver the 1-bit one uses. The
 # checkpoint name is REQUIRED and not defaulted: the two published
