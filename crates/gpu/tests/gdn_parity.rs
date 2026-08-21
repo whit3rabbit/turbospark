@@ -520,3 +520,155 @@ fn fused_in_proj_is_bit_identical_to_four_separate_gemvs() {
 fn fused_in_proj_handles_odd_offsets_and_ragged_rows() {
     expect_fused_in_proj_matches_separate(192, 2, 0x1D_0003);
 }
+
+/// **THE PREFILL AND DECODE CHAINS ARE COMPARED FROM A ZEROED STATE ABOVE,
+/// AND THAT IS THE ONLY CASE ANYTHING TESTED.** This runs the comparison
+/// from a state that already carries history, which is the case every
+/// speculative verify actually takes.
+///
+/// It matters because the two chains are DIFFERENT KERNELS even at one row
+/// -- `gdn_conv_prefill` / `gdn_delta_prefill` against `gdn_conv_decode` /
+/// `gdn_delta_decode` -- so "n rows agree with n steps" starting from zero
+/// does not imply "one row agrees with one step" starting from anywhere
+/// else. A gated-DeltaNet layer folds its history into a fixed-size
+/// accumulator, so a difference that only appears once that accumulator is
+/// non-zero is invisible to the case above by construction.
+///
+/// The question is live rather than theoretical: measured 2026-08-21 on the
+/// real `qwen3_5` install, `produce_batched` and `produce` are bit-identical
+/// at position 0 and differ on 88% of logits at position 22 with M=1, where
+/// no batching happens at all (`crates/bench/tests/batched_forward_probe.rs`).
+/// Position 0 is blind to exactly two things -- the q/k path, since a softmax
+/// over one key returns V whatever the score, and accumulated history, since
+/// there is none. This covers the second.
+#[test]
+fn one_prefill_row_matches_one_decode_step_from_a_state_that_carries_history() {
+    let mut context = MetalContext::new().expect("Metal device");
+    let c = dims().qkv_dim();
+    let vd = dims().value_dim();
+    let w = Weights::new(0xA11CE);
+    // Warm rows to build history, then the row both arms are compared on.
+    let warm = 5usize;
+    let rows = Rows::new(warm + 1, 0xA11CE_000);
+
+    let decode_bufs = DecodeBuffers::new(&context, &w);
+    for row in 0..warm {
+        let _ = gpu_decode_step(&mut context, &decode_bufs, &rows, row);
+    }
+
+    // Snapshot the carried state, and ASSERT IT CARRIES SOMETHING. From a
+    // zeroed state this test would be the one above with fewer rows.
+    let seed_tail = read_buffer_f16(&decode_bufs.tail, 0, (K - 1) * c);
+    let seed_state = read_f32_buffer(&decode_bufs.state, HV * DV * DK);
+    assert!(
+        seed_state.iter().any(|&v| v != 0.0) && seed_tail.iter().any(|&v| v.to_f32() != 0.0),
+        "the warmup left a zero state, so this is the zeroed case again"
+    );
+
+    // Arm A: one more DECODE step from that state.
+    let decode_out = gpu_decode_step(&mut context, &decode_bufs, &rows, warm);
+    let decode_state = read_f32_buffer(&decode_bufs.state, HV * DV * DK);
+    let decode_tail = read_buffer_f16(&decode_bufs.tail, 0, (K - 1) * c);
+
+    // Arm B: one PREFILL row from the SAME state, seeded from the snapshot.
+    let tail = context.new_buffer_with_data(&half_bytes(&seed_tail));
+    let state = context.new_buffer_with_data(
+        &seed_state
+            .iter()
+            .flat_map(|v| v.to_le_bytes())
+            .collect::<Vec<u8>>(),
+    );
+    let qkv_rows = context.new_buffer_with_data(&half_bytes(&rows.qkv[warm].0));
+    let a_rows = context.new_buffer_with_data(&half_bytes(&rows.a[warm].0));
+    let b_rows = context.new_buffer_with_data(&half_bytes(&rows.b[warm].0));
+    let z_rows = context.new_buffer_with_data(&half_bytes(&rows.z[warm].0));
+    let conv_out = zeroed(&context, c * 2);
+    let y = zeroed(&context, vd * 2);
+    let out = zeroed(&context, vd * 2);
+
+    let pass = context.begin_pass();
+    encode_gdn_conv_prefill(
+        &mut context,
+        &pass,
+        shape(),
+        (&tail, 0),
+        (&qkv_rows, 0),
+        (&decode_bufs.conv_w, 0),
+        (&conv_out, 0),
+        1,
+    )
+    .expect("conv prefill");
+    encode_gdn_conv_tail_update(&mut context, &pass, shape(), (&tail, 0), (&qkv_rows, 0), 1)
+        .expect("tail update");
+    encode_gdn_qk_norm(&mut context, &pass, shape(), (&conv_out, 0), 1).expect("qk norm");
+    encode_gdn_delta_prefill(
+        &mut context,
+        &pass,
+        shape(),
+        (&conv_out, 0),
+        (&a_rows, 0),
+        (&b_rows, 0),
+        (&decode_bufs.a_log, 0),
+        (&decode_bufs.dt_bias, 0),
+        &state,
+        (&y, 0),
+        1,
+    )
+    .expect("delta prefill");
+    encode_gdn_gated_norm(
+        &mut context,
+        &pass,
+        shape(),
+        (&y, 0),
+        (&z_rows, 0),
+        (&decode_bufs.norm_w, 0),
+        (&out, 0),
+        1,
+    )
+    .expect("gated norm");
+    pass.commit_and_wait();
+
+    let prefill_out: Vec<f32> = read_buffer_f16(&out, 0, vd)
+        .iter()
+        .map(|h| h.to_f32())
+        .collect();
+    let prefill_state = read_f32_buffer(&state, HV * DV * DK);
+    let prefill_tail = read_buffer_f16(&tail, 0, (K - 1) * c);
+
+    let out_diff = prefill_out
+        .iter()
+        .zip(decode_out.iter())
+        .filter(|(a, b)| a.to_bits() != b.to_bits())
+        .count();
+    let out_worst = prefill_out
+        .iter()
+        .zip(decode_out.iter())
+        .map(|(a, b)| (a - b).abs())
+        .fold(0.0f32, f32::max);
+    let state_diff = prefill_state
+        .iter()
+        .zip(decode_state.iter())
+        .filter(|(a, b)| a.to_bits() != b.to_bits())
+        .count();
+    let state_worst = prefill_state
+        .iter()
+        .zip(decode_state.iter())
+        .map(|(a, b)| (a - b).abs())
+        .fold(0.0f32, f32::max);
+    println!(
+        "from a carried state: outputs {out_diff}/{vd} differ (worst {out_worst:e}), \
+         state {state_diff}/{} differ (worst {state_worst:e})",
+        prefill_state.len()
+    );
+
+    assert_eq!(decode_tail, prefill_tail, "conv tail differs");
+    assert_eq!(
+        out_diff, 0,
+        "one prefill row and one decode step disagree on {out_diff} of {vd} outputs \
+         (worst {out_worst:e}) when the state carries history, though they agree from zero"
+    );
+    assert_eq!(
+        state_diff, 0,
+        "the carried state diverges by {state_worst:e} after ONE row"
+    );
+}
