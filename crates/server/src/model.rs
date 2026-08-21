@@ -12,7 +12,10 @@
 //! open, so there is exactly one per process and it is borrowed mutably for
 //! the duration of a request, not handed out by value.
 
-use runtime::{LogitProducer, RawDecodeResult, RuntimeError};
+use runtime::{
+    run_raw_completion, GenerationConfig, LogitProducer, RawDecodeProgress, RawDecodeResult,
+    RuntimeError,
+};
 use tokenizer::MfTokenizer;
 
 pub trait ChatModel: Send + Sync {
@@ -32,6 +35,39 @@ pub trait ChatModel: Send + Sync {
         &self,
         f: &mut dyn FnMut(&mut dyn LogitProducer) -> Result<RawDecodeResult, RuntimeError>,
     ) -> Result<RawDecodeResult, RuntimeError>;
+
+    /// Runs one generation, and owns the choice of WHICH decode loop.
+    ///
+    /// **A method rather than a call in `exec.rs`, because the speculative
+    /// loop cannot be reached through [`Self::with_producer`] at all.**
+    /// `run_raw_completion_speculative` is generic over
+    /// `runtime::SpeculativeProducer`, which carries an associated
+    /// `Checkpoint` type and so is not object-safe; `with_producer` hands out
+    /// a `&mut dyn LogitProducer`. Only a backend holding the CONCRETE runner
+    /// can call it, so the decision belongs to the backend.
+    ///
+    /// The default is the sequential loop through `with_producer`, which is
+    /// byte for byte what every caller did before this method existed --
+    /// `ScriptedChatModel` therefore needs no implementation and every
+    /// integration test keeps the exact path it had.
+    fn run_completion(
+        &self,
+        prompt_ids: &[foundation::TokenId],
+        config: &GenerationConfig,
+        on_progress: &mut dyn FnMut(RawDecodeProgress),
+    ) -> Result<RawDecodeResult, RuntimeError> {
+        self.with_producer(&mut |producer| {
+            run_raw_completion(
+                producer,
+                self.tokenizer(),
+                prompt_ids,
+                config,
+                self.max_context(),
+                self.vocab_size(),
+                &mut *on_progress,
+            )
+        })
+    }
 
     /// The decode rate cap and thermal stepping this backend generates
     /// under (ROADMAP Phase P2). Process-level, not per request: there is

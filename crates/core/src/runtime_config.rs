@@ -8,6 +8,23 @@
 /// Allowed cache-slot values.
 pub const ALLOWED_CACHE_SLOTS: [u32; 4] = [8, 16, 24, 32];
 
+/// The speculative-decoding block sizes a caller may name.
+///
+/// The upper bound is the batched verify's register-bound row cap (a round of
+/// block B verifies `B + 1` rows against `MAX_BATCH_ROWS = 16`); the measured
+/// optimum is 2 and everything above 4 loses on this engine (`docs/MTP.md`,
+/// `docs/DFLASH2.md`), so the range is deliberately wider than the useful
+/// part rather than pretending to be a recommendation.
+///
+/// **Here rather than in `crates/invocation` because it has two parsers to
+/// serve.** `turbospark-check` reaches it through that crate's flat option
+/// grammar and `turbospark-server` through its own; both depend on this one,
+/// neither depends on the other, and a second copy of a numeric range is the
+/// count-that-rots shape this repo has paid for before. Same reasoning as
+/// [`ALLOWED_CACHE_SLOTS`] above, which both parsers already read for exactly
+/// this purpose.
+pub const ALLOWED_SPECULATION_BLOCKS: std::ops::RangeInclusive<u32> = 1..=15;
+
 /// Documented default cache-slot count.
 pub const DEFAULT_CACHE_SLOTS: u32 = 16;
 

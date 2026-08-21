@@ -2,9 +2,7 @@
 
 use std::collections::HashSet;
 
-use runtime::{
-    run_raw_completion, GenerationConfig, RawDecodeProgress, RawDecodeResult, RuntimeError,
-};
+use runtime::{GenerationConfig, RawDecodeProgress, RawDecodeResult, RuntimeError};
 use tokenizer::{
     ParsedToolCall, ReasoningEffort, StructuredAssistantDecoder, StructuredAssistantEvent,
 };
@@ -144,44 +142,40 @@ pub(crate) fn stream_blocking(
     // when it gave up is lost with it.
     let mut degraded = false;
 
-    let result = model.with_producer(&mut |producer| {
-        run_raw_completion(
-            producer,
-            model.tokenizer(),
-            prompt_ids,
-            config,
-            model.max_context(),
-            model.vocab_size(),
-            |e| {
-                let (id, text) = match e {
-                    RawDecodeProgress::Token { id, delta, .. } => (id, delta),
-                    // `-1` is the tokenizer's "no such token": a flushed tail
-                    // is text with no token id behind it.
-                    RawDecodeProgress::Tail(tail) => (tokenizer::NO_SUCH_TOKEN_ID, tail),
-                    _ => return,
-                };
-                match decoder.as_mut().filter(|_| !degraded) {
-                    None => {
-                        if !text.is_empty() {
-                            on_piece(Piece::Text(text));
-                        }
+    // `run_completion` and not `with_producer` + `run_raw_completion`: the
+    // BACKEND owns which decode loop runs, because the speculative one takes
+    // a concrete `SpeculativeProducer` and cannot be reached through a
+    // `&mut dyn LogitProducer` (`ChatModel::run_completion`). The default
+    // implementation is the sequential loop this line used to spell out, so
+    // the scripted backend's path is unchanged.
+    let result = model.run_completion(prompt_ids, config, &mut |e| {
+        let (id, text) = match e {
+            RawDecodeProgress::Token { id, delta, .. } => (id, delta),
+            // `-1` is the tokenizer's "no such token": a flushed tail
+            // is text with no token id behind it.
+            RawDecodeProgress::Tail(tail) => (tokenizer::NO_SUCH_TOKEN_ID, tail),
+            _ => return,
+        };
+        match decoder.as_mut().filter(|_| !degraded) {
+            None => {
+                if !text.is_empty() {
+                    on_piece(Piece::Text(text));
+                }
+            }
+            Some(decoder) => match decoder.consume(id, &text) {
+                Ok(events) => {
+                    for event in events {
+                        on_piece(piece_for(event));
                     }
-                    Some(decoder) => match decoder.consume(id, &text) {
-                        Ok(events) => {
-                            for event in events {
-                                on_piece(piece_for(event));
-                            }
-                        }
-                        Err(_) => {
-                            degraded = true;
-                            if !text.is_empty() {
-                                on_piece(Piece::Text(text));
-                            }
-                        }
-                    },
+                }
+                Err(_) => {
+                    degraded = true;
+                    if !text.is_empty() {
+                        on_piece(Piece::Text(text));
+                    }
                 }
             },
-        )
+        }
     });
 
     // NOT OPTIONAL, AND NOT SYMMETRIC WITH `consume`. Harmony ends a tool call

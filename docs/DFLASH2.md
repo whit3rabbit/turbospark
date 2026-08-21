@@ -236,15 +236,47 @@ Every arm is asserted BYTE-IDENTICAL to the same generation with
 speculation off, so the drafter is lossless in practice and not only by
 construction.
 
-`dflash2_accept_length_probe`, 32-token prompt, 256 greedy tokens, 16 slots,
-against a ~21-22 tok/s non-speculative reference:
+`dflash2_accept_length_probe`, 600 greedy tokens per arm, 16 slots. **THREE
+WORKLOADS SINCE 2026-08-21**, each swept across every block; the accepted and
+rollback columns are deterministic and reproduced to the last digit across two
+runs on different machine load.
 
-| block | accepted/round | committed/round | rollbacks | vs off |
-| ---: | ---: | ---: | ---: | ---: |
-| 8 | 4.56 | 5.56 | 73 of 109 | 0.83x |
-| 7 | 4.37 | 5.37 | 66 of 112 | 0.92x |
-| 4 | 2.98 | 3.98 | 58 of 151 | 1.06x |
-| 2 | 1.74 | 2.74 | 38 of 219 | **1.35x** |
+| workload | block | accepted/round | committed/round | rollbacks | rate |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| code | 8 | 4.56 | 5.56 | 73 of 109 | 67% |
+| code | 7 | 4.37 | 5.37 | 66 of 112 | 59% |
+| code | 4 | 2.98 | 3.98 | 58 of 151 | 38% |
+| code | 2 | 1.74 | 2.74 | 38 of 219 | 17% |
+| math | 8 | 5.67 | 6.67 | 41 of 91 | 45% |
+| math | 7 | 5.59 | 6.59 | 34 of 91 | 37% |
+| math | 4 | 3.49 | 4.49 | 27 of 134 | 20% |
+| math | 2 | 1.89 | 2.89 | 16 of 208 | 8% |
+| prose | 8 | 1.84 | 2.84 | 204 of 213 | 96% |
+| prose | 7 | 1.85 | 2.85 | 198 of 211 | 94% |
+| prose | 4 | 1.60 | 2.60 | 193 of 231 | 84% |
+| prose | 2 | 1.23 | 2.23 | 140 of 270 | 52% |
+
+Per-position acceptance: **prose 0.53-0.81, code 0.84-0.94, math 0.86-0.98.**
+
+**THE THIRD WORKLOAD WAS CHOSEN AS THE HARD CASE AND MEASURED AS THE EASY
+ONE.** Multi-step arithmetic was added on the reasoning that a drafter
+predicts a NUMBER far worse than the next word of an explanation, and that a
+block ordering set on easy text would come apart there. It is the most
+templated thing this checkpoint writes -- restated totals, `120 x $3.25 =
+$390.00`, section headings -- and it accepts HIGHER than code. Prose was and
+remains the hard case. Recorded rather than quietly swapped for something
+harder: a workload that confirms is evidence, and the prediction being wrong
+is the more useful half.
+
+**WHAT THE THIRD WORKLOAD SETTLED, and it is not what it was added to
+settle.** The two-workload version of this table could be read as "a large
+block is fine where acceptance is high and catastrophic where it is not".
+`math` refutes that: it accepts higher than `code` at every position and
+block 8 still loses to block 2 on it. Acceptance decides whether speculation
+pays AT ALL -- prose loses at every block but 2 -- while the BLOCK is decided
+by compounding and rollback cost almost independently of it. A block of B
+needs all B proposals to land, so 0.93 per position is a 45% rollback rate at
+8.
 
 **THESE ARE AT 600 GENERATED TOKENS AND AN EARLIER DRAFT OF THIS PAGE
 PUBLISHED THE 256-TOKEN VERSION, which flattered every row.** At 256 the
@@ -540,15 +572,34 @@ and applies them if present, which for this checkpoint are 1.0 / 1.0 / none
 
 Items 1-5 of this list are DONE (section 6). What remains:
 
-1. **A quiet-machine row for the BLOCK ORDERING specifically.** Partly
-   answered already: the power A/B above is a quiet, fan-pinned capture and
-   reproduces tok/s to 0.2%, so `nospec` against `spec` AT BLOCK 2 is
-   settled (22.31 against 19.71). What it does not cover is the four-block
-   sweep, whose seconds still come from the probe on a machine rendering an
-   interactive session -- an 11% error on a published power row and a 37%
-   spread between identical arms, by Gotcha 43. The acceptance and rollback
-   columns are deterministic and need no re-run; only the ordering of 7 / 8 /
-   4 / 2 by wall clock is still uncalled.
+1. **The BLOCK ORDERING, now supported three ways but still not from a quiet
+   machine.** Two runs at different desktop load, 2026-08-21:
+
+   | run | ref tok/s | code (2/4/7/8) | math | prose |
+   | --- | ---: | --- | --- | --- |
+   | 1 | 20.16 | 1.43 / 1.14 / 0.97 / 0.90 | 1.50 / 1.31 / 1.17 / 1.10 | 0.96 at 2 |
+   | 2 | 15.95 | 1.86 / 1.20 / 0.98 / 0.93 | 2.07 / 1.47 / 1.28 / 1.21 | 1.26 / 0.68 / 0.51 / 0.47 |
+
+   **The ordering is monotone decreasing in the block on every workload of
+   both runs**, and the absolute ratios moved while it did not -- the shape
+   this repo expects, and the reason only the ordering is quoted.
+
+   **ONE CONFOUND, stated because it is not visible in the table.** `BLOCKS`
+   is swept in the fixed order 7, 8, 4, 2, so block 2 always runs LAST; run 2
+   got quieter as it went (its early arms were competing with a compile), so
+   a monotone load trend aliases exactly with the block ordering there. What
+   keeps the conclusion standing is that the alias is broken three
+   independent ways: run 1 had far less load variation and gives the same
+   ordering; the rollback RATES are deterministic and predict this ordering
+   with no timing input at all (52-96% at blocks 4-8 on prose against 17-52%
+   at 2); and prose block 8 reads 0.47x, which is not a number any load story
+   produces from a 1.0x baseline. A genuinely idle capture would still be
+   worth taking. Note the obvious structural fix -- interleave the blocks
+   instead of sweeping them -- is NOT cheap here: the DFlash2 block is fixed
+   at OPEN, so an interleaved arm costs a model open (~20 s on this install)
+   every time the block changes, which is why the sweep is ordered in the
+   first place. Running the sweep twice with `BLOCKS` reversed is the cheap
+   version of the same control.
 2. ~~**`scripts/power.sh`.**~~ DONE, and its table is in section 6 above:
    0.88x throughput at +17.4% J/token on prose, watts moving only 3.5%, so
    the energy penalty is the TIME penalty. It is what priced the opt-in
@@ -556,16 +607,33 @@ Items 1-5 of this list are DONE (section 6). What remains:
    had run it -- a hedge that outlives its own resolution is worse than a
    wrong number, because nobody re-checks a sentence that admits
    uncertainty.)
-3. **A second workload.** Every acceptance figure here is one greedy prose
-   prompt whose per-position acceptance is 0.93-1.00, well above the
-   published GSM8K numbers. Both the block-8-beats-block-7 result and the
-   accept lengths could narrow on a harder distribution, and neither has
-   been asked.
-4. **Server wiring**, which DFlash2 inherits from the MTP follow-up list.
-5. **One review finding left unfixed**: the unconditional batched-prefill
-   scratch in `RealGemmaState`. Its sibling, the per-prompt-token
-   `commit_and_wait` in `dflash_prime_from_capture`, was MEASURED AND
-   CLOSED -- see below.
+3. ~~**A second workload.**~~ DONE 2026-08-21: there are THREE, all swept,
+   spanning per-position acceptance 0.53 to 0.98 (section 6). The serving
+   default survives on all three and is now evidence-backed rather than
+   two-sample. Note the third one refuted the prediction that motivated it --
+   arithmetic is the EASIEST of the three, not the hardest -- and that
+   sharpened the mechanism rather than the verdict: block choice turns on
+   compounding and rollback cost, not on acceptance.
+4. ~~**Server wiring**, which DFlash2 inherits from the MTP follow-up list.~~
+   DONE 2026-08-21. `turbospark-server` takes `--speculative` and
+   `--speculative-drafter` with the CLI's grammar and the CLI's meanings, and
+   the policy behind both now lives in `runtime::speculation_policy` rather
+   than in a CLI-private module the server could not reach. ONE thing differs
+   and it is inherent: "is this run deterministic" is fixed per PROCESS on
+   the CLI and per REQUEST on a server, so the install half is resolved at
+   open and a sampled request falls back to the sequential loop silently.
+   Most clients send a non-zero temperature, so a server started with
+   `--speculative` speculates on a minority of its traffic.
+5. ~~**One review finding left unfixed**: the unconditional batched-prefill
+   scratch in `RealGemmaState`.~~ DONE 2026-08-21: it is a
+   `BatchedPrefillScratch` allocated on first use by the chunk driver. Worth
+   354 KiB on the real Gemma 4 install, so this is consistency with a rule
+   rather than a memory win -- `real_mtp` and `real_dflash` are `Option`s for
+   the same reason, and `families/qwen/batched_scratch.rs` states it: an
+   unasked-for feature must allocate nothing so a frozen oracle row keeps
+   describing the engine that shipped. Its sibling, the per-prompt-token
+   `commit_and_wait` in `dflash_prime_from_capture`, was MEASURED AND CLOSED
+   -- see below.
 6. ~~**The M-row capture hook** in `families/qwen/batched.rs` has no test.~~
    DONE 2026-08-20. `the_batched_capture_writes_what_the_per_token_hook_writes`
    (`crates/runtime/tests/real_forward_qwen35_dflash.rs`) drafts off a

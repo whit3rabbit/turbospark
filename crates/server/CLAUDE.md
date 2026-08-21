@@ -43,7 +43,7 @@ crates/server/
 - `main.rs`: Server binary entry point and CLI option handling (`--model` real mode, legacy positional scripted mode, port, `--bind loopback|tailnet`).
 - `handler/`: the `/v1/chat/completions` and `/v1/models` handlers, plus the generation core both endpoints share -- `plan.rs` (chat template, encode, shaping config) and `exec.rs`'s `run_full` and `stream_blocking` (which owns the `StructuredAssistantDecoder` when a request carries tools).
 - `messages.rs`: the Anthropic `/v1/messages` handler, wrapping the same core in `translate_request` / `translate_response` / `new_stream_translator`.
-- `model.rs`: the `ChatModel` trait and `ScriptedChatModel`, bridging Axum handlers to `turbospark-runtime`.
+- `model.rs`: the `ChatModel` trait and `ScriptedChatModel`, bridging Axum handlers to `turbospark-runtime`. The trait owns WHICH decode loop runs (`run_completion`, Gotcha 17), not just which producer.
 - `real_model.rs`: `RealChatModel`, a `RealForwardRunner` behind the same trait (macOS only).
 - `response.rs`: constructors for `anyllm_translate::openai`'s response and SSE chunk envelopes, filling the many fields this server never populates in one place.
 
@@ -70,7 +70,7 @@ ANTHROPIC_BASE_URL=http://127.0.0.1:8080 ANTHROPIC_API_KEY=unused \
 cargo run --release -p turbospark-server --bin turbospark-server -- \
   --model ~/models/gemma4.gturbo [--port N] [--max-context N|auto] [--expert-cache-slots auto|N] \
   [--bind loopback|tailnet] [--power-profile performance|balanced|efficiency] \
-  [--max-tokens-per-sec R]
+  [--max-tokens-per-sec R] [--speculative off|auto|N] [--speculative-drafter auto|mtp|dflash]
 cargo run --release -p turbospark-server --bin turbospark-server -- --model gemma4
 
 # Launch the portable scripted server (tokenizer only, canned completions).
@@ -143,3 +143,45 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
 14. **`stream_blocking` MUST call `decoder.finish()`, and for a year it did not.** A Harmony tool call is terminated by `<|call|>`, which is a stop token, so `run_raw_completion` breaks before the progress callback and the decoder never sees the token ending the span it is parsing -- the call comes out of `finish` (tokenizer crate Gotcha 5). Skipping it dropped every `gpt-oss` call silently: no error, no markup on the wire, just an assistant turn with nothing in it. The call is emitted AFTER `run_raw_completion` returns, which is why `tests/harmony_channels.rs` asserts the streamed `tool_calls` delta arrives BEFORE the finish chunk rather than only that it arrives. Two side notes. It is gated on the run having SUCCEEDED, since a failed request reports the error rather than a partial turn. And it also releases the tail DeepSeek's arm withholds as a possible tool-marker prefix, which this loop used to truncate -- a fix that came free with the call and touches no other dialect (the Gemma, ChatML and Harmony arms never fill `held_text`).
 
 13. **`--model` resolves a catalog alias, and `catalog` is a macOS-only dependency on purpose.** `open_real_model` passes the argument through `catalog::resolve_model_arg` -- the same one behind `turbospark-check --model` -- so an install answers to one name whichever binary opens it, with an existing directory always winning over an alias (a bare name that preferred an alias would serve a DIFFERENT model than the command line named, and this binary runs unattended). Two things follow. The dependency is gated to `cfg(target_os = "macos")` beside `repack`, which costs nothing because `--model` is refused before resolution on every other platform, and because `catalog`'s dependency set is a subset of `repack`'s plus `tokenizer` -- adding it pulls in **no new external crate**. And the guard test (`an_alias_resolves_to_its_install_directory`) asserts on a name that is NOT a directory, deliberately: for a real path `resolve_model_arg` and `PathBuf::from` agree, so every path-shaped case passes under the mutation that removes resolution entirely. It is also the only test in this binary that touches `TURBOSPARK_HOME`, which is what makes it safe under parallel test threads.
+
+17. **SPECULATION IS PROCESS-LEVEL LIKE THE RATE CAP, BUT ITS SECOND
+   CONDITION IS PER REQUEST -- and that is the one thing this server cannot
+   inherit from the CLI.** `--speculative` and `--speculative-drafter` are
+   parsed in `args.rs`, resolved ONCE in `RealChatModel::open` through
+   `runtime::speculation_policy` (the same three functions `open_session`
+   calls), and reported on the startup line. That much is Gotcha 10's shape
+   exactly: there is one runner per process and the drafter's state is
+   allocated at open, so there is nothing a request could switch.
+
+   What differs is the OTHER input. Acceptance is `argmax(target) ==
+   proposal`, exact only at temperature 0. On the CLI that is a property of
+   the process, so `open_session` refuses once and is done. Here every
+   request carries its own temperature, so `open` resolves the INSTALL half
+   as though the request were deterministic and `run_completion` applies the
+   per-request half. **A sampled request falls back to the sequential loop
+   SILENTLY** -- it is the normal case (OpenAI and Anthropic clients send a
+   non-zero temperature by default), and a per-request warning for the normal
+   case is noise that trains an operator to ignore the startup line that
+   matters. Refusing would be worse: a 400 for a setting the caller never
+   sent.
+
+   **The practical consequence to tell an operator: a server started with
+   `--speculative` speculates on a MINORITY of its traffic.** That is a
+   limitation rather than a bug, and it is the same refusal the CLI makes.
+
+   **`ChatModel::run_completion` exists because the speculative loop cannot be
+   reached through `with_producer` at all.**
+   `run_raw_completion_speculative` is generic over
+   `runtime::SpeculativeProducer`, which carries an associated `Checkpoint`
+   type and is therefore not object-safe, while `with_producer` hands out a
+   `&mut dyn LogitProducer`. Only a backend holding the CONCRETE runner can
+   call it, so the loop CHOICE belongs to the backend. The trait method is
+   DEFAULTED to the sequential loop, which is why `ScriptedChatModel` needed
+   no change and every integration test kept its exact path;
+   `with_producer` stays as the primitive that default is written on.
+
+   `tests/real_backend.rs` pins speculation OFF rather than letting `auto`
+   sense the install, for AGENTS.md Gotcha 35's reason and alongside the two
+   sized knobs Gotcha 16 already pins: `Auto` reads the resident index, so a
+   gate left on it would decode speculatively or sequentially depending on
+   which drafter the install that env var points at happens to carry.

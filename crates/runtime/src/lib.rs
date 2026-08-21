@@ -37,6 +37,8 @@ mod real_forward_types;
 mod real_forward_utils;
 #[cfg(target_os = "macos")]
 mod router_hist;
+#[cfg(target_os = "macos")]
+mod speculation_policy;
 mod speculative;
 mod token_sink;
 
@@ -84,6 +86,15 @@ pub use raw_completion::{
 #[cfg(target_os = "macos")]
 pub use real_forward::{
     dispatch_profile_report, PhaseCounters, RealForwardError, RealForwardRunner, RollbackPoint,
+};
+// The drafter/speculation policy, shared by `turbospark-check` and
+// `turbospark-server`. It lived in the CLI until the server needed the same
+// three decisions in the same order; see `speculation_policy`'s own header
+// for why it is here rather than copied.
+#[cfg(target_os = "macos")]
+pub use speculation_policy::{
+    draft_policies, resolve_drafter, resolve_speculation, DrafterChoice, Speculation,
+    SpeculationPlan, SpeculativeDrafter,
 };
 pub use speculative::{
     run_raw_completion_speculative, run_raw_completion_speculative_cancellable,

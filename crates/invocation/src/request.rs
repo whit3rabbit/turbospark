@@ -227,12 +227,9 @@ pub enum Speculation {
     Block(u32),
 }
 
-/// The blocks a caller may name. The upper bound is the batched verify's
-/// register-bound row cap (a round of block B verifies `B + 1` rows against
-/// `MAX_BATCH_ROWS = 16`); the measured optimum is 2 and everything above 4
-/// loses on this engine (`docs/MTP.md`), so the range is deliberately wider
-/// than the useful part rather than pretending to be a recommendation.
-pub const ALLOWED_SPECULATION_BLOCKS: std::ops::RangeInclusive<u32> = 1..=15;
+/// The blocks a caller may name, re-exported from `foundation` so this
+/// parser and `turbospark-server`'s own read ONE range (AGENTS.md Gotcha 2).
+pub use foundation::runtime_config::ALLOWED_SPECULATION_BLOCKS;
 
 /// Which drafter `--speculative` drives. The two drafters are ALTERNATIVES
 /// (`docs/MTP_SPECULATIVE.md`, `docs/DFLASH2.md`): the checkpoint's own MTP

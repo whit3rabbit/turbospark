@@ -15,8 +15,8 @@ crates/cli/
 |   +-- main.rs             # turbospark-check process entry point
 |   +-- generate/           # Non-interactive text & chat template generation driver
 |   |   +-- mod.rs          # Generation loop coordination and session management
-|   |   +-- speculation.rs  # Speculative decoding resolution and policies
-|   |   \-- speculation_tests.rs # Unit tests for speculative decoding resolution
+|   |   +-- session.rs      # Session lifecycle; maps invocation enums onto runtime's
+|   |   \-- format.rs       # Prompt/footer rendering and channel splitting
 |   +-- chat.rs             # Interactive REPL session runner using window-fit
 |   \-- bin/
 |       +-- model.rs        # turbospark-model: argv, subcommand parse, exit codes
@@ -32,7 +32,7 @@ crates/cli/
 ## Key Modules
 
 - `main.rs`: Reads command-line arguments, delegates parsing to `turbospark-invocation`, prints resolved requests, and routes execution to generation routines.
-- `generate/`: Coordinates tokenizer loading, chat template rendering, prefill chunking, GPU decode generation loops, and speculative decoding resolution (`speculation.rs`). `open_session` resolves `--model` through `catalog::resolve_model_arg` first (see Gotcha 5).
+- `generate/`: Coordinates tokenizer loading, chat template rendering, prefill chunking, and GPU decode generation loops. `open_session` resolves `--model` through `catalog::resolve_model_arg` first (see Gotcha 5) and maps the parser's enums onto `runtime`'s. **The speculation POLICY is no longer here**: it moved to `runtime::speculation_policy` when `turbospark-server` needed the same three decisions (see Gotcha 10).
 - `chat.rs`: Interactive REPL loop maintaining user/assistant turn history and applying `fit_conversation_window` to manage context window bounds.
 - `bin/model.rs`: `turbospark-model`'s argv parse and exit-code mapping. **A second binary rather than subcommands on `turbospark-check`, and that is a decision**: `turbospark-invocation` is a pure, flat option parser whose contract is "`--model` is required and exactly one mode flag is set", with a five-place rule for every new flag and a hardcoded option-count assertion. A subcommand grammar does not belong in it, and bending it into one would put a required `--model` in front of a command whose entire job is that there is no model yet. Two exit codes, and a script doing `probe X && pull X` depends on the difference: 2 for a malformed invocation, 1 for a run that was asked for correctly and did not work.
 - `bin/model_cmd/`: the seven subcommands (`list`, `info`, `probe`, `recommend`, `pull`, `path`, `rm`). **Nothing here decides anything** -- `turbospark-catalog` resolves rows, reaches verdicts and runs the walk; this module chooses column widths. Same split `main.rs` has with `invocation`, and it is what lets the verdict logic be tested without a terminal.
@@ -168,14 +168,25 @@ printf '[{"role":"user","content":"Explain how coastal wetlands reduce flood dam
    would make the common case a failure. `off` is silent, deliberately: a
    warning there would train people to ignore the one that matters.
 
+   **THE POLICY LIVES IN `runtime::speculation_policy`, NOT HERE.** It was
+   `generate/speculation.rs` until 2026-08-21, when `turbospark-server` needed
+   the same three decisions in the same order and could not reach a line of it
+   -- this crate has two binaries and no lib target (Gotcha 9). `open_session`
+   now maps `invocation::Speculation` / `SpeculativeDrafter` onto the runtime's
+   through `map_speculation` / `map_drafter`, the same two-enums-one-mapping
+   shape Gotchas 2 and 6 describe, and calls `resolve_drafter`,
+   `draft_policies` and `resolve_speculation`. The nine policy tests moved with
+   it and gained a tenth covering `draft_policies`, which had none while it was
+   an inline `match` reachable only with a 14 GB install in hand.
+
    **`auto` DETECTS BOTH DRAFTERS AND ENABLES ONLY ONE.** `resolve_drafter`
    reads the resident index (kilobytes, before the open) and returns a
    `DrafterChoice`: an MTP head resolves to `Mtp` and is switched on, while a
    DFlash2-only install ALSO resolves to `Mtp` -- so `open` allocates no
    DFlash2 state -- carrying a `note` that names `--speculative-drafter
    dflash`. The asymmetry is measured, not stylistic: through the shipped
-   loop the head pays 1.44-1.66x while DFlash2 reads 1.47x on code and 0.88x
-   throughput at +17.4% J/token on PROSE, so enabling it by default makes the
+   loop the head pays 1.44-1.66x while DFlash2 reads 1.43-1.50x on code and
+   math and 0.96x throughput at +17.4% J/token on PROSE, so enabling it by default makes the
    common workload slower and hungrier without being asked. Resolving to
    `Mtp` also saves 213 MiB of peak footprint, measured as the gap between
    the two arms of one protocol case on the real 27B.

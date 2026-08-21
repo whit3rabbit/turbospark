@@ -246,6 +246,18 @@ cargo test -p turbospark-catalog --test catalog_network --release -- --ignored -
 cargo run --release -p turbospark-server --bin turbospark-server -- --model ~/models/gemma4.gturbo
 cargo run --release -p turbospark-server --bin turbospark-server -- --model gemma4
 
+# Speculative decoding on the server, with the CLI's grammar and meanings
+# (`--speculative off|auto|N`, `--speculative-drafter auto|mtp|dflash`). Both
+# are PROCESS-level, resolved once at open like the rate cap, because the
+# drafter's state is allocated there. ONE thing differs from the CLI and it is
+# inherent: acceptance is exact only at temperature 0, which is a property of
+# the PROCESS there and of the REQUEST here -- so a sampled request falls back
+# to the sequential loop silently, and since most clients send a non-zero
+# temperature a server started this way speculates on a MINORITY of its
+# traffic. The startup line says which drafter resolved and why.
+cargo run --release -p turbospark-server --bin turbospark-server -- \
+  --model ~/models/qwen38-27b-dflash2.gturbo --speculative-drafter dflash
+
 # Point an Anthropic-native client straight at it, no proxy in between.
 ANTHROPIC_BASE_URL=http://127.0.0.1:8080 ANTHROPIC_API_KEY=unused \
   CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=true claude

@@ -15,7 +15,10 @@
 use std::path::Path;
 use std::sync::Mutex;
 
-use runtime::{LogitProducer, RateControl, RawDecodeResult, RealForwardRunner, RuntimeError};
+use runtime::{
+    run_raw_completion, run_raw_completion_speculative, GenerationConfig, LogitProducer,
+    RateControl, RawDecodeProgress, RawDecodeResult, RealForwardRunner, RuntimeError,
+};
 use tokenizer::MfTokenizer;
 
 use crate::model::ChatModel;
@@ -29,6 +32,15 @@ pub struct RealChatModel {
     expert_cache_slots: usize,
     model_id: String,
     rate: RateControl,
+    /// Whether this process may draft ahead, resolved ONCE at open against
+    /// the install -- the drafter's state is allocated there and there is one
+    /// runner per process, so it is no more per-request than the rate cap is.
+    ///
+    /// Resolved as though the request were deterministic, because the second
+    /// input is not knowable at open: see [`Self::run_completion`].
+    speculation: runtime::SpeculationPlan,
+    /// Which drafter [`Self::speculation`] would drive, for the startup line.
+    drafter: runtime::SpeculativeDrafter,
 }
 
 impl RealChatModel {
@@ -51,6 +63,8 @@ impl RealChatModel {
         max_context: Option<u32>,
         expert_cache_slots: Option<u32>,
         rate: RateControl,
+        speculation: runtime::Speculation,
+        drafter: runtime::SpeculativeDrafter,
     ) -> Result<Self, String> {
         let arch = repack::peek_manifest_arch(model_dir)?;
         let context = runtime::resolve_max_context(
@@ -91,7 +105,14 @@ impl RealChatModel {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "model".to_string());
-        let runner = RealForwardRunner::open_with_slot_policy(
+        // THE DRAFTER IS RESOLVED BEFORE THE OPEN, exactly as `open_session`
+        // does it: the policies name one drafter and the wrong one is
+        // indistinguishable from an install with no drafter at all. Shared
+        // with the CLI rather than reimplemented (`runtime::speculation_policy`)
+        // -- two copies would name different causes the first time they
+        // disagreed.
+        let choice = runtime::resolve_drafter(drafter, model_dir);
+        let runner = RealForwardRunner::open_with_slot_policy_and_speculation(
             model_dir,
             arch,
             context.resolved as usize,
@@ -99,12 +120,32 @@ impl RealChatModel {
                 Some(n) => runtime::ExpertCacheSlots::Fixed(n as usize),
                 None => runtime::ExpertCacheSlots::Auto,
             },
+            runtime::draft_policies(&choice, speculation),
         )
         .map_err(|e| e.to_string())?;
         // The MODEL's padded head width, not the tokenizer dialect's
         // constant: two checkpoints can share a dialect and pad differently.
         let vocab_size = runner.vocab_size();
         let expert_cache_slots = runner.expert_cache_slots();
+        // **RESOLVED AS THOUGH THE REQUEST WERE DETERMINISTIC, which is the
+        // one place this server cannot follow the CLI's shape.** On the CLI
+        // the whole process has one shaping, so `open_session` knows at open
+        // whether acceptance can be exact. Here every request carries its own
+        // temperature. What is fixed at open is the INSTALL half -- does it
+        // carry a usable drafter -- so that is what is resolved here, and the
+        // per-request half is applied in `run_completion`.
+        let plan = runtime::resolve_speculation(
+            speculation,
+            choice.drafter,
+            match choice.drafter {
+                runtime::SpeculativeDrafter::Dflash => runner.dflash_speculation_blocker(),
+                // The note outranks the engine's blocker where there is one,
+                // for `crates/cli/CLAUDE.md` Gotcha 10's reason: both are true
+                // of a DFlash2-only install and only one names a flag.
+                _ => choice.note.clone().or_else(|| runner.speculation_blocker()),
+            },
+            true,
+        )?;
         Ok(Self {
             tokenizer,
             runner: Mutex::new(runner),
@@ -113,7 +154,36 @@ impl RealChatModel {
             expert_cache_slots,
             model_id,
             rate,
+            speculation: plan,
+            drafter: choice.drafter,
         })
+    }
+
+    /// What speculation this process resolved to, for the startup line.
+    ///
+    /// Reported rather than silent for the reason the CLI reports it: an
+    /// install carrying a drafter and decoding one token at a time with
+    /// nothing said is the failure the feature was built to end. A server
+    /// says it once, at startup, where an operator sees it.
+    pub fn speculation_line(&self) -> String {
+        match &self.speculation {
+            runtime::SpeculationPlan::Enabled { block } => {
+                let which = match self.drafter {
+                    runtime::SpeculativeDrafter::Dflash => "dflash2 (block drafter)",
+                    _ => "mtp head (step drafter)",
+                };
+                format!(
+                    "speculative decoding: on, {which}, block {block} \
+                     (temperature-0 requests only)"
+                )
+            }
+            runtime::SpeculationPlan::Disabled { reason: Some(why) } => {
+                format!("speculative decoding: off ({why})")
+            }
+            runtime::SpeculationPlan::Disabled { reason: None } => {
+                "speculative decoding: off".to_string()
+            }
+        }
     }
 
     /// The per-layer routed-expert slot count the runner actually opened
@@ -163,5 +233,66 @@ impl ChatModel for RealChatModel {
 
     fn rate_control(&self) -> RateControl {
         self.rate
+    }
+
+    /// The speculative loop when this process resolved one AND this request
+    /// can be served by it; the sequential loop otherwise.
+    ///
+    /// **THE SECOND CONDITION IS PER REQUEST, AND THAT IS THE ONE THING THIS
+    /// SERVER CANNOT INHERIT FROM THE CLI.** Acceptance is
+    /// `argmax(target) == proposal`, exact only at temperature 0. On the CLI
+    /// that is a property of the process, so `open_session` can refuse once
+    /// and be done. Here it is a property of the REQUEST, so the check has to
+    /// be made per call and the answer differs between two requests to one
+    /// server.
+    ///
+    /// A sampled request falls back SILENTLY rather than failing. It is the
+    /// normal case -- OpenAI and Anthropic clients send a non-zero temperature
+    /// by default, so a server started with `--speculative` speculates on a
+    /// minority of its traffic -- and a per-request warning for the normal
+    /// case is noise that trains an operator to ignore the startup line that
+    /// matters. Refusing would be worse still: it turns a valid request into
+    /// an error for a setting the caller never sent.
+    fn run_completion(
+        &self,
+        prompt_ids: &[foundation::TokenId],
+        config: &GenerationConfig,
+        on_progress: &mut dyn FnMut(RawDecodeProgress),
+    ) -> Result<RawDecodeResult, RuntimeError> {
+        let block = match &self.speculation {
+            runtime::SpeculationPlan::Enabled { block } if config.shaping.is_deterministic() => {
+                *block
+            }
+            _ => {
+                return self.with_producer(&mut |producer| {
+                    run_raw_completion(
+                        producer,
+                        &self.tokenizer,
+                        prompt_ids,
+                        config,
+                        self.context.resolved,
+                        self.vocab_size,
+                        &mut *on_progress,
+                    )
+                })
+            }
+        };
+        // The CONCRETE runner, which is the whole reason this override exists:
+        // `SpeculativeProducer` has an associated type and cannot be reached
+        // through the `&mut dyn LogitProducer` `with_producer` lends.
+        let mut runner = self
+            .runner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        run_raw_completion_speculative(
+            &mut *runner,
+            &self.tokenizer,
+            prompt_ids,
+            config,
+            self.context.resolved,
+            self.vocab_size,
+            block,
+            &mut *on_progress,
+        )
     }
 }

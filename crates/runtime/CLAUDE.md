@@ -128,6 +128,28 @@ cargo test -p turbospark-runtime
 
 ## Crate Gotchas
 
+0. **THE SPECULATION POLICY LIVES HERE BECAUSE TWO FRONT ENDS NEED IT.**
+   `speculation_policy.rs` (macOS-gated, like `families`) owns three
+   decisions in a fixed order: `resolve_drafter` reads an install's resident
+   index to say which drafter it carries, `draft_policies` turns that plus the
+   request into the `DraftPolicies` to OPEN with, and `resolve_speculation`
+   says whether this run may draft. It was `crates/cli`'s private
+   `generate/speculation.rs` until 2026-08-21, when `turbospark-server` needed
+   the same three and could reach none of them -- that crate has two binaries
+   and no lib target.
+
+   Two things about the shape. The enums here (`Speculation`,
+   `SpeculativeDrafter`) are runtime-native and `crates/invocation` keeps its
+   own, meeting in one mapping function per front end: that crate is pure and
+   may not read an install or a machine, and every decision above needs one or
+   the other. And `draft_policies`'s `note` arm is load-bearing rather than
+   tidy -- a DFlash2-only install under `auto` must open with the MTP policy
+   OFF so `resolve_speculation` can refuse with a message naming
+   `--speculative-drafter dflash`, instead of the open failing with "carries
+   no multi-token-prediction head" and sending someone holding a working
+   drafter off to download a different one.
+
+
 1. **PRODUCE WRITES LOGITS, NEVER PROBABILITIES**: `LogitProducer::produce` must return raw, unnormalized logits. `selection::select` performs softmaxing internally. Returning probabilities destroys sampling temperature reweighting (`softmax(softmax(z))`).
 2. **`produce_prefill` may skip the output head, `produce` never may.** The prefill loop in `raw_completion.rs` calls `produce_prefill` for every prompt token but the last, because only the last one's logits are read. `RealForwardRunner` implements that by skipping the final norm, full-vocab GEMV, softcap, and host readback. Any producer overriding it must still advance every other per-token side effect (KV cache, position, command buffer commit AND wait) exactly as `produce` does: the buffer wait is what stops the next token overwriting scratch the GPU is still reading. Unrelated to `ChunkedPrefillRunner::prefill_chunk`, which does produce usable logits.
 3. **Flow selection keys on `ArchConfig.family`, not on tensor naming.** `Llama` and `Qwen3Moe` share one flow and are told apart INSIDE it by the same field. Gemma 4 and Qwen 3.6 both carry `language_model.model.embed_tokens.weight`, so the naming probe can only distinguish a real Gemma install from a synthetic short-name one. Within `Gemma4` the probe still applies; `QwenGdnMoe` always builds `RealQwenState`; `DeepseekV4Flash` is refused at open.

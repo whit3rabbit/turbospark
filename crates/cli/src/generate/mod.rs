@@ -28,13 +28,12 @@ use tokenizer::{Message, MfTokenizer, ReasoningEffort, ReasoningSupport};
 
 pub(crate) mod format;
 pub(crate) mod session;
-pub(crate) mod speculation;
 
 pub(crate) use format::{
     map_reasoning_effort, parse_messages_file, print_footer, print_phases, role_name, ChannelSplit,
 };
+pub(crate) use runtime::SpeculationPlan;
 pub(crate) use session::{open_session, Session};
-pub(crate) use speculation::SpeculationPlan;
 
 pub fn try_generate(request: &InvocationRequest) {
     match &request.mode {

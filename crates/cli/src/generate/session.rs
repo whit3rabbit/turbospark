@@ -1,11 +1,12 @@
 //! Generation session lifecycle and hardware setup.
 
 use invocation::InvocationRequest;
-use runtime::{RateControl, RealForwardRunner};
+use runtime::{
+    resolve_drafter, resolve_speculation, DrafterChoice, RateControl, RealForwardRunner,
+    SpeculationPlan,
+};
 use selection::ShapingConfig;
 use tokenizer::MfTokenizer;
-
-use super::speculation::{resolve_drafter, resolve_speculation, DrafterChoice, SpeculationPlan};
 
 /// Everything a generating mode needs: the loaded model, its tokenizer, and
 /// the validated sampling configuration. Opened once per process, reused by
@@ -103,10 +104,8 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
     // multi-token-prediction head" and decoded sequentially with a working
     // drafter on disk. `Auto` reads the resident index, which is the index
     // region alone and not the weights.
-    let DrafterChoice {
-        drafter,
-        note: drafter_note,
-    } = resolve_drafter(request.speculative_drafter, model_dir);
+    let asked = map_speculation(request.speculation);
+    let choice = resolve_drafter(map_drafter(request.speculative_drafter), model_dir);
     let runner = RealForwardRunner::open_with_slot_policy_and_speculation(
         model_dir,
         arch,
@@ -115,44 +114,13 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
             invocation::ExpertCacheSlots::Auto => runtime::ExpertCacheSlots::Auto,
             invocation::ExpertCacheSlots::Fixed(n) => runtime::ExpertCacheSlots::Fixed(n as usize),
         },
-        // The drafter the flag named owns the request; the other is pinned
-        // OFF so a dflash-carrying install never silently opens BOTH
-        // drafters' state.
-        match drafter {
-            invocation::SpeculativeDrafter::Mtp => {
-                runtime::DraftPolicies::mtp(match request.speculation {
-                    invocation::Speculation::Off => runtime::MtpDraftPolicy::Off,
-                    // A NOTE MEANS THE DECISION IS ALREADY MADE, so do not
-                    // ask the open for a head we know is not there. Without
-                    // this, `--speculative 2` on a DFlash2-only install
-                    // fails at OPEN with `MtpDraftPolicy::Fixed`'s message --
-                    // "this install carries no multi-token-prediction head
-                    // ... stream an install that adds the official
-                    // checkpoint's last shard" -- which sends someone who is
-                    // holding a working drafter off to download a different
-                    // one. `Off` lets the open succeed so `resolve_speculation`
-                    // below can refuse with the note, which names the flag.
-                    _ if drafter_note.is_some() => runtime::MtpDraftPolicy::Off,
-                    invocation::Speculation::Auto => runtime::MtpDraftPolicy::Auto,
-                    invocation::Speculation::Block(n) => runtime::MtpDraftPolicy::Fixed(n as usize),
-                })
-            }
-            // `Auto` is resolved above and cannot reach here.
-            invocation::SpeculativeDrafter::Auto | invocation::SpeculativeDrafter::Dflash => {
-                runtime::DraftPolicies {
-                    mtp: runtime::MtpDraftPolicy::Off,
-                    dflash: match request.speculation {
-                        invocation::Speculation::Off => runtime::DflashDraftPolicy::Off,
-                        invocation::Speculation::Auto => runtime::DflashDraftPolicy::Auto,
-                        invocation::Speculation::Block(n) => {
-                            runtime::DflashDraftPolicy::Fixed(n as usize)
-                        }
-                    },
-                }
-            }
-        },
+        runtime::draft_policies(&choice, asked),
     )
     .map_err(|e| e.to_string())?;
+    let DrafterChoice {
+        drafter,
+        note: drafter_note,
+    } = choice;
 
     // Report the RESOLVED slot count, not the request. Under `auto` the
     // request carries no number, and this one is a property of the machine
@@ -189,13 +157,13 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
     // generation already under way. The runner owns that list because the
     // runner owns the refusals it mirrors.
     let speculation = resolve_speculation(
-        request.speculation,
+        asked,
         // The RESOLVED drafter, because `auto` takes its block from the
         // drafter's own default and the two differ: 2 for the MTP head, 8
         // for DFlash2.
         drafter,
         match drafter {
-            invocation::SpeculativeDrafter::Dflash => runner.dflash_speculation_blocker(),
+            runtime::SpeculativeDrafter::Dflash => runner.dflash_speculation_blocker(),
             // THE NOTE WINS WHERE THERE IS ONE. Both reasons are true of a
             // DFlash2-only install under `auto` -- it has no MTP head, and
             // its DFlash2 drafter was deliberately not enabled -- and only
@@ -215,7 +183,7 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
                 // different measured optima, so a throughput number from
                 // this run is unreadable without knowing which one ran.
                 let which = match drafter {
-                    invocation::SpeculativeDrafter::Dflash => "dflash2 (block drafter)",
+                    runtime::SpeculativeDrafter::Dflash => "dflash2 (block drafter)",
                     _ => "mtp head (step drafter)",
                 };
                 eprintln!("speculative decoding: on, {which}, block {block}");
@@ -275,6 +243,31 @@ fn report_context(plan: &runtime::ContextPlan, requested: invocation::MaxContext
 /// The two crates declare their own profile enums on purpose: `invocation`
 /// is pure and depends only on `foundation`. This is the one place the two
 /// spellings meet.
+/// The parser's speculation enums onto the runtime's, in the one place they
+/// meet.
+///
+/// Two enums rather than one, exactly as [`map_power_profile`] below has two:
+/// `crates/invocation` is pure and depends only on `foundation`, while every
+/// decision the runtime side makes reads an install or a machine. Both
+/// matches are exhaustive with no wildcard arm, so a fourth spelling of
+/// either is a compile error here rather than a silent default somewhere
+/// downstream (AGENTS.md Gotchas 24/37/39).
+fn map_speculation(speculation: invocation::Speculation) -> runtime::Speculation {
+    match speculation {
+        invocation::Speculation::Auto => runtime::Speculation::Auto,
+        invocation::Speculation::Off => runtime::Speculation::Off,
+        invocation::Speculation::Block(n) => runtime::Speculation::Block(n),
+    }
+}
+
+fn map_drafter(drafter: invocation::SpeculativeDrafter) -> runtime::SpeculativeDrafter {
+    match drafter {
+        invocation::SpeculativeDrafter::Auto => runtime::SpeculativeDrafter::Auto,
+        invocation::SpeculativeDrafter::Mtp => runtime::SpeculativeDrafter::Mtp,
+        invocation::SpeculativeDrafter::Dflash => runtime::SpeculativeDrafter::Dflash,
+    }
+}
+
 fn map_power_profile(profile: invocation::PowerProfile) -> runtime::PowerProfile {
     match profile {
         invocation::PowerProfile::Performance => runtime::PowerProfile::Performance,

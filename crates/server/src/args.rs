@@ -1,4 +1,4 @@
-pub const USAGE: &str = "usage: turbospark-server --model <install-dir|alias> [--port N] [--max-context N|auto] [--expert-cache-slots auto|N] [--bind loopback|tailnet] [--power-profile performance|balanced|efficiency] [--max-tokens-per-sec R]\n       turbospark-server <tokenizer-dir> [port]\n       turbospark-server --help | --version\n\noptions:\n  --model              a .gturbo directory or a turbospark-model alias (`turbospark-model list`)\n  --port               listen port (default 8080)\n  --max-context        context window in tokens, or auto (default auto: the\n                       checkpoint's trained context, capped by what memory\n                       holds, and 4096 when the install declares none)\n  --expert-cache-slots routed-cache slots per layer: auto or 8/16/24/32 (default auto)\n  --bind               loopback or tailnet (default loopback; tailnet is NOT auth)\n  --power-profile      performance, balanced or efficiency\n  --max-tokens-per-sec decode rate cap, greater than 0\n  --help               print this text and exit\n  --version            print the version and exit";
+pub const USAGE: &str = "usage: turbospark-server --model <install-dir|alias> [--port N] [--max-context N|auto] [--expert-cache-slots auto|N] [--bind loopback|tailnet] [--power-profile performance|balanced|efficiency] [--max-tokens-per-sec R] [--speculative off|auto|N] [--speculative-drafter auto|mtp|dflash]\n       turbospark-server <tokenizer-dir> [port]\n       turbospark-server --help | --version\n\noptions:\n  --model              a .gturbo directory or a turbospark-model alias (`turbospark-model list`)\n  --port               listen port (default 8080)\n  --max-context        context window in tokens, or auto (default auto: the\n                       checkpoint's trained context, capped by what memory\n                       holds, and 4096 when the install declares none)\n  --expert-cache-slots routed-cache slots per layer: auto or 8/16/24/32 (default auto)\n  --bind               loopback or tailnet (default loopback; tailnet is NOT auth)\n  --power-profile      performance, balanced or efficiency\n  --max-tokens-per-sec decode rate cap, greater than 0\n  --speculative        off, auto, or a block size 1-15 (default auto). Speculation\n                       applies to temperature-0 requests only; others decode\n                       sequentially\n  --speculative-drafter auto, mtp or dflash (default auto; auto reports a DFlash2\n                       drafter but does not enable it -- see docs/DFLASH2.md)\n  --help               print this text and exit\n  --version            print the version and exit";
 
 /// Interface the server listens on. Resolution fails rather than widening:
 /// there is no path from `Tailnet` to a wildcard or LAN address.
@@ -101,6 +101,12 @@ pub struct ModelArgs {
     /// is one runner per process, so there is nothing per-request to vary.
     pub power_profile: Option<runtime::PowerProfile>,
     pub max_tokens_per_sec: Option<f64>,
+    /// Process-level for the same reason the two above are, and one more:
+    /// the drafter's state is allocated at OPEN, so there is nothing a
+    /// request could switch. The per-request half is whether the request is
+    /// deterministic, which `RealChatModel::run_completion` applies.
+    pub speculation: runtime::Speculation,
+    pub drafter: runtime::SpeculativeDrafter,
 }
 
 /// Parses the `--model` mode's flags. Returns `Ok(None)` when the first
@@ -126,6 +132,8 @@ pub fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
         bind: BindMode::Loopback,
         power_profile: None,
         max_tokens_per_sec: None,
+        speculation: runtime::Speculation::Auto,
+        drafter: runtime::SpeculativeDrafter::Auto,
     };
     let mut i = 0;
     while i < args.len() {
@@ -180,6 +188,43 @@ pub fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
                     ));
                 }
                 parsed.max_tokens_per_sec = Some(rate);
+            }
+            "--speculative" => {
+                parsed.speculation = match value.as_str() {
+                    "off" => runtime::Speculation::Off,
+                    "auto" => runtime::Speculation::Auto,
+                    // Read the allowed range rather than re-hardcoding it,
+                    // exactly as `--expert-cache-slots` below reads
+                    // `ALLOWED_CACHE_SLOTS` (AGENTS.md Gotcha 2). It lives in
+                    // `foundation` so this parser and `crates/invocation`'s
+                    // share one range.
+                    _ => match value.parse::<u32>() {
+                        Ok(n)
+                            if foundation::runtime_config::ALLOWED_SPECULATION_BLOCKS
+                                .contains(&n) =>
+                        {
+                            runtime::Speculation::Block(n)
+                        }
+                        _ => {
+                            return Err(format!(
+                                "--speculative must be off, auto, or a block in {:?}, not {value}",
+                                foundation::runtime_config::ALLOWED_SPECULATION_BLOCKS
+                            ))
+                        }
+                    },
+                }
+            }
+            "--speculative-drafter" => {
+                parsed.drafter = match value.as_str() {
+                    "auto" => runtime::SpeculativeDrafter::Auto,
+                    "mtp" => runtime::SpeculativeDrafter::Mtp,
+                    "dflash" => runtime::SpeculativeDrafter::Dflash,
+                    other => {
+                        return Err(format!(
+                            "--speculative-drafter must be auto, mtp or dflash, not {other}"
+                        ))
+                    }
+                }
             }
             other => return Err(format!("unknown option {other}\n{USAGE}")),
         }

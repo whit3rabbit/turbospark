@@ -35,8 +35,21 @@ async fn real_backend_serves_streaming_and_non_streaming_requests() {
     // Slots AND the context window both PINNED, not `auto`. This is a gate,
     // and a gate that let the machine pick either would be asserting against
     // a different configuration on every host (AGENTS.md Gotcha 35).
-    let model = RealChatModel::open(&dir, Some(1024), Some(16), Default::default())
-        .expect("real install should open");
+    //
+    // SPECULATION IS PINNED OFF for the same reason, and it is the newest
+    // instance of that rule here: `Speculation::Auto` reads the INSTALL, so a
+    // gate left on it would decode speculatively or sequentially depending on
+    // which drafter the install this env var happens to point at carries.
+    // Off is also what every host has always run, so no assertion below moves.
+    let model = RealChatModel::open(
+        &dir,
+        Some(1024),
+        Some(16),
+        Default::default(),
+        runtime::Speculation::Off,
+        runtime::SpeculativeDrafter::Auto,
+    )
+    .expect("real install should open");
     let model: Arc<dyn turbospark_server::ChatModel> = Arc::new(model);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
