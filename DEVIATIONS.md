@@ -1610,15 +1610,37 @@ help. `auto` had the same install right, which is why only a named block could
 see it (`crates/runtime/CLAUDE.md` Gotcha 0).
 
 **IT IS NOT BIT-IDENTICAL TO A SEQUENTIAL DECODE OVER A LONG GENERATION, and
-that claim used to be made.** A batched verify runs `dequant_int4_gemm_simd`
-where a decode step runs `dequant_int4_gemv_simd`; the two accumulate
-differently, so at a near-tie the argmax falls the other way and the streams
-part -- measured at 154 tokens on the protocol's prose case. Every BLOCK SIZE
-still produces identical text to every other, which is what says the kernel
-pair rather than the batch width is the variable. Both streams are the model's
-own greedy output and neither is degraded; a caller needing a stream
-reproducible token-for-token against non-speculative decoding leaves
-speculation off.
+that claim used to be made.** A greedy speculative stream parts from a greedy
+sequential one at a near-tie, where the argmax falls the other way -- measured
+at 154 tokens on the protocol's prose case. Every BLOCK SIZE produces
+identical text to every other, which says the batch WIDTH is not the variable.
+Both streams are the model's own greedy output and neither is degraded; a
+caller needing a stream reproducible token-for-token against non-speculative
+decoding leaves speculation off.
+
+**WHY IT DIVERGES IS OPEN, and the answer written here until 2026-08-21 was
+wrong.** The stated cause was that a verify runs `dequant_int4_gemm_simd`
+where a decode step runs `dequant_int4_gemv_simd` and "the two accumulate
+differently". That was an inference from reading the two shaders rather than a
+measurement, and it does not survive one. The pair agrees BIT-FOR-BIT at
+B = 1, 2, 8 and 16 on a fixture built to round -- ragged BF16 companions,
+full-mantissa FP16 activations over ~1e-3 to ~1e2 with alternating signs --
+and the green means something because that fixture carries a positive control:
+`dequant_int4_gemm_mma`, which reduces in an order Apple does not document,
+differs from the GEMV on ~39% of the same outputs. Reading was never going to
+settle it either, since Metal's fast-math reassociates freely and source order
+does not determine compiled order in either kernel.
+
+The `gdn.metal` multi-row kernels were the next suspect and are also exact
+(0 of 896 outputs differ bitwise in `gdn_parity.rs`'s prefill-vs-decode case;
+its 5e-2 state tolerance is conservative rather than descriptive). So the
+difference lives somewhere else in `produce_batched`, and the experiment that
+would localise it has not been run: that function at M=1 against `produce` on
+one token of a real install, which separates "these two functions differ" from
+"batching differs". Note the block-size evidence does NOT narrow this the way
+it was read as doing -- every speculative arm calls `produce_batched` and the
+sequential arm calls `produce`, so identical text across blocks is consistent
+with any difference between the two functions.
 
 Server wiring is absent (`turbospark-server` exposes no speculation at all),
 and one review finding stays unfixed: the unconditional batched-prefill

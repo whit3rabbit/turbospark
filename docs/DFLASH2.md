@@ -375,25 +375,51 @@ point would move. Measured at blocks 2, 4 and 8 on the same prompt:
 | 8 | 2825 | char 825 |
 
 All three are byte-identical TO EACH OTHER and part from the sequential
-stream at exactly the same character. So M is not the variable: what is, is
-that a batched verify runs `dequant_int4_gemm_simd` where a decode step runs
-`dequant_int4_gemv_simd`. Two kernels, two accumulation orders, one
-systematic last-bit difference -- so every speculative token comes from the
-GEMM and every sequential token from the GEMV, and the streams part at the
-first near-tie whatever the block.
+stream at exactly the same character. So M is not the variable. What IS the
+variable is that every speculative arm computes its tokens through
+`produce_batched` and the sequential arm computes its through `produce`; the
+streams part at the first near-tie whatever the block, because every
+speculative token comes from one function and every sequential token from the
+other.
 
 That also explains why the block-size sweep above changes throughput and
 NOTHING about the text: all three speculative arms are computing the same
 thing, just in differently-sized batches of it.
 
-WORTH KNOWING BEFORE TRUSTING THE EXACT-PARITY CLAIM: `crates/gpu`'s note on
-`dequant_int4_gemm_simd` says "Parity stays EXACT, which is what keeps a
-batched verify bit-identical to a sequential decode", and the sibling MMA
-test's header records that its fixture "sums exactly in FP32 and cannot see
-reassociation at all". A fixture that cannot see reassociation cannot be the
-evidence for a bit-identity claim on real weights, and this measurement is
-the counter-example. Whether the two kernels can be MADE bit-identical at
-acceptable cost is open and nobody has costed it.
+**WHICH DIFFERENCE BETWEEN THOSE TWO FUNCTIONS IS RESPONSIBLE IS OPEN, and
+the answer this section gave until 2026-08-21 was wrong.** It said the cause
+was that a verify runs `dequant_int4_gemm_simd` where a decode step runs
+`dequant_int4_gemv_simd` -- "two kernels, two accumulation orders". That was
+read off the two shaders rather than measured, and the measurement refutes it:
+
+- The pair agrees BIT-FOR-BIT at B = 1, 2, 8 and 16 on a fixture built to
+  round, with ragged BF16 companions and full-mantissa FP16 activations
+  spanning ~1e-3 to ~1e2 with alternating signs
+  (`the_gemm_and_the_gemv_agree_on_data_that_can_see_reassociation`).
+- That green is load-bearing only because the same fixture carries a POSITIVE
+  CONTROL: `dequant_int4_gemm_mma`, which hands its reduction to
+  `simdgroup_multiply_accumulate` and reduces in an order Apple does not
+  document, differs from the GEMV on ~39% of the same outputs. A fixture that
+  can see a reassociation sees none between the GEMM and the GEMV.
+- Reading was never going to settle it in either direction. Metal's fast-math
+  reassociates freely, so rewriting one kernel's sum in the opposite order
+  compiles to identical code and that mutation survives every case in the
+  parity file. SOURCE order does not determine COMPILED order here.
+- The `gdn.metal` multi-row kernels were the next suspect and are exact too:
+  0 of 896 outputs differ bitwise in `gdn_parity.rs`'s prefill-vs-decode case,
+  so its 5e-2 state tolerance is conservative rather than descriptive.
+
+**The experiment that would localise it has not been run**: `produce_batched`
+at M=1 against `produce` on one token of a real install. At M=1 there is no
+batching, so a difference there is a kernel or composition difference between
+the two functions and an agreement there puts the cause in the batching
+itself -- most likely the attention span each row sees. Note the block-size
+table above does NOT narrow this, though it reads as though it does: identical
+text across blocks is consistent with ANY difference between the two
+functions.
+
+Whether the two paths can be MADE bit-identical at acceptable cost is still
+open, and costing it against the GEMM would have been wasted work.
 
 ### Through the REAL generation loop, and the block that ships
 
