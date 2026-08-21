@@ -127,6 +127,26 @@ const GATED_INSTALLS: &[GatedInstall] = &[
         var: "TURBOSPARK_GEMMA4_IQ_INSTALL_DIR",
         trims: true,
     },
+    // Ornith-1.5, all three installs. Their templates carry `| trim`, so they
+    // land on Qwen 3.6's side of this table rather than Qwen3-30B-A3B's --
+    // read off the files, not inferred from the family, because those two
+    // spellings live one architecture apart. Worth having all three rows and
+    // not one: the 35B's sidecars come from a DIFFERENT repository per
+    // install (the GGUF one's from the BF16 repo, the INT4 one's from the MLX
+    // conversion), and that they render identically is an assertion rather
+    // than an assumption.
+    GatedInstall {
+        var: "TURBOSPARK_ORNITH9B_INSTALL_DIR",
+        trims: true,
+    },
+    GatedInstall {
+        var: "TURBOSPARK_ORNITH35B_GGUF_INSTALL_DIR",
+        trims: true,
+    },
+    GatedInstall {
+        var: "TURBOSPARK_ORNITH35B_INSTALL_DIR",
+        trims: true,
+    },
 ];
 
 /// Every real install this machine can see, for the reasoning half below.
@@ -141,6 +161,9 @@ const REASONING_INSTALLS: &[&str] = &[
     "TURBOSPARK_MUSEGLIMMER_INSTALL_DIR",
     "TURBOSPARK_GPTOSS_INSTALL_DIR",
     "TURBOSPARK_GEMMA4_IQ_INSTALL_DIR",
+    "TURBOSPARK_ORNITH9B_INSTALL_DIR",
+    "TURBOSPARK_ORNITH35B_GGUF_INSTALL_DIR",
+    "TURBOSPARK_ORNITH35B_INSTALL_DIR",
 ];
 
 /// THE DIGEST-SAFETY PROOF FOR `--reasoning`, and the coverage the fixture

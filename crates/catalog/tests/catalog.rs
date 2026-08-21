@@ -139,6 +139,19 @@ fn two_checkpoints_of_one_architecture_have_different_sidecar_lists() {
 /// MLX rows are deliberately exempt. They legitimately shrink, because the
 /// walk drops the vision tower -- `bonsai27b` installs 3.9 GB from a 5.1 GB
 /// checkpoint, and 333 vision tensors are 0.858 GiB of the difference.
+///
+/// **A GGUF WALK CAN SHRINK TOO, AND TWO ROWS NOW DO**, which is why an
+/// `install_bytes` exactly equal to a `download_bytes` is a deliberate
+/// rounding here rather than a copied figure. `ornith9b` really installs
+/// 189,503 bytes UNDER its download (the F32-to-BF16 transcode of 177
+/// tensors), and `ornith35b-gguf` 953 MB under (its source declares an MTP
+/// block and `plan::classify` skips every `blk.<n>` at or above the trunk
+/// count by name, so 256 experts never land). Neither is a reason to relax
+/// this assertion: the field's contract is "approximate in the generous
+/// direction only", so declaring the download size is both permitted and
+/// conservative, and the measured truth is recorded in each row's `notes`.
+/// Relaxing it would need a measured-install field the schema does not have,
+/// and would give back the guard that caught four understated rows.
 #[test]
 fn a_gguf_rows_install_is_never_smaller_than_its_download() {
     for entry in Catalog::embedded().unwrap().entries() {

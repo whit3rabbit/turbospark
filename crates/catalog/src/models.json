@@ -335,6 +335,113 @@
       "notes": "The mixed-block-type case: Q4_K experts and embedding, Q8_0 attention, one Q6_K tensor. The walk un-does llama.cpp's V-head interleaving on eight tensors; five of them are quantized and no BF16 probe can see them."
     },
     {
+      "alias": "ornith35b",
+      "name": "Ornith-1.5 35B-A3B (MLX INT4, group 64)",
+      "family": "qwen36",
+      "source": {
+        "kind": "mlx",
+        "repo": "ornith-ai/Ornith-1.5-35B-A3B-MLX-4bit",
+        "revision": "19504d912fa8fc7622bf6b1de3db5d5d890b1f02",
+        "file": null
+      },
+      "sidecars": {
+        "repo": null,
+        "revision": null,
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "chat_template.jinja",
+          "generation_config.json"
+        ]
+      },
+      "download_bytes": 19509024201,
+      "install_bytes": 19550070958,
+      "status": "verified",
+      "gates": [
+        "ornith35b_quality_gate",
+        "ornith35b_memory_oracle"
+      ],
+      "measured": [
+        {
+          "chip": "Apple M4 Max",
+          "context": 4096,
+          "expert_cache_slots": 16,
+          "peak_footprint_mib": 1579,
+          "decode_tok_s_min": 32.175,
+          "decode_tok_s_max": 42.27,
+          "measured_on": "2026-08-20",
+          "source": "this port, two readings (bench + memory oracle), AC; peaks span 1570.6-1578.5 MiB across six cases"
+        }
+      ],
+      "notes": "A retrain of Qwen 3.6's architecture: its config derives qwen_gdn_moe_35b_a3b() field for field from BOTH the HF config and llama.cpp's GGUF metadata independently, so no ArchConfig, kernel or flow work was needed. 1.63-1.67x faster than the same model's Q8_0 GGUF install at half the expert stride. The publisher's own MLX conversion DROPS the mtp.* head, so this install clears speculation_blocker's dtype arm and still cannot draft. No cross-engine KL."
+    },
+    {
+      "alias": "ornith35b-gguf",
+      "name": "Ornith-1.5 35B-A3B (GGUF Q8_0)",
+      "family": "qwen36",
+      "source": {
+        "kind": "gguf",
+        "repo": "ornith-ai/Ornith-1.5-35B-A3B-GGUF",
+        "revision": "5ae357e3eaf951ae221e8d784c71a8a3cdb6aa5f",
+        "file": "Ornith-1.5-35B-Q8_0.gguf"
+      },
+      "sidecars": {
+        "repo": "ornith-ai/Ornith-1.5-35B-A3B",
+        "revision": "fbb995a79eedd569a5edc5f2af9644c0fa1124fc",
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "chat_template.jinja",
+          "generation_config.json"
+        ]
+      },
+      "download_bytes": 37802149120,
+      "install_bytes": 37802149120,
+      "status": "runs",
+      "gates": [],
+      "notes": "Superseded by `ornith35b` on every axis measured -- same model, 1.63-1.67x slower, twice the expert stride, twice the disk -- so it carries NO frozen row deliberately: what it is for is being the Q8_0 arm of that quantization A/B, which is throughput and needs no digest. Q8_0 rather than Q4_K_M for the same superblock-alignment reason as `ornith9b`. Headless: the walk skips the MTP block by name, since a head is ingested from safetensors rather than from a GGUF. Measured install 36,848,844,396 bytes, 953 MB UNDER the download: this is the first GGUF row here whose source declares a block the walk deliberately drops, and blk.40's 256 experts are most of the difference. install_bytes is declared at the download size, which the field's contract permits (generous only) and which a_gguf_rows_install_is_never_smaller_than_its_download requires."
+    },
+    {
+      "alias": "ornith9b",
+      "name": "Ornith-1.5 9B (GGUF Q8_0)",
+      "family": "qwen35",
+      "source": {
+        "kind": "gguf",
+        "repo": "ornith-ai/Ornith-1.5-9B-GGUF",
+        "revision": "0677a38f331a214c4e5e7bd07ecab04c14ac52f1",
+        "file": "Ornith-1.5-9B-Q8_0.gguf"
+      },
+      "sidecars": {
+        "repo": "ornith-ai/Ornith-1.5-9B",
+        "revision": "98db59be66b580b0395b3dc8237b32eefcdfec22",
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "chat_template.jinja"
+        ]
+      },
+      "download_bytes": 9527501248,
+      "install_bytes": 9527501248,
+      "status": "verified",
+      "gates": [
+        "ornith9b_quality_gate",
+        "ornith9b_memory_oracle"
+      ],
+      "measured": [
+        {
+          "chip": "Apple M4 Max",
+          "context": 4096,
+          "expert_cache_slots": 16,
+          "peak_footprint_mib": 438,
+          "decode_tok_s_min": 23.865,
+          "decode_tok_s_max": 25.222,
+          "measured_on": "2026-08-20",
+          "source": "this port, two readings (bench + memory oracle), AC; peaks span 434.9-438.4 MiB across six cases"
+        }
+      ],
+      "notes": "Q8_0 and NOT Q4_K_M, which is forced rather than preferred: this family's V-head de-interleave runs on the COLUMNS of linear_attn.out_proj, and a 128-column head is half a 256-element K-quant superblock, so the Q4_K_M file is refused by name. Nothing is given up -- the Q8_0 file is Q8_0 and F32 throughout. NO MTP head: this checkpoint publishes none, so it cannot speculate at any dtype. No cross-engine KL. Measured install 9,527,311,745 bytes, marginally UNDER the download because the walk narrows this file's 177 F32 tensors to BF16; install_bytes is declared at the download size, which the field's contract permits (generous only)."
+    },
+    {
       "alias": "bonsai27b",
       "name": "Bonsai 27B (MLX affine 1-bit, group 128)",
       "family": "qwen35",
