@@ -141,6 +141,15 @@ make swift-test
 # real cases SKIP with a note rather than failing.
 make swift-test-real MODEL=~/models/gemma4.gturbo
 
+# BLOCKED is a SECOND install and reaches what MODEL structurally cannot:
+# speculation resolves from the ARTIFACT, so one variable gates one shape and
+# the refusal path was covered by nothing until it existed. Point it at a MoE
+# or sub-4-bit install; the tests CHECK that it is one, because a merely
+# headless dense install passes every other line while re-testing a case
+# already covered (`crates/ffi/CLAUDE.md` Gotcha 11).
+make swift-test-real MODEL=~/models/qwen38-27b-mtp.gturbo \
+                     BLOCKED=~/models/ornith35b.gturbo
+
 # The demo chat app. Model picker, streaming transcript with collapsible
 # reasoning, a Stop button, and a status footer. Deliberately minimal: it
 # exists to verify the binding, not to be a product.

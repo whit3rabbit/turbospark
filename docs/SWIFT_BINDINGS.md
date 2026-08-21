@@ -536,6 +536,10 @@ make swift-lib                                     # required first
 make swift-test                                    # ABI checks, no model
 make swift-test-real MODEL=~/models/gemma4.gturbo  # end to end, minutes
 make swift-demo                                    # the chat app
+
+# BLOCKED opens a SECOND install, for the cases MODEL cannot reach.
+make swift-test-real MODEL=~/models/qwen38-27b-mtp.gturbo \
+                     BLOCKED=~/models/ornith35b.gturbo
 ```
 
 **arm64 only.** The engine is Metal on Apple Silicon and has never been run
@@ -564,6 +568,15 @@ something the others structurally cannot.
 | Rust, no model | `cargo test -p turbospark-ffi` | ownership, error propagation, the panic guard, cancellation from a second thread |
 | ABI, no model | `make swift-test` | **the hand-written header disagreeing with Rust** |
 | whole stack | `make swift-test-real` | streaming, cancel, telemetry against a real Metal forward pass |
+
+**The bottom row's coverage is a property of the install you point it at**,
+which is easy to miss because the other two rows are not. Speculation resolves
+from the artifact, so `MODEL` alone decides whether the drafter cases run or
+skip; `BLOCKED` adds an install that architecturally cannot speculate, which is
+the only way the refusal path is reached at all. The tests verify that
+`BLOCKED` really is a MoE or sub-4-bit install rather than believing the
+caller, because a merely headless one passes every other assertion while
+re-testing a case already covered.
 
 The middle row is not optional and is not redundant. `crates/ffi`'s own tests
 reach the same function bodies through the `rlib`, so they pass against a

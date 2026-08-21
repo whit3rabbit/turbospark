@@ -68,8 +68,16 @@ swift-test: swift-lib
 
 # The same suite plus the end-to-end arm, which needs a real install and
 # takes minutes. Without the variable those cases SKIP with a note.
+#
+# BLOCKED is a SECOND install and covers the cases MODEL structurally cannot:
+# every speculation assertion is a property of the install it opens, so one
+# variable can only ever gate one shape. Point it at a MoE or sub-4-bit
+# install (`make swift-test-real MODEL=~/models/qwen38-27b-mtp.gturbo
+# BLOCKED=~/models/ornith35b.gturbo`). Unset, those two cases skip like the
+# rest.
 swift-test-real: swift-lib
-	cd swift/TurboSpark && TURBOSPARK_TEST_MODEL=$(MODEL) swift test
+	cd swift/TurboSpark && TURBOSPARK_TEST_MODEL=$(MODEL) \
+	  TURBOSPARK_TEST_MODEL_NO_SPECULATION=$(BLOCKED) swift test
 
 swift-demo: swift-lib
 	cd swift/TurboSparkDemo && swift run TurboSparkDemo

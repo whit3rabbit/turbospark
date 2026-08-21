@@ -45,6 +45,13 @@ make swift-lib
 make swift-test
 make swift-test-real MODEL=~/models/gemma4.gturbo
 make swift-demo
+
+# BLOCKED is a SECOND install and covers what MODEL structurally cannot:
+# every speculation assertion is a property of the install being opened, so
+# one variable gates one shape. Point it at a MoE or sub-4-bit install and
+# the refusal cases run too (see Gotcha 11).
+make swift-test-real MODEL=~/models/qwen38-27b-mtp.gturbo \
+                     BLOCKED=~/models/ornith35b.gturbo
 ```
 
 ## Crate Gotchas
@@ -179,3 +186,28 @@ make swift-demo
    which draws an `ld` warning per object file. The warnings are the visible
    half; the real problem is an app claiming to support macOS 13 while
    containing objects built against a much newer SDK.
+
+11. **ONE INSTALL VARIABLE CAN ONLY EVER GATE ONE SHAPE, and speculation is
+   a property of the install.** `TURBOSPARK_TEST_MODEL` opens one artifact
+   per run, so every speculation assertion in `RealModelTests` is conditional
+   on which one -- `testADeclinedDflashDrafterCanBeAskedForByName` SKIPS
+   unless it happens to be the DFlash2 install, and until 2026-08-21 the
+   REFUSAL path was covered by nothing at all: it was swept by hand and
+   written into `DEVIATIONS.md`, which no run re-checks.
+   `TURBOSPARK_TEST_MODEL_NO_SPECULATION` (`BLOCKED=` on the make target) is
+   a second install, so one `swift test` covers two shapes.
+
+   **It must point at a MoE or sub-4-bit install and the tests CHECK that**,
+   rather than trusting the caller. A dense INT4 install with no MTP head
+   also reports speculation off with a reason and would satisfy every other
+   line, so a variable aimed at the wrong artifact would read green while
+   re-testing a case already covered -- the fixture-must-discriminate rule
+   (AGENTS.md Gotchas 48, 50, 51) applied to an env var. Verified by aiming
+   it at `qwen38-27b` on purpose: both cases fail, and both say what to point
+   it at instead.
+
+   The refusal case is also this crate's regression guard for the wrong-cause
+   bug fixed the same day (`crates/runtime/CLAUDE.md` Gotcha 0): a named block
+   on a MoE install used to be refused for its missing HEAD rather than its
+   architecture, which on a GUI surface is a message telling someone to
+   download 4.4 GB that cannot help.

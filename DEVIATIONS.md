@@ -1591,6 +1591,24 @@ on at block 2 when `speculativeDrafter: "dflash"` is asked for; `ornith35b`
 BOTH spellings -- the flag and the option key -- because a GUI cannot pass a
 command-line flag.
 
+**TWO OF THOSE THREE SHAPES ARE ASSERTED BY A TEST NOW RATHER THAN BY THIS
+PARAGRAPH.** The sweep above was run by hand, and a paragraph is not a gate:
+`TURBOSPARK_TEST_MODEL` opens ONE install per run, so every speculation
+assertion in `RealModelTests` is conditional on which artifact it points at.
+`TURBOSPARK_TEST_MODEL_NO_SPECULATION` is a second variable covering the
+refusal path, so `make swift-test-real MODEL=... BLOCKED=...` reaches both an
+install that speculates and one that architecturally cannot. It CHECKS that
+the second one is a MoE or sub-4-bit install rather than trusting the caller,
+because a merely headless dense install satisfies every other line while
+testing a case already covered.
+
+That refusal case is also the C ABI's regression guard for a wrong-cause bug
+found by this sweep's server twin and fixed the same day: a NAMED block on a
+MoE install was refused for its missing MTP HEAD rather than for its
+architecture, so a GUI host was told to stream a 4.4 GB shard that cannot
+help. `auto` had the same install right, which is why only a named block could
+see it (`crates/runtime/CLAUDE.md` Gotcha 0).
+
 **IT IS NOT BIT-IDENTICAL TO A SEQUENTIAL DECODE OVER A LONG GENERATION, and
 that claim used to be made.** A batched verify runs `dequant_int4_gemm_simd`
 where a decode step runs `dequant_int4_gemv_simd`; the two accumulate

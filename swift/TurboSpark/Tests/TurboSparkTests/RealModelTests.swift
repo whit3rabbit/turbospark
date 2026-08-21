@@ -29,6 +29,35 @@ final class RealModelTests: XCTestCase {
         return raw
     }
 
+    /// An install this engine CANNOT speculate on, for the refusal cases.
+    ///
+    /// **A SECOND VARIABLE RATHER THAN A SECOND RUN, because one process
+    /// holds one session per open and the shapes it has to compare are
+    /// properties of DIFFERENT installs.** `TURBOSPARK_TEST_MODEL` covers
+    /// whatever it points at, and every speculation assertion in this file is
+    /// therefore conditional on which artifact that is -- which is how the
+    /// blocked path came to be swept by hand and asserted by nothing.
+    ///
+    ///     TURBOSPARK_TEST_MODEL=~/models/qwen38-27b-mtp.gturbo \
+    ///     TURBOSPARK_TEST_MODEL_NO_SPECULATION=~/models/ornith35b.gturbo \
+    ///       swift test
+    ///
+    /// Any install whose ARCHITECTURE blocks the batched verify will do: a
+    /// MoE one (no batched routed pair) or a sub-4-bit one (the GEMM is
+    /// INT4-only). It must NOT be a merely headless dense INT4 install --
+    /// that one is refused for a different reason, and the case below is
+    /// written to tell the two apart.
+    private func blockedModelPath() throws -> String {
+        guard let raw = ProcessInfo.processInfo.environment["TURBOSPARK_TEST_MODEL_NO_SPECULATION"],
+            !raw.isEmpty
+        else {
+            throw XCTSkip(
+                "set TURBOSPARK_TEST_MODEL_NO_SPECULATION to a MoE or sub-4-bit install "
+                    + "to run this")
+        }
+        return raw
+    }
+
     /// Tests opening a real model and inspecting its resolved session parameters.
     func testOpensAndDescribesItself() async throws {
         let session = try await TurboSparkSession(modelPath: try modelPath())
@@ -227,5 +256,82 @@ final class RealModelTests: XCTestCase {
             "phases: \(phases.calls) calls at \(phases.totalMsPerCall) ms, "
                 + "hit rate \(phases.expertHitRate.map { String($0) } ?? "n/a"), "
                 + "peak \(peak / 1_048_576) MiB")
+    }
+
+    /// **`auto` ON AN INSTALL THAT CANNOT SPECULATE OPENS ANYWAY, and says
+    /// why.** That is the warn-half of the hard-fail/warn split reaching the
+    /// C ABI, and it is the half a GUI depends on: most installs carry no
+    /// usable drafter, so a refusal here would make the common case a
+    /// failure to open a model that runs perfectly well.
+    ///
+    /// The three `speculation` fields are checked together because they are
+    /// only meaningful as a set -- a null block with a null reason is "the
+    /// caller asked for off", and that is a different state from this one.
+    func testAutoOpensAnInstallItCannotSpeculateOnAndReportsWhy() async throws {
+        let session = try await TurboSparkSession(modelPath: try blockedModelPath())
+        XCTAssertNil(session.info.speculation.block, "this install cannot be verified against")
+        XCTAssertNil(session.info.speculation.drafter, "no block means no drafter to name")
+        let reason = try XCTUnwrap(
+            session.info.speculation.reason,
+            "auto declining without saying why is the silence this feature exists to end")
+
+        // ASSERT THE FIXTURE DISCRIMINATES. A dense INT4 install with no head
+        // also reports off with a reason, and would pass every line above --
+        // so a variable pointed at the wrong artifact would make this file
+        // read green while testing the case it already covers. The refusal
+        // case below is written against the ARCHITECTURAL reason specifically.
+        XCTAssertTrue(
+            reason.contains("dense-only") || reason.contains("INT4-only"),
+            "point TURBOSPARK_TEST_MODEL_NO_SPECULATION at a MoE or sub-4-bit "
+                + "install; this one says: \(reason)")
+
+        // The blocker's own claim, checked rather than quoted: "the model
+        // decodes normally, only speculation is unavailable".
+        var options = GenerateOptions()
+        options.maxNewTokens = 40
+        options.temperature = 0.0
+        var result: GenerationResult?
+        for try await event in session.generate(
+            [ChatMessage(role: .user, content: "Name three coastal plants.")], options: options
+        ) {
+            if case .finished(let r) = event { result = r }
+        }
+        let r = try XCTUnwrap(result)
+        XCTAssertGreaterThan(r.newTokens, 5, "an install that cannot speculate must still decode")
+        print("blocked auto: off (\(reason)), still decoded \(r.newTokens) tokens")
+    }
+
+    /// **A NAMED BLOCK IT CANNOT SERVE FAILS THE OPEN, AND NAMES THE
+    /// ARCHITECTURE RATHER THAN THE MISSING HEAD.**
+    ///
+    /// Two claims, and the second is a regression guard with a date on it.
+    /// Until 2026-08-21 this reported "carries no multi-token-prediction head
+    /// ... stream an install that adds the official checkpoint's last shard",
+    /// which sent a caller after a 4.4 GB shard that cannot help -- the
+    /// batched verify is dense-only and no checkpoint changes that. `auto`
+    /// got the same install right, which is why only a NAMED block can see
+    /// it, and why the case above is not enough on its own.
+    ///
+    /// The failure being at OPEN is the point of the first claim: a caller
+    /// who named a block is measuring, and a session that quietly did not
+    /// speculate is the number that ends up in a table.
+    func testANamedBlockIsRefusedForTheArchitectureRatherThanTheHead() async throws {
+        let path = try blockedModelPath()
+        var options = OpenOptions()
+        options.speculation = .block(2)
+
+        do {
+            _ = try await TurboSparkSession(modelPath: path, options: options)
+            XCTFail("a named block on an install that cannot serve it must not open quietly")
+        } catch let error as TurboSparkError {
+            XCTAssertEqual(error.code, .open)
+            XCTAssertTrue(
+                error.message.contains("dense-only") || error.message.contains("INT4-only"),
+                "the refusal must name the architectural obstacle, got: \(error.message)")
+            XCTAssertFalse(
+                error.message.contains("multi-token-prediction head"),
+                "no checkpoint helps here, so the head must not be blamed: \(error.message)")
+            print("blocked named: refused with \(error.message)")
+        }
     }
 }
