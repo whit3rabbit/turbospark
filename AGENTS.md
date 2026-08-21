@@ -833,6 +833,24 @@ hf download ornith-ai/Ornith-1.5-9B-GGUF Ornith-1.5-9B-Q8_0.gguf \
 uv run --python 3.12 --with numpy scripts/kld_llamacpp.py \
   ~/models/gguf-ref/Ornith-1.5-9B-Q8_0.gguf /tmp/kld/ornith9b-warm
 
+# The SAME family's MoE half, against MLX rather than llama.cpp, because this
+# install comes from an affine INT4 conversion where the 9B's comes from a
+# GGUF -- so the pair covers both intake formats instead of one twice. Needs
+# no fork: upstream mlx-lm carries `qwen3_5_moe`. Reads 0.02739 mean nats at
+# 91.10% top-1 against a 0.02780 shape floor, i.e. BELOW it. **Do not compare
+# that absolute to the 9B's 0.000138** -- an MoE shape floor is four orders of
+# magnitude above a dense one because batched-vs-cached routing and reduce
+# order is what it is made of, so the RATIO transfers and the absolute does
+# not (`crates/bench/CLAUDE.md` Gotcha 8). No backend floor: mlx's CPU path
+# runs this at 15.4 s/position (~2.5 h), measured, despite only 3B active.
+TURBOSPARK_ORNITH35B_INSTALL_DIR=~/models/ornith35b.gturbo \
+TURBOSPARK_LOGIT_DUMP_DIR=/tmp/kld/ornith35b-warm \
+  cargo test -p turbospark-bench --test logit_dump --release -- --ignored --nocapture
+hf download ornith-ai/Ornith-1.5-35B-A3B-MLX-4bit \
+  --revision 19504d912fa8fc7622bf6b1de3db5d5d890b1f02
+uv run --python 3.12 --with mlx-lm --with numpy \
+  scripts/kld_mlx_affine.py /tmp/kld/ornith35b-warm ornith-35b-4bit
+
 
 # Its cross-engine KL, through the SAME driver the 1-bit one uses. The
 # checkpoint name is REQUIRED and not defaulted: the two published

@@ -843,10 +843,100 @@ the file the way the repack walk did (Gotcha 34).
 Caveats, the same ones as the three sections above. One corpus, one family,
 one machine, one llama.cpp build. This says the two engines agree on these
 bytes; it does not say either is close to the unquantized model, which still
-needs a bf16 reference nobody has run here. It says nothing about the two
-35B installs, whose own cross-engine checks are unrun -- the INT4 one is one
-`logit_dump.rs` arm and one `kld_mlx_affine.py` table entry away, since
-mlx-lm 0.31.3 carries `qwen3_5_moe`.
+needs a bf16 reference nobody has run here. It says nothing about the 35B
+INT4 install either -- that one has its own section immediately below, and
+the two should be read together. `ornith35b-gguf` remains unchecked and is
+superseded on every measured axis, so it carries no frozen row on purpose.
+
+### Cross-engine: MLX on the same bytes, `qwen35moe` (Ornith-1.5-35B-A3B)
+
+The section above checks Ornith's DENSE half against llama.cpp on GGUF
+bytes. This is the same family's MoE half against MLX on affine INT4 bytes,
+and the pair is deliberate: the two installs come from different intake
+formats, so together they cover both rather than measuring one twice.
+
+`scripts/kld_mlx_affine.py` replays this port's own id sequence through
+mlx-lm on `ornith-ai/Ornith-1.5-35B-A3B-MLX-4bit` @ `19504d91`, the exact
+artifact `~/models/ornith35b.gturbo` was streamed from. mlx 0.32.1 with
+upstream `mlx_lm.models.qwen3_5_moe` -- no fork, unlike the 1-bit arm. 573
+positions, 16 expert-cache slots, 2026-08-20, on AC.
+
+| Comparison | Mean KL | Median | p99 | Max | Top-1 agree |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| mlx batched vs cached (shape floor) | 0.02780 | 0.01122 | 0.256 | 1.141 | 92.84% |
+| **this port vs mlx, same bytes, both cached** | **0.02739** | **0.01035** | **0.288** | **1.706** | **91.10%** |
+| backend floor | not measured -- see below | | | | |
+
+| Reading | Perplexity |
+| --- | ---: |
+| **this port, INT4-affine install** | **6.2298** |
+| mlx-lm, same bytes, cached | 6.3649 |
+| mlx-lm, same bytes, batched | 6.2829 |
+
+**The headline sits BELOW the shape floor**, at 0.985x of it: this port and
+mlx-lm agree on identical bytes marginally more closely than mlx-lm's own
+two forward shapes agree with each other. Gemma's MLX comparison reads 0.75x
+by the same arithmetic, so both are on the same side of the line. The
+perplexity says it on a different axis -- the two mlx arms are 1.3% apart
+from each other (6.3649 cached against 6.2829 batched) and this port's
+6.2298 sits 0.85% from the nearer one, i.e. inside the band the reference
+engine spans by itself.
+
+**READ THIS ROW BESIDE THE `qwen35` ONE ABOVE, because together they are the
+cleanest evidence here for what a shape floor is made of.** Same family, same
+architecture lineage, same corpus, same day. The DENSE 9B's shape floor is
+0.0000024; this MoE 35B's is 0.02780 -- **four orders of magnitude**, on two
+different reference engines. Batched-vs-cached expert routing and reduce
+order under non-associative FP addition is the entire difference. It follows
+that the absolute numbers here are not comparable to the 9B's 0.000138 and
+were never going to be; the RATIO to the floor is what transfers, and on that
+axis both families are fine. `crates/bench/CLAUDE.md` Gotcha 8 states the
+rule; this pair is the demonstration.
+
+**THE BACKEND FLOOR IS NOT MEASURED, AND THE REASON WAS MEASURED RATHER THAN
+ASSUMED.** The expectation was that it would be cheap: only 3B of 35B are
+active per token, which is the reasoning that makes `qwen3moe`'s llama.cpp
+CPU arm cost ~40 s. It is not. mlx's CPU backend runs this at **15.4 s per
+position**, about 2.5 hours for the corpus, so the arm is refused on cost and
+the report carries that sentence instead of a number. The generalisation is
+worth more than the row: **whether a backend floor is affordable is a
+property of the REFERENCE ENGINE's CPU path, not of the model's
+active-parameter count.** The driver's note is per checkpoint now rather than
+a literal describing the dense 27B, which is what it said before -- Gotcha
+38's species, in a script written to be model-agnostic.
+
+**A guard in the driver had to be fixed first, and it was undercounting
+rather than the reference being wrong.** `assert_reference_matches` tested
+`isinstance(m, (nn.QuantizedLinear, nn.QuantizedEmbedding))`, which is
+complete for a dense checkpoint and misses an MoE one: mlx packs each layer's
+256 routed experts into a `QuantizedSwitchLinear`, a third type living in
+`mlx_lm.models.switch_layers` rather than `mlx.nn`. That is 40 layers x 3
+roles = 120 modules, so the guard saw 312 of 432 and refused a good
+reference. It now finds modules by asking whether they carry a
+`(bits, group_size)` pair -- the question the header's `.scales` count
+actually answers -- so a fourth quantized type cannot silently escape it.
+Over-counting is not a hazard because the comparison is an EQUALITY against
+the header's composition. The composition itself is checked whole
+(`{(4,64): 432, (8,64): 80}`) rather than as a total plus a uniform width,
+which this checkpoint could not have satisfied: like Gemma and Qwen 3.6 it
+lifts its router and shared-expert gate to 8 bits on all 40 layers.
+
+Everything here is deterministic. **Warm and cold dumps are BYTE-IDENTICAL**
+(`217161d8...` both ways) on a STREAMING MoE install, which is a stronger
+statement than the dense 9B's identical pair -- there the install has no
+expert cache to warm, and here it has one. That is AGENTS.md Gotcha 27's fix
+holding on a fifth family. The COLD dump separately reproduces
+`ornith35b_quality_gate.rs`'s frozen 6.2298 exactly.
+
+Cost: ~40 s per dump, ~2 min for both mlx arms, plus ~12 min for the one-time
+19.5 GB reference download. Neither engine softcaps here (the family declares
+`finalLogitSoftcap: 0.0`), so both maxima are reported rather than asserted:
+26.20 this port against 27.25 mlx-lm.
+
+Caveats, the same ones as every section above. One corpus, one family, one
+machine, one mlx build; and with no backend floor this row has one scale
+rather than two, so read it as "inside the reference engine's own spread"
+rather than as a bound.
 
 ### Cross-engine: MLX on the same bytes, the 1-BIT family
 
@@ -877,12 +967,14 @@ API level rather than merely lacking a Metal kernel ("The supported bits are
 
 **The headline is 2.1x the shape floor and the SMALLEST in absolute terms of
 any family's** (Gemma 0.00845, `qwen3moe` 0.00320, gpt-oss 0.00978, IQ3
-0.00440, `qwen35` 0.000138). Note the margin is a factor of ~200 against the
-MoE families and only 8.8x against `qwen35`, which is the other DENSE
-checkpoint measured here -- consistent with the paragraph below, since that
-is the axis this is really reading. Top-1 agreement is 100.0% on all 573
-positions, where the MoE families read 97.5-98.2% and dense `qwen35` reads
-99.65%. Perplexity agrees to 0.04%, and
+0.00440, `qwen35` 0.000138, `qwen35moe` 0.02739). Note the margin is a
+factor of ~200 against the llama.cpp-referenced MoE families, ~1,700 against
+the MLX-referenced one, and only 8.8x against `qwen35`, which is the other
+DENSE checkpoint measured here -- consistent with the paragraph below, since
+that is the axis this is really reading. Top-1 agreement is 100.0% on all
+573 positions, against 97.5-98.2% for the MoE families checked through
+llama.cpp, 91.10% for the MoE one checked through MLX, and 99.65% for dense
+`qwen35`. Perplexity agrees to 0.04%, and
 max |logit| is 28.171875 on BOTH sides -- the same value to the last bit.
 
 **Both numbers being tiny is the reading, and it is consistent rather than

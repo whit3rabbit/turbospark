@@ -129,6 +129,15 @@ fn resolve_target() -> Option<DumpTarget> {
         // order relative to RoPE, and the RMS epsilon. Each perturbs every
         // layer systematically, which is what makes them visible here.
         .or_else(|| plain("TURBOSPARK_ORNITH9B_INSTALL_DIR"))
+        // The same family's MoE half, and a plain arm for the same reasons.
+        // Its reference is MLX rather than llama.cpp (`kld_mlx_affine.py`,
+        // `ornith-35b-4bit`), because this install is streamed from an MLX
+        // affine conversion where the 9B's is streamed from a GGUF -- so the
+        // pair covers BOTH of this family's intake formats rather than
+        // measuring one of them twice. Being MoE, both of its floors mean
+        // something, where the dense 9B's shape floor collapses to nearly
+        // nothing (`crates/bench/CLAUDE.md` Gotcha 8).
+        .or_else(|| plain("TURBOSPARK_ORNITH35B_INSTALL_DIR"))
         .or_else(|| {
             env_dir("TURBOSPARK_GPTOSS_INSTALL_DIR").map(|install| DumpTarget {
                 install,
@@ -146,7 +155,8 @@ fn dump_reference_logits() {
             "logit_dump: needs TURBOSPARK_GEMMA4_INSTALL_DIR (or \
              TURBOSPARK_QWEN36_INSTALL_DIR, TURBOSPARK_QWEN3MOE_INSTALL_DIR, \
              TURBOSPARK_QWEN35_INSTALL_DIR, TURBOSPARK_TERNARY_INSTALL_DIR, \
-             TURBOSPARK_ORNITH9B_INSTALL_DIR, or \
+             TURBOSPARK_ORNITH9B_INSTALL_DIR, TURBOSPARK_ORNITH35B_INSTALL_DIR, \
+             or \
              TURBOSPARK_GPTOSS_INSTALL_DIR) and \
              TURBOSPARK_LOGIT_DUMP_DIR; skipping."
         );

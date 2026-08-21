@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
-"""Cross-engine KL for the SUB-4-BIT MLX families: this port against MLX on
-the identical bytes (ROADMAP's 1-bit entry step 5, and its ternary entry).
+"""Cross-engine KL for the MLX-AFFINE families: this port against MLX on the
+identical bytes (ROADMAP's 1-bit entry step 5, and its ternary entry).
+
+It said SUB-4-BIT while its only entries were 1- and 2-bit, which was a true
+statement about two checkpoints rather than a limit of the driver: nothing
+below is narrower than "MLX affine at some width", and `ornith-35b-4bit` is
+4- and 8-bit mixed. See `CHECKPOINTS`.
 
     TURBOSPARK_QWEN35_INSTALL_DIR=~/models/bonsai27b.gturbo \
     TURBOSPARK_LOGIT_DUMP_DIR=/tmp/kld/bonsai-warm \
@@ -12,6 +17,12 @@ the identical bytes (ROADMAP's 1-bit entry step 5, and its ternary entry).
       cargo test -p turbospark-bench --test logit_dump --release -- --ignored --nocapture
     uv run --python 3.12 --with 'mlx-lm==0.31.2' --with numpy \
       scripts/kld_mlx_affine.py /tmp/kld/ternary-warm ternary-2bit
+
+    TURBOSPARK_ORNITH35B_INSTALL_DIR=~/models/ornith35b.gturbo \
+    TURBOSPARK_LOGIT_DUMP_DIR=/tmp/kld/ornith35b-warm \
+      cargo test -p turbospark-bench --test logit_dump --release -- --ignored --nocapture
+    uv run --python 3.12 --with mlx-lm --with numpy \
+      scripts/kld_mlx_affine.py /tmp/kld/ornith35b-warm ornith-35b-4bit
 
 **THE CHECKPOINT NAME IS REQUIRED, NOT DEFAULTED, and that is the whole
 reason this file is parameterized rather than copied.** A model-specific
@@ -77,23 +88,55 @@ from kld import divergences, perplexity  # noqa: E402
 # exact repo and commit each install was streamed from. Same quantized bytes
 # on both sides is the whole point.
 #
-# `modules` is the checkpoint header's count of tensors carrying a `.scales`
-# companion, and it is a CROSS-CHECK rather than decoration; see
-# `assert_reference_matches`.
+# `widths` is the checkpoint's quantization COMPOSITION: how many modules sit
+# at each `(bits, group_size)`, counted from the header's `.scales` companions
+# and cross-checked against the loaded reference by `assert_reference_matches`.
+#
+# IT IS A MAP RATHER THAN A SCALAR BECAUSE A CHECKPOINT CAN CARRY TWO WIDTHS.
+# It was `bits` + `group_size` + `modules` while every entry here was uniform,
+# which is a true statement about two checkpoints and not a property of the
+# format: `ornith-35b-4bit` lifts its ROUTER and its shared-expert gate to 8
+# bits on all 40 layers, exactly as Gemma and Qwen 3.6 do, so a uniform-width
+# guard refuses a perfectly good reference. A map is also strictly STRONGER
+# than what it replaces -- it pins the composition, where the old pair pinned
+# a total plus a claim that every module agreed with it.
 CHECKPOINTS = {
     "bonsai-1bit": {
         "repo": "prism-ml/Bonsai-27B-mlx-1bit",
         "revision": "ef22f239c670078e1507f9769bcaa66657332b96",
-        "bits": 1,
-        "group_size": 128,
-        "modules": 498,
+        "widths": {(1, 128): 498},
+        "backend_floor_note": (
+            "not measured (dense 27B; a CPU arm reads all 24.8B backbone "
+            "weights per token)"
+        ),
     },
     "ternary-2bit": {
         "repo": "prism-ml/Ternary-Bonsai-27B-mlx-2bit",
         "revision": "70f75f3ad081ab840a42f3304c02c27e7f89bfb7",
-        "bits": 2,
-        "group_size": 128,
-        "modules": 498,
+        "widths": {(2, 128): 498},
+        "backend_floor_note": (
+            "not measured (dense 27B; a CPU arm reads all 24.8B backbone "
+            "weights per token)"
+        ),
+    },
+    # Ornith-1.5-35B-A3B, the MoE half, and the first MIXED-width entry.
+    # 432 modules at 4 bits plus the 80 eight-bit ones named above; 512 in
+    # total, which is the header's `.scales` count.
+    "ornith-35b-4bit": {
+        "repo": "ornith-ai/Ornith-1.5-35B-A3B-MLX-4bit",
+        "revision": "19504d912fa8fc7622bf6b1de3db5d5d890b1f02",
+        "widths": {(4, 64): 432, (8, 64): 80},
+        # MEASURED before being written down, and the expectation was wrong:
+        # only 3B of 35B are active per token, so by the reasoning that makes
+        # `qwen3moe`'s llama.cpp CPU arm cost ~40 s this one should have been
+        # cheap. mlx's CPU backend runs it at 15.4 s/position, i.e. ~2.5 h for
+        # the corpus. Affordability of a backend floor is a property of the
+        # REFERENCE ENGINE's CPU path, not of the model's active-parameter
+        # count.
+        "backend_floor_note": (
+            "not measured (mlx's CPU backend runs this at 15.4 s/position, "
+            "~2.5 h for the corpus, despite only 3B of 35B active)"
+        ),
     },
 }
 
@@ -128,22 +171,25 @@ def require_the_mlx_build(spec) -> str:
     """
     import mlx.core as mx
 
-    bits, group = spec["bits"], spec["group_size"]
-    try:
-        w = mx.random.normal((256, 256))
-        q, s, b = mx.quantize(w, group_size=group, bits=bits)
-        mx.eval(mx.quantized_matmul(mx.random.normal((1, 256)), q, s, b,
-                                    transpose=True, group_size=group, bits=bits))
-    except Exception as exc:  # noqa: BLE001 -- the message IS the diagnosis
-        sys.exit(
-            f"this mlx cannot do bits={bits} ({type(exc).__name__}: {exc})\n"
-            "  at one bit that needs github.com/PrismML-Eng/mlx@prism, built from source:\n"
-            "    git clone -b prism https://github.com/PrismML-Eng/mlx.git\n"
-            "    uv venv /tmp/prism-venv --python 3.12\n"
-            "    uv pip install --python /tmp/prism-venv/bin/python cmake ninja setuptools nanobind\n"
-            "    uv pip install --python /tmp/prism-venv/bin/python -e mlx/ --no-build-isolation\n"
-            "    uv pip install --python /tmp/prism-venv/bin/python 'mlx-lm==0.31.2' transformers numpy"
-        )
+    # EVERY width the checkpoint carries, not just its dominant one: a mixed
+    # reference is only representable if mlx can do all of them, and finding
+    # that out here beats finding it out inside model loading.
+    for bits, group in sorted(spec["widths"]):
+        try:
+            w = mx.random.normal((256, 256))
+            q, s, b = mx.quantize(w, group_size=group, bits=bits)
+            mx.eval(mx.quantized_matmul(mx.random.normal((1, 256)), q, s, b,
+                                        transpose=True, group_size=group, bits=bits))
+        except Exception as exc:  # noqa: BLE001 -- the message IS the diagnosis
+            sys.exit(
+                f"this mlx cannot do bits={bits} ({type(exc).__name__}: {exc})\n"
+                "  at one bit that needs github.com/PrismML-Eng/mlx@prism, built from source:\n"
+                "    git clone -b prism https://github.com/PrismML-Eng/mlx.git\n"
+                "    uv venv /tmp/prism-venv --python 3.12\n"
+                "    uv pip install --python /tmp/prism-venv/bin/python cmake ninja setuptools nanobind\n"
+                "    uv pip install --python /tmp/prism-venv/bin/python -e mlx/ --no-build-isolation\n"
+                "    uv pip install --python /tmp/prism-venv/bin/python 'mlx-lm==0.31.2' transformers numpy"
+            )
     return f"{mx.__version__} ({mx.__file__})"
 
 
@@ -156,35 +202,56 @@ def assert_reference_matches(model, spec) -> dict:
     different question with the same shape of answer -- and the tell would be
     a suspiciously SMALL divergence, i.e. the direction nobody investigates.
 
-    Counted rather than spot-checked, and the count is a cross-check: each
-    checkpoint's safetensors header carries `modules` tensors with a
-    `.scales` companion, so that many quantized modules is the whole model
-    and one fewer is a layer that quietly did not quantize.
+    Counted rather than spot-checked, and the COMPOSITION is the cross-check:
+    the checkpoint's safetensors header says how many tensors carry a
+    `.scales` companion at each width, so the same map here is the whole
+    model and one fewer at any width is a layer that quietly did not
+    quantize.
 
-    The BITS check is the other half, and it is what catches a dump paired
-    with the wrong reference -- the two published checkpoints of this
-    architecture have the same module count and the same shapes, so nothing
-    else here would notice.
+    Comparing the whole map is also what catches a dump paired with the WRONG
+    reference -- the two 27B checkpoints of that architecture have the same
+    module count and the same shapes, and differ only in their width.
+
+    The map is keyed on `(bits, group_size)` and NOT on the module type. A
+    header cannot tell a QuantizedLinear from a QuantizedEmbedding either, so
+    keying on it would be asserting something the evidence does not contain;
+    the type still reaches the report, which is where it is useful.
+
+    **MODULES ARE FOUND BY DUCK TYPING, NOT BY A CLASS LIST, AND THAT IS THE
+    FIX FOR A REAL MISCOUNT.** This used to test
+    `isinstance(m, (nn.QuantizedLinear, nn.QuantizedEmbedding))`, which is
+    complete for a DENSE checkpoint and silently misses an MoE one: mlx packs
+    each layer's routed experts into a `QuantizedSwitchLinear`, a THIRD type
+    that lives in `mlx_lm.models.switch_layers` rather than `mlx.nn`. On
+    `ornith-35b-4bit` that is 40 layers x 3 roles = 120 modules, so the guard
+    saw 312 of 432 and refused a perfectly good reference. Naming the classes
+    would have had to be revised again for the next one; asking each module
+    whether it carries a `(bits, group_size)` pair asks the question the
+    header's `.scales` count actually answers. Over-counting is not a hazard
+    here because the comparison is an EQUALITY against that count, so a
+    spurious module fails just as loudly as a missing one.
     """
-    import mlx.nn as nn
-
-    want_bits, want_modules = spec["bits"], spec["modules"]
+    want: dict[tuple, int] = dict(spec["widths"])
     seen: dict[tuple, int] = {}
+    detail: dict[tuple, int] = {}
     for _, module in model.named_modules():
-        if isinstance(module, (nn.QuantizedLinear, nn.QuantizedEmbedding)):
-            key = (type(module).__name__, module.bits, module.group_size)
-            seen[key] = seen.get(key, 0) + 1
-    if not seen or any(bits != want_bits for (_, bits, _) in seen):
+        bits = getattr(module, "bits", None)
+        group = getattr(module, "group_size", None)
+        if bits is None or group is None:
+            continue
+        seen[(bits, group)] = seen.get((bits, group), 0) + 1
+        full = (type(module).__name__, bits, group)
+        detail[full] = detail.get(full, 0) + 1
+    if seen != want:
         sys.exit(
-            f"reference model is not {want_bits}-bit throughout: "
-            f"{seen or 'no quantized modules'}"
+            "reference model's quantization composition does not match the "
+            f"checkpoint header.\n  expected {dict(sorted(want.items()))}\n"
+            f"  observed {dict(sorted(seen.items())) or 'no quantized modules'}\n"
+            f"  by module type: {dict(sorted(detail.items(), key=str))}\n"
+            "  a SHORTFALL at one width is usually a module type this walk did "
+            "not recognise, not a reference that failed to quantize."
         )
-    total = sum(seen.values())
-    if total != want_modules:
-        sys.exit(
-            f"reference has {total} quantized modules, the checkpoint header says {want_modules}"
-        )
-    return {f"{name}(bits={b},group={g})": n for (name, b, g), n in sorted(seen.items(), key=str)}
+    return {f"{name}(bits={b},group={g})": n for (name, b, g), n in sorted(detail.items(), key=str)}
 
 
 def mlx_logits(token_ids: list[int], cached: bool, spec) -> tuple[np.ndarray, dict]:
@@ -260,7 +327,7 @@ def main() -> None:
         # MLX against itself across its two shapes: the SHAPE floor.
         "kl_mlx_self": divergences(batched, cached),
         # Named rather than omitted: see the module doc.
-        "backend_floor": "not measured (dense 27B; a CPU arm is not affordable here)",
+        "backend_floor": spec["backend_floor_note"],
         "perplexity": {
             "turbospark": perplexity(port, ids, first),
             "mlx_cached": perplexity(cached, ids, first),
