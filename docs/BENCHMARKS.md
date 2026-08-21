@@ -1254,6 +1254,79 @@ which is the compute-bound reading the Qwen3.8 pair first supported; the
 2-bit GEMV is simply doing more per byte than either neighbour (four
 elements a byte against eight, and no `+/-1` shortcut).
 
+### Ornith-1.5: three installs of two checkpoints
+
+Not a parity claim. Swift has no `qwen3_5` support at all, so every number
+here is this port measuring itself.
+
+Measured 2026-08-20 on the machine in the provenance table, on AC, release,
+16 expert-cache slots, 4,096 context. **Neither checkpoint is a new family**:
+`Ornith-1.5-35B-A3B` derives `qwen_gdn_moe_35b_a3b()` field for field from
+its HF config AND from llama.cpp's GGUF metadata independently, and
+`Ornith-1.5-9B` is the dense half at a new shape.
+
+| | 9B (GGUF Q8_0, dense) | 35B-A3B (MLX INT4) | 35B-A3B (GGUF Q8_0) |
+| --- | ---: | ---: | ---: |
+| install on disk | 8.87 GiB | 18.21 GiB | 34.32 GiB |
+| stream wall clock | 10.2 min | 22.4 min | 29.6 min |
+| resident tensors | 427 | 613 | 613 |
+| expert stride | 0 (dense) | 1,769,472 B | 3,342,336 B |
+| slot cache at 16 | 0 | 1,080 MiB | 2,040 MiB |
+| peak phys_footprint | 438 MiB | 1,578 MiB | not frozen |
+| reference perplexity | 6.0503 | 6.2298 | not frozen |
+| greedy digest | `37c9bbaf` | `8bab7013` | -- |
+| sampled digest | `db6538f6` | `8ff05e36` | -- |
+| 8-slot digest | equal, 1.00-1.02x | equal, 0.91-0.94x | -- |
+| decode, three cases | 23.9-25.2 tok/s | 32.2-42.3 tok/s | see below |
+
+The two 8-slot ratios are the pair worth reading together.
+`--expert-cache-slots` sizes a ROUTED-expert cache, so the dense 9B reads
+1.00x while its MoE sibling reads 0.91x on the same day and the same
+prompt. That contrast is what makes either number a statement rather than
+an absence. Both digests being slot-invariant is the reduce-order fix
+(AGENTS.md Gotcha 27) holding on a fourth family.
+
+**The 9B's recurrent state is larger than its KV**, which inverts the usual
+reading of a footprint. Three quarters of its layers are gated-DeltaNet, and
+a recurrent state is fixed in the window where a KV layer's is nothing but
+the window: 24 linear layers give 144.0 MiB of delta-rule `S` against 8 full
+layers' 128.0 MiB of KV at 4,096. Its 8.9 GB of resident weights are absent
+from the 438 MiB entirely, which is AGENTS.md Gotcha 40 re-derived on a
+fourth install shape.
+
+#### INT4 against Q8_0, same model, same architecture
+
+Three interleaved pairs at 16 slots, warmup discarded, `--max-new 300`,
+greedy, both streams captured to files:
+
+| pair | Q8_0 | INT4 |
+| ---: | ---: | ---: |
+| 1 | 22.650 | 36.896 |
+| 2 | 21.947 | 36.241 |
+| 3 | 22.089 | 36.805 |
+
+**1.63-1.67x**, spreads 3.2% and 1.8%. Half the expert stride is the
+honest half of the mechanism; the rest is that the INT4 routed pair is the
+MLX-affine one rather than the GGUF one.
+
+An earlier unpaired reading of this said 4.95x and was **cold against
+warm**: a 34 GB install's first run reads 8.5 tok/s while it populates the
+page cache, against 22 warm. Gotcha 20's discard-a-warmup rule is written
+for a cold GPU after a build and applies at least as hard to a cold page
+cache after an install, where the error is 2.6x rather than 1.5x.
+
+#### What these installs cannot do
+
+The 35B's published checkpoint carries a 785-tensor multi-token-prediction
+head, and none of the three installs has it. The GGUF walk skips every
+`blk.<n>` at or above the trunk count by name (a head is ingested from
+safetensors, not from a GGUF), and the publisher's own MLX 4-bit conversion
+drops `mtp.*` outright -- the same thing mlx-community's Qwen3.8 conversion
+does, now observed on a second publisher. So the INT4 install clears
+`speculation_blocker`'s dtype arm and still cannot draft, and the head is
+coupled to a batched MoE verify rather than to an ingest: `MtpState`'s
+required tensors name a DENSE FFN, while this head's is MoE.
+
 ## Batched verify and speculative decoding
 
 Not a parity claim. Swift has no speculative decoding. **Full write-up,

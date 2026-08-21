@@ -768,6 +768,39 @@ TURBOSPARK_TERNARY_INSTALL_DIR=~/models/ternary27b.gturbo \
 TURBOSPARK_TERNARY_INSTALL_DIR=~/models/ternary27b.gturbo \
   cargo test -p turbospark-bench --test ternary_memory_oracle --release -- --ignored --nocapture
 
+# ORNITH-1.5, two checkpoints of the SAME shipped architectures and three
+# installs. Neither is a new family: the 35B derives `qwen_gdn_moe_35b_a3b()`
+# field for field from its HF config AND from llama.cpp's GGUF metadata
+# independently, and the 9B is the dense half at a new shape. Install them:
+TURBOSPARK_ORNITH9B_INSTALL_DIR=~/models/ornith9b.gturbo \
+  cargo test -p turbospark-repack --test ornith_install_network --release -- --ignored --nocapture installs_the_real_ornith_9b
+TURBOSPARK_ORNITH35B_GGUF_INSTALL_DIR=~/models/ornith35b-gguf.gturbo \
+  cargo test -p turbospark-repack --test ornith_install_network --release -- --ignored --nocapture installs_the_real_ornith_35b
+
+# The INT4-affine 35B, which is the one to prefer: 1.63-1.67x the Q8_0
+# install's decode at half the expert stride and half the disk, and the only
+# one that clears `speculation_blocker`'s dtype arm (it still cannot draft --
+# the publisher's MLX conversion drops `mtp.*`, like mlx-community's Qwen3.8
+# one). Q8_0 rather than Q4_K_M on the two GGUF rows is FORCED, not preferred:
+# this family's V-head de-interleave runs on the COLUMNS of
+# `linear_attn.out_proj` and a 128-column head is half a 256-element K-quant
+# superblock (`crates/repack` Gotcha 7).
+TURBOSPARK_ORNITH35B_INSTALL_DIR=~/models/ornith35b.gturbo \
+  cargo test -p turbospark-repack --test ornith_mlx_install_network --release -- --ignored --nocapture
+
+# Their four gates. The 9B's oracle is what VERIFIED `protocol_parameters`'
+# `qwen3_5` row, which had been placed on the tokenizer's evidence alone and
+# said so: all three cases reach endOfTurn at the shared 4,096/1,024.
+TURBOSPARK_ORNITH9B_INSTALL_DIR=~/models/ornith9b.gturbo \
+  cargo test -p turbospark-bench --test ornith9b_quality_gate --release -- --ignored --nocapture
+TURBOSPARK_ORNITH9B_INSTALL_DIR=~/models/ornith9b.gturbo \
+  cargo test -p turbospark-bench --test ornith9b_memory_oracle --release -- --ignored --nocapture
+TURBOSPARK_ORNITH35B_INSTALL_DIR=~/models/ornith35b.gturbo \
+  cargo test -p turbospark-bench --test ornith35b_quality_gate --release -- --ignored --nocapture
+TURBOSPARK_ORNITH35B_INSTALL_DIR=~/models/ornith35b.gturbo \
+  cargo test -p turbospark-bench --test ornith35b_memory_oracle --release -- --ignored --nocapture
+
+
 # Its cross-engine KL, through the SAME driver the 1-bit one uses. The
 # checkpoint name is REQUIRED and not defaulted: the two published
 # checkpoints have the same module count and the same shapes, so pairing a
