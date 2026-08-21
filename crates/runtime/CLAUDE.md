@@ -149,6 +149,29 @@ cargo test -p turbospark-runtime
    no multi-token-prediction head" and sending someone holding a working
    drafter off to download a different one.
 
+   **THE HEADLESS ARM BESIDE IT IS THE SAME ARGUMENT ON A WIDER INPUT, and it
+   was missing until 2026-08-21.** The note only ever fires for a DFlash2
+   install; every OTHER headless install still mapped a NAMED block onto
+   `MtpDraftPolicy::Fixed` and failed at OPEN. Measured on the real
+   `ornith35b`: `--speculative 2` reported "carries no multi-token-prediction
+   head ... stream an install that adds the official checkpoint's last shard",
+   sending a caller after a 4.4 GB shard that CANNOT help, because the batched
+   verify is dense-only and that install routes to 256 experts. `auto` got the
+   same install right in the same run, which is what localised it -- `auto`
+   reaches `resolve_speculation` and a named block did not. Gotcha 16's
+   architectural-blocker-before-the-missing-head ordering was correct all
+   along and simply unreachable. `DrafterChoice` carries
+   `install_has_mtp_head: Option<bool>` now and the block arm declines to ask
+   the open for a head it knows is absent. Three things about it. `Some(false)`
+   and never a bare falsy test: `None` is an unreadable index, and "nobody
+   looked" must keep failing at open with the engine's own message rather than
+   being explained by a guess. `resolve_drafter` reads the index even for an
+   EXPLICITLY named drafter, because `--speculative-drafter mtp --speculative
+   2` had the same bug by a second route -- passing the drafter through
+   untouched is not the same as not looking at the install. And the hard fail
+   is unchanged; only the reason improves, and on a DENSE headless install it
+   is the same sentence it always was.
+
 
 1. **PRODUCE WRITES LOGITS, NEVER PROBABILITIES**: `LogitProducer::produce` must return raw, unnormalized logits. `selection::select` performs softmaxing internally. Returning probabilities destroys sampling temperature reweighting (`softmax(softmax(z))`).
 2. **`produce_prefill` may skip the output head, `produce` never may.** The prefill loop in `raw_completion.rs` calls `produce_prefill` for every prompt token but the last, because only the last one's logits are read. `RealForwardRunner` implements that by skipping the final norm, full-vocab GEMV, softcap, and host readback. Any producer overriding it must still advance every other per-token side effect (KV cache, position, command buffer commit AND wait) exactly as `produce` does: the buffer wait is what stops the next token overwriting scratch the GPU is still reading. Unrelated to `ChunkedPrefillRunner::prefill_chunk`, which does produce usable logits.

@@ -61,6 +61,12 @@ pub enum SpeculativeDrafter {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DrafterChoice {
     pub drafter: SpeculativeDrafter,
+    /// Whether the install carries an MTP head, as far as [`resolve_drafter`]
+    /// could tell. `None` means it could not tell -- an unreadable index --
+    /// and is deliberately NOT folded into `Some(false)`: "there is no head"
+    /// and "nobody looked" license different things, and only the first one
+    /// licenses [`draft_policies`] declining to ask the open for one.
+    pub install_has_mtp_head: Option<bool>,
     /// `Some` only for a DFlash2-carrying install under `auto`. Preferred
     /// over the engine's own blocker as the disabled reason, because that
     /// one would say "carries no multi-token-prediction head" -- true, and
@@ -112,20 +118,34 @@ pub enum SpeculationPlan {
 /// An unreadable index resolves to `Mtp` rather than failing: this function
 /// picks a drafter, and `open` is entitled to be the one that refuses a
 /// broken install.
+///
+/// **THE INDEX IS READ WHATEVER THE REQUEST, and that is not the same
+/// question as which drafter to pick.** An explicit ask is still passed
+/// through untouched -- naming a drafter is a promise the caller made to
+/// themselves -- but `install_has_mtp_head` is recorded either way, because
+/// [`draft_policies`] needs it to avoid asking the open for a head that is
+/// not there, and a caller who named BOTH a drafter and a block is exactly
+/// the one that used to get the wrong reason. It costs one read of the
+/// resident index, which is kilobytes and which `open` is about to do again
+/// regardless.
 pub fn resolve_drafter(requested: SpeculativeDrafter, model_dir: &Path) -> DrafterChoice {
+    let index = model_io::load_resident_index(&model_dir.join("model_weights.bin")).ok();
+    let install_has_mtp_head = index.as_ref().map(install_has_mtp_head);
     let plain = |drafter| DrafterChoice {
         drafter,
+        install_has_mtp_head,
         note: None,
     };
     if requested != SpeculativeDrafter::Auto {
         return plain(requested);
     }
-    let Ok(index) = model_io::load_resident_index(&model_dir.join("model_weights.bin")) else {
+    let Some(index) = index else {
         return plain(SpeculativeDrafter::Mtp);
     };
-    if !install_has_mtp_head(&index) && install_has_dflash(&index) {
+    if install_has_mtp_head == Some(false) && install_has_dflash(&index) {
         return DrafterChoice {
             drafter: SpeculativeDrafter::Mtp,
+            install_has_mtp_head,
             note: Some(
                 // NAMES BOTH SPELLINGS, because there are three front ends
                 // and one of them has no command line: a GUI driving
@@ -160,12 +180,43 @@ pub fn resolve_drafter(requested: SpeculativeDrafter, model_dir: &Path) -> Draft
 /// checkpoint's last shard" -- which sends someone who is holding a working
 /// drafter off to download a different one. `Off` lets the open succeed so
 /// [`resolve_speculation`] can refuse with the note, which names the flag.
+///
+/// **THE HEADLESS ARM IS THAT SAME ARGUMENT ON A WIDER INPUT, and the two are
+/// deliberately not collapsed into one condition.** The `note` arm asks "has
+/// the decision already been made"; the headless arm asks "is there a head to
+/// ask the open for at all". They agree on a DFlash2-only install and part
+/// company on every other headless one -- which is exactly where this was
+/// wrong. Measured 2026-08-21 on the real `ornith35b` install: `--speculative
+/// 2` reached `MtpDraftPolicy::Fixed`, failed at OPEN with "carries no
+/// multi-token-prediction head ... stream an install that adds the official
+/// checkpoint's last shard", and so sent a caller after a 4.4 GB shard that
+/// CANNOT help -- the batched verify is dense-only and this install routes to
+/// 256 experts, which no checkpoint changes. `auto` got the same install
+/// right, because `auto` reaches [`resolve_speculation`] and a named block
+/// did not. `speculation_blocker` has always reported the ARCHITECTURAL
+/// obstacle ahead of the missing head (`crates/runtime/CLAUDE.md` Gotcha 16);
+/// it was simply never reached, because the open failed first. `Off` lets the
+/// open succeed so it is.
+///
+/// **The hard fail is UNCHANGED.** `resolve_speculation` still returns `Err`
+/// for a named block it cannot serve -- a caller who named a block is
+/// measuring, and a run that quietly did not speculate is the number that
+/// ends up in a table. Only the reason improves, and on a DENSE headless
+/// install it is the SAME sentence as before, because that is what
+/// `speculation_blocker` returns once its architectural checks pass.
 pub fn draft_policies(choice: &DrafterChoice, speculation: Speculation) -> DraftPolicies {
     match choice.drafter {
         SpeculativeDrafter::Mtp => DraftPolicies::mtp(match speculation {
             Speculation::Off => MtpDraftPolicy::Off,
             _ if choice.note.is_some() => MtpDraftPolicy::Off,
             Speculation::Auto => MtpDraftPolicy::Auto,
+            // `Some(false)` and never a bare falsy test: an index nobody
+            // could read is `None`, and that has to keep asking for the head
+            // so a broken install still fails at open with the engine's own
+            // message rather than being explained by a guess.
+            Speculation::Block(_) if choice.install_has_mtp_head == Some(false) => {
+                MtpDraftPolicy::Off
+            }
             Speculation::Block(n) => MtpDraftPolicy::Fixed(n as usize),
         }),
         // `Auto` is resolved by `resolve_drafter` before this is called and

@@ -117,8 +117,12 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
         runtime::draft_policies(&choice, asked),
     )
     .map_err(|e| e.to_string())?;
+    // `install_has_mtp_head` is `draft_policies`' input above and nothing this
+    // binary prints, so it is dropped by name rather than with a `..` -- a
+    // wildcard here would silently swallow the next field somebody adds.
     let DrafterChoice {
         drafter,
+        install_has_mtp_head: _,
         note: drafter_note,
     } = choice;
 

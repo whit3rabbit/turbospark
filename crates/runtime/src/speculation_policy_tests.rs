@@ -61,6 +61,46 @@ fn an_explicit_drafter_is_never_re_resolved() {
     }
 }
 
+/// **NOT RE-RESOLVING THE DRAFTER IS NOT THE SAME AS NOT LOOKING AT THE
+/// INSTALL, and conflating the two is what left `--speculative-drafter mtp
+/// --speculative 2` reporting the wrong obstacle.** The drafter is passed
+/// through untouched -- that is the test above -- while
+/// `install_has_mtp_head` is recorded either way, because `draft_policies`
+/// needs it to avoid asking the open for a head that is not there.
+///
+/// The fixture is dflash-only, so it is headless, so `Some(false)` is the
+/// answer and `None` (the old behaviour on this path, which read the index
+/// for nobody) is distinguishable from it.
+#[test]
+fn an_explicit_drafter_still_records_whether_the_install_has_a_head() {
+    let dir = std::env::temp_dir().join(format!(
+        "turbospark-explicit-head-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    turbospark_repack::build_synthetic_qwen_gdn_dense_install_with_dflash(
+        &dir,
+        512,
+        4,
+        "drafter-toy-explicit",
+        4,
+    )
+    .expect("synthetic dflash install");
+
+    for named in [SpeculativeDrafter::Mtp, SpeculativeDrafter::Dflash] {
+        let choice = resolve_drafter(named, &dir);
+        assert_eq!(choice.drafter, named, "the ask is still honoured");
+        assert_eq!(
+            choice.install_has_mtp_head,
+            Some(false),
+            "an explicit ask must still read the index"
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// An install whose index cannot be read resolves to `Mtp` rather than
 /// failing: this function picks a drafter, and `open` is entitled to be the
 /// one that refuses a broken install. No note either, so the message such a
@@ -73,6 +113,11 @@ fn an_unreadable_index_resolves_to_the_pre_existing_default() {
     );
     assert_eq!(choice.drafter, SpeculativeDrafter::Mtp);
     assert_eq!(choice.note, None);
+    // UNKNOWN, not "no head". `draft_policies` keys the headless arm on
+    // `Some(false)` precisely so this case keeps asking the open for the
+    // head and failing there, with the engine's message about the broken
+    // install rather than a guess about its contents.
+    assert_eq!(choice.install_has_mtp_head, None);
 }
 
 /// **DFLASH2 IS DETECTED AND DELIBERATELY NOT ENABLED**, which is the
@@ -120,6 +165,7 @@ fn auto_detects_dflash_but_leaves_it_off() {
         SpeculativeDrafter::Mtp,
         "auto must not enable dflash: it is 0.96x on prose"
     );
+    assert_eq!(choice.install_has_mtp_head, Some(false));
     let note = choice.note.expect("a detected drafter must be reported");
     // BOTH spellings, one per kind of front end. `crates/ffi` has no
     // command line, so a note naming only the flag is an instruction a GUI
@@ -176,6 +222,9 @@ fn an_install_with_both_drafters_keeps_the_mtp_head_and_says_nothing() {
         choice.note, None,
         "the MTP head is being used, so there is nothing to explain"
     );
+    // The one fixture here that reads `Some(true)`, which is what keeps the
+    // headless arm from being satisfiable by every install at once.
+    assert_eq!(choice.install_has_mtp_head, Some(true));
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -297,6 +346,10 @@ fn a_noted_dflash_install_opens_with_both_drafters_off() {
 
     let noted = DrafterChoice {
         drafter: SpeculativeDrafter::Mtp,
+        // A dflash-only install: no head, which is ALSO what the headless arm
+        // keys on. The two conditions agree here and part company below,
+        // which is why the plain contrast case sets `Some(true)`.
+        install_has_mtp_head: Some(false),
         note: Some("carries a DFlash2 drafter".to_string()),
     };
     for asked in [Speculation::Auto, Speculation::Block(2)] {
@@ -311,8 +364,15 @@ fn a_noted_dflash_install_opens_with_both_drafters_off() {
     // The contrast that makes the arm above discriminating: the SAME drafter
     // with no note does ask for the head, so a mutation deleting the note
     // clause changes this pair rather than nothing.
+    //
+    // It has to carry a HEAD (`Some(true)`) to be that contrast now. With
+    // `Some(false)` the headless arm would produce `Off` too and the pair
+    // would pass with the note clause deleted -- the fixture-must-discriminate
+    // rule (AGENTS.md Gotchas 48, 50, 51) applying to a second condition on
+    // the same match.
     let plain = DrafterChoice {
         drafter: SpeculativeDrafter::Mtp,
+        install_has_mtp_head: Some(true),
         note: None,
     };
     assert_eq!(
@@ -328,9 +388,104 @@ fn a_noted_dflash_install_opens_with_both_drafters_off() {
     // carrying both never opens both drafters' state.
     let dflash = DrafterChoice {
         drafter: SpeculativeDrafter::Dflash,
+        install_has_mtp_head: Some(false),
         note: None,
     };
     let policies = super::draft_policies(&dflash, Speculation::Block(4));
     assert_eq!(policies.mtp, MtpDraftPolicy::Off);
     assert_eq!(policies.dflash, DflashDraftPolicy::Fixed(4));
+}
+
+/// **A NAMED BLOCK ON A HEADLESS INSTALL MUST NOT ASK THE OPEN FOR A HEAD,
+/// or the open fails first and names the wrong obstacle.**
+///
+/// Measured 2026-08-21 on the real `ornith35b` install: `--speculative 2`
+/// reached `MtpDraftPolicy::Fixed`, failed at open, and reported "carries no
+/// multi-token-prediction head ... stream an install that adds the official
+/// checkpoint's last shard" -- sending a caller after a 4.4 GB shard that
+/// cannot help, because the batched verify is dense-only and that install
+/// routes to 256 experts. `auto` got the same install right on the same run,
+/// which is what localised it: `auto` reaches `resolve_speculation` and a
+/// named block did not.
+///
+/// This is the `note` arm's argument on a wider input, so the two conditions
+/// are checked apart. The note covers a DFlash2-only install; this covers
+/// every OTHER headless one, which is where nothing covered it.
+#[test]
+fn a_named_block_on_a_headless_install_lets_the_open_succeed() {
+    use crate::families::qwen::MtpDraftPolicy;
+
+    let headless = DrafterChoice {
+        drafter: SpeculativeDrafter::Mtp,
+        install_has_mtp_head: Some(false),
+        note: None,
+    };
+    assert_eq!(
+        super::draft_policies(&headless, Speculation::Block(2)).mtp,
+        MtpDraftPolicy::Off,
+        "a block on a known-headless install must not be asked of the open"
+    );
+    // `Auto` is UNCHANGED and must stay so: `MtpDraftPolicy::Auto` already
+    // builds a head iff one is present, so it never had this failure and
+    // routing it through `Off` would lose nothing but say less.
+    assert_eq!(
+        super::draft_policies(&headless, Speculation::Auto).mtp,
+        MtpDraftPolicy::Auto
+    );
+
+    // **AN UNREADABLE INDEX IS `None` AND STILL ASKS.** "There is no head"
+    // and "nobody could look" license different things: a broken install has
+    // to keep failing at open with the engine's own message rather than being
+    // explained by a guess this module is not entitled to make. Folding
+    // `None` into `Some(false)` would pass every assertion above and quietly
+    // change that.
+    let unknown = DrafterChoice {
+        drafter: SpeculativeDrafter::Mtp,
+        install_has_mtp_head: None,
+        note: None,
+    };
+    assert_eq!(
+        super::draft_policies(&unknown, Speculation::Block(2)).mtp,
+        MtpDraftPolicy::Fixed(2)
+    );
+}
+
+/// The other half of the same fix: the routing above is only worth anything
+/// if what it reaches names the ARCHITECTURAL obstacle ahead of the missing
+/// head, which `speculation_blocker` has always done and nothing reached.
+///
+/// Pinned as a pair, because the MoE case is the one that was wrong and the
+/// dense case is the one that must not change: on a dense headless install
+/// the head really is the obstacle and the shard really would fix it, so that
+/// message is correct and stays word for word.
+#[test]
+fn a_headless_moe_install_is_refused_for_its_architecture_not_its_head() {
+    let moe = resolve_speculation(
+        Speculation::Block(2),
+        SpeculativeDrafter::Mtp,
+        Some(MOE.to_string()),
+        true,
+    )
+    .expect_err("a named block on a MoE install must fail");
+    assert!(
+        moe.contains("dense-only") && moe.contains("128 experts"),
+        "a MoE install must be refused for its architecture, got: {moe}"
+    );
+    assert!(
+        !moe.contains("multi-token-prediction head"),
+        "no checkpoint helps here, so the head must not be named: {moe}"
+    );
+
+    // The contrast: dense and headless, where naming the head is right.
+    let dense = resolve_speculation(
+        Speculation::Block(2),
+        SpeculativeDrafter::Mtp,
+        Some(NO_HEAD.to_string()),
+        true,
+    )
+    .expect_err("a named block on a headless install must fail");
+    assert!(
+        dense.contains("multi-token-prediction head"),
+        "got: {dense}"
+    );
 }
