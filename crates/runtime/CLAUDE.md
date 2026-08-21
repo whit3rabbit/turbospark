@@ -47,7 +47,11 @@ crates/runtime/
 |   |   |   +-- moe.rs          # Shared + routed MoE pass encoding
 |   |   |   +-- mtp.rs          # The MTP head's draft step (MtpState, its own one-layer KV)
 |   |   |   +-- dflash.rs       # DFlash2 BLOCK drafter: state, shape derivation, policy
-|   |   |   +-- dflash_draft.rs # its context-KV write, one-pass block forward, host selector
+|   |   |   +-- dflash_draft/   # DFlash2 draft passes and candidate selection
+|   |   |   |   +-- mod.rs      # Draft round orchestration, cursor rewind, probe methods
+|   |   |   |   +-- context_kv.rs # Context-KV projection pass
+|   |   |   |   +-- forward.rs  # One-pass block forward pass
+|   |   |   |   \-- select.rs   # Host candidate selection & codebook helpers
 |   |   |   \-- state.rs        # RealQwenState & the dense/MoE split
 |   |   \-- synthetic/          # Synthetic fallback decode flow
 |   |       +-- mod.rs          # Synthetic entry point & host MoE FFN

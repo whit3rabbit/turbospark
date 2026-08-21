@@ -1,5 +1,5 @@
 //! The DFlash2 block-diffusion drafter's state and context-KV half
-//! (`docs/DFLASH2.md`). The draft forward itself is `dflash_draft.rs`.
+//! (`docs/DFLASH2.md`). The draft forward itself is `dflash_draft/`.
 //!
 //! Two facts about this drafter organize everything below:
 //!
