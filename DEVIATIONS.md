@@ -1545,13 +1545,30 @@ That last part is the deviation worth stating. `--speculative auto` DETECTS
 the drafter off the resident index and reports it, naming
 `--speculative-drafter dflash`, but resolves to the MTP path and allocates no
 DFlash2 state. Measured through the shipped generation loop over 600-token
-generations on `Qwen3.8-27B`: block 2 runs **1.30-1.47x on a predictable code
-prompt and 0.88-0.97x on prose**, and the trained block of 8 runs 0.84x and
-0.48x. A default that makes the common workload slower and costs +17.4%
-J/token has to be asked for. The MTP head keeps its `auto`; its measurement is
-the opposite way up. `turbospark-bench`'s own `--speculative` is the exception
-and drives whichever drafter the index carries, because the harness that
-measures a knob is the one caller that must be able to turn it on.
+generations on `Qwen3.8-27B`, THREE workloads and three runs
+(`docs/DFLASH2.md` section 6): block 2 runs **1.32-1.86x on a predictable
+code prompt, 1.46-2.07x on multi-step arithmetic and 0.90-1.26x on prose**,
+while the trained block of 8 runs 0.81-0.93x, 1.06-1.21x and 0.42-0.47x. A
+default that makes the common workload slower and costs +17.4% J/token has to
+be asked for. The MTP head keeps its `auto`; its measurement is the opposite
+way up.
+
+**THREE CALLERS EXPOSE THE FLAG AND THEY DIFFER ON PURPOSE.**
+`turbospark-check` is the shape above. `turbospark-bench` drives whichever
+drafter the index carries rather than detecting-without-enabling, because the
+harness that MEASURES a knob is the one caller that must be able to turn it on
+(AGENTS.md Gotcha 35). `turbospark-server` takes the same two flags with the
+CLI's meanings, resolved once at open through the shared
+`runtime::speculation_policy` -- but its second condition is per REQUEST
+rather than per process, since acceptance is exact only at temperature 0 and
+every request carries its own. A sampled request falls back to the sequential
+loop silently, so a server started with `--speculative` speculates on a
+MINORITY of its traffic.
+
+**`crates/ffi` AND THE SWIFT PACKAGE EXPOSE NO SPECULATION AT ALL**, which is
+a gap rather than a decision: nothing in `turbospark.h` names a drafter or a
+block, so a native GUI host decodes sequentially whatever the install carries.
+Wiring it is the same three decisions the other two callers already share.
 
 **IT IS NOT BIT-IDENTICAL TO A SEQUENTIAL DECODE OVER A LONG GENERATION, and
 that claim used to be made.** A batched verify runs `dequant_int4_gemm_simd`
