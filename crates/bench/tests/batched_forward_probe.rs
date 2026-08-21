@@ -49,8 +49,35 @@
 //! layers, the FFN, the head, every GEMM. It is blind to two things only:
 //! the q/k path, since a softmax over one key returns V whatever the score,
 //! and carried history, since there is none. History is separately excluded
-//! (`gdn_parity`'s carried-state case). **What is left is the q/k path and
-//! the multi-key reduction that consumes it.**
+//! (`gdn_parity`'s carried-state case).
+//!
+//! **THE ONSET IS A STEP AND NOT A DRIFT, which narrows it further and rules
+//! out the obvious remaining suspect.** One row at each position, history
+//! built by `produce` in BOTH arms so only the row under test differs:
+//!
+//!   keys  1     0/248320 differ
+//!   keys  2     0/248320 differ
+//!   keys  3  224516/248320 differ, worst 2.7e-2
+//!   keys  4  188467/248320 differ
+//!   keys  5  149951/248320 differ
+//!   keys  6  155934/248320 differ
+//!
+//! Two keys is BIT-IDENTICAL, and a two-key softmax is not degenerate -- it
+//! exposes the score in full -- so q, k and V are all exact at that point,
+//! and so is everything upstream of them. Then three keys differs at full
+//! magnitude. Nothing accumulates gradually; it switches on.
+//!
+//! And it is NOT the split-KV combine, which is the natural guess for a
+//! threshold in the key count: `MIN_POSITIONS_PER_CHUNK` is 16, so
+//! `chunks_for` returns 1 for every span in this table and the cross-chunk
+//! max and denominator pass does not run at any of them. Both paths also
+//! dispatch the same `encode_attention_decode` with argument-for-argument
+//! identical spans, the same per-head q/k norm at the same epsilon, and the
+//! same `rope_neox_subdim` at the same theta and rotary dim.
+//!
+//! **So the next step is a per-layer bisect and not more elimination by
+//! reading.** What is wanted is the first layer at which the two residual
+//! streams part at span 3, which needs a readback this probe does not have.
 //!
 //! ```sh
 //! TURBOSPARK_PROBE_INSTALL_DIR=~/models/qwen38-27b-mtp.gturbo \
@@ -204,6 +231,38 @@ fn a_batched_forward_at_one_row_is_compared_against_a_sequential_step() {
         &zero_seq,
         &zero_batched,
     );
+    // --- THE SHAPE OF THE ONSET: positions 0..5, one row each ---
+    //
+    // Position 0 agreeing and position 22 differing leaves two shapes, and
+    // they point at different components. If the difference appears in FULL
+    // the moment there are two keys, it is the multi-key reduction -- the
+    // split-KV combine has a cross-chunk max and denominator that a
+    // single-key softmax skips entirely. If it GROWS with history instead,
+    // something is accumulating and the per-step difference is small.
+    println!("onset (M=1, one row at each position, fresh each time):");
+    for p in 0..6usize {
+        runner.reset();
+        let mut a = vec![LogitValue::from_f32(0.0); vocab];
+        for (i, &token) in prompt[..=p].iter().enumerate() {
+            runner.produce(token, i, &mut a).expect("produce");
+        }
+        runner.reset();
+        let mut b = vec![LogitValue::from_f32(0.0); vocab];
+        for (i, &token) in prompt[..p].iter().enumerate() {
+            runner.produce(token, i, &mut b).expect("produce");
+        }
+        runner
+            .produce_batched(&prompt[p..=p], p, &mut b)
+            .expect("batched");
+        compare(
+            &format!("position {p} ({} keys)", p + 1),
+            &bits(&a),
+            &bits(&b),
+            &a,
+            &b,
+        );
+    }
+
     runner.reset();
     for (i, &token) in prompt.iter().enumerate() {
         runner.produce(token, i, &mut scratch).expect("produce");
