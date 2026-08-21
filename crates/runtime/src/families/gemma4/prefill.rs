@@ -27,6 +27,16 @@ impl RealForwardRunner {
                 "prefill_chunk called with an empty chunk".to_string(),
             ));
         }
+        // The ONE place the batched scratch is allocated, and it is here
+        // rather than at open so a run that never chunks its prefill never
+        // pays for it (`BatchedPrefillScratch`). Idempotent, and ahead of the
+        // loop so every `RealGemmaState::batched()` below it is infallible.
+        let arch = self.arch.clone();
+        let context = &mut self.context;
+        self.real
+            .as_mut()
+            .expect("real state present")
+            .ensure_batched(context, &arch)?;
         let mut offset = 0usize;
         while offset < tokens.len() {
             let take = (tokens.len() - offset).min(MAX_PREFILL_BATCH);

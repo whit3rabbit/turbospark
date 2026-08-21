@@ -77,6 +77,7 @@ impl RealForwardRunner {
             .real
             .as_ref()
             .expect("real state present")
+            .batched()
             .batch_h1
             .clone();
 
@@ -140,6 +141,7 @@ impl RealForwardRunner {
             .real
             .as_ref()
             .expect("real state present")
+            .batched()
             .wide_blobs
             .clone();
         let t_bind = Instant::now();
@@ -256,12 +258,12 @@ impl RealForwardRunner {
             let rw_off = (sub_start * top_k * 2) as u64;
             let routes_off = (sub_start * top_k * 16) as u64;
             gpu::write_buffer_bytes(
-                &real.batch_routing_w,
+                &real.batched().batch_routing_w,
                 rw_off as usize,
                 &f16_slice_to_le_bytes(&routing16),
             );
             gpu::write_buffer_bytes(
-                &real.batch_routes,
+                &real.batched().batch_routes,
                 routes_off as usize,
                 &gpu::MoePrefillRoute::bytes(&routes),
             );
@@ -277,8 +279,8 @@ impl RealForwardRunner {
                 &wide,
                 offsets,
                 (&real.routed_x, x_off),
-                (&real.batch_acts, acts_off),
-                (&real.batch_routes, routes_off),
+                (&real.batched().batch_acts, acts_off),
+                (&real.batched().batch_routes, routes_off),
                 hidden as u32,
                 moe_inter,
                 top_k as u32,
@@ -291,10 +293,10 @@ impl RealForwardRunner {
                 &pass,
                 &wide,
                 offsets,
-                (&real.batch_acts, acts_off),
-                (&real.batch_routing_w, rw_off),
-                (&real.batch_routes, routes_off),
-                (&real.batch_y, x_off),
+                (&real.batched().batch_acts, acts_off),
+                (&real.batched().batch_routing_w, rw_off),
+                (&real.batched().batch_routes, routes_off),
+                (&real.batched().batch_y, x_off),
                 hidden as u32,
                 moe_inter,
                 top_k as u32,
@@ -325,9 +327,9 @@ impl RealForwardRunner {
                 gpu::encode_rms_norm_bf16w(
                     &mut self.context,
                     &pass,
-                    (&real.batch_y, row_off),
+                    (&real.batched().batch_y, row_off),
                     post_ffn2,
-                    (&real.batch_y, row_off),
+                    (&real.batched().batch_y, row_off),
                     hidden as u32,
                     RMS_EPS,
                 )
@@ -336,7 +338,7 @@ impl RealForwardRunner {
                     &mut self.context,
                     &pass,
                     (&batch_h1, row_off),
-                    (&real.batch_y, row_off),
+                    (&real.batched().batch_y, row_off),
                     hidden as u32,
                 )
                 .map_err(gpu_err)?;
