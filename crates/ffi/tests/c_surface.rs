@@ -142,6 +142,14 @@ fn session_info_is_json_the_swift_side_can_decode() {
     assert_eq!(json["maxContext"], 4096);
     assert!(json["vocabSize"].as_u64().unwrap() > 0);
     assert!(json.get("reasoningSupport").is_some());
+    // The speculation block is PRESENT AND NULL rather than absent, which
+    // is the difference between "this session does not speculate" and "this
+    // build predates the field". A scripted engine implements no drafter,
+    // so null is the right answer here and there is no reason to report.
+    let speculation = json.get("speculation").expect("speculation is reported");
+    assert!(speculation["block"].is_null());
+    assert!(speculation["drafter"].is_null());
+    assert!(speculation["reason"].is_null());
 }
 
 // ------------------------------------------------------------- generation

@@ -382,6 +382,11 @@ pub fn session_for_testing(
         cancel: Arc::new(AtomicBool::new(false)),
         max_context,
         rate: runtime::RateControl::default(),
+        // A scripted producer replays logits and implements no drafter, so
+        // there is nothing to speculate WITH. `None` rather than a policy
+        // decision: this is the absence of a capability, not a caller's
+        // choice, which is why the reported `reason` is null too.
+        speculation_block: None,
         info: wire::SessionInfo {
             model_path: "<scripted>".to_string(),
             family: "<scripted>".to_string(),
@@ -392,6 +397,7 @@ pub fn session_for_testing(
             vocab_size,
             dialect: format!("{:?}", tokenizer.dialect),
             reasoning_support: "none".to_string(),
+            speculation: wire::SpeculationInfo::default(),
         },
         tokenizer,
     }

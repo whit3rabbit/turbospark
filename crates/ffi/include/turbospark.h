@@ -135,6 +135,18 @@ void ts_string_free(char *s);
  *                       null ASKS THE OS, so Low Power Mode selects
  *                       efficiency. Name one explicitly when measuring.
  *   maxTokensPerSec   number | null
+ *   speculation       "off" | "auto" | number | "<number>" | null
+ *                       (default auto). Resolved at OPEN, because that is
+ *                       where the drafter's state is allocated. A NAMED
+ *                       block that cannot be served fails this call; "auto"
+ *                       that cannot be served opens and reports why in
+ *                       sessionInfo.speculation.
+ *   speculativeDrafter "auto" | "mtp" | "dflash" | null
+ *                       (default auto). "auto" ENABLES an MTP head and only
+ *                       REPORTS a DFlash2 one, which is measured rather
+ *                       than stylistic: DFlash2 reads 1.43-1.50x on code
+ *                       and math and 0.96x throughput at +17.4% J/token on
+ *                       PROSE, so it is opt-in.
  *
  * Opening is expensive: it maps gigabytes and compiles Metal pipelines.
  * Open once and keep the handle.
@@ -167,7 +179,8 @@ void ts_session_cancel(const TsSession *s);
  *
  *   { "modelPath", "family", "maxContext", "trainedContext",
  *     "pastTrainedContext", "expertCacheSlots", "vocabSize", "dialect",
- *     "reasoningSupport" }
+ *     "reasoningSupport",
+ *     "speculation": { "block", "drafter", "reason" } }
  *
  * maxContext and expertCacheSlots are the RESOLVED values, never what was
  * asked for: under "auto" the request carries no number, and the KV cache
@@ -177,6 +190,18 @@ void ts_session_cancel(const TsSession *s);
  * reasoningSupport is "level" | "toggleOnly" | "none". A GUI should disable
  * its reasoning picker on "none" and grey out the LEVELS on "toggleOnly",
  * where asking for one turns thinking on but sets no level.
+ *
+ * speculation.block is the resolved block size, or null when this session
+ * does not draft ahead; that null IS the "is it on" test, and drafter
+ * ("mtp" | "dflash") is non-null exactly when block is. speculation.reason
+ * says why it is off when a caller might have expected otherwise, and is
+ * null both when they asked for "off" and when it is on.
+ *
+ * A NON-NULL BLOCK IS A STATEMENT ABOUT THE SESSION, NOT THE NEXT TURN.
+ * Acceptance is argmax(target) == proposal, exact only at temperature 0, so
+ * a sampled turn decodes sequentially whatever this says -- silently, and
+ * by design: this binding's own sampling default is 0.2, so a per-turn
+ * warning would fire on the normal case. Send temperature 0 to speculate.
  */
 int32_t ts_session_info_json(const TsSession *s, char **out);
 

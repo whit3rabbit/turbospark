@@ -121,9 +121,16 @@ fn auto_detects_dflash_but_leaves_it_off() {
         "auto must not enable dflash: it is 0.96x on prose"
     );
     let note = choice.note.expect("a detected drafter must be reported");
+    // BOTH spellings, one per kind of front end. `crates/ffi` has no
+    // command line, so a note naming only the flag is an instruction a GUI
+    // caller cannot act on.
     assert!(
         note.contains("--speculative-drafter dflash"),
         "the note must name the flag that runs it, got: {note}"
+    );
+    assert!(
+        note.contains("speculativeDrafter"),
+        "the note must name the C ABI option too, got: {note}"
     );
 
     let _ = std::fs::remove_dir_all(&dir);

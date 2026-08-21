@@ -58,6 +58,17 @@ pub struct Session {
     /// Mode toggling mid-conversation change the pace for reasons the caller
     /// never asked about.
     pub(crate) rate: runtime::RateControl,
+    /// How many tokens a speculative round proposes, or `None` when this
+    /// session does not draft ahead. Resolved at open, where the drafter's
+    /// state is allocated.
+    ///
+    /// **A block here is necessary and not sufficient**: acceptance is
+    /// `argmax(target) == proposal`, exact only at temperature 0, so
+    /// `generate` gates on the TURN's shaping as well. A plain `usize`
+    /// rather than a `runtime::SpeculationPlan` because that type is
+    /// macOS-only and this struct is not; the human-readable half of the
+    /// plan is already carried in `info.speculation`.
+    pub(crate) speculation_block: Option<usize>,
 }
 
 impl Session {

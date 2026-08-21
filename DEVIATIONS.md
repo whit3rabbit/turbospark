@@ -1553,7 +1553,7 @@ default that makes the common workload slower and costs +17.4% J/token has to
 be asked for. The MTP head keeps its `auto`; its measurement is the opposite
 way up.
 
-**THREE CALLERS EXPOSE THE FLAG AND THEY DIFFER ON PURPOSE.**
+**FOUR CALLERS EXPOSE IT AND THEY DIFFER ON PURPOSE.**
 `turbospark-check` is the shape above. `turbospark-bench` drives whichever
 drafter the index carries rather than detecting-without-enabling, because the
 harness that MEASURES a knob is the one caller that must be able to turn it on
@@ -1565,10 +1565,31 @@ every request carries its own. A sampled request falls back to the sequential
 loop silently, so a server started with `--speculative` speculates on a
 MINORITY of its traffic.
 
-**`crates/ffi` AND THE SWIFT PACKAGE EXPOSE NO SPECULATION AT ALL**, which is
-a gap rather than a decision: nothing in `turbospark.h` names a drafter or a
-block, so a native GUI host decodes sequentially whatever the install carries.
-Wiring it is the same three decisions the other two callers already share.
+**`crates/ffi` AND THE SWIFT PACKAGE ARE THE FOURTH CALLER SINCE 2026-08-21,
+and they take the SERVER's shape rather than the CLI's.** `ts_session_open`
+accepts `speculation` (`"off"` | `"auto"` | a block) and `speculativeDrafter`
+(`auto` | `mtp` | `dflash`) as JSON options, so adding them was a field rather
+than an ABI break; `ts_session_info_json` reports what they resolved to under
+`speculation: { block, drafter, reason }`, with a null block meaning off and
+`reason` carrying the note `auto` would otherwise swallow. The three decisions
+are `runtime::speculation_policy`'s, unrestated.
+
+It follows the server on the one axis where the two front ends genuinely
+differ: a GUI's temperature belongs to the TURN, so the install half is
+settled at open and a sampled turn falls back to the sequential loop
+SILENTLY. This binding's own sampling default is 0.2, which makes sampled the
+normal case, so a caller has to send temperature exactly 0 to reach a batched
+verify -- and the session-level answer is said once, in `sessionInfo`, rather
+than once per turn.
+
+Verified end to end through the SwiftPM target on three install shapes
+(2026-08-21, real installs): `qwen38-27b-mtp` reports `block 2 via mtp` under
+plain `auto` and a greedy turn decodes coherently through the batched verify;
+`qwen38-27b-dflash2` reports off under `auto` with the opt-in note and turns
+on at block 2 when `speculativeDrafter: "dflash"` is asked for; `ornith35b`
+(MoE) reports off carrying the engine's dense-only blocker. The note now names
+BOTH spellings -- the flag and the option key -- because a GUI cannot pass a
+command-line flag.
 
 **IT IS NOT BIT-IDENTICAL TO A SEQUENTIAL DECODE OVER A LONG GENERATION, and
 that claim used to be made.** A batched verify runs `dequant_int4_gemm_simd`

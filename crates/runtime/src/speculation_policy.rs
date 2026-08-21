@@ -127,9 +127,17 @@ pub fn resolve_drafter(requested: SpeculativeDrafter, model_dir: &Path) -> Draft
         return DrafterChoice {
             drafter: SpeculativeDrafter::Mtp,
             note: Some(
+                // NAMES BOTH SPELLINGS, because there are three front ends
+                // and one of them has no command line: a GUI driving
+                // `crates/ffi` reads this note verbatim, and telling it to
+                // pass a flag it cannot pass is an instruction it cannot
+                // follow. The CLI and the server share the flag; the C ABI
+                // takes the same choice as an option key.
                 "this install carries a DFlash2 drafter, which auto leaves OFF: measured \
                  0.96x throughput and +17.4% J/token on prose against 1.43-1.50x on code \
-                 and math, so it is opt-in. Pass --speculative-drafter dflash to use it"
+                 and math, so it is opt-in. Select the dflash drafter to use it \
+                 (--speculative-drafter dflash, or speculativeDrafter \"dflash\" on the \
+                 C ABI)"
                     .to_string(),
             ),
         };

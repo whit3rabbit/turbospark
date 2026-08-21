@@ -1,5 +1,7 @@
 import XCTest
 
+import CTurboSpark
+
 @testable import TurboSpark
 
 /// **These tests exist to prove the HAND-WRITTEN header matches the Rust
@@ -75,6 +77,54 @@ final class SurfaceTests: XCTestCase {
         XCTAssertTrue(
             flagged.isSubset(of: installed),
             "catalog flagged \(flagged.subtracting(installed)) as installed, store disagrees")
+    }
+
+    /// Tests that a misspelled speculation option is refused by NAME, with
+    /// no model on the machine.
+    ///
+    /// **This is the only check anywhere that the two sides agree on the
+    /// speculation spellings.** The Rust unit tests call the mapper
+    /// directly, so they pass against a `turbospark.h` that documents keys
+    /// nothing reads; only encoding a Swift `OpenOptions` and handing the
+    /// JSON to the staticlib can catch that. It works without an install
+    /// because `open` maps every option BEFORE it touches the disk, so the
+    /// error naming the option outranks the error naming the path.
+    func testAMisspelledSpeculationOptionIsRefusedByName() async throws {
+        var options = OpenOptions()
+        // `.block(99)` rather than a bad string: an enum cannot misspell
+        // itself, so the value has to be one the Swift side can express and
+        // the ENGINE rejects. 99 is past the 1-15 the three front ends
+        // share, and the message must say so.
+        options.speculation = .block(99)
+        do {
+            _ = try await TurboSparkSession(
+                modelPath: "/nonexistent/model.gturbo", options: options)
+            XCTFail("a block outside the allowed range should throw")
+        } catch let error as TurboSparkError {
+            XCTAssertTrue(
+                error.message.contains("99") && error.message.contains("speculation"),
+                "expected the option and the value, got \(error.message)")
+            XCTAssertFalse(
+                error.message.contains("/nonexistent"),
+                "the option is answerable without the install and should be answered first")
+        }
+    }
+
+    /// Tests that a drafter name the engine does not know is refused.
+    func testAnUnknownDrafterIsRefusedRatherThanDefaulted() async throws {
+        // The enum cannot produce this, so it is built by hand: the point
+        // is that the RUST side refuses rather than falling back to auto,
+        // which would leave a caller thinking they had picked a drafter.
+        struct BadOptions: Encodable { let speculativeDrafter = "mpt" }
+        let json = String(decoding: try JSONEncoder().encode(BadOptions()), as: UTF8.self)
+        var out: OpaquePointer?
+        let status = "/nonexistent/model.gturbo".withCString { path in
+            json.withCString { opts in ts_session_open(path, opts, &out) }
+        }
+        XCTAssertNotEqual(status, 0)
+        XCTAssertTrue(
+            TurboSparkError.fromLastError(status).message.contains("mpt"),
+            "the message should name the misspelling")
     }
 
     /// Tests that the session peak memory footprint counter can be read.

@@ -169,6 +169,31 @@ fn clamp_max_new(session: &Session, asked: u32, prompt_len: usize) -> Result<u32
     Ok(asked.min(session.max_context - prompt_len as u32))
 }
 
+/// The block THIS TURN drafts by: the session's, kept only when the turn is
+/// deterministic.
+///
+/// **THE SECOND HALF OF THE SPECULATION DECISION IS PER TURN, and it is the
+/// one thing this binding cannot settle at open.** Acceptance is
+/// `argmax(target) == proposal`, which is exact speculative decoding at
+/// temperature 0 and biased at any other, so a sampled turn takes the
+/// sequential loop however the session resolved. That is the SERVER's shape
+/// rather than the CLI's, and for the server's reason: the CLI has one
+/// shaping per process and can settle both halves at open, while here the
+/// temperature belongs to the request.
+///
+/// It falls back SILENTLY rather than failing. This binding's own sampling
+/// default is T=0.2, so sampled is the NORMAL case -- a GUI would be told
+/// off once per turn for a setting it never sent, and refusing would turn a
+/// valid request into an error. What the caller is owed instead is the
+/// session-level answer, and that is in `sessionInfo.speculation`, said
+/// once.
+///
+/// A free function taking both inputs rather than a method, so the decision
+/// is pinnable without a session and without a 14 GB install.
+fn turn_block(session_block: Option<usize>, deterministic: bool) -> Option<usize> {
+    session_block.filter(|_| deterministic)
+}
+
 /// Runs one turn, calling `emit(kind, text, a, b)` per event.
 pub(crate) fn generate(
     session: &Session,
@@ -244,9 +269,25 @@ pub(crate) fn generate(
         Engine::Real(runner) => runner.vocab_size(),
         Engine::Scripted(_) => session.info.vocab_size,
     };
-    let result: RawDecodeResult = match &mut *engine {
+    let block = turn_block(session.speculation_block, config.shaping.is_deterministic());
+    let result: RawDecodeResult = match (&mut *engine, block) {
+        // The CONCRETE runner, which is why this sits inside the match:
+        // `SpeculativeProducer` has an associated type and cannot be
+        // reached through a `&mut dyn LogitProducer`.
         #[cfg(target_os = "macos")]
-        Engine::Real(runner) => runtime::run_raw_completion_cancellable(
+        (Engine::Real(runner), Some(block)) => runtime::run_raw_completion_speculative_cancellable(
+            runner.as_mut(),
+            &session.tokenizer,
+            &prompt_ids,
+            &config,
+            session.max_context,
+            vocab_size,
+            block,
+            &predicate,
+            &mut on_progress,
+        ),
+        #[cfg(target_os = "macos")]
+        (Engine::Real(runner), None) => runtime::run_raw_completion_cancellable(
             runner.as_mut(),
             &session.tokenizer,
             &prompt_ids,
@@ -256,7 +297,10 @@ pub(crate) fn generate(
             &predicate,
             &mut on_progress,
         ),
-        Engine::Scripted(producer) => runtime::run_raw_completion_cancellable(
+        // A scripted producer implements no drafter, so `block` is always
+        // `None` here and the arm is a plain wildcard rather than a case
+        // this could get wrong.
+        (Engine::Scripted(producer), _) => runtime::run_raw_completion_cancellable(
             producer.as_mut(),
             &session.tokenizer,
             &prompt_ids,
@@ -282,4 +326,25 @@ pub(crate) fn generate(
         content,
         reasoning: reasoning_text,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The per-turn half of the speculation decision, in all four states.
+    ///
+    /// Cheap enough to be exhaustive, and worth being: three of the four
+    /// cells are "decode sequentially" and the one that is not is the only
+    /// path in this crate that reaches a batched verify.
+    #[test]
+    fn a_turn_speculates_only_when_the_session_can_and_the_turn_is_greedy() {
+        assert_eq!(turn_block(Some(2), true), Some(2));
+        // Sampled: the session's block is DISCARDED rather than honoured,
+        // because acceptance is exact only at temperature 0.
+        assert_eq!(turn_block(Some(2), false), None);
+        // No drafter: greedy does not conjure one.
+        assert_eq!(turn_block(None, true), None);
+        assert_eq!(turn_block(None, false), None);
+    }
 }

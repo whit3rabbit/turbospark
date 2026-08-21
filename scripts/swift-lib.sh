@@ -33,5 +33,25 @@ mkdir -p "$dest"
 cp "$lib" "$dest/libturbospark_ffi.a"
 cp "$root/crates/ffi/include/turbospark.h" "$dest/turbospark.h"
 
+# **SwiftPM DOES NOT TREAT THE ARCHIVE AS A BUILD INPUT, so without this the
+# test target links the PREVIOUS staticlib and reports on code that is no
+# longer in the tree.** The `-L` path arrives as an unsafe linker flag, which
+# SwiftPM passes through without adding a dependency edge, so a `.a` that
+# changed under an unchanged set of Swift sources triggers no relink at all.
+#
+# That is not a tidiness point: `swift test` is the ONLY thing that can check
+# the hand-written header (crates/ffi/CLAUDE.md Gotcha 2), and a stale link
+# makes it check the build before the one being tested. Measured 2026-08-21
+# while mutation-checking the FFI's speculation options: two mutations of
+# `open.rs` in a row read as the FIRST one's failure, twice, and the restored
+# tree still read red until the Swift sources were touched by hand.
+#
+# Touching the sources is the cheapest correct fix. Deleting `.build` would
+# also work and costs a full rebuild of the package every time.
+find "$root/swift/TurboSpark/Sources/TurboSpark" \
+     "$root/swift/TurboSpark/Tests" \
+     "$root/swift/TurboSparkDemo/Sources" \
+     -name '*.swift' -exec touch {} +
+
 printf 'staticlib %s MiB -> %s\n' \
   "$(( $(stat -f%z "$dest/libturbospark_ffi.a") / 1048576 ))" "$dest"

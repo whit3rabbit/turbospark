@@ -48,6 +48,41 @@ pub struct OpenOptions {
     /// `efficiency`) and what a measurement harness must not.
     pub power_profile: Option<String>,
     pub max_tokens_per_sec: Option<f64>,
+    /// `"off"` | `"auto"` | a block size, as a number or a string. Absent
+    /// means `auto`, which is what both other front ends default to.
+    ///
+    /// Resolved at OPEN and not per turn, because that is where the
+    /// drafter's state is allocated and there is one engine per session --
+    /// the same reason `turbospark-server` makes it a process-level flag.
+    /// A named block that cannot be served is an ERROR from
+    /// `ts_session_open`; `auto` that cannot be served opens fine and
+    /// reports the reason in `sessionInfo.speculation`.
+    pub speculation: Option<serde_json::Value>,
+    /// `auto` | `mtp` | `dflash`. Absent means `auto`, which ENABLES an MTP
+    /// head and only REPORTS a DFlash2 one (`docs/DFLASH2.md`).
+    pub speculative_drafter: Option<String>,
+}
+
+/// What a session resolved about speculative decoding, once, at open.
+///
+/// Reported for the reason the resolved slot count is: a caller who asked
+/// for `auto` named no number, and an install carrying a drafter that
+/// decodes one token at a time with nothing said is the failure the feature
+/// was built to end.
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpeculationInfo {
+    /// How many tokens a round proposes, or null when this session does not
+    /// speculate at all. Null is the "is it on" test; there is no separate
+    /// flag to disagree with it.
+    pub block: Option<usize>,
+    /// `mtp` | `dflash`, present only when `block` is. Two drafters serve
+    /// one family with different shapes and different measured optima, so a
+    /// throughput figure is unreadable without knowing which one ran.
+    pub drafter: Option<String>,
+    /// Why speculation is off, when the caller might have expected it on.
+    /// Null when they asked for `off` and got it, and null when it is on.
+    pub reason: Option<String>,
 }
 
 /// Arguments to `ts_generate`.
@@ -144,6 +179,11 @@ pub struct SessionInfo {
     /// picker on `none` and grey out the LEVELS on `toggleOnly`, where
     /// thinking turns on but the level is dropped.
     pub reasoning_support: String,
+    /// What speculative decoding resolved to. **`block` being non-null is a
+    /// statement about this SESSION and not about the next turn**:
+    /// acceptance is exact only at temperature 0, so a sampled turn decodes
+    /// sequentially whatever this says.
+    pub speculation: SpeculationInfo,
 }
 
 /// What `ts_session_phases_json` returns: `MFERENCE_PHASES=1`'s breakdown.

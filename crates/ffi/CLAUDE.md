@@ -112,6 +112,26 @@ make swift-demo
    RESOLVED slot count is reported rather than the requested one. Do not
    "simplify" either by reading the caller's options back out.
 
+   **SPECULATION IS THE ONE PLACE IT FOLLOWS THE SERVER INSTEAD.** The three
+   decisions are the shared `runtime::speculation_policy`'s, in the same
+   order, and the drafter is resolved BEFORE the open because the policies
+   name exactly one. But `resolve_speculation` is called with
+   `deterministic: true` -- the install half is what is fixed at open, and
+   the per-turn half is `generate::turn_block`, because a GUI's temperature
+   belongs to the request the way a server's does and not to the process the
+   way the CLI's does. A sampled turn falls back SILENTLY: this binding's
+   sampling default is 0.2, so sampled is the normal case and a per-turn
+   warning would fire on it. The session-level answer is in
+   `sessionInfo.speculation` instead, said once.
+
+   Two smaller decisions inside it. Every option is MAPPED before anything
+   is read from disk, so a misspelled key outranks a bad path in the error
+   -- which is also what lets the SwiftPM target reach these spellings with
+   no install on the machine, the only kind of check Gotcha 2 admits. And
+   `Session` carries a plain `Option<usize>` block rather than a
+   `runtime::SpeculationPlan`, because that type is macOS-only and this
+   struct is not; the human-readable half already lives in `SessionInfo`.
+
 6. **`Engine::Scripted` IS ABSENT FROM THE HEADER ON PURPOSE.** It is
    reachable only through `session_for_testing` on the `rlib` face, and it
    exists so the whole generate path -- the channel split, the cancel
@@ -137,7 +157,23 @@ make swift-demo
    binary target, which resolves paths for its consumers properly. A
    two-package repository does not need the packaging step.
 
-9. **`scripts/swift-lib.sh` SETS `MACOSX_DEPLOYMENT_TARGET`, AND IT MUST
+9. **SwiftPM DOES NOT TREAT THE STATICLIB AS A BUILD INPUT, so `swift test`
+   will happily link the PREVIOUS one.** The `-L` path arrives as an unsafe
+   linker flag, which SwiftPM passes through without adding a dependency
+   edge, so an archive that changed under an unchanged set of `.swift` files
+   triggers no relink at all. That is not cosmetic here: this target is the
+   ONLY thing that can check the hand-written header (Gotcha 2), and a stale
+   link makes it check the build before the one being tested.
+
+   Measured 2026-08-21 while mutation-checking the FFI's speculation
+   options: two mutations of `open.rs` in a row both read as the FIRST one's
+   failure, and the RESTORED tree still read red until the Swift sources
+   were touched by hand. A mutation check on this crate was unreliable for
+   as long as the seam existed. `scripts/swift-lib.sh` now `touch`es every
+   `.swift` file in both packages after staging the archive; deleting
+   `.build` would also work and costs a full package rebuild each time.
+
+10. **`scripts/swift-lib.sh` SETS `MACOSX_DEPLOYMENT_TARGET`, AND IT MUST
    MATCH BOTH `Package.swift` FILES.** Without it cargo builds for the host
    SDK's default (macOS 26.5 on this machine) while SwiftPM links for 13.0,
    which draws an `ld` warning per object file. The warnings are the visible

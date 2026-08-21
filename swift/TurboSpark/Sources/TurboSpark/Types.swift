@@ -42,24 +42,69 @@ public struct OpenOptions: Encodable, Sendable {
         case performance, balanced, efficiency
     }
 
+    /// Whether and how far this session drafts ahead.
+    ///
+    /// Settled when the model is OPENED, because that is where the
+    /// drafter's state is allocated, and not per turn. `.block` throws from
+    /// `TurboSparkSession.init` when the install cannot serve it, while
+    /// `.auto` opens and explains itself in
+    /// `SessionInfo.speculation.reason`.
+    public enum Speculation: Encodable, Sendable {
+        case auto
+        case off
+        /// A named block size. The engine accepts 1 through 15; anything
+        /// else throws, naming the range.
+        case block(UInt32)
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            switch self {
+            case .auto: try c.encode("auto")
+            case .off: try c.encode("off")
+            case .block(let n): try c.encode(n)
+            }
+        }
+    }
+
+    /// Which drafter `speculation` drives. The two are ALTERNATIVES rather
+    /// than a spectrum: the checkpoint's own MTP head drafts a token at a
+    /// time, DFlash2 proposes a whole block in one pass.
+    public enum SpeculativeDrafter: String, Encodable, Sendable {
+        /// Whichever the install carries -- but `auto` ENABLES an MTP head
+        /// and only REPORTS a DFlash2 one, which is measured rather than
+        /// stylistic: DFlash2 reads 1.43-1.50x on code and math and 0.96x
+        /// throughput at +17.4% J/token on PROSE.
+        case auto
+        case mtp
+        case dflash
+    }
+
     public var maxContext: Sizing?
     public var expertCacheSlots: Sizing?
     /// `nil` ASKS THE OS, so Low Power Mode selects efficiency. Name one
     /// explicitly when measuring anything.
     public var powerProfile: PowerProfile?
     public var maxTokensPerSec: Double?
+    /// `nil` means `.auto`, which is what the CLI and the server default to.
+    public var speculation: Speculation?
+    /// `nil` means `.auto`.
+    public var speculativeDrafter: SpeculativeDrafter?
 
     /// Creates options for opening a model session.
     public init(
         maxContext: Sizing? = nil,
         expertCacheSlots: Sizing? = nil,
         powerProfile: PowerProfile? = nil,
-        maxTokensPerSec: Double? = nil
+        maxTokensPerSec: Double? = nil,
+        speculation: Speculation? = nil,
+        speculativeDrafter: SpeculativeDrafter? = nil
     ) {
         self.maxContext = maxContext
         self.expertCacheSlots = expertCacheSlots
         self.powerProfile = powerProfile
         self.maxTokensPerSec = maxTokensPerSec
+        self.speculation = speculation
+        self.speculativeDrafter = speculativeDrafter
     }
 }
 
@@ -144,6 +189,39 @@ public struct SessionInfo: Decodable, Sendable, Equatable {
     public let vocabSize: Int
     public let dialect: String
     public let reasoningSupport: ReasoningSupport
+    /// What speculative decoding resolved to for this session.
+    public let speculation: Speculation
+
+    /// The session's resolved speculative decoding, reported once.
+    public struct Speculation: Decodable, Sendable, Equatable {
+        public enum Drafter: String, Decodable, Sendable {
+            /// The checkpoint's own multi-token-prediction head, a token at
+            /// a time.
+            case mtp
+            /// The DFlash2 block-diffusion drafter, a whole block per pass.
+            case dflash
+        }
+
+        /// How many tokens a round proposes, or nil when this session does
+        /// not draft ahead. THIS is the "is it on" test; there is no
+        /// separate flag that could disagree with it.
+        ///
+        /// **Non-nil is a statement about the SESSION, not about the next
+        /// turn.** Acceptance is exact only at temperature 0, so a sampled
+        /// turn decodes sequentially whatever this says. Send
+        /// `GenerateOptions.temperature = 0` to speculate.
+        public let block: Int?
+        /// Non-nil exactly when `block` is. Two drafters serve one family
+        /// with different shapes and different measured optima, so a
+        /// throughput figure is unreadable without knowing which ran.
+        public let drafter: Drafter?
+        /// Why speculation is off, when the caller might have expected it
+        /// on. Nil both when `.off` was asked for and when it is on. Worth
+        /// surfacing: an install carrying a drafter and decoding one token
+        /// at a time with nothing said is the failure this feature exists
+        /// to end.
+        public let reason: String?
+    }
 }
 
 /// The decode phase breakdown. Cumulative over every forward pass this

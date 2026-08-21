@@ -193,6 +193,21 @@ private struct StatusBar: View {
                         .font(.caption).foregroundStyle(.orange)
                         .help("The model runs, but quality degrades past this point.")
                 }
+                // Shown even when OFF, and carrying the engine's own reason.
+                // An install that carries a drafter and decodes one token at
+                // a time with nothing said is the failure the feature exists
+                // to end -- and this app samples, so the honest label for a
+                // drafter that resolved is "greedy only".
+                if let block = info.speculation.block {
+                    label(
+                        "speculative",
+                        "\(info.speculation.drafter?.rawValue ?? "on") x\(block), greedy only"
+                    )
+                    .help("Acceptance is exact only at temperature 0, so a sampled turn "
+                        + "decodes sequentially.")
+                } else if let reason = info.speculation.reason {
+                    label("speculative", "off").help(reason)
+                }
             } else {
                 Text("no model open").font(.caption).foregroundStyle(.secondary)
             }

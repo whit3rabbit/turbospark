@@ -25,7 +25,7 @@ use std::sync::{Arc, Mutex};
 use tokenizer::MfTokenizer;
 
 use crate::session::{Engine, Session};
-use crate::wire::{sized, OpenOptions, SessionInfo};
+use crate::wire::{sized, OpenOptions, SessionInfo, SpeculationInfo};
 
 /// Maps the wire spelling of a power profile.
 fn power_profile(name: &str) -> Result<runtime::PowerProfile, String> {
@@ -39,7 +39,94 @@ fn power_profile(name: &str) -> Result<runtime::PowerProfile, String> {
     }
 }
 
+/// Maps the wire spelling of `speculation`, which is `"off"`, `"auto"`, or a
+/// block size written either as a number or as a string.
+///
+/// Both spellings of a block are accepted for the reason [`sized`] accepts
+/// three spellings of automatic: a Swift enum encoding a mixed number/string
+/// value may reasonably choose either, and making them mean different things
+/// would be a trap invisible from the header. Any other string is an error
+/// rather than a fallback to `auto`, so `"of"` is heard about.
+///
+/// The allowed range is READ from `foundation` rather than restated, exactly
+/// as `turbospark-server`'s parser reads it, so the three front ends cannot
+/// come to accept different blocks (AGENTS.md Gotcha 2).
+fn speculation(value: &Option<serde_json::Value>) -> Result<runtime::Speculation, String> {
+    let allowed = foundation::runtime_config::ALLOWED_SPECULATION_BLOCKS;
+    let block = |n: u64| {
+        u32::try_from(n)
+            .ok()
+            .filter(|v| allowed.contains(v))
+            .map(runtime::Speculation::Block)
+            .ok_or_else(|| format!("speculation block must be in {allowed:?}, got {n}"))
+    };
+    match value {
+        None | Some(serde_json::Value::Null) => Ok(runtime::Speculation::Auto),
+        Some(serde_json::Value::String(s)) if s.eq_ignore_ascii_case("auto") => {
+            Ok(runtime::Speculation::Auto)
+        }
+        Some(serde_json::Value::String(s)) if s.eq_ignore_ascii_case("off") => {
+            Ok(runtime::Speculation::Off)
+        }
+        Some(serde_json::Value::String(s)) => match s.parse::<u64>() {
+            Ok(n) => block(n),
+            Err(_) => Err(format!(
+                "speculation must be \"off\", \"auto\" or a block in {allowed:?}, got {s:?}"
+            )),
+        },
+        Some(serde_json::Value::Number(n)) => match n.as_u64() {
+            Some(n) => block(n),
+            None => Err(format!("speculation block must be in {allowed:?}, got {n}")),
+        },
+        Some(other) => Err(format!(
+            "speculation must be \"off\", \"auto\" or a block in {allowed:?}, got {other}"
+        )),
+    }
+}
+
+/// Maps the wire spelling of a drafter.
+fn drafter(name: Option<&str>) -> Result<runtime::SpeculativeDrafter, String> {
+    match name {
+        None | Some("auto") => Ok(runtime::SpeculativeDrafter::Auto),
+        Some("mtp") => Ok(runtime::SpeculativeDrafter::Mtp),
+        Some("dflash") => Ok(runtime::SpeculativeDrafter::Dflash),
+        Some(other) => Err(format!(
+            "speculativeDrafter must be auto, mtp or dflash, got {other:?}"
+        )),
+    }
+}
+
+/// The wire name of a resolved drafter. Only ever reported beside an ENABLED
+/// block, so `Auto` -- which `resolve_drafter` has already replaced by the
+/// time this is called -- has no spelling of its own to invent.
+fn drafter_name(drafter: runtime::SpeculativeDrafter) -> &'static str {
+    match drafter {
+        runtime::SpeculativeDrafter::Dflash => "dflash",
+        _ => "mtp",
+    }
+}
+
 pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String> {
+    // EVERY OPTION IS MAPPED BEFORE ANYTHING IS READ FROM DISK, and that
+    // ordering is worth keeping. A misspelled key is the caller's own
+    // mistake and is answerable in microseconds, so answering it first
+    // means a caller who sent both a bad path and a bad option hears about
+    // the one they can fix from the header alone -- and it is what lets the
+    // SwiftPM target, the only thing that can check `turbospark.h`
+    // (`CLAUDE.md` Gotcha 2), reach these spellings with no install on the
+    // machine.
+    let max_context = sized(&options.max_context, "maxContext")?;
+    let expert_cache_slots = sized(&options.expert_cache_slots, "expertCacheSlots")?;
+    let asked = speculation(&options.speculation)?;
+    let requested_drafter = drafter(options.speculative_drafter.as_deref())?;
+    // The SPELLING only. `resolve_profile` is where the OS is asked about
+    // Low Power Mode and it stays below, next to the rate control it feeds.
+    let requested_profile = options
+        .power_profile
+        .as_deref()
+        .map(power_profile)
+        .transpose()?;
+
     // `model` takes a path OR a `turbospark-model` alias, and an existing
     // directory always wins: a bare name that silently preferred an alias
     // would run a DIFFERENT model than the caller named, fluently and with
@@ -62,7 +149,7 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
 
     let trained = repack::trained_context_meta::peek(dir);
     let plan = runtime::resolve_max_context(
-        match sized(&options.max_context, "maxContext")? {
+        match max_context {
             Some(n) => runtime::MaxContext::Fixed(n),
             None => runtime::MaxContext::Auto,
         },
@@ -81,24 +168,61 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
     )
     .map_err(|e| e.to_string())?;
 
-    let runner = runtime::RealForwardRunner::open_with_slot_policy(
+    // THE DRAFTER IS RESOLVED BEFORE THE OPEN, exactly as the CLI's
+    // `open_session` and the server's `RealChatModel::open` do it: the
+    // policies below name exactly one drafter, and the wrong one is
+    // indistinguishable from an install carrying none at all -- pinned at
+    // `Mtp`, a DFlash2 install reports "carries no multi-token-prediction
+    // head" and decodes sequentially with a working drafter on disk. `Auto`
+    // reads the resident INDEX, which is kilobytes and not the weights.
+    //
+    // The three decisions are `runtime::speculation_policy`'s and are not
+    // restated here: a second copy names the wrong cause the first time two
+    // front ends disagree, which is why that module left `crates/cli` when
+    // the server needed it.
+    let choice = runtime::resolve_drafter(requested_drafter, dir);
+    let runner = runtime::RealForwardRunner::open_with_slot_policy_and_speculation(
         dir,
         arch,
         plan.resolved as usize,
-        match sized(&options.expert_cache_slots, "expertCacheSlots")? {
+        match expert_cache_slots {
             Some(n) => runtime::ExpertCacheSlots::Fixed(n as usize),
             None => runtime::ExpertCacheSlots::Auto,
         },
+        runtime::draft_policies(&choice, asked),
     )
     .map_err(|e| e.to_string())?;
 
-    let profile = runtime::resolve_profile(
-        options
-            .power_profile
-            .as_deref()
-            .map(power_profile)
-            .transpose()?,
-    );
+    // **RESOLVED AS THOUGH EVERY TURN WERE DETERMINISTIC, which is the one
+    // place this binding follows the SERVER rather than the CLI.** On the
+    // CLI a process has one shaping, so `open_session` can settle both
+    // halves at once. Here, as on a server, the temperature belongs to the
+    // request: what is fixed at open is the INSTALL half -- does it carry a
+    // drafter this engine can verify with -- and the per-turn half is
+    // applied in `generate`.
+    //
+    // A NAMED block that cannot be served fails HERE, which is the whole
+    // hard-fail/warn split: a caller who named a block is measuring, and a
+    // session that quietly did not speculate is the number that ends up in
+    // a table. `auto` opens and reports the reason instead.
+    let speculation_plan = runtime::resolve_speculation(
+        asked,
+        choice.drafter,
+        match choice.drafter {
+            runtime::SpeculativeDrafter::Dflash => runner.dflash_speculation_blocker(),
+            // The note outranks the engine's own blocker where there is
+            // one: both are true of a DFlash2-only install under `auto`,
+            // and only one names something the caller can act on.
+            _ => choice.note.clone().or_else(|| runner.speculation_blocker()),
+        },
+        true,
+    )?;
+    let speculation_block = match &speculation_plan {
+        runtime::SpeculationPlan::Enabled { block } => Some(*block),
+        runtime::SpeculationPlan::Disabled { .. } => None,
+    };
+
+    let profile = runtime::resolve_profile(requested_profile);
     let rate = runtime::rate_control_for(profile, options.max_tokens_per_sec);
 
     let info = SessionInfo {
@@ -121,6 +245,14 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
             tokenizer::ReasoningSupport::None => "none",
         }
         .to_string(),
+        speculation: SpeculationInfo {
+            block: speculation_block,
+            drafter: speculation_block.map(|_| drafter_name(choice.drafter).to_string()),
+            reason: match speculation_plan {
+                runtime::SpeculationPlan::Disabled { reason } => reason,
+                runtime::SpeculationPlan::Enabled { .. } => None,
+            },
+        },
     };
 
     Ok(Session {
@@ -129,6 +261,109 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
         cancel: Arc::new(AtomicBool::new(false)),
         max_context: plan.resolved,
         rate,
+        speculation_block,
         info,
     })
+}
+
+/// The option MAPPERS, which are the half of this module reachable without a
+/// multi-gigabyte install.
+///
+/// `tests/c_surface.rs` drives everything else here through a scripted
+/// session; `open` itself needs a real one, so the wire spellings would
+/// otherwise be covered by nothing at all.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn json(text: &str) -> Option<serde_json::Value> {
+        Some(serde_json::from_str(text).expect("fixture must be valid JSON"))
+    }
+
+    #[test]
+    fn an_absent_speculation_is_auto() {
+        // The DEFAULT, and the one every other front end shares: a GUI that
+        // sends `{}` gets what `turbospark-check` and `turbospark-server`
+        // give with no flags.
+        assert_eq!(speculation(&None).unwrap(), runtime::Speculation::Auto);
+        assert_eq!(
+            speculation(&json("null")).unwrap(),
+            runtime::Speculation::Auto
+        );
+    }
+
+    #[test]
+    fn a_block_is_accepted_as_a_number_and_as_a_string() {
+        // Both spellings, for `sized`'s reason: a Swift enum encoding a
+        // mixed number/string value may choose either, and two meanings for
+        // one intent is a trap invisible from the header.
+        assert_eq!(
+            speculation(&json("4")).unwrap(),
+            runtime::Speculation::Block(4)
+        );
+        assert_eq!(
+            speculation(&json("\"4\"")).unwrap(),
+            runtime::Speculation::Block(4)
+        );
+    }
+
+    #[test]
+    fn off_and_auto_are_case_insensitive_and_distinct() {
+        assert_eq!(
+            speculation(&json("\"OFF\"")).unwrap(),
+            runtime::Speculation::Off
+        );
+        assert_eq!(
+            speculation(&json("\"Auto\"")).unwrap(),
+            runtime::Speculation::Auto
+        );
+    }
+
+    #[test]
+    fn a_block_outside_the_shared_range_is_refused_and_names_it() {
+        // The range is `foundation`'s and is not restated here, so this
+        // reads it back rather than pinning a literal: the assertion is
+        // that a block past the end is refused AND that the message says
+        // what the end is.
+        let allowed = foundation::runtime_config::ALLOWED_SPECULATION_BLOCKS;
+        let past = allowed.end() + 1;
+        let err = speculation(&json(&past.to_string())).unwrap_err();
+        assert!(
+            err.contains(&format!("{allowed:?}")) && err.contains(&past.to_string()),
+            "expected the range and the value, got {err}"
+        );
+        assert!(speculation(&json("0")).is_err(), "0 proposes nothing");
+    }
+
+    #[test]
+    fn a_misspelling_is_an_error_rather_than_a_silent_auto() {
+        // `"of"` should be heard about. Falling back to the default here
+        // would turn a typo into a session that quietly did something else.
+        assert!(speculation(&json("\"of\"")).is_err());
+        assert!(speculation(&json("true")).is_err());
+        assert!(drafter(Some("mpt")).is_err());
+    }
+
+    #[test]
+    fn the_drafter_spellings_are_the_cli_and_server_ones() {
+        assert_eq!(drafter(None).unwrap(), runtime::SpeculativeDrafter::Auto);
+        assert_eq!(
+            drafter(Some("auto")).unwrap(),
+            runtime::SpeculativeDrafter::Auto
+        );
+        assert_eq!(
+            drafter(Some("mtp")).unwrap(),
+            runtime::SpeculativeDrafter::Mtp
+        );
+        assert_eq!(
+            drafter(Some("dflash")).unwrap(),
+            runtime::SpeculativeDrafter::Dflash
+        );
+        // Round-trips through the reported name, so a GUI reading
+        // `sessionInfo.speculation.drafter` can hand it straight back as
+        // `speculativeDrafter` on the next open.
+        for name in ["mtp", "dflash"] {
+            assert_eq!(drafter_name(drafter(Some(name)).unwrap()), name);
+        }
+    }
 }

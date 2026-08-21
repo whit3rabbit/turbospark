@@ -121,11 +121,13 @@ options.maxContext = .fixed(8192)          // or .auto, the default
 options.expertCacheSlots = .fixed(16)      // or .auto: 8, 16, 24, 32
 options.powerProfile = .efficiency         // or nil, see below
 options.maxTokensPerSec = 30
+options.speculation = .auto                // or .off, .block(2)
+options.speculativeDrafter = .auto         // or .mtp, .dflash
 
 let session = try await TurboSparkSession(modelPath: "gemma4", options: options)
 ```
 
-Everything defaults to automatic, which is what a GUI should want. Two
+Everything defaults to automatic, which is what a GUI should want. Three
 defaults are worth understanding rather than accepting:
 
 **`expertCacheSlots: .auto` climbs, never falls.** It picks the largest
@@ -140,6 +142,24 @@ That is right for a user-facing app and wrong for anything measuring: name a
 profile explicitly if you are benchmarking, or an efficiency cap will quietly
 become part of your result.
 
+**`speculation: .auto` drafts ahead only if the install can, and only on
+temperature-0 turns.** The drafter's state is allocated at open, so this is a
+session setting and not a per-turn one -- but acceptance is
+`argmax(target) == proposal`, exact only at temperature 0, so a sampled turn
+takes the sequential loop whatever the session resolved. Since
+`GenerateOptions.temperature` defaults to 0.2, **an app that never sends 0
+never speculates**, and that fallback is silent by design (a per-turn warning
+would fire on the normal case). Read `info.speculation` for the
+session-level answer, once.
+
+`.auto` also declines a DFlash2 drafter it FINDS, and says so in
+`info.speculation.reason`. That asymmetry is measured rather than stylistic:
+the checkpoint's own MTP head pays 1.44-1.66x, while DFlash2 reads 1.43-1.50x
+on code and math and 0.96x throughput at +17.4% J/token on PROSE. Ask for it
+with `speculativeDrafter = .dflash` if your workload is code-shaped.
+`.block(n)` is a promise rather than a preference: an install that cannot
+serve it throws from `init` rather than opening quietly without it.
+
 ### Reading what you actually got
 
 ```swift
@@ -152,6 +172,9 @@ info.family             // "gemma4", "qwen36", "llama", ...
 info.vocabSize          // token count in vocabulary
 info.dialect            // chat template dialect ("harmony", "qwen", ...)
 info.reasoningSupport   // .level | .toggleOnly | .none
+info.speculation.block  // the RESOLVED block, or nil when off
+info.speculation.drafter// .mtp | .dflash, non-nil exactly when block is
+info.speculation.reason // why it is off, when you might expect otherwise
 ```
 
 **Read these rather than what you asked for.** Under automatic sizing you
@@ -386,7 +409,7 @@ byte callback is *also* called concurrently from worker threads.
 | `ts_session_open(dir, options_json, out)` | expensive; open once |
 | `ts_session_close(s)` | not while a generation is in flight |
 | `ts_session_cancel(s)` | any thread, never blocks |
-| `ts_session_info_json(s, out)` | resolved window, slots, family, dialect |
+| `ts_session_info_json(s, out)` | resolved window, slots, family, dialect, speculation |
 | `ts_session_phases_json(s, out)` | decode phase breakdown |
 | `ts_peak_footprint_bytes()` | process-wide, 0 if unavailable |
 | `ts_generate(s, messages, options, cb, ud, out)` | blocks for the turn |
@@ -460,7 +483,9 @@ int main(void) {
   "maxContext": 8192,
   "expertCacheSlots": "auto",
   "powerProfile": "efficiency",
-  "maxTokensPerSec": 30
+  "maxTokensPerSec": 30,
+  "speculation": "auto",
+  "speculativeDrafter": "auto"
 }
 ```
 
@@ -468,6 +493,22 @@ int main(void) {
 `null`, or absence; all four spellings of automatic mean the same thing,
 because a caller's encoder may produce any of them. Any *other* string is an
 error rather than a silent fallback.
+
+`speculation` accepts `"off"`, `"auto"`, `null`, absence, or a block size as
+either a number or a string. `speculativeDrafter` accepts `"auto"`, `"mtp"`
+or `"dflash"`. Both are refused by name rather than defaulted when
+misspelled, and both are mapped BEFORE the install is touched, so a bad
+option is reported ahead of a bad path.
+
+`ts_session_info_json` reports what they resolved to:
+
+```json
+{ "speculation": { "block": 2, "drafter": "mtp", "reason": null } }
+```
+
+A null `block` is the "is it off" test; `drafter` is non-null exactly when
+`block` is, and `reason` is non-null only when a caller might have expected
+it on.
 
 `ts_generate` options and its result:
 
@@ -544,6 +585,15 @@ phases:   23 calls at 25.4 ms, expert hit rate 0.74, peak 3743 MiB
 
 The peak is at 32 auto-resolved slots. At the pinned 16 that every published
 figure uses it is around 2,180 MiB.
+
+**One caveat about the middle row that is worth knowing before trusting a
+red or a green from it.** SwiftPM does not treat `libturbospark_ffi.a` as a
+build input -- the `-L` path is an unsafe linker flag, which it passes
+through without a dependency edge -- so a changed archive under unchanged
+`.swift` files used to trigger no relink, and `swift test` would report on
+the PREVIOUS build. `scripts/swift-lib.sh` touches both packages' Swift
+sources after staging the archive for that reason. If the seam ever returns,
+its symptom is a mutation check whose result never moves.
 
 ---
 

@@ -37,9 +37,20 @@ final class RealModelTests: XCTestCase {
         XCTAssertGreaterThan(session.info.maxContext, 0)
         XCTAssertGreaterThan(session.info.vocabSize, 0)
         XCTAssertFalse(session.info.family.isEmpty)
+        // `drafter` is non-nil exactly when `block` is, which is the one
+        // invariant the two fields can break independently -- a drafter
+        // named beside a null block would read as "on" to a status panel
+        // that checked the wrong field.
+        let speculation = session.info.speculation
+        XCTAssertEqual(
+            speculation.block != nil, speculation.drafter != nil,
+            "block and drafter must agree, got \(String(describing: speculation))")
         print(
             "open: family=\(session.info.family) context=\(session.info.maxContext) "
-                + "slots=\(session.info.expertCacheSlots) vocab=\(session.info.vocabSize)")
+                + "slots=\(session.info.expertCacheSlots) vocab=\(session.info.vocabSize) "
+                + "speculation=\(speculation.block.map(String.init) ?? "off")"
+                + "\(speculation.drafter.map { " via \($0.rawValue)" } ?? "")"
+                + "\(speculation.reason.map { " (\($0))" } ?? "")")
     }
 
     /// Tests streaming generation of coherent text against a real model.
@@ -120,6 +131,83 @@ final class RealModelTests: XCTestCase {
         print(
             "cancel: stopped after \(r.newTokens) tokens in "
                 + String(format: "%.1fs", Date().timeIntervalSince(started)))
+    }
+
+    /// **The only thing that drives a batched verify through this binding.**
+    ///
+    /// A greedy turn is what the speculative loop needs -- acceptance is
+    /// `argmax(target) == proposal`, exact only at temperature 0 -- and
+    /// every other case in this file samples, so without this the branch
+    /// added for speculation is reached by nothing at all. On an install
+    /// carrying no drafter it still tests the greedy path, which is also
+    /// covered nowhere else here.
+    ///
+    /// It asserts COHERENCE and not speed. The speedup is measured on the
+    /// engine's own probes (`docs/DFLASH2.md`, `docs/MTP.md`) against a
+    /// quiet machine; a tok/s figure taken here would be a number from
+    /// whatever else the machine was doing.
+    func testAGreedyTurnRunsWhateverSpeculationResolvedTo() async throws {
+        let session = try await TurboSparkSession(modelPath: try modelPath())
+        var options = GenerateOptions()
+        options.maxNewTokens = 120
+        // EXACTLY zero. `is_deterministic` tests `== 0.0`, so the standing
+        // smoke's 0.0001 is a SAMPLED run as far as this gate is concerned
+        // and would silently take the sequential loop.
+        options.temperature = 0.0
+
+        var streamed = ""
+        var result: GenerationResult?
+        for try await event in session.generate(
+            [ChatMessage(role: .user, content: "Explain how coastal wetlands reduce flood damage.")],
+            options: options
+        ) {
+            if case .content(let c) = event { streamed += c }
+            if case .finished(let r) = event { result = r }
+        }
+
+        let r = try XCTUnwrap(result)
+        XCTAssertGreaterThan(r.newTokens, 20)
+        XCTAssertEqual(streamed, r.content)
+        XCTAssertTrue(
+            r.content.lowercased().contains("wetland") || r.content.lowercased().contains("flood"),
+            "expected an on-topic answer, got: \(r.content.prefix(200))")
+        let block = session.info.speculation.block
+        print(
+            "greedy: \(r.newTokens) tokens, \(r.stopReason), "
+                + (block.map { "speculative block \($0)" } ?? "sequential (no drafter)"))
+    }
+
+    /// Tests that a DFlash2 drafter `auto` declined can be asked for by name.
+    ///
+    /// Conditional on the install, and deliberately so: this is the only
+    /// path through the binding that reaches the block drafter, and it
+    /// exists on exactly one artifact here. On any other install the first
+    /// open reports no dflash note and the test has nothing to say, which
+    /// is reported rather than passed silently.
+    ///
+    /// It costs a SECOND model open, because the drafter's state is
+    /// allocated at open and cannot be switched on a live session -- which
+    /// is the same reason both other front ends make it a process-level
+    /// setting.
+    func testADeclinedDflashDrafterCanBeAskedForByName() async throws {
+        let auto = try await TurboSparkSession(modelPath: try modelPath())
+        guard auto.info.speculation.reason?.contains("dflash") == true else {
+            throw XCTSkip(
+                "this install carries no DFlash2 drafter; auto said "
+                    + (auto.info.speculation.reason ?? "nothing"))
+        }
+        // Under `auto` it is OFF, which is the measured decision rather
+        // than an accident: 0.96x throughput on prose.
+        XCTAssertNil(auto.info.speculation.block)
+
+        var options = OpenOptions()
+        options.speculativeDrafter = .dflash
+        let named = try await TurboSparkSession(modelPath: try modelPath(), options: options)
+        XCTAssertEqual(named.info.speculation.drafter, .dflash)
+        let block = try XCTUnwrap(
+            named.info.speculation.block, "asking for it by name must turn it on")
+        XCTAssertNil(named.info.speculation.reason, "an enabled drafter has nothing to explain")
+        print("dflash: block \(block) after auto declined it")
     }
 
     /// Tests reading phase metrics after completing a generation request.
