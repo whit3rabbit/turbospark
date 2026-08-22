@@ -55,6 +55,7 @@ crates/runtime/
 |   |   |   +-- attn.rs         # Gated DeltaNet & gated full attention blocks
 |   |   |   +-- dense.rs        # Dense gated FFN (`qwen3_5`, ROADMAP's 1-bit entry)
 |   |   |   +-- moe.rs          # Shared + routed MoE pass encoding
+|   |   |   +-- moe_batch.rs    # The M-ROW routed half behind the verify (Phase 3)
 |   |   |   +-- mtp.rs          # The MTP head's draft step
 |   |   |   +-- mtp_dump.rs     # Debug intermediate dump helper for MTP
 |   |   |   +-- mtp_state.rs    # MTP state and policy definitions
@@ -87,6 +88,7 @@ crates/runtime/
     +-- real_forward_gptoss.rs  # The gpt-oss flow: perturb each input, require the logits to move
     +-- real_forward_qwen.rs    # RealForwardRunner Qwen 3.6 decode tests
     +-- real_forward_qwen35.rs  # The DENSE, ONE-BIT half of the same flow
+    +-- real_forward_qwen_moe_batched.rs # The BATCHED routed verify vs M sequential produce
     \-- fixtures/
         \-- ChatMLTokenizer/    # Toy ChatML tokenizer fixture directory for integration tests
 ```
@@ -344,9 +346,14 @@ cargo test -p turbospark-runtime
     one is present, while an explicit `Fixed(n)` on a headless install stays an
     error because the caller named something this install cannot do. The second
     half is `speculation_blocker`: drafting needs a head, but VERIFYING needs
-    `produce_batched`, which is dense-only and INT4-only, so a MoE or sub-4-bit
-    install carrying a head would pass a head-presence check and then die at
-    the first verify with generation under way. It reports the ARCHITECTURAL
+    `produce_batched`, which is INT4-only (and was dense-only until Phase 3
+    landed the routed half), so a sub-4-bit install carrying a head would pass
+    a head-presence check and then die at the first verify with generation
+    under way. **The blocker still refuses MoE and that is now a POLICY rather
+    than a capability**: the batched routed pair runs and is gated, but no
+    published MoE conversion of this architecture carries an ingestible head,
+    so nothing could drive it. Lifting the MoE arm is a drafter question, not
+    a verify one. It reports the ARCHITECTURAL
     blocker before the missing head -- on a MoE install "no head" is true and
     useless, since no checkpoint would help. Two traps in writing such a probe:
     read a tensor the batched path really dispatches rather than the manifest,
@@ -466,10 +473,38 @@ cargo test -p turbospark-runtime
     rises with the block (10% at 2, 84% at 8, 98% at 15), which is why
     batching beats sequential at block 2 and LOSES to it at 8 and 15.
 
-    Three refusals, all by name and none of them temporary: dense only (no
-    batched routed pair, and the expert union is larger than what the slot
-    cache already loads), INT4 only (enforced in `encode_gemm_any`; the 1-bit
-    and 2-bit checkpoints of this same architecture have no batched kernel),
-    and no KV wrap inside a block. A sequential fallback for any of them
-    would be numerically identical and would make a "batched" verify measure
-    the unbatched engine -- AGENTS.md Gotcha 35 one layer down.
+    **THE ROUTED HALF RUNS SINCE ROADMAP PHASE 3** and this paragraph used
+    to open "dense only". `families/qwen/moe_batch.rs` drives the batched
+    routed pair, bit-identical to M sequential `produce` calls on a routed
+    trunk (`tests/real_forward_qwen_moe_batched.rs`). Two of its properties
+    are family-specific and each is one mutation from a fluent wrong model:
+    the GATED SHARED EXPERT seeds phase 2's accumulator rather than being
+    added to a finished routed sum (which is why
+    `encode_moe_prefill_phase2_fused` takes a residual at all -- FP addition
+    is not associative, so seeding is a different function from appending),
+    and the tail is ONE RAW RESIDUAL ADD, because this family has no
+    sandwich norms and importing one from the file next door is Gotcha 11
+    exactly. A MoE layer also costs a MID-LAYER COMMIT the dense path does
+    not, the router's top-k being a host decision downstream of a readback.
+
+    Three refusals remain, all by name: INT4 only (enforced in
+    `encode_gemm_any` and again on the routed blob's `RoutedBlobLayout`; the
+    1-bit and 2-bit checkpoints of this same architecture have no batched
+    kernel), a block whose expert UNION outgrows the slot cache, and no KV
+    wrap inside a block. A sequential fallback for any of them would be
+    numerically identical and would make a "batched" verify measure the
+    unbatched engine -- AGENTS.md Gotcha 35 one layer down.
+
+    The union bound is what CAPS the block size and is not a limitation to
+    work around: at top-8 a block of M tokens reads up to `8M` experts, so
+    M=2 wants 16 and M=4 wants 32, and `ExpertCache::plan_if_possible`
+    ASSERTS rather than degrading (AGENTS.md Gotcha 54) -- which is why the
+    driver bounds its own sub-batches. Small blocks are what pay on this
+    engine, measured independently on both speculative pages.
+
+    **NOTHING REACHES IT END TO END YET**, and that is the checkpoints
+    rather than the code: `speculation_blocker` still refuses a MoE install,
+    because drafting needs a HEAD and no published MoE conversion of this
+    architecture carries an ingestible one. Ornith's lives in its BF16
+    repo's last shard and is itself MoE, where `MtpState::REQUIRED` names
+    the DENSE FFN tensors a `qwen3_5` head has.

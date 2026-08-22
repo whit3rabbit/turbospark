@@ -38,7 +38,7 @@ crates/repack/
 |   |   +-- dense.rs                # Dense sub-4-bit Qwen generator (build_synthetic_qwen_gdn_dense_install)
 |   |   +-- dense_arch.rs           # Architecture definitions and shapes for dense Qwen fixtures
 |   |   +-- dense_tensors.rs        # Synthetic tensor fixture construction helpers for dense Qwen
-|   |   \-- moe.rs                  # MoE Qwen 3.6 generator (build_synthetic_qwen_gdn_moe_install)
+|   |   \-- moe.rs                  # MoE Qwen 3.6 generator (+ the `_with_mtp` variant Phase 3 is gated by)
 |   +-- gemma4_checkpoint/          # Gemma 4 / Qwen 3.6 mlx-community safetensors converter & streamer
 |   |   +-- mod.rs                  # Module root and install writer entrypoints
 |   |   +-- classify.rs             # Tensor classification (resident vs routed)

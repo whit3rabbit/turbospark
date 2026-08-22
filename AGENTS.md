@@ -1027,13 +1027,22 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
    `moe_gguf.metal`'s three routed-expert decode pairs
    (`moe_phase1_gate_up_act_{q8_0,q4_k,mxfp4}` +
    `moe_phase2_down_reduce_k8_{q8_0,q4_k,mxfp4}`), all port-local because
-   Swift has no GGUF intake, plus the port-local BATCHED routed pair for
-   chunked prefill (`moe.metal` + `moe_prefill_batch.metal`:
+   Swift has no GGUF intake, plus the port-local BATCHED routed pair, which
+   serves chunked prefill AND -- since ROADMAP Phase 3 -- the `qwen3_5`
+   speculative verify (`moe.metal` + `moe_prefill_batch.metal`:
    `moe_prefill_phase1_routes_int4` over a flat route list and the FUSED
    `moe_prefill_phase2_fused_int4`, reading blobs through a 32-pointer
    `RoutedBlobsWide` argument buffer, bit-exact against M decode-pair
    calls -- see `docs/BATCHED_PREFILL.md` steps 2-3 and its sub-batch
-   eviction gotcha before touching that driver). Q6_K has a GEMV and no siblings on purpose:
+   eviction gotcha before touching that driver). **Its phase 2 takes a
+   RESIDUAL and seeds the accumulator with it**, which the decode kernel
+   has always done and this one hardcoded to `0.0f` for as long as its
+   only callers had nothing to put there: Gemma, `llama`, `gpt-oss` and
+   the synthetic flow all pass `zero_hidden`, and `qwen3_5` passes its
+   GATED SHARED EXPERT. FP addition is not associative, so seeding is not
+   the same function as adding the shared expert to a finished routed sum,
+   and a driver that appended a residual add would be a different model
+   that still read fluently. Q6_K has a GEMV and no siblings on purpose:
    the only real file using it puts it in `output.weight`. MXFP4 is the
    MIRROR of that (ROADMAP M5): both routed phases and NO resident GEMV,
    because `gpt-oss` puts it in `ffn_*_exps` and nowhere else. Its pair
