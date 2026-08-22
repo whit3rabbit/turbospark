@@ -27,6 +27,7 @@ use anyllm_translate::anthropic::{ErrorType, MessageCreateRequest};
 use anyllm_translate::mapping::errors_map::create_anthropic_error;
 use anyllm_translate::mapping::streaming_map::StreamingTranslator;
 use anyllm_translate::openai::streaming::ChatCompletionChunk;
+use anyllm_translate::openai::ChatCompletionRequest;
 use anyllm_translate::{
     compute_request_warnings, new_stream_translator, translate_request, translate_response,
     TranslationConfig,
@@ -40,9 +41,10 @@ use futures::stream::{Stream, StreamExt};
 use runtime::GenerationConfig;
 use tokenizer::ReasoningEffort;
 
+use crate::guardrails::run_guarded;
 use crate::handler::{
-    now_unix, plan, reasoning_effort, run_full, status_for, stream_blocking, tool_names, AppState,
-    GenError, Piece,
+    now_unix, plan, reasoning_effort, status_for, stream_blocking, tool_names, AppState, GenError,
+    Piece,
 };
 use crate::response::{
     completion_chunk, completion_response, finish_reason, reasoning_delta, role_delta, text_delta,
@@ -122,20 +124,11 @@ pub async fn messages(
             config,
             tools,
             effort,
-            openai.model,
+            &openai,
             request.model,
         )
     } else {
-        full_response(
-            model,
-            prompt_ids,
-            config,
-            tools,
-            effort,
-            openai.model,
-            request.model,
-        )
-        .await
+        full_response(model, &openai, effort, request.model).await
     };
 
     if let Some(value) = degraded.and_then(|v| v.parse().ok()) {
@@ -146,18 +139,16 @@ pub async fn messages(
 
 async fn full_response(
     model: AppState,
-    prompt_ids: Vec<foundation::TokenId>,
-    config: GenerationConfig,
-    tools: HashSet<String>,
+    openai: &ChatCompletionRequest,
     effort: ReasoningEffort,
-    backend_model: String,
     // The model name the client asked for, echoed into the Anthropic
-    // response. Translation maps it to `backend_model` on the way in, and
+    // response. Translation maps it to the backend model on the way in, and
     // that mapping is not necessarily reversible, so it is carried across
     // rather than derived.
     client_model: String,
 ) -> Response {
-    let generated = match run_full(model, prompt_ids, config, tools, effort).await {
+    let backend_model = openai.model.clone();
+    let generated = match run_guarded(model, openai, effort).await {
         Ok(r) => r,
         Err(e) => return gen_error_body(e),
     };
@@ -176,15 +167,22 @@ async fn full_response(
     Json(translate_response(&openai_response, &client_model)).into_response()
 }
 
+/// A tool-carrying request is BUFFERED when guardrails are on, exactly as the
+/// OpenAI stream is and for the same reason (see `handler::stream_response`).
+/// Everything else keeps the live path byte for byte.
 fn stream_response(
     model: AppState,
     prompt_ids: Vec<foundation::TokenId>,
     config: GenerationConfig,
     tools: HashSet<String>,
     effort: ReasoningEffort,
-    backend_model: String,
+    openai: &ChatCompletionRequest,
     client_model: String,
 ) -> Response {
+    if !tools.is_empty() && model.guardrails().active() {
+        return buffered_stream_response(model, openai.clone(), effort, client_model);
+    }
+    let backend_model = openai.model.clone();
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
     let id = format!("chatcmpl-{}", now_unix());
     let created = now_unix();
@@ -262,6 +260,90 @@ fn stream_response(
         }
         // No `[DONE]` sentinel: that is an OpenAI-ism. An Anthropic stream
         // ends at `message_stop`.
+    });
+
+    let stream: std::pin::Pin<
+        Box<dyn Stream<Item = Result<Event, std::convert::Infallible>> + Send>,
+    > = Box::pin(tokio_stream::wrappers::UnboundedReceiverStream::new(rx).map(Ok));
+    Sse::new(stream).into_response()
+}
+
+/// The guarded generation, pushed through the Anthropic translator in the
+/// order its state machine requires.
+///
+/// **ROLE, REASONING, CONTENT, TOOL CALLS, FINISH -- and that order is the
+/// correctness condition, not a style** (crate Gotcha 6). The translator opens
+/// the message on the first chunk carrying a role, opens a `thinking` block on
+/// the first reasoning delta and closes it on the first text delta without
+/// reopening. Feed it content before reasoning and the events come out
+/// malformed rather than erroring.
+fn buffered_stream_response(
+    model: AppState,
+    openai: ChatCompletionRequest,
+    effort: ReasoningEffort,
+    client_model: String,
+) -> Response {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
+    let id = format!("chatcmpl-{}", now_unix());
+    let created = now_unix();
+    let backend_model = openai.model.clone();
+
+    tokio::spawn(async move {
+        let mut translator = new_stream_translator(client_model);
+        let send = |chunk: ChatCompletionChunk, translator: &mut StreamingTranslator| {
+            for event in translator.process_chunk(&chunk) {
+                let _ = tx.send(to_sse(&event));
+            }
+        };
+        let chunk = |delta, finish| {
+            completion_chunk(id.clone(), created, backend_model.clone(), delta, finish)
+        };
+
+        match run_guarded(model, &openai, effort).await {
+            Ok(generated) => {
+                send(chunk(role_delta(), None), &mut translator);
+                if !generated.reasoning.is_empty() {
+                    send(
+                        chunk(reasoning_delta(generated.reasoning), None),
+                        &mut translator,
+                    );
+                }
+                if !generated.text.is_empty() {
+                    send(chunk(text_delta(generated.text), None), &mut translator);
+                }
+                for (index, call) in generated.calls.into_iter().enumerate() {
+                    send(
+                        chunk(tool_call_delta(index as u32, call), None),
+                        &mut translator,
+                    );
+                }
+                send(
+                    chunk(
+                        Default::default(),
+                        Some(finish_reason(generated.decode.reason)),
+                    ),
+                    &mut translator,
+                );
+                for event in translator.finish() {
+                    let _ = tx.send(to_sse(&event));
+                }
+            }
+            // Same contract as the live path: an `error` event rather than a
+            // message closed as if it had stopped normally.
+            Err(e) => {
+                let message = match e {
+                    GenError::Runtime(e) => e.to_string(),
+                    GenError::Join(m) => m,
+                };
+                let _ = tx.send(to_sse(&StreamEvent::Error {
+                    error: StreamError {
+                        error_type: "api_error".to_string(),
+                        message,
+                    },
+                }));
+            }
+        }
+        // No `[DONE]`: an Anthropic stream ends at `message_stop`.
     });
 
     let stream: std::pin::Pin<

@@ -1405,7 +1405,13 @@ live network).
   streamed `content_block_start` / `input_json_delta` / `content_block_stop`
   sequence. Three limits worth stating:
 
-  - `tool_choice` is accepted and IGNORED. Nothing forces or forbids a call.
+  - `tool_choice` is PARTLY honoured, and the split is worth stating. `none`
+    and a named function reach `tool_names`, which is what the decoder's
+    allowlist and the guardrails' schema set are both built from, so `none`
+    suppresses tools entirely and a named choice restricts to that one.
+    `required` (and a named choice) additionally make prose with no call a
+    RETRY rather than an accepted turn, since guardrails landed. Nothing
+    constrains DECODING itself: no grammar forces a call token.
   - A streamed call arrives as ONE chunk carrying id, name, and the whole
     argument string, not as the argument fragments a remote OpenAI backend
     emits. The decoder only yields a call once its closing marker arrives,
@@ -1419,6 +1425,29 @@ live network).
   If the dialect parser rejects what the model wrote (prose that merely
   looks like a call), the request does NOT fail: the decoder is abandoned
   and the rest of the run is emitted as plain text.
+
+  **GUARDRAILS SIT ON TOP OF ALL OF THAT AND ARE ON BY DEFAULT**
+  (`--guardrails off` to disable; `crates/server/CLAUDE.md` Gotcha 18).
+  `src/guardrails.rs` wraps `forge-guardrails` and does three things the
+  decoder cannot: it RESCUES a call the decoder declined to parse out of the
+  raw text (bare JSON, Qwen `<function=>` XML, Mistral `[TOOL_CALLS]`,
+  rehearsal syntax), VALIDATES a call's arguments against the schema the
+  request itself sent (required fields, types, enums), and RE-ASKS once with
+  a nudge when either check fails. A rescued call is validated too, and one
+  that fails is re-asked rather than sent.
+
+  The cost, stated because it is a behaviour change rather than an addition:
+  **a request carrying TOOLS is buffered rather than streamed while
+  guardrails are on.** A verdict needs the whole turn. Requests without tools
+  stream exactly as they always did. Only `forge-guardrails`'s pure half is
+  linked (`default-features = false, features = ["guardrails"]`): 6 new
+  packages against the ~290 its proxy half would add, and none of its
+  clients, proxy routes or process management is reachable from here.
+
+  NOT taken from that crate: its ONNX tool-call classifier (needs a Hugging
+  Face artifact download and the `ort` runtime), tool-output compression,
+  secret redaction, and step/prerequisite enforcement -- the last because it
+  needs forge to own the agent loop, and here the CLIENT owns it.
 
   What is still dropped: image and document content blocks, and `thinking`.
   A replayed `thinking` block is dropped from the prompt rather than

@@ -10,6 +10,7 @@
 //! `RealForwardRunner` forward pass against a `.gturbo` install). Model
 //! dialect auto-selection is the tokenizer's job here, not the server's.
 
+mod guardrails;
 mod handler;
 mod messages;
 mod model;
@@ -17,6 +18,9 @@ mod model;
 mod real_model;
 mod response;
 
+/// Tool-call guardrail configuration: rescue parsing, argument validation,
+/// and the retry budget.
+pub use guardrails::GuardrailConfig;
 /// Shared application state for request handling.
 pub use handler::AppState;
 /// Trait and canned test backend for chat generation.

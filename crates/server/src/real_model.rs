@@ -41,6 +41,8 @@ pub struct RealChatModel {
     speculation: runtime::SpeculationPlan,
     /// Which drafter [`Self::speculation`] would drive, for the startup line.
     drafter: runtime::SpeculativeDrafter,
+    /// Tool-call guardrails, resolved once at open like the rate cap.
+    guardrails: crate::GuardrailConfig,
 }
 
 impl RealChatModel {
@@ -65,6 +67,7 @@ impl RealChatModel {
         rate: RateControl,
         speculation: runtime::Speculation,
         drafter: runtime::SpeculativeDrafter,
+        guardrails: crate::GuardrailConfig,
     ) -> Result<Self, String> {
         let arch = repack::peek_manifest_arch(model_dir)?;
         let context = runtime::resolve_max_context(
@@ -156,6 +159,7 @@ impl RealChatModel {
             rate,
             speculation: plan,
             drafter: choice.drafter,
+            guardrails,
         })
     }
 
@@ -233,6 +237,10 @@ impl ChatModel for RealChatModel {
 
     fn rate_control(&self) -> RateControl {
         self.rate
+    }
+
+    fn guardrails(&self) -> crate::GuardrailConfig {
+        self.guardrails
     }
 
     /// The speculative loop when this process resolved one AND this request

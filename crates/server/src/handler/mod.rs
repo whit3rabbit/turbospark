@@ -28,6 +28,7 @@ pub(crate) use exec::*;
 pub use plan::AppState;
 pub(crate) use plan::*;
 
+use crate::guardrails::run_guarded;
 use crate::response::{
     completion_chunk, completion_response, reasoning_delta, role_delta, text_delta, tool_call_delta,
 };
@@ -108,6 +109,9 @@ pub async fn chat_completions(
     State(model): State<AppState>,
     Json(request): Json<ChatCompletionRequest>,
 ) -> Response {
+    // Planned here as well as inside `run_guarded` so an unparseable request
+    // is still refused with a 400 before any generation starts. The guarded
+    // path re-plans because a retry turn changes the messages.
     let (prompt_ids, config) = match plan(&model, &request) {
         Ok(p) => p,
         Err(e) => return error_response(axum::http::StatusCode::BAD_REQUEST, e),
@@ -132,12 +136,12 @@ pub async fn chat_completions(
             config,
             tools,
             effort,
-            request.model,
+            &request,
             include_usage,
         );
     }
 
-    let generated = match run_full(model, prompt_ids, config, tools, effort).await {
+    let generated = match run_guarded(model, &request, effort).await {
         Ok(r) => r,
         Err(e) => return gen_error_response(e),
     };
@@ -156,15 +160,39 @@ pub async fn chat_completions(
     .into_response()
 }
 
+/// **A TOOL-CARRYING REQUEST IS BUFFERED WHEN GUARDRAILS ARE ON, and every
+/// other request streams exactly as it always did.**
+///
+/// The guardrails need the whole generation before they can reach a verdict: a
+/// call to rescue is one the decoder did not parse, so it is indistinguishable
+/// from prose until the turn ends, and a retry re-generates from scratch. Emit
+/// deltas live and both repairs become unavailable -- the markup is already on
+/// the wire.
+///
+/// So a request carrying tools generates to completion, is inspected, and is
+/// then re-framed as the SSE sequence it would have produced. The cost is
+/// real and is taken knowingly: time-to-first-token becomes time-to-last-token
+/// for that turn, roughly 5-10 s at this engine's 20-45 tok/s. The alternative
+/// is guardrails that do nothing for the client that motivated them -- Claude
+/// Code sends `stream: true` WITH tools -- and a `forge-guardrails-proxy` in
+/// front would buffer identically.
+///
+/// The condition is keyed on the request carrying tools, which is what keeps
+/// ordinary chat traffic on the live path byte for byte (the same shape as
+/// Gotcha 12's third condition and Gotcha 7's prompt split).
 fn stream_response(
     model: AppState,
     prompt_ids: Vec<foundation::TokenId>,
     config: GenerationConfig,
     tools: HashSet<String>,
     effort: ReasoningEffort,
-    model_name: String,
+    request: &ChatCompletionRequest,
     include_usage: bool,
 ) -> Response {
+    if !tools.is_empty() && model.guardrails().active() {
+        return buffered_stream_response(model, request.clone(), effort, include_usage);
+    }
+    let model_name = request.model.clone();
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
     let id = format!("chatcmpl-{}", now_unix());
     let created = now_unix();
@@ -225,6 +253,86 @@ fn stream_response(
             Err(e) => {
                 let body = serde_json::json!({
                     "error": {"message": e.to_string(), "type": "server_error"}
+                });
+                let _ = tx.send(Event::default().data(body.to_string()));
+            }
+        }
+        let _ = tx.send(Event::default().data("[DONE]"));
+    });
+
+    let stream: std::pin::Pin<
+        Box<dyn Stream<Item = Result<Event, std::convert::Infallible>> + Send>,
+    > = Box::pin(tokio_stream::wrappers::UnboundedReceiverStream::new(rx).map(Ok));
+    Sse::new(stream).into_response()
+}
+
+/// The guarded generation, re-framed as the SSE sequence the live path would
+/// have produced.
+///
+/// **THE CHUNK ORDER IS LOAD BEARING and is not cosmetic.** Anthropic's
+/// `StreamingTranslator` is a state machine over this exact sequence (crate
+/// Gotcha 6): it opens the message on the first chunk carrying a role, opens a
+/// thinking block on the first reasoning delta and closes it on the first
+/// content delta without reopening. Reordering these -- content before
+/// reasoning, or a finish chunk before the tool calls -- produces malformed
+/// Anthropic events rather than an error, so `/v1/messages` inherits its
+/// correctness from this function keeping role, reasoning, content, tool
+/// calls, finish.
+fn buffered_stream_response(
+    model: AppState,
+    request: ChatCompletionRequest,
+    effort: ReasoningEffort,
+    include_usage: bool,
+) -> Response {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
+    let id = format!("chatcmpl-{}", now_unix());
+    let created = now_unix();
+    let model_name = request.model.clone();
+
+    tokio::spawn(async move {
+        let send = |chunk: anyllm_translate::openai::streaming::ChatCompletionChunk| {
+            let _ =
+                tx.send(Event::default().data(serde_json::to_string(&chunk).unwrap_or_default()));
+        };
+        let chunk = |delta, finish| {
+            completion_chunk(id.clone(), created, model_name.clone(), delta, finish)
+        };
+
+        match run_guarded(model, &request, effort).await {
+            Ok(generated) => {
+                send(chunk(role_delta(), None));
+                if !generated.reasoning.is_empty() {
+                    send(chunk(reasoning_delta(generated.reasoning), None));
+                }
+                if !generated.text.is_empty() {
+                    send(chunk(text_delta(generated.text), None));
+                }
+                for (index, call) in generated.calls.into_iter().enumerate() {
+                    send(chunk(tool_call_delta(index as u32, call), None));
+                }
+                send(chunk(
+                    Default::default(),
+                    Some(crate::response::finish_reason(generated.decode.reason)),
+                ));
+                if include_usage {
+                    send(crate::response::usage_chunk(
+                        id.clone(),
+                        created,
+                        model_name.clone(),
+                        generated.decode.prompt_tokens as u32,
+                        generated.decode.new_tokens as u32,
+                    ));
+                }
+            }
+            // Same contract as the live path: a failed run is not a completed
+            // one, so it is an error event rather than a fabricated `stop`.
+            Err(e) => {
+                let message = match e {
+                    GenError::Runtime(e) => e.to_string(),
+                    GenError::Join(m) => m,
+                };
+                let body = serde_json::json!({
+                    "error": {"message": message, "type": "server_error"}
                 });
                 let _ = tx.send(Event::default().data(body.to_string()));
             }

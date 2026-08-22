@@ -48,6 +48,11 @@ async fn real_backend_serves_streaming_and_non_streaming_requests() {
         Default::default(),
         runtime::Speculation::Off,
         runtime::SpeculativeDrafter::Auto,
+        // PINNED for the same reason speculation is, and this one would be
+        // inert anyway: no request below carries tools, so every guardrail
+        // short-circuits on the empty offer set. Pinning says so rather than
+        // leaving a gate's path to a default that can move.
+        turbospark_server::GuardrailConfig::OFF,
     )
     .expect("real install should open");
     let model: Arc<dyn turbospark_server::ChatModel> = Arc::new(model);

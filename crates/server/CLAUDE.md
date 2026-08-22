@@ -26,6 +26,8 @@ crates/server/
 |   |   +-- exec.rs             # `run_full` and `stream_blocking`
 |   |   \-- tests.rs            # Unit tests for the two above
 |   +-- messages.rs             # Anthropic /v1/messages: translate in, generate, translate out
+|   +-- guardrails.rs           # Tool-call rescue, argument validation, the retry loop
+|   |   \-- tests.rs            # Unit tests for the verdict (pure, no model)
 |   +-- model.rs                # ChatModel trait and the ScriptedChatModel backend
 |   +-- real_model.rs           # RealChatModel: RealForwardRunner backend (macOS only)
 |   +-- response.rs             # Constructors for the OpenAI response & SSE chunk envelopes
@@ -34,6 +36,7 @@ crates/server/
     +-- chat_completions.rs     # Integration tests for the OpenAI endpoint
     +-- messages.rs             # Integration tests for /v1/messages, /v1/models, wider OpenAI shapes
     +-- harmony_channels.rs     # gpt-oss reasoning -> thinking/reasoning_content, and its tool calls
+    +-- guardrails.rs           # Rescue/validate/retry end to end, both endpoints, no model
     +-- real_backend.rs         # Gated real-model end-to-end test (macOS, #[ignore]d)
     \-- fixtures/               # Test tokenizer fixtures for integration tests
 ```
@@ -44,6 +47,7 @@ crates/server/
 - `handler/`: the `/v1/chat/completions` and `/v1/models` handlers, plus the generation core both endpoints share -- `plan.rs` (chat template, encode, shaping config) and `exec.rs`'s `run_full` and `stream_blocking` (which owns the `StructuredAssistantDecoder` when a request carries tools).
 - `messages.rs`: the Anthropic `/v1/messages` handler, wrapping the same core in `translate_request` / `translate_response` / `new_stream_translator`.
 - `model.rs`: the `ChatModel` trait and `ScriptedChatModel`, bridging Axum handlers to `turbospark-runtime`. The trait owns WHICH decode loop runs (`run_completion`, Gotcha 17), not just which producer.
+- `guardrails.rs`: tool-call rescue parsing, argument validation against the request's own schema, and the one-retry loop, over `forge-guardrails` (see Gotcha 18). `inspect` is the pure verdict; `run_guarded` is the loop that acts on it.
 - `real_model.rs`: `RealChatModel`, a `RealForwardRunner` behind the same trait (macOS only).
 - `response.rs`: constructors for `anyllm_translate::openai`'s response and SSE chunk envelopes, filling the many fields this server never populates in one place.
 
@@ -70,7 +74,8 @@ ANTHROPIC_BASE_URL=http://127.0.0.1:8080 ANTHROPIC_API_KEY=unused \
 cargo run --release -p turbospark-server --bin turbospark-server -- \
   --model ~/models/gemma4.gturbo [--port N] [--max-context N|auto] [--expert-cache-slots auto|N] \
   [--bind loopback|tailnet] [--power-profile performance|balanced|efficiency] \
-  [--max-tokens-per-sec R] [--speculative off|auto|N] [--speculative-drafter auto|mtp|dflash]
+  [--max-tokens-per-sec R] [--speculative off|auto|N] [--speculative-drafter auto|mtp|dflash] \
+  [--guardrails on|off]
 cargo run --release -p turbospark-server --bin turbospark-server -- --model gemma4
 
 # Launch the portable scripted server (tokenizer only, canned completions).
@@ -185,3 +190,66 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
    sized knobs Gotcha 16 already pins: `Auto` reads the resident index, so a
    gate left on it would decode speculatively or sequentially depending on
    which drafter the install that env var points at happens to carry.
+
+18. **TOOL-CALL GUARDRAILS ARE ON BY DEFAULT, AND A REQUEST CARRYING TOOLS IS
+   BUFFERED RATHER THAN STREAMED WHILE THEY ARE.** `src/guardrails.rs` wraps
+   `forge-guardrails` (crates.io, `default-features = false`): it rescues a
+   call the `StructuredAssistantDecoder` could not parse out of the raw text,
+   checks a parsed call's arguments against the schema the request sent, and
+   re-asks ONCE with a nudge. `--guardrails off` restores the previous path
+   exactly.
+
+   **The buffering is inherent, not an implementation shortcut.** A verdict
+   needs the whole turn: a call worth rescuing is one the decoder did not
+   parse, so it is indistinguishable from prose until the turn ends, and a
+   retry re-generates from scratch. Emit deltas live and both repairs are
+   already on the wire. So `stream_response` forks -- a tool-carrying request
+   goes to `buffered_stream_response`, everything else keeps the live
+   `stream_blocking` path byte for byte. The cost is time-to-first-token
+   becoming time-to-last-token for a tool turn (~5-10 s at 20-45 tok/s), taken
+   knowingly: the alternative does nothing for Claude Code, which sends
+   `stream: true` WITH tools, and a `forge-guardrails-proxy` in front would
+   buffer identically. The condition is keyed on the REQUEST carrying tools,
+   the same shape as Gotchas 7 and 12.
+
+   **THE RETRY RE-RENDERS THE PROMPT rather than appending tokens**, which is
+   why `run_guarded` takes the whole `ChatCompletionRequest` and not the
+   planned `prompt_ids`. A nudge has to arrive as a `user` turn after the
+   failed `assistant` turn, through the checkpoint's own template; appended
+   tokens land inside whatever channel the model was last writing in and are
+   wrong on every dialect. The budget is ONE, because Gotcha 1's queue is
+   serial and a second generation doubles the worst-case mutex hold.
+
+   **RESCUE COMPOSES WITH VALIDATION, and getting that backwards was a real
+   bug this crate's own test caught.** The first version returned a rescued
+   call unchecked, which is exactly inverted: a call recovered from markup the
+   decoder could not parse is the one MOST likely to have arguments the model
+   also got wrong. `inspect` rescues first and then validates the result, and
+   a rescued call that fails validation is re-asked rather than sent --
+   `an_invalid_call_is_retried_and_the_second_answer_wins` is the guard, and it
+   failed on the first run by returning a call with empty arguments.
+
+   **A retry cannot be tested with `ScriptedChatModel`**, and the reason is
+   worth knowing before someone tries: `with_producer` rebuilds the producer
+   from the same steps on every call, so it replays one answer forever.
+   `tests/guardrails.rs` carries `TwoTurnModel`, whose producer also overrides
+   `produce_prefill` to a no-op -- that decouples the script from the PROMPT
+   LENGTH, which matters because a retry's prompt is longer than the first
+   (it carries the failed turn plus the nudge) and a `ScriptedLogitProducer`
+   sized for the first generation runs out mid-prefill on the second.
+
+   `--guardrails` is process-level like the rate cap and speculation, on the
+   same reasoning (Gotchas 10 and 17) plus one of its own: a per-request field
+   would let any client opt its own traffic out of the repair the deployment
+   chose. `tests/real_backend.rs` pins it OFF for Gotcha 35's reason.
+
+   **THIS IS THE ONE CRATE IN THE WORKSPACE THAT OVERRIDES `rust-version`.**
+   `forge-guardrails` declares 1.87 and the workspace floor is 1.82, so
+   `crates/server/Cargo.toml` spells `rust-version = "1.87"` literally rather
+   than inheriting. Overriding here rather than raising the workspace keeps
+   the claim true for the other fifteen crates, none of which has that floor.
+   Nothing in this repo was taking 1.82 literally anyway -- `rust-toolchain.toml`
+   pins `stable` -- but a declared floor a crate cannot honour is the kind of
+   silent-and-wrong this file exists to prevent. Note the 1.87 belongs to the
+   `guardrails` feature: that crate's DEFAULT features need 1.95, which is
+   exactly why `default-features = false` is not merely a size decision.

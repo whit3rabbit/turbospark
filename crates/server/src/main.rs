@@ -59,6 +59,7 @@ fn open_real_model(args: &ModelArgs) -> Result<Arc<dyn turbospark_server::ChatMo
         rate,
         args.speculation,
         args.drafter,
+        args.guardrails,
     )?;
     // Both sized figures are the RESOLVED ones, never `args`: under `auto`
     // the request carries no number, and each has to be readable beside any
@@ -98,6 +99,14 @@ fn open_real_model(args: &ModelArgs) -> Result<Arc<dyn turbospark_server::ChatMo
     // time with nothing said is the failure the feature was built to end. A
     // server says it once, at startup, where an operator sees it.
     eprintln!("{}", model.speculation_line());
+    eprintln!(
+        "  guardrails: {}",
+        if args.guardrails.active() {
+            "on (tool calls rescued and argument-checked; a request with tools is buffered, not streamed)"
+        } else {
+            "off"
+        }
+    );
     Ok(Arc::new(model))
 }
 

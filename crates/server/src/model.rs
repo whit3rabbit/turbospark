@@ -77,6 +77,20 @@ pub trait ChatModel: Send + Sync {
     fn rate_control(&self) -> runtime::RateControl {
         runtime::RateControl::default()
     }
+
+    /// Which tool-call guardrails this backend generates under.
+    ///
+    /// Process-level for exactly the reason [`ChatModel::rate_control`] is,
+    /// and NOT for a symmetry: whether a deployment repairs a malformed tool
+    /// call is a property of the deployment, and a per-request field would let
+    /// any client opt its own traffic out of it.
+    ///
+    /// The default is ON, which costs the scripted backend nothing: every
+    /// guardrail is keyed on the request carrying tools, and a request with
+    /// none takes the path it always took.
+    fn guardrails(&self) -> crate::guardrails::GuardrailConfig {
+        crate::guardrails::GuardrailConfig::default()
+    }
 }
 
 /// Always replays the same scripted logit sequence, regardless of the
