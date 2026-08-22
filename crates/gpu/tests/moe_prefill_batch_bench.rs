@@ -211,6 +211,10 @@ fn c_of_m_for_the_batched_routed_pair() {
             .expect("bind wide blobs");
         let bat_acts = context.new_output_buffer((m * TOP_K * F * 2) as u64);
         let bat_y = context.new_output_buffer((m * D * 2) as u64);
+        // Zero seed: this bench times the routed pair the way the families
+        // without a shared expert dispatch it, which is the arithmetic it
+        // has always timed.
+        let bat_zero = context.new_buffer_with_data(&vec![0u8; m * D * 2]);
         let batched_round = |context: &mut MetalContext| {
             let pass = context.begin_pass();
             for b in &blobs {
@@ -239,6 +243,7 @@ fn c_of_m_for_the_batched_routed_pair() {
                 (&bat_acts, 0),
                 (&routing_buf, 0),
                 (&routes_buf, 0),
+                (&bat_zero, 0),
                 (&bat_y, 0),
                 D as u32,
                 F as u32,

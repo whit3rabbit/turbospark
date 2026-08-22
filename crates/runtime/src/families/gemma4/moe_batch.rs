@@ -296,6 +296,13 @@ impl RealForwardRunner {
                 (&real.batched().batch_acts, acts_off),
                 (&real.batched().batch_routing_w, rw_off),
                 (&real.batched().batch_routes, routes_off),
+                // Seed from ZEROS: this family adds its shared expert in
+                // the sandwich tail below, after a norm, so the routed sum
+                // starts from nothing -- which is what the decode path's
+                // `zero_hidden` argument says too. `0.0f + p` is the
+                // operation the kernel's old hardcoded seed performed, so
+                // this row's bytes do not move.
+                (&real.batched().batch_zero, x_off),
                 (&real.batched().batch_y, x_off),
                 hidden as u32,
                 moe_inter,

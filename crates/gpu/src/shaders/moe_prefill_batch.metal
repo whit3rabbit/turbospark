@@ -99,6 +99,12 @@ kernel void moe_prefill_phase2_fused_int4(
     constant uint& F [[buffer(7)]],
     constant uint& top_k [[buffer(8)]],
     constant uint& tokens [[buffer(9)]],
+    // [tokens, D], the accumulator SEED, exactly as the decode kernel's
+    // `residual` is. Families with no shared expert bind zeros and get the
+    // 0.0f seed this used to hardcode; `qwen3_5` binds its per-token gated
+    // shared-expert output, which the decode kernel adds FIRST and which
+    // therefore cannot be added afterwards without changing the sum.
+    device const half* residual [[buffer(10)]],
     uint2 tg [[threadgroup_position_in_grid]],
     uint sg_idx [[simdgroup_index_in_threadgroup]],
     uint lane [[thread_index_in_simdgroup]]
@@ -130,7 +136,10 @@ kernel void moe_prefill_phase2_fused_int4(
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
     if (sg_idx == 0 && lane == 0) {
-        float acc = 0.0f;
+        // Seeded, then rank order -- `moe_phase2_down_reduce_k8`'s exact
+        // sequence. FP addition is not associative, so seeding is not the
+        // same operation as adding the residual to the finished sum.
+        float acc = float(residual[t * DD + d]);
         acc += partial[0]; acc += partial[1]; acc += partial[2]; acc += partial[3];
         acc += partial[4]; acc += partial[5]; acc += partial[6]; acc += partial[7];
         y[t * DD + d] = half(acc);

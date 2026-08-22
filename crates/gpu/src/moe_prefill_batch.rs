@@ -179,11 +179,29 @@ pub fn encode_moe_prefill_phase1(
     Ok(())
 }
 
-/// Fused phase 2 over the same routes: `y[t * D + d] = sum_rank
-/// routing_w[t * top_k + rank] * down_d(acts[t, rank])`, reduced in rank
-/// order per token from a 0.0f seed -- the decode kernel's arithmetic
-/// with a token axis. `routing_w` holds `tokens * top_k` halfs and `y`
-/// holds `tokens * D` halfs.
+/// Fused phase 2 over the same routes, computing `y[t * D + d]` as
+/// `residual[t * D + d]` plus `sum_rank routing_w[t * top_k + rank] *
+/// down_d(acts[t, rank])`, reduced in rank order per token from the
+/// RESIDUAL seed -- the decode kernel's arithmetic with a token axis.
+/// `routing_w` holds `tokens * top_k` halfs; `residual` and `y` hold
+/// `tokens * D` halfs and may be the same buffer.
+///
+/// `residual` mirrors `moe_phase2_down_reduce_k8`'s argument of that name
+/// and exists for one family. Gemma, `llama`, `gpt-oss` and the synthetic
+/// flow all pass `zero_hidden` on the decode path, which is why this
+/// kernel hardcoded a `0.0f` seed and was right to; `qwen3_5` passes its
+/// GATED SHARED-EXPERT output, and FP addition is not associative, so
+/// `(h1 + p0 + ... + p7)` is not `(p0 + ... + p7) + h1` and the shared
+/// expert cannot be folded in by a later residual add. Callers with no
+/// shared expert bind a zeroed buffer and get the old arithmetic exactly:
+/// `0.0f + p` is the same operation the previous seed performed.
+///
+/// A UNIFORM `has_residual` flag was the alternative and is not taken: a
+/// flag is a second thing to get wrong (pass it wrong and the seed is
+/// silently zeros or garbage), where a zeroed buffer is inert, and it
+/// would put a branch in the reduce. A function constant is refused for
+/// Gotcha 1's reason -- a specialization axis missing from
+/// `constants_key` silently reuses whichever pipeline compiled first.
 #[allow(clippy::too_many_arguments)]
 pub fn encode_moe_prefill_phase2_fused(
     context: &mut MetalContext,
@@ -193,6 +211,7 @@ pub fn encode_moe_prefill_phase2_fused(
     acts: (&metal::Buffer, u64),
     routing_w: (&metal::Buffer, u64),
     routes: (&metal::Buffer, u64),
+    residual: (&metal::Buffer, u64),
     y: (&metal::Buffer, u64),
     d_dim: u32,
     f_dim: u32,
@@ -218,6 +237,7 @@ pub fn encode_moe_prefill_phase2_fused(
             (routing_w.0, 3, routing_w.1),
             (routes.0, 4, routes.1),
             (y.0, 5, y.1),
+            (residual.0, 10, residual.1),
         ],
         &[
             (&offsets.bytes(), 1),

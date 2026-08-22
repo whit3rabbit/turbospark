@@ -55,6 +55,13 @@ pub(crate) struct RealGemmaState {
 ///   Both are single-banked: the driver retires the previous layer's
 ///   routed command buffer before this layer's routed half begins,
 ///   so no in-flight dispatch reads them while they are rewritten.
+/// - `batch_zero`: `[M, hidden]` FP16 of ZEROS, written once here and
+///   never again. It is the fused phase 2's accumulator seed, the batched
+///   twin of `DecodeScratch::zero_hidden` -- this family adds its shared
+///   expert in the sandwich tail after a norm, so the routed sum starts
+///   from nothing, exactly as the decode path's phase 2 does. Filled
+///   explicitly rather than trusting a fresh `MTLBuffer` to be zeroed,
+///   which is `zero_hidden`'s own precedent.
 ///
 /// **ALLOCATED ON FIRST USE, so an install that never chunks its prefill
 /// allocates none of it.** That is the rule this engine follows everywhere
@@ -66,7 +73,7 @@ pub(crate) struct RealGemmaState {
 ///
 /// The stake is small and saying so is part of the point: on the real Gemma 4
 /// install (hidden 2816, moe_inter 704, top_k 8, `MAX_PREFILL_BATCH` 16) the
-/// six buffers come to ~354 KiB, well inside the 77 MiB run-to-run spread of
+/// seven buffers come to ~442 KiB, well inside the 77 MiB run-to-run spread of
 /// the oracle's own peak. This is consistency with a rule, not a memory win,
 /// and a future `MAX_PREFILL_BATCH` or a wider model is what would make it
 /// one.
@@ -82,6 +89,7 @@ pub(crate) struct BatchedPrefillScratch {
     pub(crate) batch_h1: gpu::MetalBuffer,
     pub(crate) batch_routing_w: gpu::MetalBuffer,
     pub(crate) batch_routes: gpu::MetalBuffer,
+    pub(crate) batch_zero: gpu::MetalBuffer,
     /// The wide expert-blob argument buffer the batched pair reads
     /// through (up to [`gpu::MAX_PREFILL_EXPERT_BINDINGS`] pointers, one
     /// per cache slot, bound once per layer).
@@ -206,6 +214,12 @@ impl RealGemmaState {
             // 16 bytes per encoded route (token, rank, slot, reserved),
             // matching `MoePrefillRoute::bytes` and the shader struct.
             batch_routes: context.new_output_buffer((MAX_PREFILL_BATCH * top_k * 16) as u64),
+            batch_zero: {
+                let bytes = MAX_PREFILL_BATCH * hidden.max(1) * 2;
+                let buffer = context.new_output_buffer(bytes as u64);
+                gpu::write_buffer_bytes(&buffer, 0, &vec![0u8; bytes]);
+                buffer
+            },
             wide_blobs,
         });
         Ok(())

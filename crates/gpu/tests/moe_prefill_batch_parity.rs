@@ -21,6 +21,21 @@
 //! happen to round identically under reordering -- the real-shape case
 //! is the order-sensitivity sentinel, and a future edit that weakens it
 //! weakens the Gotcha 27 guard.
+//!
+//! **THE RESIDUAL SEED HAS THE SAME ASYMMETRY, measured 2026-08-21 when
+//! it was added, and it is why there are TWO shared-expert cases rather
+//! than one.** Moving the seed from the front of the reduce to the end --
+//! the difference between what `qwen3_5`'s decode kernel does and what a
+//! driver appending a residual add would do -- reddens
+//! `a_shared_expert_residual_is_bit_identical_at_the_real_shape` and
+//! NOTHING else, the 128-wide case included. So the small case cannot see
+//! the property the seed exists for, and a future edit that drops the
+//! real-shape case would leave the summation-order claim untested while
+//! eight tests still passed. Three mutations were run: hardcoding the old
+//! `0.0f` seed (reddens all three new cases and none of the six older
+//! ones), appending instead of seeding (reddens the real-shape case
+//! alone), and dropping the token stride from the residual index (reddens
+//! both parity cases, not the discriminator).
 
 use half::f16;
 use metal::Buffer;
@@ -120,6 +135,13 @@ struct Fixture {
     routes: Vec<MoePrefillRoute>,
     /// `weights[t * top_k + r]`, the router weights behind those ranks.
     weights: Vec<f32>,
+    /// `[tokens, D]`, phase 2's accumulator SEED. Zero for the families
+    /// that add their shared expert elsewhere (Gemma, `llama`, `gpt-oss`);
+    /// `qwen3_5`'s gated shared-expert output otherwise. Both sides of the
+    /// comparison read it, so a non-zero one is what makes the seeding
+    /// order observable at all -- see
+    /// `the_residual_seed_is_what_a_zero_fixture_cannot_see`.
+    residual: Vec<f16>,
     d: usize,
     f: usize,
     top_k: usize,
@@ -168,11 +190,27 @@ impl Fixture {
             x,
             routes,
             weights,
+            residual: vec![f16::from_f32(0.0); tokens * d],
             d,
             f,
             top_k,
             tokens,
         }
+    }
+
+    /// Give phase 2 a NON-ZERO accumulator seed, the shape `qwen3_5`'s
+    /// gated shared expert has. Deliberately spans several binades and
+    /// both signs: a seed all of one magnitude cannot show that it is
+    /// added FIRST rather than last, which is the only thing the seeding
+    /// changes.
+    fn with_residual(mut self) -> Self {
+        let row = deterministic_row(0xD1CE, self.tokens * self.d);
+        self.residual = row
+            .iter()
+            .enumerate()
+            .map(|(i, &v)| f16::from_f32(v * if i % 3 == 0 { 8.0 } else { 0.125 }))
+            .collect();
+        self
     }
 
     /// The ORACLE: the vendored decode pair, once per token, blobs bound
@@ -188,7 +226,10 @@ impl Fixture {
         let acts_buf = self
             .context
             .new_output_buffer((MAX_STREAMED_EXPERTS * f * 2) as u64);
-        let zero_residual = self.context.new_buffer_with_data(&vec![0u8; d * 2]);
+        // The decode kernel takes ONE row; the batched one takes all M.
+        // Feeding the same values through both is what makes the seed's
+        // position in the sum comparable.
+        let residual_buf = self.context.new_buffer_with_data(&to_le(&self.residual));
         let y_buf = self.context.new_output_buffer((d * 2) as u64);
         let routed = RoutedBlobsBuffer::new(&mut self.context, false).expect("arg buffer");
 
@@ -236,7 +277,7 @@ impl Fixture {
                 &self.offsets,
                 (&acts_buf, 0),
                 (&routing_buf, 0),
-                (&zero_residual, 0),
+                (&residual_buf, (t * d * 2) as u64),
                 (&y_buf, 0),
                 d as u32,
                 f as u32,
@@ -274,6 +315,7 @@ impl Fixture {
         let routes_buf = self
             .context
             .new_buffer_with_data(&MoePrefillRoute::bytes(&self.routes));
+        let residual_buf = self.context.new_buffer_with_data(&to_le(&self.residual));
 
         let routed = RoutedBlobsWideBuffer::new(&mut self.context, false).expect("arg buffer");
         let blob_refs: Vec<(&Buffer, u64)> = self.blobs.iter().map(|b| (b, 0u64)).collect();
@@ -308,6 +350,7 @@ impl Fixture {
             (&acts_buf, 0),
             (&routing_buf, 0),
             (&routes_buf, 0),
+            (&residual_buf, 0),
             (&y_buf, 0),
             d as u32,
             f as u32,
@@ -378,6 +421,62 @@ fn batched_pair_pads_ranks_like_the_decode_kernel() {
     let (got_acts, got_y) = fixture.batched_pair(None, None);
     assert_bits_equal("acts", &got_acts, &want_acts);
     assert_bits_equal("y", &got_y, &want_y);
+}
+
+/// The SHARED-EXPERT shape: phase 2 seeded with a non-zero residual, which
+/// is what `qwen3_5` passes (its gated shared-expert output) and what every
+/// other family passes zeros for. The seed is added FIRST, before the eight
+/// ranks, so it is not the same arithmetic as adding the shared expert to a
+/// finished routed sum -- that is the whole reason the kernel takes it
+/// rather than the driver appending a residual add.
+#[test]
+fn batched_pair_is_bit_identical_with_a_shared_expert_residual() {
+    let mut fixture = Fixture::new(128, 128, 8, 6, 12).with_residual();
+    let (want_acts, want_y) = fixture.decode_pair_sequential();
+    let (got_acts, got_y) = fixture.batched_pair(None, None);
+    assert_bits_equal("acts", &got_acts, &want_acts);
+    assert_bits_equal("y", &got_y, &want_y);
+}
+
+/// The same at the real routed shape, where the 8-term sums are long
+/// enough for reordering to be visible at all (the file header records
+/// that the small cases round identically under a reversed reduce).
+#[test]
+fn a_shared_expert_residual_is_bit_identical_at_the_real_shape() {
+    let mut fixture = Fixture::new(2816, 704, 8, 4, 10).with_residual();
+    let (want_acts, want_y) = fixture.decode_pair_sequential();
+    let (got_acts, got_y) = fixture.batched_pair(None, None);
+    assert_bits_equal("acts", &got_acts, &want_acts);
+    assert_bits_equal("y", &got_y, &want_y);
+}
+
+/// THE FIXTURE MUST DISCRIMINATE BEFORE THE TWO CASES ABOVE MEAN
+/// ANYTHING. A zero residual is the additive identity, so with one the
+/// seeded kernel and the `acc = 0.0f` kernel it replaced are the same
+/// function and the parity cases would pass against either -- exactly the
+/// trap AGENTS.md Gotchas 48 and 50 record on two other axes (a packing
+/// fixture blind to field order, a norm fixture whose weights are near
+/// zero). This asserts the seed reaches the output: same routes, same
+/// weights, same activations, residual the only difference, and the
+/// outputs must DIFFER.
+///
+/// It also pins the identity in the other direction, which is what says
+/// the Gemma path's bytes did not move when the seed was added: a zeroed
+/// residual reproduces the un-seeded result exactly.
+#[test]
+fn the_residual_seed_is_what_a_zero_fixture_cannot_see() {
+    let mut zeroed = Fixture::new(128, 128, 8, 6, 12);
+    let (_, zero_y) = zeroed.batched_pair(None, None);
+
+    let mut seeded = Fixture::new(128, 128, 8, 6, 12).with_residual();
+    let (_, seeded_y) = seeded.batched_pair(None, None);
+    assert_bits_differ("residual seed", &seeded_y, &zero_y);
+
+    // And the decode oracle agrees about the zero case, so "unchanged"
+    // means unchanged against the vendored kernel and not merely
+    // self-consistent.
+    let (_, want_y) = zeroed.decode_pair_sequential();
+    assert_bits_equal("zero residual", &zero_y, &want_y);
 }
 
 /// MUTATION 1: swapping one token's routing weights across ranks changes
