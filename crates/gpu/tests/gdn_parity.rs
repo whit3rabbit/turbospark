@@ -672,3 +672,124 @@ fn one_prefill_row_matches_one_decode_step_from_a_state_that_carries_history() {
         "the carried state diverges by {state_worst:e} after ONE row"
     );
 }
+
+/// **REPEATED ONE-ROW PREFILL CALLS, ROW BY ROW FROM ZERO -- the shape
+/// `produce_batched` takes at M=1, which no other case here covers.**
+///
+/// The case above it runs SEVEN rows as ONE `n=7` call; the carried-state
+/// case runs one row after a five-row warmup, so its conv tail is FULL. This
+/// runs `n=1` repeatedly and compares at EVERY row, which is the only way to
+/// see the transient while the tail is still filling: `K` is 4, so the conv
+/// window holds 1, 2, 3 then 4 real entries on rows 0, 1, 2, 3.
+///
+/// It exists because that transient lines up with a real symptom. On the real
+/// `qwen3_5` install `produce_batched` and `produce` are bit-identical at the
+/// first TWO tokens and differ across most of the vocabulary from the THIRD
+/// (`crates/bench/tests/batched_forward_probe.rs`), and a width-4 causal conv
+/// first holds three real entries on exactly that token. If the two chains
+/// part here at row 2, that is the cause; if they agree at every row, the
+/// coincidence is a coincidence and the conv is excluded for good.
+#[test]
+fn repeated_one_row_prefill_calls_match_decode_steps_row_by_row() {
+    let mut context = MetalContext::new().expect("Metal device");
+    let c = dims().qkv_dim();
+    let vd = dims().value_dim();
+    let w = Weights::new(0xC0DE);
+    let count = 6usize;
+    let rows = Rows::new(count, 0xC0DE_000);
+
+    // Arm A carries its own tail and state through `gpu_decode_step`.
+    let decode_bufs = DecodeBuffers::new(&context, &w);
+    // Arm B carries its own, advanced only by `gdn_conv_tail_update`.
+    let tail = zeroed(&context, (K - 1) * c * 2);
+    let state = zeroed(&context, HV * DV * DK * 4);
+
+    let mut first_bad: Option<usize> = None;
+    for row in 0..count {
+        let decode_out = gpu_decode_step(&mut context, &decode_bufs, &rows, row);
+
+        let qkv_row = context.new_buffer_with_data(&half_bytes(&rows.qkv[row].0));
+        let a_row = context.new_buffer_with_data(&half_bytes(&rows.a[row].0));
+        let b_row = context.new_buffer_with_data(&half_bytes(&rows.b[row].0));
+        let z_row = context.new_buffer_with_data(&half_bytes(&rows.z[row].0));
+        let conv_out = zeroed(&context, c * 2);
+        let y = zeroed(&context, vd * 2);
+        let out = zeroed(&context, vd * 2);
+
+        let pass = context.begin_pass();
+        encode_gdn_conv_prefill(
+            &mut context,
+            &pass,
+            shape(),
+            (&tail, 0),
+            (&qkv_row, 0),
+            (&decode_bufs.conv_w, 0),
+            (&conv_out, 0),
+            1,
+        )
+        .expect("conv prefill");
+        encode_gdn_conv_tail_update(&mut context, &pass, shape(), (&tail, 0), (&qkv_row, 0), 1)
+            .expect("tail update");
+        encode_gdn_qk_norm(&mut context, &pass, shape(), (&conv_out, 0), 1).expect("qk norm");
+        encode_gdn_delta_prefill(
+            &mut context,
+            &pass,
+            shape(),
+            (&conv_out, 0),
+            (&a_row, 0),
+            (&b_row, 0),
+            (&decode_bufs.a_log, 0),
+            (&decode_bufs.dt_bias, 0),
+            &state,
+            (&y, 0),
+            1,
+        )
+        .expect("delta prefill");
+        encode_gdn_gated_norm(
+            &mut context,
+            &pass,
+            shape(),
+            (&y, 0),
+            (&z_row, 0),
+            (&decode_bufs.norm_w, 0),
+            (&out, 0),
+            1,
+        )
+        .expect("gated norm");
+        pass.commit_and_wait();
+
+        let prefill_out: Vec<f32> = read_buffer_f16(&out, 0, vd)
+            .iter()
+            .map(|h| h.to_f32())
+            .collect();
+        let out_diff = prefill_out
+            .iter()
+            .zip(decode_out.iter())
+            .filter(|(a, b)| a.to_bits() != b.to_bits())
+            .count();
+        let tail_equal = read_buffer_f16(&decode_bufs.tail, 0, (K - 1) * c)
+            == read_buffer_f16(&tail, 0, (K - 1) * c);
+        let state_diff = read_f32_buffer(&decode_bufs.state, HV * DV * DK)
+            .iter()
+            .zip(read_f32_buffer(&state, HV * DV * DK).iter())
+            .filter(|(a, b)| a.to_bits() != b.to_bits())
+            .count();
+        println!(
+            "row {row} ({} real conv entries): outputs {out_diff}/{vd} differ, \
+             state {state_diff}/{} differ, tail equal {tail_equal}",
+            (row + 1).min(K),
+            HV * DV * DK
+        );
+        if (out_diff != 0 || state_diff != 0 || !tail_equal) && first_bad.is_none() {
+            first_bad = Some(row);
+        }
+    }
+
+    assert_eq!(
+        first_bad,
+        None,
+        "a one-row prefill call and a decode step part at row {first_bad:?}; \
+         the conv tail is still filling until row {}",
+        K - 1
+    );
+}

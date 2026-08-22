@@ -75,9 +75,21 @@
 //! identical spans, the same per-head q/k norm at the same epsilon, and the
 //! same `rope_neox_subdim` at the same theta and rotary dim.
 //!
+//! It is also NOT stale scratch: the same batched call twice from one
+//! checkpoint gives 0/248320 differing, so this is arithmetic rather than a
+//! buffer carrying state across calls (Gotcha 27's shape, checked because a
+//! comparison against `produce` alone cannot tell the two apart).
+//!
 //! **So the next step is a per-layer bisect and not more elimination by
 //! reading.** What is wanted is the first layer at which the two residual
 //! streams part at span 3, which needs a readback this probe does not have.
+//! Two things a future bisect should NOT spend time on. A synthetic install
+//! cannot see any of this -- `real_forward_qwen35_batched_onset.rs` sweeps a
+//! dense INT4 fixture and reads 0 differing at every span, so the harness has
+//! to be the real install. And the eliminations above were re-run at the real
+//! model's SHAPES, not just at fixture shapes, because the GEMM bakes M, N
+//! and B as function constants and a different N is a different pipeline
+//! (`the_gemm_and_the_gemv_agree_at_the_real_models_shapes`).
 //!
 //! ```sh
 //! TURBOSPARK_PROBE_INSTALL_DIR=~/models/qwen38-27b-mtp.gturbo \
@@ -269,6 +281,35 @@ fn a_batched_forward_at_one_row_is_compared_against_a_sequential_step() {
     }
     let point = runner.checkpoint();
 
+    // --- IS `produce_batched` EVEN DETERMINISTIC? ---
+    //
+    // Every arm above compares it against `produce`, which cannot tell an
+    // arithmetic difference from a STATE one: a scratch buffer left
+    // uninitialised, or carrying the previous call's values, produces a
+    // stable-looking wrong answer that also happens to differ from the
+    // sequential path. Running it twice from the same checkpoint separates
+    // those -- and a difference here would be Gotcha 27's shape (output as a
+    // function of hidden state rather than of the input), which is a bug in
+    // its own right and a much better lead than any of the arithmetic.
+    let mut twice_a = vec![LogitValue::from_f32(0.0); vocab];
+    let mut twice_b = vec![LogitValue::from_f32(0.0); vocab];
+    runner
+        .produce_batched(&follow[..1], base, &mut twice_a)
+        .expect("batched once");
+    runner.rollback(&point);
+    runner
+        .produce_batched(&follow[..1], base, &mut twice_b)
+        .expect("batched twice");
+    runner.rollback(&point);
+    println!("determinism (the same batched call twice from one checkpoint):");
+    let unstable = compare(
+        "run 1 vs run 2",
+        &bits(&twice_a),
+        &bits(&twice_b),
+        &twice_a,
+        &twice_b,
+    );
+
     // --- M=2: the first case where rows can influence each other ---
     runner
         .produce(follow[0], base, &mut scratch)
@@ -296,7 +337,14 @@ fn a_batched_forward_at_one_row_is_compared_against_a_sequential_step() {
     // THE VERDICT, stated rather than left to the reader: exactly one of
     // these is the case, and which one decides where to look next.
     println!("\nVERDICT:");
-    if m1 > 0 {
+    if unstable > 0 {
+        println!(
+            "  `produce_batched` IS NOT DETERMINISTIC -- the same call from the same\n  \
+             checkpoint gave different logits twice. Stop reading the arithmetic: this\n  \
+             is a scratch buffer carrying state across calls, and every comparison\n  \
+             above is measuring that rather than a kernel (AGENTS.md Gotcha 27)."
+        );
+    } else if m1 > 0 {
         println!(
             "  `produce_batched` differs from `produce` AT ONE ROW, where no batching\n  \
              happens. The cause is a COMPOSITION difference between the two functions --\n  \

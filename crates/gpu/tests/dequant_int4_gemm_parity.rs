@@ -312,10 +312,35 @@ fn f16_ragged(seed: u64, len: usize) -> Vec<f16> {
 /// see the property is worse than no fixture, because it reports green.
 #[test]
 fn the_gemm_and_the_gemv_agree_on_data_that_can_see_reassociation() {
-    let rows = 128usize;
-    let cols = 512usize;
     let mut context = MetalContext::new().expect("Metal device");
+    hostile_parity_at(&mut context, 128, 512, &[1, 2, 8, MAX_BATCH_ROWS]);
+}
 
+/// **THE SAME COMPARISON AT THE REAL MODEL'S SHAPES, because the kernel BAKES
+/// M, N and B as function constants and a different N is a different
+/// pipeline.** An agreement at 128x512 does not transfer to 17408x5120 on its
+/// own: the two compile separately, the unroll and register pressure differ,
+/// and `n_groups / 4` walks 2 full blocks in one and 68 in the other.
+///
+/// The shapes are `Qwen/Qwen3.8-27B`'s, read off the install's manifest --
+/// hidden 5120, 24 q heads at head_dim 256, FFN 17408 -- so this covers a
+/// packed q projection, the KV projections and both FFN orientations. The
+/// weights are synthetic; only the DIMENSIONS have to be real for the
+/// specialization to be.
+///
+/// It exists because an earlier elimination of this kernel was run at fixture
+/// shapes alone and that gap was worth closing rather than arguing about.
+#[test]
+fn the_gemm_and_the_gemv_agree_at_the_real_models_shapes() {
+    let mut context = MetalContext::new().expect("Metal device");
+    // (rows, cols): q_packed, k/v, FFN gate/up, FFN down.
+    for (rows, cols) in [(12288, 5120), (1024, 5120), (17408, 5120), (5120, 17408)] {
+        println!("shape {rows}x{cols}:");
+        hostile_parity_at(&mut context, rows, cols, &[1, 2]);
+    }
+}
+
+fn hostile_parity_at(context: &mut MetalContext, rows: usize, cols: usize, batches: &[usize]) {
     let scales_offset = (rows * cols / 2) as u64;
     let biases_offset = scales_offset + (rows * cols / 64 * 2) as u64;
     let mut blob = fill(0x5EED, scales_offset as usize);
@@ -323,7 +348,7 @@ fn the_gemm_and_the_gemv_agree_on_data_that_can_see_reassociation() {
     blob.extend_from_slice(&bf16_ragged(0xDECAF, rows * cols / 64));
     let weights = context.new_buffer_with_data(&blob);
 
-    for batch in [1usize, 2, 8, MAX_BATCH_ROWS] {
+    for &batch in batches {
         let x_values = f16_ragged(0xA5A5 + batch as u64, batch * cols);
 
         // THE DATA MUST BE ORDER-SENSITIVE, and this is the first of two
@@ -361,7 +386,7 @@ fn the_gemm_and_the_gemv_agree_on_data_that_can_see_reassociation() {
         autorelease_pool(|| {
             let pass = context.begin_pass();
             encode_dequant_int4_gemm_resident(
-                &mut context,
+                context,
                 &pass,
                 &matrix(),
                 (&x, 0),
@@ -377,7 +402,7 @@ fn the_gemm_and_the_gemv_agree_on_data_that_can_see_reassociation() {
             autorelease_pool(|| {
                 let pass = context.begin_pass();
                 encode_dequant_int4_gemv_resident(
-                    &mut context,
+                    context,
                     &pass,
                     &matrix(),
                     (&x, (b * cols * 2) as u64),
@@ -427,7 +452,7 @@ fn the_gemm_and_the_gemv_agree_on_data_that_can_see_reassociation() {
         autorelease_pool(|| {
             let pass = context.begin_pass();
             encode_dequant_int4_gemm_mma_resident(
-                &mut context,
+                context,
                 &pass,
                 &matrix(),
                 (&x, 0),
