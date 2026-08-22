@@ -489,9 +489,18 @@ Caveats. One corpus, one family, one machine. mlx-lm returns bfloat16,
 whose 8 mantissa bits are strictly coarser than this port's f16 storage at
 these softcapped magnitudes, so there is no f16 storage floor to subtract
 (measured: 3.5e-22 nats) and mlx is the lower-precision side, not this
-port. Qwen 3.6 has no cross-engine number: `logit_dump.rs` accepts
-`TURBOSPARK_QWEN36_INSTALL_DIR` and would produce one, but `kld.py`'s
-reference is pinned to the Gemma repo.
+port. Qwen 3.6 still has no cross-engine number, but the reason recorded
+here until 2026-08-21 was wrong in both halves. It read: "`logit_dump.rs`
+accepts `TURBOSPARK_QWEN36_INSTALL_DIR` and would produce one, but
+`kld.py`'s reference is pinned to the Gemma repo." That pin is gone
+(`kld.py` takes a keyed checkpoint name), and this checkpoint would not
+have belonged there anyway -- Qwen 3.6 35B-A3B is an MoE, 256 experts at
+top-8, and `kld.py` has no guard that the reference loaded quantized. Its
+pins live in `kld_mlx_affine.py`'s `CHECKPOINTS` as `qwen36`, verified off
+the published config and index (`model_type: qwen3_5_moe`, 512 quantized
+modules composed 432 at 4 bits and 80 at 8, vision tower unquantized and
+stripped). What is actually missing is the INSTALL: `~/models/qwen36.gturbo`
+was cleared 2026-08-15, so the row has never been through a forward pass.
 
 ### Cross-engine: llama.cpp on the same GGUF
 

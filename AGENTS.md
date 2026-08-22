@@ -387,7 +387,7 @@ TURBOSPARK_QWEN3MOE_INSTALL_DIR=~/models/qwen3moe-gguf.gturbo \
 TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
 TURBOSPARK_LOGIT_DUMP_DIR=/tmp/kld/turbospark \
   cargo test -p turbospark-bench --test logit_dump --release -- --ignored --nocapture
-uv run --python 3.12 --with mlx-lm --with numpy scripts/kld.py /tmp/kld/turbospark
+uv run --python 3.12 --with mlx-lm --with numpy scripts/kld.py /tmp/kld/turbospark gemma4
 
 # Same dump with NO warmup walk, which is the condition quality_gate takes
 # its perplexity under. Reproduces the frozen row exactly; that is the
@@ -1914,11 +1914,27 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
     skipped precisely when an arm was reused from cache, which is most
     re-runs; it now computes from the returned array and runs either way.
     A guard that only fires on a cold path is close to no guard.
-    Look for siblings before assuming this one is done: `scripts/kld.py` is
-    Gemma-pinned throughout (`REPO`, and a docstring asserting softcap 30),
-    which is BY DESIGN there -- its reference checkpoint is a Gemma repo --
-    but the same audit is owed to any measurement script that claims to take
-    an arbitrary install.
+    Look for siblings before assuming this one is done. That clause used to
+    end here naming `scripts/kld.py` as Gemma-pinned throughout (`REPO`, and
+    a docstring asserting softcap 30) and calling it BY DESIGN, since its
+    reference checkpoint genuinely is a Gemma repo. **THE AUDIT IT RECORDED
+    AS OWED WAS PAID 2026-08-21** and the "by design" reading did not
+    survive it: the pin is a keyed `CHECKPOINTS` table now, the name is
+    REQUIRED rather than defaulted, and the softcap comes from
+    `softcap_of(install)` -- the same three moves this gotcha's own fix made
+    one file over. A defensible constant and a correct one are different
+    things, and the tell that it was the first is that nothing about `REPO`
+    had to change for it to become wrong, only the arrival of a caller.
+    **THE SECOND CALLER TURNED OUT NOT TO BELONG IN THAT FILE AT ALL**,
+    which is the part worth carrying: `docs/BENCHMARKS.md` had recorded for
+    months that Qwen 3.6 has no cross-engine number because "`kld.py`'s
+    reference is pinned to the Gemma repo", i.e. that the pin was the whole
+    obstacle. It was not. That checkpoint is an MoE and `kld.py` has no
+    reference guard, so the row went to `kld_mlx_affine.py`, whose
+    `assert_reference_matches` exists for exactly that shape. A stale
+    sentence naming one blocker is worth re-deriving before it is believed;
+    this one had been true when written and was wrong in two ways by the
+    time anyone acted on it.
 
 39. **An OPTIONAL metadata key that falls back to a BASELINE is a bug; it has
     to fall back to what the format says its absence MEANS.** Third instance

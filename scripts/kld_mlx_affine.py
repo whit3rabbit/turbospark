@@ -24,6 +24,14 @@ below is narrower than "MLX affine at some width", and `ornith-35b-4bit` is
     uv run --python 3.12 --with mlx-lm --with numpy \
       scripts/kld_mlx_affine.py /tmp/kld/ornith35b-warm ornith-35b-4bit
 
+    # NEVER RUN: needs `~/models/qwen36.gturbo` re-streamed first (cleared
+    # 2026-08-15). Everything else about the row is pinned; see `CHECKPOINTS`.
+    TURBOSPARK_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
+    TURBOSPARK_LOGIT_DUMP_DIR=/tmp/kld/qwen36-warm \
+      cargo test -p turbospark-bench --test logit_dump --release -- --ignored --nocapture
+    uv run --python 3.12 --with mlx-lm --with numpy \
+      scripts/kld_mlx_affine.py /tmp/kld/qwen36-warm qwen36
+
 **THE CHECKPOINT NAME IS REQUIRED, NOT DEFAULTED, and that is the whole
 reason this file is parameterized rather than copied.** A model-specific
 constant in a measurement script is a wrong ANSWER waiting for its second
@@ -42,6 +50,34 @@ source. TWO bits is in that list, so the ternary arm runs under an ordinary
 `uv run --with mlx-lm` ephemeral env like `kld.py`'s. `require_the_mlx_build`
 probes for the width it is about to use rather than checking a version
 string, so either environment is accepted when it can actually do the work.
+
+**THE REFERENCE HAD A NORM BUG ON THIS EXACT FAMILY UNTIL 2026-08-18, AND IT
+IS THE `+1` AGAIN.** mlx-lm's `qwen3_5.py::sanitize` shifted every RMSNorm
+weight by 1.0 when the checkpoint carried `mtp.*` weights OR had an
+unsanitized conv1d. A conversion that KEEPS its MTP head while already
+storing conv1d in MLX layout therefore got the shift applied a SECOND time,
+to norms the converter had already shifted. Fixed in `4eeaf20` ("Fix Qwen3.6
+converted norm sanitization", #1623) by dropping the `mtp.*` clause and
+keeping the raw-conv1d layout as the only signal; the upstream test is named
+`..._norm_not_shift_twice`. That fix is in git main (0.32.0) and NOT in
+0.31.3, which is what `uv run --with mlx-lm` still resolves.
+
+EVERY ROW BELOW IS UNAFFECTED, and it is worth saying why rather than
+leaving it to luck: the clause keys on `mtp.*` being PRESENT, and all three
+mlx conversions here drop it (`qwen36` 0 of 2,090 tensors and
+`ornith-35b-4bit` 0, both read off the published index). So the two mlx-lm
+versions do the same thing to these checkpoints. A reference that RETAINS a
+head -- `mlx-community/Qwen3.8-27B-MTP-4bit`,
+`scottlowry/Ornith-1.5-35B-A3B-oQ4e-mtp` -- is the case that needs 0.32.0,
+and those are precisely the checkpoints an MTP drafter comparison would
+reach for. Pin the build before believing such a number, because a
+double-shifted norm is a plausible-looking reference, not a crashing one.
+
+Note this port hit the MIRROR of that bug from the other side (AGENTS.md
+Gotcha 50's second instance): it read the MTP head's CENTERED q/k norms
+plainly and put the true token at median rank 248,308 of 248,320. Same
+convention, same family, opposite direction -- which is the reason to treat
+`+1` on this family as a place where both engines have been wrong.
 
 **THIS IS A SEPARATE DRIVER FROM `kld.py` AND NOT A WIDENING OF IT**, which
 is a decision rather than duplication. `kld.py` runs mlx-lm out of a `uv run
@@ -117,6 +153,43 @@ CHECKPOINTS = {
         "backend_floor_note": (
             "not measured (dense 27B; a CPU arm reads all 24.8B backbone "
             "weights per token)"
+        ),
+    },
+    # Qwen 3.6 35B-A3B: the OTHER checkpoint of `qwen_gdn_moe_35b_a3b()`, and
+    # the row `docs/BENCHMARKS.md` has been describing as blocked since Phase
+    # Q -- "`logit_dump.rs` accepts `TURBOSPARK_QWEN36_INSTALL_DIR` and would
+    # produce one, but `kld.py`'s reference is pinned to the Gemma repo".
+    # That sentence names the wrong obstacle twice over. `kld.py`'s pin is
+    # gone, and this checkpoint would not have belonged there anyway: it is an
+    # MoE and that driver has no reference guard, which is the one thing an
+    # MoE reference needs (see `assert_reference_matches`).
+    #
+    # NEVER RUN. `~/models/qwen36.gturbo` was cleared 2026-08-15, so nothing
+    # here has been through a forward pass. Everything that could be settled
+    # without the install was, off the published config and index:
+    #   - `model_type: qwen3_5_moe`, which resolves to
+    #     `mlx_lm/models/qwen3_5_moe.py` -- a thin `sanitize`-only subclass of
+    #     `qwen3_5.py`, i.e. the SAME reference module `ornith-35b-4bit` below
+    #     already runs through. Read, not guessed: mlx-lm has no module named
+    #     for this family's own string.
+    #   - 512 `.scales`, 80 of them at 8 bits (`mlp.gate` and
+    #     `mlp.shared_expert_gate` on all 40 layers), so 432 at 4 bits.
+    #   - its 333 VISION tensors carry ZERO `.scales` and `sanitize` strips
+    #     them, so they do not enter the count. That check is the reason this
+    #     map can be trusted before the run: Ornith's conversion has no vision
+    #     tower at all, so copying its numbers across would have been a guess
+    #     that happened to be right.
+    "qwen36": {
+        "repo": "mlx-community/Qwen3.6-35B-A3B-4bit",
+        "revision": "38740b847e4cb78f352aba30aa41c76e08e6eb46",
+        "widths": {(4, 64): 432, (8, 64): 80},
+        # NOT copied from the row below, though the number would be. That one
+        # is a MEASUREMENT of mlx's CPU path on a different checkpoint; this
+        # is an expectation, and saying so is the difference between the two.
+        "backend_floor_note": (
+            "not measured (no install on disk; expect it to be unaffordable "
+            "for `ornith-35b-4bit`'s measured reason -- same architecture, "
+            "and mlx's CPU backend runs that one at 15.4 s/position)"
         ),
     },
     # Ornith-1.5-35B-A3B, the MoE half, and the first MIXED-width entry.

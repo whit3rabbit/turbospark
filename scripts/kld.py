@@ -10,19 +10,38 @@ repacked from, and reports how far apart the two distributions are.
       cargo test -p turbospark-bench --test logit_dump --release -- --ignored --nocapture
 
     uv run --python 3.12 --with mlx-lm --with numpy \
-      scripts/kld.py /tmp/kld/turbospark
+      scripts/kld.py /tmp/kld/turbospark gemma4
+
+**THE CHECKPOINT NAME IS REQUIRED, NOT DEFAULTED.** This file carried
+`REPO = "mlx-community/gemma-4-26b-a4b-it-4bit"` as a module constant for
+its whole life, which was defensible while its only caller was Gemma and is
+exactly the failure AGENTS.md Gotcha 38 names: a model-specific constant in
+a measurement script is a wrong ANSWER waiting for its second caller. The
+failure mode is the quiet one -- a dump paired with the wrong reference
+still has the right shape, so every check below passes and the only symptom
+is a divergence that reads as a kernel bug. Same shape as
+`kld_llamacpp.py`'s cache-name bug and the reason
+`kld_mlx_affine.py`'s `CHECKPOINTS` table is keyed and required; see
+`CHECKPOINTS` below.
 
 WHY IDS AND NOT PROSE. A tokenizer or chat-template difference between the
 two engines would show up as a divergence and read as a numerics gap. The
 ids come out of `meta.json` and are fed to mlx-lm directly; its tokenizer
 is never asked to encode anything.
 
-WHY THE HEADS ARE COMPARABLE. Both sides return `softcap * tanh(z /
-softcap)` with softcap 30 and neither normalizes: this port by
-`utility.metal`'s `logit_softcap_fp16` (AGENTS.md Gotcha 16), mlx-lm at
+WHY THE HEADS ARE COMPARABLE, and it is READ off the install rather than
+recalled. Neither side normalizes (AGENTS.md Gotcha 16). Where the family
+declares a `finalLogitSoftcap` both sides return `softcap * tanh(z /
+softcap)` -- this port by `utility.metal`'s `logit_softcap_fp16`, mlx-lm at
 `mlx_lm/models/gemma4_text.py`'s `Model.__call__`, which applies
-`logit_softcap` and returns. That was read rather than assumed; a softcap
-on one side only would dominate every number below.
+`logit_softcap` and returns -- and `check_heads` ASSERTS against the
+declared bound, because a softcap on one side only would dominate every
+number below. Where the family declares none there is no transform to
+mismatch, so both maxima are REPORTED instead of being checked against an
+invented tolerance. THE BOUND USED TO BE THE LITERAL 30 IN THIS DOCSTRING,
+which is Gemma's value; `softcap_of` reads it from the dump's own install,
+which is the fix Gotcha 38 required of `kld_llamacpp.py` and which this
+file never received.
 
 `kl_mlx_self` IS THE NUMBER THAT MAKES `kl_vs_mlx` READABLE, and it is the
 whole reason this script runs mlx-lm twice. A KL between two engines has no
@@ -55,32 +74,109 @@ import sys
 
 import numpy as np
 
-# Pinned in `crates/repack/tests/gemma4_checkpoint_network.rs`: the exact
-# repo and commit `~/models/gemma4.gturbo` was repacked from. Same
-# quantized bytes on both sides is the whole point, so a different
+# Each entry is pinned in the matching `crates/repack/tests/*_checkpoint_
+# network.rs`: the exact repo and commit that install was repacked from.
+# Same quantized bytes on both sides is the whole point, so a different
 # revision here silently turns a kernel comparison into a checkpoint
 # comparison.
-REPO = "mlx-community/gemma-4-26b-a4b-it-4bit"
-REVISION = "0d77464eeb233a2da68ebf9d7dc4edaac7db956d"
+#
+# WHAT MAKES A CHECKPOINT ELIGIBLE FOR THIS DRIVER rather than for
+# `kld_mlx_affine.py`: upstream `mlx` must be able to load it. That split is
+# the ENVIRONMENT and not the family -- upstream refuses `bits=1` at the API
+# level, so the 1-bit reference needs a fork built from source and therefore
+# needs a script that is handed an interpreter. Everything upstream can load
+# belongs here, under an ordinary `uv run --with mlx-lm`.
+CHECKPOINTS = {
+    "gemma4": {
+        "repo": "mlx-community/gemma-4-26b-a4b-it-4bit",
+        "revision": "0d77464eeb233a2da68ebf9d7dc4edaac7db956d",
+        "install_var": "TURBOSPARK_GEMMA4_INSTALL_DIR",
+    },
+    # `qwen36` IS NOT HERE, AND THAT IS A DECISION RATHER THAN AN OMISSION.
+    # `docs/BENCHMARKS.md` has recorded since Phase Q that Qwen 3.6 has no
+    # cross-engine number because "`kld.py`'s reference is pinned to the
+    # Gemma repo", which reads as though killing the pin above is the whole
+    # job. It is not: that checkpoint is an MoE, and THIS driver has no
+    # reference guard at all. `kld_mlx_affine.py` does, and its guard exists
+    # for exactly this shape -- mlx packs routed experts into a
+    # `QuantizedSwitchLinear`, a type an `isinstance` list misses, so an MoE
+    # reference silently counts short. The row is in that file's
+    # `CHECKPOINTS` instead. Adding it here would put an MoE reference in
+    # the one driver that cannot check it loaded quantized.
+}
 
 
-def snapshot_dir() -> pathlib.Path:
+def snapshot_dir(spec) -> pathlib.Path:
+    repo, revision = spec["repo"], spec["revision"]
     path = (
         pathlib.Path.home()
         / ".cache/huggingface/hub"
-        / f"models--{REPO.replace('/', '--')}"
+        / f"models--{repo.replace('/', '--')}"
         / "snapshots"
-        / REVISION
+        / revision
     )
     if not (path / "config.json").exists():
         sys.exit(
             f"reference checkpoint not found at {path}\n"
-            f"  hf download {REPO} --revision {REVISION}"
+            f"  hf download {repo} --revision {revision}"
         )
     return path
 
 
-def mlx_logits(token_ids: list[int], cached: bool) -> np.ndarray:
+def softcap_of(install: str) -> float:
+    """The install's declared `final_logit_softcapping`, or 0.0 for none.
+
+    Read the property, do not recall it (AGENTS.md Gotcha 38). Shared with
+    `kld_llamacpp.py`, which is where it was written and which imports it
+    from here rather than keeping a second copy: the question "what
+    transform does this install's head apply" is about the install and not
+    about which engine it is being compared against.
+
+    Falls back to "unknown" when the install is gone: the dump is a frozen
+    artifact and outlives the install dir it names (the Gemma GGUF arms in
+    /tmp/kld are the standing example -- that install was deleted and its
+    logits cannot be regenerated).
+    """
+    try:
+        manifest = json.loads((pathlib.Path(install) / "manifest.json").read_text())
+    except OSError:
+        return float("nan")
+    return float(manifest.get("arch", {}).get("finalLogitSoftcap", 0.0))
+
+
+def check_heads(cached: np.ndarray, port: np.ndarray, softcap: float,
+                reference: str) -> dict:
+    """Are the two engines' output heads the same function?
+
+    Every divergence below is meaningless if they are not, and the failure
+    is not hypothetical: a reference that skips a saturating nonlinearity
+    the port applies disagrees by a factor, not by a rounding error.
+
+    Where the family softcaps, the bound is exact and declared, so this
+    asserts against it (1.001 for f32 rounding at the asymptote). Where it
+    does not, there is no transform to mismatch and nothing to assert -- so
+    both maxima are REPORTED instead of being checked against an invented
+    tolerance. A gross mismatch is visible in the two numbers.
+
+    `reference` names the other engine, and is the key the maxima are
+    reported under, so one implementation serves both drivers.
+    """
+    reference_max = float(np.abs(cached).max())
+    port_max = float(np.abs(port).max())
+    if softcap > 0.0 and reference_max > softcap * 1.001:
+        sys.exit(
+            f"{reference}'s max |logit| is {reference_max:.4f}, over the {softcap} "
+            "softcap this install declares: the two heads are not the same "
+            "function, so no divergence below would be about the weights"
+        )
+    return {
+        "declared_softcap": softcap,
+        f"max_abs_logit_{reference}": reference_max,
+        "max_abs_logit_port": port_max,
+    }
+
+
+def mlx_logits(token_ids: list[int], cached: bool, spec) -> np.ndarray:
     """mlx-lm's next-token logits for every position, as float32 [rows, vocab].
 
     Row i is the logits after consuming `token_ids[i]`, which is the layout
@@ -96,7 +192,7 @@ def mlx_logits(token_ids: list[int], cached: bool) -> np.ndarray:
     from mlx_lm import load
     from mlx_lm.models.cache import make_prompt_cache
 
-    model, _ = load(str(snapshot_dir()))
+    model, _ = load(str(snapshot_dir(spec)))
     if not cached:
         out = model(mx.array([token_ids]))
         mx.eval(out)
@@ -167,7 +263,14 @@ def perplexity(logits: np.ndarray, token_ids: list[int], first: int) -> float:
 
 
 def main() -> None:
-    dump = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "/tmp/kld/turbospark")
+    if len(sys.argv) != 3 or sys.argv[2] not in CHECKPOINTS:
+        sys.exit(
+            f"usage: {sys.argv[0]} <dump-dir> <{'|'.join(CHECKPOINTS)}>\n"
+            "  the checkpoint name is REQUIRED; see the module doc for why"
+        )
+    dump = pathlib.Path(sys.argv[1])
+    name = sys.argv[2]
+    spec = CHECKPOINTS[name]
     meta = json.loads((dump / "meta.json").read_text())
     rows, vocab, ids = meta["rows"], meta["vocab_size"], meta["token_ids"]
 
@@ -176,15 +279,17 @@ def main() -> None:
         sys.exit(f"{dump}/logits.f16 holds {port.size} values, expected {rows * vocab}")
     port = port.reshape(rows, vocab).astype(np.float32)
 
-    cached = mlx_logits(ids, cached=True)
-    batched = mlx_logits(ids, cached=False)
-    for name, arr in (("cached", cached), ("batched", batched)):
+    cached = mlx_logits(ids, cached=True, spec=spec)
+    batched = mlx_logits(ids, cached=False, spec=spec)
+    for shape, arr in (("cached", cached), ("batched", batched)):
         if arr.shape != port.shape:
-            sys.exit(f"mlx-lm {name} returned {arr.shape}, this port dumped {port.shape}")
+            sys.exit(f"mlx-lm {shape} returned {arr.shape}, this port dumped {port.shape}")
 
     first = meta["first_scored_position"]
     report = {
         "rows": rows,
+        # Read this first. It is the precondition for everything under it.
+        "heads": check_heads(cached, port, softcap_of(meta["install"]), "mlx"),
         # This port against mlx-lm in the SAME forward shape. The headline.
         "kl_vs_mlx": divergences(cached, port),
         # mlx-lm against itself across its two shapes. The floor that says
@@ -195,14 +300,18 @@ def main() -> None:
             "mlx_cached": perplexity(cached, ids, first),
             "mlx_batched": perplexity(batched, ids, first),
         },
-        "reference": f"{REPO}@{REVISION[:8]}",
+        "reference": f"{spec['repo']}@{spec['revision'][:8]}",
         "install": meta["install"],
         "expert_cache_slots": meta["expert_cache_slots"],
         "cache_state": meta["cache_state"],
         "prompt_len": meta["prompt_len"],
     }
     print(json.dumps(report, indent=2))
-    (dump / "kld.json").write_text(json.dumps(report, indent=2) + "\n")
+    # Named per artifact, for `kld_llamacpp.py`'s reason: every arm of every
+    # model is the same shape, so a shared filename lets one run's report be
+    # read as another's. The bare `kld.json` this used to write was safe for
+    # exactly as long as there was one entry above it.
+    (dump / f"kld-{name}.json").write_text(json.dumps(report, indent=2) + "\n")
 
 
 if __name__ == "__main__":

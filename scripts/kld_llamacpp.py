@@ -60,58 +60,16 @@ import sys
 import numpy as np
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from kld import divergences, perplexity  # noqa: E402  (path set above)
+# `softcap_of` and `check_heads` were WRITTEN here (Gotcha 38's fix, after a
+# hardcoded 30.0 aborted a correct `qwen3moe` run) and now live in `kld.py`
+# beside `divergences` and `perplexity`, because the question they answer --
+# what transform does this install's head apply -- is about the install and
+# not about which engine it is being compared against. `kld.py` needed the
+# same fix and importing it is one implementation rather than two.
+from kld import check_heads, divergences, perplexity, softcap_of  # noqa: E402
 
 HARNESS_SRC = pathlib.Path(__file__).resolve().parent / "llamacpp_logits.c"
 HARNESS_BIN = pathlib.Path("/tmp/llamacpp_logits")
-
-def softcap_of(install: str) -> float:
-    """The install's declared `final_logit_softcapping`, or 0.0 for none.
-
-    THIS USED TO BE THE LITERAL 30.0, which is Gemma's value, because every
-    caller until `qwen3moe` was Gemma. A family that does not softcap
-    (`finalLogitSoftcap: 0.0`) produces raw logits well past 30, so the
-    constant turned a correct run into a hard exit whose message blamed the
-    heads. Read the property, do not recall it.
-
-    Falls back to "unknown" when the install is gone: the dump is a frozen
-    artifact and outlives the install dir it names (the Gemma GGUF arms in
-    /tmp/kld are the standing example -- that install was deleted and its
-    logits cannot be regenerated).
-    """
-    try:
-        manifest = json.loads((pathlib.Path(install) / "manifest.json").read_text())
-    except OSError:
-        return float("nan")
-    return float(manifest.get("arch", {}).get("finalLogitSoftcap", 0.0))
-
-
-def check_heads(cached: np.ndarray, port: np.ndarray, softcap: float) -> dict:
-    """Are the two engines' output heads the same function?
-
-    Every divergence below is meaningless if they are not, and the failure
-    is not hypothetical: a reference that skips a saturating nonlinearity
-    the port applies disagrees by a factor, not by a rounding error.
-
-    Where the family softcaps, the bound is exact and declared, so this
-    asserts against it (1.001 for f32 rounding at the asymptote). Where it
-    does not, there is no transform to mismatch and nothing to assert -- so
-    both maxima are REPORTED instead of being checked against an invented
-    tolerance. A gross mismatch is visible in the two numbers.
-    """
-    llamacpp_max = float(np.abs(cached).max())
-    port_max = float(np.abs(port).max())
-    if softcap > 0.0 and llamacpp_max > softcap * 1.001:
-        sys.exit(
-            f"llama.cpp's max |logit| is {llamacpp_max:.4f}, over the {softcap} "
-            "softcap this install declares: the two heads are not the same "
-            "function, so no divergence below would be about the weights"
-        )
-    return {
-        "declared_softcap": softcap,
-        "max_abs_logit_llamacpp": llamacpp_max,
-        "max_abs_logit_port": port_max,
-    }
 
 
 def build_harness() -> None:
@@ -224,7 +182,10 @@ def main() -> None:
         "rows": rows,
         "backend": backend(n_gpu_layers),
         # Read this first. It is the precondition for everything under it.
-        "heads": check_heads(cached, primary, softcap_of(meta["install"])),
+        # "llamacpp" keeps this report's key `max_abs_logit_llamacpp`, which
+        # the shared implementation derives from the name rather than
+        # hardcoding, so the frozen reports stay comparable.
+        "heads": check_heads(cached, primary, softcap_of(meta["install"]), "llamacpp"),
         # llama.cpp against ITSELF, twice, so the headline has a scale.
         # Nothing below is readable without these two (see the module doc).
         "kl_shape_floor": divergences(batched, cached),

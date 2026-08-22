@@ -134,7 +134,7 @@ TURBOSPARK_QWEN3MOE_INSTALL_DIR=~/models/qwen3moe-gguf.gturbo \
 TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
 TURBOSPARK_LOGIT_DUMP_DIR=/tmp/kld/turbospark \
   cargo test -p turbospark-bench --test logit_dump --release -- --ignored --nocapture
-uv run --python 3.12 --with mlx-lm --with numpy scripts/kld.py /tmp/kld/turbospark
+uv run --python 3.12 --with mlx-lm --with numpy scripts/kld.py /tmp/kld/turbospark gemma4
 
 # The same for the 1-BIT family (ROADMAP's 1-bit entry, step 5). Its driver
 # is separate because upstream mlx REFUSES bits=1 at the API level on every
