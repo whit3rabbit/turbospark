@@ -16,7 +16,7 @@ The port is tested against the original rather than assumed compatible. Decode t
 > **Where the low-memory win comes from, and where it does not.** The ~2 GB
 > figures are a property of MIXTURE-OF-EXPERTS models: their routed experts
 > are streamed from SSD through a bounded slot cache instead of being held
-> in RAM. Dense models (Mistral, TinyLlama, Qwen3.8-27B, Bonsai) run
+> in RAM. Dense models (Mistral, TinyLlama, Qwen3.8-27B, Bonsai, Ornith-1.5 9B) run
 > correctly on this engine, but they get none of that benefit: a dense
 > token touches every weight once, so the whole mapping is wired for the
 > GPU and the RAM requirement is the install's full size on disk. This was
@@ -92,16 +92,20 @@ The plain version: on a 36 GB laptop, a 26B-parameter model that would normally 
 | **Gemma 4 26B-A4B** (INT4) | 13 GB | **~2.1 GB** | 35 to 41 tok/s | 17 W | 0.4 to 0.5 J |
 | **Gemma 4 26B-A4B** (3-bit) | 12 GB | **~1.8 GB** | 23 to 25 tok/s | 27 W | ~1.0 J |
 | **Qwen 3.6 35B-A3B** (INT4) | 18 GB | **~1.6 GB** | 33 to 38 tok/s | 14 W | ~0.4 J |
+| **Ornith-1.5 35B-A3B** (INT4) | 18 GB | **~1.6 GB** | 32 to 42 tok/s | not measured | not measured |
 | **Qwen3-30B-A3B** (Q4_K_M) | 17 GB | ~2.7 GB | 16 to 25 tok/s | 21 W | ~0.8 to 1.4 J |
 | **gpt-oss-20b** (MXFP4) | 11 GB | ~5.4 GB | 23 to 30 tok/s | 30 to 33 W | ~1.1 to 1.3 J |
 
-**The first three rows are the point of the project**: a 26B model in ~2.1 GB and a 35B model in ~1.6 GB, against 13 GB and 18 GB on disk. The last two rows are honest counter-examples that still stream but land higher, and the reason is arithmetic rather than a defect: see the note on expert size below.
+**The first four rows are the point of the project**: a 26B model in ~2.1 GB and two 35B models in ~1.6 GB, against 13 GB and 18 GB on disk. The last two rows are honest counter-examples that still stream but land higher, and the reason is arithmetic rather than a defect: see the note on expert size below.
+
+Ornith-1.5 35B-A3B lands on Qwen 3.6's numbers because it *is* Qwen 3.6's architecture, retrained: its config derives the same internal baseline field for field, so it needed no new kernel and no new decode flow. Its two blank cells are blank because nobody has run a power capture on it, not because it drew badly.
 
 Dense models (no experts to stream) work too, but the memory story is different and the table above does not apply to them:
 
 | Model | Size on disk | RAM while generating | Speed | Note |
 | --- | ---: | ---: | ---: | --- |
 | **Qwen3.8-27B** (INT4) | 14 GB | 660 MB counted | 19 to 21 tok/s | see caveat |
+| **Ornith-1.5 9B** (Q8_0) | 8.9 GB | 438 MB counted | 24 to 25 tok/s | same caveat |
 | **Mistral 7B** (Q4_K_M) | 4.1 GB | 1.2 GB counted | 16 to 30 tok/s | measured at 8k context |
 | **Bonsai-27B** (1-bit) | 3.9 GB | not yet measured | ~18 tok/s | |
 | **Ternary-Bonsai-27B** (2-bit) | 7.6 GB | 660 MB counted | 13 to 14 tok/s | same caveat |
@@ -118,18 +122,20 @@ The right-hand column is arithmetic rather than a measurement. A conventional ru
 | Install | Format | Bits | On disk | RAM here | A conventional runner needs | Ratio |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
 | Qwen 3.6 35B-A3B | MLX affine | 4 | 18 GB | **1.6 GB** | ~18 GB | **11x** |
+| Ornith-1.5 35B-A3B | MLX affine | 4 | 18 GB | **1.6 GB** | ~18 GB | **11x** |
 | Gemma 4 26B-A4B | MLX affine | 4 | 13 GB | **2.1 GB** | ~13 GB | **6x** |
 | Gemma 4 26B-A4B | GGUF IQ3_XXS/IQ4_NL | ~3 | 12 GB | **1.8 GB** | ~12 GB | **6.5x** |
 | Qwen3-30B-A3B | GGUF Q4_K_M | 4 | 17 GB | **2.7 GB** | ~17 GB | **6x** |
 | gpt-oss-20b | GGUF MXFP4 | 4 | 11 GB | **5.4 GB** | ~11 GB | **2x** |
 | Mixtral 8x7B | GGUF Q4_K_M | 4 | 26 GB | runs, does not stream usefully | ~26 GB | **1x** |
 | Qwen3.8-27B | MLX affine | 4 | 14 GB | ~14 GB | ~14 GB | **1x** |
+| Ornith-1.5 9B | GGUF Q8_0 | 8 | 8.9 GB | ~8.9 GB | ~8.9 GB | **1x** |
 | Ternary-Bonsai-27B | MLX affine | 2 | 7.6 GB | ~7.6 GB | ~7.6 GB | **1x** |
 | Bonsai-27B | MLX affine | 1 | 3.9 GB | ~3.9 GB | ~3.9 GB | **1x** |
 | Mistral 7B | GGUF Q4_K_M | 4 | 4.1 GB | ~4.1 GB | ~4.1 GB | **1x** |
 | Muse Glimmer 30B | MLX affine | 4 | 15 GB | ~15 GB | ~15 GB | **1x** |
 
-The five dense rows say 1x on purpose. Their *counted* footprints are 660 MB, 660 MB, not measured, 1.2 GB and 535 MB respectively, and quoting those as the RAM requirement would be wrong for the reason the caveat above gives. Muse Glimmer is the sharpest illustration: 535 MB counted against 15 GB of weights, because the resident mapping is not charged to the process and three quarters of its layers use a 2,048-token sliding window rather than the full context. Ratios are rounded, and the ones above 1x are the whole engineering claim of this project.
+The six dense rows say 1x on purpose. Their *counted* footprints are 660 MB, 438 MB, 660 MB, not measured, 1.2 GB and 535 MB respectively, and quoting those as the RAM requirement would be wrong for the reason the caveat above gives. Muse Glimmer is the sharpest illustration: 535 MB counted against 15 GB of weights, because the resident mapping is not charged to the process and three quarters of its layers use a 2,048-token sliding window rather than the full context. Ratios are rounded, and the ones above 1x are the whole engineering claim of this project.
 
 Mixtral is the interesting failure. It is a mixture of experts and it still gets no benefit, because the expert cache is `slots x layers x expert_size` and its 8 experts of ~109 MiB each want 54 GiB at the default 16 slots.
 
