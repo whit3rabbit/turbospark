@@ -115,7 +115,8 @@ pub use synthetic_qwen::{
     build_synthetic_qwen_gdn_dense_install_with_dflash_streamed,
     build_synthetic_qwen_gdn_dense_install_with_mtp,
     build_synthetic_qwen_gdn_dense_install_with_mtp_streamed, build_synthetic_qwen_gdn_moe_install,
-    tiny_qwen_gdn_dense_arch, tiny_qwen_gdn_moe_arch,
+    build_synthetic_qwen_gdn_moe_install_with_mtp, tiny_qwen_gdn_dense_arch,
+    tiny_qwen_gdn_moe_arch,
 };
 pub use synthetic_real::build_synthetic_gemma4_real_install;
 /// The checkpoint's own trained context length: read it out of either

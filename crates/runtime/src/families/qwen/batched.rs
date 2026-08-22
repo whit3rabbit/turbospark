@@ -15,19 +15,44 @@
 //! the composite those numbers feed already assumes, and widening attention
 //! at decode context would buy 0.6% of a pass.
 //!
-//! Three refusals, all BY NAME rather than by falling back:
+//! **THE ROUTED HALF RUNS SINCE ROADMAP PHASE 3** and this file's first
+//! refusal used to be "dense only". `moe_batch.rs` drives the batched
+//! routed pair; what remains true is the CEILING that refusal cited. A
+//! block of M tokens reads the UNION of their routes, up to `8M` experts
+//! at top-8, and `ExpertCache::plan_if_possible` ASSERTS
+//! `experts.len() <= slot_count` rather than degrading (AGENTS.md
+//! Gotcha 54). So M=2 wants 16 and M=4 wants 32, and past that the round
+//! is refused by name rather than asserting. That ceiling is not a
+//! limitation to work around: small blocks are what pay on this engine,
+//! measured independently on both speculative pages.
 //!
-//! 1. **Dense only.** A batched routed-expert pair does not exist, and the
-//!    union of M tokens' experts is larger than what the slot cache already
-//!    loads (AGENTS.md Gotcha 54), so there is nothing to fall back TO.
-//! 2. **INT4 only**, enforced one level down in `encode_gemm_any`. The 1-bit
-//!    and 2-bit checkpoints of this same architecture have no batched kernel.
+//! A MoE layer also costs a MID-LAYER COMMIT the dense path does not: the
+//! router's top-k is a HOST decision downstream of a readback, so the
+//! attention half must complete before the routed half can be planned.
+//! That is the same shape the per-token flow has, and it is why `pass` is
+//! reassigned here rather than being one buffer for the whole forward.
+//!
+//! Three refusals remain, all BY NAME rather than by falling back:
+//!
+//! 1. **INT4 only**, enforced one level down in `encode_gemm_any` and again
+//!    in the routed half's `RoutedBlobLayout` check. The 1-bit and 2-bit
+//!    checkpoints of this same architecture have no batched kernel.
+//! 2. **A union that outgrows the slot cache**, per the paragraph above.
 //! 3. **No KV wrap.** M consecutive positions occupy M ADJACENT slots only
 //!    while `position % capacity` does not roll over inside the block.
 //!
-//! The first two would otherwise be silent: a sequential fallback is
+//! The first would otherwise be silent: a sequential fallback is
 //! numerically identical, so it would pass every losslessness test while
 //! making the measurement describe the wrong engine.
+//!
+//! **NOTHING REACHES THE ROUTED HALF END TO END YET**, and that is a
+//! property of the checkpoints rather than of this file:
+//! `speculation_policy`'s `speculation_blocker` still refuses a MoE
+//! install, because drafting needs a HEAD and no published MoE
+//! conversion of this architecture carries an ingestible one (Ornith's
+//! lives in its BF16 repo's last shard and is itself MoE, where
+//! `MtpState::REQUIRED` names dense FFN tensors). The path is reached by
+//! tests calling `produce_batched` directly.
 
 use foundation::LogitValue;
 
@@ -40,6 +65,65 @@ use crate::real_forward::RealForwardRunner;
 use crate::real_forward_dispatch::{encode_embed_any, encode_gemm_any};
 use crate::real_forward_types::RealForwardError;
 use crate::real_forward_utils::norm_view;
+
+/// One token's router GEMV, into row `m` of the batch's own logits
+/// buffer.
+///
+/// It LOOPS rather than batching for the same reason the norms do: the
+/// router is `num_experts x hidden` against this family's 2048 hidden and
+/// 256 experts, which is a rounding error beside the expert GEMVs it
+/// selects, and `router_gemv_gemma4_r4` has no M-row form.
+#[allow(clippy::too_many_arguments)]
+fn encode_router_gemv_batched(
+    context: &mut gpu::MetalContext,
+    pass: &gpu::PassEncoder,
+    weights: &gpu::ResidentGpuWeights,
+    index: &model_io::ResidentIndex,
+    router_name: &str,
+    qwen: &super::RealQwenState,
+    batched: &BatchedScratch,
+    m: usize,
+    hidden: usize,
+    num_experts: usize,
+) -> Result<(), RealForwardError> {
+    let routed = batched.routed.as_ref().ok_or_else(|| {
+        RealForwardError::Unsupported("routed scratch missing on a MoE install".to_string())
+    })?;
+    let router = crate::real_forward_utils::entry(index, router_name)?;
+    if router.dtype != 5 || router.size_bytes as usize != num_experts * hidden {
+        return Err(RealForwardError::Unsupported(format!(
+            "{router_name}: expected INT8 (dtype 5) {num_experts}x{hidden}, got dtype {} \
+             with {} packed bytes",
+            router.dtype, router.size_bytes
+        )));
+    }
+    let base = index.header.index_size;
+    gpu::encode_router_gemv_gemma4(
+        context,
+        pass,
+        (
+            weights.buffer(),
+            weights.gpu_offset(router.file_offset - base),
+        ),
+        (
+            weights.buffer(),
+            weights.gpu_offset(router.scale_offset - base),
+        ),
+        (
+            weights.buffer(),
+            weights.gpu_offset(router.bias_offset - base),
+        ),
+        (&batched.moe_x, (m * hidden * 2) as u64),
+        (&qwen.router_ones, 0),
+        (
+            &routed.batch_router_logits_f32,
+            (m * num_experts * 4) as u64,
+        ),
+        num_experts as u32,
+        hidden as u32,
+    )
+    .map_err(RealForwardError::Gpu)
+}
 
 impl RealForwardRunner {
     /// Runs `tokens` through the trunk in ONE pass, writing `tokens.len() *
@@ -70,14 +154,6 @@ impl RealForwardRunner {
         let batch = tokens.len();
         let gpu_err = RealForwardError::Gpu;
 
-        if arch.num_experts != 0 {
-            return Err(RealForwardError::Unsupported(
-                "batched forward is dense-only: the routed-expert pair has no batched \
-                 kernel, and the union of M tokens' experts exceeds what the slot cache \
-                 already loads (AGENTS.md Gotcha 54), so there is nothing to batch"
-                    .to_string(),
-            ));
-        }
         if batch == 0 {
             return Err(RealForwardError::Unsupported(
                 "batched forward needs at least one token".to_string(),
@@ -142,8 +218,28 @@ impl RealForwardRunner {
         }
 
         let embed_name = "language_model.model.embed_tokens.weight";
-        let pass = self.context.begin_pass_labeled("batched verify");
-        let (context, weights, index, scratch, qwen, kv, dflash) = (
+        let mut pass = self.context.begin_pass_labeled("batched verify");
+        // A MoE layer commits mid-layer, so the routed half's host-side
+        // resources have to be reachable from inside the loop. They are
+        // taken as disjoint fields here for the same reason
+        // `families/qwen/moe.rs` is a free function taking them one by
+        // one: a `&mut self` call between a `let real = ...` binding and
+        // its last use is E0502 (crate Gotcha 5).
+        let (
+            context,
+            weights,
+            index,
+            scratch,
+            qwen,
+            kv,
+            dflash,
+            streamers,
+            slot_buffers,
+            moe_offsets,
+            routed_layouts,
+            router_hist,
+            phases,
+        ) = (
             &mut self.context,
             &self.weights,
             &self.index,
@@ -153,7 +249,20 @@ impl RealForwardRunner {
                 .ok_or_else(|| RealForwardError::Unsupported("not a Qwen install".to_string()))?,
             &mut self.kv,
             self.real_dflash.as_ref(),
+            &mut self.streamers,
+            &self.slot_buffers,
+            &self.moe_offsets,
+            &self.routed_layouts,
+            &mut self.router_hist,
+            &mut self.phases,
         );
+        let expert_cache_slots = self.expert_cache_slots;
+        let top_k = arch.top_k_experts as usize;
+        let num_experts = arch.num_experts as usize;
+        let moe_inter = arch.moe_intermediate_size;
+        // The last MoE layer's routed buffer is still in flight when the
+        // loop ends; the head below reads `scratch.x`, which it writes.
+        let mut routed_in_flight: Option<gpu::CommittedPass> = None;
 
         // An embedding lookup has no trip count to amortize, so it loops for
         // the same reason the norms below do.
@@ -243,10 +352,73 @@ impl RealForwardRunner {
                 .map_err(gpu_err)?;
             }
 
-            encode_dense_ffn_batched(
-                context, &pass, weights, index, scratch, batched, layer, hidden, inter, use_silu,
-                batch,
-            )?;
+            if num_experts == 0 {
+                // A dense layer stays in the SAME command buffer: nothing
+                // in it is data-dependent on a host readback the way the
+                // router's top-k is, so the whole row of layers can ride
+                // one buffer exactly as it did before the routed half
+                // existed. This branch's bytes do not move.
+                encode_dense_ffn_batched(
+                    context, &pass, weights, index, scratch, batched, layer, hidden, inter,
+                    use_silu, batch,
+                )?;
+            } else {
+                // M router GEMVs into the batch's own logits rows, then
+                // COMMIT AND WAIT: the top-k below is a host decision and
+                // cannot be encoded.
+                let router_name = layer_tensor(layer, "mlp.gate.weight");
+                for m in 0..batch {
+                    encode_router_gemv_batched(
+                        context,
+                        &pass,
+                        weights,
+                        index,
+                        &router_name,
+                        qwen,
+                        batched,
+                        m,
+                        hidden,
+                        num_experts,
+                    )?;
+                }
+                let t_wait = std::time::Instant::now();
+                phases.cb1_gpu_nanos += (pass.commit().wait_with_gpu_time() * 1e9) as u64;
+                phases.gpu_wait_nanos += t_wait.elapsed().as_nanos() as u64;
+
+                // Retire the PREVIOUS layer's routed buffer. It has
+                // provably completed already -- it was committed before
+                // this layer's attention buffer on the same queue, and
+                // that one was just waited out -- so this costs nothing
+                // and is taken for the GPU-time ATTRIBUTION, exactly as
+                // the Gemma chunk driver's `retire_routed` is.
+                if let Some(prev) = routed_in_flight.take() {
+                    phases.routed_cb_gpu_nanos += (prev.wait_with_gpu_time() * 1e9) as u64;
+                }
+                routed_in_flight = Some(super::moe_batch::encode_qwen_layer_moe_batched(
+                    context,
+                    weights,
+                    index,
+                    scratch,
+                    qwen,
+                    batched,
+                    streamers,
+                    slot_buffers,
+                    moe_offsets,
+                    routed_layouts,
+                    router_hist,
+                    phases,
+                    expert_cache_slots,
+                    layer,
+                    hidden,
+                    inter,
+                    moe_inter as u32,
+                    num_experts,
+                    top_k,
+                    use_silu,
+                    batch,
+                )?);
+                pass = context.begin_pass_labeled("batched verify");
+            }
 
             // THE DFLASH2 AUX CAPTURE at M rows: the residual rows this
             // layer just produced, into the fc input's layout. Same point
@@ -266,6 +438,13 @@ impl RealForwardRunner {
                     .map_err(gpu_err)?;
                 }
             }
+        }
+
+        // The last MoE layer's routed buffer, retired for its GPU time.
+        // The head below is encoded into a buffer committed after it, so
+        // the queue already orders the residual stream it wrote.
+        if let Some(last) = routed_in_flight.take() {
+            phases.routed_cb_gpu_nanos += (last.wait_with_gpu_time() * 1e9) as u64;
         }
 
         let final_norm = norm_view(weights, index, "language_model.model.norm.weight", hidden)?;

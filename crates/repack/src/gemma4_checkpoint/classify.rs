@@ -95,15 +95,31 @@ pub fn classify_for_family(name: &str, num_layers: usize, family: ModelFamily) -
         }
         return Gemma4Bucket::LmResident;
     }
-    // THE MULTI-TOKEN-PREDICTION HEAD, and it is gated on the family rather
-    // than accepted everywhere. Exactly one published checkpoint carries
-    // these -- `Qwen/Qwen3.8-27B`, whose `mtp_num_hidden_layers` is 1 -- and
-    // the mlx-community conversion this family's trunk is normally streamed
-    // from DROPS them, so no existing install grows a head by this arm
-    // existing. An `mtp.` tensor under any other family is a checkpoint this
-    // walk has never seen, and falling through to `Unknown` refuses it by
-    // name rather than ingesting a head no decode flow would look for.
-    if name.starts_with(MTP_PREFIX) && family == ModelFamily::QwenGdnDense {
+    // THE MULTI-TOKEN-PREDICTION HEAD, gated on the family rather than
+    // accepted everywhere: an `mtp.` tensor under a family that has no
+    // drafter is a checkpoint this walk has never seen, and falling
+    // through to `Unknown` refuses it by name rather than ingesting a head
+    // no decode flow would look for.
+    //
+    // **BOTH HALVES OF `qwen3_5`, not just the dense one.** This read
+    // `== QwenGdnDense` until ROADMAP Phase 3, on the true observation
+    // that `Qwen/Qwen3.8-27B` was the only published carrier. It is
+    // AGENTS.md Gotcha 61's shape -- one arm of a shared architecture
+    // naming one family -- and the MoE half is a real carrier now:
+    // Ornith-1.5-35B-A3B's BF16 repo ships a head in its last shard.
+    //
+    // Widening admits nothing that exists today. Every mlx conversion of
+    // the MoE half DROPS `mtp.*` (verified off the published indexes:
+    // `Qwen3.6-35B-A3B-4bit` and `Ornith-1.5-35B-A3B-MLX-4bit` carry zero),
+    // so no install on disk grows a head by this arm existing. What it
+    // enables is the fixture the batched routed verify is gated by, and
+    // eventually the real head. NOTE the head it would ingest from Ornith
+    // is itself MoE where `MtpState::REQUIRED` names DENSE FFN tensors, so
+    // that stream still fails at open naming the tensor it wanted -- which
+    // is the loud failure, and better than reporting no head at all.
+    if name.starts_with(MTP_PREFIX)
+        && matches!(family, ModelFamily::QwenGdnDense | ModelFamily::QwenGdnMoe)
+    {
         return Gemma4Bucket::MtpHead;
     }
     // THE DFLASH2 DRAFTER, gated the same way and for the same reason: the

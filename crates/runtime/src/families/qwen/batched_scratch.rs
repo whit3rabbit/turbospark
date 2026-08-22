@@ -37,15 +37,59 @@ pub(crate) struct BatchedScratch {
     pub(crate) ffn_act: gpu::MetalBuffer,
     pub(crate) h2: gpu::MetalBuffer,
     pub(crate) logits: gpu::MetalBuffer,
+    /// The routed half's M-row buffers, `None` on a DENSE install.
+    ///
+    /// Gated on `num_experts != 0` for the same reason the whole struct is
+    /// gated on a draft depth: a dense install must allocate exactly what it
+    /// allocated before the routed batched path existed, so that
+    /// `qwen38_memory_oracle`'s frozen row keeps describing it. A dense
+    /// checkpoint also has no `moe_intermediate_size` (it encodes 0 there,
+    /// per `crates/runtime` Gotcha 12's note on the two widths), so the
+    /// sizes below are not merely wasted, they are meaningless.
+    pub(crate) routed: Option<BatchedRoutedScratch>,
+}
+
+/// The M-row siblings of the buffers the per-token routed pass
+/// (`families/qwen/moe.rs`) holds one row of.
+///
+/// `ffn_gate` / `ffn_up` / `ffn_act` are NOT here: the shared expert's
+/// width is `intermediate_size`, which is what the dense FFN buffers above
+/// are already sized for, and the two never run in the same layer.
+pub(crate) struct BatchedRoutedScratch {
+    /// `[M * top_k, moe_inter]` FP16, phase 1's output over the route list.
+    pub(crate) batch_acts: gpu::MetalBuffer,
+    /// `[M, hidden]` FP16, the fused phase 2's output.
+    pub(crate) batch_y: gpu::MetalBuffer,
+    /// `[M, hidden]` FP16, the GATED shared-expert output per token, and
+    /// phase 2's accumulator SEED. It cannot be the single-row `h1` the
+    /// per-token path reuses: all M tokens' shared branches are encoded
+    /// before any of them is consumed.
+    pub(crate) batch_h1: gpu::MetalBuffer,
+    /// `[M]` FP16, one `shared_expert_gate` logit per token.
+    pub(crate) batch_gate_logit: gpu::MetalBuffer,
+    /// `[M * top_k]` FP16 in PAIR order (token-major, rank within), which
+    /// is the layout the fused phase 2 looks its routes up by -- not the
+    /// decode path's slot-indexed `MAX_STREAMED_EXPERTS` row.
+    pub(crate) batch_routing_w: gpu::MetalBuffer,
+    /// The encoded route list, 16 bytes per `MoePrefillRoute`.
+    pub(crate) batch_routes: gpu::MetalBuffer,
+    /// `[M, num_experts]` FP32 router logits, read back for the WHOLE
+    /// batch in one host wait. `RealQwenState::router_logits_f32` holds a
+    /// single row and is not widened: that buffer is allocated by every
+    /// MoE install whether or not a drafter is open, and this one is not.
+    pub(crate) batch_router_logits_f32: gpu::MetalBuffer,
+    /// The wide expert-blob argument buffer, bound once per layer with
+    /// every cache slot.
+    pub(crate) wide_blobs: gpu::RoutedBlobsWideBuffer,
 }
 
 impl BatchedScratch {
     pub(crate) fn new(
-        context: &gpu::MetalContext,
+        context: &mut gpu::MetalContext,
         arch: &ArchConfig,
         qwen_shape: gpu::GdnShape,
         batch: usize,
-    ) -> Self {
+    ) -> Result<Self, gpu::GpuError> {
         let hidden = arch.hidden_size as u64;
         let q_dim = (arch.num_heads * arch.full_head_dim) as u64;
         let inter = arch.intermediate_size as u64;
@@ -54,8 +98,36 @@ impl BatchedScratch {
         let value_dim = qwen_shape.value_dim() as u64;
         let v_heads = qwen_shape.num_v_heads as u64;
         let b = batch as u64;
+        // The argument buffer needs `context` MUTABLY where every plain
+        // allocation below needs it immutably through `halfs`, so it is
+        // built first and its borrow ends here.
+        let wide_blobs = if arch.num_experts == 0 {
+            None
+        } else {
+            Some(gpu::RoutedBlobsWideBuffer::new(
+                context,
+                arch.hidden_activation.contains("silu"),
+            )?)
+        };
         let halfs = |n: u64| context.new_output_buffer(n.max(1) * b * 2);
-        Self {
+        let routed = wide_blobs.map(|wide_blobs| {
+            let top_k = arch.top_k_experts as u64;
+            let moe_inter = arch.moe_intermediate_size.max(1) as u64;
+            BatchedRoutedScratch {
+                batch_acts: halfs(top_k * moe_inter),
+                batch_y: halfs(hidden),
+                batch_h1: halfs(hidden),
+                batch_gate_logit: halfs(1),
+                batch_routing_w: halfs(top_k),
+                // 16 bytes per encoded route (token, rank, slot, reserved),
+                // matching `MoePrefillRoute::bytes` and the shader struct.
+                batch_routes: context.new_output_buffer(b * top_k * 16),
+                batch_router_logits_f32: context
+                    .new_output_buffer(b * arch.num_experts.max(1) as u64 * 4),
+                wide_blobs,
+            }
+        });
+        Ok(Self {
             batch,
             normed: halfs(hidden),
             q_packed: halfs(2 * q_dim),
@@ -76,6 +148,7 @@ impl BatchedScratch {
             ffn_act: halfs(inter),
             h2: halfs(hidden),
             logits: halfs(vocab),
-        }
+            routed,
+        })
     }
 }

@@ -182,6 +182,10 @@ impl DflashState {
         let h = hidden as u64;
         let inter = shape.inter as u64;
         let vocab = arch.vocab_size as u64;
+        // Built before `halfs` binds `context` immutably: the verify
+        // scratch's argument buffer needs it mutably.
+        let batched = BatchedScratch::new(context, arch, gdn_shape, block + 1)
+            .map_err(RealForwardError::Gpu)?;
         let halfs = |n: u64| context.new_output_buffer(rows * n * 2);
         let state = Self {
             kv,
@@ -194,7 +198,7 @@ impl DflashState {
                 shape.num_heads as u32,
                 shape.head_dim as u32,
             ),
-            batched: BatchedScratch::new(context, arch, gdn_shape, block + 1),
+            batched,
             x: halfs(h),
             normed: halfs(h),
             conv_p: halfs(h),

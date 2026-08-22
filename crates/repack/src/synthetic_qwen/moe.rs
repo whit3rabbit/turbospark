@@ -101,6 +101,54 @@ pub fn build_synthetic_qwen_gdn_moe_install(
     num_experts: i64,
     model_id: &str,
 ) -> Result<ArchConfig, Box<dyn std::error::Error>> {
+    build_synthetic_qwen_gdn_moe_install_inner(
+        dir,
+        vocab_size,
+        num_layers,
+        num_experts,
+        model_id,
+        false,
+    )
+}
+
+/// The same install PLUS a multi-token-prediction head, which is what
+/// makes the batched routed verify (`families/qwen/moe_batch.rs`)
+/// reachable at all: `produce_batched` allocates its M-row scratch beside
+/// a drafter, so a MoE install with no head has nowhere to put it.
+///
+/// **THE HEAD IS DENSE AND THE TRUNK IS MoE, which is deliberate and is
+/// not what a real Ornith checkpoint looks like.** That model's head is
+/// itself MoE -- 256 per-expert `gate/up/down`, a router and a shared
+/// expert, all in its BF16 repo's last shard -- while `MtpState::REQUIRED`
+/// names the DENSE FFN tensors a `qwen3_5` head has. Adapting the drafter
+/// to an MoE head is its own piece of work. What this fixture exists to
+/// reach is the TRUNK's routed batched half; the head's only job is to
+/// allocate the verify scratch, and it is the smallest thing that will.
+pub fn build_synthetic_qwen_gdn_moe_install_with_mtp(
+    dir: &std::path::Path,
+    vocab_size: i64,
+    num_layers: i64,
+    num_experts: i64,
+    model_id: &str,
+) -> Result<ArchConfig, Box<dyn std::error::Error>> {
+    build_synthetic_qwen_gdn_moe_install_inner(
+        dir,
+        vocab_size,
+        num_layers,
+        num_experts,
+        model_id,
+        true,
+    )
+}
+
+fn build_synthetic_qwen_gdn_moe_install_inner(
+    dir: &std::path::Path,
+    vocab_size: i64,
+    num_layers: i64,
+    num_experts: i64,
+    model_id: &str,
+    with_mtp: bool,
+) -> Result<ArchConfig, Box<dyn std::error::Error>> {
     let arch = tiny_qwen_gdn_moe_arch(vocab_size, num_layers, num_experts);
     let experts = num_experts as usize;
     let vocab = vocab_size as usize;
@@ -262,6 +310,18 @@ pub fn build_synthetic_qwen_gdn_moe_install(
         1.0,
         7,
     ));
+    if with_mtp {
+        // At THIS fixture's widths, not the dense fixture's: a head whose
+        // hidden size disagrees with its trunk's fails at `open()` on a
+        // length check rather than producing a smaller head.
+        ts.extend(crate::synthetic_qwen::dense_tensors::mtp_head_tensors_at(
+            HIDDEN,
+            NUM_HEADS,
+            HEAD_DIM,
+            NUM_KV_HEADS,
+            INTER,
+        ));
+    }
 
     let blob = assemble_safetensors(&ts);
     let source = MemoryRangeSource::new(&blob);

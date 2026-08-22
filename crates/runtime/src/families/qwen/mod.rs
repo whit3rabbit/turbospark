@@ -11,6 +11,7 @@ mod dflash;
 mod dflash_draft;
 mod dflash_state;
 mod moe;
+mod moe_batch;
 mod mtp;
 mod mtp_dump;
 mod mtp_state;

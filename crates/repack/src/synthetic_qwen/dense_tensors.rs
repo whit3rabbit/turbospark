@@ -142,81 +142,98 @@ pub(crate) fn bf16_matrix(name: &str, rows: usize, cols: usize, seed: u64) -> Te
 ///   changes the output. Seeded alike they are interchangeable and the
 ///   embedding/hidden ordering is untestable.
 pub(crate) fn mtp_head_tensors() -> Vec<Tensor> {
-    let q_out = NUM_HEADS * HEAD_DIM;
-    let kv_out = NUM_KV_HEADS * HEAD_DIM;
+    mtp_head_tensors_at(HIDDEN, NUM_HEADS, HEAD_DIM, NUM_KV_HEADS, INTER)
+}
+
+/// The same head at an ARBITRARY trunk shape.
+///
+/// The MoE fixture is `HIDDEN = 64` where the dense one is 128, so the
+/// constants above cannot serve both. A head whose widths disagree with
+/// its trunk's is not a smaller head, it is an install that fails at
+/// `open()` on a length check -- which is the good failure, and still not
+/// one a fixture should be built to produce.
+pub(crate) fn mtp_head_tensors_at(
+    hidden: usize,
+    num_heads: usize,
+    head_dim: usize,
+    num_kv_heads: usize,
+    inter: usize,
+) -> Vec<Tensor> {
+    let q_out = num_heads * head_dim;
+    let kv_out = num_kv_heads * head_dim;
     let mut ts = vec![
         // The head's own structure, above the block.
-        bf16_matrix("mtp.fc.weight", HIDDEN, 2 * HIDDEN, 9_100),
-        bf16_vector("mtp.pre_fc_norm_embedding.weight", HIDDEN, 1.0, 9_101),
-        bf16_vector("mtp.pre_fc_norm_hidden.weight", HIDDEN, 1.0, 9_102),
-        bf16_vector("mtp.norm.weight", HIDDEN, 1.0, 9_103),
+        bf16_matrix("mtp.fc.weight", hidden, 2 * hidden, 9_100),
+        bf16_vector("mtp.pre_fc_norm_embedding.weight", hidden, 1.0, 9_101),
+        bf16_vector("mtp.pre_fc_norm_hidden.weight", hidden, 1.0, 9_102),
+        bf16_vector("mtp.norm.weight", hidden, 1.0, 9_103),
     ];
     // The block: every shape a TRUNK full-attention layer's, which is what
     // makes the draft step reuse `families/qwen/attn.rs` with no new kernel.
     ts.push(bf16_vector(
         "mtp.layers.0.input_layernorm.weight",
-        HIDDEN,
+        hidden,
         1.0,
         9_110,
     ));
     ts.push(bf16_vector(
         "mtp.layers.0.post_attention_layernorm.weight",
-        HIDDEN,
+        hidden,
         1.0,
         9_111,
     ));
     ts.push(bf16_matrix(
         "mtp.layers.0.self_attn.q_proj.weight",
         2 * q_out,
-        HIDDEN,
+        hidden,
         9_120,
     ));
     ts.push(bf16_matrix(
         "mtp.layers.0.self_attn.k_proj.weight",
         kv_out,
-        HIDDEN,
+        hidden,
         9_121,
     ));
     ts.push(bf16_matrix(
         "mtp.layers.0.self_attn.v_proj.weight",
         kv_out,
-        HIDDEN,
+        hidden,
         9_122,
     ));
     ts.push(bf16_matrix(
         "mtp.layers.0.self_attn.o_proj.weight",
-        HIDDEN,
+        hidden,
         q_out,
         9_123,
     ));
     ts.push(bf16_vector(
         "mtp.layers.0.self_attn.q_norm.weight",
-        HEAD_DIM,
+        head_dim,
         1.0,
         9_124,
     ));
     ts.push(bf16_vector(
         "mtp.layers.0.self_attn.k_norm.weight",
-        HEAD_DIM,
+        head_dim,
         1.0,
         9_125,
     ));
     ts.push(bf16_matrix(
         "mtp.layers.0.mlp.gate_proj.weight",
-        INTER,
-        HIDDEN,
+        inter,
+        hidden,
         9_130,
     ));
     ts.push(bf16_matrix(
         "mtp.layers.0.mlp.up_proj.weight",
-        INTER,
-        HIDDEN,
+        inter,
+        hidden,
         9_131,
     ));
     ts.push(bf16_matrix(
         "mtp.layers.0.mlp.down_proj.weight",
-        HIDDEN,
-        INTER,
+        hidden,
+        inter,
         9_132,
     ));
     ts
