@@ -1618,8 +1618,27 @@ Both streams are the model's own greedy output and neither is degraded; a
 caller needing a stream reproducible token-for-token against non-speculative
 decoding leaves speculation off.
 
-**WHY IT DIVERGES IS OPEN, and the answer written here until 2026-08-21 was
-wrong.** The stated cause was that a verify runs `dequant_int4_gemm_simd`
+**IT IS THIS PORT'S SHAPE FLOOR AND NOT A DEFECT, measured 2026-08-21 in the
+unit that makes it readable.** `produce_batched` and `produce` differ by
+6.2e-8 to 1.5e-5 NATS with the argmax agreeing on every row
+(`crates/bench/tests/batched_forward_probe.rs`), against a dense
+batched-vs-cached shape floor of 7.4e-6 measured on MLX for this same
+architecture -- and against 1.57e-5, this repo's own cross-engine result for
+the family, published as "no detectable kernel gap". Every engine's batched
+and cached passes disagree by about this much; that disagreement is exactly
+what `scripts/kld.py` measures as the shape floor by running the REFERENCE
+twice. A greedy stream parting at the first near-tie is then what it should
+do, and leaving speculation off is the answer for a caller who needs
+token-for-token reproducibility -- not a fix.
+
+**THE COUNT AND THE MAX DELTA ARE THE WRONG UNITS**, and reading them as the
+magnitude is what made this look like a bug: "88% of the vocabulary differs,
+worst 2e-2" describes a distributional difference of 1e-5 nats. The tell was
+available throughout and went unused -- the argmax never moved.
+
+**WHAT CAUSES THAT FLOOR IS BOUNDED, and the cause written here earlier on
+2026-08-21 was wrong.** The stated cause was that a verify runs
+`dequant_int4_gemm_simd`
 where a decode step runs `dequant_int4_gemv_simd` and "the two accumulate
 differently". That was an inference from reading the two shaders rather than a
 measurement, and it does not survive one. The pair agrees BIT-FOR-BIT at
@@ -1634,13 +1653,17 @@ does not determine compiled order in either kernel.
 The `gdn.metal` multi-row kernels were the next suspect and are also exact
 (0 of 896 outputs differ bitwise in `gdn_parity.rs`'s prefill-vs-decode case;
 its 5e-2 state tolerance is conservative rather than descriptive). So the
-difference lives somewhere else in `produce_batched`, and the experiment that
-would localise it has not been run: that function at M=1 against `produce` on
-one token of a real install, which separates "these two functions differ" from
-"batching differs". Note the block-size evidence does NOT narrow this the way
-it was read as doing -- every speculative arm calls `produce_batched` and the
-sequential arm calls `produce`, so identical text across blocks is consistent
-with any difference between the two functions.
+floor lives elsewhere in `produce_batched`, and it is BOUNDED rather than
+open. It is present at M=1, where no batching happens at all, so the batch
+width was never the variable; it is absent at one and two keys and present
+from three, and a two-key softmax exposes the score in full, so q, k and V
+are exact until there are three of them. Not the split-KV combine either --
+`chunks_for` returns 1 until span 32. What is left is the attention
+reduction, which is the only thing a key count reaches. Note the block-size
+evidence does NOT narrow this the way it was read as doing: every speculative
+arm calls `produce_batched` and the sequential arm calls `produce`, so
+identical text across blocks is consistent with any difference between the
+two functions.
 
 Server wiring is absent (`turbospark-server` exposes no speculation at all),
 and one review finding stays unfixed: the unconditional batched-prefill

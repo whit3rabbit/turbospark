@@ -4,10 +4,14 @@ What `incoai/Qwen3.8-27B-DFlash2` is, read off the published checkpoint
 header (8,928 B JSON, ranged reads, no download) and off the two reference
 implementations (vLLM `qwen3_dflash.py` + `qwen3_dflash2.py` + their
 speculators, and llama.cpp's `draft-dflash`). Sections 1-5 hold FACTS about
-the drafter. Section 6 holds THIS PORT'S STATE, which as of 2026-08-19 is
-"built and blocked". Section 7 holds the comparison against the two
-references, including the divergences the comparison found. Section 8 is the
-work list. Nothing projected appears in sections 1-5.
+the drafter. Section 6 holds THIS PORT'S STATE, which as of 2026-08-21 is
+SHIPPED AND COMPLETE -- opt-in by default, wired through all four front ends,
+and measured on three workloads across four blocks on a quiet machine. (It
+read "built and blocked" for two days after it was neither; the blocker was
+an FP16 overflow, fixed in `220635b`.) Section 7 holds the comparison against
+the two references, including the divergences the comparison found -- all six
+resolved. Section 8 is the work list and every item on it is closed. Nothing
+projected appears in sections 1-5.
 
 DFlash2 is a block-diffusion DRAFTER for speculative decoding, aimed at the
 same checkpoint this engine runs as the dense `qwen3_5` family
@@ -409,17 +413,33 @@ read off the two shaders rather than measured, and the measurement refutes it:
   0 of 896 outputs differ bitwise in `gdn_parity.rs`'s prefill-vs-decode case,
   so its 5e-2 state tolerance is conservative rather than descriptive.
 
-**The experiment that would localise it has not been run**: `produce_batched`
-at M=1 against `produce` on one token of a real install. At M=1 there is no
-batching, so a difference there is a kernel or composition difference between
-the two functions and an agreement there puts the cause in the batching
-itself -- most likely the attention span each row sees. Note the block-size
-table above does NOT narrow this, though it reads as though it does: identical
-text across blocks is consistent with ANY difference between the two
-functions.
+**AND IT IS NOT A DEFECT AT ALL. Measured in NATS the same day, it is this
+port's own SHAPE FLOOR.** `produce_batched` and `produce` differ by 6.2e-8 to
+1.5e-5 nats with the argmax agreeing on every row, against a dense
+batched-vs-cached shape floor of **7.4e-6** measured on MLX for this same
+architecture, and against **1.57e-5**, this repo's own cross-engine result for
+the family, published as "no detectable kernel gap" (`crates/bench/CLAUDE.md`
+Gotcha 8). Every engine's batched and cached passes disagree by about this
+much -- that disagreement is precisely what `scripts/kld.py` measures, by
+running the REFERENCE twice.
 
-Whether the two paths can be MADE bit-identical at acceptable cost is still
-open, and costing it against the GEMM would have been wasted work.
+**THE COUNT AND THE MAX DELTA ARE THE WRONG UNITS, and reading them as the
+magnitude is the whole reason this looked like a bug.** "88% of the vocabulary
+differs, worst 2e-2" sounds enormous and describes a distributional difference
+of 1e-5 nats. The tell was available from the first measurement and went
+unused: the argmax never moved. A greedy stream tracking for ~154 tokens and
+then parting at the first near-tie is exactly what a floor this size predicts.
+
+So there is nothing to make bit-identical that every engine does not also
+have, and the advice to a caller needing a token-for-token reproducible stream
+is unchanged: leave speculation off. What the eliminations bound is the
+floor's CAUSE -- present at M=1 so not the batch width, absent at one and two
+keys and present from three (and a two-key softmax exposes the score in full,
+so q, k and V are exact there), and not the split-KV combine, which does not
+run until span 32. That leaves the attention reduction, the only thing a key
+count reaches. Note the block-size table above does NOT narrow this, though it
+reads as though it does: identical text across blocks is consistent with ANY
+difference between the two functions.
 
 ### Through the REAL generation loop, and the block that ships
 

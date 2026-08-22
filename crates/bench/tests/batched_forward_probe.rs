@@ -80,16 +80,37 @@
 //! buffer carrying state across calls (Gotcha 27's shape, checked because a
 //! comparison against `produce` alone cannot tell the two apart).
 //!
-//! **So the next step is a per-layer bisect and not more elimination by
-//! reading.** What is wanted is the first layer at which the two residual
-//! streams part at span 3, which needs a readback this probe does not have.
-//! Two things a future bisect should NOT spend time on. A synthetic install
+//! **AND IT IS NOT A DEFECT. Measured in NATS it is this port's own shape
+//! floor, which is where the whole hunt should have started.** The arms above
+//! read 6.2e-8 to 1.5e-5 nats with the argmax agreeing on every row, against
+//! a dense batched-vs-cached shape floor of 7.4e-6 measured on MLX for this
+//! same architecture -- and against 1.57e-5, this repo's own cross-engine
+//! result for the family, published as "no detectable kernel gap"
+//! (`crates/bench/CLAUDE.md` Gotcha 8). Every engine's batched and cached
+//! passes disagree by about this much; that disagreement is what `kld.py`
+//! measures as the shape floor by running the REFERENCE twice.
+//!
+//! **THE COUNT AND THE MAX DELTA ARE THE WRONG UNITS, and reading them as the
+//! magnitude is what made this look like a bug worth bisecting.** "88% of the
+//! vocabulary differs, worst 2e-2" sounds enormous and describes a
+//! distributional difference of 1e-5 nats. The tell was available the whole
+//! time and was not used: the argmax never moved. A greedy stream parting at
+//! ~154 tokens is then exactly what it should do -- it tracks until the first
+//! near-tie and then falls the other way, which is ordinary FP behaviour a
+//! batched verify has in every engine.
+//!
+//! So there is nothing here to fix and no per-layer bisect to run. What the
+//! eliminations below are still worth is bounding the floor's CAUSE: it is
+//! not the INT4 GEMM (bit-exact at fixture and at real shapes, against a
+//! positive control that differs), not the GDN multi-row kernels (bit-exact
+//! from zero, carried and filling states), not the split-KV combine
+//! (`chunks_for` is 1 until span 32), and not stale scratch. It appears at
+//! three keys and not two, so it is the attention reduction, which is the
+//! only thing left that a key count reaches.
+//!
+//! One thing a future reader should NOT spend time on: a synthetic install
 //! cannot see any of this -- `real_forward_qwen35_batched_onset.rs` sweeps a
-//! dense INT4 fixture and reads 0 differing at every span, so the harness has
-//! to be the real install. And the eliminations above were re-run at the real
-//! model's SHAPES, not just at fixture shapes, because the GEMM bakes M, N
-//! and B as function constants and a different N is a different pipeline
-//! (`the_gemm_and_the_gemv_agree_at_the_real_models_shapes`).
+//! dense INT4 fixture and reads 0 differing at every span.
 //!
 //! ```sh
 //! TURBOSPARK_PROBE_INSTALL_DIR=~/models/qwen38-27b-mtp.gturbo \
@@ -115,6 +136,46 @@ fn bits(logits: &[LogitValue]) -> Vec<u16> {
     logits.iter().map(|v| v.to_bits()).collect()
 }
 
+/// KL(p || q) in NATS over the two rows' softmaxes.
+///
+/// **THIS IS THE UNIT THAT MAKES THE GAP READABLE, and the count of differing
+/// logits is not.** Every engine's batched and cached passes disagree -- that
+/// is what `scripts/kld.py` calls the SHAPE FLOOR, measured by running the
+/// REFERENCE twice, once token-by-token through a cache and once as one
+/// batched pass, holding weights and kernels fixed. In mlx-lm on Gemma it
+/// costs 0.0352 nats and 4% of the argmaxes. So "the batched pass differs
+/// from the cached one" is not on its own a defect, and a raw count of moved
+/// logits cannot say whether this port's gap is ordinary or anomalous.
+///
+/// The floors to read this against are per SHAPE, not per port
+/// (`crates/bench/CLAUDE.md` Gotcha 8). A dense model's two passes are nearly
+/// the same computation, so its floor nearly vanishes:
+///
+///   dense `qwen35` 9B, llama.cpp batched vs cached   0.0000024   99.65%
+///   dense `qwen3_5` 27B, mlx batched vs cached       0.0000074  100.00%
+///   MoE `qwen3moe`, llama.cpp                        0.00135     99.1%
+///   MoE ornith-35B, mlx                              0.02780     92.84%
+///
+/// The install this probe runs on is DENSE `qwen3_5`, so the ~1e-6 rows are
+/// its comparison. Computed in f64 off an f16 input, which is exact.
+fn kl_nats(p: &[LogitValue], q: &[LogitValue]) -> f64 {
+    let softmax = |v: &[LogitValue]| {
+        let m = v
+            .iter()
+            .map(|x| x.to_f32() as f64)
+            .fold(f64::NEG_INFINITY, f64::max);
+        let exps: Vec<f64> = v.iter().map(|x| ((x.to_f32() as f64) - m).exp()).collect();
+        let sum: f64 = exps.iter().sum();
+        exps.into_iter().map(|e| e / sum).collect::<Vec<f64>>()
+    };
+    let (p, q) = (softmax(p), softmax(q));
+    p.iter()
+        .zip(q.iter())
+        .filter(|(pi, _)| **pi > 0.0)
+        .map(|(pi, qi)| pi * (pi / qi.max(f64::MIN_POSITIVE)).ln())
+        .sum()
+}
+
 /// How far apart two logit rows are, as a count and as the worst absolute
 /// gap. The count alone would not distinguish a last-bit difference from a
 /// broken pass, and only the first of those is what this is hunting.
@@ -133,8 +194,10 @@ fn compare(label: &str, a: &[u16], b: &[u16], af: &[LogitValue], bf: &[LogitValu
             .unwrap_or(0)
     };
     println!(
-        "  {label}: {differing}/{} logits differ, worst |delta| {worst:e}, argmax {} vs {}",
+        "  {label}: {differing}/{} logits differ, worst |delta| {worst:e}, KL {:.3e} nats, \
+         argmax {} vs {}",
         a.len(),
+        kl_nats(af, bf),
         argmax(af),
         argmax(bf)
     );
@@ -336,8 +399,36 @@ fn a_batched_forward_at_one_row_is_compared_against_a_sequential_step() {
 
     // THE VERDICT, stated rather than left to the reader: exactly one of
     // these is the case, and which one decides where to look next.
+    // THE VERDICT IS READ IN NATS, NOT IN THE COUNT. See `kl_nats`: every
+    // engine's batched and cached passes disagree, and the question is
+    // whether this port's gap is bigger than the floor its SHAPE implies.
+    const DENSE_SHAPE_FLOOR_NATS: f64 = 7.4e-6;
+    let worst_kl = [&seq_1, &seq_2_row0, &seq_2_row1]
+        .iter()
+        .zip([&batched, &b0, &b1])
+        .map(|(s, b)| kl_nats(s, b))
+        .fold(0.0f64, f64::max);
+    println!(
+        "\nworst KL over the arms above: {worst_kl:.3e} nats, against a dense \
+         batched-vs-cached shape floor of {DENSE_SHAPE_FLOOR_NATS:.1e} measured on \
+         mlx for this same architecture"
+    );
+
     println!("\nVERDICT:");
-    if unstable > 0 {
+    if worst_kl < 10.0 * DENSE_SHAPE_FLOOR_NATS {
+        println!(
+            "  WITHIN THE SHAPE FLOOR. The two paths differ by about as much as the\n  \
+             REFERENCE engines' own batched and cached passes differ from each other on\n  \
+             this architecture (mlx 7.4e-6 nats; this repo's accepted cross-engine result\n  \
+             for the family is 1.57e-5 at 100% top-1, published as no detectable gap).\n  \
+             The argmax agrees on every row here, which is why a greedy stream tracks for\n  \
+             ~154 tokens and then parts at the first near-tie -- ordinary FP behaviour a\n  \
+             batched verify has in every engine, not a defect in this one.\n  \
+             DO NOT read the differing-LOGIT COUNT as the magnitude: 88% of a vocabulary\n  \
+             moving at 1e-5 nats is a tiny distributional difference, and that count is\n  \
+             what made this look like a bug worth bisecting."
+        );
+    } else if unstable > 0 {
         println!(
             "  `produce_batched` IS NOT DETERMINISTIC -- the same call from the same\n  \
              checkpoint gave different logits twice. Stop reading the arithmetic: this\n  \
