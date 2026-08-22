@@ -122,7 +122,8 @@ fn an_unreadable_index_resolves_to_the_pre_existing_default() {
 
 /// **DFLASH2 IS DETECTED AND DELIBERATELY NOT ENABLED**, which is the
 /// asymmetry this whole function exists for. Through the shipped loop it
-/// reads 0.96x throughput at +17.4% J/token on prose, so `auto` must not
+/// reads 0.90x throughput on prose against 1.33-1.47x on code and math, and
+/// +17.4% J/token in its own power arm, so `auto` must not
 /// switch it on; but silence would be the bug the feature was built to end,
 /// so the note names the flag that would.
 ///

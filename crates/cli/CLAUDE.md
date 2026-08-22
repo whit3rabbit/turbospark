@@ -185,9 +185,10 @@ printf '[{"role":"user","content":"Explain how coastal wetlands reduce flood dam
    DFlash2-only install ALSO resolves to `Mtp` -- so `open` allocates no
    DFlash2 state -- carrying a `note` that names `--speculative-drafter
    dflash`. The asymmetry is measured, not stylistic: through the shipped
-   loop the head pays 1.44-1.66x while DFlash2 reads 1.43-1.50x on code and
-   math and 0.96x throughput at +17.4% J/token on PROSE, so enabling it by default makes the
-   common workload slower and hungrier without being asked. Resolving to
+   loop the head pays 1.44-1.66x while DFlash2 at block 2 reads 1.33x on code
+   and 1.47x on math against 0.90x on PROSE, with its power arm at +17.4%
+   J/token, so enabling it by default makes the common workload slower and
+   hungrier without being asked. Resolving to
    `Mtp` also saves 213 MiB of peak footprint, measured as the gap between
    the two arms of one protocol case on the real 27B.
 

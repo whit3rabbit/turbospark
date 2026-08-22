@@ -61,11 +61,15 @@ const GENERATE: usize = 600;
 /// stream for.
 ///
 /// NOT a bit-identity claim, which is measured FALSE (`docs/DFLASH2.md`): a
-/// batched verify runs `dequant_int4_gemm_simd` where a decode step runs
-/// `dequant_int4_gemv_simd`, the two accumulate differently, and the streams
-/// part at the first near-tie. What this floor catches is the failure that
-/// matters -- a drafter or a rollback that corrupts state, which diverges in
-/// the first handful of tokens rather than the second hundred.
+/// batched verify row differs from a one-row decode pass in the last bits, so
+/// the streams part at the first near-tie. That difference is this port's
+/// SHAPE FLOOR rather than a defect -- 1e-5 nats with the argmax agreeing,
+/// against the 7.4e-6 that MLX's own batched and cached passes differ by on
+/// this architecture -- and an earlier version of this comment blamed the
+/// batched INT4 kernel, which is bit-exact against the GEMV. What this floor
+/// catches is the failure that matters: a drafter or a rollback that corrupts
+/// state, which diverges in the first handful of tokens rather than the
+/// second hundred.
 ///
 /// **64 AND NOT THE OBSERVED 154, because the divergence point is DATA
 /// DEPENDENT and has no principled lower bound.** It is wherever the first
@@ -484,9 +488,12 @@ fn dflash2_accept_length_and_speedup() {
     // byte-identity against a SEQUENTIAL decode this one is measured TRUE:
     // blocks 2, 4, 7 and 8 produce the same tokens, because every one of
     // them commits rows from the same batched kernel and only the batch
-    // SIZE differs. That is also what says the divergence above is the
-    // kernel pair rather than the batch width -- if M were the variable,
-    // these four would disagree with each other too.
+    // SIZE differs. That is also what says the batch WIDTH is not what
+    // makes the sequential stream part -- if M were the variable, these four
+    // would disagree with each other too. (It does NOT identify a kernel
+    // pair, which an earlier version of this comment claimed: the divergence
+    // is `produce_batched` vs `produce` as functions, and measured in nats it
+    // is this port's shape floor rather than a defect.)
     //
     // It is the strongest exact assertion this file can make, and it is
     // strictly stronger than what the old `GENERATE = 256` byte-identity
@@ -522,7 +529,7 @@ fn dflash2_accept_length_and_speedup() {
 /// cannot make. The sweep runs a code-shaped answer, whose greedy stream
 /// stays byte-identical to a sequential decode for all 600 tokens -- so on
 /// that prompt alone the losslessness check can never fail, whatever the
-/// engine does. This one diverges at ~200 tokens on the same install
+/// engine does. This one diverges at 154 tokens on the same install
 /// (`docs/DFLASH2.md`), which is what makes the floor below a live check
 /// rather than a decoration. Taken from `PROTOCOL_CASES` rather than
 /// retyped, so it cannot drift from the case the rest of the harness runs.

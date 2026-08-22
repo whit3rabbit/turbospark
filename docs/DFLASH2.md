@@ -360,8 +360,10 @@ Two assertions replaced the old one:
   The floor is deliberately well under the 154 measured, because the
   divergence point is data-dependent and has no principled lower bound;
 - EVERY BLOCK SIZE MUST GENERATE IDENTICAL TEXT, which is exact, has no
-  length below which it stops looking, and is the assertion that identified
-  the kernel pair rather than the batch width as the cause.
+  length below which it stops looking, and is the assertion that ruled the
+  batch WIDTH out as the cause. (It does not identify a kernel pair, which
+  this line claimed for a day: what differs is `produce_batched` against
+  `produce` as functions, and in nats that difference is a shape floor.)
 
 The honest claim is "identical for the first hundred-odd tokens, then
 divergent at the first near-tie". A caller who needs token-for-token

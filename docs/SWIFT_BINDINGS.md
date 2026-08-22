@@ -154,9 +154,10 @@ session-level answer, once.
 
 `.auto` also declines a DFlash2 drafter it FINDS, and says so in
 `info.speculation.reason`. That asymmetry is measured rather than stylistic:
-the checkpoint's own MTP head pays 1.44-1.66x, while DFlash2 reads 1.43-1.50x
-on code and math and 0.96x throughput at +17.4% J/token on PROSE. Ask for it
-with `speculativeDrafter = .dflash` if your workload is code-shaped.
+the checkpoint's own MTP head pays 1.44-1.66x, while DFlash2 at block 2 reads
+1.33x on code and 1.47x on math against 0.90x on PROSE, with its power arm at
++17.4% J/token. Ask for it with `speculativeDrafter = .dflash` if your
+workload is code-shaped.
 `.block(n)` is a promise rather than a preference: an install that cannot
 serve it throws from `init` rather than opening quietly without it.
 

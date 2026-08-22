@@ -230,9 +230,12 @@ TURBOSPARK_MTP_INSTALL_DIR=~/models/qwen38-27b-mtp.gturbo \
 # stronger and has no length below which it stops looking; and each arm must
 # match the SEQUENTIAL stream for a floor of 64 tokens, printing where it
 # actually diverged. Byte-identity to sequential is measured FALSE past a few
-# hundred tokens (the batched verify runs a different kernel from a decode
-# step), so a floor is what is true -- and the floor is 64 against an observed
-# 154 because the divergence point is data dependent.
+# hundred tokens -- a batched row differs from a one-row pass in the last
+# bits, which is this port's SHAPE FLOOR and not a defect (1e-5 nats with the
+# argmax agreeing, against 7.4e-6 on MLX for the same architecture; an earlier
+# note here blamed the batched INT4 kernel, which is bit-exact against the
+# GEMV). So a floor is what is true -- 64 against an observed 154, because the
+# divergence point is data dependent.
 #
 # It samples through `selection::select` under the same greedy ShapingConfig
 # `real_model.rs` builds, not a local argmax, so a sampler regression is

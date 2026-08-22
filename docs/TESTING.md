@@ -437,10 +437,11 @@ attention) so it cannot rot silently; only the timings are advisory.
   an `MFERENCE_*` var between tests in one file.
 - **A probe that can return a degenerate value has to assert against it, not
   print it.** `crates/bench/tests/mtp_accept_length_probe.rs` measures the
-  MTP head's accept length and reads zero, because the head is broken rather
-  than weak; a version that merely printed its table would hand a reader a
-  quotable verdict on a question that is still open. It asserts a functional
-  drafter (first proposal accepted above 2%) and fails. The bar separates
+  MTP head's accept length, and on its first run READ ZERO -- because the head
+  was broken rather than weak (centered norms read plainly; fixed, and it now
+  pays 1.44-1.66x). A version that merely printed its table would have handed
+  a reader a quotable "loses" verdict on a question that was not settled. It
+  asserts a functional drafter (first proposal accepted above 2%) and fails. The bar separates
   "drafting" from "not drafting", never "pays" from "loses" -- a gate that
   encoded the interesting threshold would be asserting the answer.
   `crates/bench/tests/mtp_head_probe.rs` is the paired instrument that says

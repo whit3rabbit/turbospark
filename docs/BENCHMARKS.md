@@ -1572,28 +1572,36 @@ Losslessness is settled independently of the economics: every block size
 produces a token stream byte-identical to the same generation with
 speculation switched off.
 
-**QUALIFIED 2026-08-20, ON A DIFFERENT DRAFTER AND FAMILY.** That claim is this probe's, at ITS generation length, and the DFlash2 work found the limit it cannot see: byte-identity to a sequential decode holds for a few hundred tokens and then fails, because a batched verify and a decode step run DIFFERENT KERNELS (`dequant_int4_gemm_simd` against `dequant_int4_gemv_simd`) whose accumulation orders differ, so the streams part at the first near-tie. Nobody has re-run THIS probe long enough to say whether the same happens here; the mechanism is shared, so assume it does until measured. What survives exactly either way is that every BLOCK SIZE produces the same text. See `docs/DFLASH2.md`.
+**QUALIFIED 2026-08-20, ON A DIFFERENT DRAFTER AND FAMILY.** That claim is this probe's, at ITS generation length, and the DFlash2 work found the limit it cannot see: byte-identity to a sequential decode holds for a few hundred tokens and then fails, because a batched verify row differs from a one-row decode pass in the last bits, so the streams part at the first near-tie. Nobody has re-run THIS probe long enough to say whether the same happens here; the mechanism is shared, so assume it does until measured. What survives exactly either way is that every BLOCK SIZE produces the same text. **The cause named here until 2026-08-21 was wrong** -- it blamed `dequant_int4_gemm_simd` against `dequant_int4_gemv_simd`, read off the shaders rather than measured, and those two agree BIT-FOR-BIT on data proven able to see a reassociation. Measured in nats the divergence is this port's own SHAPE FLOOR (1e-5 with the argmax agreeing, against 7.4e-6 for MLX's batched-vs-cached on the same architecture), i.e. the very quantity the floors elsewhere on this page measure. See `docs/DFLASH2.md`.
 
 ### DFlash2, the block drafter, measured 2026-08-19
 
 Not a parity claim, and not the same question as the row above: that one
 prices a drafter this port did not have, from published accept lengths. This
 one runs a real one. Install `~/models/qwen38-27b-dflash2.gturbo` (the dense
-`qwen3_5` trunk plus `incoai/Qwen3.8-27B-DFlash2`), 32-token prompt, 256
-greedy tokens, 16 slots, against a ~21-22 tok/s non-speculative reference.
-Full write-up: `docs/DFLASH2.md`.
+`qwen3_5` trunk plus `incoai/Qwen3.8-27B-DFlash2`), 32-token prompt, 600
+greedy tokens, 16 slots, THREE workloads, against a 21.93 tok/s
+non-speculative reference. Full write-up: `docs/DFLASH2.md`.
 
-**The acceptance column is deterministic** (greedy, fixed prompt, fixed
-weights); the seconds are NOT, and are omitted here on purpose -- the
-machine was running an interactive session throughout, which Gotcha 43
-measured as an 11% error on a published row.
+**The acceptance and rollback columns are deterministic** (greedy, fixed
+prompt, fixed weights) and reproduce to the last digit across four runs. The
+SECONDS are not, and the row below is the one capture taken on a genuinely
+idle machine -- its own tell is that the three no-drafter reference arms read
+27.36 / 27.40 / 27.48 s on equal-cost work, a 0.4% spread.
 
-| block | accepted/round | committed/round | rollbacks | vs off |
-| ---: | ---: | ---: | ---: | ---: |
-| 8 | 4.56 | 5.56 | 73 of 109 | 0.83x |
-| 7 | 4.37 | 5.37 | 66 of 112 | 0.92x |
-| 4 | 2.98 | 3.98 | 58 of 151 | 1.06x |
-| 2 | 1.74 | 2.74 | 38 of 219 | **1.35x** |
+| block | accepted/round (code / math / prose) | rollback rate | vs off (code / math / prose) |
+| ---: | --- | --- | --- |
+| 2 | 1.74 / 1.89 / 1.23 | 17% / 8% / 52% | **1.33x / 1.47x / 0.90x** |
+| 4 | 2.98 / 3.49 / 1.60 | 38% / 20% / 84% | 1.06x / 1.28x / 0.60x |
+| 7 | 4.37 / 5.59 / 1.85 | 59% / 37% / 94% | 0.90x / 1.18x / 0.46x |
+| 8 | 4.56 / 5.67 / 1.84 | 67% / 45% / 96% | 0.82x / 1.07x / 0.42x |
+
+**Monotone decreasing in the block on every workload**, which is what makes
+the shipped `DFLASH_SERVING_BLOCK = 2` evidence-backed rather than a guess:
+it wins where speculation pays and bounds the loss where it does not. What
+decides the ordering is the ROLLBACK RATE, not acceptance -- `math` accepts
+higher than `code` at every position and still loses to it at block 2 in
+nothing, while `prose` at block 8 rolls back 96% of its rounds.
 
 **AT 600 GENERATED TOKENS. The 256-token version of this table, published
 here for a day, read 8.09 committed per round at block 8 and 1.43x** -- the
@@ -1602,7 +1610,19 @@ the prose that follows, so a short generation measures the easy part and
 reports it as the whole. Accept length and speedup are functions of
 GENERATION LENGTH as well as of the prompt.
 
-**NOT byte-identical to a non-speculative decode over a long generation**, which an earlier draft of this row claimed. Acceptance is exact -- a proposal is kept only when it equals the target's argmax -- but the committed token comes from a BATCHED verify row, and `dequant_int4_gemm_simd` accumulates differently from the decode path's `dequant_int4_gemv_simd`, so at the first near-tie the streams part. Measured: they agree for ~200 tokens on the protocol prompt, then take different but equally fluent continuations, both stopping on endOfTurn. Every BLOCK SIZE does produce identical text to every other, which is the exact invariant that survives and is what identifies the kernel pair rather than the batch width as the cause. `docs/DFLASH2.md` carries the measurement.
+**AND THE BLOCK-2 FIGURE MOVED AGAIN FOR A SECOND REASON, worth separating
+from the first.** Earlier captures swept `BLOCKS` as 7, 8, 4, 2, so block 2
+always ran LAST, and on a machine whose load drifts downward through a
+capture that aliases exactly with the block ordering -- run 2 read 1.86x on
+code from that position. A reversed sweep and then this idle run both read
+~1.33x. The ordering survives every run; the ABSOLUTE at any one position
+does not, unless the machine was quiet.
+
+**NOT byte-identical to a non-speculative decode over a long generation**, which an earlier draft of this row claimed. Acceptance is exact -- a proposal is kept only when it equals the target's argmax -- but the committed token comes from a BATCHED verify row, and a batched row differs from a one-row pass in the last bits, so at the first near-tie the streams part. Measured: they agree for 154 tokens on the protocol's prose case, then take different but equally fluent continuations, both stopping on endOfTurn; on code and math they agree for all 600. Every BLOCK SIZE produces identical text to every other, so the batch WIDTH is not the variable.
+
+**THAT DIFFERENCE IS THIS PORT'S SHAPE FLOOR, NOT A DEFECT, and two earlier drafts of this paragraph named a cause that is measurably wrong.** It blamed `dequant_int4_gemm_simd` accumulating differently from `dequant_int4_gemv_simd`; those two agree BIT-FOR-BIT at every batch width on data proven able to see a reassociation, at fixture and at the real model's shapes, against a positive control (`dequant_int4_gemm_mma`) that differs on ~39% of the same outputs. Measured in NATS, `produce_batched` and `produce` differ by 6.2e-8 to 1.5e-5 with the argmax agreeing on every row -- against a dense batched-vs-cached shape floor of **7.4e-6** measured on MLX for this same architecture, and **1.57e-5**, this page's own cross-engine result for the family, published as no detectable kernel gap. Every engine's batched and cached passes disagree by about this much; that disagreement is exactly what the shape-floor arm of `scripts/kld.py` measures by running the REFERENCE twice.
+
+**READ IT IN NATS, NOT IN THE DIFFERING-LOGIT COUNT.** "88% of the vocabulary differs, worst 2e-2" sounds enormous and describes 1e-5 nats, and the argmax never moved -- which is why a greedy stream tracks for 154 tokens before parting at all. Reading the count as the magnitude is what turned an ordinary floor into a hunt. `crates/bench/tests/batched_forward_probe.rs` is the instrument and reports KL beside the count; `docs/DFLASH2.md` carries the full measurement.
 
 **READ THE ACCEPT LENGTH AGAINST ITS PROMPT AND ITS LENGTH.** 5.56 committed
 per round now sits beside vLLM's published 5.34 and llama.cpp's 4.92-5.08

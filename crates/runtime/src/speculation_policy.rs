@@ -101,12 +101,17 @@ pub enum SpeculationPlan {
 /// **DETECTION IS NOT ENABLEMENT, AND THAT SPLIT IS THE WHOLE POINT OF THIS
 /// FUNCTION.** `auto` resolves to `Mtp` even on an install whose only
 /// drafter is DFlash2, and returns a note naming the flag that would run it.
-/// The measurement is why: through the shipped loop on the real install,
-/// DFlash2 reads 1.43-1.50x on code and math and **0.96x throughput at
-/// +17.4% J/token on prose** (`docs/DFLASH2.md`), so a default that switched
-/// it on would make one common workload slower and hungrier without being
-/// asked. The MTP head is the opposite case (1.44-1.66x) and keeps its
-/// `auto`. Resolving to `Mtp` also means `open` allocates no DFlash2 state,
+/// The measurement is why: through the shipped loop on the real install over
+/// 600-token generations on an idle machine, DFlash2 at block 2 reads
+/// **1.33x on code and 1.47x on math against 0.90x on PROSE**, and its own
+/// power A/B reads 0.88x throughput at **+17.4% J/token** on the protocol's
+/// prose case (`docs/DFLASH2.md`). So a default that switched it on would
+/// make one common workload slower AND hungrier without being asked. (Two
+/// numbers, two captures: the 0.90x is the block sweep and the 0.88x the
+/// `COOLING=max` energy arm. Do not merge them -- an earlier version of this
+/// comment quoted 0.96x, which is neither; that is the PREFILL ratio from
+/// the priming measurement.) The MTP head is the opposite case (1.44-1.66x)
+/// and keeps its `auto`. Resolving to `Mtp` also means `open` allocates no DFlash2 state,
 /// which is 213 MiB of peak footprint on the real 27B install -- measured,
 /// as the gap between the two arms of the same protocol case.
 ///
@@ -154,8 +159,8 @@ pub fn resolve_drafter(requested: SpeculativeDrafter, model_dir: &Path) -> Draft
                 // follow. The CLI and the server share the flag; the C ABI
                 // takes the same choice as an option key.
                 "this install carries a DFlash2 drafter, which auto leaves OFF: measured \
-                 0.96x throughput and +17.4% J/token on prose against 1.43-1.50x on code \
-                 and math, so it is opt-in. Select the dflash drafter to use it \
+                 0.90x throughput on prose against 1.33-1.47x on code and math, and \
+                 +17.4% J/token, so it is opt-in. Select the dflash drafter to use it \
                  (--speculative-drafter dflash, or speculativeDrafter \"dflash\" on the \
                  C ABI)"
                     .to_string(),
