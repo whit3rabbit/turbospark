@@ -271,6 +271,7 @@ If a checkpoint uses a type in a role that has no kernel, it passes the manifest
 - **Interactive REPL & CLI**: `turbospark-check` binary for interactive chat (`--chat`), raw prompt (`--prompt`), or JSON message history (`--messages-file`).
 - **HTTP Server**: `turbospark-server` serving OpenAI Chat Completions (`/v1/chat/completions`), Anthropic Messages (`/v1/messages`), and `/v1/models`.
 - **Configurable Expert Cache**: Adjust expert cache slot counts (8, 16, 24, 32) to tune performance vs memory footprint.
+- **Tool Calling, With Guardrails On By Default**: Both endpoints render a request's `tools` through the checkpoint's own chat template and return calls as OpenAI `tool_calls` / Anthropic `tool_use`. On top of that, a reliability layer aimed at what a SMALL local model actually gets wrong: a call emitted in a dialect the checkpoint's own template did not teach it (bare JSON, Qwen XML, Mistral `[TOOL_CALLS]`) is **rescued** out of the raw text instead of reaching the client as prose, a call's arguments are **validated** against the schema the request itself sent, and a failure is **re-asked once** with a corrective nudge. All of it runs **in process against the local model**: the pure half of [`forge-guardrails`](https://crates.io/crates/forge-guardrails) is compiled in (6 added crates, no network crate among them), there is no proxy, no second process, and no outbound call of any kind. One behaviour change to know: a request carrying tools is buffered rather than streamed while guardrails are on, because a verdict needs the whole turn; requests without tools stream exactly as before. `--guardrails off` restores the previous path. See [`docs/FORGE_GUARDRAILS.md`](docs/FORGE_GUARDRAILS.md).
 
 ### Limitations & Out of Scope
 - **Apple Silicon Acceleration Only**: Metal GPU acceleration requires macOS (`xcrun -sdk macosx metal`). On non-macOS platforms, crates compile CPU stubs.
@@ -537,6 +538,7 @@ list of what is deliberately not supported are in
 - [`docs/POWER_BASELINE.md`](docs/POWER_BASELINE.md): Power metrics (Watts, Joules/token).
 - [`docs/SPECULATIVE_DECODING.md`](docs/SPECULATIVE_DECODING.md): DFlash and batched verify, measured marginal (~1.1x, small blocks only), and why it is not shipped.
 - [`docs/EXPERT_ROUTING.md`](docs/EXPERT_ROUTING.md): Domain-restricted expert sets, measured negative.
+- [`docs/FORGE_GUARDRAILS.md`](docs/FORGE_GUARDRAILS.md): Tool-call rescue, argument validation and the one-retry loop: how a verdict is reached, why a tool request is buffered, and why none of it leaves the process.
 - [`docs/SWIFT_BINDINGS.md`](docs/SWIFT_BINDINGS.md): Driving the engine from a native app: the Swift API, the C ABI, threading, and what is not supported.
 
 
