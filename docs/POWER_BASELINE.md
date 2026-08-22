@@ -1,7 +1,14 @@
 # Power baseline
 
-Watts and joules-per-token for both real installs, over the frozen
-community protocol, on AC and on battery. ROADMAP Phase P1.
+Watts and joules-per-token over the frozen community protocol, on AC and on
+battery. ROADMAP Phase P1.
+
+Seven installs have rows here now: Gemma 4 26B-A4B (INT4 and 3-bit),
+Qwen 3.6 35B-A3B, Qwen3-30B-A3B, gpt-oss-20b, Muse Glimmer 30B and
+Ornith-1.5 35B-A3B. This line read "both real installs" until 2026-08-22,
+which was true of the Phase P1 capture it was written for and had been
+wrong for five sections; **re-count it before quoting it**, since nothing
+goes red when a count rots.
 
 This is not a parity claim. Swift was never measured for power, here or
 upstream, so there is no second engine in any table below; this is the
@@ -294,6 +301,67 @@ suggested, and whatever pushed the machine over was partly not the
 engine. Gotcha 28's conclusion -- that thermal saturation here is a
 function of total draw rather than of the power source -- is unchanged;
 the number attached to it is.
+
+## Ornith-1.5 35B-A3B: the first row the contamination floor caught
+
+Measured 2026-08-22 on AC, `~/models/ornith35b.gturbo` (MLX INT4, manifest
+sha `e69caecb…`), `short-explanation` only, 16 slots, rev `e8deb6c`. Every
+one of six rows Nominal, arms agreeing to 2.3%, 67 samples per decode arm.
+
+| phase | tok/s | watts | J/token | cpu W | gpu W | samples/arm |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| decode | 42.99 | 21.05 | 0.4731 | 7.96 | 13.09 | 67 |
+| prefill | -- | 20.38 | 0.4301 | 8.08 | 12.30 | 6 |
+
+**Take the decode row; the prefill row is thin.** Six samples at a 200 ms
+interval over a 1.37 s window is close to the edge-error floor, and the
+harness's own too-few-samples warning fires only under three. The two arms
+agreeing to 2.3% is the reason it is printed at all.
+
+**IT TOOK THREE CAPTURES, AND THE FIRST TWO PASSED EVERY TELL THIS PAGE HAD.**
+That is what the row is really worth recording for.
+
+| capture | CPU floor | decode cpu W | E% | tok/s | J/token |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1 | 3,361 mW | 10.67 | 93 | 43.2 | 0.4927 |
+| 2 | 2,480 mW | 3.21 | 74.8 | 42.0 | 0.3899 |
+| 3 (this row) | **244 mW** | 7.96 | 94.7 | 43.0 | 0.4731 |
+
+Capture 1 ran against a Finder stuck at 99% of a core with
+`iconservicesagent` at 25%, and 269% of CPU summed across the machine. It
+reproduced to 0.18% on `gpu_W` and 0.29% on tok/s and held Nominal on all
+six rows, so BOTH of Gotcha 43's tells read clean: dispersion cannot see a
+load that is CONSTANT, because it contaminates every arm equally, and the
+`cpu_W`-against-norm tell needs a norm, which a first capture of a new
+install does not have. Only the minimum CPU power anywhere in the log
+separated them, which is why `scripts/power.sh` now prints it.
+
+**CAPTURE 2 IS THE ONE WORTH STUDYING, because its `cpu_W` was the LOWEST
+of the three and it is not the clean one.** Reading 3.21 W against capture
+3's 7.96 invites the conclusion that capture 3 carries 4.7 W of background.
+It does not. Capture 2's E-cluster residency fell to 74.8% against 93-95%
+on either side of it, and its throughput to 42.0 -- the signature of
+`read_pool` threads BLOCKED on real SSD reads rather than servicing page-
+cache hits, with Brave, Parsec and WhatsApp crowding the cache that holds an
+18 GB install's experts. Less CPU meant less work done, not less
+contamination. Captures 1 and 3 agree on the working distribution (p25 7,948
+and 7,124 mW) and differ almost exactly by capture 1's floor excess
+(10.67 - 7.96 = 2.7 W against a floor difference of 3.1 W), which is what
+identifies 3 as the clean one and ~8 W as the engine's own CPU draw.
+
+The general form, and it is the inverse of the usual worry: **a LOWER `cpu_W`
+can mean a WORSE capture.** Pair it with E-cluster residency and throughput
+before reading it as cleanliness.
+
+**Against its own architecture.** Ornith-1.5 35B-A3B is Qwen 3.6's
+architecture retrained, so the AC table above is the natural comparison:
+0.4731 J/token here against Qwen 3.6's 0.3513 on the same case, at 21.05 W
+against 14.30, while decoding FASTER (43.0 against 38.8 tok/s). The gap is
+mostly CPU (7.96 against 3.95) with GPU up 26%. **Do not read that as an
+engine regression**: the Qwen 3.6 row is from 2026-08-07 on a different
+binary, and cross-session absolutes are the thing that has repeatedly failed
+to reproduce here (Gotcha 22). A controlled answer needs both installs in
+one session, which is what the "Still owed" entry below asks for.
 
 ## Muse Glimmer 30B: two operating points, and the row is the unconstrained one
 
@@ -726,11 +794,13 @@ a different lever than this one.
   UI, well under the 18.40 W that made the Qwen row obvious, moved a
   decode row 37% with every arm Nominal. See the gpt-oss section and
   AGENTS.md Gotcha 43.
-- **A dispersion line in `scripts/power.sh`'s summary.** It prints a mean
-  per case and phase, so two arms 37% apart on identical work look like
-  one number. The per-arm values are in `rows.tsv` and reading them is
-  currently a manual step; a min/max column would make contamination
-  visible where the row is published.
+- **Ornith-1.5 35B-A3B against Qwen 3.6 in ONE session.** The two share an
+  architecture, so the 0.4731-against-0.3513 J/token gap in the section above
+  is the most interesting comparison on this page and the least trustworthy:
+  its two halves are two weeks and one binary apart. Both installs are on
+  disk and the capture is ~4 minutes for one case each.
+- **The other two Ornith cases**, and a capture for `ornith9b`. The row above
+  is `short-explanation` alone.
 - **A wall-power number**, which needs an external meter rather than the
   battery gauge.
 - **A rate-cap SWEEP.** `READING_SPEED_TOK_PER_SEC` is 10.0 and the A/B above
@@ -744,6 +814,17 @@ a different lever than this one.
   `CRITICAL_TOK_PER_SEC` are a THERMAL ladder and this does not settle them --
   their job is shedding heat, not saving joules, and Gotcha 28's trap means an
   energy curve cannot be read as a ladder placement.
+
+**A THIRD ENTRY WAS RETIRED 2026-08-22.** "A dispersion line in
+`scripts/power.sh`'s summary" asked for a min/max column so that two arms 37%
+apart could not read as one number. It is there: the summary carries a
+`J/tok±` spread column and warns per group over 10%, and beside it a
+`contamination floor` line that reports the minimum CPU power anywhere in the
+log and warns over 2,000 mW. The floor is the addition the entry did not ask
+for and the Ornith captures showed was the necessary one -- dispersion is
+blind to a STEADY load by construction. Calibrated on three real captures
+here: 94 mW and 392 mW on the two clean DFlash2 ones against 3,361 mW on a
+contaminated one, and verified silent on the former before being believed.
 
 Two entries were retired here on 2026-08-18 rather than left standing, because
 the cooled A/B answered both and a "still owed" item that has quietly been
