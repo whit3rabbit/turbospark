@@ -509,6 +509,47 @@ awk -v t0="$PM_T0" -v tend="$PM_T_END" '
 ' "$OUT/pm.txt"
 echo
 
+# THE CONTAMINATION FLOOR, and it is the tell DISPERSION CANNOT PROVIDE.
+#
+# AGENTS.md Gotcha 43's two tells are `cpu_W` against the install's own norm
+# and dispersion between arms doing identical work. Dispersion caught the
+# 2026-08-13 gpt-oss capture because that load DRIFTED: the desktop UI was
+# busy early and idle late, so the two arms disagreed by 37%. A STEADY load
+# contaminates both arms equally, so dispersion reads clean and only the norm
+# comparison fires -- which needs a norm, i.e. a previous clean capture of the
+# same install. The first capture of a new install has no norm at all.
+#
+# The minimum CPU power seen ANYWHERE in the log does not need one. The
+# capture spans model opens, settling gaps and the pauses between arms, so a
+# quiet machine touches near-idle at some point and a contaminated one never
+# does. The 2026-08-21 ornith35b capture read a minimum of 3,361 mW across 484
+# samples with a median of 10,154 -- no sample under 3 W in 106 seconds --
+# while its arms agreed to 0.18% on `gpu_W`. Every published row here should
+# have been checked this way and none was.
+awk '
+  /^CPU Power:/ { if ($3 + 0 < lo || n == 0) lo = $3 + 0; n++ }
+  END {
+    if (n == 0) { print "contamination floor: no CPU Power samples"; exit }
+    printf "contamination floor: %d mW minimum CPU power over %d samples\n", lo, n
+    # 2000 mW is CALIBRATED against three real captures on this machine, not
+    # picked: the two clean DFlash2 ones read 94 mW (883 samples) and 392 mW
+    # (1,363 samples, fans pinned), and the contaminated ornith35b one read
+    # 3,361 mW (484). Nearly an order of magnitude of separation, and the
+    # threshold sits in the gap. It is not zero because `powermetrics` itself
+    # wakes 5x/s and the harness runs a shell between arms.
+    if (lo > 2000) {
+      printf "WARNING the CPU never fell below %.2f W anywhere in this capture,\n", lo / 1000
+      print  "        including the gaps between generations. That is a STEADY"
+      print  "        background load, which the per-arm dispersion below cannot"
+      print  "        see because it contaminates every arm equally. `watts` and"
+      print  "        `J/tok` are Combined Power and carry it; `gpu_W` and tok/s"
+      print  "        are largely insulated. Find the consumer (`ps -A -o %cpu,comm -r"
+      print  "        | head`) and re-run before publishing any energy row."
+    }
+  }
+' "$OUT/pm.txt"
+echo
+
 echo "== measured rows (warmups excluded), $LABEL, arms ${ARMS}, cooling ${COOLING}"
 awk -F'\t' '
   $4 != "warmup" {
@@ -522,21 +563,41 @@ awk -F'\t' '
     secs[k] += $6; j[k] += $8; w[k] += $9; jt[k] += $10
     cpu[k] += $11; gpu[k] += $12; e[k] += $13; p[k] += $14
     if ($17 != "") { wall[k] += $17; walln[k]++ }
+    # PER-ARM EXTREMES, not just the mean. A mean over two arms doing
+    # IDENTICAL work hides the one thing worth knowing about them, which is
+    # whether they agreed: the 2026-08-13 gpt-oss capture averaged 1.7072
+    # and 1.0799 J/tok into 1.3936, a number describing neither run, and the
+    # spread was recoverable only by reading rows.tsv by hand.
+    if (n[k] == 0 || $10 + 0 < jtlo[k]) jtlo[k] = $10 + 0
+    if (n[k] == 0 || $10 + 0 > jthi[k]) jthi[k] = $10 + 0
     n[k]++
   }
   END {
-    printf "%-18s %-8s %-8s %5s %8s %9s %9s %8s %8s %7s %7s %9s\n", \
+    printf "%-18s %-8s %-8s %5s %8s %9s %9s %8s %7s %8s %7s %7s %9s\n", \
       "case", "arm", "phase", "runs", "secs", "joules", "watts", "J/tok", \
-      "cpu_W", "gpu_W", "E%", "wall_W"
+      "J/tok±", "cpu_W", "gpu_W", "E%", "wall_W"
     for (k in n) {
       split(k, f, "\t")
-      printf "%-18s %-8s %-8s %5d %8.2f %9.1f %9.2f %8.4f %8.2f %7.2f %7.1f %9s\n", \
+      # The spread the mean beside it hides, as a percentage of the mean.
+      spread = (n[k] > 1 && jt[k] > 0) \
+        ? 100 * (jthi[k] - jtlo[k]) / (jt[k] / n[k]) : 0
+      printf "%-18s %-8s %-8s %5d %8.2f %9.1f %9.2f %8.4f %6.1f%% %8.2f %7.2f %7.1f %9s\n", \
         f[1], f[2], f[3], n[k], secs[k] / n[k], j[k] / n[k], w[k] / n[k], jt[k] / n[k], \
+        spread, \
         cpu[k] / n[k] / 1000, gpu[k] / n[k] / 1000, e[k] / n[k], \
         (walln[k] > 0 ? sprintf("%.2f", wall[k] / walln[k]) : "n/a")
+      # 10% is where a spread stops being run-to-run noise on this machine:
+      # a clean capture reproduces to 0.4-2%, and the contaminated gpt-oss
+      # one read 37%. A short window trips it for a different reason (too
+      # few samples), which is why the sample-count warning stays separate.
+      if (spread > 10) wide[f[1] "/" f[2] "/" f[3]] = spread
     }
     for (k in thermal) printf "WARNING %s left Nominal thermal pressure (%s)\n", k, thermal[k]
     for (k in little) printf "WARNING %s integrated only %d samples; shorten the interval\n", k, little[k]
+    # ONE LINE, because this block is piped through `sort`: a continuation
+    # line sorts away from the warning it belongs to.
+    for (k in wide) \
+      printf "WARNING %s J/tok spread %.1f%% across runs doing IDENTICAL work; the mean describes neither, read rows.tsv per arm\n", k, wide[k]
   }
 ' "$OUT/rows.tsv" | sort
 

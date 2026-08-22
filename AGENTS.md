@@ -2106,6 +2106,36 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
     rather than the mean, and treat any within-case spread over a few
     percent as contamination until a quiet re-run says otherwise.
 
+    **BOTH OF THOSE TELLS ARE BLIND TO A STEADY LOAD, AND THE THIRD ONE IS
+    NOW IN THE HARNESS** (2026-08-21). Dispersion caught the gpt-oss capture
+    because that load DRIFTED -- the desktop UI was busy early and idle late,
+    so two arms doing identical work disagreed by 37%. A CONSTANT background
+    load contaminates every arm equally: dispersion reads clean and only the
+    `cpu_W`-against-norm tell fires, which needs a norm, i.e. a previous
+    clean capture of the same install. **The first capture of a new install
+    has no norm at all**, which is exactly when a power row is most likely to
+    be published.
+    Measured on the first ornith35b capture: `gpu_W` reproduced to 0.18% and
+    tok/s to 0.29% across arms, every one of six rows Nominal, and `cpu_W`
+    read 10.67 W -- against a Finder stuck at 99% of a core, `iconservicesagent`
+    at 25%, and 269% of CPU summed across the machine. Nothing in the summary
+    said so, and the row was one paste from `docs/POWER_BASELINE.md`.
+    **The statistic that needs no norm is the MINIMUM CPU power anywhere in
+    the log**, gaps between generations included: a capture spans model opens
+    and settling pauses, so a quiet machine touches near-idle at some point
+    and a contaminated one never does. Calibrated on three real captures
+    here -- 94 mW and 392 mW on the two clean DFlash2 ones against 3,361 mW
+    on the contaminated one, with no sample under 3 W in 106 seconds.
+    `scripts/power.sh` prints it as `contamination floor` and warns over
+    2,000 mW, and its summary now carries a `J/tok±` spread column plus a
+    per-group warning over 10%, so both tells are in the output rather than
+    recoverable by hand from `rows.tsv`. The sentence above saying the script
+    "prints neither in its summary" was true when written and is the thing
+    that got fixed. **`gpu_W` and tok/s survive this kind of contamination**
+    (GPU work is insulated, and CPU contention depresses throughput rather
+    than inflating it), so a throughput row from a contaminated capture is
+    conservative while its `watts` and `J/tok` are not.
+
 44. **A SPECIAL TOKEN'S DELTA IS THE EMPTY STRING, so a consumer that reads
     MARKUP must key on the token ID and must not skip an empty delta.**
     `StreamingDetokenizer` renders special tokens to nothing, so every frame
