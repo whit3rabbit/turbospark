@@ -599,16 +599,34 @@ and applies them if present, which for this checkpoint are 1.0 / 1.0 / none
 Items 1-5 of this list are DONE (section 6). What remains:
 
 1. ~~**A quiet-machine row for the BLOCK ORDERING specifically.**~~ ANSWERED
-   2026-08-21, and by a CONTROL rather than by a quieter machine. Three runs:
+   2026-08-21, first by a CONTROL and then by an actually quiet machine, which
+   agreed. Four runs:
 
    | run | block order | ref tok/s | code (2/4/7/8) | math | prose |
    | --- | --- | ---: | --- | --- | --- |
    | 1 | 7,8,4,2 | 20.16 | 1.43 / 1.14 / 0.97 / 0.90 | 1.50 / 1.31 / 1.17 / 1.10 | 0.96 at 2 |
    | 2 | 7,8,4,2 | 15.95 | 1.86 / 1.20 / 0.98 / 0.93 | 2.07 / 1.47 / 1.28 / 1.21 | 1.26 / 0.68 / 0.51 / 0.47 |
    | 3 | **2,4,8,7** | 22.47 | 1.32 / 1.05 / 0.89 / 0.81 | 1.46 / 1.28 / 1.16 / 1.06 | 0.90 / 0.60 / 0.46 / 0.42 |
+   | 4 | 7,8,4,2 | 21.93 | 1.33 / 1.06 / 0.90 / 0.82 | 1.47 / 1.28 / 1.18 / 1.07 | 0.90 / 0.60 / 0.46 / 0.42 |
 
    **The ordering is monotone decreasing in the block on every workload of
    every run: 2, then 4, then 7, then 8.**
+
+   **RUN 4 IS THE QUIET-MACHINE ROW THIS ITEM ORIGINALLY ASKED FOR, and it
+   sharpens the position finding rather than repeating it.** It sweeps in the
+   ORIGINAL order -- block 2 last, the position that inflated runs 1 and 2 --
+   on an idle machine, and it lands on run 3's REVERSED-order numbers: 1.33
+   against 1.32 on code, 1.47 against 1.46 on math, and prose identical to two
+   decimals at 0.90 / 0.60 / 0.46 / 0.42. Its own internal check is that the
+   three no-drafter reference arms read 27.36 / 27.40 / 27.48 s on
+   equal-cost work, a 0.4% spread.
+   So the "position effect" measured above is a property of a machine whose
+   load DRIFTS during a capture, not of sweeping in that order: when nothing
+   else is running, first and last position agree to ~1%. Runs 1 and 2 are
+   what a contaminated capture looks like, and run 2's 1.86x on code is the
+   number to distrust rather than run 3's 1.32x. That also means the reversal
+   remains the right control to REPEAT, since a future capture cannot know in
+   advance whether it was quiet.
 
    THE CONFOUND WAS REAL AND IS NOW MEASURED RATHER THAN ARGUED AWAY. `BLOCKS`
    is swept in a fixed order, so block 2 always ran LAST in runs 1 and 2 --

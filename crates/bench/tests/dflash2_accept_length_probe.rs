@@ -355,9 +355,20 @@ fn assert_blocks_agree(label: &str, streams: &[(usize, Vec<i32>)]) {
              block size must change throughput and nothing else"
         );
     }
+    // NOT "the batched kernel", which this line said until 2026-08-21 and
+    // which is measurably wrong: `dequant_int4_gemm_simd` agrees with the
+    // GEMV bit-for-bit on data proven able to see a reassociation, against a
+    // positive control that does differ. What the identical text across
+    // blocks establishes is narrower -- every speculative arm computes its
+    // tokens through `produce_batched` and the sequential arm through
+    // `produce`, so the block is not the variable and those two functions
+    // are. WHICH difference between them is open;
+    // `crates/bench/tests/batched_forward_probe.rs` has it down to the q/k
+    // path, with a step onset at three keys.
     println!(
-        "all {} block sizes generated identical {label} text; the divergence from \
-         the sequential stream is the batched kernel, not the block",
+        "all {} block sizes generated identical {label} text; so the divergence from \
+         the sequential stream is `produce_batched` vs `produce`, not the block \
+         (and not the batched INT4 GEMM, which is bit-exact -- batched_forward_probe.rs)",
         streams.len()
     );
 }
