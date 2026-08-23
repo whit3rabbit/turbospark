@@ -9,6 +9,13 @@ fn tok(items: &[&str]) -> Vec<String> {
     items.iter().map(|s| s.to_string()).collect()
 }
 
+fn expect_invalid_value(outcome: ParseOutcome, want_option: &str) {
+    match expect_failure(outcome) {
+        ParseFailure::InvalidValue { option, .. } => assert_eq!(option, want_option),
+        other => panic!("expected an InvalidValue for {want_option}, got {other:?}"),
+    }
+}
+
 fn expect_failure(outcome: ParseOutcome) -> ParseFailure {
     match outcome {
         ParseOutcome::Failure(f) => f,
@@ -218,4 +225,95 @@ fn power_control_values_outside_their_documented_sets_are_rejected() {
             "expected {bad} to be rejected"
         );
     }
+}
+
+// --- directional steering (docs/OBLITERATION.md) --------------------------
+
+/// An unknown mode is refused rather than defaulting. A caller who asked for
+/// one edit and silently got another would measure the wrong model.
+#[test]
+fn an_unknown_steering_mode_is_refused() {
+    expect_invalid_value(
+        parse(&tok(&[
+            "--model",
+            "m.bin",
+            "--prompt",
+            "hi",
+            "--steering-mode",
+            "obliterate",
+        ])),
+        "--steering-mode",
+    );
+}
+
+/// NaN and infinity are refused at the parser. A non-finite alpha puts a NaN
+/// into the residual stream, and NaN reads as a PERFECT score on every rank
+/// or top-k instrument downstream (AGENTS.md Gotcha 59) -- the one wrong
+/// value nothing reports as wrong.
+#[test]
+fn a_non_finite_steering_scale_is_refused() {
+    for bad in ["nan", "inf", "-inf"] {
+        expect_invalid_value(
+            parse(&tok(&[
+                "--model",
+                "m.bin",
+                "--prompt",
+                "hi",
+                "--steering-scale",
+                bad,
+            ])),
+            "--steering-scale",
+        );
+    }
+}
+
+/// An inverted range would steer nothing. Refused rather than accepted as an
+/// empty selection, so an asked-for edit cannot become a silent no-op.
+#[test]
+fn an_inverted_steering_layer_range_is_refused() {
+    expect_invalid_value(
+        parse(&tok(&[
+            "--model",
+            "m.bin",
+            "--prompt",
+            "hi",
+            "--steering-layers",
+            "40:30",
+        ])),
+        "--steering-layers",
+    );
+}
+
+#[test]
+fn a_malformed_steering_layer_range_is_refused() {
+    for bad in ["30", "30-40", "a:b", "30:", ":40"] {
+        expect_invalid_value(
+            parse(&tok(&[
+                "--model",
+                "m.bin",
+                "--prompt",
+                "hi",
+                "--steering-layers",
+                bad,
+            ])),
+            "--steering-layers",
+        );
+    }
+}
+
+/// A negative gate is meaningless (the kernel treats non-positive as "always
+/// fire"), so it is refused rather than silently reinterpreted.
+#[test]
+fn a_negative_steering_gate_is_refused() {
+    expect_invalid_value(
+        parse(&tok(&[
+            "--model",
+            "m.bin",
+            "--prompt",
+            "hi",
+            "--steering-gate",
+            "-1.0",
+        ])),
+        "--steering-gate",
+    );
 }

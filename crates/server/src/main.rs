@@ -60,6 +60,7 @@ fn open_real_model(args: &ModelArgs) -> Result<Arc<dyn turbospark_server::ChatMo
         args.speculation,
         args.drafter,
         args.guardrails,
+        args.steering.clone(),
     )?;
     // Both sized figures are the RESOLVED ones, never `args`: under `auto`
     // the request carries no number, and each has to be readable beside any

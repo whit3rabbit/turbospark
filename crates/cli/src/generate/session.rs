@@ -106,7 +106,8 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
     // region alone and not the weights.
     let asked = map_speculation(request.speculation);
     let choice = resolve_drafter(map_drafter(request.speculative_drafter), model_dir);
-    let runner = RealForwardRunner::open_with_slot_policy_and_speculation(
+    let steering = resolve_steering(request)?;
+    let runner = RealForwardRunner::open_with_slot_policy_speculation_and_steering(
         model_dir,
         arch,
         plan.resolved as usize,
@@ -115,8 +116,15 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
             invocation::ExpertCacheSlots::Fixed(n) => runtime::ExpertCacheSlots::Fixed(n as usize),
         },
         runtime::draft_policies(&choice, asked),
+        steering,
     )
     .map_err(|e| e.to_string())?;
+    // Reported beside the resolved slot count, for that field's reason: an
+    // edit applied to every token has to be readable next to any number
+    // taken from the run.
+    if let Some(line) = runner.steering_line() {
+        eprintln!("{line}");
+    }
     // `install_has_mtp_head` is `draft_policies`' input above and nothing this
     // binary prints, so it is dropped by name rather than with a `..` -- a
     // wildcard here would silently swallow the next field somebody adds.
@@ -270,6 +278,42 @@ fn map_drafter(drafter: invocation::SpeculativeDrafter) -> runtime::SpeculativeD
         invocation::SpeculativeDrafter::Mtp => runtime::SpeculativeDrafter::Mtp,
         invocation::SpeculativeDrafter::Dflash => runtime::SpeculativeDrafter::Dflash,
     }
+}
+
+/// Loads and shapes the direction set a run asked for.
+///
+/// The FILE is parsed here, before open, for the reason `resolve_drafter`
+/// reads a resident index here: `crates/runtime` cannot reach
+/// `crates/repack`, which owns the GGUF parser (AGENTS.md Gotcha 8), so the
+/// front end hands the runner a plain `model_io::SteeringSet`.
+///
+/// Every failure is an error rather than a fallback to steering off. A caller
+/// who named a vector and silently got none would measure the unsteered
+/// engine and report it as the steered one -- the argument `MtpState::build`
+/// makes for an explicitly-requested drafter, on an axis that changes the
+/// TOKENS rather than the throughput.
+fn resolve_steering(request: &InvocationRequest) -> Result<runtime::SteeringPolicy, String> {
+    let Some(path) = request.steering.as_deref() else {
+        return Ok(runtime::SteeringPolicy::off());
+    };
+    let mut set = repack::control_vector::load_control_vector(std::path::Path::new(path))
+        .map_err(|e| format!("--steering {path}: {e}"))?;
+    if let Some((start, end)) = request.steering_layers {
+        set.restrict_to_range(start as usize, end as usize);
+    }
+    Ok(runtime::SteeringPolicy {
+        // The flag wins over the file's declared mode, and the file's wins
+        // over the default: a vector built for one edit should apply that
+        // edit unless someone says otherwise.
+        mode: request
+            .steering_mode
+            .or(set.declared_mode)
+            .unwrap_or_default(),
+        alpha: request.steering_scale.unwrap_or(1.0),
+        target: request.steering_target,
+        gate_threshold: request.steering_gate,
+        set: Some(set),
+    })
 }
 
 fn map_power_profile(profile: invocation::PowerProfile) -> runtime::PowerProfile {

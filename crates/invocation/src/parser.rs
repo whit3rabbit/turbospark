@@ -9,15 +9,20 @@ use crate::failure::ParseFailure;
 use crate::options::OPTIONS;
 use crate::request::{
     ExpertCacheSlots, InvocationRequest, MaxContext, Mode, PowerProfile, PrefillChunk,
-    ReadAheadMode, ReasoningEffort, Speculation, SpeculativeDrafter, ALLOWED_SPECULATION_BLOCKS,
-    DEFAULT_MAX_NEW, DEFAULT_REPETITION_PENALTY, DEFAULT_TEMPERATURE, DEFAULT_TOP_K, DEFAULT_TOP_P,
-    MAX_TOP_K,
+    ReadAheadMode, ReasoningEffort, Speculation, SpeculativeDrafter, SteeringMode,
+    ALLOWED_SPECULATION_BLOCKS, DEFAULT_MAX_NEW, DEFAULT_REPETITION_PENALTY, DEFAULT_TEMPERATURE,
+    DEFAULT_TOP_K, DEFAULT_TOP_P, MAX_TOP_K,
 };
 use foundation::runtime_config::{ALLOWED_CACHE_SLOTS, ALLOWED_CHUNK_SIZES};
 
 /// One of the three possible outcomes of parsing a token list. There is no
 /// fourth outcome and no partially populated result.
 #[derive(Debug, Clone, PartialEq)]
+// `Success` carries the whole request and the other three carry nothing, so
+// this is inherently lopsided; `--steering`'s six fields pushed it past
+// clippy's threshold. Boxing the payload would change a type every front end
+// matches on, to save a move that happens once per process.
+#[allow(clippy::large_enum_variant)]
 pub enum ParseOutcome {
     /// A fully populated, validated invocation request.
     Success(InvocationRequest),
@@ -61,6 +66,12 @@ pub fn parse(tokens: &[String]) -> ParseOutcome {
     let mut expert_cache_slots = ExpertCacheSlots::default();
     let mut speculation = Speculation::default();
     let mut speculative_drafter = SpeculativeDrafter::default();
+    let mut steering: Option<String> = None;
+    let mut steering_mode: Option<SteeringMode> = None;
+    let mut steering_scale: Option<f32> = None;
+    let mut steering_layers: Option<(u32, u32)> = None;
+    let mut steering_target: f32 = 0.0;
+    let mut steering_gate: f32 = 0.0;
     let mut prefill_chunk = PrefillChunk::default();
     let mut power_profile: Option<PowerProfile> = None;
     let mut max_tokens_per_sec: Option<f64> = None;
@@ -191,6 +202,33 @@ pub fn parse(tokens: &[String]) -> ParseOutcome {
                     }
                 }
             }
+            "--steering" => steering = Some(value.to_string()),
+            "--steering-mode" => match SteeringMode::parse(value) {
+                Some(m) => steering_mode = Some(m),
+                None => return invalid("--steering-mode", value),
+            },
+            // Rejected rather than clamped, and NON-FINITE is rejected too: a
+            // NaN alpha puts a NaN into the residual stream, and NaN reads as
+            // a PERFECT score on every rank instrument downstream.
+            "--steering-scale" => match value.parse::<f32>() {
+                Ok(v) if v.is_finite() => steering_scale = Some(v),
+                _ => return invalid("--steering-scale", value),
+            },
+            "--steering-target" => match value.parse::<f32>() {
+                Ok(v) if v.is_finite() => steering_target = v,
+                _ => return invalid("--steering-target", value),
+            },
+            "--steering-gate" => match value.parse::<f32>() {
+                Ok(v) if v.is_finite() && v >= 0.0 => steering_gate = v,
+                _ => return invalid("--steering-gate", value),
+            },
+            // START:END, inclusive and 0-based. An inverted range is refused
+            // here rather than silently steering nothing: a run that asked to
+            // steer and quietly did not would measure the unsteered engine.
+            "--steering-layers" => match parse_layer_range(value) {
+                Some(r) => steering_layers = Some(r),
+                None => return invalid("--steering-layers", value),
+            },
             "--power-profile" => match PowerProfile::parse(value) {
                 Some(profile) => power_profile = Some(profile),
                 None => return invalid("--power-profile", value),
@@ -287,12 +325,36 @@ pub fn parse(tokens: &[String]) -> ParseOutcome {
         expert_cache_slots,
         speculation,
         speculative_drafter,
+        steering,
+        steering_mode,
+        steering_scale,
+        steering_layers,
+        steering_target,
+        steering_gate,
         prefill_chunk,
         power_profile,
         max_tokens_per_sec,
         reasoning,
         quiet,
     })
+}
+
+/// Parses `START:END`, inclusive and 0-based, for `--steering-layers`.
+///
+/// Inclusive because that is what llama.cpp's `--control-vector-layer-range`
+/// means and a caller moving between the two should not have to know they
+/// differ. An inverted range (`END < START`) is `None` rather than an empty
+/// selection: it would steer nothing, and a run that asked to steer and
+/// silently did not would measure the unsteered engine and report it as the
+/// steered one.
+fn parse_layer_range(value: &str) -> Option<(u32, u32)> {
+    let (a, b) = value.split_once(':')?;
+    let start: u32 = a.trim().parse().ok()?;
+    let end: u32 = b.trim().parse().ok()?;
+    if end < start {
+        return None;
+    }
+    Some((start, end))
 }
 
 fn invalid(option: &'static str, value: &str) -> ParseOutcome {

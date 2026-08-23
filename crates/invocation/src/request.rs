@@ -230,6 +230,7 @@ pub enum Speculation {
 /// The blocks a caller may name, re-exported from `foundation` so this
 /// parser and `turbospark-server`'s own read ONE range (AGENTS.md Gotcha 2).
 pub use foundation::runtime_config::ALLOWED_SPECULATION_BLOCKS;
+pub use foundation::SteeringMode;
 
 /// Which drafter `--speculative` drives. The two drafters are ALTERNATIVES
 /// (`docs/MTP_SPECULATIVE.md`, `docs/DFLASH2.md`): the checkpoint's own MTP
@@ -319,6 +320,21 @@ pub struct InvocationRequest {
     pub speculation: Speculation,
     /// Which drafter that policy drives; see [`SpeculativeDrafter`].
     pub speculative_drafter: SpeculativeDrafter,
+    /// Path to a control vector to steer with, if any. An opaque string:
+    /// this crate is pure and reads no file, so resolving and parsing it is
+    /// the front end's job (`docs/OBLITERATION.md`).
+    pub steering: Option<String>,
+    /// Which edit to apply. `None` defers to whatever the vector file
+    /// declares, and to `Ablate` if it declares nothing.
+    pub steering_mode: Option<SteeringMode>,
+    /// Strength. `None` means 1.0.
+    pub steering_scale: Option<f32>,
+    /// Inclusive, 0-based layer range to restrict the vector to.
+    pub steering_layers: Option<(u32, u32)>,
+    /// What `SteeringMode::Clamp` pins the coefficient to.
+    pub steering_target: f32,
+    /// Coefficient magnitude below which the edit does not fire.
+    pub steering_gate: f32,
     /// The prompt-processing chunk-size tuning.
     pub prefill_chunk: PrefillChunk,
     /// The power profile, or `None` for automatic (which resolves against

@@ -206,6 +206,15 @@ pub struct RealForwardRunner {
     /// `MFERENCE_FFN_HIST=/path.json` on a family whose flow feeds the
     /// capture (museGlimmer today). Written on drop; see `ffn_hist.rs`.
     pub(crate) ffn_hist: Option<crate::ffn_hist::FfnActHist>,
+    /// Per-layer residual stream at the last prompt token, `None` unless
+    /// `MFERENCE_RESID_CAPTURE=/path.json` on a family whose flow feeds the
+    /// capture (the qwen flow today). Written on drop; see
+    /// `resid_capture.rs`. This is what a steering direction is extracted
+    /// FROM (ROADMAP item 9's prerequisite).
+    pub(crate) resid_capture: Option<crate::resid_capture::ResidCapture>,
+    /// The directional-steering state, `None` unless a caller passed a
+    /// policy carrying a direction set. Built at open; see `steering.rs`.
+    pub(crate) steering: Option<crate::steering::SteeringState>,
     /// Set for the duration of one [`LogitProducer::produce_prefill`] call:
     /// the caller is discarding this token's logits, so the output head
     /// (final norm, full-vocab GEMV, softcap, host readback) is skipped.
@@ -333,6 +342,11 @@ impl RealForwardRunner {
             // A frozen footprint row must not acquire either by detection.
             // `open_with_options_and_speculation` is the explicit way in.
             crate::families::qwen::DraftPolicies::off(),
+            // Pinned OFF for the same reason, and the argument is stronger
+            // here: steering CHANGES THE TOKENS. A measuring caller that
+            // acquired one by detection would freeze a digest for an edited
+            // model and report it as the model's.
+            crate::steering::SteeringPolicy::off(),
         )
     }
 
@@ -357,6 +371,7 @@ impl RealForwardRunner {
             ExpertCacheSlots::Fixed(expert_cache_slots),
             None,
             speculation,
+            crate::steering::SteeringPolicy::off(),
         )
     }
 
@@ -384,6 +399,7 @@ impl RealForwardRunner {
             slots,
             None,
             crate::families::qwen::DraftPolicies::from_env(),
+            crate::steering::SteeringPolicy::off(),
         )
     }
 
@@ -400,7 +416,70 @@ impl RealForwardRunner {
         slots: ExpertCacheSlots,
         speculation: crate::families::qwen::DraftPolicies,
     ) -> Result<Self, RealForwardError> {
-        Self::open_inner(dir, expecting, max_context, slots, None, speculation)
+        Self::open_inner(
+            dir,
+            expecting,
+            max_context,
+            slots,
+            None,
+            speculation,
+            crate::steering::SteeringPolicy::off(),
+        )
+    }
+
+    /// [`RealForwardRunner::open_with_slot_policy_and_speculation`] carrying
+    /// a directional-steering policy as well (`docs/OBLITERATION.md`).
+    ///
+    /// One entry point taking BOTH rather than a `..._and_steering` sibling
+    /// beside the speculation one: the two are independent axes and the
+    /// front ends set both, so separate entry points would need a third for
+    /// the combination and the count would keep doubling.
+    ///
+    /// The direction set arrives already PARSED. `crates/runtime` cannot
+    /// reach `crates/repack`, which owns the GGUF parser (AGENTS.md Gotcha
+    /// 8), so the front end loads the file and hands over a plain
+    /// `model_io::SteeringSet` -- the same shape `resolve_drafter` uses to
+    /// read a resident index before open and pass in a decision.
+    ///
+    /// `SteeringPolicy::off()` allocates nothing and encodes nothing, so an
+    /// engine opened this way with steering off is identical in bytes and in
+    /// footprint to one opened through the function above.
+    pub fn open_with_slot_policy_speculation_and_steering(
+        dir: &Path,
+        expecting: ArchConfig,
+        max_context: usize,
+        slots: ExpertCacheSlots,
+        speculation: crate::families::qwen::DraftPolicies,
+        steering: crate::steering::SteeringPolicy,
+    ) -> Result<Self, RealForwardError> {
+        Self::open_inner(
+            dir,
+            expecting,
+            max_context,
+            slots,
+            None,
+            speculation,
+            steering,
+        )
+    }
+
+    /// A one-line description of the steering state, or `None` when off.
+    ///
+    /// Reported by the binaries on the startup line beside the resolved slot
+    /// count, for that field's reason: an edit applied to every token has to
+    /// be readable beside any number taken from the run.
+    pub fn steering_line(&self) -> Option<String> {
+        self.steering.as_ref().map(|s| s.summary())
+    }
+
+    /// The pre-edit coefficient each steered layer reported on the last
+    /// forward pass, `None` per layer where nothing is steered.
+    ///
+    /// This is the measurement the edit produces for free: how much of the
+    /// direction the residual stream carried at each layer. See
+    /// `docs/OBLITERATION.md`.
+    pub fn steering_coefficients(&self) -> Option<Vec<Option<f32>>> {
+        self.steering.as_ref().map(|s| s.coefficients())
     }
 
     /// [`RealForwardRunner::open_with_options`] with an explicit SWA ring
@@ -422,6 +501,7 @@ impl RealForwardRunner {
             ExpertCacheSlots::Fixed(expert_cache_slots),
             fp16_ring_capacity_override,
             crate::families::qwen::DraftPolicies::off(),
+            crate::steering::SteeringPolicy::off(),
         )
     }
 }

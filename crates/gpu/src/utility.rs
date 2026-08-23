@@ -8,6 +8,7 @@
 //! `split_q_gate_fp16` (all Qwen 3.6-specific) are vendored but not yet
 //! dispatched — no Qwen path exists in this port yet.
 
+use foundation::SteeringMode;
 use metal::FunctionConstantValues;
 
 use crate::bytes::u32_bytes;
@@ -211,6 +212,108 @@ pub fn encode_split_q_gate(
         &[(packed.0, 0, packed.1), (q.0, 1, q.1), (gate.0, 2, gate.1)],
         &[(u32_bytes(&heads), 3), (u32_bytes(&dim), 4)],
         (grid_for(count), 1, 1),
+        (THREADS_PER_GROUP, 1, 1),
+    );
+    Ok(())
+}
+
+/// The scalar operands of one [`encode_steer_direction`] dispatch.
+///
+/// Grouped into a struct rather than passed as eight positional arguments
+/// because six of them are `f32` or `u32` and a transposed pair would be a
+/// silent wrong edit rather than a type error -- `alpha` and `target` in
+/// particular are both plain floats whose swap produces a plausible result.
+#[derive(Debug, Clone, Copy)]
+pub struct SteerParams {
+    /// Length of the direction, and of the row window it edits.
+    pub d_len: u32,
+    /// How many consecutive rows of `x` to edit. 1 during decode, `M` for a
+    /// batched verify or a prefill chunk.
+    pub rows: u32,
+    /// Distance between rows of `x`, in ELEMENTS and never bytes. Taking it
+    /// in elements is deliberate: the residual stream's own row offsets are
+    /// computed in bytes at every call site (`m * hidden * 2`), so a stride
+    /// that accepted bytes would read correctly at `rows == 1` and silently
+    /// edit every other row at `rows > 1`.
+    pub row_stride: u32,
+    /// Which of the three edits to apply.
+    pub mode: SteeringMode,
+    /// Strength. `0.0` is the exact identity in every mode, which is the null
+    /// control the steering probe leans on.
+    pub alpha: f32,
+    /// `1 / ||d||`, precomputed by the loader. See
+    /// `turbospark_compute::steering::inv_norm`, including why a zero
+    /// direction yields `0.0` here rather than an infinity.
+    pub inv_norm: f32,
+    /// The coefficient [`SteeringMode::Clamp`] pins the stream to. Ignored by
+    /// the other two modes.
+    pub target: f32,
+    /// Coefficient magnitude below which the edit does not fire. Non-positive
+    /// fires always. Evaluated inside the kernel, never by a host reading the
+    /// coefficient back -- that would cost a synchronization per layer per
+    /// token.
+    pub gate_threshold: f32,
+}
+
+/// Applies one directional-steering edit to `params.rows` rows of a residual
+/// stream, in place, and writes each row's pre-edit unit coefficient to
+/// `coeff`.
+///
+/// See the shader for the math, for why the mode is a uniform rather than a
+/// function constant, and for the FP16 overflow hazard that
+/// [`SteeringMode::Add`] and [`SteeringMode::Clamp`] carry and
+/// [`SteeringMode::Ablate`] does not. The contract is
+/// `turbospark_compute::steering::steer_in_place`.
+///
+/// `coeff` must hold at least `params.rows` FP32 elements and must be bound
+/// even when the caller ignores it: an unbound Metal buffer argument is
+/// undefined behaviour, not an empty one.
+pub fn encode_steer_direction(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    x: (&metal::Buffer, u64),
+    direction: (&metal::Buffer, u64),
+    coeff: (&metal::Buffer, u64),
+    params: &SteerParams,
+) -> Result<(), GpuError> {
+    assert!(params.d_len > 0, "steering direction is empty");
+    assert!(params.rows > 0, "steering dispatch has no rows");
+    assert!(
+        params.row_stride >= params.d_len,
+        "steering row stride {} is shorter than the direction ({}), so rows would overlap",
+        params.row_stride,
+        params.d_len
+    );
+
+    let pipeline = context.pipeline(
+        SOURCE,
+        "steer_direction_fp16",
+        &FunctionConstantValues::new(),
+        b"",
+    )?;
+    let mode = params.mode.as_u32();
+    pass.encode_threads_3d(
+        &pipeline,
+        &[
+            (x.0, 0, x.1),
+            (direction.0, 1, direction.1),
+            (coeff.0, 2, coeff.1),
+        ],
+        &[
+            (u32_bytes(&params.d_len), 3),
+            (u32_bytes(&params.row_stride), 4),
+            (u32_bytes(&mode), 5),
+            (crate::bytes::f32_bytes(&params.alpha), 6),
+            (crate::bytes::f32_bytes(&params.inv_norm), 7),
+            (crate::bytes::f32_bytes(&params.target), 8),
+            (crate::bytes::f32_bytes(&params.gate_threshold), 9),
+        ],
+        // One threadgroup per row: the kernel reduces across the whole row,
+        // so a row is the unit of work and `threadgroup_position_in_grid`
+        // is the row index. The threadgroup width must stay at
+        // THREADS_PER_GROUP -- the shader sizes its partial-sum array for
+        // 256 threads (8 SIMD groups) and widening it here would overrun.
+        (params.rows as u64 * THREADS_PER_GROUP, 1, 1),
         (THREADS_PER_GROUP, 1, 1),
     );
     Ok(())

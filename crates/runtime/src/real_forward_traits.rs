@@ -19,6 +19,12 @@ impl LogitProducer for RealForwardRunner {
         if let Some(dflash) = self.real_dflash.as_mut() {
             dflash.reset();
         }
+        // Re-arm the residual capture for the next generation, so a caller
+        // that opens once and walks a corpus gets one snapshot per prompt
+        // rather than one per process.
+        if let Some(capture) = self.resid_capture.as_mut() {
+            capture.note_generation_start();
+        }
     }
 
     fn produce(

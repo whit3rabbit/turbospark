@@ -15,6 +15,9 @@ pub mod prefill;
 pub mod primitives;
 /// Runtime engine configuration and options builder.
 pub mod runtime_config;
+/// The directional-steering edit's mode, shared by the CPU reference and the
+/// Metal dispatch.
+pub mod steering;
 
 pub use chunk_sizing::{resolve_automatic_chunk_size, InputLength};
 pub use error::Error;
@@ -27,3 +30,4 @@ pub use runtime_config::{
     AttentionStrategy, CacheReplacement, HeadProjection, RuntimeConfig, RuntimeConfigBuilder,
     ALLOWED_CACHE_SLOTS, ALLOWED_CHUNK_SIZES, DEFAULT_CACHE_SLOTS, DEFAULT_CHUNK_SIZE,
 };
+pub use steering::SteeringMode;

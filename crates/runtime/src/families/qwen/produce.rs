@@ -13,6 +13,90 @@ use crate::real_forward_dispatch::{encode_embed_any, encode_gemv_any};
 use crate::real_forward_types::RealForwardError;
 use crate::real_forward_utils::{entry, norm_view};
 
+/// Lift this layer's OUTPUT -- the residual stream after the FFN join --
+/// into the steering capture, if one is open.
+///
+/// Zero dispatches when it is not, which is what keeps
+/// `MFERENCE_RESID_CAPTURE` unset identical in bytes and in footprint to the
+/// engine that shipped before this module existed.
+///
+/// It reuses `encode_dflash_copy_rows` rather than adding a kernel: that one
+/// is a generic strided FP16 row copy and the drafter already lifts
+/// `scratch.x` with it at this exact boundary. A COPY cannot change what it
+/// copies, so generated text is byte-identical with the capture on -- the
+/// same guarantee `ffn_hist` gets by redirecting a destination, reached the
+/// other way round because nothing writes the residual stream to a spare
+/// buffer for us to redirect.
+fn encode_resid_capture(
+    context: &mut gpu::MetalContext,
+    pass: &gpu::PassEncoder,
+    scratch: &crate::real_forward_types::DecodeScratch,
+    capture: Option<&crate::resid_capture::ResidCapture>,
+    layer: usize,
+    hidden: usize,
+) -> Result<(), RealForwardError> {
+    let Some(c) = capture else {
+        return Ok(());
+    };
+    gpu::encode_dflash_copy_rows(
+        context,
+        pass,
+        (&scratch.x, 0),
+        (&c.capture, c.layer_offset(layer)),
+        1,
+        hidden as u32,
+        c.hidden() as u32,
+    )
+    .map_err(RealForwardError::Gpu)
+}
+
+/// Apply this layer's directional-steering edit, if one is configured for it.
+///
+/// Placed at the same boundary as the capture above -- the residual stream
+/// after the FFN join, which is this layer's OUTPUT -- so the direction is
+/// applied where it was extracted from. Steering at a different boundary than
+/// the capture would be a different edit than the one measured.
+///
+/// Zero dispatches when steering is off, and zero for a layer the direction
+/// set does not cover: the per-layer table holds `None` there rather than a
+/// zero vector, so a set steering three of sixty-four layers costs three
+/// dispatches per token and not sixty-four.
+fn encode_steering(
+    context: &mut gpu::MetalContext,
+    pass: &gpu::PassEncoder,
+    scratch: &crate::real_forward_types::DecodeScratch,
+    steering: Option<&crate::steering::SteeringState>,
+    layer: usize,
+    hidden: usize,
+) -> Result<(), RealForwardError> {
+    let Some(s) = steering else {
+        return Ok(());
+    };
+    let Some(l) = s.layer(layer) else {
+        return Ok(());
+    };
+    gpu::encode_steer_direction(
+        context,
+        pass,
+        (&scratch.x, 0),
+        (&s.directions, l.offset),
+        // One FP32 slot per layer, so the coefficients of a whole pass
+        // survive to be read back together after the commit.
+        (&s.coeff, (layer * 4) as u64),
+        &gpu::SteerParams {
+            d_len: hidden as u32,
+            rows: 1,
+            row_stride: hidden as u32,
+            mode: s.mode,
+            alpha: s.alpha,
+            inv_norm: l.inv_norm,
+            target: s.target,
+            gate_threshold: s.gate_threshold,
+        },
+    )
+    .map_err(RealForwardError::Gpu)
+}
+
 impl RealForwardRunner {
     pub(crate) fn produce_real_qwen(
         &mut self,
@@ -85,6 +169,8 @@ impl RealForwardRunner {
             kv,
             qwen,
             dflash,
+            resid_capture,
+            steering,
             streamers,
             slot_buffers,
             routed_blobs,
@@ -101,6 +187,8 @@ impl RealForwardRunner {
             &mut self.kv,
             self.real_qwen.as_ref().expect("checked above"),
             self.real_dflash.as_ref(),
+            self.resid_capture.as_ref(),
+            self.steering.as_ref(),
             &mut self.streamers,
             &self.slot_buffers,
             &self.routed_blobs,
@@ -228,6 +316,8 @@ impl RealForwardRunner {
                         .map_err(gpu_err)?;
                     }
                 }
+                encode_steering(context, &pass, scratch, steering, layer, hidden)?;
+                encode_resid_capture(context, &pass, scratch, resid_capture, layer, hidden)?;
                 continue;
             }
 
@@ -290,6 +380,12 @@ impl RealForwardRunner {
                 top_k,
                 use_silu,
             )?;
+            // The MoE half's post-FFN residual add happens INSIDE
+            // `encode_qwen_layer_moe`, so this layer's output exists only
+            // once that call returns -- the same boundary the dense branch
+            // captures at, reached by a different route.
+            encode_steering(context, &pass, scratch, steering, layer, hidden)?;
+            encode_resid_capture(context, &pass, scratch, resid_capture, layer, hidden)?;
         }
 
         // Final norm + head. No softcap: Qwen has none, and the head must
@@ -334,6 +430,16 @@ impl RealForwardRunner {
         // at this position, ready for a prime or a context write.
         if let Some(d) = self.real_dflash.as_mut() {
             d.note_capture(position, 1);
+        }
+        // The command buffer has been waited on, so every layer's capture
+        // region is final. `record_pass` keeps at most one snapshot per
+        // generation and decides which by `skip_head`, so this is called on
+        // every pass rather than guarded here -- see `resid_capture.rs` on
+        // why the LAST PROMPT token is the pass worth keeping and why
+        // "whatever ran last" is the wrong rule.
+        let skip_head = self.skip_head;
+        if let Some(capture) = self.resid_capture.as_mut() {
+            capture.record_pass(position, skip_head);
         }
 
         if self.skip_head {

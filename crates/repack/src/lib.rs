@@ -13,6 +13,7 @@
 #![recursion_limit = "256"]
 
 mod arch_registry;
+pub mod control_vector;
 mod gemma4_checkpoint;
 mod gguf_checkpoint;
 mod gguf_config;

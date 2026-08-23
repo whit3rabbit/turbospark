@@ -2890,6 +2890,7 @@ Workspace directory structure and crate layout:
 |   +-- TurboSpark     # SwiftPM package wrapping crates/ffi (session actor, AsyncStream, catalog)
 |   \-- TurboSparkDemo # minimal SwiftUI chat app; verifies the binding end to end
 +-- scripts
+|   +-- extract_direction.py # per-layer steering direction from two capture sets
 |   +-- kld.py         # cross-engine KL vs mlx-lm (reads tests/logit_dump.rs's output)
 |   +-- kld_llamacpp.py# the same, vs llama.cpp on the same GGUF bytes (Gotcha 34)
 |   +-- kld_mlx_affine.py # the same, vs MLX at ONE or TWO bits (the first needs the PrismML mlx fork)
@@ -2910,6 +2911,7 @@ Workspace directory structure and crate layout:
     +-- MTP.md         # the MTP head: architecture and MEASURED findings only
     +-- MTP_SPECULATIVE.md # native MTP heads on the DENSE family; pays, after a c(M) fix
     +-- NEW_MODEL.md   # end-to-end checklist for wiring a new model family
+    +-- OBLITERATION.md# live directional steering: runtime abliteration, with measurement
     +-- SPECULATIVE_DECODING.md # DFlash / batched verify, measured marginal
     +-- SWIFT_BINDINGS.md # the C ABI and the Swift package: examples, contract, limits
     +-- POWER_BASELINE.md # watts, joules-per-token, hygiene audit (ROADMAP Phase P1)

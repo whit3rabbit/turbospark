@@ -172,3 +172,144 @@ void bias_add_bf16_fp16(
     if (tid >= count) return;
     y[tid] = half(float(y[tid]) + float(bias[tid]));
 }
+
+// ============================================================================
+// PORT-LOCAL (ROADMAP item 9, in its RUNTIME form): directional steering of a
+// residual stream row. Its contract is `turbospark_compute::steering`, which
+// is the only definition of what this computes -- the Swift engine has no
+// steering surface, so there is no upstream kernel to diff against.
+//
+//   c     = d . x                       (the raw dot product)
+//   c_hat = c * inv_norm                (the coefficient along the UNIT d)
+//
+//   ablate: x -= alpha * c_hat * d_hat  == x - alpha * c * inv_norm^2 * d
+//   add:    x += alpha * d
+//   clamp:  x += (target - c_hat) * d_hat
+//
+// `ablate` at alpha = 1 is exactly `x - d_hat d_hat^T x`, which is the
+// operation the weight edit `W - d_hat d_hat^T W` precomputes. Doing it here
+// rather than at repack time gives up nothing numerically and gains the two
+// things this engine cares about: it writes no weight byte (so a quantized
+// install is untouched, and requantizing an edited weight is exactly the
+// damage `quality_sensitivity.rs` measures at +10.5% perplexity for 0.0122%
+// of expert bytes), and it can be turned off between two generations in one
+// process, which is what makes a steered-vs-unsteered A/B possible at all.
+//
+// THE MODE IS A UNIFORM AND NOT A FUNCTION CONSTANT, deliberately.
+// `MetalContext::pipeline`'s function and pipeline caches key on the shader
+// source ADDRESS plus an explicit `constants_key`, so a specialization axis
+// whose byte does not reach that key silently reuses whichever pipeline
+// compiled first (crate Gotcha 1). Here that would make `ablate` and `add`
+// the same function on the second dispatch -- a different edit than the one
+// asked for, applied silently, producing fluent output either way. A branch
+// on a uniform cannot do that. The same reasoning made
+// `rmsnorm_bf16w_centered` a separate kernel rather than a flag, and made
+// MXFP4's activation a uniform rather than a constant.
+//
+// ONE DISPATCH, NOT TWO. The dot product and the write could be separate
+// kernels, and separating them would double an already dispatch-bound cost:
+// this runs once or twice per layer per token, so on a 64-layer model it adds
+// 64-128 dispatches against a decode step's ~810. The bytes are negligible
+// (one row of `hidden` against a projection's `hidden * 4 * hidden` weights);
+// the encode is not.
+//
+// The block reduce is `rmsnorm.metal`'s `rms_block_inv` shape, not a new one:
+// per-SIMD `simd_sum`, partials through threadgroup memory, then one SIMD
+// group merges them. That shape reads `simdgroups` at runtime instead of
+// hardcoding a loop bound, which is what keeps it correct where `gdn.metal`'s
+// two norms are correct at EXACTLY 128 threads and silently wrong otherwise
+// (crate Gotcha 5). `partial` still sizes for the 256-thread maximum the
+// attribute above pins, so the Rust dispatch must not widen the threadgroup.
+//
+// FP32 accumulator, FP16 store, matching `residual_add_fp16` next door. Note
+// `ablate` can only ever REDUCE |x| and so cannot overflow, while `add` and
+// `clamp` can push an FP16 stream past 65,504 at a large enough alpha; that
+// overflow arrives as inf and then as NaN, and NaN reads as a perfect score
+// on any rank instrument (AGENTS.md Gotchas 59 and 60). The finiteness check
+// belongs to the caller, at the point a measurement is taken.
+// ============================================================================
+
+// Threadgroup memory carries at most 256/32 = 8 partial sums, as in
+// rmsnorm.metal. Slot 0 is reused after the merge to broadcast the total.
+constant constexpr uint kSteerMaxSimdGroups = 8;
+
+// These must equal `foundation::SteeringMode::as_u32`. Pinned from the Rust
+// side by `steering_mode_codes_match_the_shader`, because a reordering here
+// swaps two edits that both decode fluently.
+constant constexpr uint kSteerModeAblate = 0;
+constant constexpr uint kSteerModeAdd    = 1;
+constant constexpr uint kSteerModeClamp  = 2;
+
+[[kernel, max_total_threads_per_threadgroup(256)]]
+void steer_direction_fp16(
+    device       half*  x              [[buffer(0)]],  // [rows, row_stride] FP16, in place
+    device const half*  d              [[buffer(1)]],  // [D] FP16
+    device       float* coeff          [[buffer(2)]],  // [rows] FP32, ALWAYS bound
+    constant     uint&  D              [[buffer(3)]],
+    constant     uint&  row_stride     [[buffer(4)]],  // ELEMENTS, never bytes
+    constant     uint&  mode           [[buffer(5)]],
+    constant     float& alpha          [[buffer(6)]],
+    constant     float& inv_norm       [[buffer(7)]],  // 1 / ||d||, precomputed
+    constant     float& target         [[buffer(8)]],
+    constant     float& gate_threshold [[buffer(9)]],
+    uint  row              [[threadgroup_position_in_grid]],
+    uint  lid              [[thread_position_in_threadgroup]],
+    uint  lsize            [[threads_per_threadgroup]],
+    uint  simd_lane_id     [[thread_index_in_simdgroup]],
+    uint  simd_group_id    [[simdgroup_index_in_threadgroup]],
+    uint  simdgroups       [[simdgroups_per_threadgroup]]
+) {
+    threadgroup float partial[kSteerMaxSimdGroups];
+    device half* xr = x + row * row_stride;
+
+    float acc = 0.0f;
+    for (uint i = lid; i < D; i += lsize) {
+        acc = fma(float(xr[i]), float(d[i]), acc);
+    }
+    acc = simd_sum(acc);
+    if (simd_lane_id == 0) {
+        partial[simd_group_id] = acc;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    if (simd_group_id == 0) {
+        float v = (simd_lane_id < simdgroups) ? partial[simd_lane_id] : 0.0f;
+        v = simd_sum(v);
+        if (simd_lane_id == 0) {
+            partial[0] = v;
+        }
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    const float c = partial[0];
+    const float c_hat = c * inv_norm;
+
+    // Reported before the gate and before the edit. After the edit it would
+    // measure the parameters rather than the model: ablation drives it to
+    // (1 - alpha) * c_hat and clamp drives it to `target`, by construction.
+    if (lid == 0) {
+        coeff[row] = c_hat;
+    }
+
+    // The gate is evaluated HERE and never by a host reading `coeff` back: a
+    // host-side gate would cost a command-buffer synchronization per layer
+    // per token. Every thread in the threadgroup sees the same uniform
+    // operands, so this returns for all of them or none, and no barrier
+    // follows it.
+    if (gate_threshold > 0.0f && fabs(c_hat) < gate_threshold) {
+        return;
+    }
+
+    float scale;
+    if (mode == kSteerModeAblate) {
+        scale = -alpha * c * inv_norm * inv_norm;
+    } else if (mode == kSteerModeAdd) {
+        scale = alpha;
+    } else {
+        scale = (target - c_hat) * inv_norm;
+    }
+
+    for (uint i = lid; i < D; i += lsize) {
+        xr[i] = half(fma(scale, float(d[i]), float(xr[i])));
+    }
+}

@@ -162,6 +162,54 @@ pub const OPTIONS: &[OptionDecl] = &[
         usage_hint: "power profile: performance, balanced, efficiency (default performance, or efficiency under Low Power Mode)",
     },
     OptionDecl {
+        flag: "--steering",
+        takes_value: true,
+        is_required: false,
+        is_mode_selecting: false,
+        usage_hint: "path to a control vector (.gguf, llama.cpp layout) to steer with \
+                     (default none; see docs/OBLITERATION.md)",
+    },
+    OptionDecl {
+        flag: "--steering-mode",
+        takes_value: true,
+        is_required: false,
+        is_mode_selecting: false,
+        usage_hint: "steering edit: ablate, add, clamp (default ablate, or whatever \
+                     the vector file declares)",
+    },
+    OptionDecl {
+        flag: "--steering-scale",
+        takes_value: true,
+        is_required: false,
+        is_mode_selecting: false,
+        usage_hint: "steering strength (default 1.0; 0.0 is the exact identity, and \
+                     large values on add/clamp can overflow the FP16 residual stream)",
+    },
+    OptionDecl {
+        flag: "--steering-layers",
+        takes_value: true,
+        is_required: false,
+        is_mode_selecting: false,
+        usage_hint: "layer range to steer, START:END inclusive, 0-based (default every \
+                     layer the vector covers)",
+    },
+    OptionDecl {
+        flag: "--steering-target",
+        takes_value: true,
+        is_required: false,
+        is_mode_selecting: false,
+        usage_hint: "coefficient --steering-mode clamp pins the stream to (default 0.0; \
+                     ignored by ablate and add)",
+    },
+    OptionDecl {
+        flag: "--steering-gate",
+        takes_value: true,
+        is_required: false,
+        is_mode_selecting: false,
+        usage_hint: "only steer where the direction's coefficient reaches this magnitude \
+                     (default 0.0, meaning always)",
+    },
+    OptionDecl {
         flag: "--reasoning",
         takes_value: true,
         is_required: false,

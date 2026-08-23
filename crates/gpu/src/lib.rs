@@ -226,6 +226,7 @@ pub use rope::{
 pub use utility::{
     encode_bias_add, encode_gelu_mul, encode_logit_softcap, encode_residual_add, encode_scalar_mul,
     encode_sigmoid_gate_mul, encode_sigmoid_scalar_mul, encode_silu_mul, encode_split_q_gate,
+    encode_steer_direction, SteerParams,
 };
 
 /// The Metal buffer handle, re-exported so downstream crates (e.g.

@@ -19,6 +19,7 @@ crates/core/
 |   +-- runtime_config.rs   # RuntimeConfig, RuntimeConfigBuilder, ALLOWED_* const sets
 |   +-- chunk_sizing.rs     # Automatic chunk-size resolution algorithm
 |   +-- prefill.rs          # Prefill chunking primitives and iterator logic
+|   +-- steering.rs         # SteeringMode: the directional-steering edit's three modes
 |   \-- error.rs            # CoreError enum declaration
 \-- tests/
     +-- chunk_sizing.rs     # Unit tests for chunk-size resolution
@@ -32,6 +33,19 @@ crates/core/
 - `chunk_sizing.rs`: Implements 3-state resolution rule turning input prompt lengths into allowed chunk sizes.
 - `prefill.rs`: Handles splitting long input token sequences into executable prefill chunks.
 - `error.rs`: Central error type for core initialization failures.
+- `steering.rs`: `SteeringMode` (`Ablate` / `Add` / `Clamp`), the three edits
+  the directional-steering kernel applies to a residual stream row. It lives
+  in this leaf crate rather than beside either implementation because it is
+  the one thing both of them name and NEITHER can reach the other:
+  `turbospark_compute::steering` is the numerical contract and
+  `turbospark_gpu::encode_steer_direction` selects on it, and `crates/gpu`
+  carries `turbospark-compute` as a DEV-dependency only, so an enum declared
+  in `compute` would be unnameable from the dispatch module. Its discriminants
+  are the wire values the MSL kernel's `kSteerMode*` constants switch on, so a
+  reorder here silently swaps two edits that both decode fluently; the three
+  parity cases in `crates/gpu/tests/utility_and_pass.rs` are what catch that
+  across the boundary, and `steering_mode_codes_are_pinned` catches it on this
+  side.
 
 ## Development & Test Commands
 

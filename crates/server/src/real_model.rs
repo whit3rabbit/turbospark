@@ -60,6 +60,12 @@ impl RealChatModel {
     /// the KV buffers are allocated, because `KvCacheManager::new` sizes
     /// every layer up front and its failure is a Metal allocation error with
     /// no number in it pointing back at the flag.
+    // Eight process-level knobs, each resolved once at startup and none
+    // derivable from another. Grouping them into a struct would buy a shorter
+    // signature and cost the compile error that catches a new one being
+    // dropped at a call site -- which is exactly how `install_has_dflash`
+    // would have arrived unnoticed one crate over.
+    #[allow(clippy::too_many_arguments)]
     pub fn open(
         model_dir: &Path,
         max_context: Option<u32>,
@@ -68,6 +74,7 @@ impl RealChatModel {
         speculation: runtime::Speculation,
         drafter: runtime::SpeculativeDrafter,
         guardrails: crate::GuardrailConfig,
+        steering: runtime::SteeringPolicy,
     ) -> Result<Self, String> {
         let arch = repack::peek_manifest_arch(model_dir)?;
         let context = runtime::resolve_max_context(
@@ -115,7 +122,7 @@ impl RealChatModel {
         // -- two copies would name different causes the first time they
         // disagreed.
         let choice = runtime::resolve_drafter(drafter, model_dir);
-        let runner = RealForwardRunner::open_with_slot_policy_and_speculation(
+        let runner = RealForwardRunner::open_with_slot_policy_speculation_and_steering(
             model_dir,
             arch,
             context.resolved as usize,
@@ -124,8 +131,15 @@ impl RealChatModel {
                 None => runtime::ExpertCacheSlots::Auto,
             },
             runtime::draft_policies(&choice, speculation),
+            steering,
         )
         .map_err(|e| e.to_string())?;
+        // Echoed on the startup line beside the speculation one. Steering
+        // changes the TOKENS, so a server serving an edited model has to say
+        // so where an operator reading the log will see it.
+        if let Some(line) = runner.steering_line() {
+            eprintln!("{line}");
+        }
         // The MODEL's padded head width, not the tokenizer dialect's
         // constant: two checkpoints can share a dialect and pad differently.
         let vocab_size = runner.vocab_size();

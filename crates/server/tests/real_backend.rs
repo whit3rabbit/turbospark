@@ -53,6 +53,11 @@ async fn real_backend_serves_streaming_and_non_streaming_requests() {
         // short-circuits on the empty offer set. Pinning says so rather than
         // leaving a gate's path to a default that can move.
         turbospark_server::GuardrailConfig::OFF,
+        // PINNED OFF, and this is the one flag here that would change the
+        // TOKENS rather than the path taken to them: a steered model is a
+        // different model, so a test asserting what this install says must
+        // not be able to acquire one by default.
+        runtime::SteeringPolicy::off(),
     )
     .expect("real install should open");
     let model: Arc<dyn turbospark_server::ChatModel> = Arc::new(model);

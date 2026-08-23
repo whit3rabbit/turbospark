@@ -36,10 +36,14 @@ mod real_forward_types;
 #[cfg(target_os = "macos")]
 mod real_forward_utils;
 #[cfg(target_os = "macos")]
+mod resid_capture;
+#[cfg(target_os = "macos")]
 mod router_hist;
 #[cfg(target_os = "macos")]
 mod speculation_policy;
 mod speculative;
+#[cfg(target_os = "macos")]
+pub mod steering;
 mod token_sink;
 
 pub use config::GenerationConfig;
@@ -100,6 +104,8 @@ pub use speculative::{
     run_raw_completion_speculative, run_raw_completion_speculative_cancellable,
     DEFAULT_SPECULATION_BLOCK,
 };
+#[cfg(target_os = "macos")]
+pub use steering::SteeringPolicy;
 
 // Token id width consumed from the core primitives, keeping the dependency
 // edge live and documenting the interchange type this crate uses throughout.

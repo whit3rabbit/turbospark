@@ -17,6 +17,7 @@ impl RealForwardRunner {
         expert_cache_slots: ExpertCacheSlots,
         fp16_ring_capacity_override: Option<usize>,
         speculation: crate::families::qwen::DraftPolicies,
+        steering: crate::steering::SteeringPolicy,
     ) -> Result<Self, RealForwardError> {
         if expert_cache_slots == ExpertCacheSlots::Fixed(0) {
             return Err(RealForwardError::Unsupported(
@@ -120,6 +121,7 @@ impl RealForwardRunner {
             expecting.num_experts.max(0) as usize,
         );
         let ffn_hist = crate::ffn_hist::FfnActHist::from_env(&context, &expecting);
+        let resid_capture = crate::resid_capture::ResidCapture::from_env(&context, &expecting);
         let mut runner = Self {
             context,
             weights,
@@ -148,6 +150,8 @@ impl RealForwardRunner {
             routed_layouts,
             router_hist,
             ffn_hist,
+            resid_capture,
+            steering: None,
             skip_head: false,
         };
         match runner.arch.family {
@@ -283,6 +287,50 @@ impl RealForwardRunner {
                     &runner.arch,
                 )?);
             }
+        }
+        // LAST, after the family state, because it validates against the
+        // resolved `ArchConfig` and because a steering failure should be the
+        // last thing an otherwise-good open reports rather than masking one.
+        // `SteeringPolicy::off()` returns before touching anything, so this
+        // allocates and encodes nothing on every existing caller.
+        runner.steering =
+            crate::steering::SteeringState::build(&runner.context, &runner.arch, &steering)?;
+        if runner.steering.is_some()
+            && !matches!(
+                runner.arch.family,
+                model_io::ModelFamily::QwenGdnMoe | model_io::ModelFamily::QwenGdnDense
+            )
+        {
+            // Refused BY NAME rather than ignored. Only the qwen flow
+            // dispatches the edit today, so on any other family a direction
+            // set would load, report itself on the startup line, and change
+            // nothing -- the caller would measure the unsteered engine and
+            // report it as the steered one (`MtpState::build`'s argument for
+            // an explicitly-requested drafter).
+            return Err(RealForwardError::Unsupported(format!(
+                "steering is wired for the qwen flow only; family {:?} does not dispatch \
+                 the edit, so a direction set here would be a silent no-op",
+                runner.arch.family
+            )));
+        }
+        // STEERING AND SPECULATION ARE MUTUALLY EXCLUSIVE, and the refusal is
+        // not conservatism: the speculative verify runs `produce_batched`,
+        // which has no steering hook, so the drafted-and-verified tokens --
+        // which are the ones COMMITTED -- would come from the UNSTEERED
+        // model while the sequential fallback tokens came from the steered
+        // one. The output would be a silent mixture of two models, coherent
+        // and wrong, with nothing to say so. Refused by name until the
+        // batched path carries the edit; the kernel already takes `rows` and
+        // `row_stride` for exactly that.
+        if runner.steering.is_some() && (runner.real_mtp.is_some() || runner.real_dflash.is_some())
+        {
+            return Err(RealForwardError::Unsupported(
+                "steering and speculative decoding cannot both be on: the speculative \
+                 verify runs the batched forward, which does not apply the edit, so the \
+                 committed tokens would come from the unsteered model. Pass \
+                 --speculative off alongside --steering"
+                    .to_string(),
+            ));
         }
         Ok(runner)
     }

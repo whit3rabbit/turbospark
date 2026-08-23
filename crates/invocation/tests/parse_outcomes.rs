@@ -329,3 +329,100 @@ fn an_out_of_range_or_misspelled_speculation_block_is_refused() {
         );
     }
 }
+
+// --- directional steering (docs/OBLITERATION.md) --------------------------
+
+#[test]
+fn steering_defaults_to_off_and_reads_no_file() {
+    let req = expect_success(parse(&tok(&["--model", "m.bin", "--prompt", "hi"])));
+    assert_eq!(req.steering, None);
+    assert_eq!(req.steering_mode, None);
+    assert_eq!(req.steering_scale, None);
+    assert_eq!(req.steering_layers, None);
+    assert_eq!(req.steering_target, 0.0);
+    assert_eq!(req.steering_gate, 0.0);
+}
+
+#[test]
+fn steering_flags_round_trip() {
+    let req = expect_success(parse(&tok(&[
+        "--model",
+        "m.bin",
+        "--prompt",
+        "hi",
+        "--steering",
+        "/tmp/d.gguf",
+        "--steering-mode",
+        "clamp",
+        "--steering-scale",
+        "0.75",
+        "--steering-layers",
+        "30:40",
+        "--steering-target",
+        "2.5",
+        "--steering-gate",
+        "0.1",
+    ])));
+    assert_eq!(req.steering.as_deref(), Some("/tmp/d.gguf"));
+    assert_eq!(
+        req.steering_mode,
+        Some(turbospark_invocation::SteeringMode::Clamp)
+    );
+    assert_eq!(req.steering_scale, Some(0.75));
+    assert_eq!(req.steering_layers, Some((30, 40)));
+    assert_eq!(req.steering_target, 2.5);
+    assert_eq!(req.steering_gate, 0.1);
+}
+
+/// The path stays an OPAQUE string here. This crate is pure and reads no
+/// file, so a missing or malformed vector is the front end's error to
+/// report, not a parse failure.
+#[test]
+fn a_steering_path_is_not_validated_by_the_parser() {
+    let req = expect_success(parse(&tok(&[
+        "--model",
+        "m.bin",
+        "--prompt",
+        "hi",
+        "--steering",
+        "/does/not/exist.gguf",
+    ])));
+    assert_eq!(req.steering.as_deref(), Some("/does/not/exist.gguf"));
+}
+
+/// Each of the three modes must parse, or a flag silently narrows to one
+/// edit while accepting the names of the other two.
+#[test]
+fn every_steering_mode_parses() {
+    for (name, want) in [
+        ("ablate", turbospark_invocation::SteeringMode::Ablate),
+        ("add", turbospark_invocation::SteeringMode::Add),
+        ("clamp", turbospark_invocation::SteeringMode::Clamp),
+    ] {
+        let req = expect_success(parse(&tok(&[
+            "--model",
+            "m.bin",
+            "--prompt",
+            "hi",
+            "--steering-mode",
+            name,
+        ])));
+        assert_eq!(req.steering_mode, Some(want), "mode {name}");
+    }
+}
+
+/// A single-layer range is `N:N`, and it must be accepted: steering one
+/// layer is a normal thing to ask for, and an off-by-one in the inclusivity
+/// check would reject it.
+#[test]
+fn a_single_layer_range_is_accepted() {
+    let req = expect_success(parse(&tok(&[
+        "--model",
+        "m.bin",
+        "--prompt",
+        "hi",
+        "--steering-layers",
+        "31:31",
+    ])));
+    assert_eq!(req.steering_layers, Some((31, 31)));
+}

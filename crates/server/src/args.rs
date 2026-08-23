@@ -1,4 +1,4 @@
-pub const USAGE: &str = "usage: turbospark-server --model <install-dir|alias> [--port N] [--max-context N|auto] [--expert-cache-slots auto|N] [--bind loopback|tailnet] [--power-profile performance|balanced|efficiency] [--max-tokens-per-sec R] [--speculative off|auto|N] [--speculative-drafter auto|mtp|dflash] [--guardrails on|off]\n       turbospark-server <tokenizer-dir> [port]\n       turbospark-server --help | --version\n\noptions:\n  --model              a .gturbo directory or a turbospark-model alias (`turbospark-model list`)\n  --port               listen port (default 8080)\n  --max-context        context window in tokens, or auto (default auto: the\n                       checkpoint's trained context, capped by what memory\n                       holds, and 4096 when the install declares none)\n  --expert-cache-slots routed-cache slots per layer: auto or 8/16/24/32 (default auto)\n  --bind               loopback or tailnet (default loopback; tailnet is NOT auth)\n  --power-profile      performance, balanced or efficiency\n  --max-tokens-per-sec decode rate cap, greater than 0\n  --speculative        off, auto, or a block size 1-15 (default auto). Speculation\n                       applies to temperature-0 requests only; others decode\n                       sequentially\n  --speculative-drafter auto, mtp or dflash (default auto; auto reports a DFlash2\n                       drafter but does not enable it -- see docs/DFLASH2.md)\n  --guardrails         on or off (default on). Rescues a tool call the decoder\n                       could not parse, checks arguments against the request's\n                       own schema, and re-asks once. A request carrying TOOLS is\n                       buffered rather than streamed while this is on, because a\n                       verdict needs the whole turn; requests without tools are\n                       unaffected\n  --help               print this text and exit\n  --version            print the version and exit";
+pub const USAGE: &str = "usage: turbospark-server --model <install-dir|alias> [--port N] [--max-context N|auto] [--expert-cache-slots auto|N] [--bind loopback|tailnet] [--power-profile performance|balanced|efficiency] [--max-tokens-per-sec R] [--speculative off|auto|N] [--speculative-drafter auto|mtp|dflash] [--guardrails on|off] [--steering PATH] [--steering-mode ablate|add|clamp] [--steering-scale F] [--steering-layers S:E] [--steering-target F] [--steering-gate F]\n       turbospark-server <tokenizer-dir> [port]\n       turbospark-server --help | --version\n\noptions:\n  --model              a .gturbo directory or a turbospark-model alias (`turbospark-model list`)\n  --port               listen port (default 8080)\n  --max-context        context window in tokens, or auto (default auto: the\n                       checkpoint's trained context, capped by what memory\n                       holds, and 4096 when the install declares none)\n  --expert-cache-slots routed-cache slots per layer: auto or 8/16/24/32 (default auto)\n  --bind               loopback or tailnet (default loopback; tailnet is NOT auth)\n  --power-profile      performance, balanced or efficiency\n  --max-tokens-per-sec decode rate cap, greater than 0\n  --speculative        off, auto, or a block size 1-15 (default auto). Speculation\n                       applies to temperature-0 requests only; others decode\n                       sequentially\n  --speculative-drafter auto, mtp or dflash (default auto; auto reports a DFlash2\n                       drafter but does not enable it -- see docs/DFLASH2.md)\n  --guardrails         on or off (default on). Rescues a tool call the decoder\n                       could not parse, checks arguments against the request's\n                       own schema, and re-asks once. A request carrying TOOLS is\n                       buffered rather than streamed while this is on, because a\n                       verdict needs the whole turn; requests without tools are\n                       unaffected\n  --steering           path to a control vector (.gguf, llama.cpp layout). Applies a\n                       directional edit to the residual stream of EVERY request this\n                       process serves; no weight byte is modified. See\n                       docs/OBLITERATION.md\n  --steering-mode      ablate, add or clamp (default: the vector file's declared mode,\n                       or ablate)\n  --steering-scale     strength (default 1.0 when --steering is given; 0.0 is the exact\n                       identity)\n  --steering-layers    START:END, inclusive and 0-based (default every layer the\n                       vector covers)\n  --steering-target    coefficient --steering-mode clamp pins the stream to (default 0)\n  --steering-gate      only steer where the coefficient reaches this magnitude\n                       (default 0, meaning always)\n  --help               print this text and exit\n  --version            print the version and exit";
 
 /// Interface the server listens on. Resolution fails rather than widening:
 /// there is no path from `Tailnet` to a wildcard or LAN address.
@@ -110,6 +110,17 @@ pub struct ModelArgs {
     /// Tool-call guardrails. Process-level for the reason the three above
     /// are, plus one of its own: a per-request field would let any client
     /// opt its own traffic out of the repair this deployment chose.
+    /// A directional-steering policy, resolved once at startup
+    /// (`docs/OBLITERATION.md`). PROCESS-level like every other flag here,
+    /// and for a stronger reason than the drafter's: the direction buffers
+    /// are allocated at open, AND the edit changes the tokens, so there is
+    /// nothing a request could safely switch mid-flight.
+    ///
+    /// Unlike speculation this has NO per-request half. Speculation falls
+    /// back silently for a sampled request because acceptance is exact only
+    /// at temperature 0; steering has no such precondition, so a server
+    /// started with it steers every request it serves.
+    pub steering: runtime::SteeringPolicy,
     pub guardrails: turbospark_server::GuardrailConfig,
 }
 
@@ -139,7 +150,17 @@ pub fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
         speculation: runtime::Speculation::Auto,
         drafter: runtime::SpeculativeDrafter::Auto,
         guardrails: turbospark_server::GuardrailConfig::default(),
+        steering: runtime::SteeringPolicy::off(),
     };
+    // Held aside because `--steering-layers` may be given BEFORE or AFTER
+    // `--steering`, and the restriction has to survive either order: the
+    // range is applied when the set arrives and again here if it already has.
+    let mut steering_layers: Option<(usize, usize)> = None;
+    // Tracked separately so the FILE's declared mode can win where the flag
+    // is absent, and the flag where it is present -- the precedence
+    // `crates/cli`'s `resolve_steering` applies, stated the same way.
+    let mut steering_mode: Option<foundation::SteeringMode> = None;
+    let mut steering_scale: Option<f32> = None;
     let mut i = 0;
     while i < args.len() {
         let flag = args[i].as_str();
@@ -219,6 +240,68 @@ pub fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
                     },
                 }
             }
+            "--steering" => {
+                let mut set = repack::control_vector::load_control_vector(std::path::Path::new(
+                    value.as_str(),
+                ))
+                .map_err(|e| format!("--steering {value}: {e}"))?;
+                if let Some((start, end)) = steering_layers {
+                    set.restrict_to_range(start, end);
+                }
+                parsed.steering.set = Some(set);
+            }
+            "--steering-mode" => {
+                steering_mode = Some(foundation::SteeringMode::parse(value.as_str()).ok_or_else(
+                    || format!("--steering-mode must be ablate, add or clamp, not {value}"),
+                )?);
+            }
+            "--steering-scale" => {
+                steering_scale = Some(match value.parse::<f32>() {
+                    Ok(v) if v.is_finite() => v,
+                    _ => {
+                        return Err(format!(
+                            "--steering-scale must be a finite number, not {value}"
+                        ))
+                    }
+                });
+            }
+            "--steering-target" => {
+                parsed.steering.target = match value.parse::<f32>() {
+                    Ok(v) if v.is_finite() => v,
+                    _ => {
+                        return Err(format!(
+                            "--steering-target must be a finite number, not {value}"
+                        ))
+                    }
+                }
+            }
+            "--steering-gate" => {
+                parsed.steering.gate_threshold = match value.parse::<f32>() {
+                    Ok(v) if v.is_finite() && v >= 0.0 => v,
+                    _ => {
+                        return Err(format!(
+                            "--steering-gate must be a finite number >= 0, not {value}"
+                        ))
+                    }
+                }
+            }
+            "--steering-layers" => {
+                let bad = || {
+                    format!(
+                        "--steering-layers must be START:END, inclusive and 0-based, not {value}"
+                    )
+                };
+                let (a, b) = value.split_once(':').ok_or_else(bad)?;
+                let start: usize = a.trim().parse().map_err(|_| bad())?;
+                let end: usize = b.trim().parse().map_err(|_| bad())?;
+                if end < start {
+                    return Err(bad());
+                }
+                steering_layers = Some((start, end));
+                if let Some(set) = parsed.steering.set.as_mut() {
+                    set.restrict_to_range(start, end);
+                }
+            }
             "--speculative-drafter" => {
                 parsed.drafter = match value.as_str() {
                     "auto" => runtime::SpeculativeDrafter::Auto,
@@ -256,6 +339,22 @@ pub fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
                 foundation::ALLOWED_CACHE_SLOTS
             ));
         }
+    }
+    // Resolved AFTER the loop so flag order does not matter: the flag wins
+    // over the file's declared mode, the file's over the default, and a set
+    // present with no scale means full strength rather than the zero the
+    // `off()` default carries.
+    if parsed.steering.set.is_some() {
+        parsed.steering.mode = steering_mode
+            .or_else(|| {
+                parsed
+                    .steering
+                    .set
+                    .as_ref()
+                    .and_then(|set| set.declared_mode)
+            })
+            .unwrap_or_default();
+        parsed.steering.alpha = steering_scale.unwrap_or(1.0);
     }
     Ok(Some(parsed))
 }

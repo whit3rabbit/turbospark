@@ -25,6 +25,7 @@ pub use options::{OptionDecl, OPTIONS};
 pub use parser::{parse, ParseOutcome};
 pub use request::{
     ExpertCacheSlots, InvocationRequest, MaxContext, Mode, PowerProfile, PrefillChunk,
-    ReadAheadMode, ReasoningEffort, Speculation, SpeculativeDrafter, ALLOWED_SPECULATION_BLOCKS,
+    ReadAheadMode, ReasoningEffort, Speculation, SpeculativeDrafter, SteeringMode,
+    ALLOWED_SPECULATION_BLOCKS,
 };
 pub use usage::{render_usage, render_version, VERSION};

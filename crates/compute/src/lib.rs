@@ -39,6 +39,8 @@ pub mod rms_norm;
 pub mod rope;
 /// Softmax sampling and logit soft-capping compute kernels.
 pub mod sampling;
+/// Directional steering of a residual stream row (ablate, add, clamp).
+pub mod steering;
 /// Numerical error measurement and tolerance checking utilities.
 pub mod tolerance;
 /// Walsh-Hadamard Transform (WHT) compute kernels.
@@ -87,6 +89,7 @@ pub use quant_gguf_mxfp4::{
 pub use rms_norm::{rms_norm, rms_norm_centered};
 pub use rope::{rope_neox, rope_neox_subdim, rope_paired, yarn_frequencies, YarnSpec};
 pub use sampling::logit_softcap_softmax;
+pub use steering::{direction_coefficient, inv_norm, steer_in_place, unit_coefficient};
 pub use tolerance::{bounded_rel_error, max_abs_diff, rel_error, Tolerance};
 pub use wht::wht;
 

@@ -37,7 +37,7 @@ crates/gpu/
 |   +-- dispatch_profile.rs         # Intra-command-buffer dispatch profiler
 |   +-- device_memory.rs            # MTLDevice recommendedMaxWorkingSetSize & name
 |   +-- power_state.rs              # NSProcessInfo thermal state & Low Power Mode probes
-|   +-- utility.rs                  # Elementwise helpers (scalar mul, softcap, M5's bias add)
+|   +-- utility.rs                  # Elementwise helpers (scalar mul, softcap, M5's bias add, the steering edit)
 |   +-- logit_softmax.rs            # Softcap and logit softmax helpers
 |   +-- bytes.rs                    # Metal buffer byte alignment utilities
 |   +-- gdn.rs                      # Gated-DeltaNet kernel dispatches (8 kernels)
@@ -61,7 +61,7 @@ crates/gpu/
 |       +-- moe.metal               # MoE router GEMV and phase 1/2 shader source
 |       +-- rmsnorm.metal           # RMSNorm shader source
 |       +-- rope.metal              # RoPE shader source
-|       \-- utility.metal           # Elementwise utility shader source
+|       \-- utility.metal           # Elementwise utility shader source + the steering edit
 \-- tests/                          # Metal numerical parity & allocation unit tests
     +-- attention_chunk_bench.rs
     +-- attention_decode_parity.rs
@@ -113,6 +113,43 @@ crates/gpu/
 - `dequant_q5_k_gemv.rs`: the GGUF Q5_K GEMV dispatch, port-local (ROADMAP Phase M2). Exists for one tensor shape: Mixtral 8x7B's Q4_K_M carries `attn_output` in Q5_K while its experts are Q4_K, so there is no embedding-lookup and no MoE sibling. Q5_K is Q4_K plus a fifth bit in its own 32-byte `qh` run, indexed by the element's position WITHIN a sub-block at a bit that advances with the 64-element group, so one `qh` byte is read eight times. Its shader source is a CONCATENATION with `dequant_q4_k.metal` (Gotcha 4): the 6-bit scale/min packing is Q4_K's byte for byte and it calls `q4_k_scale_min` rather than carrying a second copy.
 - `dequant_q6_k_gemv.rs`: the GGUF Q6_K GEMV dispatch, port-local. Exists for ONE tensor: Qwen 3.6's Q4_K_M carries a single Q6_K weight, `output.weight`, and nothing else in either real file uses the type, so there is deliberately no embedding-lookup or MoE sibling. Same 32-lane shape for a third reason: a lane owns one `qh` byte and hence the four elements it supplies high bits for, 32 apart inside a 128-element half. Q6_K splits an element's six bits across `ql` and `qh`, biases the quant by a fixed 32 rather than carrying a per-sub-block min, and stores sixteen SIGNED int8 sub-block scales as plain bytes.
 - `moe_gguf/`: the routed-expert decode pairs for GGUF expert blobs, port-local: `moe_phase1_gate_up_act_{q8_0,q4_k,mxfp4}` + `moe_phase2_down_reduce_k8_{q8_0,q4_k,mxfp4}`, plus phase-1-only IQ3_XXS/IQ4_XS, phase-2-only IQ4_NL, and (ROADMAP Phase M2) a phase-2-only Q6_K for the `ffn_down_exps` of 16 of Mixtral's 32 layers -- the first mixture whose two types differ across LAYERS rather than across the phases of one expert. The Q4_K pair does not re-implement the unpack; it calls `dequant_q4_k_row_simd` out of `dequant_q4_k.metal`, which joins the concatenation ahead of `moe_gguf.metal`. Both pairs share one host-side dispatch body, so only the kernel name and the block-size precondition differ (32 elements per row for Q8_0, 256 for Q4_K). Separate kernels rather than a function-constant variant of the vendored pair because the two blob layouts share no addressing: a GGUF blob has no scale or bias planes at all, so six of the nine `MoeExpertOffsets` fields are zero and only the three weight offsets locate anything. Shares the vendored pair's `RoutedBlobs` argument buffer, which is one array of eight pointers whatever the blobs contain. **MXFP4 (ROADMAP M5) is the one pair that does not fit that description, in two ways.** It has BOTH phases and no resident GEMV, the mirror of Q5_K's and Q6_K's footing, because `gpt-oss` puts MXFP4 in `ffn_*_exps` and nowhere else -- so its row unpack is written in `moe_gguf.metal` rather than borrowed, there being no `dequant_mxfp4.metal` to borrow from. And it carries the FAMILY's expert math as well as the block layout: the clamped SwiGLU (`min(gate, limit)`, a swish with `alpha`, times `(clamp(up) + 1)`, all from ggml's `ggml_compute_forward_swiglu_oai_f32`) and the per-expert biases the blob holds at the three `MoeExpertOffsets` bias fields every earlier GGUF install left at zero. Both ride as UNIFORMS via `Mxfp4Activation`, never function constants: `constants_key` is one byte wide and a specialization axis that misses it silently reuses the wrong pipeline. `Mxfp4Activation::PLAIN` keeps the block-type parity cases and the family cases in one kernel so neither hides the other. A 17-byte block also makes MXFP4 rows odd-length, which is why every read in it is `uint8_t`: an `as_type<half>` copied in from the Q8_0 helper next door would be misaligned on half the rows.
+- `utility.rs`'s `encode_steer_direction` (+ `SteerParams`): the DIRECTIONAL
+  STEERING edit on a residual stream row (ROADMAP item 9, in its RUNTIME form
+  rather than the repack-time one that entry scopes). Port-local; its contract
+  is `turbospark_compute::steering`. Three modes off ONE dot product --
+  `ablate` (`x -= alpha * c_hat * d_hat`, which at `alpha = 1` is exactly the
+  operation abliteration's weight edit precomputes), `add` (llama.cpp control
+  vectors), and `clamp` (feature clamping) -- plus a per-row coefficient
+  readback that IS the measurement: `c_hat` says how much of the direction the
+  stream carried, which is the steered-vs-unsteered signal without a second
+  model to compare against. Four things about it are decisions rather than
+  detail. **The mode is a UNIFORM and never a function constant**: a
+  specialization axis whose byte misses `pipeline`'s `constants_key` silently
+  reuses whichever pipeline compiled first (Gotcha 1), and here that would
+  make two different edits one function on the second dispatch. **One dispatch
+  and not two**, because the cost of this kernel is encode rather than
+  bandwidth -- it adds 64-128 dispatches per token on a 64-layer model against
+  a decode step's ~810, while reading one row against a projection's whole
+  weight matrix. **The block reduce is `rmsnorm.metal`'s `rms_block_inv`
+  shape**, which reads `simdgroups` at runtime instead of hardcoding a loop
+  bound, and that is what keeps it correct where `gdn.metal`'s two norms are
+  correct at EXACTLY 128 threads and silently wrong otherwise (Gotcha 5);
+  `partial` still sizes for 256 threads, so the dispatch must not widen the
+  threadgroup. **The gate is evaluated INSIDE the kernel**, never by a host
+  reading the coefficient back, which would cost a synchronization per layer
+  per token. `row_stride` is in ELEMENTS rather than bytes on purpose: every
+  residual call site computes its row offset in bytes, so a byte-taking stride
+  would read correctly at `rows == 1` and edit the wrong rows at `rows > 1`.
+  Note `ablate` can only REDUCE `|x|` and so cannot overflow, while `add` and
+  `clamp` can push an FP16 stream past 65,504 at a large enough alpha --
+  arriving as `inf` and then NaN, which reads as a perfect score on any rank
+  instrument (AGENTS.md Gotchas 59 and 60). `tests/utility_and_pass.rs` holds
+  the numbers, with `the_three_modes_are_different_functions` asserting the
+  fixture DISCRIMINATES before the parity cases are believed, and the ablate
+  case deliberately at a FRACTIONAL alpha: `ablate` at 1.0 and `clamp` at
+  target 0 are the same function, so a mutation swapping the shader's mode
+  codes passed that case until the parameters were moved off the degenerate
+  point.
 - `resident_metal.rs`: `ResidentGpuWeights` zero-copy `MTLBuffer` wrapping around `mmap` slices.
 - `device_memory.rs`: `recommended_max_working_set`, the Metal device's own
   ceiling plus its name, here for the same reason `power_state.rs` is. Adapted
