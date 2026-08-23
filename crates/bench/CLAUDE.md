@@ -39,7 +39,9 @@ crates/bench/
 |   +-- mtp_accept_length_probe.rs # MTP head as drafter: accepted vs the block table's break-even
 |   +-- mtp_head_probe.rs    # What the head predicts, when the probe above reads zero
 |   +-- dflash2_accept_length_probe.rs # The BLOCK drafter's sweep, plus the losslessness floor
-|   \-- dflash2_bisect_probe.rs # Localizes a broken drafter; one runner, one variable
+|   +-- dflash2_bisect_probe.rs # Localizes a broken drafter; one runner, one variable
+|   +-- steering_probe.rs   # Live steering: inert at alpha 0, and a real edit above the floor
+|   \-- steering_sweep.rs   # Which alpha is usable: steered output scored under the UNSTEERED model
 \-- prompts/
     +-- quality-v1/         # Quality gate reference prompt fixtures
     |   \-- assistant-reference.txt
@@ -245,6 +247,41 @@ TURBOSPARK_DFLASH2_INSTALL_DIR=~/models/qwen38-27b-dflash2.gturbo \
 TURBOSPARK_DFLASH2_INSTALL_DIR=~/models/qwen38-27b-dflash2.gturbo \
   cargo test -p turbospark-bench --test dflash2_bisect_probe --release -- --ignored --nocapture
 
+# Live directional steering (`docs/OBLITERATION.md`, ROADMAP item 9 phase 3).
+# Three opens of ONE install, ~30 s: the edit is rank-1 and reversible, so
+# comparing a steered engine against its original needs no second model.
+#
+# FOUR ARMS, and only the first is an assertion about the KERNEL: at alpha 0
+# the dispatch runs at every covered layer and the output must be
+# BIT-IDENTICAL to steering off, which covers a wrong reduction, a wrong
+# buffer offset and a wrong row stride in one comparison. Then the divergence
+# in nats against the dense shape floor, the per-layer coefficient trace, and
+# a determinism check.
+#
+# **ARM 2 IS THE ONE PLACE IN THIS CRATE WHERE A LARGE KL IS THE GOOD
+# OUTCOME**, which inverts every other divergence measurement here -- and it
+# is why the scale DEFAULTS TO 0.3 rather than 1.0. See Gotcha 18.
+TURBOSPARK_PROBE_INSTALL_DIR=~/models/qwen38-27b.gturbo \
+TURBOSPARK_STEERING_VECTOR=/tmp/steer/ocean.gguf \
+  cargo test -p turbospark-bench --test steering_probe --release -- --ignored --nocapture
+
+# Which steering alpha is usable on a given direction. Six opens, ~2 min.
+# Generates greedily under a STEERED engine at each alpha, then teacher-forces
+# those ids through the UNSTEERED one -- no second checkpoint, because the
+# edit is rank-1 and reversible.
+#
+# **THE NUMBER IS NOT A COHERENCE SCORE** and one row of it says nothing: it
+# rises both when the edit WORKS (a steered model should say things the
+# unsteered one would not) and when it does DAMAGE. Only the shape separates
+# them, which is why this is a sweep and not a knob on `steering_probe`.
+# The ANCHOR is the unsteered model on the frozen reference answer -- what
+# fluent prose costs it -- and on `qwen38-27b` it reproduces
+# `qwen38_quality_gate`'s 4.9432 exactly, which is a free check that this
+# target and that gate walk the same ids. See Gotcha 19.
+TURBOSPARK_PROBE_INSTALL_DIR=~/models/qwen38-27b.gturbo \
+TURBOSPARK_STEERING_VECTOR=/tmp/steer/ocean.gguf \
+  cargo test -p turbospark-bench --test steering_sweep --release -- --ignored --nocapture
+
 # Sensitivity proof for the gate above: APFS-clone the install, shift one
 # quantization level in a strided subset of the routed experts, re-measure.
 # ~30 s. Response curve and detection floor in docs/BENCHMARKS.md.
@@ -306,3 +343,79 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
    **When you re-freeze a row, move BOTH sides.** The catalog convention is
    worst-observed: slowest reading of the slowest case, fastest of the
    fastest, highest peak, plus the context and slot count they were taken at.
+
+18. **A DIVERGENCE NUMBER CANNOT TELL A STEERED MODEL FROM A DESTROYED ONE,
+   and `steering_probe.rs` is the one place here where a LARGE KL is the
+   success signal.** Every other divergence measurement in this crate -- the
+   cross-engine KLs, `batched_forward_probe` -- wants a small number read
+   against a floor (Gotcha 8). Steering inverts that: the floor still says
+   "this is the edit rather than noise", but the edit is supposed to move the
+   distribution a lot. That inversion has a trap under it that fired on the
+   probe's first run.
+
+   Ablating a captured direction at `alpha = 1` over all 64 layers COLLAPSES
+   the turn on `qwen3_5` -- the model emits end-of-turn immediately and
+   generates nothing (`docs/OBLITERATION.md` records the mechanism: the
+   direction's norm at the late layers is a quarter of the residual stream's,
+   and that stream is the output head's input). A collapsed turn reads
+   **21.818 nats, 2,948,321x the shape floor**, which is indistinguishable in
+   that number from a spectacularly effective steer. The probe defaulted to
+   exactly that operating point, passed, and reported the documented failure
+   mode as a success.
+
+   Two consequences, and the first generalises past steering.
+   **A probe whose DEFAULT parameters land on a known-degenerate point is
+   worse than no probe**, because it produces a quotable number with a green
+   tick beside it; the default is 0.3 now, reproducing the doc's coherent row.
+   And **the check that caught it was printing the generated TEXT**, not any
+   statistic -- so the probe prints both continuations side by side and runs
+   an objective collapse detector (first token is end-of-turn, or the whole
+   continuation is one or two distinct tokens) that REPORTS rather than
+   asserts, since deliberately measuring the collapse point is legitimate.
+   Fluency is a judgement no test can make; "the turn ended immediately" is
+   not. This is AGENTS.md Gotchas 30/57/59's shape on a new axis: an
+   instrument reading a plausible value on degenerate input.
+
+   One arm's mutation check is worth knowing rather than repeating. Deleting
+   the rollback between the determinism arm's two runs reddens the test
+   through the ENGINE's own KV-position guard and never reaches the equality,
+   so an invariant is doing the work there. The only leak that arm can
+   observe is one preserving the cursor while changing what the kernels read
+   -- which is the shape a scratch buffer carrying state across calls has,
+   and the reason to keep it.
+
+19. **A VERDICT RULE CAN BE PRINCIPLED AND STILL WRONG, AND THE STEEPEST STEP
+   IS THE ONE THAT WAS.** `steering_sweep.rs` reports which steering alpha is
+   usable. Its first rule was the largest multiplicative jump between
+   neighbouring arms, chosen deliberately to avoid a fabricated threshold
+   (Gotcha 8's discipline, applied to a curve). It gives the wrong answer:
+   on the real `qwen38-27b` it picked alpha 0.6 -> 0.8 at 60.7x and concluded
+   everything at or below 0.6 was usable, while 0.6 was already emitting
+   template markup at 13 distinct tokens against 34-36 for the fluent arms.
+
+   **The largest jump lands INSIDE the wreckage**, because once output is
+   degenerate the number keeps climbing and the interesting transition is
+   already behind it. The criterion is the ANCHOR CROSSING instead: the last
+   arm whose perplexity stays under what the unsteered model pays for
+   ordinary human prose. That is not a fabricated constant either -- the
+   anchor is measured, and the argument is structural, since a model's own
+   GREEDY output is the argmax path and should be far MORE predictable to
+   that model than human writing. The fluent arms sit at 0.3x the anchor.
+
+   **THE COLUMN STOPS BEING MONOTONE PAST THE CROSSING** (0.8 scores 313.99
+   against 1.0's 280.31), so any rule that assumes a monotone curve is
+   reading noise once it is past the point it should have stopped at.
+
+   Two further things this target establishes about its own instrument.
+   Its anchor reproduces `qwen38_quality_gate`'s frozen 4.9432 to the last
+   digit -- an independent code path over the same corpus, which is what says
+   the two walk the same ids -- and mutating `teacher_forced_nll`'s scoring
+   window moves it to 12.7892, which is what says the match discriminates
+   rather than being a coincidence. That second run is also Gotcha 7 in
+   miniature: scoring prompt tokens on an instruction-tuned checkpoint
+   inflates perplexity, because the model was never trained to predict them.
+
+   **And the number is NOT a coherence score**, however it is used. It rises
+   when the edit works and when the edit does damage, with nothing in a
+   single value separating those. Only the shape across a sweep does, which
+   is why a one-alpha version would have been misleading rather than partial.

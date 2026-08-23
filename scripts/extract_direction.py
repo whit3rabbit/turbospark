@@ -158,6 +158,66 @@ def separation(pos: np.ndarray, neg: np.ndarray) -> np.ndarray:
     return out
 
 
+def stream_share(pos: np.ndarray, neg: np.ndarray, dirs: np.ndarray) -> np.ndarray:
+    """Per layer, `||d_l|| / ||x_l||`: the share of the residual an ablation
+    at `alpha = 1` removes.
+
+    **This is the quantity that predicts the COLLAPSE, and it is the third
+    distinct thing `||d_l||` can be divided by in this file.** `separation`
+    divides by the within-set spread to ask where the concept lives; this
+    divides by the stream's own magnitude to ask what removing it costs. They
+    rank layers differently and neither substitutes for the other.
+
+    The mechanism is recorded in `docs/OBLITERATION.md`: the late-layer
+    residual IS the output head's input, so ablating a direction that is a
+    large share of it damages what the head reads. Measured on the real
+    `qwen38-27b` ocean/mountain corpus, layer 63's direction norm is 116.34
+    against a mean row norm of 457.9 -- 25.4% -- and `ablate` at `alpha = 1`
+    over all 64 layers made the model emit end-of-turn immediately, while
+    0.3 stayed coherent. The hottest layer is 59 at 27.9%, not 63.
+
+    `x_l` is the mean activation over BOTH sets, which is the stream the edit
+    will actually meet at that layer: an operator steers arbitrary prompts,
+    not the extraction corpus, and the two sets' shared magnitude is the best
+    estimate available offline.
+    """
+    layers = pos.shape[1]
+    out = np.zeros(layers, dtype=np.float64)
+    for l in range(layers):
+        both = np.concatenate(
+            (pos[:, l, :].astype(np.float64), neg[:, l, :].astype(np.float64))
+        )
+        stream = float(np.linalg.norm(both, axis=1).mean())
+        out[l] = float(np.linalg.norm(dirs[l])) / stream if stream > 0 else 0.0
+    return out
+
+
+def suggested_alpha(share: np.ndarray, budget: float) -> float:
+    """The largest `ablate` alpha keeping the worst layer's removal under
+    `budget` of the stream.
+
+    **A CEILING, NOT A RECOMMENDATION, and the difference matters.** It says
+    where the edit starts damaging what the head reads; it says nothing about
+    where the edit starts WORKING, which is a property of the direction and
+    the concept and is not computable from norms. An alpha under this that
+    steers nothing is an ordinary outcome.
+
+    It is derived per model AND per direction rather than looked up. The
+    obvious alternative -- a table of known-good alphas per model family, or
+    a tier by parameter count -- cannot work here, because what collapses the
+    turn is this ratio and a parameter count does not predict it: two
+    directions extracted from one checkpoint can differ severalfold in it.
+
+    The budget is the one number here that is a judgement rather than a
+    measurement, and it is deliberately loose. It is set from the two
+    measured points named in `stream_share` (22% collapsed, 6.5% did not) and
+    a third of the way between them is not a threshold anyone has bracketed.
+    Widen or ignore it; it is printed with its own reasoning for that reason.
+    """
+    worst = float(share.max())
+    return budget / worst if worst > 0 else float("inf")
+
+
 def _kv_string(key: str, value: str) -> bytes:
     kb, vb = key.encode(), value.encode()
     return (
@@ -227,6 +287,17 @@ def main() -> None:
     ap.add_argument("--out", required=True, help="output .gguf")
     ap.add_argument("--method", choices=["mean", "svd"], default="mean")
     ap.add_argument("--arch", default="qwen35", help="general.architecture to stamp")
+    ap.add_argument(
+        "--alpha-budget",
+        type=float,
+        default=0.10,
+        help=(
+            "share of the residual an ablation may remove at the hottest "
+            "layer, used only to print a suggested alpha ceiling (default "
+            "0.10). A judgement, not a measured threshold -- see "
+            "`suggested_alpha`."
+        ),
+    )
     args = ap.parse_args()
 
     print("loading captures:")
@@ -238,18 +309,27 @@ def main() -> None:
     dirs = directions(pos, neg, args.method)
     norms = np.linalg.norm(dirs, axis=1)
     sep = separation(pos, neg)
+    share = stream_share(pos, neg, dirs)
 
-    # Two columns, because they answer different questions and only the
-    # second one can be compared across layers. `norm` is the raw magnitude
-    # of the difference of means and rises with the residual stream's own
-    # scale; `sep` divides that out. Reported rather than thresholded: a
-    # near-zero layer is a real and interesting outcome (the sets do not
-    # separate there), and which layers to steer at is the caller's call.
+    # THREE columns, and each divides `norm` by something different because
+    # each answers a different question. `norm` is the raw magnitude and
+    # rises with the residual stream's own scale, so it can be compared
+    # across layers only by accident. `sep` divides by the within-set spread:
+    # where does the CONCEPT live. `share` divides by the stream's own
+    # magnitude: what does removing it COST. A layer can rank high on one and
+    # low on another, which is the whole reason all three are printed.
+    #
+    # Reported rather than thresholded: a near-zero layer is a real and
+    # interesting outcome (the sets do not separate there), and which layers
+    # to steer at is the caller's call.
     print(f"\nper-layer direction ({args.method}):")
-    print(f"  {'layer':>5}  {'norm':>10}  {'sep':>7}  (sep = effect size, scale-free)")
-    for l, (n, s) in enumerate(zip(norms, sep)):
+    print(
+        f"  {'layer':>5}  {'norm':>10}  {'sep':>7}  {'share':>7}   "
+        f"(sep = effect size, scale-free; share = ||d||/||x||)"
+    )
+    for l, (n, s, sh) in enumerate(zip(norms, sep, share)):
         bar = "#" * int(40 * s / max(sep.max(), 1e-9))
-        print(f"  {l:5d}  {n:10.4f}  {s:7.3f}  {bar}")
+        print(f"  {l:5d}  {n:10.4f}  {s:7.3f}  {sh:6.1%}  {bar}")
 
     best, worst = int(sep.argmax()), int(sep.argmin())
     print(
@@ -259,6 +339,45 @@ def main() -> None:
     print(
         f"By raw norm it would read layer {int(norms.argmax())}, which is "
         f"mostly where the residual stream is biggest -- see `separation`."
+    )
+
+    # THE ALPHA CEILING, derived rather than looked up. See `suggested_alpha`
+    # on why a per-model table cannot do this job: the collapse is a function
+    # of THIS direction against THIS stream, and two directions off one
+    # checkpoint differ in it.
+    hottest = int(share.argmax())
+    budget = args.alpha_budget
+    cap = suggested_alpha(share, budget)
+    print(
+        f"\nBY STREAM SHARE: layer {hottest} carries the largest share at "
+        f"{share[hottest]:.1%}; ablating there at alpha 1 removes that much "
+        f"of the residual."
+    )
+    if cap >= 1.0:
+        # NOT "full ablation is fine". A budget loose enough to admit alpha
+        # 1.0 has stopped bounding anything, and on the corpus this was
+        # written against a 30% budget admits exactly the operating point
+        # measured to COLLAPSE the turn. Report that the budget implied no
+        # ceiling and say which number was the judgement.
+        print(
+            f"  No ceiling implied AT THIS BUDGET: the hottest layer's "
+            f"{share[hottest]:.1%} is already inside {budget:.0%}."
+        )
+        print(
+            f"  That is a statement about --alpha-budget, not about safety. "
+            f"On this page's own\n  corpus a 30% budget admits alpha 1.0, "
+            f"which is the arm measured to collapse the turn."
+        )
+    else:
+        print(
+            f"  SUGGESTED ABLATE CEILING: alpha <= {cap:.2f} keeps every "
+            f"layer's removal under {budget:.0%} of the stream."
+        )
+    print(
+        "  A CEILING, NOT A RECOMMENDATION: it says where the edit starts "
+        "damaging what\n  the output head reads, not where it starts working. "
+        "Restricting to a layer band\n  (--steering-layers) raises the usable "
+        "alpha by dropping the hot layers entirely."
     )
     if norms.max() <= 0.0:
         sys.exit("every layer's direction is zero; the two sets are identical")

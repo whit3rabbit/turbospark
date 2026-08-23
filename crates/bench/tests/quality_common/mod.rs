@@ -430,6 +430,49 @@ fn reference_perplexity(
     (nll_sum / answer_ids.len() as f64).exp()
 }
 
+/// Mean NLL per token of `continuation`, teacher-forced after `prompt_ids`.
+///
+/// [`reference_perplexity`] scores a FIXED human-written answer to say how
+/// good a model is. This scores an ARBITRARY id list to say how surprising
+/// some text is TO a model, which is the other direction and is what
+/// `steering_sweep.rs` needs: generate under a steered engine, score under
+/// the unsteered one.
+///
+/// **IT IS NOT A COHERENCE SCORE AND MUST NOT BE READ AS ONE.** A steered
+/// model is SUPPOSED to say things the unsteered model would not, so this
+/// number rises for two unrelated reasons -- the edit working, and the edit
+/// doing damage -- and nothing in it separates them. What separates them is
+/// the SHAPE across a sweep: a gentle rise is the steering, and a jump of
+/// orders of magnitude is the collapse. Read the curve, never one value.
+///
+/// Returns mean NLL rather than its exponential so a caller can average or
+/// difference in log space; `exp()` at the point of display.
+pub fn teacher_forced_nll(
+    runner: &mut RealForwardRunner,
+    prompt_ids: &[i32],
+    continuation: &[i32],
+) -> f64 {
+    assert!(
+        !continuation.is_empty(),
+        "an empty continuation has no mean NLL; the caller has nothing to score"
+    );
+    let mut ids = prompt_ids.to_vec();
+    ids.extend(continuation);
+    runner.reset();
+    let mut logits = vec![LogitValue::from_f32(0.0); runner.vocab_size()];
+    let mut nll_sum = 0.0f64;
+    let first_scored = prompt_ids.len() - 1;
+    for (position, &token) in ids.iter().take(ids.len() - 1).enumerate() {
+        runner
+            .produce(token, position, &mut logits)
+            .expect("forward pass over the continuation");
+        if position >= first_scored {
+            nll_sum += negative_log_prob(&logits, ids[position + 1]);
+        }
+    }
+    nll_sum / continuation.len() as f64
+}
+
 /// `-log softmax(logits)[target]`, as `logsumexp(z) - z[target]`.
 ///
 /// Accumulated in f64 over the full vocabulary (262,144 on both families),

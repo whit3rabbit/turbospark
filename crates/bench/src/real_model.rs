@@ -92,6 +92,48 @@ pub fn open_model_runner_speculative(
     Ok((runner, tokenizer))
 }
 
+/// [`open_model_runner`] carrying a directional-steering policy
+/// (`docs/OBLITERATION.md`).
+///
+/// A SEPARATE entry point for the reason [`open_model_runner_speculative`]
+/// is one, and the reason is sharper here than there: steering CHANGES THE
+/// TOKENS. A frozen digest or a frozen perplexity that silently acquired an
+/// edit to every layer's residual stream would be a different measurement
+/// wearing the old row's name, and unlike a slot count -- which is a
+/// throughput axis only (crate Gotcha 5) -- nothing about the output would
+/// be expected to survive it. Both memory oracles and all six quality gates
+/// reach `open_model_runner*` above and therefore cannot get here by
+/// defaulting into anything.
+///
+/// The set arrives already PARSED, from `repack::control_vector`, because
+/// `crates/runtime` cannot reach the crate that owns the GGUF parser
+/// (AGENTS.md Gotcha 8). `SteeringPolicy::off()` allocates and encodes
+/// nothing, so passing it is identical to the plain opener -- which is what
+/// the probe's null control exists to check rather than assume.
+pub fn open_model_runner_steered(
+    model_dir: &Path,
+    slots: usize,
+    steering: runtime::SteeringPolicy,
+) -> Result<(RealForwardRunner, MfTokenizer), String> {
+    let arch = repack::peek_manifest_arch(model_dir)?;
+    let tokenizer = MfTokenizer::load_from_dir(model_dir).map_err(|e| {
+        format!(
+            "failed to load a tokenizer from {}: {e}",
+            model_dir.display()
+        )
+    })?;
+    let runner = RealForwardRunner::open_with_slot_policy_speculation_and_steering(
+        model_dir,
+        arch,
+        PROTOCOL_MAX_CONTEXT as usize,
+        runtime::ExpertCacheSlots::Fixed(slots),
+        runtime::DraftPolicies::off(),
+        steering,
+    )
+    .map_err(|e| e.to_string())?;
+    Ok((runner, tokenizer))
+}
+
 /// [`open_model_runner`] with the KV window named explicitly.
 ///
 /// THE PROTOCOL'S 4K IS A PROPERTY OF THE HARNESS, NOT OF THE PROMPTS, and
