@@ -118,7 +118,9 @@ pub use synthetic_qwen::{
     build_synthetic_qwen_gdn_moe_install_with_mtp, tiny_qwen_gdn_dense_arch,
     tiny_qwen_gdn_moe_arch,
 };
-pub use synthetic_real::build_synthetic_gemma4_real_install;
+pub use synthetic_real::{
+    build_synthetic_gemma4_real_install, build_synthetic_gemma4_real_install_at_shared_bits,
+};
 /// The checkpoint's own trained context length: read it out of either
 /// intake format, record it in an install, read it back. See the module
 /// docs for why this is install metadata rather than an `ArchConfig` field.

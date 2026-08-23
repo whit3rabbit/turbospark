@@ -72,11 +72,12 @@ pub(crate) struct RealGemmaState {
 /// row keeps describing the engine that shipped before the feature existed.
 ///
 /// The stake is small and saying so is part of the point: on the real Gemma 4
-/// install (hidden 2816, moe_inter 704, top_k 8, `MAX_PREFILL_BATCH` 16) the
-/// seven buffers come to ~442 KiB, well inside the 77 MiB run-to-run spread of
-/// the oracle's own peak. This is consistency with a rule, not a memory win,
-/// and a future `MAX_PREFILL_BATCH` or a wider model is what would make it
-/// one.
+/// install (hidden 2816, ffn_intermediate 2112, moe_inter 704, top_k 8, 16
+/// heads at full_head_dim 512, `MAX_PREFILL_BATCH` 16) the routed seven come
+/// to ~442 KiB and the batched-GEMV seven to ~0.87 MiB, together well inside
+/// the 77 MiB run-to-run spread of the oracle's own peak. This is consistency
+/// with a rule, not a memory win, and a future `MAX_PREFILL_BATCH` or a wider
+/// model is what would make it one.
 ///
 /// **Lazily and not from a flag at open**, because there is no open-time
 /// signal to key on: `prefill_chunk` is a `LogitProducer` method any caller
@@ -94,6 +95,30 @@ pub(crate) struct BatchedPrefillScratch {
     /// through (up to [`gpu::MAX_PREFILL_EXPERT_BINDINGS`] pointers, one
     /// per cache slot, bound once per layer).
     pub(crate) wide_blobs: gpu::RoutedBlobsWideBuffer,
+    /// The M-row siblings of the `DecodeScratch` buffers the batched
+    /// RESIDENT GEMVs write (`MFERENCE_BATCHED_GEMV`). They live here
+    /// rather than in a second lazily-allocated struct because the two
+    /// seams share one allocation point and neither is reachable outside
+    /// the chunk driver.
+    ///
+    /// `batch_q` and `batch_attn_out` are sized at the LARGEST `q_dim`
+    /// this model has, `num_heads * max(head_dim, full_head_dim)`: Gemma 4
+    /// gives its five full layers a 512-wide head against the sliding
+    /// window's 256, so one buffer serves both and the narrow layers
+    /// simply use a prefix of each row. That is the same thing
+    /// `DecodeScratch` does with its single-row `q`.
+    ///
+    /// `x`, `dense_x`, `routed_x`, `router_logits_f32` and `batch_h1` are
+    /// NOT duplicated here -- all five already hold `MAX_PREFILL_BATCH`
+    /// rows, because the residual stream crosses layers and the routed
+    /// half reads its inputs back after a commit.
+    pub(crate) batch_normed: gpu::MetalBuffer,
+    pub(crate) batch_q: gpu::MetalBuffer,
+    pub(crate) batch_attn_out: gpu::MetalBuffer,
+    pub(crate) batch_o: gpu::MetalBuffer,
+    pub(crate) batch_ffn_gate: gpu::MetalBuffer,
+    pub(crate) batch_ffn_up: gpu::MetalBuffer,
+    pub(crate) batch_ffn_act: gpu::MetalBuffer,
 }
 
 impl RealGemmaState {
@@ -204,6 +229,12 @@ impl RealGemmaState {
         let top_k = arch.top_k_experts as usize;
         let hidden = arch.hidden_size as usize;
         let moe_inter = arch.moe_intermediate_size.max(1) as usize;
+        let inter = arch.intermediate_size as usize;
+        // The widest `q_dim` any layer of this model uses. Gemma 4's five
+        // full layers carry a 512-wide head against the sliding window's
+        // 256, so sizing from `head_dim` alone would under-allocate every
+        // full layer's batched q by half.
+        let q_dim = (arch.num_heads * arch.head_dim.max(arch.full_head_dim)) as usize;
         let halfs = |n: usize| context.new_output_buffer((n.max(1) * 2) as u64);
         let batch_rows = |per_token: usize| halfs(MAX_PREFILL_BATCH * per_token);
         self.batched = Some(BatchedPrefillScratch {
@@ -221,6 +252,13 @@ impl RealGemmaState {
                 buffer
             },
             wide_blobs,
+            batch_normed: batch_rows(hidden),
+            batch_q: batch_rows(q_dim),
+            batch_attn_out: batch_rows(q_dim),
+            batch_o: batch_rows(hidden),
+            batch_ffn_gate: batch_rows(inter),
+            batch_ffn_up: batch_rows(inter),
+            batch_ffn_act: batch_rows(inter),
         });
         Ok(())
     }

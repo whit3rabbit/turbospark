@@ -20,7 +20,9 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use half::f16;
-use turbospark_repack::build_synthetic_gemma4_real_install;
+use turbospark_repack::{
+    build_synthetic_gemma4_real_install, build_synthetic_gemma4_real_install_at_shared_bits,
+};
 use turbospark_runtime::{ChunkedPrefillRunner, LogitProducer, RealForwardRunner};
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -46,6 +48,27 @@ const PROMPT: [i32; 11] = [5, 9, 2, 7, 1, 3, 8, 4, 6, 0, 11];
 fn build_install(dir: &std::path::Path, experts: i64) -> model_io::ArchConfig {
     build_synthetic_gemma4_real_install(dir, VOCAB, 2, experts, 4, 8, "tiny-gemma4-real")
         .expect("real-naming install builds")
+}
+
+/// The same fixture with the SHARED EXPERT at four bits, which is what the
+/// real `mlx-community/gemma-4-26b-a4b-it-4bit` install declares. The
+/// default above writes it at EIGHT and is the repo's only coverage of an
+/// INT8 resident GEMV inside a whole Gemma forward pass, so it is left
+/// alone; `encode_gemm_any` is INT4-affine only, so the batched shared
+/// expert is unreachable on it and the eight-bit case is pinned separately
+/// as a REFUSAL below.
+fn build_install_int4_shared(dir: &std::path::Path, experts: i64) -> model_io::ArchConfig {
+    build_synthetic_gemma4_real_install_at_shared_bits(
+        dir,
+        VOCAB,
+        2,
+        experts,
+        4,
+        8,
+        "tiny-gemma4-int4-shared",
+        4,
+    )
+    .expect("real-naming install builds")
 }
 
 /// The reference: every prompt token through `produce_prefill` but the
@@ -322,5 +345,197 @@ fn decoding_continues_correctly_after_a_batched_routed_prefill() {
     assert_eq!(
         batched, sequential,
         "decode diverged after a batched routed prefill"
+    );
+}
+
+// --- The batched resident GEMVs (`MFERENCE_BATCHED_GEMV`) ---
+//
+// `docs/BATCHED_PREFILL.md`'s 29.7% row: the four attention projections
+// always, and the shared expert's three when the routed half is batched
+// too. Same bar as everything above -- byte-identity against the
+// SEQUENTIAL path -- and it is a real bar here rather than a hope, because
+// `dequant_int4_gemm_simd` is measured bit-exact against
+// `dequant_int4_gemv_simd` (`crates/gpu/tests/dequant_int4_gemm_parity.rs`).
+// The setter is used rather than the env var, which would race the other
+// test threads in this process.
+
+/// A prompt long enough to WRAP this fixture's sliding-window ring, which
+/// `PROMPT` cannot: the ring holds `sliding_window + MAX_PREFILL_CHUNK_TOKENS`
+/// = 8 + 128 = 136 tokens, and 136 is not a multiple of `MAX_PREFILL_BATCH`,
+/// so the micro-batch covering positions [128, 144) straddles the wrap.
+/// That is the one case where a batched K/V projection writing M ADJACENT
+/// slots would run past the layer's buffer.
+fn wrapping_prompt() -> Vec<i32> {
+    // Deterministic, every id inside the vocabulary, and not constant --
+    // a repeated token would route every position to the same experts and
+    // hide a bank or slot bug.
+    (0..160)
+        .map(|i| ((i * 37 + 11) % VOCAB as usize) as i32)
+        .collect()
+}
+
+#[test]
+fn a_batched_gemv_chunked_prefill_is_byte_identical_to_the_sequential_one() {
+    let dir = temp_dir();
+    let arch = build_install(&dir, 16);
+    let mut runner = RealForwardRunner::open_with_options(&dir, arch, 4096, 16)
+        .expect("real-naming install opens");
+    runner.set_batched_gemv_prefill(true);
+
+    let expected = sequential_prefill(&mut runner, &PROMPT);
+    assert!(
+        expected.iter().all(|v| v.is_finite()),
+        "the reference itself must be finite before anything is compared to it"
+    );
+    assert!(
+        expected.iter().any(|&v| v != expected[0]),
+        "degenerate reference logits: this fixture cannot discriminate"
+    );
+    let actual = chunked_prefill(&mut runner, &PROMPT, PROMPT.len());
+    assert_eq!(
+        actual, expected,
+        "batched resident GEMVs must reproduce the sequential logits exactly"
+    );
+}
+
+#[test]
+fn the_chunk_boundary_does_not_move_the_logits_under_the_batched_gemvs() {
+    let dir = temp_dir();
+    let arch = build_install(&dir, 16);
+    let mut runner = RealForwardRunner::open_with_options(&dir, arch, 4096, 16)
+        .expect("real-naming install opens");
+    runner.set_batched_gemv_prefill(true);
+
+    let expected = sequential_prefill(&mut runner, &PROMPT);
+    for chunk in [1usize, 2, 3, 5, 11] {
+        let actual = chunked_prefill(&mut runner, &PROMPT, chunk);
+        assert_eq!(
+            actual, expected,
+            "chunk span {chunk} changed the logits under the batched GEMVs"
+        );
+    }
+}
+
+#[test]
+fn both_prefill_seams_together_are_byte_identical_to_the_sequential_one() {
+    // The combination is the configuration a throughput A/B would run and
+    // the only one in which the SHARED EXPERT's three projections batch,
+    // so neither seam alone covers it.
+    let dir = temp_dir();
+    let arch = build_install_int4_shared(&dir, 16);
+    let mut runner = RealForwardRunner::open_with_options(&dir, arch, 4096, 16)
+        .expect("real-naming install opens");
+    runner.set_routed_batch_prefill(true);
+    runner.set_batched_gemv_prefill(true);
+
+    let expected = sequential_prefill(&mut runner, &PROMPT);
+    for chunk in [1usize, 4, 11] {
+        let actual = chunked_prefill(&mut runner, &PROMPT, chunk);
+        assert_eq!(
+            actual, expected,
+            "chunk span {chunk} moved the logits with both seams on"
+        );
+    }
+}
+
+#[test]
+fn a_batched_projection_that_straddles_the_ring_wrap_still_matches_sequential() {
+    // THE CASE `PROMPT` CANNOT REACH. Everything else in this file runs 11
+    // tokens against a 136-token ring, so no write ever wraps and the span
+    // split is dead code the rest of the suite cannot see. Reverting
+    // `ring_spans` to one unsplit call reddens THIS case and nothing else
+    // in the file -- checked, not assumed.
+    let dir = temp_dir();
+    let arch = build_install_int4_shared(&dir, 16);
+    let mut runner = RealForwardRunner::open_with_options(&dir, arch, 4096, 16)
+        .expect("real-naming install opens");
+    let prompt = wrapping_prompt();
+    assert!(
+        prompt.len() > 144,
+        "the prompt must reach past the micro-batch that straddles the wrap at 136"
+    );
+
+    let expected = sequential_prefill(&mut runner, &prompt);
+    assert!(
+        expected.iter().all(|v| v.is_finite()),
+        "the reference itself must be finite before anything is compared to it"
+    );
+
+    runner.set_batched_gemv_prefill(true);
+    let actual = chunked_prefill(&mut runner, &prompt, 16);
+    assert_eq!(
+        actual, expected,
+        "a batched K/V projection straddling the ring wrap moved the logits"
+    );
+
+    runner.set_routed_batch_prefill(true);
+    let both = chunked_prefill(&mut runner, &prompt, 16);
+    assert_eq!(
+        both, expected,
+        "the same, with the routed half batched as well"
+    );
+}
+
+#[test]
+fn a_shared_expert_with_no_batched_kernel_is_refused_by_name() {
+    // AGENTS.md Gotcha 35 at the dispatch: `encode_gemm_any` is
+    // INT4-affine only, and a sequential fallback here would be
+    // numerically identical -- so a caller who asked for the batched
+    // engine would measure the unbatched one and report it as batched.
+    // The DEFAULT fixture writes its shared MLP at eight bits, so it is
+    // exactly the install that has to be refused rather than looped.
+    let dir = temp_dir();
+    let arch = build_install(&dir, 16);
+    let mut runner = RealForwardRunner::open_with_options(&dir, arch, 4096, 16)
+        .expect("real-naming install opens");
+    runner.set_routed_batch_prefill(true);
+    runner.set_batched_gemv_prefill(true);
+
+    runner.reset();
+    let mut logits = vec![f16::from_f32(0.0); VOCAB as usize];
+    let err = runner
+        .prefill_chunk(&PROMPT, 0, &mut logits)
+        .expect_err("an INT8 shared expert has no batched kernel");
+    assert!(
+        err.contains("mlp.gate_proj.weight") && err.contains("no BATCHED kernel"),
+        "the refusal must name the tensor and the reason: {err}"
+    );
+}
+
+#[test]
+fn decoding_continues_correctly_after_a_batched_gemv_prefill() {
+    // Decode itself never batches, so this is really asking whether the
+    // batched prefill left the KV cache and the residual stream where the
+    // sequential one leaves them.
+    let dir = temp_dir();
+    let arch = build_install_int4_shared(&dir, 16);
+    let mut runner = RealForwardRunner::open_with_options(&dir, arch, 4096, 16)
+        .expect("real-naming install opens");
+
+    let mut sequential = Vec::new();
+    sequential_prefill(&mut runner, &PROMPT);
+    for (step, &token) in [3i32, 7, 2].iter().enumerate() {
+        let mut logits = vec![f16::from_f32(0.0); VOCAB as usize];
+        runner
+            .produce(token, PROMPT.len() + step, &mut logits)
+            .expect("decode after sequential prefill succeeds");
+        sequential.push(logits.iter().map(|v| v.to_f32()).collect::<Vec<_>>());
+    }
+
+    runner.set_routed_batch_prefill(true);
+    runner.set_batched_gemv_prefill(true);
+    let mut batched = Vec::new();
+    chunked_prefill(&mut runner, &PROMPT, 4);
+    for (step, &token) in [3i32, 7, 2].iter().enumerate() {
+        let mut logits = vec![f16::from_f32(0.0); VOCAB as usize];
+        runner
+            .produce(token, PROMPT.len() + step, &mut logits)
+            .expect("decode after batched chunked prefill succeeds");
+        batched.push(logits.iter().map(|v| v.to_f32()).collect::<Vec<_>>());
+    }
+
+    assert_eq!(
+        batched, sequential,
+        "decode diverged after a batched-GEMV prefill"
     );
 }

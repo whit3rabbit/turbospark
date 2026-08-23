@@ -81,26 +81,33 @@ impl RealForwardRunner {
             .batch_h1
             .clone();
 
-        // Shared-expert branches for every token up front: each rides its
-        // own committed command buffer, so the GPU drains them while the
-        // host plans and preads the routed union. (`MFERENCE_SHARED_CB=0`
-        // reverts the DECODE path to inline encoding; the batched path
-        // always overlaps, because the union `pread` below is one large
-        // host stall to hide.)
-        for t in 0..m {
-            let slot = moe::RoutedSlot {
-                token: t,
-                bank: 0,
-                protect: HashSet::new(),
-            };
-            self.encode_shared_expert_branch(
-                layer,
-                hidden,
-                inter,
-                use_silu,
-                &slot,
-                (&batch_h1, (t * hidden * 2) as u64),
-            )?;
+        // Shared-expert branches for every token up front, so the GPU
+        // drains them while the host plans and preads the routed union.
+        // (`MFERENCE_SHARED_CB=0` reverts the DECODE path to inline
+        // encoding; the batched path always overlaps, because the union
+        // `pread` below is one large host stall to hide.)
+        //
+        // Under `MFERENCE_BATCHED_GEMV` all M tokens share ONE command
+        // buffer and three M-row GEMMs; otherwise each rides its own
+        // committed buffer with three GEMVs, which is what shipped.
+        if self.batched_gemv_prefill {
+            self.encode_shared_expert_branch_batched(layer, hidden, inter, use_silu, m)?;
+        } else {
+            for t in 0..m {
+                let slot = moe::RoutedSlot {
+                    token: t,
+                    bank: 0,
+                    protect: HashSet::new(),
+                };
+                self.encode_shared_expert_branch(
+                    layer,
+                    hidden,
+                    inter,
+                    use_silu,
+                    &slot,
+                    (&batch_h1, (t * hidden * 2) as u64),
+                )?;
+            }
         }
 
         // Router readback for the WHOLE micro-batch at once, then host

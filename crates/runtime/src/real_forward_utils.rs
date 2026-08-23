@@ -264,9 +264,37 @@ pub(crate) fn topk_softmax(logits: &[f32], k: usize) -> (Vec<usize>, Vec<f32>) {
     (selected, weights)
 }
 
+/// How a `rows`-row write starting at `base` splits across a RING cache's
+/// wrap: `[(row offset within the write, row count); 2]`, the second span
+/// empty whenever the write does not straddle.
+///
+/// `KvCacheManager::k_slot` addresses `position % capacity` and validates
+/// ONE row, while a batched projection hands it `rows` ADJACENT slots -- so
+/// a straddling write runs past the layer's buffer with no assertion in the
+/// way. Splitting costs one extra dispatch per projection on the one write
+/// that straddles and is a no-op on every other one (`spans[1].1 == 0`, and
+/// `spans[0]` is exactly the single call that would otherwise be made).
+///
+/// **TWO CALLERS, AND NEITHER CAN REFUSE INSTEAD.** The DFlash2 drafter's
+/// cache is a real ring of `DFLASH_WINDOW + DFLASH_RING_SLACK`, so it wraps
+/// every 2,176 positions and refusing would end an ordinary generation. The
+/// chunked-prefill driver's batched attention projections write Gemma 4's
+/// sliding-window rings, which wrap every `sliding_window +
+/// MAX_PREFILL_CHUNK_TOKENS` positions. `produce_batched` on the `qwen3_5`
+/// trunk is the one place that DOES refuse, because its full layers wrap
+/// only at `max_context`.
+///
+/// It is written for the ring case and is correct for a LINEAR layer too:
+/// `physical_slot` is `position % capacity` whatever the layer kind, so a
+/// linear layer simply never reaches the second span.
+pub(crate) fn ring_spans(capacity: usize, base: usize, rows: usize) -> [(usize, usize); 2] {
+    let first = rows.min(capacity - base % capacity);
+    [(0, first), (first, rows - first)]
+}
+
 #[cfg(test)]
 mod tests {
-    use super::affine_group_size;
+    use super::{affine_group_size, ring_spans};
     use model_io::ResidentIndexEntry;
 
     /// The real checkpoints' shape, in miniature: `bits` per element, one FP16
@@ -344,5 +372,47 @@ mod tests {
         // this, so reaching it would abort the process rather than error.
         let ragged = entry(1, 12, 4, 1);
         assert!(affine_group_size(&ragged, "w", 1, 12, 1).is_err());
+    }
+
+    /// The spans have to cover the write exactly and land on the physical
+    /// slots `position % capacity` names, or a batched projection writes
+    /// somebody else's rows.
+    #[test]
+    fn a_ring_write_splits_at_the_wrap_and_nowhere_else() {
+        // Clear of the wrap: one span, and it is the whole write.
+        assert_eq!(ring_spans(1152, 0, 16), [(0, 16), (16, 0)]);
+        assert_eq!(ring_spans(1152, 1000, 16), [(0, 16), (16, 0)]);
+        // Ending exactly ON the wrap still does not straddle.
+        assert_eq!(ring_spans(1152, 1136, 16), [(0, 16), (16, 0)]);
+        // Straddling: 4 rows before the wrap, 12 after.
+        assert_eq!(ring_spans(1152, 1148, 16), [(0, 4), (4, 12)]);
+        // A base past the first lap addresses by modulus, not by lap.
+        assert_eq!(ring_spans(1152, 1152 + 1148, 16), [(0, 4), (4, 12)]);
+        // Single-row writes never split, which is what makes the split a
+        // no-op for every per-token caller.
+        assert_eq!(ring_spans(1152, 1151, 1), [(0, 1), (1, 0)]);
+
+        // The spans partition the write, and each row lands where
+        // `physical_slot` would put it. Swept across a whole lap so no
+        // single lucky base carries the claim.
+        for base in 0..(2 * 1152) {
+            for rows in 1..=16usize {
+                let spans = ring_spans(1152, base, rows);
+                assert_eq!(spans[0].1 + spans[1].1, rows, "base {base} rows {rows}");
+                for (offset, count) in spans {
+                    if count == 0 {
+                        continue;
+                    }
+                    // Contiguous from the span's own first physical slot,
+                    // which is what one GEMM writing `count` adjacent rows
+                    // assumes, and inside the buffer.
+                    let start = (base + offset) % 1152;
+                    assert!(start + count <= 1152, "base {base} rows {rows}");
+                    for row in 0..count {
+                        assert_eq!(start + row, (base + offset + row) % 1152);
+                    }
+                }
+            }
+        }
     }
 }

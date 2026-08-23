@@ -242,6 +242,8 @@ cargo test -p turbospark-runtime
     lives in `GdnStateManager`), and a compressed-attention install gives
     EVERY layer a placeholder rather than only its compressed ones. The
     dense-7B arm is cross-checked against the one measured KV figure in the
+   - `MFERENCE_ROUTED_BATCH=1`: inside the chunk driver, runs each layer's routed half as ONE route-list dispatch pair per union-bounded sub-batch instead of per token (`docs/BATCHED_PREFILL.md` steps 2 and 3, `families/gemma4/moe_batch.rs`). INT4-affine blobs only; a GGUF install is refused by layout rather than looped.
+   - `MFERENCE_BATCHED_GEMV=1`: the same driver's RESIDENT GEMVs as M-row GEMMs through `encode_gemm_any` (step 6, the 29.7% row of the prefill dispatch ranking). **It moves the four attention projections always and the shared expert's three only when `MFERENCE_ROUTED_BATCH` is also on** -- the per-token routed pass reads a single-row `h1` at offset 0 and that read is on the DECODE path's signature, so widening it would be a decode change. Norms, RoPE, attention, the residual adds and the router GEMV stay per token. INT4-affine only, refused by name otherwise (which the DEFAULT synthetic fixture triggers: it writes its shared MLP at eight bits where the real install declares four). Output is byte-identical on both arms and that is measured rather than structural -- the batched and single-row INT4 kernels agree bit-for-bit on a fixture built to see reassociation, against a positive control that does not.
     repo: 32 layers at 8,192 comes out to exactly the 1,024 MiB
     `mistral_memory_oracle` records (AGENTS.md Gotcha 40).
 
@@ -268,6 +270,8 @@ cargo test -p turbospark-runtime
     `encode_qwen_layer_dense` with `MTP_PREFIX` in place of `TRUNK_PREFIX`,
     because the published head's single block is a trunk full-attention
     layer's shape field for field. No new kernel, no new dispatch shape.
+
+    **THE RESIDENT GEMVS BATCH TOO, BEHIND A SECOND SEAM** (`docs/BATCHED_PREFILL.md` step 6, `MFERENCE_BATCHED_GEMV`). The four attention projections become M-row GEMMs through `encode_gemm_any`, and so do the shared expert's three when the routed half is batched as well; that second half is also where the host saving is largest, since the per-token shared branch opens and commits its OWN command buffer per token. Everything with no weights to amortize -- norms, per-head norms, RoPE, attention, the residual adds, the router GEMV -- still loops. Two hazards it added, both silent if unguarded: a batched K/V projection can STRADDLE a sliding-window ring's wrap (`k_slot` validates one row, so it would run past the layer's buffer), which `ring_spans` splits; and `batch_q` is sized at the model's WIDEST head, because Gemma 4's five full layers are 512-wide against the sliding window's 256 and no fixture here has `head_dim != full_head_dim` to catch a wrong sizing, so a length check at the dispatch stands in for the test that cannot exist.
 
     **Reusing the trunk's scratch is safe for exactly one reason and it is
     an ORDERING one.** `scratch.x` is re-initialised from the embedding at

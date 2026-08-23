@@ -149,16 +149,28 @@ impl RealForwardRunner {
 
         let mut pending_routed: Option<gpu::CommittedPass> = None;
         for layer in 0..arch.num_layers as usize {
-            for t in 0..m {
-                let position = start_position + t;
-                self.encode_gemma4_layer_attn_and_router(
+            if self.batched_gemv_prefill {
+                // The four attention projections as M-row GEMMs; everything
+                // else in the half stays per token (`MFERENCE_BATCHED_GEMV`).
+                self.encode_gemma4_layer_attn_and_router_batched(
                     &pass,
                     layer,
-                    position,
-                    (position + 1) as u32,
+                    start_position,
                     base,
-                    t,
+                    m,
                 )?;
+            } else {
+                for t in 0..m {
+                    let position = start_position + t;
+                    self.encode_gemma4_layer_attn_and_router(
+                        &pass,
+                        layer,
+                        position,
+                        (position + 1) as u32,
+                        base,
+                        t,
+                    )?;
+                }
             }
 
             let cb1 = pass.commit();

@@ -223,6 +223,49 @@ pub fn build_synthetic_gemma4_real_install(
     sliding_window: i64,
     model_id: &str,
 ) -> Result<ArchConfig, Box<dyn std::error::Error>> {
+    build_synthetic_gemma4_real_install_at_shared_bits(
+        dir,
+        vocab_size,
+        num_layers,
+        num_experts,
+        top_k,
+        sliding_window,
+        model_id,
+        8,
+    )
+}
+
+/// The same fixture with the SHARED EXPERT's three projections written at
+/// `shared_bits` (8 or 4) instead of the default 8.
+///
+/// **THE DEFAULT IS 8 AND THE REAL CHECKPOINT IS 4**, which is not a bug in
+/// either: `mlx-community/gemma-4-26b-a4b-it-4bit` declares
+/// `sharedExpert.weightBits: 4` beside its 8-bit router, while this fixture
+/// has carried an INT8 shared MLP since it was written and is the only
+/// coverage in the repo of the INT8 resident GEMV inside a whole Gemma
+/// forward pass. Flipping the default would silently retire that.
+///
+/// The 4-bit form exists because `encode_gemm_any` is INT4-affine only, so
+/// the chunk driver's batched shared expert (`MFERENCE_BATCHED_GEMV`) is
+/// unreachable on the 8-bit fixture -- it is refused BY NAME rather than
+/// looped, correctly, which means the default fixture cannot gate the very
+/// dispatches that seam moves on the real install. A fixture that cannot
+/// see the property is worse than no fixture.
+#[allow(clippy::too_many_arguments)]
+pub fn build_synthetic_gemma4_real_install_at_shared_bits(
+    dir: &std::path::Path,
+    vocab_size: i64,
+    num_layers: i64,
+    num_experts: i64,
+    top_k: i64,
+    sliding_window: i64,
+    model_id: &str,
+    shared_bits: u32,
+) -> Result<ArchConfig, Box<dyn std::error::Error>> {
+    assert!(
+        shared_bits == 8 || shared_bits == 4,
+        "shared_bits must be 8 or 4; {shared_bits} has no resident GEMV pair here"
+    );
     let mut arch = tiny_gemma4_arch(vocab_size, num_layers);
     arch.num_experts = num_experts;
     arch.top_k_experts = top_k;
@@ -309,13 +352,18 @@ pub fn build_synthetic_gemma4_real_install(
             } else {
                 (INTER, HIDDEN)
             };
-            ts.extend(int8_triple(
+            let triple = if shared_bits == 8 {
+                int8_triple
+            } else {
+                int4_triple
+            };
+            ts.extend(triple(
                 &format!("{p}.mlp.{role}.weight"),
                 rows,
                 cols,
                 seed + 30 + i as u64,
             ));
-            overrides.insert(format!("{p}.mlp.{role}"), 8u32);
+            overrides.insert(format!("{p}.mlp.{role}"), shared_bits);
         }
         for (i, norm) in [
             "input_layernorm",

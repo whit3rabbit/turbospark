@@ -43,24 +43,11 @@ pub(crate) const DFLASH_THETA: f32 = 1e7;
 /// argument that it cancels.
 pub(crate) const RESIDUAL_RESCALE: f32 = 1.0 / DFLASH_RESIDUAL_SCALE;
 
-/// How a `rows`-row write starting at `base` splits across a RING cache's
-/// wrap: `[(row offset within the write, row count); 2]`, the second span
-/// empty whenever the write does not straddle.
-///
-/// `KvCacheManager::k_slot` addresses `position % capacity` and validates
-/// ONE row, while both writers below hand a batched projection `rows`
-/// ADJACENT slots -- so a straddling write runs past the layer's buffer
-/// with no assertion in the way. `produce_batched` REFUSES that case on the
-/// trunk, whose full layers only wrap at `max_context`; the drafter's cache
-/// is a real ring of `DFLASH_WINDOW + DFLASH_RING_SLACK`, so it wraps every
-/// 2,176 positions and refusing would end an ordinary generation. Splitting
-/// costs one extra dispatch per projection on the one round that straddles
-/// and is a no-op on every other round (`spans[1].1 == 0`, and `spans[0]`
-/// is exactly the single call that used to be made).
-pub(crate) fn ring_spans(capacity: usize, base: usize, rows: usize) -> [(usize, usize); 2] {
-    let first = rows.min(capacity - base % capacity);
-    [(0, first), (first, rows - first)]
-}
+/// Re-exported from [`crate::real_forward_utils`], where it moved when the
+/// chunked-prefill driver's batched attention projections needed the same
+/// split on Gemma 4's sliding-window rings. Its call sites here are
+/// unchanged.
+pub(crate) use crate::real_forward_utils::ring_spans;
 
 impl RealForwardRunner {
     /// `SpeculativeProducer::prime_drafter` for the DFlash2 path: write the

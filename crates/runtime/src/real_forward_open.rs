@@ -144,6 +144,7 @@ impl RealForwardRunner {
             shared_cb_overlap: std::env::var("MFERENCE_SHARED_CB").as_deref() != Ok("0"),
             routed_pipeline: std::env::var("MFERENCE_ROUTED_PIPELINE").as_deref() != Ok("0"),
             routed_batch_prefill: std::env::var("MFERENCE_ROUTED_BATCH").as_deref() == Ok("1"),
+            batched_gemv_prefill: std::env::var("MFERENCE_BATCHED_GEMV").as_deref() == Ok("1"),
             routed_layouts,
             router_hist,
             ffn_hist,

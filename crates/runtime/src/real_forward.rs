@@ -170,6 +170,32 @@ pub struct RealForwardRunner {
     /// only: a GGUF install is refused by layout when the seam is on,
     /// never silently looped.
     pub(crate) routed_batch_prefill: bool,
+    /// Whether the chunked-prefill driver runs its RESIDENT GEMVs -- the
+    /// four attention projections and the shared expert's three -- as
+    /// M-row GEMMs instead of one dispatch per token
+    /// (`docs/BATCHED_PREFILL.md`, the 29.7% row of the prefill dispatch
+    /// ranking). `MFERENCE_BATCHED_GEMV=1` turns it on; UNSET keeps the
+    /// per-token path, exactly as the routed seam above does for the other
+    /// half of the layer.
+    ///
+    /// Output is byte-identical either way, and that is a MEASURED claim
+    /// rather than a structural one: `dequant_int4_gemm_simd` and
+    /// `dequant_int4_gemv_simd` agree bit-for-bit on a fixture built to
+    /// see reassociation, against a positive control
+    /// (`dequant_int4_gemm_mma`) that differs on ~39% of outputs on the
+    /// same data (`crates/gpu/tests/dequant_int4_gemm_parity.rs`). So this
+    /// is a throughput axis only. INT4-affine only: any other dtype is
+    /// refused BY NAME when the seam is on, never silently looped.
+    ///
+    /// **WHICH DISPATCHES IT MOVES, EXACTLY, because "batched GEMVs" is
+    /// wider than what it does.** The four attention projections always.
+    /// The shared expert's three ONLY when [`Self::routed_batch_prefill`]
+    /// is also on: the per-token routed pass reads a single-row `h1` at
+    /// offset 0, and that read is on the DECODE path's signature
+    /// (`families/gemma4/moe.rs`), so pointing it at an M-row buffer is a
+    /// decode change rather than a prefill one. The batched routed half
+    /// already writes `batch_h1` per token and needs no such change.
+    pub(crate) batched_gemv_prefill: bool,
     /// Which layout each layer's routed expert blobs use, PER PHASE.
     pub(crate) routed_layouts: Vec<RoutedLayerLayout>,
     /// Per-layer expert-selection histogram, `None` unless
@@ -261,6 +287,14 @@ impl RealForwardRunner {
     #[doc(hidden)]
     pub fn set_routed_batch_prefill(&mut self, on: bool) {
         self.routed_batch_prefill = on;
+    }
+
+    /// Sibling of [`Self::set_shared_cb_overlap`] for
+    /// `MFERENCE_BATCHED_GEMV` (the chunked-prefill driver's batched
+    /// resident GEMVs).
+    #[doc(hidden)]
+    pub fn set_batched_gemv_prefill(&mut self, on: bool) {
+        self.batched_gemv_prefill = on;
     }
 
     /// [`RealForwardRunner::open`] with an explicit KV capacity: the

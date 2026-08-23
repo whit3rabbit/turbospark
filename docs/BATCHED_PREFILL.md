@@ -600,6 +600,68 @@ So this is one phase followed by an optional one, rather than a fork:
    1.0 at M=2), so 32 slots is a precondition for step 3 paying at all.
 5. **Widen to the GGUF pairs** per block type, if and when a GGUF MoE
    install is the one being optimized.
+6. ~~**Batch the RESIDENT GEMVs**~~ -- landed behind
+   `MFERENCE_BATCHED_GEMV=1`, and numbered SIXTH rather than inserted
+   before step 4 because these numbers are cited from `ROADMAP.md`,
+   `crates/runtime/CLAUDE.md` and a comment in `moe_batch.rs`, and
+   renumbering would rot all three. It is independent of steps 4 and 5 and
+   could have been done at any point after step 1.
+
+   It is the 29.7% row of the dispatch ranking above, the largest single
+   term after the routed pair, and it needed **no new kernel**:
+   `dequant_int4_gemm_simd` already existed for the speculative verify, and
+   `encode_gemm_any` already refused every other dtype by name. What
+   changed is which encoder the chunk driver calls.
+
+   **The four attention projections always; the shared expert's three only
+   when `MFERENCE_ROUTED_BATCH` is also on.** The per-token routed pass
+   reads a single-row `h1` at offset 0 and that read is on the DECODE
+   path's signature (`families/gemma4/moe.rs`), so pointing it at an M-row
+   buffer would be a decode change rather than a prefill one; the batched
+   routed half already writes `batch_h1` per token and needs no such
+   change. The shared expert is also where the host saving is largest --
+   the per-token form opens and commits its OWN command buffer per token,
+   so a 16-token micro-batch went from 16 command buffers per layer to 1.
+
+   Norms, per-head norms, RoPE, attention, the residual adds and the
+   router GEMV all still loop per token, which is the same line
+   `families/qwen/batched_layers.rs` draws and the one the composite
+   assumes (they are the 21.2% with nothing to amortize; attention is step
+   4).
+
+   **Byte-identity is the gate and it is a MEASURED claim.**
+   `the_gemm_and_the_gemv_agree_on_data_that_can_see_reassociation` runs
+   both kernels on ragged BF16 companions and full-mantissa FP16
+   activations and they agree BIT-FOR-BIT, against a positive control
+   (`dequant_int4_gemm_mma`) that differs on ~39% of outputs on the same
+   fixture. So the seam is a throughput axis only, and
+   `real_forward_gemma4_chunked.rs` asserts it against the SEQUENTIAL path
+   at five chunk spans.
+
+   Two things the bring-up found that the plan did not predict:
+
+   - **A batched K/V projection can straddle the sliding-window ring's
+     wrap**, and `k_slot` validates ONE row, so it would run past the
+     layer's buffer with nothing in the way. Split with `ring_spans`, which
+     the DFlash2 drafter already had for its own ring and which moved to
+     `real_forward_utils.rs` for the second caller. `PROMPT` in the chunked
+     test file is 11 tokens against a 136-token ring and cannot reach it;
+     the case that does uses a 160-token prompt, and reverting the split
+     reddens that one case and nothing else in the file.
+   - **The synthetic fixture writes its shared MLP at EIGHT bits where the
+     real install declares four**, so the default fixture cannot gate the
+     dispatches this seam moves -- it is refused by name instead, correctly.
+     That INT8 is deliberate elsewhere (it is the repo's only coverage of an
+     INT8 resident GEMV inside a whole Gemma pass), so it stays, and
+     `build_synthetic_gemma4_real_install_at_shared_bits` is the four-bit
+     sibling the byte-identity cases build. Both the refusal and the
+     agreement are pinned.
+
+   **NO THROUGHPUT NUMBER IS RECORDED HERE YET**, deliberately: it landed
+   on a machine running another build, and Gotcha 43 says a prefill A/B
+   taken then is contamination rather than a measurement. The seam ships
+   OFF and the interleaved pairs are owed on a quiet machine, alongside the
+   prefill energy capture.
 
 ## Gates this owes
 
