@@ -41,7 +41,8 @@ crates/bench/
 |   +-- dflash2_accept_length_probe.rs # The BLOCK drafter's sweep, plus the losslessness floor
 |   +-- dflash2_bisect_probe.rs # Localizes a broken drafter; one runner, one variable
 |   +-- steering_probe.rs   # Live steering: inert at alpha 0, and a real edit above the floor
-|   \-- steering_sweep.rs   # Which alpha is usable: steered output scored under the UNSTEERED model
+|   +-- steering_sweep.rs   # Which alpha is usable: steered output scored under the UNSTEERED model
+|   \-- mapped_expert_probe.rs # What phys_footprint charges for an mmap Metal wrapped and the GPU read
 \-- prompts/
     +-- quality-v1/         # Quality gate reference prompt fixtures
     |   \-- assistant-reference.txt
@@ -334,7 +335,44 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
 
 ## Crate Gotchas
 
-1. **Footprint Accounting**: `phys_footprint` includes resident weight mapping (`mmap` pinned by Metal `newBufferWithBytesNoCopy`) + KV cache + expert slot capacity + process baseline. The slot term is `slots x layers x expert_stride` and it DOMINATES, so depth counts as much as expert size: Qwen3-30B-A3B peaks at 2,751 MiB against Gemma 4's ~2,100 because it is 48 layers deep at a ~2.9 MiB expert (2,094 MiB of slot capacity) rather than 30 at ~3.2 MiB. Do not assume a new family lands in the 1.6-2.2 GiB band; compute the product.
+1. **Footprint Accounting**: `phys_footprint` is KV cache + expert slot capacity + process baseline. The slot term DOMINATES at `slots x layers x expert_stride`, so depth counts as much as expert size: Qwen3-30B-A3B peaks at 2,751 MiB against Gemma 4's ~2,100 because it is 48 layers deep at a ~2.9 MiB expert (2,094 MiB of slot capacity) rather than 30 at ~3.2 MiB. Do not assume a new family lands in the 1.6-2.2 GiB band; compute the product.
+
+   **`phys_footprint` DOES NOT COUNT A FILE-BACKED MAPPING, EVEN ONCE METAL HAS
+   WRAPPED IT AND THE GPU HAS READ IT.** This gotcha used to open "includes
+   resident weight mapping (`mmap` pinned by Metal `newBufferWithBytesNoCopy`)".
+   That was never measured, it is wrong, and it contradicted Gotcha 11 in this
+   same file (a dense install's 4.07 GiB of weights reading a 684 MiB footprint)
+   plus AGENTS.md Gotcha 40. Two entries disagreed with it and it survived anyway.
+   MEASURED 2026-08-23 on the real Gemma 4 install
+   (`tests/mapped_expert_probe.rs`), mapping the whole 12.3 GB expert table as 30
+   per-layer files:
+
+   | stage | phys_footprint | delta |
+   |---|---|---|
+   | baseline | 31.9 MiB | |
+   | after `mmap` of 12.3 GB | 31.9 MiB | +0.0 |
+   | after 30 `newBufferWithBytesNoCopy` wraps | 34.8 MiB | **+2.9** |
+   | after ONE GPU expert read | 174.1 MiB | +139.2 |
+   | after one expert on each of 30 layers | 174.2 MiB | **+0.1** |
+
+   The wrap costs the buffer OBJECTS and nothing else. The +139.2 is one-time MSL
+   pipeline compilation, not pages: the sweep after it faulted in ~96 MiB of fresh
+   file-backed pages across 30 separate mappings, through the GPU, and moved the
+   counter by 0.1 MiB. Clean file-backed pages are excluded whoever reads them.
+
+   **AND THE SLOT TERM IS CONDITIONAL ON THE RESIDENCY MODE SINCE 2026-08-23.**
+   Under `MFERENCE_EXPERT_RESIDENCY=mapped` there is no slot cache at all -- the
+   routed experts are read in place out of one `mmap` per layer -- so the dominant
+   term goes to zero and what is left is KV plus baseline. Every frozen row in this
+   crate is a STREAMED row, and the seam is off by default precisely so they stand;
+   a mapped row is a NEW row rather than a re-freeze of an old one. See
+   `docs/EXPERT_RESIDENCY.md` and AGENTS.md Gotcha 36, whose slot-cache
+   multiplication is conditional on the same mode.
+
+   **What survives from the old text is the warning that motivated it**: do not
+   "explain" a footprint number by assuming you know which term dominates. Measure
+   it. `tests/memory_oracle.rs` asserts the session peak against the published
+   ceiling, and separately that a replayed warm case stops growing (Gotcha 17).
 2. **Cold GPU Benchmark Artifacts**: The first run after a build executes on a cold GPU at low DVFS clock states (up to 53% slower). Always discard at least one warmup run.
 3. **Power Source & Cross-Session Ratios**: Thermal throttling and battery state (`pmset -g ps`) alter absolute tok/s. Always measure ratios back-to-back in the same session.
 

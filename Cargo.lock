@@ -1982,6 +1982,7 @@ dependencies = [
  "serde_json",
  "turbospark-catalog",
  "turbospark-core",
+ "turbospark-gpu",
  "turbospark-model-io",
  "turbospark-repack",
  "turbospark-runtime",

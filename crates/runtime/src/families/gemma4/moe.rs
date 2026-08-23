@@ -49,33 +49,56 @@ impl RealForwardRunner {
         }
         let layer_scalar = real.layer_scalar[layer];
 
-        let streamer = self.streamers[layer].as_mut().ok_or_else(|| {
-            RealForwardError::Unsupported(format!(
-                "real Gemma 4 layer {layer} has no packed-expert streamer"
-            ))
-        })?;
-        // `protect` is empty on the decode path, so this is the same call it
-        // has always made. Inside a chunk it names the slots the previous
-        // token's in-flight command buffer is reading; the cache ASSERTS
-        // rather than degrades when it cannot honour that plus the misses
-        // (`ExpertCache::plan_if_possible`), so the caller has already
-        // ensured the arithmetic works or retired the buffer first.
-        let plan = streamer.plan_experts_cached(&selected, &slot.protect);
-        let (requests, hits) = (plan.experts.len() as u64, plan.hits as u64);
-        self.phases.expert_requests += requests;
-        self.phases.expert_hits += hits;
-        self.phases.router_nanos += t_router.elapsed().as_nanos() as u64;
-
+        // MAPPED RESIDENCY SKIPS BOTH THE PLAN AND THE `pread`. Every expert
+        // is already addressable in its layer's mapping, so there is no cache
+        // to consult and nothing to copy -- which is the whole of what this
+        // mode buys (the `expert io` bucket was 3.86 ms/token at 32 slots on
+        // this install, and the slot cache it replaces was 1.5-3.0 GiB).
+        //
+        // `slots` carries a different KIND of handle in each arm (a cache
+        // slot index against an expert id), which is why the two blob-ref
+        // constructions below are separate rather than sharing a lookup: the
+        // two index different things and a shared one would read plausibly
+        // wrong bytes rather than failing.
+        let mapped_active = self.mapped.buffers.get(layer).is_some_and(Option::is_some);
         let order: Vec<usize> = (0..selected.len()).collect();
+        let slots: Vec<usize> = if mapped_active {
+            // Counted as requests that all hit, because on this path every
+            // expert IS resident by construction. Reporting zero requests
+            // would make `MFERENCE_PHASES`'s hit rate undefined rather than
+            // perfect, and the two modes have to stay comparable.
+            self.phases.expert_requests += selected.len() as u64;
+            self.phases.expert_hits += selected.len() as u64;
+            self.phases.router_nanos += t_router.elapsed().as_nanos() as u64;
+            selected.clone()
+        } else {
+            let streamer = self.streamers[layer].as_mut().ok_or_else(|| {
+                RealForwardError::Unsupported(format!(
+                    "real Gemma 4 layer {layer} has no packed-expert streamer"
+                ))
+            })?;
+            // `protect` is empty on the decode path, so this is the same call it
+            // has always made. Inside a chunk it names the slots the previous
+            // token's in-flight command buffer is reading; the cache ASSERTS
+            // rather than degrades when it cannot honour that plus the misses
+            // (`ExpertCache::plan_if_possible`), so the caller has already
+            // ensured the arithmetic works or retired the buffer first.
+            let plan = streamer.plan_experts_cached(&selected, &slot.protect);
+            let (requests, hits) = (plan.experts.len() as u64, plan.hits as u64);
+            self.phases.expert_requests += requests;
+            self.phases.expert_hits += hits;
+            self.phases.router_nanos += t_router.elapsed().as_nanos() as u64;
 
-        let streamer = self.streamers[layer]
-            .as_mut()
-            .expect("streamer presence checked above");
-        let t_io = Instant::now();
-        let slots = streamer
-            .execute_expert_cache_plan(&plan)
-            .map_err(|e| RealForwardError::Unsupported(format!("expert stream: {e}")))?;
-        self.phases.expert_io_nanos += t_io.elapsed().as_nanos() as u64;
+            let streamer = self.streamers[layer]
+                .as_mut()
+                .expect("streamer presence checked above");
+            let t_io = Instant::now();
+            let slots = streamer
+                .execute_expert_cache_plan(&plan)
+                .map_err(|e| RealForwardError::Unsupported(format!("expert stream: {e}")))?;
+            self.phases.expert_io_nanos += t_io.elapsed().as_nanos() as u64;
+            slots
+        };
 
         if !self.shared_cb_overlap {
             let h1 = self.real.as_ref().expect("real state present").h1.clone();
@@ -98,11 +121,29 @@ impl RealForwardRunner {
             &f16_slice_to_le_bytes(&routing16),
         );
 
-        let layer_slots = &self.slot_buffers[layer];
-        let blob_refs: Vec<(&gpu::MetalBuffer, u64)> = ordered
-            .iter()
-            .map(|&(cache_slot, _)| (&layer_slots[cache_slot], 0u64))
-            .collect();
+        // The two arms differ only in WHERE a blob lives, never in the order
+        // the slots are dispatched: that stays the router's own ranking in
+        // both, which is what keeps output byte-identical across residency
+        // modes for the same reason it is byte-identical across slot counts
+        // (AGENTS.md Gotcha 27).
+        let blob_refs: Vec<(&gpu::MetalBuffer, u64)> = if mapped_active {
+            let buffer = self.mapped.buffers[layer]
+                .as_ref()
+                .expect("mapped residency checked above");
+            let mapping = self.mapped.layers[layer]
+                .as_ref()
+                .expect("mapped residency checked above");
+            ordered
+                .iter()
+                .map(|&(expert, _)| (buffer, mapping.expert_offset(expert)))
+                .collect()
+        } else {
+            let layer_slots = &self.slot_buffers[layer];
+            ordered
+                .iter()
+                .map(|&(cache_slot, _)| (&layer_slots[cache_slot], 0u64))
+                .collect()
+        };
         // Selected by FIELD rather than through a `&self` accessor: this
         // binding is live across `routed.bind(&mut self.context, ..)` and
         // the two phase encodes, and a method call would borrow all of

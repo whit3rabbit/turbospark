@@ -60,6 +60,36 @@ impl RealForwardRunner {
                 layout.phase1, layout.phase2
             )));
         }
+        // MAPPED RESIDENCY AND THE BATCHED ROUTED PAIR CANNOT BOTH RUN, and
+        // the reason is structural rather than a missing branch. This driver
+        // binds `slot_buffers[layer]` ONCE per layer -- an array indexed by
+        // CACHE SLOT, which `MoePrefillRoute::slot` indexes into -- because
+        // sub-batches share the layer's slot cache. Mapped residency has no
+        // slot cache at all: it has one buffer per layer plus a per-expert
+        // offset, and the experts to bind are the SUB-BATCH's union, which
+        // changes inside the loop below. Serving both means re-binding per
+        // sub-batch instead of per layer, which is a change to this driver
+        // rather than a branch in it.
+        //
+        // Refused here rather than at `open` because `set_routed_batch_prefill`
+        // can flip this seam AFTER open, so an open-time env read would miss
+        // the setter -- and this is the site that genuinely cannot serve the
+        // request, which is where the driver's other refusals already live.
+        //
+        // Deleting this arm was MEASURED rather than reasoned about: the run
+        // trips `assert!(!blobs.is_empty() ...)` in `gpu::moe_prefill_batch`'s
+        // argument encoder, because `slot_buffers[layer]` is empty under this
+        // mode. That is a plain `assert!` and aborts in RELEASE, so the
+        // failure is loud rather than silent -- but it names neither seam and
+        // comes from a crate the caller never asked for.
+        if self.mapped.buffers.get(layer).is_some_and(Option::is_some) {
+            return Err(RealForwardError::Unsupported(format!(
+                "batched routed prefill (MFERENCE_ROUTED_BATCH) and mapped expert \
+                 residency (MFERENCE_EXPERT_RESIDENCY=mapped) cannot be combined: this \
+                 pair binds one buffer per CACHE SLOT and mapped residency has no slot \
+                 cache (layer {layer}). Pick one"
+            )));
+        }
         if self.slot_buffers[layer].len() > gpu::MAX_PREFILL_EXPERT_BINDINGS {
             return Err(RealForwardError::Unsupported(format!(
                 "batched routed prefill needs slot indices below {}; this install has {} slots",

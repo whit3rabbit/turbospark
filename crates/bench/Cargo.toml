@@ -45,3 +45,11 @@ turbospark-vision-io = { path = "../vision-io", version = "0.1.0" }
 # (`runtime`, `repack`, `catalog` and `server` all take it); nothing new
 # enters here.
 serde_json = "1"
+# `tests/mapped_expert_probe.rs`: it wraps the expert table in Metal
+# buffers itself rather than going through a runner, so it needs the
+# device and the GEMV directly. Here rather than in `crates/gpu`'s own
+# tests because the question is a phys_footprint one and
+# `src/memory.rs`'s sampler is the instrument every other memory number
+# in this repo comes from; duplicating that mach FFI to keep the test
+# next to the kernel is the drift this crate's oracle rows exist to avoid.
+gpu = { package = "turbospark-gpu", path = "../gpu", version = "0.1.0" }

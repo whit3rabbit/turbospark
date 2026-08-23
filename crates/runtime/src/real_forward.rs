@@ -98,6 +98,14 @@ pub struct RealForwardRunner {
     /// before the allocations they alias.
     pub(crate) slot_buffers: Vec<Vec<gpu::MetalBuffer>>,
     pub(crate) streamers: Vec<Option<streaming::PreadExpertStreamer>>,
+    /// MAPPED expert residency (`MFERENCE_EXPERT_RESIDENCY=mapped`): the
+    /// routed experts read in place out of one `mmap` per layer instead of
+    /// being `pread`-copied into the slots above. Empty unless the seam is
+    /// on, and when it is on `streamers` and `slot_buffers` are empty
+    /// instead -- the two are alternatives, which is why the routed path
+    /// branches on `mapped.buffers[layer].is_some()` rather than on a
+    /// separate mode flag that could disagree with what was allocated.
+    pub(crate) mapped: crate::real_forward_init::MappedResidency,
     /// What the slot policy actually resolved to, kept so a caller can
     /// REPORT it. Under `ExpertCacheSlots::Auto` the number is a property of
     /// this machine and this install, so a startup line that echoed the

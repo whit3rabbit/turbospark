@@ -129,7 +129,7 @@ live network).
 
   | Upstream experiment | Upstream result | This port | Status |
   |---|---|---|---|
-  | Bounded `pread` beats `mmap` for cold experts (2.79 vs 9.88 ms) | production | `PreadExpertStreamer` is the production path | ported |
+  | Bounded `pread` beats `mmap` for cold experts (2.79 vs 9.88 ms) | production | `PreadExpertStreamer` is the production path, and upstream's COLD result reproduces here. `MappedExpertLayer` (2026-08-23) measures the case upstream did not: WARM and on the memory axis. Peak `phys_footprint` 3,721 -> 606 MiB and decode 51.9 -> 69.8 tok/s on the real Gemma 4 install, output byte-identical, because the slot cache holds a copy of bytes the GPU can read in place. Cold it is far worse exactly as upstream found (first prefill 74.8s against 2.5s). Both paths ship; `docs/EXPERT_RESIDENCY.md` | ported, and extended on an axis upstream did not measure |
   | LFU expert cache (io 72.6 -> 64.8 ms) | production | LFU/LRU policy in `crates/streaming` | ported |
   | Split attention (4.1x end to end at 4K) | production | `chunks_for` split-KV: 11.7-15.8x kernel-isolated at 4096, +25% decode at 800 context (Phase 6 below) | ported, confirmed |
   | FP16 SWA ring buffer (saved 575-591 MiB) | production | static KV accounting: 922.7 - 319.8 MB = 575.0 MiB saved (`docs/BENCHMARKING.md`) | ported, exact match |
