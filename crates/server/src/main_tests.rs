@@ -234,3 +234,187 @@ fn tailnet_host_never_falls_back() {
     assert!(tailnet_host("100.064.0.1").is_err());
     assert!(tailnet_host("100.64.0.1;rm -rf /").is_err());
 }
+
+// --- directional steering (docs/OBLITERATION.md) --------------------------
+//
+// The CLI's half of these six flags is covered by `crates/invocation`'s parse
+// tests. THIS parser is a second implementation of the same precedence rules
+// against a different type, and until now none of the cases above touched it,
+// so the two could drift with nothing to catch it. The order-dependence case
+// below is the one no other file can cover at all: `crates/invocation`
+// collects every flag before resolving anything, while this loop applies the
+// layer range as it goes and has to repair it in two places.
+
+#[test]
+fn steering_defaults_to_off_and_reads_no_file() {
+    let d = parse(&["--model", "/tmp/m"]).unwrap().unwrap();
+    assert!(d.steering.set.is_none());
+    assert!(!d.steering.is_active());
+    assert_eq!(d.steering.alpha, 0.0);
+}
+
+/// A steering PARAMETER without `--steering` is refused rather than ignored.
+/// Without a direction set the process serves every request unsteered, so the
+/// flag would be a command line saying one thing while the server does
+/// another -- on the one axis here that changes the TOKENS.
+///
+/// All five, because they reach the parsed policy by three different routes:
+/// `--steering-mode` and `--steering-scale` are held aside, `--steering-target`
+/// and `--steering-gate` are written straight into it, and
+/// `--steering-layers` is held aside AND replayed.
+#[test]
+fn a_steering_parameter_without_a_vector_is_refused() {
+    for (flag, value) in [
+        ("--steering-mode", "renorm"),
+        ("--steering-scale", "0.8"),
+        ("--steering-layers", "30:40"),
+        ("--steering-target", "2.5"),
+        ("--steering-gate", "0.5"),
+    ] {
+        let err = parse(&["--model", "/tmp/m", flag, value])
+            .expect_err(&format!("{flag} alone should be refused"));
+        assert!(
+            err.contains(flag) && err.contains("--steering"),
+            "message should name the flag and what it needs: {err}"
+        );
+    }
+}
+
+/// The rejection has to be SPELLED from the accepted set. This message named
+/// three modes for a release after `renorm` landed, so a caller who misspelled
+/// the fourth was told it did not exist.
+///
+/// TWO ASSERTIONS, because the first one alone is SELF-REFERENTIAL and was
+/// measured to be: the message is built from `STEERING_MODE_NAMES`, so
+/// iterating that same list only proves the message was not hand-written, and
+/// shortening the list leaves this green (checked -- it is `crates/core`'s
+/// `the_mode_names_are_exactly_what_parse_accepts` that reddens there). The
+/// literal is what pins the regression that actually happened, and the loop
+/// is what pins the mechanism that prevents it recurring. Neither replaces the
+/// other.
+#[test]
+fn an_unknown_steering_mode_names_every_mode_it_accepts() {
+    let err = parse(&["--model", "/tmp/m", "--steering-mode", "renrom"])
+        .expect_err("a misspelled mode should be refused");
+    assert!(
+        err.contains("renorm"),
+        "the fourth mode is the one this message lost once, and reads: {err}"
+    );
+    for name in foundation::STEERING_MODE_NAMES {
+        assert!(
+            err.contains(name),
+            "the rejection should name {name}, and reads: {err}"
+        );
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn write_vector(tag: &str, layers: usize, mode: Option<foundation::SteeringMode>) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "turbospark-server-steer-{}-{tag}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("v.gguf");
+    let dirs: Vec<Vec<f32>> = (0..layers)
+        .map(|l| (0..8).map(|i| (l * 8 + i) as f32 * 0.125).collect())
+        .collect();
+    std::fs::write(
+        &path,
+        repack::control_vector::write_control_vector(&dirs, "qwen35", mode),
+    )
+    .unwrap();
+    path
+}
+
+/// Precedence, stated the same way `crates/cli`'s `resolve_steering` states
+/// it: the flag wins over the file's declared mode, the file's over the
+/// default. A set present with no `--steering-scale` means FULL strength, not
+/// the zero `SteeringPolicy::off()` carries -- that last one is the trap,
+/// since inheriting the default would load a vector and apply the identity.
+#[cfg(target_os = "macos")]
+#[test]
+fn the_mode_comes_from_the_flag_then_the_file_then_the_default() {
+    let declared = write_vector("declared", 4, Some(foundation::SteeringMode::Renorm));
+    let bare = write_vector("bare", 4, None);
+    let p = |args: &[&str]| parse(args).unwrap().unwrap().steering;
+
+    let from_file = p(&[
+        "--model",
+        "/tmp/m",
+        "--steering",
+        declared.to_str().unwrap(),
+    ]);
+    assert_eq!(from_file.mode, foundation::SteeringMode::Renorm);
+    assert_eq!(from_file.alpha, 1.0, "a loaded vector means full strength");
+
+    let from_flag = p(&[
+        "--model",
+        "/tmp/m",
+        "--steering",
+        declared.to_str().unwrap(),
+        "--steering-mode",
+        "add",
+    ]);
+    assert_eq!(from_flag.mode, foundation::SteeringMode::Add);
+
+    let defaulted = p(&["--model", "/tmp/m", "--steering", bare.to_str().unwrap()]);
+    assert_eq!(defaulted.mode, foundation::SteeringMode::Ablate);
+}
+
+/// `--steering-layers` must survive BOTH orders, and this loop is the only
+/// place in the workspace where that is a live question: it restricts the set
+/// as the flag arrives, so the range has to be replayed when the vector comes
+/// second and applied on arrival when it comes first. Getting one half wrong
+/// steers the layers the caller excluded, which is fluent and wrong.
+#[cfg(target_os = "macos")]
+#[test]
+fn a_layer_range_applies_whichever_side_of_the_vector_it_is_given() {
+    let v = write_vector("range", 6, None);
+    let path = v.to_str().unwrap();
+    let covered = |args: &[&str]| {
+        let s = parse(args).unwrap().unwrap().steering;
+        let set = s.set.expect("a vector was given");
+        (
+            set.covered_layers(),
+            set.layer(0).is_some(),
+            set.layer(3).is_some(),
+        )
+    };
+
+    let after = covered(&[
+        "--model",
+        "/tmp/m",
+        "--steering",
+        path,
+        "--steering-layers",
+        "2:4",
+    ]);
+    let before = covered(&[
+        "--model",
+        "/tmp/m",
+        "--steering-layers",
+        "2:4",
+        "--steering",
+        path,
+    ]);
+    assert_eq!(after, (3, false, true));
+    assert_eq!(before, after, "the range must not depend on flag order");
+}
+
+/// An inverted range is refused here rather than silently selecting nothing,
+/// matching `crates/invocation`'s `parse_layer_range`.
+#[cfg(target_os = "macos")]
+#[test]
+fn an_inverted_layer_range_is_refused() {
+    let v = write_vector("inverted", 6, None);
+    assert!(parse(&[
+        "--model",
+        "/tmp/m",
+        "--steering",
+        v.to_str().unwrap(),
+        "--steering-layers",
+        "4:2",
+    ])
+    .is_err());
+}

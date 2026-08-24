@@ -317,3 +317,41 @@ fn a_negative_steering_gate_is_refused() {
         "--steering-gate",
     );
 }
+
+/// A steering PARAMETER without `--steering` is refused rather than ignored,
+/// on the same ground the inverted range above is: the run would decode
+/// unsteered while the command line says otherwise, so a caller measuring an
+/// edit would measure the engine without one.
+///
+/// All five are checked because they reach the request by three different
+/// routes -- three are `Option` fields, and `--steering-target` and
+/// `--steering-gate` are plain floats legal AT their 0.0 default, so those two
+/// need an explicit-supplied flag before the check can see them at all. A
+/// version of this test covering only the `Option` three would leave that half
+/// unguarded.
+#[test]
+fn a_steering_parameter_without_a_vector_is_refused() {
+    for (flag, value) in [
+        ("--steering-mode", "renorm"),
+        ("--steering-scale", "0.8"),
+        ("--steering-layers", "30:40"),
+        ("--steering-target", "2.5"),
+        ("--steering-gate", "0.5"),
+    ] {
+        expect_invalid_value(
+            parse(&tok(&["--model", "m.bin", "--prompt", "hi", flag, value])),
+            flag,
+        );
+    }
+}
+
+/// The check must not fire on the values those two flags carry by DEFAULT.
+/// Passing `--steering-target 0` explicitly is still an orphan and is refused
+/// above; passing nothing is an ordinary invocation and must parse.
+#[test]
+fn an_invocation_with_no_steering_flags_at_all_still_parses() {
+    assert!(matches!(
+        parse(&tok(&["--model", "m.bin", "--prompt", "hi"])),
+        ParseOutcome::Success(_)
+    ));
+}

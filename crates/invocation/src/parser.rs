@@ -72,6 +72,12 @@ pub fn parse(tokens: &[String]) -> ParseOutcome {
     let mut steering_layers: Option<(u32, u32)> = None;
     let mut steering_target: f32 = 0.0;
     let mut steering_gate: f32 = 0.0;
+    // Tracked because both default to 0.0 and both are legal AT 0.0, so the
+    // value cannot say whether a caller supplied it. Same shape as
+    // `top_p_explicit` below, and needed for the same kind of whole-invocation
+    // check.
+    let mut steering_target_explicit = false;
+    let mut steering_gate_explicit = false;
     let mut prefill_chunk = PrefillChunk::default();
     let mut power_profile: Option<PowerProfile> = None;
     let mut max_tokens_per_sec: Option<f64> = None;
@@ -215,11 +221,17 @@ pub fn parse(tokens: &[String]) -> ParseOutcome {
                 _ => return invalid("--steering-scale", value),
             },
             "--steering-target" => match value.parse::<f32>() {
-                Ok(v) if v.is_finite() => steering_target = v,
+                Ok(v) if v.is_finite() => {
+                    steering_target = v;
+                    steering_target_explicit = true;
+                }
                 _ => return invalid("--steering-target", value),
             },
             "--steering-gate" => match value.parse::<f32>() {
-                Ok(v) if v.is_finite() && v >= 0.0 => steering_gate = v,
+                Ok(v) if v.is_finite() && v >= 0.0 => {
+                    steering_gate = v;
+                    steering_gate_explicit = true;
+                }
                 _ => return invalid("--steering-gate", value),
             },
             // START:END, inclusive and 0-based. An inverted range is refused
@@ -307,6 +319,44 @@ pub fn parse(tokens: &[String]) -> ParseOutcome {
             value: "cumulative-probability truncation below 1.0 requires rank-based truncation to be enabled"
                 .to_string(),
         });
+    }
+
+    // A STEERING PARAMETER WITHOUT `--steering` IS REFUSED, NOT IGNORED, and
+    // it is the same argument the inverted layer range is refused on: the run
+    // would decode unsteered while the command line says otherwise, so a
+    // caller measuring an edit would measure the engine without one. Every
+    // other silent-no-op on this path is already closed -- an empty layer
+    // range, a family that does not dispatch the edit, a direction file that
+    // will not parse -- and this was the one left open, because five of the
+    // six flags mean nothing on their own and the sixth is what turns the
+    // feature on.
+    //
+    // Reported against the first offending flag in a FIXED order rather than
+    // all of them, matching the mutually-exclusive checks above: a caller
+    // fixes one flag per run either way, and one name keeps the payload a
+    // sentence.
+    if steering.is_none() {
+        let orphan = if steering_mode.is_some() {
+            Some("--steering-mode")
+        } else if steering_scale.is_some() {
+            Some("--steering-scale")
+        } else if steering_layers.is_some() {
+            Some("--steering-layers")
+        } else if steering_target_explicit {
+            Some("--steering-target")
+        } else if steering_gate_explicit {
+            Some("--steering-gate")
+        } else {
+            None
+        };
+        if let Some(option) = orphan {
+            return ParseOutcome::Failure(ParseFailure::InvalidValue {
+                option,
+                value: "a steering parameter needs --steering; without a direction set the \
+                        run decodes unsteered and the parameter does nothing"
+                    .to_string(),
+            });
+        }
     }
 
     ParseOutcome::Success(InvocationRequest {

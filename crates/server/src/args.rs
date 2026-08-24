@@ -161,6 +161,11 @@ pub fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
     // `crates/cli`'s `resolve_steering` applies, stated the same way.
     let mut steering_mode: Option<foundation::SteeringMode> = None;
     let mut steering_scale: Option<f32> = None;
+    // Both of these land DIRECTLY in `parsed.steering` and both are legal at
+    // the 0.0 the `off()` default already carries, so the value cannot say
+    // whether a caller supplied one. Tracked for the orphan check below.
+    let mut steering_target_explicit = false;
+    let mut steering_gate_explicit = false;
     let mut i = 0;
     while i < args.len() {
         let flag = args[i].as_str();
@@ -250,9 +255,18 @@ pub fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
                 }
                 parsed.steering.set = Some(set);
             }
+            // The accepted set is `SteeringMode::parse`'s and the message has
+            // to be spelled from it rather than recalled: this read "ablate,
+            // add or clamp" for a release after `renorm` landed, so a caller
+            // who misspelled the fourth mode was told there were three.
             "--steering-mode" => {
                 steering_mode = Some(foundation::SteeringMode::parse(value.as_str()).ok_or_else(
-                    || format!("--steering-mode must be ablate, add or clamp, not {value}"),
+                    || {
+                        format!(
+                            "--steering-mode must be one of {}, not {value}",
+                            foundation::STEERING_MODE_NAMES.join(", ")
+                        )
+                    },
                 )?);
             }
             "--steering-scale" => {
@@ -273,7 +287,8 @@ pub fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
                             "--steering-target must be a finite number, not {value}"
                         ))
                     }
-                }
+                };
+                steering_target_explicit = true;
             }
             "--steering-gate" => {
                 parsed.steering.gate_threshold = match value.parse::<f32>() {
@@ -283,7 +298,8 @@ pub fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
                             "--steering-gate must be a finite number >= 0, not {value}"
                         ))
                     }
-                }
+                };
+                steering_gate_explicit = true;
             }
             "--steering-layers" => {
                 let bad = || {
@@ -355,6 +371,38 @@ pub fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
             })
             .unwrap_or_default();
         parsed.steering.alpha = steering_scale.unwrap_or(1.0);
+    } else {
+        // A STEERING PARAMETER WITHOUT `--steering` IS REFUSED, NOT IGNORED.
+        // Without a direction set the process serves every request unsteered,
+        // so a parameter here is not a weaker request for the edit -- it is a
+        // command line that says one thing while the server does another, on
+        // an axis that changes the TOKENS. Every neighbouring silent-no-op is
+        // already closed (an empty layer range, a family that does not
+        // dispatch the edit, a direction file that will not parse); this was
+        // the one left open, and it is worse on a server than on the CLI
+        // because nobody watches a daemon start.
+        //
+        // First offender in a fixed order, matching `crates/invocation`'s
+        // arm, which is the same check on the same six flags.
+        let orphan = if steering_mode.is_some() {
+            Some("--steering-mode")
+        } else if steering_scale.is_some() {
+            Some("--steering-scale")
+        } else if steering_layers.is_some() {
+            Some("--steering-layers")
+        } else if steering_target_explicit {
+            Some("--steering-target")
+        } else if steering_gate_explicit {
+            Some("--steering-gate")
+        } else {
+            None
+        };
+        if let Some(flag) = orphan {
+            return Err(format!(
+                "{flag} needs --steering; without a direction set this server would decode \
+                 unsteered and the flag would do nothing"
+            ));
+        }
     }
     Ok(Some(parsed))
 }

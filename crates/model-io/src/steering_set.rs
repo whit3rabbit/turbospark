@@ -31,13 +31,25 @@ pub struct LayerDirection {
     /// NOT normalized: `SteeringMode::Add` reads the magnitude, because a
     /// llama.cpp control vector carries its strength IN the vector.
     pub values: Vec<f32>,
-    /// `1 / ||values||`, or `0.0` for a zero direction.
+    /// `1 / ||values||` over the F32 values above, or `0.0` for a zero
+    /// direction.
     ///
     /// Precomputed here because it is a property of the direction, constant
     /// across every layer, token and generation -- a per-token kernel
     /// deriving it would reduce over the whole vector on every dispatch to
     /// learn something known at load time. `turbospark_compute::steering`
     /// takes it by the same route so the two sides compute one expression.
+    ///
+    /// **IT IS NOT THE VALUE THE GPU DISPATCH USES, AND MUST NOT BE PASSED TO
+    /// ONE.** `runtime::SteeringState::build` recomputes it from the FP16
+    /// values it packs for the kernel, deliberately: the kernel reads FP16 and
+    /// reports `c_hat = (d . x) * inv_norm`, so an `inv_norm` taken over a
+    /// different `d` than the one being multiplied makes the reported
+    /// coefficient disagree with the edit applied -- in the number whose whole
+    /// job is to be the measurement. This one is the FILE's, correct for a
+    /// caller reasoning in F32 about what the file contains (which is what
+    /// `crates/repack`'s reporting target uses it for) and wrong for anything
+    /// that dispatches.
     pub inv_norm: f32,
 }
 

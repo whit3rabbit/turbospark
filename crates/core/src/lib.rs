@@ -30,4 +30,4 @@ pub use runtime_config::{
     AttentionStrategy, CacheReplacement, HeadProjection, RuntimeConfig, RuntimeConfigBuilder,
     ALLOWED_CACHE_SLOTS, ALLOWED_CHUNK_SIZES, DEFAULT_CACHE_SLOTS, DEFAULT_CHUNK_SIZE,
 };
-pub use steering::SteeringMode;
+pub use steering::{SteeringMode, STEERING_MODE_NAMES};

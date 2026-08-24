@@ -404,11 +404,16 @@ fn every_steering_mode_parses() {
         ("clamp", turbospark_invocation::SteeringMode::Clamp),
         ("renorm", turbospark_invocation::SteeringMode::Renorm),
     ] {
+        // `--steering` is carried because a parameter without it is refused
+        // as an orphan. This crate is pure and opens nothing, so the path is
+        // an opaque string and need not exist.
         let req = expect_success(parse(&tok(&[
             "--model",
             "m.bin",
             "--prompt",
             "hi",
+            "--steering",
+            "d.gguf",
             "--steering-mode",
             name,
         ])));
@@ -426,6 +431,8 @@ fn a_single_layer_range_is_accepted() {
         "m.bin",
         "--prompt",
         "hi",
+        "--steering",
+        "d.gguf",
         "--steering-layers",
         "31:31",
     ])));

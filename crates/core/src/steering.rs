@@ -82,6 +82,17 @@ pub enum SteeringMode {
     Renorm,
 }
 
+/// Every spelling [`SteeringMode::parse`] accepts, in declaration order.
+///
+/// Exists so a front end's rejection message can be SPELLED from the accepted
+/// set rather than recalled from it. `turbospark-server`'s `--steering-mode`
+/// error named three modes for a release after [`SteeringMode::Renorm`]
+/// landed, which told a caller who had misspelled the fourth that it did not
+/// exist -- the count-that-rots shape, on a string no test was reading.
+/// `the_mode_names_are_exactly_what_parse_accepts` is what keeps this and
+/// `parse` from drifting.
+pub const STEERING_MODE_NAMES: &[&str] = &["ablate", "add", "clamp", "renorm"];
+
 impl SteeringMode {
     /// The value the MSL kernel's `mode` uniform switches on.
     pub const fn as_u32(self) -> u32 {
@@ -139,5 +150,62 @@ impl SteeringMode {
             Self::Ablate | Self::Renorm => false,
             Self::Add | Self::Clamp => true,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ALL: [SteeringMode; 4] = [
+        SteeringMode::Ablate,
+        SteeringMode::Add,
+        SteeringMode::Clamp,
+        SteeringMode::Renorm,
+    ];
+
+    /// The discriminants are the wire values the MSL kernel switches on, so a
+    /// reorder here silently swaps two edits that both decode fluently.
+    /// `crates/gpu`'s `steering_mode_codes_match_the_shader` pins them against
+    /// the shader's own constants; this pins them on the side that declares
+    /// them, so a reorder reddens without a Metal device.
+    #[test]
+    fn steering_mode_codes_are_pinned() {
+        assert_eq!(SteeringMode::Ablate.as_u32(), 0);
+        assert_eq!(SteeringMode::Add.as_u32(), 1);
+        assert_eq!(SteeringMode::Clamp.as_u32(), 2);
+        assert_eq!(SteeringMode::Renorm.as_u32(), 3);
+    }
+
+    /// [`STEERING_MODE_NAMES`] exists to be printed in a rejection message, so
+    /// it is worth nothing unless it is exactly what `parse` accepts. Checked
+    /// in BOTH directions: every name parses, and every mode's own
+    /// `as_str` is in the list. One direction alone permits a list that has
+    /// grown a name `parse` refuses, or lost one it accepts.
+    #[test]
+    fn the_mode_names_are_exactly_what_parse_accepts() {
+        for name in STEERING_MODE_NAMES {
+            assert!(
+                SteeringMode::parse(name).is_some(),
+                "{name} is advertised and does not parse"
+            );
+        }
+        for mode in ALL {
+            assert!(
+                STEERING_MODE_NAMES.contains(&mode.as_str()),
+                "{mode:?} parses as {} and is not advertised",
+                mode.as_str()
+            );
+        }
+        assert_eq!(STEERING_MODE_NAMES.len(), ALL.len());
+    }
+
+    /// A rejection is never a fallback to the default: a caller who asked for
+    /// one edit and silently got another would measure the wrong model.
+    #[test]
+    fn an_unknown_mode_is_none_rather_than_the_default() {
+        assert_eq!(SteeringMode::parse("Ablate"), None);
+        assert_eq!(SteeringMode::parse("renrom"), None);
+        assert_eq!(SteeringMode::parse(""), None);
     }
 }
