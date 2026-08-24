@@ -300,6 +300,20 @@ TURBOSPARK_STEERING_BANDS=all,0:50 \
 TURBOSPARK_STEERING_ALPHAS=0,0.4,0.45,0.5,0.55,0.6 \
   cargo test -p turbospark-bench --test steering_sweep --release -- --ignored --nocapture
 
+# `TURBOSPARK_STEERING_PROMPT` is what makes a SECOND direction measurable, on
+# this target and on `steering_probe` alike. Both were written against one
+# ocean-adjacent string, and a vector extracted from some other concept pair
+# has no reason to move it -- so without this the sweep measures the prompt as
+# much as the direction. It defaults to that same string, so every frozen row
+# in `docs/OBLITERATION.md` reproduces with it unset (checked), and the
+# resolved prompt is PRINTED so a published row cannot silently be a different
+# one. Crossing two directions with two prompts is what established that the
+# usable band belongs to the direction -- see Gotcha 22.
+TURBOSPARK_PROBE_INSTALL_DIR=~/models/qwen38-27b.gturbo \
+TURBOSPARK_STEERING_VECTOR=/tmp/steer2/register.gguf \
+TURBOSPARK_STEERING_PROMPT="Explain why the sky appears blue." \
+  cargo test -p turbospark-bench --test steering_sweep --release -- --ignored --nocapture
+
 # Sensitivity proof for the gate above: APFS-clone the install, shift one
 # quantization level in a strided subset of the routed experts, re-measure.
 # ~30 s. Response curve and detection floor in docs/BENCHMARKS.md.
@@ -477,3 +491,41 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
    covered count. Same species as AGENTS.md Gotchas 30, 57 and 59: an
    instrument returning a plausible value on degenerate input, where nobody
    investigates a good-looking answer.
+
+22. **TWO INSTRUMENTS AGREEING ONCE IS ONE DATAPOINT, NOT A VALIDATION -- and
+   the agreement is most convincing exactly where there is only one case to
+   check it on.** `scripts/extract_direction.py` derives an alpha ceiling from
+   activations with no generation at all; `steering_sweep.rs` measures a
+   usable band by generating and scoring. On the ocean/mountain direction they
+   read 0.36 and 0.4, one grid step apart, and `docs/OBLITERATION.md` recorded
+   that as "the derived ceiling validated rather than merely plausible". The
+   argument was good -- the two share no code and no inputs beyond the corpus.
+   It was still a sample of one.
+
+   On a second direction off the SAME checkpoint the derived number reads 0.09
+   against a measured 0.8. **The failure is not a mis-scaling but a SIGN**: the
+   second direction carries 3.8x the stream share and tolerates 2x MORE alpha,
+   where the formula says tolerable alpha falls as share rises. No budget
+   constant fixes that, which is what turns "recalibrate it" into "it does not
+   predict this".
+
+   **THE UNDERLYING DEFECT IS A QUANTITY SUBSTITUTION, and it is the shape to
+   look for.** The column divides by `||d||` -- what the direction IS -- where
+   `ablate` subtracts `|c_hat| = |d.x|/||d||`, what the STREAM carries of it.
+   Through the deep layers those sit a factor of exactly 2.0 apart on both
+   corpora, which is structural (a difference of means puts a positive row near
+   `+||d||/2` along itself), and a constant factor is precisely why the column
+   ranks layers usefully and calibrates badly. At layer 0 they are 180x apart
+   and the conclusion INVERTS: the page's flagged "separates strongly and
+   ablation is nearly free" layer removes 72.1% of its row, the most expensive
+   in the model. A near-proportional wrong quantity is worse than an obviously
+   wrong one, because it survives every eyeball check that is not a second case.
+
+   Two habits this pays for. **Cross the variables before attributing a
+   difference** -- the second direction arrived with a second prompt, and only
+   a 2x2 (two directions x two prompts, four sweeps, ~5 min) showed the band is
+   a property of the direction and the prompt moves it not at all. And **state
+   which claims replicated**: both of the sweep's earlier refutations held on
+   the new direction, so those are facts about this engine, while the ceiling
+   was a fact about one corpus. A page that reports "we tested a second case"
+   without splitting its claims that way has learned nothing transferable.

@@ -96,6 +96,16 @@ const GENERATE: usize = 40;
 /// points at 0.2 and 0.4 would beg the question.
 const DEFAULT_ALPHAS: &[f32] = &[0.0, 0.2, 0.4, 0.6, 0.8, 1.0];
 
+/// The prompt every arm generates from unless `TURBOSPARK_STEERING_PROMPT`
+/// says otherwise.
+///
+/// Kept verbatim so this page's frozen sweep tables reproduce. It is
+/// ocean-adjacent because the first direction measured on this surface was --
+/// and a sweep is where that coupling does real damage, because the usable
+/// band is read off where the output degrades, and a direction the prompt
+/// never invites has less to degrade.
+const DEFAULT_STEERING_PROMPT: &str = "Describe what you notice about the water.";
+
 fn ids_for(tokenizer: &MfTokenizer, text: &str) -> Vec<i32> {
     let rendered = tokenizer
         .apply_chat_template(&[Message::new(Role::User, text)])
@@ -262,7 +272,10 @@ fn the_alpha_sweep_shows_where_steering_becomes_damage() {
             .join(", ")
     );
 
-    let prompt_text = "Describe what you notice about the water.";
+    let prompt_text = std::env::var("TURBOSPARK_STEERING_PROMPT")
+        .unwrap_or_else(|_| DEFAULT_STEERING_PROMPT.to_string());
+    let prompt_text = prompt_text.as_str();
+    println!("  prompt {prompt_text:?}");
 
     // ---- PHASE A: generate every steered arm, ONE RUNNER ALIVE AT A TIME ----
     //

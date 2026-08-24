@@ -179,7 +179,17 @@ def stream_share(pos: np.ndarray, neg: np.ndarray, dirs: np.ndarray) -> np.ndarr
     `x_l` is the mean activation over BOTH sets, which is the stream the edit
     will actually meet at that layer: an operator steers arbitrary prompts,
     not the extraction corpus, and the two sets' shared magnitude is the best
-    estimate available offline.
+    estimate available offline. **That last clause was checked on 2026-08-23
+    and holds**: the same ratio computed on the two SWEEP prompts, which are
+    in neither corpus, comes out 1.0x and 1.1x of the corpus figure.
+
+    **BUT THIS IS NOT THE FRACTION `ablate` REMOVES -- see `removed_share`.**
+    The edit takes out `alpha * c_hat * d_hat`, whose length is `alpha*|c_hat|`
+    and not `alpha*||d||`. The two coincide only when the stream's component
+    along the direction is about as long as the direction itself. Measured on
+    both corpora they sit a factor of exactly 2.0 apart through the deep
+    layers, and 180x apart at layer 0. Kept because it RANKS layers and
+    because this page's published tables cite it; read `removed` for the cost.
     """
     layers = pos.shape[1]
     out = np.zeros(layers, dtype=np.float64)
@@ -192,27 +202,74 @@ def stream_share(pos: np.ndarray, neg: np.ndarray, dirs: np.ndarray) -> np.ndarr
     return out
 
 
+def removed_share(pos: np.ndarray, neg: np.ndarray, dirs: np.ndarray) -> np.ndarray:
+    """Per layer, `|c_hat| / ||x_l||`: the fraction of the row an `ablate` at
+    `alpha = 1` ACTUALLY removes.
+
+    `stream_share` divides by `||d||`, which is what the direction is; this
+    divides by `|c_hat| = |d . x| / ||d||`, which is what the kernel subtracts.
+    It is the cosine between the row and the direction, times the row.
+
+    Two measured facts about the gap, both on the real `qwen38-27b`:
+
+    - Through the deep layers the two are a factor of exactly **2.0** apart on
+      BOTH corpora, and that is structural rather than a coincidence. `d` is a
+      difference of means, so where the direction dominates what separates the
+      sets, a positive row sits at about `+||d||/2` along it and a negative one
+      at `-||d||/2` -- the mean `|c_hat|` is half the direction's norm by
+      construction. A constant factor is why `share` ranks layers usefully and
+      calibrates badly.
+    - At layer 0 they are **180x** apart on the ocean corpus (0.4% by `share`,
+      72.1% here), and the sign of the conclusion flips with them. That layer
+      is essentially the token embedding, so it lies near a low-dimensional
+      subspace and its cosine with a direction extracted from it is large.
+      `docs/OBLITERATION.md` flagged layer 0 as "separates strongly and
+      ablation is nearly free, worth measuring before it is believed". It was
+      measured, and it is the most expensive layer in the model to ablate, not
+      the cheapest.
+    """
+    layers = pos.shape[1]
+    out = np.zeros(layers, dtype=np.float64)
+    for l in range(layers):
+        both = np.concatenate(
+            (pos[:, l, :].astype(np.float64), neg[:, l, :].astype(np.float64))
+        )
+        stream = float(np.linalg.norm(both, axis=1).mean())
+        dn = float(np.linalg.norm(dirs[l]))
+        if stream <= 0 or dn <= 0:
+            continue
+        c_hat = np.abs(both @ (dirs[l].astype(np.float64) / dn)).mean()
+        out[l] = float(c_hat) / stream
+    return out
+
+
 def suggested_alpha(share: np.ndarray, budget: float) -> float:
     """The largest `ablate` alpha keeping the worst layer's removal under
     `budget` of the stream.
 
-    **A CEILING, NOT A RECOMMENDATION, and the difference matters.** It says
-    where the edit starts damaging what the head reads; it says nothing about
-    where the edit starts WORKING, which is a property of the direction and
-    the concept and is not computable from norms. An alpha under this that
-    steers nothing is an ordinary outcome.
+    **THIS IS A DIAGNOSTIC AND NOT A PREDICTOR OF THE USABLE BAND. It was
+    published as a validated ceiling and that claim is REFUTED** (2026-08-23,
+    `docs/OBLITERATION.md`). Measured against `steering_sweep.rs` on two
+    directions from one checkpoint:
 
-    It is derived per model AND per direction rather than looked up. The
-    obvious alternative -- a table of known-good alphas per model family, or
-    a tier by parameter count -- cannot work here, because what collapses the
-    turn is this ratio and a parameter count does not predict it: two
-    directions extracted from one checkpoint can differ severalfold in it.
+        direction   derived   measured band
+        ocean         0.36    0.4            <- looked like validation
+        register      0.09    0.8            <- 8.9x, and the sign is wrong
 
-    The budget is the one number here that is a judgement rather than a
-    measurement, and it is deliberately loose. It is set from the two
-    measured points named in `stream_share` (22% collapsed, 6.5% did not) and
-    a third of the way between them is not a threshold anyone has bracketed.
-    Widen or ignore it; it is printed with its own reasoning for that reason.
+    The relationship is INVERTED, not merely mis-scaled: the register
+    direction carries 3.8x the stream share and tolerates 2x MORE alpha, where
+    this formula says alpha falls as share rises. No budget constant fixes a
+    sign, and recomputing it on `removed_share` does not rescue it either
+    (0.14 and 0.19 against 0.4 and 0.8 -- conservative on both, still not
+    proportional). The one-corpus agreement was a coincidence.
+
+    What survives is the ORDERING: both quantities say where ablating costs
+    most, which is what `--steering-layers` is chosen from. The alpha question
+    is answered by generating and scoring, i.e. by `steering_sweep.rs`, and
+    there is no offline substitute.
+
+    The budget remains a judgement rather than a measurement, and is printed
+    with its own reasoning for that reason.
     """
     worst = float(share.max())
     return budget / worst if worst > 0 else float("inf")
@@ -310,26 +367,33 @@ def main() -> None:
     norms = np.linalg.norm(dirs, axis=1)
     sep = separation(pos, neg)
     share = stream_share(pos, neg, dirs)
+    removed = removed_share(pos, neg, dirs)
 
-    # THREE columns, and each divides `norm` by something different because
+    # FOUR columns, and each divides `norm` by something different because
     # each answers a different question. `norm` is the raw magnitude and
     # rises with the residual stream's own scale, so it can be compared
     # across layers only by accident. `sep` divides by the within-set spread:
     # where does the CONCEPT live. `share` divides by the stream's own
-    # magnitude: what does removing it COST. A layer can rank high on one and
-    # low on another, which is the whole reason all three are printed.
+    # magnitude, and `removed` does the same to the component the kernel
+    # actually subtracts: what does removing it COST. A layer can rank high on
+    # one and low on another, which is the whole reason all four are printed.
+    #
+    # `share` and `removed` are BOTH printed because they disagree in a way
+    # that changed a conclusion on this page: a factor of 2.0 through the deep
+    # layers, where it is harmless, and 180x at layer 0, where it inverts which
+    # layer is the cheapest to ablate. See `removed_share`.
     #
     # Reported rather than thresholded: a near-zero layer is a real and
     # interesting outcome (the sets do not separate there), and which layers
     # to steer at is the caller's call.
     print(f"\nper-layer direction ({args.method}):")
     print(
-        f"  {'layer':>5}  {'norm':>10}  {'sep':>7}  {'share':>7}   "
-        f"(sep = effect size, scale-free; share = ||d||/||x||)"
+        f"  {'layer':>5}  {'norm':>10}  {'sep':>7}  {'share':>7}  {'removed':>8}   "
+        f"(sep = effect size; share = ||d||/||x||; removed = |c_hat|/||x||)"
     )
-    for l, (n, s, sh) in enumerate(zip(norms, sep, share)):
+    for l, (n, s, sh, rm) in enumerate(zip(norms, sep, share, removed)):
         bar = "#" * int(40 * s / max(sep.max(), 1e-9))
-        print(f"  {l:5d}  {n:10.4f}  {s:7.3f}  {sh:6.1%}  {bar}")
+        print(f"  {l:5d}  {n:10.4f}  {s:7.3f}  {sh:6.1%}  {rm:7.1%}  {bar}")
 
     best, worst = int(sep.argmax()), int(sep.argmin())
     print(
@@ -341,10 +405,10 @@ def main() -> None:
         f"mostly where the residual stream is biggest -- see `separation`."
     )
 
-    # THE ALPHA CEILING, derived rather than looked up. See `suggested_alpha`
-    # on why a per-model table cannot do this job: the collapse is a function
-    # of THIS direction against THIS stream, and two directions off one
-    # checkpoint differ in it.
+    # THE ALPHA CEILING. Derived rather than looked up -- and MEASURED NOT TO
+    # PREDICT the usable band (`suggested_alpha` carries the two-direction
+    # table). It is printed as a layer-ranking diagnostic and as the input to
+    # `--steering-layers`, never as an alpha to steer at.
     hottest = int(share.argmax())
     budget = args.alpha_budget
     cap = suggested_alpha(share, budget)
@@ -370,14 +434,23 @@ def main() -> None:
         )
     else:
         print(
-            f"  SUGGESTED ABLATE CEILING: alpha <= {cap:.2f} keeps every "
+            f"  DERIVED CEILING (diagnostic): alpha <= {cap:.2f} keeps every "
             f"layer's removal under {budget:.0%} of the stream."
         )
     print(
-        "  A CEILING, NOT A RECOMMENDATION: it says where the edit starts "
-        "damaging what\n  the output head reads, not where it starts working. "
-        "Restricting to a layer band\n  (--steering-layers) raises the usable "
-        "alpha by dropping the hot layers entirely."
+        f"  BY REMOVAL: layer {int(removed.argmax())} loses the most of its row, "
+        f"{removed.max():.1%} at alpha 1.\n  That is the quantity `ablate` "
+        f"actually subtracts; `share` above uses ||d|| and reads\n  "
+        f"{share[int(removed.argmax())]:.1%} at the same layer."
+    )
+    print(
+        "  DO NOT STEER AT THE DERIVED CEILING: measured against steering_sweep.rs\n"
+        "  on two directions from one checkpoint it under-called the usable band by\n"
+        "  1.1x and 8.9x, and the relationship is INVERTED -- the direction carrying\n"
+        "  3.8x the share tolerated 2x MORE alpha. Both columns RANK layers; neither\n"
+        "  predicts a strength. Run the sweep (docs/OBLITERATION.md) for that.\n"
+        "  Restricting to a layer band does NOT raise the usable alpha either: that\n"
+        "  was predicted from these columns and refuted on both directions."
     )
     if norms.max() <= 0.0:
         sys.exit("every layer's direction is zero; the two sets are identical")

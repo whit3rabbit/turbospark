@@ -40,6 +40,7 @@ throughput.
 | 2 | direction loading, per-family dispatch, CLI/server flags | **LANDED**, working end to end |
 | 3 | the A/B probe, coefficient trace, KL against unsteered | **LANDED**, four arms green |
 | 4 | the alpha sweep, the `renorm` mode, the layer-band axis | **LANDED**; both of the sweep's predictions REFUTED, which is the result |
+| 5 | a SECOND direction and a second prompt | **LANDED**; the two refutations REPLICATE, and the derived alpha ceiling does not survive |
 
 **It works.** On the real `qwen38-27b`, a direction extracted by this engine
 from its own activations, applied at runtime with no weight byte modified,
@@ -297,6 +298,13 @@ That is a real prediction rather than a fit: it was computed from the
 captures, and the two operating points already measured by hand sit either
 side of it -- 0.3 coherent, 1.0 collapsed. `--alpha-budget` moves it.
 
+**IT DOES NOT TRANSFER TO A SECOND DIRECTION, and the section on that is
+below.** On a register direction off the same checkpoint it predicts 0.09
+against a measured 0.8, and the relationship is inverted rather than
+mis-scaled. Read this whole subsection as a description of one corpus and the
+layer RANKING as the part that survives; the numbers below are correct and the
+prediction built on them is not.
+
 **It is a CEILING and not a RECOMMENDATION**, and the distinction is the
 whole honesty of the number. It says where the edit starts damaging what the
 output head reads. It says nothing about where the edit starts WORKING,
@@ -311,6 +319,15 @@ place to steer. It is more likely an artifact -- the layer 0 residual is
 essentially the token embedding, so a corpus of similarly-shaped prompts has
 a tiny within-set spread, and `sep` divides by that. Worth measuring before
 it is believed; llama.cpp never applies a direction at layer 0 anyway.
+
+**MEASURED, AND THE "nearly free" HALF IS AN ARTIFACT OF THE FORMULA RATHER
+THAN OF THE CORPUS.** `share` divides by `||d||`, but `ablate` removes
+`|c_hat|`, and at layer 0 those differ by **180x**: the true fraction removed
+is 72.1%, making it the most expensive layer in the model to ablate rather
+than the cheapest. The guessed mechanism was right and applies to both
+columns -- a near-embedding residual sits close to a low-dimensional subspace,
+which shrinks the within-set spread `sep` divides by AND raises its cosine
+with any direction extracted from it.
 
 ### The alpha sweep, and the derived ceiling checked against it (2026-08-23)
 
@@ -337,7 +354,15 @@ that gate provably walk the same ids.
 captures alone.** Two instruments sharing no code and no inputs beyond the
 same corpus -- one arithmetic on activations with no generation at all, one
 generated text scored under the unedited model -- landing one sweep step
-apart. That is the derived ceiling validated rather than merely plausible.
+apart.
+
+**THAT WAS WRITTEN AS "the derived ceiling validated rather than merely
+plausible" AND IT IS WITHDRAWN.** One agreement on one corpus is not a
+validation, and the second direction measured on this page reads 0.09 derived
+against 0.8 measured, inverting the relationship rather than scaling it. Two
+instruments agreeing once is worth exactly one datapoint, and the reason this
+one read as more than that is that it was the only pair anyone had. The
+measured band in the table below stands; the ceiling beside it does not.
 
 At 0.6 the model emits template markup (`assistant\n<think>\n\n</think>`
 repeating) at 13 distinct tokens; at 0.8 it says `" contains"` and stops.
@@ -470,6 +495,111 @@ rather than one silently preferred. Its own discrimination check is the pair
 above: the warning fires for `ablate` and stays quiet for `renorm`, on the
 same grid, which is what says it is reading the difference and not the noise.
 
+### The second direction: what replicated, and the one thing that did not (2026-08-23)
+
+Every number above this point came from ONE 6+6 ocean/mountain corpus on one
+prompt. Two predictions had been refuted on it, and nothing in the repo could
+say whether those were facts about steering on this engine or facts about that
+direction. This is the answer, and it is different for each claim.
+
+The second corpus is a REGISTER pair -- `"<topic>. Use formal academic
+language."` against `"<topic>. Use casual conversational language."`, six
+matched pairs holding the topic constant inside each pair, so the only thing
+varying is the register clause. It was chosen to be a different KIND of
+direction (a style, not a topic) and it came out far stronger:
+
+| | ocean/mountain | register |
+|---|---|---|
+| effect size (`sep`) | 0.185 - 0.511 | **1.087 - 4.182** |
+| peak stream share | 27.9% (layer 59) | **105.7% (layer 57)** |
+| derived alpha ceiling | 0.36 | **0.09** |
+| MEASURED usable band | 0.4 | **0.8** |
+
+`steering_probe` is green on it end to end, which is worth stating because
+arm 1 is the only assertion on this page that is about the KERNEL: at alpha 0
+the dispatch runs at all 64 layers and the output is bit-identical to steering
+off, 24 tokens deep, on a direction and a prompt the kernel had never seen.
+Arm 2 reads 3.6063e-3 nats at alpha 0.1, 487x the shape floor.
+
+The qualitative check lands too, and it is the sign the arithmetic cannot
+give: ablating a FORMALITY direction should make the model less formal, and
+the one visible change at alpha 0.1 is `"a physical phenomenon known as"`
+becoming `"a physical phenomenon called"`.
+
+**BOTH REFUTATIONS REPLICATE.** `renorm` again fails to extend the usable band
+and again degrades far more gracefully past it -- at alpha 1.0 both modes are
+degenerate at 3 distinct tokens while `ablate` reads perplexity 4727.1131 and
+`renorm` 3.8793, a thousandfold in graceful-failure terms and nothing at all
+in usable strength. And the layer band again fails to buy headroom: `all` and
+`0:50` both stop at 0.8. That second one replicates by a DIFFERENT mechanism,
+which strengthens it -- on the ocean direction the restriction left the greedy
+path byte-identical through 0.6, i.e. it did nothing; here it visibly moves
+arms (1.3268 against 1.2753 at 0.2) and still does not move the band.
+
+**THE DERIVED ALPHA CEILING DOES NOT SURVIVE, AND THE FAILURE IS NOT A
+MIS-SCALING.** It predicted 0.09 against a measured 0.8. The section above
+this one called it "validated rather than merely plausible" on the strength of
+0.36 against 0.4, and that agreement was a coincidence of one corpus. Worse
+than the 8.9x: **the relationship is inverted.** The register direction
+carries 3.8x the stream share and tolerates 2x MORE alpha, where the formula
+says tolerable alpha falls as share rises. No budget constant fixes a sign.
+
+Three things were checked before that was written down, in the order that made
+each one cheap.
+
+**Was it the direction or the prompt?** Both changed at once, so neither was
+attributable. Crossing them is two more sweeps:
+
+| | water prompt | sky prompt |
+|---|---|---|
+| ocean direction | 0.4 | 0.4 |
+| register direction | 0.8 | 0.8 |
+
+The band is a property of the DIRECTION and the prompt does not move it. That
+also reproduces this page's frozen ocean band on a prompt it was never
+measured on.
+
+**Is the share formula measuring the wrong thing?** Yes, and this part is a
+real correction rather than a caveat. `ablate` removes `alpha * c_hat * d_hat`,
+whose length is `alpha * |c_hat|`; `share` divides by `||d||`, which is what
+the direction IS rather than what the stream carries of it. Measured on both
+corpora the two sit a factor of exactly **2.0** apart through the deep layers,
+and that is structural: `d` is a difference of means, so where the direction
+dominates what separates the sets, a positive row sits near `+||d||/2` along it
+and a negative one near `-||d||/2`. A constant factor is precisely why `share`
+ranks layers usefully and calibrates badly.
+
+**It does not rescue the prediction** -- corrected ceilings are 0.14 and 0.19
+against measured 0.4 and 0.8, conservative on both and still not proportional.
+
+**But it inverts the layer-0 anomaly this page flagged as "worth measuring
+before it is believed".** Layer 0 reads a 0.4% share, the cheapest place in the
+model to ablate, beside an effect size second only to layer 62 -- which the
+page correctly called suspicious. By the quantity actually removed it is
+**72.1%**, the single most expensive layer in the model, off by 180x. The
+mechanism is the one the page guessed for the effect size: the layer 0
+residual is essentially the token embedding, so it lies near a low-dimensional
+subspace and its cosine with a direction extracted from it is large.
+`scripts/extract_direction.py` prints both columns now.
+
+**Was the gap the corpus-versus-prompt difference?** A natural explanation:
+the share is computed on extraction rows chosen to separate along `d`, while
+the alpha is applied to a neutral prompt that should carry less of it.
+**Refuted** -- the same ratio on the two sweep prompts, which are in neither
+corpus, comes out 1.0x and 1.1x of the corpus figure.
+
+So the honest standing claim is that both columns RANK layers and neither
+predicts a strength; `steering_sweep.rs` is the only instrument that answers
+"what alpha is usable", and there is no offline substitute for generating and
+scoring. The script says so where it used to print a ceiling.
+
+One instrument result rode along. Gotcha 20's `distinct`-versus-crossing
+disagreement fires on this direction too, and on the arm it should: `renorm`
+at alpha 1.0 scores 3.8793, a comfortable 0.8x of the anchor, at **3 distinct
+tokens**. The crossing calls that usable and the vocabulary collapse says it
+is not. A reporting feature no test can redden on has now discriminated on two
+independent directions.
+
 ### This number is not a coherence score
 
 It rises for two unrelated reasons: the edit WORKING (a steered model is
@@ -484,6 +614,11 @@ A 6-prompt-vs-6-prompt ocean/mountain corpus extracts a direction with
 per-layer effect sizes of 0.19 to 0.51. That exercises the pipeline end to
 end and says nothing about how well the method works: 6+6 is a plumbing
 fixture, and the concept pair is deliberately mild.
+
+There are TWO such fixtures now, and the second is 8x the first on effect size
+(1.09 to 4.18) -- which is what makes the pair useful rather than either one
+alone. Two is still two: everything on this page is one checkpoint, one
+family, and two concept pairs of six prompts each.
 
 ## Lessons
 
@@ -701,17 +836,23 @@ Ranked by value per cost.
    dispatches against a decode step's ~810 -- is a few percent, and Gotcha 22
    says an effect that size cannot be measured on battery at all. Every other
    number on this page is deterministic and so was measurable without either.
-5. **A second direction and a second prompt**, promoted from last. Every
-   number here is one 6+6 corpus on one prompt, and TWO predictions have now
-   been refuted on it -- which is either a fact about steering on this engine
-   or a fact about this direction, and nothing here can tell those apart. It
-   is the cheapest way to find out which, and it is now the main threat to
-   the page's conclusions.
+5. ~~A second direction and a second prompt~~ -- **LANDED, and it split the
+   page's claims in two.** Both sweep refutations REPLICATE on a register
+   direction 8x stronger than the first, so those are facts about this
+   engine. The derived alpha ceiling does NOT: it reads 0.09 against a
+   measured 0.8, with the relationship inverted. The band is a property of
+   the direction and not of the prompt (a 2x2 says so).
 6. **The batched path**, which is the largest structural gap: until it
    carries the edit, steering and speculation stay mutually exclusive.
 7. **llama.cpp interop**, one `#[ignore]`d test against a published `repeng`
    vector. Cheap, and it is the only open item that could invalidate files
    already written by this port.
+8. **A THIRD direction, and a direction someone else extracted.** Both
+   corpora here are this port's own captures of matched instruction pairs on
+   one checkpoint, so they share a shape as well as a source. The ceiling's
+   failure was only visible because the second direction was much stronger
+   than the first; what else is a property of that shape is not known, and a
+   published `repeng` vector would answer it and item 7 in one run.
 
 ## Reproducing
 
@@ -776,8 +917,16 @@ TURBOSPARK_STEERING_VECTOR=/tmp/steer/d.gguf \
 # (the unsteered model on the frozen reference answer) is what fluent prose
 # costs, and the usable band is the last arm below it.
 # TURBOSPARK_STEERING_ALPHAS overrides the sweep; it must start at 0.
+#
+# TURBOSPARK_STEERING_PROMPT sets the text every arm generates from, on BOTH
+# this target and `steering_probe`. It defaults to the ocean-adjacent string
+# both were written against, so every frozen row on this page reproduces with
+# it unset -- and a SECOND direction needs it, because a vector extracted from
+# some other concept pair has no reason to move that text. The resolved prompt
+# is printed, so a row cannot silently be a different one.
 TURBOSPARK_PROBE_INSTALL_DIR=~/models/qwen38-27b.gturbo \
 TURBOSPARK_STEERING_VECTOR=/tmp/steer/d.gguf \
+TURBOSPARK_STEERING_PROMPT="Explain why the sky appears blue." \
   cargo test -p turbospark-bench --test steering_sweep --release -- --ignored --nocapture
 ```
 

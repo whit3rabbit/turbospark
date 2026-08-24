@@ -68,6 +68,14 @@ use turbospark_bench::real_model::{open_model_runner, open_model_runner_steered}
 /// a couple of minutes.
 const GREEDY_TOKENS: usize = 24;
 
+/// The prompt every arm walks unless `TURBOSPARK_STEERING_PROMPT` says
+/// otherwise.
+///
+/// Kept verbatim so `docs/OBLITERATION.md`'s frozen arms reproduce; it is
+/// ocean-adjacent because the first direction measured on this surface was,
+/// and that coupling is exactly what the override exists to break.
+const DEFAULT_STEERING_PROMPT: &str = "Describe what you notice about the water.";
+
 /// The scale a divergence here is read against.
 ///
 /// A dense model's batched and cached passes are nearly the same
@@ -251,7 +259,18 @@ fn a_steering_edit_is_inert_at_zero_and_moves_the_distribution_at_one() {
     // ONE prompt for every arm. The comparison is arithmetic, so what the
     // prompt says does not matter -- but it has to be the SAME text in all
     // three engines, or a difference in the tokens would read as the edit.
-    let prompt_text = "Describe what you notice about the water.";
+    //
+    // The DEFAULT is ocean-adjacent because the first direction measured here
+    // was, and it is kept verbatim so `docs/OBLITERATION.md`'s frozen arms
+    // reproduce. `TURBOSPARK_STEERING_PROMPT` is what makes a SECOND direction
+    // measurable at all: a vector extracted from some other concept pair has
+    // no reason to move this text, and an arm that reads a small divergence
+    // because the prompt was wrong for the direction is indistinguishable from
+    // one that reads it because the edit does not work.
+    let prompt_text = std::env::var("TURBOSPARK_STEERING_PROMPT")
+        .unwrap_or_else(|_| DEFAULT_STEERING_PROMPT.to_string());
+    let prompt_text = prompt_text.as_str();
+    println!("  prompt {prompt_text:?}");
 
     // ---- ARM 0: the unsteered reference ----
     //
