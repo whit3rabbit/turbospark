@@ -47,7 +47,12 @@
 //!
 //! Any other value is REFUSED rather than clamped: it is a file written
 //! against a convention nothing here implements, and guessing at it would
-//! steer every block some unknown distance off.
+//! steer every block some unknown distance off. So is a value that is not an
+//! integer at all -- GGUF metadata carries no schema, so a string, a float or
+//! an array is a real thing a writer can put here, and reading one as ABSENT
+//! would hand llama.cpp's convention to a file that was declaring a different
+//! one. Presence and readability are separate questions, and only the first
+//! has a safe default.
 //!
 //! Because llama.cpp ignores the key, a file written now is positioned
 //! identically in both engines. A legacy `layer_base = 0` file is NOT, and
@@ -66,7 +71,7 @@ use std::path::Path;
 use foundation::SteeringMode;
 use model_io::{LayerDirection, SteeringSet};
 
-use crate::gguf_header::{parse_header, GgufHeader};
+use crate::gguf_header::{parse_header, GgufHeader, GgufValue};
 
 /// The tensor-name prefix llama.cpp's loader splits on.
 const DIRECTION_PREFIX: &str = "direction";
@@ -110,6 +115,10 @@ pub enum ControlVectorError {
     Truncated { name: String, wanted: u64, len: u64 },
     /// `turbospark.layer_base` names a convention this reader does not know.
     UnknownLayerBase { base: u64 },
+    /// `turbospark.layer_base` is PRESENT but is not an integer, so the file
+    /// states a convention this reader cannot read. Distinct from the key
+    /// being absent, which is llama.cpp's convention and is fine.
+    MalformedLayerBase { kind: String },
     /// The caller asked to write a direction for block 0, which the format
     /// cannot name (`direction.0` is refused by llama.cpp and here).
     LayerZeroNotExpressible,
@@ -151,6 +160,13 @@ impl std::fmt::Display for ControlVectorError {
                  default when the key is absent) and 0 (this port before the numbering \
                  was corrected). Guessing at another would steer every block off"
             ),
+            Self::MalformedLayerBase { kind } => write!(
+                f,
+                "{LAYER_BASE_KEY} is present but is {kind} rather than an integer, so \
+                 this file states a block numbering that cannot be read. Treating it as \
+                 absent would silently apply llama.cpp's convention to a file that was \
+                 trying to declare a different one"
+            ),
             Self::LayerZeroNotExpressible => write!(
                 f,
                 "a direction for block 0 cannot be written: the format names blocks from \
@@ -167,11 +183,40 @@ impl std::error::Error for ControlVectorError {}
 ///
 /// Absent means llama.cpp's, because llama.cpp stamps nothing and a foreign
 /// vector is the case the default exists to serve.
+/// Names what an unreadable `layer_base` value IS, short and from a fixed
+/// set. `{value:?}` would print a whole array into an error message.
+fn unreadable_kind(value: &GgufValue) -> &'static str {
+    use GgufValue as V;
+    match value {
+        V::I8(_) | V::I16(_) | V::I32(_) | V::I64(_) => "a negative integer",
+        V::F32(_) | V::F64(_) => "a float",
+        V::Bool(_) => "a bool",
+        V::String(_) => "a string",
+        V::Array(_) => "an array",
+        // Unreachable: `as_u64` widens every unsigned variant. Named rather
+        // than `unreachable!`d, because a panic here would abort a load over
+        // a metadata key the reader is already refusing.
+        V::U8(_) | V::U16(_) | V::U32(_) | V::U64(_) => "an integer out of range",
+    }
+}
+
 fn layer_base(header: &GgufHeader) -> Result<u64, ControlVectorError> {
-    match header.metadata_u64(LAYER_BASE_KEY) {
-        None => Ok(DEFAULT_LAYER_BASE),
+    // Keyed on PRESENCE first, not on `metadata_u64`'s `None`. That `None`
+    // merges "no such key" with "the key is a string / a float / an array",
+    // and the two mean opposite things here: absent is a foreign vector under
+    // llama.cpp's convention, present-and-unreadable is a file declaring a
+    // convention this reader cannot resolve. Merging them would place every
+    // direction one block off in silence, which is the failure this whole
+    // key exists to prevent.
+    let Some(value) = header.metadata.get(LAYER_BASE_KEY) else {
+        return Ok(DEFAULT_LAYER_BASE);
+    };
+    match value.as_u64() {
         Some(b @ (0 | 1)) => Ok(b),
         Some(base) => Err(ControlVectorError::UnknownLayerBase { base }),
+        None => Err(ControlVectorError::MalformedLayerBase {
+            kind: unreadable_kind(value).to_string(),
+        }),
     }
 }
 
@@ -518,6 +563,47 @@ mod tests {
         assert_eq!(
             parse_control_vector(&builder.build().0),
             Err(ControlVectorError::UnknownLayerBase { base: 2 })
+        );
+    }
+
+    /// A PRESENT key this reader cannot read is not an ABSENT key, and
+    /// collapsing the two is the one way left for this surface to misplace a
+    /// direction in silence.
+    ///
+    /// GGUF metadata carries no schema, so the value's type is the writer's
+    /// choice: `metadata_u64` answers `None` for a string, a float, a bool, an
+    /// array and a negative signed integer alike. Reading that `None` as
+    /// "absent" hands the file llama.cpp's convention -- which is the right
+    /// default for a foreign vector precisely BECAUSE llama.cpp stamps
+    /// nothing, and the wrong one for a file that stamped `"0"` and meant it.
+    /// Every block would land one place off, with no error, which is the
+    /// failure the whole numbering correction exists to end.
+    ///
+    /// Refused for the same reason `an_unknown_layer_base_is_refused` refuses
+    /// a 2: the file is stating a convention, and this reader cannot tell
+    /// which one.
+    #[test]
+    fn a_layer_base_this_reader_cannot_read_is_refused_rather_than_defaulted() {
+        let unreadable = |b: crate::GgufBuilder| {
+            let data: Vec<u8> = (0..8).flat_map(|i| (i as f32).to_le_bytes()).collect();
+            parse_control_vector(&b.tensor("direction.1", GGML_TYPE_F32, &[8], data).build().0)
+        };
+
+        assert!(
+            matches!(
+                unreadable(crate::GgufBuilder::new().metadata_str(LAYER_BASE_KEY, "0")),
+                Err(ControlVectorError::MalformedLayerBase { .. })
+            ),
+            "a string layer_base must not read as an absent one"
+        );
+
+        // The control: the key really is optional, and its absence is still
+        // llama.cpp's convention rather than an error. Without this the fix
+        // above could be "refuse whenever the key does not parse", which
+        // would reject every published vector in the ecosystem.
+        assert!(
+            unreadable(crate::GgufBuilder::new()).is_ok(),
+            "an absent key is still the default, not a refusal"
         );
     }
 
