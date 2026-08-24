@@ -39,6 +39,7 @@ throughput.
 | 0 | residual capture + offline extraction | **LANDED**, verified on the real install |
 | 2 | direction loading, per-family dispatch, CLI/server flags | **LANDED**, working end to end |
 | 3 | the A/B probe, coefficient trace, KL against unsteered | **LANDED**, four arms green |
+| 4 | the alpha sweep, the `renorm` mode, the layer-band axis | **LANDED**; both of the sweep's predictions REFUTED, which is the result |
 
 **It works.** On the real `qwen38-27b`, a direction extracted by this engine
 from its own activations, applied at runtime with no weight byte modified,
@@ -88,14 +89,21 @@ engine two ways.
 
 ## The edit
 
-One kernel, three modes, one dot product. Writing `c = d . x` for the raw dot
-product and `c_hat = c / ||d||` for the coefficient along the unit direction:
+One kernel, four modes, one reduction pass. Writing `c = d . x` for the raw
+dot product and `c_hat = c / ||d||` for the coefficient along the unit
+direction:
 
 | mode | operation | what it is |
 |---|---|---|
 | `ablate` | `x -= alpha * c_hat * d_hat` | abliteration; equals the weight edit at `alpha = 1` |
 | `add` | `x += alpha * d` | llama.cpp control vectors, ActAdd |
 | `clamp` | `x += (target - c_hat) * d_hat` | feature clamping (the Golden Gate shape) |
+| `renorm` | `ablate`, then scale the row back to `\|\|x\|\|` | norm-preserving projection |
+
+`renorm` is the newest and is the one that needed an argument rather than a
+formula, so it has its own section below. The short version: it costs no
+second reduction and no second pass, and it leaves the other three
+bit-identical.
 
 `c_hat` falls out of every mode for free and is written to a coefficient
 buffer. **That is the measurement**: it says how much of the direction the
@@ -174,7 +182,7 @@ needs no second model to compare against. Four arms:
 |---|---|
 | 1, null control at alpha 0 | **0 of 248,320 logits differ**, KL exactly `0.000e0`, 24 greedy tokens identical |
 | 2, steered vs unsteered | KL **0.10142 nats**, 13,705x the 7.4e-6 dense shape floor |
-| 3, coefficient trace | 64 layers reporting, `\|c\|` from 0.0491 to 29.9005 |
+| 3, coefficient trace | 64 layers reporting, `|c|` from 0.0484 to 20.9949 |
 | 4, determinism | two 24-token runs from one checkpoint agree |
 
 The steered turn stays coherent and its wording shifts, parting from the
@@ -186,6 +194,17 @@ unsteered: " I am an AI, I don't have eyes to see a specific body of water
 steered:   " I am an AI, I do not have physical senses and cannot see or
              touch water directly. However, I can describe"
 ```
+
+**That arm 3 row was corrected on 2026-08-23 and is worth a sentence.** It
+read `0.0491 to 29.9005` and reproduces from nothing: three separate vector
+files on this disk all give `0.0484 to 20.9949`, and so does the kernel as it
+stood BEFORE the `renorm` change (checked by reverting the shader and
+re-running, because a 30% move in a reported number is not something to ship
+past). Arms 1, 2 and 4 reproduce to the digit, so nothing regressed -- the
+figure was simply wrong when written. The reason it survived is the reason to
+record it: **arm 3 REPORTS where the others ASSERT**, so no test could ever
+have reddened on it. A number in a table that nothing checks is a number
+nobody re-runs.
 
 **Arm 1 is the load-bearing one and it is the only assertion of the four
 that is about the KERNEL.** At alpha 0 the dispatch runs at every layer, it
@@ -345,6 +364,112 @@ broken outputs by perplexity means nothing. And `distinct` collapses from
 34-36 to 13/2/5 exactly where perplexity explodes, which is two independent
 signals agreeing on where the break is.
 
+### The fourth mode, and the prediction it was built to test (2026-08-23)
+
+`renorm` is `ablate` followed by a rescale of the row back to its original
+`||x||`. The OBLITERATUS review below listed it as the one remaining idea with
+a measurable prediction attached: it attacks the collapse from the opposite
+side to the derived ceiling -- the ceiling AVOIDS the damage, this REPAIRS it
+-- so **its usable band should reach alpha 1.0 where the other modes stop
+near 0.4**.
+
+**That prediction is REFUTED.** Both modes break by alpha 0.6.
+
+| alpha | `ablate` ppl | distinct | `renorm` ppl | distinct |
+|---|---|---|---|---|
+| 0 | 1.3187 | 34 | 1.3187 | 34 |
+| 0.4 | 1.7158 | 36 | 1.7176 | 35 |
+| 0.45 | 1.7883 | 37 | 1.8331 | 33 |
+| 0.5 | 2.8168 | 34 | 2.8797 | 37 |
+| 0.55 | **2.1309** | **18** | 3.3624 | 36 |
+| 0.6 | 5.1736 | 13 | 5.2974 | 26 |
+
+**What it DOES buy is real and much smaller than predicted.** Both modes score
+the same anchor crossing (0.55), and only one of them is telling the truth at
+the top of that band. At 0.55 `ablate` has already degenerated -- 18 distinct
+tokens, one sentence repeated with template markup between the copies -- while
+`renorm` reads "Here is what I notice about the water: 1. **It is clear and
+transparent**...", fluent at 36. At 0.6 it holds 26 distinct against 13.
+
+So the honest claim is that norm preservation degrades more GRACEFULLY through
+the knee and buys roughly one grid step of genuinely usable strength, not the
+jump to full ablation the idea promised. On this direction and this prompt.
+
+Two things worth not re-deriving. The mechanism the prediction rested on is
+narrower than it looks: the final RMS norm is scale-invariant, so if the
+collapse were simply "the head reads a smaller vector" the model's own norm
+would already undo it and this mode would change nothing at all. The only
+thing it can repair is the RESIDUAL ADD, which is not scale-invariant --
+shrinking `x` at every layer amplifies each subsequent sublayer's relative
+contribution. That mechanism is real, and it is evidently not what dominates
+the collapse. And at alpha 1.0 `renorm` scores WORSE than `ablate` (8927
+against 280); both are word salad there, and ordering broken outputs by
+perplexity means nothing, so that row is reported rather than read.
+
+It costs no second reduction and no second pass, which is the part that made
+it cheap enough to test: `||x||^2` fuses into the loop that already computes
+the coefficient, and the post-edit norm is analytic
+(`||x'||^2 = ||x||^2 - alpha*(2 - alpha)*c_hat^2`, exactly, since the
+projection is orthogonal -- Pythagoras at `alpha = 1`). Its rescale factor is
+exactly `1.0` in the other three modes and `1.0 * v == v` in IEEE-754, so one
+write loop serves all four and the older three are unmoved to the BIT. That is
+measured rather than argued: the `ablate` column above reproduces this page's
+frozen sweep table to the last digit, and the GPU's two bit-identity cases
+stayed green through the change.
+
+### The layer band is not the lever the stream share suggested (2026-08-23)
+
+The stream-share column says the damage concentrates in layers 51-63, so a
+band excluding them should carry a higher usable alpha. `--steering-layers` is
+the knob and nothing had measured it.
+
+**Also refuted, and more flatly.** Sweeping `all` against `0:50` (51 of the
+vector's 64 layers, so every high-share layer dropped):
+
+| band | usable alpha, `ablate` | usable alpha, `renorm` |
+|---|---|---|
+| all | 0.4 | 0.4 |
+| 0:50 | 0.4 | 0.4 |
+
+On the coarse grid the two bands are not merely equal -- under `ablate` they
+are **byte-identical through alpha 0.6**, four arms agreeing to the last digit
+of perplexity and the last token of text. The restriction is doing something
+(the arms differ at 0.8 and 1.0), it just does not touch the greedy path at
+any strength anyone would use.
+
+The reading that survives: the stream share explains WHY full ablation
+collapses, and it does not follow that excluding the high-share layers
+recovers headroom. Those layers carry the largest share of the direction and
+apparently contribute little to the argmax path until the model is already
+broken.
+
+### The anchor crossing under-calls damage, and `distinct` is what catches it
+
+Third instance on this page of a verdict rule being wrong, after the steepest
+step and the probe's alpha-1.0 default -- and this one was invisible on the
+coarse grid, because both modes happened to land on the same answer there.
+
+At alpha 0.55 `ablate` reads 2.1309, which is 0.4x the anchor and comfortably
+inside the usable band by the stated criterion. Its output is one sentence
+repeated with template markup between the copies. The perplexity is not
+lying -- a short degenerate repetition IS predictable to the unsteered model --
+it is answering a different question from the one being asked of it.
+
+`distinct` is the independent signal, and this page already noted the two
+"agreeing on where the break is" as what made the original table readable.
+The fine grid is where they come apart: `ablate`'s vocabulary collapses
+34 -> 18 at 0.5 -> 0.55, AT the crossing, while `renorm`'s falls 36 -> 26 at
+0.55 -> 0.6, ABOVE it.
+
+`steering_sweep.rs` reports that disagreement now. Deliberately REPORTS: there
+is no measured basis for a "distinct must stay above N" line, so inventing one
+to resolve the conflict would be the fabricated threshold Gotcha 38 warns
+against. It prints the largest consecutive drop and says when it lands at or
+before the crossing, and an operator choosing a strength gets both numbers
+rather than one silently preferred. Its own discrimination check is the pair
+above: the warning fires for `ablate` and stays quiet for `renorm`, on the
+same grid, which is what says it is reading the difference and not the noise.
+
 ### This number is not a coherence score
 
 It rises for two unrelated reasons: the edit WORKING (a steered model is
@@ -466,21 +591,22 @@ and nothing today.
   Prompted by their strength-sweep interface, which trades coherence against
   effect; the ratio form is this port's, because the mechanism was already
   measured here.
+- **Coherence as a measured quantity**, and **an alpha sweep** to read it
+  across. Landed together as `steering_sweep.rs`, because a single-alpha
+  version of the first would have been misleading rather than partial.
+- **Norm-preserving projection**, as the fourth `SteeringMode` (`renorm`).
+  **Built, measured, and its headline prediction REFUTED** -- see the section
+  above. Recorded here as taken rather than moved to Declined, because the
+  idea was worth the cost: it was the only one on their list with a
+  falsifiable claim attached, the claim was cheap to test against an
+  instrument that already existed, and the answer is a real result either way.
+  What it buys is one grid step of graceful degradation, not the usable full
+  ablation it promised.
 
 ### Worth taking, not yet built
 
-- **Norm-preserving projection**, as a fourth `SteeringMode`: project out,
-  then rescale the row to its original norm. It attacks the collapse from the
-  other side -- the ceiling AVOIDS the damage, this REPAIRS it -- and would
-  make full ablation usable. The kernel already reduces over the row for `c`
-  and needs one more reduction for `||x||`.
-- **Coherence as a measured quantity.** `steering_probe.rs` says fluency is a
-  judgement no test can make, and that is half wrong: perplexity of the
-  STEERED output under the UNSTEERED model is cheap, non-arbitrary, and
-  `quality_common` already has the machinery. It would upgrade the collapse
-  detector from a binary proxy to a graded curve.
-- **An alpha sweep** in the probe, reporting effect against coherence rather
-  than one point. Costs one open per alpha, ~10 s each.
+Nothing from this review is left in this state. The three ideas above are
+built; the rest are under Declined.
 
 ### Declined
 
@@ -521,12 +647,21 @@ steer. That is a limit of the shape, not of the tuning.
   diagnostic and REFUSE a direction set at open by name -- a set that loaded,
   reported itself on the startup line and changed nothing would be the exact
   silent no-op this whole surface is built to avoid.
-- **No throughput number.** The kernel adds one dispatch per steered layer
-  per token -- 64 on this model against a decode step's several hundred --
-  and the bytes are negligible against a projection's weight read. That is an
-  arithmetic expectation and NOT a measurement; nothing has timed it. The
-  layer band is the lever if it turns out to matter. Phase 3 did not take it
-  because the machine was not quiet.
+- **No throughput number, and it is blocked on MACHINE CONDITIONS rather
+  than on code.** The kernel adds one dispatch per steered layer per token --
+  64 on this model against a decode step's ~810 -- and the bytes are
+  negligible against a projection's weight read. That is an arithmetic
+  expectation and NOT a measurement; nothing has timed it. `renorm` adds a
+  second reduction inside that same dispatch, which is one fma per element
+  and no extra memory traffic, so the expectation does not change for it.
+  Three sessions have now declined to take it, each for the same two reasons
+  and both worth stating so the next one does not read it as neglect: the
+  expected effect is a few percent, Gotcha 43 says a loaded machine cannot
+  see it, and Gotcha 22 says an effect that size cannot be measured on
+  battery AT ALL. Everything else on this page is deterministic -- greedy
+  generation and teacher-forced NLL -- which is exactly why the rest could be
+  measured on a machine that could not support this one. The layer band is
+  the lever if it turns out to matter.
 - **The batched path does not steer, and steering plus speculation is
   REFUSED at open because of it.** `produce_batched` (the speculative verify,
   and the chunked-prefill driver) has no hook, so the drafted-and-verified
@@ -547,35 +682,36 @@ steer. That is a limit of the shape, not of the tuning.
   point a measurement is taken.
 ## Next, in order
 
-Ranked by value per cost. Items 2 and 3 are the pair worth doing together:
-the throughput number needs a quiet machine, and a fourth mode is the change
-most likely to need one afterwards.
+Ranked by value per cost.
 
-1. ~~Coherence as a measured quantity~~ and ~~an alpha sweep~~ -- **LANDED
-   together** as `steering_sweep.rs`, because a single-alpha version of the
-   first would have been misleading rather than partial. See above.
-2. **A throughput number**, on a quiet machine, with and without the edit at
-   a fixed layer band. The open item below has been an arithmetic expectation
-   for long enough, and it is now the only Phase 3 deliverable outstanding.
-3. **Norm-preserving projection** as a fourth mode -- project out, then
-   rescale the row to its original norm. Item 1 is what makes its claim
-   testable: "full ablation stays coherent" is now a sweep whose usable band
-   should extend to alpha 1.0 rather than stopping at 0.4. It is the one
-   remaining idea from the OBLITERATUS review with a measurable prediction
-   attached.
-4. **A layer-band sweep** beside the alpha one. `--steering-layers` is the
-   other lever and is entirely unmeasured: the stream-share column says the
-   damage is concentrated in layers 51-63, so a band excluding them should
-   raise the usable alpha, and nothing has checked that.
-5. **The batched path**, which is the largest structural gap: until it
+1. ~~Coherence as a measured quantity~~ and ~~an alpha sweep~~ -- **LANDED**
+   as `steering_sweep.rs`.
+2. ~~Norm-preserving projection~~ -- **LANDED as `renorm`, and its prediction
+   REFUTED.** See above; it buys graceful degradation through the knee rather
+   than a usable full ablation.
+3. ~~A layer-band sweep~~ -- **LANDED as the sweep's second axis, and that
+   prediction refuted too.** Excluding layers 51-63 leaves the greedy path
+   byte-identical at every usable alpha.
+4. **A throughput number**, on a quiet machine, with and without the edit at
+   a fixed layer band. **Now the only Phase 3 deliverable outstanding**, and
+   it has been an arithmetic expectation for three sessions. It is blocked on
+   MACHINE CONDITIONS rather than on code, which is worth stating plainly so
+   the next session does not mistake it for work: it needs a quiet machine
+   (Gotcha 43) and AC power, because the expected effect -- 64 extra
+   dispatches against a decode step's ~810 -- is a few percent, and Gotcha 22
+   says an effect that size cannot be measured on battery at all. Every other
+   number on this page is deterministic and so was measurable without either.
+5. **A second direction and a second prompt**, promoted from last. Every
+   number here is one 6+6 corpus on one prompt, and TWO predictions have now
+   been refuted on it -- which is either a fact about steering on this engine
+   or a fact about this direction, and nothing here can tell those apart. It
+   is the cheapest way to find out which, and it is now the main threat to
+   the page's conclusions.
+6. **The batched path**, which is the largest structural gap: until it
    carries the edit, steering and speculation stay mutually exclusive.
-6. **llama.cpp interop**, one `#[ignore]`d test against a published `repeng`
+7. **llama.cpp interop**, one `#[ignore]`d test against a published `repeng`
    vector. Cheap, and it is the only open item that could invalidate files
    already written by this port.
-7. **A second direction and a second prompt.** Every number on this page is
-   one 6+6 corpus on one prompt. The usable band is stated as "on THIS
-   direction and THIS prompt" throughout and that caveat is load-bearing, not
-   modesty.
 
 ## Reproducing
 
@@ -642,6 +778,26 @@ TURBOSPARK_STEERING_VECTOR=/tmp/steer/d.gguf \
 # TURBOSPARK_STEERING_ALPHAS overrides the sweep; it must start at 0.
 TURBOSPARK_PROBE_INSTALL_DIR=~/models/qwen38-27b.gturbo \
 TURBOSPARK_STEERING_VECTOR=/tmp/steer/d.gguf \
+  cargo test -p turbospark-bench --test steering_sweep --release -- --ignored --nocapture
+```
+
+```sh
+# The same sweep across the other two axes. TURBOSPARK_STEERING_MODE points
+# it at a different edit WITHOUT rewriting the vector, which is what keeps a
+# mode comparison single-variable; an unknown spelling is refused rather than
+# falling back to the file's. TURBOSPARK_STEERING_BANDS sweeps the layer band
+# beside alpha (`all` or START:END, inclusive and 0-based, the spelling
+# `--steering-layers` takes); a band covering zero layers is refused, because
+# it would steer nothing and read as usable at every strength.
+#
+# READ THE `distinct` COLUMN BESIDE THE VERDICT. The anchor crossing
+# UNDER-CALLS damage in the knee -- measured -- and the run prints a warning
+# when the vocabulary collapses at or below its own crossing.
+TURBOSPARK_PROBE_INSTALL_DIR=~/models/qwen38-27b.gturbo \
+TURBOSPARK_STEERING_VECTOR=/tmp/steer/d.gguf \
+TURBOSPARK_STEERING_MODE=renorm \
+TURBOSPARK_STEERING_BANDS=all,0:50 \
+TURBOSPARK_STEERING_ALPHAS=0,0.4,0.45,0.5,0.55,0.6 \
   cargo test -p turbospark-bench --test steering_sweep --release -- --ignored --nocapture
 ```
 

@@ -216,7 +216,22 @@ fn a_steering_edit_is_inert_at_zero_and_moves_the_distribution_at_one() {
 
     let set = repack::control_vector::load_control_vector(&vector)
         .unwrap_or_else(|e| panic!("{}: {e:?}", vector.display()));
-    let mode = set.declared_mode.unwrap_or_default();
+
+    // `TURBOSPARK_STEERING_MODE` points the four arms at a different edit
+    // without rewriting the vector, which is what makes two modes comparable
+    // on ONE artifact. REFUSED on an unknown spelling rather than falling
+    // back to the file's: a probe that silently measured a different edit
+    // than the one asked for would report the wrong model as the right one
+    // (`SteeringMode::parse` returns `None` for exactly that reason).
+    let mode = match std::env::var("TURBOSPARK_STEERING_MODE") {
+        Ok(raw) => foundation::SteeringMode::parse(raw.trim()).unwrap_or_else(|| {
+            panic!(
+                "TURBOSPARK_STEERING_MODE={raw:?} is not a steering mode. \
+                 Accepted: ablate, add, clamp, renorm."
+            )
+        }),
+        Err(_) => set.declared_mode.unwrap_or_default(),
+    };
     println!(
         "steering_probe: install {}\n  vector {} ({} covered layers), mode {}, alpha {alpha}",
         dir.display(),

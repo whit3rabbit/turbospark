@@ -10,11 +10,11 @@
 //! here is what keeps the parity test comparing two spellings of one contract
 //! rather than two enums that happen to agree today.
 
-/// Which edit [`crate::steering`]'s three-mode kernel applies to a residual
+/// Which edit [`crate::steering`]'s four-mode kernel applies to a residual
 /// stream row, given a direction `d` and its precomputed `1 / ||d||`.
 ///
-/// All three are one dot product plus one strided write, and differ only in
-/// what they do with the coefficient. Writing `c = d . x` for the raw dot
+/// All four share one reduction pass and one strided write, and differ only
+/// in what they do with the coefficient. Writing `c = d . x` for the raw dot
 /// product and `c_hat = c / ||d||` for the coefficient along the unit
 /// direction:
 ///
@@ -23,6 +23,13 @@
 /// | [`Ablate`](Self::Ablate) | `x -= alpha * c_hat * d_hat` |
 /// | [`Add`](Self::Add) | `x += alpha * d` |
 /// | [`Clamp`](Self::Clamp) | `x += (target - c_hat) * d_hat` |
+/// | [`Renorm`](Self::Renorm) | [`Ablate`](Self::Ablate), then rescale the row back to its original `\|\|x\|\|` |
+///
+/// [`Renorm`](Self::Renorm) is the only one that reads anything about `x`
+/// beyond its coefficient, and it costs nothing extra to: `||x||^2`
+/// accumulates in the same loop that computes `c`, from a value already in
+/// register, and the POST-edit norm is analytic rather than a second pass
+/// (see `turbospark_compute::steering`).
 ///
 /// **`Add` is the only one that reads `d`'s magnitude**, and that asymmetry
 /// is the file format's rather than a choice: a llama.cpp control vector
@@ -43,10 +50,11 @@ pub enum SteeringMode {
     /// `x' = x - r_hat r_hat^T x` that the weight edit
     /// `W' = W - r_hat r_hat^T W` precomputes.
     ///
-    /// The default because it is the only mode that cannot overflow: it
-    /// removes a component of `x` and therefore never increases `|x|`, where
-    /// the other two add to a stream stored in FP16 (see the module docs on
-    /// [`crate::steering`]).
+    /// The default because it cannot overflow: it removes a component of `x`
+    /// and therefore never increases `|x|`, where [`Add`](Self::Add) and
+    /// [`Clamp`](Self::Clamp) add to a stream stored in FP16 (see the module
+    /// docs on [`crate::steering`]). [`Renorm`](Self::Renorm) cannot overflow
+    /// either, for a different reason -- see [`Self::can_grow`].
     #[default]
     Ablate,
     /// Add the direction, scaled. Turner et al.'s activation addition, and
@@ -56,6 +64,22 @@ pub enum SteeringMode {
     /// was. Feature clamping: the edit that holds a concept on regardless of
     /// context, rather than nudging it.
     Clamp,
+    /// Norm-preserving projection: [`Ablate`](Self::Ablate), then rescale the
+    /// row back to the magnitude it had before.
+    ///
+    /// It attacks the collapse `docs/OBLITERATION.md` records from the other
+    /// side. Ablating a whole direction at every layer damages what the
+    /// output head reads, and the ceiling that page derives AVOIDS that
+    /// damage by bounding `alpha`; this REPAIRS it, so full ablation stays
+    /// available. Whether that actually widens the usable band is a measured
+    /// question rather than a claim -- see the alpha sweep on that page.
+    ///
+    /// The mechanism it can plausibly repair is NOT "the head reads a smaller
+    /// vector", because the final RMS norm is scale-invariant and would undo
+    /// that on its own. It is the RESIDUAL ADD, which is not: shrinking `x`
+    /// at every layer amplifies each subsequent sublayer's relative
+    /// contribution to the stream.
+    Renorm,
 }
 
 impl SteeringMode {
@@ -65,6 +89,7 @@ impl SteeringMode {
             Self::Ablate => 0,
             Self::Add => 1,
             Self::Clamp => 2,
+            Self::Renorm => 3,
         }
     }
 
@@ -78,6 +103,7 @@ impl SteeringMode {
             "ablate" => Some(Self::Ablate),
             "add" => Some(Self::Add),
             "clamp" => Some(Self::Clamp),
+            "renorm" => Some(Self::Renorm),
             _ => None,
         }
     }
@@ -89,19 +115,28 @@ impl SteeringMode {
             Self::Ablate => "ablate",
             Self::Add => "add",
             Self::Clamp => "clamp",
+            Self::Renorm => "renorm",
         }
     }
 
     /// Whether this mode can increase `|x|`, and therefore whether a large
     /// `alpha` can push a residual stream stored in FP16 past 65,504.
     ///
-    /// [`Self::Ablate`] removes a component and cannot; the other two can.
+    /// [`Self::Ablate`] removes a component and cannot. [`Self::Renorm`]
+    /// cannot either, and for a reason worth stating rather than inferring:
+    /// it restores the row to the L2 norm it already had, so no element can
+    /// exceed `||x||`, and `||x||` was representable before the edit because
+    /// the row was. Its per-element values DO grow -- the rescale multiplies
+    /// by a factor at or above 1 -- but they are bounded by a magnitude the
+    /// stream already carried. [`Self::Add`] and [`Self::Clamp`] have no such
+    /// bound.
+    ///
     /// Callers that dispatch an unbounded `alpha` on a growing mode should
     /// expect the overflow to arrive as `inf` and then as NaN, which reads as
     /// a PERFECT score on any rank or top-k instrument (AGENTS.md Gotcha 59).
     pub const fn can_grow(self) -> bool {
         match self {
-            Self::Ablate => false,
+            Self::Ablate | Self::Renorm => false,
             Self::Add | Self::Clamp => true,
         }
     }

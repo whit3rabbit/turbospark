@@ -174,8 +174,8 @@ pub const OPTIONS: &[OptionDecl] = &[
         takes_value: true,
         is_required: false,
         is_mode_selecting: false,
-        usage_hint: "steering edit: ablate, add, clamp (default ablate, or whatever \
-                     the vector file declares)",
+        usage_hint: "steering edit: ablate, add, clamp, renorm (default ablate, or \
+                     whatever the vector file declares)",
     },
     OptionDecl {
         flag: "--steering-scale",

@@ -116,10 +116,11 @@ crates/gpu/
 - `utility.rs`'s `encode_steer_direction` (+ `SteerParams`): the DIRECTIONAL
   STEERING edit on a residual stream row (ROADMAP item 9, in its RUNTIME form
   rather than the repack-time one that entry scopes). Port-local; its contract
-  is `turbospark_compute::steering`. Three modes off ONE dot product --
+  is `turbospark_compute::steering`. Four modes off ONE reduction pass --
   `ablate` (`x -= alpha * c_hat * d_hat`, which at `alpha = 1` is exactly the
   operation abliteration's weight edit precomputes), `add` (llama.cpp control
-  vectors), and `clamp` (feature clamping) -- plus a per-row coefficient
+  vectors), `clamp` (feature clamping), and `renorm` (`ablate`, then rescale
+  the row back to its original `||x||`) -- plus a per-row coefficient
   readback that IS the measurement: `c_hat` says how much of the direction the
   stream carried, which is the steered-vs-unsteered signal without a second
   model to compare against. Four things about it are decisions rather than
@@ -143,13 +144,41 @@ crates/gpu/
   Note `ablate` can only REDUCE `|x|` and so cannot overflow, while `add` and
   `clamp` can push an FP16 stream past 65,504 at a large enough alpha --
   arriving as `inf` and then NaN, which reads as a perfect score on any rank
-  instrument (AGENTS.md Gotchas 59 and 60). `tests/utility_and_pass.rs` holds
-  the numbers, with `the_three_modes_are_different_functions` asserting the
+  instrument (AGENTS.md Gotchas 59 and 60). **`renorm` cannot overflow
+  either**, for a different reason: it restores a magnitude the row already
+  carried, so no element can exceed a value that was already representable.
+  **It adds a SECOND reduction and neither of the costs that suggests.**
+  `||x||^2` accumulates in the loop that already computes `c` -- the row
+  element is in register for the dot product, so it is one more fma and no
+  memory traffic -- and the POST-edit norm is ANALYTIC rather than a second
+  pass over the written row, because the projection is orthogonal:
+  `||x'||^2 = ||x||^2 - alpha*(2 - alpha)*c_hat^2`, exactly, which at
+  `alpha = 1` is Pythagoras. So the kernel stays at one reduction and one
+  write, which is what matters on a dispatch-bound path. Its rescale factor is
+  exactly `1.0f` in the other three modes and `1.0f * v == v` in IEEE-754, so
+  ONE write loop serves all four and the older three stay bit-identical --
+  measured, not asserted: `alpha_zero_leaves_the_row_bit_identical` and
+  `full_ablation_and_a_zero_clamp_are_the_same_edit` both compare `to_bits`
+  and both stayed green through the addition. `partial_c` and `partial_xx`
+  size for 256 threads apiece.
+  `tests/utility_and_pass.rs` holds
+  the numbers, with `the_original_three_modes_are_different_functions`
+  asserting the
   fixture DISCRIMINATES before the parity cases are believed, and the ablate
   case deliberately at a FRACTIONAL alpha: `ablate` at 1.0 and `clamp` at
   target 0 are the same function, so a mutation swapping the shader's mode
   codes passed that case until the parameters were moved off the degenerate
-  point.
+  point. **`renorm` has its own discrimination case and its own fixture**, and
+  the reason is the same trap one turn further on: its effect scales with how
+  much of the direction the row carries, and on the DEFAULT fixture the
+  rescale factor is 1.006 -- so it would be compared against `ablate` where
+  the two genuinely almost agree. `steer_row_carrying` is the fixture that can
+  see it. Its parity case also runs at a fractional alpha for a SECOND
+  degenerate point: `alpha * (2 - alpha)` equals `alpha` at exactly 1.0, so a
+  case at full strength alone cannot tell the correct rescale from a plain
+  `alpha` -- and full strength is the natural value to reach for, since making
+  it usable is the mode's whole purpose. Both mutations were checked and both
+  redden only their own cases.
 - `resident_metal.rs`: `ResidentGpuWeights` zero-copy `MTLBuffer` wrapping around `mmap` slices.
 - `device_memory.rs`: `recommended_max_working_set`, the Metal device's own
   ceiling plus its name, here for the same reason `power_state.rs` is. Adapted

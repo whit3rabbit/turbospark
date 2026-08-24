@@ -282,6 +282,24 @@ TURBOSPARK_PROBE_INSTALL_DIR=~/models/qwen38-27b.gturbo \
 TURBOSPARK_STEERING_VECTOR=/tmp/steer/ocean.gguf \
   cargo test -p turbospark-bench --test steering_sweep --release -- --ignored --nocapture
 
+# Its other two axes. `TURBOSPARK_STEERING_MODE` points it at a different edit
+# WITHOUT rewriting the vector, which is what keeps a mode comparison
+# single-variable (one artifact, swept twice); an unknown spelling is REFUSED
+# rather than falling back to the file's declaration.
+# `TURBOSPARK_STEERING_BANDS` sweeps the layer band beside alpha -- `all` or
+# START:END, inclusive and 0-based, the spelling `--steering-layers` takes,
+# applied through the same `SteeringSet::restrict_to_range` the CLI calls. A
+# band covering ZERO layers is refused: it steers nothing, so every alpha
+# under it would read as usable.
+#
+# **READ THE `distinct` COLUMN BESIDE THE VERDICT** -- see Gotcha 20.
+TURBOSPARK_PROBE_INSTALL_DIR=~/models/qwen38-27b.gturbo \
+TURBOSPARK_STEERING_VECTOR=/tmp/steer/ocean.gguf \
+TURBOSPARK_STEERING_MODE=renorm \
+TURBOSPARK_STEERING_BANDS=all,0:50 \
+TURBOSPARK_STEERING_ALPHAS=0,0.4,0.45,0.5,0.55,0.6 \
+  cargo test -p turbospark-bench --test steering_sweep --release -- --ignored --nocapture
+
 # Sensitivity proof for the gate above: APFS-clone the install, shift one
 # quantization level in a strided subset of the routed experts, re-measure.
 # ~30 s. Response curve and detection floor in docs/BENCHMARKS.md.
@@ -419,3 +437,43 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
    when the edit works and when the edit does damage, with nothing in a
    single value separating those. Only the shape across a sweep does, which
    is why a one-alpha version would have been misleading rather than partial.
+
+20. **THE ANCHOR CROSSING UNDER-CALLS DAMAGE, AND `distinct` IS THE SECOND
+   SIGNAL THAT CATCHES IT.** Gotcha 19 records the steepest step being
+   replaced by the anchor crossing, and the crossing is better and still not
+   sufficient. Measured 2026-08-23 on the real `qwen38-27b` at a FINE alpha
+   grid: `ablate` at 0.55 reads perplexity 2.1309, which is 0.4x the anchor
+   and comfortably "usable" by the stated criterion, while its actual output
+   is one sentence repeated with template markup between the copies -- 18
+   distinct tokens against the unsteered arm's 34. The number is not lying; a
+   short degenerate repetition genuinely IS predictable to the unsteered
+   model. It is answering a different question from the one being asked.
+
+   **THE COARSE GRID COULD NOT SEE THIS**, which is the part to carry. On
+   `[0, 0.2, 0.4, 0.6, 0.8, 1.0]` both `ablate` and `renorm` report a usable
+   band of 0.4 and look identical. On `[0, 0.4, 0.45, 0.5, 0.55, 0.6]` they
+   report the same crossing (0.55) and are NOT identical: `ablate`'s
+   vocabulary collapses 34 -> 18 AT that crossing while `renorm`'s falls
+   36 -> 26 ABOVE it. A sweep's resolution is part of its verdict.
+
+   The target REPORTS the disagreement and deliberately does not resolve it.
+   There is no measured basis for a "distinct must stay above N" line, so
+   inventing one would be exactly the fabricated threshold Gotcha 38 warns
+   against; it prints the largest consecutive drop and warns when that drop
+   lands at or before the crossing. Being a reporting feature, no test can
+   redden on it -- its discrimination check is that on one real grid it fires
+   for `ablate` and stays quiet for `renorm`, which is a pair of known-
+   different cases rather than a single confirming one.
+
+21. **A LAYER BAND IS APPLIED BY RESTRICTING THE SET, NOT BY A POLICY FIELD,
+   and a band that covers nothing is the degenerate input to fear.**
+   `SteeringPolicy` has no layer range; `SteeringSet::restrict_to_range` is
+   the mechanism and it is what `crates/cli` and `crates/server` both call, so
+   a band measured here is one a caller can actually ask for. A restriction
+   that lands outside the vector's covered layers leaves ZERO layers steered,
+   and an engine that steers nothing scores exactly like the unsteered one --
+   so every alpha reads as usable and the run reports a flawless result for no
+   work done. `steering_sweep.rs` refuses it by name and prints each band's
+   covered count. Same species as AGENTS.md Gotchas 30, 57 and 59: an
+   instrument returning a plausible value on degenerate input, where nobody
+   investigates a good-looking answer.

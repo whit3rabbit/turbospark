@@ -339,6 +339,24 @@ fn as_f32(v: &[f16]) -> Vec<f32> {
     v.iter().map(|h| h.to_f32()).collect()
 }
 
+/// A row carrying a LARGE component along the direction, which [`steer_row`]
+/// does not.
+///
+/// It exists because the equivalent CPU fixture was MEASURED unable to do the
+/// job: it reads a rescale factor of 1.006, so `Renorm` and `Ablate` agree on
+/// it to within 0.6% and comparing them there proves almost nothing. Not an
+/// inflated fixture either -- on the real `qwen38-27b` the extracted direction
+/// is 19-28% of the residual stream at the late layers
+/// (`docs/OBLITERATION.md`), which is the regime the mode exists for.
+fn steer_row_carrying() -> Vec<f16> {
+    let d = steer_direction();
+    steer_row()
+        .iter()
+        .zip(d.iter())
+        .map(|(x, dv)| f16::from_f32(x.to_f32() + 4.0 * dv.to_f32()))
+        .collect()
+}
+
 /// Runs one dispatch over a single row and returns `(edited row, coefficient)`.
 fn steer_once(
     mode: foundation::SteeringMode,
@@ -346,11 +364,23 @@ fn steer_once(
     target: f32,
     gate: f32,
 ) -> (Vec<f16>, f32) {
+    steer_once_on(&steer_row(), mode, alpha, target, gate)
+}
+
+/// [`steer_once`] over a caller-supplied row, which the `Renorm` cases need:
+/// that mode's whole effect scales with how much of the direction the row
+/// carries, so the default fixture cannot exercise it.
+fn steer_once_on(
+    x: &[f16],
+    mode: foundation::SteeringMode,
+    alpha: f32,
+    target: f32,
+    gate: f32,
+) -> (Vec<f16>, f32) {
     let mut context = MetalContext::new().expect("Metal device");
     let d = steer_direction();
-    let x = steer_row();
 
-    let x_buf = context.new_buffer_with_data(&to_le(&x));
+    let x_buf = context.new_buffer_with_data(&to_le(x));
     let d_buf = context.new_buffer_with_data(&to_le(&d));
     let coeff_buf = context.new_output_buffer(4);
 
@@ -386,8 +416,20 @@ fn steer_once(
 /// The CPU reference over the same fixture, rounded to FP16 at the one place
 /// the kernel stores.
 fn steer_reference(mode: foundation::SteeringMode, alpha: f32, target: f32, gate: f32) -> Vec<f16> {
+    steer_reference_on(&steer_row(), mode, alpha, target, gate)
+}
+
+/// [`steer_reference`] over a caller-supplied row, paired with
+/// [`steer_once_on`].
+fn steer_reference_on(
+    row: &[f16],
+    mode: foundation::SteeringMode,
+    alpha: f32,
+    target: f32,
+    gate: f32,
+) -> Vec<f16> {
     let d = as_f32(&steer_direction());
-    let mut x = as_f32(&steer_row());
+    let mut x = as_f32(row);
     turbospark_compute::steer_in_place(
         &mut x,
         &d,
@@ -429,6 +471,7 @@ fn steering_mode_codes_are_pinned() {
     assert_eq!(foundation::SteeringMode::Ablate.as_u32(), 0);
     assert_eq!(foundation::SteeringMode::Add.as_u32(), 1);
     assert_eq!(foundation::SteeringMode::Clamp.as_u32(), 2);
+    assert_eq!(foundation::SteeringMode::Renorm.as_u32(), 3);
 }
 
 /// **Assert the fixture discriminates before believing any parity case.**
@@ -438,8 +481,15 @@ fn steering_mode_codes_are_pinned() {
 /// tidy fixture would pass against a kernel that implements only one of them
 /// — the same trap `the_two_norm_conventions_are_different_functions` exists
 /// for one file over, and AGENTS.md Gotchas 48 and 50 state generally.
+///
+/// `Renorm` is deliberately NOT in this test and has its own
+/// (`renorm_is_not_ablate_on_the_gpu`). It cannot use this fixture: its whole
+/// effect scales with the direction's share of the row, and on `steer_row`
+/// that share puts its rescale factor at 1.006 -- so it would be compared
+/// against `ablate` on a row where the two genuinely almost agree, and the
+/// 0.05 bar below would fail for a correct kernel.
 #[test]
-fn the_three_modes_are_different_functions() {
+fn the_original_three_modes_are_different_functions() {
     let (ablate, _) = steer_once(foundation::SteeringMode::Ablate, 1.0, 4.0, 0.0);
     let (add, _) = steer_once(foundation::SteeringMode::Add, 1.0, 4.0, 0.0);
     let (clamp, _) = steer_once(foundation::SteeringMode::Clamp, 1.0, 4.0, 0.0);
@@ -512,6 +562,99 @@ fn steer_clamp_matches_compute_reference() {
     let (got, _) = steer_once(foundation::SteeringMode::Clamp, 1.0, 4.0, 0.0);
     let want = steer_reference(foundation::SteeringMode::Clamp, 1.0, 4.0, 0.0);
     assert_steer_close(&got, &want, "clamp");
+}
+
+/// Run at `alpha = 0.6` for the reason `steer_ablate_matches_compute_
+/// reference` runs there and one more besides: `renorm`'s rescale
+/// coefficient is `alpha * (2 - alpha)`, which is EQUAL to `alpha` at exactly
+/// 1.0. A case at full strength alone is blind to the difference between the
+/// correct expression and a plain `alpha`, and full strength is the natural
+/// value to reach for, since making it usable is the mode's whole purpose.
+///
+/// On `steer_row_carrying` rather than the default row, because the whole
+/// effect scales with the direction's share and the default row's is 0.6%.
+#[test]
+fn steer_renorm_matches_compute_reference() {
+    let row = steer_row_carrying();
+    let (got, _) = steer_once_on(&row, foundation::SteeringMode::Renorm, 0.6, 4.0, 0.0);
+    let want = steer_reference_on(&row, foundation::SteeringMode::Renorm, 0.6, 4.0, 0.0);
+    assert_steer_close(&got, &want, "renorm");
+}
+
+/// `renorm`'s defining property, asserted on the GPU rather than inferred
+/// from the reference agreeing with it: the edited row must carry the norm
+/// the original did.
+///
+/// Paired with `steer_renorm_still_ablates` below, and neither alone pins the
+/// edit -- a no-op preserves the norm, and plain `ablate` removes the
+/// component. The tolerance is loose because the row is stored FP16 and the
+/// norm is a sum over 320 such values.
+#[test]
+fn steer_renorm_preserves_the_row_norm() {
+    fn l2(v: &[f16]) -> f32 {
+        v.iter()
+            .map(|a| a.to_f32() * a.to_f32())
+            .sum::<f32>()
+            .sqrt()
+    }
+    let row = steer_row_carrying();
+    let before = l2(&row);
+    for alpha in [0.6f32, 1.0] {
+        let (got, _) = steer_once_on(&row, foundation::SteeringMode::Renorm, alpha, 0.0, 0.0);
+        let after = l2(&got);
+        assert!(
+            (after - before).abs() / before < 0.01,
+            "alpha {alpha}: norm moved {before} -> {after}"
+        );
+    }
+}
+
+/// The other half: it must still project the direction OUT. Preserving the
+/// norm while leaving the component alone is the identity.
+#[test]
+fn steer_renorm_still_ablates() {
+    let row = steer_row_carrying();
+    let d = as_f32(&steer_direction());
+    let inv = turbospark_compute::inv_norm(&d);
+    let before = turbospark_compute::unit_coefficient(&as_f32(&row), &d, inv);
+    assert!(before.abs() > 1.0, "fixture carries no direction to remove");
+
+    let (got, _) = steer_once_on(&row, foundation::SteeringMode::Renorm, 1.0, 0.0, 0.0);
+    let after = turbospark_compute::unit_coefficient(&as_f32(&got), &d, inv);
+    assert!(
+        after.abs() < before.abs() * 0.02,
+        "component survived renorm: {before} -> {after}"
+    );
+}
+
+/// `renorm` and `ablate` must be different edits on the GPU too, and **the
+/// fixture is checked capable of showing that first**: as the coefficient
+/// goes to zero there is no norm to restore, the rescale factor goes to 1,
+/// and the two converge. On the DEFAULT row they agree to 0.6%, which is why
+/// this uses `steer_row_carrying` -- the same Gotcha 48 discipline
+/// `the_three_modes_are_different_functions` applies above.
+#[test]
+fn renorm_is_not_ablate_on_the_gpu() {
+    let row = steer_row_carrying();
+    let xx: f32 = as_f32(&row).iter().map(|v| v * v).sum();
+    let d = as_f32(&steer_direction());
+    let inv = turbospark_compute::inv_norm(&d);
+    let c_hat = turbospark_compute::unit_coefficient(&as_f32(&row), &d, inv);
+    let gamma = turbospark_compute::renorm_gamma(xx, c_hat, 1.0);
+    assert!(
+        gamma > 1.01,
+        "fixture cannot discriminate: gamma is {gamma}, so the two edits coincide on it"
+    );
+
+    let (ablated, _) = steer_once_on(&row, foundation::SteeringMode::Ablate, 1.0, 0.0, 0.0);
+    let (renormed, _) = steer_once_on(&row, foundation::SteeringMode::Renorm, 1.0, 0.0, 0.0);
+    let worst = (0..STEER_D)
+        .map(|i| (ablated[i].to_f32() - renormed[i].to_f32()).abs())
+        .fold(0.0f32, f32::max);
+    assert!(
+        worst > 0.05,
+        "renorm reproduced ablate's row (worst {worst})"
+    );
 }
 
 /// The reported coefficient is the pre-edit one along the UNIT direction, and

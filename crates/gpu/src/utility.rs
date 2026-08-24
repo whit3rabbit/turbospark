@@ -236,7 +236,7 @@ pub struct SteerParams {
     /// that accepted bytes would read correctly at `rows == 1` and silently
     /// edit every other row at `rows > 1`.
     pub row_stride: u32,
-    /// Which of the three edits to apply.
+    /// Which of the four edits to apply.
     pub mode: SteeringMode,
     /// Strength. `0.0` is the exact identity in every mode, which is the null
     /// control the steering probe leans on.

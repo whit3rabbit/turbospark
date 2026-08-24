@@ -218,19 +218,24 @@ void bias_add_bf16_fp16(
 // group merges them. That shape reads `simdgroups` at runtime instead of
 // hardcoding a loop bound, which is what keeps it correct where `gdn.metal`'s
 // two norms are correct at EXACTLY 128 threads and silently wrong otherwise
-// (crate Gotcha 5). `partial` still sizes for the 256-thread maximum the
-// attribute above pins, so the Rust dispatch must not widen the threadgroup.
+// (crate Gotcha 5). `partial_c` and `partial_xx` still size for the
+// 256-thread maximum the attribute above pins, so the Rust dispatch must not
+// widen the threadgroup.
 //
 // FP32 accumulator, FP16 store, matching `residual_add_fp16` next door. Note
-// `ablate` can only ever REDUCE |x| and so cannot overflow, while `add` and
-// `clamp` can push an FP16 stream past 65,504 at a large enough alpha; that
+// `ablate` can only ever REDUCE |x| and so cannot overflow, and `renorm`
+// restores a magnitude the row already carried so it cannot either, while
+// `add` and `clamp` can push an FP16 stream past 65,504 at a large enough alpha; that
 // overflow arrives as inf and then as NaN, and NaN reads as a perfect score
 // on any rank instrument (AGENTS.md Gotchas 59 and 60). The finiteness check
 // belongs to the caller, at the point a measurement is taken.
 // ============================================================================
 
-// Threadgroup memory carries at most 256/32 = 8 partial sums, as in
-// rmsnorm.metal. Slot 0 is reused after the merge to broadcast the total.
+// Threadgroup memory carries at most 256/32 = 8 partial sums per reduction,
+// as in rmsnorm.metal. Slot 0 of each is reused after the merge to broadcast
+// the total. There are TWO reductions here rather than one, and the second
+// costs no extra memory traffic: `x[i]` is already in register for the dot
+// product, so `||x||^2` is one more fma per element. Only `renorm` reads it.
 constant constexpr uint kSteerMaxSimdGroups = 8;
 
 // These must equal `foundation::SteeringMode::as_u32`. Pinned from the Rust
@@ -239,6 +244,7 @@ constant constexpr uint kSteerMaxSimdGroups = 8;
 constant constexpr uint kSteerModeAblate = 0;
 constant constexpr uint kSteerModeAdd    = 1;
 constant constexpr uint kSteerModeClamp  = 2;
+constant constexpr uint kSteerModeRenorm = 3;
 
 [[kernel, max_total_threads_per_threadgroup(256)]]
 void steer_direction_fp16(
@@ -259,29 +265,42 @@ void steer_direction_fp16(
     uint  simd_group_id    [[simdgroup_index_in_threadgroup]],
     uint  simdgroups       [[simdgroups_per_threadgroup]]
 ) {
-    threadgroup float partial[kSteerMaxSimdGroups];
+    threadgroup float partial_c[kSteerMaxSimdGroups];
+    threadgroup float partial_xx[kSteerMaxSimdGroups];
     device half* xr = x + row * row_stride;
 
-    float acc = 0.0f;
+    // Both reductions in ONE pass over the row. `xv` is loaded once and used
+    // twice, so `||x||^2` adds arithmetic and no memory traffic.
+    float acc_c  = 0.0f;
+    float acc_xx = 0.0f;
     for (uint i = lid; i < D; i += lsize) {
-        acc = fma(float(xr[i]), float(d[i]), acc);
+        const float xv = float(xr[i]);
+        acc_c  = fma(xv, float(d[i]), acc_c);
+        acc_xx = fma(xv, xv, acc_xx);
     }
-    acc = simd_sum(acc);
+    acc_c  = simd_sum(acc_c);
+    acc_xx = simd_sum(acc_xx);
     if (simd_lane_id == 0) {
-        partial[simd_group_id] = acc;
+        partial_c[simd_group_id]  = acc_c;
+        partial_xx[simd_group_id] = acc_xx;
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
     if (simd_group_id == 0) {
-        float v = (simd_lane_id < simdgroups) ? partial[simd_lane_id] : 0.0f;
-        v = simd_sum(v);
+        const bool live = (simd_lane_id < simdgroups);
+        float vc  = live ? partial_c[simd_lane_id]  : 0.0f;
+        float vxx = live ? partial_xx[simd_lane_id] : 0.0f;
+        vc  = simd_sum(vc);
+        vxx = simd_sum(vxx);
         if (simd_lane_id == 0) {
-            partial[0] = v;
+            partial_c[0]  = vc;
+            partial_xx[0] = vxx;
         }
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
-    const float c = partial[0];
+    const float c = partial_c[0];
+    const float xx = partial_xx[0];
     const float c_hat = c * inv_norm;
 
     // Reported before the gate and before the edit. After the edit it would
@@ -301,15 +320,41 @@ void steer_direction_fp16(
     }
 
     float scale;
-    if (mode == kSteerModeAblate) {
+    if (mode == kSteerModeAblate || mode == kSteerModeRenorm) {
         scale = -alpha * c * inv_norm * inv_norm;
     } else if (mode == kSteerModeAdd) {
         scale = alpha;
-    } else {
+    } else {  // kSteerModeClamp
         scale = (target - c_hat) * inv_norm;
     }
 
+    // `renorm` restores the norm ablation removed. The post-edit norm is
+    // ANALYTIC rather than a second reduction over the written row --
+    // `||x'||^2 = ||x||^2 - alpha*(2 - alpha)*c_hat^2`, exactly, because the
+    // projection is orthogonal. `turbospark_compute::steering::renorm_gamma`
+    // is the contract and carries the derivation.
+    //
+    // NOTE `alpha * (2 - alpha)` equals `alpha` at exactly 1.0, so any test
+    // of this at full strength alone cannot see the difference between them.
+    //
+    // `denom <= 0` means the row lay entirely along `d` and there is no norm
+    // left to restore: the identity, never an infinity, which would reach the
+    // stream as NaN and read as a PERFECT score on any rank instrument.
+    float gamma = 1.0f;
+    if (mode == kSteerModeRenorm) {
+        const float denom = xx - alpha * (2.0f - alpha) * c_hat * c_hat;
+        if (denom > 0.0f) {
+            const float g = sqrt(xx / denom);
+            gamma = isfinite(g) ? g : 1.0f;
+        }
+    }
+
+    // ONE write loop for all four modes. `gamma` is exactly 1.0f in the other
+    // three and `1.0f * v == v` exactly in IEEE-754, so this leaves them
+    // unchanged to the last bit rather than to within a tolerance -- which is
+    // what lets a fourth mode land without a second pipeline, without a
+    // branch here, and without moving the real-model null control.
     for (uint i = lid; i < D; i += lsize) {
-        xr[i] = half(fma(scale, float(d[i]), float(xr[i])));
+        xr[i] = half(gamma * fma(scale, float(d[i]), float(xr[i])));
     }
 }

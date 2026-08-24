@@ -390,14 +390,19 @@ fn a_steering_path_is_not_validated_by_the_parser() {
     assert_eq!(req.steering.as_deref(), Some("/does/not/exist.gguf"));
 }
 
-/// Each of the three modes must parse, or a flag silently narrows to one
-/// edit while accepting the names of the other two.
+/// Each mode must parse, or a flag silently narrows to a subset of the edits
+/// while still accepting the names of the rest.
+///
+/// A list rather than a loop over an enum, deliberately: this asserts the
+/// SPELLINGS the CLI, the server and a vector file's `declared_mode` metadata
+/// all share, and an exhaustive-match helper would only restate the enum.
 #[test]
 fn every_steering_mode_parses() {
     for (name, want) in [
         ("ablate", turbospark_invocation::SteeringMode::Ablate),
         ("add", turbospark_invocation::SteeringMode::Add),
         ("clamp", turbospark_invocation::SteeringMode::Clamp),
+        ("renorm", turbospark_invocation::SteeringMode::Renorm),
     ] {
         let req = expect_success(parse(&tok(&[
             "--model",

@@ -47,8 +47,34 @@
 //!   cargo test -p turbospark-bench --test steering_sweep --release -- --ignored --nocapture
 //! ```
 //!
-//! Six opens of one install, ~2 min. `TURBOSPARK_STEERING_ALPHAS` overrides
-//! the sweep as a comma-separated list.
+//! # The two other axes, and why they are env vars rather than files
+//!
+//! `TURBOSPARK_STEERING_MODE` overrides the edit. Without it the mode comes
+//! from the vector file's own `declared_mode`, so comparing two modes would
+//! mean writing two vectors -- and then the comparison has two variables in
+//! it, the mode and the artifact. One file swept twice is single-variable.
+//! An unknown value is REFUSED and never falls back to the file's mode, for
+//! the reason `SteeringMode::parse` gives: a caller who asked for one edit
+//! and silently got another measures the wrong model and reports it as the
+//! right one.
+//!
+//! `TURBOSPARK_STEERING_BANDS` sweeps the LAYER BAND beside alpha --
+//! comma-separated, `all` or `START:END` inclusive and 0-based. It is the
+//! other lever on the collapse: `docs/OBLITERATION.md`'s stream-share column
+//! says the damage concentrates in the late layers, so a band excluding them
+//! should push the usable alpha up. The default is a single `all` arm, so a
+//! plain run is unchanged.
+//!
+//! **A band covering ZERO layers is refused rather than run.** It steers
+//! nothing, so every alpha would read as perfectly usable and the table would
+//! report a flawless result for an engine doing nothing -- an instrument
+//! returning a plausible value on degenerate input, which is the failure this
+//! whole page keeps meeting (AGENTS.md Gotchas 30, 57, 59).
+//!
+//! Six opens of one install, ~2 min for the default single band;
+//! `bands x alphas` opens otherwise, at roughly 20 s each.
+//! `TURBOSPARK_STEERING_ALPHAS` overrides the alpha sweep as a
+//! comma-separated list.
 
 use foundation::LogitValue;
 use runtime::{LogitProducer, RealForwardRunner};
@@ -113,10 +139,43 @@ fn generate(runner: &mut RealForwardRunner, prompt: &[i32], n: usize) -> Vec<i32
 }
 
 struct Arm {
+    band: usize,
     alpha: f32,
     tokens: Vec<i32>,
     /// Mean NLL under the UNSTEERED model, filled in phase B.
     nll: f64,
+}
+
+/// One layer band of the sweep: the whole covered range, or a restriction of
+/// it applied through `SteeringSet::restrict_to_range` -- the same call the
+/// CLI's `--steering-layers` and the server's make, so a band measured here
+/// is a band a caller can actually ask for.
+struct Band {
+    label: String,
+    /// `None` is every layer the vector covers.
+    range: Option<(usize, usize)>,
+    covered: usize,
+}
+
+/// Parses `all` or `START:END` (inclusive, 0-based), the spelling
+/// `--steering-layers` takes.
+fn parse_bands(raw: &str) -> Vec<(String, Option<(usize, usize)>)> {
+    raw.split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| {
+            if s == "all" {
+                return (s.to_string(), None);
+            }
+            let (a, b) = s
+                .split_once(':')
+                .unwrap_or_else(|| panic!("band {s:?} is not `all` or `START:END`"));
+            let start: usize = a.trim().parse().expect("band start parses");
+            let end: usize = b.trim().parse().expect("band end parses");
+            assert!(start <= end, "band {s:?} runs backwards");
+            (s.to_string(), Some((start, end)))
+        })
+        .collect()
 }
 
 #[test]
@@ -143,7 +202,48 @@ fn the_alpha_sweep_shows_where_steering_becomes_damage() {
 
     let set = repack::control_vector::load_control_vector(&vector)
         .unwrap_or_else(|e| panic!("{}: {e:?}", vector.display()));
-    let mode = set.declared_mode.unwrap_or_default();
+
+    // REFUSED on an unknown spelling rather than falling back to the file's
+    // declaration: silently measuring a different edit than the one asked for
+    // is the failure `SteeringMode::parse` returns `None` to prevent, and a
+    // sweep is exactly where it would go unnoticed.
+    let mode = match std::env::var("TURBOSPARK_STEERING_MODE") {
+        Ok(raw) => foundation::SteeringMode::parse(raw.trim()).unwrap_or_else(|| {
+            panic!(
+                "TURBOSPARK_STEERING_MODE={raw:?} is not a steering mode. \
+                 Accepted: ablate, add, clamp, renorm."
+            )
+        }),
+        Err(_) => set.declared_mode.unwrap_or_default(),
+    };
+
+    let bands: Vec<Band> = parse_bands(
+        &std::env::var("TURBOSPARK_STEERING_BANDS").unwrap_or_else(|_| "all".to_string()),
+    )
+    .into_iter()
+    .map(|(label, range)| {
+        let mut restricted = set.clone();
+        if let Some((start, end)) = range {
+            restricted.restrict_to_range(start, end);
+        }
+        let covered = restricted.covered_layers();
+        // A band covering nothing steers nothing, so every alpha under it
+        // would score like the unsteered model and the table would report a
+        // perfect result for an engine doing no work.
+        assert!(
+            covered > 0,
+            "band {label:?} covers 0 of the vector's {} layers, so it would steer nothing \
+             and every alpha under it would read as usable",
+            set.covered_layers()
+        );
+        Band {
+            label,
+            range,
+            covered,
+        }
+    })
+    .collect();
+
     println!(
         "steering_sweep: install {}\n  vector {} ({} covered layers), mode {}, {} tokens per arm",
         dir.display(),
@@ -151,6 +251,15 @@ fn the_alpha_sweep_shows_where_steering_becomes_damage() {
         set.covered_layers(),
         mode.as_str(),
         GENERATE,
+    );
+    println!(
+        "  {} layer band(s): {}",
+        bands.len(),
+        bands
+            .iter()
+            .map(|b| format!("{} ({} layers)", b.label, b.covered))
+            .collect::<Vec<_>>()
+            .join(", ")
     );
 
     let prompt_text = "Describe what you notice about the water.";
@@ -162,38 +271,49 @@ fn the_alpha_sweep_shows_where_steering_becomes_damage() {
     // fixed at OPEN (`SteeringState` stores it), so a sweep is one open per
     // point either way, and holding two engines buys nothing while putting
     // two KV caches and two Metal contexts in flight at once.
-    let mut arms: Vec<Arm> = Vec::with_capacity(alphas.len());
+    let mut arms: Vec<Arm> = Vec::with_capacity(alphas.len() * bands.len());
     let mut prompt: Vec<i32> = Vec::new();
-    for &alpha in &alphas {
-        let policy = runtime::SteeringPolicy {
-            set: Some(set.clone()),
-            mode,
-            alpha,
-            target: 0.0,
-            gate_threshold: 0.0,
-        };
-        let (mut runner, tokenizer) =
-            match open_model_runner_steered(&dir, PROTOCOL_EXPERT_CACHE_SLOTS, policy) {
-                Ok(pair) => pair,
-                Err(e) => {
-                    println!("\nsteering refused this install: {e}");
-                    println!(
-                        "point TURBOSPARK_PROBE_INSTALL_DIR at a family the steering \
-                         dispatch serves (docs/OBLITERATION.md)"
-                    );
-                    return;
-                }
+    for (band_idx, band) in bands.iter().enumerate() {
+        for &alpha in &alphas {
+            let mut banded = set.clone();
+            if let Some((start, end)) = band.range {
+                banded.restrict_to_range(start, end);
+            }
+            let policy = runtime::SteeringPolicy {
+                set: Some(banded),
+                mode,
+                alpha,
+                target: 0.0,
+                gate_threshold: 0.0,
             };
-        if prompt.is_empty() {
-            prompt = ids_for(&tokenizer, prompt_text);
+            let (mut runner, tokenizer) =
+                match open_model_runner_steered(&dir, PROTOCOL_EXPERT_CACHE_SLOTS, policy) {
+                    Ok(pair) => pair,
+                    Err(e) => {
+                        println!("\nsteering refused this install: {e}");
+                        println!(
+                            "point TURBOSPARK_PROBE_INSTALL_DIR at a family the steering \
+                             dispatch serves (docs/OBLITERATION.md)"
+                        );
+                        return;
+                    }
+                };
+            if prompt.is_empty() {
+                prompt = ids_for(&tokenizer, prompt_text);
+            }
+            let tokens = generate(&mut runner, &prompt, GENERATE);
+            println!(
+                "  band {:>7} alpha {alpha:>4}: generated {} tokens",
+                band.label,
+                tokens.len()
+            );
+            arms.push(Arm {
+                band: band_idx,
+                alpha,
+                tokens,
+                nll: f64::NAN,
+            });
         }
-        let tokens = generate(&mut runner, &prompt, GENERATE);
-        println!("  alpha {alpha:>4}: generated {} tokens", tokens.len());
-        arms.push(Arm {
-            alpha,
-            tokens,
-            nll: f64::NAN,
-        });
     }
 
     // ---- PHASE B: score every arm under the UNSTEERED engine ----
@@ -225,53 +345,31 @@ fn the_alpha_sweep_shows_where_steering_becomes_damage() {
     }
 
     // ---- THE NULL CONTROL, restated here because it anchors the column ----
-    let zero = &arms[0];
-    assert_eq!(
-        zero.tokens, unsteered,
-        "alpha 0 produced a different {GENERATE}-token continuation than steering off. \
-         That arm is this sweep's zero point, so until it matches, every NLL below is \
-         measuring the kernel rather than the edit."
-    );
+    //
+    // Once per BAND, and that is stronger than once overall: alpha 0 must be
+    // inert whatever subset of layers the dispatch runs over, so a band that
+    // failed here would be a restriction bug rather than an edit.
+    for (band_idx, band) in bands.iter().enumerate() {
+        let zero = arms
+            .iter()
+            .find(|a| a.band == band_idx && a.alpha == 0.0)
+            .expect("every band has an alpha 0 arm");
+        assert_eq!(
+            zero.tokens, unsteered,
+            "band {} at alpha 0 produced a different {GENERATE}-token continuation than \
+             steering off. That arm is this sweep's zero point, so until it matches, every \
+             NLL below is measuring the kernel rather than the edit.",
+            band.label
+        );
+    }
 
     println!(
         "\nanchor: the unsteered model on the frozen reference answer reads perplexity \
          {anchor_ppl:.4}.\n  That is what ORDINARY FLUENT PROSE costs it. Read the column \
          against this, not against 1.0."
     );
-    println!(
-        "\n  {:>5}  {:>10}  {:>9}  {:>8}  first divergence",
-        "alpha", "ppl", "x anchor", "distinct"
-    );
-    for arm in &arms {
-        let ppl = arm.nll.exp();
-        let distinct: std::collections::BTreeSet<i32> = arm.tokens.iter().copied().collect();
-        let diverge = arm
-            .tokens
-            .iter()
-            .zip(unsteered.iter())
-            .position(|(a, b)| a != b)
-            .map(|i| i.to_string())
-            .unwrap_or_else(|| "none".to_string());
-        println!(
-            "  {:>5}  {:>10.4}  {:>8.1}x  {:>8}  {}",
-            arm.alpha,
-            ppl,
-            ppl / anchor_ppl,
-            distinct.len(),
-            diverge
-        );
-    }
 
-    println!("\nwhat each arm said:");
-    for arm in &arms {
-        println!(
-            "  alpha {:>4}: {:?}",
-            arm.alpha,
-            tokenizer.decode(&arm.tokens, true)
-        );
-    }
-
-    // ---- THE USABLE BAND, which is the deliverable ----
+    // ---- THE USABLE BAND, per layer band, and it is the deliverable ----
     //
     // **THE CRITERION IS THE ANCHOR CROSSING, NOT THE STEEPEST STEP.** The
     // steepest step was the first version of this and it gave the WRONG
@@ -285,47 +383,165 @@ fn the_alpha_sweep_shows_where_steering_becomes_damage() {
     // The anchor is MEASURED -- what human-written prose costs this model --
     // and the argument for comparing against it is structural: a model's own
     // GREEDY output is the argmax path, so it should be far MORE predictable
-    // to that model than human writing is. The fluent arms here sit at 0.3x
-    // the anchor. An arm whose own greedy output is as surprising as human
-    // prose has stopped producing its own distribution's typical text.
-    let usable = arms
-        .iter()
-        .take_while(|a| a.nll.exp() < anchor_ppl)
-        .last()
-        .map(|a| a.alpha);
-    match usable {
-        Some(alpha) => println!(
-            "\nUSABLE BAND: up to alpha {alpha} on THIS direction and THIS prompt.\n  \
-             The last arm whose own greedy output stays more predictable to the unsteered\n  \
-             model than ordinary prose is ({anchor_ppl:.4}). \
-             `scripts/extract_direction.py` predicts a\n  ceiling from the captures alone \
-             and the two should agree."
-        ),
-        None => println!(
-            "\nNO USABLE BAND: even the lowest alpha in the sweep scores above the \
-             {anchor_ppl:.4} anchor.\n  Either the sweep starts too high, or this direction \
-             damages the model at any strength."
-        ),
+    // to that model than human writing is. The fluent arms sit at 0.3x the
+    // anchor. An arm whose own greedy output is as surprising as human prose
+    // has stopped producing its own distribution's typical text.
+    //
+    // Every verdict below is "on THIS direction, THIS prompt, THIS mode and
+    // THIS band". `scripts/extract_direction.py` predicts a ceiling from the
+    // captures alone, and for `ablate` over all layers the two should agree.
+    let mut verdicts: Vec<(String, Option<f32>)> = Vec::with_capacity(bands.len());
+    for (band_idx, band) in bands.iter().enumerate() {
+        let rows: Vec<&Arm> = arms.iter().filter(|a| a.band == band_idx).collect();
+        println!(
+            "\n=== mode {}, layers {} ({} covered) ===",
+            mode.as_str(),
+            band.label,
+            band.covered
+        );
+        println!(
+            "  {:>5}  {:>10}  {:>9}  {:>8}  first divergence",
+            "alpha", "ppl", "x anchor", "distinct"
+        );
+        for arm in &rows {
+            let ppl = arm.nll.exp();
+            let distinct: std::collections::BTreeSet<i32> = arm.tokens.iter().copied().collect();
+            let diverge = arm
+                .tokens
+                .iter()
+                .zip(unsteered.iter())
+                .position(|(a, b)| a != b)
+                .map(|i| i.to_string())
+                .unwrap_or_else(|| "none".to_string());
+            println!(
+                "  {:>5}  {:>10.4}  {:>8.1}x  {:>8}  {}",
+                arm.alpha,
+                ppl,
+                ppl / anchor_ppl,
+                distinct.len(),
+                diverge
+            );
+        }
+
+        println!("  what each arm said:");
+        for arm in &rows {
+            println!(
+                "    alpha {:>4}: {:?}",
+                arm.alpha,
+                tokenizer.decode(&arm.tokens, true)
+            );
+        }
+
+        let usable = rows
+            .iter()
+            .take_while(|a| a.nll.exp() < anchor_ppl)
+            .last()
+            .map(|a| a.alpha);
+
+        // ---- THE SECOND SIGNAL, AND WHAT TO DO WHEN IT DISAGREES ----
+        //
+        // The anchor crossing is the criterion and it is not sufficient on
+        // its own. MEASURED on the real `qwen38-27b` at a fine grid: `ablate`
+        // at alpha 0.55 reads 2.1309, i.e. 0.4x the anchor and comfortably
+        // "usable", while its actual output is one sentence repeated with
+        // template markup between the copies -- 18 distinct tokens against
+        // the unsteered arm's 34. The crossing UNDER-CALLS the damage there,
+        // which is the third time a verdict rule on this page has been wrong
+        // in a way only the text revealed (see the steepest step, and the
+        // probe's alpha-1.0 default).
+        //
+        // `distinct` is the independent signal, and the honest thing is to
+        // REPORT THE DISAGREEMENT rather than invent a second threshold to
+        // resolve it (Gotcha 38's rule -- there is no measured basis for a
+        // "distinct must stay above N" line). So this prints the largest
+        // consecutive drop and says when it lands at or before the crossing.
+        // Nothing here is asserted: an operator choosing a strength wants
+        // both numbers, not one of them silently preferred.
+        let mut biggest_drop = 0i64;
+        let mut drop_at = 0usize;
+        let counts: Vec<usize> = rows
+            .iter()
+            .map(|a| {
+                a.tokens
+                    .iter()
+                    .copied()
+                    .collect::<std::collections::BTreeSet<i32>>()
+                    .len()
+            })
+            .collect();
+        for i in 1..counts.len() {
+            let d = counts[i - 1] as i64 - counts[i] as i64;
+            if d > biggest_drop {
+                biggest_drop = d;
+                drop_at = i;
+            }
+        }
+        match usable {
+            Some(alpha) => println!("  USABLE BAND: up to alpha {alpha}"),
+            None => println!("  NO USABLE BAND: even the lowest alpha scores above the anchor"),
+        }
+        if biggest_drop > 0 {
+            println!(
+                "  distinct tokens fall hardest {} -> {} (alpha {} -> {}), against {} at alpha 0",
+                counts[drop_at - 1],
+                counts[drop_at],
+                rows[drop_at - 1].alpha,
+                rows[drop_at].alpha,
+                counts[0]
+            );
+            if let Some(crossing) = usable {
+                if rows[drop_at].alpha <= crossing {
+                    println!(
+                        "  ** THE TWO SIGNALS DISAGREE. The vocabulary collapses at or BELOW the\n  \
+                         anchor crossing, so the crossing is the OPTIMISTIC reading here and the\n  \
+                         top of this band is likely already degenerate. Read the text."
+                    );
+                }
+            }
+        }
+
+        // Reported SECOND and explicitly not the criterion, so nobody
+        // reinstates it as one.
+        let mut worst_step = 0.0f64;
+        let mut steepest = 1usize;
+        for i in 1..rows.len() {
+            let ratio = rows[i].nll.exp() / rows[i - 1].nll.exp().max(f64::MIN_POSITIVE);
+            if ratio > worst_step {
+                worst_step = ratio;
+                steepest = i;
+            }
+        }
+        if rows.len() > 1 {
+            println!(
+                "  (steepest step alpha {} -> {} at {worst_step:.1}x, INSIDE the damage and \
+                 therefore not the criterion)",
+                rows[steepest - 1].alpha,
+                rows[steepest].alpha
+            );
+        }
+        verdicts.push((band.label.clone(), usable));
     }
 
-    // Reported SECOND and explicitly not the criterion, so nobody reinstates
-    // it as one.
-    let mut worst_step = 0.0f64;
-    let mut steepest = 1usize;
-    for i in 1..arms.len() {
-        let ratio = arms[i].nll.exp() / arms[i - 1].nll.exp().max(f64::MIN_POSITIVE);
-        if ratio > worst_step {
-            worst_step = ratio;
-            steepest = i;
+    // ---- THE CROSS-BAND COMPARISON, which is what the band axis is FOR ----
+    //
+    // `docs/OBLITERATION.md`'s stream-share column predicts the damage is
+    // concentrated in the late layers, so a band excluding them should carry a
+    // HIGHER usable alpha than `all`. Printed rather than asserted: the
+    // prediction is what is under test, and a test that asserted it could only
+    // ever confirm it.
+    if verdicts.len() > 1 {
+        println!("\nusable alpha by layer band (mode {}):", mode.as_str());
+        for (label, usable) in &verdicts {
+            match usable {
+                Some(a) => println!("  {label:>10}: up to {a}"),
+                None => println!("  {label:>10}: none"),
+            }
         }
+        println!(
+            "  A band that excludes the high-share layers should read HIGHER than `all`.\n  \
+             That is the stream-share column's prediction, and this table is what tests it."
+        );
     }
-    println!(
-        "  (steepest step is alpha {} -> {} at {worst_step:.1}x, which is INSIDE the damage \
-         and is\n  why it is not the criterion. Past the crossing the column also stops \
-         being monotone --\n  ordering broken outputs by perplexity means nothing.)",
-        arms[steepest - 1].alpha,
-        arms[steepest].alpha
-    );
 
     // Finiteness on every row, at the point the measurement is taken rather
     // than where it is used (Gotcha 59).

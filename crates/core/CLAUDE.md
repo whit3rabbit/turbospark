@@ -19,7 +19,7 @@ crates/core/
 |   +-- runtime_config.rs   # RuntimeConfig, RuntimeConfigBuilder, ALLOWED_* const sets
 |   +-- chunk_sizing.rs     # Automatic chunk-size resolution algorithm
 |   +-- prefill.rs          # Prefill chunking primitives and iterator logic
-|   +-- steering.rs         # SteeringMode: the directional-steering edit's three modes
+|   +-- steering.rs         # SteeringMode: the directional-steering edit's four modes
 |   \-- error.rs            # CoreError enum declaration
 \-- tests/
     +-- chunk_sizing.rs     # Unit tests for chunk-size resolution
@@ -33,8 +33,27 @@ crates/core/
 - `chunk_sizing.rs`: Implements 3-state resolution rule turning input prompt lengths into allowed chunk sizes.
 - `prefill.rs`: Handles splitting long input token sequences into executable prefill chunks.
 - `error.rs`: Central error type for core initialization failures.
-- `steering.rs`: `SteeringMode` (`Ablate` / `Add` / `Clamp`), the three edits
-  the directional-steering kernel applies to a residual stream row. It lives
+- `steering.rs`: `SteeringMode` (`Ablate` / `Add` / `Clamp` / `Renorm`), the
+  four edits
+  the directional-steering kernel applies to a residual stream row. **`Renorm`
+  is `Ablate` followed by a rescale of the row back to its original `||x||`**,
+  and it attacks `docs/OBLITERATION.md`'s collapse from the opposite side to
+  the alpha ceiling that page derives: the ceiling AVOIDS the damage, this
+  REPAIRS it. Two things about it are worth knowing before touching either
+  implementation. It needs NO second reduction and NO second pass -- `||x||^2`
+  fuses into the loop that already computes the coefficient, and the POST-edit
+  norm is analytic (`||x'||^2 = ||x||^2 - alpha*(2 - alpha)*c_hat^2`, exactly,
+  because the projection is orthogonal). And its rescale factor is exactly
+  `1.0` in the other three modes, where `1.0 * v == v` in IEEE-754, so it
+  lands in the SAME write loop and leaves them bit-identical rather than
+  merely within tolerance -- which is what the real-model null control
+  confirms. `can_grow()` is FALSE for it, like `Ablate` and unlike the other
+  two: it restores a magnitude the row already carried, so no element can
+  exceed a value that was already representable. **`alpha * (2 - alpha)`
+  equals `alpha` at exactly 1.0**, so any test of the rescale at full strength
+  alone is blind to the difference between them -- and full strength is the
+  natural value to reach for, since making it usable is the mode's whole
+  purpose. Both parity suites sweep alpha for that reason. It lives
   in this leaf crate rather than beside either implementation because it is
   the one thing both of them name and NEITHER can reach the other:
   `turbospark_compute::steering` is the numerical contract and
