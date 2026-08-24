@@ -905,6 +905,18 @@ every frozen row was taken on the block it says it was. What was wrong is the
 INTEROP claim alone, which is why this closed as a correction rather than a
 re-freeze.
 
+**BUT A REGENERATED VECTOR IS NOT THE SAME VECTOR, and anyone reproducing
+from scratch has to know it.** The frozen rows were measured on files that
+carry a direction for block 0; `extract_direction.py` can no longer write
+one. So re-running the extraction and then the sweep is a different
+experiment, not a reproduction, and the difference is not small in the place
+it lands: the layer-band section above measures block 0's TRUE removed
+fraction at 72.1%, the highest in the model, against the 0.4% its `share`
+column reports. Reproduce a frozen row against the vector it was taken on
+(`/tmp/steer/ocean.gguf`, `/tmp/steer2/register.gguf`, both still read 64 of
+64), and treat a regenerated one as a new direction that happens to share a
+corpus.
+
 ### Settled by reading, at no download
 
 Three independent sources, none of them a measurement:
