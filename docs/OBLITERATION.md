@@ -44,6 +44,7 @@ throughput, measured below at 1.72% of decode with all 64 layers steered and
 | 5 | a SECOND direction and a second prompt | **LANDED**; the two refutations REPLICATE, and the derived alpha ceiling does not survive |
 | 6 | the BATCHED path, and steering beside speculation | **LANDED**; lossless on both drafters, and acceptance barely moves |
 | 7 | the throughput cost | **LANDED**; -1.72% at all 64 layers, -0.75% at 26, `renorm` free |
+| 8 | llama.cpp interop | **LANDED**; the numbering was OFF BY ONE and is corrected, no measurement here moves |
 
 **It works.** On the real `qwen38-27b`, a direction extracted by this engine
 from its own activations, applied at runtime with no weight byte modified,
@@ -146,6 +147,13 @@ cross-simdgroup merge, clamp's `inv_norm`.
 | residual norm across depth | 13.9 at layer 0, 535.5 at layer 63 |
 | `--max-new` independence | same prompt captured position 21 at both 120 and 200 |
 | GGUF container | `direction.1`..`direction.64`, 1-D F32, no zero index, layer 0 round-trips bit-exactly |
+
+That container row is a PHASE 0 reading and the numbering under it was
+corrected on 2026-08-24: a file written now carries `direction.1`..
+`direction.63` for blocks 1..63, and block 0 is not written at all. The
+vectors this phase produced still read as blocks 0..63, because they declare
+`turbospark.layer_base = 0` and the reader honours it. See the interop
+section below.
 
 The byte-identity result is STRUCTURAL as well as measured: the capture is a
 COPY, and a copy cannot change what it copies. That is why it needed no
@@ -885,16 +893,96 @@ cannot remove it however the alpha is tuned, and no amount of measurement on
 this page would reveal that -- every arm would read as a working but weak
 steer. That is a limit of the shape, not of the tuning.
 
+## The llama.cpp interop off-by-one (2026-08-24)
+
+`direction.N` names llama.cpp's 0-based block `N`. This port read it as block
+`N - 1`, so every vector it wrote was positioned one block early under
+llama.cpp, and every foreign vector it read was applied one block early here.
+
+**No measurement on this page moves.** The writer emitted `direction.{l+1}`
+and the reader mapped back to `l`, so the round trip was self-consistent and
+every frozen row was taken on the block it says it was. What was wrong is the
+INTEROP claim alone, which is why this closed as a correction rather than a
+re-freeze.
+
+### Settled by reading, at no download
+
+Three independent sources, none of them a measurement:
+
+| source | what it says |
+|---|---|
+| `common.cpp`, `common_control_vector_load_one` | writes `direction.N` to buffer offset `n_embd * (N - 1)` |
+| `llama-adapter.cpp` | block `il` reads offset `n_embd * (il - 1)`, looping from `il = 1` |
+| `llama.h`, in a comment | the buffer "should point to an n_embd x n_layers buffer starting from layer 1" |
+
+The first two compose to `il = N`. The third says the same thing
+independently and was already on this machine, in
+`/opt/homebrew/include/llama.h`. `repeng`'s own exporter is a fourth: it skips
+layer 0 and names tensors `direction.{layer}`.
+
+The APPLY SITE was already right and is unchanged. llama.cpp calls
+`build_cvec` between the FFN residual add and `l_out`, which is the boundary
+`families/qwen/produce.rs` uses. One axis was wrong, not two.
+
+### Then confirmed empirically, which is what the published vector bought
+
+`jukofyork/creative-writing-control-vectors-v3.0`,
+`Meta-Llama-3-8B-Instruct/llama-3:8b-optimism_vs_nihilism__optimism.gguf`
+(509 kB), read by `control_vector_file`'s foreign arm:
+
+| | value |
+|---|---|
+| hidden | 4096 (Llama-3-8B's) |
+| blocks | **31 covered of 32 spanned** |
+| under the OLD reader | 31 covered of 31 spanned |
+
+Llama-3-8B has 32 blocks. 31 of 32 is blocks 1..31, exactly llama.cpp's
+`for il = 1; il < n_layer`. The old reader put the same bytes on blocks 0..30:
+steering a block llama.cpp never steers and leaving the last block unsteered.
+
+### The fix reads both conventions and writes one
+
+`turbospark.layer_base` was stamped from the first commit and READ BY NOTHING
+-- AGENTS.md Gotcha 45's shape exactly, a tag no reader honours. Giving it a
+consumer is what let the correction land without reinterpreting the vectors
+already on disk.
+
+- `1`, or ABSENT: `direction.N` is block `N`. llama.cpp's convention, every
+  foreign vector, and everything this port writes now.
+- `0`: `direction.N` is block `N - 1`. Files written before the correction,
+  which keep meaning what they meant when the frozen rows were measured on
+  them. Verified: `/tmp/steer/ocean.gguf` and `/tmp/steer2/register.gguf`
+  still read 64 covered of 64 spanned, at the same norms.
+- Anything else is REFUSED rather than clamped.
+
+**BLOCK 0 IS NO LONGER EXPRESSIBLE** in a file this port writes, and that
+costs nothing anyone wants: llama.cpp never applies a direction there, and the
+layer-band section above already records block 0's row as an artifact of the
+`share` formula rather than a place to steer. `extract_direction.py` announces
+the drop rather than making it quietly.
+
+### The lesson, which is not "read the reference"
+
+The module knew every relevant fact about llama.cpp and still got it wrong. It
+recorded, correctly, that llama.cpp rejects `direction.0` by name and that its
+apply loop never reaches block 0 -- and then INFERRED from those that the
+indices must shift down by one. They do not. Block 0 goes unsteered precisely
+BECAUSE the lowest direction lands on block 1.
+
+The tell was available the whole time and was internal: under the old mapping
+`direction.1` steered block 0, which contradicts the very invariant the doc
+cited two sentences earlier. **A true fact about a reference is not a reading
+of it.** When a convention is derived from a fact rather than from the line
+that implements it, check the derivation against its own premises before
+writing UNVERIFIED beside it -- the honest hedge made this look measured-open
+rather than reasoned-and-wrong, and it survived five sessions on that.
+
 ## Open, and stated as open
 
-- **llama.cpp interop of the layer indexing is UNVERIFIED.** Their loader is
-  1-indexed and rejects `direction.0`; their apply loop runs
-  `for il = 1; il < n_layer`, so their layer 0 never receives a direction.
-  This writer maps 0-based layer `l` to `direction.{l+1}` and stamps
-  `turbospark.layer_base = 0`. Whether that aligns with their numbering is
-  untested, and an off-by-one layer is exactly the kind of error that produces
-  a plausible wrong answer. Do not assume a vector written here is positioned
-  identically under llama.cpp until someone measures it.
+- ~~**llama.cpp interop of the layer indexing is UNVERIFIED**~~ --
+  **CLOSED 2026-08-24, AND THE ANSWER IT WAS CARRYING WAS WRONG.** See the
+  section below: `direction.N` is llama.cpp's block `N`, this port read it as
+  block `N - 1`, and the two were off by one for the life of the surface.
 - **The qwen family only.** Other families disable the CAPTURE with a
   diagnostic and REFUSE a direction set at open by name -- a set that loaded,
   reported itself on the startup line and changed nothing would be the exact
@@ -955,15 +1043,21 @@ Ranked by value per cost.
    mutually exclusive: a speculative steered run is byte-identical to a
    sequential steered one on both drafters, and acceptance barely moves,
    which refutes the prediction the work was built around.
-7. **llama.cpp interop**, one `#[ignore]`d test against a published `repeng`
-   vector. Cheap, and it is the only open item that could invalidate files
-   already written by this port.
+7. ~~llama.cpp interop~~ -- **LANDED 2026-08-24**, and it found a real
+   off-by-one rather than confirming the mapping. See the section below.
 8. **A THIRD direction, and a direction someone else extracted.** Both
    corpora here are this port's own captures of matched instruction pairs on
    one checkpoint, so they share a shape as well as a source. The ceiling's
    failure was only visible because the second direction was much stronger
-   than the first; what else is a property of that shape is not known, and a
-   published `repeng` vector would answer it and item 7 in one run.
+   than the first. What else is a property of that shape is not known.
+   **Item 7 brought a published `repeng` vector onto the disk and it is
+   READ but not APPLIED**: it is a Llama-3-8B vector at hidden 4096 against
+   this port's qwen38 at 5120, so it cannot be run here without a Llama
+   install. What it already answered is the numbering; what it has not
+   answered is whether the alpha band and the layer band survive a direction
+   extracted by someone else's method. Note its norms run 0.0052 to 2.5433
+   against this port's 0.05 to 116.34, so the alpha scales are not
+   comparable and a band read from one will not transfer to the other.
 
 ## Reproducing
 
@@ -1069,6 +1163,19 @@ TURBOSPARK_STEERING_ALPHAS=0,0.4,0.45,0.5,0.55,0.6 \
 # Any control vector on disk, including a published repeng one, reported
 # without loading a model.
 TURBOSPARK_CONTROL_VECTOR=/tmp/steer/d.gguf \
+  cargo test -p turbospark-repack --test control_vector_file -- --ignored --nocapture
+
+# The INTEROP arm, and a different variable: it asserts WHERE a foreign
+# vector's directions land rather than that the file parses. It REFUSES a
+# file carrying `turbospark.layer_base`, i.e. one this port wrote -- such a
+# file is read under whichever convention it declares and so cannot say
+# anything about the ecosystem's. Point it at a published vector:
+#   hf download jukofyork/creative-writing-control-vectors-v3.0 \
+#     "Meta-Llama-3-8B-Instruct/llama-3:8b-optimism_vs_nihilism__optimism.gguf" \
+#     --local-dir /tmp/steer-interop/pub
+# Expect `31 covered of 32 spanned`: Llama-3-8B's 32 blocks less the one
+# llama.cpp cannot reach. 509 kB, no model load, no GPU.
+TURBOSPARK_FOREIGN_CONTROL_VECTOR=/tmp/steer-interop/pub/....gguf \
   cargo test -p turbospark-repack --test control_vector_file -- --ignored --nocapture
 ```
 

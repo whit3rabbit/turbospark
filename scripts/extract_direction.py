@@ -31,19 +31,26 @@ against the unit direction while `add` reads the magnitude. Normalizing here
 would silently rescale `add`, which is the mode that has to stay compatible
 with the published llama.cpp vector sets.
 
-THE FILE FORMAT, AND THE ONE THING NOT VERIFIED ABOUT IT
+THE FILE FORMAT, AND THE OFF-BY-ONE THAT WAS IN IT
 
 llama.cpp's loader reads tensors named `direction.N`, F32, one-dimensional,
 with N ONE-INDEXED -- it rejects a zero index by name. Its apply loop runs
-`for il = 1; il < n_layer`, so its layer 0 never receives a direction at all.
+`for il = 1; il < n_layer`, so its block 0 never receives a direction at all.
 
-This writer maps 0-based layer `l` to `direction.{l+1}` and records
-`turbospark.layer_base = 0` so this port's own reader is unambiguous.
-**Whether that lines up with llama.cpp's own numbering is UNVERIFIED here** --
-the two could differ by one layer, which is exactly the kind of error that
-produces a plausible wrong answer rather than a failure. Read a vector
-written by this script with this port; do not assume it is positioned
-identically under llama.cpp until someone measures it.
+`direction.N` names BLOCK N. Its loader puts `direction.N` at buffer offset
+`n_embd * (N - 1)` and its applier reads block `il` from `n_embd * (il - 1)`,
+so the two compose to `il = N`.
+
+This writer emitted `direction.{l+1}` for 0-based block `l` until 2026-08-24,
+i.e. one block early, and stamped `turbospark.layer_base = 0` to say so. It
+now emits `direction.{l}` and stamps 1. The reader honours both, so vectors
+written before the correction still read as the blocks they were measured on;
+see `crates/repack/src/control_vector.rs`.
+
+The consequence is that BLOCK 0 IS DROPPED: the format cannot name it. That
+costs nothing anyone wants -- llama.cpp never applies a direction there, and
+`docs/OBLITERATION.md` records block 0's row as an artifact of the formula
+rather than a place to steer.
 """
 
 import argparse
@@ -303,14 +310,27 @@ def write_gguf(path: pathlib.Path, dirs: np.ndarray, arch: str, method: str) -> 
         # Port-local provenance. Nothing else reads these; they exist so a
         # file found later can say what it is.
         _kv_string("turbospark.extraction", method),
-        _kv_u32("turbospark.layer_base", 0),
+        # 1: direction.1 names BLOCK 1, which is llama.cpp's own numbering.
+        # This was 0 (direction.1 = block 0) until the numbering was
+        # corrected; the reader still honours that value so the vectors
+        # written before it keep meaning what they meant.
+        _kv_u32("turbospark.layer_base", 1),
     ]
+
+    # Block 0 is dropped, because the format cannot name it: llama.cpp
+    # refuses `direction.0` and its apply loop starts at block 1. Announced
+    # rather than done quietly -- the caller extracted a direction for it.
+    written = list(range(1, layers))
+    print(
+        f"  writing blocks 1-{layers - 1} of {layers}; block 0 is dropped, "
+        "the control-vector format cannot name it"
+    )
 
     infos = []
     offset = 0
     row_bytes = hidden * 4
-    for l in range(layers):
-        name = f"direction.{l + 1}".encode()  # ONE-indexed; 0 is rejected.
+    for l in written:
+        name = f"direction.{l}".encode()  # ONE-indexed; 0 is rejected.
         infos.append(
             struct.pack("<Q", len(name))
             + name
@@ -324,7 +344,7 @@ def write_gguf(path: pathlib.Path, dirs: np.ndarray, arch: str, method: str) -> 
     header = (
         GGUF_MAGIC
         + struct.pack("<I", GGUF_VERSION)
-        + struct.pack("<Q", layers)
+        + struct.pack("<Q", len(written))
         + struct.pack("<Q", len(metadata))
         + b"".join(metadata)
         + b"".join(infos)
@@ -333,7 +353,9 @@ def write_gguf(path: pathlib.Path, dirs: np.ndarray, arch: str, method: str) -> 
     with open(path, "wb") as f:
         f.write(header)
         f.write(b"\0" * pad)
-        for l in range(layers):
+        # The same order the tensor table was built in, or every direction
+        # lands on the wrong block.
+        for l in written:
             f.write(np.ascontiguousarray(dirs[l], dtype="<f4").tobytes())
 
 

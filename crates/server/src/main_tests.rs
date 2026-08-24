@@ -316,12 +316,14 @@ fn write_vector(tag: &str, layers: usize, mode: Option<foundation::SteeringMode>
     ));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("v.gguf");
-    let dirs: Vec<Vec<f32>> = (0..layers)
-        .map(|l| (0..8).map(|i| (l * 8 + i) as f32 * 0.125).collect())
+    // Blocks 1..=layers: `direction.0` has no name in this format, so a
+    // control vector cannot carry an edit for block 0.
+    let dirs: std::collections::BTreeMap<usize, Vec<f32>> = (1..=layers)
+        .map(|l| (l, (0..8).map(|i| (l * 8 + i) as f32 * 0.125).collect()))
         .collect();
     std::fs::write(
         &path,
-        repack::control_vector::write_control_vector(&dirs, "qwen35", mode),
+        repack::control_vector::write_control_vector(&dirs, "qwen35", mode).unwrap(),
     )
     .unwrap();
     path
