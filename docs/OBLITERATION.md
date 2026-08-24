@@ -21,15 +21,16 @@ the residual stream and does not localize a capability into a prunable region.
 
 ## What this is, and what it is not
 
-The engine loads a direction file and applies one of three edits to the
+The engine loads a direction file and applies one of four edits to the
 residual stream. It is agnostic to what the direction encodes: the same code
 path serves concept steering, style vectors, interpretability probes, and
 refusal-direction work. Direction PROVENANCE is the operator's, and extraction
 is a separate offline step (`scripts/extract_direction.py`).
 
 This is representation engineering, not pruning and not quantization. Nothing
-here makes a model smaller or faster; it changes behaviour and costs a little
-throughput.
+here makes a model smaller or faster; it changes behaviour and costs
+throughput, measured below at 1.72% of decode with all 64 layers steered and
+0.75% at 26 of them.
 
 ## Status
 
@@ -975,12 +976,16 @@ MFERENCE_RESID_CAPTURE=/tmp/steer/pos/p1.json \
 ```
 
 ```sh
-# 2. Extract. Reads a DIRECTORY of captures per set and prints THREE columns
+# 2. Extract. Reads a DIRECTORY of captures per set and prints FOUR columns
 #    that rank layers differently on purpose: `sep` (effect size) is the one
-#    to read when picking layers, `share` (||d||/||x||) is what predicts the
-#    collapse, and `norm` is raw and comparable across layers only by
-#    accident. It ends with a suggested ablate ceiling; `--alpha-budget`
-#    moves the 10% that ceiling is derived from.
+#    to read when picking layers, `share` (||d||/||x||) and `removed`
+#    (|c_hat|/||x||) are what ablating COSTS -- the second being the fraction
+#    the kernel actually subtracts, which differs from the first by 2.0x at
+#    depth and 180x at layer 0 -- and `norm` is raw and comparable across
+#    layers only by accident. The derived ceiling it ends with is a LAYER
+#    RANKING diagnostic and NOT a usable alpha: measured on two directions it
+#    under-called the band by 1.1x and 8.9x with the relationship inverted,
+#    so run the sweep below for that.
 uv run --python 3.12 --with numpy scripts/extract_direction.py \
   --positive /tmp/steer/pos --negative /tmp/steer/neg --out /tmp/steer/d.gguf
 ```
