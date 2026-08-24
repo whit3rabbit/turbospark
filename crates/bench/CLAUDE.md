@@ -529,3 +529,36 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
    the new direction, so those are facts about this engine, while the ceiling
    was a fact about one corpus. A page that reports "we tested a second case"
    without splitting its claims that way has learned nothing transferable.
+
+23. **THE LOAD AVERAGE IS THE WRONG INSTRUMENT FOR "CAN I MEASURE THIS?", AND
+   FOUR SESSIONS DECLINED A MEASUREMENT ON IT.** `docs/OBLITERATION.md` owed a
+   steering throughput number for five sessions. Each time it was deferred
+   because the machine was busy, citing Gotcha 43 -- correctly in spirit and
+   using a statistic that cannot answer the question. A load average says how
+   much CPU is being consumed; it says nothing about whether the contention
+   reaches the workload being timed.
+
+   Measured 2026-08-24: with `spotlightknowledged` pegging a full core
+   (indexing the several hundred test binaries the session had just built),
+   three IDENTICAL decode arms read 22.227 / 22.254 / 22.233 tok/s -- a spread
+   of **0.12%** against an expected effect of a few percent. Spotlight is
+   CPU-bound and decode on this engine is GPU-bound, which is exactly the
+   insulation Gotcha 43 already describes; nobody had tested for it. The A/B
+   then resolved -1.72% cleanly.
+
+   **The statistic that answers the question is the REFERENCE ARM'S OWN
+   SPREAD**, and it costs three runs. It needs no norm, no previous clean
+   capture and no judgement about which processes matter, and it measures the
+   only thing that counts: whether this machine, right now, reproduces the
+   quantity about to be compared. `docs/DFLASH2.md` already used it as a
+   cleanliness TELL after the fact (three no-drafter arms at 0.4%); the change
+   is to run it FIRST, as the gate on whether to measure at all.
+
+   Two limits worth keeping. It is not a substitute for Gotcha 43 on ENERGY --
+   watts are system-wide by construction, so a CPU-bound neighbour lands in
+   `cpu_W` whatever the workload does, and the contamination floor stays the
+   check there. And a tight spread licenses a RATIO between interleaved arms,
+   not an absolute row: the `off` arm in that same capture drifted 22.376 ->
+   22.232 across three rounds while the steered arms stayed flat, so the
+   paired deltas were the honest reading and interleaving is what made the
+   drift harmless.

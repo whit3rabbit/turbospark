@@ -42,6 +42,7 @@ throughput.
 | 4 | the alpha sweep, the `renorm` mode, the layer-band axis | **LANDED**; both of the sweep's predictions REFUTED, which is the result |
 | 5 | a SECOND direction and a second prompt | **LANDED**; the two refutations REPLICATE, and the derived alpha ceiling does not survive |
 | 6 | the BATCHED path, and steering beside speculation | **LANDED**; lossless on both drafters, and acceptance barely moves |
+| 7 | the throughput cost | **LANDED**; -1.72% at all 64 layers, -0.75% at 26, `renorm` free |
 
 **It works.** On the real `qwen38-27b`, a direction extracted by this engine
 from its own activations, applied at runtime with no weight byte modified,
@@ -672,6 +673,49 @@ in page slack -- so the invariant is asserted as arithmetic
 (`the_coefficient_blocks_partition_the_buffer`), which is the only place it is
 visible at all.
 
+### What it costs: 1.72% of decode at every layer, and it scales with the band (2026-08-24)
+
+Owed for five sessions, blocked on machine conditions rather than on code, and
+finally taken. Interleaved rounds on the real `qwen38-27b`, greedy, 400 tokens
+per arm, warmup discarded. Every arm generated 400 tokens and stopped on
+`maxTokens`, so the arms did equal work.
+
+| arm | r1 | r2 | r3 | mean | vs off |
+|---|---|---|---|---|---|
+| steering off | 22.376 | 22.261 | 22.232 | 22.290 | |
+| `ablate`, all 64 layers | 21.937 | 21.901 | 21.883 | 21.907 | **-1.72%** |
+| `ablate`, layers 20:45 (26 of 64) | 22.138 | 22.132 | 22.095 | 22.122 | **-0.75%** |
+| `renorm`, all 64 layers | 21.925 | 21.909 | 21.892 | 21.909 | -1.71% |
+
+**THE COST IS PER STEERED LAYER AND VERY NEARLY PROPORTIONAL.** 26 layers of
+64 is 40.6% of the coverage and costs 43.6% of the throughput, so a band's
+price is about 0.027% per layer and an operator can price any band by counting
+it. That is the arithmetic expectation confirmed rather than a surprise: the
+edit is one dispatch per covered layer per token, one reduction over `hidden`
+against a decode step's ~810 dispatches, most of which are GEMVs over matrices
+five thousand times larger.
+
+**`renorm` IS FREE RELATIVE TO `ablate`**, 21.909 against 21.907, which is
+0.01% and far inside the run-to-run spread. Its second reduction fuses into
+the loop that already computes the coefficient -- one fma per element, no extra
+memory traffic -- so this confirms the prediction rather than testing it.
+
+**WHY THIS WAS MEASURABLE AT LAST, and it was not that the machine went
+quiet.** `spotlightknowledged` was pegging a full core throughout, indexing the
+several hundred test binaries this session had just built. The check that
+licensed the run anyway is three IDENTICAL arms taken before it: 22.227 /
+22.254 / 22.233, a spread of **0.12%** against an expected effect of a few
+percent. Spotlight is CPU-bound and decode here is GPU-bound, which is exactly
+what `crates/bench/CLAUDE.md` Gotcha 43 says survives that kind of
+contamination. Measure the reference arm's spread and decide from it; four
+earlier sessions declined this run on the load average alone, and the load
+average was answering a different question.
+
+One caveat in the numbers themselves: the `off` arm drifts down across the
+three rounds (22.376 / 22.261 / 22.232) where the steered arms are flat, so
+the PAIRED deltas are the honest reading and they run -1.96% / -1.62% /
+-1.57%. Interleaving is what makes that drift harmless rather than a bias.
+
 ### This number is not a coherence score
 
 It rises for two unrelated reasons: the edit WORKING (a steered model is
@@ -854,21 +898,15 @@ steer. That is a limit of the shape, not of the tuning.
   diagnostic and REFUSE a direction set at open by name -- a set that loaded,
   reported itself on the startup line and changed nothing would be the exact
   silent no-op this whole surface is built to avoid.
-- **No throughput number, and it is blocked on MACHINE CONDITIONS rather
-  than on code.** The kernel adds one dispatch per steered layer per token --
-  64 on this model against a decode step's ~810 -- and the bytes are
-  negligible against a projection's weight read. That is an arithmetic
-  expectation and NOT a measurement; nothing has timed it. `renorm` adds a
-  second reduction inside that same dispatch, which is one fma per element
-  and no extra memory traffic, so the expectation does not change for it.
-  Three sessions have now declined to take it, each for the same two reasons
-  and both worth stating so the next one does not read it as neglect: the
-  expected effect is a few percent, Gotcha 43 says a loaded machine cannot
-  see it, and Gotcha 22 says an effect that size cannot be measured on
-  battery AT ALL. Everything else on this page is deterministic -- greedy
-  generation and teacher-forced NLL -- which is exactly why the rest could be
-  measured on a machine that could not support this one. The layer band is
-  the lever if it turns out to matter.
+- ~~**No throughput number**~~ -- **MEASURED 2026-08-24**, see the section
+  above: -1.72% of decode with all 64 layers steered, -0.75% at 26, and
+  `renorm` free relative to `ablate`. The cost is per steered layer and very
+  nearly proportional to the band, so `--steering-layers` prices itself. Four
+  sessions declined the run on the machine's load average; what settled it was
+  measuring the REFERENCE arm's spread instead (0.12% across three identical
+  arms, with a core pegged by Spotlight the whole time), because the
+  contention was CPU-bound and decode here is not.
+
 - ~~**The batched path does not steer**~~ -- **CLOSED 2026-08-24**, see the
   section above. It carries the edit through the same `encode_steering` the
   per-token path calls, the refusal is lifted, and a speculative steered run
@@ -899,15 +937,13 @@ Ranked by value per cost.
 3. ~~A layer-band sweep~~ -- **LANDED as the sweep's second axis, and that
    prediction refuted too.** Excluding layers 51-63 leaves the greedy path
    byte-identical at every usable alpha.
-4. **A throughput number**, on a quiet machine, with and without the edit at
-   a fixed layer band. **Now the only Phase 3 deliverable outstanding**, and
-   it has been an arithmetic expectation for three sessions. It is blocked on
-   MACHINE CONDITIONS rather than on code, which is worth stating plainly so
-   the next session does not mistake it for work: it needs a quiet machine
-   (Gotcha 43) and AC power, because the expected effect -- 64 extra
-   dispatches against a decode step's ~810 -- is a few percent, and Gotcha 22
-   says an effect that size cannot be measured on battery at all. Every other
-   number on this page is deterministic and so was measurable without either.
+4. ~~A throughput number~~ -- **MEASURED 2026-08-24.** -1.72% of decode at
+   all 64 layers, -0.75% at 26, and `renorm` free relative to `ablate`; the
+   cost is per steered layer and nearly proportional to the band. Four
+   sessions declined it on the machine's load average, and the thing that
+   settled it was measuring the reference arm's SPREAD instead (0.12% across
+   three identical arms, with a core pegged by Spotlight throughout) -- the
+   contention was CPU-bound and this workload is not.
 5. ~~A second direction and a second prompt~~ -- **LANDED, and it split the
    page's claims in two.** Both sweep refutations REPLICATE on a register
    direction 8x stronger than the first, so those are facts about this
