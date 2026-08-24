@@ -2945,6 +2945,16 @@ LICENSING decision about copying and never an instruction not to look: the MTP
 head's norm convention sat one grep away in the project whose headline result
 `docs/MTP_SPECULATIVE.md`'s first sentence quotes, and was rediscovered by
 two hours of bisection instead.
+**AND A TRUE FACT ABOUT A REFERENCE IS NOT A READING OF IT.** The control
+vector numbering was DERIVED from two correct facts about llama.cpp and came
+out one block off, under an honest `UNVERIFIED` that made it look
+measured-open rather than reasoned-and-wrong; the refutation was internal from
+the first commit (`crates/repack/CLAUDE.md` Gotcha 11). Check a derived
+convention against the line that IMPLEMENTS it -- brew ships llama.cpp's
+headers to `/opt/homebrew/include` and its sources are one
+`raw.githubusercontent.com` fetch away, so this class of question costs no
+download at all.
+
 
 - `crates/core`: shared primitives (`TokenId`, `LogitValue`, `LogitsView`), error types (`CoreError`), runtime configuration (`RuntimeConfig`, `RuntimeConfigBuilder`), allowed value sets (`ALLOWED_CACHE_SLOTS`, `ALLOWED_CHUNK_SIZES`), automatic chunk-size resolution (`chunk_sizing.rs`), and prefill chunking primitives (`prefill.rs`). Details in [`crates/core/CLAUDE.md`](crates/core/CLAUDE.md).
 - `crates/compute`: CPU reference kernels (RmsNorm, WHT, RoPE incl. Qwen's `rope_neox_subdim`, causal attention, int4/int8 affine quant + GEMV, the sub-4-bit MLX affine references (`quant_1bit.rs` and `quant_2bit.rs`, the second ROADMAP's ternary entry: same container, four elements per byte, a ternary grid MEASURED rather than assumed), the GGUF block-quant reference (`quant_gguf/`: Q8_0 and Q4_K dequant/quant/GEMV plus `pearson`; `quant_gguf_iq.rs` for the IQ codebooks; `quant_gguf_mxfp4.rs` for MXFP4, ROADMAP M5), embedding lookup, MoE FFN, the gated-DeltaNet chain (`gdn.rs`) and Qwen's gating kernels (`gating.rs`), logit softcap-softmax, RelError/tolerance table, sampling helpers) plus destination compute strategy marker type (`ComputeStrategy`). These are the numerical ground truth `crates/gpu`'s Metal kernels are validated against. Details in [`crates/compute/CLAUDE.md`](crates/compute/CLAUDE.md).
@@ -2990,7 +3000,17 @@ tree is routinely worked by more than one session at once, and the failure
 arrives as a normal-looking build break minutes after your own suite went
 green. Check mtimes before debugging it, and do not "fix" another session's
 half-finished edit. The same applies to `git add`: re-run `git status`
-immediately before staging.
+immediately before staging. Interactive `git add -p` is
+unavailable here, so a CONTESTED file is staged by RECONSTRUCTION:
+`git show HEAD:<path>` into a temp file, apply only your edits with an
+assert-on-missing, `git hash-object -w`, `git update-index --cacheinfo`. Two
+traps. Match patterns must come from HEAD and not the working copy, which
+carries the other session's edits. And reconstruction leaves the WORKING COPY
+BEHIND THE INDEX -- your committed text is not on disk, so the next session to
+`git add` that path silently reverts it; re-apply the edit to the working copy
+afterwards and confirm `git diff` shows only foreign hunks. And list paths
+LITERALLY in any per-file gate: zsh does not word-split an unquoted variable,
+so a loop over `$FILES` checks ONE nonexistent path and reports clean.
 
 1. greedy generation stays coherent (catches broken math),
 2. SAMPLED generation stays coherent (catches distribution bugs that greedy
