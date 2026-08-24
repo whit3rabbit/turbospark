@@ -45,6 +45,15 @@
 //! numerically identical, so it would pass every losslessness test while
 //! making the measurement describe the wrong engine.
 //!
+//! **THE STEERING EDIT RUNS HERE**, at each layer's output and ahead of the
+//! drafter's aux capture, through the same `encode_steering` the per-token
+//! path calls with `rows` of 1. That is what let `real_forward_open.rs` stop
+//! refusing steering and speculation together: a verify commits, so an
+//! unsteered verify beside a steered sequential fallback is a run of tokens
+//! from two models. Measured end to end on the real install, a speculative
+//! steered generation is byte-identical to a sequential steered one
+//! (`docs/OBLITERATION.md`).
+//!
 //! **NOTHING REACHES THE ROUTED HALF END TO END YET**, and that is a
 //! property of the checkpoints rather than of this file:
 //! `speculation_policy`'s `speculation_blocker` still refuses a MoE
@@ -60,6 +69,7 @@ use super::batched_layers::{
     encode_dense_ffn_batched, encode_full_attention_block_batched, encode_linear_block_batched,
 };
 pub(crate) use super::BatchedScratch;
+use crate::families::qwen::produce::encode_steering;
 use crate::families::qwen::{layer_tensor, RMS_EPS};
 use crate::real_forward::RealForwardRunner;
 use crate::real_forward_dispatch::{encode_embed_any, encode_gemm_any};
@@ -233,6 +243,7 @@ impl RealForwardRunner {
             qwen,
             kv,
             dflash,
+            steering,
             streamers,
             slot_buffers,
             moe_offsets,
@@ -249,6 +260,7 @@ impl RealForwardRunner {
                 .ok_or_else(|| RealForwardError::Unsupported("not a Qwen install".to_string()))?,
             &mut self.kv,
             self.real_dflash.as_ref(),
+            self.steering.as_ref(),
             &mut self.streamers,
             &self.slot_buffers,
             &self.moe_offsets,
@@ -419,6 +431,20 @@ impl RealForwardRunner {
                 )?);
                 pass = context.begin_pass_labeled("batched verify");
             }
+
+            // THE STEERING EDIT at M rows, at the same boundary and in the
+            // same order as the per-token path: this layer's OUTPUT, ahead of
+            // the drafter's capture. ONE dispatch for the whole block rather
+            // than M, because the kernel is row-parallel already (one
+            // threadgroup per row, `coeff[row]`), so a verify costs the same
+            // per-layer dispatch a single token does.
+            //
+            // A block whose rows are NOT all steered is the failure this
+            // cannot be allowed to have: the verify commits every accepted
+            // row, so a partially-steered block emits a run of tokens drawn
+            // from two different models. `encode_steering` refuses a block
+            // wider than the coefficient buffer by name rather than clamping.
+            encode_steering(context, &pass, scratch, steering, layer, hidden, batch)?;
 
             // THE DFLASH2 AUX CAPTURE at M rows: the residual rows this
             // layer just produced, into the fc input's layout. Same point

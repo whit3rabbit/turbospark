@@ -509,6 +509,48 @@ cargo test -p turbospark-runtime
     driver bounds its own sub-batches. Small blocks are what pay on this
     engine, measured independently on both speculative pages.
 
+    **THE STEERING EDIT RUNS HERE TOO SINCE 2026-08-24, AND ONE FUNCTION
+    SERVES BOTH PATHS ON PURPOSE.** `produce_batched` had no hook, so steering
+    and speculation were refused together at open -- the verify is what
+    COMMITS a speculative token, so a steered sequential path beside an
+    unsteered batched one emits a run of tokens from two models, and no
+    losslessness check can see it (the run and its speculative reference carry
+    the same mixture). `families/qwen/produce.rs`'s `encode_steering` takes
+    `rows` now and both sites call it, because two dispatch sites would have
+    to agree on the mode, the alpha, the direction offset, the row stride AND
+    the coefficient block, and a disagreement in any one of them is a fluent
+    model that is not the one asked for.
+
+    Three things this cost that are not obvious from the feature.
+
+    **The coefficient buffer was one FP32 slot per LAYER**, which an M-row
+    dispatch overruns -- at the last layer, off the end of the buffer. It is
+    `num_layers * MAX_STEER_ROWS` now, and that constant IS `gpu::MAX_BATCH_ROWS`
+    rather than a second 16 that agrees by luck: the batched INT4 GEMM caps the
+    block for its own reason, so the steering refusal is a backstop that cannot
+    currently fire, and a future rise in the kernel's cap carries the buffer
+    with it. Nothing downstream can see a wrong stride -- each later layer
+    overwrites the spill and a short GPU overrun lands in page slack -- so the
+    partition is asserted as arithmetic in `steering.rs`'s own unit test.
+
+    **The edit goes BEFORE the drafter's aux capture, in both paths.** The
+    drafter predicts what the TARGET emits, and under an edit the target is the
+    steered model, so a capture taken ahead of the edit hands it a residual no
+    committed token came from. The order was the other way round in the
+    per-token path and unobservable, since the two features could not both be
+    on. Flipping one path alone reddens
+    `the_batched_capture_agrees_with_the_per_token_hook_under_steering` and
+    nothing else; the unsteered capture case cannot see it, because with the
+    edit off the two orders are the same program.
+
+    **The prediction that a steered target would collapse acceptance against
+    an unsteered drafter is REFUTED** (MTP 1.30 -> 1.31 accepted per round,
+    DFlash2 1.33 -> 1.29). Neither drafter's weights are steered and both are
+    half-steered anyway, through their INPUT: the edit lands on every layer's
+    output including the last, so `scratch.x` is already steered when the head
+    reads `h_t` out of it. A drafter reading from anywhere upstream of the last
+    steered layer would not inherit it that way.
+
     **NOTHING REACHES IT END TO END YET**, and that is the checkpoints
     rather than the code: `speculation_blocker` still refuses a MoE install,
     because drafting needs a HEAD and no published MoE conversion of this

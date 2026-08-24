@@ -72,6 +72,47 @@ fn open(dir: &std::path::Path, block: usize) -> RealForwardRunner {
     .expect("the dflash install opens with the drafter on")
 }
 
+/// The same install opened with a directional-steering edit on every layer.
+///
+/// Only the STEERING differs from `open`; the drafter, the block, the context
+/// and the slots are the same, so a difference between two arms opened this
+/// way is the edit and nothing else.
+fn open_steered(dir: &std::path::Path, block: usize, alpha: f32) -> RealForwardRunner {
+    let arch = turbospark_repack::peek_manifest_arch(dir).expect("manifest peeks");
+    let hidden = arch.hidden_size as usize;
+    let layers = (0..arch.num_layers as usize)
+        .map(|l| {
+            let values = (0..hidden)
+                .map(|i| 0.5 * (i as f32 * 0.37 + l as f32 * 1.13).sin())
+                .collect::<Vec<f32>>();
+            Some(model_io::LayerDirection::new(values))
+        })
+        .collect();
+    RealForwardRunner::open_with_slot_policy_speculation_and_steering(
+        dir,
+        arch,
+        MAX_CONTEXT,
+        turbospark_runtime::ExpertCacheSlots::Fixed(SLOTS),
+        DraftPolicies {
+            mtp: MtpDraftPolicy::Off,
+            dflash: DflashDraftPolicy::Fixed(block),
+        },
+        turbospark_runtime::SteeringPolicy {
+            set: Some(model_io::SteeringSet {
+                layers,
+                hidden,
+                declared_mode: None,
+                declared_arch: None,
+            }),
+            mode: foundation::SteeringMode::Ablate,
+            alpha,
+            target: 0.0,
+            gate_threshold: 0.0,
+        },
+    )
+    .expect("the dflash install opens steered with the drafter on")
+}
+
 fn argmax(logits: &[LogitValue]) -> i32 {
     let mut best = 0usize;
     let mut best_v = f32::NEG_INFINITY;
@@ -487,5 +528,59 @@ fn the_draft_logits_have_a_frozen_digest() {
         digest(&draft),
         FROZEN_DRAFT_DIGEST,
         "the draft logits moved; see this test's doc comment before re-freezing"
+    );
+}
+
+/// UNDER STEERING, BOTH PATHS MUST CAPTURE THE SAME RESIDUAL -- which is an
+/// assertion about ORDER, and it had nothing guarding it.
+///
+/// The drafter's capture and the steering edit sit at the same boundary, so
+/// their order decides whether the drafter sees the residual the trunk
+/// actually committed or the one it would have committed unsteered. Both
+/// paths steer FIRST. If one of them stopped, speculation would still be
+/// lossless -- a verify rejects what it does not agree with -- so the only
+/// symptom would be a fall in ACCEPTANCE, which reads as a verdict about the
+/// drafter rather than as a bug in the pass.
+///
+/// The unsteered sibling of this case cannot see it: with the edit off, the
+/// two orders are the same program. That is why this exists as its own case
+/// rather than as a stronger tolerance on the one above.
+#[test]
+fn the_batched_capture_agrees_with_the_per_token_hook_under_steering() {
+    let dir = build();
+    let block = 2usize;
+    let n = PROMPT.len();
+    let rows = block + 1;
+    let alpha = 0.35;
+
+    let mut seq_runner = open_steered(&dir, block, alpha);
+    let sequential = draft_after_capture(&mut seq_runner, &PROMPT, n);
+
+    let mut batched_runner = open_steered(&dir, block, alpha);
+    let batched = draft_after_capture(&mut batched_runner, &PROMPT, n - rows);
+
+    assert!(
+        sequential.iter().chain(&batched).all(|v| v.is_finite()),
+        "a non-finite draft row makes every comparison below meaningless"
+    );
+
+    // THE EDIT HAS TO REACH THE DRAFT AT ALL, or this compares two unsteered
+    // runs and would stay green with the steering hook deleted.
+    let mut off_runner = open(&dir, block);
+    let unsteered = draft_after_capture(&mut off_runner, &PROMPT, n);
+    let moved = max_abs_diff(&sequential, &unsteered);
+    let agree = max_abs_diff(&sequential, &batched);
+    println!("steered batched vs sequential: {agree:.6}; steering moved the draft by {moved:.6}");
+    assert!(
+        moved > 10.0 * agree.max(1e-4),
+        "steering did not move the draft ({moved:.6}) by enough to tell it apart from \
+         the two paths' reduce-order gap ({agree:.6}), so this case proves nothing"
+    );
+
+    assert!(
+        agree < 0.05,
+        "the M-row capture disagrees with the per-token hook by {agree} under steering \
+         while agreeing without it: the two paths apply the edit and the capture in a \
+         different ORDER, so the drafter is reading a residual no committed token came from"
     );
 }

@@ -61,17 +61,36 @@ fn encode_resid_capture(
 /// set does not cover: the per-layer table holds `None` there rather than a
 /// zero vector, so a set steering three of sixty-four layers costs three
 /// dispatches per token and not sixty-four.
-fn encode_steering(
+///
+/// `rows` is 1 on the per-token path and the block size on the batched
+/// verify. ONE function serves both, because the alternative is two dispatch
+/// sites that must agree on the mode, the alpha, the direction offset, the
+/// row stride and the coefficient block, and a disagreement in any of them
+/// produces a fluent model that is not the one the caller asked for. The
+/// kernel has taken `rows` since it was written.
+pub(super) fn encode_steering(
     context: &mut gpu::MetalContext,
     pass: &gpu::PassEncoder,
     scratch: &crate::real_forward_types::DecodeScratch,
     steering: Option<&crate::steering::SteeringState>,
     layer: usize,
     hidden: usize,
+    rows: usize,
 ) -> Result<(), RealForwardError> {
     let Some(s) = steering else {
         return Ok(());
     };
+    // Checked before the coverage test, so the refusal does not depend on
+    // whether THIS layer happens to be steered: a block too wide for the
+    // coefficient buffer is a property of the block.
+    if rows > crate::steering::MAX_STEER_ROWS {
+        return Err(RealForwardError::Unsupported(format!(
+            "steering a block of {rows} rows, but the coefficient buffer holds {} per layer; \
+             steering fewer rows than the block would draw part of a block from the \
+             unsteered model",
+            crate::steering::MAX_STEER_ROWS
+        )));
+    }
     let Some(l) = s.layer(layer) else {
         return Ok(());
     };
@@ -80,12 +99,15 @@ fn encode_steering(
         pass,
         (&scratch.x, 0),
         (&s.directions, l.offset),
-        // One FP32 slot per layer, so the coefficients of a whole pass
-        // survive to be read back together after the commit.
-        (&s.coeff, (layer * 4) as u64),
+        // A block of FP32 slots per layer, so the coefficients of a whole
+        // pass survive to be read back together after the commit.
+        (
+            &s.coeff,
+            crate::steering::SteeringState::coeff_offset(layer),
+        ),
         &gpu::SteerParams {
             d_len: hidden as u32,
-            rows: 1,
+            rows: rows as u32,
             row_stride: hidden as u32,
             mode: s.mode,
             alpha: s.alpha,
@@ -302,6 +324,19 @@ impl RealForwardRunner {
                 // the fc input's own layout. Zero dispatches when no
                 // drafter is open; five small strided copies per token when
                 // one is.
+                // STEERING FIRST, THEN THE DRAFTER'S CAPTURE. The drafter's
+                // job is to predict what the TARGET emits, and once an edit is
+                // on, the target is the steered model -- so a capture taken
+                // ahead of the edit hands the drafter a residual no committed
+                // token was drawn from. Speculation stays LOSSLESS either way
+                // (a verify rejects what it does not agree with), so the cost
+                // would be acceptance alone, which is exactly the shape that
+                // reads as a verdict about the drafter rather than as a bug.
+                // The order is unobservable on every configuration that
+                // shipped before this: the two features were mutually
+                // exclusive at open, and with steering off the call encodes
+                // nothing.
+                encode_steering(context, &pass, scratch, steering, layer, hidden, 1)?;
                 if let Some(d) = dflash {
                     if let Some(aux) = d.aux_slot(layer) {
                         gpu::encode_dflash_copy_rows(
@@ -316,7 +351,6 @@ impl RealForwardRunner {
                         .map_err(gpu_err)?;
                     }
                 }
-                encode_steering(context, &pass, scratch, steering, layer, hidden)?;
                 encode_resid_capture(context, &pass, scratch, resid_capture, layer, hidden)?;
                 continue;
             }
@@ -384,7 +418,7 @@ impl RealForwardRunner {
             // `encode_qwen_layer_moe`, so this layer's output exists only
             // once that call returns -- the same boundary the dense branch
             // captures at, reached by a different route.
-            encode_steering(context, &pass, scratch, steering, layer, hidden)?;
+            encode_steering(context, &pass, scratch, steering, layer, hidden, 1)?;
             encode_resid_capture(context, &pass, scratch, resid_capture, layer, hidden)?;
         }
 

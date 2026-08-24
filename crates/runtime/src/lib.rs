@@ -105,7 +105,7 @@ pub use speculative::{
     DEFAULT_SPECULATION_BLOCK,
 };
 #[cfg(target_os = "macos")]
-pub use steering::SteeringPolicy;
+pub use steering::{SteeringPolicy, MAX_STEER_ROWS};
 
 // Token id width consumed from the core primitives, keeping the dependency
 // edge live and documenting the interchange type this crate uses throughout.

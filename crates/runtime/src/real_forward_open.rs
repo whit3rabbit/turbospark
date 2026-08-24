@@ -313,25 +313,31 @@ impl RealForwardRunner {
                 runner.arch.family
             )));
         }
-        // STEERING AND SPECULATION ARE MUTUALLY EXCLUSIVE, and the refusal is
-        // not conservatism: the speculative verify runs `produce_batched`,
-        // which has no steering hook, so the drafted-and-verified tokens --
-        // which are the ones COMMITTED -- would come from the UNSTEERED
-        // model while the sequential fallback tokens came from the steered
-        // one. The output would be a silent mixture of two models, coherent
-        // and wrong, with nothing to say so. Refused by name until the
-        // batched path carries the edit; the kernel already takes `rows` and
-        // `row_stride` for exactly that.
-        if runner.steering.is_some() && (runner.real_mtp.is_some() || runner.real_dflash.is_some())
-        {
-            return Err(RealForwardError::Unsupported(
-                "steering and speculative decoding cannot both be on: the speculative \
-                 verify runs the batched forward, which does not apply the edit, so the \
-                 committed tokens would come from the unsteered model. Pass \
-                 --speculative off alongside --steering"
-                    .to_string(),
-            ));
-        }
+        // STEERING AND SPECULATION USED TO BE MUTUALLY EXCLUSIVE HERE, and
+        // the refusal was not conservatism: the speculative verify runs
+        // `produce_batched`, which had no steering hook, so the
+        // drafted-and-verified tokens -- the ones COMMITTED -- came from the
+        // UNSTEERED model while the sequential fallback tokens came from the
+        // steered one. A silent mixture of two models, coherent and wrong.
+        //
+        // `families/qwen/batched.rs` carries the edit now, at the same
+        // boundary and through the same `encode_steering` the per-token path
+        // calls, so the two cannot disagree about what the edit IS. What
+        // makes lifting the refusal safe is measured rather than argued:
+        // `the_batched_forward_steers_every_row_exactly_as_m_produce_calls_do`
+        // requires an M-row steered verify to be BIT-IDENTICAL to M steered
+        // `produce` calls, which is the same standard the unsteered batched
+        // path is already held to.
+        //
+        // WHAT IS NOT FIXED BY THIS, and is a quality question rather than a
+        // correctness one: the DRAFTER is not steered. A direction set covers
+        // trunk layers, and neither the MTP head nor the DFlash2 drafter is a
+        // trunk layer, so a steered run drafts from the unsteered model and
+        // verifies against the steered one. Speculation stays LOSSLESS -- a
+        // verify rejects what it does not agree with -- so the cost lands on
+        // ACCEPTANCE alone, which is exactly the shape that reads as a verdict
+        // about the drafter rather than as a consequence of the edit. It is
+        // measured in `docs/OBLITERATION.md` rather than left to be guessed.
         Ok(runner)
     }
 }

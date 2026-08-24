@@ -41,6 +41,7 @@ throughput.
 | 3 | the A/B probe, coefficient trace, KL against unsteered | **LANDED**, four arms green |
 | 4 | the alpha sweep, the `renorm` mode, the layer-band axis | **LANDED**; both of the sweep's predictions REFUTED, which is the result |
 | 5 | a SECOND direction and a second prompt | **LANDED**; the two refutations REPLICATE, and the derived alpha ceiling does not survive |
+| 6 | the BATCHED path, and steering beside speculation | **LANDED**; lossless on both drafters, and acceptance barely moves |
 
 **It works.** On the real `qwen38-27b`, a direction extracted by this engine
 from its own activations, applied at runtime with no weight byte modified,
@@ -600,6 +601,77 @@ tokens**. The crossing calls that usable and the vocabulary collapse says it
 is not. A reporting feature no test can redden on has now discriminated on two
 independent directions.
 
+### The batched path steers, and the drafter turns out to be half-steered already (2026-08-24)
+
+`produce_batched` -- the speculative verify -- had no steering hook, so
+steering and speculation were REFUSED together at open. That was not
+conservatism: the verify is what COMMITS a speculative token, so a steered
+sequential path beside an unsteered batched one emits a run of tokens drawn
+from two models, coherent and wrong, and no losslessness check could see it
+(both the run and its speculative reference would carry the same mixture).
+
+`families/qwen/batched.rs` carries the edit now, through the SAME
+`encode_steering` the per-token path calls, at the same boundary, with `rows`
+set to the block instead of 1. The kernel was row-parallel from the start (one
+threadgroup per row, `coeff[row]`), so a verify pays one dispatch per steered
+layer, exactly as a single token does.
+
+**THE END-TO-END GATE IS AN md5, AND IT IS STRONGER THAN IT LOOKS.** On the
+real `qwen38-27b-mtp` install, greedy, 200 tokens:
+
+| arm | md5 | accepted/round | per-position |
+|---|---|---|---|
+| sequential, unsteered | `a79fc953` | | |
+| sequential, steered | `b16817e4` | | |
+| speculative, unsteered | `a79fc953` | 1.30 | 0.80 0.62 |
+| speculative, steered | **`b16817e4`** | 1.31 | 0.83 0.59 |
+
+A speculative steered run is byte-identical to a sequential steered one, so
+speculation stays lossless UNDER the edit. Had the batched path not been
+steered, that arm would have matched neither row -- the drafted tokens would
+have come from the unsteered model and the fallback ones from the steered one
+-- so a single equality covers the whole failure mode. `qwen38-27b-dflash2`
+replicates it exactly (`b16817e4` again, 1.33 -> 1.29 accepted per round).
+
+**ACCEPTANCE BARELY MOVES, WHICH REFUTES THE PREDICTION THIS WAS BUILT
+AROUND.** The expectation, written into the code comment that lifted the
+refusal, was that a steered target verified against an UNSTEERED drafter would
+collapse acceptance: a direction set covers trunk layers, and neither the MTP
+head nor the DFlash2 drafter is a trunk layer. Measured, the change is inside
+the noise of one prompt -- MTP 1.30 to 1.31, DFlash2 1.33 to 1.29, rollbacks
+44 and 41 in both arms.
+
+The mechanism is that **the drafter is already half-steered through its
+INPUT.** The edit is applied at every layer's output including the last, so
+`scratch.x` is steered by the time the head reads `h_t` out of it. Its WEIGHTS
+are untouched and its input is not, which is evidently enough to keep it
+predicting the edited model about as well as it predicted the unedited one.
+That is a property of where these drafters read from rather than a general
+result: a drafter taking its input from anywhere upstream of the last steered
+layer would not inherit the edit this way.
+
+**THE ORDER OF THE EDIT AND THE DRAFTER'S CAPTURE IS NOW A DECISION.** Both
+paths steer FIRST and capture second, so the drafter sees the residual the
+trunk actually committed. It was the other way round in the per-token path and
+unobservable, because the two features could not both be on. With steering off
+the two orders are the same program. `the_batched_capture_agrees_with_the_per_
+token_hook_under_steering` is the guard, and flipping the batched path alone
+reddens it and nothing else -- the pre-existing unsteered capture case cannot
+see it, by construction.
+
+One structural note worth not re-deriving. The coefficient buffer was one FP32
+slot per LAYER, which a block of M rows overruns -- at the last layer, off the
+end of the buffer entirely. It is `num_layers * MAX_STEER_ROWS` now, and
+`MAX_STEER_ROWS` is `gpu::MAX_BATCH_ROWS` rather than a second 16 that happens
+to agree: the batched INT4 GEMM caps the block for its own reason (a
+per-thread register array), so the steering refusal is a BACKSTOP that cannot
+currently fire, and if the kernel's cap ever rose the buffer would follow it
+instead of silently falling short. Neither the trace nor the logits can see a
+wrong stride -- later layers overwrite the spill and a short GPU overrun lands
+in page slack -- so the invariant is asserted as arithmetic
+(`the_coefficient_blocks_partition_the_buffer`), which is the only place it is
+visible at all.
+
 ### This number is not a coherence score
 
 It rises for two unrelated reasons: the edit WORKING (a steered model is
@@ -797,14 +869,14 @@ steer. That is a limit of the shape, not of the tuning.
   generation and teacher-forced NLL -- which is exactly why the rest could be
   measured on a machine that could not support this one. The layer band is
   the lever if it turns out to matter.
-- **The batched path does not steer, and steering plus speculation is
-  REFUSED at open because of it.** `produce_batched` (the speculative verify,
-  and the chunked-prefill driver) has no hook, so the drafted-and-verified
-  tokens -- which are the ones COMMITTED -- would come from the unsteered
-  model while sequential-fallback tokens came from the steered one. That is a
-  silent mixture of two models, coherent and wrong. Refused by name until the
-  batched path carries the edit; the kernel already takes `rows` and
-  `row_stride` for exactly that.
+- ~~**The batched path does not steer**~~ -- **CLOSED 2026-08-24**, see the
+  section above. It carries the edit through the same `encode_steering` the
+  per-token path calls, the refusal is lifted, and a speculative steered run
+  is byte-identical to a sequential steered one on both drafters. What is NOT
+  closed is the chunked-prefill driver, which is a different function
+  (`prefill_chunk_real_gemma4`, Gemma 4 only) and which steering does not
+  reach because steering is qwen-only. The two are named together in older
+  notes and are not the same code.
 - **No integration test for the capture**, matching how `ffn_hist` and
   `router_hist` are treated: an env-gated capture needs a process-global
   write, which races other tests in the same binary. The real-model A/B is
@@ -842,8 +914,10 @@ Ranked by value per cost.
    engine. The derived alpha ceiling does NOT: it reads 0.09 against a
    measured 0.8, with the relationship inverted. The band is a property of
    the direction and not of the prompt (a 2x2 says so).
-6. **The batched path**, which is the largest structural gap: until it
-   carries the edit, steering and speculation stay mutually exclusive.
+6. ~~The batched path~~ -- **LANDED.** Steering and speculation are no longer
+   mutually exclusive: a speculative steered run is byte-identical to a
+   sequential steered one on both drafters, and acceptance barely moves,
+   which refutes the prediction the work was built around.
 7. **llama.cpp interop**, one `#[ignore]`d test against a published `repeng`
    vector. Cheap, and it is the only open item that could invalidate files
    already written by this port.

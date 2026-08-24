@@ -78,11 +78,38 @@ pub(crate) struct LayerSteer {
     pub(crate) inv_norm: f32,
 }
 
+/// The widest dispatch the coefficient buffer has room for.
+///
+/// The kernel writes `coeff[row]` for every row it steers, so a block of M
+/// rows writes M floats from the layer's own base. One float per layer was
+/// enough while the only caller was the per-token pass; the batched verify
+/// dispatches M at once, and at the LAST layer those M writes would run off
+/// the end of the buffer entirely.
+///
+/// So the buffer is `num_layers * MAX_STEER_ROWS` and each layer owns a
+/// block. The batched driver REFUSES a wider block by name rather than
+/// truncating it: a row left unsteered inside a steered block is a token
+/// drawn from a different model than its neighbours, which is fluent, wrong,
+/// and invisible in every downstream number.
+///
+/// **It is the batched INT4 GEMM's own cap rather than an independent number,
+/// and that is what makes the refusal a BACKSTOP that cannot currently
+/// fire.** `gpu::MAX_BATCH_ROWS` bounds the block for an unrelated reason (its
+/// accumulators are a per-thread register array), so a wider block is already
+/// refused one level down, by name, before any layer is steered. Writing 16
+/// here instead would be two independent constants that happen to agree --
+/// and if the kernel's ever rose, the coefficient buffer would silently stop
+/// being wide enough for the blocks the engine now accepts. Sized from the
+/// thing that decides, so they cannot drift apart.
+pub const MAX_STEER_ROWS: usize = gpu::MAX_BATCH_ROWS;
+
 /// The GPU-side steering state, built at open.
 pub(crate) struct SteeringState {
     /// Every covered layer's direction, FP16, packed back to back.
     pub(crate) directions: gpu::MetalBuffer,
-    /// One FP32 pre-edit coefficient per layer, rewritten every pass.
+    /// `MAX_STEER_ROWS` FP32 pre-edit coefficients per layer, rewritten
+    /// every pass. A per-token pass writes row 0 of each block and leaves
+    /// the rest of it alone.
     pub(crate) coeff: gpu::MetalBuffer,
     /// Per model layer, `None` where this set steers nothing.
     pub(crate) layers: Vec<Option<LayerSteer>>,
@@ -162,7 +189,7 @@ impl SteeringState {
 
         Ok(Some(Self {
             directions: context.new_buffer_with_data(&packed),
-            coeff: context.new_output_buffer((num_layers.max(1) * 4) as u64),
+            coeff: context.new_output_buffer(Self::coeff_bytes(num_layers)),
             layers,
             mode: policy.mode,
             alpha: policy.alpha,
@@ -181,16 +208,37 @@ impl SteeringState {
         self.layers.iter().filter(|l| l.is_some()).count()
     }
 
+    /// Bytes the coefficient buffer needs for `num_layers` layers.
+    ///
+    /// Paired with [`Self::coeff_offset`] so the allocation and the write
+    /// offsets are two views of one layout rather than two expressions that
+    /// have to be kept in step by hand.
+    pub(crate) fn coeff_bytes(num_layers: usize) -> u64 {
+        (num_layers.max(1) * MAX_STEER_ROWS * 4) as u64
+    }
+
+    /// Byte offset of this layer's coefficient block.
+    ///
+    /// Both dispatch sites go through this rather than computing it, so the
+    /// per-token and batched passes cannot disagree about the stride -- which
+    /// they would silently, since a wrong stride still writes finite floats
+    /// into a valid buffer and only the reported trace would be wrong.
+    pub(crate) fn coeff_offset(layer: usize) -> u64 {
+        (layer * MAX_STEER_ROWS * 4) as u64
+    }
+
     /// The pre-edit coefficient each steered layer reported on the last pass.
     ///
-    /// `None` for a layer that is not steered, so a caller cannot mistake an
-    /// unwritten slot for a measured zero.
+    /// Row 0 of each layer's block: the single row of a per-token pass, and
+    /// the FIRST row of a batched one. `None` for a layer that is not
+    /// steered, so a caller cannot mistake an unwritten slot for a measured
+    /// zero.
     pub(crate) fn coefficients(&self) -> Vec<Option<f32>> {
-        let raw = gpu::read_f32_buffer(&self.coeff, self.layers.len());
+        let raw = gpu::read_f32_buffer(&self.coeff, self.layers.len() * MAX_STEER_ROWS);
         self.layers
             .iter()
             .enumerate()
-            .map(|(l, slot)| slot.map(|_| raw[l]))
+            .map(|(l, slot)| slot.map(|_| raw[l * MAX_STEER_ROWS]))
             .collect()
     }
 
@@ -208,5 +256,48 @@ impl SteeringState {
                 String::new()
             }
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// THE PER-LAYER BLOCKS MUST PARTITION THE BUFFER, and nothing about the
+    /// generated logits can tell you whether they do.
+    ///
+    /// A batched pass writes M floats from `coeff_offset(layer)`. If the
+    /// stride were narrower than a block -- one float per layer, which is
+    /// what it was before the batched path existed -- layer L's write would
+    /// land inside layer L+1's block, and at the LAST layer it would run off
+    /// the end of the buffer entirely. Neither shows up downstream: the
+    /// coefficients are an output-only measurement surface, every later
+    /// layer's own write happens to overwrite the spill, and a short GPU
+    /// buffer overrun lands in page slack rather than faulting.
+    ///
+    /// So this is the only place the layout can be checked at all, and it is
+    /// arithmetic: no GPU, no install, microseconds.
+    #[test]
+    fn the_coefficient_blocks_partition_the_buffer() {
+        for layers in [1usize, 2, 4, 64] {
+            let size = SteeringState::coeff_bytes(layers);
+            for l in 0..layers {
+                let base = SteeringState::coeff_offset(l);
+                assert!(
+                    base + (MAX_STEER_ROWS * 4) as u64 <= size,
+                    "a full block at layer {l} of {layers} runs past the {size}-byte buffer; \
+                     a batched steer there would write off the end of it"
+                );
+                if l + 1 < layers {
+                    assert_eq!(
+                        SteeringState::coeff_offset(l + 1) - base,
+                        (MAX_STEER_ROWS * 4) as u64,
+                        "layer {l}'s block overlaps layer {}'s, so a batched write of M rows \
+                         would land in the next layer's coefficients",
+                        l + 1
+                    );
+                }
+            }
+        }
     }
 }
