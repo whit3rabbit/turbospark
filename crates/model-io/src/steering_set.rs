@@ -162,7 +162,14 @@ impl SteeringSet {
             if let Some(d) = dir {
                 if d.values.len() != self.hidden {
                     return Err(ModelError::TensorSizeMismatch {
-                        name: format!("direction.{}", l + 1),
+                        // The BLOCK, not the tensor name. A set is 0-based and
+                        // convention-independent by the time it gets here,
+                        // while the name it came from depends on the file's
+                        // `turbospark.layer_base`: `direction.{l}` for
+                        // llama.cpp's numbering and `direction.{l+1}` for the
+                        // one this port wrote before 2026-08-24. Reconstructing
+                        // one of them would name a tensor the file may not have.
+                        name: format!("control vector block {l}"),
                         expected: self.hidden as u64,
                         actual: d.values.len() as u64,
                     });

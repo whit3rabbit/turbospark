@@ -261,6 +261,17 @@ TURBOSPARK_DFLASH2_INSTALL_DIR=~/models/qwen38-27b-dflash2.gturbo \
 # **ARM 2 IS THE ONE PLACE IN THIS CRATE WHERE A LARGE KL IS THE GOOD
 # OUTCOME**, which inverts every other divergence measurement here -- and it
 # is why the scale DEFAULTS TO 0.3 rather than 1.0. See Gotcha 18.
+#
+# **DO NOT REGENERATE THE VECTORS THESE ROWS WERE FROZEN ON.** The control
+# vector numbering was corrected on 2026-08-24 (`direction.N` is llama.cpp's
+# block N, not N-1), and `extract_direction.py` can no longer write a
+# direction for block 0. The files below predate that, declare
+# `turbospark.layer_base = 0`, and are still read under the old convention on
+# purpose, so every frozen row reproduces against THEM -- both still read 64
+# covered of 64 spanned. A re-extraction is a different experiment rather
+# than a reproduction, and block 0 is not a small thing to drop: its TRUE
+# removed fraction is 72.1%, the highest in the model. See
+# `docs/OBLITERATION.md`.
 TURBOSPARK_PROBE_INSTALL_DIR=~/models/qwen38-27b.gturbo \
 TURBOSPARK_STEERING_VECTOR=/tmp/steer/ocean.gguf \
   cargo test -p turbospark-bench --test steering_probe --release -- --ignored --nocapture
