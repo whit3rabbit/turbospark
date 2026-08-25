@@ -284,10 +284,19 @@ pub(crate) fn family_dispatches_steering(family: model_io::ModelFamily) -> bool 
         // dense Llama / Mistral FFN join at the same boundary, and
         // `Qwen3Moe` runs the same flow.
         F::Llama | F::Qwen3Moe => true,
-        // No hook in the flow yet. Gemma 4 additionally has a CHUNKED
-        // prefill driver that would need its own call site, so wiring it is
-        // more than one line (`docs/OBLITERATION.md`, Open).
-        F::Gemma4 | F::GptOss | F::MuseGlimmer | F::DeepseekV4Flash => false,
+        // `families/gemma4/`, THREE call sites: the sequential/decode routed
+        // tail (`mod.rs`), the chunked prefill driver's per-token routed
+        // loop (`prefill.rs`, which calls the same tail function and so
+        // needs no hook of its own), and the batched-routed prefill's
+        // per-row tail (`moe_batch.rs`, reachable only under
+        // `MFERENCE_ROUTED_BATCH`). All three land on the boundary AFTER
+        // `layer_scalar`'s `encode_scalar_mul`, which is the true end of a
+        // Gemma layer's contribution to the residual stream -- the residual
+        // add alone is not the boundary, because the whole accumulated
+        // stream is rescaled by `layer_scalar` immediately after it.
+        F::Gemma4 => true,
+        // No hook in the flow yet.
+        F::GptOss | F::MuseGlimmer | F::DeepseekV4Flash => false,
     }
 }
 
@@ -316,6 +325,15 @@ pub(crate) fn family_dispatches_steering(family: model_io::ModelFamily) -> bool 
 /// dispatches per token and not sixty-four.
 ///
 /// `rows` is 1 on a per-token path and the block size on a batched verify.
+/// `x_off` is the byte offset of the first steered row inside `scratch.x`;
+/// every caller before Gemma 4 had exactly one row and it always sat at 0,
+/// so the parameter did not exist until a caller needed otherwise. Gemma
+/// 4's chunked-prefill driver runs several tokens through one layer's
+/// routed tail in a per-token loop, each token's row at its own slot
+/// offset (`token * hidden * 2`) inside the SAME `scratch.x` buffer the
+/// sequential path uses at offset 0 -- so a caller steering token `t` of a
+/// micro-batch must steer ITS row, not row 0 of every call.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn encode_steering(
     context: &mut gpu::MetalContext,
     pass: &gpu::PassEncoder,
@@ -324,6 +342,7 @@ pub(crate) fn encode_steering(
     layer: usize,
     hidden: usize,
     rows: usize,
+    x_off: u64,
 ) -> Result<(), RealForwardError> {
     let Some(s) = steering else {
         return Ok(());
@@ -344,7 +363,7 @@ pub(crate) fn encode_steering(
     gpu::encode_steer_direction(
         context,
         pass,
-        (&scratch.x, 0),
+        (&scratch.x, x_off),
         (&s.directions, l.offset),
         // A block of FP32 slots per layer, so the coefficients of a whole
         // pass survive to be read back together after the commit.

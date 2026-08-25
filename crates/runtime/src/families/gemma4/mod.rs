@@ -16,6 +16,8 @@ use crate::real_forward::RealForwardRunner;
 use crate::real_forward_dispatch::{encode_embed_any, encode_gemm_any, encode_gemv_any};
 use crate::real_forward_types::RealForwardError;
 use crate::real_forward_utils::{layer_tensor, norm_view};
+use crate::resid_capture::encode_resid_capture;
+use crate::steering::encode_steering;
 
 const RMS_EPS: f32 = 1e-6;
 
@@ -331,6 +333,35 @@ impl RealForwardRunner {
                 use_silu,
                 &sequential,
             )?;
+            // The layer's OUTPUT, on the SAME "routed cb" pass the routed
+            // tail just encoded into: `encode_gemma4_layer_routed_moe`
+            // ends with `layer_scalar`'s `encode_scalar_mul` over the
+            // whole accumulated residual, which is the true end of this
+            // layer's contribution and what the next layer's attention
+            // reads. The sequential decode path is always token 0 of
+            // `scratch.x`, so the offset is 0; the chunked-prefill driver
+            // (`prefill.rs`) and the batched-routed tail
+            // (`moe_batch.rs`) are the other two call sites, each at
+            // their own token's offset.
+            encode_steering(
+                &mut self.context,
+                &pass,
+                &self.scratch,
+                self.steering.as_ref(),
+                layer,
+                hidden,
+                1,
+                0,
+            )?;
+            encode_resid_capture(
+                &mut self.context,
+                &pass,
+                &self.scratch,
+                self.resid_capture.as_ref(),
+                layer,
+                hidden,
+                0,
+            )?;
 
             if self.routed_pipeline {
                 debug_assert!(pending_routed.is_none(), "routed pipeline depth is 1");
@@ -396,6 +427,16 @@ impl RealForwardRunner {
         self.phases.final_cb_gpu_nanos += (pass.commit_and_wait_with_gpu_time() * 1e9) as u64;
         self.phases.final_wait_nanos += t_wait.elapsed().as_nanos() as u64;
         self.kv.advance();
+        // The command buffer has been waited on, so every layer's capture
+        // region is final. `record_pass` keeps at most one snapshot per
+        // generation and decides which by `skip_head` -- called on every
+        // pass rather than guarded here, matching the qwen and llama flows
+        // (`crates/runtime/CLAUDE.md` Gotcha 20: the encode half alone
+        // gives "no non-prefill pass ran; wrote nothing").
+        let skip_head = self.skip_head;
+        if let Some(capture) = self.resid_capture.as_mut() {
+            capture.record_pass(position, skip_head);
+        }
 
         if self.skip_head {
             return Ok(());

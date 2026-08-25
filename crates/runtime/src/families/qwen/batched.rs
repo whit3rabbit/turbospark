@@ -444,7 +444,7 @@ impl RealForwardRunner {
             // row, so a partially-steered block emits a run of tokens drawn
             // from two different models. `encode_steering` refuses a block
             // wider than the coefficient buffer by name rather than clamping.
-            encode_steering(context, &pass, scratch, steering, layer, hidden, batch)?;
+            encode_steering(context, &pass, scratch, steering, layer, hidden, batch, 0)?;
 
             // THE DFLASH2 AUX CAPTURE at M rows: the residual rows this
             // layer just produced, into the fc input's layout. Same point

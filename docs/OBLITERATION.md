@@ -45,6 +45,7 @@ throughput, measured below at 1.72% of decode with all 64 layers steered and
 | 6 | the BATCHED path, and steering beside speculation | **LANDED**; lossless on both drafters, and acceptance barely moves |
 | 7 | the throughput cost | **LANDED**; -1.72% at all 64 layers, -0.75% at 26, `renorm` free |
 | 8 | llama.cpp interop | **LANDED**; the numbering was OFF BY ONE and is corrected, no measurement here moves |
+| 9 | a fifth family (Gemma 4) and its chunked prefill driver | **LANDED**; found `encode_steering`/`encode_resid_capture` hardcoded the edited row at offset 0, fixed with an `x_off` parameter, mutation-checked on the real chunked path |
 
 **It works.** On the real `qwen38-27b`, a direction extracted by this engine
 from its own activations, applied at runtime with no weight byte modified,
@@ -1119,18 +1120,34 @@ been checked here.
   **CLOSED 2026-08-24, AND THE ANSWER IT WAS CARRYING WAS WRONG.** See the
   section below: `direction.N` is llama.cpp's block `N`, this port read it as
   block `N - 1`, and the two were off by one for the life of the surface.
-- ~~**The qwen family only**~~ -- **TWO FLOWS SINCE 2026-08-24**, the qwen one
-  (both halves, per-token and batched) and `families/llama/` (Mixtral,
-  `qwen3moe`, and the dense Mistral / Llama 2 / 3.x half). Four families of
-  eight. The remaining four still disable the CAPTURE with a diagnostic and
-  REFUSE a direction set at open by name -- a set that loaded, reported itself
-  on the startup line and changed nothing would be the exact silent no-op this
-  whole surface is built to avoid. Both gates now read ONE predicate
+- ~~**The qwen family only**~~ -- **THREE FLOWS SINCE 2026-08-24**, the qwen
+  one (both halves, per-token and batched), `families/llama/` (Mixtral,
+  `qwen3moe`, and the dense Mistral / Llama 2 / 3.x half), and
+  `families/gemma4/`. Five families of eight. The remaining three still
+  disable the CAPTURE with a diagnostic and REFUSE a direction set at open by
+  name -- a set that loaded, reported itself on the startup line and changed
+  nothing would be the exact silent no-op this whole surface is built to
+  avoid. Both gates still read ONE predicate
   (`steering::family_dispatches_steering`) rather than two lists that agreed.
-  Gemma 4 is the awkward one of the four and not merely the next one: it has a
-  CHUNKED prefill driver as well as a per-token path, so wiring it is two call
-  sites plus a third in `prefill_chunk_real_gemma4`, and a chunked prefill that
-  skipped the edit would steer a generation's decode and not its prompt.
+  Gemma 4 WAS the awkward one and is now CLOSED (see below): it has a CHUNKED
+  prefill driver as well as a per-token path, so wiring it needed three call
+  sites -- `mod.rs`'s sequential decode, `prefill.rs`'s per-token routed loop,
+  and `moe_batch.rs`'s batched-routed tail -- and a fourth thing neither qwen
+  nor llama ever needed: `encode_steering` and `encode_resid_capture`
+  hardcoded the edited row's offset at 0, because every earlier caller had
+  exactly one row and it always sat there. Gemma's chunk driver packs several
+  tokens into one `scratch.x` buffer at their own slot offsets
+  (`token * hidden * 2`), so both functions gained an `x_off` parameter and
+  every pre-existing call site was updated to pass `0` explicitly (a
+  behaviour-preserving change, confirmed by `qwen38_quality_gate` and the
+  gemma4 `quality_gate` reproducing their frozen perplexity and every digest
+  exactly). Mutation-checked: hardcoding the new parameter back to `0` in
+  either `prefill.rs`'s or `moe_batch.rs`'s hook reddens ONLY the test
+  covering that call site (`real_forward_gemma4_steered.rs`'s two
+  chunked-vs-sequential byte-identity cases), which is what says a caller
+  copying the qwen/llama call verbatim -- steer/capture row 0 regardless of
+  which token is being processed -- would have shipped a family that is
+  fluent, finite, and wrong for every token past the first of a micro-batch.
 - **No Llama-3 chat dialect, so no Llama-3 checkpoint runs here at all.**
   Unrelated to steering and found by walking into it: `detect_dialect` falls
   through to Gemma for a table carrying `<|begin_of_text|>` /
@@ -1154,15 +1171,19 @@ been checked here.
 - ~~**The batched path does not steer**~~ -- **CLOSED 2026-08-24**, see the
   section above. It carries the edit through the same `encode_steering` the
   per-token path calls, the refusal is lifted, and a speculative steered run
-  is byte-identical to a sequential steered one on both drafters. What is NOT
-  closed is the chunked-prefill driver, which is a different function
-  (`prefill_chunk_real_gemma4`, Gemma 4 only). **The reason it is out of reach
-  changed on 2026-08-24 and the conclusion did not**: it used to be "steering
-  is qwen-only", and steering is now qwen AND llama, so what keeps the two
-  apart is simply that the driver is Gemma's and Gemma does not steer. The
-  sets still do not intersect; they will the moment Gemma is wired, which is
-  why that item names all three call sites. The two are named together in
-  older notes and are not the same code.
+  is byte-identical to a sequential steered one on both drafters.
+- ~~**The chunked-prefill driver does not steer**~~ -- **CLOSED 2026-08-24**,
+  same day Gemma 4 was wired (see above). `prefill_chunk_real_gemma4` is a
+  DIFFERENT function from the batched-verify path the item above closes --
+  the two used to be named together in older notes on the strength of both
+  being "batched", and they are not the same code: one is speculative
+  VERIFY's M-row forward on the qwen flow, the other is Gemma's OWN
+  micro-batched prefill driver, unrelated to speculation. Its per-token
+  routed loop and its batched-routed tail (`MFERENCE_ROUTED_BATCH`) are two
+  further call sites beyond Gemma's sequential decode, both proven to steer
+  the RIGHT token's row rather than always row 0 by mutation-checked
+  byte-identity against a steered sequential run
+  (`real_forward_gemma4_steered.rs`).
 - **No integration test for the capture**, matching how `ffn_hist` and
   `router_hist` are treated: an env-gated capture needs a process-global
   write, which races other tests in the same binary. The real-model A/B is
@@ -1215,13 +1236,26 @@ Ranked by value per cost.
    a property of this engine and the alpha ceiling is a property of a
    direction. The Llama-3-8B vector item 7 downloaded is still unapplied and
    now for a smaller reason: no Llama-3 chat dialect (see Open).
-9. **A fifth family, and the chunked prefill driver with it.** Gemma 4 is the
-   next flow worth wiring and is the one that cannot be done in two lines: its
-   chunked prefill is a separate driver, so a steered Gemma would otherwise
-   edit the decode and not the prompt. Doing it also retires the last
-   "steering does not reach the chunked path" caveat, which is currently true
-   for a reason (Gemma-only driver, qwen-and-llama-only steering) that stops
-   being true the moment those two sets intersect.
+9. ~~A fifth family, and the chunked prefill driver with it~~ -- **LANDED
+   2026-08-24.** `families/gemma4/` steers on all three call sites its flow
+   needs (sequential decode, the chunk driver's per-token routed loop, and
+   its batched-routed tail), retiring the last "steering does not reach the
+   chunked path" caveat. The item turned out to be more than a third call
+   site: `encode_steering` and `encode_resid_capture` had hardcoded the
+   edited row at offset 0 in `scratch.x` since the qwen flow, because every
+   caller before this one had exactly one row and it always sat there.
+   Gemma's chunk driver packs several prompt tokens into `scratch.x` at once,
+   each at its own slot offset, so both functions gained an `x_off`
+   parameter. Every existing call site (qwen's two, the batched verify's one,
+   llama's two) was updated to pass `0` explicitly -- a change proven to move
+   no bytes by `qwen38_quality_gate` reproducing its frozen perplexity and
+   both digests exactly. The new threading is proven necessary rather than
+   merely plausible: reverting either of Gemma's two chunked-path calls back
+   to a hardcoded 0 reddens exactly the test covering that call site and
+   nothing else (`real_forward_gemma4_steered.rs`), which is what a caller
+   that copied the qwen/llama call verbatim -- silently steering token 0's
+   row for every token in a micro-batch -- would have shipped: fluent,
+   finite, and wrong past the first token of every chunk.
 
 ## Reproducing
 

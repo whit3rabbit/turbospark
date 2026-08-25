@@ -243,8 +243,8 @@ impl RealForwardRunner {
                 // configuration (a direction is extracted with steering OFF),
                 // and stating one order in one place is what keeps the
                 // question from having two answers.
-                encode_steering(context, &pass, scratch, steering, layer, hidden, 1)?;
-                encode_resid_capture(context, &pass, scratch, resid_capture, layer, hidden)?;
+                encode_steering(context, &pass, scratch, steering, layer, hidden, 1, 0)?;
+                encode_resid_capture(context, &pass, scratch, resid_capture, layer, hidden, 0)?;
                 continue;
             }
 
@@ -312,8 +312,8 @@ impl RealForwardRunner {
             // command buffer rather than cb1 -- the router's top-k forced a
             // commit above -- which is why the call sits after the encode
             // rather than beside the dense one.
-            encode_steering(context, &pass, scratch, steering, layer, hidden, 1)?;
-            encode_resid_capture(context, &pass, scratch, resid_capture, layer, hidden)?;
+            encode_steering(context, &pass, scratch, steering, layer, hidden, 1, 0)?;
+            encode_resid_capture(context, &pass, scratch, resid_capture, layer, hidden, 0)?;
         }
 
         if !self.skip_head {

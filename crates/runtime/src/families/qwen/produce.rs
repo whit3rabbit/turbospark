@@ -232,7 +232,7 @@ impl RealForwardRunner {
                 // shipped before this: the two features were mutually
                 // exclusive at open, and with steering off the call encodes
                 // nothing.
-                encode_steering(context, &pass, scratch, steering, layer, hidden, 1)?;
+                encode_steering(context, &pass, scratch, steering, layer, hidden, 1, 0)?;
                 if let Some(d) = dflash {
                     if let Some(aux) = d.aux_slot(layer) {
                         gpu::encode_dflash_copy_rows(
@@ -247,7 +247,7 @@ impl RealForwardRunner {
                         .map_err(gpu_err)?;
                     }
                 }
-                encode_resid_capture(context, &pass, scratch, resid_capture, layer, hidden)?;
+                encode_resid_capture(context, &pass, scratch, resid_capture, layer, hidden, 0)?;
                 continue;
             }
 
@@ -314,8 +314,8 @@ impl RealForwardRunner {
             // `encode_qwen_layer_moe`, so this layer's output exists only
             // once that call returns -- the same boundary the dense branch
             // captures at, reached by a different route.
-            encode_steering(context, &pass, scratch, steering, layer, hidden, 1)?;
-            encode_resid_capture(context, &pass, scratch, resid_capture, layer, hidden)?;
+            encode_steering(context, &pass, scratch, steering, layer, hidden, 1, 0)?;
+            encode_resid_capture(context, &pass, scratch, resid_capture, layer, hidden, 0)?;
         }
 
         // Final norm + head. No softcap: Qwen has none, and the head must

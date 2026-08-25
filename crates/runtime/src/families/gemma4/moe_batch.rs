@@ -22,6 +22,8 @@ use crate::real_forward_dispatch::router_topk_gemma4;
 use crate::real_forward_layout::RoutedBlobLayout;
 use crate::real_forward_types::RealForwardError;
 use crate::real_forward_utils::{f16_slice_to_le_bytes, layer_tensor, norm_view};
+use crate::resid_capture::encode_resid_capture;
+use crate::steering::encode_steering;
 
 use super::moe;
 
@@ -382,6 +384,34 @@ impl RealForwardRunner {
                     hidden as u32,
                 )
                 .map_err(gpu_err)?;
+                // This row's own offset, matching the per-token path's
+                // reasoning in `prefill.rs`: `scratch.x` holds every token
+                // of the whole micro-batch (not just this sub-batch), each
+                // at its own slot, so steering and capture must operate on
+                // `x_row` rather than row 0. Dispatched for every row so
+                // every prompt token is steered; capture's destination is
+                // one fixed region per layer, and sub-batches commit in
+                // increasing `sub_start` order, so the globally LAST row
+                // processed (`m - 1`) is what `record_pass` reads back.
+                encode_steering(
+                    &mut self.context,
+                    &pass,
+                    &self.scratch,
+                    self.steering.as_ref(),
+                    layer,
+                    hidden,
+                    1,
+                    x_row,
+                )?;
+                encode_resid_capture(
+                    &mut self.context,
+                    &pass,
+                    &self.scratch,
+                    self.resid_capture.as_ref(),
+                    layer,
+                    hidden,
+                    x_row,
+                )?;
             }
 
             sub_start += sub_len;

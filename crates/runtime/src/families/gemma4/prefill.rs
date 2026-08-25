@@ -7,6 +7,8 @@ use crate::real_forward::RealForwardRunner;
 use crate::real_forward_dispatch::{encode_embed_any, encode_gemv_any};
 use crate::real_forward_types::{RealForwardError, MAX_PREFILL_BATCH, ROUTED_BANKS};
 use crate::real_forward_utils::norm_view;
+use crate::resid_capture::encode_resid_capture;
+use crate::steering::encode_steering;
 
 const RMS_EPS: f32 = 1e-6;
 
@@ -234,6 +236,37 @@ impl RealForwardRunner {
                         use_silu,
                         &slot,
                     )?;
+                    // This token's OWN row, not row 0: `scratch.x` holds
+                    // every token of the micro-batch at its own slot
+                    // offset, so steering token `t` must edit that row and
+                    // capture must copy FROM it (`steering::encode_steering`'s
+                    // doc). Dispatched for every `t` including ones that
+                    // are not the micro-batch's last -- steering because
+                    // every prompt token is steered, and capture because
+                    // the destination is one fixed region per layer that
+                    // later calls simply overwrite, so the token processed
+                    // last (`t == m - 1`) is what survives to be read back
+                    // by `record_pass` below.
+                    let x_off = (t * hidden * 2) as u64;
+                    encode_steering(
+                        &mut self.context,
+                        &routed_pass,
+                        &self.scratch,
+                        self.steering.as_ref(),
+                        layer,
+                        hidden,
+                        1,
+                        x_off,
+                    )?;
+                    encode_resid_capture(
+                        &mut self.context,
+                        &routed_pass,
+                        &self.scratch,
+                        self.resid_capture.as_ref(),
+                        layer,
+                        hidden,
+                        x_off,
+                    )?;
                     if banks > 1 {
                         self.retire_routed(&mut pending_routed);
                     }
@@ -299,6 +332,20 @@ impl RealForwardRunner {
         self.phases.final_cb_gpu_nanos += (pass.commit_and_wait_with_gpu_time() * 1e9) as u64;
         self.phases.final_wait_nanos += t_wait.elapsed().as_nanos() as u64;
         self.kv.advance_by(m);
+        // The command buffer has been waited on, so every layer's capture
+        // region is final. `!want_head` is this micro-batch's `skip_head`:
+        // `record_pass` no-ops on it exactly as it does for every OTHER
+        // prompt token in the per-token flows, so calling it on every
+        // micro-batch (not only the one carrying real logits) matches
+        // their discipline rather than special-casing the chunk driver.
+        // Position is the LAST token of the micro-batch, `t == m - 1` --
+        // the row the per-token loop above left the capture buffer holding
+        // (`crates/runtime/CLAUDE.md` Gotcha 20).
+        let skip_head = !want_head;
+        let last_position = start_position + m - 1;
+        if let Some(capture) = self.resid_capture.as_mut() {
+            capture.record_pass(last_position, skip_head);
+        }
 
         if !want_head {
             return Ok(());

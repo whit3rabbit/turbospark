@@ -236,6 +236,16 @@ impl Drop for ResidCapture {
 /// same guarantee `ffn_hist` gets by redirecting a destination, reached the
 /// other way round because nothing writes the residual stream to a spare
 /// buffer for us to redirect.
+///
+/// `x_off` is the byte offset of the source row inside `scratch.x`. Every
+/// caller before Gemma 4 had one row at offset 0; the chunked-prefill
+/// driver's per-token loop puts each token at its own slot offset in the
+/// same buffer (see `steering::encode_steering`'s doc for the twin reason),
+/// and this is called for EVERY token in a micro-batch rather than only the
+/// one that matters -- the destination is one fixed region per layer, so
+/// later calls in commit order simply overwrite earlier ones, and the
+/// caller arranges for the last one dispatched to be the token whose
+/// snapshot `record_pass` actually keeps.
 pub(crate) fn encode_resid_capture(
     context: &mut gpu::MetalContext,
     pass: &gpu::PassEncoder,
@@ -243,6 +253,7 @@ pub(crate) fn encode_resid_capture(
     capture: Option<&ResidCapture>,
     layer: usize,
     hidden: usize,
+    x_off: u64,
 ) -> Result<(), crate::real_forward_types::RealForwardError> {
     let Some(c) = capture else {
         return Ok(());
@@ -250,7 +261,7 @@ pub(crate) fn encode_resid_capture(
     gpu::encode_dflash_copy_rows(
         context,
         pass,
-        (&scratch.x, 0),
+        (&scratch.x, x_off),
         (&c.capture, c.layer_offset(layer)),
         1,
         hidden as u32,
