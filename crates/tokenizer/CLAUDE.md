@@ -130,3 +130,16 @@ cargo test -p turbospark-tokenizer
    image/video content macro and an `<atem:function_calls>` tool DSL, and that
    DSL is PLAIN TEXT rather than special tokens, so no tool-call parsing is
    wired for it and every tool marker id is `NO_SUCH_TOKEN_ID`.
+
+9. **THERE IS NO LLAMA-3 DIALECT, so no Llama-3 checkpoint loads.**
+   `detect_dialect`'s fallback is Gemma, and Llama-3's table
+   (`<|begin_of_text|>` / `<|start_header_id|>` / `<|eot_id|>`, no `<s>`, no
+   `<|im_end|>`) matches no positive probe -- so it lands on Gemma and
+   `resolve_gemma` fails on a missing `<pad>`. A tokenizer gap, not an
+   architecture one: `turbospark-model probe` reports
+   `Meta-Llama-3-8B-Instruct` RUNNABLE (32 layers, hidden 4096, Q4_K/Q6_K, no
+   `rope_freqs.weight`). It fails before any weight byte streams, sidecars
+   being verified first, so it costs seconds rather than a re-stream.
+   NUMBERED 9 AND NOT 7 on purpose: 7 and 8 were in flight in another
+   session's working copy when this landed, so the gap is transient and
+   closes when that commit arrives.

@@ -2831,6 +2831,19 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
     Gotcha 59's rule (NaN reads as a perfect score) arriving one layer out,
     where NaN instead reads as no score at all.
 
+62. **READ A PROPERTY OFF THE ARTIFACT, NOT OFF THE NOTE ABOUT THE ARTIFACT.**
+    A published norm range of "0.0052 to 2.5433" was carried from a handoff
+    into a measured section describing a DIFFERENT file: two control vectors
+    from one publisher, one for a model this port runs and one for a model it
+    cannot, differing only by path. The real range was 0.0017 to 0.4268 and
+    the quoted figure was off by 6x, in a paragraph whose whole argument is
+    that the number explains the result. It cost ONE command to check and was
+    checkable from the moment it was written. The tell is a number that
+    arrived as PROSE rather than as OUTPUT: if a figure was not printed by the
+    run being described, re-derive it before publishing. Same family as
+    Gotchas 30, 38, 57 and 59 -- a value that reads plausibly, is wrong, and
+    is cheap to falsify.
+
 ## Per-Crate Documentation
 
 When working on code inside a specific crate, refer to that crate's `CLAUDE.md` file for crate-specific architecture, key modules, dev commands, and localized gotchas:
@@ -3065,6 +3078,14 @@ Three mutations "survived" in one sitting that way and read as three weak
 tests; two were fine and one was a real gap. Substitute through a helper that
 fails when the old text is absent (`assert old in s` in a two-line python
 heredoc), and prefer patterns short enough to survive reformatting.
+
+**AND ASSERT IT APPLIED WHERE YOU MEANT.** Presence is not uniqueness: a
+pattern written at one indent level is a SUBSTRING of the same line at a
+deeper one, so `replace(old, new, 1)` silently takes the first match. Two
+sibling call sites in `families/llama/mod.rs` (12-space and 16-space) gave
+byte-identical mutation results twice, which reads as "one hook covers both"
+rather than as a mis-aimed pattern. Assert `count(old) == 1`, or anchor on a
+neighbouring line.
 
 See `DEVIATIONS.md` for the full list of what this port scaffolds versus
 fully implements, `ROADMAP.md` for the forward roadmap and descope

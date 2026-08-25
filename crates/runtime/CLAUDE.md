@@ -557,3 +557,14 @@ cargo test -p turbospark-runtime
     architecture carries an ingestible one. Ornith's lives in its BF16
     repo's last shard and is itself MoE, where `MtpState::REQUIRED` names
     the DENSE FFN tensors a `qwen3_5` head has.
+
+20. **A PER-FAMILY CAPTURE HOOK HAS TWO HALVES AND THEY LIVE IN DIFFERENT
+    PLACES.** The per-layer `encode_resid_capture` calls fill a buffer inside
+    the layer loop; a separate `record_pass` after the command buffer is
+    waited on is what keeps a snapshot. Wiring only the first gives
+    `[resid-capture] no non-prefill pass ran; wrote nothing` -- loud, which is
+    the good failure mode, and still a family half-wired. Grep for
+    `record_pass` as well as for the encode when adding a family. The steering
+    edit has NO second half, so the two hooks are not symmetric even though
+    they share a boundary and are gated by one predicate
+    (`steering::family_dispatches_steering`).
