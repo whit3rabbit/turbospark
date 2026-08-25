@@ -14,6 +14,16 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- Directional steering (`--steering <path.gguf>` on `turbospark-check` and
+  `turbospark-server`): runtime abliteration, ActAdd (`add`), feature clamping
+  (`clamp`), and norm-preserving projection (`renorm`) via Metal shader
+  `steer_direction_fp16`, with support across 5 families (`qwenGdnDense`,
+  `qwenGdnMoe`, `llama`, `qwen3moe`, `gemma4`), speculative verify
+  (`produce_batched`), and Gemma 4 chunked prefill (`x_off`). Includes
+  activation capture (`MFERENCE_RESID_CAPTURE`) and extraction
+  (`scripts/extract_direction.py`).
+- `ChatDialect::Llama3` in `turbospark-tokenizer`: detection on
+  `<|start_header_id|>` / `<|eot_id|>` and fallback template renderer.
 - `turbospark-catalog`: the curated model table (thirteen rows, each naming a
   repository and revision that were streamed and run on real hardware), the
   header-only Hugging Face probe, the install driver, and the `~/.turbospark`
@@ -27,8 +37,9 @@ when this file gets updated relative to the version bump and the tag.
   wins, so nothing that previously worked changes; the server prints which
   directory an alias resolved to at startup, since it is the one that runs
   unattended.
-- Documentation: `docs/MODELS.md` (the catalog, the probe, adding a row) and
-  `docs/RELEASE.md` (how a release is cut).
+- Documentation: `docs/OBLITERATION.md` (runtime steering design, refutations,
+  measurements, and interop), `docs/MODELS.md` (the catalog, the probe, adding a
+  row), and `docs/RELEASE.md` (how a release is cut).
 
 ### Changed
 - The release workflow requires a `CHANGELOG.md` entry for the tag, publishes
@@ -36,3 +47,4 @@ when this file gets updated relative to the version bump and the tag.
   tag resumes correctly, and ships `turbospark-model` in the macOS archive.
 - `docs/NEW_MODEL.md` gained a phase for making a new family reachable from the
   CLI: the probe and install driver's family match sites, and the catalog row.
+
