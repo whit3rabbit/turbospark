@@ -63,6 +63,18 @@ pub enum ChatDialect {
     /// the ATEM tool DSL, so this variant exists for what a dialect IS
     /// evidence for -- the ids and the STOP SET.
     MuseGlimmer,
+    /// Meta's Llama-3 family (base and Instruct):
+    /// `<|start_header_id|>role<|end_header_id|>\n\ncontent<|eot_id|>`,
+    /// opened by a literal `<|begin_of_text|>`.
+    ///
+    /// **SHARES `<|begin_of_text|>` AND `<|end_of_text|>` WITH
+    /// [`ChatDialect::MuseGlimmer`] AND NOTHING ELSE**, which is why
+    /// `detect_dialect` keys on the header markers instead. No tool-calling
+    /// or thinking markup: the base 8B-Instruct table this was built against
+    /// carries none, so every such id resolves to [`NO_SUCH_TOKEN_ID`]. A
+    /// 3.1-family checkpoint's `<|eom_id|>` / `<|python_tag|>` tool-calling
+    /// pair is out of scope here and untested.
+    Llama3,
 }
 
 /// Sentinel for token roles a dialect frames as plain text rather than a

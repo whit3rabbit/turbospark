@@ -13,12 +13,19 @@ crates/runtime/
 +-- Cargo.toml                  # Crate manifest
 +-- src/
 |   +-- lib.rs                  # Library root
+|   +-- config.rs               # Runtime completion configuration
+|   +-- pacing.rs               # Decode-rate deadline arithmetic (Phase P2)
+|   +-- power.rs                # Power profiles, thermal ladder, RateControl
 |   +-- producer.rs             # LogitProducer trait & ScriptedLogitProducer mock
 |   +-- raw_completion.rs       # Generation loops (run_raw_completion & run_raw_completion_chunked)
 |   +-- raw_completion_chunked.rs # Chunked generation loop implementation
 |   +-- token_sink.rs           # TokenSink abstractions for streaming completion tokens
+|   +-- speculative.rs          # Multi-token speculative decoding generation loop orchestrator
+|   +-- speculation_policy.rs   # Speculative decoding policy and drafter configuration
+|   +-- speculation_policy_tests.rs # Unit tests for speculative decoding policy
+|   +-- router_hist.rs          # MoE expert activation routing histogram collector
+|   +-- ffn_hist.rs             # Dense FFN neuron activation mass & sparsity collector
 |   +-- resid_capture.rs        # Per-layer residual stream at the last prompt token (steering)
-|   +-- steering.rs             # SteeringPolicy + the GPU state that serves it
 |   +-- real_forward.rs         # RealForwardRunner struct, constructor, and dispatch
 |   +-- real_forward_open.rs    # RealForwardRunner open_inner implementation
 |   +-- real_forward_rollback.rs# RollbackPoint state capture and rewind methods
@@ -35,6 +42,7 @@ crates/runtime/
 |   |   |   +-- mod.rs          # Gemma 4 entry point & shared expert branch
 |   |   |   +-- attn.rs         # Attention block & router GEMV pass
 |   |   |   +-- moe.rs          # Routed MoE pass encoding
+|   |   |   +-- moe_batch.rs    # Batched routed MoE pass encoding
 |   |   |   +-- prefill.rs      # Gemma 4 chunked prefill encoders
 |   |   |   \-- state.rs        # RealGemmaState initialization
 |   |   +-- gptoss/             # `gpt-oss` decode flow (biases, sinks, YaRN, MXFP4 experts)
@@ -48,6 +56,10 @@ crates/runtime/
 |   |   |   +-- dense.rs        # Dense gated FFN (Mistral, Llama 2/3.x)
 |   |   |   +-- moe.rs          # Routed MoE pass (no shared expert)
 |   |   |   \-- state.rs        # RealLlamaState & the dense/MoE split
+|   |   +-- museglimmer/        # Dense Muse Glimmer 30B decode flow
+|   |   |   +-- mod.rs          # Entry point & layer loop
+|   |   |   +-- attn.rs         # Dense GQA + attention output gate
+|   |   |   \-- state.rs        # RealMuseState & norm convention configuration
 |   |   +-- qwen/               # Qwen 3.6 + dense `qwen3_5` decode flow
 |   |   |   +-- mod.rs          # Entry point & DraftPolicies
 |   |   |   +-- produce.rs      # Forward pass token decode (produce_real_qwen)
@@ -73,24 +85,28 @@ crates/runtime/
 |   |   \-- synthetic/          # Synthetic fallback decode flow
 |   |       +-- mod.rs          # Synthetic entry point & host MoE FFN
 |   |       \-- layer.rs        # Synthetic layer encoder
-|   +-- config.rs               # Runtime completion configuration
-|   +-- pacing.rs               # Decode-rate deadline arithmetic (Phase P2)
-|   +-- power.rs                # Power profiles, thermal ladder, RateControl
 |   \-- error.rs                # RuntimeError enum definition
 \-- tests/
+    +-- cancellation.rs         # Mid-generation cancellation integration tests
     +-- chunked_prefill.rs      # Chunked prefill loop unit tests (scripted producer)
-    +-- real_forward_gemma4_chunked.rs # The REAL chunk driver, against a non-chunked reference
+    +-- gguf_install_refused.rs # Unsupported GGUF installs refused at open tests
     +-- golden_tokens.rs        # Golden token sequence reproducibility tests
     +-- raw_completion.rs       # Raw completion loop integration tests
     +-- real_forward.rs         # RealForwardRunner short-name integration tests
     +-- real_forward_gemma4.rs  # RealForwardRunner Gemma 4 learned-weight tests
+    +-- real_forward_gemma4_chunked.rs # The REAL chunk driver, against a non-chunked reference
+    +-- real_forward_gptoss.rs  # The gpt-oss flow: perturb each input, require the logits to move
     +-- real_forward_llama.rs   # RealForwardRunner Mixtral-shaped decode tests
     +-- real_forward_llama_dense.rs # The DENSE half of the same architecture
-    +-- real_forward_qwen3moe.rs# The same flow under the Qwen3-MoE family tag
-    +-- real_forward_gptoss.rs  # The gpt-oss flow: perturb each input, require the logits to move
+    +-- real_forward_muse.rs    # Real forward tests for Muse Glimmer flow
     +-- real_forward_qwen.rs    # RealForwardRunner Qwen 3.6 decode tests
     +-- real_forward_qwen35.rs  # The DENSE, ONE-BIT half of the same flow
+    +-- real_forward_qwen35_batched_onset.rs # Batched verify onset consistency tests
+    +-- real_forward_qwen35_dflash.rs # DFlash2 speculative decoding integration tests
+    +-- real_forward_qwen35_mtp.rs # MTP speculative decoding integration tests
+    +-- real_forward_qwen3moe.rs# The same flow under the Qwen3-MoE family tag
     +-- real_forward_qwen_moe_batched.rs # The BATCHED routed verify vs M sequential produce
+    +-- speculative.rs          # Speculative decoding loop integration tests
     \-- fixtures/
         \-- ChatMLTokenizer/    # Toy ChatML tokenizer fixture directory for integration tests
 ```
@@ -154,13 +170,15 @@ cargo test -p turbospark-runtime
    drafter off to download a different one.
 
    **THE HEADLESS ARM BESIDE IT IS THE SAME ARGUMENT ON A WIDER INPUT, and it
-   was missing until 2026-08-21.** The note only ever fires for a DFlash2
+   was missing until 2026-08-21 on the MTP path and until 2026-08-22 on the
+   DFlash2 one.** The note only ever fires for a DFlash2
    install; every OTHER headless install still mapped a NAMED block onto
    `MtpDraftPolicy::Fixed` and failed at OPEN. Measured on the real
    `ornith35b`: `--speculative 2` reported "carries no multi-token-prediction
    head ... stream an install that adds the official checkpoint's last shard",
-   sending a caller after a 4.4 GB shard that CANNOT help, because the batched
-   verify is dense-only and that install routes to 256 experts. `auto` got the
+   sending a caller after a 4.4 GB shard that CANNOT help: that install routes
+   to 256 experts, and no published MoE conversion of this architecture ships a
+   drafter this port can ingest, so no shard helps. `auto` got the
    same install right in the same run, which is what localised it -- `auto`
    reaches `resolve_speculation` and a named block did not. Gotcha 16's
    architectural-blocker-before-the-missing-head ordering was correct all
@@ -173,8 +191,40 @@ cargo test -p turbospark-runtime
    EXPLICITLY named drafter, because `--speculative-drafter mtp --speculative
    2` had the same bug by a second route -- passing the drafter through
    untouched is not the same as not looking at the install. And the hard fail
-   is unchanged; only the reason improves, and on a DENSE headless install it
-   is the same sentence it always was.
+   is unchanged; only the reason improves.
+
+   **THE FIX WAS HALF-APPLIED FOR A DAY, and the missing half is the lesson.**
+   The 2026-08-21 arm keyed on `install_has_mtp_head` and `DrafterChoice`
+   carried nothing else, so `--speculative-drafter dflash --speculative 2`
+   reproduced the identical failure through `DflashDraftPolicy::Fixed`: on the
+   same `ornith35b` it reported "this install carries none (dflash.fc.weight
+   is not in the resident index); stream it beside the trunk", which on a MoE
+   checkpoint no artifact satisfies, since the published DFlash2 drafter
+   targets the DENSE half. `install_has_dflash: Option<bool>` and a second
+   guard closed it on 2026-08-22. Two drafters means two of everything on this
+   path; grep for the sibling before calling one of these fixes done.
+
+   **ROUTING A NAMED BLOCK THROUGH `Off` MOVES WHICH STRING THE CALLER SEES,
+   and the two were not equal.** The reason now comes from the BLOCKER rather
+   than from `Dflash/MtpState::build`, and both `build` errors named the
+   artifact that fixes the problem while both blocker arms named only the
+   obstacle. So the 2026-08-21 fix silently cost a dense headless install its
+   "stream an install that adds the official checkpoint's last shard
+   (docs/MTP.md)". Both arms carry their pointer now (2026-08-22), and the
+   MoE arms return FIRST so neither pointer is ever offered where no artifact
+   satisfies it.
+
+   **NOTHING IN `speculation_policy_tests.rs` CAN GUARD THAT, and its own
+   header says why**: it feeds fixture strings into `resolve_speculation` and
+   never calls either blocker, so it pins the ROUTING and not the TEXT.
+   Deleting the pointer from the real arm leaves all 37 of its cases green --
+   measured, not inferred. The guard that sees it is
+   `a_dense_int4_install_without_a_head_is_told_which_artifact_would_fix_it`
+   (`tests/real_forward_qwen35_mtp.rs`), and it needs a fixture built at 4
+   BITS: this file's `BITS = 1` is stopped by the INT4 arm and can never reach
+   the no-head one. That is the only fixture in the repo that reaches
+   `speculation_blocker`'s last arm at all, which is why the arm's text could
+   rot unobserved.
 
 
 1. **PRODUCE WRITES LOGITS, NEVER PROBABILITIES**: `LogitProducer::produce` must return raw, unnormalized logits. `selection::select` performs softmaxing internally. Returning probabilities destroys sampling temperature reweighting (`softmax(softmax(z))`).
@@ -194,6 +244,8 @@ cargo test -p turbospark-runtime
    - `MFERENCE_MTP_DRAFT=<depth>`: builds `families/qwen/mtp.rs`'s `MtpState` and lets `RealForwardRunner::mtp_draft_step` run (`docs/MTP_SPECULATIVE.md`, step 2; `qwen3_5` only). Unset, unparsable or 0 allocates NOTHING and encodes nothing, so the off path is identical in bytes and in footprint to the engine that shipped before the module existed -- which is what lets `qwen38_memory_oracle`'s frozen row stand rather than needing a new one. A depth asked for on an install with no head is an ERROR at open naming `mtp.fc.weight`, never a silent no-op: a caller that asked for speculation and quietly got none would measure the non-speculative engine and report it as the speculative one (Gotcha 14's argument, one feature over).
    - `MFERENCE_DFLASH_DRAFT=<block>`: builds `families/qwen/dflash.rs`'s `DflashState`, the SECOND drafter for this family and the first BLOCK drafter in the engine (`docs/DFLASH2.md`). Same off-path guarantee as the MTP knob, and the same refusal on an install without one. It proposes a whole block in ONE pass, so the loop calls `draft_block` and never `draft_step`; its KV holds TARGET-derived rows written by `dflash_context_write` from the trunk's aux capture, and it is `rewind_drafter`'s exception -- a target AHEAD of its cursor is normal, because that cursor advances only at the NEXT round's context write. Its residual stream is held DIVIDED by `DFLASH_RESIDUAL_SCALE`, with the norms reading it taking `DFLASH_RESIDUAL_EPS`, because the drafter's true residual peaks at 113,920 against FP16's 65,504 (AGENTS.md Gotcha 60); `dflash_select` REFUSES a non-finite row rather than proposing token 0 (Gotcha 59).
    - `MFERENCE_PREFILL_CHUNK=<tokens>`: routes prefill through `run_raw_completion_chunked` and `RealForwardRunner`'s chunk driver (Gotcha 14). An A/B seam like the two above it, not a feature flag: both arms must produce identical tokens. Unset, unparsable or 0 is the sequential path. `--prefill-chunk` exists in `crates/invocation`, is validated against `ALLOWED_CHUNK_SIZES`, and is wired to NOTHING on purpose -- it defaults to `Fixed(128)`, so wiring it turns chunked prefill on by default, which this phase has not earned across families yet.
+   - `MFERENCE_ROUTED_BATCH=1`: inside the chunk driver, runs each layer's routed half as ONE route-list dispatch pair per union-bounded sub-batch instead of per token (`docs/BATCHED_PREFILL.md` steps 2 and 3, `families/gemma4/moe_batch.rs`). INT4-affine blobs only; a GGUF install is refused by layout rather than looped.
+   - `MFERENCE_BATCHED_GEMV=1`: the same driver's RESIDENT GEMVs as M-row GEMMs through `encode_gemm_any` (step 6, the 29.7% row of the prefill dispatch ranking). **It moves the four attention projections always and the shared expert's three only when `MFERENCE_ROUTED_BATCH` is also on** -- the per-token routed pass reads a single-row `h1` at offset 0 and that read is on the DECODE path's signature, so widening it would be a decode change. Norms, RoPE, attention, the residual adds and the router GEMV stay per token. INT4-affine only, refused by name otherwise (which the DEFAULT synthetic fixture triggers: it writes its shared MLP at eight bits where the real install declares four). Output is byte-identical on both arms and that is measured rather than structural -- the batched and single-row INT4 kernels agree bit-for-bit on a fixture built to see reassociation, against a positive control that does not.
 8. **A layer's routed slots are dispatched in the ROUTER'S RANKING, and that is a correctness constraint, not a style choice.** Phase 2 reduces `blob[slot] * routing_w[slot]` in slot-index order and FP addition is not associative, so the slot order is the summation order. The Gemma flow used to order slots misses-first so the resident hits' phase-1 GEMV could ride its own command buffer (`MFERENCE_HIT_CB`, now removed); because the hit/miss split follows CACHE STATE rather than the prompt, the same prompt could decode to different text across warm runs in one process. Measured 2026-08-08: 4 distinct outputs in 6 runs on a Q8_0 GGUF install at 16 slots, 2 in 6 on the MLX install at 32. Both families are now byte-identical across 8/16/32 slots and cold vs warm. Before adding a decode-path optimization that reorders slots, ask what its ordering is a function of. See AGENTS.md Gotcha 27.
 9. **The one `thread::sleep` in this crate is in `decode`, and where it sits is load-bearing.** ROADMAP Phase P2's rate cap paces AFTER the loop has decided to continue and BEFORE the next `produce`. After, so the final token of a generation never pays a sleep nobody waits through, and the stop branches break out above it. Before `produce`, so the idle window falls between forward passes rather than inside one, which is the entire point on the energy axis: the GPU has to be idle during it. It is also strictly downstream of `selection::select`, `history.push` and the progress callback, which is why pacing cannot move a token and why no quality gate is needed for a change to it (`raw_completion.rs`'s `pacing_polls_thermal_pressure_without_changing_the_tokens` is the guard). `RateControl::is_active` gates the whole block, so the default config executes the identical statement sequence it did before the feature existed. A timing test on this may only assert a LOWER bound: a cap is a floor on spacing, never a promise about the ceiling.
 
@@ -221,6 +273,8 @@ cargo test -p turbospark-runtime
 
     **Pipelining the routed buffers costs a plan that must AVOID the in-flight token's expert slots**, which is what `RoutedSlot::protect` carries and what `ExpertCache::plan`'s `avoiding_slots` was always for. Below `2 * top_k` slots the cache cannot guarantee room for those plus this token's misses, and it ASSERTS rather than degrading, so the driver falls back to retiring before it encodes. That fallback is a throughput choice and must stay a numerics no-op; `a_cache_too_small_to_pipeline_still_reproduces_the_sequential_logits` pins it.
 
+    **THE RESIDENT GEMVS BATCH TOO, BEHIND A SECOND SEAM** (`docs/BATCHED_PREFILL.md` step 6, `MFERENCE_BATCHED_GEMV`). The four attention projections become M-row GEMMs through `encode_gemm_any`, and so do the shared expert's three when the routed half is batched as well; that second half is also where the host saving is largest, since the per-token shared branch opens and commits its OWN command buffer per token. Everything with no weights to amortize -- norms, per-head norms, RoPE, attention, the residual adds, the router GEMV -- still loops. Two hazards it added, both silent if unguarded: a batched K/V projection can STRADDLE a sliding-window ring's wrap (`k_slot` validates one row, so it would run past the layer's buffer), which `ring_spans` splits; and `batch_q` is sized at the model's WIDEST head, because Gemma 4's five full layers are 512-wide against the sliding window's 256 and no fixture here has `head_dim != full_head_dim` to catch a wrong sizing, so a length check at the dispatch stands in for the test that cannot exist.
+
     **Do not reach for the expert-union plan.** An earlier design had one `plan_experts_cached` over the chunk's union replacing M per-token plans, worth "25.2% of prefill cut 3.3x". Measured, prefill's union is 41.5 distinct experts per layer at M=16 against the 24.1 the sequential path already loads at 32 slots, so it saves nothing -- and 41.5 requests against 32 slots trips the assert above. The hit rate before and after the driver landed reads 81.2% against 81.4%, which is the third independent confirmation. See AGENTS.md Gotcha 54.
 
 15. **The context window is sized by a POLICY too, and its two failure modes
@@ -245,8 +299,6 @@ cargo test -p turbospark-runtime
     lives in `GdnStateManager`), and a compressed-attention install gives
     EVERY layer a placeholder rather than only its compressed ones. The
     dense-7B arm is cross-checked against the one measured KV figure in the
-   - `MFERENCE_ROUTED_BATCH=1`: inside the chunk driver, runs each layer's routed half as ONE route-list dispatch pair per union-bounded sub-batch instead of per token (`docs/BATCHED_PREFILL.md` steps 2 and 3, `families/gemma4/moe_batch.rs`). INT4-affine blobs only; a GGUF install is refused by layout rather than looped.
-   - `MFERENCE_BATCHED_GEMV=1`: the same driver's RESIDENT GEMVs as M-row GEMMs through `encode_gemm_any` (step 6, the 29.7% row of the prefill dispatch ranking). **It moves the four attention projections always and the shared expert's three only when `MFERENCE_ROUTED_BATCH` is also on** -- the per-token routed pass reads a single-row `h1` at offset 0 and that read is on the DECODE path's signature, so widening it would be a decode change. Norms, RoPE, attention, the residual adds and the router GEMV stay per token. INT4-affine only, refused by name otherwise (which the DEFAULT synthetic fixture triggers: it writes its shared MLP at eight bits where the real install declares four). Output is byte-identical on both arms and that is measured rather than structural -- the batched and single-row INT4 kernels agree bit-for-bit on a fixture built to see reassociation, against a positive control that does not.
     repo: 32 layers at 8,192 comes out to exactly the 1,024 MiB
     `mistral_memory_oracle` records (AGENTS.md Gotcha 40).
 
@@ -273,8 +325,6 @@ cargo test -p turbospark-runtime
     `encode_qwen_layer_dense` with `MTP_PREFIX` in place of `TRUNK_PREFIX`,
     because the published head's single block is a trunk full-attention
     layer's shape field for field. No new kernel, no new dispatch shape.
-
-    **THE RESIDENT GEMVS BATCH TOO, BEHIND A SECOND SEAM** (`docs/BATCHED_PREFILL.md` step 6, `MFERENCE_BATCHED_GEMV`). The four attention projections become M-row GEMMs through `encode_gemm_any`, and so do the shared expert's three when the routed half is batched as well; that second half is also where the host saving is largest, since the per-token shared branch opens and commits its OWN command buffer per token. Everything with no weights to amortize -- norms, per-head norms, RoPE, attention, the residual adds, the router GEMV -- still loops. Two hazards it added, both silent if unguarded: a batched K/V projection can STRADDLE a sliding-window ring's wrap (`k_slot` validates one row, so it would run past the layer's buffer), which `ring_spans` splits; and `batch_q` is sized at the model's WIDEST head, because Gemma 4's five full layers are 512-wide against the sliding window's 256 and no fixture here has `head_dim != full_head_dim` to catch a wrong sizing, so a length check at the dispatch stands in for the test that cannot exist.
 
     **Reusing the trunk's scratch is safe for exactly one reason and it is
     an ORDERING one.** `scratch.x` is re-initialised from the embedding at

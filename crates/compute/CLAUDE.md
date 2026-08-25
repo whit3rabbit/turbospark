@@ -44,10 +44,11 @@ crates/compute/
     +-- quant_gguf_iq.rs        # IQ decode vs ggml oracles, plus one test per layout trap
     +-- quant_gguf_mxfp4.rs     # MXFP4 decode vs a ggml oracle, plus one test per trap
     +-- generated/              # ggml-dumped oracle arrays, `include!`d (not a test target)
-    +--   quant_gguf_q5_k_oracle.rs   # Q5_K bytes AND floats, both produced by ggml
-    +--   quant_gguf_mxfp4_oracle.rs  # MXFP4 bytes, floats, codebook and E8M0 table
-+--   quant_1bit_oracle.rs        # Real Bonsai-27B packed bytes AND the floats MLX decodes
-+--   quant_2bit_oracle.rs        # The same, off the real Ternary-Bonsai-27B 2-bit file
+    |   +-- quant_1bit_oracle.rs        # Real Bonsai-27B packed bytes AND the floats MLX decodes
+    |   +-- quant_2bit_oracle.rs        # The same, off the real Ternary-Bonsai-27B 2-bit file
+    |   +-- quant_gguf_iq_oracles.rs    # IQ4_NL, IQ4_XS, IQ3_XXS codebook arrays from ggml
+    |   +-- quant_gguf_mxfp4_oracle.rs  # MXFP4 bytes, floats, codebook and E8M0 table
+    |   \-- quant_gguf_q5_k_oracle.rs   # Q5_K bytes AND floats, both produced by ggml
     \-- smoke.rs        # Basic compute smoke test
 ```
 

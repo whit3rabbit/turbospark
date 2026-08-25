@@ -20,6 +20,7 @@ crates/gpu/
 |   +-- attention_decode.rs         # Split-KV decode attention dispatch
 |   +-- attention_decode_tests.rs   # Unit tests for attention decode dispatch
 |   +-- moe_decode.rs               # MoE router, phase 1 GEMV, phase 2 down-reduce dispatches
+|   +-- moe_prefill_batch.rs        # Batched MoE prefill GEMV dispatch
 |   +-- rms_norm.rs                 # RMSNorm dispatches (no-scale, BF16, per-head)
 |   +-- rope.rs                     # RoPE positional embedding dispatch
 |   +-- dequant_1bit_gemv.rs        # MLX 1-bit affine GEMV pair (port-local, ROADMAP's 1-bit entry)
@@ -43,6 +44,7 @@ crates/gpu/
 |   +-- gdn.rs                      # Gated-DeltaNet kernel dispatches (8 kernels)
 |   +-- gdn_shape.rs                # GdnShape layout and validation
 |   +-- gdn_state.rs                # GDN recurrent state buffers (Qwen flow's)
+|   +-- dflash_conv.rs              # DFlash2 dynamic depthwise conv and state capture
 |   +-- dsv4_state.rs               # DSV4 Metal buffer allocation (unwired)
 |   +-- prefill_scratch.rs          # Chunked prefill scratch buffer layout (undispatched)
 |   \-- shaders/                    # MSL source, vendored from Swift except where marked port-local
@@ -50,45 +52,58 @@ crates/gpu/
 |       +-- dequant_1bit.metal      # MLX 1-bit affine GEMV + the `+/-1` form
 |       +-- dequant_2bit.metal      # MLX 2-bit affine GEMV + embedding lookup
 |       +-- dequant_int4.metal      # INT4 dequantization GEMV shader source
+|       +-- dequant_int4_batch.metal# Batched M-row INT4 GEMM shader source
+|       +-- dequant_int4_mma.metal  # INT4 simdgroup_matrix MMA shader source (dead end)
 |       +-- dequant_int8.metal      # INT8 dequantization GEMV shader source
+|       +-- dequant_iq.metal        # GGUF IQ-codebook GEMV shader source
 |       +-- dequant_q4_k.metal      # GGUF Q4_K dequantization GEMV + embedding lookup
 |       +-- dequant_q5_k.metal      # GGUF Q5_K dequantization GEMV (after dequant_q4_k.metal)
 |       +-- dequant_q6_k.metal      # GGUF Q6_K dequantization GEMV shader source
 |       +-- moe_gguf.metal          # GGUF MoE decode pairs (after moe.metal + dequant_q4_k.metal)
 |       +-- dequant_q8_0.metal      # GGUF Q8_0 dequantization GEMV shader source
+|       +-- dflash_conv.metal       # DFlash2 grouped depthwise conv shader source
 |       +-- gdn.metal               # Gated-DeltaNet (Qwen 3.6 linear attention) shader source
 |       +-- logit.metal             # Logit softcap and softmax shader source
 |       +-- moe.metal               # MoE router GEMV and phase 1/2 shader source
+|       +-- moe_prefill_batch.metal # Batched MoE prefill GEMV shader source
 |       +-- rmsnorm.metal           # RMSNorm shader source
 |       +-- rope.metal              # RoPE shader source
 |       \-- utility.metal           # Elementwise utility shader source + the steering edit
 \-- tests/                          # Metal numerical parity & allocation unit tests
     +-- attention_chunk_bench.rs
     +-- attention_decode_parity.rs
+    +-- attention_sinks.rs
     +-- attention_swa.rs
     +-- dequant_1bit_gemv_parity.rs
     +-- dequant_2bit_gemv_parity.rs
+    +-- dequant_int4_gemm_parity.rs
     +-- dequant_int4_gemv_parity.rs
+    +-- dequant_int4_mma_parity.rs
     +-- dequant_int8_gemv_parity.rs
+    +-- dequant_iq_gemv_parity.rs
     +-- dequant_q4_k_gemv_parity.rs
     +-- dequant_q5_k_gemv_parity.rs
     +-- dequant_q6_k_gemv_parity.rs
-    +-- attention_sinks.rs
-    +-- moe_gguf_parity.rs
     +-- dequant_q8_0_gemv_parity.rs
+    +-- dflash_conv_parity.rs
     +-- dispatch_profile.rs
     +-- dsv4_state.rs
     +-- gdn_parity.rs
     +-- gdn_state.rs
     +-- gemma4_real_kernels_parity.rs
+    +-- gemv_bandwidth_bench.rs
     +-- kv_cache.rs
     +-- logit_softmax_parity.rs
     +-- moe_decode.rs
+    +-- moe_gguf_parity.rs
+    +-- moe_prefill_batch_bench.rs
+    +-- moe_prefill_batch_parity.rs
+    +-- power_state.rs
     +-- prefill_scratch.rs
     +-- resident_metal.rs
     +-- rms_norm_parity.rs
-    +-- rope_yarn_parity.rs
     +-- rope_parity.rs
+    +-- rope_yarn_parity.rs
     +-- scaled_norm_and_embed.rs
     \-- utility_and_pass.rs
 ```

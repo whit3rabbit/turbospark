@@ -125,12 +125,14 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
     if let Some(line) = runner.steering_line() {
         eprintln!("{line}");
     }
-    // `install_has_mtp_head` is `draft_policies`' input above and nothing this
-    // binary prints, so it is dropped by name rather than with a `..` -- a
-    // wildcard here would silently swallow the next field somebody adds.
+    // The two presence flags are `draft_policies`' input above and nothing
+    // this binary prints, so they are dropped by name rather than with a `..`
+    // -- a wildcard here would silently swallow the next field somebody adds,
+    // which is how `install_has_dflash` would have arrived unnoticed.
     let DrafterChoice {
         drafter,
         install_has_mtp_head: _,
+        install_has_dflash: _,
         note: drafter_note,
     } = choice;
 
@@ -163,11 +165,13 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
     // process, and a `--chat` session that started speculating must not stop
     // silently three turns in.
     // `speculation_blocker` and not `mtp_draft_depth() > 0`: a head is
-    // NECESSARY and not sufficient. The batched verify is dense-only and
-    // INT4-only, so a 1-bit, 2-bit or MoE install carrying a head would pass
-    // a head-presence check and then fail at the first verify with the
-    // generation already under way. The runner owns that list because the
-    // runner owns the refusals it mirrors.
+    // NECESSARY and not sufficient. The batched verify is INT4-only, so a
+    // 1-bit or 2-bit install carrying a head would pass a head-presence check
+    // and then fail at the first verify with the generation already under way.
+    // A MoE install is refused too, but as a POLICY rather than a capability
+    // since ROADMAP Phase 3 landed the routed verify: no published MoE
+    // conversion of this architecture ships a drafter to drive it. The runner
+    // owns that list because the runner owns the refusals it mirrors.
     let speculation = resolve_speculation(
         asked,
         // The RESOLVED drafter, because `auto` takes its block from the

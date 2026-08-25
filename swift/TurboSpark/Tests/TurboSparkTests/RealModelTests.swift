@@ -280,8 +280,15 @@ final class RealModelTests: XCTestCase {
         // so a variable pointed at the wrong artifact would make this file
         // read green while testing the case it already covers. The refusal
         // case below is written against the ARCHITECTURAL reason specifically.
+        //
+        // "no MoE drafter" is `MOE_SPECULATION_BLOCKER_MARKER`
+        // (`crates/runtime/src/families/qwen/mod.rs`), the one place both Rust
+        // blockers take that phrase from. Swift cannot import it, so this is
+        // the single literal copy; keep it in step with that constant. Its
+        // predecessor here was "dense-only", which went stale when the routed
+        // pair got a batched kernel and no test could see it.
         XCTAssertTrue(
-            reason.contains("dense-only") || reason.contains("INT4-only"),
+            reason.contains("no MoE drafter") || reason.contains("INT4-only"),
             "point TURBOSPARK_TEST_MODEL_NO_SPECULATION at a MoE or sub-4-bit "
                 + "install; this one says: \(reason)")
 
@@ -307,8 +314,9 @@ final class RealModelTests: XCTestCase {
     /// Two claims, and the second is a regression guard with a date on it.
     /// Until 2026-08-21 this reported "carries no multi-token-prediction head
     /// ... stream an install that adds the official checkpoint's last shard",
-    /// which sent a caller after a 4.4 GB shard that cannot help -- the
-    /// batched verify is dense-only and no checkpoint changes that. `auto`
+    /// which sent a caller after a 4.4 GB shard that cannot help: no published
+    /// MoE conversion of this architecture ships a drafter this port can
+    /// ingest, so no shard of any checkpoint changes the answer. `auto`
     /// got the same install right, which is why only a NAMED block can see
     /// it, and why the case above is not enough on its own.
     ///
@@ -325,13 +333,56 @@ final class RealModelTests: XCTestCase {
             XCTFail("a named block on an install that cannot serve it must not open quietly")
         } catch let error as TurboSparkError {
             XCTAssertEqual(error.code, .open)
+            // Same single literal copy of `MOE_SPECULATION_BLOCKER_MARKER` as
+            // the case above; see the note there.
             XCTAssertTrue(
-                error.message.contains("dense-only") || error.message.contains("INT4-only"),
+                error.message.contains("no MoE drafter") || error.message.contains("INT4-only"),
                 "the refusal must name the architectural obstacle, got: \(error.message)")
             XCTAssertFalse(
                 error.message.contains("multi-token-prediction head"),
                 "no checkpoint helps here, so the head must not be blamed: \(error.message)")
             print("blocked named: refused with \(error.message)")
+        }
+    }
+
+    /// **THE SAME CLAIM WITH THE DRAFTER NAMED, which reached the bug by a
+    /// second route until 2026-08-22.**
+    ///
+    /// The case above leaves the drafter at `auto`, which resolves to `mtp`,
+    /// so it exercises the MTP arm alone. Naming `dflash` takes the other arm
+    /// of the same `match`, and that one had no headless guard for a day: it
+    /// reported "asks for the DFlash2 drafter, but this install carries none
+    /// ... stream it beside the trunk", sending a caller after a checkpoint
+    /// that does not exist for this half of the architecture, since the
+    /// published DFlash2 drafter targets the DENSE half.
+    ///
+    /// Not a duplicate of the case above, for the reason the Rust siblings are
+    /// not duplicates either: `drafter` selects which arm runs, so one arm's
+    /// guard says nothing about the other's. What is shared below it is the
+    /// `resolve_speculation` plumbing, and that is not what was wrong.
+    func testANamedBlockNamingDflashIsAlsoRefusedForTheArchitecture() async throws {
+        let path = try blockedModelPath()
+        var options = OpenOptions()
+        options.speculation = .block(2)
+        options.speculativeDrafter = .dflash
+
+        do {
+            _ = try await TurboSparkSession(modelPath: path, options: options)
+            XCTFail("a named block on an install that cannot serve it must not open quietly")
+        } catch let error as TurboSparkError {
+            XCTAssertEqual(error.code, .open)
+            XCTAssertTrue(
+                error.message.contains("no MoE drafter") || error.message.contains("INT4-only"),
+                "the refusal must name the architectural obstacle, got: \(error.message)")
+            // THE DISCRIMINATING HALF, and the one the marker check cannot
+            // make: "stream it beside the trunk" is `DflashState::build`'s
+            // open-time advice, correct on a dense install and unsatisfiable
+            // on this one. Its absence is what says the headless arm ran.
+            XCTAssertFalse(
+                error.message.contains("stream it beside the trunk"),
+                "no DFlash2 checkpoint of this architecture exists, so the "
+                    + "refusal must not send a caller after one: \(error.message)")
+            print("blocked named dflash: refused with \(error.message)")
         }
     }
 }

@@ -38,7 +38,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use half::f16;
 use turbospark_repack::{
-    build_synthetic_qwen_gdn_dense_install, build_synthetic_qwen_gdn_dense_install_with_mtp,
+    build_synthetic_qwen_gdn_dense_install, build_synthetic_qwen_gdn_dense_install_at_bits,
+    build_synthetic_qwen_gdn_dense_install_with_mtp,
 };
 use turbospark_runtime::{LogitProducer, RealForwardRunner};
 
@@ -944,6 +945,13 @@ fn a_sub_4_bit_install_with_a_head_reports_why_it_cannot_speculate() {
         blocker.contains("INT4-only"),
         "the reason must name the real blocker rather than the head, got: {blocker}"
     );
+    // And NOT the head, which this install has. The pair is what says the
+    // ordering in `speculation_blocker` is doing work rather than the fixture
+    // happening to have one obstacle.
+    assert!(
+        !blocker.contains("last shard"),
+        "an install that HAS a head must not be sent after one: {blocker}"
+    );
 
     // And the model still decodes. The blocker is about speculation alone.
     let mut runner = runner;
@@ -952,4 +960,68 @@ fn a_sub_4_bit_install_with_a_head_reports_why_it_cannot_speculate() {
         .produce(1, 0, &mut logits)
         .expect("a 1-bit install decodes normally");
     assert!(logits.iter().all(|v| v.to_f32().is_finite()));
+}
+
+/// **THE NO-HEAD ARM, AND THE POINTER IT HAS TO CARRY.**
+///
+/// Dense and INT4, so both architectural checks pass and the head is the only
+/// thing left: this is the one fixture in the repo that reaches
+/// `speculation_blocker`'s last arm at all. Built at 4 bits rather than this
+/// file's `BITS = 1` for exactly that reason, since a 1-bit install is stopped
+/// by the INT4 arm above and can never see this one.
+///
+/// **THE POINTER IS THE POINT, and it went missing for a day without any test
+/// noticing.** Before `draft_policies` grew its headless arm (2026-08-21) a
+/// named block on this shape failed at OPEN, so the string a caller saw was
+/// `MtpState::build`'s, which names the shard that fixes it. Afterwards the
+/// open succeeds and THIS string is the only one they see, and it named the
+/// obstacle without the remedy. `speculation_policy_tests.rs` could not catch
+/// that: it feeds a `NO_HEAD` fixture into `resolve_speculation` and never
+/// calls this function, so it pins the ROUTING and says nothing about the
+/// text. Verified by mutation -- deleting the pointer here leaves that whole
+/// module green and reddens this case alone.
+#[test]
+fn a_dense_int4_install_without_a_head_is_told_which_artifact_would_fix_it() {
+    let dir = temp_dir("dense-int4-headless");
+    build_synthetic_qwen_gdn_dense_install_at_bits(&dir, VOCAB, LAYERS, "headless-toy", 4)
+        .expect("a dense INT4 qwen3_5 install builds");
+    // `Auto` and not this file's `open`, which pins `Fixed(DEPTH)` and so
+    // fails at the open on a headless install with `MtpState::build`'s error.
+    // That refusal is the OLD path and is still correct where it fires; what
+    // this test is about is the string a caller gets when the open SUCCEEDS,
+    // which is what `draft_policies`' headless arm now arranges for a named
+    // block. `Auto` reproduces that state without going through the CLI.
+    let peeked = turbospark_repack::peek_manifest_arch(&dir).expect("manifest peeks");
+    let runner = RealForwardRunner::open_with_options_and_speculation(
+        &dir,
+        peeked,
+        4096,
+        16,
+        turbospark_runtime::DraftPolicies::mtp(turbospark_runtime::MtpDraftPolicy::Auto),
+    )
+    .expect("a headless install opens under Auto");
+
+    // ASSERT THE FIXTURE DISCRIMINATES: with a head, or at 1 bit, this arm is
+    // unreachable and every assertion below would be testing another arm.
+    assert_eq!(
+        runner.mtp_draft_depth(),
+        0,
+        "the fixture must be headless or it cannot reach this arm"
+    );
+    let blocker = runner
+        .speculation_blocker()
+        .expect("a headless install cannot speculate");
+    assert!(
+        !blocker.contains("INT4-only") && !blocker.contains("experts"),
+        "a dense INT4 install must reach past both architectural arms: {blocker}"
+    );
+    assert!(
+        blocker.contains("multi-token-prediction head"),
+        "on a dense install the head really is the obstacle: {blocker}"
+    );
+    assert!(
+        blocker.contains("last shard") && blocker.contains("docs/MTP.md"),
+        "naming the obstacle without the remedy is what this test exists to \
+         prevent: {blocker}"
+    );
 }

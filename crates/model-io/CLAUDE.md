@@ -22,12 +22,13 @@ crates/model-io/
 |   |   +-- config.rs           # ArchConfig struct definition
 |   |   +-- family.rs           # ModelFamily enum & family resolution
 |   |   \-- sub_configs.rs      # LinearAttentionConfig, RopeScalingConfig, etc.
-|   +-- arch_baselines/         # Canonical baselines (Gemma 4, Qwen 3.6, DeepSeek-V4)
+|   +-- arch_baselines/         # Canonical baselines (Gemma 4, Qwen 3.6, DeepSeek-V4, Muse Glimmer)
 |   |   +-- mod.rs              # baseline_for_family & re-exports
 |   |   +-- deepseek.rs         # DeepSeek-V4 baseline
 |   |   +-- gemma.rs            # Gemma 4 baseline
 |   |   +-- gpt_oss.rs          # gpt-oss baseline
 |   |   +-- llama.rs            # Llama/Mixtral baseline
+|   |   +-- muse_glimmer.rs     # Muse Glimmer 30B dense baseline
 |   |   \-- qwen.rs             # Qwen 3.6 & Qwen 3.5 baselines
 |   +-- arch_validation.rs      # Structural validation rules for architecture configs
 |   +-- context_policy.rs       # MaxContext, kv_bytes_for_context, largest_context_within

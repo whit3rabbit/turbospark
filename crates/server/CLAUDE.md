@@ -36,6 +36,7 @@ crates/server/
     +-- chat_completions.rs     # Integration tests for the OpenAI endpoint
     +-- messages.rs             # Integration tests for /v1/messages, /v1/models, wider OpenAI shapes
     +-- harmony_channels.rs     # gpt-oss reasoning -> thinking/reasoning_content, and its tool calls
+    +-- reasoning_channels.rs   # Streaming & non-streaming reasoning channel translation tests
     +-- guardrails.rs           # Rescue/validate/retry end to end, both endpoints, no model
     +-- real_backend.rs         # Gated real-model end-to-end test (macOS, #[ignore]d)
     \-- fixtures/               # Test tokenizer fixtures for integration tests
@@ -46,8 +47,8 @@ crates/server/
 - `main.rs`: Server binary entry point and CLI option handling (`--model` real mode, legacy positional scripted mode, port, `--bind loopback|tailnet`).
 - `handler/`: the `/v1/chat/completions` and `/v1/models` handlers, plus the generation core both endpoints share -- `plan.rs` (chat template, encode, shaping config) and `exec.rs`'s `run_full` and `stream_blocking` (which owns the `StructuredAssistantDecoder` when a request carries tools).
 - `messages.rs`: the Anthropic `/v1/messages` handler, wrapping the same core in `translate_request` / `translate_response` / `new_stream_translator`.
-- `model.rs`: the `ChatModel` trait and `ScriptedChatModel`, bridging Axum handlers to `turbospark-runtime`. The trait owns WHICH decode loop runs (`run_completion`, Gotcha 17), not just which producer.
 - `guardrails.rs`: tool-call rescue parsing, argument validation against the request's own schema, and the one-retry loop, over `forge-guardrails` (see Gotcha 18). `inspect` is the pure verdict; `run_guarded` is the loop that acts on it.
+- `model.rs`: the `ChatModel` trait and `ScriptedChatModel`, bridging Axum handlers to `turbospark-runtime`. The trait owns WHICH decode loop runs (`run_completion`, Gotcha 17), not just which producer.
 - `real_model.rs`: `RealChatModel`, a `RealForwardRunner` behind the same trait (macOS only).
 - `response.rs`: constructors for `anyllm_translate::openai`'s response and SSE chunk envelopes, filling the many fields this server never populates in one place.
 

@@ -28,7 +28,7 @@ refusal-direction work. Direction PROVENANCE is the operator's, and extraction
 is a separate offline step (`scripts/extract_direction.py`).
 
 This is representation engineering, not pruning and not quantization. Nothing
-here makes a model smaller or faster; it changes behaviour and costs
+here makes a model smaller or faster: it changes behaviour and costs
 throughput, measured below at 1.72% of decode with all 64 layers steered and
 0.75% at 26 of them.
 
@@ -112,13 +112,13 @@ Four reasons, and the first is the one that makes the rest safe to act on.
 
 **They are the same operation.** Arditi et al. state the weight edit
 `W' = W - r_hat r_hat^T W` and the activation edit `x' = x - r_hat r_hat^T x`
-are identical in effect; the weight form just precomputes it. So the runtime
+are identical in effect: the weight form just precomputes it. So the runtime
 version gives up no fidelity, and the paper's own measurements of the
 inference-time intervention characterize the weight one exactly.
 
 **The weight edit is actively WORSE on a quantized install.** Every install
 here is INT4 / Q8_0 / sub-4-bit. Orthogonalizing weights means dequantize,
-edit, requantize -- and `crates/bench/tests/quality_sensitivity.rs` measured
+edit, and requantize -- and `crates/bench/tests/quality_sensitivity.rs` measured
 that damaging 0.0122% of routed-expert bytes moves perplexity +10.5%. The
 runtime edit runs in FP32 on the accumulator and writes no weight byte.
 
@@ -162,7 +162,7 @@ which lives in the leaf crate because `crates/gpu` carries
 
 ## Measured
 
-Everything in this section was run; nothing is projected.
+Everything in this section was run. Nothing is projected.
 
 ### Phase 1, the kernel
 
@@ -251,7 +251,7 @@ read `0.0491 to 29.9005` and reproduces from nothing: three separate vector
 files on this disk all give `0.0484 to 20.9949`, and so does the kernel as it
 stood BEFORE the `renorm` change (checked by reverting the shader and
 re-running, because a 30% move in a reported number is not something to ship
-past). Arms 1, 2 and 4 reproduce to the digit, so nothing regressed -- the
+past). Arms 1, 2, and 4 reproduce to the digit, so nothing regressed -- the
 figure was simply wrong when written. The reason it survived is the reason to
 record it: **arm 3 REPORTS where the others ASSERT**, so no test could ever
 have reddened on it. A number in a table that nothing checks is a number
@@ -326,7 +326,9 @@ divides 116 by 535 and gets 22%. Over this corpus the layer 63 row norms run
 392.7 to 526.9 with a mean of 457.9, and `116.34 / 457.9` is the 25.4%. The
 535.5 comes from the Phase 0 capture check on a DIFFERENT prompt and sits
 just outside this corpus's range, which is ordinary prompt-to-prompt
-variation rather than a discrepancy. Both are fine; they are different
+variation rather than a discrepancy.
+
+Both are fine. They are different
 quantities, and a reader who divides one of these tables by the other will
 reproduce neither.
 
@@ -352,7 +354,7 @@ side of it -- 0.3 coherent, 1.0 collapsed. `--alpha-budget` moves it.
 below.** On a register direction off the same checkpoint it predicts 0.09
 against a measured 0.8, and the relationship is inverted rather than
 mis-scaled. Read this whole subsection as a description of one corpus and the
-layer RANKING as the part that survives; the numbers below are correct and the
+layer RANKING as the part that survives: the numbers below are correct and the
 prediction built on them is not.
 
 **It is a CEILING and not a RECOMMENDATION**, and the distinction is the
@@ -367,8 +369,10 @@ One row deserves suspicion rather than use: layer 0 reads an effect size of
 concept separates strongly and ablation is nearly free would be an excellent
 place to steer. It is more likely an artifact -- the layer 0 residual is
 essentially the token embedding, so a corpus of similarly-shaped prompts has
-a tiny within-set spread, and `sep` divides by that. Worth measuring before
-it is believed; llama.cpp never applies a direction at layer 0 anyway.
+a tiny within-set spread, and `sep` divides by that.
+
+Worth measuring before
+it is believed. Llama.cpp never applies a direction at layer 0 anyway.
 
 **MEASURED, AND THE "nearly free" HALF IS AN ARTIFACT OF THE FORMULA RATHER
 THAN OF THE CORPUS.** `share` divides by `||d||`, but `ablate` removes
@@ -412,10 +416,10 @@ validation, and the second direction measured on this page reads 0.09 derived
 against 0.8 measured, inverting the relationship rather than scaling it. Two
 instruments agreeing once is worth exactly one datapoint, and the reason this
 one read as more than that is that it was the only pair anyone had. The
-measured band in the table below stands; the ceiling beside it does not.
+measured band in the table below stands. The ceiling beside it does not.
 
 At 0.6 the model emits template markup (`assistant\n<think>\n\n</think>`
-repeating) at 13 distinct tokens; at 0.8 it says `" contains"` and stops.
+repeating) at 13 distinct tokens. At 0.8 it says `" contains"` and stops.
 
 ### The steepest step is the wrong criterion, and it is inside the wreckage
 
@@ -477,8 +481,10 @@ would already undo it and this mode would change nothing at all. The only
 thing it can repair is the RESIDUAL ADD, which is not scale-invariant --
 shrinking `x` at every layer amplifies each subsequent sublayer's relative
 contribution. That mechanism is real, and it is evidently not what dominates
-the collapse. And at alpha 1.0 `renorm` scores WORSE than `ablate` (8927
-against 280); both are word salad there, and ordering broken outputs by
+the collapse.
+
+And at alpha 1.0 `renorm` scores WORSE than `ablate` (8927
+against 280). Both are word salad there, and ordering broken outputs by
 perplexity means nothing, so that row is reported rather than read.
 
 It costs no second reduction and no second pass, which is the part that made
@@ -580,10 +586,12 @@ becoming `"a physical phenomenon called"`.
 and again degrades far more gracefully past it -- at alpha 1.0 both modes are
 degenerate at 3 distinct tokens while `ablate` reads perplexity 4727.1131 and
 `renorm` 3.8793, a thousandfold in graceful-failure terms and nothing at all
-in usable strength. And the layer band again fails to buy headroom: `all` and
+in usable strength.
+
+And the layer band again fails to buy headroom: `all` and
 `0:50` both stop at 0.8. That second one replicates by a DIFFERENT mechanism,
 which strengthens it -- on the ocean direction the restriction left the greedy
-path byte-identical through 0.6, i.e. it did nothing; here it visibly moves
+path byte-identical through 0.6, i.e. it did nothing. Here it visibly moves
 arms (1.3268 against 1.2753 at 0.2) and still does not move the band.
 
 **THE DERIVED ALPHA CEILING DOES NOT SURVIVE, AND THE FAILURE IS NOT A
@@ -611,7 +619,7 @@ measured on.
 
 **Is the share formula measuring the wrong thing?** Yes, and this part is a
 real correction rather than a caveat. `ablate` removes `alpha * c_hat * d_hat`,
-whose length is `alpha * |c_hat|`; `share` divides by `||d||`, which is what
+whose length is `alpha * |c_hat|`: `share` divides by `||d||`, which is what
 the direction IS rather than what the stream carries of it. Measured on both
 corpora the two sit a factor of exactly **2.0** apart through the deep layers,
 and that is structural: `d` is a difference of means, so where the direction
@@ -639,7 +647,7 @@ the alpha is applied to a neutral prompt that should carry less of it.
 corpus, comes out 1.0x and 1.1x of the corpus figure.
 
 So the honest standing claim is that both columns RANK layers and neither
-predicts a strength; `steering_sweep.rs` is the only instrument that answers
+predicts a strength. `steering_sweep.rs` is the only instrument that answers
 "what alpha is usable", and there is no offline substitute for generating and
 scoring. The script says so where it used to print a ceiling.
 
@@ -809,7 +817,7 @@ separate any better, and ranking layers by `||d_l||` reports where the STREAM
 is biggest while reading as where the CONCEPT lives.
 
 Measured on the ocean/mountain corpus: by raw norm the answer is layer 63 and
-the profile is monotone over a 360x range; by a pooled-spread effect size the
+the profile is monotone over a 360x range. By a pooled-spread effect size the
 answer is layer 62 and the profile is roughly FLAT at 0.19-0.26 through the
 middle before rising to 0.51 near the output. The second is the one that can
 be compared across layers. `scripts/extract_direction.py` prints both columns
@@ -888,7 +896,7 @@ and nothing today.
 
 - **The stream-share ratio and the derived alpha ceiling** (landed above).
   Prompted by their strength-sweep interface, which trades coherence against
-  effect; the ratio form is this port's, because the mechanism was already
+  effect. The ratio form is this port's, because the mechanism was already
   measured here.
 - **Coherence as a measured quantity**, and **an alpha sweep** to read it
   across. Landed together as `steering_sweep.rs`, because a single-alpha
@@ -905,7 +913,7 @@ and nothing today.
 ### Worth taking, not yet built
 
 Nothing from this review is left in this state. The three ideas above are
-built; the rest are under Declined.
+built. The rest are under Declined.
 
 ### Declined
 
@@ -920,7 +928,7 @@ built; the rest are under Declined.
   document calls theirs unvalidated.
 - **COSMIC layer selection** (pick layers by lowest cosine similarity between
   the two representation sets). A different scale-free metric answering the
-  question `separation` already answers. Not obviously better; no reason to
+  question `separation` already answers. Not obviously better, and no reason to
   hold two.
 
 ### Noted, and it bounds what this design can do
@@ -1186,17 +1194,35 @@ been checked here.
   copying the qwen/llama call verbatim -- steer/capture row 0 regardless of
   which token is being processed -- would have shipped a family that is
   fluent, finite, and wrong for every token past the first of a micro-batch.
-- **No Llama-3 chat dialect, so no Llama-3 checkpoint runs here at all.**
-  Unrelated to steering and found by walking into it: `detect_dialect` falls
-  through to Gemma for a table carrying `<|begin_of_text|>` /
-  `<|start_header_id|>` / `<|eot_id|>` and nothing else, and `resolve_gemma`
-  then fails on a missing `<pad>`. The failure is loud and lands before any
-  weight byte streams (`crates/catalog`'s sidecars-first order), which is why
-  it costs seconds rather than a re-stream. `Meta-Llama-3-8B-Instruct` is
-  otherwise RUNNABLE by the probe -- 32 layers, hidden 4096, Q4_K/Q6_K, no
-  `rope_freqs.weight` -- so this is a tokenizer gap and not an architecture
-  one. It is what sent this item to Mistral-7B-v0.3 instead, which needed no
-  new dialect and is a checkpoint the same vector set publishes for.
+- ~~**No Llama-3 chat dialect, so no Llama-3 checkpoint runs here at all.**~~
+  **LANDED 2026-08-24, `ChatDialect::Llama3`** (`crates/tokenizer/CLAUDE.md`
+  Gotcha 10). `detect_dialect` used to fall through to Gemma for a table
+  carrying `<|begin_of_text|>` / `<|start_header_id|>` / `<|eot_id|>` and
+  nothing else, and `resolve_gemma` then failed on a missing `<pad>` --
+  unrelated to steering and found by walking into it. Fixed by keying
+  detection on this family's OWN frame markers (`<|start_header_id|>` /
+  `<|eot_id|>`) rather than the `<|begin_of_text|>` / `<|end_of_text|>` pair it
+  shares with `muse_glimmer` (Gotcha 6's trap on a third pair), and by giving
+  it a fallback renderer (`chat_template/llama3.rs`) on Mistral's reasoning
+  rather than Harmony's refusal -- the format is a handful of markers around
+  the content, not a large second implementation of something complex.
+
+  **CONFIRMED ON THE REAL, GATED CHECKPOINT, NOT JUST A FIXTURE.**
+  `bartowski/Meta-Llama-3-8B-Instruct-GGUF` (Q4_K_M, 4.6 GiB) streamed and
+  loaded; both real-model smokes (greedy and sampled) are coherent and stop
+  `EndOfTurn`. **ONE THING TO KNOW BEFORE TRUSTING A `probe` RUN AGAINST A
+  GATED SIDECAR REPO WITHOUT `HF_TOKEN` SET: it silently reports `template
+  NONE FOUND`** where the authenticated fetch reports
+  `tokenizer_config.json:chat_template` -- the unauthenticated GET 401s and
+  the probe treats a failed sidecar fetch the same as an absent one, which
+  reads exactly like "this checkpoint ships no template" and would have been
+  a false claim in this file had it not been re-checked with a token before
+  writing it down. And running the vector Phase 8 fetched (rather than
+  Mistral-7B-v0.3's, which needed no new dialect and only ever stood in for
+  it) closes that Phase's other open thread too:
+  `steering: ablate at alpha 1 over 31 of 32 layers` on the real install,
+  matching `docs/OBLITERATION.md`'s and `control_vector_file`'s own
+  `31 covered of 32 spanned` exactly.
 - ~~**No throughput number**~~ -- **MEASURED 2026-08-24**, see the section
   above: -1.72% of decode with all 64 layers steered, -0.75% at 26, and
   `renorm` free relative to `ablate`. The cost is per steered layer and very
@@ -1230,7 +1256,7 @@ been checked here.
   `x`), but `add` and `clamp` can push an FP16 stream past 65,504, arriving as
   `inf` and then NaN -- which reads as a PERFECT score on any rank instrument
   (Gotcha 59). A numeric cap was declined as a fabricated threshold (Gotcha
-  38's rule); the finiteness assertion belongs to Phase 3's probe, at the
+  38's rule). The finiteness assertion belongs to Phase 3's probe, at the
   point a measurement is taken.
 ## Next, in order
 
@@ -1239,7 +1265,7 @@ Ranked by value per cost.
 1. ~~Coherence as a measured quantity~~ and ~~an alpha sweep~~ -- **LANDED**
    as `steering_sweep.rs`.
 2. ~~Norm-preserving projection~~ -- **LANDED as `renorm`, and its prediction
-   REFUTED.** See above; it buys graceful degradation through the knee rather
+   REFUTED.** See above. It buys graceful degradation through the knee rather
    than a usable full ablation.
 3. ~~A layer-band sweep~~ -- **LANDED as the sweep's second axis, and that
    prediction refuted too.** Excluding layers 51-63 leaves the greedy path
@@ -1272,8 +1298,10 @@ Ranked by value per cost.
    the LAYER band does (dropping the last six of 32 layers is a no-op at every
    usable alpha, exactly as dropping 51-63 of 64 was). So the layer result is
    a property of this engine and the alpha ceiling is a property of a
-   direction. The Llama-3-8B vector item 7 downloaded is still unapplied and
-   now for a smaller reason: no Llama-3 chat dialect (see Open).
+   direction. ~~The Llama-3-8B vector item 7 downloaded is still unapplied,
+   now for a smaller reason: no Llama-3 chat dialect (see Open).~~ **APPLIED
+   2026-08-24**, once the dialect landed -- see Open's now-closed Llama-3
+   dialect item for the run and its `31 of 32 layers` result.
 9. ~~A fifth family, and the chunked prefill driver with it~~ -- **LANDED
    2026-08-24.** `families/gemma4/` steers on all three call sites its flow
    needs (sequential decode, the chunk driver's per-token routed loop, and
@@ -1486,7 +1514,7 @@ MFERENCE_PREFILL_CHUNK=128 MFERENCE_ROUTED_BATCH=1 \
 # which model answered.
 ```
 
-The server takes the same flags, resolved once at startup; unlike
+The server takes the same flags, resolved once at startup. Unlike
 speculation there is no per-request half, so a server started with
 `--steering` steers every request it serves.
 
@@ -1500,7 +1528,7 @@ speculation there is no per-request half, so a server started with
 - llama.cpp `--control-vector-scaled` and vgel's `repeng` -- the file format
   this port reads, and the published vector sets it makes reachable.
 - `elder-plinius/OBLITERATUS` -- the toolkit this question came from. Its
-  weight-projection half is what ROADMAP item 9 scoped; its steering-vector
+  weight-projection half is what ROADMAP item 9 scoped. Its steering-vector
   half is what this page builds. **AGPL-3.0, so read-only for an MIT
-  workspace**; what was reviewed, taken and declined is recorded above rather
+  workspace**. What was reviewed, taken and declined is recorded above rather
   than left to be re-derived.

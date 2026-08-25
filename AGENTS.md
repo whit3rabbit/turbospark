@@ -1314,6 +1314,12 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
     wrong rather than the tree being empty. Run `git status` in the MAIN
     checkout before accepting a worktree, and work there when the subject
     is uncommitted.
+    **A SPAWNED BACKGROUND TASK GETS ONE OF THESE.** A chip started while your
+    fix is uncommitted reinvents it against HEAD: on 2026-08-22 one reached the
+    same design independently and asserted strings the same session had just
+    reworded. Save the work before discarding such a tree
+    (`git diff > /tmp/<name>.patch`); `git worktree remove --force` is the only
+    way to remove a dirty one and it keeps nothing.
 
 14. Adding one flag to `crates/invocation` touches five places, two of them
     non-obvious: the `OPTIONS` table, BOTH parser dispatch `match`es (each
@@ -2690,6 +2696,47 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
     model's scratch work, then its answer, all as one run of content, because
     the frame tokens render to the empty string.
 
+    **AND EMITTING THE CHANNEL WAS STILL ONLY HALF OF THAT HALF, which took a
+    second real-model run months later to find.** A ChatML generation prompt
+    OPENS the `<think>` frame itself -- Qwen's template ends
+    `<|im_start|>assistant\n<think>\n` when thinking is on -- so the model's
+    first generated token is already scratchpad and `think_start_id` never
+    arrives. The arm was taught to EMIT reasoning and was never ENTERED:
+    `StructuredAssistantDecoder` started in the visible channel unconditionally
+    and stayed there, since the `</think>` that arrives later flips Visible to
+    Visible. Measured on the real `qwen38-27b` install at `--reasoning low`:
+    1,413 bytes of answer and 0 of reasoning, against 676 and 737 after
+    `new` was given the prompt ids to scan. Same tokens either way -- this is
+    a routing bug, not a generation one, which is why no digest could see it
+    and why `crates/bench` (which builds no decoder) was unmoved.
+    Two things to carry. **A state machine fed a stream that begins MID-FRAME
+    needs to be told where it starts**, and the honest source is the rendered
+    prompt rather than the flag that produced it: keying on
+    `reasoning != Off` would open the frame on a checkpoint whose template
+    thinks without prefilling the tag, and hand the caller an EMPTY reply --
+    a worse failure than the one being fixed. And a fix like this one has
+    exactly two arms worth checking end to end, the one that should move and
+    the one that must not: the Gemma `--reasoning off` smoke is byte-identical
+    across a single-variable A/B, which is what says the pass-through path
+    never acquired a decoder.
+
+    **SWEEPING THE OTHER DIALECTS FOR THE SAME SHAPE FOUND ONE MORE BUG, AND
+    IT WAS A DIFFERENT MECHANISM.** Rendering every installed checkpoint's
+    template at every level it accepts and reading where the prompt leaves the
+    model (6 dialects, 10 installs, seconds, no GPU) says ChatML was the ONLY
+    instance of the initial-state bug: Gemma opens no channel at a level and
+    pre-closes an empty one at `off`, Harmony ends outside any frame, DeepSeek
+    pre-closes with `</think>`. What the sweep turned up instead is
+    `muse_glimmer`, which had no decoder arm at all and printed its `to=self`
+    scratchpad as the reply -- on EVERY turn, not just when a level was asked
+    for, because its template puts a reasoning directive in the system message
+    unconditionally and defaults the strength to `high`. So the class is
+    broader than the fix: **ask where the prompt leaves the model AND whether
+    anything is built to read it**, because the second question has its own
+    wrong answer. Both now share one rule -- the decoder's initial state comes
+    from the rendered prompt -- and `crates/tokenizer` Gotchas 7 and 8 record
+    the two frames it is applied to.
+
 57. **A DEGENERATE MEASUREMENT MUST FAIL, NOT PRINT -- AND "RANK OF THE TRUTH"
     IS WHAT SEPARATES BROKEN FROM WEAK.** `mtp_accept_length_probe.rs` read 0
     accepted of 7,168 proposals and printed a tidy `loses` table anyone could
@@ -2874,6 +2921,7 @@ Workspace directory structure and crate layout:
 +-- Cargo.lock         # lockfile committed for reproducible workspace builds
 +-- Cargo.toml         # workspace manifest declaring members and workspace metadata
 +-- AGENTS.md          # developer guide and gotchas (CLAUDE.md is a symlink to this)
++-- CHANGELOG.md       # project changelog and release notes
 +-- CLAUDE.local.md    # local developer notes (gitignored)
 +-- DEVIATIONS.md      # scaffolded vs fully wired feature inventory
 +-- LICENSE            # MIT license
@@ -2904,19 +2952,30 @@ Workspace directory structure and crate layout:
 |   \-- TurboSparkDemo # minimal SwiftUI chat app; verifies the binding end to end
 +-- scripts
 |   +-- extract_direction.py # per-layer steering direction from two capture sets
+|   +-- ffn_sparsity.py# dense FFN activation sparsity probe
+|   +-- ggml_mxfp4_oracle.c # ggml MXFP4 oracle generator
+|   +-- ggml_q5_k_oracle.c  # ggml Q5_K oracle generator
+|   +-- ggml_tables.c  # ggml IQ codebook table generator
 |   +-- kld.py         # cross-engine KL vs mlx-lm (reads tests/logit_dump.rs's output)
 |   +-- kld_llamacpp.py# the same, vs llama.cpp on the same GGUF bytes (Gotcha 34)
 |   +-- kld_mlx_affine.py # the same, vs MLX at ONE or TWO bits (the first needs the PrismML mlx fork)
 |   +-- llamacpp_logits.c # its harness: ids in, full-vocab logits out, via libllama
+|   +-- mlx_1bit_oracle.py # MLX 1-bit affine reference oracle generator
+|   +-- mlx_2bit_oracle.py # MLX 2-bit affine reference oracle generator
+|   +-- mtp_bisect.py  # MTP drafter norm & agreement bisection script
 |   +-- parity.sh      # head-to-head protocol run against the Swift MferenceCLI
 |   +-- phasediff.sh   # bucket-level decode phase diff against the Swift engine
-|   \-- power.sh       # watts & joules-per-token over the protocol (needs sudo)
+|   +-- power.sh       # watts & joules-per-token over the protocol (needs sudo)
+|   +-- router_hist.py # expert routing activation histogram analyzer
+|   +-- router_window.py # expert cache temporal windowing analyzer
+|   \-- swift-lib.sh   # staticlib + turbospark.h build helper for SwiftPM
 \-- docs
     +-- ACTIVATION_SPARSITY.md # dense-FFN neuron caching/streaming, measured negative
     +-- BATCHED_PREFILL.md # the one open gap against Swift: scope, cost, order of work
     +-- BENCHMARKS.md  # the FROZEN rows: quality, throughput, memory, cross-engine KL
     +-- BENCHMARKING.md# benchmark modes, mach memory sampling & memory oracle details
     +-- DECODE_BUDGET.md # where a decoded token's time goes; three decode dead ends
+    +-- DFLASH2.md     # DFlash2 block drafter architecture, state derivation & verify
     +-- EXPERT_ROUTING.md # domain-restricted expert sets, measured negative
     +-- GTURBO.md      # the .gturbo install format this port reads and writes
     +-- MODELS.md      # the catalog, the probe, `pull`, and how to add a row
@@ -2925,10 +2984,12 @@ Workspace directory structure and crate layout:
     +-- MTP_SPECULATIVE.md # native MTP heads on the DENSE family; pays, after a c(M) fix
     +-- NEW_MODEL.md   # end-to-end checklist for wiring a new model family
     +-- OBLITERATION.md# live directional steering: runtime abliteration, with measurement
+    +-- POWER_BASELINE.md # watts, joules-per-token, hygiene audit (ROADMAP Phase P1)
+    +-- RELEASE.md     # release checklist, versioning, tag procedures & rot guards
     +-- SPECULATIVE_DECODING.md # DFlash / batched verify, measured marginal
     +-- SWIFT_BINDINGS.md # the C ABI and the Swift package: examples, contract, limits
-    +-- POWER_BASELINE.md # watts, joules-per-token, hygiene audit (ROADMAP Phase P1)
-    \-- TESTING.md     # test suite organization, platform gating & testing rules
+    +-- TESTING.md     # test suite organization, platform gating & testing rules
+    \-- TRUBOQUANT.md  # sub-4-bit and ternary quantization layout notes
 ```
 
 `scripts/` holds the measurement surfaces that cannot be a `cargo test`:
@@ -3013,7 +3074,10 @@ tree is routinely worked by more than one session at once, and the failure
 arrives as a normal-looking build break minutes after your own suite went
 green. Check mtimes before debugging it, and do not "fix" another session's
 half-finished edit. The same applies to `git add`: re-run `git status`
-immediately before staging. Interactive `git add -p` is
+immediately before staging, and to the GATES themselves: `cargo fmt --check`
+and `cargo clippy --workspace --tests` are tree-wide, so read the PATHS they
+name before believing a red one. `rustfmt --check --edition 2021 <your files>`
+is the per-file form and attributes cleanly. Interactive `git add -p` is
 unavailable here, so a CONTESTED file is staged by RECONSTRUCTION:
 `git show HEAD:<path>` into a temp file, apply only your edits with an
 assert-on-missing, `git hash-object -w`, `git update-index --cacheinfo`. Two
@@ -3086,6 +3150,14 @@ sibling call sites in `families/llama/mod.rs` (12-space and 16-space) gave
 byte-identical mutation results twice, which reads as "one hook covers both"
 rather than as a mis-aimed pattern. Assert `count(old) == 1`, or anchor on a
 neighbouring line.
+
+**A SURVIVOR WHOSE MUTATION DID APPLY IS A MISSING TEST, NOT A WEAK ONE.**
+Deleting the pointer clause from `speculation_blocker`'s no-head arm left all
+37 cases in `speculation_policy_tests.rs` green, because that module feeds
+FIXTURE strings into `resolve_speculation` and never calls the blocker: it
+pins the ROUTING and can see no text change at all. Ask what actually CALLS
+the mutated function before writing the guard, and expect the answer to be a
+different file with a differently-shaped fixture.
 
 See `DEVIATIONS.md` for the full list of what this port scaffolds versus
 fully implements, `ROADMAP.md` for the forward roadmap and descope

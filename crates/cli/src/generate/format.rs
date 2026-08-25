@@ -21,13 +21,19 @@ use super::session::Session;
 /// without this the reasoning and the frame markup print as the reply.
 ///
 /// ChatML (Qwen) and Gemma need one only when `--reasoning` asked for
-/// thinking. Their thought channels are unreachable otherwise -- ChatML's
-/// rendered generation prompt closes its `<think>` block immediately
-/// (`<think>\n\n</think>`) and Gemma's template never opens one -- so building
-/// a decoder unconditionally would route shipped families through a state
-/// machine with nothing to do, and route a spontaneous `<tool_call>` into a
-/// parser this binary has no allowlist for. Keyed on the REQUEST, so every
-/// existing invocation takes the identity path it always took.
+/// thinking. Their thought channels are unreachable otherwise -- with thinking
+/// OFF, ChatML's rendered generation prompt closes its `<think>` block
+/// immediately (`<think>\n\n</think>`) and Gemma's template never opens one --
+/// so building a decoder unconditionally would route shipped families through
+/// a state machine with nothing to do, and route a spontaneous `<tool_call>`
+/// into a parser this binary has no allowlist for. Keyed on the REQUEST, so
+/// every existing invocation takes the identity path it always took.
+///
+/// **WITH THINKING ON, THAT SAME ChatML PROMPT LEAVES THE BLOCK OPEN**
+/// (`<think>\n`), so the model's first generated token is already scratchpad
+/// and no `<think>` ever arrives. That is why `prompt_ids` is threaded down to
+/// the decoder: without it the decoder sits in the visible channel for the
+/// whole turn and prints the reasoning as the answer, with stderr empty.
 ///
 /// **SKIPPING EITHER IS NOT A COSMETIC LOSS**, which is why this list is not
 /// just Harmony's. Measured on the real Gemma 4 install the first time a
@@ -46,10 +52,19 @@ pub(crate) struct ChannelSplit<'a> {
 }
 
 impl<'a> ChannelSplit<'a> {
-    pub(crate) fn new(tokenizer: &'a MfTokenizer, reasoning: ReasoningEffort) -> Self {
-        let wanted = tokenizer.dialect == ChatDialect::Harmony
-            || (reasoning != ReasoningEffort::Off
-                && matches!(tokenizer.dialect, ChatDialect::ChatMl | ChatDialect::Gemma));
+    /// `prompt_ids` is the rendered generation prompt: a ChatML template opens
+    /// the `<think>` frame itself when thinking is on, and the decoder cannot
+    /// tell without being shown (`StructuredAssistantDecoder::new`).
+    pub(crate) fn new(
+        tokenizer: &'a MfTokenizer,
+        reasoning: ReasoningEffort,
+        prompt_ids: &[i32],
+    ) -> Self {
+        let wanted = matches!(
+            tokenizer.dialect,
+            ChatDialect::Harmony | ChatDialect::MuseGlimmer
+        ) || (reasoning != ReasoningEffort::Off
+            && matches!(tokenizer.dialect, ChatDialect::ChatMl | ChatDialect::Gemma));
         Self {
             decoder: wanted.then(|| {
                 // An EMPTY allowlist, and that is what keeps this binary out
@@ -59,7 +74,7 @@ impl<'a> ChannelSplit<'a> {
                 // stays reasoning and prints to stderr with the rest of it.
                 // `turbospark-check` has no way to run a tool and no shape to
                 // render one in; the server is where that lives.
-                StructuredAssistantDecoder::new(tokenizer, HashSet::new(), String::new)
+                StructuredAssistantDecoder::new(tokenizer, HashSet::new(), String::new, prompt_ids)
             }),
         }
     }

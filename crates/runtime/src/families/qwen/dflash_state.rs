@@ -1,6 +1,6 @@
 use model_io::{ArchConfig, ResidentIndex};
 
-use crate::families::qwen::{prefixed_layer_tensor, TRUNK_PREFIX};
+use crate::families::qwen::{prefixed_layer_tensor, MOE_SPECULATION_BLOCKER_MARKER, TRUNK_PREFIX};
 use crate::real_forward::RealForwardError;
 use crate::real_forward_utils::entry;
 
@@ -208,6 +208,14 @@ impl DflashShape {
 }
 
 /// Why DFlash2 speculation cannot run on this runner, or `None` if it can.
+///
+/// **THE MoE ARM MIRRORS `speculation_blocker`'s AND IS A POLICY, NOT A
+/// CAPABILITY.** The batched routed verify runs since ROADMAP Phase 3
+/// (`moe_batch.rs`); what no MoE checkpoint of this architecture ships is a
+/// drafter. The published DFlash2 checkpoint (`incoai/Qwen3.8-27B-DFlash2`,
+/// `docs/DFLASH2.md`) targets the DENSE half, so an MoE install has nothing
+/// to propose with however good the verify is. The INT4 arm below is the
+/// other kind: that one really is a kernel this engine does not have.
 pub fn dflash_speculation_blocker(
     index: &ResidentIndex,
     arch: &ArchConfig,
@@ -215,7 +223,10 @@ pub fn dflash_speculation_blocker(
 ) -> Option<String> {
     if arch.num_experts != 0 {
         return Some(format!(
-            "the batched verify is dense-only and this install routes to {} experts",
+            "{MOE_SPECULATION_BLOCKER_MARKER}: this install routes to {} experts, and no \
+             published MoE checkpoint of this architecture ships a DFlash2 drafter (the \
+             published one targets the dense half). The batched routed verify itself \
+             runs, so this is a checkpoint gap and not a missing kernel",
             arch.num_experts
         ));
     }
@@ -231,9 +242,17 @@ pub fn dflash_speculation_blocker(
         )),
         Some(_) => {
             if !has_drafter {
+                // CARRIES THE POINTER `DflashState::build`'s open-time error
+                // carries, because since the headless arm landed in
+                // `draft_policies` this message is what a named block on a
+                // DENSE drafter-less install actually sees. On a dense
+                // install the advice is correct and actionable: the published
+                // drafter targets this half of the architecture. The MoE arm
+                // above is the one where it would be a wild goose chase, and
+                // that arm returns first.
                 return Some(
                     "this install carries no DFlash2 drafter (dflash.fc.weight is not in the \
-                     resident index)"
+                     resident index); stream it beside the trunk (docs/DFLASH2.md)"
                         .to_string(),
                 );
             }

@@ -20,6 +20,7 @@ use tokenizer::MfTokenizer;
 use turbospark_repack::build_synthetic_qwen_gdn_moe_install;
 use turbospark_runtime::{
     run_raw_completion, GenerationConfig, LogitProducer, RawDecodeProgress, RealForwardRunner,
+    MOE_SPECULATION_BLOCKER_MARKER,
 };
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -301,16 +302,18 @@ fn linear_layers_advance_a_non_zero_recurrent_state() {
 
 /// The MoE half of the speculation capability gate.
 ///
-/// `produce_batched` refuses `num_experts != 0` by name, so a MoE install can
-/// never run a speculative verify however good a drafter it acquires -- the
-/// routed pair has no batched kernel and the expert union of M tokens is
-/// larger than what the slot cache already loads (AGENTS.md Gotcha 54). The
-/// blocker has to say THAT rather than "no head": a reader told the head is
-/// missing would go looking for a checkpoint that carries one, which on this
-/// family would not help.
+/// `speculation_blocker` refuses `num_experts != 0` by name, so a MoE install
+/// never speculates however good a drafter it acquires. **The reason is a
+/// POLICY and not a capability since ROADMAP Phase 3** (`5640c3f`): the
+/// batched routed pair exists, is driven by `families/qwen/moe_batch.rs` and
+/// is bit-identical to M sequential `produce` calls, so what is missing is a
+/// DRAFTER -- no published MoE conversion of this architecture carries one
+/// this port can ingest. The blocker has to say THAT rather than "no head",
+/// because a reader told the head is missing goes looking for a checkpoint
+/// that carries one, and on this family there is none.
 ///
 /// Note this says nothing about decoding. The same install decodes throughout
-/// this file; only the batched verify is dense-only.
+/// this file; only speculation is refused.
 #[test]
 fn a_moe_install_reports_the_architectural_blocker_and_not_the_missing_head() {
     let dir = temp_dir();
@@ -318,10 +321,14 @@ fn a_moe_install_reports_the_architectural_blocker_and_not_the_missing_head() {
 
     let blocker = runner
         .speculation_blocker()
-        .expect("a MoE install cannot run the batched verify");
+        .expect("a MoE install cannot speculate");
+    // The marker rather than a literal, so this cannot go on asserting a
+    // sentence the engine has stopped producing (which is what happened to
+    // its predecessor, `"dense-only"`).
     assert!(
-        blocker.contains("dense-only"),
-        "the reason must name the architecture rather than the head, got: {blocker}"
+        blocker.contains(MOE_SPECULATION_BLOCKER_MARKER),
+        "the reason must name the missing drafter rather than this install's \
+         missing head, got: {blocker}"
     );
     assert_eq!(runner.mtp_draft_depth(), 0);
 }

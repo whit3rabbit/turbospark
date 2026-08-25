@@ -193,7 +193,11 @@ pub(crate) fn stream_turn(
     let mut reply = String::new();
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
-    let mut split = ChannelSplit::new(&session.tokenizer, map_reasoning_effort(request.reasoning));
+    let mut split = ChannelSplit::new(
+        &session.tokenizer,
+        map_reasoning_effort(request.reasoning),
+        prompt_ids,
+    );
     let on_progress = |event| {
         // Both variants carry visible text: `Tail` is what the stop
         // matcher withheld, so dropping it truncates the reply.

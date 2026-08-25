@@ -5,10 +5,12 @@
 mod chatml;
 mod deepseek;
 mod harmony;
+mod muse;
 
 use std::collections::HashSet;
 
 use self::harmony::{HarmonyChannel, HarmonyState};
+use self::muse::{MuseChannel, MuseState};
 use crate::dialect::{ChatDialect, MfTokenizer};
 use crate::error::ToolCallParserError;
 use crate::json_value::JsonValue;
@@ -22,13 +24,14 @@ pub enum StructuredAssistantEvent {
     /// Reasoning the model produced on its way to the answer, separated from
     /// the answer itself.
     ///
-    /// **Only the Harmony arm emits this**, and the asymmetry is deliberate.
-    /// Every other dialect here DISCARDS its thought channel (Gemma's
-    /// non-final label, ChatML's `<think>`, DeepSeek's), which is what four
-    /// shipped families' callers already see; turning those into events is a
-    /// separate decision with its own gates. Harmony emits because
-    /// `gpt-oss` puts most of its generated tokens in that channel and a
-    /// caller that paid to generate them should be able to read them.
+    /// The Harmony, ChatML and Gemma arms all emit this. Harmony always did,
+    /// because `gpt-oss` puts most of its generated tokens in that channel;
+    /// the other two started when `--reasoning` gave a caller a way to turn
+    /// thinking ON, at which point discarding the body destroyed exactly what
+    /// had been asked for. What still differs per dialect is the FRAME
+    /// (Harmony's header/body triple, ChatML's `<think>` pair, Gemma's
+    /// bracketing channel pair) -- and, for ChatML, whether the generation
+    /// prompt already opened that frame. See [`StructuredAssistantDecoder::new`].
     Reasoning(String),
     /// Parsed tool call invocation.
     ToolCall(ParsedToolCall),
@@ -48,6 +51,7 @@ pub struct StructuredAssistantDecoder<'a> {
     id_generator: Box<dyn FnMut() -> String + 'a>,
     channel: Channel,
     harmony: HarmonyState,
+    muse: MuseState,
     label: String,
     tool_tokens: Option<Vec<i32>>,
     held_text: String,
@@ -56,25 +60,174 @@ pub struct StructuredAssistantDecoder<'a> {
     failed: bool,
 }
 
+/// Where `prompt_ids` leaves a Muse Glimmer generation, read off the last
+/// frame token in it.
+///
+/// THE SAME QUESTION [`prompt_opens_thought`] ASKS FOR ChatML, on the other
+/// frame shape, and the answer is load-bearing for the same reason: the
+/// checkpoint's `add_generation_prompt` emits `<|start|>assistant` and STOPS,
+/// so a real generation begins inside a header and no `<|start|>` ever
+/// arrives. Starting [`MuseState::Unframed`] instead would pass the header
+/// remainder (` to=self`) and then the whole scratchpad through as the reply,
+/// which is exactly what this dialect did before it had an arm at all.
+///
+/// The `<|message|>` case cannot arise from this checkpoint's own template and
+/// is handled rather than defaulted, because guessing a channel there picks
+/// between losing the answer and corrupting it: the header is recovered by
+/// decoding back to the `<|start|>` that opened it.
+fn muse_state_for(tokenizer: &MfTokenizer, prompt_ids: &[i32]) -> MuseState {
+    let start = tokenizer.channel_start_id;
+    let message = tokenizer.message_start_id;
+    let eom = tokenizer.message_end_id;
+
+    for (i, &id) in prompt_ids.iter().enumerate().rev() {
+        if id == start {
+            // Seed the accumulator with the header text already rendered (the
+            // role word), so a recipient the model appends to it parses in one
+            // piece.
+            return MuseState::Header(tokenizer.decode(&prompt_ids[i + 1..], true));
+        }
+        if id == message {
+            let header_start = prompt_ids[..i]
+                .iter()
+                .rposition(|&p| p == start)
+                .map(|p| p + 1)
+                .unwrap_or(0);
+            let header = tokenizer.decode(&prompt_ids[header_start..i], true);
+            return MuseState::Body(muse::parse_header(&header));
+        }
+        if id == eom {
+            return MuseState::Between;
+        }
+    }
+    MuseState::Unframed
+}
+
+/// True when `prompt_ids` ends INSIDE an open thought frame, i.e. the last
+/// `<think>`/`</think>` in the rendered generation prompt is the opening one.
+///
+/// Scans backwards and stops at the first of the two it finds, so the
+/// balanced pairs a tool preamble puts in its instructions ("use the
+/// `<think></think>` block to plan") cannot outvote the tail.
+///
+/// Always false for a dialect whose thought frame is not this pair (Gemma,
+/// Harmony, Muse Glimmer): both ids are `None` there, so nothing matches.
+fn prompt_opens_thought(tokenizer: &MfTokenizer, prompt_ids: &[i32]) -> bool {
+    for &id in prompt_ids.iter().rev() {
+        if tokenizer.think_start_id == Some(id) {
+            return true;
+        }
+        if tokenizer.think_end_id == Some(id) {
+            return false;
+        }
+    }
+    false
+}
+
 impl<'a> StructuredAssistantDecoder<'a> {
-    /// Creates a structured assistant decoder.
+    /// Creates a structured assistant decoder over the turn whose generation
+    /// prompt is `prompt_ids`.
+    ///
+    /// **THE PROMPT IS AN ARGUMENT BECAUSE A CHATML PROMPT CAN OPEN THE
+    /// THOUGHT FRAME ITSELF, AND THEN THE MODEL NEVER EMITS `<think>`.** Qwen's
+    /// own template ends `<|im_start|>assistant\n<think>\n` when thinking is on
+    /// and `<|im_start|>assistant\n<think>\n\n</think>\n\n` when it is off, so
+    /// the FIRST token of a thinking turn is already scratchpad. A decoder that
+    /// always starts in [`Channel::Visible`] therefore stays there -- the
+    /// `</think>` that arrives later flips Visible to Visible, a no-op -- and
+    /// the whole scratchpad is reported as the answer, with the reasoning
+    /// stream empty. That is what `--reasoning` did on every ChatML checkpoint
+    /// until this parameter existed.
+    ///
+    /// Passing `&[]` means "nothing was prefilled" and reproduces the old
+    /// behaviour exactly; it is what the unit tests below drive their own
+    /// synthetic token streams with.
+    ///
+    /// Deriving this from the RENDERED PROMPT rather than from the reasoning
+    /// level is what makes it unable to be wrong: a checkpoint whose template
+    /// enables thinking without prefilling the tag is read correctly by the
+    /// same scan, where a level-keyed guess would open a frame the model is
+    /// about to open again and swallow the reply.
     pub fn new(
         tokenizer: &'a MfTokenizer,
         allowed_tools: HashSet<String>,
         id_generator: impl FnMut() -> String + 'a,
+        prompt_ids: &[i32],
     ) -> Self {
         Self {
             tokenizer,
             allowed_tools,
             id_generator: Box::new(id_generator),
-            channel: Channel::Visible,
+            channel: if prompt_opens_thought(tokenizer, prompt_ids) {
+                Channel::Thought
+            } else {
+                Channel::Visible
+            },
             harmony: HarmonyState::Unframed,
+            muse: muse_state_for(tokenizer, prompt_ids),
             label: String::new(),
             tool_tokens: None,
             held_text: String::new(),
             dsml_text: None,
             emitted_calls: 0,
             failed: false,
+        }
+    }
+
+    /// One token of a Muse Glimmer generation.
+    ///
+    /// Keys on TOKEN IDS and never on text, like the Harmony arm and for the
+    /// same reason: the detokenizer renders `<|start|>`, `<|message|>` and
+    /// `<|eom|>` to the EMPTY STRING, so a text-keyed reader would see no
+    /// transitions at all (AGENTS.md Gotcha 44).
+    ///
+    /// `<|eot|>` is absent on purpose -- it is a STOP token, so the loop breaks
+    /// before the callback and it never arrives. Nothing here needs it: it ends
+    /// a turn rather than opening a channel, and `finish` has nothing to flush
+    /// for this dialect because every body is emitted delta by delta as it
+    /// arrives.
+    fn consume_muse(&mut self, token_id: i32, delta: &str) -> Vec<StructuredAssistantEvent> {
+        if token_id == self.tokenizer.channel_start_id {
+            self.muse = MuseState::Header(String::new());
+            return Vec::new();
+        }
+        if token_id == self.tokenizer.message_start_id {
+            if let MuseState::Header(header) = &self.muse {
+                self.muse = MuseState::Body(muse::parse_header(header));
+            }
+            return Vec::new();
+        }
+        if token_id == self.tokenizer.message_end_id {
+            self.muse = MuseState::Between;
+            return Vec::new();
+        }
+        match &mut self.muse {
+            // The header is markup, never output. A recipient split across
+            // deltas (`` to=``, ``self``) accumulates here and parses whole.
+            MuseState::Header(header) => {
+                header.push_str(delta);
+                Vec::new()
+            }
+            MuseState::Between => Vec::new(),
+            MuseState::Body(channel) => {
+                let channel = *channel;
+                if delta.is_empty() {
+                    return Vec::new();
+                }
+                vec![match channel {
+                    MuseChannel::Reasoning => {
+                        StructuredAssistantEvent::Reasoning(delta.to_string())
+                    }
+                    MuseChannel::Answer => StructuredAssistantEvent::Content(delta.to_string()),
+                }]
+            }
+            MuseState::Unframed => {
+                if delta.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![StructuredAssistantEvent::Content(delta.to_string())]
+                }
+            }
         }
     }
 
@@ -106,25 +259,19 @@ impl<'a> StructuredAssistantDecoder<'a> {
         match self.tokenizer.dialect {
             ChatDialect::ChatMl => return self.consume_chatml(token_id, delta),
             ChatDialect::Deepseek => return self.consume_deepseek(token_id, delta),
-            // Nothing to decode: this family's tool DSL is
-            // `<atem:function_calls>` PLAIN TEXT with no parser wired yet,
-            // and every channel/tool id it resolves is `NO_SUCH_TOKEN_ID`.
-            // Grouped with Mistral rather than falling through to Gemma for
-            // that arm's own stated reason.
-            ChatDialect::MuseGlimmer => {
-                return Ok(if delta.is_empty() {
-                    Vec::new()
-                } else {
-                    vec![StructuredAssistantEvent::Content(delta.to_string())]
-                })
-            }
+            ChatDialect::MuseGlimmer => return Ok(self.consume_muse(token_id, delta)),
             ChatDialect::Gemma => {}
             // Nothing to decode: this checkpoint has no tool-call or
             // thinking markup, and its channel/tool ids are all
             // `NO_SUCH_TOKEN_ID`. Falling through to the Gemma arm would
             // compare every token against that sentinel, which is harmless
             // but says something untrue about the dialect.
-            ChatDialect::Mistral => {
+            // Same reasoning as Mistral immediately above: no tool-call or
+            // thinking markup in this dialect's table, so its channel/tool
+            // ids are all `NO_SUCH_TOKEN_ID` and falling through to the
+            // Gemma arm below would compare every token against that
+            // sentinel harmlessly but say something untrue about the dialect.
+            ChatDialect::Mistral | ChatDialect::Llama3 => {
                 return Ok(if delta.is_empty() {
                     Vec::new()
                 } else {

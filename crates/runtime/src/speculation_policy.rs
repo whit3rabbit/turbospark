@@ -67,6 +67,15 @@ pub struct DrafterChoice {
     /// and "nobody looked" license different things, and only the first one
     /// licenses [`draft_policies`] declining to ask the open for one.
     pub install_has_mtp_head: Option<bool>,
+    /// The same question for the DFlash2 drafter, read in the same pass and
+    /// carrying the same three-state meaning.
+    ///
+    /// **A SEPARATE FIELD RATHER THAN A DRAFTER-KEYED LOOKUP**, because
+    /// [`resolve_drafter`] answers both regardless of which drafter it
+    /// resolved: the note arm needs `mtp == Some(false) && dflash ==
+    /// Some(true)` in one expression, and [`draft_policies`] then needs
+    /// whichever one matches the drafter the caller actually named.
+    pub install_has_dflash: Option<bool>,
     /// `Some` only for a DFlash2-carrying install under `auto`. Preferred
     /// over the engine's own blocker as the disabled reason, because that
     /// one would say "carries no multi-token-prediction head" -- true, and
@@ -136,21 +145,24 @@ pub enum SpeculationPlan {
 pub fn resolve_drafter(requested: SpeculativeDrafter, model_dir: &Path) -> DrafterChoice {
     let index = model_io::load_resident_index(&model_dir.join("model_weights.bin")).ok();
     let install_has_mtp_head = index.as_ref().map(install_has_mtp_head);
+    let install_has_dflash = index.as_ref().map(install_has_dflash);
     let plain = |drafter| DrafterChoice {
         drafter,
         install_has_mtp_head,
+        install_has_dflash,
         note: None,
     };
     if requested != SpeculativeDrafter::Auto {
         return plain(requested);
     }
-    let Some(index) = index else {
+    if index.is_none() {
         return plain(SpeculativeDrafter::Mtp);
-    };
-    if install_has_mtp_head == Some(false) && install_has_dflash(&index) {
+    }
+    if install_has_mtp_head == Some(false) && install_has_dflash == Some(true) {
         return DrafterChoice {
             drafter: SpeculativeDrafter::Mtp,
             install_has_mtp_head,
+            install_has_dflash,
             note: Some(
                 // NAMES BOTH SPELLINGS, because there are three front ends
                 // and one of them has no command line: a GUI driving
@@ -186,17 +198,31 @@ pub fn resolve_drafter(requested: SpeculativeDrafter, model_dir: &Path) -> Draft
 /// drafter off to download a different one. `Off` lets the open succeed so
 /// [`resolve_speculation`] can refuse with the note, which names the flag.
 ///
-/// **THE HEADLESS ARM IS THAT SAME ARGUMENT ON A WIDER INPUT, and the two are
-/// deliberately not collapsed into one condition.** The `note` arm asks "has
-/// the decision already been made"; the headless arm asks "is there a head to
-/// ask the open for at all". They agree on a DFlash2-only install and part
-/// company on every other headless one -- which is exactly where this was
-/// wrong. Measured 2026-08-21 on the real `ornith35b` install: `--speculative
+/// **THE HEADLESS ARM EXISTS ON BOTH DRAFTERS, and each asks about its own.**
+/// The MTP branch declines to ask the open for a head when
+/// `install_has_mtp_head == Some(false)`; the DFlash2 branch does the same on
+/// `install_has_dflash`. The second was missing until 2026-08-22, so
+/// `--speculative-drafter dflash --speculative 2` on the real `ornith35b`
+/// failed at OPEN with `DflashState::build`'s "this install carries none ...
+/// stream it beside the trunk", which on a MoE checkpoint is a wild goose
+/// chase: the published DFlash2 drafter targets the DENSE half of this
+/// architecture, so no artifact satisfies that instruction. `auto` reported
+/// the right thing on the same install in the same run, exactly as it had for
+/// the MTP path, and for exactly the same reason: `auto` reaches
+/// [`resolve_speculation`] and a named block did not.
+///
+/// **THE HEADLESS ARM IS THE `note` ARM'S ARGUMENT ON A WIDER INPUT, and the
+/// two are deliberately not collapsed into one condition.** The `note` arm
+/// asks "has the decision already been made"; the headless arm asks "is there
+/// a drafter to ask the open for at all". They agree on a DFlash2-only install
+/// and part company on every other headless one -- which is exactly where this
+/// was wrong. Measured 2026-08-21 on the real `ornith35b` install: `--speculative
 /// 2` reached `MtpDraftPolicy::Fixed`, failed at OPEN with "carries no
 /// multi-token-prediction head ... stream an install that adds the official
 /// checkpoint's last shard", and so sent a caller after a 4.4 GB shard that
-/// CANNOT help -- the batched verify is dense-only and this install routes to
-/// 256 experts, which no checkpoint changes. `auto` got the same install
+/// CANNOT help -- that install routes to 256 experts, and no published MoE
+/// conversion of this architecture carries an ingestible drafter, so no shard
+/// of any checkpoint changes the answer. `auto` got the same install
 /// right, because `auto` reaches [`resolve_speculation`] and a named block
 /// did not. `speculation_blocker` has always reported the ARCHITECTURAL
 /// obstacle ahead of the missing head (`crates/runtime/CLAUDE.md` Gotcha 16);
@@ -231,6 +257,13 @@ pub fn draft_policies(choice: &DrafterChoice, speculation: Speculation) -> Draft
             dflash: match speculation {
                 Speculation::Off => DflashDraftPolicy::Off,
                 Speculation::Auto => DflashDraftPolicy::Auto,
+                // The MTP arm's headless guard, on the drafter it is missing
+                // from. `Some(false)` and never a bare falsy test, for that
+                // arm's reason: `None` is an unreadable index and has to keep
+                // failing at open with the engine's own message.
+                Speculation::Block(_) if choice.install_has_dflash == Some(false) => {
+                    DflashDraftPolicy::Off
+                }
                 Speculation::Block(n) => DflashDraftPolicy::Fixed(n as usize),
             },
         },

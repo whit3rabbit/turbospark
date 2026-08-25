@@ -1,0 +1,7 @@
+{
+ "bos_token": "<|begin_of_text|>",
+ "eos_token": "<|eot|>",
+ "pad_token": "<|finetune_right_pad|>",
+ "tokenizer_class": "PreTrainedTokenizerFast",
+ "chat_template": "{{- bos_token -}}{%- for m in messages -%}{%- if m['role'] == 'assistant' -%}{%- if m.get('reasoning_content') -%}<|start|>assistant to=self<|message|>{{ m['reasoning_content'] }}<|eom|>{%- endif -%}<|start|>assistant to=user<|message|>{{ m['content'] }}<|eot|>{%- else -%}<|start|>{{ m['role'] }}<|message|>{{ m['content'] }}<|eot|>{%- endif -%}{%- endfor -%}{%- if add_generation_prompt -%}<|start|>assistant{%- endif -%}"
+}

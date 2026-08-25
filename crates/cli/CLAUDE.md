@@ -202,6 +202,22 @@ printf '[{"role":"user","content":"Explain how coastal wetlands reduce flood dam
    on which the rule differs from the weaker "does it have dflash", which is
    why `crates/repack` grew a both-drafters fixture to pin it.
 
+   **A NAMED BLOCK ON AN INSTALL WITH NO DRAFTER OPENS ANYWAY, so the reason
+   comes from the blocker rather than from the open.** `draft_policies` maps
+   `Block(n)` onto `Off` when `resolve_drafter` established the install has no
+   drafter of the named kind, for BOTH drafters (the MTP guard landed
+   2026-08-21, the DFlash2 one 2026-08-22). Without it the open fails first
+   and names the wrong obstacle: on the MoE `ornith35b`,
+   `--speculative-drafter dflash --speculative 2` used to say "stream it
+   beside the trunk", advice no artifact can satisfy because the published
+   DFlash2 drafter targets the DENSE half of that architecture. The hard fail
+   is unchanged either way; only the sentence improves.
+
+   **VERIFYING ANY OF THESE REFUSALS END TO END NEEDS `--temperature 0`.** The
+   SAMPLED refusal is resolved ahead of the drafter's and this binary defaults
+   to 0.2, so a run meant to exercise a drafter message reports "acceptance is
+   exact only at temperature 0" instead, which reads like the case passing.
+
    Two things not to re-derive. The reason string comes from
    `RealForwardRunner::speculation_blocker()` and is never rebuilt here -- the
    engine owns the conditions it refuses on, and a second copy in the CLI would

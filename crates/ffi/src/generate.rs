@@ -39,17 +39,22 @@ struct ChannelSplit<'a> {
 }
 
 impl<'a> ChannelSplit<'a> {
-    fn new(tokenizer: &'a MfTokenizer, reasoning: ReasoningEffort) -> Self {
-        let wanted = tokenizer.dialect == ChatDialect::Harmony
-            || (reasoning != ReasoningEffort::Off
-                && matches!(tokenizer.dialect, ChatDialect::ChatMl | ChatDialect::Gemma));
+    /// `prompt_ids` is the rendered generation prompt: a ChatML template opens
+    /// the `<think>` frame itself when thinking is on, and the decoder cannot
+    /// tell without being shown (`StructuredAssistantDecoder::new`).
+    fn new(tokenizer: &'a MfTokenizer, reasoning: ReasoningEffort, prompt_ids: &[i32]) -> Self {
+        let wanted = matches!(
+            tokenizer.dialect,
+            ChatDialect::Harmony | ChatDialect::MuseGlimmer
+        ) || (reasoning != ReasoningEffort::Off
+            && matches!(tokenizer.dialect, ChatDialect::ChatMl | ChatDialect::Gemma));
         Self {
             decoder: wanted.then(|| {
                 // An EMPTY tool allowlist. This binding has no way to run a
                 // tool, so a Harmony `commentary` body stays reasoning
                 // rather than being parsed as a call the caller cannot
                 // service. Tools belong to the server surface.
-                StructuredAssistantDecoder::new(tokenizer, HashSet::new(), String::new)
+                StructuredAssistantDecoder::new(tokenizer, HashSet::new(), String::new, prompt_ids)
             }),
         }
     }
@@ -224,7 +229,7 @@ pub(crate) fn generate(
 
     let mut content = String::new();
     let mut reasoning_text = String::new();
-    let mut split = ChannelSplit::new(&session.tokenizer, reasoning);
+    let mut split = ChannelSplit::new(&session.tokenizer, reasoning, &prompt_ids);
     let total = prompt_ids.len() as u32;
 
     let mut on_progress = |event: RawDecodeProgress| {

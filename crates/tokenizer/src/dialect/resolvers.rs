@@ -5,8 +5,9 @@ use super::resolve::{
     required_id, Resolved, DEEPSEEK_ASSISTANT_MARK, DEEPSEEK_BOS_MARK, DEEPSEEK_EOS_MARK,
     DEEPSEEK_USER_MARK, HARMONY_BOS_MARK, HARMONY_CALL_MARK, HARMONY_CHANNEL_MARK,
     HARMONY_END_MARK, HARMONY_MESSAGE_MARK, HARMONY_PAD_MARK, HARMONY_RETURN_MARK, IM_END_MARK,
-    IM_START_MARK, MISTRAL_BOS_MARK, MISTRAL_EOS_MARK, MUSE_BOS_MARK, MUSE_EOM_MARK, MUSE_EOS_MARK,
-    MUSE_EOT_MARK, MUSE_MESSAGE_MARK, MUSE_PAD_MARK, MUSE_START_MARK,
+    IM_START_MARK, LLAMA3_BOS_MARK, LLAMA3_END_HEADER_MARK, LLAMA3_EOS_MARK, LLAMA3_EOT_MARK,
+    LLAMA3_START_HEADER_MARK, MISTRAL_BOS_MARK, MISTRAL_EOS_MARK, MUSE_BOS_MARK, MUSE_EOM_MARK,
+    MUSE_EOS_MARK, MUSE_EOT_MARK, MUSE_MESSAGE_MARK, MUSE_PAD_MARK, MUSE_START_MARK,
 };
 use super::NO_SUCH_TOKEN_ID;
 use crate::error::TokenizerError;
@@ -176,6 +177,69 @@ pub(crate) fn resolve_mistral(tokenizer: &Tokenizer) -> Result<Resolved, Tokeniz
     })
 }
 
+/// Meta's Llama-3 family (base and Instruct).
+///
+/// **SHARES `<|begin_of_text|>` AND `<|end_of_text|>` WITH `muse_glimmer` AND
+/// NOTHING ELSE**, exactly the trap crate Gotcha 6 already names for Harmony
+/// and Muse Glimmer -- this dialect's frame markers
+/// (`<|start_header_id|>` / `<|end_header_id|>` / `<|eot_id|>`) are resolved
+/// too, even though only `end_of_turn_id` is stored, so a checkpoint whose
+/// table has the BOS/EOS pair but not the header pair fails at LOAD rather
+/// than at the first rendered prompt.
+///
+/// No tool-calling or thinking markup: `meta-llama/Meta-Llama-3-8B-Instruct`
+/// (the checkpoint this was built and probed against, per
+/// `docs/OBLITERATION.md`'s Open section) has none in its table. Every such
+/// id is therefore [`NO_SUCH_TOKEN_ID`], the same sentinel Mistral's resolver
+/// uses for the same reason. A 3.1-family checkpoint's `<|eom_id|>` (message
+/// handoff, mirroring Muse Glimmer's) and `<|python_tag|>` (built-in tool
+/// call) would need their own arm; nothing here has been measured against
+/// one.
+///
+/// End of turn is `<|eot_id|>`, not `<|end_of_text|>`: the checkpoint closes
+/// every assistant turn with the former and reserves the latter for the raw
+/// end of a document.
+pub(crate) fn resolve_llama3(tokenizer: &Tokenizer) -> Result<Resolved, TokenizerError> {
+    let bos = required_id(tokenizer, LLAMA3_BOS_MARK)?;
+    let eos = required_id(tokenizer, LLAMA3_EOS_MARK)?;
+    let eot = required_id(tokenizer, LLAMA3_EOT_MARK)?;
+    let _start_header = required_id(tokenizer, LLAMA3_START_HEADER_MARK)?;
+    let _end_header = required_id(tokenizer, LLAMA3_END_HEADER_MARK)?;
+    Ok(Resolved {
+        bos_id: bos,
+        // The fallback renderer emits `<|begin_of_text|>` itself, matching
+        // the real checkpoint's own template (`{{- bos_token }}` at the top),
+        // so the encoder must not prepend a second one -- Harmony's and Muse
+        // Glimmer's reason, on a family with no markup living anywhere else
+        // in its table at all.
+        bos_prefix_id: None,
+        eos_id: eos,
+        // No dedicated `<pad>` in this table -- the missing one is what sent
+        // a Llama-3 checkpoint into `resolve_gemma` and a load failure before
+        // this dialect existed (AGENTS.md Gotcha 9 / crate Gotcha 9).
+        // `<|end_of_text|>` is the same reuse ChatML and Mistral already make
+        // of their own EOS for the same reason.
+        pad_id: eos,
+        end_of_turn_id: eot,
+        tool_call_start_id: NO_SUCH_TOKEN_ID,
+        tool_call_end_id: NO_SUCH_TOKEN_ID,
+        tool_response_id: NO_SUCH_TOKEN_ID,
+        tool_response_end_id: NO_SUCH_TOKEN_ID,
+        tool_call_stop_id: NO_SUCH_TOKEN_ID,
+        channel_start_id: NO_SUCH_TOKEN_ID,
+        channel_end_id: NO_SUCH_TOKEN_ID,
+        message_start_id: NO_SUCH_TOKEN_ID,
+        message_end_id: NO_SUCH_TOKEN_ID,
+        think_start_id: None,
+        think_end_id: None,
+        stop_token_ids: [eos, eot].into_iter().collect(),
+        // Llama-3's padded vocabulary: 128,000 base BPE merges plus 256
+        // reserved special-token slots. Public and read off the real
+        // checkpoint's `config.json` rather than recalled.
+        vocab_size: 128_256,
+    })
+}
+
 /// `muse_glimmer`'s ids and stop set.
 ///
 /// **THE RENDERER IS THE CHECKPOINT'S OWN TEMPLATE, exactly as Harmony's
@@ -205,7 +269,6 @@ pub(crate) fn resolve_muse_glimmer(tokenizer: &Tokenizer) -> Result<Resolved, To
     let start = required_id(tokenizer, MUSE_START_MARK)?;
     let message = required_id(tokenizer, MUSE_MESSAGE_MARK)?;
     let eom = required_id(tokenizer, MUSE_EOM_MARK)?;
-    let _ = start;
     Ok(Resolved {
         bos_id: bos,
         // The checkpoint's template emits `<|begin_of_text|>` itself, so the
@@ -223,7 +286,12 @@ pub(crate) fn resolve_muse_glimmer(tokenizer: &Tokenizer) -> Result<Resolved, To
         tool_response_id: NO_SUCH_TOKEN_ID,
         tool_response_end_id: NO_SUCH_TOKEN_ID,
         tool_call_stop_id: NO_SUCH_TOKEN_ID,
-        channel_start_id: NO_SUCH_TOKEN_ID,
+        // `<|start|>` OPENS A MESSAGE HEADER, which is the same job Harmony
+        // gives `<|channel|>`, so it goes in the same field rather than in a
+        // new one. `channel_end_id` stays the sentinel for Harmony's reason:
+        // this frame is a header/body triple, and a non-sentinel end would
+        // make the Gemma-shaped bracketing arm reachable.
+        channel_start_id: start,
         channel_end_id: NO_SUCH_TOKEN_ID,
         message_start_id: message,
         message_end_id: eom,

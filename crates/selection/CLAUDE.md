@@ -18,7 +18,9 @@ crates/selection/
     +-- determinism.rs      # Verifies seed determinism across selection runs
     +-- distribution.rs     # Verifies temperature and logit distribution behavior
     +-- domain_guards.rs    # Edge case guards (NaN/Inf logits, empty candidates)
+    +-- host_sampler_cost.rs# Micro-benchmark profiling host sampler component costs
     +-- penalty.rs          # Repetition penalty calculation unit tests
+    +-- rank_top_k.rs       # Top-k partial ranking vs full sort equivalence tests
     +-- shaping_validation.rs# Parameter range validation unit tests
     \-- truncation_order.rs # Top-k and top-p truncation order unit tests
 ```

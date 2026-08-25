@@ -33,6 +33,7 @@ crates/repack/
 |   |   \-- moe.rs                  # MoE and streamed-expert variants
 |   +-- synthetic_real.rs           # Real-named synthetic generator (build_synthetic_gemma4_real_install)
 |   +-- synthetic_llama.rs          # Real-named synthetic Mixtral / Qwen3-MoE / DENSE llama generators
+|   +-- synthetic_muse.rs           # Real-named synthetic Muse Glimmer 30B generator
 |   +-- synthetic_qwen/             # Real-named synthetic Qwen generators (MoE and dense)
 |   |   +-- mod.rs                  # Re-exports synthetic Qwen builders
 |   |   +-- dense.rs                # Dense sub-4-bit Qwen generator (build_synthetic_qwen_gdn_dense_install)
@@ -43,6 +44,7 @@ crates/repack/
 |   |   +-- mod.rs                  # Module root and install writer entrypoints
 |   |   +-- classify.rs             # Tensor classification (resident vs routed)
 |   |   +-- config.rs               # config.json & quantization spec parsing
+|   |   +-- dflash.rs               # DFlash2 draft model shard extraction and repacking
 |   |   +-- expert_blobs.rs         # Packed expert blob packing & layout calculation
 |   |   +-- manifest_quant.rs       # Manifest quantization spec generation
 |   |   +-- mtp.rs                  # The MTP head's ingest: the walk's one QUANTIZING arm
@@ -80,47 +82,63 @@ crates/repack/
 |   |   +-- gemma4_shape.rs         # SyntheticGgufShape and QuantMix helper types
 |   |   \-- gptoss.rs               # SyntheticGptOssShape: the M5 layer's SHAPE, not just its types
 |   +-- qwen36_config.rs            # Qwen 3.6 config.json -> ArchConfig (parse_qwen_gdn_moe_config)
+|   +-- museglimmer_config.rs       # Muse Glimmer config.json -> ArchConfig parser
+|   +-- trained_context.rs          # Trained context resolution from checkpoint metadata
 |   +-- hf_checkpoint.rs            # Hugging Face Llama checkpoint converter
 |   +-- install_verifier.rs         # Validates repacked install directory structure & receipt
 |   \-- manifest_peek.rs            # Pre-fetches remote checkpoint manifests without full download
 \-- tests/
+    +-- arch_registry.rs            # Architecture string registry unit tests
+    +-- arch_registry_network.rs    # Live architecture registry witness validator (ignored)
+    +-- dflash2_checkpoint_network.rs # Real DFlash2 drafter checkpoint streamed repack (ignored)
     +-- gemma4_checkpoint.rs        # Gemma 4 repack pipeline unit tests
-    +-- gguf_header.rs              # GGUF parser round trip + rejection cases
-    +-- gguf_names.rs               # GGUF name mapping, both families
-    +-- gguf_config.rs              # GGUF metadata -> ArchConfig
+    +-- gemma4_checkpoint_network.rs# Real Gemma 4 checkpoint download integration test (ignored)
     +-- gguf_checkpoint.rs          # GGUF walk: byte identity of every expert slice, plus the F32 transcode
     +-- gguf_checkpoint_network.rs  # Real GGUF header fetch + cross-checks (ignored)
-    +-- gguf_fused_gate_network.rs  # Settles FUSED_GATE_FIRST by correlation (ignored)
+    +-- gguf_config.rs              # GGUF metadata -> ArchConfig
     +-- gguf_f32_transcode_network.rs # Evidence for the transcode decision (ignored)
-    +-- gguf_q4_k_network.rs        # Q4_K dequant vs the real Qwen Q4_K_M, by correlation (ignored)
-    +-- gguf_iq_network.rs          # IQ3_XXS/IQ4_NL/IQ4_XS vs the Phase S candidate, by correlation (ignored)
-    +-- gguf_install_network.rs     # Streams the real Q8_0 GGUF into a full install (ignored)
-    +-- gguf_qwen_install_network.rs# Same for the real Qwen Q4_K_M, the mixed-block-type case (ignored)
-    +-- gguf_mixtral_install_network.rs # Same for the real Mixtral Q4_K_M, plus the two DENSE llama installs (ignored)
-    +-- gguf_qwen3moe_install_network.rs # Same for the real Qwen3-30B-A3B Q4_K_M, the FINE-GRAINED MoE (ignored)
+    +-- gguf_fused_gate_network.rs  # Settles FUSED_GATE_FIRST by correlation (ignored)
     +-- gguf_gptoss_install_network.rs # Same for the real gpt-oss-20b MXFP4 (ignored)
+    +-- gguf_header.rs              # GGUF parser round trip + rejection cases
+    +-- gguf_install_network.rs     # Streams the real Q8_0 GGUF into a full install (ignored)
+    +-- gguf_iq_install_network.rs  # Real IQ-quantized GGUF install streamer (ignored)
+    +-- gguf_iq_network.rs          # IQ3_XXS/IQ4_NL/IQ4_XS vs the Phase S candidate, by correlation (ignored)
     +-- gguf_llama_rope_patch.rs    # The rotary pair convention: in-place diagnostic + the walk's inverse (ignored)
-    +-- gguf_qwen_core_probe.rs     # A GGUF install's resident core vs the MLX one, tensor by tensor (ignored)
-    +-- gguf_qwen_quant_probe.rs    # The same question for the QUANTIZED V-head tensors, by correlation (ignored)
-    +-- gguf_qwen_convention_patch.rs # The V-head convention on every layer, and the in-place patch loop (ignored)
+    +-- gguf_mixtral_install_network.rs # Same for the real Mixtral Q4_K_M, plus the two DENSE llama installs (ignored)
+    +-- gguf_names.rs               # GGUF name mapping, both families
     +-- gguf_norm_convention_probe.rs # GGUF install's resident BF16 core vs the MLX install's (ignored)
-    +-- gemma4_checkpoint_network.rs# Real Gemma 4 checkpoint download integration test (ignored)
-    +-- qwen36_config.rs            # parse_qwen_gdn_moe_config vs the pinned Qwen 3.6 baseline
-    +-- qwen35_config.rs            # parse_qwen_gdn_dense_config vs the pinned qwen3_5 baseline, BOTH checkpoints
-    +-- synthetic_qwen35.rs         # The dense 1-bit install, end to end through the walk
-    +-- qwen35_checkpoint_network.rs# The REAL Bonsai-27B 1-bit checkpoint, streamed (ignored)
-    +-- qwen38_checkpoint_network.rs# The REAL Qwen3.8-27B INT4 checkpoint, streamed (ignored)
-    +-- mtp_head_network.rs         # The MTP head's inventory off the official BF16 header (ignored)
-    +-- mtp_quantize_network.rs     # Its INT4 round trip against real bytes, by correlation (ignored)
-    +-- ternary_checkpoint_network.rs# The REAL Ternary-Bonsai-27B 2-bit checkpoint, streamed (ignored)
-    +-- qwen36_checkpoint_network.rs# Real Qwen 3.6 checkpoint download integration test (ignored)
+    +-- gguf_q4_k_network.rs        # Q4_K dequant vs the real Qwen Q4_K_M, by correlation (ignored)
+    +-- gguf_qwen3moe_install_network.rs # Same for the real Qwen3-30B-A3B Q4_K_M, the FINE-GRAINED MoE (ignored)
+    +-- gguf_qwen_convention_patch.rs # The V-head convention on every layer, and the in-place patch loop (ignored)
+    +-- gguf_qwen_core_probe.rs     # A GGUF install's resident core vs the MLX one, tensor by tensor (ignored)
+    +-- gguf_qwen_install_network.rs# Same for the real Qwen Q4_K_M, the mixed-block-type case (ignored)
+    +-- gguf_qwen_quant_probe.rs    # The same question for the QUANTIZED V-head tensors, by correlation (ignored)
     +-- gturbo_writer.rs            # .gturbo layout writer unit tests
     +-- hf_checkpoint.rs            # HF Llama converter unit tests
     +-- hf_checkpoint_network.rs    # Real HF checkpoint download integration test (ignored)
     +-- install_verifier.rs         # Install verifier unit tests
+    +-- mtp_head_network.rs         # The MTP head's inventory off the official BF16 header (ignored)
+    +-- mtp_install_fidelity_network.rs # MTP head install fidelity vs official weights (ignored)
+    +-- mtp_quantize_network.rs     # Its INT4 round trip against real bytes, by correlation (ignored)
+    +-- museglimmer_checkpoint_network.rs # Real Muse Glimmer checkpoint streamer (ignored)
+    +-- museglimmer_config.rs       # Muse Glimmer config parsing tests
+    +-- ornith_config.rs            # Ornith architecture config parsing tests
+    +-- ornith_gguf_network.rs      # Ornith GGUF metadata and tensor probe (ignored)
+    +-- ornith_install_network.rs   # Ornith GGUF install streamer (ignored)
+    +-- ornith_mlx_install_network.rs # Ornith MLX install streamer (ignored)
+    +-- ornith_tensor_probe.rs      # Ornith tensor layout and dtype probe (ignored)
+    +-- qwen35_checkpoint_network.rs# The REAL Bonsai-27B 1-bit checkpoint, streamed (ignored)
+    +-- qwen35_config.rs            # parse_qwen_gdn_dense_config vs the pinned qwen3_5 baseline, BOTH checkpoints
+    +-- qwen36_checkpoint_network.rs# Real Qwen 3.6 checkpoint download integration test (ignored)
+    +-- qwen36_config.rs            # parse_qwen_gdn_moe_config vs the pinned Qwen 3.6 baseline
+    +-- qwen38_checkpoint_network.rs# The REAL Qwen3.8-27B INT4 checkpoint, streamed (ignored)
     +-- repack.rs                   # Quantization repack unit tests
     +-- safetensors_header.rs       # Safetensors header parsing unit tests
-    \-- synthetic_model.rs          # Synthetic install builder unit tests
+    +-- synthetic_model.rs          # Synthetic install builder unit tests
+    +-- synthetic_muse.rs           # Synthetic Muse Glimmer install builder unit tests
+    +-- synthetic_qwen.rs           # Synthetic Qwen MoE builder unit tests
+    +-- synthetic_qwen35.rs         # The dense 1-bit install, end to end through the walk
+    \-- ternary_checkpoint_network.rs# The REAL Ternary-Bonsai-27B 2-bit checkpoint, streamed (ignored)
 ```
 
 ## Key Modules
@@ -250,6 +268,7 @@ the failure this head has already had once.
 10. **`block_count` COUNTS THE MULTI-TOKEN-PREDICTION BLOCK, and the trunk is `block_count - nextn_predict_layers`.** llama.cpp writes a drafter head as one more `blk.<n>.` block: `Ornith-1.5-35B-A3B` reads 41 and 1 for a 40-layer model. Taking `block_count` verbatim derives a 41-layer config whose mask calls index 40 LINEAR when the head is full attention -- structurally valid, wrong graph. Absent means 0 (AGENTS.md Gotcha 39: the default belongs to the FORMAT), so every file installed before Ornith is unchanged. `plan::classify` takes the trunk count for the same reason and skips the head's blocks by name.
 
     **THE CHEAPEST REFERENCE FOR "WHICH TENSOR IS WRONG" IS THE PUBLISHED BF16 REPO, READ BY RANGE** (`tests/ornith_tensor_probe.rs`). `gguf_qwen_quant_probe.rs` correlates two INSTALLS, which needs a second multi-GB artifact and is unavailable for any model published only as GGUF plus BF16. A row of an `[out, in]` matrix is contiguous on both sides -- safetensors is row-major and every block layout tiles along the fastest-varying dim -- so a few KB per tensor settles it with no download. Rank the results WORST FIRST and the ranking is the diagnosis: it named `out_proj` as non-finite against 0.997-1.000 for twenty-one siblings, in one run, after a day of guessing at conventions one at a time.
+
 11. **A CONTROL VECTOR'S `direction.N` IS llama.cpp's BLOCK `N`, and this crate read it as block `N - 1` until 2026-08-24.** The format is borrowed so that files interchange with `repeng` and llama.cpp, and for the life of the surface they did not: every vector written here sat one block early elsewhere, and every foreign vector read here was applied one block early. Settled by READING rather than measuring, from sources that agree -- `common.cpp` writes `direction.N` to buffer offset `n_embd * (N - 1)`, `llama-adapter.cpp` reads block `il` from `n_embd * (il - 1)` looping from `il = 1`, and `llama.h`'s own comment says the buffer starts "from layer 1". Confirmed afterwards against a published Llama-3-8B vector, which reads **31 covered of 32 spanned** (blocks 1..31, exactly llama.cpp's apply range) where the old reader made the same bytes 31 of 31.
 
     **THE FAILURE WAS AN INFERENCE, NOT A MISSING FACT, which is what makes it worth a gotcha.** The module recorded correctly that llama.cpp rejects `direction.0` by name and that its apply loop never reaches block 0, then concluded the indices must shift down by one. They do not: block 0 goes unsteered precisely BECAUSE the lowest direction lands on block 1. The old mapping steered block 0 first, contradicting the invariant it cited two sentences earlier -- so the refutation was internal and available from the first commit. A true fact about a reference is not a reading of it, and an honest `UNVERIFIED` beside a derived convention makes it look measured-open rather than reasoned-and-wrong. It survived five sessions on that.

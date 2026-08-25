@@ -66,6 +66,25 @@ impl DraftPolicies {
 
 pub(crate) const RMS_EPS: f32 = 1e-6;
 
+/// The stable prefix every MoE speculation refusal opens with, named ONCE
+/// because four assertion sites in two languages match on it.
+///
+/// Both `speculation_blocker` and `dflash_speculation_blocker` refuse a routed
+/// install and each words the rest of its sentence for its own drafter, so
+/// what the tests can share is this leading phrase and nothing else. Before it
+/// existed the shared substring was `"dense-only"`, repeated as a literal in
+/// two Rust test files and one Swift one, which is exactly how a message and
+/// its guards drift apart: `5640c3f` gave the routed pair a batched kernel,
+/// `c9c8848` swept the docs the same day, and all four guards went on
+/// asserting a sentence that had stopped being true. Swift cannot import a
+/// Rust constant, so `RealModelTests` keeps the one literal copy and says so.
+///
+/// **IT NAMES A POLICY, NOT A CAPABILITY.** The batched routed verify runs and
+/// is gated (`families/qwen/moe_batch.rs`, bit-identical to M sequential
+/// `produce` calls); what no MoE checkpoint of this architecture ships is a
+/// DRAFTER this port can ingest. Lifting either arm is a checkpoint question.
+pub const MOE_SPECULATION_BLOCKER_MARKER: &str = "no MoE drafter";
+
 use crate::real_forward::RealForwardRunner;
 
 /// The trunk's tensor-name prefix.

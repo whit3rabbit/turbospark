@@ -1616,9 +1616,9 @@ Verified end to end through the SwiftPM target on three install shapes
 plain `auto` and a greedy turn decodes coherently through the batched verify;
 `qwen38-27b-dflash2` reports off under `auto` with the opt-in note and turns
 on at block 2 when `speculativeDrafter: "dflash"` is asked for; `ornith35b`
-(MoE) reports off carrying the engine's dense-only blocker. The note now names
-BOTH spellings -- the flag and the option key -- because a GUI cannot pass a
-command-line flag.
+(MoE) reports off carrying the engine's no-MoE-drafter blocker. The note now
+names BOTH spellings -- the flag and the option key -- because a GUI cannot
+pass a command-line flag.
 
 **TWO OF THOSE THREE SHAPES ARE ASSERTED BY A TEST NOW RATHER THAN BY THIS
 PARAGRAPH.** The sweep above was run by hand, and a paragraph is not a gate:

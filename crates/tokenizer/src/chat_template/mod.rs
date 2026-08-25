@@ -12,6 +12,7 @@
 mod chatml;
 mod deepseek;
 mod gemma;
+mod llama3;
 mod mistral;
 
 use crate::dialect::{
@@ -216,6 +217,7 @@ impl MfTokenizer {
                 "the Harmony format has no fallback renderer; a gpt-oss install must carry its                  own chat_template.jinja (or tokenizer_config.json's chat_template key)"
                     .to_string(),
             )),
+            ChatDialect::Llama3 => llama3::llama3_chat_template(messages),
         }
     }
 
@@ -245,6 +247,7 @@ impl MfTokenizer {
                 "{MUSE_START_MARK}user{MUSE_MESSAGE_MARK}{content}{MUSE_EOT_MARK}\
                  {MUSE_START_MARK}assistant{MUSE_MESSAGE_MARK}"
             ),
+            ChatDialect::Llama3 => llama3::llama3_continuation_suffix(content),
         };
         let mut out = vec![self.end_of_turn_id];
         out.extend(self.encode(&suffix, false));

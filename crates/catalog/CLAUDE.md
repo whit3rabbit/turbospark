@@ -225,3 +225,18 @@ cargo run --release -p turbospark-cli --bin turbospark-model -- pull tinyllama
     edit can be scripted without reformatting the file. Verify the round trip
     before writing (`json.dumps(json.loads(raw), ...) == raw`), because the
     day it stops being true the diff is the whole table.
+
+12. **A GATED SIDECAR REPO WITHOUT `HF_TOKEN` READS AS "NO CHAT TEMPLATE"
+    RATHER THAN AS AN ERROR.** `fill_template_and_sidecars`'s
+    `tokenizer_config.json` branch is
+    `if let Ok(Some(bytes)) = client.get_optional(...)`, which discards the
+    `Err` arm along with a genuine absence -- `get_optional` correctly
+    returns `Err("GET url: HTTP 401")` for a gated repo with no token, but
+    the pattern match cannot tell that apart from the key being missing, so
+    both print the same "no chat template found in either place" warning.
+    Measured on `meta-llama/Meta-Llama-3-8B-Instruct` (gated): unauthenticated
+    probe reports `template NONE FOUND`; with `HF_TOKEN` set,
+    `tokenizer_config.json:chat_template`. Export
+    `HF_TOKEN="$(cat ~/.cache/huggingface/token)"` (or wherever `hf auth
+    login` wrote it) before trusting a probe's chat-template verdict on a
+    gated repo.

@@ -49,6 +49,21 @@ pub(crate) const MUSE_EOM_MARK: &str = "<|eom|>";
 pub(crate) const MUSE_PAD_MARK: &str = "<|finetune_right_pad|>";
 pub(crate) const MUSE_START_MARK: &str = "<|start|>";
 pub(crate) const MUSE_MESSAGE_MARK: &str = "<|message|>";
+/// Meta's Llama-3 family (base and Instruct). SHARES `<|begin_of_text|>` and
+/// `<|end_of_text|>` with `muse_glimmer` and nothing else -- crate Gotcha 6's
+/// lesson arriving on a third pair. Neither is the witness here:
+/// `<|start_header_id|>` and `<|eot_id|>` are, because this family's frame is
+/// `<|start_header_id|>role<|end_header_id|>\n\ncontent<|eot_id|>` and neither
+/// marker collides with Muse Glimmer's `<|start|>` / `<|message|>` / `<|eot|>`
+/// (no `_header_id` / `_id` suffix on any of those three). Read off
+/// `meta-llama/Meta-Llama-3-8B-Instruct`'s `tokenizer_config.json` rather than
+/// recalled -- ids 128000 / 128001 / 128006 / 128007 / 128009 there, looked up
+/// BY NAME here for the reason crate Gotcha 2 gives.
+pub(crate) const LLAMA3_BOS_MARK: &str = "<|begin_of_text|>";
+pub(crate) const LLAMA3_EOS_MARK: &str = "<|end_of_text|>";
+pub(crate) const LLAMA3_EOT_MARK: &str = "<|eot_id|>";
+pub(crate) const LLAMA3_START_HEADER_MARK: &str = "<|start_header_id|>";
+pub(crate) const LLAMA3_END_HEADER_MARK: &str = "<|end_header_id|>";
 
 pub(crate) struct Resolved {
     pub(crate) bos_id: i32,
@@ -131,6 +146,17 @@ pub(crate) fn detect_dialect(tokenizer: &Tokenizer) -> ChatDialect {
         // the two apart. Both are checked because `<|eot|>` alone is a
         // Llama-3-family spelling that says nothing about the frame.
         ChatDialect::MuseGlimmer
+    } else if special_token_id(tokenizer, LLAMA3_START_HEADER_MARK).is_some()
+        && special_token_id(tokenizer, LLAMA3_EOT_MARK).is_some()
+    {
+        // Meta's Llama-3 family. Probed on its OWN frame markers rather than
+        // on `<|begin_of_text|>` / `<|end_of_text|>`, which it shares with
+        // `muse_glimmer` (crate Gotcha 6's lesson on a third pair): neither
+        // string collides with that family's `<|start|>` / `<|eot|>`, so the
+        // order relative to the MuseGlimmer arm above does not matter, but it
+        // still has to come before Gemma's fallback and before Mistral, whose
+        // `<s>`/`</s>` probe this table does not carry at all.
+        ChatDialect::Llama3
     } else if special_token_id(tokenizer, IM_END_MARK).is_some() {
         ChatDialect::ChatMl
     } else if special_token_id(tokenizer, GEMMA_TURN_MARK).is_none()
@@ -144,8 +170,8 @@ pub(crate) fn detect_dialect(tokenizer: &Tokenizer) -> ChatDialect {
 }
 
 use super::resolvers::{
-    resolve_chatml, resolve_deepseek, resolve_gemma, resolve_harmony, resolve_mistral,
-    resolve_muse_glimmer,
+    resolve_chatml, resolve_deepseek, resolve_gemma, resolve_harmony, resolve_llama3,
+    resolve_mistral, resolve_muse_glimmer,
 };
 
 pub(crate) fn resolve_dialect(
@@ -160,5 +186,6 @@ pub(crate) fn resolve_dialect(
         ChatDialect::Mistral => resolve_mistral(tokenizer),
         ChatDialect::Harmony => resolve_harmony(tokenizer),
         ChatDialect::MuseGlimmer => resolve_muse_glimmer(tokenizer),
+        ChatDialect::Llama3 => resolve_llama3(tokenizer),
     }
 }

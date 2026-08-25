@@ -62,7 +62,14 @@ pub(crate) struct Generated {
 fn needs_decoder(model: &AppState, tools: &HashSet<String>, reasoning: ReasoningEffort) -> bool {
     let dialect = model.tokenizer().dialect;
     !tools.is_empty()
-        || dialect == tokenizer::ChatDialect::Harmony
+        // Harmony and Muse Glimmer reason on EVERY turn, whatever the request
+        // asked for: both templates put a reasoning directive in the system
+        // message unconditionally, so an undecoded stream sends the scratchpad
+        // and the frame markup to the client as the reply.
+        || matches!(
+            dialect,
+            tokenizer::ChatDialect::Harmony | tokenizer::ChatDialect::MuseGlimmer
+        )
         || (reasoning != ReasoningEffort::Off
             && matches!(
                 dialect,
@@ -114,9 +121,14 @@ pub(crate) async fn run_full(
 ///
 /// Text is passed straight through unless [`needs_decoder`] says otherwise,
 /// exactly as before tool calling existed. Through the decoder, it is split
-/// into visible content, reasoning, and parsed calls: the thought channel the
-/// tool-chat generation prompt opens is swallowed, and Harmony's `analysis`
-/// channel comes back as [`Piece::Reasoning`].
+/// into visible content, reasoning, and parsed calls; Harmony's `analysis`
+/// channel and ChatML's `<think>` body both come back as [`Piece::Reasoning`].
+///
+/// `prompt_ids` is handed to the decoder because a ChatML generation prompt
+/// OPENS the `<think>` frame itself when thinking is on, so the model never
+/// emits the opening token and a decoder starting in the visible channel
+/// reports the whole scratchpad as the reply
+/// (`StructuredAssistantDecoder::new`).
 pub(crate) fn stream_blocking(
     model: &AppState,
     prompt_ids: &[foundation::TokenId],
@@ -131,10 +143,15 @@ pub(crate) fn stream_blocking(
     // responses reproducible.
     let mut next_id = 0usize;
     let mut decoder = needs_decoder(model, tools, effort).then(|| {
-        StructuredAssistantDecoder::new(model.tokenizer(), tools.clone(), move || {
-            next_id += 1;
-            format!("toolu_{}", next_id - 1)
-        })
+        StructuredAssistantDecoder::new(
+            model.tokenizer(),
+            tools.clone(),
+            move || {
+                next_id += 1;
+                format!("toolu_{}", next_id - 1)
+            },
+            prompt_ids,
+        )
     });
     // A model writing prose that merely looks like a tool call must not fail
     // the request. On a parser error the decoder is abandoned and the rest of

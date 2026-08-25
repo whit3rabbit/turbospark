@@ -1,6 +1,6 @@
 # turbospark-tokenizer
 
-Tokenizer wrapper around HF `tokenizers` (`MfTokenizer`), chat dialect resolution (Gemma 4, ChatML/Qwen, DeepSeek-V4, Mistral, Harmony/gpt-oss), chat template rendering (text-only and `minijinja` + `pycompat`), streaming detokenization (`StreamingDetokenizer`), stop condition matching (`StopMatcher`), tool call DSL parsers, and streaming structured decoder (`StructuredDecoder`).
+Tokenizer wrapper around HF `tokenizers` (`MfTokenizer`), chat dialect resolution (Gemma 4, ChatML/Qwen, DeepSeek-V4, Mistral, Harmony/gpt-oss, Llama-3), chat template rendering (text-only and `minijinja` + `pycompat`), streaming detokenization (`StreamingDetokenizer`), stop condition matching (`StopMatcher`), tool call DSL parsers, and streaming structured decoder (`StructuredDecoder`).
 
 ## Safety
 
@@ -23,6 +23,7 @@ crates/tokenizer/
 |   |   +-- chatml.rs               # ChatML chat template renderer
 |   |   +-- deepseek.rs             # DeepSeek chat template & tool call renderer
 |   |   +-- gemma.rs                # Gemma chat template renderer
+|   |   +-- llama3.rs               # Llama-3 header-frame chat template renderer
 |   |   \-- mistral.rs              # Mistral [INST] chat template renderer
 |   +-- jinja_chat_template.rs      # minijinja + pycompat wrapper rendering the checkpoint's own template
 |   +-- jinja_compat.rs             # Jinja compatibility syntax rewriter
@@ -35,6 +36,7 @@ crates/tokenizer/
 |   |   +-- deepseek.rs             # DeepSeek tool parsing
 |   |   \-- harmony.rs              # Harmony channel & reasoning parser
 |   +-- json_value.rs               # JSON value helper types for tool parameter encoding
+|   +-- reasoning.rs                # Reasoning effort configuration and parameter definitions
 |   +-- error.rs                    # TokenizerError enum definition
 |   \-- tool_call/                  # Dialect-specific tool call DSL parsers
 |       +-- mod.rs                  # Module root for tool call parsers
@@ -49,12 +51,17 @@ crates/tokenizer/
     +-- harmony_dialect.rs          # gpt-oss: the three-member stop set, and no fallback renderer
     +-- installed_template.rs       # Checkpoint template beats dialect; per-family agreement guard
     +-- jinja_chat_template.rs      # Jinja template rendering unit tests
+    +-- llama3_dialect.rs           # Llama-3 dialect resolution & fallback renderer tests
+    +-- reasoning_effort.rs         # Reasoning effort parameter parsing and template tests
     +-- structured_decoder.rs       # Streaming structured decoder unit tests
     +-- tool_calls.rs               # Tool call DSL parser unit tests across Gemma/Qwen/DeepSeek
     \-- fixtures/                   # Vendored toy tokenizer fixture directories
         +-- ChatMLTokenizer/        # Toy ChatML tokenizer.json fixture
         +-- DeepseekTokenizer/      # Toy DeepSeek tokenizer.json fixture
+        +-- GemmaTokenizer/         # Toy Gemma tokenizer.json fixture
         +-- HarmonyTokenizer/       # gpt-oss's special-token NAMES + a minimal Harmony template
+        +-- Llama3Tokenizer/        # Llama-3's special-token NAMES, no chat_template (fallback path)
+        +-- ReasoningEffortTokenizer/ # Reasoning effort tokenizer fixture
         \-- ZephyrTokenizer/        # Mistral's token table + an embedded Zephyr template
 ```
 
@@ -131,15 +138,166 @@ cargo test -p turbospark-tokenizer
    DSL is PLAIN TEXT rather than special tokens, so no tool-call parsing is
    wired for it and every tool marker id is `NO_SUCH_TOKEN_ID`.
 
-9. **THERE IS NO LLAMA-3 DIALECT, so no Llama-3 checkpoint loads.**
-   `detect_dialect`'s fallback is Gemma, and Llama-3's table
-   (`<|begin_of_text|>` / `<|start_header_id|>` / `<|eot_id|>`, no `<s>`, no
-   `<|im_end|>`) matches no positive probe -- so it lands on Gemma and
-   `resolve_gemma` fails on a missing `<pad>`. A tokenizer gap, not an
-   architecture one: `turbospark-model probe` reports
+7. **A CHATML GENERATION PROMPT OPENS THE `<think>` FRAME ITSELF, so
+   `StructuredAssistantDecoder::new` takes the PROMPT and not just the
+   tokenizer.** Qwen's own template ends `<|im_start|>assistant\n<think>\n`
+   when thinking is on and `<|im_start|>assistant\n<think>\n\n</think>\n\n`
+   when it is off. In the ON case the model's FIRST generated token is already
+   scratchpad and `think_start_id` never arrives, so a decoder that always
+   started in `Channel::Visible` stayed there -- the `</think>` that comes
+   later flips Visible to Visible, a no-op -- and reported the whole
+   scratchpad as the answer with the reasoning stream EMPTY. Measured on the
+   real `qwen38-27b` install at `--reasoning low`: 1,413 bytes of answer and 0
+   of reasoning before, 676 and 737 after, the same tokens either way.
+   That is Gotcha 4's asymmetry closing one layer down. The ChatML arm was
+   taught to EMIT reasoning when `--reasoning` landed, and emitting is
+   necessary but not sufficient: the arm also has to be ENTERED, and on this
+   dialect the prompt is what enters it.
+
+   **THE PROMPT IS THE SOURCE, NOT THE REASONING LEVEL**, and the difference
+   is a failure mode. `prompt_opens_thought` scans the rendered prompt ids
+   backwards for the first `think_start_id`/`think_end_id` and reports which
+   it met; keying on `reasoning != Off` instead would open the frame on a
+   checkpoint whose template enables thinking WITHOUT prefilling the tag, and
+   then the model's own `<think>` is a no-op, its `</think>` closes a frame
+   that was never its, and the answer arrives as reasoning -- an EMPTY reply,
+   which is worse than the bug being fixed. The scan is inert on Gemma,
+   Harmony and Muse Glimmer: their `think_*_id` are `None`.
+
+   Backwards, not forwards, because a tool preamble puts balanced
+   `<think></think>` pairs in its instructions ("use the `<think></think>`
+   block to plan your next tool call") and only the TAIL decides. Note the
+   fixture that pins this needs a CLOSED tail to discriminate -- with an open
+   tail a forward scan agrees by coincidence, since a balanced pair starts
+   with `<think>` too, and the test passes against both directions
+   (AGENTS.md Gotchas 48, 50, 51 on a fourth axis; the mutation check is what
+   caught the first version of it).
+
+   Found while reviewing `froggeric/Qwen-Fixed-Chat-Templates`, a community
+   Qwen template rewrite, and it is a bug in THIS port rather than anything
+   that repo fixes -- its generation prompt ends the same way Qwen's does.
+   That template renders cleanly through `minijinja` + `pycompat` with no new
+   shim (`[::-1]`, `[:n]`, `startswith`, `split`, `lstrip` all work) and its
+   default `xml` tool format is what `QwenToolCallParser` already expects, so
+   nothing here blocks adopting it; the reasons not to are architectural
+   (AGENTS.md Gotcha 41: the checkpoint's template wins, and this port ships
+   none) rather than technical.
+
+   **THE SWEEP IS THE REUSABLE PART.**
+   `every_dialects_decoder_starts_where_its_own_prompt_left_the_model` renders
+   every bundled fixture at every level its template accepts, scans the prompt
+   ids independently, and asserts the decoder's first event agrees. It is not
+   `#[ignore]`d and needs no install, so a NEW dialect gets SWEPT by existing
+   -- which is the whole reason the ChatML case survived: the question had only
+   ever been asked per dialect, by hand. **What it checks is the `<think>`
+   pair's invariant specifically**, so a dialect framing its reasoning
+   otherwise is included without being tested; Muse Glimmer passes it by having
+   no think ids at all, and its own frame is pinned by the four `muse_*` cases
+   instead. Reverting `new` to an
+   unconditional `Channel::Visible` reddens it. Measured across the seven
+   fixtures: ChatML OPEN at every level and closed at `off`, Gemma opening no
+   channel at a level and pre-closing an empty one at `off`, Harmony ending at
+   `<|start|>assistant` outside any frame, DeepSeek pre-closing with
+   `</think>`, Mistral with no thought frame at all. **ChatML was the only one
+   wrong**, which is worth knowing before hunting for siblings.
+
+   **THE SWEEP FOUND A SECOND BUG, IN A DIFFERENT MECHANISM.** `muse_glimmer`
+   had no decoder arm at all (`consume` grouped it with Mistral) and no caller
+   built one for it, so its `to=self` scratchpad printed as the reply. It is
+   NOT the ChatML shape: what was missing was the whole frame, not an initial
+   state. See Gotcha 8.
+
+8. **MUSE GLIMMER REASONS ON EVERY TURN, so its decoder arm is built
+   unconditionally like Harmony's rather than behind `--reasoning`.** Its
+   template calls `render_reasoning()` from the system message with no gate and
+   defaults the strength to `high` when the caller sets nothing, so a plain
+   `--messages-file` run with NO reasoning flag already asks for reasoning.
+   Before this arm existed, EVERY museGlimmer generation this port produced
+   printed the scratchpad as the reply: measured on the real 30B install with
+   no flag, stdout opened ` to=selfExplain how coastal wetlands reduce flood
+   damage.` followed by the scratch work, with 0 bytes on the reasoning stream.
+   After: 1,737 bytes of reasoning on stderr and an answer that starts at
+   `Coastal wetlands are a natural flood defense`.
+
+   **THE FRAME IS `<|start|>ROLE to=RECIPIENT<|message|>BODY<|eom|>`, and the
+   RECIPIENT IS THE CHANNEL.** That is the one structural difference from
+   Harmony, whose first header word is a channel NAME with the recipient an
+   optional extra. `to=user` (and a header naming no recipient, which the
+   template defaults to `user`) is the answer; `to=self` is the scratchpad;
+   anything else is reasoning, which is Harmony's default direction and routes
+   this dialect's `to=<toolname>` calls too -- the `<atem:function_calls>` body
+   is PLAIN TEXT with no parser wired, so unparseable markup on the reasoning
+   stream beats it appearing as the reply.
+
+   Three things that follow. **`<|start|>` lives in `channel_start_id`**, which
+   is the field Harmony gives `<|channel|>` for the same job; `channel_end_id`
+   stays the sentinel so the Gemma-shaped bracketing arm cannot become
+   reachable. **`<|eot|>` is absent from the state machine on purpose** -- it is
+   a stop token, so the loop breaks before the callback and it never arrives
+   (AGENTS.md Gotcha 49); only `<|eom|>`, which hands off rather than ending the
+   turn, reaches `consume`. And **the initial state comes from the PROMPT**,
+   exactly as Gotcha 7 requires for ChatML: `add_generation_prompt` emits
+   `<|start|>assistant` and STOPS, so a real generation begins inside a header
+   and no `<|start|>` ever arrives. Starting unframed passes the header
+   remainder (` to=self`) through as prose and then the whole scratchpad as the
+   reply -- which is precisely the bug, so the two fixes share one rule.
+
+9. ~~**THERE IS NO LLAMA-3 DIALECT, so no Llama-3 checkpoint loads.**~~
+   **LANDED, see Gotcha 10.** `detect_dialect`'s fallback used to be Gemma,
+   and Llama-3's table (`<|begin_of_text|>` / `<|start_header_id|>` /
+   `<|eot_id|>`, no `<s>`, no `<|im_end|>`) matched no positive probe -- so it
+   landed on Gemma and `resolve_gemma` failed on a missing `<pad>`. A
+   tokenizer gap, not an architecture one: `turbospark-model probe` reports
    `Meta-Llama-3-8B-Instruct` RUNNABLE (32 layers, hidden 4096, Q4_K/Q6_K, no
-   `rope_freqs.weight`). It fails before any weight byte streams, sidecars
-   being verified first, so it costs seconds rather than a re-stream.
+   `rope_freqs.weight`). It failed before any weight byte streamed, sidecars
+   being verified first, so it cost seconds rather than a re-stream.
    NUMBERED 9 AND NOT 7 on purpose: 7 and 8 were in flight in another
-   session's working copy when this landed, so the gap is transient and
-   closes when that commit arrives.
+   session's working copy when this landed, so the gap was transient and
+   closed when that commit arrived.
+
+10. **`ChatDialect::Llama3` CLOSES GOTCHA 9, AND ITS SHARED-MARK TRAP IS THE
+   SAME ONE GOTCHA 6 NAMES FOR HARMONY/MUSE GLIMMER, ARRIVING ON A THIRD
+   PAIR.** Meta's Llama-3 family (base and Instruct) shares
+   `<|begin_of_text|>` and `<|end_of_text|>` with `muse_glimmer` and nothing
+   else, so `detect_dialect` keys on this family's OWN frame markers
+   (`<|start_header_id|>` and `<|eot_id|>`) rather than the shared pair --
+   neither string collides with Muse Glimmer's `<|start|>` / `<|message|>` /
+   `<|eot|>` (no `_header_id` / `_id` suffix on any of those three), so the
+   two probes stay disjoint whatever order they run in.
+
+   No tool-calling or thinking markup: the base 8B-Instruct table this was
+   built and probed against (`meta-llama/Meta-Llama-3-8B-Instruct`, per
+   `docs/OBLITERATION.md`'s Open section, which is what this unblocks) has
+   none, so every such id is `NO_SUCH_TOKEN_ID`, Mistral's sentinel for the
+   same reason. A 3.1-family checkpoint's `<|eom_id|>` (message handoff,
+   mirroring Muse Glimmer's `<|eom|>`) and `<|python_tag|>` (built-in tool
+   call) would need their own arm; nothing here has been measured against
+   one, and no 3.1 checkpoint has been probed.
+
+   **UNLIKE HARMONY AND MUSE GLIMMER, THIS DIALECT GETS A FALLBACK RENDERER**
+   (`chat_template/llama3.rs`), on the same reasoning Mistral's has one: the
+   reference template is a handful of markers around the content (one
+   `<|start_header_id|>role<|end_header_id|>\n\ncontent<|eot_id|>` block per
+   message, no system preamble, no tool namespace), not a large second
+   implementation of something complex. It DOES literally emit
+   `<|begin_of_text|>`, unlike Mistral's fallback (that file's own Gotcha:
+   "it emits no `<s>`... this gap is inert" because Mistral's real template
+   always wins) -- `resolve_llama3` sets `bos_prefix_id: None` to match, so
+   `encode(_, add_bos: true)` never doubles it. A real install still always
+   ships its own template and takes the Jinja path (AGENTS.md Gotcha 41), so
+   this fallback is what a malformed install gets, same as every other
+   dialect's.
+
+11. **ADDING A `ChatDialect` VARIANT TOUCHES FOUR EXHAUSTIVE MATCHES, all
+    compiler-enforced but one.** `dialect::resolve::resolve_dialect`,
+    `chat_template::apply_dialect_chat_template`,
+    `chat_template::encode_text_continuation`, and
+    `structured_decoder::consume`'s dialect match are all non-wildcard, so a
+    missing arm is a build error rather than a runtime panic.
+    **NOT COMPILER-ENFORCED:** `server::handler::exec::needs_decoder`,
+    `cli::generate::format`, and `ffi::generate` key on the dialect through
+    `matches!(dialect, A | B)`, which compiles fine with a new variant
+    matching neither arm -- decide by hand whether the new dialect belongs
+    in those unions. `ChatDialect::Llama3` needed none of them (no
+    tool-calling or thinking markup to decode), which is why it is not the
+    worked example for that half.

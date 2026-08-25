@@ -270,12 +270,35 @@ fn check_sidecars(report: &mut ProbeReport, files: &[String], client: &Client, r
         report.chat_template = Some("chat_template.jinja".to_string());
         return;
     }
-    if report
+
+    // The FETCH happens here, where a `Client` is in scope; the DECISION is
+    // a pure function below, so the auth-failure branch (catalog Gotcha 12)
+    // is testable with a mock `Result` and no HTTP round trip -- the same
+    // split `evaluate_gguf`/`evaluate_config` already make for the gates
+    // above them (this file's own module doc).
+    let fetch = report
         .sidecars_present
         .iter()
         .any(|f| f == "tokenizer_config.json")
-    {
-        if let Ok(Some(bytes)) = client.get_optional(&repo.file_url("tokenizer_config.json")) {
+        .then(|| client.get_optional(&repo.file_url("tokenizer_config.json")));
+    resolve_chat_template(report, fetch);
+}
+
+/// Decide the `chat_template` verdict from what fetching
+/// `tokenizer_config.json` returned, or `None` when the sidecar list never
+/// had that file at all.
+///
+/// **AN AUTH FAILURE IS NOT A CONFIRMED ABSENCE.** `Client::get_optional`
+/// returns `Err` for anything other than 200/404, which on a gated
+/// repository with no `HF_TOKEN` is a 401 -- silent evidence of nothing. It
+/// gets its OWN warning rather than falling into the generic "no chat
+/// template found" line, which would read as a fact about the checkpoint
+/// rather than about this request. Measured directly: probing
+/// `meta-llama/Meta-Llama-3-8B-Instruct` (gated) unauthenticated reports
+/// `NONE FOUND`; with `HF_TOKEN` set, `tokenizer_config.json:chat_template`.
+fn resolve_chat_template(report: &mut ProbeReport, fetch: Option<Result<Option<Vec<u8>>, String>>) {
+    match fetch {
+        Some(Ok(Some(bytes))) => {
             let has_key = serde_json::from_slice::<serde_json::Value>(&bytes)
                 .ok()
                 .and_then(|v| v.get("chat_template").cloned())
@@ -285,6 +308,15 @@ fn check_sidecars(report: &mut ProbeReport, files: &[String], client: &Client, r
                 return;
             }
         }
+        Some(Ok(None)) | None => {}
+        Some(Err(e)) => {
+            report.warnings.push(format!(
+                "could not check tokenizer_config.json for a chat_template key: {e}. \
+                 This may be a gated repository refusing an unauthenticated request \
+                 (export HF_TOKEN) rather than a checkpoint that genuinely has none."
+            ));
+            return;
+        }
     }
     report.warnings.push(
         "no chat template found in either place, so an instruction-tuned checkpoint will \
@@ -292,4 +324,100 @@ fn check_sidecars(report: &mut ProbeReport, files: &[String], client: &Client, r
          answer (AGENTS.md Gotcha 41)."
             .to_string(),
     );
+}
+
+#[cfg(test)]
+mod chat_template_resolution_tests {
+    use super::*;
+
+    /// No `evaluate_gguf`/`evaluate_config` call in this crate builds a
+    /// `ProbeReport` for a case this narrow (only `warnings` and
+    /// `chat_template` are read below), so this constructs one field by
+    /// field, matching `evaluate_gguf`'s own construction in `gguf.rs`.
+    fn blank_report() -> ProbeReport {
+        ProbeReport {
+            repo: RepoRef::new("owner/name", "main"),
+            kind: crate::SourceKind::Gguf,
+            file: None,
+            download_bytes: None,
+            architecture: None,
+            family: None,
+            arch: None,
+            types: Vec::new(),
+            affine: None,
+            expert_stride: None,
+            sidecars_present: Vec::new(),
+            sidecars_missing: Vec::new(),
+            chat_template: None,
+            verdict: Verdict::Runnable,
+            warnings: Vec::new(),
+        }
+    }
+
+    /// The bug this whole function exists to fix: a 401 must NOT read as
+    /// the generic "no chat template found" warning, which states something
+    /// false about the checkpoint. It gets its own warning naming `HF_TOKEN`.
+    #[test]
+    fn an_http_error_gets_its_own_warning_naming_hf_token() {
+        let mut report = blank_report();
+        resolve_chat_template(
+            &mut report,
+            Some(Err("GET https://x: HTTP 401".to_string())),
+        );
+        assert_eq!(report.chat_template, None);
+        assert_eq!(report.warnings.len(), 1, "{:?}", report.warnings);
+        assert!(
+            report.warnings[0].contains("HF_TOKEN"),
+            "the auth-failure warning must point at the fix: {:?}",
+            report.warnings[0]
+        );
+        assert!(
+            !report.warnings[0].contains("no chat template found in either place"),
+            "the generic absence warning must not also fire: {:?}",
+            report.warnings[0]
+        );
+    }
+
+    /// A genuine 404 (or no `tokenizer_config.json` in the sidecar list at
+    /// all) is the one case that gets the generic warning -- this is what
+    /// the auth-failure case above must NOT be confused with.
+    #[test]
+    fn a_confirmed_absence_gets_the_generic_warning() {
+        for fetch in [Some(Ok(None)), None] {
+            let mut report = blank_report();
+            resolve_chat_template(&mut report, fetch);
+            assert_eq!(report.chat_template, None);
+            assert_eq!(report.warnings.len(), 1, "{:?}", report.warnings);
+            assert!(
+                report.warnings[0].contains("no chat template found in either place"),
+                "{:?}",
+                report.warnings[0]
+            );
+        }
+    }
+
+    #[test]
+    fn a_chat_template_key_present_resolves_and_warns_nothing() {
+        let mut report = blank_report();
+        let body = br#"{"chat_template": "{{ messages }}"}"#.to_vec();
+        resolve_chat_template(&mut report, Some(Ok(Some(body))));
+        assert_eq!(
+            report.chat_template.as_deref(),
+            Some("tokenizer_config.json:chat_template")
+        );
+        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    }
+
+    /// A `tokenizer_config.json` that parses but carries no `chat_template`
+    /// key is a CONFIRMED absence (not an error), so it takes the generic
+    /// warning same as a 404 -- the fetch succeeded and the key is not there.
+    #[test]
+    fn a_tokenizer_config_with_no_chat_template_key_is_a_confirmed_absence() {
+        let mut report = blank_report();
+        let body = br#"{"bos_token": "<s>"}"#.to_vec();
+        resolve_chat_template(&mut report, Some(Ok(Some(body))));
+        assert_eq!(report.chat_template, None);
+        assert_eq!(report.warnings.len(), 1);
+        assert!(report.warnings[0].contains("no chat template found in either place"));
+    }
 }

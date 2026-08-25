@@ -36,14 +36,14 @@ fn fixture() -> MfTokenizer {
 }
 
 fn decoder(tok: &MfTokenizer) -> StructuredAssistantDecoder<'_> {
-    StructuredAssistantDecoder::new(tok, HashSet::new(), || "toolu_0".to_string())
+    StructuredAssistantDecoder::new(tok, HashSet::new(), || "toolu_0".to_string(), &[])
 }
 
 /// A decoder that has been OFFERED `get_weather`, which is what makes a
 /// `to=functions.get_weather` header a call rather than an ordinary body.
 fn tool_decoder(tok: &MfTokenizer) -> StructuredAssistantDecoder<'_> {
     let allowed = HashSet::from(["get_weather".to_string()]);
-    StructuredAssistantDecoder::new(tok, allowed, || "toolu_0".to_string())
+    StructuredAssistantDecoder::new(tok, allowed, || "toolu_0".to_string(), &[])
 }
 
 /// A frame token carries no visible text of its own.
@@ -187,7 +187,7 @@ fn a_tool_call_is_emitted_from_finish_because_its_terminator_is_a_stop_token() {
 fn a_recipient_outside_the_functions_namespace_is_not_a_call() {
     let tok = fixture();
     let allowed = HashSet::from(["python".to_string()]);
-    let decoder = StructuredAssistantDecoder::new(&tok, allowed, || "toolu_0".to_string());
+    let decoder = StructuredAssistantDecoder::new(&tok, allowed, || "toolu_0".to_string(), &[]);
 
     let events = run_with(
         decoder,

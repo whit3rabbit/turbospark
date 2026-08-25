@@ -1,6 +1,6 @@
 use model_io::{ArchConfig, ResidentIndex};
 
-use crate::families::qwen::{prefixed_layer_tensor, TRUNK_PREFIX};
+use crate::families::qwen::{prefixed_layer_tensor, MOE_SPECULATION_BLOCKER_MARKER, TRUNK_PREFIX};
 use crate::real_forward::RealForwardError;
 use crate::real_forward_utils::entry;
 
@@ -159,12 +159,19 @@ impl MtpState {
     ///
     /// **A head is necessary and not sufficient, and that gap is a latent bug
     /// this function exists to close.** Drafting needs `mtp.fc.weight`;
-    /// VERIFYING needs `produce_batched`, whose refusals are narrower --
-    /// dense only, because the routed pair has no batched kernel, and INT4
-    /// only, because `encode_gemm_any` has no other arm. So a 1-bit, 2-bit or
-    /// MoE checkpoint that happened to carry a head would pass a
-    /// head-presence check, enable speculation, and then fail at the first
-    /// verify with the generation already under way.
+    /// VERIFYING needs `produce_batched`, which is INT4 only, because
+    /// `encode_gemm_any` has no other arm. So a 1-bit or 2-bit checkpoint
+    /// that happened to carry a head would pass a head-presence check, enable
+    /// speculation, and then fail at the first verify with the generation
+    /// already under way.
+    ///
+    /// **THE MoE ARM IS THE OTHER KIND OF REFUSAL AND THE TWO ARE NOT
+    /// INTERCHANGEABLE.** `produce_batched` was dense-only until ROADMAP
+    /// Phase 3 (`5640c3f`) landed the routed half, so that arm no longer
+    /// reports a capability the engine lacks: it reports that nothing can
+    /// DRIVE the verify, since no published MoE conversion of this
+    /// architecture carries an ingestible drafter. Lifting it is a checkpoint
+    /// question rather than a kernel one, which is why the message says so.
     ///
     /// Note this says nothing about whether a model DECODES: every one of
     /// those installs decodes normally, and the batched pass is used by
@@ -175,15 +182,26 @@ impl MtpState {
         has_head: bool,
     ) -> Option<String> {
         // THE ARCHITECTURAL CHECKS COME FIRST, and the order is a choice about
-        // which reason is more useful. A MoE or sub-4-bit install cannot
-        // speculate whatever head it acquires, so naming the head as the
-        // obstacle would send a reader looking for a checkpoint that does not
-        // help. It also makes these two arms reachable on the fixtures that
-        // exist, which a head-first order does not.
+        // which reason is more useful. Neither a MoE nor a sub-4-bit install
+        // can speculate on any head it acquires from the official checkpoint,
+        // so naming THIS install's missing head would send a reader after a
+        // shard that does not help. It also makes these two arms reachable on
+        // the fixtures that exist, which a head-first order does not.
+        //
+        // THE MoE ARM IS A POLICY AND SAYS SO. It used to read "the routed
+        // pair has no batched kernel", which was true until `5640c3f` and
+        // sends a reader hunting a kernel that now exists and is gated
+        // (`moe_batch.rs`). What is missing is a DRAFTER: every mlx
+        // conversion of this architecture's MoE half drops `mtp.*` (read off
+        // the published indexes), and Ornith's own head is itself MoE where
+        // `REQUIRED` names the dense FFN tensors a `qwen3_5` head has.
         if arch.num_experts != 0 {
             return Some(format!(
-                "the batched verify is dense-only and this install routes to \
-                 {} experts; the routed pair has no batched kernel",
+                "{MOE_SPECULATION_BLOCKER_MARKER}: this install routes to {} experts, \
+                 and no published MoE conversion of this architecture ships a drafter \
+                 this port can ingest (every mlx conversion drops mtp.*). The batched \
+                 routed verify itself runs, so this is a checkpoint gap and not a \
+                 missing kernel",
                 arch.num_experts
             ));
         }
@@ -217,9 +235,20 @@ impl MtpState {
             )),
             Some(_) => {
                 if !has_head {
+                    // CARRIES THE POINTER `MtpState::build`'s open-time error
+                    // carries, and the reason it has to is a consequence of
+                    // the headless arm in `draft_policies`: since 2026-08-21 a
+                    // named block on a DENSE headless install is refused HERE
+                    // rather than at the open, so this is the only string such
+                    // a caller sees, and it had quietly lost the half that
+                    // says which artifact fixes it. The advice is correct on a
+                    // dense install and a wild goose chase on a MoE one, which
+                    // is why the MoE arm above returns first.
                     return Some(format!(
                         "this install carries no multi-token-prediction head \
-                         ({FC} is not in the resident index)"
+                         ({FC} is not in the resident index); the mlx conversion drops \
+                         mtp.*, so stream an install that adds the official checkpoint's \
+                         last shard (docs/MTP.md)"
                     ));
                 }
                 None
