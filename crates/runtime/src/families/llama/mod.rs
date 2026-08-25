@@ -54,6 +54,8 @@ use foundation::LogitValue;
 use crate::real_forward::{RealForwardError, RealForwardRunner};
 use crate::real_forward_dispatch::{encode_embed_any, encode_gemv_any};
 use crate::real_forward_utils::{entry, norm_view};
+use crate::resid_capture::encode_resid_capture;
+use crate::steering::encode_steering;
 
 pub(crate) fn layer_tensor(layer: usize, suffix: &str) -> String {
     format!("language_model.model.layers.{layer}.{suffix}")
@@ -131,6 +133,8 @@ impl RealForwardRunner {
             scratch,
             kv,
             llama,
+            resid_capture,
+            steering,
             streamers,
             slot_buffers,
             routed_blobs,
@@ -146,6 +150,8 @@ impl RealForwardRunner {
             &self.scratch,
             &mut self.kv,
             self.real_llama.as_ref().expect("real llama state present"),
+            self.resid_capture.as_ref(),
+            self.steering.as_ref(),
             &mut self.streamers,
             &self.slot_buffers,
             &self.routed_blobs,
@@ -225,6 +231,20 @@ impl RealForwardRunner {
                     dense_inter,
                     use_silu,
                 )?;
+                // The layer's OUTPUT: `encode_llama_layer_dense` ends with
+                // the raw residual add, so the stream below this call is what
+                // feeds the next block. That is the boundary llama.cpp's
+                // `build_cvec` applies a control vector at, which is what
+                // makes a vector written by this port and one written by
+                // `repeng` the same edit here.
+                //
+                // STEERING FIRST, THEN THE CAPTURE, matching the qwen flow.
+                // The two are unobservable in either order on the normal
+                // configuration (a direction is extracted with steering OFF),
+                // and stating one order in one place is what keeps the
+                // question from having two answers.
+                encode_steering(context, &pass, scratch, steering, layer, hidden, 1)?;
+                encode_resid_capture(context, &pass, scratch, resid_capture, layer, hidden)?;
                 continue;
             }
 
@@ -285,6 +305,15 @@ impl RealForwardRunner {
                 top_k,
                 use_silu,
             )?;
+            // Same boundary as the dense branch, reached by a different
+            // route: this half's post-FFN residual add happens INSIDE
+            // `encode_llama_layer_moe`, so the layer's output exists only
+            // once that call returns. Note the pass here is the ROUTED
+            // command buffer rather than cb1 -- the router's top-k forced a
+            // commit above -- which is why the call sits after the encode
+            // rather than beside the dense one.
+            encode_steering(context, &pass, scratch, steering, layer, hidden, 1)?;
+            encode_resid_capture(context, &pass, scratch, resid_capture, layer, hidden)?;
         }
 
         if !self.skip_head {
@@ -323,6 +352,18 @@ impl RealForwardRunner {
         phases.final_cb_gpu_nanos += (pass.commit_and_wait_with_gpu_time() * 1e9) as u64;
         phases.final_wait_nanos += t_wait.elapsed().as_nanos() as u64;
         self.kv.advance();
+        // The command buffer has been waited on, so every layer's capture
+        // region is final. **THE ENCODE HALF IS NOT THE WHOLE HOOK**: the
+        // per-layer copies fill a buffer and this is what reads it back, and
+        // wiring only the first half gave `[resid-capture] no non-prefill
+        // pass ran; wrote nothing` -- loud, which is the good failure mode,
+        // and still a family half-wired. `record_pass` keeps at most one
+        // snapshot per generation and decides which by `skip_head`, so it is
+        // called on every pass rather than guarded here.
+        let skip_head = self.skip_head;
+        if let Some(capture) = self.resid_capture.as_mut() {
+            capture.record_pass(position, skip_head);
+        }
 
         if self.skip_head {
             return Ok(());

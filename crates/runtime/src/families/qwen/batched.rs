@@ -69,12 +69,12 @@ use super::batched_layers::{
     encode_dense_ffn_batched, encode_full_attention_block_batched, encode_linear_block_batched,
 };
 pub(crate) use super::BatchedScratch;
-use crate::families::qwen::produce::encode_steering;
 use crate::families::qwen::{layer_tensor, RMS_EPS};
 use crate::real_forward::RealForwardRunner;
 use crate::real_forward_dispatch::{encode_embed_any, encode_gemm_any};
 use crate::real_forward_types::RealForwardError;
 use crate::real_forward_utils::norm_view;
+use crate::steering::encode_steering;
 
 /// One token's router GEMV, into row `m` of the batch's own logits
 /// buffer.

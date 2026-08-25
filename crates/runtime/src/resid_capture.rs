@@ -48,7 +48,7 @@
 //! floats, which is ~4 MB of JSON text and a slow parse, against 1.3 MB of
 //! bytes that numpy reads in one call.
 
-use model_io::{ArchConfig, ModelFamily};
+use model_io::ArchConfig;
 
 /// One generation's capture: the per-layer residual at the last prompt token.
 struct Snapshot {
@@ -83,17 +83,18 @@ impl ResidCapture {
     /// with no error anywhere.
     pub(crate) fn from_env(context: &gpu::MetalContext, arch: &ArchConfig) -> Option<Self> {
         let path = std::env::var_os("MFERENCE_RESID_CAPTURE")?;
-        // `matches!` over both halves of the shared architecture, never
-        // `== QwenGdnMoe`: the dense and MoE halves run ONE flow, and a
-        // condition naming only one of them is a latent bug for exactly as
-        // long as no checkpoint of the other exists (AGENTS.md Gotcha 61).
-        if !matches!(
-            arch.family,
-            ModelFamily::QwenGdnMoe | ModelFamily::QwenGdnDense
-        ) {
+        // THE SAME PREDICATE THE STEERING REFUSAL USES, not a second list
+        // that happens to agree. The capture and the edit land on one
+        // boundary by construction, so a family wired for one and not the
+        // other extracts a direction from a place nothing steers -- or
+        // steers where nothing was measured. It also gets Gotcha 61's rule
+        // for free: the predicate matches over BOTH halves of every shared
+        // architecture, where a `== QwenGdnMoe` here would be a latent bug
+        // for exactly as long as no checkpoint of the other half existed.
+        if !crate::steering::family_dispatches_steering(arch.family) {
             eprintln!(
-                "[resid-capture] MFERENCE_RESID_CAPTURE is wired for the qwen flow only; \
-                 family {:?} does not feed the capture, ignoring",
+                "[resid-capture] MFERENCE_RESID_CAPTURE is not wired for family {:?}: its \
+                 flow does not feed the capture, ignoring",
                 arch.family
             );
             return None;
@@ -213,4 +214,47 @@ impl Drop for ResidCapture {
             ),
         }
     }
+}
+
+/// Lift this layer's OUTPUT -- the residual stream after the FFN join --
+/// into the capture, if one is open.
+///
+/// Shared by every family whose flow feeds the capture, for the reason
+/// `steering::encode_steering` is shared: this and the edit must land on the
+/// SAME boundary or a direction is extracted from one place and applied to
+/// another, and two copies of the call are two chances to disagree about
+/// which.
+///
+/// Zero dispatches when the capture is not open, which is what keeps
+/// `MFERENCE_RESID_CAPTURE` unset identical in bytes and in footprint to the
+/// engine that shipped before this module existed.
+///
+/// It reuses `encode_dflash_copy_rows` rather than adding a kernel: that one
+/// is a generic strided FP16 row copy and the drafter already lifts
+/// `scratch.x` with it at this exact boundary. A COPY cannot change what it
+/// copies, so generated text is byte-identical with the capture on -- the
+/// same guarantee `ffn_hist` gets by redirecting a destination, reached the
+/// other way round because nothing writes the residual stream to a spare
+/// buffer for us to redirect.
+pub(crate) fn encode_resid_capture(
+    context: &mut gpu::MetalContext,
+    pass: &gpu::PassEncoder,
+    scratch: &crate::real_forward_types::DecodeScratch,
+    capture: Option<&ResidCapture>,
+    layer: usize,
+    hidden: usize,
+) -> Result<(), crate::real_forward_types::RealForwardError> {
+    let Some(c) = capture else {
+        return Ok(());
+    };
+    gpu::encode_dflash_copy_rows(
+        context,
+        pass,
+        (&scratch.x, 0),
+        (&c.capture, c.layer_offset(layer)),
+        1,
+        hidden as u32,
+        c.hidden() as u32,
+    )
+    .map_err(crate::real_forward_types::RealForwardError::Gpu)
 }

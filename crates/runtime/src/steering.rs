@@ -259,6 +259,110 @@ impl SteeringState {
     }
 }
 
+/// Does this family's decode flow dispatch the steering edit and feed the
+/// capture?
+///
+/// **ONE predicate answers both questions, and that is the point.** The edit
+/// and the capture land on the same boundary by construction (see
+/// [`encode_steering`]), so a family wired for one and not the other is
+/// either a direction extracted from a place nothing steers, or a direction
+/// applied where nothing was measured. Two lists would let those drift; this
+/// one cannot. `real_forward_open` refuses a set on a family this rejects and
+/// `resid_capture` declines to open a capture there, both by name rather than
+/// silently.
+///
+/// It is a MATCH and not a default-true test: a new family arrives with no
+/// hook in its flow, so the safe answer for an unlisted one is `false` --
+/// which fails loudly at open rather than writing a file of zeros
+/// (`ffn_hist`'s reason, and `crates/runtime` Gotcha 7's).
+pub(crate) fn family_dispatches_steering(family: model_io::ModelFamily) -> bool {
+    use model_io::ModelFamily as F;
+    match family {
+        // `families/qwen/`, both halves, per-token and batched.
+        F::QwenGdnMoe | F::QwenGdnDense => true,
+        // `families/llama/`, both halves: Mixtral's routed experts and the
+        // dense Llama / Mistral FFN join at the same boundary, and
+        // `Qwen3Moe` runs the same flow.
+        F::Llama | F::Qwen3Moe => true,
+        // No hook in the flow yet. Gemma 4 additionally has a CHUNKED
+        // prefill driver that would need its own call site, so wiring it is
+        // more than one line (`docs/OBLITERATION.md`, Open).
+        F::Gemma4 | F::GptOss | F::MuseGlimmer | F::DeepseekV4Flash => false,
+    }
+}
+
+/// Apply this layer's directional-steering edit, if one is configured for it.
+///
+/// **ONE function serves every dispatch site, and that is the whole design.**
+/// It lived in `families/qwen/produce.rs` while the qwen flow was the only
+/// caller; `families/qwen/batched.rs` was the second and `families/llama/`
+/// the third, so it moved to the module that owns the state rather than
+/// staying in one family's file. The alternative is N dispatch sites that
+/// must agree on the mode, the alpha, the direction offset, the row stride
+/// and the coefficient block, and a disagreement in any one of them is a
+/// fluent model that is not the one the caller asked for.
+///
+/// The BOUNDARY is the caller's to choose and every caller chooses the same
+/// one: the residual stream after the FFN join, which is the layer's OUTPUT
+/// and is where `resid_capture` lifts from. That is also where llama.cpp
+/// applies a control vector (`build_cvec`, between the FFN residual add and
+/// `l_out`), which is what makes a vector written here and a vector written
+/// there the same edit. Steering at a different boundary than the capture
+/// would be a different edit than the one measured.
+///
+/// Zero dispatches when steering is off, and zero for a layer the direction
+/// set does not cover: the per-layer table holds `None` there rather than a
+/// zero vector, so a set steering three of sixty-four layers costs three
+/// dispatches per token and not sixty-four.
+///
+/// `rows` is 1 on a per-token path and the block size on a batched verify.
+pub(crate) fn encode_steering(
+    context: &mut gpu::MetalContext,
+    pass: &gpu::PassEncoder,
+    scratch: &crate::real_forward_types::DecodeScratch,
+    steering: Option<&SteeringState>,
+    layer: usize,
+    hidden: usize,
+    rows: usize,
+) -> Result<(), RealForwardError> {
+    let Some(s) = steering else {
+        return Ok(());
+    };
+    // Checked before the coverage test, so the refusal does not depend on
+    // whether THIS layer happens to be steered: a block too wide for the
+    // coefficient buffer is a property of the block.
+    if rows > MAX_STEER_ROWS {
+        return Err(RealForwardError::Unsupported(format!(
+            "steering a block of {rows} rows, but the coefficient buffer holds {MAX_STEER_ROWS} \
+             per layer; steering fewer rows than the block would draw part of a block from the \
+             unsteered model"
+        )));
+    }
+    let Some(l) = s.layer(layer) else {
+        return Ok(());
+    };
+    gpu::encode_steer_direction(
+        context,
+        pass,
+        (&scratch.x, 0),
+        (&s.directions, l.offset),
+        // A block of FP32 slots per layer, so the coefficients of a whole
+        // pass survive to be read back together after the commit.
+        (&s.coeff, SteeringState::coeff_offset(layer)),
+        &gpu::SteerParams {
+            d_len: hidden as u32,
+            rows: rows as u32,
+            row_stride: hidden as u32,
+            mode: s.mode,
+            alpha: s.alpha,
+            inv_norm: l.inv_norm,
+            target: s.target,
+            gate_threshold: s.gate_threshold,
+        },
+    )
+    .map_err(RealForwardError::Gpu)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -989,16 +989,145 @@ that implements it, check the derivation against its own premises before
 writing UNVERIFIED beside it -- the honest hedge made this look measured-open
 rather than reasoned-and-wrong, and it survived five sessions on that.
 
+## A second family, and someone else's direction (2026-08-24)
+
+`families/llama/` steers, which makes this the second flow to carry the edit
+and the first that can run a vector this port did not extract. It covers
+Mixtral, `qwen3moe`, and the dense Mistral / Llama 2 / 3.x half -- both
+branches of the flow, which are two call sites and not one.
+
+### What was wired, and the one predicate that keeps it honest
+
+`encode_steering` moved out of `families/qwen/produce.rs` and into
+`steering.rs` beside the state it reads, and `encode_resid_capture` moved into
+`resid_capture.rs` the same way. Neither is a tidy-up: with three call sites
+and then four, N copies would have to agree on the mode, the alpha, the
+direction offset, the row stride and the coefficient block, and a
+disagreement in any one of them is a fluent model that is not the one asked
+for.
+
+**The family gate is now ONE predicate, `family_dispatches_steering`, read by
+both the steering refusal and the capture guard.** They were two lists that
+happened to agree. The edit and the capture land on the same boundary by
+construction, so a family wired for one and not the other extracts a direction
+from a place nothing steers, or steers where nothing was measured -- and two
+lists is exactly how that drift happens. One `match`, no default arm, so a new
+family answers `false` and fails loudly rather than writing a file of zeros.
+
+**THE ENCODE HALF IS NOT THE WHOLE HOOK, and wiring only it is a mistake this
+session made.** The per-layer copies fill a buffer; a separate readback after
+the command buffer is waited on is what keeps a snapshot. With the copies in
+and the readback missing, the first real capture printed `no non-prefill pass
+ran; wrote nothing` -- loud, which is the good failure mode, and still a
+family half-wired. Grep for `record_pass` when adding a family, not just for
+the encode.
+
+### The numbering correction, confirmed on a real model rather than read
+
+The interop section above settled `direction.N = block N` by READING
+llama.cpp and confirmed it against a published vector's coverage. This is the
+first time a foreign vector has been APPLIED here, and the startup line reads
+
+```
+steering: ablate at alpha 0.5 over 31 of 32 layers
+```
+
+**31 of 32, block 0 unsteered**, which is exactly llama.cpp's
+`for il = 1; il < n_layer`. Under the pre-correction mapping the same bytes
+would have steered block 0 and left block 31 alone.
+
+### The alpha band does NOT transfer, and the layer band DOES
+
+Item 8 asked whether either band survives a direction extracted by someone
+else's method. Measured on `mistral7b`
+(`Mistral-7B-Instruct-v0.3` Q4_K_M, dense `llama`, hidden 4096, 32 layers)
+with `jukofyork/creative-writing-control-vectors-v3.0`'s
+`mistral-0.3:7b-honesty_vs_machiavellianism__machiavellianism.gguf` --
+the vector set's own build for this exact checkpoint, so the model and the
+direction match and only the METHOD is foreign.
+
+The anchor is the unsteered model's perplexity on the frozen reference
+answer, **9.3971**: that is what ordinary fluent prose costs it. Read the
+column against that, never against 1.0.
+
+| alpha | ppl | x anchor | distinct tokens |
+|---|---|---|---|
+| 0 | 1.3756 | 0.1x | 35 |
+| 0.5 | 1.6097 | 0.2x | 34 |
+| 1 | 1.7602 | 0.2x | 35 |
+| 2 | 2.7324 | 0.3x | 35 |
+| 4 | 40.3439 | 4.3x | 32 |
+| 8 | 11.0857 | 1.2x | **3** |
+
+**Usable to alpha 2**, against 0.3 for this port's ocean direction on
+`qwen38-27b` and 0.8 for its register one. So the band is two-and-a-half to
+six times wider, and the direction it moves is the one the norms predict:
+this vector's per-layer norms run 0.0052 to 2.5433 where this port's run 0.05
+to 116.34. **An alpha read off one direction is not an operating point for
+another**, which is the third independent time this page has had to say so.
+
+Note the ppl column FALLS from alpha 4 to 8 while the distinct-token count
+collapses 32 to 3. That is degenerate repetition, which the unsteered model
+finds very predictable -- the reason the harness reads the distinct column as
+the collapse criterion and not the peak.
+
+The layer band is the opposite result. Steering `all` and steering `1:25`
+(dropping the last six layers) are IDENTICAL at every usable alpha -- 1.3756
+and 2.7324, 35 distinct tokens, both arms:
+
+| band | alpha 2 | alpha 4 | alpha 8 | usable |
+|---|---|---|---|---|
+| all (31 layers) | 2.7324 | 40.3439 | 11.0857 (3 distinct) | 2 |
+| 1:25 (25 layers) | 2.7324 | 64.5058 | 27.7245 (4 distinct) | 2 |
+| 8:23 (16 layers) | 2.1517 | 7.7828 | 99.9566 | 4 |
+
+**That REPLICATES the page's late-layer refutation on a different model, a
+different family and a foreign direction**, where excluding layers 51-63 of
+64 on `qwen38-27b` left the greedy path byte-identical at every usable alpha.
+Two of the page's claims have now split cleanly: the layer-band result is a
+property of this ENGINE, the alpha ceiling is a property of a DIRECTION.
+
+The middle-only band tolerating alpha 4 is reported and not claimed: it
+steers 16 layers against 31, so a weaker edit is the ordinary explanation and
+nothing here isolates the band from the count.
+
+### What is not measured
+
+No throughput number for this family. The machine was running a test suite
+throughout, and a timing row taken under that is Gotcha 43 rather than a
+measurement. The page's existing cost result (per steered layer, very nearly
+proportional to the band) has no reason to be family-specific, but it has not
+been checked here.
+
 ## Open, and stated as open
 
 - ~~**llama.cpp interop of the layer indexing is UNVERIFIED**~~ --
   **CLOSED 2026-08-24, AND THE ANSWER IT WAS CARRYING WAS WRONG.** See the
   section below: `direction.N` is llama.cpp's block `N`, this port read it as
   block `N - 1`, and the two were off by one for the life of the surface.
-- **The qwen family only.** Other families disable the CAPTURE with a
-  diagnostic and REFUSE a direction set at open by name -- a set that loaded,
-  reported itself on the startup line and changed nothing would be the exact
-  silent no-op this whole surface is built to avoid.
+- ~~**The qwen family only**~~ -- **TWO FLOWS SINCE 2026-08-24**, the qwen one
+  (both halves, per-token and batched) and `families/llama/` (Mixtral,
+  `qwen3moe`, and the dense Mistral / Llama 2 / 3.x half). Four families of
+  eight. The remaining four still disable the CAPTURE with a diagnostic and
+  REFUSE a direction set at open by name -- a set that loaded, reported itself
+  on the startup line and changed nothing would be the exact silent no-op this
+  whole surface is built to avoid. Both gates now read ONE predicate
+  (`steering::family_dispatches_steering`) rather than two lists that agreed.
+  Gemma 4 is the awkward one of the four and not merely the next one: it has a
+  CHUNKED prefill driver as well as a per-token path, so wiring it is two call
+  sites plus a third in `prefill_chunk_real_gemma4`, and a chunked prefill that
+  skipped the edit would steer a generation's decode and not its prompt.
+- **No Llama-3 chat dialect, so no Llama-3 checkpoint runs here at all.**
+  Unrelated to steering and found by walking into it: `detect_dialect` falls
+  through to Gemma for a table carrying `<|begin_of_text|>` /
+  `<|start_header_id|>` / `<|eot_id|>` and nothing else, and `resolve_gemma`
+  then fails on a missing `<pad>`. The failure is loud and lands before any
+  weight byte streams (`crates/catalog`'s sidecars-first order), which is why
+  it costs seconds rather than a re-stream. `Meta-Llama-3-8B-Instruct` is
+  otherwise RUNNABLE by the probe -- 32 layers, hidden 4096, Q4_K/Q6_K, no
+  `rope_freqs.weight` -- so this is a tokenizer gap and not an architecture
+  one. It is what sent this item to Mistral-7B-v0.3 instead, which needed no
+  new dialect and is a checkpoint the same vector set publishes for.
 - ~~**No throughput number**~~ -- **MEASURED 2026-08-24**, see the section
   above: -1.72% of decode with all 64 layers steered, -0.75% at 26, and
   `renorm` free relative to `ablate`. The cost is per steered layer and very
@@ -1013,9 +1142,13 @@ rather than reasoned-and-wrong, and it survived five sessions on that.
   per-token path calls, the refusal is lifted, and a speculative steered run
   is byte-identical to a sequential steered one on both drafters. What is NOT
   closed is the chunked-prefill driver, which is a different function
-  (`prefill_chunk_real_gemma4`, Gemma 4 only) and which steering does not
-  reach because steering is qwen-only. The two are named together in older
-  notes and are not the same code.
+  (`prefill_chunk_real_gemma4`, Gemma 4 only). **The reason it is out of reach
+  changed on 2026-08-24 and the conclusion did not**: it used to be "steering
+  is qwen-only", and steering is now qwen AND llama, so what keeps the two
+  apart is simply that the driver is Gemma's and Gemma does not steer. The
+  sets still do not intersect; they will the moment Gemma is wired, which is
+  why that item names all three call sites. The two are named together in
+  older notes and are not the same code.
 - **No integration test for the capture**, matching how `ffn_hist` and
   `router_hist` are treated: an env-gated capture needs a process-global
   write, which races other tests in the same binary. The real-model A/B is
@@ -1057,19 +1190,24 @@ Ranked by value per cost.
    which refutes the prediction the work was built around.
 7. ~~llama.cpp interop~~ -- **LANDED 2026-08-24**, and it found a real
    off-by-one rather than confirming the mapping. See the section below.
-8. **A THIRD direction, and a direction someone else extracted.** Both
-   corpora here are this port's own captures of matched instruction pairs on
-   one checkpoint, so they share a shape as well as a source. The ceiling's
-   failure was only visible because the second direction was much stronger
-   than the first. What else is a property of that shape is not known.
-   **Item 7 brought a published `repeng` vector onto the disk and it is
-   READ but not APPLIED**: it is a Llama-3-8B vector at hidden 4096 against
-   this port's qwen38 at 5120, so it cannot be run here without a Llama
-   install. What it already answered is the numbering; what it has not
-   answered is whether the alpha band and the layer band survive a direction
-   extracted by someone else's method. Note its norms run 0.0052 to 2.5433
-   against this port's 0.05 to 116.34, so the alpha scales are not
-   comparable and a band read from one will not transfer to the other.
+8. ~~A THIRD direction, and a direction someone else extracted~~ --
+   **LANDED 2026-08-24, and it split the page's two band claims in two.** See
+   the section above. `families/llama/` steers, `mistral7b` is installed, and
+   a `jukofyork` vector built for that exact checkpoint runs on it. The ALPHA
+   band does not transfer (usable to 2 here against 0.3 and 0.8 for this
+   port's own directions, in the direction the 46x norm difference predicts);
+   the LAYER band does (dropping the last six of 32 layers is a no-op at every
+   usable alpha, exactly as dropping 51-63 of 64 was). So the layer result is
+   a property of this engine and the alpha ceiling is a property of a
+   direction. The Llama-3-8B vector item 7 downloaded is still unapplied and
+   now for a smaller reason: no Llama-3 chat dialect (see Open).
+9. **A fifth family, and the chunked prefill driver with it.** Gemma 4 is the
+   next flow worth wiring and is the one that cannot be done in two lines: its
+   chunked prefill is a separate driver, so a steered Gemma would otherwise
+   edit the decode and not the prompt. Doing it also retires the last
+   "steering does not reach the chunked path" caveat, which is currently true
+   for a reason (Gemma-only driver, qwen-and-llama-only steering) that stops
+   being true the moment those two sets intersect.
 
 ## Reproducing
 
@@ -1189,6 +1327,46 @@ TURBOSPARK_CONTROL_VECTOR=/tmp/steer/d.gguf \
 # llama.cpp cannot reach. 509 kB, no model load, no GPU.
 TURBOSPARK_FOREIGN_CONTROL_VECTOR=/tmp/steer-interop/pub/....gguf \
   cargo test -p turbospark-repack --test control_vector_file -- --ignored --nocapture
+```
+
+### Running someone else's vector (the 2026-08-24 section)
+
+The vector must be built for the checkpoint it steers. `jukofyork`'s set
+covers 70-odd base models and two of them are already catalog rows here,
+`Mistral-7B-Instruct-v0.3` and `Mixtral-8x7B-Instruct-v0.1`; picking one of
+those is what makes the METHOD the only foreign variable. A vector for a
+model this port cannot run is not a substitute -- shapes matching is not the
+same as bases matching, and `SteeringSet::validate` checks only the shape.
+
+```sh
+# 4.1 GiB, dense `llama`, hidden 4096, 32 layers. ~6 min.
+cargo run --release -p turbospark-cli --bin turbospark-model -- pull mistral7b
+
+hf download jukofyork/creative-writing-control-vectors-v3.0 \
+  "Mistral-7B-Instruct-v0.3/mistral-0.3:7b-honesty_vs_machiavellianism__machiavellianism.gguf" \
+  --local-dir /tmp/steer-llama
+
+# Expect `steering: ablate at alpha 1 over 31 of 32 layers` on stderr:
+# 31 of 32 is llama.cpp's own apply range, with block 0 unsteered.
+./target/release/turbospark-check --model mistral7b --messages-file /tmp/p.json \
+  --max-new 160 --seed 1 --temperature 0.0001 --top-k 1 \
+  --steering "/tmp/steer-llama/Mistral-7B-Instruct-v0.3/mistral-0.3:7b-honesty_vs_machiavellianism__machiavellianism.gguf" \
+  --steering-scale 1.0
+
+# The band tables above. ~1 min per band; the alphas and bands are the axes.
+TURBOSPARK_PROBE_INSTALL_DIR=~/.turbospark/models/mistral7b.gturbo \
+TURBOSPARK_STEERING_VECTOR=/tmp/steer-llama/....gguf \
+TURBOSPARK_STEERING_ALPHAS=0.0,0.5,1.0,2.0,4.0,8.0 \
+TURBOSPARK_STEERING_BANDS=all,1:25,8:23 \
+  cargo test -p turbospark-bench --test steering_sweep --release -- --ignored --nocapture
+
+# The capture works on this family too, so a direction can be EXTRACTED from
+# it rather than only applied. Writes a 32 x 4096 snapshot at the last prompt
+# token; per-layer norms should rise through the stack (0.19 to 30.47 here)
+# and a file of zeros means the family is not really feeding it.
+MFERENCE_RESID_CAPTURE=/tmp/steer-llama/cap.json \
+  ./target/release/turbospark-check --model mistral7b \
+  --messages-file /tmp/p.json --max-new 1 --temperature 0.0001 --top-k 1
 ```
 
 The server takes the same flags, resolved once at startup; unlike

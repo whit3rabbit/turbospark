@@ -296,20 +296,19 @@ impl RealForwardRunner {
         runner.steering =
             crate::steering::SteeringState::build(&runner.context, &runner.arch, &steering)?;
         if runner.steering.is_some()
-            && !matches!(
-                runner.arch.family,
-                model_io::ModelFamily::QwenGdnMoe | model_io::ModelFamily::QwenGdnDense
-            )
+            && !crate::steering::family_dispatches_steering(runner.arch.family)
         {
-            // Refused BY NAME rather than ignored. Only the qwen flow
-            // dispatches the edit today, so on any other family a direction
-            // set would load, report itself on the startup line, and change
-            // nothing -- the caller would measure the unsteered engine and
-            // report it as the steered one (`MtpState::build`'s argument for
-            // an explicitly-requested drafter).
+            // Refused BY NAME rather than ignored. A family whose flow does
+            // not dispatch the edit would load a direction set, report it on
+            // the startup line, and change nothing -- the caller would
+            // measure the unsteered engine and report it as the steered one
+            // (`MtpState::build`'s argument for an explicitly-requested
+            // drafter).
             return Err(RealForwardError::Unsupported(format!(
-                "steering is wired for the qwen flow only; family {:?} does not dispatch \
-                 the edit, so a direction set here would be a silent no-op",
+                "steering is not wired for family {:?}: its flow does not dispatch the edit, \
+                 so a direction set here would be a silent no-op. Wired today: the qwen flow \
+                 (both halves) and the llama flow (Mixtral, Qwen3-MoE, and the dense Llama / \
+                 Mistral half)",
                 runner.arch.family
             )));
         }
