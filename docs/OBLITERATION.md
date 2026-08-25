@@ -912,10 +912,15 @@ one. So re-running the extraction and then the sweep is a different
 experiment, not a reproduction, and the difference is not small in the place
 it lands: the layer-band section above measures block 0's TRUE removed
 fraction at 72.1%, the highest in the model, against the 0.4% its `share`
-column reports. Reproduce a frozen row against the vector it was taken on
-(`/tmp/steer/ocean.gguf`, `/tmp/steer2/register.gguf`, both still read 64 of
-64), and treat a regenerated one as a new direction that happens to share a
-corpus.
+column reports. Reproduce a frozen row against the vector it was taken on and treat a
+regenerated one as a new direction that happens to share a corpus. **Those
+two vectors LIVE OUTSIDE `/tmp` since 2026-08-24**, at
+`~/models/steering-vectors/{ocean,register}-legacy-layerbase0.gguf`, because
+a file that cannot be regenerated has no business in a directory whose whole
+job is to be wiped -- this page has twice recorded losing an artifact to a
+disk cleanup, and both times the note saying it was cheap to regenerate had
+gone stale before anyone read it. 1.3 MB each, and the name now carries the
+convention they declare.
 
 ### Settled by reading, at no download
 
@@ -963,8 +968,9 @@ already on disk.
   foreign vector, and everything this port writes now.
 - `0`: `direction.N` is block `N - 1`. Files written before the correction,
   which keep meaning what they meant when the frozen rows were measured on
-  them. Verified: `/tmp/steer/ocean.gguf` and `/tmp/steer2/register.gguf`
-  still read 64 covered of 64 spanned, at the same norms.
+  them. Verified: both legacy vectors
+  (`~/models/steering-vectors/*-legacy-layerbase0.gguf`) still read 64
+  covered of 64 spanned, at the same norms.
 - Anything else is REFUSED rather than clamped.
 
 **BLOCK 0 IS NO LONGER EXPRESSIBLE** in a file this port writes, and that
@@ -1062,9 +1068,17 @@ column against that, never against 1.0.
 **Usable to alpha 2**, against 0.3 for this port's ocean direction on
 `qwen38-27b` and 0.8 for its register one. So the band is two-and-a-half to
 six times wider, and the direction it moves is the one the norms predict:
-this vector's per-layer norms run 0.0052 to 2.5433 where this port's run 0.05
-to 116.34. **An alpha read off one direction is not an operating point for
-another**, which is the third independent time this page has had to say so.
+this vector's per-layer norms run **0.0017 to 0.4268** where this port's own
+ocean direction runs 0.0492 to 116.3376 -- a 270x span on the top end. **An
+alpha read off one direction is not an operating point for another**, which is
+the third independent time this page has had to say so.
+
+(An earlier draft of this paragraph quoted 0.0052 to 2.5433 here. That is the
+LLAMA-3 vector's range, carried across from the interop section, and it is the
+wrong artifact -- the two are different files for different models from the
+same publisher. Caught by reading the norms back off the file rather than off
+the note about it, which is the only reason it is a correction and not a
+published number.)
 
 Note the ppl column FALLS from alpha 4 to 8 while the distinct-token count
 collapses 32 to 3. That is degenerate repetition, which the unsteered model
@@ -1322,10 +1336,10 @@ TURBOSPARK_CONTROL_VECTOR=/tmp/steer/d.gguf \
 # anything about the ecosystem's. Point it at a published vector:
 #   hf download jukofyork/creative-writing-control-vectors-v3.0 \
 #     "Meta-Llama-3-8B-Instruct/llama-3:8b-optimism_vs_nihilism__optimism.gguf" \
-#     --local-dir /tmp/steer-interop/pub
+#     --local-dir ~/models/steering-vectors
 # Expect `31 covered of 32 spanned`: Llama-3-8B's 32 blocks less the one
 # llama.cpp cannot reach. 509 kB, no model load, no GPU.
-TURBOSPARK_FOREIGN_CONTROL_VECTOR=/tmp/steer-interop/pub/....gguf \
+TURBOSPARK_FOREIGN_CONTROL_VECTOR=~/models/steering-vectors/llama-3:8b-....gguf \
   cargo test -p turbospark-repack --test control_vector_file -- --ignored --nocapture
 ```
 
@@ -1344,18 +1358,18 @@ cargo run --release -p turbospark-cli --bin turbospark-model -- pull mistral7b
 
 hf download jukofyork/creative-writing-control-vectors-v3.0 \
   "Mistral-7B-Instruct-v0.3/mistral-0.3:7b-honesty_vs_machiavellianism__machiavellianism.gguf" \
-  --local-dir /tmp/steer-llama
+  --local-dir ~/models/steering-vectors
 
 # Expect `steering: ablate at alpha 1 over 31 of 32 layers` on stderr:
 # 31 of 32 is llama.cpp's own apply range, with block 0 unsteered.
 ./target/release/turbospark-check --model mistral7b --messages-file /tmp/p.json \
   --max-new 160 --seed 1 --temperature 0.0001 --top-k 1 \
-  --steering "/tmp/steer-llama/Mistral-7B-Instruct-v0.3/mistral-0.3:7b-honesty_vs_machiavellianism__machiavellianism.gguf" \
+  --steering ~/models/steering-vectors/honesty_vs_machiavellianism__machiavellianism.gguf \
   --steering-scale 1.0
 
 # The band tables above. ~1 min per band; the alphas and bands are the axes.
 TURBOSPARK_PROBE_INSTALL_DIR=~/.turbospark/models/mistral7b.gturbo \
-TURBOSPARK_STEERING_VECTOR=/tmp/steer-llama/....gguf \
+TURBOSPARK_STEERING_VECTOR=~/models/steering-vectors/honesty_vs_machiavellianism__machiavellianism.gguf \
 TURBOSPARK_STEERING_ALPHAS=0.0,0.5,1.0,2.0,4.0,8.0 \
 TURBOSPARK_STEERING_BANDS=all,1:25,8:23 \
   cargo test -p turbospark-bench --test steering_sweep --release -- --ignored --nocapture
