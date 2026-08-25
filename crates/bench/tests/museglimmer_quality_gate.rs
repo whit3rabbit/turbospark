@@ -44,31 +44,47 @@ const MUSE_ASSISTANT_PREFIX: &str = " to=user<|message|>";
 const BASELINES: &[quality_common::ChipQuality] = &[
     // M4 Max 36GB (the development machine; see CLAUDE.local.md).
     //
-    // Frozen 2026-08-15 on AC, release, 16 expert-cache slots, from TWO fresh
-    // processes that agreed on the perplexity to the last digit and on both
-    // digests to the last hex character. Only the tok/s moved between them
-    // (16.288 then 19.886 at 16 slots), and no tok/s is frozen here.
+    // RE-FROZEN 2026-08-25. The 2026-08-15 row (perplexity 6.2826, greedy
+    // digest `fc1e4e58...`) stopped reproducing on this same machine, and
+    // the cause is NOT a code regression -- it was bisected out. Every
+    // commit between the 2026-08-15 row's own commit (`ea77279`) and HEAD
+    // was checked out, rebuilt and re-run against this exact install; all of
+    // them, including `ea77279` ITSELF re-run fresh today, produce the
+    // digests below rather than the 2026-08-15 ones. So the source code that
+    // wrote the old row cannot reproduce its own recorded values on this
+    // machine ten days later, which rules out every commit in between by
+    // construction. What was checked and found unchanged: the install's own
+    // files (mtimes from 2026-08-15, untouched), macOS (26.5.2, build
+    // 25F84) and Xcode (26.6), both matching this repo's other notes from
+    // around that period. The exact mechanism of the drift (Metal shader
+    // compiler cache, GPU firmware, or something else this session could not
+    // pin down) is NOT established. What IS established: the new values are
+    // stable and reproducible -- identical across roughly ten independent
+    // runs this session (with and without an unrelated uncommitted diff,
+    // with and without a reverted INT4 GEMV kernel specialization, and at
+    // every step of the bisect), including the two fresh-process-agreement
+    // runs `quality_common` itself requires below. Read this as "the row was
+    // stale, not that anything regressed" -- see
+    // `docs/OBLITERATION.md`'s museGlimmer section for the manual CLI
+    // cross-check that confirms the current generation is coherent, on-topic
+    // prose, not degenerate output.
     //
-    // **6.2826 IS THE NUMBER THAT SAYS THE ASSISTANT PREFIX IS RIGHT**, and
-    // that is most of what this row is for on this family. The generation
-    // prompt ends at `<|start|>assistant` and the model's next emission is a
-    // RECIPIENT; splicing the reference answer in raw would land it in no
-    // message at all, which is the position that made gpt-oss read
-    // 148,421.76 (crate Gotcha 13). A healthy single-digit number beside
-    // coherent generations is what rules that out.
+    // **6.2886 IS STILL THE NUMBER THAT SAYS THE ASSISTANT PREFIX IS
+    // RIGHT**, unchanged from the old row's own argument: a healthy
+    // single-digit perplexity beside coherent generations is what rules out
+    // the reference answer landing in no message at all (crate Gotcha 13).
     //
-    // The constrained arm reads 1.00x and 0.99x rather than the 0.85-0.94x
-    // the MoE families show, which is the mechanism rather than a surprise:
-    // `--expert-cache-slots` sizes a routed-expert cache and a DENSE model
-    // has no routed experts, so the two arms differ only in noise. The 8-slot
-    // digest EQUALS the 16-slot one, which is Gotcha 9's standing assertion
-    // and is trivially satisfied here for the same reason.
+    // The constrained arm still reads ~1.0x rather than the 0.85-0.94x the
+    // MoE families show, for the same reason as before: `--expert-cache-slots`
+    // sizes a routed-expert cache and this DENSE model has none, so the two
+    // arms differ only in noise. The 8-slot digest still EQUALS the 16-slot
+    // one (Gotcha 9's standing assertion).
     quality_common::ChipQuality {
         brand_substr: "Apple M4 Max",
-        perplexity: 6.2826,
-        greedy_digest: "fc1e4e58a6fd99757d3bc02cba8b0adb54a65d3dcfa0d34a08609b96ee453811",
-        sampled_digest: "24fe355decf2f389be48f1d9e93946b1374cfb145809b55ae50b4124359b0bd4",
-        source: "this port, 2026-08-15, Apple M4 Max, AC, 16 slots",
+        perplexity: 6.2886,
+        greedy_digest: "e11b7013827ed1257dbf887353d7e6f383c1b6334dae20a7a38e27ccc468b3fc",
+        sampled_digest: "b8349cd1a303346812d3262e32020158eef6c5c15583dfa25dc7599e23fb508a",
+        source: "this port, 2026-08-25, Apple M4 Max, macOS 26.5.2 (25F84), AC, 16 slots -- re-frozen after the 2026-08-15 row stopped reproducing on the same machine, bisected to rule out a code cause",
     },
 ];
 

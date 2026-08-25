@@ -2891,6 +2891,16 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
     Gotchas 30, 38, 57 and 59 -- a value that reads plausibly, is wrong, and
     is cheap to falsify.
 
+63. **A FROZEN DIGEST THAT STOPS REPRODUCING IS NOT NECESSARILY A CODE
+    REGRESSION -- BISECT TO AND INCLUDING THE COMMIT THAT WROTE IT BEFORE
+    BLAMING ANYTHING IN BETWEEN.** If that commit, checked out and rebuilt
+    fresh, ALSO fails to reproduce its own recorded value on the same
+    machine, every commit since it is exonerated by construction and the
+    cause is environmental (toolchain, Metal compiler, machine state), not a
+    source change. Two wrong guesses at a specific culprit commit preceded
+    this discovery; the freezing-commit test is the one that actually
+    settles it. `crates/bench/CLAUDE.md` Gotcha 24 has the full incident.
+
 ## Per-Crate Documentation
 
 When working on code inside a specific crate, refer to that crate's `CLAUDE.md` file for crate-specific architecture, key modules, dev commands, and localized gotchas:
@@ -2974,6 +2984,7 @@ Workspace directory structure and crate layout:
     +-- BATCHED_PREFILL.md # the one open gap against Swift: scope, cost, order of work
     +-- BENCHMARKS.md  # the FROZEN rows: quality, throughput, memory, cross-engine KL
     +-- BENCHMARKING.md# benchmark modes, mach memory sampling & memory oracle details
+    +-- CLI.md         # every flag on all three binaries, incl. the steering walkthrough
     +-- DECODE_BUDGET.md # where a decoded token's time goes; three decode dead ends
     +-- DFLASH2.md     # DFlash2 block drafter architecture, state derivation & verify
     +-- EXPERT_ROUTING.md # domain-restricted expert sets, measured negative

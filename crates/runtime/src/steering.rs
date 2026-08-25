@@ -295,8 +295,19 @@ pub(crate) fn family_dispatches_steering(family: model_io::ModelFamily) -> bool 
         // add alone is not the boundary, because the whole accumulated
         // stream is rescaled by `layer_scalar` immediately after it.
         F::Gemma4 => true,
-        // No hook in the flow yet.
-        F::GptOss | F::MuseGlimmer | F::DeepseekV4Flash => false,
+        // `families/gptoss/`, ONE call site: the routed-MoE tail's raw
+        // residual add (no shared expert here, so the routed sum IS the
+        // whole join), on the post-mid-layer-commit "routed cb" pass.
+        F::GptOss => true,
+        // `families/museglimmer/`, ONE call site: the FFN-half sandwich
+        // tail's residual add, the layer's true output. No router, so no
+        // mid-layer commit -- the whole token runs on one pass and this is
+        // simply wherever it currently is.
+        F::MuseGlimmer => true,
+        // No hook in the flow yet: DeepSeek-V4-Flash's compressed-attention
+        // kernels are unported, so it is refused at open before any decode
+        // flow -- there is no layer loop for a hook to sit in.
+        F::DeepseekV4Flash => false,
     }
 }
 

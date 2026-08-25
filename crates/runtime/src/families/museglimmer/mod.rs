@@ -63,6 +63,8 @@ use foundation::LogitValue;
 use crate::real_forward::{RealForwardError, RealForwardRunner};
 use crate::real_forward_dispatch::{encode_embed_any, encode_gemv_any};
 use crate::real_forward_utils::norm_view;
+use crate::resid_capture::encode_resid_capture;
+use crate::steering::encode_steering;
 
 pub(crate) fn layer_tensor(layer: usize, suffix: &str) -> String {
     format!("language_model.model.layers.{layer}.{suffix}")
@@ -126,7 +128,19 @@ impl RealForwardRunner {
             1.0,
         )?;
 
-        let (context, weights, index, arch, scratch, kv, muse, phases, ffn_hist) = (
+        let (
+            context,
+            weights,
+            index,
+            arch,
+            scratch,
+            kv,
+            muse,
+            resid_capture,
+            steering,
+            phases,
+            ffn_hist,
+        ) = (
             &mut self.context,
             &self.weights,
             &self.index,
@@ -134,6 +148,8 @@ impl RealForwardRunner {
             &self.scratch,
             &mut self.kv,
             self.real_muse.as_ref().expect("real muse state present"),
+            self.resid_capture.as_ref(),
+            self.steering.as_ref(),
             &mut self.phases,
             self.ffn_hist.as_ref(),
         );
@@ -299,6 +315,17 @@ impl RealForwardRunner {
                 hidden as u32,
             )
             .map_err(gpu_err)?;
+
+            // The layer's OUTPUT: this FFN-half residual add is the true end
+            // of the layer's contribution to the stream (a raw add, no
+            // rescale after it, the same boundary `families/llama/`'s dense
+            // branch uses). No router here, so no mid-layer commit -- the
+            // whole token stays on one pass, and this is simply wherever
+            // that pass currently is.
+            //
+            // STEERING FIRST, THEN THE CAPTURE, matching every other flow.
+            encode_steering(context, &pass, scratch, steering, layer, hidden, 1, 0)?;
+            encode_resid_capture(context, &pass, scratch, resid_capture, layer, hidden, 0)?;
         }
 
         if !self.skip_head {
@@ -348,9 +375,17 @@ impl RealForwardRunner {
         phases.final_cb_gpu_nanos += (pass.commit_and_wait_with_gpu_time() * 1e9) as u64;
         phases.final_wait_nanos += t_wait.elapsed().as_nanos() as u64;
         self.kv.advance();
+        // The command buffer has been waited on, so every layer's
+        // resid-capture region is final. `record_pass` decides whether THIS
+        // pass is the one worth keeping (`crates/runtime` Gotcha 20 -- the
+        // encode half above is not the whole hook).
+        let skip_head = self.skip_head;
+        if let Some(capture) = self.resid_capture.as_mut() {
+            capture.record_pass(position, skip_head);
+        }
 
-        // The command buffer has been waited on, so every layer's capture
-        // region is final. Prefill passes are counted but not read back:
+        // Same reasoning for the FFN activation census. Prefill passes are
+        // counted but not read back:
         // prefill routes differently and a 2 MB readback per prompt token
         // buys data the analysis would exclude (`ffn_hist.rs`).
         if let Some(hist) = self.ffn_hist.as_mut() {

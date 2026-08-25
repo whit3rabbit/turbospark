@@ -46,6 +46,8 @@ use foundation::LogitValue;
 use crate::real_forward::{RealForwardError, RealForwardRunner};
 use crate::real_forward_dispatch::{encode_embed_any, encode_gemv_any};
 use crate::real_forward_utils::{entry, norm_view};
+use crate::resid_capture::encode_resid_capture;
+use crate::steering::encode_steering;
 
 pub(crate) fn layer_tensor(layer: usize, suffix: &str) -> String {
     format!("language_model.model.layers.{layer}.{suffix}")
@@ -117,6 +119,8 @@ impl RealForwardRunner {
             scratch,
             kv,
             state,
+            resid_capture,
+            steering,
             streamers,
             slot_buffers,
             routed_blobs,
@@ -134,6 +138,8 @@ impl RealForwardRunner {
             self.real_gpt_oss
                 .as_ref()
                 .expect("real gpt-oss state present"),
+            self.resid_capture.as_ref(),
+            self.steering.as_ref(),
             &mut self.streamers,
             &self.slot_buffers,
             &self.routed_blobs,
@@ -251,6 +257,15 @@ impl RealForwardRunner {
                 num_experts,
                 top_k,
             )?;
+            // The layer's OUTPUT: `encode_gpt_oss_layer_moe` ends with the
+            // raw residual add (no shared expert, so the routed sum is the
+            // whole join) -- same boundary shape as `families/llama/`'s MoE
+            // branch, reached the same way: after a mid-layer commit forced
+            // by the router's host-side top-k.
+            //
+            // STEERING FIRST, THEN THE CAPTURE, matching every other flow.
+            encode_steering(context, &pass, scratch, steering, layer, hidden, 1, 0)?;
+            encode_resid_capture(context, &pass, scratch, resid_capture, layer, hidden, 0)?;
         }
 
         if !self.skip_head {
@@ -286,6 +301,14 @@ impl RealForwardRunner {
         phases.final_cb_gpu_nanos += (pass.commit_and_wait_with_gpu_time() * 1e9) as u64;
         phases.final_wait_nanos += t_wait.elapsed().as_nanos() as u64;
         self.kv.advance();
+        // The command buffer has been waited on, so every layer's capture
+        // region is final. `record_pass` decides whether THIS pass is the
+        // one worth keeping (`crates/runtime` Gotcha 20 -- the encode half
+        // above is not the whole hook).
+        let skip_head = self.skip_head;
+        if let Some(capture) = self.resid_capture.as_mut() {
+            capture.record_pass(position, skip_head);
+        }
 
         if self.skip_head {
             return Ok(());

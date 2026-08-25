@@ -573,3 +573,19 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
    22.232 across three rounds while the steered arms stayed flat, so the
    paired deltas were the honest reading and interleaving is what made the
    drift harmless.
+
+24. **BEFORE RE-FREEZING A DIGEST THAT STOPPED MATCHING, PROVE IT ISN'T A
+   REGRESSION.** `museglimmer_quality_gate.rs`'s 2026-08-15 golden stopped
+   reproducing; `git bisect` from that commit to HEAD landed on the SAME
+   new digest at every step, including the freezing commit itself rebuilt
+   fresh -- which is what proves it, since a commit cannot fail to
+   reproduce its own recorded output unless something outside the source
+   tree changed. Checklist before re-freezing: (1) bisect to and including
+   the freezing commit, not just to a suspect commit; (2) rule out the
+   install's own files (check mtimes); (3) rule out the toolchain (macOS
+   build, Xcode version); (4) manually inspect the new output for
+   coherence, not just a healthy perplexity number; (5) confirm the new
+   value is stable across several fresh runs, not a one-off. Isolate
+   whether YOUR uncommitted diff is the cause first with
+   `git stash push -- <the one file>`, rebuild, re-run, `git stash pop` --
+   cheaper than a full bisect and rules out the easy case immediately.

@@ -308,8 +308,9 @@ impl RealForwardRunner {
                 "steering is not wired for family {:?}: its flow does not dispatch the edit, \
                  so a direction set here would be a silent no-op. Wired today: the qwen flow \
                  (both halves), the llama flow (Mixtral, Qwen3-MoE, and the dense Llama / \
-                 Mistral half), and Gemma 4 (sequential decode and chunked prefill, both \
-                 batched-routed and per-token)",
+                 Mistral half), Gemma 4 (sequential decode and chunked prefill, both \
+                 batched-routed and per-token), gpt-oss, and museGlimmer. Unwired: \
+                 DeepSeek-V4-Flash (no decode flow exists to hook)",
                 runner.arch.family
             )));
         }

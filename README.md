@@ -530,6 +530,7 @@ list of what is deliberately not supported are in
 
 ## Documentation
 
+- [`docs/CLI.md`](docs/CLI.md): Every flag on `turbospark-check`, `turbospark-model`, and `turbospark-server`, including a full steering/obliteration walkthrough.
 - [`docs/MODELS.md`](docs/MODELS.md): The model catalog, the header-only probe, `turbospark-model pull`, and how to install something not in the table.
 - [`docs/MODEL_FAMILY.md`](docs/MODEL_FAMILY.md): Supported model families, automatic detection, and parity matrix.
 - [`docs/GTURBO.md`](docs/GTURBO.md): Comprehensive specification of the `.gturbo` installation format.

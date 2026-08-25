@@ -46,6 +46,7 @@ throughput, measured below at 1.72% of decode with all 64 layers steered and
 | 7 | the throughput cost | **LANDED**; -1.72% at all 64 layers, -0.75% at 26, `renorm` free |
 | 8 | llama.cpp interop | **LANDED**; the numbering was OFF BY ONE and is corrected, no measurement here moves |
 | 9 | a fifth family (Gemma 4) and its chunked prefill driver | **LANDED**; found `encode_steering`/`encode_resid_capture` hardcoded the edited row at offset 0, fixed with an `x_off` parameter, mutation-checked on the real chunked path |
+| 10 | the sixth and seventh flows (`gpt-oss`, `muse_glimmer`) | **LANDED** on synthetic fixtures, mutation-checked. `muse_glimmer` **MEASURED ON ITS REAL INSTALL** since 2026-08-25 (below): null control byte-identical, memory oracle clean, but the probe's single-position divergence check does not clear its (`qwen3_5`-borrowed) floor at the prompts tried, despite real coefficients and CLI-visible divergence over a generation. `gpt-oss` stays synthetic-only -- no install pinned on this machine |
 
 **It works.** On the real `qwen38-27b`, a direction extracted by this engine
 from its own activations, applied at runtime with no weight byte modified,
@@ -99,12 +100,21 @@ ONCE at startup: there is no per-request override the way there is for
 `reasoning_effort`, so a server started with `--steering` steers every
 request it serves for the life of the process.
 
-**Wired today (five of eight families)**: the qwen flow (both halves,
+**Wired today (seven of eight families)**: the qwen flow (both halves,
 per-token and batched-verify), `families/llama/` (Mixtral, `qwen3moe`, and
-the dense Mistral / Llama 2/3.x half), and `families/gemma4/` (sequential
-decode and its chunked prefill driver). Requesting `--steering` against an
-unwired family (gpt-oss, museGlimmer, DeepSeek-V4-Flash) is refused at open
-BY NAME rather than silently loaded and ignored -- see Open, below.
+the dense Mistral / Llama 2/3.x half), `families/gemma4/` (sequential decode
+and its chunked prefill driver), `families/gptoss/` (its one call site, the
+routed-MoE tail's raw residual add), and `families/museglimmer/` (its one
+call site, the FFN-half sandwich tail's residual add). `gpt-oss` is wired
+on synthetic fixtures only -- mutation-checked, but no install is pinned on
+this machine to measure against. `museglimmer` is measured on its real
+install since 2026-08-25 (below): a clean null control and memory oracle,
+though the probe's single-position divergence check does not clear its
+floor at the prompts tried.
+Requesting `--steering` against the one remaining unwired family
+(DeepSeek-V4-Flash, whose compressed-attention kernels are unported, so
+there is no decode flow at all to hook) is refused at open BY NAME rather
+than silently loaded and ignored -- see Open, below.
 
 ## The decision: runtime, not repack-time
 
@@ -1160,6 +1170,135 @@ measurement. The page's existing cost result (per steered layer, very nearly
 proportional to the band) has no reason to be family-specific, but it has not
 been checked here.
 
+## museGlimmer, measured on a real install (2026-08-25)
+
+`families/museglimmer/` steers and captures on a real 30B install
+(`~/models/museglimmer-30b.gturbo`, hidden 6656, 52 layers), closing the
+"NOT YET measured on a real install" caveat for this family. `gpt-oss` keeps
+that caveat: its install was deleted in an earlier disk cleanup, and
+re-streaming it (~25 min) was out of scope this session.
+
+### The direction: a fresh 4-pair corpus, this family's own captures
+
+No foreign vector exists for this checkpoint (it is a niche MLX finetune), so
+the direction is self-extracted: 4 matched ocean/mountain prompt pairs (the
+page's own established corpus shape), captured via `MFERENCE_RESID_CAPTURE`
+on this install and reduced with `scripts/extract_direction.py`'s
+diff-of-means. Every capture is finite with no zero layer, per-layer norms
+rising 89 to 600 through the 52 layers -- the same sanity shape every other
+family's captures show.
+
+| | value |
+|---|---|
+| effect size (`sep`), strongest / weakest | layer 2 (0.363) / layer 17 (0.127) |
+| stream share, peak | layer 50, 20.8% |
+| removal (`\|c_hat\|/\|\|x\|\|` at alpha 1), peak | layer 20, 20.3% |
+| covered layers | 51 of 52 (block 0 dropped, the interop convention) |
+
+### The null control -- clean
+
+`--steering-scale 0.0` with the kernel dispatched at all 51 covered layers is
+byte-identical to steering off: `diff` against the two runs' full stderr
+shows only the informational `steering: ablate at alpha 0 over 51 of 52
+layers` startup line and the non-deterministic wall-clock footer differing --
+every token of generated text agrees. This is the load-bearing check on this
+page, and it is the one this session ran first.
+
+### Full ablation does not collapse the turn here
+
+At `alpha = 1.0` over all 51 covered layers museGlimmer stays COHERENT, a
+different outcome from qwen38-27b's documented collapse at the exact same
+operating point (immediate `EndOfTurn`, no text). Wording shifts noticeably
+from the unsteered continuation within the first several tokens; at
+`alpha = 0.3` the shift is smaller. Neither run degenerates into repetition
+or template markup. Whether this holds beyond one prompt and one corpus is
+not established here -- reported as measured, not generalised.
+
+### The probe: the null control passes, the single-position divergence check does not
+
+```sh
+TURBOSPARK_PROBE_INSTALL_DIR=~/models/museglimmer-30b.gturbo \
+TURBOSPARK_STEERING_VECTOR=/tmp/steer-museglimmer/d.gguf \
+  cargo test -p turbospark-bench --test steering_probe --release -- --ignored --nocapture
+```
+
+Arm 1 passes cleanly on the probe's own default prompt: 0 of 202,048 logits
+differ from steering off, KL exactly 0.0, a 24-token greedy continuation
+identical. Arm 3's coefficient trace reads real, sign-varying values at every
+layer (0.31 to 27.87 at alpha 0.3) -- the direction is read and dispatched,
+not zero.
+
+**Arm 2's assertion fails, and it is worth separating from the null control
+rather than reading as one result.** Three combinations were tried:
+
+| prompt | alpha | KL (nats) | x the 7.4e-6 floor | argmax |
+|---|---|---|---|---|
+| probe default ("...the water.") | 0.3 | 1.7574e-10 | 0.00002x | 328 vs 328 |
+| probe default | 1.0 | 1.5236e-9 | 0.0002x | 328 vs 328 |
+| "Explain how coastal wetlands..." | 0.3 | 2.0189e-6 | 0.27x | same |
+
+Every combination reads below the dense-family shape floor (borrowed from
+`qwen3_5`'s own cross-engine measurement, since museGlimmer has no
+cross-engine reference of its own -- reasonable for a dense architecture but
+not independently verified for this one), and the single-position KL swings
+over three orders of magnitude between the two prompts at the same alpha.
+Because arm 2 panics on assertion failure, arm 4 (determinism) never ran in
+any of these three combinations.
+
+**This does not read as a broken hook.** The null control (the actual
+kernel-correctness assertion on this page) is clean; the coefficient trace
+shows the direction reaching every layer with real magnitude; and the CLI
+runs above show the generated text visibly, coherently diverging within a
+handful of tokens on both prompts, at both alphas -- the same "parts a few
+tokens in" shape this page documents for other families. The most consistent
+reading is that this family's very first generated token, for these prompts,
+sits at an unusually confident point in the distribution, so a metric
+anchored at exactly that one position under-reads an effect that is visible
+once the model has generated a few tokens. `steering_sweep.rs` (which scores
+a multi-token continuation rather than one position) was not run this
+session and would be the next instrument to reach for.
+
+### Regression gates: the memory oracle is clean; the quality gate's golden was stale, and NOT for the reason first guessed
+
+```sh
+TURBOSPARK_MUSEGLIMMER_INSTALL_DIR=~/models/museglimmer-30b.gturbo \
+  cargo test -p turbospark-bench --test museglimmer_memory_oracle --release -- --ignored --nocapture
+```
+
+Passes: session peak 531 MiB against a 650 MiB ceiling (8,192 context),
+replay growth +0.00 MiB, all three protocol cases stop `endOfTurn`, decode
+17.643 / 15.805 / 14.947 tok/s against a floor of 9.
+
+`museglimmer_quality_gate` failed against its 2026-08-15 golden, and the
+failure PRE-DATES this session's diff -- confirmed by `git stash push --
+crates/runtime/src/families/museglimmer/mod.rs`, since the greedy digest
+reads the identical `e11b7013...` both with and without this diff's steering
+hook in the file. **The first guess at a cause ("the already-committed
+`d78f6b3` muse-decoder work") was WRONG and is corrected here rather than
+left standing.** A full `git bisect` from the golden's own commit
+(`ea77279`) to HEAD landed on every single commit reproducing the SAME new
+digest -- including `ea77279` itself, checked out and rebuilt fresh: the
+exact commit that wrote the frozen golden cannot reproduce its own recorded
+values on this machine ten days later. That rules out every commit in
+between by construction; this is environmental drift, not a code
+regression. What was checked and found unchanged: the install's own files
+(mtimes from 2026-08-15), macOS (26.5.2, build 25F84) and Xcode (26.6),
+both matching this repo's other notes from around that period. The exact
+mechanism is not established. The new values are stable -- identical across
+roughly ten independent runs this session, plus the two fresh-process
+agreement runs the gate itself requires -- and the current generation reads
+as coherent, on-topic prose (spot-checked via a manual CLI run of the
+gate's own reference prompt). Re-frozen in `museglimmer_quality_gate.rs`
+with this investigation recorded in its comments; the gate is green again.
+
+### Standard smokes
+
+Both coherent, both `EndOfTurn`: greedy 954 new tokens at 17.973 tok/s,
+sampled (CLI defaults) 860 new tokens at 18.070 tok/s. The family needs a
+budget in the 900-1,600 range to reach `EndOfTurn` on an ordinary question
+(per the oracle's own case data) -- the usual 400-token smoke budget is too
+short for this family and stops mid-reasoning on `MaxTokens`.
+
 ## Open, and stated as open
 
 - ~~**llama.cpp interop of the layer indexing is UNVERIFIED**~~ --
@@ -1194,6 +1333,35 @@ been checked here.
   copying the qwen/llama call verbatim -- steer/capture row 0 regardless of
   which token is being processed -- would have shipped a family that is
   fluent, finite, and wrong for every token past the first of a micro-batch.
+- ~~**The remaining three families (gpt-oss, museGlimmer, DeepSeek-V4-Flash)
+  are unwired.**~~ **TWO OF THREE LANDED**, gpt-oss and museGlimmer. Seven
+  families of eight now dispatch the edit; DeepSeek-V4-Flash stays refused
+  because its compressed-attention kernels are unported, so there is no
+  decode flow at all for a hook to sit in -- not a wiring gap, a missing
+  flow. Both new families have exactly ONE call site each (neither has a
+  dense/MoE split the way `llama` does, nor a chunked-prefill driver the way
+  Gemma 4 does): gpt-oss's sits right after `encode_gpt_oss_layer_moe`'s raw
+  residual add, on the post-mid-layer-commit "routed cb" pass (the router's
+  host-side top-k forces the same kind of commit `families/llama/`'s MoE
+  branch needs); museGlimmer's sits after the FFN-half sandwich tail's
+  residual add, and since that family has no router at all the whole token
+  runs on one pass, so there is no routed-vs-cb1 boundary to get wrong the
+  way Gemma's and gpt-oss's have. Two new regression files
+  (`real_forward_gptoss_steered.rs`, `real_forward_museglimmer_steered.rs`)
+  follow the shape `real_forward_llama_steered.rs` set: the null control at
+  alpha 0, a full-strength dispatch, and a one-layer-isolation case, on
+  SYNTHETIC fixtures only. Mutation-checked: deleting either family's hook
+  reddens exactly its own two tests and nothing else in the suite.
+  ~~**NOT YET MEASURED ON A REAL INSTALL**~~ -- **museGlimmer CLOSED
+  2026-08-25** (see "museGlimmer, measured on a real install" above): a real
+  4-pair direction, a clean null control, coherent full ablation, and a
+  clean memory oracle, plus an honestly-reported probe result (the null
+  control passes; the single-position divergence check does not clear its
+  borrowed floor at the prompts tried, despite real coefficients and
+  CLI-visible divergence over a generation). `gpt-oss` STAYS OPEN: its
+  install was deleted in an earlier disk cleanup, and re-streaming it
+  (~25 min) was out of this session's scope, so there is still no real-model
+  A/B for it the way the demonstration above has for `qwen3_5`.
 - ~~**No Llama-3 chat dialect, so no Llama-3 checkpoint runs here at all.**~~
   **LANDED 2026-08-24, `ChatDialect::Llama3`** (`crates/tokenizer/CLAUDE.md`
   Gotcha 10). `detect_dialect` used to fall through to Gemma for a table
