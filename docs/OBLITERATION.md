@@ -68,6 +68,44 @@ Target install for verification: `~/models/qwen38-27b.gturbo` (dense
 quality gate and a memory oracle, so a steered-vs-unsteered number is readable
 against known baselines.
 
+## CLI
+
+`--steering <path.gguf>` on BOTH `turbospark-check` and `turbospark-server` --
+same flag, no separate binary, no rebuild. A direction is a llama.cpp-layout
+control vector (`.gguf`): one this port extracted with
+`scripts/extract_direction.py`, or a foreign one such as `repeng`'s or
+`jukofyork`'s published sets, provided it declares the checkpoint's own
+`hidden_size` (`SteeringSet::validate` checks the shape and nothing about the
+concept, so a vector for the wrong model opens and steers something, silently
+-- see "Running someone else's vector" under Reproducing).
+
+| Flag | Takes | Default | Meaning |
+| --- | --- | --- | --- |
+| `--steering` | path | none (off) | the control vector; every other flag below is REFUSED at parse time without this one |
+| `--steering-mode` | `ablate` \| `add` \| `clamp` \| `renorm` | `ablate`, or whatever the file declares | which edit |
+| `--steering-scale` | float | `1.0` | strength; `0.0` is the exact identity in every mode |
+| `--steering-layers` | `START:END` | every layer the vector covers | 0-based, inclusive layer band |
+| `--steering-target` | float | `0.0` | the coefficient `clamp` pins to; ignored by `ablate`/`add` |
+| `--steering-gate` | float | `0.0` (always fires) | only steer where the direction's own coefficient reaches this magnitude |
+
+```sh
+turbospark-check --model qwen38-27b --messages-file /tmp/p.json \
+  --steering /tmp/steer/d.gguf --steering-mode add \
+  --steering-scale 0.5 --steering-layers 20:45
+```
+
+`turbospark-server --model ... --steering ...` takes the same flags, resolved
+ONCE at startup: there is no per-request override the way there is for
+`reasoning_effort`, so a server started with `--steering` steers every
+request it serves for the life of the process.
+
+**Wired today (five of eight families)**: the qwen flow (both halves,
+per-token and batched-verify), `families/llama/` (Mixtral, `qwen3moe`, and
+the dense Mistral / Llama 2/3.x half), and `families/gemma4/` (sequential
+decode and its chunked prefill driver). Requesting `--steering` against an
+unwired family (gpt-oss, museGlimmer, DeepSeek-V4-Flash) is refused at open
+BY NAME rather than silently loaded and ignored -- see Open, below.
+
 ## The decision: runtime, not repack-time
 
 Four reasons, and the first is the one that makes the rest safe to act on.
@@ -1415,6 +1453,37 @@ TURBOSPARK_STEERING_BANDS=all,1:25,8:23 \
 MFERENCE_RESID_CAPTURE=/tmp/steer-llama/cap.json \
   ./target/release/turbospark-check --model mistral7b \
   --messages-file /tmp/p.json --max-new 1 --temperature 0.0001 --top-k 1
+```
+
+### Gemma 4, and its chunked prefill driver (2026-08-24)
+
+Gemma 4 is the family whose steering ALSO has to reach a prompt of more than
+one token: `--messages-file` and `--chat` route a longer prompt through
+`prefill_chunk_real_gemma4` rather than one token at a time, and that driver
+is a different function from the sequential decode path every other example
+on this page exercises. The `real_forward_gemma4_steered.rs` test proves this
+by a byte-identity check rather than by eye (a steered chunked run must match
+a steered sequential run token for token); the command below is the same
+property read off a real generation.
+
+```sh
+# 128 experts, INT4 shared MLP, so both the per-token routed loop and
+# MFERENCE_ROUTED_BATCH's batched-routed tail are reachable on this install.
+./target/release/turbospark-check --model gemma4 \
+  --messages-file /tmp/p.json --max-new 200 --seed 1 --temperature 0.0001 --top-k 1 \
+  --steering /tmp/steer/d.gguf --steering-mode ablate --steering-scale 1.0
+
+# The same prompt through the batched-routed prefill seam, which only a
+# multi-token prompt (not a one-token capture probe) reaches:
+MFERENCE_PREFILL_CHUNK=128 MFERENCE_ROUTED_BATCH=1 \
+  ./target/release/turbospark-check --model gemma4 \
+  --messages-file /tmp/p.json --max-new 200 --seed 1 --temperature 0.0001 --top-k 1 \
+  --steering /tmp/steer/d.gguf --steering-mode ablate --steering-scale 1.0
+
+# Both must produce IDENTICAL output to each other and to the sequential
+# per-token routed path (MFERENCE_ROUTED_BATCH unset) at the same alpha --
+# grouping tokens into a command buffer, batched or not, must not change
+# which model answered.
 ```
 
 The server takes the same flags, resolved once at startup; unlike
