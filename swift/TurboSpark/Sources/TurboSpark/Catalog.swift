@@ -127,6 +127,16 @@ public enum TurboSparkCatalog {
         }
     }
 
+    /// Deletes an installed model from `~/.turbospark` and removes its directory.
+    public static func delete(_ alias: String) throws {
+        try check(alias.withCString { ts_model_delete($0) })
+    }
+
+    /// Ranks curated models by hardware fit for this machine at `context`.
+    public static func recommend(context: UInt32 = 4096) throws -> [ModelRecommendation] {
+        try decode([ModelRecommendation].self, from: try takeString { ts_recommend_json(context, $0) })
+    }
+
     /// Installs a catalog row, streaming progress.
     ///
     /// **The walk CANNOT RESUME**: it streams gigabytes without writing the
@@ -149,6 +159,43 @@ public enum TurboSparkCatalog {
                 do {
                     let json = try takeString { out in
                         alias.withCString { ts_install($0, installCallback, userdata, out) }
+                    }
+                    continuation.yield(.finished(try decode(InstalledModel.self, from: json)))
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            thread.name = "com.turbospark.install"
+            thread.start()
+        }
+    }
+
+    /// Probes and installs an arbitrary Hugging Face repository, streaming progress.
+    ///
+    /// `repo` is `owner/name` or `owner/name@revision`. `alias` is the local name.
+    public static func install(
+        repo: String,
+        alias: String,
+        file: String? = nil,
+        sidecarRepo: String? = nil
+    ) -> AsyncThrowingStream<InstallEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let thread = Thread {
+                let box = InstallBox(continuation)
+                let userdata = Unmanaged.passRetained(box).toOpaque()
+                defer { Unmanaged<InstallBox>.fromOpaque(userdata).release() }
+                do {
+                    let json = try takeString { out in
+                        repo.withCString { r in
+                            alias.withCString { a in
+                                withOptionalCString(file) { f in
+                                    withOptionalCString(sidecarRepo) { s in
+                                        ts_install_repo(r, a, f, s, installCallback, userdata, out)
+                                    }
+                                }
+                            }
+                        }
                     }
                     continuation.yield(.finished(try decode(InstalledModel.self, from: json)))
                     continuation.finish()

@@ -287,3 +287,40 @@ public struct PhaseReport: Decodable, Sendable, Equatable {
     /// data.
     public let expertHitRate: Double?
 }
+
+/// Hardware model fit recommendation for this machine.
+public struct ModelRecommendation: Decodable, Sendable, Identifiable, Equatable {
+    public var id: String { alias }
+
+    public enum FitVerdict: String, Decodable, Sendable {
+        case resident
+        case streams
+        case tight
+        case refused
+        case unknown
+    }
+
+    public let alias: String
+    public let name: String
+    public let family: String?
+    public let verdict: FitVerdict
+    public let verdictSummary: String
+    public let runs: Bool
+    public let countedBytes: UInt64
+    public let installBytes: UInt64
+    public let slotCacheSlots: Int
+    public let largestContext: UInt32
+    public let notes: [String]
+    public let toksPerSecondMin: Double?
+    public let toksPerSecondMax: Double?
+}
+
+/// System hardware and power telemetry.
+public struct SystemTelemetry: Decodable, Sendable, Equatable {
+    public let physicalMemoryBytes: UInt64
+    public let recommendedWorkingSetBytes: UInt64?
+    public let chip: String?
+    public let lowPowerMode: Bool
+    public let thermalLevel: String
+}
+

@@ -100,6 +100,10 @@ struct ContentView: View {
             }
             .onChange(of: model.turns.last?.content) { _ in
                 withAnimation { proxy.scrollTo(model.turns.last?.id, anchor: .bottom) }
+                model.updateTokenEstimate()
+            }
+            .onChange(of: model.draft) { _ in
+                model.updateTokenEstimate()
             }
         }
     }
@@ -212,11 +216,21 @@ private struct StatusBar: View {
                     label("steering", info.steering.mode ?? "on")
                         .help(info.steering.summary ?? "Directional steering is active.")
                 }
+                if model.estimatedPromptTokens > 0 {
+                    label("draft", "\(model.estimatedPromptTokens) tok")
+                }
             } else {
                 Text("no model open").font(.caption).foregroundStyle(.secondary)
             }
 
             Spacer()
+
+            if let t = model.telemetry {
+                label("ram", humanBytes(t.physicalMemoryBytes))
+                if t.thermalLevel != "nominal" {
+                    label("thermal", t.thermalLevel).foregroundStyle(.orange)
+                }
+            }
 
             if let r = model.lastResult {
                 if let rate = r.tokensPerSecond {

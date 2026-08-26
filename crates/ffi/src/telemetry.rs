@@ -85,3 +85,22 @@ pub(crate) fn peak_footprint_bytes() -> u64 {
 pub(crate) fn peak_footprint_bytes() -> u64 {
     0
 }
+
+/// System hardware and power telemetry as JSON.
+pub(crate) fn system_info_json() -> Result<String, String> {
+    let physical = runtime::physical_memory();
+    let (working_set, chip) = match runtime::recommended_max_working_set() {
+        Some((bytes, name)) => (Some(bytes), name),
+        None => (None, String::new()),
+    };
+    let low_power = runtime::low_power_mode_enabled();
+    let thermal = format!("{:?}", runtime::thermal_level()).to_lowercase();
+    let info = serde_json::json!({
+        "physicalMemoryBytes": physical,
+        "recommendedWorkingSetBytes": working_set,
+        "chip": if chip.is_empty() { None } else { Some(chip) },
+        "lowPowerMode": low_power,
+        "thermalLevel": thermal,
+    });
+    serde_json::to_string(&info).map_err(|e| e.to_string())
+}

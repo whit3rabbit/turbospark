@@ -168,3 +168,114 @@ pub(crate) fn install_bytes(alias: &str) -> Result<(u64, u64), String> {
         .ok_or_else(|| format!("no catalog row named {alias:?}"))?;
     Ok((entry.download_bytes, entry.install_bytes))
 }
+
+/// Deletes an installed model from the store and drops its directory.
+pub(crate) fn delete(alias: &str) -> Result<(), String> {
+    let store = Store::default_store()?;
+    let path = store
+        .resolve(alias)
+        .ok_or_else(|| format!("model {alias:?} is not installed"))?;
+    if path.exists() {
+        std::fs::remove_dir_all(&path)
+            .map_err(|e| format!("failed to remove {}: {e}", path.display()))?;
+    }
+    store.forget(alias)
+}
+
+/// Ranks curated models by hardware fit for this machine at `context`.
+pub(crate) fn recommend_json(context: Option<u32>) -> Result<String, String> {
+    let physical = runtime::physical_memory();
+    if physical == 0 {
+        return Err(
+            "no physical memory probe available on this platform; cannot recommend models"
+                .to_string(),
+        );
+    }
+    let (working_set, chip) = match runtime::recommended_max_working_set() {
+        Some((bytes, name)) => (Some(bytes), name),
+        None => (None, String::new()),
+    };
+    let machine = catalog::Machine {
+        physical_bytes: physical,
+        working_set_bytes: working_set,
+        chip,
+    };
+    let catalog = Catalog::embedded()?;
+    let entries: Vec<&catalog::CatalogEntry> = catalog.entries().collect();
+    let context_val = context.unwrap_or(4096);
+    let recommendations = catalog::recommend_catalog(&entries, &machine, context_val);
+    let rows: Vec<_> = recommendations
+        .into_iter()
+        .map(|r| {
+            let alias = match &r.origin {
+                catalog::Origin::Catalog(a) => a.clone(),
+                catalog::Origin::Discovered { repo, .. } => repo.clone(),
+            };
+            json!({
+                "alias": alias,
+                "name": r.name,
+                "family": r.family,
+                "verdict": match r.fit.verdict {
+                    catalog::FitVerdict::Resident => "resident",
+                    catalog::FitVerdict::Streams => "streams",
+                    catalog::FitVerdict::Tight => "tight",
+                    catalog::FitVerdict::Refused => "refused",
+                    catalog::FitVerdict::Unknown => "unknown",
+                },
+                "verdictSummary": r.fit.verdict.as_str(),
+                "runs": r.fit.verdict.runs(),
+                "countedBytes": r.fit.counted,
+                "installBytes": r.fit.mapped,
+                "slotCacheSlots": r.fit.slots,
+                "largestContext": r.fit.largest_context,
+                "notes": r.notes,
+                "toksPerSecondMin": r.measured.as_ref().map(|m| m.decode_tok_s_min),
+                "toksPerSecondMax": r.measured.as_ref().map(|m| m.decode_tok_s_max),
+            })
+        })
+        .collect();
+    serde_json::to_string(&rows).map_err(|e| e.to_string())
+}
+
+/// Probes and installs an arbitrary Hugging Face model repository.
+pub(crate) fn install_repo(
+    repo: &str,
+    alias: &str,
+    file: Option<&str>,
+    sidecar_repo: Option<&str>,
+    mut on_stage: impl FnMut(&str),
+    on_bytes: Arc<dyn Fn(u64) + Send + Sync>,
+) -> Result<String, String> {
+    let weights = parse_repo(repo)?;
+    let sidecars = match sidecar_repo {
+        Some(text) => parse_repo(text)?,
+        None => weights.clone(),
+    };
+    let client = Client::new();
+    let report = catalog::probe(&client, &weights, file, Some(&sidecars))?;
+    if !report.verdict.is_runnable() {
+        return Err(match report.verdict {
+            Verdict::Refused(why) => format!("model would not run here: {why}"),
+            Verdict::Runnable => unreachable!(),
+        });
+    }
+    let plan = InstallPlan::from_probe(alias, &report, sidecars);
+    let store = Store::default_store()?;
+    let dir = store.install_path(alias);
+    if dir.join("manifest.json").is_file() {
+        return Err(format!("{} already holds an install", dir.display()));
+    }
+    on_stage(
+        "this walk streams the checkpoint and CANNOT RESUME: a failure restarts it \
+         from the beginning",
+    );
+    let installed = catalog::install_with_byte_progress(
+        &plan,
+        &dir,
+        &client,
+        |line| on_stage(line),
+        Some(on_bytes),
+    )?;
+    catalog::record(&store, &installed)?;
+    serde_json::to_string(&installed.model).map_err(|e| e.to_string())
+}

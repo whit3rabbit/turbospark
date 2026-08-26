@@ -41,6 +41,8 @@ final class ChatModel: ObservableObject {
     // Status
     @Published var lastResult: GenerationResult?
     @Published var peakFootprint: UInt64?
+    @Published var estimatedPromptTokens: Int = 0
+    @Published var telemetry: SystemTelemetry?
     @Published var error: String?
 
     // Settings
@@ -64,9 +66,45 @@ final class ChatModel: ObservableObject {
         do {
             installed = try TurboSparkCatalog.installed()
             catalog = try TurboSparkCatalog.available()
+            telemetry = TurboSparkSession.systemTelemetry
             if selected == nil { selected = installed.first }
         } catch {
             self.error = "\(error)"
+        }
+    }
+
+    /// Deletes an installed model from disk and refreshes state.
+    func deleteModel(_ model: InstalledModel) {
+        do {
+            try TurboSparkCatalog.delete(model.alias)
+            if selected?.alias == model.alias {
+                session = nil
+                selected = nil
+                turns = []
+            }
+            refreshModels()
+        } catch {
+            self.error = "\(error)"
+        }
+    }
+
+    /// Recalculates prompt token count for current turns + draft.
+    func updateTokenEstimate() {
+        guard let session else {
+            estimatedPromptTokens = 0
+            return
+        }
+        var history = turns.compactMap { turn -> ChatMessage? in
+            guard !turn.content.isEmpty || turn.role == .user else { return nil }
+            return ChatMessage(role: turn.role, content: turn.content)
+        }
+        if !draft.isEmpty {
+            history.append(ChatMessage(role: .user, content: draft))
+        }
+        Task {
+            if let count = try? await session.countTokens(history, reasoning: reasoning) {
+                self.estimatedPromptTokens = count
+            }
         }
     }
 

@@ -72,6 +72,10 @@ struct InstallSheet: View {
                     task?.cancel()
                     dismiss()
                 }
+                if isInstalled(selected) {
+                    Button("Delete", role: .destructive) { deleteSelected() }
+                        .disabled(running || selected == nil)
+                }
                 Button("Install") { start() }
                     .buttonStyle(.borderedProminent)
                     .disabled(running || selected == nil || isInstalled(selected))
@@ -79,6 +83,16 @@ struct InstallSheet: View {
         }
         .padding(16)
         .frame(width: 560)
+    }
+
+    private func deleteSelected() {
+        guard let alias = selected else { return }
+        do {
+            try TurboSparkCatalog.delete(alias)
+            onFinished()
+        } catch {
+            failure = "\(error)"
+        }
     }
 
     private func isInstalled(_ alias: String?) -> Bool {

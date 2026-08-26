@@ -288,6 +288,21 @@ than being silently dropped. Check `info.reasoningSupport` first:
 | `.toggleOnly` | thinking turns on, the level is dropped | grey out the levels, keep the toggle |
 | `.none` | no chat template at all | disable it; asking throws |
 
+### Estimating tokens
+
+```swift
+let count = try await session.countTokens(
+    [ChatMessage(role: .user, content: "Hello world")],
+    reasoning: .off
+)
+print("prompt uses \(count) / \(session.info.maxContext) tokens")
+```
+
+Renders the conversation through the checkpoint's chat template and counts the
+exact tokens without allocating KV cache or executing forward passes. Use this
+in a composer to update context meter gauges and warn users when a draft
+approaches the window limit.
+
 ### Telemetry
 
 ```swift
@@ -299,6 +314,9 @@ phases.gpuWaitMs
 phases.expertHitRate      // nil before anything has been requested
 
 TurboSparkSession.peakFootprintBytes   // process-wide, or nil
+if let sys = TurboSparkSession.systemTelemetry {
+    print("RAM: \(sys.physicalMemoryBytes), thermal: \(sys.thermalLevel)")
+}
 ```
 
 Two caveats, both of which make a naive status panel wrong:
@@ -329,8 +347,12 @@ artifact is the same either way.
 let rows = try TurboSparkCatalog.available()      // curated table, with `installed`
 let mine = try TurboSparkCatalog.installed()      // what is in ~/.turbospark
 let cost = try TurboSparkCatalog.cost(of: "gemma4")
+let recs = try TurboSparkCatalog.recommend(context: 4096) // ranked by hardware fit
 let report = try TurboSparkCatalog.probe(repo: "Qwen/Qwen3-30B-A3B-GGUF",
                                          file: "Qwen3-30B-A3B-Q4_K_M.gguf")
+
+// Delete an installed model to recover disk space:
+try TurboSparkCatalog.delete("gemma4")
 ```
 
 `probe` returns JSON rather than a struct, because a probe report's shape
@@ -356,6 +378,15 @@ for try await event in TurboSparkCatalog.install("gemma4") {
     case .finished(let model):
         print("installed at \(model.path)")
     }
+}
+
+// Or install an arbitrary probed Hugging Face repository:
+for try await event in TurboSparkCatalog.install(
+    repo: "Qwen/Qwen3-30B-A3B-GGUF",
+    alias: "my-qwen",
+    file: "Qwen3-30B-A3B-Q4_K_M.gguf"
+) {
+    // ...
 }
 ```
 
@@ -430,12 +461,17 @@ byte callback is *also* called concurrently from worker threads.
 | `ts_session_info_json(s, out)` | resolved window, slots, family, dialect, speculation |
 | `ts_session_phases_json(s, out)` | decode phase breakdown |
 | `ts_peak_footprint_bytes()` | process-wide, 0 if unavailable |
+| `ts_system_info_json(out)` | hardware RAM, chip, power, thermal status |
+| `ts_session_count_tokens(s, messages, reasoning, out_count)` | evaluates exact prompt token count |
 | `ts_generate(s, messages, options, cb, ud, out)` | blocks for the turn |
 | `ts_catalog_json(out)` | every platform |
 | `ts_installed_json(out)` | every platform |
+| `ts_model_delete(alias)` | delete installed model directory and forget row |
+| `ts_recommend_json(context, out)` | rank curated models by hardware fit |
 | `ts_probe_json(repo, file, sidecar, out)` | header-only, no download |
 | `ts_install_bytes_json(alias, out)` | cost before committing |
 | `ts_install(alias, cb, ud, out)` | blocks for minutes; cannot resume |
+| `ts_install_repo(repo, alias, file, sidecars, cb, ud, out)` | install arbitrary HF repository |
 
 ### A complete C example
 

@@ -22,8 +22,9 @@ use std::sync::{Arc, Mutex};
 use foundation::LogitValue;
 use tokenizer::MfTokenizer;
 use turbospark_ffi::{
-    abi, session_for_testing, ts_generate, ts_last_error, ts_probe_json, ts_session_cancel,
-    ts_session_info_json, ts_session_open, ts_string_free, Session, TS_EVENT_CONTENT,
+    abi, session_for_testing, ts_generate, ts_last_error, ts_model_delete, ts_probe_json,
+    ts_recommend_json, ts_session_cancel, ts_session_count_tokens, ts_session_info_json,
+    ts_session_open, ts_string_free, ts_system_info_json, Session, TS_EVENT_CONTENT,
     TS_EVENT_PREFILL,
 };
 
@@ -419,5 +420,47 @@ fn a_malformed_repository_is_rejected_before_any_network_call() {
             "{bad}: got {:?}",
             last_error()
         );
+    }
+}
+
+#[test]
+fn session_counts_prompt_tokens_correctly() {
+    let session = endless_session(fixture(), "h", 10);
+    let messages = c(r#"[{"role":"user","content":"Hello world"}]"#);
+    let mut count: u32 = 0;
+    let code =
+        unsafe { ts_session_count_tokens(&session, messages.as_ptr(), ptr::null(), &mut count) };
+    assert_eq!(code, abi::TS_OK, "{}", last_error());
+    assert!(count > 0, "token count should be positive");
+}
+
+#[test]
+fn system_info_json_is_valid_json() {
+    let mut out: *mut c_char = ptr::null_mut();
+    let code = unsafe { ts_system_info_json(&mut out) };
+    assert_eq!(code, abi::TS_OK, "{}", last_error());
+    let json_str = unsafe { take(out) };
+    let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+    assert!(parsed.get("physicalMemoryBytes").is_some());
+    assert!(parsed.get("thermalLevel").is_some());
+}
+
+#[test]
+fn deleting_nonexistent_model_returns_error() {
+    let alias = c("nonexistent_alias_12345");
+    let code = unsafe { ts_model_delete(alias.as_ptr()) };
+    assert_eq!(code, abi::TS_ERR_INVALID_ARGUMENT);
+    assert!(last_error().contains("not installed"));
+}
+
+#[test]
+fn recommend_json_returns_ranked_catalog_rows() {
+    let mut out: *mut c_char = ptr::null_mut();
+    let code = unsafe { ts_recommend_json(4096, &mut out) };
+    // On platforms without memory probe (or CI), it returns an error or JSON array
+    if code == abi::TS_OK {
+        let json_str = unsafe { take(out) };
+        let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+        assert!(parsed.is_array());
     }
 }

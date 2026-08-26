@@ -170,6 +170,31 @@ public final class TurboSparkSession: @unchecked Sendable {
         }
     }
 
+    /// Evaluates exact prompt token count for `messages` using this session's
+    /// chat template and tokenizer, without running generation.
+    public func countTokens(
+        _ messages: [ChatMessage],
+        reasoning: GenerateOptions.Reasoning = .off
+    ) async throws -> Int {
+        let messagesJSON = try Self.encode(messages)
+        let reasoningStr = reasoning.rawValue
+        return try await withCheckedThrowingContinuation { cont in
+            queue.async { [handle] in
+                var count: UInt32 = 0
+                let status = messagesJSON.withCString { m in
+                    reasoningStr.withCString { r in
+                        ts_session_count_tokens(handle.raw, m, r, &count)
+                    }
+                }
+                guard status == 0 else {
+                    cont.resume(throwing: TurboSparkError.fromLastError(status))
+                    return
+                }
+                cont.resume(returning: Int(count))
+            }
+        }
+    }
+
     /// This process's peak physical footprint in bytes, or nil where the
     /// counter is unavailable.
     ///
@@ -180,6 +205,12 @@ public final class TurboSparkSession: @unchecked Sendable {
     public static var peakFootprintBytes: UInt64? {
         let bytes = ts_peak_footprint_bytes()
         return bytes == 0 ? nil : bytes
+    }
+
+    /// Hardware and power telemetry for this machine, or nil where unavailable.
+    public static var systemTelemetry: SystemTelemetry? {
+        guard let json = try? takeString({ ts_system_info_json($0) }) else { return nil }
+        return try? decode(SystemTelemetry.self, from: json)
     }
 
     private static func encode<T: Encodable>(_ value: T) throws -> String {

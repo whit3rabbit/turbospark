@@ -236,7 +236,24 @@ int32_t ts_session_phases_json(const TsSession *s, char **out);
  */
 uint64_t ts_peak_footprint_bytes(void);
 
+/*
+ * Hardware and power telemetry for this machine, as JSON:
+ *   { "physicalMemoryBytes", "recommendedWorkingSetBytes", "chip",
+ *     "lowPowerMode", "thermalLevel" }
+ */
+int32_t ts_system_info_json(char **out);
+
 /* ---- generation ---- */
+
+/*
+ * Evaluates the exact prompt token count of `messages_json` using the
+ * session's chat template and tokenizer, without running generation.
+ *
+ * `reasoning` is "off"|"low"|"medium"|"high"|"xhigh" (or NULL for "off").
+ * Writes token count to `*out_count`.
+ */
+int32_t ts_session_count_tokens(const TsSession *s, const char *messages_json,
+                                const char *reasoning, uint32_t *out_count);
 
 /*
  * Generates one assistant turn. Blocks for the whole turn.
@@ -277,6 +294,19 @@ int32_t ts_catalog_json(char **out);
 int32_t ts_installed_json(char **out);
 
 /*
+ * Deletes an installed model directory and forgets it from ~/.turbospark.
+ * Returns TS_OK on success or TS_ERR_INVALID_ARGUMENT if not installed.
+ */
+int32_t ts_model_delete(const char *alias);
+
+/*
+ * Ranks curated models by hardware fit on this machine for `context_window`
+ * tokens (e.g. 4096 or 8192, 0 means default 4096). Returns JSON array of
+ * recommendations.
+ */
+int32_t ts_recommend_json(uint32_t context_window, char **out);
+
+/*
  * Probes a Hugging Face repository by HEADER ALONE: kilobytes and seconds,
  * no download. `repo` is "owner/name" or "owner/name@revision". `file` and
  * `sidecar_repo` may be NULL.
@@ -309,6 +339,16 @@ int32_t ts_install_bytes_json(const char *alias, char **out);
  */
 int32_t ts_install(const char *alias, TsInstallCallback cb, void *userdata,
                    char **result_json);
+
+/*
+ * Probes and installs an arbitrary Hugging Face repository `repo` under
+ * local `alias`. `file` and `sidecar_repo` may be NULL.
+ *
+ * Blocks for the whole walk and cannot resume.
+ */
+int32_t ts_install_repo(const char *repo, const char *alias, const char *file,
+                        const char *sidecar_repo, TsInstallCallback cb,
+                        void *userdata, char **result_json);
 
 #ifdef __cplusplus
 }

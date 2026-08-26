@@ -201,6 +201,18 @@ fn turn_block(session_block: Option<usize>, deterministic: bool) -> Option<usize
     session_block.filter(|_| deterministic)
 }
 
+/// Evaluates the prompt token count without running generation.
+pub(crate) fn count_tokens(
+    session: &Session,
+    messages: &[WireMessage],
+    reasoning_str: &str,
+) -> Result<u32, String> {
+    let reasoning = ReasoningEffort::parse(reasoning_str)
+        .ok_or_else(|| format!("unknown reasoning level {:?}", reasoning_str))?;
+    let (prompt_ids, _note) = render(&session.tokenizer, messages, reasoning)?;
+    Ok(prompt_ids.len() as u32)
+}
+
 /// Runs one turn, calling `emit(kind, text, a, b)` per event.
 pub(crate) fn generate(
     session: &Session,

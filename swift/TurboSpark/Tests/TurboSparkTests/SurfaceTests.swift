@@ -181,5 +181,32 @@ final class SurfaceTests: XCTestCase {
             TurboSparkError.fromLastError(status).message.contains("steeringMode"),
             "the message should name the misspelling")
     }
+
+    /// Tests that model recommendations can be decoded into Swift types.
+    func testCatalogRecommendationsAreDecodable() throws {
+        let recs = try TurboSparkCatalog.recommend(context: 4096)
+        XCTAssertFalse(recs.isEmpty, "recommendations should return catalog rows")
+        let first = try XCTUnwrap(recs.first)
+        XCTAssertFalse(first.alias.isEmpty)
+        XCTAssertFalse(first.name.isEmpty)
+        XCTAssertFalse(first.verdictSummary.isEmpty)
+    }
+
+    /// Tests that system hardware and power telemetry is readable.
+    func testSystemTelemetryIsReadable() throws {
+        let telemetry = try XCTUnwrap(TurboSparkSession.systemTelemetry)
+        XCTAssertGreaterThan(telemetry.physicalMemoryBytes, 0)
+        XCTAssertFalse(telemetry.thermalLevel.isEmpty)
+    }
+
+    /// Tests that deleting a nonexistent model throws an expected error.
+    func testDeletingNonexistentModelThrows() throws {
+        XCTAssertThrowsError(try TurboSparkCatalog.delete("nonexistent_model_test_123")) { error in
+            let e = error as? TurboSparkError
+            XCTAssertEqual(e?.code, .invalidArgument)
+            XCTAssertTrue(e?.message.contains("not installed") == true)
+        }
+    }
 }
+
 
