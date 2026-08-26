@@ -18,6 +18,8 @@ mod raw_completion_chunked;
 #[cfg(target_os = "macos")]
 mod real_forward;
 #[cfg(target_os = "macos")]
+mod real_forward_api;
+#[cfg(target_os = "macos")]
 mod real_forward_dispatch;
 #[cfg(target_os = "macos")]
 mod real_forward_dispatch_moe;

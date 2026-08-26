@@ -12,9 +12,11 @@ use tokenizer::{
 use crate::session::{Engine, Session};
 use crate::wire::{GenerateOptions, GenerateResult, WireMessage};
 
-/// The event kinds the C callback receives. Mirrored in `turbospark.h`.
+/// Prefill progress event kind.
 pub const TS_EVENT_PREFILL: i32 = 0;
+/// Content text delta event kind.
 pub const TS_EVENT_CONTENT: i32 = 1;
+/// Reasoning / thought text delta event kind.
 pub const TS_EVENT_REASONING: i32 = 2;
 
 /// Splits a token's text into the answer and the reasoning that preceded it.

@@ -108,10 +108,12 @@ pub enum FitVerdict {
 }
 
 impl FitVerdict {
+    /// True if the candidate fits memory sufficiently to run (resident, streamed, or tight).
     pub fn runs(self) -> bool {
         matches!(self, Self::Resident | Self::Streams | Self::Tight)
     }
 
+    /// Human-readable summary of the fit verdict.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Resident => "fits, fully resident",

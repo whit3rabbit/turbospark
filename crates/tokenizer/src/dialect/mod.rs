@@ -81,6 +81,8 @@ pub enum ChatDialect {
 /// single special token (DeepSeek's tool markers). Never a valid token ID.
 pub const NO_SUCH_TOKEN_ID: i32 = -1;
 
+/// Tokenizer wrapper combining Hugging Face's `tokenizers` backend with
+/// chat dialect detection, special token ID mapping, and Jinja chat templates.
 pub struct MfTokenizer {
     pub dialect: ChatDialect,
     pub bos_id: i32,
@@ -232,10 +234,12 @@ impl MfTokenizer {
             .unwrap_or_default()
     }
 
+    /// Look up the token ID for a string token, or `None` if not in vocabulary.
     pub fn token_to_id(&self, token: &str) -> Option<i32> {
         self.tokenizer.token_to_id(token).map(|id| id as i32)
     }
 
+    /// Look up the string token representation for a token ID, or `None` if invalid.
     pub fn id_to_token(&self, id: i32) -> Option<String> {
         self.tokenizer.id_to_token(id as u32)
     }

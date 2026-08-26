@@ -105,6 +105,8 @@ pub async fn model_detail(State(model): State<AppState>, Path(model_id): Path<St
     }
 }
 
+/// `POST /v1/chat/completions`. OpenAI-compatible chat completions endpoint,
+/// supporting both non-streaming responses and SSE token streaming.
 pub async fn chat_completions(
     State(model): State<AppState>,
     Json(request): Json<ChatCompletionRequest>,

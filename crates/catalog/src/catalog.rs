@@ -107,10 +107,12 @@ impl Catalog {
         self.overridden.contains_key(alias)
     }
 
+    /// Number of entries currently in the catalog.
     pub fn len(&self) -> usize {
         self.by_alias.len()
     }
 
+    /// Returns true if the catalog contains no entries.
     pub fn is_empty(&self) -> bool {
         self.by_alias.is_empty()
     }

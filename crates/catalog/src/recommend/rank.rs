@@ -42,6 +42,7 @@ pub enum Evidence {
 }
 
 impl Evidence {
+    /// Maps a catalog entry [`Status`] into its ranking [`Evidence`] level.
     pub fn of(status: Status) -> Self {
         match status {
             Status::Verified => Self::Verified,
@@ -50,6 +51,7 @@ impl Evidence {
         }
     }
 
+    /// String description of the evidence tier.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Verified => "verified",

@@ -9,12 +9,11 @@ mod muse;
 
 use std::collections::HashSet;
 
-use self::harmony::{HarmonyChannel, HarmonyState};
-use self::muse::{MuseChannel, MuseState};
+use self::harmony::HarmonyState;
+use self::muse::MuseState;
 use crate::dialect::{ChatDialect, MfTokenizer};
 use crate::error::ToolCallParserError;
-use crate::json_value::JsonValue;
-use crate::tool_call::{is_valid_function_name, GemmaToolCallParser, ParsedToolCall};
+use crate::tool_call::{GemmaToolCallParser, ParsedToolCall};
 
 /// Decoded event emitted by the structured assistant output decoder.
 #[derive(Debug, Clone, PartialEq)]
@@ -171,63 +170,6 @@ impl<'a> StructuredAssistantDecoder<'a> {
             dsml_text: None,
             emitted_calls: 0,
             failed: false,
-        }
-    }
-
-    /// One token of a Muse Glimmer generation.
-    ///
-    /// Keys on TOKEN IDS and never on text, like the Harmony arm and for the
-    /// same reason: the detokenizer renders `<|start|>`, `<|message|>` and
-    /// `<|eom|>` to the EMPTY STRING, so a text-keyed reader would see no
-    /// transitions at all (AGENTS.md Gotcha 44).
-    ///
-    /// `<|eot|>` is absent on purpose -- it is a STOP token, so the loop breaks
-    /// before the callback and it never arrives. Nothing here needs it: it ends
-    /// a turn rather than opening a channel, and `finish` has nothing to flush
-    /// for this dialect because every body is emitted delta by delta as it
-    /// arrives.
-    fn consume_muse(&mut self, token_id: i32, delta: &str) -> Vec<StructuredAssistantEvent> {
-        if token_id == self.tokenizer.channel_start_id {
-            self.muse = MuseState::Header(String::new());
-            return Vec::new();
-        }
-        if token_id == self.tokenizer.message_start_id {
-            if let MuseState::Header(header) = &self.muse {
-                self.muse = MuseState::Body(muse::parse_header(header));
-            }
-            return Vec::new();
-        }
-        if token_id == self.tokenizer.message_end_id {
-            self.muse = MuseState::Between;
-            return Vec::new();
-        }
-        match &mut self.muse {
-            // The header is markup, never output. A recipient split across
-            // deltas (`` to=``, ``self``) accumulates here and parses whole.
-            MuseState::Header(header) => {
-                header.push_str(delta);
-                Vec::new()
-            }
-            MuseState::Between => Vec::new(),
-            MuseState::Body(channel) => {
-                let channel = *channel;
-                if delta.is_empty() {
-                    return Vec::new();
-                }
-                vec![match channel {
-                    MuseChannel::Reasoning => {
-                        StructuredAssistantEvent::Reasoning(delta.to_string())
-                    }
-                    MuseChannel::Answer => StructuredAssistantEvent::Content(delta.to_string()),
-                }]
-            }
-            MuseState::Unframed => {
-                if delta.is_empty() {
-                    Vec::new()
-                } else {
-                    vec![StructuredAssistantEvent::Content(delta.to_string())]
-                }
-            }
         }
     }
 
@@ -417,106 +359,6 @@ impl<'a> StructuredAssistantDecoder<'a> {
     /// into a lost turn. Falling back to the channel rule reports the body as
     /// reasoning, which is what a caller that offered no tools can use.
     ///
-    /// ONE ORDERING CONSTRAINT IS INHERITED RATHER THAN ENFORCED HERE. A
-    /// consumer mapping [`StructuredAssistantEvent::Reasoning`] onto an
-    /// Anthropic `thinking` block gets a well-formed stream because Harmony
-    /// emits `analysis` BEFORE `final` within one response. This arm reports
-    /// whatever order the model produced; it does not reorder to protect a
-    /// downstream state machine.
-    fn consume_harmony(
-        &mut self,
-        token_id: i32,
-        delta: &str,
-    ) -> Result<Vec<StructuredAssistantEvent>, ToolCallParserError> {
-        if token_id == self.tokenizer.channel_start_id {
-            self.label.clear();
-            self.harmony = HarmonyState::Header;
-            return Ok(Vec::new());
-        }
-        if token_id == self.tokenizer.message_start_id {
-            let header = harmony::parse_header(&self.label);
-            self.label.clear();
-            self.harmony = match header.recipient.filter(|n| self.accepts_tool(n)) {
-                Some(name) => HarmonyState::Tool {
-                    name,
-                    body: String::new(),
-                },
-                None => HarmonyState::Body(header.channel),
-            };
-            return Ok(Vec::new());
-        }
-        if token_id == self.tokenizer.message_end_id {
-            // A tool body closed by `<|end|>` rather than by `<|call|>` is
-            // still a complete call. Reachable only from a model that framed
-            // one that way; the emit path is shared with `finish` so the two
-            // cannot drift.
-            let events = self.close_harmony_tool()?;
-            self.harmony = HarmonyState::Between;
-            return Ok(events);
-        }
-        Ok(match &mut self.harmony {
-            HarmonyState::Header => {
-                self.label.push_str(delta);
-                Vec::new()
-            }
-            HarmonyState::Tool { body, .. } => {
-                body.push_str(delta);
-                if body.len() > crate::tool_call::MAXIMUM_BYTES {
-                    self.failed = true;
-                    return Err(ToolCallParserError::Oversized);
-                }
-                Vec::new()
-            }
-            HarmonyState::Between => Vec::new(),
-            HarmonyState::Body(_) | HarmonyState::Unframed if delta.is_empty() => Vec::new(),
-            HarmonyState::Body(HarmonyChannel::Reasoning) => {
-                vec![StructuredAssistantEvent::Reasoning(delta.to_string())]
-            }
-            HarmonyState::Body(HarmonyChannel::Final) | HarmonyState::Unframed => {
-                vec![StructuredAssistantEvent::Content(delta.to_string())]
-            }
-        })
-    }
-
-    /// Whether a header's recipient names a tool this decoder may emit. The
-    /// name check is the same one the three DSL parsers apply, so a namespace
-    /// separator that survived stripping cannot reach a caller as a function
-    /// name.
-    fn accepts_tool(&self, name: &str) -> bool {
-        is_valid_function_name(name) && self.allowed_tools.contains(name)
-    }
-
-    /// Closes an open Harmony tool span, if there is one, parsing its
-    /// accumulated body as the call's arguments.
-    ///
-    /// A body that will not parse is [`ToolCallParserError::Malformed`], which
-    /// is the same verdict the Gemma arm reaches on an unterminated tool span.
-    /// The common way to get one is a generation that hit its token budget
-    /// partway through the JSON.
-    fn close_harmony_tool(&mut self) -> Result<Vec<StructuredAssistantEvent>, ToolCallParserError> {
-        let Some((name, body)) = self.harmony.take_tool() else {
-            return Ok(Vec::new());
-        };
-        let arguments = match JsonValue::parse(body.trim()) {
-            // Arguments are an object in every wire format this feeds, and
-            // every other parser here builds one. A bare array or scalar is a
-            // malformed call rather than a call with odd arguments.
-            Ok(value @ JsonValue::Object(_)) => value,
-            _ => {
-                self.failed = true;
-                return Err(ToolCallParserError::Malformed);
-            }
-        };
-        let call = ParsedToolCall {
-            id: (self.id_generator)(),
-            name,
-            arguments_json: arguments.encoded(),
-            arguments,
-        };
-        self.emitted_calls += 1;
-        Ok(vec![StructuredAssistantEvent::ToolCall(call)])
-    }
-
     /// Release any tail withheld as a potential DSML-open prefix.
     pub fn drain(&mut self) -> Vec<StructuredAssistantEvent> {
         if self.failed || self.dsml_text.is_some() || self.held_text.is_empty() {

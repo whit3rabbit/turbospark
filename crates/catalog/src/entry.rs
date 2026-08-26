@@ -46,6 +46,7 @@ pub enum SourceKind {
 }
 
 impl SourceKind {
+    /// String identifier for this packaging format ("mlx" or "gguf").
     pub fn as_str(self) -> &'static str {
         match self {
             SourceKind::Mlx => "mlx",
@@ -77,6 +78,7 @@ pub enum Status {
 }
 
 impl Status {
+    /// String representation of the verification status ("verified", "runs", or "caveat").
     pub fn as_str(self) -> &'static str {
         match self {
             Status::Verified => "verified",

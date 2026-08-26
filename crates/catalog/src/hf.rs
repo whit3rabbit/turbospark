@@ -28,6 +28,7 @@ pub struct RepoRef {
 }
 
 impl RepoRef {
+    /// Creates a new repository reference from owner/name and revision.
     pub fn new(repo: impl Into<String>, revision: impl Into<String>) -> Self {
         Self {
             repo: repo.into(),
@@ -155,6 +156,7 @@ impl Default for Client {
 }
 
 impl Client {
+    /// Creates a new Hugging Face HTTP client, reading `HF_TOKEN` from the environment if present.
     pub fn new() -> Self {
         let inner = reqwest::blocking::Client::builder()
             .timeout(std::time::Duration::from_secs(120))

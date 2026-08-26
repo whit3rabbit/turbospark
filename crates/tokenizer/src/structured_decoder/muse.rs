@@ -76,3 +76,69 @@ pub(super) fn parse_header(header: &str) -> MuseChannel {
         Some(_) => MuseChannel::Reasoning,
     }
 }
+
+use super::StructuredAssistantDecoder;
+use crate::StructuredAssistantEvent;
+
+impl<'a> StructuredAssistantDecoder<'a> {
+    /// One token of a Muse Glimmer generation.
+    ///
+    /// Keys on TOKEN IDS and never on text, like the Harmony arm and for the
+    /// same reason: the detokenizer renders `<|start|>`, `<|message|>` and
+    /// `<|eom|>` to the EMPTY STRING, so a text-keyed reader would see no
+    /// transitions at all (AGENTS.md Gotcha 44).
+    ///
+    /// `<|eot|>` is absent on purpose -- it is a STOP token, so the loop breaks
+    /// before the callback and it never arrives. Nothing here needs it: it ends
+    /// a turn rather than opening a channel, and `finish` has nothing to flush
+    /// for this dialect because every body is emitted delta by delta as it
+    /// arrives.
+    pub(super) fn consume_muse(
+        &mut self,
+        token_id: i32,
+        delta: &str,
+    ) -> Vec<StructuredAssistantEvent> {
+        if token_id == self.tokenizer.channel_start_id {
+            self.muse = MuseState::Header(String::new());
+            return Vec::new();
+        }
+        if token_id == self.tokenizer.message_start_id {
+            if let MuseState::Header(header) = &self.muse {
+                self.muse = MuseState::Body(parse_header(header));
+            }
+            return Vec::new();
+        }
+        if token_id == self.tokenizer.message_end_id {
+            self.muse = MuseState::Between;
+            return Vec::new();
+        }
+        match &mut self.muse {
+            // The header is markup, never output. A recipient split across
+            // deltas (`` to=``, ``self``) accumulates here and parses whole.
+            MuseState::Header(header) => {
+                header.push_str(delta);
+                Vec::new()
+            }
+            MuseState::Between => Vec::new(),
+            MuseState::Body(channel) => {
+                let channel = *channel;
+                if delta.is_empty() {
+                    return Vec::new();
+                }
+                vec![match channel {
+                    MuseChannel::Reasoning => {
+                        StructuredAssistantEvent::Reasoning(delta.to_string())
+                    }
+                    MuseChannel::Answer => StructuredAssistantEvent::Content(delta.to_string()),
+                }]
+            }
+            MuseState::Unframed => {
+                if delta.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![StructuredAssistantEvent::Content(delta.to_string())]
+                }
+            }
+        }
+    }
+}

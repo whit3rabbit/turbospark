@@ -28,6 +28,7 @@
 use std::os::raw::{c_char, c_int, c_void};
 use std::sync::Arc;
 
+/// C ABI error codes and exception-safe wrapper boundary.
 pub mod abi;
 mod generate;
 mod models;
@@ -36,6 +37,7 @@ mod open;
 mod session;
 mod strings;
 mod telemetry;
+/// JSON wire structures exchanged across the C ABI.
 pub mod wire;
 
 pub use generate::{TS_EVENT_CONTENT, TS_EVENT_PREFILL, TS_EVENT_REASONING};

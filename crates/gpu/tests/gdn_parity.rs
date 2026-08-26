@@ -549,7 +549,7 @@ fn one_prefill_row_matches_one_decode_step_from_a_state_that_carries_history() {
     let w = Weights::new(0xA11CE);
     // Warm rows to build history, then the row both arms are compared on.
     let warm = 5usize;
-    let rows = Rows::new(warm + 1, 0xA11CE_000);
+    let rows = Rows::new(warm + 1, 0xA11C_E000);
 
     let decode_bufs = DecodeBuffers::new(&context, &w);
     for row in 0..warm {
@@ -696,7 +696,7 @@ fn repeated_one_row_prefill_calls_match_decode_steps_row_by_row() {
     let vd = dims().value_dim();
     let w = Weights::new(0xC0DE);
     let count = 6usize;
-    let rows = Rows::new(count, 0xC0DE_000);
+    let rows = Rows::new(count, 0x0C0D_E000);
 
     // Arm A carries its own tail and state through `gpu_decode_step`.
     let decode_bufs = DecodeBuffers::new(&context, &w);

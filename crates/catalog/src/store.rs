@@ -65,6 +65,7 @@ pub fn default_root() -> Option<PathBuf> {
 }
 
 impl Store {
+    /// Creates a new model store rooted at the given path.
     pub fn new(root: impl Into<PathBuf>) -> Self {
         Self { root: root.into() }
     }
@@ -78,6 +79,7 @@ impl Store {
         })
     }
 
+    /// The root directory of this store.
     pub fn root(&self) -> &Path {
         &self.root
     }

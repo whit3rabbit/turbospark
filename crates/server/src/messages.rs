@@ -91,6 +91,8 @@ fn to_sse(event: &StreamEvent) -> Event {
         .data(serde_json::to_string(event).unwrap_or_default())
 }
 
+/// `POST /v1/messages`. Anthropic-compatible messages endpoint, translating
+/// requests to OpenAI format and translating responses back.
 pub async fn messages(
     State(model): State<AppState>,
     Json(request): Json<MessageCreateRequest>,

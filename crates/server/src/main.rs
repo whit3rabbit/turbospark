@@ -24,6 +24,7 @@
 //! entirely by the Tailnet ACL.
 
 mod args;
+mod bind;
 
 use std::path::PathBuf;
 use std::sync::Arc;

@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
-use super::args::{parse_model_args, short_circuit, tailnet_host, BindMode, ModelArgs};
+use super::args::{parse_model_args, short_circuit, BindMode, ModelArgs};
+use super::bind::tailnet_host;
 
 fn parse(argv: &[&str]) -> Result<Option<ModelArgs>, String> {
     let owned: Vec<String> = argv.iter().map(|s| s.to_string()).collect();

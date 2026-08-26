@@ -35,6 +35,7 @@ mod synthetic_model;
 mod synthetic_muse;
 mod synthetic_qwen;
 mod synthetic_real;
+mod synthetic_tensors;
 mod trained_context;
 
 pub use arch_registry::{

@@ -7,6 +7,7 @@
 //! with `turbospark-invocation`, and it is what lets the verdict logic be
 //! tested without a terminal.
 
+mod progress;
 mod render;
 
 use catalog::{Catalog, Client, InstallPlan, RepoRef, Store, Verdict};
@@ -76,7 +77,10 @@ pub fn probe(
     file: Option<&str>,
     sidecars: Option<&RepoRef>,
 ) -> Result<(), Error> {
-    let report = catalog::probe(client, repo, file, sidecars).map_err(Error::Failed)?;
+    let pb = progress::spinner(format!("probing {repo}..."));
+    let report_res = catalog::probe(client, repo, file, sidecars);
+    pb.finish_and_clear();
+    let report = report_res.map_err(Error::Failed)?;
     render::report(&report);
     match &report.verdict {
         Verdict::Runnable => Ok(()),
@@ -127,8 +131,10 @@ pub fn remove(store: &Store, alias: &str, yes: bool) -> Result<(), Error> {
             return Err(Error::Failed("not confirmed, nothing deleted".to_string()));
         }
     }
-    std::fs::remove_dir_all(&path)
-        .map_err(|e| Error::Failed(format!("removing {}: {e}", path.display())))?;
+    let pb = progress::spinner(format!("removing {}...", path.display()));
+    let rm_res = std::fs::remove_dir_all(&path);
+    pb.finish_and_clear();
+    rm_res.map_err(|e| Error::Failed(format!("removing {}: {e}", path.display())))?;
     store.forget(alias).map_err(Error::Failed)?;
     println!("removed {} ({})", path.display(), human_bytes(bytes));
     Ok(())
@@ -154,27 +160,10 @@ pub fn pull(
         )));
     }
 
-    let pb = if plan.install_bytes > 0 {
-        let pb = indicatif::ProgressBar::new(plan.install_bytes);
-        if let Ok(style) = indicatif::ProgressStyle::with_template(
-            "[{elapsed_precise}] [{bar:40.cyan/blue}] {bytes:>10}/{total_bytes:10} ({bytes_per_sec}, {eta}) {msg}",
-        ) {
-            pb.set_style(style.progress_chars("=>-"));
-        }
-        pb
-    } else {
-        let pb = indicatif::ProgressBar::new_spinner();
-        if let Ok(style) = indicatif::ProgressStyle::with_template(
-            "[{elapsed_precise}] {spinner} {bytes:>10} ({bytes_per_sec}) {msg}",
-        ) {
-            pb.set_style(style.tick_chars("-\\|/"));
-        }
-        pb
-    };
-    pb.enable_steady_tick(std::time::Duration::from_millis(100));
-
+    let pb = progress::byte_progress_bar(plan.install_bytes);
     let pb_for_msg = pb.clone();
     let mut progress = move |stage: &str| {
+        pb_for_msg.set_message(stage.to_string());
         pb_for_msg.println(format!("[pull] {stage}"));
     };
     let report = catalog::gate(client, &plan, options.force, &mut progress).map_err(|e| {
@@ -307,22 +296,29 @@ pub fn recommend(catalog: &Catalog, client: &Client, options: &Options) -> Resul
 
     let entries: Vec<&catalog::CatalogEntry> = catalog.entries().collect();
     let mut rows: Vec<catalog::Recommendation> = if options.probe {
-        entries
+        let pb = progress::count_progress_bar(entries.len() as u64, "probing curated models...");
+        let results = entries
             .iter()
             .map(|entry| {
+                pb.set_message(format!("probing {}...", entry.alias));
                 // A probe failure is not a refusal: the row still has its
                 // size and its evidence, and losing it entirely because a
                 // header read timed out would be the worse answer.
                 let report = catalog::probe_entry(client, entry).ok();
+                pb.inc(1);
                 catalog::from_entry(entry, &machine, context, report.as_ref())
             })
-            .collect()
+            .collect();
+        pb.finish_and_clear();
+        results
     } else {
         catalog::recommend_catalog(&entries, &machine, context)
     };
 
     if let Some(scan) = options.discover {
-        eprintln!("scanning the {scan} most-downloaded GGUF repositories ...");
+        let pb = progress::spinner(format!(
+            "scanning the {scan} most-downloaded GGUF repositories on Hugging Face..."
+        ));
         let found = catalog::discover(
             client,
             &machine,
@@ -331,8 +327,9 @@ pub fn recommend(catalog: &Catalog, client: &Client, options: &Options) -> Resul
                 context,
                 ..Default::default()
             },
-        )?;
-        rows.extend(found);
+        );
+        pb.finish_and_clear();
+        rows.extend(found?);
     }
     // **Ranked ONCE, here, over everything.** Ranking inside each arm is what
     // the first draft did and it left `--probe` unsorted entirely, because

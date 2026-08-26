@@ -8,13 +8,16 @@ use super::{is_valid_function_name, ParsedToolCall, MAXIMUM_BYTES};
 use crate::error::ToolCallParserError;
 use crate::json_value::JsonValue;
 
+/// Parser for Qwen ChatML XML-style function call markup blocks.
 pub struct QwenToolCallParser;
 
 impl QwenToolCallParser {
+    /// Creates a new Qwen tool-call parser.
     pub fn new() -> Self {
         Self
     }
 
+    /// Parses a Qwen XML tool-call block into a [`ParsedToolCall`].
     pub fn parse(
         &self,
         text: &str,
