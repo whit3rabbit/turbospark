@@ -46,7 +46,8 @@ throughput, measured below at 1.72% of decode with all 64 layers steered and
 | 7 | the throughput cost | **LANDED**; -1.72% at all 64 layers, -0.75% at 26, `renorm` free |
 | 8 | llama.cpp interop | **LANDED**; the numbering was OFF BY ONE and is corrected, no measurement here moves |
 | 9 | a fifth family (Gemma 4) and its chunked prefill driver | **LANDED**; found `encode_steering`/`encode_resid_capture` hardcoded the edited row at offset 0, fixed with an `x_off` parameter, mutation-checked on the real chunked path |
-| 10 | the sixth and seventh flows (`gpt-oss`, `muse_glimmer`) | **LANDED** on synthetic fixtures, mutation-checked, and **BOTH NOW MEASURED ON A REAL INSTALL** since 2026-08-25 (below). `muse_glimmer`: null control byte-identical, memory oracle clean, but the probe's single-position divergence check does not clear its (`qwen3_5`-borrowed) floor at the prompts tried, despite real coefficients and CLI-visible divergence over a generation. `gpt-oss`: the same pattern, one step sharper -- the null control passes on both instruments, the probe's single-position check misses for a now-EXACT reason (the position it measures is Harmony's near-fixed `<|channel|>` token, decoded and confirmed rather than guessed), and the edit is visibly real once generation runs past that token: coherent, differently-worded output at alpha 0.3, and a DIFFERENT failure mode from `qwen38-27b`'s at alpha 1.0 (an unresolved reasoning loop rather than an immediate collapse) |
+| 10 | the sixth and seventh flows (`gpt-oss`, `muse_glimmer`) | **LANDED** on synthetic fixtures, mutation-checked, and **BOTH NOW MEASURED ON A REAL INSTALL** since 2026-08-25 (below). `muse_glimmer`: null control byte-identical, memory oracle clean, but at the time of that measurement the probe's single-position divergence check did not clear its (`qwen3_5`-borrowed) floor at the prompts tried, despite real coefficients and CLI-visible divergence over a generation. `gpt-oss`: the same pattern, one step sharper -- the null control passed on both instruments, the probe's single-position check missed for a now-EXACT reason (the position it measured is Harmony's near-fixed `<|channel|>` token, decoded and confirmed rather than guessed), and the edit was visibly real once generation ran past that token: coherent, differently-worded output at alpha 0.3, and a DIFFERENT failure mode from `qwen38-27b`'s at alpha 1.0 (an unresolved reasoning loop rather than an immediate collapse). **The single-position check itself is now FIXED, generally** (arm 2 asserts on a windowed teacher-forced KL trace rather than one position -- see "Open, and stated as open" below and `crates/bench/CLAUDE.md` Gotcha 25); re-captured with a fresh direction on each real install the same day, arm 2 now PASSES on both: museGlimmer's window max reads 11440x its floor (against 0x at the old single position), gpt-oss's reads 33x (against 0x at a position confirmed to decode to `<|channel|>` on both engines) |
+| 11 | Swift bindings and demo GUI integration | **LANDED**; full steering options in `turbospark-ffi` wire types / `turbospark.h`, `swift/TurboSpark` (`OpenOptions`, `SessionInfo.Steering`), and `swift/TurboSparkDemo` status footer |
 
 **It works.** On the real `qwen38-27b`, a direction extracted by this engine
 from its own activations, applied at runtime with no weight byte modified,
@@ -69,7 +70,7 @@ Target install for verification: `~/models/qwen38-27b.gturbo` (dense
 quality gate and a memory oracle, so a steered-vs-unsteered number is readable
 against known baselines.
 
-## CLI
+## CLI and Interfaces
 
 `--steering <path.gguf>` on BOTH `turbospark-check` and `turbospark-server` --
 same flag, no separate binary, no rebuild. A direction is a llama.cpp-layout
@@ -99,6 +100,39 @@ turbospark-check --model qwen38-27b --messages-file /tmp/p.json \
 ONCE at startup: there is no per-request override the way there is for
 `reasoning_effort`, so a server started with `--steering` steers every
 request it serves for the life of the process.
+
+### Swift bindings and native apps
+
+Native applications configure steering via `OpenOptions` when initializing a
+`TurboSparkSession`. Like the CLI and server, the vector is validated and
+loaded at open time:
+
+```swift
+var options = OpenOptions()
+options.steering = "/path/to/vector.gguf"
+options.steeringMode = .add             // .ablate, .add, .clamp, .renorm
+options.steeringScale = 0.5
+options.steeringLayers = "20:45"
+options.steeringTarget = 0.0            // for .clamp mode
+options.steeringGate = 0.0              // threshold to trigger edit
+
+let session = try await TurboSparkSession(modelPath: "qwen38-27b", options: options)
+
+// Introspect active steering:
+if session.info.steering.active {
+    print("Mode: \(session.info.steering.mode ?? "none")")
+    print("Scale: \(session.info.steering.scale ?? 1.0)")
+    print("Summary: \(session.info.steering.summary ?? "")")
+}
+```
+
+The C ABI (`turbospark.h`) exposes `steering`, `steeringMode`, `steeringScale`,
+`steeringLayers`, `steeringTarget`, `steeringGate` in `ts_session_open` JSON
+and reports `{ "active": bool, "mode": string?, "scale": number?, "summary": string? }`
+in `ts_session_info_json`.
+
+`swift/TurboSparkDemo` surfaces steering in `ChatModel` and displays active
+mode and summary details in its status bar footer.
 
 **Wired today (seven of eight families)**: the qwen flow (both halves,
 per-token and batched-verify), `families/llama/` (Mixtral, `qwen3moe`, and
@@ -1439,7 +1473,7 @@ context. Likely they want..." against steered's "This is ambiguous. It
 could be a prompt for a creative writing exercise..."). Both runs reach
 `EndOfTurn` with a coherent final answer (unsteered: "Could you tell me a
 bit more about the water you're thinking of?..."; steered: "I'm not sure
-which water you're referring to—whether it's a calm lake, a rushing
+which water you're referring to--whether it's a calm lake, a rushing
 river..." -- different phrasing, same underlying request for
 clarification, which is an ordinary outcome for a direction extracted
 from an unrelated ocean/mountain concept pair rather than from anything
@@ -1536,16 +1570,67 @@ ordinary question for this family.
   real install" and "gpt-oss, measured on a real install" above). Both:
   a real self-extracted direction, a clean null control on both instruments,
   coherent generation at a moderate alpha, and a clean memory oracle. Both
-  also share the probe's one honestly-reported shortfall -- the
-  single-position divergence check does not clear its borrowed floor at the
+  also shared the probe's one honestly-reported shortfall -- the
+  single-position divergence check did not clear its borrowed floor at the
   prompts tried, despite real coefficients and CLI-visible divergence over a
-  generation -- and `gpt-oss`'s write-up narrows WHY: the position that
-  check measures decodes to Harmony's `<|channel|>` token, near-fixed by the
-  chat template regardless of content, so the check is reading the format's
+  generation -- and `gpt-oss`'s write-up narrowed WHY: the position that
+  check measured decodes to Harmony's `<|channel|>` token, near-fixed by the
+  chat template regardless of content, so the check was reading the format's
   own near-determinism rather than the direction's absence. Full ablation on
   `gpt-oss` also does NOT collapse the way `qwen38-27b`'s does at alpha 1 --
   it fails a different way, settling into an unresolved reasoning loop past
   ~900 tokens rather than stopping immediately.
+  ~~**The probe measures divergence at exactly one position, which a chat
+  template can pin -- fixing that is a bigger instrument change than a
+  floor constant, and was left open.**~~ **CLOSED.** `steering_probe.rs`'s
+  arm 2 no longer relies on the single prompt-final position at all: it
+  teacher-forces the unsteered engine's own greedy continuation through the
+  steered engine, position by position, and asserts on the MAXIMUM KL over
+  that whole window rather than on one entry. A template-pinned position
+  (Harmony's `<|channel|>` included) still contributes a near-zero entry --
+  the fix does not detect pinning, it refuses to trust any single entry, so
+  the position where real content diverges is what the max finds instead,
+  with no per-dialect branch anywhere in the new code
+  (`crates/bench/CLAUDE.md` Gotcha 25). Both the prompt-final KL and the
+  window's max (with its position and the decoded argmax token on both
+  sides) are printed, so a template-pinned entry stays visible for
+  diagnosis even though it no longer decides the verdict alone. Backward-safe
+  by construction: the window contains the old single position, so a
+  checkpoint that already passed cannot newly fail.
+
+  **CONFIRMED ON BOTH REAL INSTALLS THE SAME DAY, WITH A FRESH SELF-EXTRACTED
+  DIRECTION ON EACH.** No published vector exists for either checkpoint, so
+  a new 4-pair ocean/mountain corpus was captured and reduced per family
+  (the same shape as every other direction on this page), rather than
+  reusing `qwen38-27b`'s vectors, which do not fit either model's hidden
+  size.
+
+  `museGlimmer` (`~/models/museglimmer-30b.gturbo`, alpha 0.3, 51 covered
+  layers): prompt-final KL `8.3235e-10` nats, `0x` the `7.4e-6` dense floor
+  -- the exact false negative this fix targets. Window max: `8.4657e-2`
+  nats, **11440x the floor**, at window position 21 (prompt token index
+  85), argmax `" provided"` on both sides (the steered continuation departs
+  from the unsteered one earlier in the window than the position where the
+  max KL lands, since divergence in probability mass need not coincide with
+  a change in the argmax). Arm 2 now PASSES.
+
+  `gpt-oss` (`~/.turbospark/models/gptoss-20b.gturbo`, alpha 0.3, 23
+  covered layers): prompt-final argmax decodes to `<|channel|>` on both
+  engines, exactly as the mechanism above predicts, KL `1.6498e-12` nats,
+  `0x` the `1.4e-3` MoE floor. Window max: `4.4824e-2` nats, **33x the
+  floor**, at window position 23, argmax `" want"` on both sides. Arm 2 now
+  PASSES, and the generated text confirms it is real content diverging, not
+  noise: unsteered continues `"...Likely they want a"`, steered
+  `"...This is ambiguous. We need context. The"`.
+
+  A second, smaller bug surfaced verifying this: two of arm 2's own
+  diagnostic `println!` arguments were swapped on the first pass (the
+  `Nx the floor` ratio and the decoded window position printed in each
+  other's slots) -- caught by the printed numbers not matching their own
+  labels (11440x showing up next to "prompt token index" instead of next
+  to "x the floor"), fixed, and confirmed on both installs above. The
+  assertion itself was unaffected throughout, since it compares the
+  unformatted `f64`s directly; only the human-readable line was wrong.
 - ~~**No Llama-3 chat dialect, so no Llama-3 checkpoint runs here at all.**~~
   **LANDED 2026-08-24, `ChatDialect::Llama3`** (`crates/tokenizer/CLAUDE.md`
   Gotcha 10). `detect_dialect` used to fall through to Gemma for a table

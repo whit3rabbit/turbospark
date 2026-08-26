@@ -15,11 +15,18 @@
 //!    arithmetic, so any difference at all is the kernel writing something
 //!    it should not -- a wrong reduction, a wrong buffer offset, a wrong row
 //!    stride -- and one comparison covers all three. It is an ASSERTION.
-//! 2. **Steered vs unsteered, in NATS against the shape floor.** Here a
+//! 2. **Steered vs unsteered, in NATS against the shape floor, WINDOWED over
+//!    the prompt-final position plus a teacher-forced continuation.** Here a
 //!    LARGE divergence is the success signal and the floor is what says it
 //!    is the edit rather than noise. That direction is unusual enough to be
 //!    worth stating: every other divergence measurement in this crate wants
-//!    a small number.
+//!    a small number. The window exists because the single prompt-final
+//!    position alone can be pinned by the checkpoint's own chat template
+//!    (Harmony's `<|channel|>` on `gpt-oss` is the confirmed case --
+//!    `crates/bench/CLAUDE.md` Gotcha 25) and read near machine epsilon even
+//!    when the edit is real; the max KL over the whole window is what this
+//!    arm asserts on now, with the single prompt-final number still printed
+//!    for continuity.
 //! 3. **The coefficient trace.** `c_l` per steered layer, read back from the
 //!    kernel's own scratch. This is the "reference" without a reference
 //!    model -- it says how much of the direction was present at each layer
@@ -211,6 +218,15 @@ fn require_finite(label: &str, v: &[LogitValue]) {
     );
 }
 
+/// [`require_finite`] applied to every row of a trace, labelling each by its
+/// index so a saturated row names its own position rather than the whole
+/// trace.
+fn require_finite_all(label: &str, rows: &[Vec<LogitValue>]) {
+    for (i, row) in rows.iter().enumerate() {
+        require_finite(&format!("{label}[{i}]"), row);
+    }
+}
+
 /// Walks a prompt from a fresh state and returns the last token's logits.
 fn walk(runner: &mut RealForwardRunner, ids: &[i32]) -> Vec<LogitValue> {
     let mut scratch = vec![LogitValue::from_f32(0.0); runner.vocab_size()];
@@ -239,6 +255,61 @@ fn greedy(runner: &mut RealForwardRunner, from: usize, first: i32, n: usize) -> 
         out.push(token);
     }
     out
+}
+
+/// Like [`greedy`], but also returns the logits that CHOSE each generated
+/// token, not just the tokens themselves. `greedy` throws every
+/// intermediate distribution away; arm 2's windowed divergence check needs
+/// all of them, to compare position by position against the steered
+/// engine's teacher-forced trace over the same continuation
+/// ([`teacher_force_trace`]).
+fn greedy_with_trace(
+    runner: &mut RealForwardRunner,
+    from: usize,
+    first: i32,
+    n: usize,
+) -> (Vec<i32>, Vec<Vec<LogitValue>>) {
+    let mut scratch = vec![LogitValue::from_f32(0.0); runner.vocab_size()];
+    let mut out = Vec::with_capacity(n);
+    let mut trace = Vec::with_capacity(n);
+    let mut token = first;
+    for step in 0..n {
+        runner
+            .produce(token, from + step, &mut scratch)
+            .expect("produce");
+        trace.push(scratch.clone());
+        token = argmax(&scratch);
+        out.push(token);
+    }
+    (out, trace)
+}
+
+/// Feeds `ids` into `runner` from `from`, one at a time, TEACHER-FORCED --
+/// the caller's tokens are fed regardless of what the runner itself would
+/// have picked -- and returns the logits produced at each step.
+///
+/// This is what makes a row of this trace comparable to the SAME row of
+/// [`greedy_with_trace`]'s trace: both describe "predict the token after
+/// this exact prefix", and only which engine is doing the predicting
+/// differs. Arm 2 uses this to walk the UNSTEERED engine's own generated
+/// continuation through the already-open STEERED runner, so the two engines
+/// can be compared position by position along one real continuation instead
+/// of at a single fixed position that a chat template can pin
+/// (`crates/bench/CLAUDE.md` Gotcha 25).
+fn teacher_force_trace(
+    runner: &mut RealForwardRunner,
+    from: usize,
+    ids: &[i32],
+) -> Vec<Vec<LogitValue>> {
+    let mut scratch = vec![LogitValue::from_f32(0.0); runner.vocab_size()];
+    let mut trace = Vec::with_capacity(ids.len());
+    for (i, &token) in ids.iter().enumerate() {
+        runner
+            .produce(token, from + i, &mut scratch)
+            .expect("produce");
+        trace.push(scratch.clone());
+    }
+    trace
 }
 
 #[test]
@@ -341,7 +412,7 @@ fn a_steering_edit_is_inert_at_zero_and_moves_the_distribution_at_one() {
     //
     // Opened FIRST and dropped before the steered ones, so a footprint or a
     // Metal-allocation difference cannot be blamed on ordering.
-    let (off_logits, off_tokens, prompt, tokenizer) = {
+    let (off_logits, off_tokens, off_trace, prompt, tokenizer) = {
         let (mut runner, tokenizer) = open_model_runner(&dir, PROTOCOL_EXPERT_CACHE_SLOTS)
             .unwrap_or_else(|e| panic!("install opens unsteered: {e}"));
         assert!(
@@ -354,12 +425,16 @@ fn a_steering_edit_is_inert_at_zero_and_moves_the_distribution_at_one() {
         let logits = walk(&mut runner, &prompt);
         require_finite("unsteered", &logits);
         let first = argmax(&logits);
-        let tokens = greedy(&mut runner, prompt.len(), first, GREEDY_TOKENS);
+        // `_with_trace` rather than plain `greedy`: arm 2's windowed
+        // divergence check (below) needs every intermediate distribution
+        // this generation passed through, not just the final tokens.
+        let (tokens, trace) = greedy_with_trace(&mut runner, prompt.len(), first, GREEDY_TOKENS);
+        require_finite_all("unsteered window", &trace);
         // The tokenizer outlives its runner deliberately: the two steered
         // arms need it to DETOKENIZE, and it is a property of the install
         // rather than of the engine, so re-loading it per arm would only
         // add a way for the arms to disagree about what the ids mean.
-        (logits, tokens, prompt, tokenizer)
+        (logits, tokens, trace, prompt, tokenizer)
     };
     println!(
         "  {} prompt tokens, vocab {}",
@@ -489,36 +564,114 @@ fn a_steering_edit_is_inert_at_zero_and_moves_the_distribution_at_one() {
         None => panic!("a steered runner must report coefficients"),
     }
 
-    // --- ARM 2: the divergence, and here a LARGE number is the good one ---
+    // --- The teacher-forced window feeding ARM 2 ---
+    //
+    // Walks the SAME tokens the unsteered engine actually generated into the
+    // steered runner, one at a time, so arm 2 can compare the two engines'
+    // distributions along one real continuation instead of at a single
+    // position a chat template can pin (`crates/bench/CLAUDE.md` Gotcha 25).
+    // Checkpointed and rolled back so the runner is left exactly where
+    // `walk(&mut runner, &prompt)` put it -- arm 4's own
+    // checkpoint/rollback pair below still starts from that same state.
+    //
+    // `off_first` plus the first `GREEDY_TOKENS - 1` entries of `off_tokens`
+    // is the token the unsteered engine placed at every position `off_trace`
+    // covers: `off_trace[k]` is the distribution that chose the token at
+    // prompt position `prompt.len() + 1 + k`, so feeding that same prefix
+    // into the steered engine reproduces the position `off_trace[k]`
+    // describes, one step later in the fed sequence.
+    let off_first = argmax(&off_logits);
+    let forced_ids: Vec<i32> = std::iter::once(off_first)
+        .chain(off_tokens[..off_tokens.len() - 1].iter().copied())
+        .collect();
+    let pre_window = runner.checkpoint();
+    let steered_trace = teacher_force_trace(&mut runner, prompt.len(), &forced_ids);
+    runner.rollback(&pre_window);
+    require_finite_all("steered window", &steered_trace);
+
+    // --- ARM 2: the divergence, WINDOWED over the prompt-final position
+    // plus every teacher-forced position after it. A LARGE number
+    // SOMEWHERE in this window is the good one. ---
+    //
+    // The prompt-final KL (`steered_kl`) is what earlier revisions of this
+    // file asserted on alone; it is kept as its own number for continuity
+    // with frozen rows in `docs/OBLITERATION.md`, but it is only entry 0 of
+    // the window now, not the verdict. On a checkpoint whose chat template
+    // forces a fixed token right after the prompt (Harmony's `<|channel|>`
+    // on `gpt-oss`, decoded and confirmed -- Gotcha 25), that one entry
+    // reads a KL near machine epsilon even when the edit is real; later
+    // entries, where real content is being generated, do not share that
+    // problem, and the max over the whole window finds them with no
+    // per-dialect branch anywhere in this file.
+    //
+    // The SAME `shape_floor_nats` applies at every window entry: the floor
+    // is a property of the architecture's batched-vs-cached numerical noise
+    // (Gotcha 8), not of sequence position, so nothing about a later
+    // position changes its magnitude.
     let steered_kl = kl_nats(&off_logits, &steered_logits);
+    let window_kls: Vec<f64> = off_trace
+        .iter()
+        .zip(steered_trace.iter())
+        .map(|(off_row, steered_row)| kl_nats(off_row, steered_row))
+        .collect();
+    let (max_pos, max_kl) = std::iter::once((0usize, steered_kl))
+        .chain(window_kls.iter().enumerate().map(|(i, &kl)| (i + 1, kl)))
+        .max_by(|a, b| a.1.total_cmp(&b.1))
+        .expect("window has at least one entry (the prompt-final position)");
+
     let differing = bits(&off_logits)
         .iter()
         .zip(bits(&steered_logits).iter())
         .filter(|(a, b)| a != b)
         .count();
+    let decode_one = |id: i32| tokenizer.decode(&[id], false);
     println!(
-        "\narm 2, steered vs unsteered: {differing}/{} logits differ, KL {steered_kl:.4e} nats \
-         ({:.0}x the {shape_floor_nats:.1e} {floor_label} shape floor), argmax {} vs {}",
+        "\narm 2, steered vs unsteered, windowed over the prompt-final position plus {} \
+         teacher-forced position(s):",
+        window_kls.len()
+    );
+    println!(
+        "  prompt-final: {differing}/{} logits differ, KL {steered_kl:.4e} nats ({:.0}x the \
+         {shape_floor_nats:.1e} {floor_label} shape floor), argmax {:?} vs {:?}",
         off_logits.len(),
         steered_kl / shape_floor_nats,
-        argmax(&off_logits),
-        argmax(&steered_logits),
+        decode_one(argmax(&off_logits)),
+        decode_one(argmax(&steered_logits)),
+    );
+    let (max_off_tok, max_steered_tok) = if max_pos == 0 {
+        (argmax(&off_logits), argmax(&steered_logits))
+    } else {
+        (
+            argmax(&off_trace[max_pos - 1]),
+            argmax(&steered_trace[max_pos - 1]),
+        )
+    };
+    println!(
+        "  window max: KL {max_kl:.4e} nats ({:.0}x the floor) at window position {max_pos} \
+         (prompt token index {}), argmax off={:?} steered={:?}",
+        max_kl / shape_floor_nats,
+        prompt.len() + max_pos,
+        decode_one(max_off_tok),
+        decode_one(max_steered_tok),
     );
     assert!(
-        steered_kl.is_finite() && steered_kl > shape_floor_nats,
-        "the steered distribution is {steered_kl:.4e} nats from the unsteered one, at or \
-         below the {shape_floor_nats:.1e} {floor_label} floor that ordinary numerical \
-         differences already cost on this architecture. So this run did not measurably \
-         steer AT THE SINGLE POSITION MEASURED, and the likeliest cause is a direction \
-         that is all zeros or is not covering the layers this model runs: `inv_norm` \
-         makes a zero direction inert, and every surface around it -- the covered-layer \
-         count, the summary line, the coefficient readback -- still reports a healthy \
-         steer. Before concluding that, though, check whether this position is one the \
-         model's own chat template pins regardless of content -- Harmony's `<|channel|>` \
-         is one such case and reads a KL near machine epsilon even when the coefficient \
-         trace and a full generation both show the edit is real \
-         (`crates/bench/CLAUDE.md` Gotcha 25); a floor fix cannot rescue a reading taken \
-         at a fixed position."
+        max_kl.is_finite() && max_kl > shape_floor_nats,
+        "the steered distribution never exceeds the {shape_floor_nats:.1e} {floor_label} \
+         floor at ANY of the {} positions checked (the prompt-final position plus {} \
+         teacher-forced positions after it); the best was {max_kl:.4e} nats at window \
+         position {max_pos}. So this run did not measurably steer anywhere in the window \
+         checked, and the likeliest cause is a direction that is all zeros or is not \
+         covering the layers this model runs: `inv_norm` makes a zero direction inert, and \
+         every surface around it -- the covered-layer count, the summary line, the \
+         coefficient readback -- still reports a healthy steer. This window exists \
+         specifically to rule out a single template-pinned position (Harmony's \
+         `<|channel|>` on `gpt-oss` is the confirmed case -- `crates/bench/CLAUDE.md` \
+         Gotcha 25) as the cause, so if the coefficient trace above shows a real, \
+         sign-varying edit, widen the search before concluding the direction itself is \
+         inert: a longer window (raise GREEDY_TOKENS) or a different \
+         TURBOSPARK_STEERING_PROMPT may still find where it shows up.",
+        window_kls.len() + 1,
+        window_kls.len(),
     );
 
     // --- ARM 4: determinism, which no comparison against the OFF arm can see ---
@@ -616,8 +769,10 @@ fn a_steering_edit_is_inert_at_zero_and_moves_the_distribution_at_one() {
     println!(
         "\nVERDICT: the edit is inert at alpha 0 (bit-identical, {GREEDY_TOKENS} tokens \
          deep), deterministic, and moves the distribution {:.0}x the {floor_label} shape \
-         floor at alpha {alpha}{}. What this does NOT say is whether the direction names \
-         the concept it was extracted for -- that is a judgement about text, not a number.",
+         floor SOMEWHERE in the window at alpha {alpha} (prompt-final alone: {:.0}x){}. What \
+         this does NOT say is whether the direction names the concept it was extracted for \
+         -- that is a judgement about text, not a number.",
+        max_kl / shape_floor_nats,
         steered_kl / shape_floor_nats,
         if collapsed {
             " -- BUT THE TURN COLLAPSED, so that multiple describes a model that stopped \

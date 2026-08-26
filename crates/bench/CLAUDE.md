@@ -651,3 +651,43 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
    genuinely weak direction is judged correctly, and separately fix (or
    route around) a position the template has already decided before
    trusting any single-position divergence number on a new dialect.
+
+   **THE SECOND FIX IS ALSO IN NOW, AND IT DID NOT NEED A PER-DIALECT
+   BRANCH.** Arm 2 no longer measures one fixed position at all. It
+   teacher-forces the UNSTEERED engine's own greedy continuation (already
+   generated for arm 4's determinism check) through the STEERED engine,
+   position by position, computes KL at every one of those positions plus
+   the original prompt-final one, and asserts on the WINDOW's MAXIMUM
+   rather than on entry 0 alone. A template-pinned position still
+   contributes a near-zero entry, exactly as before -- the fix is not
+   detecting that a position is pinned, it is refusing to trust any single
+   entry, so the position where real content diverges (the doc's manual
+   gpt-oss investigation found this "within the first two sentences" past
+   the forced token) is what the max finds instead. This is the general
+   form the paragraph above asked for: no knowledge of Harmony, or of any
+   other dialect's framing, anywhere in the new code. Both the prompt-final
+   KL and the window's max (with its position and the decoded argmax token
+   on both sides) are still printed, so a template-pinned entry stays
+   visible for diagnosis even though it no longer decides the verdict by
+   itself. Backward-safe by construction, since the window strictly
+   contains the old single position: a checkpoint that already passed
+   (any dense family, where position 0 already clears the floor) cannot
+   newly fail.
+
+   **CONFIRMED ON BOTH REAL INSTALLS THE SAME DAY, with a fresh
+   self-extracted direction on each (no published vector exists for
+   either).** `museGlimmer`: prompt-final KL `8.3235e-10` nats (`0x` the
+   dense floor, the exact false negative), window max `8.4657e-2` nats
+   (**11440x** the floor) at window position 21, argmax `" provided"` on
+   both sides. `gpt-oss`: prompt-final argmax decodes to `<|channel|>` on
+   BOTH engines (confirming the mechanism directly, not by inference), KL
+   `1.6498e-12` nats (`0x` the MoE floor), window max `4.4824e-2` nats
+   (**33x** the floor) at window position 23, with the generated text
+   confirming real divergence (`"...Likely they want a"` vs `"...This is
+   ambiguous. We need context. The"`). Arm 2 PASSES on both. A second bug
+   surfaced verifying this -- two of arm 2's OWN diagnostic `println!`
+   arguments were transposed on the first pass (the `Nx the floor` ratio
+   and the decoded window position printed in each other's slots), caught
+   by the printed numbers not matching their own labels and fixed before
+   these values were taken; the assertion itself, which compares the raw
+   `f64`s directly, was never affected.
