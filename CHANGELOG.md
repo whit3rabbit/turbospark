@@ -17,11 +17,28 @@ when this file gets updated relative to the version bump and the tag.
 - Directional steering (`--steering <path.gguf>` on `turbospark-check` and
   `turbospark-server`): runtime abliteration, ActAdd (`add`), feature clamping
   (`clamp`), and norm-preserving projection (`renorm`) via Metal shader
-  `steer_direction_fp16`, with support across 5 families (`qwenGdnDense`,
-  `qwenGdnMoe`, `llama`, `qwen3moe`, `gemma4`), speculative verify
-  (`produce_batched`), and Gemma 4 chunked prefill (`x_off`). Includes
-  activation capture (`MFERENCE_RESID_CAPTURE`) and extraction
-  (`scripts/extract_direction.py`).
+  `steer_direction_fp16`, with support across 7 of 8 families (`qwenGdnDense`,
+  `qwenGdnMoe`, `llama`, `qwen3moe`, `gemma4`, `gptoss`, `museGlimmer`),
+  speculative verify (`produce_batched`), and Gemma 4 chunked prefill
+  (`x_off`). `DeepSeek-V4-Flash` stays refused at open by name -- its
+  compressed-attention kernels are unported, so there is no decode flow at
+  all to hook. Includes activation capture (`MFERENCE_RESID_CAPTURE`) and
+  extraction (`scripts/extract_direction.py`).
+- `gpt-oss` and `museGlimmer` steering measured on real installs
+  (2026-08-25): a self-extracted 4-pair direction and a byte-identical null
+  control on each, plus a clean memory-oracle replay. Both share one
+  honestly-reported shortfall -- the steering probe's single-position
+  divergence check does not clear its (`qwen3_5`-borrowed) floor at the
+  prompts tried, despite real per-layer coefficients and CLI-visible
+  divergence over a full generation. `gpt-oss`'s write-up traces the
+  shortfall to an exact cause rather than a guess: the position that check
+  reads decodes to Harmony's near-fixed `<|channel|>` token, so it measures
+  the chat template's own determinism, not the direction's absence. Full
+  ablation on `gpt-oss` also fails differently than `qwen38-27b`'s collapse
+  at the same operating point -- an unresolved reasoning loop past ~900
+  tokens rather than an immediate stop. Full write-up:
+  `docs/OBLITERATION.md`'s "museGlimmer, measured on a real install" and
+  "gpt-oss, measured on a real install" sections.
 - `ChatDialect::Llama3` in `turbospark-tokenizer`: detection on
   `<|start_header_id|>` / `<|eot_id|>` and fallback template renderer.
 - `turbospark-catalog`: the curated model table (thirteen rows, each naming a

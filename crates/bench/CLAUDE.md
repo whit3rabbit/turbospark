@@ -589,3 +589,38 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
    whether YOUR uncommitted diff is the cause first with
    `git stash push -- <the one file>`, rebuild, re-run, `git stash pop` --
    cheaper than a full bisect and rules out the easy case immediately.
+
+25. **`steering_probe.rs`'S SINGLE-POSITION DIVERGENCE CHECK CAN ALSO FAIL IN
+   THE OPPOSITE DIRECTION FROM GOTCHA 18, BY READING A POSITION THE CHAT
+   TEMPLATE HAS ALREADY DECIDED.** Gotcha 18 is a KL too LARGE to trust
+   (collapse reads as a huge success). `gpt-oss` (2026-08-25) found the
+   other failure mode: a KL too SMALL to trust, on a checkpoint where the
+   edit is demonstrably real. The probe measures divergence at exactly one
+   position -- the token right after the rendered prompt -- and on a
+   Harmony checkpoint that position is `<|channel|>`: the assistant turn
+   always opens `<|start|>assistant<|channel|>`, so that token is close to
+   fixed by the TEMPLATE regardless of the prompt, the direction, or
+   whether steering is even dispatched. Checked directly against the
+   install's `tokenizer.json`, not inferred: the winning id (200005) is
+   `<|channel|>` on every prompt/alpha combination tried, steered or not.
+   So the single-position number was reading the format's own
+   near-determinism, not the direction's absence -- and the coefficient
+   trace (`|c|` in the thousands at several layers) plus a full CLI
+   generation past that token both confirm the edit is real and visible in
+   the actual output.
+   **The general form, one layer past Gotcha 18's: a single fixed
+   measurement position is only informative if that position is free to
+   vary.** Before trusting (or distrusting) a one-position divergence
+   number on a new family, decode what token sits at that position and ask
+   whether the CHAT TEMPLATE, not the model, put it there. `museGlimmer`'s
+   real-install write-up has the same shortfall recorded a session earlier
+   as an open question ("this family's very first generated token sits at
+   an unusually confident point") -- gpt-oss is the case where that guess
+   became a checked, exact mechanism rather than staying a hypothesis. The
+   probe has no per-family or per-template branch to detect this
+   automatically; the mitigation used here was to fall back to reading
+   generated TEXT past the forced token, the same move Gotcha 18 already
+   made for the opposite failure. No MoE-specific shape floor exists yet
+   either (`gpt-oss` is MoE and the probe's `DENSE_SHAPE_FLOOR_NATS` is a
+   `qwen3_5`, i.e. dense, number -- AGENTS.md Gotcha 8's ratio-not-absolute
+   rule applies and building a real floor is still open work).
