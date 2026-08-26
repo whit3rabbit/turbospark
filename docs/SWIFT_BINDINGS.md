@@ -123,11 +123,17 @@ options.powerProfile = .efficiency         // or nil, see below
 options.maxTokensPerSec = 30
 options.speculation = .auto                // or .off, .block(2)
 options.speculativeDrafter = .auto         // or .mtp, .dflash
+options.steering = "/path/to/vector.gguf"  // or nil (disabled)
+options.steeringMode = .ablate             // or .add, .clamp, .renorm
+options.steeringScale = 0.5                // default 1.0; 0.0 is identity
+options.steeringLayers = "20:45"           // 0-based inclusive layer range
+options.steeringTarget = 0.0               // for .clamp mode (default 0.0)
+options.steeringGate = 0.0                 // activation threshold >= 0
 
 let session = try await TurboSparkSession(modelPath: "gemma4", options: options)
 ```
 
-Everything defaults to automatic, which is what a GUI should want. Three
+Everything defaults to automatic, which is what a GUI should want. Four
 defaults are worth understanding rather than accepting:
 
 **`expertCacheSlots: .auto` climbs, never falls.** It picks the largest
@@ -161,6 +167,13 @@ workload is code-shaped.
 `.block(n)` is a promise rather than a preference: an install that cannot
 serve it throws from `init` rather than opening quietly without it.
 
+**`steering` applies a control vector at open.** The vector file is parsed
+and verified against the model architecture before any memory is mapped, and
+the session verifies that the architecture family supports directional
+steering. Steering modifiers (`steeringMode`, `steeringScale`, `steeringLayers`,
+`steeringTarget`, `steeringGate`) require a `steering` path and throw if passed
+alone.
+
 ### Reading what you actually got
 
 ```swift
@@ -173,6 +186,10 @@ info.family             // "gemma4", "qwen36", "llama", ...
 info.vocabSize          // token count in vocabulary
 info.dialect            // chat template dialect ("harmony", "qwen", ...)
 info.reasoningSupport   // .level | .toggleOnly | .none
+info.steering.active    // true when a control vector is active
+info.steering.mode      // "ablate", "add", "clamp", "renorm" or nil
+info.steering.scale     // active scale multiplier or nil
+info.steering.summary   // human-readable one-line description or nil
 info.speculation.block  // the RESOLVED block, or nil when off
 info.speculation.drafter// .mtp | .dflash, non-nil exactly when block is
 info.speculation.reason // why it is off, when you might expect otherwise
@@ -486,7 +503,13 @@ int main(void) {
   "powerProfile": "efficiency",
   "maxTokensPerSec": 30,
   "speculation": "auto",
-  "speculativeDrafter": "auto"
+  "speculativeDrafter": "auto",
+  "steering": "/path/to/vector.gguf",
+  "steeringMode": "ablate",
+  "steeringScale": 0.5,
+  "steeringLayers": "20:45",
+  "steeringTarget": 0.0,
+  "steeringGate": 0.0
 }
 ```
 
@@ -501,12 +524,22 @@ or `"dflash"`. Both are refused by name rather than defaulted when
 misspelled, and both are mapped BEFORE the install is touched, so a bad
 option is reported ahead of a bad path.
 
+`steering` accepts a file path string to a `.gguf` control vector, or `null`.
+`steeringMode` accepts `"ablate"`, `"add"`, `"clamp"`, `"renorm"`.
+`steeringScale` accepts a finite number (default 1.0).
+`steeringLayers` accepts `"START:END"` (0-based inclusive layer range).
+`steeringTarget` and `steeringGate` accept finite numbers.
+
 `ts_session_info_json` reports what they resolved to:
 
 ```json
-{ "speculation": { "block": 2, "drafter": "mtp", "reason": null } }
+{
+  "steering": { "active": true, "mode": "ablate", "scale": 0.5, "summary": "ablate at alpha 0.5 over 26 of 64 layers" },
+  "speculation": { "block": 2, "drafter": "mtp", "reason": null }
+}
 ```
 
+`steering.active` indicates whether a control vector is loaded and active.
 A null `block` is the "is it off" test; `drafter` is non-null exactly when
 `block` is, and `reason` is non-null only when a caller might have expected
 it on.

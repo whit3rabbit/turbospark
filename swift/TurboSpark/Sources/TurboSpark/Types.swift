@@ -79,6 +79,11 @@ public struct OpenOptions: Encodable, Sendable {
         case dflash
     }
 
+    /// The edit applied along a control vector.
+    public enum SteeringMode: String, Encodable, Sendable {
+        case ablate, add, clamp, renorm
+    }
+
     public var maxContext: Sizing?
     public var expertCacheSlots: Sizing?
     /// `nil` ASKS THE OS, so Low Power Mode selects efficiency. Name one
@@ -89,6 +94,18 @@ public struct OpenOptions: Encodable, Sendable {
     public var speculation: Speculation?
     /// `nil` means `.auto`.
     public var speculativeDrafter: SpeculativeDrafter?
+    /// Path to a .gguf control vector (llama.cpp layout). `nil` disables steering.
+    public var steering: String?
+    /// `nil` uses the vector's declared mode or `.ablate`.
+    public var steeringMode: SteeringMode?
+    /// Multiplier on edit strength (default 1.0; 0.0 is identity).
+    public var steeringScale: Double?
+    /// Layer range to steer, "START:END" inclusive and 0-based (default all).
+    public var steeringLayers: String?
+    /// Target coefficient for `.clamp` mode (default 0.0).
+    public var steeringTarget: Double?
+    /// Activation magnitude threshold to trigger the edit (default 0.0).
+    public var steeringGate: Double?
 
     /// Creates options for opening a model session.
     public init(
@@ -97,7 +114,13 @@ public struct OpenOptions: Encodable, Sendable {
         powerProfile: PowerProfile? = nil,
         maxTokensPerSec: Double? = nil,
         speculation: Speculation? = nil,
-        speculativeDrafter: SpeculativeDrafter? = nil
+        speculativeDrafter: SpeculativeDrafter? = nil,
+        steering: String? = nil,
+        steeringMode: SteeringMode? = nil,
+        steeringScale: Double? = nil,
+        steeringLayers: String? = nil,
+        steeringTarget: Double? = nil,
+        steeringGate: Double? = nil
     ) {
         self.maxContext = maxContext
         self.expertCacheSlots = expertCacheSlots
@@ -105,6 +128,12 @@ public struct OpenOptions: Encodable, Sendable {
         self.maxTokensPerSec = maxTokensPerSec
         self.speculation = speculation
         self.speculativeDrafter = speculativeDrafter
+        self.steering = steering
+        self.steeringMode = steeringMode
+        self.steeringScale = steeringScale
+        self.steeringLayers = steeringLayers
+        self.steeringTarget = steeringTarget
+        self.steeringGate = steeringGate
     }
 }
 
@@ -189,8 +218,22 @@ public struct SessionInfo: Decodable, Sendable, Equatable {
     public let vocabSize: Int
     public let dialect: String
     public let reasoningSupport: ReasoningSupport
+    /// What directional steering resolved to for this session.
+    public let steering: Steering
     /// What speculative decoding resolved to for this session.
     public let speculation: Speculation
+
+    /// The session's resolved directional steering, reported once.
+    public struct Steering: Decodable, Sendable, Equatable {
+        /// True when a control vector is active on this session.
+        public let active: Bool
+        /// `ablate` | `add` | `clamp` | `renorm`, present only when active.
+        public let mode: String?
+        /// Active scale multiplier, present only when active.
+        public let scale: Double?
+        /// Human-readable one-line description, or nil when inactive.
+        public let summary: String?
+    }
 
     /// The session's resolved speculative decoding, reported once.
     public struct Speculation: Decodable, Sendable, Equatable {

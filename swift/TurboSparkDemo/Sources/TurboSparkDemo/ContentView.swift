@@ -208,6 +208,10 @@ private struct StatusBar: View {
                 } else if let reason = info.speculation.reason {
                     label("speculative", "off").help(reason)
                 }
+                if info.steering.active {
+                    label("steering", info.steering.mode ?? "on")
+                        .help(info.steering.summary ?? "Directional steering is active.")
+                }
             } else {
                 Text("no model open").font(.caption).foregroundStyle(.secondary)
             }

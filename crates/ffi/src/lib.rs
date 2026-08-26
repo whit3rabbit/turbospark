@@ -397,6 +397,7 @@ pub fn session_for_testing(
             vocab_size,
             dialect: format!("{:?}", tokenizer.dialect),
             reasoning_support: "none".to_string(),
+            steering: wire::SteeringInfo::default(),
             speculation: wire::SpeculationInfo::default(),
         },
         tokenizer,

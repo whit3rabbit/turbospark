@@ -47,6 +47,7 @@ final class ChatModel: ObservableObject {
     @Published var reasoning: GenerateOptions.Reasoning = .off
     @Published var temperature: Double = 0.2
     @Published var maxNewTokens: Double = 512
+    @Published var steeringPath: String?
 
     private var task: Task<Void, Never>?
 
@@ -84,7 +85,9 @@ final class ChatModel: ObservableObject {
             // let Low Power Mode pick the power profile and let the machine
             // pick the expert-cache slots; a measurement harness is the one
             // that must not.
-            session = try await TurboSparkSession(modelPath: model.path)
+            var options = OpenOptions()
+            options.steering = steeringPath
+            session = try await TurboSparkSession(modelPath: model.path, options: options)
             selected = model
         } catch {
             self.error = "\(error)"

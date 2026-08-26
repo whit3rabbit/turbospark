@@ -133,4 +133,53 @@ final class SurfaceTests: XCTestCase {
         let peak = try XCTUnwrap(TurboSparkSession.peakFootprintBytes)
         XCTAssertGreaterThan(peak, 0)
     }
+
+    /// Tests that an inverted or malformed steering layer range is refused before disk.
+    func testAnInvalidSteeringLayerRangeIsRefused() async throws {
+        var options = OpenOptions()
+        options.steering = "/path/to/vector.gguf"
+        options.steeringLayers = "10:5"
+        do {
+            _ = try await TurboSparkSession(
+                modelPath: "/nonexistent/model.gturbo", options: options)
+            XCTFail("an inverted layer range should throw")
+        } catch let error as TurboSparkError {
+            XCTAssertTrue(
+                error.message.contains("steeringLayers"),
+                "expected the option in the message, got \(error.message)")
+        }
+    }
+
+    /// Tests that steering modifiers without a steering vector path are refused.
+    func testSteeringModifiersWithoutPathAreRefused() async throws {
+        var options = OpenOptions()
+        options.steeringMode = .add
+        do {
+            _ = try await TurboSparkSession(
+                modelPath: "/nonexistent/model.gturbo", options: options)
+            XCTFail("steering modifiers without path should throw")
+        } catch let error as TurboSparkError {
+            XCTAssertTrue(
+                error.message.contains("steering options given without a steering vector path"),
+                "expected path requirement message, got \(error.message)")
+        }
+    }
+
+    /// Tests that an unknown steering mode is refused rather than defaulted.
+    func testAnUnknownSteeringModeIsRefusedRatherThanDefaulted() async throws {
+        struct BadOptions: Encodable {
+            let steering = "/path/to/vector.gguf"
+            let steeringMode = "unknown"
+        }
+        let json = String(decoding: try JSONEncoder().encode(BadOptions()), as: UTF8.self)
+        var out: OpaquePointer?
+        let status = "/nonexistent/model.gturbo".withCString { path in
+            json.withCString { opts in ts_session_open(path, opts, &out) }
+        }
+        XCTAssertNotEqual(status, 0)
+        XCTAssertTrue(
+            TurboSparkError.fromLastError(status).message.contains("steeringMode"),
+            "the message should name the misspelling")
+    }
 }
+

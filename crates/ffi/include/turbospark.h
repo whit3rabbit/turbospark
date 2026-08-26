@@ -147,6 +147,12 @@ void ts_string_free(char *s);
  *                       than stylistic: DFlash2 reads 1.43-1.50x on code
  *                       and math and 0.96x throughput at +17.4% J/token on
  *                       PROSE, so it is opt-in.
+ *   steering          string | null (path to .gguf control vector)
+ *   steeringMode      "ablate" | "add" | "clamp" | "renorm" | null
+ *   steeringScale     number | null (default 1.0)
+ *   steeringLayers    "START:END" | null (0-based inclusive layer range)
+ *   steeringTarget    number | null (for clamp mode, default 0.0)
+ *   steeringGate      number | null (activation threshold >= 0, default 0.0)
  *
  * Opening is expensive: it maps gigabytes and compiles Metal pipelines.
  * Open once and keep the handle.
@@ -180,6 +186,7 @@ void ts_session_cancel(const TsSession *s);
  *   { "modelPath", "family", "maxContext", "trainedContext",
  *     "pastTrainedContext", "expertCacheSlots", "vocabSize", "dialect",
  *     "reasoningSupport",
+ *     "steering": { "active", "mode", "scale", "summary" },
  *     "speculation": { "block", "drafter", "reason" } }
  *
  * maxContext and expertCacheSlots are the RESOLVED values, never what was
@@ -190,6 +197,9 @@ void ts_session_cancel(const TsSession *s);
  * reasoningSupport is "level" | "toggleOnly" | "none". A GUI should disable
  * its reasoning picker on "none" and grey out the LEVELS on "toggleOnly",
  * where asking for one turns thinking on but sets no level.
+ *
+ * steering.active is true when a control vector is loaded on this session.
+ * steering.summary holds a human-readable one-line description of the edit.
  *
  * speculation.block is the resolved block size, or null when this session
  * does not draft ahead; that null IS the "is it on" test, and drafter

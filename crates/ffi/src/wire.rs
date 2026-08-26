@@ -61,6 +61,33 @@ pub struct OpenOptions {
     /// `auto` | `mtp` | `dflash`. Absent means `auto`, which ENABLES an MTP
     /// head and only REPORTS a DFlash2 one (`docs/DFLASH2.md`).
     pub speculative_drafter: Option<String>,
+    /// Path to a control vector (.gguf, llama.cpp layout) to steer with.
+    pub steering: Option<String>,
+    /// `ablate` | `add` | `clamp` | `renorm`. Default is `ablate` or whatever
+    /// the vector declares.
+    pub steering_mode: Option<String>,
+    /// Multiplier on the edit strength (default 1.0; 0.0 is identity).
+    pub steering_scale: Option<f64>,
+    /// Layer range to steer, `START:END` inclusive 0-based (default all).
+    pub steering_layers: Option<String>,
+    /// Coefficient for `clamp` mode (default 0.0).
+    pub steering_target: Option<f64>,
+    /// Minimum activation magnitude to fire the edit (default 0.0).
+    pub steering_gate: Option<f64>,
+}
+
+/// What a session resolved about directional steering, once, at open.
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SteeringInfo {
+    /// True when a control vector is active on this session.
+    pub active: bool,
+    /// `ablate` | `add` | `clamp` | `renorm`, present only when active.
+    pub mode: Option<String>,
+    /// Active scale multiplier, present only when active.
+    pub scale: Option<f64>,
+    /// Human-readable one-line description, or null when inactive.
+    pub summary: Option<String>,
 }
 
 /// What a session resolved about speculative decoding, once, at open.
@@ -179,6 +206,7 @@ pub struct SessionInfo {
     /// picker on `none` and grey out the LEVELS on `toggleOnly`, where
     /// thinking turns on but the level is dropped.
     pub reasoning_support: String,
+    pub steering: SteeringInfo,
     /// What speculative decoding resolved to. **`block` being non-null is a
     /// statement about this SESSION and not about the next turn**:
     /// acceptance is exact only at temperature 0, so a sampled turn decodes

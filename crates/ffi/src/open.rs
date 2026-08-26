@@ -106,6 +106,58 @@ fn drafter_name(drafter: runtime::SpeculativeDrafter) -> &'static str {
     }
 }
 
+/// Maps the wire spelling of a steering mode (`ablate`, `add`, `clamp`, `renorm`).
+fn steering_mode(name: &str) -> Result<foundation::SteeringMode, String> {
+    foundation::SteeringMode::parse(name).ok_or_else(|| {
+        format!(
+            "steeringMode must be one of {:?}, got {name:?}",
+            foundation::STEERING_MODE_NAMES
+        )
+    })
+}
+
+/// Maps a layer range string (`START:END`, inclusive and 0-based).
+fn layer_range(range_str: &str) -> Result<(usize, usize), String> {
+    let bad =
+        || format!("steeringLayers must be START:END, inclusive and 0-based, got {range_str:?}");
+    let (a, b) = range_str.split_once(':').ok_or_else(bad)?;
+    let start: usize = a.trim().parse().map_err(|_| bad())?;
+    let end: usize = b.trim().parse().map_err(|_| bad())?;
+    if end < start {
+        return Err(bad());
+    }
+    Ok((start, end))
+}
+
+/// Maps a steering scale multiplier (finite number, default 1.0).
+fn steering_scale(scale: Option<f64>) -> Result<f32, String> {
+    match scale {
+        None => Ok(1.0),
+        Some(s) if s.is_finite() => Ok(s as f32),
+        Some(s) => Err(format!("steeringScale must be a finite number, got {s}")),
+    }
+}
+
+/// Maps a steering clamp target (finite number, default 0.0).
+fn steering_target(target: Option<f64>) -> Result<f32, String> {
+    match target {
+        None => Ok(0.0),
+        Some(t) if t.is_finite() => Ok(t as f32),
+        Some(t) => Err(format!("steeringTarget must be a finite number, got {t}")),
+    }
+}
+
+/// Maps a steering gate threshold (finite number >= 0.0, default 0.0).
+fn steering_gate(gate: Option<f64>) -> Result<f32, String> {
+    match gate {
+        None => Ok(0.0),
+        Some(g) if g.is_finite() && g >= 0.0 => Ok(g as f32),
+        Some(g) => Err(format!(
+            "steeringGate must be a finite number >= 0, got {g}"
+        )),
+    }
+}
+
 pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String> {
     // EVERY OPTION IS MAPPED BEFORE ANYTHING IS READ FROM DISK, and that
     // ordering is worth keeping. A misspelled key is the caller's own
@@ -119,6 +171,19 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
     let expert_cache_slots = sized(&options.expert_cache_slots, "expertCacheSlots")?;
     let asked = speculation(&options.speculation)?;
     let requested_drafter = drafter(options.speculative_drafter.as_deref())?;
+    let requested_steering_mode = options
+        .steering_mode
+        .as_deref()
+        .map(steering_mode)
+        .transpose()?;
+    let requested_steering_scale = steering_scale(options.steering_scale)?;
+    let requested_steering_target = steering_target(options.steering_target)?;
+    let requested_steering_gate = steering_gate(options.steering_gate)?;
+    let requested_steering_layers = options
+        .steering_layers
+        .as_deref()
+        .map(layer_range)
+        .transpose()?;
     // The SPELLING only. `resolve_profile` is where the OS is asked about
     // Low Power Mode and it stays below, next to the rate control it feeds.
     let requested_profile = options
@@ -126,6 +191,16 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
         .as_deref()
         .map(power_profile)
         .transpose()?;
+
+    if options.steering.is_none()
+        && (requested_steering_mode.is_some()
+            || options.steering_scale.is_some()
+            || requested_steering_layers.is_some()
+            || options.steering_target.is_some()
+            || options.steering_gate.is_some())
+    {
+        return Err("steering options given without a steering vector path".to_string());
+    }
 
     // `model` takes a path OR a `turbospark-model` alias, and an existing
     // directory always wins: a bare name that silently preferred an alias
@@ -168,6 +243,28 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
     )
     .map_err(|e| e.to_string())?;
 
+    // Steering policy is loaded before open, following CLI and server pattern.
+    let steering_policy = if let Some(path_str) = options.steering.as_deref() {
+        let path = Path::new(path_str);
+        let mut set = repack::control_vector::load_control_vector(path)
+            .map_err(|e| format!("steering {path_str}: {e}"))?;
+        if let Some((start, end)) = requested_steering_layers {
+            set.restrict_to_range(start, end);
+        }
+        let mode = requested_steering_mode
+            .or(set.declared_mode)
+            .unwrap_or_default();
+        runtime::SteeringPolicy {
+            set: Some(set),
+            mode,
+            alpha: requested_steering_scale,
+            target: requested_steering_target,
+            gate_threshold: requested_steering_gate,
+        }
+    } else {
+        runtime::SteeringPolicy::off()
+    };
+
     // THE DRAFTER IS RESOLVED BEFORE THE OPEN, exactly as the CLI's
     // `open_session` and the server's `RealChatModel::open` do it: the
     // policies below name exactly one drafter, and the wrong one is
@@ -181,7 +278,7 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
     // front ends disagree, which is why that module left `crates/cli` when
     // the server needed it.
     let choice = runtime::resolve_drafter(requested_drafter, dir);
-    let runner = runtime::RealForwardRunner::open_with_slot_policy_and_speculation(
+    let runner = runtime::RealForwardRunner::open_with_slot_policy_speculation_and_steering(
         dir,
         arch,
         plan.resolved as usize,
@@ -190,6 +287,7 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
             None => runtime::ExpertCacheSlots::Auto,
         },
         runtime::draft_policies(&choice, asked),
+        steering_policy.clone(),
     )
     .map_err(|e| e.to_string())?;
 
@@ -245,6 +343,16 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
             tokenizer::ReasoningSupport::None => "none",
         }
         .to_string(),
+        steering: if runner.steering_line().is_some() {
+            crate::wire::SteeringInfo {
+                active: true,
+                mode: Some(steering_policy.mode.as_str().to_string()),
+                scale: Some(steering_policy.alpha as f64),
+                summary: runner.steering_line(),
+            }
+        } else {
+            crate::wire::SteeringInfo::default()
+        },
         speculation: SpeculationInfo {
             block: speculation_block,
             drafter: speculation_block.map(|_| drafter_name(choice.drafter).to_string()),
@@ -365,5 +473,47 @@ mod tests {
         for name in ["mtp", "dflash"] {
             assert_eq!(drafter_name(drafter(Some(name)).unwrap()), name);
         }
+    }
+
+    #[test]
+    fn the_steering_mode_spellings_are_the_shared_ones() {
+        assert_eq!(
+            steering_mode("ablate").unwrap(),
+            foundation::SteeringMode::Ablate
+        );
+        assert_eq!(steering_mode("add").unwrap(), foundation::SteeringMode::Add);
+        assert_eq!(
+            steering_mode("clamp").unwrap(),
+            foundation::SteeringMode::Clamp
+        );
+        assert_eq!(
+            steering_mode("renorm").unwrap(),
+            foundation::SteeringMode::Renorm
+        );
+        assert!(steering_mode("unknown").is_err());
+    }
+
+    #[test]
+    fn layer_range_requires_start_and_end_in_order() {
+        assert_eq!(layer_range("0:31").unwrap(), (0, 31));
+        assert_eq!(layer_range(" 5 : 10 ").unwrap(), (5, 10));
+        assert!(layer_range("10:5").is_err());
+        assert!(layer_range("10").is_err());
+        assert!(layer_range("10:abc").is_err());
+    }
+
+    #[test]
+    fn steering_scalars_validate_bounds() {
+        assert_eq!(steering_scale(None).unwrap(), 1.0);
+        assert_eq!(steering_scale(Some(2.5)).unwrap(), 2.5);
+        assert!(steering_scale(Some(f64::NAN)).is_err());
+
+        assert_eq!(steering_target(None).unwrap(), 0.0);
+        assert_eq!(steering_target(Some(-1.0)).unwrap(), -1.0);
+        assert!(steering_target(Some(f64::INFINITY)).is_err());
+
+        assert_eq!(steering_gate(None).unwrap(), 0.0);
+        assert_eq!(steering_gate(Some(0.5)).unwrap(), 0.5);
+        assert!(steering_gate(Some(-0.1)).is_err());
     }
 }

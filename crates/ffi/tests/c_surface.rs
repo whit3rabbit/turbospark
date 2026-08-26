@@ -150,6 +150,12 @@ fn session_info_is_json_the_swift_side_can_decode() {
     assert!(speculation["block"].is_null());
     assert!(speculation["drafter"].is_null());
     assert!(speculation["reason"].is_null());
+
+    let steering = json.get("steering").expect("steering is reported");
+    assert_eq!(steering["active"], false);
+    assert!(steering["mode"].is_null());
+    assert!(steering["scale"].is_null());
+    assert!(steering["summary"].is_null());
 }
 
 // ------------------------------------------------------------- generation
