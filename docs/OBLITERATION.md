@@ -1391,6 +1391,20 @@ the edit worked. Neither direction of that asymmetry was tested against a
 real MoE-specific floor this session; that instrumentation does not exist
 yet and building it was out of scope here.
 
+**Built the following session and it was NOT the cause.**
+`steering_probe.rs` now resolves a real `MOE_SHAPE_FLOOR_NATS = 0.00135`
+(`qwen3moe`, llama.cpp batched vs cached) whenever `ArchConfig.num_experts >
+0`, rather than always checking against the dense `qwen3_5` number
+(`crates/bench/CLAUDE.md` Gotcha 25). Re-run against `gpt-oss` with the fix
+in place, the probe correctly prints `MoE shape floor 1.35e-3 nats` and the
+steered KL still reads ~1.6e-9 nats -- `0x` even the wider, correct floor.
+So the floor genuinely was wrong (a threshold off by over two orders of
+magnitude, and worth fixing on its own terms for any future MoE family
+whose direction is merely weak rather than measured at a pinned position),
+and fixing it changes nothing about this reading: the cause is the
+`<|channel|>` position below, not the threshold. The two are independent
+problems and only one is closed.
+
 **But the argmax identity across all three combinations is not
 ambiguous, and it has an exact cause.** Token id 200005 of the 201,088-token
 vocabulary -- identical in every row above, regardless of prompt, alpha, or

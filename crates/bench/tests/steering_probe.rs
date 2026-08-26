@@ -93,7 +93,59 @@ const DEFAULT_STEERING_PROMPT: &str = "Describe what you notice about the water.
 /// whose flow contains no copy extracts to -- makes the whole pipeline run,
 /// report a covered layer count, print a summary line, and steer NOTHING.
 /// No error anywhere. Asserting against this floor is what catches it.
+///
+/// **ONLY VALID FOR A DENSE ARCHITECTURE.** `crates/bench/CLAUDE.md` Gotcha
+/// 8: an MoE shape floor runs orders of magnitude above a dense one, because
+/// batched-vs-cached expert routing and reduce order is what the gap is made
+/// of and a dense model's two passes are nearly the same computation. Using
+/// this constant against an MoE install checks a threshold ~182x too tight
+/// -- which is exactly what happened on `gpt-oss` (2026-08-25): its steered
+/// KL of ~1e-11 to ~1e-9 nats reads as "did not steer" against this number
+/// even though the coefficient trace and a CLI generation both confirm the
+/// edit ran (`docs/OBLITERATION.md`'s "gpt-oss, measured on a real install").
+/// See [`MOE_SHAPE_FLOOR_NATS`] and [`shape_floor_for`].
 const DENSE_SHAPE_FLOOR_NATS: f64 = 7.4e-6;
+
+/// The MoE sibling of [`DENSE_SHAPE_FLOOR_NATS`].
+///
+/// `qwen3moe`, llama.cpp batched vs cached: 0.00135 nats, 99.1% top-1 --
+/// `docs/BENCHMARKS.md` and the doc table in `batched_forward_probe.rs`.
+/// Sourced the same way the dense constant is: an EXTERNAL reference
+/// engine's own batched-vs-cached divergence on an install of this shape,
+/// not a number measured by this port. That is deliberate and not a
+/// shortcut -- `crates/bench/CLAUDE.md` Gotcha 8 establishes the floor is a
+/// property of the ARCHITECTURE SHAPE (how much a batched routing decision
+/// and a cached one can disagree), not of which engine runs it, so every
+/// engine's batched and cached passes disagree by about this much on an
+/// MoE model. It is also the only MoE batched-vs-cached number available
+/// to this port at all: `produce_batched` (`batched_forward_probe.rs`)
+/// refuses a MoE install by name, so there is no batched-verify path here
+/// to measure this port's OWN MoE shape floor against.
+///
+/// **This does not make every MoE reading interpretable.** `gpt-oss`'s
+/// ~1e-9 nats reading is still three orders of magnitude below this floor
+/// too, because that reading's cause is a different failure entirely: the
+/// probe measures divergence at a single position that Harmony's chat
+/// template pins to `<|channel|>` regardless of the prompt or the edit
+/// (`crates/bench/CLAUDE.md` Gotcha 25). Fixing the floor closes the
+/// wrong-threshold gap; it does not fix measuring at a template-fixed
+/// position, which is still open work.
+const MOE_SHAPE_FLOOR_NATS: f64 = 0.00135;
+
+/// Picks the shape floor for `arch`, plus a label for the printed line.
+///
+/// `arch.num_experts` is the discriminator, not `arch.family`: several
+/// families (`Llama`, and in principle any future one) cover both a dense
+/// and an MoE checkpoint under one family tag, distinguished only by expert
+/// count (AGENTS.md Gotcha 61's rule -- "only `expert_count` says which
+/// half a file is").
+fn shape_floor_for(arch: &model_io::ArchConfig) -> (f64, &'static str) {
+    if arch.num_experts > 0 {
+        (MOE_SHAPE_FLOOR_NATS, "MoE")
+    } else {
+        (DENSE_SHAPE_FLOOR_NATS, "dense")
+    }
+}
 
 fn ids_for(tokenizer: &MfTokenizer, text: &str) -> Vec<i32> {
     let rendered = tokenizer
@@ -198,6 +250,19 @@ fn a_steering_edit_is_inert_at_zero_and_moves_the_distribution_at_one() {
     let vector = std::path::PathBuf::from(
         std::env::var_os("TURBOSPARK_STEERING_VECTOR").expect("TURBOSPARK_STEERING_VECTOR"),
     );
+
+    // Peeked independently of opening the runner (same call
+    // `open_model_runner*` makes internally) so the shape floor can be
+    // picked BEFORE arm 2 needs it, from the one field that actually
+    // decides dense vs MoE (`num_experts`, not `family` -- Gotcha 61).
+    let arch = repack::peek_manifest_arch(&dir)
+        .unwrap_or_else(|e| panic!("{}: failed to read manifest arch: {e}", dir.display()));
+    let (shape_floor_nats, floor_label) = shape_floor_for(&arch);
+    println!(
+        "  arch family {:?}, {} experts -> {floor_label} shape floor {shape_floor_nats:.2e} nats",
+        arch.family, arch.num_experts
+    );
+
     // **THE DEFAULT IS 0.3 AND NOT 1.0, AND THAT IS THE WHOLE OPERATING
     // POINT QUESTION.** `docs/OBLITERATION.md` records `ablate` at
     // `alpha = 1` across all 64 layers as COLLAPSING the turn -- the model
@@ -433,21 +498,27 @@ fn a_steering_edit_is_inert_at_zero_and_moves_the_distribution_at_one() {
         .count();
     println!(
         "\narm 2, steered vs unsteered: {differing}/{} logits differ, KL {steered_kl:.4e} nats \
-         ({:.0}x the {DENSE_SHAPE_FLOOR_NATS:.1e} dense shape floor), argmax {} vs {}",
+         ({:.0}x the {shape_floor_nats:.1e} {floor_label} shape floor), argmax {} vs {}",
         off_logits.len(),
-        steered_kl / DENSE_SHAPE_FLOOR_NATS,
+        steered_kl / shape_floor_nats,
         argmax(&off_logits),
         argmax(&steered_logits),
     );
     assert!(
-        steered_kl.is_finite() && steered_kl > DENSE_SHAPE_FLOOR_NATS,
+        steered_kl.is_finite() && steered_kl > shape_floor_nats,
         "the steered distribution is {steered_kl:.4e} nats from the unsteered one, at or \
-         below the {DENSE_SHAPE_FLOOR_NATS:.1e} floor that ordinary numerical differences \
-         already cost on this architecture. So this run did not measurably steer, and the \
-         likeliest cause is a direction that is all zeros or is not covering the layers \
-         this model runs: `inv_norm` makes a zero direction inert, and every surface \
-         around it -- the covered-layer count, the summary line, the coefficient \
-         readback -- still reports a healthy steer."
+         below the {shape_floor_nats:.1e} {floor_label} floor that ordinary numerical \
+         differences already cost on this architecture. So this run did not measurably \
+         steer AT THE SINGLE POSITION MEASURED, and the likeliest cause is a direction \
+         that is all zeros or is not covering the layers this model runs: `inv_norm` \
+         makes a zero direction inert, and every surface around it -- the covered-layer \
+         count, the summary line, the coefficient readback -- still reports a healthy \
+         steer. Before concluding that, though, check whether this position is one the \
+         model's own chat template pins regardless of content -- Harmony's `<|channel|>` \
+         is one such case and reads a KL near machine epsilon even when the coefficient \
+         trace and a full generation both show the edit is real \
+         (`crates/bench/CLAUDE.md` Gotcha 25); a floor fix cannot rescue a reading taken \
+         at a fixed position."
     );
 
     // --- ARM 4: determinism, which no comparison against the OFF arm can see ---
@@ -544,10 +615,10 @@ fn a_steering_edit_is_inert_at_zero_and_moves_the_distribution_at_one() {
 
     println!(
         "\nVERDICT: the edit is inert at alpha 0 (bit-identical, {GREEDY_TOKENS} tokens \
-         deep), deterministic, and moves the distribution {:.0}x the shape floor at alpha \
-         {alpha}{}. What this does NOT say is whether the direction names the concept it \
-         was extracted for -- that is a judgement about text, not a number.",
-        steered_kl / DENSE_SHAPE_FLOOR_NATS,
+         deep), deterministic, and moves the distribution {:.0}x the {floor_label} shape \
+         floor at alpha {alpha}{}. What this does NOT say is whether the direction names \
+         the concept it was extracted for -- that is a judgement about text, not a number.",
+        steered_kl / shape_floor_nats,
         if collapsed {
             " -- BUT THE TURN COLLAPSED, so that multiple describes a model that stopped \
              generating rather than one that was steered"

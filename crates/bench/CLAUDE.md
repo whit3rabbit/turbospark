@@ -617,10 +617,37 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
    as an open question ("this family's very first generated token sits at
    an unusually confident point") -- gpt-oss is the case where that guess
    became a checked, exact mechanism rather than staying a hypothesis. The
-   probe has no per-family or per-template branch to detect this
-   automatically; the mitigation used here was to fall back to reading
-   generated TEXT past the forced token, the same move Gotcha 18 already
-   made for the opposite failure. No MoE-specific shape floor exists yet
-   either (`gpt-oss` is MoE and the probe's `DENSE_SHAPE_FLOOR_NATS` is a
-   `qwen3_5`, i.e. dense, number -- AGENTS.md Gotcha 8's ratio-not-absolute
-   rule applies and building a real floor is still open work).
+   probe has no per-template branch to detect this automatically; the
+   mitigation used here was to fall back to reading generated TEXT past
+   the forced token, the same move Gotcha 18 already made for the
+   opposite failure.
+
+   **THE MoE FLOOR MISMATCH THIS GOTCHA ORIGINALLY LEFT OPEN IS NOW FIXED,
+   AND IT WAS NOT THE CAUSE.** `steering_probe.rs` used
+   `DENSE_SHAPE_FLOOR_NATS` (a `qwen3_5`, i.e. dense, number) as the
+   threshold for every install, which per AGENTS.md Gotcha 8's
+   ratio-not-absolute rule checked `gpt-oss` against a bound ~182x too
+   tight. `shape_floor_for` now reads `ArchConfig.num_experts` (not
+   `family` -- several families cover both a dense and an MoE checkpoint
+   under one tag, Gotcha 61) and picks `MOE_SHAPE_FLOOR_NATS = 0.00135`
+   (`qwen3moe`, llama.cpp batched vs cached -- `docs/BENCHMARKS.md`, and
+   the same number `batched_forward_probe.rs`'s own doc table already
+   cited) for any install with `num_experts > 0`. Sourced the same way as
+   the dense constant: an EXTERNAL reference engine's batched-vs-cached
+   number for the shape, not this port's own -- `produce_batched`
+   structurally cannot supply one, since it refuses a MoE install by name
+   (`batched_forward_probe.rs`), so there is no batched-verify path here
+   to measure this port's OWN MoE floor against.
+
+   Re-run against `gpt-oss` with the fix in place: the printed floor
+   correctly resolves to `MoE shape floor 1.35e-3 nats`, and the steered
+   KL still reads ~1.6e-9 nats -- `0x` even that wider floor, not merely
+   under the dense one. **So the floor was a real bug (a threshold off by
+   over two orders of magnitude) and fixing it changes nothing about
+   `gpt-oss`'s verdict**, because that reading's cause is the position
+   pinned by the chat template above, an entirely different failure mode
+   from the one a floor threshold can detect. The two fixes are
+   independent: get the floor right so a future MoE family with a
+   genuinely weak direction is judged correctly, and separately fix (or
+   route around) a position the template has already decided before
+   trusting any single-position divergence number on a new dialect.

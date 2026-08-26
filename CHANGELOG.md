@@ -41,7 +41,7 @@ when this file gets updated relative to the version bump and the tag.
   "gpt-oss, measured on a real install" sections.
 - `ChatDialect::Llama3` in `turbospark-tokenizer`: detection on
   `<|start_header_id|>` / `<|eot_id|>` and fallback template renderer.
-- `turbospark-catalog`: the curated model table (thirteen rows, each naming a
+- `turbospark-catalog`: the curated model table (17 rows, each naming a
   repository and revision that were streamed and run on real hardware), the
   header-only Hugging Face probe, the install driver, and the `~/.turbospark`
   store. Nothing in it decodes, so it builds on every platform.
