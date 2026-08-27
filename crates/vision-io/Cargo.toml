@@ -1,0 +1,31 @@
+[package]
+name = "turbospark-vision-io"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "Portable vision preprocessing: decode, PIL-bicubic smart resize, patchify, position tables."
+
+[lib]
+name = "turbospark_vision_io"
+path = "src/lib.rs"
+
+[dependencies]
+# Shared primitives (TokenId). MIT, in-workspace.
+foundation = { package = "turbospark-core", path = "../core", version = "0.1.0" }
+# Image decode. MIT OR Apache-2.0. `default-features = false` plus an explicit
+# codec list keeps this to the PURE-RUST decoders, which is what lets this
+# crate stay checkable for a non-macOS target (AGENTS.md Gotcha 8): the
+# default feature set pulls in codecs with C build dependencies.
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+# JSON. MIT OR Apache-2.0. Reads `preprocessor_config.json`.
+serde_json = "1"
+
+[dev-dependencies]
+# The tests ENCODE small PNGs in memory so decode has something to read
+# without a fixture file on disk. A regular dependency is not in scope for an
+# integration test, so it is named again here; the encoder half is only ever
+# used by tests.
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }

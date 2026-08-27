@@ -170,12 +170,17 @@ cargo clippy --workspace --tests
 # no download, target already installed. `--workspace` does NOT work: onig_sys
 # (via tokenizer) and other cc-rs build deps need an x86_64-linux-gnu-gcc that
 # is not installed here, so runtime/repack/catalog/server/cli/bench cannot be
-# checked on this machine at all. These eight can, and are green. Run it when
+# checked on this machine at all. These nine can, and are green. Run it when
 # touching a cfg, a dependency table, or anything unsafe. See Gotcha 8.
+# `turbospark-vision-io` is the one crate that is here by DESIGN rather than
+# by luck: the whole point of splitting vision preprocessing out is that the
+# decode, resize and position-table arithmetic lives somewhere a non-macOS
+# build can reach, so a cfg or a dependency that drops it from this list is a
+# bug in the crate rather than an accepted limitation.
 cargo check --target x86_64-unknown-linux-gnu \
   -p turbospark-core -p turbospark-compute -p turbospark-model-io \
   -p turbospark-streaming -p turbospark-selection -p turbospark-invocation \
-  -p turbospark-window-fit -p turbospark-gpu
+  -p turbospark-window-fit -p turbospark-gpu -p turbospark-vision-io
 
 # Run the CLI (validates the invocation; on macOS also attempts real
 # generation against --model in all three modes: --prompt (raw text),
@@ -2920,6 +2925,7 @@ When working on code inside a specific crate, refer to that crate's `CLAUDE.md` 
 - [`crates/server/CLAUDE.md`](crates/server/CLAUDE.md): the `turbospark-server` HTTP server (OpenAI `/v1/chat/completions`, Anthropic `/v1/messages`, `/v1/models`), Axum handlers, SSE streaming, `anyllm_translate` wire types.
 - [`crates/streaming/CLAUDE.md`](crates/streaming/CLAUDE.md): Routed expert `pread` streamer, LFU/LRU slot cache policy, chunked reads on a persistent `read_pool`, macOS `F_RDADVISE` hints.
 - [`crates/tokenizer/CLAUDE.md`](crates/tokenizer/CLAUDE.md): Tokenizer wrapper (`MfTokenizer`), chat dialects, Jinja template rendering, stop matcher, fixture token IDs.
+- [`crates/vision-io/CLAUDE.md`](crates/vision-io/CLAUDE.md): portable vision preprocessing -- PIL-bicubic smart resize, patchify's transposed inner order, the three position tables, and the mlx-vlm oracle fixtures.
 - [`crates/window-fit/CLAUDE.md`](crates/window-fit/CLAUDE.md): Pure conversation window fitting (`fit_conversation_window`), turn dropping logic.
 
 ## Layout
@@ -2956,6 +2962,7 @@ Workspace directory structure and crate layout:
 |   +-- ffi            # C ABI over the engine for a native GUI host (staticlib + turbospark.h)
 |   +-- streaming      # pread-based expert streamer, LFU/LRU slot cache & read pool
 |   +-- tokenizer      # tokenizer wrapper, chat templates (text/Jinja), stop matcher, DSL parser
+|   +-- vision-io      # portable vision preprocessing: decode, PIL-bicubic smart resize, patchify, position tables
 |   \-- window-fit     # deterministic conversation-window fitting & turn dropping
 +-- swift
 |   +-- TurboSpark     # SwiftPM package wrapping crates/ffi (session actor, AsyncStream, catalog)
@@ -2974,6 +2981,7 @@ Workspace directory structure and crate layout:
 |   +-- mlx_2bit_oracle.py # MLX 2-bit affine reference oracle generator
 |   +-- mtp_bisect.py  # MTP drafter norm & agreement bisection script
 |   +-- parity.sh      # head-to-head protocol run against the Swift MferenceCLI
+|   +-- qwen3vl_vision_oracle.py # probes mlx-vlm for crates/vision-io's five golden fixtures
 |   +-- phasediff.sh   # bucket-level decode phase diff against the Swift engine
 |   +-- power.sh       # watts & joules-per-token over the protocol (needs sudo)
 |   +-- router_hist.py # expert routing activation histogram analyzer
@@ -3000,7 +3008,8 @@ Workspace directory structure and crate layout:
     +-- SPECULATIVE_DECODING.md # DFlash / batched verify, measured marginal
     +-- SWIFT_BINDINGS.md # the C ABI and the Swift package: examples, contract, limits
     +-- TESTING.md     # test suite organization, platform gating & testing rules
-    \-- TRUBOQUANT.md  # sub-4-bit and ternary quantization layout notes
+    +-- TRUBOQUANT.md  # sub-4-bit and ternary quantization layout notes
+    \-- VISION_PHASE0.md # qwen3_5 vision tower: tensor inventory, mRoPE semantics, patch order
 ```
 
 `scripts/` holds the measurement surfaces that cannot be a `cargo test`:
@@ -3047,6 +3056,7 @@ download at all.
 - `crates/selection`: candidate selection (`select`, `select_from_logits`) from a per-candidate score vector under a validated shaping configuration (temperature, top-k, top-p, repetition penalty, seed), accumulated history, step position, determinism, and distribution guards. Numeric parity with any upstream implementation is out of scope; only the observable contract is exercised. Details in [`crates/selection/CLAUDE.md`](crates/selection/CLAUDE.md).
 - `crates/window-fit`: pure, deterministic conversation-window fitting (`fit_conversation_window`). Drops the oldest eligible turns from a conversation (`FitOutcome`, `DroppedTurn`), using a caller-supplied whole-conversation length measurement, until the measured length is under a caller-supplied bound or nothing eligible remains. An optional leading instruction turn and the newest turn are never removed. Performs no input or output and holds no state between calls. Details in [`crates/window-fit/CLAUDE.md`](crates/window-fit/CLAUDE.md).
 - `crates/tokenizer`: wraps HF `tokenizers` crate (`MfTokenizer`); resolves Gemma 4 / ChatML (Qwen) / DeepSeek-V4 chat dialect from special tokens (`dialect/`); renders text-only chat templates plus DeepSeek's native tool chat (`chat_template/`); generic Jinja-templated tool chat for Gemma/ChatML (`minijinja` + `pycompat`, rendering `chat_template.jinja`); streaming detokenizer (`StreamingDetokenizer`) and stop matcher (`StopMatcher`) (stop set unions dialect stops with `generation_config.json` `eos_token_id` list); Gemma/Qwen/DeepSeek tool-call DSL parsers and streaming structured assistant-output decoder (`structured_decoder/`, which also splits `gpt-oss`'s Harmony channels into content and REASONING -- the one dialect whose frame is a header/body triple rather than a bracketing token pair, and, since `--reasoning` landed, no longer the only one whose thought channel is emitted rather than discarded (Gotcha 55); its TOOL CALLS come out of the same header parser plus `JsonValue::parse`, and out of `finish` rather than a token, since `<|call|>` terminates a call and is a stop -- Gotcha 49). Details in [`crates/tokenizer/CLAUDE.md`](crates/tokenizer/CLAUDE.md).
+- `crates/vision-io`: portable vision preprocessing for the `qwen3_5` vision tower -- image decode (`decode.rs`, pure-Rust JPEG/PNG), `smart_resize` dimension selection (`smart_resize.rs` over `rounding.rs`'s banker's rounding), PIL bicubic resampling reproduced in fixed point (`resize.rs`), rescale/normalize (`normalize.rs`), patch-row extraction in merge-window order (`patchify.rs`), and the three position tables: the bilinear position-embedding index/weight table (`pos_embed.rs`), the tower's 2-D rotary frequency rows (`rope.rs`) and the trunk's mRoPE `(t, h, w)` triples plus placeholder spans (`mrope.rs`). Builds and tests off macOS by design, and is in the cross-target `cargo check` list for that reason. TWO THINGS TO READ BEFORE TOUCHING IT: patch rows carry `(T, P_h, P_w, C)` inside each row where the reference carries `(C, T, P_h, P_w)`, deliberately, so the repack can copy `patch_embed.proj.weight` verbatim; and every golden fixture under `tests/generated/` is PROBED from the vendored mlx-vlm by `scripts/qwen3vl_vision_oracle.py` rather than transcribed. Details in [`crates/vision-io/CLAUDE.md`](crates/vision-io/CLAUDE.md).
 - `crates/model-io`: `manifest/` decode and field-by-field validation against a resolved `ArchConfig` (`arch_config/`, with canonical Gemma 4, Qwen 3.6, DeepSeek-V4-Flash and -- ROADMAP's 1-bit entry -- Bonsai-27B `qwen3_5` baselines in `arch_baselines/`), `packed_experts/layout.json` decode (`PackedExpertsLayout`), `model_weights.bin` resident tensor index reader (`ResidentIndex`), `mmap`'d resident-buffer view (`ResidentBuffer`), streaming SHA-256 verification (`sha256.rs`), and trusted install receipt (`InstallReceipt`). Allowed a narrow amount of `unsafe` (the `mmap` call). Details in [`crates/model-io/CLAUDE.md`](crates/model-io/CLAUDE.md).
 - `crates/streaming`: routed-expert `pread` streamer (`PreadExpertStreamer`) with a fixed per-layer slot cache. The LFU/LRU eviction policy (`ExpertCache`) is pure logic, separated from file I/O so it can be tested against access traces without a model install. Cache misses are split into chunks and read on `read_pool`, a process-wide set of parked worker threads, so a layer that misses once still reads at full width (the `pread` is a page-cache memcpy, not disk I/O). `rdadvice` and `read_pool` are the other `unsafe`-carrying modules (macOS `F_RDADVISE`, a documented no-op elsewhere; raw destination pointers across worker threads). Details in [`crates/streaming/CLAUDE.md`](crates/streaming/CLAUDE.md).
 - `crates/ffi`: the C ABI a native GUI drives the engine through (`staticlib` plus a hand-written `include/turbospark.h`), and the third crate carrying `unsafe`. An opaque session handle over a `Mutex<RealForwardRunner>`, a streaming event callback, JSON options and telemetry, and the catalog/probe/install surface. **The cancel flag lives OUTSIDE the session mutex**, which is the whole design: a GUI generates on a background thread and presses Stop on the main one, so a flag behind the lock would make Stop wait for the generation it is stopping. `swift/TurboSpark` wraps it and `swift/TurboSparkDemo` is a SwiftUI app proving the stack end to end. Details in [`crates/ffi/CLAUDE.md`](crates/ffi/CLAUDE.md).

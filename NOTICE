@@ -41,3 +41,24 @@ knapsack solves a per-tensor mixed-precision assignment, which is a decision
 this port does not make: it chooses among the quantizations a repository
 already publishes. See `docs/MODELS.md` for the reasoning and for the
 measurements that argue against acquiring that decision.
+
+## sconce
+
+<https://github.com/whit3rabbit/mlx-v>, commit `0abccca`, `Cargo.toml`
+declaring `license = "MIT"` (the repository ships no `LICENSE` file, so
+there is no license text to quote here as the entry above does).
+
+| here | upstream | what changed |
+|---|---|---|
+| `crates/vision-io/src/rounding.rs` | `src/vision/rounding.rs` | taken whole; the doc comment re-derived for this family's factor of 32 |
+| `crates/vision-io/src/resize.rs` | `src/vision/preprocess.rs` | the PIL arm only. The torchvision arm and its per-axis precision search are dropped (no checkpoint here resizes with it), as is the unclamped f64 value path (this port's position embedding interpolates from an index/weight table rather than resampling). Rewritten against interleaved RGB8 slices, so candle's `Tensor` is gone with it |
+| `crates/vision-io/src/smart_resize.rs` | `src/vision/preprocess.rs` | `resized_dims`, minus the explicit-override variant. sconce's trailing `.max(factor)` on both axes is dropped in favour of refusing a zero edge by name |
+| `crates/vision-io/src/patchify.rs` | `src/vision/patchify.rs` | the merge-window nest, with the INNER feature order changed from `(C, T, P, P)` to `(T, P, P, C)`. Not a port difference to reconcile later: it is what lets the repack copy `patch_embed.proj.weight` verbatim (`docs/VISION_PHASE0.md` item 4), and `crates/vision-io/tests/preprocess_parity.rs` bridges it explicitly |
+
+**`src/models/qwen2_vl/mrope.rs` was read and deliberately not taken.** It
+drives its walk from `vision_start` markers where mlx-vlm's `get_rope_index`
+drives from the image-pad token's own position. The two agree on every
+well-formed prompt and disagree on a malformed one, and this port follows
+mlx-vlm because mlx-vlm is the reference for the trunk being fed. The
+divergence is pinned by
+`a_placeholder_with_no_vision_start_is_treated_as_text`.
