@@ -43,6 +43,7 @@
 mod attn;
 mod dense;
 mod moe;
+mod moe_prefill;
 mod prefill;
 mod state;
 
@@ -139,6 +140,7 @@ impl RealForwardRunner {
             streamers,
             slot_buffers,
             routed_blobs,
+            routed_blobs_banks,
             moe_offsets,
             routed_layouts,
             router_hist,
@@ -156,6 +158,7 @@ impl RealForwardRunner {
             &mut self.streamers,
             &self.slot_buffers,
             &self.routed_blobs,
+            &self.routed_blobs_banks,
             &self.moe_offsets,
             &self.routed_layouts,
             &mut self.router_hist,
@@ -296,6 +299,7 @@ impl RealForwardRunner {
                 streamers,
                 slot_buffers,
                 routed_blobs.as_ref(),
+                routed_blobs_banks,
                 moe_offsets,
                 routed_layouts,
                 router_hist,
@@ -306,6 +310,7 @@ impl RealForwardRunner {
                 num_experts,
                 top_k,
                 use_silu,
+                &crate::moe_prefill_pipeline::RoutedSlot::sequential(),
             )?;
             // Same boundary as the dense branch, reached by a different
             // route: this half's post-FFN residual add happens INSIDE

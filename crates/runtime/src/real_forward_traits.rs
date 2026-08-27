@@ -152,13 +152,13 @@ impl SpeculativeProducer for RealForwardRunner {
 }
 
 impl ChunkedPrefillRunner for RealForwardRunner {
-    /// Gemma 4, the DENSE half of `llama` (Mistral, Llama 2/3.x) and
-    /// `muse_glimmer` today, and the refusal is BY NAME rather than a
-    /// silent fallback to the sequential path. A caller that asked for
-    /// chunked prefill and quietly got the token-at-a-time loop would
-    /// measure the old engine and report it as the new one, which is the
-    /// failure mode this whole phase exists to avoid.
-    /// [`Self::supports_chunked_prefill`] is the SAME predicate this
+    /// Gemma 4, BOTH halves of `llama` (Mistral, Llama 2/3.x, Mixtral,
+    /// `qwen3moe`), `muse_glimmer` and `gpt-oss` today, and the refusal is
+    /// BY NAME rather than a silent fallback to the sequential path. A
+    /// caller that asked for chunked prefill and quietly got the
+    /// token-at-a-time loop would measure the old engine and report it as
+    /// the new one, which is the failure mode this whole phase exists to
+    /// avoid. [`Self::supports_chunked_prefill`] is the SAME predicate this
     /// refusal uses, so a caller deciding whether to route here at all and
     /// this method's own hard refusal can never disagree.
     fn prefill_chunk(
@@ -179,15 +179,28 @@ impl ChunkedPrefillRunner for RealForwardRunner {
             })
             .map_err(|e| e.to_string());
         }
+        if self.real_llama.is_some() {
+            return gpu::autorelease_pool(|| {
+                self.prefill_chunk_real_llama_moe(tokens, start_position, logits)
+            })
+            .map_err(|e| e.to_string());
+        }
         if self.real_muse.is_some() {
             return gpu::autorelease_pool(|| {
                 self.prefill_chunk_real_muse(tokens, start_position, logits)
             })
             .map_err(|e| e.to_string());
         }
+        if self.real_gpt_oss.is_some() {
+            return gpu::autorelease_pool(|| {
+                self.prefill_chunk_real_gpt_oss(tokens, start_position, logits)
+            })
+            .map_err(|e| e.to_string());
+        }
         Err(format!(
-            "chunked prefill is wired for the real Gemma 4 flow, the dense llama flow \
-             (Mistral, Llama 2/3.x) and muse_glimmer only; this install is {:?}",
+            "chunked prefill is wired for the real Gemma 4 flow, both halves of the \
+             llama flow (Mistral, Llama 2/3.x, Mixtral, qwen3moe), muse_glimmer and \
+             gpt-oss only; this install is {:?}",
             self.arch.family
         ))
     }

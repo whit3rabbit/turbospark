@@ -12,6 +12,7 @@ use model_io::{ArchConfig, ModelFamily, ResidentIndex};
 
 use crate::families::gptoss::layer_tensor;
 use crate::real_forward::RealForwardError;
+use crate::real_forward_types::MAX_PREFILL_BATCH;
 use crate::real_forward_utils::entry;
 
 /// BF16 bit pattern for 1.0.
@@ -57,9 +58,19 @@ pub(crate) struct RealGptOssState {
     /// is a no-op and selection reduces to a softmax over the selected --
     /// llama.cpp's `SOFTMAX_WEIGHT` with `norm_w = false`, exactly.
     pub(crate) per_expert_ones: Vec<f32>,
+    /// FP32 router logits, one `[num_experts]` row per token of a prefill
+    /// micro-batch (`MAX_PREFILL_BATCH` rows, matching
+    /// `RealGemmaState`/`RealLlamaState`'s field of the same name): the
+    /// chunked-prefill driver's per-layer command buffer writes all M
+    /// tokens' router GEMVs before the host reads any of them back (and
+    /// adds the bias). The sequential decode path always uses row 0.
     pub(crate) router_logits_f32: gpu::MetalBuffer,
-    /// `[hidden]`: the post-attention norm feeding router and routed experts.
-    /// There is no shared expert to feed.
+    /// `[hidden]` per token of a prefill micro-batch: the post-attention
+    /// norm feeding router and routed experts. There is no shared expert to
+    /// feed. Written in the attention half of a layer and read in the
+    /// routed half, with a commit between them in the chunked driver, so it
+    /// needs a row per token for the same reason `RealLlamaState::moe_x`
+    /// does (`crates/runtime/CLAUDE.md` Gotcha 14).
     pub(crate) moe_x: gpu::MetalBuffer,
     /// `[hidden]`: the routed sum, added back to the stream.
     pub(crate) h2: gpu::MetalBuffer,
@@ -238,8 +249,9 @@ impl RealGptOssState {
             router_bias,
             router_ones,
             per_expert_ones: vec![1.0; num_experts],
-            router_logits_f32: context.new_output_buffer((num_experts * 4) as u64),
-            moe_x: halfs(hidden),
+            router_logits_f32: context
+                .new_output_buffer((num_experts * 4 * MAX_PREFILL_BATCH) as u64),
+            moe_x: halfs(hidden * MAX_PREFILL_BATCH),
             h2: halfs(hidden),
         })
     }

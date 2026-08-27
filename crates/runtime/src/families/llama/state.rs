@@ -12,6 +12,7 @@ use model_io::{ArchConfig, ModelFamily, ResidentIndex};
 
 use crate::families::llama::layer_tensor;
 use crate::real_forward::RealForwardError;
+use crate::real_forward_types::MAX_PREFILL_BATCH;
 use crate::real_forward_utils::entry;
 
 /// BF16 bit pattern for 1.0.
@@ -51,9 +52,19 @@ pub(crate) struct RealLlamaState {
     /// It changes what the FFN half of a layer is and nothing above it:
     /// attention, both norms and the head are the same code either way.
     pub(crate) dense: bool,
+    /// FP32 router logits, one `[num_experts]` row per token of a prefill
+    /// micro-batch (`MAX_PREFILL_BATCH` rows, matching `RealGemmaState`'s
+    /// field of the same name): the chunked-prefill driver's per-layer
+    /// command buffer writes all M tokens' router GEMVs before the host
+    /// reads any of them back. The sequential decode path always uses row 0.
     pub(crate) router_logits_f32: gpu::MetalBuffer,
-    /// `[hidden]`: the post-attention norm that feeds the router and the
-    /// routed experts. There is no shared expert to feed.
+    /// `[hidden]` per token of a prefill micro-batch: the post-attention
+    /// norm that feeds the router and the routed experts. There is no
+    /// shared expert to feed. Written in the attention half of a layer and
+    /// read in the routed half, with a commit between them in the chunked
+    /// driver, so it needs a row per token for the same reason
+    /// `RealGemmaState::routed_x` does (`crates/runtime/CLAUDE.md`
+    /// Gotcha 14).
     pub(crate) moe_x: gpu::MetalBuffer,
     /// `[hidden]`: the routed sum, added back to the stream.
     pub(crate) h2: gpu::MetalBuffer,
@@ -214,9 +225,11 @@ impl RealLlamaState {
             dense,
             per_expert_ones: vec![1.0; num_experts],
             // `new_output_buffer(0)` is not a thing worth finding out about
-            // at the first dispatch, and a dense flow never binds this.
-            router_logits_f32: context.new_output_buffer((num_experts.max(1) * 4) as u64),
-            moe_x: halfs(hidden),
+            // at the first dispatch, and a dense flow never binds either of
+            // these past row 0.
+            router_logits_f32: context
+                .new_output_buffer((num_experts.max(1) * 4 * MAX_PREFILL_BATCH) as u64),
+            moe_x: halfs(hidden * MAX_PREFILL_BATCH),
             h2: halfs(hidden),
         })
     }

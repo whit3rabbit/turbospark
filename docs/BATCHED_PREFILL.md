@@ -732,3 +732,48 @@ sweep `[1, 2, 3, 4, 7, 11]`, including a span that crosses the sliding
 window) and on the real `~/models/museglimmer-30b.gturbo` install: greedy
 and sampled stdout md5-identical against a pre-change binary, at 40 new
 tokens each (`crates/runtime/CLAUDE.md` Gotcha 14).
+
+**THE MoE HALF OF `families/llama/` AND `gpt-oss` LANDED FOURTH AND FIFTH
+(2026-08-27), AND NEITHER NEEDED STEPS 2/3 EITHER.** Both replicate Step 1
+alone: a per-layer command buffer for the attention-and-router half
+(`cb1`), then a per-token routed loop pipelined with `RoutedSlot` across the
+micro-batch, exactly as Gemma 4's ORIGINAL driver did before the batched
+routed kernel (steps 2/3) existed. The reason this was enough, and did not
+need new kernel work the way the "not a small increment" line above
+predicted: Step 1's routed dispatch reuses `encode_moe_phase1_any` /
+`encode_moe_phase2_any`, the SAME per-token calls the sequential decode path
+already makes, which are already layout-agnostic (Affine, GGUF Q4_K/Q6_K,
+MXFP4). Steps 2/3's batched routed KERNEL is the INT4-affine-only piece, and
+it stayed unwired for both -- a GGUF Qwen3MoE install and an MXFP4 gpt-oss
+install both still refuse `MFERENCE_ROUTED_BATCH=1`'s widening today, which
+is the correctly-scoped remainder of "Step 5 (GGUF Routed Pair Widening)"
+below.
+
+`RoutedSlot`, the bank/protect pipelining pattern, and `retire_routed` moved
+out of `families/gemma4/moe.rs` into a shared
+`crates/runtime/src/moe_prefill_pipeline.rs` ahead of this pair landing,
+since three families now need the identical struct rather than three copies
+of it; Gemma 4's own 16-test chunked-prefill suite confirmed the extraction
+moved no bytes.
+
+Neither new driver needed a ring-wrap fix, for two different reasons. The
+MoE half of `llama` has no sliding-window layers at all (`RealLlamaState::build`
+refuses one), so there is no ring to straddle. `gpt-oss` DOES have a real
+alternating window, but this driver's attention stays per-token and
+unbatched (no `MFERENCE_BATCHED_GEMV`-style widening for either family), so
+there is no batched K/V projection to straddle it either -- the ring is
+addressed by `position` exactly as the sequential path already does.
+`gpt-oss`'s one real behavioral difference from `llama`'s MoE half, the
+router bias added on the host between the readback and the top-k, needed no
+new code in the chunked driver: it rides inside the SAME
+`encode_gpt_oss_layer_moe` call the per-token loop already makes, which
+already does the add internally per call.
+
+Both verified byte-identical against sequential on their synthetic fixtures
+(chunk-span sweep, plus a cache-too-small-to-pipeline case forcing the
+`banks == 1` retire-before-encode fallback) and on real installs: `gpt-oss`
+against `~/.turbospark/models/gptoss-20b.gturbo` (greedy and sampled stdout
+md5-identical against a pre-change binary, prefill dropping from 7.56s to
+3.79s on a 75-token prompt now that chunking engages), the MoE half of
+`llama` against a freshly-pulled `Qwen/Qwen3-30B-A3B-GGUF` install (see
+`crates/runtime/CLAUDE.md` Gotcha 14 for the exact md5s).

@@ -35,6 +35,7 @@
 
 mod attn;
 mod moe;
+mod prefill;
 mod state;
 
 pub(crate) use state::RealGptOssState;
@@ -124,6 +125,7 @@ impl RealForwardRunner {
             streamers,
             slot_buffers,
             routed_blobs,
+            routed_blobs_banks,
             moe_offsets,
             routed_layouts,
             router_hist,
@@ -143,6 +145,7 @@ impl RealForwardRunner {
             &mut self.streamers,
             &self.slot_buffers,
             &self.routed_blobs,
+            &self.routed_blobs_banks,
             &self.moe_offsets,
             &self.routed_layouts,
             &mut self.router_hist,
@@ -247,6 +250,7 @@ impl RealForwardRunner {
                 streamers,
                 slot_buffers,
                 routed_blobs.as_ref(),
+                routed_blobs_banks,
                 moe_offsets,
                 routed_layouts,
                 router_hist,
@@ -256,6 +260,7 @@ impl RealForwardRunner {
                 moe_inter,
                 num_experts,
                 top_k,
+                &crate::moe_prefill_pipeline::RoutedSlot::sequential(),
             )?;
             // The layer's OUTPUT: `encode_gpt_oss_layer_moe` ends with the
             // raw residual add (no shared expert, so the routed sum is the

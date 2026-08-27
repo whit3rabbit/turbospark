@@ -132,31 +132,23 @@ fn the_chunk_boundary_does_not_move_the_logits() {
 }
 
 #[test]
-fn an_moe_llama_install_is_still_refused_by_name() {
-    // The dense driver must not become a silent catch-all for the OTHER
-    // half of this architecture string: Mixtral stays refused, exactly as
-    // it was before this file existed.
-    let dir = temp_dir("moe-refused");
-    let arch = turbospark_repack::build_synthetic_llama_real_install(
-        &dir,
-        VOCAB,
-        LAYERS,
-        8,
-        "tiny-mixtral",
-    )
-    .expect("MoE llama install builds");
-    let mut runner =
-        RealForwardRunner::open(&dir, arch).expect("MoE llama install opens for sequential decode");
+fn a_dense_install_stays_on_the_dense_driver_once_the_moe_half_also_has_one() {
+    // The dense driver must not become confused with, or fall back to, the
+    // MoE driver once `families/llama/moe_prefill.rs` lands next to it:
+    // both halves are supported now (`real_forward_llama_moe_chunked.rs`
+    // covers the MoE half's own byte-identity in full), and this is the
+    // narrow cross-check that a DENSE install still resolves to the DENSE
+    // driver's path rather than tripping the MoE branch's `dense: false`
+    // guard.
+    let mut runner = open_runner("moe-now-supported-too");
     assert!(
-        !runner.supports_chunked_prefill(),
-        "an MoE llama install must not report chunked-prefill support"
+        runner.supports_chunked_prefill(),
+        "a dense llama install must still report chunked-prefill support"
     );
-    let mut logits = vec![f16::from_f32(0.0); VOCAB as usize];
-    let err = runner
-        .prefill_chunk(&PROMPT[..1], 0, &mut logits)
-        .expect_err("MoE llama must refuse chunked prefill by name");
-    assert!(
-        err.contains("dense llama flow"),
-        "refusal should name the flow it does serve, got: {err}"
+    let expected = sequential_prefill(&mut runner, &PROMPT);
+    let actual = chunked_prefill(&mut runner, &PROMPT, PROMPT.len());
+    assert_eq!(
+        actual, expected,
+        "the dense driver must still be reached and still be correct"
     );
 }
