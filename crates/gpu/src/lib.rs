@@ -98,6 +98,8 @@ mod rms_norm;
 mod rope;
 #[cfg(target_os = "macos")]
 mod utility;
+#[cfg(target_os = "macos")]
+mod vision;
 
 #[cfg(target_os = "macos")]
 pub use attention_decode::{
@@ -227,6 +229,11 @@ pub use utility::{
     encode_bias_add, encode_gelu_mul, encode_logit_softcap, encode_residual_add, encode_scalar_mul,
     encode_sigmoid_gate_mul, encode_sigmoid_scalar_mul, encode_silu_mul, encode_split_q_gate,
     encode_steer_direction, SteerParams,
+};
+#[cfg(target_os = "macos")]
+pub use vision::{
+    encode_vision_attention, encode_vision_gelu, encode_vision_layer_norm, encode_vision_matmul,
+    encode_vision_residual_add, encode_vision_rope_2d, GeluKind, MAX_ATTENTION_HEAD_DIM,
 };
 
 /// The Metal buffer handle, re-exported so downstream crates (e.g.

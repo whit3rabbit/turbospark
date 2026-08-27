@@ -47,6 +47,7 @@ crates/gpu/
 |   +-- dflash_conv.rs              # DFlash2 dynamic depthwise conv and state capture
 |   +-- dsv4_state.rs               # DSV4 Metal buffer allocation (unwired)
 |   +-- prefill_scratch.rs          # Chunked prefill scratch buffer layout (undispatched)
+|   +-- vision.rs                   # qwen3_5 vision tower dispatches (port-local, ROADMAP M-V2)
 |   \-- shaders/                    # MSL source, vendored from Swift except where marked port-local
 |       +-- attention.metal         # Decode attention Metal shader source
 |       +-- dequant_1bit.metal      # MLX 1-bit affine GEMV + the `+/-1` form
@@ -68,7 +69,8 @@ crates/gpu/
 |       +-- moe_prefill_batch.metal # Batched MoE prefill GEMV shader source
 |       +-- rmsnorm.metal           # RMSNorm shader source
 |       +-- rope.metal              # RoPE shader source
-|       \-- utility.metal           # Elementwise utility shader source + the steering edit
+|       +-- utility.metal           # Elementwise utility shader source + the steering edit
+|       \-- vision.metal            # qwen3_5 vision tower shader source (port-local)
 \-- tests/                          # Metal numerical parity & allocation unit tests
     +-- attention_chunk_bench.rs
     +-- attention_decode_parity.rs
@@ -105,7 +107,9 @@ crates/gpu/
     +-- rope_parity.rs
     +-- rope_yarn_parity.rs
     +-- scaled_norm_and_embed.rs
-    \-- utility_and_pass.rs
+    +-- utility_and_pass.rs
+    +-- vision_block_parity.rs
+    \-- vision_parity.rs
 ```
 
 ## Key Modules
@@ -194,6 +198,13 @@ crates/gpu/
   `alpha` -- and full strength is the natural value to reach for, since making
   it usable is the mode's whole purpose. Both mutations were checked and both
   redden only their own cases.
+- `vision.rs` + `shaders/vision.metal`: the `qwen3_5` vision tower's six kernels (ROADMAP M-V2) -- `vision_layer_norm_fp16`, `vision_gelu_tanh_fp16` / `vision_gelu_erf_fp16`, `vision_rope_2d_fp16`, `vision_attention_bidir_fp16`, `vision_matmul_fp16`, `vision_residual_add_fp16`. PORT-LOCAL; their contract is `turbospark_compute::vision`. **FIVE THINGS TO READ BEFORE TOUCHING THEM.**
+  **Every weight is `half`, not `bfloat`**, alone in this crate. The tower is signed off at FP16 end to end (`docs/VISION_PHASE0.md`): its checkpoints ship F16, the extreme-page probe puts peak activations at 13.8% of FP16's ceiling with a factor of 7.3 in hand, and INT4 was measured and REJECTED on OCR quality. The two types are the same WIDTH, so binding a BF16 tensor here passes every length check and reads the bytes as a different number.
+  **LayerNorm reduces TWICE** (mean, then variance about that mean) rather than using the one-pass `E[x^2] - E[x]^2` identity. That identity cancels catastrophically when the mean is large relative to the spread, which is this tower's NORMAL condition rather than an edge case: block 26 runs at absmax 9,024 with rms 145.
+  **The two GELUs are separate KERNELS, never one with a mode uniform** -- Gotcha 1's trap, and here it would make the tower's two activations one function. **Metal ships no `erf`**, which reads like it should (`metal_math` has every other libm name); the series is written out as the same Abramowitz-Stegun 7.1.26 the CPU reference uses, deliberately the same approximation so the parity bound measures FP32-vs-FP64 and FP16 storage rather than a gap between rival expansions.
+  **The attention is ONE PASS over the keys, online softmax**, with the 8 SIMD groups splitting keys and the 32 lanes splitting the head dimension into a register tile. The straightforward three-pass shape (max, denominator, weighted sum with threads over the head dim) is CORRECT and recomputes every dot product once per output element -- `head_dim` times too much work, a factor of 72 here. The first draft did exactly that. `MAX_ATTENTION_HEAD_DIM` is 128 from that register tile and is REFUSED rather than clamped, since exceeding it truncates a head silently.
+  **`vision_matmul_fp16` takes all three position attributes as `uint2`**, which is a Metal rule and not a style: a kernel's position inputs must be all scalar or all vectors of the same width, so a `uint2` threadgroup position beside a scalar `thread_position_in_threadgroup` does not compile. The simdgroup attributes are a different family and stay scalar.
+  `tests/vision_parity.rs` holds the per-kernel numbers, each parity case paired with a DISCRIMINATION case (the tower has three places where two functions nearly coincide). `tests/vision_block_parity.rs` is the composition gate: every per-kernel case passes while the block is wired wrongly, so it runs a whole block at the real widths and checks q/k/v slicing, rope reaching q and k but NOT v, both residuals, and that every one of the twelve weights reaches the output.
 - `resident_metal.rs`: `ResidentGpuWeights` zero-copy `MTLBuffer` wrapping around `mmap` slices.
 - `device_memory.rs`: `recommended_max_working_set`, the Metal device's own
   ceiling plus its name, here for the same reason `power_state.rs` is. Adapted
@@ -226,3 +237,4 @@ cargo test -p turbospark-gpu
 6. **`PassEncoder` ends encoding on drop, and that is load-bearing rather than tidy.** Every `?` between `begin_pass` and `commit` used to drop an encoder that had never been sent `endEncoding`, and Metal aborts the process from `-[_MTLCommandEncoder dealloc]` when that happens -- while the real error is still travelling up the stack, so the assertion is all anyone sees. `commit` therefore takes its profile with `Option::take` and clones the command buffer instead of moving fields out (a struct with a `Drop` impl cannot be destructured). A new pass-like wrapper needs the same or it reintroduces the blindfold. See AGENTS.md Gotcha 32.
 7. **KV Cache Ring Specialization**: `KvCacheManager`'s `fp16_ring_enabled` mode specializes `FC_ATTN_RING_CAP` into Metal pipelines. Ring capacity values MUST be included in the pipeline cache constants key.
 8. **Command buffers on one queue execute in COMMIT ORDER, and that is what licenses reusing single-row scratch across them.** A GPU-only intermediate written by buffer N and read by buffer N+1 needs no fence and no second copy; the shared-expert-into-routed chain has always relied on it, and `crates/runtime`'s chunked prefill driver relies on it to run several tokens through one set of projection and FFN scratch. What it does NOT cover is the HOST: a buffer the CPU writes (routing weights, an argument buffer) or reads back can race a buffer still in flight, because those writes never enter the queue. When deciding whether something needs a second copy or a per-token row, ask who WRITES it, not who reads it.
+9. **The whole-block vision parity test CANNOT see which GELU the block selects, and that is recorded rather than fixed.** The two forms agree to ~3e-4 while a block's output carries the accumulated FP16 error of two norms, five GEMMs of up to 4,304 terms and an attention, so the difference is two orders of magnitude under the bound the parity assertion has to allow. No tightening fixes it. `the_blocks_gelu_choice_is_invisible_at_the_parity_bound` states the limitation as an assertion (the two kinds differ, and by less than the bound) so a reader cannot assume the composition test covers it; the choice is pinned instead by the two per-kernel cases plus the one-line call site. Found by mutation, not by review.

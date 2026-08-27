@@ -1085,6 +1085,14 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
    PRECOMPUTED per-pair frequency table plus a magnitude scale, because
    the three older rope kernels derive every frequency from a scalar theta
    and YaRN is not expressible that way), and
+   the port-local VISION TOWER set (ROADMAP M-V2: `vision_layer_norm_fp16`, the
+   two GELUs `vision_gelu_tanh_fp16` and `vision_gelu_erf_fp16` as SEPARATE
+   kernels because the tower uses both in one forward pass,
+   `vision_rope_2d_fp16` off a per-token frequency ROW, the one-pass
+   online-softmax `vision_attention_bidir_fp16`, `vision_matmul_fp16` and
+   `vision_residual_add_fp16` -- and ALONE IN THIS PORT they bind `half`
+   weights rather than `bfloat`, the tower being signed off at FP16 end to
+   end), and
    `utility` elementwise kernels including the port-local `scalar_mul_fp16`,
    the port-local `bias_add_bf16_fp16` (M5: a separate pass rather than a
    bias argument on seven GEMV kernels and four families' dispatch sites)

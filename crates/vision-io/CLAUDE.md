@@ -154,7 +154,24 @@ globally and nothing enters this workspace.
    mrope walk drives from the markers and was not taken (see `NOTICE`);
    `a_placeholder_with_no_vision_start_is_treated_as_text` pins the choice.
 
-10. **Nothing here gathers.** `pos_embed_weights` returns indices and
+10. **`preprocess_oracle.rs` is 73 KB against the house norm of 5-9 KB for a
+    generated fixture, and that is a considered trade rather than an
+    oversight.** It is the only fixture here that has to carry PIXELS: the
+    other four commit indices, weights or integer triples, while this one
+    commits four source images plus the patch matrices they produce. Two
+    rounds of shrinking already happened -- the first draft was 245 KB, cut
+    by dropping the test geometry from patch 16 to patch 2 (`patch_dim` 1536
+    to 24, every loop still exercised because the pipeline is parameterized
+    on the geometry) and by fixing a numpy 2.x `repr` that was wrapping every
+    float as `np.float32(0.5)`. What remains is real coverage: five cases
+    spanning all three resize branches plus the identity one, at full
+    per-element comparison. The lever if it ever has to shrink again is
+    committing a strided sample of the tiny cases the way `real_geometry`
+    already does, which costs per-element coverage on exactly the cases that
+    established the `(T, P_h, P_w, C)` order in the first place. Do not reach
+    for it without a reason.
+
+11. **Nothing here gathers.** `pos_embed_weights` returns indices and
     weights, and `vision_rope_freq_rows` returns frequency rows; the values
     being gathered live in GPU buffers this crate cannot see. Keep it that
     way -- the split is what lets the index arithmetic, which is where the
