@@ -10,6 +10,8 @@ mod error;
 mod families;
 #[cfg(target_os = "macos")]
 mod ffn_hist;
+#[cfg(target_os = "macos")]
+mod moe_prefill_pipeline;
 mod pacing;
 mod power;
 mod producer;

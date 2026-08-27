@@ -3,9 +3,10 @@ use std::time::Instant;
 use foundation::LogitValue;
 
 use super::moe;
+use crate::moe_prefill_pipeline::routed_pipeline_banks;
 use crate::real_forward::RealForwardRunner;
 use crate::real_forward_dispatch::{encode_embed_any, encode_gemv_any};
-use crate::real_forward_types::{RealForwardError, MAX_PREFILL_BATCH, ROUTED_BANKS};
+use crate::real_forward_types::{RealForwardError, MAX_PREFILL_BATCH};
 use crate::real_forward_utils::norm_view;
 use crate::resid_capture::encode_resid_capture;
 use crate::steering::encode_steering;
@@ -119,17 +120,7 @@ impl RealForwardRunner {
             )));
         }
 
-        // How many tokens' routed command buffers may be in flight at once.
-        // Pipelining costs a plan that must AVOID the previous token's
-        // slots, so the cache needs room for those plus this token's misses;
-        // below `2 * top_k` slots it cannot guarantee that and
-        // `ExpertCache::plan` aborts the process rather than degrading, so
-        // a small cache falls back to retiring before it encodes.
-        let banks = if self.expert_cache_slots >= 2 * top_k {
-            ROUTED_BANKS
-        } else {
-            1
-        };
+        let banks = routed_pipeline_banks(self.expert_cache_slots, top_k);
 
         let embed_name = "language_model.model.embed_tokens.weight";
         let base = self.index.header.index_size;
@@ -359,15 +350,5 @@ impl RealForwardRunner {
         }
         gpu::read_buffer_f16_into(&self.scratch.logits, 0, logits);
         Ok(())
-    }
-
-    /// Waits out a pipelined routed command buffer and books its GPU time,
-    /// leaving `pending` empty. A no-op when nothing is in flight.
-    pub(crate) fn retire_routed(&mut self, pending: &mut Option<gpu::CommittedPass>) {
-        if let Some(committed) = pending.take() {
-            let t_retire = Instant::now();
-            self.phases.routed_cb_gpu_nanos += (committed.wait_with_gpu_time() * 1e9) as u64;
-            self.phases.pipeline_wait_nanos += t_retire.elapsed().as_nanos() as u64;
-        }
     }
 }

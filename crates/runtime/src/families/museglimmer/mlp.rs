@@ -8,6 +8,12 @@ use crate::real_forward_utils::norm_view;
 use super::layer_tensor;
 use super::state::{POST_NORM_EPS, RMS_EPS};
 
+/// Encodes one layer's FFN half (pre-FFN norm, gated FFN, sandwich norm,
+/// residual add) into `pass`. `x` is read as the residual for the pre-FFN
+/// norm and written back with the FFN's normed output added, both at
+/// `x_off` (Gotcha 21's convention: the residual stream is the only buffer
+/// needing a row per token in a chunked-prefill driver; every transient
+/// buffer here stays at offset 0).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn encode_mlp_block(
     context: &mut gpu::MetalContext,
@@ -19,6 +25,7 @@ pub(crate) fn encode_mlp_block(
     layer: usize,
     hidden: usize,
     inter: usize,
+    x_off: u64,
 ) -> Result<(), RealForwardError> {
     let gpu_err = RealForwardError::Gpu;
 
@@ -32,7 +39,7 @@ pub(crate) fn encode_mlp_block(
     gpu::encode_rms_norm_bf16w_centered(
         context,
         pass,
-        (&scratch.x, 0),
+        (&scratch.x, x_off),
         pre_ffn,
         (&scratch.ffn_normed, 0),
         hidden as u32,
@@ -114,7 +121,7 @@ pub(crate) fn encode_mlp_block(
     gpu::encode_residual_add(
         context,
         pass,
-        (&scratch.x, 0),
+        (&scratch.x, x_off),
         (&scratch.ffn_normed, 0),
         hidden as u32,
     )

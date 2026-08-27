@@ -715,9 +715,20 @@ each mean replicating steps 1 through 3 (attention AND routed-expert
 batching) plus that family's own hazards -- gpt-oss's alternating window,
 attention sinks and router-bias-before-topk, the ring-wrap and
 shared-expert ordering Gemma 4's own bring-up already found -- not a small
-increment. **`muse_glimmer` is a THIRD case, not a fourth MoE one**: it has
-no router at all (this doc's own line above), so it needs only the SAME
-simpler no-mid-layer-commit driver dense `llama` just got, adapted to its
-own attention shape (three-sliding/one-full window, centered norms on four
-tensors and plain on the final one, NoPE on the full layers, an attention
-output gate, a logit softcap) -- no MoE steps involved.
+increment. **`muse_glimmer` was a THIRD case, not a fourth MoE one, and
+landed third (2026-08-27)**: it has no router at all (this doc's own line
+above), so it needed only the SAME simpler no-mid-layer-commit driver dense
+`llama` got, adapted to its own attention shape (three-sliding/one-full
+window, centered norms on four tensors and plain on the final one, NoPE on
+the full layers, an attention output gate, a logit softcap) -- no MoE steps
+involved, and no ring-wrap hazard either, since attention stays per-token
+inside the driver and the sliding-window ring is addressed by `position`
+exactly as the sequential path already does it. `mlp::encode_mlp_block`
+gained the same `x_off: u64` parameter `encode_llama_layer_dense` did;
+`attn::encode_attention_block` needed no change, for the identical reason
+dense `llama`'s did not (it never touches `scratch.x`). Verified
+byte-identical against sequential on the synthetic fixture (chunk-span
+sweep `[1, 2, 3, 4, 7, 11]`, including a span that crosses the sliding
+window) and on the real `~/models/museglimmer-30b.gturbo` install: greedy
+and sampled stdout md5-identical against a pre-change binary, at 40 new
+tokens each (`crates/runtime/CLAUDE.md` Gotcha 14).

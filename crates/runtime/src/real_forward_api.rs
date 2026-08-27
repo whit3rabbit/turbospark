@@ -33,11 +33,13 @@ impl RealForwardRunner {
     /// calls this too, so a caller deciding whether to route through the
     /// chunked driver at all (`crates/cli`'s default `--prefill-chunk`
     /// wiring, `crates/server`'s automatic dispatch) and the driver's own
-    /// hard refusal can never disagree. Gemma 4 and the DENSE half of
-    /// `llama` (Mistral, Llama 2/3.x) today; MoE `llama`, `qwen3moe`,
-    /// `gpt-oss`, `muse_glimmer` and the qwen flow all answer `false`.
+    /// hard refusal can never disagree. Gemma 4, the DENSE half of `llama`
+    /// (Mistral, Llama 2/3.x) and `muse_glimmer` today; MoE `llama`,
+    /// `qwen3moe`, `gpt-oss` and the qwen flow all answer `false`.
     pub fn supports_chunked_prefill(&self) -> bool {
-        self.real.is_some() || self.real_llama.as_ref().is_some_and(|s| s.dense)
+        self.real.is_some()
+            || self.real_llama.as_ref().is_some_and(|s| s.dense)
+            || self.real_muse.is_some()
     }
 
     /// Rows this model's output head writes, i.e. the length every `produce`

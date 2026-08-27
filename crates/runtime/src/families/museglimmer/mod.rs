@@ -52,6 +52,7 @@
 
 mod attn;
 mod mlp;
+mod prefill;
 mod state;
 
 pub(crate) use state::RealMuseState;
@@ -220,7 +221,7 @@ impl RealForwardRunner {
             .map_err(gpu_err)?;
 
             mlp::encode_mlp_block(
-                context, &pass, weights, index, scratch, ffn_hist, layer, hidden, inter,
+                context, &pass, weights, index, scratch, ffn_hist, layer, hidden, inter, 0,
             )?;
 
             // The layer's OUTPUT: this FFN-half residual add is the true end

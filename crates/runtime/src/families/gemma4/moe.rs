@@ -4,6 +4,11 @@ use std::time::Instant;
 
 use half::f16;
 
+// Re-exported (not just imported) because `moe_batch.rs`, `mod.rs` and
+// `shared_expert.rs` all reach this type as `moe::RoutedSlot`, and moving
+// the definition to a shared module shouldn't force three call sites to
+// change their qualified paths.
+pub(crate) use crate::moe_prefill_pipeline::RoutedSlot;
 use crate::real_forward::RealForwardRunner;
 use crate::real_forward_dispatch::{
     encode_moe_phase1_any, encode_moe_phase2_any, router_topk_gemma4,
@@ -12,36 +17,6 @@ use crate::real_forward_types::RealForwardError;
 use crate::real_forward_utils::{f16_slice_to_le_bytes, layer_tensor, norm_view};
 
 const RMS_EPS: f32 = 1e-6;
-
-/// Which token of a prefill micro-batch a routed pass is for, and which
-/// bank of per-token routed resources it may use. Both are 0 on the
-/// sequential decode path, which is why that path's bytes cannot move.
-#[derive(Debug, Clone)]
-pub(crate) struct RoutedSlot {
-    /// Index inside the micro-batch: selects the `x`, `routed_x` and
-    /// router-logits rows.
-    pub(crate) token: usize,
-    /// Index inside [`crate::real_forward_types::ROUTED_BANKS`]: selects
-    /// the two resources the HOST writes per token, `routing_w` and the
-    /// routed argument buffer. The GPU-only intermediates are not banked;
-    /// see `ROUTED_BANKS` for why that is safe and this is not.
-    pub(crate) bank: usize,
-    /// Expert slots a command buffer still in flight is reading, which this
-    /// token's plan may not evict. Empty on the sequential path and for the
-    /// first token of a micro-batch.
-    pub(crate) protect: std::collections::HashSet<usize>,
-}
-
-impl RoutedSlot {
-    /// The sequential decode path: token 0, bank 0, nothing in flight.
-    pub(crate) fn sequential() -> Self {
-        Self {
-            token: 0,
-            bank: 0,
-            protect: std::collections::HashSet::new(),
-        }
-    }
-}
 
 impl RealForwardRunner {
     #[allow(clippy::too_many_arguments)]
