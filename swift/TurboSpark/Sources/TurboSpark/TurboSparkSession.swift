@@ -195,6 +195,125 @@ public final class TurboSparkSession: @unchecked Sendable {
         }
     }
 
+    /// Evaluates the token count of a raw text string using this session's tokenizer.
+    public func countTokens(
+        in text: String,
+        addSpecialTokens: Bool = false
+    ) async throws -> Int {
+        try await withCheckedThrowingContinuation { cont in
+            queue.async { [handle] in
+                var count: UInt32 = 0
+                let status = text.withCString { t in
+                    ts_session_count_text_tokens(handle.raw, t, addSpecialTokens, &count)
+                }
+                guard status == 0 else {
+                    cont.resume(throwing: TurboSparkError.fromLastError(status))
+                    return
+                }
+                cont.resume(returning: Int(count))
+            }
+        }
+    }
+
+    /// Formats a conversation transcript into raw prompt text using this session's
+    /// chat template and reasoning effort setting.
+    public func renderPrompt(
+        _ messages: [ChatMessage],
+        reasoning: GenerateOptions.Reasoning = .off
+    ) async throws -> String {
+        let messagesJSON = try Self.encode(messages)
+        let reasoningStr = reasoning.rawValue
+        return try await withCheckedThrowingContinuation { cont in
+            queue.async { [handle] in
+                do {
+                    let prompt = try takeString { out in
+                        messagesJSON.withCString { m in
+                            reasoningStr.withCString { r in
+                                ts_session_render_prompt(handle.raw, m, r, out)
+                            }
+                        }
+                    }
+                    cont.resume(returning: prompt)
+                } catch {
+                    cont.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    /// Tokenizes raw text into an array of integer token IDs using this session's tokenizer.
+    public func tokenize(
+        _ text: String,
+        addSpecialTokens: Bool = false
+    ) async throws -> [Int32] {
+        return try await withCheckedThrowingContinuation { cont in
+            queue.async { [handle] in
+                do {
+                    let json = try takeString { out in
+                        text.withCString { t in
+                            ts_session_tokenize_json(handle.raw, t, addSpecialTokens, out)
+                        }
+                    }
+                    cont.resume(returning: try decode([Int32].self, from: json))
+                } catch {
+                    cont.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    /// Detokenizes an array of integer token IDs into text using this session's tokenizer.
+    public func detokenize(
+        _ tokens: [Int32],
+        skipSpecialTokens: Bool = false
+    ) async throws -> String {
+        let tokensJSON = try Self.encode(tokens)
+        return try await withCheckedThrowingContinuation { cont in
+            queue.async { [handle] in
+                do {
+                    let text = try takeString { out in
+                        tokensJSON.withCString { t in
+                            ts_session_detokenize_json(handle.raw, t, skipSpecialTokens, out)
+                        }
+                    }
+                    cont.resume(returning: text)
+                } catch {
+                    cont.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    /// Fits a conversation transcript into a context token budget by pruning older turns
+    /// (preserving optional leading system instruction and newest user turn).
+    ///
+    /// `maxTokens`: the token budget limit. When `nil`, defaults to the session's resolved `maxContext`.
+    public func fitWindow(
+        _ messages: [ChatMessage],
+        maxTokens: UInt32? = nil,
+        reasoning: GenerateOptions.Reasoning = .off
+    ) async throws -> WindowFitOutcome {
+        let messagesJSON = try Self.encode(messages)
+        let reasoningStr = reasoning.rawValue
+        let limit = maxTokens ?? info.maxContext
+        return try await withCheckedThrowingContinuation { cont in
+            queue.async { [handle] in
+                do {
+                    let json = try takeString { out in
+                        messagesJSON.withCString { m in
+                            reasoningStr.withCString { r in
+                                ts_session_fit_window_json(handle.raw, m, r, limit, out)
+                            }
+                        }
+                    }
+                    cont.resume(returning: try decode(WindowFitOutcome.self, from: json))
+                } catch {
+                    cont.resume(throwing: error)
+                }
+            }
+        }
+    }
+
     /// This process's peak physical footprint in bytes, or nil where the
     /// counter is unavailable.
     ///

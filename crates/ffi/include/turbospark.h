@@ -38,6 +38,7 @@
 #ifndef TURBOSPARK_H
 #define TURBOSPARK_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -187,7 +188,9 @@ void ts_session_cancel(const TsSession *s);
  *     "pastTrainedContext", "expertCacheSlots", "vocabSize", "dialect",
  *     "reasoningSupport",
  *     "steering": { "active", "mode", "scale", "summary" },
- *     "speculation": { "block", "drafter", "reason" } }
+ *     "speculation": { "block", "drafter", "reason" },
+ *     "specialTokens": { "bosId", "eosId", "padId", "endOfTurnId",
+ *                       "stopTokenIds", "thinkStartId", "thinkEndId" } }
  *
  * maxContext and expertCacheSlots are the RESOLVED values, never what was
  * asked for: under "auto" the request carries no number, and the KV cache
@@ -256,6 +259,57 @@ int32_t ts_session_count_tokens(const TsSession *s, const char *messages_json,
                                 const char *reasoning, uint32_t *out_count);
 
 /*
+ * Formats a conversation transcript into raw prompt text using the session's
+ * chat template and reasoning effort setting.
+ *
+ * `messages_json` is [{"role":"user","content":"..."}].
+ * `reasoning` is "off"|"low"|"medium"|"high"|"xhigh" (or NULL for "off").
+ * Writes formatted prompt string to `*out_prompt`.
+ */
+int32_t ts_session_render_prompt(const TsSession *s, const char *messages_json,
+                                 const char *reasoning, char **out_prompt);
+
+/*
+ * Tokenizes raw text into a JSON array of integer token IDs using the session tokenizer.
+ * `add_special` indicates whether special tokens (such as BOS) should be added.
+ * Writes JSON array of integers to `*out`.
+ */
+int32_t ts_session_tokenize_json(const TsSession *s, const char *text,
+                                 bool add_special, char **out);
+
+/*
+ * Detokenizes a JSON array of integer token IDs into text using the session tokenizer.
+ * `skip_special` indicates whether special tokens (BOS/EOS/turn markers) are stripped.
+ * Writes decoded text string to `*out`.
+ */
+int32_t ts_session_detokenize_json(const TsSession *s, const char *tokens_json,
+                                   bool skip_special, char **out);
+
+/*
+ * Evaluates the token count of a raw text string using the session's tokenizer.
+ * `add_special` indicates whether special tokens (such as BOS) should be added.
+ * Writes token count to `*out_count`.
+ */
+int32_t ts_session_count_text_tokens(const TsSession *s, const char *text,
+                                     bool add_special, uint32_t *out_count);
+
+/*
+ * Fits a conversation transcript into a context token budget by pruning older
+ * turns (preserving optional leading system/developer instruction and newest turn),
+ * using the checkpoint's chat template and tokenizer.
+ *
+ * `messages_json` is [{"role":"user","content":"..."}].
+ * `reasoning` is "off"|"low"|"medium"|"high"|"xhigh" (or NULL for "off").
+ * `max_tokens` is the context budget limit (0 means session's resolved max_context).
+ *
+ * Writes JSON result to `*out`:
+ *   { "retained": [...], "measuredTokens": 120, "removedTurnCount": 1, "hasRoomForGeneration": true }
+ */
+int32_t ts_session_fit_window_json(const TsSession *s, const char *messages_json,
+                                   const char *reasoning, uint32_t max_tokens,
+                                   char **out);
+
+/*
  * Generates one assistant turn. Blocks for the whole turn.
  *
  * `messages_json` is [{"role":"user","content":"..."}], rendered through the
@@ -265,7 +319,7 @@ int32_t ts_session_count_tokens(const TsSession *s, const char *messages_json,
  * `options_json` may be NULL or "{}". Recognised keys, with the defaults the
  * CLI uses:
  *   maxNewTokens 512, temperature 0.2, topK 64, topP 0.95,
- *   repetitionPenalty 1.0, seed null, stop [], reasoning "off"
+ *   repetitionPenalty 1.0, seed null, stop [], stopTokens [], reasoning "off"
  *
  * `reasoning` is "off"|"low"|"medium"|"high"|"xhigh". THE ACCEPTED SET IS
  * THE CHECKPOINT'S: a level its template rejects comes back as an error

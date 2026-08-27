@@ -126,6 +126,7 @@ pub struct GenerateOptions {
     pub repetition_penalty: f64,
     pub seed: Option<u64>,
     pub stop: Vec<String>,
+    pub stop_tokens: Vec<u32>,
     /// `off` | `low` | `medium` | `high` | `xhigh`. The ACCEPTED SET IS THE
     /// CHECKPOINT'S, not this crate's: a level the template rejects comes
     /// back as an error naming the level, because a per-family allowlist
@@ -144,17 +145,41 @@ impl Default for GenerateOptions {
             repetition_penalty: 1.0,
             seed: None,
             stop: Vec::new(),
+            stop_tokens: Vec::new(),
             reasoning: "off".to_string(),
         }
     }
 }
 
 /// One chat message, in the shape `--messages-file` accepts.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WireMessage {
     pub role: String,
     #[serde(default)]
     pub content: String,
+}
+
+/// The result of fitting a conversation into a context window budget.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowFitOutcome {
+    pub retained: Vec<WireMessage>,
+    pub measured_tokens: u64,
+    pub removed_turn_count: usize,
+    pub has_room_for_generation: bool,
+}
+
+/// Special token identifiers for tokenizer introspection.
+#[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SpecialTokensInfo {
+    pub bos_id: Option<i32>,
+    pub eos_id: Option<i32>,
+    pub pad_id: Option<i32>,
+    pub end_of_turn_id: Option<i32>,
+    pub stop_token_ids: Vec<i32>,
+    pub think_start_id: Option<i32>,
+    pub think_end_id: Option<i32>,
 }
 
 /// What `ts_generate` writes to its result out-parameter.
@@ -212,6 +237,7 @@ pub struct SessionInfo {
     /// acceptance is exact only at temperature 0, so a sampled turn decodes
     /// sequentially whatever this says.
     pub speculation: SpeculationInfo,
+    pub special_tokens: SpecialTokensInfo,
 }
 
 /// What `ts_session_phases_json` returns: `MFERENCE_PHASES=1`'s breakdown.

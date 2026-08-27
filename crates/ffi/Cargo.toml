@@ -22,6 +22,7 @@ foundation = { package = "turbospark-core", path = "../core", version = "0.1.0" 
 runtime = { package = "turbospark-runtime", path = "../runtime", version = "0.1.0" }
 selection = { package = "turbospark-selection", path = "../selection", version = "0.1.0" }
 tokenizer = { package = "turbospark-tokenizer", path = "../tokenizer", version = "0.1.0" }
+window_fit = { package = "turbospark-window-fit", path = "../window-fit", version = "0.1.0" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Portable on purpose: nothing in the catalog decodes, so a GUI can browse

@@ -361,6 +361,15 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
                 runtime::SpeculationPlan::Enabled { .. } => None,
             },
         },
+        special_tokens: crate::wire::SpecialTokensInfo {
+            bos_id: (tokenizer.bos_id >= 0).then_some(tokenizer.bos_id),
+            eos_id: (tokenizer.eos_id >= 0).then_some(tokenizer.eos_id),
+            pad_id: (tokenizer.pad_id >= 0).then_some(tokenizer.pad_id),
+            end_of_turn_id: (tokenizer.end_of_turn_id >= 0).then_some(tokenizer.end_of_turn_id),
+            stop_token_ids: tokenizer.stop_token_ids.iter().copied().collect(),
+            think_start_id: tokenizer.think_start_id,
+            think_end_id: tokenizer.think_end_id,
+        },
     };
 
     Ok(Session {

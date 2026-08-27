@@ -23,9 +23,10 @@ use foundation::LogitValue;
 use tokenizer::MfTokenizer;
 use turbospark_ffi::{
     abi, session_for_testing, ts_generate, ts_last_error, ts_model_delete, ts_probe_json,
-    ts_recommend_json, ts_session_cancel, ts_session_count_tokens, ts_session_info_json,
-    ts_session_open, ts_string_free, ts_system_info_json, Session, TS_EVENT_CONTENT,
-    TS_EVENT_PREFILL,
+    ts_recommend_json, ts_session_cancel, ts_session_count_text_tokens, ts_session_count_tokens,
+    ts_session_detokenize_json, ts_session_fit_window_json, ts_session_info_json, ts_session_open,
+    ts_session_render_prompt, ts_session_tokenize_json, ts_string_free, ts_system_info_json,
+    Session, TS_EVENT_CONTENT, TS_EVENT_PREFILL,
 };
 
 fn fixture() -> MfTokenizer {
@@ -435,6 +436,43 @@ fn session_counts_prompt_tokens_correctly() {
 }
 
 #[test]
+fn session_counts_raw_text_tokens_correctly() {
+    let session = endless_session(fixture(), "h", 10);
+    let text = c("The quick brown fox jumps over the lazy dog.");
+    let mut count: u32 = 0;
+    let code = unsafe { ts_session_count_text_tokens(&session, text.as_ptr(), false, &mut count) };
+    assert_eq!(code, abi::TS_OK, "{}", last_error());
+    assert!(count > 0, "text token count should be positive");
+}
+
+#[test]
+fn session_fits_conversation_window_correctly() {
+    let session = endless_session(fixture(), "h", 10);
+    // Multiple messages: system + older user/assistant turns + newest user turn
+    let messages = c(r#"[
+        {"role":"system","content":"You are a helpful assistant."},
+        {"role":"user","content":"First question that is quite detailed and takes some token space."},
+        {"role":"assistant","content":"First detailed answer that also occupies substantial token space."},
+        {"role":"user","content":"Second question?"}
+    ]"#);
+    let mut out: *mut c_char = ptr::null_mut();
+    // Use a bound that fits system + newest user, but not all 4 messages
+    let code = unsafe {
+        ts_session_fit_window_json(&session, messages.as_ptr(), ptr::null(), 40, &mut out)
+    };
+    assert_eq!(code, abi::TS_OK, "{}", last_error());
+    let json_str = unsafe { take(out) };
+    let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+    assert!(parsed.get("retained").is_some());
+    assert!(parsed["removedTurnCount"].as_u64().unwrap() > 0);
+    let retained = parsed["retained"].as_array().unwrap();
+    // System message should be preserved
+    assert_eq!(retained.first().unwrap()["role"], "system");
+    // Newest user turn should be preserved
+    assert_eq!(retained.last().unwrap()["role"], "user");
+}
+
+#[test]
 fn system_info_json_is_valid_json() {
     let mut out: *mut c_char = ptr::null_mut();
     let code = unsafe { ts_system_info_json(&mut out) };
@@ -463,4 +501,86 @@ fn recommend_json_returns_ranked_catalog_rows() {
         let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
         assert!(parsed.is_array());
     }
+}
+
+#[test]
+fn session_renders_formatted_chat_prompt() {
+    let session = endless_session(fixture(), "h", 10);
+    let messages = c(r#"[
+        {"role":"system","content":"You are a helpful assistant."},
+        {"role":"user","content":"Hello world"}
+    ]"#);
+    let mut out: *mut c_char = ptr::null_mut();
+    let code =
+        unsafe { ts_session_render_prompt(&session, messages.as_ptr(), ptr::null(), &mut out) };
+    assert_eq!(code, abi::TS_OK, "{}", last_error());
+    let prompt = unsafe { take(out) };
+    assert!(prompt.contains("<|im_start|>system"));
+    assert!(prompt.contains("You are a helpful assistant."));
+    assert!(prompt.contains("<|im_start|>user"));
+    assert!(prompt.contains("Hello world"));
+    assert!(prompt.contains("<|im_start|>assistant"));
+}
+
+#[test]
+fn session_tokenizes_and_detokenizes_roundtrip() {
+    let session = endless_session(fixture(), "h", 10);
+    let text = c("The quick brown fox jumps over the lazy dog.");
+    let mut out_tokens: *mut c_char = ptr::null_mut();
+    let code = unsafe { ts_session_tokenize_json(&session, text.as_ptr(), false, &mut out_tokens) };
+    assert_eq!(code, abi::TS_OK, "{}", last_error());
+    let tokens_json = unsafe { take(out_tokens) };
+    let tokens: Vec<i32> = serde_json::from_str(&tokens_json).unwrap();
+    assert!(!tokens.is_empty());
+
+    let tokens_c = c(&tokens_json);
+    let mut out_text: *mut c_char = ptr::null_mut();
+    let decode_code =
+        unsafe { ts_session_detokenize_json(&session, tokens_c.as_ptr(), false, &mut out_text) };
+    assert_eq!(decode_code, abi::TS_OK, "{}", last_error());
+    let decoded_text = unsafe { take(out_text) };
+    assert_eq!(decoded_text, "The quick brown fox jumps over the lazy dog.");
+}
+
+#[test]
+fn session_info_includes_special_tokens() {
+    let session = endless_session(fixture(), "h", 8);
+    let mut out: *mut c_char = ptr::null_mut();
+    assert_eq!(
+        unsafe { ts_session_info_json(&session, &mut out) },
+        abi::TS_OK
+    );
+    let json: serde_json::Value = serde_json::from_str(&unsafe { take(out) }).unwrap();
+    let special = json
+        .get("specialTokens")
+        .expect("specialTokens must be present in SessionInfo");
+    assert!(special.get("stopTokenIds").is_some());
+    let stop_ids = special["stopTokenIds"].as_array().unwrap();
+    assert!(!stop_ids.is_empty());
+}
+
+#[test]
+fn generation_with_custom_stop_tokens() {
+    let tok = fixture();
+    let h_id = tok.token_to_id("h").unwrap();
+    let session = endless_session(tok, "h", 32);
+    let messages = c(r#"[{"role":"user","content":"hi"}]"#);
+    let options = c(&format!(
+        r#"{{"maxNewTokens":10,"temperature":0.0,"stopTokens":[{h_id}]}}"#
+    ));
+    let mut out: *mut c_char = ptr::null_mut();
+    let code = unsafe {
+        ts_generate(
+            &session,
+            messages.as_ptr(),
+            options.as_ptr(),
+            None,
+            ptr::null_mut(),
+            &mut out,
+        )
+    };
+    assert_eq!(code, abi::TS_OK, "{}", last_error());
+    let result: serde_json::Value = serde_json::from_str(&unsafe { take(out) }).unwrap();
+    // It stopped on the first token because it is in stop_tokens
+    assert!(result["newTokens"].as_u64().unwrap() <= 1);
 }

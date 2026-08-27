@@ -256,6 +256,115 @@ pub unsafe extern "C" fn ts_session_count_tokens(
     })
 }
 
+/// Evaluates the token count of a raw text string using the session tokenizer.
+#[no_mangle]
+pub unsafe extern "C" fn ts_session_count_text_tokens(
+    ptr: *const TsSession,
+    text: *const c_char,
+    add_special: bool,
+    out_count: *mut u32,
+) -> c_int {
+    guard_result(|| {
+        if out_count.is_null() {
+            return Err((
+                abi::TS_ERR_INVALID_ARGUMENT,
+                "out_count must not be null".into(),
+            ));
+        }
+        let session = session::borrow(ptr).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let raw = strings::required(text, "text").map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let count = generate::count_text_tokens(session, raw, add_special);
+        *out_count = count;
+        Ok(())
+    })
+}
+
+/// Formats a conversation transcript into raw prompt text using the session's
+/// chat template and reasoning effort setting.
+#[no_mangle]
+pub unsafe extern "C" fn ts_session_render_prompt(
+    ptr: *const TsSession,
+    messages_json: *const c_char,
+    reasoning: *const c_char,
+    out_prompt: *mut *mut c_char,
+) -> c_int {
+    guard_result(|| {
+        let session = session::borrow(ptr).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let raw = strings::required(messages_json, "messagesJson")
+            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let messages: Vec<wire::WireMessage> = serde_json::from_str(raw)
+            .map_err(|e| (abi::TS_ERR_JSON, format!("messagesJson: {e}")))?;
+        let reasoning_str = strings::optional(reasoning, "reasoning")
+            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?
+            .unwrap_or("off");
+        let rendered = generate::render_prompt(session, &messages, reasoning_str)
+            .map_err(|e| (abi::TS_ERR_GENERATE, e))?;
+        strings::emit(&rendered, out_prompt).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
+    })
+}
+
+/// Tokenizes raw text into a JSON array of integer token IDs using the session tokenizer.
+#[no_mangle]
+pub unsafe extern "C" fn ts_session_tokenize_json(
+    ptr: *const TsSession,
+    text: *const c_char,
+    add_special: bool,
+    out: *mut *mut c_char,
+) -> c_int {
+    guard_result(|| {
+        let session = session::borrow(ptr).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let raw = strings::required(text, "text").map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let tokens = generate::tokenize(session, raw, add_special);
+        let json = serde_json::to_string(&tokens).map_err(|e| (abi::TS_ERR_JSON, e.to_string()))?;
+        strings::emit(&json, out).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
+    })
+}
+
+/// Detokenizes a JSON array of integer token IDs into text using the session tokenizer.
+#[no_mangle]
+pub unsafe extern "C" fn ts_session_detokenize_json(
+    ptr: *const TsSession,
+    tokens_json: *const c_char,
+    skip_special: bool,
+    out: *mut *mut c_char,
+) -> c_int {
+    guard_result(|| {
+        let session = session::borrow(ptr).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let raw = strings::required(tokens_json, "tokensJson")
+            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let tokens: Vec<i32> = serde_json::from_str(raw)
+            .map_err(|e| (abi::TS_ERR_JSON, format!("tokensJson: {e}")))?;
+        let text = generate::detokenize(session, &tokens, skip_special);
+        strings::emit(&text, out).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
+    })
+}
+
+/// Fits a conversation transcript into a context token budget using `turbospark-window-fit`.
+#[no_mangle]
+pub unsafe extern "C" fn ts_session_fit_window_json(
+    ptr: *const TsSession,
+    messages_json: *const c_char,
+    reasoning: *const c_char,
+    max_tokens: u32,
+    out: *mut *mut c_char,
+) -> c_int {
+    guard_result(|| {
+        let session = session::borrow(ptr).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let raw = strings::required(messages_json, "messagesJson")
+            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let messages: Vec<wire::WireMessage> = serde_json::from_str(raw)
+            .map_err(|e| (abi::TS_ERR_JSON, format!("messagesJson: {e}")))?;
+        let reasoning_str = strings::optional(reasoning, "reasoning")
+            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?
+            .unwrap_or("off");
+        let outcome = generate::fit_window(session, &messages, reasoning_str, max_tokens)
+            .map_err(|e| (abi::TS_ERR_GENERATE, e))?;
+        let json =
+            serde_json::to_string(&outcome).map_err(|e| (abi::TS_ERR_JSON, e.to_string()))?;
+        strings::emit(&json, out).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
+    })
+}
+
 /// The catalog, as a JSON array, each row carrying an `installed` flag.
 #[no_mangle]
 pub unsafe extern "C" fn ts_catalog_json(out: *mut *mut c_char) -> c_int {
@@ -523,6 +632,15 @@ pub fn session_for_testing(
             reasoning_support: "none".to_string(),
             steering: wire::SteeringInfo::default(),
             speculation: wire::SpeculationInfo::default(),
+            special_tokens: wire::SpecialTokensInfo {
+                bos_id: (tokenizer.bos_id >= 0).then_some(tokenizer.bos_id),
+                eos_id: (tokenizer.eos_id >= 0).then_some(tokenizer.eos_id),
+                pad_id: (tokenizer.pad_id >= 0).then_some(tokenizer.pad_id),
+                end_of_turn_id: (tokenizer.end_of_turn_id >= 0).then_some(tokenizer.end_of_turn_id),
+                stop_token_ids: tokenizer.stop_token_ids.iter().copied().collect(),
+                think_start_id: tokenizer.think_start_id,
+                think_end_id: tokenizer.think_end_id,
+            },
         },
         tokenizer,
     }

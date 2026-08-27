@@ -213,6 +213,79 @@ pub(crate) fn count_tokens(
     Ok(prompt_ids.len() as u32)
 }
 
+/// Evaluates the token count of a raw text string using the session tokenizer.
+pub(crate) fn count_text_tokens(session: &Session, text: &str, add_special: bool) -> u32 {
+    session.tokenizer.encode(text, add_special).len() as u32
+}
+
+/// Fits a conversation transcript into a context budget using `turbospark-window-fit`.
+pub(crate) fn fit_window(
+    session: &Session,
+    messages: &[WireMessage],
+    reasoning_str: &str,
+    max_tokens: u32,
+) -> Result<crate::wire::WindowFitOutcome, String> {
+    let reasoning = ReasoningEffort::parse(reasoning_str)
+        .ok_or_else(|| format!("unknown reasoning level {:?}", reasoning_str))?;
+
+    let bound = if max_tokens == 0 {
+        session.max_context as u64
+    } else {
+        max_tokens as u64
+    };
+
+    let has_leading_instruction = messages
+        .first()
+        .map(|m| m.role == "system" || m.role == "developer")
+        .unwrap_or(false);
+
+    let measure = |slice: &[WireMessage]| -> u64 {
+        match render(&session.tokenizer, slice, reasoning) {
+            Ok((ids, _)) => ids.len() as u64,
+            Err(_) => u64::MAX,
+        }
+    };
+
+    let outcome =
+        window_fit::fit_conversation_window(messages, has_leading_instruction, bound, measure);
+
+    Ok(crate::wire::WindowFitOutcome {
+        retained: outcome.retained_turns().to_vec(),
+        measured_tokens: outcome.measured_length(),
+        removed_turn_count: outcome.removed_turn_count(),
+        has_room_for_generation: outcome.has_room_for_generation(),
+    })
+}
+
+/// Formats a conversation transcript into raw prompt text using the session's
+/// chat template and reasoning effort setting.
+pub(crate) fn render_prompt(
+    session: &Session,
+    messages: &[WireMessage],
+    reasoning_str: &str,
+) -> Result<String, String> {
+    let reasoning = ReasoningEffort::parse(reasoning_str)
+        .ok_or_else(|| format!("unknown reasoning level {:?}", reasoning_str))?;
+    let decoded: Vec<Message> = messages
+        .iter()
+        .map(|m| Ok(Message::new(role_of(&m.role)?, m.content.clone())))
+        .collect::<Result<_, String>>()?;
+    session
+        .tokenizer
+        .apply_chat_template_with_reasoning(&decoded, reasoning)
+        .map_err(|e| format!("chat template: {e}"))
+}
+
+/// Encodes raw text into token IDs using the session tokenizer.
+pub(crate) fn tokenize(session: &Session, text: &str, add_special: bool) -> Vec<i32> {
+    session.tokenizer.encode(text, add_special)
+}
+
+/// Decodes token IDs into a text string using the session tokenizer.
+pub(crate) fn detokenize(session: &Session, token_ids: &[i32], skip_special: bool) -> String {
+    session.tokenizer.decode(token_ids, skip_special)
+}
+
 /// Runs one turn, calling `emit(kind, text, a, b)` per event.
 pub(crate) fn generate(
     session: &Session,
@@ -229,7 +302,11 @@ pub(crate) fn generate(
         shaping: session.shaping(options)?,
         max_new_tokens: max_new,
         stop_strings: options.stop.clone(),
-        extra_stop_tokens: Vec::new(),
+        extra_stop_tokens: options
+            .stop_tokens
+            .iter()
+            .map(|&t| t as foundation::TokenId)
+            .collect(),
         rate: session.rate,
     };
 

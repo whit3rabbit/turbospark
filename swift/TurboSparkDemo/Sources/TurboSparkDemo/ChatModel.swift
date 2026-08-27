@@ -146,7 +146,7 @@ final class ChatModel: ObservableObject {
         prefill = nil
 
         // Only `.content` becomes history. See `Turn.reasoning`.
-        let history = turns.compactMap { turn -> ChatMessage? in
+        let rawHistory = turns.compactMap { turn -> ChatMessage? in
             guard !turn.content.isEmpty || turn.role == .user else { return nil }
             return ChatMessage(role: turn.role, content: turn.content)
         }
@@ -158,7 +158,8 @@ final class ChatModel: ObservableObject {
 
         task = Task {
             do {
-                for try await event in session.generate(history, options: options) {
+                let fitted = try await session.fitWindow(rawHistory, reasoning: reasoning)
+                for try await event in session.generate(fitted.retained, options: options) {
                     switch event {
                     case .prefill(let done, let total):
                         prefill = (done, total)

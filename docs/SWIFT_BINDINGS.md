@@ -193,6 +193,12 @@ info.steering.summary   // human-readable one-line description or nil
 info.speculation.block  // the RESOLVED block, or nil when off
 info.speculation.drafter// .mtp | .dflash, non-nil exactly when block is
 info.speculation.reason // why it is off, when you might expect otherwise
+info.specialTokens.bosId        // e.g. 1 or nil
+info.specialTokens.eosId        // e.g. 2 or nil
+info.specialTokens.endOfTurnId  // e.g. 151645 or nil
+info.specialTokens.stopTokenIds // [151643, 151645]
+info.specialTokens.thinkStartId // e.g. 151648 or nil
+info.specialTokens.thinkEndId   // e.g. 151649 or nil
 ```
 
 **Read these rather than what you asked for.** Under automatic sizing you
@@ -216,6 +222,7 @@ options.topP = 0.95
 options.repetitionPenalty = 1.0
 options.seed = 20260721           // nil for nondeterministic
 options.stop = ["\n\n---"]
+options.stopTokens = [151643, 151645] // numerical stop token IDs
 options.reasoning = .off
 ```
 
@@ -291,17 +298,78 @@ than being silently dropped. Check `info.reasoningSupport` first:
 ### Estimating tokens
 
 ```swift
+// Count tokens for a full conversation through the chat template:
 let count = try await session.countTokens(
-    [ChatMessage(role: .user, content: "Hello world")],
+    [ChatMessage.system("You are a helpful assistant."), ChatMessage.user("Hello world")],
     reasoning: .off
 )
 print("prompt uses \(count) / \(session.info.maxContext) tokens")
+
+// Or count raw tokens in arbitrary text without chat formatting:
+let draftTokens = try await session.countTokens(in: "Draft user input...")
 ```
 
 Renders the conversation through the checkpoint's chat template and counts the
 exact tokens without allocating KV cache or executing forward passes. Use this
 in a composer to update context meter gauges and warn users when a draft
 approaches the window limit.
+
+### Prompt rendering & template inspection
+
+```swift
+// Inspect the exact formatted prompt string passed to the model:
+let rawPrompt = try await session.renderPrompt(
+    [ChatMessage.system("You are a helpful assistant."), ChatMessage.user("Hello world")],
+    reasoning: .medium
+)
+print(rawPrompt)
+```
+
+Formats the conversation through the model's Jinja chat template, formatting system
+instructions, reasoning triggers, and role markers (e.g. `<|im_start|>`, `[INST]`,
+`<|start|>user<|message|>`). Use this in a chat app to preview formatted prompts, debug
+system prompts, and inspect dialect framing.
+
+### Tokenization & detokenization
+
+```swift
+// Encode raw text to integer token IDs:
+let tokenIDs = try await session.tokenize("Hello, world!", addSpecialTokens: false)
+print("Token IDs: \(tokenIDs)")
+
+// Decode token IDs back to text:
+let reconstructed = try await session.detokenize(tokenIDs, skipSpecialTokens: false)
+assert(reconstructed == "Hello, world!")
+```
+
+Exposes direct access to the model's tokenizer for token visualizers, token chip
+highlighters, token-level editing, and span calculations in chat interfaces.
+
+### Conversation window fitting & context budgeting
+
+As chat conversations grow over many turns, transcripts easily exceed the
+model's context window. `fitWindow` uses `turbospark-window-fit` and the model's
+chat template to iteratively prune older eligible turns (retaining leading
+system/developer instructions and the newest user turn) to fit into a target
+token budget:
+
+```swift
+let outcome = try await session.fitWindow(
+    conversation,
+    maxTokens: 4096,  // nil defaults to session.info.maxContext
+    reasoning: .off
+)
+
+if outcome.removedTurnCount > 0 {
+    print("Pruned \(outcome.removedTurnCount) older turns to fit context window")
+}
+
+// Generate safely using the fitted transcript:
+let stream = session.generate(outcome.retained, options: options)
+```
+
+`outcome.hasRoomForGeneration` is true when the fitted prompt leaves headroom
+for generated response tokens.
 
 ### Telemetry
 
@@ -458,11 +526,16 @@ byte callback is *also* called concurrently from worker threads.
 | `ts_session_open(dir, options_json, out)` | expensive; open once |
 | `ts_session_close(s)` | not while a generation is in flight |
 | `ts_session_cancel(s)` | any thread, never blocks |
-| `ts_session_info_json(s, out)` | resolved window, slots, family, dialect, speculation |
+| `ts_session_info_json(s, out)` | resolved window, slots, family, dialect, speculation, specialTokens |
 | `ts_session_phases_json(s, out)` | decode phase breakdown |
 | `ts_peak_footprint_bytes()` | process-wide, 0 if unavailable |
 | `ts_system_info_json(out)` | hardware RAM, chip, power, thermal status |
 | `ts_session_count_tokens(s, messages, reasoning, out_count)` | evaluates exact prompt token count |
+| `ts_session_render_prompt(s, messages, reasoning, out_prompt)` | formats conversation into raw prompt text |
+| `ts_session_tokenize_json(s, text, add_special, out)` | tokenizes text into JSON array of token IDs |
+| `ts_session_detokenize_json(s, tokens_json, skip_special, out)` | decodes token IDs into text string |
+| `ts_session_count_text_tokens(s, text, add_special, out_count)` | evaluates raw text token count |
+| `ts_session_fit_window_json(s, messages, reasoning, max_tokens, out)` | fits conversation into token budget |
 | `ts_generate(s, messages, options, cb, ud, out)` | blocks for the turn |
 | `ts_catalog_json(out)` | every platform |
 | `ts_installed_json(out)` | every platform |
@@ -571,7 +644,16 @@ option is reported ahead of a bad path.
 ```json
 {
   "steering": { "active": true, "mode": "ablate", "scale": 0.5, "summary": "ablate at alpha 0.5 over 26 of 64 layers" },
-  "speculation": { "block": 2, "drafter": "mtp", "reason": null }
+  "speculation": { "block": 2, "drafter": "mtp", "reason": null },
+  "specialTokens": {
+    "bosId": 1,
+    "eosId": 2,
+    "padId": 0,
+    "endOfTurnId": 151645,
+    "stopTokenIds": [151643, 151645],
+    "thinkStartId": 151648,
+    "thinkEndId": 151649
+  }
 }
 ```
 
@@ -584,7 +666,7 @@ it on.
 
 ```json
 { "maxNewTokens": 512, "temperature": 0.2, "topK": 64, "topP": 0.95,
-  "repetitionPenalty": 1.0, "seed": null, "stop": [], "reasoning": "off" }
+  "repetitionPenalty": 1.0, "seed": null, "stop": [], "stopTokens": [], "reasoning": "off" }
 ```
 
 ```json
@@ -596,6 +678,20 @@ it on.
 `tokensPerSecond` is `null` when no decoding happened, so nothing can plot a
 rate that was never measured. `stopReason` is one of `endOfTurn`,
 `toolCalls`, `eos`, `stopString`, `maxTokens`, `cancelled`.
+
+`ts_session_fit_window_json` result:
+
+```json
+{
+  "retained": [
+    { "role": "system", "content": "You are a helpful assistant." },
+    { "role": "user", "content": "Latest user message" }
+  ],
+  "measuredTokens": 1420,
+  "removedTurnCount": 2,
+  "hasRoomForGeneration": true
+}
+```
 
 ---
 

@@ -20,6 +20,43 @@ public struct ChatMessage: Codable, Sendable, Equatable {
         self.role = role
         self.content = content
     }
+
+    /// Convenience factory for a system message.
+    public static func system(_ content: String) -> ChatMessage {
+        ChatMessage(role: .system, content: content)
+    }
+
+    /// Convenience factory for a developer instruction message.
+    public static func developer(_ content: String) -> ChatMessage {
+        ChatMessage(role: .developer, content: content)
+    }
+
+    /// Convenience factory for a user message.
+    public static func user(_ content: String) -> ChatMessage {
+        ChatMessage(role: .user, content: content)
+    }
+
+    /// Convenience factory for an assistant message.
+    public static func assistant(_ content: String) -> ChatMessage {
+        ChatMessage(role: .assistant, content: content)
+    }
+
+    /// Convenience factory for a tool message.
+    public static func tool(_ content: String) -> ChatMessage {
+        ChatMessage(role: .tool, content: content)
+    }
+}
+
+/// The result of fitting a conversation into a context window budget.
+public struct WindowFitOutcome: Codable, Sendable, Equatable {
+    /// The messages retained after pruning older turns.
+    public let retained: [ChatMessage]
+    /// The token count of the rendered retained messages.
+    public let measuredTokens: Int
+    /// Number of older turns removed to fit the budget.
+    public let removedTurnCount: Int
+    /// Whether there is room remaining for generation within the budget.
+    public let hasRoomForGeneration: Bool
 }
 
 /// How a session is opened. `nil` everywhere means fully automatic, which is
@@ -153,6 +190,7 @@ public struct GenerateOptions: Encodable, Sendable {
     public var repetitionPenalty: Double = 1.0
     public var seed: UInt64?
     public var stop: [String] = []
+    public var stopTokens: [UInt32] = []
     public var reasoning: Reasoning = .off
 
     public init() {}
@@ -222,6 +260,19 @@ public struct SessionInfo: Decodable, Sendable, Equatable {
     public let steering: Steering
     /// What speculative decoding resolved to for this session.
     public let speculation: Speculation
+    /// Special token identifiers for tokenizer inspection.
+    public let specialTokens: SpecialTokens
+
+    /// Special token identifiers for tokenizer introspection.
+    public struct SpecialTokens: Decodable, Sendable, Equatable {
+        public let bosId: Int32?
+        public let eosId: Int32?
+        public let padId: Int32?
+        public let endOfTurnId: Int32?
+        public let stopTokenIds: [Int32]
+        public let thinkStartId: Int32?
+        public let thinkEndId: Int32?
+    }
 
     /// The session's resolved directional steering, reported once.
     public struct Steering: Decodable, Sendable, Equatable {

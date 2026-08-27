@@ -207,6 +207,109 @@ final class SurfaceTests: XCTestCase {
             XCTAssertTrue(e?.message.contains("not installed") == true)
         }
     }
+
+    /// Tests that ChatMessage convenience constructors correctly assign roles and contents.
+    func testChatMessageConvenienceFactories() {
+        let sys = ChatMessage.system("sys prompt")
+        XCTAssertEqual(sys.role, .system)
+        XCTAssertEqual(sys.content, "sys prompt")
+
+        let dev = ChatMessage.developer("dev instruction")
+        XCTAssertEqual(dev.role, .developer)
+        XCTAssertEqual(dev.content, "dev instruction")
+
+        let usr = ChatMessage.user("user message")
+        XCTAssertEqual(usr.role, .user)
+        XCTAssertEqual(usr.content, "user message")
+
+        let asst = ChatMessage.assistant("assistant answer")
+        XCTAssertEqual(asst.role, .assistant)
+        XCTAssertEqual(asst.content, "assistant answer")
+
+        let tool = ChatMessage.tool("tool output")
+        XCTAssertEqual(tool.role, .tool)
+        XCTAssertEqual(tool.content, "tool output")
+    }
+
+    /// Tests that WindowFitOutcome can decode from JSON without coding keys drift.
+    func testWindowFitOutcomeDecodable() throws {
+        let json = """
+        {
+            "retained": [
+                {"role": "system", "content": "You are helpful."},
+                {"role": "user", "content": "Hello"}
+            ],
+            "measuredTokens": 18,
+            "removedTurnCount": 2,
+            "hasRoomForGeneration": true
+        }
+        """
+        let outcome = try JSONDecoder().decode(WindowFitOutcome.self, from: Data(json.utf8))
+        XCTAssertEqual(outcome.retained.count, 2)
+        XCTAssertEqual(outcome.retained[0].role, .system)
+        XCTAssertEqual(outcome.measuredTokens, 18)
+        XCTAssertEqual(outcome.removedTurnCount, 2)
+        XCTAssertTrue(outcome.hasRoomForGeneration)
+    }
+
+    /// Tests that SessionInfo and SpecialTokens decode correctly from JSON.
+    func testSessionInfoSpecialTokensDecodable() throws {
+        let json = """
+        {
+            "modelPath": "/path/to/model.gturbo",
+            "family": "qwen36",
+            "maxContext": 4096,
+            "trainedContext": 32768,
+            "pastTrainedContext": false,
+            "expertCacheSlots": 16,
+            "vocabSize": 151936,
+            "dialect": "ChatMl",
+            "reasoningSupport": "level",
+            "steering": { "active": false },
+            "speculation": { "block": null, "drafter": null, "reason": null },
+            "specialTokens": {
+                "bosId": 1,
+                "eosId": 2,
+                "padId": 0,
+                "endOfTurnId": 151645,
+                "stopTokenIds": [151643, 151645],
+                "thinkStartId": 151648,
+                "thinkEndId": 151649
+            }
+        }
+        """
+        let info = try JSONDecoder().decode(SessionInfo.self, from: Data(json.utf8))
+        XCTAssertEqual(info.family, "qwen36")
+        XCTAssertEqual(info.specialTokens.bosId, 1)
+        XCTAssertEqual(info.specialTokens.eosId, 2)
+        XCTAssertEqual(info.specialTokens.endOfTurnId, 151645)
+        XCTAssertEqual(info.specialTokens.stopTokenIds, [151643, 151645])
+        XCTAssertEqual(info.specialTokens.thinkStartId, 151648)
+        XCTAssertEqual(info.specialTokens.thinkEndId, 151649)
+    }
+
+    /// Tests that GenerateOptions encodes custom stopTokens without error.
+    func testGenerateOptionsStopTokensEncodable() throws {
+        var options = GenerateOptions()
+        options.stopTokens = [151643, 151645]
+        let data = try JSONEncoder().encode(options)
+        let json = String(decoding: data, as: UTF8.self)
+        XCTAssertTrue(json.contains("stopTokens"))
+        XCTAssertTrue(json.contains("151643"))
+    }
+
+    /// Tests that new C ABI symbols in turbospark.h link and handle null arguments.
+    func testNewCABISymbolsLinkAndValidateNullArgs() {
+        var out: UnsafeMutablePointer<CChar>?
+        let statusPrompt = ts_session_render_prompt(nil, nil, nil, &out)
+        XCTAssertEqual(statusPrompt, TS_ERR_INVALID_ARGUMENT)
+
+        let statusTokenize = ts_session_tokenize_json(nil, nil, false, &out)
+        XCTAssertEqual(statusTokenize, TS_ERR_INVALID_ARGUMENT)
+
+        let statusDetokenize = ts_session_detokenize_json(nil, nil, false, &out)
+        XCTAssertEqual(statusDetokenize, TS_ERR_INVALID_ARGUMENT)
+    }
 }
 
 
