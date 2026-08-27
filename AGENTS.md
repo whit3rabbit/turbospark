@@ -790,6 +790,23 @@ TURBOSPARK_QWEN38_INSTALL_DIR=~/models/qwen38-27b.gturbo \
 TURBOSPARK_QWEN38_INSTALL_DIR=~/models/qwen38-27b.gturbo \
   cargo test -p turbospark-bench --test qwen38_quality_gate --release -- --ignored --nocapture
 
+# THE VISION TOWER'S INTAKE (ROADMAP M-V3), and the ORDER of these two is
+# load-bearing rather than a preference (`crates/repack` Gotcha 8). The
+# FIXTURE runs in 0.1 s and makes every assertion the download would
+# otherwise make minutes at a time -- including the one whose absence shipped
+# a headless install for a release, that BOTH writers carry the component.
+cargo test -p turbospark-repack --test synthetic_qwen35_vision
+# Only then the real 16 GB stream, into its OWN directory. Separate from
+# `~/models/qwen38-27b.gturbo` on purpose: that install is what
+# `qwen38_memory_oracle` and `qwen38_quality_gate` assert their frozen rows
+# against, and adding ~0.9 GiB of tower would move its footprint and force a
+# re-freeze for a component neither gate exercises. ~25 min, CANNOT RESUME.
+# It is also the only place the BF16 arm of `convert_raw_to_fp16` runs: this
+# checkpoint's tower is BF16 where Bonsai's (and the fixture's) is F16.
+TURBOSPARK_QWEN38_VISION_INSTALL_DIR=~/models/qwen38-27b-vision.gturbo \
+  cargo test -p turbospark-repack --test qwen38_checkpoint_network --release -- \
+  --ignored --nocapture repacks_the_real_qwen38_27b_checkpoint_with_its_vision_tower
+
 # The THIRD checkpoint of the `qwen3_5` family (ROADMAP's ternary entry) and
 # the one that made it a WIDTH rather than a family: MLX affine at TWO bits,
 # group 128, FP16 companions. Its `text_config` is Bonsai-27B's to the key --
@@ -2162,7 +2179,7 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
     here -- 94 mW and 392 mW on the two clean DFlash2 ones against 3,361 mW
     on the contaminated one, with no sample under 3 W in 106 seconds.
     `scripts/power.sh` prints it as `contamination floor` and warns over
-    2,000 mW, and its summary now carries a `J/tok±` spread column plus a
+    2,000 mW, and its summary now carries a `J/tok+/-` spread column plus a
     per-group warning over 10%, so both tells are in the output rather than
     recoverable by hand from `rows.tsv`. The sentence above saying the script
     "prints neither in its summary" was true when written and is the thing

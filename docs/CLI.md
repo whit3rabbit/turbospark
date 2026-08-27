@@ -1,6 +1,6 @@
 # CLI reference
 
-Three binaries, three jobs:
+Three primary user binaries, plus a benchmark harness:
 
 - `turbospark-check` -- run generation once against an install: a raw prompt, a
   rendered chat conversation, or an interactive REPL. See
@@ -10,10 +10,16 @@ Three binaries, three jobs:
   concept this drives.
 - `turbospark-server` -- an OpenAI- and Anthropic-compatible HTTP server over
   one open install. See [`crates/server/CLAUDE.md`](../crates/server/CLAUDE.md).
+- `turbospark-bench` -- throughput and memory benchmark harness replicating the
+  frozen community protocol. See [`docs/BENCHMARKING.md`](BENCHMARKING.md).
 
-`--help` on any of the three prints its own flag list and exits; `--version`
-prints the workspace version. Both short-circuit before `--model` is read, so
-neither needs a real install on disk.
+`--help` on `turbospark-check`, `turbospark-model` (`--help`, `-h`, `help`),
+and `turbospark-server` (`--help`, `-h`) prints its flag list and exits;
+`--version` on `turbospark-check`, `turbospark-model` (`--version`, `-V`, `version`),
+and `turbospark-server` (`--version`, `-V`) prints the workspace version.
+Both short-circuit before `--model` is read, so neither needs a real
+install on disk. Note `turbospark-check`'s flat parser recognizes the long forms
+`--help` and `--version` only.
 
 This page documents every flag. It does not repeat the *why* behind a
 default or a caveat where a dedicated page already carries that -- follow the
@@ -45,10 +51,10 @@ than one, is a parse error.
 | Flag | Takes | Default | Meaning |
 | --- | --- | --- | --- |
 | `--max-new` | positive integer | `1024` | generated-token limit |
-| `--max-context` | positive integer, or `auto` | `auto` | context window; `auto` resolves to the checkpoint's own trained context, capped by what memory holds, and `4096` when the install declares neither |
+| `--max-context` | positive integer, or `auto` | `auto` | context window; `auto` resolves to the checkpoint's own trained context, capped by what memory holds, and `4096` when the install declares none |
 | `--temperature` | float | `0.2` | sampling temperature; `0.0` is greedy |
 | `--top-k` | integer, `0`-`256` | `64` | rank-based candidate count, `0` disables |
-| `--top-p` | float, `(0, 1]` | `0.95` | cumulative-probability threshold |
+| `--top-p` | float, `(0, 1]` | `0.95` | cumulative-probability threshold (sub-1.0 threshold requires `--top-k > 0`) |
 | `--repetition-penalty` | float `> 0` | `1.0` | repetition penalty factor |
 | `--seed` | non-negative integer | unset | determinism seed |
 | `--stop` | text, repeatable | none | extra stop string, in addition to the tokenizer's own stop set |
@@ -60,7 +66,7 @@ than one, is a parse error.
 | --- | --- | --- | --- |
 | `--rdadvise` | `off\|normal\|aggressive` | `off` | read-ahead hint mode for streamed expert reads (macOS) |
 | `--expert-cache-slots` | `8\|16\|24\|32`, or `auto` | `auto` | routed-expert slot cache size; `auto` never resolves below `16` |
-| `--prefill-chunk` | integer, or `auto` | `128` | **parsed and printed, but not wired** -- this flag currently changes nothing; chunked prefill is controlled by the `MFERENCE_PREFILL_CHUNK` environment variable instead |
+| `--prefill-chunk` | `32\|64\|128\|256\|512\|1024\|2048\|4096`, or `auto` | `128` | prompt-processing chunk size; drives chunked prefill for supported families (Gemma 4, dense Llama/Mistral) and falls back to sequential prefill for others; `MFERENCE_PREFILL_CHUNK` environment variable overrides when set |
 | `--power-profile` | `performance\|balanced\|efficiency` | `performance` (or `efficiency` under Low Power Mode) | decode rate governance |
 | `--max-tokens-per-sec` | float `> 0` | uncapped (or the efficiency profile's reading speed) | hard decode rate cap |
 
@@ -69,7 +75,7 @@ than one, is a parse error.
 | Flag | Takes | Default | Meaning |
 | --- | --- | --- | --- |
 | `--speculative` | `off\|auto`, or a block size `1`-`15` | `auto` | a named block size FAILS at open if the install cannot serve it; acceptance is exact only at `--temperature 0` |
-| `--speculative-drafter` | `auto\|mtp\|dflash` | `auto` | which drafter `--speculative` drives; `auto` enables an MTP head but only REPORTS a DFlash one (DFlash measures 0.88x on prose -- name it explicitly to actually run it) |
+| `--speculative-drafter` | `auto\|mtp\|dflash` | `auto` | which drafter `--speculative` drives; `auto` enables an MTP head but only REPORTS a DFlash one (DFlash measures 0.88x on prose -- name it explicitly to actually run it; see [`docs/MTP.md`](MTP.md) and [`docs/DFLASH2.md`](DFLASH2.md)) |
 
 ### Steering (obliteration)
 
@@ -126,15 +132,14 @@ turbospark-model <command> [flags...]
 | `list` | none | `--filter TEXT` | prints every curated catalog row, marks installed ones |
 | `info` | `<alias>` | none | prints one catalog row in full, including its gate targets |
 | `probe` | `<repo>[@rev]` | `--file NAME.gguf`, `--sidecar-repo REPO[@rev]` | reads a Hugging Face repo's headers only, no download; reports whether this engine would run it |
-| `recommend` | none | `--context N`, `--budget BYTES`, `--probe`, `--discover [N]` | ranks models by whether they fit this machine and how much is known about them; `--probe` reads every curated row's header for exact numbers, `--discover` also ranks the N most-downloaded GGUF repos on Hugging Face (default `20`) through the same probe |
-| `pull` | `<alias>`, or `--repo REPO[@rev] --alias NAME` | `--out DIR`, `--file NAME.gguf`, `--sidecar-repo REPO[@rev]`, `--force` | installs a curated model, or any repository the probe accepts |
+| `recommend` | none | `--context N`, `--budget BYTES`, `--probe`, `--discover [N]` | ranks models by whether they fit this machine and how much is known about them; `--budget` accepts bare bytes or suffixes (`36G`, `36GB`, `36GiB`); `--context` defaults to `4096`; `--probe` reads every curated row's header for exact numbers, `--discover` also ranks the N most-downloaded GGUF repos on Hugging Face (default `20`) through the same probe |
+| `pull` | `<alias>`, or `--repo REPO[@rev] --alias NAME` | `--out DIR`, `--file NAME.gguf`, `--sidecar-repo REPO[@rev]`, `--force` | installs a curated model, or any repository the probe accepts; `--out` overrides install destination; `--force` installs past a probe refusal |
 | `path` | `<alias>` | none | prints the install directory (fails loudly if not installed) |
 | `rm` | `<alias>` | `--yes` / `-y` | deletes an install; without `--yes`, prompts for the alias name to confirm |
 
-Environment: `TURBOSPARK_HOME` overrides the store root (default
-`~/.turbospark`); `HF_TOKEN` is read for gated Hugging Face repositories.
-`--help`/`-h` and `--version`/`-V` are global. Flags not accepted by the
-given command are rejected rather than silently ignored.
+Global options: `--help` / `-h` / `help`, `--version` / `-V` / `version`.
+
+Flags not accepted by the given command are rejected rather than silently ignored.
 
 See [`docs/MODELS.md`](MODELS.md) for the catalog itself, and what it takes
 to add a row.
@@ -170,12 +175,13 @@ process).
 | `--steering-gate` | float | `0.0` | as above |
 | `--help` / `-h`, `--version` / `-V` | -- | -- | -- |
 
-**Not present on the server:** `--prefill-chunk` (chunked prefill has no
-server-side flag at all). `--reasoning` is not a server flag either -- a
-reasoning effort is a per-request field on the OpenAI/Anthropic wire schema,
-so it is chosen per request rather than pinned for the process, unlike
-`--steering` and `--speculative` which are resolved once at open and apply to
-every request the process serves for its whole life.
+**Not present on the server:** `--prefill-chunk`, `--rdadvise`, and `--quiet`
+(chunked prefill, streaming read-ahead hint, and quiet mode have no server-side
+flags). Per-turn generation parameters (`--temperature`, `--top-k`, `--top-p`,
+`--max-new`, `--stop`, `--reasoning`, `--seed`) are not server CLI flags either --
+they are received per-request on the OpenAI and Anthropic wire protocols rather
+than pinned for the process, unlike `--steering` and `--speculative` which are
+resolved once at open and apply to every request the process serves for its whole life.
 
 The legacy positional form (`turbospark-server <tokenizer-dir> [port]`) runs
 the portable scripted backend against canned completions rather than a real
@@ -184,6 +190,48 @@ install, and always binds loopback regardless of `--bind`.
 ```sh
 turbospark-server --model ~/models/gemma4.gturbo
 turbospark-server --model gemma4 --bind tailnet --port 8080
+turbospark-server --model gemma4 --guardrails off
+```
+
+## `turbospark-bench`
+
+```sh
+turbospark-bench <tokenizer-dir> [--real]
+turbospark-bench --model <install-dir> [flags...]
+```
+
+Harness for measuring throughput tok/s, split prefill/decode latencies, and
+peak `phys_footprint` memory usage under the frozen community benchmark protocol.
+See [`docs/BENCHMARKING.md`](BENCHMARKING.md) for background and baseline numbers.
+
+### Modes
+
+- **Scripted mode**: `turbospark-bench <tokenizer-dir>` (portable, runs on Linux;
+  measures loop and tokenizer overhead with canned logit replay).
+- **Synthetic real mode**: `turbospark-bench <tokenizer-dir> --real` (macOS;
+  builds a tiny temporary synthetic model to exercise real GPU forward dispatch).
+- **Real model mode**: `turbospark-bench --model <install-dir> [flags...]` (macOS;
+  runs the full benchmark protocol against a `.gturbo` install).
+
+### Real model flags
+
+| Flag | Takes | Default | Meaning |
+| --- | --- | --- | --- |
+| `--model` | path | required | path to `.gturbo` install directory |
+| `--case` | case ID | all 3 cases | restrict run to one protocol case (`short-explanation`, `medium-review`, `long-synthesis`) |
+| `--expert-cache-slots` | `8\|16\|24\|32` | `16` | routed-expert slot cache size per layer |
+| `--power-profile` | `performance\|balanced\|efficiency` | `performance` | power governance mode (explicitly defaults to `performance` rather than LPM state) |
+| `--max-tokens-per-sec` | float `> 0` | uncapped | decode rate cap |
+| `--speculative` | `off\|auto`, or block size `> 0` | `off` | speculative decoding (defaults off to preserve sampled protocol numbers) |
+| `--speculative-drafter` | `auto\|mtp\|dflash` | `auto` | drafter to drive under `--speculative` |
+| `--shaping` | `protocol\|greedy` | `protocol` | `protocol` uses the protocol's fixed temperature/top-k/top-p; `greedy` samples argmax |
+
+```sh
+# Run full protocol benchmark against Gemma 4
+cargo run --release -p turbospark-bench --bin turbospark-bench -- --model ~/models/gemma4.gturbo
+
+# Run single protocol case
+cargo run --release -p turbospark-bench --bin turbospark-bench -- --model ~/models/gemma4.gturbo --case short-explanation
 ```
 
 ## Steering (obliteration)
@@ -348,3 +396,35 @@ through `crates/ffi` cannot drive it yet.
 For everything measured about these edits -- throughput cost, the collapse
 mechanism, cross-family and cross-direction replication, and what is still
 open -- see [`docs/OBLITERATION.md`](OBLITERATION.md).
+
+## Environment variables
+
+| Variable | Affected binaries | Purpose | Default |
+| --- | --- | --- | --- |
+| `TURBOSPARK_HOME` | `turbospark-check`, `turbospark-model`, `turbospark-server` | Base directory for the local model store and catalog | `~/.turbospark` |
+| `HF_TOKEN` / `HUGGING_FACE_HUB_TOKEN` | `turbospark-model` | Authentication token for gated Hugging Face repositories | none |
+| `MFERENCE_PHASES` | `turbospark-check` | Set to `1` to print forward-pass phase timing breakdowns on stderr | unset |
+| `MFERENCE_DISPATCH_PROFILE` | `turbospark-check`, `turbospark-server`, `turbospark-bench` | Set to `1` to collect and print per-dispatch GPU kernel timing and ranking profile (see [`docs/DECODE_BUDGET.md`](DECODE_BUDGET.md)) | unset |
+| `MFERENCE_CHAT_DATE` | all (chat template rendering) | Override current date/time (`YYYY-MM-DD` or `YYYY-MM-DDTHH:MM:SS`) in chat templates (e.g. gpt-oss Harmony preamble) | current system UTC time |
+| `MFERENCE_PREFILL_CHUNK` | `turbospark-check` | Override prompt-processing chunk size (e.g. `128`, `256`, `512`, `1024`) | unset |
+| `MFERENCE_RESID_CAPTURE` | `turbospark-check` | File path to dump residual stream activations (JSON) at prefill-to-decode transition | unset |
+| `MFERENCE_SPEC_STATS` | `turbospark-check`, `turbospark-server`, `turbospark-bench` | Set to `1` to log speculative decoding acceptance rate per block position and rollback counts to stderr | unset |
+| `MFERENCE_READ_QOS` | all (streaming reads) | Set to `utility` to drop background routed-expert streaming read QoS on macOS from user-initiated to utility | unset |
+| `MFERENCE_SHARED_CB` | all (forward pass) | Set to `0` to disable command buffer overlap | `1` (enabled) |
+| `MFERENCE_ROUTED_PIPELINE` | all (MoE dispatch) | Set to `0` to disable routed expert pipeline execution | `1` (enabled) |
+| `MFERENCE_ROUTED_BATCH` | all (MoE prefill) | Set to `1` to enable experimental routed batch prefill | `0` (off) |
+| `MFERENCE_BATCHED_GEMV` | all (MoE prefill) | Set to `1` to enable experimental batched GEMV prefill | `0` (off) |
+| `MFERENCE_ROUTER_HIST` | all (MoE runtime) | File path to dump expert routing frequency histogram (JSON) at exit | unset |
+| `MFERENCE_ROUTER_TRACE` | all (MoE runtime) | Set to collect per-layer routed expert activation trace | unset |
+| `MFERENCE_FFN_HIST` | all (dense runtime) | File path to dump dense FFN neuron activation frequency histogram (JSON) at exit | unset |
+| `MFERENCE_MTP_DUMP` | all (MTP drafter) | Directory path to dump MTP intermediate hidden states | unset |
+| `MFERENCE_MTP_DRAFT` | `turbospark-check`, `turbospark-server`, `turbospark-bench` | Draft block depth (positive integer) or policy (`0` to disable, unset for `auto`) | unset (`auto`) |
+| `MFERENCE_DFLASH_DRAFT` | `turbospark-check`, `turbospark-server`, `turbospark-bench` | DFlash2 draft block depth (positive integer) or policy (`0` to disable, unset for `auto`) | unset (`auto`) |
+
+### Test oracle and benchmark environment variables
+
+The integration tests and benchmark oracle suites (`turbospark-bench`, `turbospark-repack`) recognize dedicated environment variables to point at local `.gturbo` model directories or control vectors:
+
+- Model install directories: `TURBOSPARK_GEMMA4_INSTALL_DIR`, `TURBOSPARK_QWEN36_INSTALL_DIR`, `TURBOSPARK_QWEN3MOE_INSTALL_DIR`, `TURBOSPARK_MISTRAL_INSTALL_DIR`, `TURBOSPARK_GPTOSS_INSTALL_DIR`, `TURBOSPARK_MUSEGLIMMER_INSTALL_DIR`, `TURBOSPARK_QWEN38_DFLASH2_INSTALL_DIR`, `TURBOSPARK_MTP_INSTALL_DIR`, `TURBOSPARK_ORNITH35B_INSTALL_DIR`, `TURBOSPARK_ORNITH9B_INSTALL_DIR`, `TURBOSPARK_QWEN35_INSTALL_DIR`, `TURBOSPARK_TERNARY_INSTALL_DIR`, `TURBOSPARK_IQ3_INSTALL_DIR`.
+- Logit dump and KLD comparison: `TURBOSPARK_LOGIT_DUMP_DIR`, `TURBOSPARK_LOGIT_DUMP_COLD`.
+- Steering sweep suite: `TURBOSPARK_PROBE_INSTALL_DIR`, `TURBOSPARK_STEERING_VECTOR`, `TURBOSPARK_STEERING_ALPHAS`, `TURBOSPARK_STEERING_BANDS`, `TURBOSPARK_STEERING_MODE`, `TURBOSPARK_CONTROL_VECTOR`, `TURBOSPARK_FOREIGN_CONTROL_VECTOR`.
