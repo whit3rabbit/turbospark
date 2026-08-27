@@ -16,10 +16,18 @@ use super::types::{io_err, ExpertBlob, LayerBlobs, WriterError};
 /// changes. On a mixed one they are not, and padding every layer to the
 /// maximum is the difference between a 10.3 GB install and a 16.2 GB one
 /// (ROADMAP Phase S; see `model_io::LayerLayout::expert_stride`).
+///
+/// `file_name` is what the layout entry records for the caller to open. It is
+/// a parameter rather than the `layer_NN.bin` this used to derive, because
+/// ROADMAP M-V3's vision tower packs its blocks through this exact function
+/// into a single `blobs.bin` -- the tower is one "layer" of `depth` "experts",
+/// and the only thing about it that is not already a routed layer's shape is
+/// what the file is called.
 pub(crate) fn build_layer_file(
     layer: &LayerBlobs,
     max_stride: u64,
     experts_per_layer: usize,
+    file_name: &str,
 ) -> Result<(Vec<u8>, serde_json::Value), WriterError> {
     if layer.experts.len() != experts_per_layer {
         return Err(WriterError::WrongExpertCount {
@@ -47,7 +55,6 @@ pub(crate) fn build_layer_file(
     // keeps every expert offset page-aligned for the streamer.
     let expert_stride =
         (widest.div_ceil(crate::GTURBO_PAGE_BYTES) * crate::GTURBO_PAGE_BYTES).min(max_stride);
-    let file_name = format!("layer_{:02}.bin", layer.layer);
     let mut file_bytes = Vec::with_capacity(layer.experts.len() * expert_stride as usize);
     let mut expert_entries = Vec::with_capacity(layer.experts.len());
 
@@ -88,6 +95,54 @@ pub(crate) fn build_layer_file(
         "experts": expert_entries,
     });
     Ok((file_bytes, entry))
+}
+
+/// Writes `packed_vision/{blobs.bin,layout.json}` (ROADMAP M-V3).
+///
+/// The tower is ONE layer of `blocks.experts.len()` experts, so this is
+/// [`build_layer_file`] plus the two-key layout wrapper and nothing else.
+/// Written as its own small function rather than as a mode on
+/// `write_gturbo_install_impl`, because that one also writes
+/// `model_weights.bin` and `manifest.json` -- and the manifest has to be
+/// written LAST, after these files exist, since `build_manifest_json` hashes
+/// every file it lists.
+///
+/// **It must therefore be called BEFORE the manifest**, in both writers. A
+/// caller that gets the order wrong gets an io error naming
+/// `packed_vision/blobs.bin`, which is the good failure mode and is why the
+/// hashing reads the file rather than the bytes in hand.
+pub fn write_packed_vision(
+    dir: &Path,
+    blocks: &LayerBlobs,
+    block_stride: u64,
+) -> Result<(), WriterError> {
+    let subdir = dir.join(model_io::PACKED_VISION_DIR);
+    std::fs::create_dir_all(&subdir).map_err(|e| io_err(dir, e))?;
+
+    let blocks_per_tower = blocks.experts.len();
+    let (file_bytes, entry) =
+        build_layer_file(blocks, block_stride, blocks_per_tower, "blobs.bin")?;
+    let blobs_path = subdir.join("blobs.bin");
+    std::fs::write(&blobs_path, &file_bytes).map_err(|e| io_err(&blobs_path, e))?;
+
+    // The same four top-level keys `packed_experts/layout.json` carries, so
+    // `model_io::load_packed_layout_from` decodes this with no second parser.
+    // `expertsPerLayer` is the BLOCK COUNT and `numLayers` is 1; the words are
+    // the schema's rather than the tower's, which is the cost of the reuse and
+    // is cheaper than a parallel format.
+    let layout_json = serde_json::json!({
+        "expertStride": block_stride,
+        "numLayers": 1,
+        "expertsPerLayer": blocks_per_tower,
+        "layers": [entry],
+    });
+    let layout_path = subdir.join("layout.json");
+    std::fs::write(
+        &layout_path,
+        serde_json::to_vec_pretty(&layout_json).unwrap(),
+    )
+    .map_err(|e| io_err(&layout_path, e))?;
+    Ok(())
 }
 
 /// Writes a full `.gturbo` install to `dir`: `manifest.json`,
@@ -154,8 +209,9 @@ pub(crate) fn write_gturbo_install_impl(
 
     let mut layout_layers = Vec::with_capacity(layers.len());
     for layer in layers {
-        let (file_bytes, entry) = build_layer_file(layer, expert_stride, experts_per_layer)?;
         let file_name = format!("layer_{:02}.bin", layer.layer);
+        let (file_bytes, entry) =
+            build_layer_file(layer, expert_stride, experts_per_layer, &file_name)?;
         let layer_path = dir.join("packed_experts").join(&file_name);
         std::fs::write(&layer_path, &file_bytes).map_err(|e| io_err(&layer_path, e))?;
         layout_layers.push(entry);

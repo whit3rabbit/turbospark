@@ -32,7 +32,7 @@
 
 use model_io::{
     ArchConfig, CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig,
-    ModelFamily, RopeScalingConfig,
+    ModelFamily, RopeScalingConfig, VisionConfig,
 };
 
 use crate::gemma4_checkpoint::Gemma4Error;
@@ -76,6 +76,143 @@ pub fn parse_qwen_gdn_moe_config(json: &str) -> Result<ArchConfig, Gemma4Error> 
 /// disagree field for field, one of them is wrong.
 pub fn parse_qwen_gdn_dense_config(json: &str) -> Result<ArchConfig, Gemma4Error> {
     parse_qwen_family_config(json, ModelFamily::QwenGdnDense)
+}
+
+/// Parses `vision_config` into a [`VisionConfig`], or `NONE` when the
+/// checkpoint declares no tower (ROADMAP M-V3).
+///
+/// **THIS IS A SEPARATE PARSE FROM [`parse_qwen_gdn_dense_config`] AND THE
+/// SEPARATION IS THE DESIGN, NOT A CONVENIENCE.** `ArchConfig.vision`
+/// describes what an INSTALL carries; this function describes what a
+/// CHECKPOINT declares. Folding it into the family parser would break both
+/// ends at once:
+///
+/// - `arch_validation` compares a manifest field by field against a
+///   per-architecture baseline, and every baseline carries
+///   `VisionConfig::NONE`. An `ArchConfig` that read 27 blocks off the config
+///   would compare 27 against 0 for every EXISTING install on disk, none of
+///   which declares a `visionDepth` at all -- AGENTS.md Gotcha 24 exactly,
+///   and it would refuse every qwen35 and qwen36 install ever written.
+/// - `every_published_checkpoint_parses_to_one_baseline` and its Ornith
+///   siblings assert `derived == baseline` on the whole struct, so the two
+///   would have to disagree about a field neither is wrong about.
+///
+/// **AND THE ARTIFACT DOES NOT FOLLOW THE CONFIG, WHICH IS WHAT SETTLES IT.**
+/// All three `qwen3_5` checkpoints plus BOTH Ornith releases declare the
+/// identical tower -- depth 27, hidden 1152, intermediate 4304,
+/// `num_position_embeddings` 2304, `mrope_section` [11, 11, 10] and the same
+/// four token ids, verified against the published files rather than inferred.
+/// But `ornith-ai/Ornith-1.5-35B-A3B-MLX-4bit` ships NO `vision_tower.`
+/// tensors at all. So a config-derived tower would mark that install as
+/// carrying one, `validate_manifest` would then demand `packed_vision/` files
+/// the walk never wrote, and a working install would stop opening. It is the
+/// same "DECLARED AND UNSHIPPED" split `ornith_config.rs` already records for
+/// `mtp.*`, and the same answer the MTP head reached: what an install has is
+/// answered by its BYTES, so nothing can disagree with them.
+///
+/// A PARTIAL block is refused rather than defaulted. Every field is a shape
+/// some kernel strides by, and a default would be this port inventing a number
+/// the checkpoint declined to state (AGENTS.md Gotcha 39). `mrope_section` is
+/// the one exception in SOURCE rather than in strictness: it is not in
+/// `vision_config` at all but in `text_config.rope_parameters`, because it
+/// describes how the TRUNK consumes an image's positions rather than anything
+/// the tower computes.
+pub fn parse_vision_config(json: &str) -> Result<VisionConfig, Gemma4Error> {
+    let root: serde_json::Value =
+        serde_json::from_str(json).map_err(|e| Gemma4Error::Config(e.to_string()))?;
+    let tc = root.get("text_config").unwrap_or(&root);
+    let root = &root;
+    let Some(vc) = root.get("vision_config") else {
+        return Ok(VisionConfig::NONE);
+    };
+    let i = |k: &str| -> Result<i64, Gemma4Error> {
+        vc.get(k)
+            .and_then(serde_json::Value::as_i64)
+            .ok_or_else(|| Gemma4Error::Config(format!("missing vision_config.{k}")))
+    };
+
+    // From the TRUNK's rope block, not the tower's. Required whenever a tower
+    // exists: without it the trunk cannot place an image token's three
+    // positions, and mRoPE degenerating to plain RoPE is precisely the silent
+    // wrong answer (`docs/VISION_PHASE0.md` item 2).
+    let section = tc
+        .get("rope_parameters")
+        .and_then(|r| r.get("mrope_section"))
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| {
+            Gemma4Error::Config(
+                "a vision_config with no text_config.rope_parameters.mrope_section; the trunk \
+                 cannot place image tokens without it"
+                    .to_string(),
+            )
+        })?;
+    if section.len() != 3 {
+        return Err(Gemma4Error::Config(format!(
+            "mrope_section has {} entries, expected the (t, h, w) triple",
+            section.len()
+        )));
+    }
+    let mut mrope_section = [0i64; 3];
+    for (slot, v) in mrope_section.iter_mut().zip(section) {
+        *slot = v
+            .as_i64()
+            .ok_or_else(|| Gemma4Error::Config("mrope_section entry is not an integer".into()))?;
+    }
+
+    let vision = VisionConfig {
+        depth: i("depth")?,
+        hidden_size: i("hidden_size")?,
+        intermediate_size: i("intermediate_size")?,
+        num_heads: i("num_heads")?,
+        patch_size: i("patch_size")?,
+        temporal_patch_size: i("temporal_patch_size")?,
+        in_channels: i("in_channels")?,
+        spatial_merge_size: i("spatial_merge_size")?,
+        num_position_embeddings: i("num_position_embeddings")?,
+        out_hidden_size: i("out_hidden_size")?,
+        mrope_section,
+        // Token ids live at the ROOT, beside the wrapper rather than inside
+        // either config: they belong to the tokenizer's vocabulary, which the
+        // text and vision halves share.
+        vision_start_token_id: root_i(root, "vision_start_token_id")?,
+        vision_end_token_id: root_i(root, "vision_end_token_id")?,
+        image_token_id: root_i(root, "image_token_id")?,
+        video_token_id: root_i(root, "video_token_id")?,
+    };
+
+    // Two consistency checks the fields cannot make individually, both of
+    // which produce a wrong STRIDE rather than an error if they fail.
+    if vision.num_heads == 0 || vision.hidden_size % vision.num_heads != 0 {
+        return Err(Gemma4Error::Config(format!(
+            "vision hidden_size {} is not divisible by num_heads {}",
+            vision.hidden_size, vision.num_heads
+        )));
+    }
+    // The position table is a SQUARE grid the tower interpolates from, so a
+    // non-square count means the grid edge this port derives (`sqrt`) is not
+    // the one the checkpoint trained.
+    let edge = (vision.num_position_embeddings as f64).sqrt() as i64;
+    if edge * edge != vision.num_position_embeddings {
+        return Err(Gemma4Error::Config(format!(
+            "vision num_position_embeddings {} is not a square; the position table is \
+             interpolated from a square grid",
+            vision.num_position_embeddings
+        )));
+    }
+    if !vision.is_active() {
+        return Err(Gemma4Error::Config(
+            "vision_config declares depth 0, which this port cannot tell from an absent \
+             tower; a checkpoint with no tower should omit the block"
+                .to_string(),
+        ));
+    }
+    Ok(vision)
+}
+
+fn root_i(root: &serde_json::Value, key: &str) -> Result<i64, Gemma4Error> {
+    root.get(key)
+        .and_then(serde_json::Value::as_i64)
+        .ok_or_else(|| Gemma4Error::Config(format!("missing {key} beside vision_config")))
 }
 
 fn parse_qwen_family_config(json: &str, family: ModelFamily) -> Result<ArchConfig, Gemma4Error> {
@@ -215,5 +352,10 @@ fn parse_qwen_family_config(json: &str, family: ModelFamily) -> Result<ArchConfi
         routed_scaling_factor: 1.0,
         swiglu_limit: 0.0,
         rope_scaling: RopeScalingConfig::NONE,
+        // NOT parsed from `vision_config`, though all three published
+        // checkpoints declare one. See `parse_vision_config`: this field
+        // describes what an INSTALL carries, and the config describes what the
+        // architecture has.
+        vision: VisionConfig::NONE,
     })
 }

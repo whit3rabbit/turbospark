@@ -32,6 +32,9 @@ A `.gturbo` model installation is a directory structured as follows:
 │   ├── layer_00.bin         # Expert weight blobs for layer 0 (fixed stride per expert)
 │   ├── layer_01.bin         # Expert weight blobs for layer 1
 │   └── ...
+├── packed_vision/           # OPTIONAL: present only when the install carries a vision tower
+│   ├── layout.json          # The SAME schema packed_experts/layout.json uses
+│   └── blobs.bin            # One fixed-stride blob per transformer block
 ├── tokenizer.json           # Hugging Face tokenizer specification
 └── chat_template.jinja      # Jinja2 chat template for conversation formatting
 ```
@@ -222,6 +225,48 @@ layer_00.bin:
 - **Two levels of `expertStride`, and they mean different things.** The top-level value is the model-wide MAXIMUM; each layer object carries its own, which is what that layer's file is actually padded to. Address or size a layer with the layer's value, never the top-level one. A layer declaring a stride above the top-level maximum is rejected at load, since consumers size a slot from the maximum.
 - **Why per layer.** Until sub-4-bit intake, every install was uniform across layers and one number said everything. A mixed checkpoint is not: `unsloth/gemma-4-26B-A4B-it-UD-Q3_K_M` carries IQ3_XXS gate/up over IQ4_NL down on twenty-nine layers and IQ4_XS over Q8_0 on the thirtieth, whose blob is 4,212,736 bytes against the others' 2,632,960. Padding all thirty to that maximum would write 16.23 GB of experts where 10.33 is needed, and inflate every cache miss on twenty-nine of thirty layers by the same 1.6x. Nothing about the output would change, because a zero-padded blob decodes correctly.
 - **Backwards compatible**: a layer object without its own `expertStride` inherits the top-level value, which is every install written before per-layer striding.
+
+### 3.5 `packed_vision/` (optional)
+
+Present only when the install carries a vision tower, which today means a
+`qwen3_5`-family install whose source checkpoint shipped one. Absent
+otherwise, and `manifest.arch.visionDepth` is then `0`.
+
+```
+packed_vision/
++-- layout.json   # expertStride / numLayers=1 / expertsPerLayer=<blocks> / layers[0]
+\-- blobs.bin     # block 0 blob | block 1 blob | ... , each expertStride bytes
+```
+
+- **It reuses the `packed_experts` schema verbatim** rather than defining a
+  second format. The tower is ONE "layer" whose "experts" are its transformer
+  blocks, so `numLayers` is 1 and `expertsPerLayer` is the block count. The
+  words belong to the schema rather than to the tower; that is the cost of the
+  reuse and it is cheaper than a parallel format with its own parser.
+- **What licenses the reuse is that nothing downstream interprets those
+  words.** A "layer" is a file and an "expert" is a fixed-stride blob inside
+  it, which is exactly what a double-buffered block loop wants -- so the tower
+  gets the existing `pread` streamer, slot cache and read pool with no new I/O
+  code. The loaders take the subdirectory as a parameter for this reason.
+- **Twelve roles per block**, in forward-pass order: `ln1_w`, `ln1_b`,
+  `qkv_w`, `qkv_b`, `proj_w`, `proj_b`, `ln2_w`, `ln2_b`, `fc1_w`, `fc1_b`,
+  `fc2_w`, `fc2_b`. All `fp16`.
+- **The tower's NON-block tensors are resident, not here**: `patch_embed.*`,
+  `pos_embed` and `merger.*` live in `model_weights.bin` under a `vision.`
+  prefix. Each is read once per image, so streaming one buys nothing -- the
+  block loop exists because a block is read once per block per image and only
+  two need be live at a time.
+- **FP16, against the resident index's BF16 rule.** Every unquantized TEXT
+  tensor is narrowed to BF16, the only unquantized width the text kernels
+  dispatch. The vision kernels bind `half`, so the tower keeps FP16 end to
+  end, and the runtime's dtype gate accepts tag 2 for `vision.`-prefixed names
+  ALONE. That scoping is not cosmetic: the unquantized text readers identify a
+  tensor by byte width, so an FP16 tensor reaching one is misread rather than
+  rejected.
+- **Whether an install has a tower is answered by its BYTES.** A checkpoint's
+  `vision_config` states what the ARCHITECTURE has; several published
+  checkpoints declare a full tower and ship none of it. The manifest records
+  what was written, so nothing can disagree with the files.
 
 ---
 

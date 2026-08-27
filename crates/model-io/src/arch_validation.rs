@@ -259,5 +259,85 @@ pub(crate) fn validate_arch(a: &ManifestArch, e: &ArchConfig) -> Result<(), Mode
         a.rope_scaling_beta_slow.unwrap_or(0.0),
         e.rope_scaling.beta_slow
     );
+    // ROADMAP M-V3, the vision tower. Every field falls back to
+    // `VisionConfig::NONE`'s zero and NOT to `gemma_defaults.vision`, which is
+    // the same distinction the rope-scaling block above draws: silence here
+    // means the install declares no tower, and Gemma's answer to a question
+    // about a Qwen tower is not evidence (AGENTS.md Gotchas 24 and 39). The
+    // two happen to agree today -- Gemma's baseline also carries `NONE` -- so
+    // this is a case where writing the fallback correctly costs nothing now
+    // and is what keeps the next multimodal baseline from silently validating
+    // every other family's installs against ITS tower.
+    check!("visionDepth", a.vision_depth.unwrap_or(0), e.vision.depth);
+    check!(
+        "visionHiddenSize",
+        a.vision_hidden_size.unwrap_or(0),
+        e.vision.hidden_size
+    );
+    check!(
+        "visionIntermediateSize",
+        a.vision_intermediate_size.unwrap_or(0),
+        e.vision.intermediate_size
+    );
+    check!(
+        "visionNumHeads",
+        a.vision_num_heads.unwrap_or(0),
+        e.vision.num_heads
+    );
+    check!(
+        "visionPatchSize",
+        a.vision_patch_size.unwrap_or(0),
+        e.vision.patch_size
+    );
+    check!(
+        "visionTemporalPatchSize",
+        a.vision_temporal_patch_size.unwrap_or(0),
+        e.vision.temporal_patch_size
+    );
+    check!(
+        "visionInChannels",
+        a.vision_in_channels.unwrap_or(0),
+        e.vision.in_channels
+    );
+    check!(
+        "visionSpatialMergeSize",
+        a.vision_spatial_merge_size.unwrap_or(0),
+        e.vision.spatial_merge_size
+    );
+    check!(
+        "visionNumPositionEmbeddings",
+        a.vision_num_position_embeddings.unwrap_or(0),
+        e.vision.num_position_embeddings
+    );
+    check!(
+        "visionOutHiddenSize",
+        a.vision_out_hidden_size.unwrap_or(0),
+        e.vision.out_hidden_size
+    );
+    check!(
+        "visionMropeSection",
+        a.vision_mrope_section.unwrap_or([0, 0, 0]),
+        e.vision.mrope_section
+    );
+    check!(
+        "visionStartTokenId",
+        a.vision_start_token_id.unwrap_or(0),
+        e.vision.vision_start_token_id
+    );
+    check!(
+        "visionEndTokenId",
+        a.vision_end_token_id.unwrap_or(0),
+        e.vision.vision_end_token_id
+    );
+    check!(
+        "visionImageTokenId",
+        a.vision_image_token_id.unwrap_or(0),
+        e.vision.image_token_id
+    );
+    check!(
+        "visionVideoTokenId",
+        a.vision_video_token_id.unwrap_or(0),
+        e.vision.video_token_id
+    );
     Ok(())
 }

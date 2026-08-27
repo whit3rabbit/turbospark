@@ -25,7 +25,7 @@ pub mod types;
 
 pub use layers::{
     write_gturbo_install, write_gturbo_install_with_resident_index,
-    write_gturbo_install_with_resident_index_and_experts,
+    write_gturbo_install_with_resident_index_and_experts, write_packed_vision,
 };
 pub use streaming::StreamingGturboWriter;
 pub use types::{ExpertBlob, LayerBlobs, SubTensor, WriterError};

@@ -19,7 +19,7 @@
 
 use model_io::{
     ArchConfig, CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig,
-    ModelFamily, RopeScalingConfig,
+    ModelFamily, RopeScalingConfig, VisionConfig,
 };
 
 use crate::gemma4_checkpoint::{write_gemma4_install, Gemma4Quant};
@@ -121,6 +121,7 @@ pub fn tiny_gqa_moe_arch(
         routed_scaling_factor: 1.0,
         swiglu_limit: 0.0,
         rope_scaling: RopeScalingConfig::NONE,
+        vision: VisionConfig::NONE,
     }
 }
 

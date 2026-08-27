@@ -4,6 +4,7 @@ mod dense;
 mod dense_arch;
 mod dense_tensors;
 mod moe;
+mod vision;
 
 pub use dense::{
     build_synthetic_qwen_gdn_dense_install, build_synthetic_qwen_gdn_dense_install_at_bits,
@@ -11,9 +12,12 @@ pub use dense::{
     build_synthetic_qwen_gdn_dense_install_with_dflash,
     build_synthetic_qwen_gdn_dense_install_with_dflash_streamed,
     build_synthetic_qwen_gdn_dense_install_with_mtp,
-    build_synthetic_qwen_gdn_dense_install_with_mtp_streamed, tiny_qwen_gdn_dense_arch,
+    build_synthetic_qwen_gdn_dense_install_with_mtp_streamed,
+    build_synthetic_qwen_gdn_dense_install_with_vision,
+    build_synthetic_qwen_gdn_dense_install_with_vision_streamed, tiny_qwen_gdn_dense_arch,
 };
 pub use moe::{
     build_synthetic_qwen_gdn_moe_install, build_synthetic_qwen_gdn_moe_install_with_mtp,
     tiny_qwen_gdn_moe_arch,
 };
+pub use vision::tiny_vision_config;

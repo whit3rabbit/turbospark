@@ -1,6 +1,6 @@
 use crate::arch_config::{
     ArchConfig, CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig,
-    ModelFamily, RopeScalingConfig,
+    ModelFamily, RopeScalingConfig, VisionConfig,
 };
 
 fn gemma4_layer_mask() -> Vec<u8> {
@@ -54,5 +54,6 @@ pub fn gemma4_26b_a4b() -> ArchConfig {
         routed_scaling_factor: 1.0,
         swiglu_limit: 0.0,
         rope_scaling: RopeScalingConfig::NONE,
+        vision: VisionConfig::NONE,
     }
 }

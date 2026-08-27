@@ -284,6 +284,60 @@ fn the_stream_layout_takes_its_stride_from_the_layer() {
     assert_eq!(layout.expert_offset(0, 2), 2 * STRIDE);
 }
 
+/// The subdirectory is a PARAMETER, and it reaches the path and nothing else
+/// (ROADMAP M-V3).
+///
+/// The vision tower streams out of `packed_vision/blobs.bin` through this
+/// same type, which is the whole reuse claim -- `StreamLayout` interprets
+/// nothing, so a "layer" is a file and an "expert" is a fixed-stride blob
+/// inside it, and a block loop wants exactly that.
+///
+/// Asserted by DIFFERENCE rather than by checking one path, because the thing
+/// that could break is the subdir being ignored: hardcode `packed_experts`
+/// back into `from_packed_layer_in` and the two paths below become equal
+/// while every other field still agrees.
+#[test]
+fn the_packed_subdirectory_reaches_the_path_and_nothing_else() {
+    const STRIDE: u64 = 4096;
+    let layer = model_io::LayerLayout {
+        layer: 0,
+        file: "blobs.bin".to_string(),
+        expert_stride: STRIDE,
+        experts: (0..2)
+            .map(|e| model_io::ExpertEntry {
+                expert: e,
+                offset: e as u64 * STRIDE,
+                size: STRIDE,
+                sub_tensors: Default::default(),
+            })
+            .collect(),
+    };
+    let dir = std::path::Path::new("/tmp");
+    let experts = StreamLayout::from_packed_layer_in(&layer, dir, model_io::PACKED_EXPERTS_DIR);
+    let vision = StreamLayout::from_packed_layer_in(&layer, dir, model_io::PACKED_VISION_DIR);
+
+    assert!(
+        vision.path.ends_with("packed_vision/blobs.bin"),
+        "{}",
+        vision.path
+    );
+    assert_ne!(
+        experts.path, vision.path,
+        "the subdirectory did not reach the path"
+    );
+    // Everything else is identical, which is what says the parameter is a
+    // path and not a second format.
+    assert_eq!(experts.expert_stride, vision.expert_stride);
+    assert_eq!(experts.stream_size, vision.stream_size);
+    assert_eq!(experts.experts_per_layer, vision.experts_per_layer);
+    assert_eq!(experts.expert_offsets, vision.expert_offsets);
+    // And the default-subdir constructor still agrees with the explicit one.
+    assert_eq!(
+        StreamLayout::from_packed_experts_layer(&layer, dir).path,
+        experts.path
+    );
+}
+
 /// The window spans the highest OFFSET, not `expert count * stride`.
 ///
 /// Every writer to date emits dense `e * stride` offsets, on which the two

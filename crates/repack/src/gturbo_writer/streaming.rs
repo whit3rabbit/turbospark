@@ -47,9 +47,13 @@ impl StreamingGturboWriter {
 
     /// Writes one layer of expert blobs directly to disk and records its layout entry.
     pub fn write_layer(&mut self, layer: &LayerBlobs) -> Result<(), WriterError> {
-        let (file_bytes, entry) =
-            build_layer_file(layer, self.expert_stride, self.experts_per_layer)?;
         let file_name = format!("layer_{:02}.bin", layer.layer);
+        let (file_bytes, entry) = build_layer_file(
+            layer,
+            self.expert_stride,
+            self.experts_per_layer,
+            &file_name,
+        )?;
         let layer_path = self.dir.join("packed_experts").join(&file_name);
         std::fs::write(&layer_path, &file_bytes).map_err(|e| io_err(&layer_path, e))?;
         self.layout_layers.push(entry);
@@ -67,9 +71,13 @@ impl StreamingGturboWriter {
     /// differently-strided leftover is refused rather than adopted -- which is
     /// the only way this can go quietly wrong.
     pub fn adopt_layer(&mut self, layer: &LayerBlobs) -> Result<(), WriterError> {
-        let (file_bytes, entry) =
-            build_layer_file(layer, self.expert_stride, self.experts_per_layer)?;
         let file_name = format!("layer_{:02}.bin", layer.layer);
+        let (file_bytes, entry) = build_layer_file(
+            layer,
+            self.expert_stride,
+            self.experts_per_layer,
+            &file_name,
+        )?;
         let layer_path = self.dir.join("packed_experts").join(&file_name);
         let found = std::fs::metadata(&layer_path)
             .map_err(|e| io_err(&layer_path, e))?

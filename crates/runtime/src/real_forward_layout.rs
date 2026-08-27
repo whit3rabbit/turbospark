@@ -67,15 +67,26 @@ pub(crate) const DTYPE_GGUF_MXFP4: u8 = 14;
 /// `read_bf16_host`, every kernel binding a `device const bfloat*` --
 /// identifies it by BYTE SIZE and decodes it as BF16.
 ///
-/// The writer also defines FP16 (2) and FP32 (3) tags and NOTHING HERE READS
-/// EITHER, which is why [`readable_resident_dtype`] refuses them rather than
-/// letting them through to be misread. An F16 norm is the dangerous case: it
-/// is the same width as BF16, so every length check passes and the values
-/// come out wrong by up to 2^112. The repack side narrows instead
-/// (`turbospark_repack`'s `narrow_raw_to_bf16`); this is the backstop for a
-/// hand-made install, in the same relationship the GGUF dtype gate has to
-/// `model_io::validate_quant`.
+/// The writer also defines FP16 (2) and FP32 (3) tags, and for every TEXT
+/// tensor nothing here reads either, which is why [`readable_resident_dtype`]
+/// refuses them rather than letting them through to be misread. An F16 norm is
+/// the dangerous case: it is the same width as BF16, so every length check
+/// passes and the values come out wrong by up to 2^112. The repack side
+/// narrows instead (`turbospark_repack`'s `narrow_raw_to_bf16`); this is the
+/// backstop for a hand-made install, in the same relationship the GGUF dtype
+/// gate has to `model_io::validate_quant`.
 pub(crate) const DTYPE_RAW_BF16: u8 = 1;
+
+/// FP16, readable for the VISION TOWER'S resident tensors alone (ROADMAP
+/// M-V3). See [`readable_resident_dtype`] for why the exception is scoped by
+/// NAME rather than granted outright.
+pub(crate) const DTYPE_RAW_FP16: u8 = 2;
+
+/// The prefix the tower's resident tensors carry, and the whole basis of the
+/// FP16 exception. Written by `turbospark_repack`'s vision ingest; the two
+/// spellings have to agree, and `the_vision_prefix_matches_the_writers`
+/// asserts it rather than leaving it to a comment.
+pub(crate) const VISION_PREFIX: &str = "vision.";
 
 /// Whether a resident entry's dtype tag has a reader in this crate.
 ///
@@ -83,7 +94,29 @@ pub(crate) const DTYPE_RAW_BF16: u8 = 1;
 /// a tag added to the writer and not here is refused at open with its number
 /// in the message, where a permissive default would dispatch it as something
 /// else.
-pub(crate) fn readable_resident_dtype(dtype: u8) -> bool {
+///
+/// **IT TAKES THE NAME BECAUSE THE ANSWER IS NOT A PROPERTY OF THE TAG ALONE**
+/// (ROADMAP M-V3). The `qwen3_5` vision tower is FP16 end to end -- its Metal
+/// kernels bind `half` where every other kernel in `crates/gpu` binds
+/// `bfloat` -- so its resident tensors genuinely are tag 2 and narrowing them
+/// to BF16 would cost three mantissa bits on the merger's two large matrices
+/// to store a precision no consumer wants. But the hazard the blanket refusal
+/// closes is real and unchanged for text: `norm_view` and `read_bf16_host` are
+/// dtype-BLIND, resolving an unquantized tensor by byte width, so a tag-2
+/// tensor either of them reaches is misread rather than rejected (AGENTS.md
+/// Gotcha 45).
+///
+/// Scoping by prefix is what keeps both halves. Nothing under `vision.` is
+/// reachable from any text-path helper -- the tower is read by
+/// `crates/runtime/src/vision/` and by nothing else -- so the exception cannot
+/// widen into the case it was written to prevent. Granting tag 2 outright
+/// would reopen it for every family at once, and for a tensor whose reader is
+/// dtype-blind that is not a narrower bug than the one being fixed, it is the
+/// same one.
+pub(crate) fn readable_resident_dtype(name: &str, dtype: u8) -> bool {
+    if dtype == DTYPE_RAW_FP16 {
+        return name.starts_with(VISION_PREFIX);
+    }
     matches!(
         dtype,
         DTYPE_RAW_BF16 | 4 | 5 | DTYPE_INT1_AFFINE | DTYPE_INT2_AFFINE

@@ -51,10 +51,16 @@ impl RealForwardRunner {
         // because that is what every unquantized reader here does. FP16 is
         // the same width, so nothing fails and the values are wrong by up to
         // 2^112 -- fluent garbage from an install that opened cleanly.
+        //
+        // It takes the NAME as well as the tag since ROADMAP M-V3: the vision
+        // tower is FP16 by design and its tensors are read by nothing on the
+        // text path, so tag 2 is honoured under `vision.` and refused
+        // everywhere else. `readable_resident_dtype`'s own doc has the
+        // argument for why the exception is scoped rather than granted.
         if let Some(entry) = index
             .entries
             .values()
-            .find(|e| !readable_resident_dtype(e.dtype))
+            .find(|e| !readable_resident_dtype(&e.name, e.dtype))
         {
             return Err(RealForwardError::Unsupported(format!(
                 "tensor {} carries resident dtype {}, which no reader in this crate honours; \

@@ -25,7 +25,7 @@ gpu = { package = "turbospark-gpu", path = "../gpu" }
 - `gdn.rs`: Eight gated-DeltaNet dispatches plus `GdnShape` structural preconditions.
 - `dequant_int4_gemv.rs` & `dequant_int8_gemv.rs`: INT4/INT8 GEMV SIMD dispatches.
 - `resident_metal.rs`: `ResidentGpuWeights` zero-copy `MTLBuffer` wrapping around mapped slices.
-- `shaders/`: Vendored Metal Shading Language (MSL) source files.
+- `shaders/`: Metal Shading Language (MSL) source files containing **98 compute kernels** across 12 quantization formats, attention primitives, GDN linear attention, and vision processing. See [`docs/KERNELS.md`](../../docs/KERNELS.md) for the complete reference.
 
 ## Development & Test Commands
 

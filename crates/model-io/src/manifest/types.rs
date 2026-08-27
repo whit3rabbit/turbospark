@@ -174,6 +174,43 @@ pub struct ManifestArch {
     pub rope_scaling_beta_fast: Option<f64>,
     #[serde(default)]
     pub rope_scaling_beta_slow: Option<f64>,
+    /// The vision tower (ROADMAP M-V3). Absent means no tower, which is what
+    /// `VisionConfig::NONE` says and what every install written before M-V3
+    /// declares -- which is why all fifteen are `Option` and default rather
+    /// than being required alongside the shape fields.
+    #[serde(default)]
+    pub vision_depth: Option<i64>,
+    #[serde(default)]
+    pub vision_hidden_size: Option<i64>,
+    #[serde(default)]
+    pub vision_intermediate_size: Option<i64>,
+    #[serde(default)]
+    pub vision_num_heads: Option<i64>,
+    #[serde(default)]
+    pub vision_patch_size: Option<i64>,
+    #[serde(default)]
+    pub vision_temporal_patch_size: Option<i64>,
+    #[serde(default)]
+    pub vision_in_channels: Option<i64>,
+    #[serde(default)]
+    pub vision_spatial_merge_size: Option<i64>,
+    #[serde(default)]
+    pub vision_num_position_embeddings: Option<i64>,
+    #[serde(default)]
+    pub vision_out_hidden_size: Option<i64>,
+    /// mRoPE's `(t, h, w)` channel split. A fixed-size array rather than a
+    /// `Vec`, so a file declaring the wrong number of sections is refused by
+    /// serde at decode rather than indexed out of bounds at a dispatch.
+    #[serde(default)]
+    pub vision_mrope_section: Option<[i64; 3]>,
+    #[serde(default)]
+    pub vision_start_token_id: Option<i64>,
+    #[serde(default)]
+    pub vision_end_token_id: Option<i64>,
+    #[serde(default)]
+    pub vision_image_token_id: Option<i64>,
+    #[serde(default)]
+    pub vision_video_token_id: Option<i64>,
 }
 
 /// Quantization parameters for a model component slot in `manifest.json`.

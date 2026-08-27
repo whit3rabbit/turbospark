@@ -47,6 +47,7 @@ fn toy_arch() -> turbospark_model_io::ArchConfig {
         routed_scaling_factor: 1.0,
         swiglu_limit: 0.0,
         rope_scaling: turbospark_model_io::RopeScalingConfig::NONE,
+        vision: turbospark_model_io::VisionConfig::NONE,
     }
 }
 

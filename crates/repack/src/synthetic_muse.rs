@@ -29,7 +29,7 @@
 
 use model_io::{
     muse_glimmer_layer_mask, ArchConfig, CompressedAttentionConfig, HyperConnectionConfig,
-    LinearAttentionConfig, ModelFamily, RopeScalingConfig,
+    LinearAttentionConfig, ModelFamily, RopeScalingConfig, VisionConfig,
 };
 
 use crate::gemma4_checkpoint::{write_muse_glimmer_install, Gemma4Quant};
@@ -116,6 +116,7 @@ pub fn tiny_muse_glimmer_arch(vocab_size: i64, num_layers: i64) -> ArchConfig {
         routed_scaling_factor: 1.0,
         swiglu_limit: 0.0,
         rope_scaling: RopeScalingConfig::NONE,
+        vision: VisionConfig::NONE,
     }
 }
 

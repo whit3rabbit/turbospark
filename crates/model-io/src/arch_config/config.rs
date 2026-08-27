@@ -1,6 +1,7 @@
 use super::family::ModelFamily;
 use super::sub_configs::{
     CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig, RopeScalingConfig,
+    VisionConfig,
 };
 
 /// `full_attention_layer_mask` values: 0 = sliding-window attention, 1 =
@@ -84,6 +85,16 @@ pub struct ArchConfig {
     pub swiglu_limit: f64,
     /// YaRN rope scaling, or [`RopeScalingConfig::NONE`].
     pub rope_scaling: RopeScalingConfig,
+    /// The vision tower, or [`VisionConfig::NONE`] (ROADMAP M-V3).
+    ///
+    /// Optional in the manifest and defaulted to `NONE`, which is what makes
+    /// every install written before M-V3 keep opening. Read AGENTS.md Gotcha
+    /// 24 before touching that default: an omitted family-extension field is
+    /// resolved against the GEMMA baseline whatever family the manifest
+    /// claims, so this one is resolved explicitly to `NONE` rather than to
+    /// `gemma_defaults.vision`, and `build_manifest_json` writes it
+    /// unconditionally.
+    pub vision: VisionConfig,
 }
 
 impl ArchConfig {

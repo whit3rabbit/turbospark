@@ -43,15 +43,17 @@ pub use arch_registry::{
     planned_gguf_architectures, refuse_foreign_config, ArchSupport, PlannedArch,
 };
 pub use gemma4_checkpoint::{
-    classify_for_family, classify_gemma4, gemma4_manifest_quant, is_supported_affine_shape,
-    manifest_quant, narrow_raw_to_bf16, orchestrate_gemma4_checkpoint,
+    classify_for_family, classify_gemma4, convert_raw_to_fp16, gemma4_manifest_quant,
+    is_supported_affine_shape, manifest_quant, narrow_raw_to_bf16, orchestrate_gemma4_checkpoint,
     orchestrate_gemma4_checkpoint_sharded, parse_gemma4_config, parse_gemma4_quantization,
-    pass_through_packed, write_gemma4_install, write_gemma4_install_streamed,
-    write_muse_glimmer_install, write_muse_glimmer_install_streamed, write_qwen_gdn_dense_install,
+    pass_through_packed, read_vision_entries, vision_arch_for_manifest, vision_should_ingest,
+    write_gemma4_install, write_gemma4_install_streamed, write_muse_glimmer_install,
+    write_muse_glimmer_install_streamed, write_qwen_gdn_dense_install,
     write_qwen_gdn_dense_install_streamed, write_qwen_gdn_moe_install,
-    write_qwen_gdn_moe_install_streamed, Gemma4Bucket, Gemma4Error, Gemma4Quant,
-    Gemma4RepackOutput, Gemma4Shards, NarrowedRaw, AFFINE_1BIT_GROUP_SIZE, AFFINE_2BIT_GROUP_SIZE,
-    AFFINE_GROUP_SIZE, DFLASH_PREFIX, GTURBO_PAGE_BYTES,
+    write_qwen_gdn_moe_install_streamed, ConvertedFp16, Gemma4Bucket, Gemma4Error, Gemma4Quant,
+    Gemma4RepackOutput, Gemma4Shards, NarrowedRaw, VisionRead, AFFINE_1BIT_GROUP_SIZE,
+    AFFINE_2BIT_GROUP_SIZE, AFFINE_GROUP_SIZE, DFLASH_PREFIX, GTURBO_PAGE_BYTES,
+    VISION_BLOCK_ROLES, VISION_INSTALL_PREFIX, VISION_PREFIX, VISION_RESIDENT_TENSORS,
 };
 pub use gguf_checkpoint::{
     dtype_tag_for_ggml_type, gguf_manifest_quant, orchestrate_gguf_checkpoint,
@@ -68,8 +70,8 @@ pub use gguf_names::{
 };
 pub use gturbo_writer::{
     write_gturbo_install, write_gturbo_install_with_resident_index,
-    write_gturbo_install_with_resident_index_and_experts, ExpertBlob, LayerBlobs,
-    StreamingGturboWriter, SubTensor, WriterError,
+    write_gturbo_install_with_resident_index_and_experts, write_packed_vision, ExpertBlob,
+    LayerBlobs, StreamingGturboWriter, SubTensor, WriterError,
 };
 pub use hf_checkpoint::{orchestrate_llama_checkpoint, LlamaCheckpointDims, OrchestrateError};
 pub use install_verifier::verify_install_full_sha256;
@@ -77,7 +79,9 @@ pub use manifest_peek::peek_manifest_arch;
 pub use museglimmer_config::{
     muse_glimmer_mask, parse_muse_glimmer_config, parse_muse_glimmer_scalars, MuseGlimmerScalars,
 };
-pub use qwen36_config::{parse_qwen_gdn_dense_config, parse_qwen_gdn_moe_config};
+pub use qwen36_config::{
+    parse_qwen_gdn_dense_config, parse_qwen_gdn_moe_config, parse_vision_config,
+};
 pub use ranged_download::{
     fetch_gguf_header, fetch_safetensors_header, ByteProgressCallback, DownloadError,
     HttpRangeSource, MemoryRangeSource, RangeSource, GGUF_INITIAL_FETCH_BYTES,
@@ -116,9 +120,11 @@ pub use synthetic_qwen::{
     build_synthetic_qwen_gdn_dense_install_with_dflash,
     build_synthetic_qwen_gdn_dense_install_with_dflash_streamed,
     build_synthetic_qwen_gdn_dense_install_with_mtp,
-    build_synthetic_qwen_gdn_dense_install_with_mtp_streamed, build_synthetic_qwen_gdn_moe_install,
-    build_synthetic_qwen_gdn_moe_install_with_mtp, tiny_qwen_gdn_dense_arch,
-    tiny_qwen_gdn_moe_arch,
+    build_synthetic_qwen_gdn_dense_install_with_mtp_streamed,
+    build_synthetic_qwen_gdn_dense_install_with_vision,
+    build_synthetic_qwen_gdn_dense_install_with_vision_streamed,
+    build_synthetic_qwen_gdn_moe_install, build_synthetic_qwen_gdn_moe_install_with_mtp,
+    tiny_qwen_gdn_dense_arch, tiny_qwen_gdn_moe_arch, tiny_vision_config,
 };
 pub use synthetic_real::{
     build_synthetic_gemma4_real_install, build_synthetic_gemma4_real_install_at_shared_bits,

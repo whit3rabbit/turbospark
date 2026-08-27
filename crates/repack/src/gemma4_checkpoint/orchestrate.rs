@@ -9,6 +9,7 @@ use super::config::{Gemma4Error, Gemma4Quant};
 use super::expert_blobs::{expert_stride_from_headers, plan_one_expert_layer};
 use super::narrow::narrow_raw_to_bf16;
 use super::shards::{shape4, Gemma4Shards};
+use super::vision::VisionRead;
 use crate::gturbo_writer::LayerBlobs;
 use crate::ranged_download::RangeSource;
 use crate::resident_writer::{RawTensorSpec, ResidentEntrySpec};
@@ -26,6 +27,15 @@ pub struct Gemma4RepackOutput {
     /// One `(tensor, values that lost bits)` row per unquantized tensor this
     /// walk had to narrow to BF16. See `narrow_raw_to_bf16`.
     pub lossy_narrowing: Vec<(String, usize)>,
+    /// The vision tower's packed blocks, when this walk ingested one
+    /// (ROADMAP M-V3). `None` on every text-only walk, which is every caller
+    /// that passes `VisionConfig::NONE`.
+    ///
+    /// Its RESIDENT entries are not here: they are already in `resident`,
+    /// appended where the MTP head's are. Carrying them twice would invite a
+    /// writer to append them a second time, and a duplicated name in the
+    /// resident index is not something the reader would notice.
+    pub vision: Option<VisionRead>,
 }
 
 /// Walks a Gemma 4 checkpoint's tensors: classifies every name, orders and
@@ -69,6 +79,22 @@ pub fn orchestrate_gemma4_checkpoint_sharded(
         resident.entries.extend(drafter.entries);
         resident.lossy_narrowing.extend(drafter.lossy_narrowing);
     }
+    // THE VISION TOWER (ROADMAP M-V3). This is the NON-streamed writer's arm
+    // and `write_gemma4_install_streamed` carries its own; neither is a
+    // fallback for the other. See that one's comment for why an arm in one
+    // writer alone is a hole the fixtures cannot see.
+    //
+    // Appended after the drafters for their reason: it is a separate model
+    // sharing one resident region, and its names keep to their own `vision.`
+    // group rather than interleaving with any trunk layer's.
+    let vision = if super::vision::vision_should_ingest(arch, &plan.vision_bases) {
+        let mut tower =
+            super::vision::read_vision_entries(shards, &plan.vision_bases, &arch.vision)?;
+        resident.entries.extend(std::mem::take(&mut tower.entries));
+        Some(tower)
+    } else {
+        None
+    };
     let expert_stride = expert_stride_from_headers(shards, arch, quant, &plan.routed)?;
     let mut layers = Vec::new();
     if !plan.routed.is_empty() {
@@ -83,6 +109,7 @@ pub fn orchestrate_gemma4_checkpoint_sharded(
         expert_stride,
         excluded_multimodal: plan.excluded,
         lossy_narrowing: resident.lossy_narrowing,
+        vision,
     })
 }
 
@@ -110,6 +137,28 @@ pub struct ClassifiedNames<'a> {
     /// head's two reasons plus a third of its own: the drafter also has
     /// rank-3 tensors (`base_kernel`), which no trunk arm accepts at all.
     pub dflash_bases: Vec<&'a str>,
+    /// The vision tower's tensors (ROADMAP M-V3), kept out of
+    /// `resident_bases` for the head's two reasons and a third that is
+    /// sharper here than for either drafter.
+    ///
+    /// The head's first reason: the tower takes a dtype arm no trunk tensor
+    /// takes. It stays FP16 verbatim where every unquantized trunk tensor is
+    /// narrowed to BF16 (`narrow_raw_to_bf16`, AGENTS.md Gotcha 45), so
+    /// merging would put a third path inside `read_resident_entries`.
+    ///
+    /// The head's second reason, and the one that would actually corrupt the
+    /// index: `lm_order_key` sorts on `layer_index`, which finds `.layers.`
+    /// inside a name -- and `vision_tower.blocks.N.*` would sort into the
+    /// TRUNK's layer groups. Twenty-seven blocks interleaved through sixty-four
+    /// trunk layers is not a wrong byte anywhere, just an index no later reader
+    /// can make sense of.
+    ///
+    /// The third is this bucket's own: most of these tensors do not become
+    /// resident entries at all. The 27 blocks are packed into
+    /// `packed_vision/blobs.bin` and streamed; only `patch_embed.*`,
+    /// `pos_embed` and `merger.*` land in the index. So the split is not a
+    /// tidiness preference here, it is two different destinations.
+    pub vision_bases: Vec<&'a str>,
 }
 
 /// Classifies all tensor names in the shards into their respective roles.
@@ -122,6 +171,7 @@ pub fn classify_all<'a>(
     let mut excluded: Vec<String> = Vec::new();
     let mut mtp_bases: Vec<&str> = Vec::new();
     let mut dflash_bases: Vec<&str> = Vec::new();
+    let mut vision_bases: Vec<&str> = Vec::new();
     let mut routed: BTreeMap<usize, BTreeMap<&'static str, &str>> = BTreeMap::new();
 
     for name in shards.names() {
@@ -146,6 +196,7 @@ pub fn classify_all<'a>(
             Gemma4Bucket::ExcludedMultimodal => excluded.push(name.clone()),
             Gemma4Bucket::MtpHead => mtp_bases.push(name),
             Gemma4Bucket::DflashDrafter => dflash_bases.push(name),
+            Gemma4Bucket::VisionTower => vision_bases.push(name),
             Gemma4Bucket::Unknown => return Err(Gemma4Error::UnknownTensor(name.clone())),
         }
     }
@@ -159,12 +210,22 @@ pub fn classify_all<'a>(
     // Plain lexicographic again: one name group, and the drafter's own
     // `layers.N` ordering inside it is lexicographic's natural order.
     dflash_bases.sort_unstable();
+    // Plain lexicographic, deliberately. It is NOT the tower's block order --
+    // `blocks.10.*` sorts before `blocks.2.*` -- and that is fine because
+    // nothing downstream reads this order: `vision::read_vision_entries`
+    // indexes blocks by parsing the number out of each name, so a block's
+    // position in the packed file is a function of its INDEX rather than of
+    // where it landed here. Reusing `lm_order_key` would be worse than
+    // useless, since it is the function that would misfile these names in the
+    // first place (see `ClassifiedNames::vision_bases`).
+    vision_bases.sort_unstable();
     Ok(ClassifiedNames {
         resident_bases,
         routed,
         excluded,
         mtp_bases,
         dflash_bases,
+        vision_bases,
     })
 }
 

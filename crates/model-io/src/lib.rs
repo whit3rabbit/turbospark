@@ -29,7 +29,7 @@ pub use arch_baselines::{
 };
 pub use arch_config::{
     ArchConfig, CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig,
-    ModelFamily, RopeScalingConfig,
+    ModelFamily, RopeScalingConfig, VisionConfig,
 };
 pub use context_policy::{
     committed_bytes, kv_bytes_for_context, largest_context_within, resolve_max_context,
@@ -50,8 +50,10 @@ pub use manifest::{
     EXECUTABLE_GGUF_TYPES, REQUIRED_FILES,
 };
 pub use packed_experts_layout::{
-    load as load_packed_experts_layout, ExpertEntry, LayerLayout, PackedExpertsLayout,
-    SubTensorEntry, DEFAULT_MAX_BYTES as PACKED_EXPERTS_LAYOUT_DEFAULT_MAX_BYTES,
+    load as load_packed_experts_layout, load_from as load_packed_layout_from, ExpertEntry,
+    LayerLayout, PackedExpertsLayout, SubTensorEntry,
+    DEFAULT_MAX_BYTES as PACKED_EXPERTS_LAYOUT_DEFAULT_MAX_BYTES, PACKED_EXPERTS_DIR,
+    PACKED_VISION_DIR,
 };
 pub use resident_buffer::ResidentBuffer;
 pub use resident_index::{

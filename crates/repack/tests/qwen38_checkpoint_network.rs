@@ -626,3 +626,208 @@ fn repacks_the_real_qwen38_27b_checkpoint_with_its_mtp_head() {
         dir.display()
     );
 }
+
+/// **ROADMAP M-V3's stage-2 gate: the real 333-tensor vision tower, packed.**
+///
+/// A SEPARATE install rather than a flag on `repacks_the_real_qwen38_27b_checkpoint`,
+/// and the reason is that the headless install that test writes is the one
+/// `qwen38_memory_oracle` and `qwen38_quality_gate` assert their frozen rows
+/// against. Adding ~0.9 GiB of tower to it would move its footprint and force
+/// a re-freeze for a component neither gate exercises. So the text-only walk
+/// stays byte-identical and this writes its own directory.
+///
+/// It runs AFTER `crates/repack/tests/synthetic_qwen35_vision.rs` is green,
+/// which is Gotcha 8's order and not a preference: every assertion below cost
+/// milliseconds there and costs twenty-five minutes here.
+///
+/// **THE ONE THING ONLY THIS TEST CAN SEE is the dtype.** The fixture is F16
+/// throughout, like the rest of the dense 1-bit install it hangs off; THIS
+/// checkpoint's tower is **BF16**, so the conversion arm of
+/// `convert_raw_to_fp16` runs here and its verbatim arm runs there.
+/// `a_bf16_tower_converts_to_fp16_exactly_in_the_normal_range` proves the
+/// arithmetic offline; what it cannot prove is that the real tower's values
+/// all sit inside FP16's range, and an overflow is a hard refusal by design.
+#[test]
+#[ignore = "streams the real 16 GB Qwen3.8-27B 4-bit checkpoint plus its 0.9 GiB vision tower"]
+fn repacks_the_real_qwen38_27b_checkpoint_with_its_vision_tower() {
+    let index_bytes = get("model.safetensors.index.json");
+    assert_eq!(
+        model_io::hash_data(&index_bytes),
+        PINNED_INDEX_SHA256,
+        "model.safetensors.index.json does not match the pinned fingerprint"
+    );
+    let index: serde_json::Value = serde_json::from_slice(&index_bytes).expect("index json");
+    let weight_map = index["weight_map"].as_object().expect("weight_map");
+
+    // The tower is PRESENT in this artifact. Ornith's MLX conversion declares
+    // the identical `vision_config` and ships none, so "the config says 27
+    // blocks" is not evidence that the bytes are here.
+    let vision_names: Vec<&String> = weight_map
+        .keys()
+        .filter(|n| n.starts_with("vision_tower."))
+        .collect();
+    assert_eq!(
+        vision_names.len(),
+        333,
+        "the vision tower's inventory moved"
+    );
+
+    let config = String::from_utf8(get("config.json")).expect("config utf8");
+    let mut arch = parse_qwen_gdn_dense_config(&config).expect("config parses");
+    // The TRUNK still parses to the pinned baseline, which is what says
+    // ingesting the tower changed no text field.
+    assert_eq!(arch, model_io::qwen_gdn_dense_27b());
+
+    let vision = turbospark_repack::parse_vision_config(&config).expect("vision_config parses");
+    // Read off the published file, cross-checked in `docs/VISION_PHASE0.md`
+    // item 1. `intermediate_size` is the one worth naming: the planning table
+    // guessed 4608 by analogy with the merger's width and it is 4304.
+    assert_eq!(vision.depth, 27);
+    assert_eq!(vision.hidden_size, 1152);
+    assert_eq!(vision.intermediate_size, 4304, "NOT 4608");
+    assert_eq!(vision.num_heads, 16);
+    assert_eq!(vision.head_dim(), 72);
+    assert_eq!(
+        vision.out_hidden_size, arch.hidden_size,
+        "the merger writes into the trunk"
+    );
+    assert_eq!(vision.num_position_embeddings, 2304, "a 48x48 grid");
+    assert_eq!(vision.mrope_section, [11, 11, 10]);
+    arch.vision = vision;
+
+    // The role table accounts for the whole tower: 27 blocks x 12 roles plus
+    // the 9 non-block tensors is exactly 333. Arithmetic rather than a
+    // comment, and it is what would catch a publisher adding a tensor.
+    assert_eq!(
+        vision.depth as usize * turbospark_repack::VISION_BLOCK_ROLES.len()
+            + turbospark_repack::VISION_RESIDENT_TENSORS.len(),
+        vision_names.len(),
+        "the role table does not account for the published tower"
+    );
+
+    let quant = parse_gemma4_quantization(&config).expect("quantization parses");
+    let shard_names: BTreeSet<String> = weight_map
+        .values()
+        .map(|v| v.as_str().expect("shard name").to_string())
+        .collect();
+    let sources: Vec<HttpRangeSource> = shard_names
+        .iter()
+        .map(|name| HttpRangeSource::new(format!("{REPO_BASE}/{name}")))
+        .collect();
+    let headers = sources
+        .iter()
+        .map(|s| fetch_safetensors_header(s).expect("shard header"))
+        .collect::<Vec<_>>();
+
+    // THE DTYPE, off the header before a single weight byte moves. This
+    // checkpoint's tower is BF16 where Bonsai's is F16, which is the whole
+    // reason `convert_raw_to_fp16` has two arms.
+    let tower_dtypes: BTreeSet<&str> = headers
+        .iter()
+        .flat_map(|h| h.tensors.iter())
+        .filter(|(n, _)| n.starts_with("vision_tower."))
+        .map(|(_, t)| t.dtype.as_str())
+        .collect();
+    assert_eq!(
+        tower_dtypes,
+        BTreeSet::from(["BF16"]),
+        "this checkpoint's tower is BF16; a change here moves which arm runs"
+    );
+
+    let shards = Gemma4Shards::new(
+        headers
+            .iter()
+            .zip(sources.iter())
+            .map(|(h, s)| (h, s as &dyn turbospark_repack::RangeSource))
+            .collect(),
+    );
+
+    let dir = install_dir_from(
+        "TURBOSPARK_QWEN38_VISION_INSTALL_DIR",
+        "turbospark-qwen38-vision",
+    );
+    eprintln!("installing to {}", dir.display());
+    write_qwen_gdn_dense_install_streamed(&dir, &arch, MODEL_ID, &shards, &quant, |stage| {
+        eprintln!("[repack] {stage}");
+    })
+    .expect("streamed install with a vision tower");
+
+    // The manifest declares the tower and loads with it.
+    let manifest = model_io::load_manifest(&dir, &arch, 4 * 1024 * 1024)
+        .expect("the vision install's manifest loads");
+    for f in ["packed_vision/layout.json", "packed_vision/blobs.bin"] {
+        assert!(manifest.files.contains_key(f), "the manifest omits {f}");
+    }
+
+    // The packed side: 27 blocks, addressed through the packed-experts loader.
+    let layout = model_io::load_packed_layout_from(
+        &dir,
+        model_io::PACKED_VISION_DIR,
+        model_io::PACKED_EXPERTS_LAYOUT_DEFAULT_MAX_BYTES,
+    )
+    .expect("packed_vision/layout.json decodes");
+    assert_eq!(layout.num_layers, 1);
+    assert_eq!(layout.experts_per_layer, vision.depth as usize);
+    let blocks = &layout.layers[0];
+    assert_eq!(blocks.experts.len(), 27);
+
+    // The per-block stride is what the shapes predict, which is the check the
+    // fixture's arithmetic stands in for. Twelve tensors at FP16: two norms
+    // and their biases, a fused qkv and its bias, a proj and its bias, and the
+    // two MLP matrices with theirs.
+    let h = vision.hidden_size as u64;
+    let i = vision.intermediate_size as u64;
+    let expected_block_bytes = 2
+        * (
+            // norm1 w+b, norm2 w+b
+            4 * h
+        // qkv [3h, h] + bias [3h]
+        + 3 * h * h + 3 * h
+        // proj [h, h] + bias [h]
+        + h * h + h
+        // fc1 [i, h] + bias [i]
+        + i * h + i
+        // fc2 [h, i] + bias [h]
+        + h * i + h
+        );
+    assert!(
+        blocks.expert_stride >= expected_block_bytes,
+        "stride {} is below the {expected_block_bytes} bytes a block needs",
+        blocks.expert_stride
+    );
+    assert!(
+        blocks.expert_stride - expected_block_bytes < 4096,
+        "stride {} pads more than one page over the {expected_block_bytes} needed",
+        blocks.expert_stride
+    );
+
+    // The resident side: nine tensors, all FP16 (tag 2), beside a trunk whose
+    // norms are BF16 (tag 1). Both rules in one index is the thing that could
+    // quietly stop being true.
+    let resident =
+        model_io::load_resident_index(&dir.join("model_weights.bin")).expect("resident index");
+    for suffix in turbospark_repack::VISION_RESIDENT_TENSORS {
+        let name = format!("vision.{suffix}");
+        let entry = resident
+            .entries
+            .get(&name)
+            .unwrap_or_else(|| panic!("{name} is not in the resident index"));
+        assert_eq!(entry.dtype, 2, "{name} should be FP16");
+    }
+    assert_eq!(
+        resident
+            .entries
+            .get("language_model.model.norm.weight")
+            .expect("the trunk's final norm")
+            .dtype,
+        DTYPE_BF16,
+        "the trunk's norms must still narrow to BF16"
+    );
+
+    eprintln!(
+        "vision install at {} ({} blocks, {} bytes/block)",
+        dir.display(),
+        blocks.experts.len(),
+        blocks.expert_stride
+    );
+}

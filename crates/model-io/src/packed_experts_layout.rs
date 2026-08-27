@@ -93,12 +93,38 @@ impl PackedExpertsLayout {
 /// ~22 MB layout.json; Gemma's is ~5 MB.
 pub const DEFAULT_MAX_BYTES: u64 = 64 * 1024 * 1024;
 
+/// The routed experts' subdirectory, and the only one until ROADMAP M-V3.
+pub const PACKED_EXPERTS_DIR: &str = "packed_experts";
+
+/// The vision tower's subdirectory (ROADMAP M-V3). It carries the SAME schema
+/// this module decodes: one `LayerLayout`, `experts` = the tower's blocks,
+/// free-form roles with a dtype each. What makes the reuse honest rather than
+/// a pun is that `StreamLayout` interprets none of it -- a "layer" is a file
+/// and an "expert" is a fixed-stride blob inside it, which is exactly what a
+/// double-buffered block loop wants.
+pub const PACKED_VISION_DIR: &str = "packed_vision";
+
 /// Loads packed experts layout from `dir/packed_experts/layout.json`.
 pub fn load(dir: &Path, max_bytes: u64) -> Result<PackedExpertsLayout, ModelError> {
-    let path = dir.join("packed_experts").join("layout.json");
+    load_from(dir, PACKED_EXPERTS_DIR, max_bytes)
+}
+
+/// [`load`] against an arbitrary subdirectory of the install.
+///
+/// The subdirectory is a PARAMETER rather than two copies of this decoder,
+/// because a second copy is a second place for the `expert_stride` fallback,
+/// the per-layer stride ceiling and the missing-entry check to drift -- and
+/// Gotcha 2 is already about one of those being got wrong. The vision tower
+/// passes [`PACKED_VISION_DIR`].
+pub fn load_from(
+    dir: &Path,
+    subdir: &str,
+    max_bytes: u64,
+) -> Result<PackedExpertsLayout, ModelError> {
+    let path = dir.join(subdir).join("layout.json");
     if !path.exists() {
         return Err(ModelError::MissingFile {
-            name: "packed_experts/layout.json".to_string(),
+            name: format!("{subdir}/layout.json"),
         });
     }
     let size = std::fs::metadata(&path)

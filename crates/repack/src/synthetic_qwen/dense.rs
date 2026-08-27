@@ -32,7 +32,7 @@ pub fn build_synthetic_qwen_gdn_dense_install_at_bits(
     bits: u32,
 ) -> Result<ArchConfig, Box<dyn std::error::Error>> {
     build_synthetic_qwen_gdn_dense_install_inner(
-        dir, vocab_size, num_layers, model_id, bits, false, false, false,
+        dir, vocab_size, num_layers, model_id, bits, false, false, false, false,
     )
 }
 
@@ -51,7 +51,7 @@ pub fn build_synthetic_qwen_gdn_dense_install_with_mtp(
     bits: u32,
 ) -> Result<ArchConfig, Box<dyn std::error::Error>> {
     build_synthetic_qwen_gdn_dense_install_inner(
-        dir, vocab_size, num_layers, model_id, bits, true, false, false,
+        dir, vocab_size, num_layers, model_id, bits, true, false, false, false,
     )
 }
 
@@ -73,7 +73,7 @@ pub fn build_synthetic_qwen_gdn_dense_install_with_mtp_streamed(
     bits: u32,
 ) -> Result<ArchConfig, Box<dyn std::error::Error>> {
     build_synthetic_qwen_gdn_dense_install_inner(
-        dir, vocab_size, num_layers, model_id, bits, true, true, false,
+        dir, vocab_size, num_layers, model_id, bits, true, true, false, false,
     )
 }
 
@@ -87,7 +87,7 @@ pub fn build_synthetic_qwen_gdn_dense_install_with_dflash(
     bits: u32,
 ) -> Result<ArchConfig, Box<dyn std::error::Error>> {
     build_synthetic_qwen_gdn_dense_install_inner(
-        dir, vocab_size, num_layers, model_id, bits, false, false, true,
+        dir, vocab_size, num_layers, model_id, bits, false, false, true, false,
     )
 }
 
@@ -108,7 +108,7 @@ pub fn build_synthetic_qwen_gdn_dense_install_with_both_drafters(
     bits: u32,
 ) -> Result<ArchConfig, Box<dyn std::error::Error>> {
     build_synthetic_qwen_gdn_dense_install_inner(
-        dir, vocab_size, num_layers, model_id, bits, true, false, true,
+        dir, vocab_size, num_layers, model_id, bits, true, false, true, false,
     )
 }
 
@@ -124,7 +124,46 @@ pub fn build_synthetic_qwen_gdn_dense_install_with_dflash_streamed(
     bits: u32,
 ) -> Result<ArchConfig, Box<dyn std::error::Error>> {
     build_synthetic_qwen_gdn_dense_install_inner(
-        dir, vocab_size, num_layers, model_id, bits, false, true, true,
+        dir, vocab_size, num_layers, model_id, bits, false, true, true, false,
+    )
+}
+
+/// [`build_synthetic_qwen_gdn_dense_install`] with a VISION TOWER attached
+/// (ROADMAP M-V3), through the NON-streamed writer.
+///
+/// Depth 2 at hidden 64 (`synthetic_qwen::vision`), which is the tower's real
+/// tensor inventory at a size a unit test can digest.
+pub fn build_synthetic_qwen_gdn_dense_install_with_vision(
+    dir: &std::path::Path,
+    vocab_size: i64,
+    num_layers: i64,
+    model_id: &str,
+    bits: u32,
+) -> Result<ArchConfig, Box<dyn std::error::Error>> {
+    build_synthetic_qwen_gdn_dense_install_inner(
+        dir, vocab_size, num_layers, model_id, bits, false, false, false, true,
+    )
+}
+
+/// The same install through the STREAMED writer, which is the one every real
+/// checkpoint takes.
+///
+/// **This entry point exists for the reason its MTP sibling does, and that
+/// reason is a bug that shipped.** The head's ingest landed in the
+/// non-streamed walk alone, every fixture went through that path, and the
+/// first real stream wrote a byte-identical HEADLESS install with no error.
+/// The tower has an arm in both writers from day one, and
+/// `both_writers_carry_the_vision_tower` is what keeps it that way: remove
+/// either arm and that test reddens.
+pub fn build_synthetic_qwen_gdn_dense_install_with_vision_streamed(
+    dir: &std::path::Path,
+    vocab_size: i64,
+    num_layers: i64,
+    model_id: &str,
+    bits: u32,
+) -> Result<ArchConfig, Box<dyn std::error::Error>> {
+    build_synthetic_qwen_gdn_dense_install_inner(
+        dir, vocab_size, num_layers, model_id, bits, false, true, false, true,
     )
 }
 
@@ -138,8 +177,16 @@ fn build_synthetic_qwen_gdn_dense_install_inner(
     with_mtp: bool,
     streamed: bool,
     with_dflash: bool,
+    with_vision: bool,
 ) -> Result<ArchConfig, Box<dyn std::error::Error>> {
-    let arch = tiny_qwen_gdn_dense_arch(vocab_size, num_layers);
+    let mut arch = tiny_qwen_gdn_dense_arch(vocab_size, num_layers);
+    // The tower is on the ARCH as well as in the tensor list, because
+    // `vision::should_ingest` requires both: the arch is the caller's request
+    // and the tensors are the artifact's answer. A fixture that set only one
+    // would exercise neither arm of that conjunction.
+    if with_vision {
+        arch.vision = super::vision::tiny_vision_config();
+    }
     let vocab = vocab_size as usize;
     let la = &arch.linear_attention;
     let qkv_dim = la.qkv_dim() as usize;
@@ -279,6 +326,9 @@ fn build_synthetic_qwen_gdn_dense_install_inner(
     }
     if with_dflash {
         ts.extend(dflash_drafter_tensors(vocab));
+    }
+    if with_vision {
+        ts.extend(super::vision::vision_tower_tensors());
     }
 
     let blob = assemble_safetensors(&ts);

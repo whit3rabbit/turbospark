@@ -32,8 +32,24 @@ impl StreamLayout {
         layer: &model_io::LayerLayout,
         layout_dir: &std::path::Path,
     ) -> Self {
+        Self::from_packed_layer_in(layer, layout_dir, model_io::PACKED_EXPERTS_DIR)
+    }
+
+    /// [`Self::from_packed_experts_layer`] against an arbitrary subdirectory.
+    ///
+    /// The vision tower (ROADMAP M-V3) passes `model_io::PACKED_VISION_DIR`
+    /// and gets a streamer over its 27 BLOCKS with nothing else changed --
+    /// which is the whole reuse claim, and it holds because this struct
+    /// interprets none of what it addresses. `expert` is an index into a
+    /// fixed-stride file and `layer` is which file; neither word means
+    /// anything about routing here.
+    pub fn from_packed_layer_in(
+        layer: &model_io::LayerLayout,
+        layout_dir: &std::path::Path,
+        subdir: &str,
+    ) -> Self {
         let expert_stride = layer.expert_stride;
-        let path = layout_dir.join("packed_experts").join(&layer.file);
+        let path = layout_dir.join(subdir).join(&layer.file);
         let expert_offsets: Vec<u64> = layer.experts.iter().map(|e| e.offset).collect();
         // Spans the HIGHEST offset rather than `count * stride`. The two
         // agree only while the writer emits dense `e * stride` offsets, and

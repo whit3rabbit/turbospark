@@ -2,7 +2,7 @@
 
 use super::config::{is_supported_affine_shape, Gemma4Error, Gemma4Quant};
 use super::shards::{le_u16, Gemma4Shards};
-use crate::resident_writer::{ResidentEntrySpec, ResidentTensorSpec, DTYPE_BF16};
+use crate::resident_writer::{ResidentEntrySpec, ResidentTensorSpec, DTYPE_BF16, DTYPE_FP16};
 
 /// One unquantized tensor narrowed to BF16, which is the only unquantized
 /// width this port can dispatch.
@@ -102,6 +102,129 @@ pub fn narrow_raw_to_bf16(
         other => Err(Gemma4Error::UnsupportedDtype {
             tensor: tensor.to_string(),
             dtype: other.to_string(),
+        }),
+    }
+}
+
+/// One unquantized tensor converted to FP16, for the vision tower alone
+/// (ROADMAP M-V3).
+pub struct ConvertedFp16 {
+    pub bytes: Vec<u8>,
+    /// Always [`DTYPE_FP16`], a field for [`NarrowedRaw::dtype`]'s reason.
+    pub dtype: u8,
+    /// Values that landed in FP16's SUBNORMAL range, where the mantissa is
+    /// truncated, plus those that flushed to zero. Everything in the normal
+    /// range is exact -- see the header.
+    pub lossy: usize,
+}
+
+/// Converts an unquantized tensor to FP16, refusing values FP16 cannot hold.
+///
+/// **THE TOWER IS THE ONE COMPONENT THIS PORT KEEPS AT FP16, AND THAT MAKES
+/// THIS THE MIRROR OF `narrow_raw_to_bf16` RATHER THAN A SECOND COPY OF IT.**
+/// Every text tensor is narrowed to BF16 because BF16 is the only unquantized
+/// width the text kernels dispatch (AGENTS.md Gotcha 45). The vision kernels
+/// landed in M-V2 bind `half` and are alone in `crates/gpu` in doing so, so
+/// for these tensors the rule points the other way: sending them through the
+/// BF16 narrowing would throw away three mantissa bits to store a precision
+/// nothing then reads.
+///
+/// **BOTH PUBLISHED CHECKPOINTS ARE COVERED AND THEY DISAGREE ON THE SOURCE
+/// DTYPE.** `prism-ml/Bonsai-27B-mlx-1bit` ships the tower F16, so that arm is
+/// a verbatim copy. `mlx-community/Qwen3.8-27B-4bit` -- the artifact the real
+/// M-V3 gate streams -- ships the SAME 333 tensors at the SAME shapes in
+/// **BF16**, so that arm is a real conversion. A walk that only handled F16
+/// would pass every fixture built from the 1-bit file and refuse the very
+/// checkpoint it exists to ingest.
+///
+/// **BF16 to FP16 IS EXACT IN THE NORMAL RANGE, AND THE DIRECTION IS WHAT
+/// MAKES IT SO.** BF16 carries 7 mantissa bits against FP16's 10, so the
+/// mantissa WIDENS and cannot round. What can go wrong is the EXPONENT, in
+/// both directions, and the two ends are treated differently on purpose:
+///
+/// - **Above FP16's 65,504 the value is REFUSED by name, never clamped.**
+///   BF16 reaches 3.4e38, so a large weight becomes `inf`, and an `inf` weight
+///   is the failure mode AGENTS.md Gotcha 59 is about -- it does not crash,
+///   it propagates into activations as NaN, and NaN then reads as a PERFECT
+///   score on every rank and top-k instrument downstream. A refusal at repack
+///   costs one message; the alternative costs a session.
+/// - **Below FP16's smallest normal (6.1e-5) the value degrades gracefully**
+///   into FP16 subnormals and eventually to zero, and that is counted rather
+///   than refused. A weight that small contributes nothing a norm can see, and
+///   refusing one would reject a checkpoint over a value it does not use.
+///
+/// The count is reported through the streamed writer's `progress` callback for
+/// `narrow_raw_to_bf16`'s reason: a lossy step in silence is how a quality
+/// question becomes a mystery three phases later.
+pub fn convert_raw_to_fp16(
+    tensor: &str,
+    dtype: &str,
+    bytes: Vec<u8>,
+) -> Result<ConvertedFp16, Gemma4Error> {
+    let mismatch = |detail: String| Gemma4Error::ShapeMismatch {
+        tensor: tensor.to_string(),
+        detail,
+    };
+    match dtype {
+        "F16" => {
+            if bytes.len() % 2 != 0 {
+                return Err(mismatch(format!(
+                    "{} bytes is not a whole number of F16 values",
+                    bytes.len()
+                )));
+            }
+            Ok(ConvertedFp16 {
+                bytes,
+                dtype: DTYPE_FP16,
+                lossy: 0,
+            })
+        }
+        "BF16" | "F32" => {
+            let width = if dtype == "BF16" { 2 } else { 4 };
+            if bytes.len() % width != 0 {
+                return Err(mismatch(format!(
+                    "{} bytes is not a whole number of {dtype} values",
+                    bytes.len()
+                )));
+            }
+            let mut out = Vec::with_capacity(bytes.len() / width * 2);
+            let mut lossy = 0usize;
+            for chunk in bytes.chunks_exact(width) {
+                let value = if width == 2 {
+                    compute::bf16_to_f32(u16::from_le_bytes([chunk[0], chunk[1]]))
+                } else {
+                    f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]])
+                };
+                let converted = compute::f32_to_f16(value);
+                let back = compute::f16_to_f32(converted);
+                // A source that was already non-finite is passed through: the
+                // checkpoint says so, and inventing a refusal for it would
+                // blame this conversion for the publisher's bytes. Only a
+                // FINITE value that became non-finite is this step's doing.
+                if value.is_finite() && !back.is_finite() {
+                    return Err(Gemma4Error::ShapeMismatch {
+                        tensor: tensor.to_string(),
+                        detail: format!(
+                            "value {value:e} exceeds FP16's 65504 maximum; the vision tower is \
+                             held at FP16 end to end and an overflow here would reach a kernel \
+                             as inf"
+                        ),
+                    });
+                }
+                if back != value {
+                    lossy += 1;
+                }
+                out.extend_from_slice(&converted.to_le_bytes());
+            }
+            Ok(ConvertedFp16 {
+                bytes: out,
+                dtype: DTYPE_FP16,
+                lossy,
+            })
+        }
+        other => Err(Gemma4Error::UnsupportedDtype {
+            tensor: tensor.to_string(),
+            dtype: format!("{other} in a vision tower tensor (expected F16 or BF16)"),
         }),
     }
 }

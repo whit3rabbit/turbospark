@@ -362,3 +362,49 @@ fn decodes(shape: SyntheticGgufShape) {
 
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// **THE FP16 EXCEPTION IS SCOPED BY NAME, AND BOTH DIRECTIONS MATTER**
+/// (ROADMAP M-V3).
+///
+/// `readable_resident_dtype` accepts tag 2 (FP16) only for `vision.`-prefixed
+/// tensors, because the `qwen3_5` vision tower is FP16 end to end -- its Metal
+/// kernels bind `half` where every other kernel in `crates/gpu` binds
+/// `bfloat` -- while every TEXT consumer of an unquantized tensor
+/// (`norm_view`, `read_bf16_host`) is dtype-BLIND and decodes by byte width.
+/// So an FP16 tensor either of those reaches is MISREAD rather than rejected:
+/// same width, every length check passes, values wrong by up to 2^112
+/// (AGENTS.md Gotcha 45).
+///
+/// This test is the half that could rot silently. The accepting half is
+/// exercised by every vision install; nothing but this says the exception did
+/// not widen into a blanket permission, and a blanket one is not a narrower
+/// bug than the one the refusal was written to prevent -- it is the same bug.
+///
+/// Retagging BF16 (1) to FP16 (2) on a GGUF install touches only text
+/// tensors, since this fixture has no vision tower at all.
+#[test]
+fn an_fp16_resident_tensor_is_refused_unless_it_is_the_vision_tower() {
+    let (dir, arch) = gguf_install(executable_shape());
+    let changed = retag_dtypes(&dir, 1, 2);
+    assert!(
+        changed > 0,
+        "the fixture carries no BF16 resident tensor to retag, so this proves nothing"
+    );
+
+    // `expect_err` does not compile here: it needs the OK type to be `Debug`
+    // and `RealForwardRunner` is not (`crates/runtime` Gotcha 17).
+    let Err(err) = RealForwardRunner::open(&dir, arch) else {
+        panic!("an FP16 text tensor must be refused: it would be decoded as BF16");
+    };
+    let text = err.to_string();
+    assert!(
+        text.contains("resident dtype 2"),
+        "the refusal should name the tag it refused: {text}"
+    );
+    assert!(
+        text.contains("narrowed to BF16"),
+        "the refusal should say what the writer owes: {text}"
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}

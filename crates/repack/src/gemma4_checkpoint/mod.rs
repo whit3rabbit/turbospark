@@ -18,19 +18,29 @@ mod mtp;
 mod narrow;
 mod orchestrate;
 mod shards;
+mod vision;
 
-pub use classify::{classify_for_family, classify_gemma4, Gemma4Bucket, DFLASH_PREFIX};
+pub use classify::{
+    classify_for_family, classify_gemma4, Gemma4Bucket, DFLASH_PREFIX, VISION_INSTALL_PREFIX,
+    VISION_PREFIX,
+};
 pub use config::{
     is_supported_affine_shape, parse_gemma4_config, parse_gemma4_quantization, Gemma4Error,
     Gemma4Quant, AFFINE_1BIT_GROUP_SIZE, AFFINE_2BIT_GROUP_SIZE, AFFINE_GROUP_SIZE,
 };
 pub use expert_blobs::{expert_stride_from_headers, plan_one_expert_layer};
 pub use manifest_quant::{gemma4_manifest_quant, manifest_quant, manifest_quant_for};
-pub use narrow::{narrow_raw_to_bf16, pass_through_packed, NarrowedRaw};
+pub use narrow::{
+    convert_raw_to_fp16, narrow_raw_to_bf16, pass_through_packed, ConvertedFp16, NarrowedRaw,
+};
 pub use orchestrate::{
     orchestrate_gemma4_checkpoint, orchestrate_gemma4_checkpoint_sharded, Gemma4RepackOutput,
 };
 pub use shards::{Gemma4Shards, GTURBO_PAGE_BYTES};
+pub use vision::{
+    read_vision_entries, vision_arch_for_manifest, vision_should_ingest, VisionRead,
+    BLOCK_ROLES as VISION_BLOCK_ROLES, RESIDENT_TENSORS as VISION_RESIDENT_TENSORS,
+};
 
 use std::path::Path;
 
@@ -96,6 +106,41 @@ pub fn write_gemma4_install_streamed(
         resident.entries.extend(drafter.entries);
         resident.lossy_narrowing.extend(drafter.lossy_narrowing);
     }
+    // THE VISION TOWER (ROADMAP M-V3), read HERE rather than beside the
+    // `write_packed_vision` call further down, because it is the walk's one
+    // arm with TWO destinations: its 27 blocks become packed blobs, but its
+    // nine non-block tensors are RESIDENT entries and `resident.entries` is
+    // consumed a few lines below. Reading it after that point would write a
+    // tower whose merger and patch embedding are simply missing -- an install
+    // that validates, opens, and has no way to turn an image into tokens.
+    //
+    // The same both-writers rule the two arms above carry applies to this one
+    // and is stated at the `write_packed_vision` call site.
+    let tower = if vision::vision_should_ingest(arch, &plan.vision_bases) {
+        let mut tower = vision::read_vision_entries(shards, &plan.vision_bases, &arch.vision)?;
+        progress(&format!(
+            "ingested a {}-block vision tower ({} resident tensors)",
+            tower.blocks.experts.len(),
+            tower.entries.len()
+        ));
+        // MOVED rather than cloned: the merger's two matrices are ~90 MiB
+        // between them, and this walk's whole point is that peak memory is one
+        // unit of work rather than the model.
+        resident.entries.extend(std::mem::take(&mut tower.entries));
+        Some(tower)
+    } else {
+        None
+    };
+    if let Some(tower) = &tower {
+        let lossy: usize = tower.lossy_conversion.iter().map(|(_, n)| n).sum();
+        if lossy > 0 {
+            progress(&format!(
+                "converted {} vision tensors to FP16 with {lossy} values losing bits \
+                 (subnormals; the normal range is exact -- see `convert_raw_to_fp16`)",
+                tower.lossy_conversion.len()
+            ));
+        }
+    }
     let resident_bytes =
         crate::resident_writer::build_resident_weights_bin_mixed(&resident.entries);
     // Reported rather than merely counted, on the streamed path especially:
@@ -121,6 +166,43 @@ pub fn write_gemma4_install_streamed(
         "resident region built ({} bytes)",
         resident_bytes.len()
     ));
+
+    // THE VISION TOWER, and this arm has to exist HERE as well as in
+    // `orchestrate_gemma4_checkpoint_sharded` for the reason the MTP head's
+    // comment above spells out at length: every REAL install takes this
+    // streamed writer and every fixture used to take the other one, so an arm
+    // in one writer alone is gated by a test that cannot reach the path a
+    // download takes. The head cost a 15-minute stream to discover that; the
+    // tower gets its arm in both writers from day one and a
+    // `both_writers_carry_the_vision_tower` test that fails if either is
+    // removed.
+    //
+    // It writes BEFORE `writer.finish`, which is not a preference:
+    // `build_manifest_json` HASHES every file it lists, so `packed_vision/`
+    // has to be on disk by then. Getting the order wrong is an io error
+    // naming the missing file, which is the good failure mode and is why the
+    // manifest hashes the file rather than the bytes in hand.
+    let ingest_vision = vision::vision_should_ingest(arch, &plan.vision_bases);
+    if let Some(tower) = &tower {
+        crate::gturbo_writer::write_packed_vision(dir, &tower.blocks, tower.block_stride)?;
+        progress(&format!(
+            "vision tower packed ({} blocks, {} bytes/block)",
+            tower.blocks.experts.len(),
+            tower.block_stride
+        ));
+    } else if !plan.vision_bases.is_empty() {
+        // Classified and deliberately dropped: the caller passed
+        // `VisionConfig::NONE`, which is what every text-only walk does. Said
+        // out loud rather than dropped in silence, because "this checkpoint
+        // has a tower and this install will not have one" is exactly the kind
+        // of fact a reader of a 25-minute log needs and cannot recover later.
+        progress(&format!(
+            "dropped {} vision-tower tensors (this walk was asked for a text-only install)",
+            plan.vision_bases.len()
+        ));
+    }
+    let arch = vision::vision_arch_for_manifest(arch, ingest_vision);
+    let arch = arch.as_ref();
 
     if plan.routed.is_empty() {
         // A DENSE INSTALL STILL NEEDS ITS QUANT BLOCK, which is why this
@@ -174,6 +256,15 @@ pub fn write_gemma4_install(
 ) -> Result<Gemma4RepackOutput, Box<dyn std::error::Error>> {
     let out = orchestrate_gemma4_checkpoint(header, source, arch, quant)?;
     let resident_bytes = crate::resident_writer::build_resident_weights_bin_mixed(&out.resident);
+    // THE VISION TOWER, before either `finish` below, because
+    // `build_manifest_json` hashes every file it lists. The streamed writer
+    // has the same two lines and the same ordering constraint; see its
+    // comment for why both writers carry this rather than one.
+    if let Some(tower) = &out.vision {
+        crate::gturbo_writer::write_packed_vision(dir, &tower.blocks, tower.block_stride)?;
+    }
+    let arch = vision::vision_arch_for_manifest(arch, out.vision.is_some());
+    let arch = arch.as_ref();
     if out.layers.is_empty() {
         // The streamed walk's reason, verbatim: a dense install still needs
         // its quant block, and `write_gturbo_install_with_resident_index`

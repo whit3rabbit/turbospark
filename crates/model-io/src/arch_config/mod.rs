@@ -14,4 +14,5 @@ pub use config::ArchConfig;
 pub use family::ModelFamily;
 pub use sub_configs::{
     CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig, RopeScalingConfig,
+    VisionConfig,
 };

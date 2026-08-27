@@ -22,12 +22,36 @@ pub enum Gemma4Bucket {
     /// A DFlash2 block-diffusion drafter tensor (`dflash.*`), the second
     /// speculative drafter this walk knows (`docs/DFLASH2.md`).
     DflashDrafter,
+    /// A `qwen3_5` vision-tower tensor (`vision_tower.*`), ingested rather
+    /// than dropped (ROADMAP M-V3). Distinct from [`Self::ExcludedMultimodal`]
+    /// by FAMILY, not by prefix: the same `vision_tower.` string is a Gemma or
+    /// `muse_glimmer` tower this port still has no kernels for.
+    VisionTower,
     /// Tensor not matching known language model or multimodal patterns.
     Unknown,
 }
 
 /// The prefix the multi-token-prediction head's tensors carry.
 pub const MTP_PREFIX: &str = "mtp.";
+
+/// The prefix the vision tower's tensors carry in the SOURCE checkpoint.
+///
+/// Both `qwen3_5` publishers use it, and so do Gemma 4 and `muse_glimmer` --
+/// which is exactly why the arm reading it is family-gated. It is NOT the
+/// prefix the tower's resident tensors get in the INSTALL: that is
+/// `VISION_INSTALL_PREFIX`, and the two differ on purpose (see there).
+pub const VISION_PREFIX: &str = "vision_tower.";
+
+/// The prefix the tower's resident tensors carry in the WRITTEN install.
+///
+/// Shorter than the source's, and the rename is load-bearing twice over.
+/// `crates/runtime`'s FP16 exception is scoped to this exact string, so it has
+/// to be one nothing else can collide with; and `lm_order_key` sorts resident
+/// names on `layer_index`, which finds `.layers.` in anything spelled like a
+/// block -- the tower is kept out of `resident_bases` for that reason
+/// (`ClassifiedNames::vision_bases`), and a distinct namespace makes the
+/// separation visible to every later reader of the index.
+pub const VISION_INSTALL_PREFIX: &str = "vision.";
 
 /// The prefix a DFlash2 drafter's tensors carry once they reach a walk.
 ///
@@ -129,6 +153,25 @@ pub fn classify_for_family(name: &str, num_layers: usize, family: ModelFamily) -
     // rather than ingesting a drafter no decode flow would look for.
     if name.starts_with(DFLASH_PREFIX) && family == ModelFamily::QwenGdnDense {
         return Gemma4Bucket::DflashDrafter;
+    }
+    // THE VISION TOWER (ROADMAP M-V3), and it must come BEFORE the drop list
+    // below, which matches the same prefix for every family.
+    //
+    // `matches!` over two variants rather than `==` one, and that is AGENTS.md
+    // Gotcha 61 applied rather than quoted: `qwen35` and `qwen35moe` share
+    // this file, and three separate `== ModelFamily::QwenGdnMoe` conditions
+    // elsewhere were each a latent bug for exactly as long as no dense
+    // checkpoint existed to exercise them. Both halves of this architecture
+    // ship the identical 333-tensor tower.
+    //
+    // Gemma 4 and `muse_glimmer` keep `ExcludedMultimodal` on the same string:
+    // this port has no kernels for their towers, and ingesting one because the
+    // prefix matched would write an install carrying weights nothing can
+    // dispatch.
+    if name.starts_with(VISION_PREFIX)
+        && matches!(family, ModelFamily::QwenGdnDense | ModelFamily::QwenGdnMoe)
+    {
+        return Gemma4Bucket::VisionTower;
     }
     // THIS LIST IS READ OFF REAL CHECKPOINT HEADERS, one prefix per
     // publisher's naming, and it is not guesswork: an unlisted prefix falls

@@ -28,10 +28,21 @@ pub(crate) fn build_manifest_json(
     dir: &Path,
 ) -> Result<serde_json::Value, WriterError> {
     let mut files = serde_json::Map::new();
+    // The vision tower's two files, listed only when the arch declares one.
+    // Keyed on `arch.vision.is_active()` and not on the directory existing,
+    // because a `files` entry names a file this reader will then `read` --
+    // probing the filesystem instead would turn a walk that forgot to write
+    // the blobs into an install that validates and is missing its tower.
+    let vision: &[&str] = if arch.vision.is_active() {
+        &["packed_vision/layout.json", "packed_vision/blobs.bin"]
+    } else {
+        &[]
+    };
     for relative in ["model_weights.bin", "packed_experts/layout.json"]
         .into_iter()
         .map(String::from)
         .chain((0..num_layers).map(|l| format!("packed_experts/layer_{l:02}.bin")))
+        .chain(vision.iter().map(|s| String::from(*s)))
     {
         let path = dir.join(&relative);
         let bytes = std::fs::read(&path).map_err(|e| io_err(&path, e))?;
@@ -103,6 +114,27 @@ pub(crate) fn build_manifest_json(
             "ropeScalingOriginalContext": arch.rope_scaling.original_context,
             "ropeScalingBetaFast": arch.rope_scaling.beta_fast,
             "ropeScalingBetaSlow": arch.rope_scaling.beta_slow,
+            // ROADMAP M-V3, the vision tower, and unconditional for the block
+            // comment's reason rather than a new one: an omitted field is
+            // resolved against a baseline, so an install that HAS a tower and
+            // says nothing would validate its 27 blocks against zero. Every
+            // pre-M-V3 family writes `VisionConfig::NONE`'s zeros here, which
+            // is what those installs already validate against.
+            "visionDepth": arch.vision.depth,
+            "visionHiddenSize": arch.vision.hidden_size,
+            "visionIntermediateSize": arch.vision.intermediate_size,
+            "visionNumHeads": arch.vision.num_heads,
+            "visionPatchSize": arch.vision.patch_size,
+            "visionTemporalPatchSize": arch.vision.temporal_patch_size,
+            "visionInChannels": arch.vision.in_channels,
+            "visionSpatialMergeSize": arch.vision.spatial_merge_size,
+            "visionNumPositionEmbeddings": arch.vision.num_position_embeddings,
+            "visionOutHiddenSize": arch.vision.out_hidden_size,
+            "visionMropeSection": arch.vision.mrope_section,
+            "visionStartTokenId": arch.vision.vision_start_token_id,
+            "visionEndTokenId": arch.vision.vision_end_token_id,
+            "visionImageTokenId": arch.vision.image_token_id,
+            "visionVideoTokenId": arch.vision.video_token_id,
             // STILL VALIDATED AND NOT WRITTEN: `hcEps` and `hcMult`. They are
             // DeepSeek-V4-Flash's, that family is refused at open because its
             // kernels are unported, and no walk can produce such an install --

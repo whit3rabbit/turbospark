@@ -112,8 +112,29 @@ pub fn validate(m: &Manifest, expected: &ArchConfig) -> Result<(), ModelError> {
             return Err(ModelError::MissingFile { name: padded });
         }
     }
+    // The vision tower's two files, required only when the resolved arch says
+    // there IS a tower (ROADMAP M-V3). Gated on `expected` rather than added
+    // to `REQUIRED_FILES`, because that list applies to every install ever
+    // written and none before M-V3 carries these -- the same reason the
+    // per-layer expert files above are generated from `num_layers` instead of
+    // being listed.
+    if expected.vision.is_active() {
+        for f in VISION_FILES {
+            if !m.files.contains_key(f) {
+                return Err(ModelError::MissingFile {
+                    name: f.to_string(),
+                });
+            }
+        }
+    }
     Ok(())
 }
+
+/// The files an install carrying a vision tower must declare. ONE blob rather
+/// than one per block: the tower streams by BLOCK the way an MoE layer streams
+/// by expert, and `PackedExpertsLayout`'s schema puts all of one layer's
+/// experts in one file.
+const VISION_FILES: [&str; 2] = ["packed_vision/layout.json", "packed_vision/blobs.bin"];
 
 /// The page size this format's writer aligns `expertStride` to. Hardcoded
 /// rather than queried from the OS: both macOS/arm64 and Linux/x86_64 (the

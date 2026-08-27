@@ -43,6 +43,7 @@ fn dense_arch() -> model_io::ArchConfig {
         routed_scaling_factor: 1.0,
         swiglu_limit: 0.0,
         rope_scaling: model_io::RopeScalingConfig::NONE,
+        vision: model_io::VisionConfig::NONE,
     }
 }
 
