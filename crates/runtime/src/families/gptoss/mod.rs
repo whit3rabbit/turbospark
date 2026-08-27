@@ -35,6 +35,7 @@
 
 mod attn;
 mod moe;
+mod moe_batch;
 mod prefill;
 mod state;
 

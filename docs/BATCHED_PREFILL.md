@@ -777,3 +777,198 @@ md5-identical against a pre-change binary, prefill dropping from 7.56s to
 3.79s on a 75-token prompt now that chunking engages), the MoE half of
 `llama` against a freshly-pulled `Qwen/Qwen3-30B-A3B-GGUF` install (see
 `crates/runtime/CLAUDE.md` Gotcha 14 for the exact md5s).
+
+### Step 5's two arms, measured before building either
+
+Measured 2026-08-27 on the two real installs left by the step-1 landing
+above, to decide whether Step 5 pays and which arm to build first.
+`MFERENCE_PHASES=1`, the frozen `long-synthesis` prompt, `--max-new 8` so
+99.7% of the divisor is prefill, chunking already on at the default 128, slot
+count `auto`. **The answer inverts the order the work was scoped in: build
+the MXFP4 arm first, and the GGUF one may not be worth building at all.**
+
+| | Gemma 4 (affine) | qwen3moe (Q4_K/Q6_K) | gpt-oss (MXFP4) |
+| --- | ---: | ---: | ---: |
+| experts/layer, top_k | 128, 8 | 128, 8 | **32, 4** |
+| one expert blob | 3.2 MiB | 2.92 MiB | **12.64 MiB** |
+| layers | 30 | 48 | 24 |
+| slots at `auto` | 32 | 32 | **24** |
+| prefill ms/token | 14.70 | 46.4 | 31.6 |
+| routed pair, GPU device ms/token | 3.86 | 10.11 | **15.15** |
+| ... as a share of all GPU device time | 38.2% | 36.5% | **61.4%** |
+| expert `pread` (**does not batch**) | 25.0% | **37.1%** | **8.2%** |
+| expert cache hit rate | 81.4% | 75.7% | **96.7%** |
+| routed host structure (retire+bind+readback) | 3.44 | 8.95 | 17.12 |
+| largest M with `union(M) <= slots` | 8 | 8 | **16 (the kernel's own cap)** |
+
+Gemma's column is the step-1 pair-3 table above; the other two were measured
+for this section. The gpt-oss row reproduced across two runs (89.60 s and
+91.44 s wall, routed device 15.15 and 14.70 ms/token) on a machine that was
+NOT quiet (Gotcha 43: `synrepo` and `rust-analyzer` both near a full core),
+which is why the columns above are shares and reachable-M rather than
+absolutes -- GPU device time is the bucket contamination does not reach.
+
+**`gpt-oss` is the arm worth building, on three independent counts.** Its
+routed pair is 61.4% of prefill GPU device time against Gemma's 38.2%, so
+the term steps 2/3 attack is the workload rather than a quarter of it. Its
+`pread` bucket -- the term that does not batch and that sets the ceiling for
+both other families -- is 8.2% rather than 25-37%, because 32 experts at
+top-4 fit a 24-slot cache almost entirely (96.7% hit). And **it is the only
+family here that reaches M=16**: with only 32 experts to draw from, its union
+saturates near 20 and stays under 24 slots at every M, so the binding
+constraint is `MAX_BATCH_ROWS` rather than `union(M) <= slot_count`. Both
+128-expert families cap at M=8, where the measured `c(M)` is worse.
+
+**`qwen3moe` is the weaker arm and its ceiling is not the kernel.** 37.1% of
+its prefill is expert `pread`, measured three separate times across this
+document to batch not at all, and its 75.7% hit rate at the maximum 32 slots
+says that bucket is already at the lever's end (`ALLOWED_CACHE_SLOTS` stops
+at 32). Its routed device share, 36.5%, is Gemma's; so is its reachable M.
+It would also cost TWO block-type kernels rather than one -- its blobs are
+Q4_K on gate/up and **Q6_K on down**, so phase 1 and phase 2 need different
+row helpers -- where MXFP4 covers both phases with one. Cheaper work, on a
+larger term, for the family that reaches the wider batch: the ordering is not
+close.
+
+**What is NOT measured here is `c(M)` for either block type**, and that gap
+is the reason this section quotes shares rather than a projected multiplier.
+The only measured `c(M)` in this document is INT4-affine at Gemma's shape
+(0.77/0.68/0.66 at M=2/4/8), and this document has already been burned once
+for borrowing a proxy across kernels: the routed pair's 0.287 stand-in was
+optimistic by 2.3x when the real pair was finally measured. MXFP4's blob is
+12.64 MiB against affine's 3.2, so its union dedupes even less of what an L2
+can hold, and the structural reason Gemma's pair only reached 0.66 -- the win
+is occupancy and dispatch count, not weight amortization -- applies here
+harder, not less. Measure `c(M)` on the real MXFP4 shape
+(`moe_prefill_batch_bench.rs`'s arms, at D=2880 F=2880 top_k=4) before
+quoting any end-to-end number for this arm.
+
+The kernel itself is a smaller piece of work than "a genuinely new kernel
+shape" suggests, because both halves already exist and neither is the hard
+one: `moe_prefill_batch.metal` owns the route list, the 32-pointer
+`RoutedBlobsWide` buffer and the rank-ordered fused phase 2 that makes
+Gotcha 27 hold by construction, while `moe_gguf.metal` owns
+`dequant_mxfp4_row_simd`, `moe_activate_mxfp4`'s clamped SwiGLU and the
+per-expert bias offsets. What has to be designed rather than composed is the
+`Mxfp4Activation` uniform reaching the batched pair without acquiring a
+function-constant axis that misses `constants_key` (Gotcha 1, and
+`moe_gguf/`'s own note on why that activation is a uniform in the decode
+pair).
+
+### Step 5's MXFP4 arm, built and measured
+
+Landed 2026-08-27, the same day the section above scoped it.
+`moe_prefill_batch_gguf.metal`'s `moe_prefill_phase1_routes_mxfp4` and
+`moe_prefill_phase2_fused_mxfp4`, driven from
+`families/gptoss/moe_batch.rs` under the same `MFERENCE_ROUTED_BATCH=1`
+seam. Real `~/.turbospark/models/gptoss-20b.gturbo`, the frozen
+`long-synthesis` prompt (2,839 tokens), `--max-new 8`, 24 slots (auto),
+three interleaved pairs after a discarded warmup:
+
+| pair | per-token routed | batched routed | |
+| ---: | ---: | ---: | ---: |
+| 1 | 82.94 s | 64.35 s | 1.289x |
+| 2 | 79.31 s | 59.83 s | 1.326x |
+| 3 | 78.37 s | 59.81 s | 1.310x |
+| mean | 80.21 s | **61.33 s** | **1.31x** |
+| ms/token | 28.3 | **21.6** | |
+
+**1.31x against Gemma 4's 1.19x for the same step on the affine pair**, and
+the ordering measurement above is why: this family's routed pair is 61.4% of
+its prefill GPU device time where Gemma's is 38.2%.
+
+Where it came from, `MFERENCE_PHASES=1` on the batched arm against the
+per-token one, ms per prompt token:
+
+| bucket | per-token | batched |
+| --- | ---: | ---: |
+| gpu wait (layer cb1) | 10.93 | 18.40 |
+| routed cb retire | 16.32 | **0.82** |
+| expert io (`pread`) | 2.59 | **1.26** |
+| routed bind + upload | 0.70 | 0.05 |
+| encode + logit readback | 0.94 | 0.26 |
+| **total** | **31.6** | **20.7** |
+| GPU busy, cb1 / routed | 9.54 / 15.15 | 8.86 / **10.16** |
+
+**Read the total row, not the `gpu wait` one.** That bucket ROSE, and it is
+not a regression: the batched routed buffer is committed at the end of a
+layer and retired after the NEXT layer's router wait, so the waiting that
+used to be attributed to `routed cb retire` has migrated into `cb1`'s wait.
+This is the same reattribution step 1's own table records in the opposite
+direction, and it is why neither bucket alone is quotable.
+
+**The pair's own `c(M)` measures 10.16 / 15.15 = 0.67 at M=16**, which lands
+within a point of the affine pair's measured `c(8) = 0.66` on a different
+block type at a different shape -- an independent confirmation that this
+kernel family's win is occupancy and dispatch count rather than weight
+amortization, exactly as the affine measurement concluded.
+
+**M=16 IS ACTUALLY REACHED, measured rather than inferred from the mean
+union.** The expert-cache counters say the greedy shrink essentially never
+fires: the batched arm makes 75,762 plan requests against the 73,478 that
+full-width 16-token sub-batches predict (178 sub-batches per layer, 24
+layers, union(16) = 17.2), a 3.1% gap. On both 128-expert families the same
+arithmetic would cap the sub-batch at 8.
+
+**AND THE EXPERT `pread` BUCKET HALVED (2.59 to 1.26 ms/token), WHICH IS THE
+ONE PLACE THIS FAMILY CONTRADICTS THE UNION FINDING ABOVE.** Absolute cache
+MISSES -- the count that is bytes rather than bookkeeping -- fell 9,044 to
+6,478, a 28% cut, where Gemma 4's step 1 measured its hit rate moving 81.2%
+to 81.4% and this document calls the union worthless three separate times.
+Read the ABSOLUTE misses and not the rate: the batched arm's hit rate looks
+WORSE (96.7% to 91.4%) purely because its request count fell 3.6x with the
+misses in the numerator.
+
+The likely mechanism is not union dedup and the distinction matters for
+anyone porting this to a third family. The per-token path passes each token's
+plan a `protect` set naming the previous token's in-flight slots
+(`RoutedSlot::protect`, the pipelining constraint), which reserves slots and
+forces evictions the routing alone would not; the batched path retires before
+it plans and so passes an EMPTY protect set over the whole sub-batch's union
+at once. So what fell is eviction pressure from PIPELINING, not traffic the
+union deduplicated -- consistent with the union tables above rather than a
+counterexample to them. It shows up here and not on Gemma 4 because 32
+experts against 24 slots means the cache already holds three quarters of the
+model's experts, so relaxing placement has somewhere to go. **This was not
+separated experimentally**, and separating it would mean running the
+per-token arm with pipelining disabled; the 28% is measured, the attribution
+is reasoned.
+
+Gates paid: bit-exactness against M sequential MXFP4 decode-pair calls at
+the real D=2880/F=2880 shape, mutation-checked four ways
+(`crates/gpu/tests/moe_prefill_batch_gguf_parity.rs`); byte-identity against
+the sequential path on the synthetic fixture at chunk spans 1/2/3/5/8/11 and
+at a cache too small to hold a sub-batch's union, mutation-checked two ways
+(`crates/runtime/tests/real_forward_gptoss_chunked.rs`); and on the real
+install a THREE-way md5 identity rather than the usual two -- the
+PRE-CHANGE binary, the post-change binary with the seam off, and the
+post-change binary with it on all produce `7281650e...` greedy (over three
+interleaved pairs) and `78aae4b3...` sampled. The pre-change arm is what
+says the default path did not move, which an on-vs-off comparison within one
+binary cannot: both of its arms carry whatever the change did.
+
+The memory oracle is unaffected STRUCTURALLY rather than by measurement, and
+the reason is the lazy allocation: `ensure_batched` is called only under
+`routed_batch_prefill`, which is off unless `MFERENCE_ROUTED_BATCH` is set,
+and no oracle sets it. `BatchedRoutedScratch` is ~1.1 MiB against that
+family's 5,700 MiB ceiling even when it is allocated.
+
+**The Q4_K/Q6_K arm is still unbuilt and the case for it is unchanged --
+but wiring a SECOND family to this seam exposed that the unwired one was
+SILENTLY IGNORING it.** `MFERENCE_ROUTED_BATCH=1` on the real `qwen3moe`
+install ran to completion with no message and no batching, because
+`families/llama/moe_prefill.rs` simply had no branch reading the flag: a
+caller who set it would have measured the per-token engine and reported it
+under the batched arm's label, which is the `encode_gemm_any` doctrine's
+exact failure. It is a named refusal now, and
+`the_batched_routed_seam_is_refused_by_name_on_this_family` pins it.
+
+Two things worth carrying from how that was found. It was a claim in THIS
+document ("refused by layout, as it did before") checked against the binary
+rather than a test failing -- the sentence was written from the affine
+driver's guard and was never true of the family that has no driver at all.
+And the DENSE drivers ignoring the same flag is correct and deliberately not
+asserted: `MFERENCE_ROUTED_BATCH` asks for the routed half as one dispatch
+pair, and a dense family has no routed half for it to refer to. The rule is
+"refuse where the request is meaningful and unserved", not "refuse
+everywhere unwired".

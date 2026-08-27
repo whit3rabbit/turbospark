@@ -49,6 +49,8 @@ crates/runtime/
 |   |   |   +-- mod.rs          # Entry point & layer loop
 |   |   |   +-- attn.rs         # GQA + projection biases + YaRN rope + attention sinks
 |   |   |   +-- moe.rs          # Routed MXFP4 pass; adds the ROUTER BIAS before the top-k
+|   |   |   +-- moe_batch.rs    # Batched routed MXFP4 pass (step 5, 2026-08-27)
+|   |   |   +-- prefill.rs      # gpt-oss chunked prefill driver
 |   |   |   \-- state.rs        # RealGptOssState: YaRN table, per-layer router bias
 |   |   +-- llama/              # `llama` architecture (Mixtral + dense) decode flow
 |   |   |   +-- mod.rs          # Entry point & layer loop
@@ -245,7 +247,7 @@ cargo test -p turbospark-runtime
    - `MFERENCE_MTP_DRAFT=<depth>`: builds `families/qwen/mtp.rs`'s `MtpState` and lets `RealForwardRunner::mtp_draft_step` run (`docs/MTP_SPECULATIVE.md`, step 2; `qwen3_5` only). Unset, unparsable or 0 allocates NOTHING and encodes nothing, so the off path is identical in bytes and in footprint to the engine that shipped before the module existed -- which is what lets `qwen38_memory_oracle`'s frozen row stand rather than needing a new one. A depth asked for on an install with no head is an ERROR at open naming `mtp.fc.weight`, never a silent no-op: a caller that asked for speculation and quietly got none would measure the non-speculative engine and report it as the speculative one (Gotcha 14's argument, one feature over).
    - `MFERENCE_DFLASH_DRAFT=<block>`: builds `families/qwen/dflash.rs`'s `DflashState`, the SECOND drafter for this family and the first BLOCK drafter in the engine (`docs/DFLASH2.md`). Same off-path guarantee as the MTP knob, and the same refusal on an install without one. It proposes a whole block in ONE pass, so the loop calls `draft_block` and never `draft_step`; its KV holds TARGET-derived rows written by `dflash_context_write` from the trunk's aux capture, and it is `rewind_drafter`'s exception -- a target AHEAD of its cursor is normal, because that cursor advances only at the NEXT round's context write. Its residual stream is held DIVIDED by `DFLASH_RESIDUAL_SCALE`, with the norms reading it taking `DFLASH_RESIDUAL_EPS`, because the drafter's true residual peaks at 113,920 against FP16's 65,504 (AGENTS.md Gotcha 60); `dflash_select` REFUSES a non-finite row rather than proposing token 0 (Gotcha 59).
    - `MFERENCE_PREFILL_CHUNK=<tokens>`: routes prefill through `run_raw_completion_chunked` and `RealForwardRunner`'s chunk driver (Gotcha 14). An A/B seam like the two above it, not a feature flag: both arms must produce identical tokens. Unset, unparsable or 0 is the sequential path. **`--prefill-chunk` IS wired now (2026-08-26), and this env var still wins over it when set.** `crates/cli`'s `resolve_chunk_tokens` and `crates/server`'s `RealChatModel::run_completion` both check the env var first, then fall through to the flag's resolved value (`invocation::PrefillChunk::resolved`: `Fixed(n) -> n`, `Auto -> DEFAULT_CHUNK_SIZE`) ONLY when `RealForwardRunner::supports_chunked_prefill()` says the open install's family can serve it, and to the sequential path with no error otherwise -- the flag carries a default on every invocation whether or not the caller typed it, so an unsupported family must not become an error for a caller who asked for nothing. That predicate is the SAME one `ChunkedPrefillRunner::prefill_chunk`'s own hard refusal uses (`real_forward_api.rs`), so a caller deciding whether to route here and the driver's own refusal can never disagree. Two families today: Gemma 4 and the dense half of `llama` (Gotcha 14).
-   - `MFERENCE_ROUTED_BATCH=1`: inside the chunk driver, runs each layer's routed half as ONE route-list dispatch pair per union-bounded sub-batch instead of per token (`docs/BATCHED_PREFILL.md` steps 2 and 3, `families/gemma4/moe_batch.rs`). INT4-affine blobs only; a GGUF install is refused by layout rather than looped.
+   - `MFERENCE_ROUTED_BATCH=1`: inside the chunk driver, runs each layer's routed half as ONE route-list dispatch pair per union-bounded sub-batch instead of per token (`docs/BATCHED_PREFILL.md` steps 2 and 3, `families/gemma4/moe_batch.rs`). **TWO families since 2026-08-27**: Gemma 4 on INT4-affine blobs, and `gpt-oss` on MXFP4 ones (step 5's first arm, `families/gptoss/moe_batch.rs`). Each refuses the OTHER's layout by name rather than looping, so neither can silently measure the per-token engine. `qwen3moe`'s Q4_K/Q6_K blobs are still refused by layout: that arm was scoped by measurement and deliberately not built (Gotcha 22).
    - `MFERENCE_BATCHED_GEMV=1`: the same driver's RESIDENT GEMVs as M-row GEMMs through `encode_gemm_any` (step 6, the 29.7% row of the prefill dispatch ranking). **It moves the four attention projections always and the shared expert's three only when `MFERENCE_ROUTED_BATCH` is also on** -- the per-token routed pass reads a single-row `h1` at offset 0 and that read is on the DECODE path's signature, so widening it would be a decode change. Norms, RoPE, attention, the residual adds and the router GEMV stay per token. INT4-affine only, refused by name otherwise (which the DEFAULT synthetic fixture triggers: it writes its shared MLP at eight bits where the real install declares four). Output is byte-identical on both arms and that is measured rather than structural -- the batched and single-row INT4 kernels agree bit-for-bit on a fixture built to see reassociation, against a positive control that does not.
 8. **A layer's routed slots are dispatched in the ROUTER'S RANKING, and that is a correctness constraint, not a style choice.** Phase 2 reduces `blob[slot] * routing_w[slot]` in slot-index order and FP addition is not associative, so the slot order is the summation order. The Gemma flow used to order slots misses-first so the resident hits' phase-1 GEMV could ride its own command buffer (`MFERENCE_HIT_CB`, now removed); because the hit/miss split follows CACHE STATE rather than the prompt, the same prompt could decode to different text across warm runs in one process. Measured 2026-08-08: 4 distinct outputs in 6 runs on a Q8_0 GGUF install at 16 slots, 2 in 6 on the MLX install at 32. Both families are now byte-identical across 8/16/32 slots and cold vs warm. Before adding a decode-path optimization that reorders slots, ask what its ordering is a function of. See AGENTS.md Gotcha 27.
 9. **The one `thread::sleep` in this crate is in `decode`, and where it sits is load-bearing.** ROADMAP Phase P2's rate cap paces AFTER the loop has decided to continue and BEFORE the next `produce`. After, so the final token of a generation never pays a sleep nobody waits through, and the stop branches break out above it. Before `produce`, so the idle window falls between forward passes rather than inside one, which is the entire point on the energy axis: the GPU has to be idle during it. It is also strictly downstream of `selection::select`, `history.push` and the progress callback, which is why pacing cannot move a token and why no quality gate is needed for a change to it (`raw_completion.rs`'s `pacing_polls_thermal_pressure_without_changing_the_tokens` is the guard). `RateControl::is_active` gates the whole block, so the default config executes the identical statement sequence it did before the feature existed. A timing test on this may only assert a LOWER bound: a cap is a floor on spacing, never a promise about the ceiling.
@@ -668,3 +670,82 @@ cargo test -p turbospark-runtime
     the batched-routed case. Neither mutation touches the other's coverage,
     which is what says the two are independent call sites rather than one
     path exercising both.
+
+22. **THE BATCHED ROUTED HALF SERVES TWO FAMILIES NOW, AND WHICH ONE WAS
+    BUILT SECOND WAS DECIDED BY MEASUREMENT RATHER THAN BY THE ORDER THE
+    WORK WAS SCOPED IN.** `docs/BATCHED_PREFILL.md` step 5 is titled "GGUF
+    Routed Pair Widening" and the GGUF arm is the one NOT built.
+    `families/gptoss/moe_batch.rs` (2026-08-27) drives
+    `gpu::moe_prefill_batch_gguf`'s MXFP4 pair under the same
+    `MFERENCE_ROUTED_BATCH` seam, measuring **1.31x** on the real 20B
+    install against Gemma 4's 1.19x for the same step.
+
+    **The three measurements that chose it, taken before either arm was
+    written** (`MFERENCE_PHASES=1`, the frozen `long-synthesis` prompt, both
+    real installs, slot count `auto`): `gpt-oss`'s routed pair is 61.4% of
+    its prefill GPU device time where Gemma's is 38.2% and `qwen3moe`'s is
+    36.5%; its un-batchable expert `pread` bucket is 8.2% where the two
+    128-expert families run 25-37%; and with 32 experts at top-4 its
+    measured union stays under the slot count at EVERY M, so it is the only
+    family here that reaches M=16 -- both 128-expert families cap at M=8 on
+    `union(M) <= slot_count`. `qwen3moe` would also have cost TWO kernels
+    (Q4_K on gate/up, Q6_K on down) where MXFP4 covers both phases with one.
+    Do the share-and-reachable-M arithmetic before widening a kernel to a
+    third family; it is two runs and it inverted the planned order here.
+
+    **The driver is Gemma's with two subtractions and one addition, and all
+    three are already in this family's sequential flow.** No shared expert
+    (phase 2 seeds from `batch_zero` and the routed sum reaches the stream
+    through one raw residual add -- passing `x` there would add the residual
+    twice), no sandwich norms (the tail is that one add rather than Gemma's
+    norm/add/norm/add/scalar-mul), and the ROUTER BIAS added to each token's
+    read-back logits BEFORE its top-k, which is `families/gptoss/moe.rs`'s
+    first six lines. Getting that last one wrong selects the wrong experts
+    and still reads fluently; the mutation that drops it reddens exactly the
+    four batched cases in `real_forward_gptoss_chunked.rs` and none of the
+    five per-token ones.
+
+    **`BatchedRoutedScratch` is allocated on FIRST USE**, per the rule
+    `families/gemma4/state.rs` states at length: a run that never asks for
+    the batched half allocates none of it, so the frozen `gptoss_memory_oracle`
+    row keeps describing the engine that shipped before this landed. It is
+    ~1.1 MiB against a 5,700 MiB ceiling, so this is consistency with a rule
+    rather than a memory win.
+
+    **Its wide argument buffer comes from the MXFP4 pair's OWN shader
+    library**, through `RoutedBlobsWideBuffer::new_for` / `bind_for` rather
+    than the affine pair's `new` / `bind`. The two libraries declare
+    `RoutedBlobsWide` identically, so one encoder works today; taking it from
+    the function that will READ the buffer means a layout that ever diverged
+    is a compile-time mismatch instead of a silently misread pointer array.
+
+    Verified byte-identical against the sequential path on the synthetic
+    fixture (chunk spans 1/2/3/5/8/11, several straddling the fixture's
+    8-token sliding window, plus a two-slot case forcing the greedy
+    sub-batch shrink) and on the real install: a THREE-way md5 identity --
+    the PRE-CHANGE binary, the post-change binary with the seam off, and the
+    post-change binary with it on (`7281650e...` greedy, `78aae4b3...`
+    sampled). The pre-change arm is the one that says the DEFAULT path did
+    not move; an on-vs-off comparison inside one binary cannot, since both
+    of its arms carry whatever the change did.
+
+    **WIRING A SECOND FAMILY TO THIS SEAM EXPOSED THAT THE UNWIRED ONE WAS
+    SILENTLY IGNORING IT, and that is the part most worth carrying.**
+    `MFERENCE_ROUTED_BATCH=1` on the real `qwen3moe` install ran to
+    completion with no message and no batching, because
+    `families/llama/moe_prefill.rs` had no branch reading the flag at all --
+    so a caller who set it measured the per-token engine and would have
+    reported the number under the batched arm's label. That is the
+    `encode_gemm_any` doctrine's exact failure, in the one family that had a
+    routed half and no batched kernel for it. Now a named refusal, pinned by
+    `the_batched_routed_seam_is_refused_by_name_on_this_family`.
+
+    Two things about how it was found. It came from checking a sentence in
+    `docs/BATCHED_PREFILL.md` ("refused by layout, as it did before")
+    against the binary, not from a test going red -- the sentence had been
+    written from the AFFINE driver's guard and was never true of the family
+    that has no driver. And the rule the fix follows is narrower than
+    "refuse everywhere unwired": the DENSE drivers ignore the same flag and
+    are right to, because `MFERENCE_ROUTED_BATCH` asks for the routed half
+    as one dispatch pair and a dense family has no routed half to refer to.
+    Refuse where the request is MEANINGFUL and unserved.

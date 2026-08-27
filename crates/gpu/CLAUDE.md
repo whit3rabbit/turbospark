@@ -20,7 +20,8 @@ crates/gpu/
 |   +-- attention_decode.rs         # Split-KV decode attention dispatch
 |   +-- attention_decode_tests.rs   # Unit tests for attention decode dispatch
 |   +-- moe_decode.rs               # MoE router, phase 1 GEMV, phase 2 down-reduce dispatches
-|   +-- moe_prefill_batch.rs        # Batched MoE prefill GEMV dispatch
+|   +-- moe_prefill_batch.rs        # Batched MoE prefill GEMV dispatch (INT4 affine)
+|   +-- moe_prefill_batch_gguf.rs   # The same over MXFP4 expert blobs (step 5; gpt-oss)
 |   +-- rms_norm.rs                 # RMSNorm dispatches (no-scale, BF16, per-head)
 |   +-- rope.rs                     # RoPE positional embedding dispatch
 |   +-- dequant_1bit_gemv.rs        # MLX 1-bit affine GEMV pair (port-local, ROADMAP's 1-bit entry)
@@ -67,6 +68,7 @@ crates/gpu/
 |       +-- logit.metal             # Logit softcap and softmax shader source
 |       +-- moe.metal               # MoE router GEMV and phase 1/2 shader source
 |       +-- moe_prefill_batch.metal # Batched MoE prefill GEMV shader source
+|       +-- moe_prefill_batch_gguf.metal # The MXFP4 batched pair (after the moe_gguf chain)
 |       +-- rmsnorm.metal           # RMSNorm shader source
 |       +-- rope.metal              # RoPE shader source
 |       +-- utility.metal           # Elementwise utility shader source + the steering edit
@@ -99,6 +101,7 @@ crates/gpu/
     +-- moe_decode.rs
     +-- moe_gguf_parity.rs
     +-- moe_prefill_batch_bench.rs
+    +-- moe_prefill_batch_gguf_parity.rs
     +-- moe_prefill_batch_parity.rs
     +-- power_state.rs
     +-- prefill_scratch.rs
@@ -205,6 +208,12 @@ crates/gpu/
   **The attention is ONE PASS over the keys, online softmax**, with the 8 SIMD groups splitting keys and the 32 lanes splitting the head dimension into a register tile. The straightforward three-pass shape (max, denominator, weighted sum with threads over the head dim) is CORRECT and recomputes every dot product once per output element -- `head_dim` times too much work, a factor of 72 here. The first draft did exactly that. `MAX_ATTENTION_HEAD_DIM` is 128 from that register tile and is REFUSED rather than clamped, since exceeding it truncates a head silently.
   **`vision_matmul_fp16` takes all three position attributes as `uint2`**, which is a Metal rule and not a style: a kernel's position inputs must be all scalar or all vectors of the same width, so a `uint2` threadgroup position beside a scalar `thread_position_in_threadgroup` does not compile. The simdgroup attributes are a different family and stay scalar.
   `tests/vision_parity.rs` holds the per-kernel numbers, each parity case paired with a DISCRIMINATION case (the tower has three places where two functions nearly coincide). `tests/vision_block_parity.rs` is the composition gate: every per-kernel case passes while the block is wired wrongly, so it runs a whole block at the real widths and checks q/k/v slicing, rope reaching q and k but NOT v, both residuals, and that every one of the twelve weights reaches the output.
+- `moe_prefill_batch_gguf.rs` + `shaders/moe_prefill_batch_gguf.metal`: the batched routed pair over MXFP4 expert blobs (`docs/BATCHED_PREFILL.md` step 5), which is `gpt-oss`'s only layout. PORT-LOCAL; the contract is BIT-IDENTITY with the MXFP4 DECODE pair run M times, held by `tests/moe_prefill_batch_gguf_parity.rs`. **FOUR THINGS TO READ BEFORE TOUCHING IT.**
+  **It is a SUBSTITUTION of `moe_prefill_batch.metal`, not a generalization of it**, and deliberately so: the two blobs share no row addressing (an affine blob has scale and bias PLANES the helper strides through, an MXFP4 block carries its own E8M0 exponent inline in 17 bytes), so a function-constant variant selecting between them would be two kernels wearing one name, with a specialization byte that has to reach `constants_key` or the cache hands back whichever compiled first (Gotcha 1).
+  **The activation parameters and `has_bias` ride as UNIFORMS**, inherited from the decode pair's decision for the same reason. `a_plain_activation_is_a_different_function` is what says they reach the kernel at all: the fixture writes bias planes on BOTH arms, so if the uniforms were ignored the `GPT_OSS` and `PLAIN` runs would agree and both parity cases would pass against a kernel that read neither.
+  **The bias placement is the family's math and not the block type's**, in two places that a reader will not find by looking at the flow: gate/up biases are added BEFORE the activation, where the clamp reads them (`min(gate + b, limit)`), and the down bias is added PER SLOT INSIDE the routing weight, because it is that expert's own bias on that expert's own output. Both were mutation-checked; each wrong order reddens exactly the three `GPT_OSS` cases and neither `PLAIN` one.
+  **This arm was built before the Q4_K/Q6_K one on a measurement, not on convenience** (`docs/BATCHED_PREFILL.md`, "Step 5's two arms"): `gpt-oss`'s routed pair is 61.4% of its prefill GPU device time against Gemma's 38.2%, its un-batchable `pread` is 8.2% against 25-37%, and it is the only family whose union stays under the slot count at every M -- so `the_batched_mxfp4_pair_runs_at_the_full_batch_width` is the repo's ONLY batched-routed case at M=16, both 128-expert families capping at M=8.
+  `RoutedBlobsWideBuffer` is shared with the affine pair but is created and bound through `new_for` / `bind_for`, taking the source and function that will READ it. The two libraries declare `RoutedBlobsWide` identically, so one encoder would work today; taking it from the reading function instead means a layout that ever diverged is a compile-time mismatch rather than a silently misread pointer array.
 - `resident_metal.rs`: `ResidentGpuWeights` zero-copy `MTLBuffer` wrapping around `mmap` slices.
 - `device_memory.rs`: `recommended_max_working_set`, the Metal device's own
   ceiling plus its name, here for the same reason `power_state.rs` is. Adapted

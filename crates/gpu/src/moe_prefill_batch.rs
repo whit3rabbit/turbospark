@@ -79,11 +79,36 @@ pub struct RoutedBlobsWideBuffer {
 }
 
 impl RoutedBlobsWideBuffer {
-    /// Creates a new wide routed-blobs argument buffer.
+    /// Creates a new wide routed-blobs argument buffer for the INT4-affine
+    /// batched pair.
     pub fn new(context: &mut MetalContext, use_silu: bool) -> Result<Self, GpuError> {
+        Self::new_for(context, SOURCE, "moe_prefill_phase1_routes_int4", use_silu)
+    }
+
+    /// The same, for a batched pair living in a DIFFERENT shader library --
+    /// `moe_prefill_batch_gguf.rs`'s MXFP4 pair is the second caller
+    /// (`docs/BATCHED_PREFILL.md` step 5).
+    ///
+    /// The two libraries declare `RoutedBlobsWide` identically, so it is
+    /// tempting to encode both with one function and share the buffer. That
+    /// is an assumption about `encoded_length` across two separate
+    /// compilations, and it is the kind this repo pays for: the encoder is
+    /// taken from the function that will READ the buffer, so a layout that
+    /// ever diverged would be a compile-time mismatch rather than a silently
+    /// misread pointer array.
+    ///
+    /// `source` must be the same `&'static str` constant the matching
+    /// dispatch passes -- the pipeline and argument-encoder caches key on its
+    /// ADDRESS, not its text (Gotcha 1).
+    pub fn new_for(
+        context: &mut MetalContext,
+        source: &'static str,
+        function: &'static str,
+        use_silu: bool,
+    ) -> Result<Self, GpuError> {
         let encoder = context.argument_encoder(
-            SOURCE,
-            "moe_prefill_phase1_routes_int4",
+            source,
+            function,
             &moe_function_constants(use_silu),
             &constants_key(use_silu),
             0,
@@ -107,10 +132,30 @@ impl RoutedBlobsWideBuffer {
         use_silu: bool,
         blobs: &[(&metal::Buffer, u64)],
     ) -> Result<(), GpuError> {
-        assert!(!blobs.is_empty() && blobs.len() <= MAX_PREFILL_EXPERT_BINDINGS);
-        let encoder = context.argument_encoder(
+        self.bind_for(
+            context,
             SOURCE,
             "moe_prefill_phase1_routes_int4",
+            use_silu,
+            blobs,
+        )
+    }
+
+    /// [`Self::bind`] for a pair in a different shader library. See
+    /// [`Self::new_for`]; `source` and `function` must be the pair the
+    /// buffer was created for.
+    pub fn bind_for(
+        &self,
+        context: &mut MetalContext,
+        source: &'static str,
+        function: &'static str,
+        use_silu: bool,
+        blobs: &[(&metal::Buffer, u64)],
+    ) -> Result<(), GpuError> {
+        assert!(!blobs.is_empty() && blobs.len() <= MAX_PREFILL_EXPERT_BINDINGS);
+        let encoder = context.argument_encoder(
+            source,
+            function,
             &moe_function_constants(use_silu),
             &constants_key(use_silu),
             0,

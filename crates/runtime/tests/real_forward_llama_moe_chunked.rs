@@ -200,3 +200,32 @@ fn decoding_continues_correctly_after_a_chunked_prefill() {
         );
     }
 }
+
+/// `MFERENCE_ROUTED_BATCH` must be REFUSED BY NAME on this family, never
+/// ignored. The batched routed pair exists for INT4-affine and MXFP4 blobs;
+/// this family's are GGUF K-quants and step 5's Q4_K/Q6_K arm was scoped by
+/// measurement and deliberately not built (`docs/BATCHED_PREFILL.md`).
+///
+/// Silently running the per-token loop instead is the failure this repo
+/// names repeatedly: a caller who asked for the batched half would measure
+/// the unbatched engine and report it under the batched arm's label. It was
+/// the real behaviour until 2026-08-27 and was found by checking a claim in
+/// the docs against the binary rather than by a test.
+///
+/// A DENSE driver ignoring the same flag is correct and deliberately not
+/// asserted here: there is no routed half for it to refer to.
+#[test]
+fn the_batched_routed_seam_is_refused_by_name_on_this_family() {
+    let mut runner = open_runner("routed-batch-refused", 16);
+    runner.set_routed_batch_prefill(true);
+
+    let mut logits = vec![f16::from_f32(0.0); VOCAB as usize];
+    let err = runner
+        .prefill_chunk(&PROMPT, 0, &mut logits)
+        .expect_err("the batched routed seam must be refused on this family");
+    let text = err.to_string();
+    assert!(
+        text.contains("MFERENCE_ROUTED_BATCH"),
+        "the refusal must name the seam the caller set; got {text}"
+    );
+}

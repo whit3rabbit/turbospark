@@ -87,6 +87,8 @@ mod moe_gguf;
 #[cfg(target_os = "macos")]
 mod moe_prefill_batch;
 #[cfg(target_os = "macos")]
+mod moe_prefill_batch_gguf;
+#[cfg(target_os = "macos")]
 mod power_state;
 #[cfg(target_os = "macos")]
 mod prefill_scratch;
@@ -205,6 +207,11 @@ pub use moe_gguf::{
 pub use moe_prefill_batch::{
     encode_moe_prefill_phase1, encode_moe_prefill_phase2_fused, MoePrefillRoute,
     RoutedBlobsWideBuffer, MAX_PREFILL_EXPERT_BINDINGS,
+};
+#[cfg(target_os = "macos")]
+pub use moe_prefill_batch_gguf::{
+    bind_routed_blobs_wide as bind_routed_blobs_wide_mxfp4, encode_moe_prefill_phase1_mxfp4,
+    encode_moe_prefill_phase2_fused_mxfp4, new_routed_blobs_wide as new_routed_blobs_wide_mxfp4,
 };
 #[cfg(target_os = "macos")]
 pub use power_state::{low_power_mode_enabled, physical_memory, thermal_state_raw};

@@ -74,6 +74,53 @@ pub(crate) struct RealGptOssState {
     pub(crate) moe_x: gpu::MetalBuffer,
     /// `[hidden]`: the routed sum, added back to the stream.
     pub(crate) h2: gpu::MetalBuffer,
+    /// The batched routed half's scratch (`docs/BATCHED_PREFILL.md` step 5),
+    /// allocated on first use by [`Self::ensure_batched`] and `None` on every
+    /// run that never chunks its prefill with `MFERENCE_ROUTED_BATCH` set.
+    pub(crate) batched: Option<BatchedRoutedScratch>,
+}
+
+/// Batched routed-expert scratch for `gpt-oss`, all sized for
+/// [`MAX_PREFILL_BATCH`] rows and reached only from the chunk driver's
+/// batched routed half.
+///
+/// It is `RealGemmaState`'s `BatchedPrefillScratch` MINUS two groups, and
+/// both absences are this family's rather than an omission. There is no
+/// `batch_h1`, because there is no shared expert to hold M rows of output
+/// for -- phase 2's seed is `batch_zero` and the routed sum reaches the
+/// stream through one raw residual add. And there are no batched-GEMV
+/// fields (`batch_normed`, `batch_q`, ...), because `MFERENCE_BATCHED_GEMV`
+/// is not wired for this family: that seam is INT4-affine only, and this
+/// family's resident tensors are Q8_0.
+///
+/// **ALLOCATED ON FIRST USE**, per the rule `families/gemma4/state.rs`
+/// states at length: an unasked-for feature must allocate nothing, so a
+/// frozen memory-oracle row keeps describing the engine that shipped before
+/// the feature existed. On the real 20B install (hidden 2880, moe_inter
+/// 2880, top_k 4, `MAX_PREFILL_BATCH` 16) these five come to ~1.1 MiB,
+/// against a 5,700 MiB ceiling.
+pub(crate) struct BatchedRoutedScratch {
+    /// `[M * top_k, moe_inter]` FP16, written by the route-list phase 1.
+    pub(crate) batch_acts: gpu::MetalBuffer,
+    /// `[M, hidden]` FP16, the fused phase-2 output the per-token residual
+    /// add reads.
+    pub(crate) batch_y: gpu::MetalBuffer,
+    /// `[M * top_k]` FP16, one HOST write per sub-batch.
+    pub(crate) batch_routing_w: gpu::MetalBuffer,
+    /// The encoded route list, likewise host-written. 16 bytes per route,
+    /// matching `MoePrefillRoute::bytes` and the shader struct.
+    pub(crate) batch_routes: gpu::MetalBuffer,
+    /// `[M, hidden]` FP16 of ZEROS, written once here and never again: the
+    /// fused phase 2's accumulator seed, the batched twin of
+    /// `DecodeScratch::zero_hidden`. Filled explicitly rather than trusting
+    /// a fresh `MTLBuffer` to be zeroed, which is `zero_hidden`'s own
+    /// precedent.
+    pub(crate) batch_zero: gpu::MetalBuffer,
+    /// The 32-pointer argument buffer the batched pair reads, encoded by
+    /// the MXFP4 phase-1 function out of that pair's OWN shader library --
+    /// never the affine pair's, though the two declare `RoutedBlobsWide`
+    /// identically (`crates/gpu`'s `new_for`).
+    pub(crate) wide_blobs: gpu::RoutedBlobsWideBuffer,
 }
 
 impl RealGptOssState {
@@ -253,7 +300,57 @@ impl RealGptOssState {
                 .new_output_buffer((num_experts * 4 * MAX_PREFILL_BATCH) as u64),
             moe_x: halfs(hidden * MAX_PREFILL_BATCH),
             h2: halfs(hidden),
+            batched: None,
         })
+    }
+
+    /// Allocates [`BatchedRoutedScratch`] the first time the chunk driver's
+    /// batched routed half asks for it, and is a no-op afterwards.
+    ///
+    /// Idempotent rather than "call once", because the entry point that calls
+    /// it is reached once per CHUNK, not once per run.
+    pub(crate) fn ensure_batched(
+        &mut self,
+        context: &mut gpu::MetalContext,
+        arch: &ArchConfig,
+    ) -> Result<(), RealForwardError> {
+        if self.batched.is_some() {
+            return Ok(());
+        }
+        let top_k = arch.top_k_experts as usize;
+        let hidden = arch.hidden_size as usize;
+        let moe_inter = arch.moe_intermediate_size.max(1) as usize;
+        // `true` matches `moe.rs`'s own note: `use_silu` is dead for this
+        // family (the MXFP4 pair takes its activation from
+        // `Mxfp4Activation::GPT_OSS`), but the argument-buffer encoder and
+        // the dispatches must agree on it or they miss the pipeline cache.
+        let wide_blobs =
+            gpu::new_routed_blobs_wide_mxfp4(context, true).map_err(RealForwardError::Gpu)?;
+        let halfs = |n: usize| context.new_output_buffer((n.max(1) * 2) as u64);
+        let batch_rows = |per_token: usize| halfs(MAX_PREFILL_BATCH * per_token);
+        self.batched = Some(BatchedRoutedScratch {
+            batch_acts: batch_rows(top_k * moe_inter),
+            batch_y: batch_rows(hidden),
+            batch_routing_w: batch_rows(top_k),
+            batch_routes: context.new_output_buffer((MAX_PREFILL_BATCH * top_k * 16) as u64),
+            batch_zero: {
+                let bytes = MAX_PREFILL_BATCH * hidden.max(1) * 2;
+                let buffer = context.new_output_buffer(bytes as u64);
+                gpu::write_buffer_bytes(&buffer, 0, &vec![0u8; bytes]);
+                buffer
+            },
+            wide_blobs,
+        });
+        Ok(())
+    }
+
+    /// The batched scratch, reached only from inside the chunk driver's
+    /// batched routed half -- downstream of the `ensure_batched` at its entry
+    /// point, so the `expect` is a structural invariant rather than a hope.
+    pub(crate) fn batched(&self) -> &BatchedRoutedScratch {
+        self.batched
+            .as_ref()
+            .expect("prefill_chunk_real_gpt_oss calls ensure_batched before any layer runs")
     }
 }
 

@@ -206,3 +206,112 @@ fn the_router_bias_still_applies_per_token_under_chunking() {
         "chunked and sequential must agree with the router bias applied"
     );
 }
+
+// --- The batched routed half (`docs/BATCHED_PREFILL.md` step 5) ---
+//
+// Same bar as above -- byte-identity against the SEQUENTIAL path -- with
+// the MXFP4 route-list dispatch pair replacing the per-token routed loop.
+// The setter is the `MFERENCE_ROUTED_BATCH` seam; setting the env var
+// instead would race the other test threads in this process.
+
+#[test]
+fn a_batched_routed_chunked_prefill_is_byte_identical_to_the_sequential_one() {
+    let vocab = SyntheticGptOssShape::default().vocab as usize;
+    let mut runner = open_runner("batched-whole", 16);
+    runner.set_routed_batch_prefill(true);
+
+    let expected = sequential_prefill(&mut runner, &PROMPT, vocab);
+    assert!(
+        expected.iter().all(|v| v.is_finite()),
+        "the reference itself must be finite before anything is compared to it"
+    );
+    // The discriminating-fixture guard the step-1 cases carry: a constant
+    // reference vector compares equal to itself under any driver.
+    assert!(
+        expected.iter().any(|&v| v != expected[0]),
+        "degenerate reference logits: this fixture cannot discriminate"
+    );
+
+    let actual = chunked_prefill(&mut runner, &PROMPT, PROMPT.len(), vocab);
+    assert_eq!(
+        actual, expected,
+        "batched routed prefill must reproduce the sequential logits exactly"
+    );
+}
+
+#[test]
+fn the_chunk_boundary_does_not_move_the_logits_under_the_batched_routed_half() {
+    // The Gotcha 27 question at chunk scale: the fused phase 2 reduces per
+    // token in router-rank order, so no span may move the answer -- and
+    // every span must still agree with the SEQUENTIAL reference, never just
+    // with another batched run. Spans straddle the fixture's 8-token
+    // sliding window, so the EVEN layers wrap their ring at some and not
+    // others.
+    let vocab = SyntheticGptOssShape::default().vocab as usize;
+    let mut runner = open_runner("batched-spans", 16);
+    runner.set_routed_batch_prefill(true);
+
+    let expected = sequential_prefill(&mut runner, &PROMPT, vocab);
+    for chunk in [1usize, 2, 3, 5, 8, 11] {
+        let actual = chunked_prefill(&mut runner, &PROMPT, chunk, vocab);
+        assert_eq!(
+            actual, expected,
+            "chunk span {chunk} changed the logits under the batched routed half"
+        );
+    }
+}
+
+#[test]
+fn a_small_cache_shrinks_the_batched_sub_batches_without_moving_the_logits() {
+    // TWO slots against a 4-expert top-2 fixture: any two tokens routing
+    // disjointly exceed the cache, so the greedy shrink must cut the
+    // sub-batch (often to one token) and commit a command buffer per
+    // sub-batch. That path is what the Gemma bring-up's 8-slot case caught
+    // a real eviction bug on -- a later sub-batch's `pread` evicting slots
+    // an earlier sub-batch's dispatches still named, which reads as fluent
+    // wrong logits. Shrinking is a throughput choice and must stay a
+    // numerics no-op.
+    let vocab = SyntheticGptOssShape::default().vocab as usize;
+    let mut runner = open_runner("batched-small-cache", 2);
+    runner.set_routed_batch_prefill(true);
+
+    let expected = sequential_prefill(&mut runner, &PROMPT, vocab);
+    let actual = chunked_prefill(&mut runner, &PROMPT, PROMPT.len(), vocab);
+    assert_eq!(
+        actual, expected,
+        "a shrunk sub-batch must reproduce the sequential logits exactly"
+    );
+}
+
+#[test]
+fn decoding_continues_correctly_after_a_batched_routed_prefill() {
+    // The KV cache, the position and the ring must all be where a
+    // sequential prefill would have left them, which only a DECODE past the
+    // prompt can show.
+    let vocab = SyntheticGptOssShape::default().vocab as usize;
+    let mut runner = open_runner("batched-decode", 16);
+
+    let mut sequential = Vec::new();
+    sequential_prefill(&mut runner, &PROMPT, vocab);
+    let mut logits = vec![f16::from_f32(0.0); vocab];
+    for step in 0..3 {
+        runner
+            .produce(7, PROMPT.len() + step, &mut logits)
+            .expect("decode after sequential prefill succeeds");
+        sequential.push(logits.iter().map(|v| v.to_f32()).collect::<Vec<_>>());
+    }
+
+    runner.set_routed_batch_prefill(true);
+    let mut batched = Vec::new();
+    chunked_prefill(&mut runner, &PROMPT, PROMPT.len(), vocab);
+    for step in 0..3 {
+        runner
+            .produce(7, PROMPT.len() + step, &mut logits)
+            .expect("decode after batched chunked prefill succeeds");
+        batched.push(logits.iter().map(|v| v.to_f32()).collect::<Vec<_>>());
+    }
+    assert_eq!(
+        batched, sequential,
+        "decode after a batched routed prefill must track decode after a sequential one"
+    );
+}

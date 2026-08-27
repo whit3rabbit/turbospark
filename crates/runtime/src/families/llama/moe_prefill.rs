@@ -55,6 +55,26 @@ impl RealForwardRunner {
                 "prefill_chunk called with an empty chunk".to_string(),
             ));
         }
+        // REFUSED BY NAME rather than ignored, and the asymmetry with the
+        // DENSE drivers is the point. `MFERENCE_ROUTED_BATCH` asks for the
+        // routed half as one route-list dispatch pair; this family HAS a
+        // routed half and no batched kernel for its Q4_K/Q6_K blobs, so
+        // running the per-token loop anyway would hand back a number from
+        // the unbatched engine under the batched arm's label -- the
+        // `encode_gemm_any` doctrine, and the reason both wired families
+        // refuse each other's layout by name. A dense driver ignores the
+        // flag legitimately: there is no routed half for it to refer to.
+        // Step 5's MXFP4 arm is wired (`families/gptoss/moe_batch.rs`); the
+        // Q4_K/Q6_K one was scoped by measurement and deliberately not
+        // built (`docs/BATCHED_PREFILL.md`, "Step 5's two arms").
+        if self.routed_batch_prefill {
+            return Err(RealForwardError::Unsupported(
+                "MFERENCE_ROUTED_BATCH is not wired for this family: the batched \
+                 routed pair exists for INT4-affine (gemma4) and MXFP4 (gpt-oss) \
+                 blobs, and this install's routed experts are GGUF K-quants"
+                    .to_string(),
+            ));
+        }
         let mut offset = 0usize;
         while offset < tokens.len() {
             let take = (tokens.len() - offset).min(MAX_PREFILL_BATCH);

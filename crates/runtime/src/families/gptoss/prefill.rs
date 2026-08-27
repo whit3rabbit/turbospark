@@ -120,6 +120,17 @@ impl RealForwardRunner {
         }
 
         let banks = routed_pipeline_banks(self.expert_cache_slots, top_k);
+        if self.routed_batch_prefill {
+            // Allocated on first use, so a run that never asks for the
+            // batched half allocates none of its scratch. Idempotent, and
+            // ahead of the layer loop so every `batched()` below it is
+            // infallible -- `families/gemma4/prefill.rs`'s exact placement.
+            let context = &mut self.context;
+            self.real_gpt_oss
+                .as_mut()
+                .expect("real gpt-oss state present")
+                .ensure_batched(context, &arch)?;
+        }
 
         let embed_name = "language_model.model.embed_tokens.weight";
 
@@ -262,6 +273,26 @@ impl RealForwardRunner {
             // starts: token 0 protects no slots, so a survivor from the
             // previous layer could have its slots evicted under it.
             self.retire_routed(&mut pending_routed);
+
+            if self.routed_batch_prefill {
+                // Step 5: the whole layer's routed half as one MXFP4
+                // route-list dispatch pair per union-bounded sub-batch
+                // (`docs/BATCHED_PREFILL.md`). Same retire discipline as the
+                // per-token path: committed here, retired after the NEXT
+                // layer's router wait.
+                pending_routed = Some(self.encode_gpt_oss_layer_routed_moe_batched(
+                    layer,
+                    hidden,
+                    moe_inter,
+                    num_experts,
+                    top_k,
+                    m,
+                )?);
+                pass = self
+                    .context
+                    .begin_pass_labeled("gpt-oss chunk cb1 (attn+router)");
+                continue;
+            }
 
             let mut previous_slots: HashSet<usize> = HashSet::new();
             for t in 0..m {
