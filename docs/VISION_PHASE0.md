@@ -145,15 +145,44 @@ similarity **0.999993**, max abs diff 1.03, mean abs diff 0.0004 over a
 (1280, 5120) output. **FP16 accumulation is numerically safe at this page
 size** -- accumulating in FP32 changes almost nothing.
 
-**Not yet tested: the largest legal page.** `preprocessor_config.json`
-allows up to 16,777,216 pixels (4096x4096), i.e. up to 16,384 patches --
-3.2x this test's 5,120. The block-26 blowup is plausibly closer to a
-fixed outlier-feature magnitude than something that scales with sequence
-length, but this was not verified at the extreme end. **Action item for
-M-V2's own gate**: rerun this probe (script below) at a near-4096x4096 page
-before finalizing FP16 as the vision-tower compute dtype; if the extreme
-case pushes past FP16's ceiling, the fix is scoping the final block(s)'
-accumulator to FP32 rather than widening the whole tower.
+### The largest legal page -- MEASURED 2026-08-26, and the shape held
+
+This section previously carried an open action item: the block-26 blowup
+was "plausibly closer to a fixed outlier-feature magnitude than something
+that scales with sequence length", unverified at the extreme end, and
+M-V2's own gate was to rerun the probe before finalizing FP16. **That has
+now been run and FP16 is confirmed.**
+
+A dense 4064x4064 OCR page (16,516,096 px, just under the 16,777,216
+ceiling; `/tmp/vision-probe/make_extreme_image.py`) resizes to
+`grid_thw=[1,254,254]` -- **64,516 patches, 12.6x this section's original
+5,120** and essentially the largest input the processor will accept.
+
+| | 1024x1280 page | 4064x4064 page | change |
+|---|---|---|---|
+| patches | 5,120 | 64,516 | **12.6x** |
+| block 8 absmax | 12.9 | 14.9 | 1.16x |
+| block 25 absmax | 466.3 | 531.0 | 1.14x |
+| **block 26 absmax** | **8,384** | **9,024** | **1.076x** |
+| merger out absmax | 69.6 | 280.3 | 4.0x |
+| fp16-vs-fp32 merger cosine | 0.999993 | **0.999980** | -- |
+
+**The hypothesis was right and the margin is comfortable.** 12.6x the
+sequence length moved the peak activation by 7.6%, which is the signature
+of a fixed outlier feature rather than a length-dependent one -- had it
+scaled with sequence length it would have needed 105,000 and blown through
+FP16's 65,504 ceiling. At 9,024 the tower sits at **13.8% of that ceiling**
+(against 12.8% at the small page), so the headroom is a factor of 7.3.
+
+**Decision: FP16 throughout, no FP32 scoping of the final blocks.** The
+contingency this action item named is not needed. Two caveats worth keeping:
+the merger output DID move 4x (69.6 -> 280.3), which is the one quantity
+here that tracks length, and it is nowhere near the ceiling; and the whole
+argument is about ACTIVATIONS, so it says nothing about the weight
+quantization question item 4 settles separately.
+
+Reproduce with the command in "Reproducing items 3 and 4" below, pointing
+`--image` at a near-4096x4096 page. Takes a few minutes on an M4 Max.
 
 ## 4. INT4 transcode quality -- RESOLVED (against the plan's default)
 

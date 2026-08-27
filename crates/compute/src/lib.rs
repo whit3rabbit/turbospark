@@ -44,6 +44,9 @@ pub mod sampling;
 pub mod steering;
 /// Numerical error measurement and tolerance checking utilities.
 pub mod tolerance;
+
+/// FP32 reference kernels for the qwen3_5 vision tower (ROADMAP M-V2).
+pub mod vision;
 /// Walsh-Hadamard Transform (WHT) compute kernels.
 pub mod wht;
 
@@ -94,6 +97,10 @@ pub use steering::{
     direction_coefficient, inv_norm, renorm_gamma, steer_in_place, unit_coefficient,
 };
 pub use tolerance::{bounded_rel_error, max_abs_diff, rel_error, Tolerance};
+pub use vision::{
+    attention_scale, bidirectional_attention, gelu_erf, gelu_tanh_vision, layer_norm, matmul_bias,
+    rope_vision_2d,
+};
 pub use wht::wht;
 
 /// Marker for the destination-selected compute strategy.
