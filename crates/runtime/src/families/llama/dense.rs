@@ -34,9 +34,12 @@ use crate::real_forward_types::{DecodeScratch, RealForwardError};
 
 /// Encodes one dense layer's FFN plus its residual add into `pass`.
 ///
-/// `x` is read as the residual and written back with the FFN output added;
-/// `llama.moe_x` holds the post-attention norm the caller produced, and is
-/// the FFN's input. Both projections read it, so it must not be the
+/// `x` is read as the residual and written back with the FFN output added,
+/// at `x_off` (Gotcha 21's established convention: the residual stream is
+/// the only buffer that needs a row per token in a chunked-prefill driver,
+/// so it takes an explicit offset while every transient buffer below stays
+/// at 0). `llama.moe_x` holds the post-attention norm the caller produced,
+/// and is the FFN's input; both projections read it, so it must not be the
 /// destination of anything encoded in between.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn encode_llama_layer_dense(
@@ -50,6 +53,7 @@ pub(crate) fn encode_llama_layer_dense(
     hidden: usize,
     inter: usize,
     use_silu: bool,
+    x_off: u64,
 ) -> Result<(), RealForwardError> {
     let gpu_err = RealForwardError::Gpu;
 
@@ -106,7 +110,7 @@ pub(crate) fn encode_llama_layer_dense(
     gpu::encode_residual_add(
         context,
         pass,
-        (&scratch.x, 0),
+        (&scratch.x, x_off),
         (&llama.h2, 0),
         hidden as u32,
     )

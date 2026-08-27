@@ -16,8 +16,9 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use runtime::{
-    run_raw_completion, run_raw_completion_speculative, GenerationConfig, LogitProducer,
-    RateControl, RawDecodeProgress, RawDecodeResult, RealForwardRunner, RuntimeError,
+    run_raw_completion, run_raw_completion_chunked, run_raw_completion_speculative,
+    GenerationConfig, LogitProducer, RateControl, RawDecodeProgress, RawDecodeResult,
+    RealForwardRunner, RuntimeError,
 };
 use tokenizer::MfTokenizer;
 
@@ -285,7 +286,34 @@ impl ChatModel for RealChatModel {
             runtime::SpeculationPlan::Enabled { block } if config.shaping.is_deterministic() => {
                 *block
             }
+            // Chunked prefill wins over the sequential loop whenever this
+            // install's family can serve it (`supports_chunked_prefill`,
+            // the SAME predicate the CLI's default `--prefill-chunk` wiring
+            // checks). No per-request flag: prefill shape is a property of
+            // the install rather than of a caller's prompt, matching the
+            // rate cap, speculation and the guardrails toggle (Gotchas 10,
+            // 17, 18). Decode's per-token progress callback is unaffected
+            // either way, since only the PREFILL portion routes
+            // differently, and speculation is checked first above -- the
+            // two seams are not composable today, same as the CLI.
             _ => {
+                let mut runner = self
+                    .runner
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                if runner.supports_chunked_prefill() {
+                    return run_raw_completion_chunked(
+                        &mut *runner,
+                        &self.tokenizer,
+                        prompt_ids,
+                        config,
+                        self.context.resolved,
+                        self.vocab_size,
+                        foundation::DEFAULT_CHUNK_SIZE as usize,
+                        &mut *on_progress,
+                    );
+                }
+                drop(runner);
                 return self.with_producer(&mut |producer| {
                     run_raw_completion(
                         producer,
@@ -296,7 +324,7 @@ impl ChatModel for RealChatModel {
                         self.vocab_size,
                         &mut *on_progress,
                     )
-                })
+                });
             }
         };
         // The CONCRETE runner, which is the whole reason this override exists:

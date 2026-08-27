@@ -254,3 +254,27 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
    silent-and-wrong this file exists to prevent. Note the 1.87 belongs to the
    `guardrails` feature: that crate's DEFAULT features need 1.95, which is
    exactly why `default-features = false` is not merely a size decision.
+
+19. **CHUNKED PREFILL IS AUTOMATIC HERE SINCE 2026-08-26, WITH NO PER-REQUEST
+   OR PROCESS FLAG AT ALL.** `RealChatModel::run_completion`'s non-speculative
+   branch locks the runner and checks `RealForwardRunner::supports_chunked_prefill()`
+   before deciding which loop to run: `run_raw_completion_chunked` at
+   `foundation::DEFAULT_CHUNK_SIZE` when the open install's family can serve
+   it (Gemma 4, or the dense half of `llama`), `run_raw_completion` otherwise.
+   Unlike rate control, speculation and guardrails (Gotchas 10, 17, 18), this
+   one genuinely needed no flag: those three are policy choices an operator
+   might want to disable, where prefill shape is a pure throughput axis with
+   the SAME losslessness guarantee `crates/cli`'s `--prefill-chunk` wiring
+   relies on (`crates/runtime/CLAUDE.md` Gotcha 14's byte-identity contract),
+   so there is nothing for a flag to trade off.
+
+   Checked ORDER matters: speculation is resolved first (its own `match` arm
+   above this one), so the two seams are not composable, exactly as the CLI's
+   `stream_turn` documents for the same pair. Decode's per-token progress
+   callback is unaffected either way, since only prefill routes differently
+   and the two loops share it downstream.
+
+   Verified against the real Gemma 4 install end to end (`tests/real_backend.rs`,
+   `--ignored`, needs `TURBOSPARK_GEMMA4_INSTALL_DIR`): both the streaming and
+   non-streaming cases pass with this dispatch live, which is the first time
+   that test has exercised anything but `run_raw_completion` on this backend.

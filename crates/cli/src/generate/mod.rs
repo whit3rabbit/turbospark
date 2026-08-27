@@ -227,18 +227,7 @@ pub(crate) fn stream_turn(
         let _ = out.flush();
         reply.push_str(&answer);
     };
-    // `MFERENCE_PREFILL_CHUNK=<tokens>` routes prefill through
-    // `run_raw_completion_chunked` and the runner's chunk driver
-    // (`docs/BATCHED_PREFILL.md` step 1). An A/B SEAM, spelled like the two
-    // decode-path ones beside it (`MFERENCE_SHARED_CB`,
-    // `MFERENCE_ROUTED_PIPELINE`) rather than a flag, for the same reason:
-    // both arms must produce identical tokens, so what it varies is
-    // throughput and nothing a user needs to reach for. Unset, unparsable
-    // or 0 is the sequential path, byte for byte what it always was.
-    let chunk_tokens = std::env::var("MFERENCE_PREFILL_CHUNK")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .filter(|&n| n > 0);
+    let chunk_tokens = resolve_chunk_tokens(session, request);
     let result = match (&session.speculation, chunk_tokens) {
         // Speculation wins over the chunked-prefill seam when both are on:
         // the speculative loop has its own prefill (it primes the drafter as
@@ -278,4 +267,35 @@ pub(crate) fn stream_turn(
     };
     let _ = writeln!(out);
     Ok((reply, result))
+}
+
+/// Whether, and at what chunk size, this turn's prefill should route
+/// through the chunked driver.
+///
+/// `MFERENCE_PREFILL_CHUNK` still wins when set: it is the existing A/B
+/// seam (`docs/BATCHED_PREFILL.md` step 1), spelled like `MFERENCE_SHARED_CB`
+/// and `MFERENCE_ROUTED_PIPELINE` beside it, and both its arms must produce
+/// identical tokens -- an explicit ask that the family can't serve stays a
+/// hard error via `prefill_chunk`'s own refusal, unchanged from before this
+/// flag was wired.
+///
+/// `--prefill-chunk` is different on purpose: it carries a default
+/// (`Fixed(128)`) on every invocation, whether or not the caller typed it,
+/// so routing it through the chunked driver only when
+/// `RealForwardRunner::supports_chunked_prefill` says this install can serve
+/// it -- and falling back to the sequential path with no error otherwise --
+/// is what keeps a caller who never named the flag from seeing a family it
+/// never asked about.
+fn resolve_chunk_tokens(session: &Session, request: &InvocationRequest) -> Option<usize> {
+    if let Some(env_chunk) = std::env::var("MFERENCE_PREFILL_CHUNK")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|&n| n > 0)
+    {
+        return Some(env_chunk);
+    }
+    if !session.runner.supports_chunked_prefill() {
+        return None;
+    }
+    Some(request.prefill_chunk.resolved() as usize)
 }

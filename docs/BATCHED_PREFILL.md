@@ -526,18 +526,30 @@ So this is one phase followed by an optional one, rather than a fork:
 
 1. ~~**`RealForwardRunner: ChunkedPrefillRunner`, looping the existing
    per-token kernels inside each layer.**~~ **Done, 2026-08-16, measured at
-   1.22x** (see "Step 1, measured"). Gemma 4 only; every other family is
-   refused by name rather than falling back to the sequential loop, because
-   a caller that asked for chunked prefill and quietly got the old path
-   would measure the old engine and report it as the new one.
+   1.22x** (see "Step 1, measured"). Gemma 4 first, and a SECOND family
+   landed 2026-08-26: the dense half of `llama` (Mistral, Llama 2/3.x,
+   `families/llama/prefill.rs`), structurally simpler since a dense layer
+   needs no router readback at all, so the whole micro-batch runs every
+   layer in ONE command buffer rather than one per layer. Every other
+   family is still refused by name rather than falling back to the
+   sequential loop, because a caller that explicitly asked for the chunked
+   driver on an install it can't serve and quietly got the old path would
+   measure the old engine and report it as the new one.
 
    Reachable through `MFERENCE_PREFILL_CHUNK=<tokens>` on
    `turbospark-check`, an A/B seam beside `MFERENCE_SHARED_CB` and
-   `MFERENCE_ROUTED_PIPELINE`. **`--prefill-chunk` already exists in
-   `crates/invocation` and is deliberately still wired to nothing**: it
-   defaults to `Fixed(128)`, so wiring it would turn chunked prefill on by
-   default, and this phase has one family and one measured install behind
-   it. That flag is what the seam becomes, not a second mechanism.
+   `MFERENCE_ROUTED_PIPELINE`; that env var's contract is unchanged (still
+   hard-fails on an unsupported family). **`--prefill-chunk` IS wired now
+   (2026-08-26, `crates/cli/CLAUDE.md` Gotcha 7, `crates/runtime/CLAUDE.md`'s
+   `MFERENCE_PREFILL_CHUNK` bullet), and the server dispatches automatically
+   too, with no per-request flag** (`crates/server/CLAUDE.md` Gotcha 19).
+   Neither routes through the chunked driver on an install it can't serve
+   -- both check `RealForwardRunner::supports_chunked_prefill()`, the same
+   predicate the driver's own refusal uses, and fall back to the sequential
+   path with no error when it says no. That is what makes wiring the flag's
+   `Fixed(128)` default safe even though only two families are served:
+   the default was never something a caller who didn't type the flag
+   explicitly asked for.
 
    What it does, and the rest of this entry is the design rather than a
    plan: per chunk it advances M KV rows, the position by M, and
@@ -591,7 +603,12 @@ So this is one phase followed by an optional one, rather than a fork:
    construction, which is what makes the Gotcha 27 proof trivial.
 4. **Batched attention** (Phase B above), if the measured 1.4x is not
    enough. One kernel, widening `attention_decode_partial` to hold M query
-   rows per KV chunk. Not the descoped tile pipeline.
+   rows per KV chunk. Not the descoped tile pipeline. Deliberately deferred
+   past the 2026-08-26 default-on and dense-llama work: it is real new-kernel
+   engineering (a new function-constant axis, per-row online-softmax state
+   generalized to M rows, and real register-pressure risk per
+   `dequant_int4_gemm_simd`'s spill history in `crates/gpu/CLAUDE.md`),
+   not a small increment to attempt alongside a flag-wiring pass.
 
    Note steps 2 and 3 carry a constraint step 1 does not: a batched routed
    pair needs all M tokens' experts resident at once, so M is capped at the
@@ -687,3 +704,20 @@ and it is where the 21.4 ms was measured. `ternary27b` and
 their prefill lever is the plain GEMV alone, and steps 2 and 3 above buy
 them nothing. Every other family needs a 5 to 25 minute re-stream before it
 can be gated (`docs/MODELS.md`).
+
+**The dense half of `llama` landed second (2026-08-26)**, ahead of the MoE
+families, precisely because it has no MoE pair to widen: it is the same
+Phase A batching step 1 already built, applied to a layer with no router
+readback, so a whole micro-batch fits in ONE command buffer instead of one
+per layer (`families/llama/prefill.rs`). Widening to the MoE half of
+`families/llama/` (Mixtral, Qwen3MoE, one flow file) or to `gpt-oss` would
+each mean replicating steps 1 through 3 (attention AND routed-expert
+batching) plus that family's own hazards -- gpt-oss's alternating window,
+attention sinks and router-bias-before-topk, the ring-wrap and
+shared-expert ordering Gemma 4's own bring-up already found -- not a small
+increment. **`muse_glimmer` is a THIRD case, not a fourth MoE one**: it has
+no router at all (this doc's own line above), so it needs only the SAME
+simpler no-mid-layer-commit driver dense `llama` just got, adapted to its
+own attention shape (three-sliding/one-full window, centered norms on four
+tensors and plain on the final one, NoPE on the full layers, an attention
+output gate, a logit softcap) -- no MoE steps involved.

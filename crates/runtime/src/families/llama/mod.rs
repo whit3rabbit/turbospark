@@ -43,6 +43,7 @@
 mod attn;
 mod dense;
 mod moe;
+mod prefill;
 mod state;
 
 pub(crate) use state::RealLlamaState;
@@ -230,6 +231,7 @@ impl RealForwardRunner {
                     hidden,
                     dense_inter,
                     use_silu,
+                    0,
                 )?;
                 // The layer's OUTPUT: `encode_llama_layer_dense` ends with
                 // the raw residual add, so the stream below this call is what

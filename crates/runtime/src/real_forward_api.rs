@@ -26,6 +26,20 @@ impl RealForwardRunner {
         self.context.buffer_allocation_count()
     }
 
+    /// Whether [`crate::producer::ChunkedPrefillRunner::prefill_chunk`] would
+    /// serve this install rather than refuse it by name.
+    ///
+    /// The ONE place that decision is made: `prefill_chunk`'s own refusal
+    /// calls this too, so a caller deciding whether to route through the
+    /// chunked driver at all (`crates/cli`'s default `--prefill-chunk`
+    /// wiring, `crates/server`'s automatic dispatch) and the driver's own
+    /// hard refusal can never disagree. Gemma 4 and the DENSE half of
+    /// `llama` (Mistral, Llama 2/3.x) today; MoE `llama`, `qwen3moe`,
+    /// `gpt-oss`, `muse_glimmer` and the qwen flow all answer `false`.
+    pub fn supports_chunked_prefill(&self) -> bool {
+        self.real.is_some() || self.real_llama.as_ref().is_some_and(|s| s.dense)
+    }
+
     /// Rows this model's output head writes, i.e. the length every `produce`
     /// logits buffer must have.
     ///

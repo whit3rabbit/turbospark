@@ -173,6 +173,19 @@ impl Default for PrefillChunk {
     }
 }
 
+impl PrefillChunk {
+    /// The concrete chunk size a caller consuming this value should use.
+    /// `Auto` resolves to the same default `Fixed` carries: nothing yet
+    /// adapts chunk size to context length, so this is the one place that
+    /// decision lives rather than each consumer re-deciding it.
+    pub fn resolved(&self) -> u32 {
+        match self {
+            PrefillChunk::Fixed(n) => *n,
+            PrefillChunk::Auto => DEFAULT_CHUNK_SIZE,
+        }
+    }
+}
+
 /// Routed-expert cache sizing: a fixed per-layer slot count drawn from the
 /// foundation-published allowed set, or automatic sizing.
 ///

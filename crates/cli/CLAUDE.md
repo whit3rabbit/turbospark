@@ -103,25 +103,42 @@ printf '[{"role":"user","content":"Explain how coastal wetlands reduce flood dam
    a machine with no `HOME` reports the same "no such install" it always did.
    `crates/catalog/tests/store.rs` pins both directions.
 
-7. **`--prefill-chunk` IS PARSED AND WIRED TO NOTHING, DELIBERATELY, and the
-   env seam beside it is the way in.** `stream_turn` routes prefill through
-   `run_raw_completion_chunked` only under `MFERENCE_PREFILL_CHUNK=<tokens>`
-   (`docs/BATCHED_PREFILL.md` step 1, measured 1.22x on the real Gemma 4
-   install). The flag exists in `turbospark-invocation`, validates against
-   `ALLOWED_CHUNK_SIZES` and is printed in the resolved-request block, but
-   consuming it would turn chunked prefill ON BY DEFAULT -- its default is
-   `Fixed(128)`, not "off" -- and today one family has a chunk driver and one
-   install has been measured. Wiring it is a decision about the DEFAULT,
-   which needs a new `PrefillChunk` variant plus `invocation`'s five places
-   (AGENTS.md Gotcha 14), not a one-line read.
+7. **`--prefill-chunk` IS WIRED AS OF 2026-08-26, and NOT by consuming
+   `request.prefill_chunk` unconditionally.** `stream_turn` calls a
+   `resolve_chunk_tokens` helper: `MFERENCE_PREFILL_CHUNK` still wins first
+   (unchanged env-seam contract, see below), and otherwise the flag's value
+   (`Fixed(n).resolved()` or `Auto -> DEFAULT_CHUNK_SIZE`, via
+   `invocation::PrefillChunk::resolved`) is used ONLY when
+   `session.runner.supports_chunked_prefill()` says this install's family can
+   serve it -- else `None`, the sequential path, with NO error. That
+   asymmetry is deliberate: the flag defaults to `Fixed(128)` on every
+   invocation whether or not the caller typed it, so an install the chunked
+   driver doesn't serve must fall back silently rather than error on a
+   caller who never asked for anything. `supports_chunked_prefill()` is the
+   SAME predicate `ChunkedPrefillRunner::prefill_chunk`'s own refusal uses
+   (`crates/runtime/src/real_forward_api.rs`), so the two can't disagree.
+   Two families serve it today: Gemma 4, and the DENSE half of `llama`
+   (Mistral, Llama 2/3.x, `families/llama/prefill.rs`; ROADMAP.md's PF-02
+   section has the full list of what's still unserved and why).
 
-   Two consequences while it is a seam. **The env var is an A/B seam and its
-   two arms must produce identical tokens**, like `MFERENCE_SHARED_CB` next
-   door: verified on the real install at chunk spans 32, 128 and 512 against
-   the frozen greedy and sampled digests. And **the resolved-request block
-   already prints `prefill_chunk`**, so a stdout md5 taken across a run with
-   the env var set is unchanged by it -- the seam moves no printed field,
-   unlike the `expert_cache_slots` case in Gotcha 6.
+   Verified end to end on real installs (not just the synthetic parity
+   suite): greedy and sampled stdout are md5-IDENTICAL between a
+   pre-wiring binary (sequential by default) and the current one (chunked
+   by default) on both `~/models/gemma4.gturbo` and
+   `~/.turbospark/models/mistral7b.gturbo`. `MFERENCE_PREFILL_CHUNK=64` on
+   an unsupported family (checked against `gptoss-20b.gturbo`) still hits
+   the named hard refusal; the same install with no env var and the default
+   flag generates normally with no error at all.
+
+   Two consequences carried over from when this was a bare seam. **The env
+   var is STILL an A/B seam whose two arms must produce identical tokens**,
+   like `MFERENCE_SHARED_CB` next door: verified on the real install at
+   chunk spans 32, 128 and 512 against the frozen greedy and sampled
+   digests. And **the resolved-request block already printed
+   `prefill_chunk` before this landed**, so nothing about wiring the flag
+   moved a printed field -- unlike the `expert_cache_slots` case in
+   Gotcha 6, the standing stdout digests did not need re-deriving for this
+   change (confirmed by the same md5-identical comparison above).
 
 8. **`--max-context` DEFAULTS TO `auto`, and the resolved number lives on
    `Session`, never on the request.** `open_session` resolves the window
