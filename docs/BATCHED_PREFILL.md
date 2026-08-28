@@ -842,7 +842,10 @@ can hold, and the structural reason Gemma's pair only reached 0.66 -- the win
 is occupancy and dispatch count, not weight amortization -- applies here
 harder, not less. Measure `c(M)` on the real MXFP4 shape
 (`moe_prefill_batch_bench.rs`'s arms, at D=2880 F=2880 top_k=4) before
-quoting any end-to-end number for this arm.
+quoting any end-to-end number for this arm. (SINCE DONE, 2026-08-27: the
+MXFP4 `c(M)` is measured at 0.76/0.74/0.73/0.74 for M=2/4/8/16 -- see "the
+pair's own c(M)" in the built-and-measured section below. The Q4_K/Q6_K
+half of this paragraph still stands unmeasured.)
 
 The kernel itself is a smaller piece of work than "a genuinely new kernel
 shape" suggests, because both halves already exist and neither is the hard
@@ -898,11 +901,35 @@ used to be attributed to `routed cb retire` has migrated into `cb1`'s wait.
 This is the same reattribution step 1's own table records in the opposite
 direction, and it is why neither bucket alone is quotable.
 
-**The pair's own `c(M)` measures 10.16 / 15.15 = 0.67 at M=16**, which lands
-within a point of the affine pair's measured `c(8) = 0.66` on a different
-block type at a different shape -- an independent confirmation that this
-kernel family's win is occupancy and dispatch count rather than weight
-amortization, exactly as the affine measurement concluded.
+**The pair's own `c(M)` is MEASURED on the bench's interleaved arms since
+2026-08-27** (`moe_prefill_batch_bench.rs`'s `mxfp4` module, D=2880 F=2880
+top-4, unions 6/10/13/17 off the measured prefill table; four serial runs,
+spread under 0.01 on every M above 2):
+
+| M | 2 | 4 | 8 | 16 |
+| --- | ---: | ---: | ---: | ---: |
+| c(M) | 0.76 | 0.74 | 0.73 | 0.74 |
+
+**The 0.67 this paragraph first quoted for c(16) -- inferred from the phase
+table's device-time rows (10.16 / 15.15) -- was 9% optimistic**, which is
+the cross-instrument gap the bench arm existed to close: the end-to-end
+rows fold in whole-command-buffer effects the kernel-level arms exclude.
+The conclusion the inferred figure was drafted to support still stands, and
+now on same-instrument terms: measured the same day on the same machine,
+the affine arm reads c(8) = 0.73 beside MXFP4's 0.73, so the two block
+types land within a point of each other and neither is anywhere near a
+weight-amortization curve -- the win is occupancy and dispatch count, as
+the affine measurement concluded. (The affine arm's own recorded
+0.77/0.68/0.66 did not reproduce on this busier day either, reading
+0.80-0.89 / 0.75-0.85 / 0.73-0.74; ratios hold within a session and
+absolutes do not, AGENTS.md Gotcha 22.) One shape note: the MXFP4 curve is
+FLAT from M=4 where the affine one keeps improving to M=8 -- at this shape
+the sequential arm's per-token device cost is already constant (~0.58 ms),
+so the batched win saturates early and M=16 buys dispatch count, not a
+better c(M). And one instrument note now recorded in the bench itself: the
+file's two arms must not time-share the device (a static mutex serializes
+them; the first concurrent `-- --ignored` run read the affine c(8) as
+0.38 with no error anywhere).
 
 **M=16 IS ACTUALLY REACHED, measured rather than inferred from the mean
 union.** The expert-cache counters say the greedy shrink essentially never
@@ -920,20 +947,38 @@ Read the ABSOLUTE misses and not the rate: the batched arm's hit rate looks
 WORSE (96.7% to 91.4%) purely because its request count fell 3.6x with the
 misses in the numerator.
 
-The likely mechanism is not union dedup and the distinction matters for
-anyone porting this to a third family. The per-token path passes each token's
+**The mechanism WAS separated experimentally on 2026-08-27, and the
+reasoned attribution this paragraph first carried was WRONG.** The
+hypothesis was pipelining pressure: the per-token path passes each token's
 plan a `protect` set naming the previous token's in-flight slots
-(`RoutedSlot::protect`, the pipelining constraint), which reserves slots and
-forces evictions the routing alone would not; the batched path retires before
-it plans and so passes an EMPTY protect set over the whole sub-batch's union
-at once. So what fell is eviction pressure from PIPELINING, not traffic the
-union deduplicated -- consistent with the union tables above rather than a
-counterexample to them. It shows up here and not on Gemma 4 because 32
-experts against 24 slots means the cache already holds three quarters of the
-model's experts, so relaxing placement has somewhere to go. **This was not
-separated experimentally**, and separating it would mean running the
-per-token arm with pipelining disabled; the 28% is measured, the attribution
-is reasoned.
+(`RoutedSlot::protect`), which reserves slots and forces evictions the
+routing alone would not, while the batched path retires before it plans and
+passes an EMPTY set over the whole sub-batch's union at once. The seam that
+tests it is `MFERENCE_ROUTED_PIPELINE=0` on the per-token arm, wired into
+this family's chunked driver for exactly this experiment (banks = 1 and an
+empty protect set TOGETHER -- sound only as a pair, because
+retire-before-plan is what leaves no in-flight slot for the empty set to
+endanger; the seam did not exist before, and the two rows above that first
+proposed this experiment assumed it did). The answer is no: same prompt,
+same config, misses read 9,024 with the protect set live and 9,400 with it
+off, stdout md5-identical both ways, so removing the pipelining constraint
+recovers NOTHING of the 9,024 -> 6,478 drop.
+
+**The union really is deduplicating on this family**, which makes `gpt-oss`
+the measured, family-scoped exception to this document's thrice-measured
+"the union saves nothing" -- and the exception fits the standing finding's
+own bound rather than contradicting it. AGENTS.md Gotcha 54 bounds the
+union's saving by INTRA-WINDOW EVICTION RE-READS. On the 128-expert
+families the sub-batch is capped at M<=8 by `union <= slot_count`, and at
+those widths the re-reads were already near zero (Gemma's hit rate moved
+81.2% to 81.4%). Here the full 16-token window's union (17.2) fits the 24
+slots, so one plan per sub-batch dedups the whole window -- and with only
+24 slots against 32 experts, evictions between one token's plan and the
+next are real, the per-token plans re-pay ~2,500 of them per run, and the
+union recovers exactly those. Porting rule for a third family: expect the
+union term to be worth something only where the window's union fits the
+slot cache while the cache does NOT comfortably hold the routed working
+set -- both halves are one multiplication off the header.
 
 Gates paid: bit-exactness against M sequential MXFP4 decode-pair calls at
 the real D=2880/F=2880 shape, mutation-checked four ways

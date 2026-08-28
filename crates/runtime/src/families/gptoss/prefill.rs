@@ -119,7 +119,20 @@ impl RealForwardRunner {
             )));
         }
 
-        let banks = routed_pipeline_banks(self.expert_cache_slots, top_k);
+        // `MFERENCE_ROUTED_PIPELINE=0` (the seam Gemma 4's sequential decode
+        // has always read) means the same thing here: retire each token's
+        // routed pass before the next plan (banks = 1) AND pass no protect
+        // set. The two must move together -- with the previous pass retired
+        // there is no in-flight slot for an empty protect set to endanger,
+        // while an empty set at banks = 2 would let the planner evict a slot
+        // the GPU is still reading. This is the A/B seam that separates the
+        // batched arm's miss drop into its two candidate causes
+        // (docs/BATCHED_PREFILL.md, step 5's miss-drop paragraph).
+        let banks = if self.routed_pipeline {
+            routed_pipeline_banks(self.expert_cache_slots, top_k)
+        } else {
+            1
+        };
         if self.routed_batch_prefill {
             // Allocated on first use, so a run that never asks for the
             // batched half allocates none of its scratch. Idempotent, and
@@ -302,7 +315,14 @@ impl RealForwardRunner {
                 let slot = RoutedSlot {
                     token: t,
                     bank: t % banks,
-                    protect: previous_slots.clone(),
+                    // Empty when pipelining is off: retire-before-plan has
+                    // already run (banks == 1 above), so no slot is in
+                    // flight for the plan to avoid.
+                    protect: if self.routed_pipeline {
+                        previous_slots.clone()
+                    } else {
+                        HashSet::new()
+                    },
                 };
                 let routed_pass = self.context.begin_pass_labeled("gpt-oss routed cb");
                 let (

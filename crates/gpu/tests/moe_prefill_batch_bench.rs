@@ -24,6 +24,7 @@
 
 use half::f16;
 use metal::Buffer;
+use std::sync::Mutex;
 use turbospark_gpu::{
     bind_routed_blobs_wide_mxfp4, encode_moe_phase1, encode_moe_phase1_mxfp4, encode_moe_phase2,
     encode_moe_phase2_mxfp4, encode_moe_prefill_phase1, encode_moe_prefill_phase1_mxfp4,
@@ -34,6 +35,14 @@ use turbospark_gpu::{
 
 const ITERATIONS: usize = 50;
 const WARMUPS: usize = 3;
+
+/// The two arms must not time-share the device: cargo runs a file's tests
+/// on parallel threads by default, and the first `-- --ignored` run of both
+/// arms interleaved their dispatches on one GPU -- the affine arm read
+/// c(2) = 0.914 / c(8) = 0.381 against its serial 0.87 / 0.74, with no
+/// error anywhere. A lock is sturdier than a doc note saying
+/// `--test-threads=1`.
+static GPU_SERIAL: Mutex<()> = Mutex::new(());
 
 fn to_le(v: &[f16]) -> Vec<u8> {
     let mut out = Vec::with_capacity(v.len() * 2);
@@ -117,6 +126,7 @@ mod affine {
     #[test]
     #[ignore = "benchmark: needs a real Metal device, reports rather than asserts"]
     fn c_of_m_for_the_batched_routed_pair() {
+        let _gpu = GPU_SERIAL.lock().expect("bench serialization");
         let mut context = MetalContext::new().expect("Metal device");
         let layout = blob_layout();
         let offsets = layout.offsets;
@@ -347,6 +357,7 @@ mod mxfp4 {
     #[test]
     #[ignore = "benchmark: needs a real Metal device, reports rather than asserts"]
     fn c_of_m_for_the_batched_mxfp4_pair() {
+        let _gpu = GPU_SERIAL.lock().expect("bench serialization");
         let mut context = MetalContext::new().expect("Metal device");
         let layout = blob_layout();
         let offsets = layout.offsets;
