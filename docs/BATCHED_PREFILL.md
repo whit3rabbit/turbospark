@@ -743,11 +743,12 @@ need new kernel work the way the "not a small increment" line above
 predicted: Step 1's routed dispatch reuses `encode_moe_phase1_any` /
 `encode_moe_phase2_any`, the SAME per-token calls the sequential decode path
 already makes, which are already layout-agnostic (Affine, GGUF Q4_K/Q6_K,
-MXFP4). Steps 2/3's batched routed KERNEL is the INT4-affine-only piece, and
-it stayed unwired for both -- a GGUF Qwen3MoE install and an MXFP4 gpt-oss
-install both still refuse `MFERENCE_ROUTED_BATCH=1`'s widening today, which
-is the correctly-scoped remainder of "Step 5 (GGUF Routed Pair Widening)"
-below.
+MXFP4). Steps 2/3's batched routed KERNEL was the INT4-affine-only piece
+when these two flows landed, and it stayed unwired for both AT THE TIME. The
+MXFP4 gpt-oss arm has since been built ("Step 5's MXFP4 arm, built and
+measured" below); a GGUF Qwen3MoE install still refuses
+`MFERENCE_ROUTED_BATCH=1`'s widening, by name, and that Q4_K/Q6_K arm is the
+correctly-scoped remainder of "Step 5 (GGUF Routed Pair Widening)" below.
 
 `RoutedSlot`, the bank/protect pipelining pattern, and `retire_routed` moved
 out of `families/gemma4/moe.rs` into a shared
