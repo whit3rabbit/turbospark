@@ -231,13 +231,26 @@ build (`Qwen3.8-27B-MTPLX-Optimized-Speed`, 4-bit, 4K context, M3 Max 40c /
 tok/s, TG 17.1 tok/s** (<https://share.google/KzY3rnCKaUxdYwrpz>). This
 port's own row above, on a smaller-memory chip of the same class (M4 Max
 40c / 36 GB), already reads TG **18.6-21.1 tok/s** -- at or above the
-MTPLX-tuned figure -- but has **no PP figure at all**: chunked prefill
-(the "Prefill Batching" work above) serves every family except the qwen
-linear-attention (gated-DeltaNet) flow this checkpoint uses, so today's
-prefill runs the old sequential per-token path and would not be a fair
-number against oMLX's chunked one (`docs/BATCHED_PREFILL.md`). See
-`ROADMAP.md`'s active-tasks table for the follow-up work rather than
-duplicating a TODO here.
+MTPLX-tuned figure.
+
+**PP now has a real number (2026-08-29) and it does NOT close the gap:
+21.31 tok/s** (2,940-token `long-synthesis` prompt, 137.98s, chunked
+prefill on -- `MFERENCE_PREFILL_CHUNK=128`, `~/models/qwen38-27b.gturbo`,
+this machine quiet at the time, load average 2.2-2.6). Chunked prefill now
+serves the dense qwen linear-attention flow (`families/qwen/prefill.rs`,
+`docs/BATCHED_PREFILL.md`'s "sixth flow" entry), so this is a fair number
+against oMLX's chunked one and not the old sequential path -- and it still
+reads roughly a TENTH of oMLX's 210.3 tok/s. The reason is architectural
+rather than a bug: that driver is "Step 1" only (batches command buffers to
+remove per-token scheduling overhead, no new kernel), so PP throughput
+lands close to this install's OWN TG throughput rather than near a
+GEMM-batched engine's -- removing scheduling overhead does not change that
+each token still runs its own GEMV. Closing this gap needs the GEMV-to-GEMM
+widening this repo calls "steps 2-6" (`MFERENCE_BATCHED_GEMV` and friends,
+built for Gemma 4's affine blobs already) ported to this family, which is
+tracked as a distinct follow-up in `ROADMAP.md` rather than assumed to fall
+out of the chunking work above. See `ROADMAP.md`'s active-tasks table for
+that follow-up rather than duplicating a TODO here.
 
 ## Expert-cache slots: the one runtime control that moves this
 
