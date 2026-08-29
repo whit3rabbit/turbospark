@@ -2016,6 +2016,7 @@ dependencies = [
  "turbospark-runtime",
  "turbospark-selection",
  "turbospark-tokenizer",
+ "turbospark-vision-io",
  "turbospark-window-fit",
 ]
 

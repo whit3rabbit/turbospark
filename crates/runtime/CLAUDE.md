@@ -919,14 +919,30 @@ cargo test -p turbospark-runtime
     on which function is called rather than on the shader compiler continuing
     to agree. Gotcha 26's shape, one feature over.
 
-29. **`PromptVision` IS CLEARED BY `reset()` AND DELIBERATELY NOT BY
-    `rollback`, and the asymmetry is the whole point.** A new generation is a
-    new prompt and the map is indexed by position within one, so a bulk-OCR
-    loop -- open once, walk pages, which is the workload the vision plan
-    exists for -- would blit page N's rows at page N+1's positions, which are
-    not even placeholders. A speculative rewind stays INSIDE one prompt and
-    still needs the map it was built with. Both halves are pinned by
-    `reset_clears_the_injection_map_and_rollback_does_not`.
+29. **`PromptVision` SURVIVES BOTH `reset()` AND `rollback`, AND ONLY AN
+    EXPLICIT `clear_prompt_vision` DROPS IT. M-V5 HAD THIS BACKWARDS AND IT
+    SHIPPED A HALLUCINATING `--image`.** The original rule was "reset clears
+    it", on the sound-sounding reasoning that a new generation is a new prompt
+    and a bulk-OCR loop must not inherit page N's spans. But
+    `run_raw_completion` calls `producer.reset()` at ENTRY, and a caller sets
+    the map just BEFORE that call -- so the clear landed on the map for the
+    very prompt about to be prefilled. Every image run prefilled placeholder
+    embeddings and produced a fluent description of a page it had not been
+    shown, with the right prompt length and no error anywhere.
+
+    **The whole test suite missed it because every case drove `produce`
+    directly**, this crate's synthetic file and `crates/bench`'s cross-engine
+    dump alike. The path a front end actually takes -- set a map, run the
+    ordinary loop -- was untested until M-V7's first real run.
+    `an_injected_map_survives_the_generation_loops_own_reset` is the guard and
+    it goes through `run_raw_completion`.
+
+    What keeps a bulk-OCR loop safe now is the CALLER consuming the map per
+    page (`crates/cli`'s loop calls `clear_prompt_vision` before building each
+    one). A caller who forgets gets NO injection rather than the previous
+    page's, which is the safe direction: a model handed placeholder embeddings
+    answers vaguely instead of describing the wrong picture confidently.
+    `only_an_explicit_clear_drops_the_injection_map` pins all three halves.
 
     Its six construction checks are refusals rather than tolerances because
     each is a wrong image reaching the model FLUENTLY: triples covering a

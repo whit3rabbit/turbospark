@@ -28,6 +28,7 @@ use tokenizer::{Message, MfTokenizer, ReasoningEffort, ReasoningSupport};
 
 pub(crate) mod format;
 pub(crate) mod session;
+pub(crate) mod vision;
 
 pub(crate) use format::{
     map_reasoning_effort, parse_messages_file, print_footer, print_phases, role_name, ChannelSplit,
@@ -55,6 +56,22 @@ fn run_prompt(request: &InvocationRequest, prompt: &str) {
     // Verbatim, with a BOS prefix and no chat template: this mode's contract,
     // matching the Swift original. An instruction-tuned model babbles here;
     // that is the missing markup, not a decode bug.
+    //
+    // **`--image` IS REFUSED HERE RATHER THAN SERVED**, and that is this
+    // mode's contract rather than an omission: it encodes the prompt VERBATIM
+    // with no template, so there is no `<|vision_start|><|image_pad|>` run for
+    // the splice to expand and nowhere for the tower's rows to land. Serving
+    // it would mean this binary inventing framing the checkpoint was not
+    // trained on -- fluent output that ignores the picture (AGENTS.md Gotcha
+    // 41). `--messages-file` applies the template and is where images go.
+    if !request.images.is_empty() {
+        eprintln!(
+            "note: not attempting real generation: --image needs a chat template and --prompt \
+             encodes verbatim; use --messages-file (its content parts take image entries) or \
+             --chat"
+        );
+        return;
+    }
     let prompt_ids = session.tokenizer.encode(prompt, true);
     // Clamp rather than let `check_admission` refuse the whole run: a long
     // raw prompt generates into whatever room is left, the same as the other
@@ -81,12 +98,45 @@ fn run_prompt(request: &InvocationRequest, prompt: &str) {
 fn run_messages_file(request: &InvocationRequest, path: &str) {
     // Decode the conversation before loading the model: a typo in the JSON
     // should not cost a multi-gigabyte install open first.
-    let messages = match parse_messages_file(path) {
+    let (messages, file_images) = match parse_messages_file(path) {
         Ok(m) => m,
         Err(e) => {
             eprintln!("note: not attempting real generation: {e}");
             return;
         }
+    };
+    // TWO SOURCES, and they may not both be used. A file's parts already say
+    // WHERE each image goes; `--image` says only that there is one. Accepting
+    // both would leave the pairing between a path and a marker run ambiguous,
+    // which is the silent mispairing every refusal in this feature exists to
+    // prevent.
+    if !file_images.is_empty() && !request.images.is_empty() {
+        eprintln!(
+            "note: not attempting real generation: {path} already carries image content parts, \
+             so --image would be ambiguous about which marker run each path pairs with; use one \
+             or the other"
+        );
+        return;
+    }
+    // A file that already carries parts cannot be BATCHED: it places its own
+    // markers inside the conversation, so "one page per turn" has no meaning
+    // -- which of the file's parts would each turn keep?
+    if request.image_batch && !file_images.is_empty() {
+        eprintln!(
+            "note: not attempting real generation: --image-batch runs the prompt once per \
+             --image, and {path} places its images itself; drop --image-batch, or move the paths \
+             to --image"
+        );
+        return;
+    }
+    // The messages are built PER TURN below, because under `--image-batch`
+    // each turn carries one marker rather than all of them. A file's messages
+    // already carry their parts and are used as they are.
+    let from_file = !file_images.is_empty();
+    let images = if from_file {
+        file_images
+    } else {
+        request.images.clone()
     };
     let mut session = match open_session(request) {
         Ok(s) => s,
@@ -96,31 +146,144 @@ fn run_messages_file(request: &InvocationRequest, path: &str) {
         }
     };
 
-    let prompt_ids = match render_prompt(
-        &session.tokenizer,
-        &messages,
-        map_reasoning_effort(request.reasoning),
-    ) {
-        Ok(ids) => ids,
-        Err(e) => {
-            eprintln!("note: not attempting real generation: {e}");
+    // ONE PASS PER PAGE under `--image-batch`, otherwise one pass carrying
+    // every image. The batch arm is the bulk-OCR shape the whole vision design
+    // exists for: ONE open runner, the tower's scratch allocated and dropped
+    // per page, and `reset()` between turns -- so peak memory is flat in the
+    // page count rather than growing with it.
+    let turns: Vec<Vec<String>> = if request.image_batch {
+        if images.is_empty() {
+            eprintln!(
+                "note: not attempting real generation: --image-batch needs at least one --image"
+            );
             return;
         }
+        images.iter().map(|p| vec![p.clone()]).collect()
+    } else {
+        vec![images]
     };
-    let max_new = match clamp_max_new(&session, request, prompt_ids.len()) {
-        Ok(n) => n,
-        Err(e) => {
-            eprintln!("note: not attempting real generation: {e}");
+    let batched = turns.len() > 1 || request.image_batch;
+
+    for (page, turn_images) in turns.iter().enumerate() {
+        // CONSUME the previous page's map before building this one. `reset`
+        // deliberately does NOT do this -- it runs at the START of the
+        // generation the map belongs to, so clearing there destroys the map
+        // before prefill (`crates/runtime/src/real_forward_traits.rs`). The
+        // KV cache is rewound by `run_raw_completion`'s own reset; only the
+        // map is this loop's to release.
+        session.runner.clear_prompt_vision();
+        if batched {
+            println!(
+                "--- image {} of {}: {}",
+                page + 1,
+                turns.len(),
+                turn_images[0]
+            );
+        }
+        // THIS TURN's messages carry THIS turn's image parts. Under
+        // `--image-batch` that is one marker per turn, not all of them, which
+        // is what the splice then expands -- rendering three markers and
+        // supplying one grid is a mismatch the walk refuses by name.
+        let turn_messages = if from_file {
+            messages.clone()
+        } else {
+            match prepend_images_to_last_user(messages.clone(), turn_images) {
+                Ok(m) => m,
+                Err(e) => {
+                    eprintln!("note: not attempting real generation: {e}");
+                    return;
+                }
+            }
+        };
+        if let Err(e) = run_one_turn(&mut session, request, &turn_messages, turn_images) {
+            eprintln!("note: {e}");
             return;
         }
+    }
+    print_phases(&session);
+}
+
+/// Render, attach any images, and stream one turn.
+fn run_one_turn(
+    session: &mut Session,
+    request: &InvocationRequest,
+    messages: &[Message],
+    images: &[String],
+) -> Result<(), String> {
+    let rendered = render_prompt(
+        &session.tokenizer,
+        messages,
+        map_reasoning_effort(request.reasoning),
+    )?;
+
+    // The rendered ids carry ONE `<|image_pad|>` per image; the spliced ones
+    // carry `merged_tokens` copies and are what the model sees.
+    let prompt_ids = if images.is_empty() {
+        rendered
+    } else {
+        if !session.runner.has_vision_tower() {
+            return Err(format!(
+                "not attempting real generation: {} image(s) were given but this install \
+                 declares no vision tower; re-stream the checkpoint with its vision_tower.* \
+                 tensors",
+                images.len()
+            ));
+        }
+        let dir = session.model_dir.clone();
+        let params = vision::preprocess_params(session, &dir)?;
+        let prepared = vision::prepare_images(images, &params)?;
+        vision::attach(session, &rendered, &prepared, &params)?
     };
 
+    let max_new = clamp_max_new(session, request, prompt_ids.len())?;
     println!("generating (real forward pass, chat template applied):");
-    match stream_turn(&mut session, request, &prompt_ids, max_new) {
+    match stream_turn(session, request, &prompt_ids, max_new) {
         Ok((_, result)) => print_footer(&result, request.quiet),
         Err(e) => eprintln!("generation failed: {e}"),
     }
-    print_phases(&session);
+    Ok(())
+}
+
+/// Put `--image` paths into the LAST user turn, before its text.
+///
+/// **PREPEND, not append**, and that is matched to the reference rather than
+/// chosen: `apply_chat_template(processor, config, question, num_images=1)`
+/// builds `[image, text]`, so the marker run comes first and the question
+/// follows. Appending would move every mRoPE position past the image and
+/// produce a different prompt for the same request.
+///
+/// A conversation with no user turn is REFUSED rather than growing one: the
+/// caller said where the question goes, and inventing a turn to hang the
+/// picture on is this binary deciding framing it has no basis for.
+fn prepend_images_to_last_user(
+    mut messages: Vec<Message>,
+    images: &[String],
+) -> Result<Vec<Message>, String> {
+    if images.is_empty() {
+        return Ok(messages);
+    }
+    let Some(index) = messages
+        .iter()
+        .rposition(|m| m.role == tokenizer::Role::User)
+    else {
+        return Err(
+            "--image needs a user turn to attach to, and this conversation has none".to_string(),
+        );
+    };
+    let target = &mut messages[index];
+    let mut parts: Vec<tokenizer::ContentPart> = images
+        .iter()
+        .map(|_| tokenizer::ContentPart::Image)
+        .collect();
+    if target.content_parts.is_empty() {
+        if let Some(text) = target.content.clone() {
+            parts.push(tokenizer::ContentPart::Text(text));
+        }
+    } else {
+        parts.extend(target.content_parts.iter().cloned());
+    }
+    *target = Message::with_parts(target.role, parts);
+    Ok(messages)
 }
 
 /// Render `messages` through the loaded tokenizer's own dialect template.

@@ -238,3 +238,55 @@ fn the_dimension_cap_is_stated_in_the_error() {
     let text = err.to_string();
     assert!(text.contains("16385") && text.contains("16384"), "{text}");
 }
+
+/// **`rescale_factor` IS OPTIONAL AND THE REAL CHECKPOINT OMITS IT.**
+///
+/// `mlx-community/Qwen3.8-27B-4bit`'s `preprocessor_config.json` carries
+/// `size`, `patch_size`, `merge_size`, `temporal_patch_size`, `image_mean`
+/// and `image_std` -- and no `rescale_factor`. This crate REQUIRED it until
+/// the first real `--image` run refused a valid install by name.
+///
+/// The default is the reference processor's own signature default
+/// (`processing_qwen3_vl.py:162`), not a guess: it is the universal 0-255 to
+/// 0-1 conversion. Contrast the pixel budget, which stays required because
+/// the generic library default is wrong for this family by a factor of 16
+/// (crate Gotcha 6).
+#[test]
+fn an_absent_rescale_factor_takes_the_references_own_default() {
+    let json = r#"{
+        "size": {"shortest_edge": 65536, "longest_edge": 16777216},
+        "patch_size": 16, "merge_size": 2, "temporal_patch_size": 2,
+        "image_mean": [0.5, 0.5, 0.5], "image_std": [0.5, 0.5, 0.5]
+    }"#;
+    let params = PreprocessParams::from_preprocessor_config_json(json).expect("parses");
+    assert_eq!(
+        params.rescale_factor,
+        turbospark_vision_io::DEFAULT_RESCALE_FACTOR as f32
+    );
+    assert_eq!(params.rescale_factor, 1.0 / 255.0);
+}
+
+/// A DECLARED value still wins, so the default cannot mask a checkpoint that
+/// means something else.
+#[test]
+fn a_declared_rescale_factor_beats_the_default() {
+    let json = r#"{
+        "size": {"shortest_edge": 65536, "longest_edge": 16777216},
+        "patch_size": 16, "merge_size": 2, "temporal_patch_size": 2,
+        "image_mean": [0.5, 0.5, 0.5], "image_std": [0.5, 0.5, 0.5],
+        "rescale_factor": 0.5
+    }"#;
+    let params = PreprocessParams::from_preprocessor_config_json(json).expect("parses");
+    assert_eq!(params.rescale_factor, 0.5);
+}
+
+/// The pixel budget is still REFUSED when absent, which is the asymmetry the
+/// default above must not erode.
+#[test]
+fn an_absent_pixel_budget_is_still_refused() {
+    let json = r#"{
+        "patch_size": 16, "merge_size": 2, "temporal_patch_size": 2,
+        "image_mean": [0.5, 0.5, 0.5], "image_std": [0.5, 0.5, 0.5]
+    }"#;
+    assert!(PreprocessParams::from_preprocessor_config_json(json).is_err());
+}

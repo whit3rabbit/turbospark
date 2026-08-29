@@ -64,6 +64,8 @@ than one, is a parse error.
 
 | Flag | Takes | Default | Meaning |
 | --- | --- | --- | --- |
+| `--image` | path, repeatable | none | image to include; all of them land in ONE turn unless `--image-batch` |
+| `--image-batch` | flag | off | run the prompt once per `--image` instead of once with all of them |
 | `--rdadvise` | `off\|normal\|aggressive` | `off` | read-ahead hint mode for streamed expert reads (macOS) |
 | `--expert-cache-slots` | `8\|16\|24\|32`, or `auto` | `auto` | routed-expert slot cache size; `auto` never resolves below `16` |
 | `--prefill-chunk` | `32\|64\|128\|256\|512\|1024\|2048\|4096`, or `auto` | `128` | prompt-processing chunk size; drives chunked prefill for supported families (Gemma 4, dense Llama/Mistral) and falls back to sequential prefill for others; `MFERENCE_PREFILL_CHUNK` environment variable overrides when set |
@@ -120,6 +122,54 @@ turbospark-check --model ~/models/gemma4.gturbo --messages-file /tmp/p.json \
 # Interactive chat.
 turbospark-check --model ~/models/gemma4.gturbo --chat
 ```
+
+### Images
+
+`--image` is repeatable and every path lands in ONE turn, prepended to the
+last user message -- which is where the reference processor puts them, so the
+rendered prompt matches what mlx-vlm builds for the same request.
+
+```sh
+printf '[{"role":"user","content":"Transcribe the text in this image."}]' > /tmp/p.json
+turbospark-check --model ~/models/qwen38-27b-vision.gturbo --messages-file /tmp/p.json \
+  --image page.png --max-new 200 --temperature 0.0001 --top-k 1
+```
+
+`--image-batch` runs the prompt once PER image instead, over ONE open runner:
+the bulk-OCR shape. The tower's scratch is allocated and dropped per page, so
+peak memory is flat in the page count rather than growing with it.
+
+```sh
+turbospark-check --model ~/models/qwen38-27b-vision.gturbo --messages-file /tmp/p.json \
+  --image p1.png --image p2.png --image p3.png --image-batch --max-new 200
+```
+
+A `--messages-file` can place images itself, which is what a multi-turn
+conversation needs. The shape is HF's content-part list plus a `path`, since
+nothing else in this JSON could name a file:
+
+```json
+[{"role": "user", "content": [
+  {"type": "image", "path": "page.png"},
+  {"type": "text",  "text": "Transcribe the text in this image."}
+]}]
+```
+
+Four things this refuses rather than guessing at:
+
+- **`--prompt` with `--image`.** That mode encodes verbatim with no template,
+  so there is no marker run for the image to land in. Use `--messages-file`.
+- **`--image` alongside a file that already carries image parts.** The file
+  says where each image goes and the flag does not, so the pairing between a
+  path and a marker run would be ambiguous.
+- **`--image-batch` with a file that carries image parts**, for the same
+  reason: which of the file's own parts would each page keep?
+- **An install with no vision tower.** Named at the point the images are
+  attached rather than ignored.
+
+The install must carry its `preprocessor_config.json`: the pixel budget is
+read from the checkpoint and has no safe default (`crates/vision-io` Gotcha
+6). An install missing it is refused by name.
 
 ## `turbospark-model`
 

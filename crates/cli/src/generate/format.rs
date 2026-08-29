@@ -4,8 +4,8 @@ use std::collections::HashSet;
 
 use runtime::RawDecodeResult;
 use tokenizer::{
-    ChatDialect, Message, MfTokenizer, ReasoningEffort, Role, StructuredAssistantDecoder,
-    StructuredAssistantEvent,
+    ChatDialect, ContentPart, Message, MfTokenizer, ReasoningEffort, Role,
+    StructuredAssistantDecoder, StructuredAssistantEvent,
 };
 
 use super::session::Session;
@@ -220,7 +220,25 @@ pub(crate) fn map_reasoning_effort(effort: invocation::ReasoningEffort) -> Reaso
 /// Decode the `--messages-file` JSON: an array of `{"role", "content"}`
 /// objects, exactly the Swift original's shape. An unknown role is an
 /// error, not a silent fallback to `user`.
-pub(crate) fn parse_messages_file(path: &str) -> Result<Vec<Message>, String> {
+///
+/// **`content` MAY ALSO BE A PART LIST** (ROADMAP M-V7), which is how a
+/// conversation carries images:
+///
+/// ```json
+/// {"role": "user", "content": [
+///   {"type": "image", "path": "page.png"},
+///   {"type": "text",  "text": "Transcribe this."}
+/// ]}
+/// ```
+///
+/// The shape is HF's, matching what the checkpoint's own template branches
+/// on, with one addition: `path` names the file, because nothing else in this
+/// JSON could. Image paths come back beside the messages IN ORDER, since the
+/// nth path pairs with the nth marker run the template renders.
+///
+/// A bare string keeps its exact previous meaning, which is what leaves every
+/// text conversation on the path it has always taken.
+pub(crate) fn parse_messages_file(path: &str) -> Result<(Vec<Message>, Vec<String>), String> {
     let bytes = std::fs::read(path).map_err(|e| format!("cannot read {path}: {e}"))?;
     let value: serde_json::Value =
         serde_json::from_slice(&bytes).map_err(|e| format!("{path}: {e}"))?;
@@ -228,21 +246,77 @@ pub(crate) fn parse_messages_file(path: &str) -> Result<Vec<Message>, String> {
         .as_array()
         .ok_or_else(|| format!("{path}: expected a JSON array of messages"))?;
     let mut messages = Vec::with_capacity(rows.len());
+    let mut images = Vec::new();
     for (index, row) in rows.iter().enumerate() {
         let role = row["role"]
             .as_str()
             .ok_or_else(|| format!("{path}: message {index} has no string \"role\""))?;
-        let content = row["content"]
-            .as_str()
-            .ok_or_else(|| format!("{path}: message {index} has no string \"content\""))?;
         let role = parse_role(role)
             .ok_or_else(|| format!("{path}: message {index} has unsupported role {role:?}"))?;
-        messages.push(Message::new(role, content));
+
+        match &row["content"] {
+            serde_json::Value::String(text) => messages.push(Message::new(role, text)),
+            serde_json::Value::Array(parts) => {
+                let parsed = parse_content_parts(path, index, parts, &mut images)?;
+                messages.push(Message::with_parts(role, parsed));
+            }
+            _ => {
+                return Err(format!(
+                    "{path}: message {index} has no \"content\" string or part list"
+                ))
+            }
+        }
     }
     if messages.is_empty() {
         return Err(format!("{path}: no messages"));
     }
-    Ok(messages)
+    Ok((messages, images))
+}
+
+/// One message's ordered content parts, appending any image paths to
+/// `images`.
+///
+/// An unknown `type` is an ERROR rather than a skip: silently dropping a part
+/// builds a prompt missing something the caller asked for, and on an image
+/// part specifically it would desynchronise every later path from its span.
+fn parse_content_parts(
+    path: &str,
+    index: usize,
+    parts: &[serde_json::Value],
+    images: &mut Vec<String>,
+) -> Result<Vec<ContentPart>, String> {
+    let mut out = Vec::with_capacity(parts.len());
+    for (p, part) in parts.iter().enumerate() {
+        let where_ = || format!("{path}: message {index} part {p}");
+        let kind = part["type"]
+            .as_str()
+            .ok_or_else(|| format!("{}: has no string \"type\"", where_()))?;
+        match kind {
+            "text" => {
+                let text = part["text"]
+                    .as_str()
+                    .ok_or_else(|| format!("{}: a text part needs \"text\"", where_()))?;
+                out.push(ContentPart::Text(text.to_string()));
+            }
+            "image" => {
+                let image = part["path"].as_str().ok_or_else(|| {
+                    format!(
+                        "{}: an image part needs \"path\" naming a file on disk",
+                        where_()
+                    )
+                })?;
+                images.push(image.to_string());
+                out.push(ContentPart::Image);
+            }
+            other => {
+                return Err(format!(
+                    "{}: unsupported content part type {other:?} (expected \"text\" or \"image\")",
+                    where_()
+                ))
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// `tokenizer::Role`'s own `as_str` is crate-private, so the CLI owns this

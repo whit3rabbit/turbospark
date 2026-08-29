@@ -62,6 +62,8 @@ pub fn parse(tokens: &[String]) -> ParseOutcome {
     let mut repetition_penalty = DEFAULT_REPETITION_PENALTY;
     let mut seed: Option<u64> = None;
     let mut stop: Vec<String> = Vec::new();
+    let mut images: Vec<String> = Vec::new();
+    let mut image_batch = false;
     let mut rdadvise = ReadAheadMode::default();
     let mut expert_cache_slots = ExpertCacheSlots::default();
     let mut speculation = Speculation::default();
@@ -111,6 +113,7 @@ pub fn parse(tokens: &[String]) -> ParseOutcome {
             match token {
                 "--chat" => chat = true,
                 "--quiet" => quiet = true,
+                "--image-batch" => image_batch = true,
                 other => unreachable!("no-value option {other} not handled"),
             }
             i += 1;
@@ -164,6 +167,10 @@ pub fn parse(tokens: &[String]) -> ParseOutcome {
                 Err(_) => return invalid("--seed", value),
             },
             "--stop" => stop.push(value.clone()),
+            // Repeatable and ORDER-PRESERVING, like `--stop` above it: the
+            // order is what pairs each path with its marker run in the
+            // rendered prompt, so a set would be the wrong container.
+            "--image" => images.push(value.clone()),
             "--rdadvise" => match ReadAheadMode::parse(value) {
                 Some(mode) => rdadvise = mode,
                 None => return invalid("--rdadvise", value),
@@ -371,6 +378,8 @@ pub fn parse(tokens: &[String]) -> ParseOutcome {
         repetition_penalty,
         seed,
         stop,
+        images,
+        image_batch,
         rdadvise,
         expert_cache_slots,
         speculation,

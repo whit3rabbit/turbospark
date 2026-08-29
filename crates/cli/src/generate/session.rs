@@ -12,6 +12,12 @@ use tokenizer::MfTokenizer;
 /// the validated sampling configuration. Opened once per process, reused by
 /// every turn of an interactive chat.
 pub(crate) struct Session {
+    /// The RESOLVED install directory, kept because `--image` reads the
+    /// checkpoint's own `preprocessor_config.json` out of it.
+    ///
+    /// Resolved rather than `request.model`: that may be a catalog ALIAS, and
+    /// re-resolving it downstream is how the two come apart (Gotcha 5).
+    pub(crate) model_dir: std::path::PathBuf,
     pub(crate) tokenizer: MfTokenizer,
     pub(crate) runner: RealForwardRunner,
     pub(crate) shaping: ShapingConfig,
@@ -220,6 +226,7 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
     let rate = runtime::rate_control_for(profile, request.max_tokens_per_sec);
 
     Ok(Session {
+        model_dir: model_dir.to_path_buf(),
         tokenizer,
         runner,
         shaping,

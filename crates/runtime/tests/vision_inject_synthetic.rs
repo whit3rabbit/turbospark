@@ -405,10 +405,20 @@ fn a_span_position_ignores_its_token_id_and_a_text_position_does_not() {
 // Lifetime
 // ---------------------------------------------------------------------------
 
-/// `reset()` drops the map, which is what makes a bulk-OCR loop safe: page
-/// N+1's prefill must not inherit page N's spans.
+/// The map survives BOTH `rollback` and `reset`, and only an explicit
+/// `clear_prompt_vision` drops it.
+///
+/// **M-V5 had `reset` clearing it and that was wrong**, for a reason no test
+/// here could see: `run_raw_completion` calls `reset` at ENTRY, so the clear
+/// landed on the map for the very prompt about to be prefilled. See
+/// `an_injected_map_survives_the_generation_loops_own_reset`, which is the
+/// case that reaches it.
+///
+/// What keeps a bulk-OCR loop safe instead is the caller CONSUMING the map
+/// per page. A caller who forgets gets no injection rather than the previous
+/// page's -- vague answers instead of confident wrong ones.
 #[test]
-fn reset_clears_the_injection_map_and_rollback_does_not() {
+fn only_an_explicit_clear_drops_the_injection_map() {
     let dir = build_vision("lifetime");
     let ids = prompt_ids();
 
@@ -425,8 +435,15 @@ fn reset_clears_the_injection_map_and_rollback_does_not() {
 
     runner.reset();
     assert!(
+        runner.prompt_vision().is_some(),
+        "reset runs at the START of the generation the map belongs to; clearing there \
+         destroys it before prefill"
+    );
+
+    runner.clear_prompt_vision();
+    assert!(
         runner.prompt_vision().is_none(),
-        "a new generation inherited the previous prompt's spans"
+        "an explicit clear is what ends the map's life"
     );
 
     let _ = std::fs::remove_dir_all(&dir);
@@ -538,4 +555,91 @@ fn an_injected_run_has_a_frozen_digest() {
         got, FROZEN_INJECTED_DIGEST,
         "the injected pipeline moved; see this constant's doc comment before re-freezing"
     );
+}
+
+// ---------------------------------------------------------------------------
+// The generation LOOP, not `produce` (ROADMAP M-V7)
+// ---------------------------------------------------------------------------
+
+/// **THE ONE CASE THAT WOULD HAVE CAUGHT M-V5's REAL BUG.**
+///
+/// `run_raw_completion` calls `producer.reset()` at ENTRY, and M-V5 wired
+/// `reset` to clear `prompt_vision` -- so the injection map was destroyed
+/// before a single token was prefilled. Every `--image` run prefilled
+/// placeholder embeddings and hallucinated, with the right prompt length and
+/// no error anywhere.
+///
+/// Nothing above catches it: every other case in this file drives `produce`
+/// directly, and so does `crates/bench`'s cross-engine dump. A caller setting
+/// a map and then running the ORDINARY generation loop was untested, which is
+/// exactly the path every front end takes.
+///
+/// The assertion is that the injected rows still REACH the output through the
+/// loop -- perturb them and the generated tokens must move.
+#[test]
+fn an_injected_map_survives_the_generation_loops_own_reset() {
+    let dir = build_vision("loop-reset");
+    let ids = prompt_ids();
+    let params = params();
+
+    let generate = |perturb: bool| -> Vec<i32> {
+        let mut runner = open(&dir);
+        let mut embedding = runner
+            .encode_image(&image(&params), &params)
+            .expect("the tower runs");
+        if perturb {
+            for v in &mut embedding.rows {
+                *v = F16::from_f32(F16::from_bits(*v).to_f32() + 0.25).to_bits();
+            }
+        }
+        let positions = positions_for(&ids);
+        runner
+            .set_prompt_vision(std::slice::from_ref(&embedding), &positions, ids.len())
+            .expect("validates");
+
+        let config = turbospark_runtime::GenerationConfig {
+            shaping: selection::ShapingConfig::new(0.0, 0, None, 1.0, None).unwrap(),
+            max_new_tokens: 4,
+            stop_strings: Vec::new(),
+            extra_stop_tokens: Vec::new(),
+            rate: Default::default(),
+        };
+        let tokenizer = load_fixture_tokenizer();
+        let mut out = Vec::new();
+        turbospark_runtime::run_raw_completion(
+            &mut runner,
+            &tokenizer,
+            &ids,
+            &config,
+            4096,
+            VOCAB as usize,
+            |e| {
+                if let turbospark_runtime::RawDecodeProgress::Token { id, .. } = e {
+                    out.push(id);
+                }
+            },
+        )
+        .expect("generates");
+        out
+    };
+
+    let plain = generate(false);
+    let perturbed = generate(true);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(!plain.is_empty(), "the loop generated nothing");
+    assert_ne!(
+        plain, perturbed,
+        "the injected rows did not reach the generation loop; `reset` is eating the map"
+    );
+}
+
+/// The fixture tokenizer, for the loop's stop matcher and detokenizer alone.
+///
+/// The synthetic install ships no sidecars, and the loop needs SOME tokenizer;
+/// its vocabulary is irrelevant here because the ids are supplied directly and
+/// the assertion is about whether the rows reach the output.
+fn load_fixture_tokenizer() -> tokenizer::MfTokenizer {
+    let dir =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ChatMLTokenizer");
+    tokenizer::MfTokenizer::load_from_dir(&dir).expect("fixture tokenizer loads")
 }

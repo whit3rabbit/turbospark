@@ -325,6 +325,22 @@ pub struct InvocationRequest {
     pub seed: Option<u64>,
     /// The accumulated stop-string list, in supplied order.
     pub stop: Vec<String>,
+    /// Image paths, in supplied order (ROADMAP M-V7).
+    ///
+    /// ORDER-PRESERVING and not a set: the nth path pairs with the nth
+    /// marker run the template renders, so reordering them silently pairs
+    /// each picture with the wrong span.
+    ///
+    /// Opaque strings, like `steering` below: this crate is pure and reads
+    /// no file, so decoding and preprocessing is the front end's job.
+    pub images: Vec<String>,
+    /// Run the prompt once PER image rather than once with all of them.
+    ///
+    /// The bulk-OCR shape: one open runner, one generation per page, KV
+    /// reset between. Without it every `--image` lands in ONE turn, which is
+    /// what the checkpoint's template does natively and what the flag reads
+    /// like.
+    pub image_batch: bool,
     /// The read-ahead advisory mode.
     pub rdadvise: ReadAheadMode,
     /// The routed-cache slot count, or `Auto` to size it at open.

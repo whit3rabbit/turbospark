@@ -117,6 +117,20 @@ pub const OPTIONS: &[OptionDecl] = &[
         usage_hint: "stop string, repeatable, accumulates in order (default: none)",
     },
     OptionDecl {
+        flag: "--image",
+        takes_value: true,
+        is_required: false,
+        is_mode_selecting: false,
+        usage_hint: "image path, repeatable, all images land in ONE turn (default: none)",
+    },
+    OptionDecl {
+        flag: "--image-batch",
+        takes_value: false,
+        is_required: false,
+        is_mode_selecting: false,
+        usage_hint: "run the prompt once PER --image instead of once with all of them",
+    },
+    OptionDecl {
         flag: "--rdadvise",
         takes_value: true,
         is_required: false,

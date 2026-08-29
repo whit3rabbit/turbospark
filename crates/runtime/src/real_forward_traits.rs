@@ -25,13 +25,25 @@ impl LogitProducer for RealForwardRunner {
         if let Some(capture) = self.resid_capture.as_mut() {
             capture.note_generation_start();
         }
-        // A new generation is a new PROMPT, and the injection map is indexed
-        // by position within one. Carrying it over is what a bulk-OCR loop
-        // does by default -- open once, walk pages -- and page N's spans
-        // against page N+1's tokens blits the wrong image at positions that
-        // are not even placeholders, fluently. `rollback` deliberately does
-        // NOT do this; that one stays inside a prompt.
-        self.prompt_vision = None;
+        // **`prompt_vision` IS DELIBERATELY NOT CLEARED HERE, and M-V5 had it
+        // the other way round.** `reset` is called at the START of a
+        // generation by `run_raw_completion` itself, and a caller sets the
+        // injection map just BEFORE that call -- so clearing here destroyed
+        // the map for the very prompt it belonged to, and every `--image` run
+        // prefilled placeholder embeddings and hallucinated. Measured on the
+        // real install: the model described a page it had not been shown, with
+        // the right prompt length and no error anywhere.
+        //
+        // Nothing caught it because every test that existed drove `produce`
+        // directly. `an_injected_map_survives_the_generation_loops_own_reset`
+        // is the guard, and it goes through `run_raw_completion`.
+        //
+        // What this field's lifetime rests on instead is the CALLER consuming
+        // it: `clear_prompt_vision` after each turn, which is what the CLI's
+        // page loop does. A caller who forgets gets NO injection on the next
+        // turn rather than the previous page's -- the safe direction, since a
+        // model handed placeholder embeddings answers vaguely instead of
+        // describing the wrong picture confidently.
     }
 
     fn produce(

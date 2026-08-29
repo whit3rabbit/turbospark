@@ -438,3 +438,38 @@ fn a_single_layer_range_is_accepted() {
     ])));
     assert_eq!(req.steering_layers, Some((31, 31)));
 }
+
+/// `--image` accumulates IN ORDER (ROADMAP M-V7).
+///
+/// The nth path pairs with the nth marker run the template renders, so a
+/// container that reordered or deduplicated would silently pair each picture
+/// with the wrong span. Two DISTINCT paths plus a repeat, because a set would
+/// pass a two-path test and fail this one.
+#[test]
+fn image_paths_accumulate_in_supplied_order() {
+    let request = expect_success(parse(&tok(&[
+        "--model", "m", "--prompt", "p", "--image", "b.png", "--image", "a.png", "--image", "b.png",
+    ])));
+    assert_eq!(request.images, vec!["b.png", "a.png", "b.png"]);
+    assert!(!request.image_batch);
+}
+
+#[test]
+fn image_batch_is_a_valueless_flag() {
+    let request = expect_success(parse(&tok(&[
+        "--model",
+        "m",
+        "--prompt",
+        "p",
+        "--image-batch",
+    ])));
+    assert!(request.image_batch);
+    assert!(request.images.is_empty());
+}
+
+#[test]
+fn no_image_flag_leaves_the_list_empty() {
+    let request = expect_success(parse(&tok(&["--model", "m", "--prompt", "p"])));
+    assert!(request.images.is_empty());
+    assert!(!request.image_batch);
+}

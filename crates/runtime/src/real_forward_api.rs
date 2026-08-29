@@ -35,6 +35,17 @@ impl RealForwardRunner {
         self.arch.vision.is_active()
     }
 
+    /// This install's vision configuration, as the manifest declares it.
+    ///
+    /// The special token ids and the patch geometry a front end needs to
+    /// build a prompt, read off the INSTALL rather than recalled: they are
+    /// per-checkpoint and a constant here would be AGENTS.md Gotcha 38's
+    /// shape. Returns `VisionConfig::NONE` on an install with no tower, whose
+    /// `is_active()` is false.
+    pub fn vision_config(&self) -> &model_io::VisionConfig {
+        &self.arch.vision
+    }
+
     /// Bytes the vision tower's slot cache pins, `VISION_SLOTS x
     /// block_stride`. `None` until the tower has been opened.
     ///

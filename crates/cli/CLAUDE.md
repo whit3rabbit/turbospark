@@ -253,3 +253,64 @@ printf '[{"role":"user","content":"Explain how coastal wetlands reduce flood dam
     binary additionally attempts real generation against `--model` through
     `RealForwardRunner`, in all three modes (`--prompt`, `--messages-file`,
     `--chat`). See `DEVIATIONS.md` for what each mode covers.
+
+12. **`--image` LANDS EVERY PATH IN ONE TURN AND `--image-batch` RUNS ONE
+   TURN PER PATH, and the split is what the two workloads actually are**
+   (ROADMAP M-V7). The flag reads like "put this picture in the prompt", which
+   is what it does; the bulk-OCR loop the vision design exists for is the
+   OTHER shape and asks for itself by name. `--messages-file` content parts
+   serve the third case, a conversation that places images itself.
+
+   **PREPENDED to the last user turn, not appended**, and that is matched to
+   the reference rather than chosen: `apply_chat_template(processor, config,
+   question, num_images=1)` builds `[image, text]`. Appending moves every
+   mRoPE position past the image and produces a different prompt for the same
+   request.
+
+   Four refusals, each a silent wrong answer otherwise. `--prompt` with
+   `--image` (that mode encodes VERBATIM with no template, so there is no
+   marker run to land in and this binary would be inventing framing --
+   AGENTS.md Gotcha 41). `--image` alongside a file that already carries image
+   parts (the file says where each image goes and the flag does not, so the
+   path-to-marker pairing is ambiguous). `--image-batch` with such a file
+   (which of its own parts would each page keep?). And an install with no
+   vision tower, named where the images are attached.
+
+   **THE PIXEL BUDGET IS READ FROM THE INSTALL AND HAS NO DEFAULT.** An
+   install missing `preprocessor_config.json` is refused by name;
+   `crates/vision-io` Gotcha 6 has the reason (the generic library default is
+   wrong for this family by a factor of 16 on the ceiling, which produces a
+   correct-looking lower-quality answer). `Session.model_dir` exists for this
+   one read, and it is the RESOLVED directory rather than `request.model`,
+   which may be a catalog alias (Gotcha 5).
+
+13. **THE FIRST END-TO-END `--image` RUN HALLUCINATED, AND THE CAUSE WAS
+   `reset()` EATING THE INJECTION MAP.** M-V5 wired
+   `LogitProducer::reset` to clear `prompt_vision` so a bulk-OCR loop could
+   not inherit the previous page's spans. `run_raw_completion` calls
+   `producer.reset()` at ENTRY -- so the clear landed on the map for the very
+   prompt about to be prefilled, and every image run prefilled placeholder
+   embeddings.
+
+   **It presented as a plausible answer rather than an error**: the right
+   prompt length (1,302 tokens), no warning anywhere, and a fluent
+   transcription of a page the model had not been shown ("The quick brown fox
+   jumps over the lazy dog" against a page of generated word tables).
+
+   **NOTHING CAUGHT IT BECAUSE EVERY TEST DROVE `produce` DIRECTLY** -- the
+   synthetic injection file, and `crates/bench`'s cross-engine dump, both walk
+   positions by hand. A caller setting a map and then running the ORDINARY
+   generation loop was untested, and that is the path every front end takes.
+   `an_injected_map_survives_the_generation_loops_own_reset` closes it and
+   goes through `run_raw_completion`.
+
+   Two things to carry. **The lifetime rule inverted**: `reset` no longer
+   clears the map, and the CALLER consumes it (`clear_prompt_vision` per page,
+   which this crate's loop does). A caller who forgets now gets NO injection
+   rather than the previous page's, which is the safe direction -- a model
+   handed placeholder embeddings answers vaguely instead of describing the
+   wrong picture confidently. And **the tell was comparing against a known
+   answer**: the same page through `vision_logit_dump.rs` had already produced
+   the correct table, so the two paths disagreeing localized it in one step.
+   A vision feature needs an end-to-end arm whose output someone can READ;
+   shapes and lengths all agreed here.

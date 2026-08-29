@@ -36,6 +36,11 @@ pub struct PreprocessParams {
     pub rescale_factor: f32,
 }
 
+/// What an absent `rescale_factor` means: the reference processor's own
+/// signature default (`processing_qwen3_vl.py:162`), i.e. the universal
+/// 0-255 to 0-1 conversion.
+pub const DEFAULT_RESCALE_FACTOR: f64 = 1.0 / 255.0;
+
 /// The maximum accepted long-side/short-side aspect ratio, from the reference
 /// processor's own `> 200` check.
 pub const MAX_ASPECT_RATIO: f64 = 200.0;
@@ -74,9 +79,23 @@ impl PreprocessParams {
     ///   converts unconditionally, so three is what the format's silence
     ///   MEANS rather than a value being guessed. It lives in `vision_config`
     ///   for the tower's own use and is not duplicated here.
-    /// - `image_mean` / `image_std` / `rescale_factor` are required. They are
-    ///   written by every checkpoint, and a wrong normalization is invisible
-    ///   in the output shape.
+    /// - `image_mean` / `image_std` are required. A wrong normalization is
+    ///   invisible in the output shape, and no default is safe: these are
+    ///   per-checkpoint and the shipped pair here (`0.5`) differs from the
+    ///   ImageNet triples other families write.
+    /// - `rescale_factor` is DEFAULTED to [`DEFAULT_RESCALE_FACTOR`], and the
+    ///   asymmetry with the pixel budget is the point. This clause used to say
+    ///   it was "written by every checkpoint" and
+    ///   `mlx-community/Qwen3.8-27B-4bit` -- the very checkpoint this crate
+    ///   was built against -- omits it, which the first real `--image` run
+    ///   found. The reference's own processor declares
+    ///   `rescale_factor: float = 1 / 255.0` as a signature default
+    ///   (`processing_qwen3_vl.py:162`), so `1/255` is what the format's
+    ///   SILENCE means rather than a guess: it is the universal 0-255 to 0-1
+    ///   conversion, where the generic pixel budget is wrong for this family
+    ///   by a factor of 16. AGENTS.md Gotcha 39's rule -- reach for the
+    ///   FORMAT's default when a key is optional, and refuse only where the
+    ///   format has none.
     pub fn from_preprocessor_config_json(json: &str) -> Result<Self, VisionIoError> {
         let root: serde_json::Value =
             serde_json::from_str(json).map_err(|e| VisionIoError::BadConfig {
@@ -127,13 +146,12 @@ impl PreprocessParams {
             max_pixels,
             image_mean: read_triple(&root, "image_mean")?,
             image_std: read_triple(&root, "image_std")?,
+            // DEFAULTED, unlike the pixel budget above it, and the two are
+            // not inconsistent -- see the doc comment's third bullet.
             rescale_factor: root
                 .get("rescale_factor")
                 .and_then(|v| v.as_f64())
-                .ok_or_else(|| VisionIoError::BadConfig {
-                    field: "rescale_factor".into(),
-                    why: "missing or not a number".into(),
-                })? as f32,
+                .unwrap_or(DEFAULT_RESCALE_FACTOR) as f32,
         })
     }
 }

@@ -41,6 +41,9 @@ fn a_full_invocation_with_every_other_option_still_parses_to_success_not_help() 
         "1",
         "--stop",
         "s",
+        "--image",
+        "page.png",
+        "--image-batch",
         "--rdadvise",
         "normal",
         "--expert-cache-slots",
@@ -90,8 +93,8 @@ fn usage_text_enumerates_every_declared_option_with_a_default_or_allowed_value_d
     );
     let other_options = OPTIONS.len() - required_and_mode_options.len();
     assert_eq!(
-        other_options, 26,
-        "expected twenty-six remaining documented options"
+        other_options, 28,
+        "expected twenty-eight remaining documented options"
     );
 }
 
