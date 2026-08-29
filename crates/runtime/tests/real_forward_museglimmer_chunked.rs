@@ -126,3 +126,25 @@ fn the_chunk_boundary_does_not_move_the_logits() {
         );
     }
 }
+
+/// `MFERENCE_BATCHED_GEMV` must be REFUSED BY NAME on this family, never
+/// ignored. This seam names the chunk driver's RESIDENT GEMVs, which every
+/// family has -- this one's are even INT4-affine, the layout the M-row GEMM
+/// serves -- but that GEMM is wired in Gemma 4's driver alone, so silently
+/// running the per-token loop would measure the unbatched engine under the
+/// batched arm's label.
+#[test]
+fn the_batched_gemv_seam_is_refused_by_name_on_this_family() {
+    let mut runner = open_runner("batched-gemv-refused");
+    runner.set_batched_gemv_prefill(true);
+
+    let mut logits = vec![f16::from_f32(0.0); VOCAB as usize];
+    let err = runner
+        .prefill_chunk(&PROMPT, 0, &mut logits)
+        .expect_err("the batched resident-GEMV seam must be refused on this family");
+    let text = err.to_string();
+    assert!(
+        text.contains("MFERENCE_BATCHED_GEMV"),
+        "the refusal must name the seam the caller set; got {text}"
+    );
+}

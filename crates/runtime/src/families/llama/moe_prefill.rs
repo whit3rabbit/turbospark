@@ -17,9 +17,9 @@
 //! **No ring-wrap hazard**, unlike Gemma 4's batched-GEMV seam: this
 //! architecture has no sliding-window layers at all (`RealLlamaState::build`
 //! refuses any non-full-attention layer), and attention here stays
-//! per-token and unbatched regardless (no `MFERENCE_BATCHED_GEMV`-style
-//! widening for this family), so there is no batched K/V projection to
-//! straddle a ring in the first place.
+//! per-token and unbatched regardless (`MFERENCE_BATCHED_GEMV` is REFUSED
+//! by name below, never silently ignored), so there is no batched K/V
+//! projection to straddle a ring in the first place.
 //!
 //! **No shared expert**, unlike Gemma 4's routed half: phase 2's residual
 //! seed is `scratch.zero_hidden`, so there is no shared-expert branch to
@@ -72,6 +72,19 @@ impl RealForwardRunner {
                 "MFERENCE_ROUTED_BATCH is not wired for this family: the batched \
                  routed pair exists for INT4-affine (gemma4) and MXFP4 (gpt-oss) \
                  blobs, and this install's routed experts are GGUF K-quants"
+                    .to_string(),
+            ));
+        }
+        // The same rule for the resident-GEMV seam, which unlike the one
+        // above is meaningful on EVERY chunked driver: this family has
+        // resident GEMVs whatever its routed layout, and the M-row GEMM is
+        // wired in Gemma 4's driver alone (step 6).
+        if self.batched_gemv_prefill {
+            return Err(RealForwardError::Unsupported(
+                "MFERENCE_BATCHED_GEMV is not wired for this family: the M-row \
+                 resident GEMM exists in the gemma4 chunked driver alone \
+                 (INT4-affine), and this driver keeps every resident GEMV per \
+                 token"
                     .to_string(),
             ));
         }

@@ -47,6 +47,22 @@ impl RealForwardRunner {
                 "prefill_chunk called with an empty chunk".to_string(),
             ));
         }
+        // REFUSED BY NAME rather than ignored. A dense driver ignores
+        // `MFERENCE_ROUTED_BATCH` legitimately (no routed half to refer
+        // to), but this seam names the driver's RESIDENT GEMVs, which every
+        // family has; the M-row GEMM is wired in Gemma 4's driver alone
+        // (INT4-affine, step 6), so running the per-token loop anyway would
+        // measure the unbatched engine under the batched arm's label
+        // (crate Gotcha 22's rule).
+        if self.batched_gemv_prefill {
+            return Err(RealForwardError::Unsupported(
+                "MFERENCE_BATCHED_GEMV is not wired for this family: the M-row \
+                 resident GEMM exists in the gemma4 chunked driver alone \
+                 (INT4-affine), and this driver keeps every resident GEMV per \
+                 token"
+                    .to_string(),
+            ));
+        }
         let mut offset = 0usize;
         while offset < tokens.len() {
             let take = (tokens.len() - offset).min(MAX_PREFILL_BATCH);

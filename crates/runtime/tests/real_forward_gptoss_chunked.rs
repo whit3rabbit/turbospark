@@ -315,3 +315,27 @@ fn decoding_continues_correctly_after_a_batched_routed_prefill() {
         "decode after a batched routed prefill must track decode after a sequential one"
     );
 }
+
+/// `MFERENCE_BATCHED_GEMV` must be REFUSED BY NAME on this family, never
+/// ignored. Unlike `MFERENCE_ROUTED_BATCH` (which a dense driver rightly
+/// ignores, having no routed half to refer to), this seam names the chunk
+/// driver's RESIDENT GEMVs, which every family has -- this one's are Q8_0
+/// attention projections and head. The M-row GEMM is wired in Gemma 4's
+/// driver alone, so silently running the per-token loop would measure the
+/// unbatched engine under the batched arm's label.
+#[test]
+fn the_batched_gemv_seam_is_refused_by_name_on_this_family() {
+    let vocab = SyntheticGptOssShape::default().vocab as usize;
+    let mut runner = open_runner("batched-gemv-refused", 16);
+    runner.set_batched_gemv_prefill(true);
+
+    let mut logits = vec![f16::from_f32(0.0); vocab];
+    let err = runner
+        .prefill_chunk(&PROMPT, 0, &mut logits)
+        .expect_err("the batched resident-GEMV seam must be refused on this family");
+    let text = err.to_string();
+    assert!(
+        text.contains("MFERENCE_BATCHED_GEMV"),
+        "the refusal must name the seam the caller set; got {text}"
+    );
+}

@@ -229,3 +229,23 @@ fn the_batched_routed_seam_is_refused_by_name_on_this_family() {
         "the refusal must name the seam the caller set; got {text}"
     );
 }
+
+/// The resident-GEMV seam (`MFERENCE_BATCHED_GEMV`) must be refused by name
+/// too, and unlike the routed seam above it is meaningful on EVERY chunked
+/// driver: this family has resident GEMVs whatever its routed layout, and
+/// the M-row GEMM is wired in Gemma 4's driver alone.
+#[test]
+fn the_batched_gemv_seam_is_refused_by_name_on_this_family() {
+    let mut runner = open_runner("batched-gemv-refused", 16);
+    runner.set_batched_gemv_prefill(true);
+
+    let mut logits = vec![f16::from_f32(0.0); VOCAB as usize];
+    let err = runner
+        .prefill_chunk(&PROMPT, 0, &mut logits)
+        .expect_err("the batched resident-GEMV seam must be refused on this family");
+    let text = err.to_string();
+    assert!(
+        text.contains("MFERENCE_BATCHED_GEMV"),
+        "the refusal must name the seam the caller set; got {text}"
+    );
+}

@@ -25,10 +25,10 @@
 //! The three-sliding/one-full window, the centered-vs-plain norm split, NoPE
 //! on full layers and the attention output gate all need no new logic here:
 //! they are already correct per-token in `attn.rs`/`mlp.rs`/`mod.rs`, and
-//! attention stays per-token and unbatched in this driver (no
-//! `MFERENCE_BATCHED_GEMV`-style widening), so the sliding-window ring is
-//! addressed by `position` exactly as the sequential decode path already
-//! does it.
+//! attention stays per-token and unbatched in this driver
+//! (`MFERENCE_BATCHED_GEMV` is REFUSED by name, never silently ignored), so
+//! the sliding-window ring is addressed by `position` exactly as the
+//! sequential decode path already does it.
 
 use std::time::Instant;
 
@@ -55,6 +55,21 @@ impl RealForwardRunner {
         if tokens.is_empty() {
             return Err(RealForwardError::Unsupported(
                 "prefill_chunk called with an empty chunk".to_string(),
+            ));
+        }
+        // REFUSED BY NAME rather than ignored. This seam names the driver's
+        // RESIDENT GEMVs, which every family has (this one's are INT4
+        // affine, so the request is doubly plausible here); the M-row GEMM
+        // is wired in Gemma 4's driver alone (step 6), so running the
+        // per-token loop anyway would measure the unbatched engine under
+        // the batched arm's label (crate Gotcha 22's rule).
+        if self.batched_gemv_prefill {
+            return Err(RealForwardError::Unsupported(
+                "MFERENCE_BATCHED_GEMV is not wired for this family: the M-row \
+                 resident GEMM exists in the gemma4 chunked driver alone \
+                 (INT4-affine), and this driver keeps every resident GEMV per \
+                 token"
+                    .to_string(),
             ));
         }
         let mut offset = 0usize;
