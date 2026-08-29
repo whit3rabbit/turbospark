@@ -287,16 +287,54 @@ rather than at anything favouring this port.
 
 So the controlled ratio on one machine is **4.94x**, and reading it as
 compute efficiency: mlx-lm sustains 26.7% of the M4 Max's FP16 peak against
-this port's 5.4%. **The single biggest structural term is the micro-batch
-width.** mlx-lm prefills at M=512 and re-reads the 14 GB weight set 6 times
-over this prompt; this port prefills at M=16 -- `gpu::MAX_BATCH_ROWS`, set by
-the batched INT4 GEMM's per-thread accumulator registers, not a tuning
-choice -- and re-reads it 187 times, 2,576 GB against 84 GB. Even at M=16
-that traffic is an 8.8 s floor at decode-observed bandwidth while the arm
-takes 72 s, so a second term sits on top of it: roughly 1.27 million
-one-row kernel launches (norms, RoPE, residual adds, per-head norms,
-`silu_mul`, and one attention dispatch per token per full layer) that the
-seam does not widen.
+this port's 5.4%.
+
+**THE GAP IS TWO TERMS OF ALMOST EXACTLY EQUAL SIZE, and naming either one
+alone is wrong.** Normalize both engines against the same yardstick -- one
+full weight pass, which decode measures at 47.6 ms -- and write
+`c(M) = (time for M rows) / (M x one pass)`, so an ideal kernel reads
+`max(1/M, compute_floor)`:
+
+| engine | M | measured `c` | its own ideal `c` | off ideal |
+|---|---|---|---|---|
+| this port | 16 | 0.515 | 0.0625 | **8.2x** |
+| mlx-lm | 512 | 0.106 | 0.0277 | **3.8x** |
+
+So this port is worse on BOTH axes and by similar factors. Holding one fixed
+and fixing the other:
+
+- widen M only (16 to 512, same kernel quality): 10.9 ms/token, **92 tok/s**, 2.3x
+- fix the kernel only (to mlx-lm's quality, still M=16): 11.3 ms/token, **88 tok/s**, 2.2x
+- both: 5.0 ms/token, **199 tok/s**
+
+**The width term saturates at M=36**, where the 1.32 ms compute floor
+overtakes the `1/M` bandwidth floor, so M=64 captures the entire width
+benefit and mlx-lm's 512 buys it nothing over 64. This is the part worth not
+re-deriving: the answer is not "copy their 512".
+
+The kernel term is legible as effective WEIGHT BANDWIDTH, the same quantity
+on both paths: `dequant_int4_gemv_simd` sustains **294 GB/s** at M=1 on the
+decode path, while `dequant_int4_gemm_simd` sustains **35.7 GB/s** at M=16
+here. That 8.2x predicts the measured speedup rather than merely agreeing
+with it -- 16 rows at 8.2x the cost per byte is a **1.94x** net win against
+the **1.86-2.13x** measured above, which is the check that says this model of
+the gap is the right one.
+
+`MFERENCE_PHASES=1 MFERENCE_DISPATCH_PROFILE=1` agrees and is what redirected
+this: over a 582-token prefill, `dequant_int4_gemm_simd` is **85.4%** of
+sampled GPU time. The 1.27 million one-row launches that survive the seam
+(norms, residual adds, `silu_mul`, per-head norms, RoPE, `split_q_gate`,
+`sigmoid_gate_mul`) are 74% of the DISPATCH COUNT and about **8%** of the
+time; `attention_decode_partial` plus its combine is **2.6%**. Launch count
+is not time here, and reading it as time is what produced the wrong answer.
+Note the profile was taken at 582 tokens and attention grows with context, so
+its share at 2,940 is perhaps 4-5x that and still not the term to chase.
+
+**WHICH MAKES `docs/BATCHED_PREFILL.md` STEP 4 A LOW-VALUE ITEM ON THIS
+FAMILY**, despite being the biggest remaining kernel on that list. It is 48
+of 64 layers with no attention at all (they are gated DeltaNet, already fully
+batched inside `encode_linear_block_batched`), and the 16 that have it spend
+2.6% of prefill there. Cost an optimization by the terms it does not touch.
 
 **IT STILL DOES NOT REACH oMLX**, and the honest ratio is now roughly a
 FIFTH rather than a tenth: 40.79 against 210.3 tok/s. So the GEMV-to-GEMM
