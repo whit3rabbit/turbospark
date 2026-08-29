@@ -359,7 +359,7 @@ impl RealForwardRunner {
         // The head's FFN is the trunk's DENSE width, and `residual` is the
         // head's own `x` -- the parameter `dense.rs` grew for this one caller.
         dense::encode_qwen_layer_dense(
-            context, &pass, weights, index, scratch, qwen, &scratch.x, MTP_PREFIX, 0, hidden,
+            context, &pass, weights, index, scratch, qwen, &scratch.x, 0, MTP_PREFIX, 0, hidden,
             inter, use_silu,
         )?;
 

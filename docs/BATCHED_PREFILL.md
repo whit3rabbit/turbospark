@@ -779,6 +779,66 @@ md5-identical against a pre-change binary, prefill dropping from 7.56s to
 `llama` against a freshly-pulled `Qwen/Qwen3-30B-A3B-GGUF` install (see
 `crates/runtime/CLAUDE.md` Gotcha 14 for the exact md5s).
 
+**THE DENSE HALF OF THE QWEN LINEAR-ATTENTION FLOW LANDED SIXTH
+(2026-08-29), `qwenGdnDense` (`qwen38-27b.gturbo`), AND IT IS NEITHER OF THE
+TWO SHAPES ABOVE.** The obvious precedent looked like `families/qwen/batched.rs`
+-- the M-row GEMM machinery this family already built for the MTP/DFlash2
+verify pass -- and that turned out to be the wrong one: it implements steps
+2-6 (GEMVs become GEMMs), sized for tiny drafter block depths and allocated
+only when a drafter is open. `families/qwen/prefill.rs` is Step 1 again,
+same shape as dense `llama`'s and `muse_glimmer`'s: loop the EXISTING
+per-token kernels (`attn::encode_linear_block` for the gated-DeltaNet mask-2
+layers, `attn::encode_full_attention_block` for the mask-1 ones,
+`dense::encode_qwen_layer_dense` for the FFN) inside a micro-batch, batching
+COMMAND BUFFERS rather than GEMVs, one buffer for the whole micro-batch
+since a dense layer has no router readback. **No new kernel, and no new
+buffer either** -- the first family so far where that is true even of the
+per-token scratch, because every intermediate the trunk's sequential flow
+already owns (`qwen.moe_x`, `qwen.h2`, the GDN scratch fields) is a
+single-row GPU-only buffer safe to reuse per token under commit-order
+execution, exactly the property `crates/gpu/CLAUDE.md` Gotcha 8 already
+established for the other two Step-1-shaped drivers.
+
+The one open question this family has that no other Step-1 driver does is
+the GATED-DELTANET RECURRENT STATE, and it resolves for free rather than
+needing new machinery: `encode_linear_block`'s decode-shaped kernels advance
+`qwen.gdn.state_buffer(layer)` in place with no position argument at all,
+so calling it once per token, strictly in increasing order, within one
+layer's inner loop before moving to the next layer, reproduces sequential
+decode's math exactly -- `crates/runtime/CLAUDE.md` Gotcha 4's constraint
+satisfied by construction. It is also what makes cross-chunk continuity
+free: the state buffer is the one sequential decode already reads and
+writes, so a prompt spanning several `prefill_chunk` calls carries it
+forward automatically, with no state to hand between calls.
+
+Two refusals are BY NAME, both specific to this family. An image prompt
+(`self.prompt_vision.is_some()`) is refused: the image injection in
+`produce.rs` is this family's only embedding call site today
+(`crates/runtime/CLAUDE.md` Gotcha 27), and this first cut stays text-only
+rather than growing a second call site sight unseen. An open drafter
+(`self.real_mtp.is_some() || self.real_dflash.is_some()`) is refused too:
+the sequential dense branch fires the DFlash2 aux-capture hook on every
+forward pass, which this driver does not encode, so silently prefilling
+through it would leave the drafter reading a stale or empty capture on its
+first draft. `supports_chunked_prefill()` folds both conditions into its
+qwen clause so a caller routes around the driver entirely rather than
+reaching either refusal in the ordinary case; the driver still carries both
+checks itself as a backstop. The MoE half (`qwenGdnMoe`) is left for a
+follow-up, matching how `llama`'s dense and MoE halves landed as two
+separate steps.
+
+Verified byte-identical against sequential on the synthetic fixture
+(`tests/real_forward_qwen35_chunked.rs`: chunk-span sweep `[1, 2, 3, 4, 7,
+11]`, crossing this fixture's GDN-then-full-attention layer mask at every
+span; plus the `MFERENCE_BATCHED_GEMV`, vision, open-drafter and MoE-still-
+refused cases every sibling driver carries) and on the real
+`~/models/qwen38-27b.gturbo` install: greedy and sampled stdout
+byte-identical against the sequential path, `qwen38_quality_gate` unmoved
+(reference-answer perplexity 4.9432, frozen digests all reproduced). This is
+what unblocks a real PP figure for the oMLX comparison below -- measuring
+and recording that figure is tracked separately, since it is a benchmark run
+rather than a code change.
+
 ### Step 5's two arms, measured before building either
 
 Measured 2026-08-27 on the two real installs left by the step-1 landing

@@ -216,10 +216,16 @@ impl ChunkedPrefillRunner for RealForwardRunner {
             })
             .map_err(|e| e.to_string());
         }
+        if self.real_qwen.as_ref().is_some_and(|s| s.dense) {
+            return gpu::autorelease_pool(|| {
+                self.prefill_chunk_real_qwen_dense(tokens, start_position, logits)
+            })
+            .map_err(|e| e.to_string());
+        }
         Err(format!(
             "chunked prefill is wired for the real Gemma 4 flow, both halves of the \
-             llama flow (Mistral, Llama 2/3.x, Mixtral, qwen3moe), muse_glimmer and \
-             gpt-oss only; this install is {:?}",
+             llama flow (Mistral, Llama 2/3.x, Mixtral, qwen3moe), muse_glimmer, \
+             gpt-oss, and the dense qwen flow (qwenGdnDense) only; this install is {:?}",
             self.arch.family
         ))
     }

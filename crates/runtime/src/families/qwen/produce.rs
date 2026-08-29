@@ -249,6 +249,7 @@ impl RealForwardRunner {
                     scratch,
                     qwen,
                     &scratch.x,
+                    0,
                     TRUNK_PREFIX,
                     layer,
                     hidden,

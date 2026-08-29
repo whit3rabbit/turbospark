@@ -45,6 +45,12 @@ use crate::real_forward_types::{DecodeScratch, RealForwardError};
 /// MTP head runs this same FFN over its own hidden stream
 /// (`docs/MTP_SPECULATIVE.md`), after the trunk's token is complete. The
 /// trunk still passes `scratch.x` and is byte-identical for it.
+///
+/// `x_off` is the residual's row offset within `residual`, following the
+/// `families/llama/dense.rs` / `crates/runtime/CLAUDE.md` Gotcha 21
+/// precedent: the chunked-prefill driver packs several tokens into one
+/// buffer at their own offsets, where every other caller (the sequential
+/// trunk, the MTP head) sits at row 0 and passes `0` explicitly.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn encode_qwen_layer_dense(
     context: &mut gpu::MetalContext,
@@ -54,6 +60,7 @@ pub(crate) fn encode_qwen_layer_dense(
     scratch: &DecodeScratch,
     qwen: &RealQwenState,
     residual: &gpu::MetalBuffer,
+    x_off: u64,
     prefix: &str,
     layer: usize,
     hidden: usize,
@@ -110,7 +117,13 @@ pub(crate) fn encode_qwen_layer_dense(
     // the attention output nor the FFN output on the way back into the stream
     // (`ffn_sandwich_norms: false`), and doing so is what took the Qwen 3.6
     // reference perplexity from 6.25 to 255,409 once already.
-    gpu::encode_residual_add(context, pass, (residual, 0), (&qwen.h2, 0), hidden as u32)
-        .map_err(gpu_err)?;
+    gpu::encode_residual_add(
+        context,
+        pass,
+        (residual, x_off),
+        (&qwen.h2, 0),
+        hidden as u32,
+    )
+    .map_err(gpu_err)?;
     Ok(())
 }

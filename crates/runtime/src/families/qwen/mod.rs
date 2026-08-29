@@ -15,6 +15,7 @@ mod moe_batch;
 mod mtp;
 mod mtp_dump;
 mod mtp_state;
+mod prefill;
 mod produce;
 mod state;
 

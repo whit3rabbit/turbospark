@@ -193,12 +193,20 @@ impl RealForwardRunner {
     /// wiring, `crates/server`'s automatic dispatch) and the driver's own
     /// hard refusal can never disagree. Gemma 4, BOTH halves of `llama`
     /// (Mistral, Llama 2/3.x, Mixtral, `qwen3moe`), `muse_glimmer` and
-    /// `gpt-oss` today; only the qwen flow answers `false`.
+    /// `gpt-oss` today, plus the DENSE half of the qwen flow
+    /// (`qwenGdnDense`) as long as this open has no image prompt attached
+    /// and no drafter open -- `prefill_chunk_real_qwen_dense`'s two named
+    /// refusals (`crates/runtime/CLAUDE.md`'s qwen chunked-prefill Gotcha).
+    /// The MoE half of qwen (`qwenGdnMoe`) still answers `false`.
     pub fn supports_chunked_prefill(&self) -> bool {
         self.real.is_some()
             || self.real_llama.is_some()
             || self.real_muse.is_some()
             || self.real_gpt_oss.is_some()
+            || (self.real_qwen.as_ref().is_some_and(|s| s.dense)
+                && self.prompt_vision.is_none()
+                && self.real_mtp.is_none()
+                && self.real_dflash.is_none())
     }
 
     /// Rows this model's output head writes, i.e. the length every `produce`
