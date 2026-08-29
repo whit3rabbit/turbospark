@@ -101,6 +101,63 @@ kernel void rope_neox_subdim(
                     float(position), theta);
 }
 
+// Qwen 3.8's INTERLEAVED mRoPE (ROADMAP M-V5, `docs/VISION_PHASE0.md` item
+// 2). `rope_neox_subdim` with the scalar position replaced by a per-pair
+// choice among (t, h, w).
+//
+// IT CALLS `apply_neox_pair`, WHICH IS THE POINT. A text token gets
+// t == h == w from the reference's own `get_rope_index`, so at that input
+// every pair selects the same number and this kernel executes the identical
+// float sequence `rope_neox_subdim` executes -- BIT-identical, not merely
+// close. The trunk therefore stays byte-exact for every text token of a
+// mixed prompt and only an image's own tokens take a different angle. Any
+// rewrite that precomputes cos/sin on the host, or reassociates the angle,
+// gives that up and turns a structural invariant into an FP coincidence.
+//
+// The selector is `_interleaved_position_selector`
+// (`mlx_vlm/models/rope_utils.py:350-355`): default t, then h claims residue
+// 1 and w residue 2, each stopping at `min(section * 3, half_rotary)`.
+// THE CLAMPS ARE IMPLEMENTED RATHER THAN THE `i % 3` COLLAPSE: that collapse
+// holds only because this family's [11, 11, 10] tiles freq_dim 32 exactly.
+//
+// `section_t` is not a parameter. t is what a pair gets when neither of the
+// other two claims it, so passing its width would be a second copy of a
+// number this already derives.
+kernel void rope_mrope_interleaved(
+    device half* data [[buffer(0)]],
+    constant uint& position_t [[buffer(1)]],
+    constant uint& head_dim [[buffer(2)]],
+    constant uint& num_heads [[buffer(3)]],
+    constant float& theta [[buffer(4)]],
+    constant uint& rotary_dim [[buffer(5)]],
+    constant uint& position_h [[buffer(6)]],
+    constant uint& position_w [[buffer(7)]],
+    constant uint& section_h [[buffer(8)]],
+    constant uint& section_w [[buffer(9)]],
+    uint3 gid [[thread_position_in_grid]]
+) {
+    const uint pair = gid.x;
+    const uint head_index = gid.y;
+    const uint token_index = gid.z;
+    const uint dimension = rope_head_dim(head_dim);
+    const uint heads = rope_num_heads(num_heads);
+    const uint half_rotary = rotary_dim / 2u;
+    if (pair >= half_rotary || head_index >= heads) return;
+
+    uint selected = position_t;
+    if (pair % 3u == 1u && pair < min(section_h * 3u, half_rotary)) {
+        selected = position_h;
+    } else if (pair % 3u == 2u && pair < min(section_w * 3u, half_rotary)) {
+        selected = position_w;
+    }
+
+    device half* head = data
+        + token_index * heads * dimension
+        + head_index * dimension;
+    apply_neox_pair(head, pair, half_rotary, rotary_dim,
+                    float(selected), theta);
+}
+
 kernel void rope_proportional_neox(
     device half* data [[buffer(0)]],
     constant uint& position [[buffer(1)]],

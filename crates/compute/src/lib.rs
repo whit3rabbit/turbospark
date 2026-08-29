@@ -91,7 +91,10 @@ pub use quant_gguf_mxfp4::{
     MXFP4_VALUES,
 };
 pub use rms_norm::{rms_norm, rms_norm_centered};
-pub use rope::{rope_neox, rope_neox_subdim, rope_paired, yarn_frequencies, YarnSpec};
+pub use rope::{
+    mrope_component_selector, rope_mrope_interleaved, rope_neox, rope_neox_subdim, rope_paired,
+    yarn_frequencies, YarnSpec,
+};
 pub use sampling::logit_softcap_softmax;
 pub use steering::{
     direction_coefficient, inv_norm, renorm_gamma, steer_in_place, unit_coefficient,

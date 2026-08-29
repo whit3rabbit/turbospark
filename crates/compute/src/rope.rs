@@ -107,6 +107,100 @@ pub fn rope_neox_subdim(
     out
 }
 
+/// Which of `(t, h, w)` drives each frequency pair under Qwen 3.8's
+/// INTERLEAVED mRoPE (`docs/VISION_PHASE0.md` item 2). Returns one component
+/// index in `0..3` per pair, `freq_dim == rotary_dim / 2` entries.
+///
+/// A transcription of `_interleaved_position_selector`
+/// (`mlx_vlm/models/rope_utils.py:350-355`): every pair defaults to `t`, then
+/// `h` claims residue 1 and `w` residue 2, each stopping at
+/// `min(section[dim] * 3, freq_dim)`.
+///
+/// **BOTH CLAMPS ARE REAL AND THE `i % 3` COLLAPSE IS NOT THE RULE.** On this
+/// family they never bind -- `head_dim` 256 at `partial_rotary_factor` 0.25
+/// gives `freq_dim` 32, and the declared `[11, 11, 10]` tiles it exactly, so
+/// the selector reduces to `i % 3`. That is a property of one config rather
+/// than of the format: sections summing to less than `freq_dim` leave a tail
+/// of pairs on `t`, and the collapse would silently hand them to `h` and `w`.
+///
+/// `section[0]` is read by nothing, here or in the reference. `t` is what a
+/// pair gets when neither of the other two claims it, so stating its width
+/// would be a second, drifting copy of `freq_dim - (claimed by h) - (claimed
+/// by w)`.
+pub fn mrope_component_selector(section: [usize; 3], freq_dim: usize) -> Vec<u8> {
+    let mut selector = vec![0u8; freq_dim];
+    // `h` takes residue 1, `w` residue 2. The two index sets are disjoint, so
+    // the reference's loop order is not load-bearing -- worth knowing before
+    // anyone reorders them.
+    for (dim, offset) in [(1usize, 1usize), (2usize, 2usize)] {
+        let limit = (section[dim] * 3).min(freq_dim);
+        let mut idx = offset;
+        while idx < limit {
+            selector[idx] = dim as u8;
+            idx += 3;
+        }
+    }
+    selector
+}
+
+/// Interleaved mRoPE: [`rope_neox_subdim`] with the scalar position replaced
+/// by a per-pair choice among `(t, h, w)` through
+/// [`mrope_component_selector`].
+///
+/// Same pairing, same frequency divisor, same angle arithmetic. **At
+/// `t == h == w` this is [`rope_neox_subdim`] evaluated at that position**,
+/// which is not a coincidence to be measured but the whole reason the trunk's
+/// existing kernel stays exact for every TEXT token of a mixed prompt
+/// (`docs/VISION_PHASE0.md` item 2). Only an image's own tokens diverge.
+#[allow(clippy::too_many_arguments)]
+pub fn rope_mrope_interleaved(
+    input: &[f32],
+    num_tokens: usize,
+    num_heads: usize,
+    head_dim: usize,
+    rotary_dim: usize,
+    positions: [usize; 3],
+    section: [usize; 3],
+    theta: f32,
+) -> Vec<f32> {
+    assert_eq!(
+        input.len(),
+        num_tokens * num_heads * head_dim,
+        "input size mismatch"
+    );
+    assert!(rotary_dim % 2 == 0, "rotary_dim must be even");
+    assert!(rotary_dim <= head_dim, "rotary_dim cannot exceed head_dim");
+
+    let pairs = rotary_dim / 2;
+    let selector = mrope_component_selector(section, pairs);
+    let log_theta = theta.ln();
+    // Spelled exactly as `rope_neox_subdim` spells it, so the degenerate case
+    // agrees to the bit rather than to a tolerance.
+    let angles: Vec<f32> = (0..pairs)
+        .map(|i| {
+            let exponent = -((2 * i) as f32) / rotary_dim as f32;
+            positions[selector[i] as usize] as f32 * (exponent * log_theta).exp()
+        })
+        .collect();
+
+    let mut out = input.to_vec();
+    for t in 0..num_tokens {
+        for head in 0..num_heads {
+            let base = (t * num_heads + head) * head_dim;
+            for (i, angle) in angles.iter().enumerate() {
+                let (s, c) = angle.sin_cos();
+                let i0 = base + i;
+                let i1 = base + pairs + i;
+                let x0 = input[i0];
+                let x1 = input[i1];
+                out[i0] = x0 * c - x1 * s;
+                out[i1] = x0 * s + x1 * c;
+            }
+        }
+    }
+    out
+}
+
 /// NeoX-convention RoPE. Pairs `(x[i], x[i + head_dim/2])` for
 /// `i in [0, rotated_pairs)`. Frequencies divide by `head_dim` (not
 /// `2 * rotated_pairs`), matching HF Gemma 4's proportional-RoPE init.

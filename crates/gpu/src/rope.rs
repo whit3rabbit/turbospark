@@ -148,6 +148,166 @@ pub fn encode_rope_neox_subdim(
     Ok(())
 }
 
+/// Encoder-level `rope_mrope_interleaved`: Qwen 3.8's interleaved mRoPE
+/// (ROADMAP M-V5). [`encode_rope_neox_subdim`]'s element set and frequency
+/// divisor, with each pair's position chosen from `(t, h, w)` by the
+/// reference's own selector.
+///
+/// **At `t == h == w` this dispatch is BIT-IDENTICAL to
+/// [`encode_rope_neox_subdim`] at that position**, because the two kernels
+/// share `apply_neox_pair` and the selector then picks the same number for
+/// every pair. That is what keeps a mixed prompt's TEXT tokens byte-exact
+/// against the engine that shipped before vision, so the trunk dispatches
+/// this one only where the three actually diverge.
+///
+/// `section` is `mrope_section` from the checkpoint's `text_config`
+/// (`VisionConfig::mrope_section`); its first entry is unused, `t` being the
+/// component a pair falls back to.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_rope_mrope_interleaved(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    data: (&metal::Buffer, u64),
+    positions: (u32, u32, u32),
+    num_heads: u32,
+    head_dim: u32,
+    rotary_dim: u32,
+    section: (u32, u32, u32),
+    theta: f32,
+) -> Result<(), GpuError> {
+    assert!(rotary_dim % 2 == 0, "rotary_dim must be even");
+    assert!(rotary_dim <= head_dim, "rotary_dim cannot exceed head_dim");
+    let pipeline = context.pipeline(
+        SOURCE,
+        "rope_mrope_interleaved",
+        &unused_function_constants(),
+        b"",
+    )?;
+    let (pos_t, pos_h, pos_w) = positions;
+    let (_section_t, section_h, section_w) = section;
+    pass.encode_threads_3d(
+        &pipeline,
+        &[(data.0, 0, data.1)],
+        &[
+            (u32_bytes(&pos_t), 1),
+            (u32_bytes(&head_dim), 2),
+            (u32_bytes(&num_heads), 3),
+            (f32_bytes(&theta), 4),
+            (u32_bytes(&rotary_dim), 5),
+            (u32_bytes(&pos_h), 6),
+            (u32_bytes(&pos_w), 7),
+            (u32_bytes(&section_h), 8),
+            (u32_bytes(&section_w), 9),
+        ],
+        ((rotary_dim / 2).max(1) as u64, num_heads.max(1) as u64, 1),
+        (1, 1, 1),
+    );
+    Ok(())
+}
+
+/// Whole-buffer [`encode_rope_mrope_interleaved`], for parity fixtures that
+/// have no pass of their own. Mirrors [`rope_proportional_neox`]'s shape:
+/// every token takes the same triple, which is the single-position decode
+/// call the kernel is built for.
+#[allow(clippy::too_many_arguments)]
+pub fn rope_mrope_interleaved(
+    context: &mut MetalContext,
+    data: &[f16],
+    positions: (u32, u32, u32),
+    num_tokens: u32,
+    num_heads: u32,
+    head_dim: u32,
+    rotary_dim: u32,
+    section: (u32, u32, u32),
+    theta: f32,
+) -> Result<Vec<f16>, GpuError> {
+    assert!(rotary_dim % 2 == 0, "rotary_dim must be even");
+    assert!(rotary_dim <= head_dim, "rotary_dim cannot exceed head_dim");
+    let data_bytes = half_slice_to_le_bytes(data);
+    let buffer = context.new_buffer_with_data(&data_bytes);
+
+    let pipeline = context.pipeline(
+        SOURCE,
+        "rope_mrope_interleaved",
+        &unused_function_constants(),
+        b"",
+    )?;
+    let (pos_t, pos_h, pos_w) = positions;
+    let (_section_t, section_h, section_w) = section;
+    dispatch_threads_3d(
+        context,
+        &pipeline,
+        &[(&buffer, 0)],
+        &[
+            (u32_bytes(&pos_t), 1),
+            (u32_bytes(&head_dim), 2),
+            (u32_bytes(&num_heads), 3),
+            (f32_bytes(&theta), 4),
+            (u32_bytes(&rotary_dim), 5),
+            (u32_bytes(&pos_h), 6),
+            (u32_bytes(&pos_w), 7),
+            (u32_bytes(&section_h), 8),
+            (u32_bytes(&section_w), 9),
+        ],
+        (
+            (rotary_dim / 2).max(1) as u64,
+            num_heads.max(1) as u64,
+            num_tokens.max(1) as u64,
+        ),
+        (1, 1, 1),
+    );
+
+    Ok(read_half_buffer(&buffer, data.len()))
+}
+
+/// Whole-buffer [`encode_rope_neox_subdim`], the reference arm of the
+/// degenerate-equivalence case in `tests/rope_mrope_parity.rs`. That
+/// assertion is BIT equality, so it has to run the real kernel rather than a
+/// CPU restatement of it.
+#[allow(clippy::too_many_arguments)]
+pub fn rope_neox_subdim(
+    context: &mut MetalContext,
+    data: &[f16],
+    position: u32,
+    num_tokens: u32,
+    num_heads: u32,
+    head_dim: u32,
+    rotary_dim: u32,
+    theta: f32,
+) -> Result<Vec<f16>, GpuError> {
+    assert!(rotary_dim % 2 == 0, "rotary_dim must be even");
+    assert!(rotary_dim <= head_dim, "rotary_dim cannot exceed head_dim");
+    let data_bytes = half_slice_to_le_bytes(data);
+    let buffer = context.new_buffer_with_data(&data_bytes);
+
+    let pipeline = context.pipeline(
+        SOURCE,
+        "rope_neox_subdim",
+        &unused_function_constants(),
+        b"",
+    )?;
+    dispatch_threads_3d(
+        context,
+        &pipeline,
+        &[(&buffer, 0)],
+        &[
+            (u32_bytes(&position), 1),
+            (u32_bytes(&head_dim), 2),
+            (u32_bytes(&num_heads), 3),
+            (f32_bytes(&theta), 4),
+            (u32_bytes(&rotary_dim), 5),
+        ],
+        (
+            (rotary_dim / 2).max(1) as u64,
+            num_heads.max(1) as u64,
+            num_tokens.max(1) as u64,
+        ),
+        (1, 1, 1),
+    );
+
+    Ok(read_half_buffer(&buffer, data.len()))
+}
+
 /// Applies Gemma 4's proportional NeoX RoPE in place, dispatched on the
 /// GPU via `rope_proportional_neox`. `data` is `[num_tokens, num_heads,
 /// head_dim]`; every token uses the same `position` (matching the single-
