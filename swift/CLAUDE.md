@@ -49,34 +49,39 @@ swift/
     |   +-- State/                   # AppModel (@MainActor) + extensions,
     |   |                            # AppChat/AppProject/AppTool,
     |   |                            # GlobalMcpFileStore, SystemPermissionsManager
-    |   +-- Generation/              # composer, output pane, chat sidebar, tool cards,
-    |   |                            # ProjectSettingsSheet, ProjectMcpSettingsSheet
-    |   +-- Installation/            # model hub, catalog sheet, probe, ETA cards
+    |   +-- Generation/              # composer, output pane, chat sidebar (+ projects,
+    |   |                            # chat rows, footer subviews), tool cards,
+    |   |                            # ProjectSettingsSheet (+ permissions, rules subviews),
+    |   |                            # ProjectMcpSettingsSheet
+    |   +-- Installation/            # model hub (+ filter bar), catalog sheet, probe,
+    |   |                            # ModelDetailPaneView (+ hardware fit, tech specs)
     |   +-- Diagnostics/             # inspector options, metric formatting, phase counters
     |   +-- Presentation/            # markdown render, docx/xlsx/pdf extract
-    |   +-- Components/              # AppearanceSettingsPaneView, McpSettingsPaneView,
+    |   +-- Components/              # AppearanceSettingsPaneView (+ ThemeConfigCard,
+    |   |                            # AppearancePreferencesCard), McpSettingsPaneView,
+    |   |                            # ModelsSettingsPaneView (+ CustomModelFoldersSection),
     |   |                            # McpServerEditorSheet, PermissionsSettingsPaneView,
     |   |                            # ToastOverlayView, ErrorBanner
-    |   +-- Theme/                   # AppearanceSettings, TurboSparkTheme,
-    |   |                            # AppChromePresentation, PointerCursorModifier,
-    |   |                            # ThemeCodePreviewView
+    |   +-- Theme/                   # AppearanceSettings, AppearanceTypes, AppDockIconRenderer,
+    |   |                            # TurboSparkTheme, AppChromePresentation,
+    |   |                            # PointerCursorModifier, ThemeCodePreviewView
     |   +-- Tools/                   # AppToolCatalog, AppToolRegistry,
     |   |   +-- Core/                # AppToolPermissionEngine, OpenAIToolSchema
     |   |   +-- MCP/                 # McpClientEngine, McpServerSpec, ProjectMcpDetector
     |   |   +-- File/                # FileReadWriteTools
     |   |   \-- Web/                 # WebTools
     |   \-- Resources/               # app-prompts.json, Logos/ (Bundle.module)
-    \-- Tests/TurboSparkAppTests/    # 44+ unit tests: AppearanceSettingsTests,
-                                     # McpClientEngineTests, ProjectMcpDetectionTests,
-                                     # ProjectRulesDetectionTests, SystemPermissionsTests,
-                                     # ToolPermissionsTests
+    \-- Tests/TurboSparkAppTests/    # Unit tests covering appearance settings,
+                                     # MCP client engine, project MCP detection,
+                                     # project rules detection, system permissions,
+                                     # and tool permissions.
 ```
 
 `AppModel` is split across `AppModel.swift` plus `AppModel+{Chat, Files,
-Generation, Installation, Models, Persistence, Projects, Tools}.swift`.
-Published state and derived properties live in the base file; every behaviour
-is an extension. Add new behaviour as a new extension file rather than growing
-the base one.
+Generation, Hooks, Installation, Mcp, Models, Persistence, Projects, Tools,
+Transcript}.swift`. Published state and core lifecycle live in the base file;
+every functional domain is an extension. Add new behaviour as a new extension
+file rather than growing the base one.
 
 ## Build, test, dev commands
 
@@ -343,14 +348,15 @@ so going through `make` recompiles the whole app every single time. Use
     is stale. It stops being safe the moment the archive's number is raised
     past a consumer's, so change the script and both manifests together.
 
-15. **THE 400-LINE GUIDELINE IS ALREADY BROKEN ON THE VIEW SIDE.**
-    `ChatSidebarView` (476, down from 522 once the rail took its section
-    list), `ModelDetailPaneView` (432), `ModelHubView` (407) and
-    `InspectorOptionsSection` (406) are over it. Split by
-    subview when touching one of them rather than adding to it. Nothing in
-    `TurboSpark/` is anywhere near the limit and should stay that way: the
-    binding is thin on purpose, and logic that creeps into it is logic no
-    Rust test can reach.
+15. **THE 400-LINE GUIDELINE IS ACTIVELY ENFORCED VIA SUBVIEW MODULARITY.**
+    Large views (`ChatSidebarView`, `ModelDetailPaneView`, `ModelHubView`,
+    `AppearanceSettingsPaneView`, `ProjectSettingsSheet`,
+    `ModelsSettingsPaneView`) and core classes (`AppModel`, `AppearanceSettings`)
+    are decomposed into dedicated subviews, domain extensions, and type files.
+    Split by subview and functional extension when touching or extending them
+    rather than growing a single view or model file. Nothing in `TurboSpark/`
+    is near the limit: the binding is thin on purpose, and logic that creeps
+    into it is logic no Rust test can reach.
 
 16. **THE APP CONSUMES THE STREAM ON THE MAIN ACTOR, ONE `objectWillChange`
     PER EVENT.** `AppModel` is `@MainActor`, so the `Task` in
