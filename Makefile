@@ -1,4 +1,4 @@
-.PHONY: all build build-debug build-release test test-debug test-release fmt fmt-check clippy check catalog-guard swift-lib swift-test swift-demo clean install uninstall
+.PHONY: all build build-debug build-release test test-debug test-release fmt fmt-check clippy check catalog-guard swift-lib swift-test swift-test-real swift-app-build swift-app-release swift-app swift-demo clean clean-cargo clean-swift install uninstall
 
 PREFIX ?= $(HOME)/.local
 BINDIR ?= $(PREFIX)/bin
@@ -79,12 +79,25 @@ swift-test-real: swift-lib
 	cd swift/TurboSpark && TURBOSPARK_TEST_MODEL=$(MODEL) \
 	  TURBOSPARK_TEST_MODEL_NO_SPECULATION=$(BLOCKED) swift test
 
-swift-demo: swift-lib
-	cd swift/TurboSparkDemo && swift run TurboSparkDemo
+swift-app-build: swift-lib
+	cd swift/TurboSparkApp && swift build
 
-clean:
+swift-app-release: swift-lib
+	cd swift/TurboSparkApp && swift build -c release
+
+swift-app: swift-lib
+	cd swift/TurboSparkApp && swift run TurboSparkApp
+
+swift-demo: swift-app
+
+clean-cargo:
 	cargo clean
-	rm -rf swift/TurboSpark/.build swift/TurboSparkDemo/.build
+
+clean-swift:
+	rm -rf swift/TurboSpark/.build swift/TurboSparkApp/.build
 	rm -f swift/TurboSpark/Sources/CTurboSpark/libturbospark_ffi.a
 	rm -f swift/TurboSpark/Sources/CTurboSpark/turbospark.h
+
+clean: clean-cargo clean-swift
+
 

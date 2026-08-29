@@ -5,9 +5,7 @@
 opens a `.gturbo` install, streams tokens, stops mid-generation, installs
 models, and reads engine telemetry, all in-process.
 
-`swift/TurboSparkDemo` is a small chat app that exercises every one of those.
-It is deliberately minimal: it exists to verify the binding, not to be a
-product.
+`swift/TurboSparkApp` is a full SwiftUI chat app that exercises every one of those.
 
 ---
 
@@ -27,7 +25,7 @@ make swift-lib
 search path in `unsafeFlags` is resolved against the root of the package
 being *built*, not the package that declared it, so `TurboSpark`'s own
 `-LSources/CTurboSpark` is correct when its tests link and wrong for
-everybody else. `swift/TurboSparkDemo/Package.swift` shows the shape:
+everybody else. `swift/TurboSparkApp/Package.swift` shows the shape:
 
 ```swift
 .executableTarget(
@@ -464,7 +462,7 @@ Two things a progress UI has to get right:
 without writing the checkpoint to disk whole, and **it cannot resume**: a
 failure restarts from the beginning. A user who does not know that will kill
 it at 90% and try again. The first `.stage` event says so;
-`swift/TurboSparkDemo/Sources/TurboSparkDemo/InstallSheet.swift` puts the
+`swift/TurboSparkApp/Sources/TurboSparkApp/Installation/CatalogSheet.swift` puts the
 warning above the button.
 
 **Take the maximum of byte events, not the latest.** Ranged downloads are
@@ -802,8 +800,10 @@ Stated so the omissions are decisions on the record rather than gaps.
   header is hand-written
 - [`crates/ffi/include/turbospark.h`](../crates/ffi/include/turbospark.h):
   the canonical contract
+- [`docs/KEYBOARD_SHORTCUTS.md`](KEYBOARD_SHORTCUTS.md): keyboard shortcuts and accessibility navigation reference for the SwiftUI app
 - [`docs/MODELS.md`](MODELS.md): the catalog, the probe, and what `pull`
   does
 - [`docs/GTURBO.md`](GTURBO.md): the install format a session opens
 - [`docs/BENCHMARKS.md`](BENCHMARKS.md): the frozen throughput, memory and
   quality numbers
+

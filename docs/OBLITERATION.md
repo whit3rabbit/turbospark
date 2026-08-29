@@ -47,7 +47,7 @@ throughput, measured below at 1.72% of decode with all 64 layers steered and
 | 8 | llama.cpp interop | **LANDED**; the numbering was OFF BY ONE and is corrected, no measurement here moves |
 | 9 | a fifth family (Gemma 4) and its chunked prefill driver | **LANDED**; found `encode_steering`/`encode_resid_capture` hardcoded the edited row at offset 0, fixed with an `x_off` parameter, mutation-checked on the real chunked path |
 | 10 | the sixth and seventh flows (`gpt-oss`, `muse_glimmer`) | **LANDED** on synthetic fixtures, mutation-checked, and **BOTH NOW MEASURED ON A REAL INSTALL** since 2026-08-25 (below). `muse_glimmer`: null control byte-identical, memory oracle clean, but at the time of that measurement the probe's single-position divergence check did not clear its (`qwen3_5`-borrowed) floor at the prompts tried, despite real coefficients and CLI-visible divergence over a generation. `gpt-oss`: the same pattern, one step sharper -- the null control passed on both instruments, the probe's single-position check missed for a now-EXACT reason (the position it measured is Harmony's near-fixed `<|channel|>` token, decoded and confirmed rather than guessed), and the edit was visibly real once generation ran past that token: coherent, differently-worded output at alpha 0.3, and a DIFFERENT failure mode from `qwen38-27b`'s at alpha 1.0 (an unresolved reasoning loop rather than an immediate collapse). **The single-position check itself is now FIXED, generally** (arm 2 asserts on a windowed teacher-forced KL trace rather than one position -- see "Open, and stated as open" below and `crates/bench/CLAUDE.md` Gotcha 25); re-captured with a fresh direction on each real install the same day, arm 2 now PASSES on both: museGlimmer's window max reads 11440x its floor (against 0x at the old single position), gpt-oss's reads 33x (against 0x at a position confirmed to decode to `<|channel|>` on both engines) |
-| 11 | Swift bindings and demo GUI integration | **LANDED**; full steering options in `turbospark-ffi` wire types / `turbospark.h`, `swift/TurboSpark` (`OpenOptions`, `SessionInfo.Steering`), and `swift/TurboSparkDemo` status footer |
+| 11 | Swift bindings and demo GUI integration | **LANDED**; full steering options in `turbospark-ffi` wire types / `turbospark.h`, `swift/TurboSpark` (`OpenOptions`, `SessionInfo.Steering`), and `swift/TurboSparkApp` status footer |
 
 **It works.** On the real `qwen38-27b`, a direction extracted by this engine
 from its own activations, applied at runtime with no weight byte modified,
@@ -131,7 +131,7 @@ The C ABI (`turbospark.h`) exposes `steering`, `steeringMode`, `steeringScale`,
 and reports `{ "active": bool, "mode": string?, "scale": number?, "summary": string? }`
 in `ts_session_info_json`.
 
-`swift/TurboSparkDemo` surfaces steering in `ChatModel` and displays active
+`swift/TurboSparkApp` surfaces steering in its inspector and displays active
 mode and summary details in its status bar footer.
 
 **Wired today (seven of eight families)**: the qwen flow (both halves,

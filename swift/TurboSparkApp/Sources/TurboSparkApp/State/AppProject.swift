@@ -1,0 +1,357 @@
+import Foundation
+
+/// High-level permission mode governing tool execution and risk gating (Unsloth Studio parity).
+public enum AppPermissionMode: String, Codable, CaseIterable, Identifiable, Sendable {
+    /// Smart auto-approval: runs safe & low-risk development commands silently, prompts on high-risk operations.
+    case auto
+    /// Always ask: prompts before executing any mutating, terminal, network, or external tool.
+    case ask
+    /// Permissive: executes all tools without prompting within sandbox bounds.
+    case permissive
+    /// Strict read-only: denies mutating actions, file writes, terminal executions, and crons.
+    case readOnly
+
+    public var id: String { rawValue }
+
+    public var label: String {
+        switch self {
+        case .auto: return "Auto (Approve for me)"
+        case .ask: return "Always Ask"
+        case .permissive: return "Always Allow"
+        case .readOnly: return "Strict Read-Only"
+        }
+    }
+
+    public var shortLabel: String {
+        switch self {
+        case .auto: return "Auto"
+        case .ask: return "Ask"
+        case .permissive: return "Allow All"
+        case .readOnly: return "Read Only"
+        }
+    }
+
+    public var descriptionText: String {
+        switch self {
+        case .auto:
+            return "Runs standard development commands silently (file reads, cargo/npm builds, safe searches, diffs) and automatically pauses for approval on high-risk actions (destructive deletions, sudo, credential access, dangerous git resets, unverified network egress)."
+        case .ask:
+            return "Prompts for manual user confirmation before executing any tool call that performs writes, terminal commands, network fetches, or external MCP calls."
+        case .permissive:
+            return "Allows all tool actions to execute immediately without interactive approval prompts, bounded only by workspace sandbox limits."
+        case .readOnly:
+            return "Allows only inspection, search, and reading. Prohibits all file modifications, terminal executions, destructive MCP calls, and background automations."
+        }
+    }
+
+    public var systemImage: String {
+        switch self {
+        case .auto: return "sparkles.shield.fill"
+        case .ask: return "questionmark.shield.fill"
+        case .permissive: return "lock.open.shield.fill"
+        case .readOnly: return "lock.shield.fill"
+        }
+    }
+}
+
+/// Permission level for tool actions performed by an agent.
+public enum AppToolPermission: String, Codable, CaseIterable, Identifiable, Sendable {
+    case allow
+    case ask
+    case deny
+
+    public var id: String { rawValue }
+
+    public var label: String {
+        switch self {
+        case .allow: return "Always Allow"
+        case .ask: return "Ask Before Execution"
+        case .deny: return "Deny"
+        }
+    }
+
+    public var systemImage: String {
+        switch self {
+        case .allow: return "checkmark.circle.fill"
+        case .ask: return "questionmark.circle.fill"
+        case .deny: return "nosign"
+        }
+    }
+}
+
+/// Granular permission matrix for a project workspace.
+public struct AppProjectPermissions: Codable, Equatable, Sendable {
+    /// High-level permission mode (defaults to .auto).
+    public var mode: AppPermissionMode
+    /// Permission for reading files, listing directories, and searching code.
+    public var fileRead: AppToolPermission
+    /// Permission for writing, editing, or deleting files.
+    public var fileWrite: AppToolPermission
+    /// Permission for running shell / terminal commands.
+    public var terminal: AppToolPermission
+    /// Permission for web requests and documentation fetching.
+    public var web: AppToolPermission
+    /// Permission for external MCP tools.
+    public var mcp: AppToolPermission
+    /// Permission for background workflow and cron automation.
+    public var automation: AppToolPermission
+
+    public init(
+        mode: AppPermissionMode = .auto,
+        fileRead: AppToolPermission = .allow,
+        fileWrite: AppToolPermission = .ask,
+        terminal: AppToolPermission = .ask,
+        web: AppToolPermission = .allow,
+        mcp: AppToolPermission = .ask,
+        automation: AppToolPermission = .ask
+    ) {
+        self.mode = mode
+        self.fileRead = fileRead
+        self.fileWrite = fileWrite
+        self.terminal = terminal
+        self.web = web
+        self.mcp = mcp
+        self.automation = automation
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.mode = try container.decodeIfPresent(AppPermissionMode.self, forKey: .mode) ?? .auto
+        self.fileRead = try container.decodeIfPresent(AppToolPermission.self, forKey: .fileRead) ?? .allow
+        self.fileWrite = try container.decodeIfPresent(AppToolPermission.self, forKey: .fileWrite) ?? .ask
+        self.terminal = try container.decodeIfPresent(AppToolPermission.self, forKey: .terminal) ?? .ask
+        self.web = try container.decodeIfPresent(AppToolPermission.self, forKey: .web) ?? .allow
+        self.mcp = try container.decodeIfPresent(AppToolPermission.self, forKey: .mcp) ?? .ask
+        self.automation = try container.decodeIfPresent(AppToolPermission.self, forKey: .automation) ?? .ask
+    }
+
+    /// Auto configuration: smart risk-gated execution (Unsloth Studio default).
+    public static var auto: AppProjectPermissions {
+        AppProjectPermissions(
+            mode: .auto,
+            fileRead: .allow,
+            fileWrite: .allow,
+            terminal: .allow,
+            web: .allow,
+            mcp: .allow,
+            automation: .allow
+        )
+    }
+
+    /// Safe standard configuration requiring confirmation for state-mutating actions.
+    public static var standard: AppProjectPermissions {
+        AppProjectPermissions(
+            mode: .auto,
+            fileRead: .allow,
+            fileWrite: .ask,
+            terminal: .ask,
+            web: .allow,
+            mcp: .ask,
+            automation: .ask
+        )
+    }
+
+    /// Permissive configuration allowing all actions without asking.
+    public static var permissive: AppProjectPermissions {
+        AppProjectPermissions(
+            mode: .permissive,
+            fileRead: .allow,
+            fileWrite: .allow,
+            terminal: .allow,
+            web: .allow,
+            mcp: .allow,
+            automation: .allow
+        )
+    }
+
+    /// Explicit ask configuration requiring user approval for all mutating actions.
+    public static var alwaysAsk: AppProjectPermissions {
+        AppProjectPermissions(
+            mode: .ask,
+            fileRead: .allow,
+            fileWrite: .ask,
+            terminal: .ask,
+            web: .ask,
+            mcp: .ask,
+            automation: .ask
+        )
+    }
+
+    /// Read-only configuration that denies file writes and terminal executions.
+    public static var readOnly: AppProjectPermissions {
+        AppProjectPermissions(
+            mode: .readOnly,
+            fileRead: .allow,
+            fileWrite: .deny,
+            terminal: .deny,
+            web: .allow,
+            mcp: .deny,
+            automation: .deny
+        )
+    }
+}
+
+/// Agent specialization profile governing behavior and prompt engineering.
+public enum AppAgentType: String, Codable, CaseIterable, Identifiable, Sendable {
+    case general
+    case coder
+    case researcher
+    case autonomous
+    case custom
+
+    public var id: String { rawValue }
+
+    public var label: String {
+        switch self {
+        case .general: return "General Assistant"
+        case .coder: return "Coding Agent"
+        case .researcher: return "Document Analyst"
+        case .autonomous: return "Autonomous Planner"
+        case .custom: return "Custom Agent"
+        }
+    }
+
+    public var descriptionText: String {
+        switch self {
+        case .general:
+            return "Versatile conversational assistant with optional tool usage when requested."
+        case .coder:
+            return "Software engineer optimized for codebase navigation, editing, terminal commands, and debugging."
+        case .researcher:
+            return "Deep analytical agent focused on reading documents, code search, and contextual synthesis."
+        case .autonomous:
+            return "Self-directed agent that iterates over multi-step tool workflows to accomplish complex objectives."
+        case .custom:
+            return "User-configured agent with customized system instructions and tool capabilities."
+        }
+    }
+
+    public var systemImage: String {
+        switch self {
+        case .general: return "bubble.left.and.bubble.right"
+        case .coder: return "chevron.left.forwardslash.chevron.right"
+        case .researcher: return "doc.text.magnifyingglass"
+        case .autonomous: return "arrow.triangle.2.circlepath"
+        case .custom: return "person.crop.circle.badge.gearshape"
+        }
+    }
+
+    public var defaultSystemPrompt: String {
+        switch self {
+        case .general:
+            return "You are a helpful and concise AI assistant. You can answer questions, provide explanations, and use tools when helpful."
+        case .coder:
+            return "You are an expert software engineer. Analyze the project structure, inspect files, write clean modular code, execute necessary commands, and verify your changes carefully."
+        case .researcher:
+            return "You are a thorough research and document analysis assistant. Carefully inspect project files, extract pertinent details, and synthesize accurate, well-structured summaries."
+        case .autonomous:
+            return "You are an autonomous problem solver. Plan your strategy step-by-step, invoke tools to gather information and make changes, check outcomes, and deliver a comprehensive final report."
+        case .custom:
+            return "You are a specialized AI assistant tailored for this project."
+        }
+    }
+}
+
+/// A project workspace managing a codebase, custom rules, permissions, and agent profile.
+public struct AppProject: Identifiable, Codable, Equatable, Sendable {
+    /// Unique identifier for the project.
+    public var id = UUID()
+    /// User-visible project name.
+    public var name: String
+    /// Absolute filesystem path to the project root directory.
+    public var rootDirectoryPath: String?
+    /// Selected agent behavior profile.
+    public var agentType: AppAgentType
+    /// User-supplied custom system prompt or project rules.
+    public var customInstructions: String
+    /// Tool execution permissions for this project.
+    public var permissions: AppProjectPermissions
+    /// Maximum autonomous tool-execution iterations per turn.
+    public var maxAutonomousSteps: Int
+    /// Timestamp when the project was created.
+    public var createdAt: Date
+    /// Timestamp when the project was last updated.
+    public var updatedAt: Date
+
+    public init(
+        id: UUID = UUID(),
+        name: String,
+        rootDirectoryPath: String? = nil,
+        agentType: AppAgentType = .coder,
+        customInstructions: String = "",
+        permissions: AppProjectPermissions = .standard,
+        maxAutonomousSteps: Int = 5,
+        createdAt: Date = Date(),
+        updatedAt: Date = Date()
+    ) {
+        self.id = id
+        self.name = name
+        self.rootDirectoryPath = rootDirectoryPath
+        self.agentType = agentType
+        self.customInstructions = customInstructions
+        self.permissions = permissions
+        self.maxAutonomousSteps = maxAutonomousSteps
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+
+    /// Resolved URL to the root directory if configured.
+    public var rootDirectoryURL: URL? {
+        guard let rootDirectoryPath, !rootDirectoryPath.isEmpty else { return nil }
+        return URL(fileURLWithPath: rootDirectoryPath, isDirectory: true)
+    }
+
+    /// Whether a valid root directory is assigned.
+    public var hasRootDirectory: Bool {
+        guard let path = rootDirectoryPath, !path.isEmpty else { return false }
+        var isDir: ObjCBool = false
+        return FileManager.default.fileExists(atPath: path, isDirectory: &isDir) && isDir.boolValue
+    }
+}
+
+/// Archive container for persisting all application projects and the active selection.
+public struct AppProjectArchive: Codable, Sendable {
+    /// Identifier of the active project, or nil for all chats.
+    public var selectedProjectID: UUID?
+    /// All saved projects.
+    public var projects: [AppProject]
+
+    public init(selectedProjectID: UUID? = nil, projects: [AppProject] = []) {
+        self.selectedProjectID = selectedProjectID
+        self.projects = projects
+    }
+
+    public static func empty() -> AppProjectArchive {
+        AppProjectArchive(selectedProjectID: nil, projects: [])
+    }
+}
+
+/// Filesystem storage utilities for saving and loading project archives.
+public enum AppProjectFileStore {
+    private static var storageDirectory: URL {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let directory = appSupport.appendingPathComponent("TurboSpark", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory
+    }
+
+    private static var archiveFileURL: URL {
+        storageDirectory.appendingPathComponent("projects_archive.json")
+    }
+
+    /// Loads the saved project archive from disk or returns an empty default.
+    public static func load() -> AppProjectArchive {
+        guard let data = try? Data(contentsOf: archiveFileURL),
+              let archive = try? JSONDecoder().decode(AppProjectArchive.self, from: data) else {
+            return AppProjectArchive.empty()
+        }
+        return archive
+    }
+
+    /// Persists the project archive to disk atomically.
+    public static func save(_ archive: AppProjectArchive) {
+        if let data = try? JSONEncoder().encode(archive) {
+            try? data.write(to: archiveFileURL, options: .atomic)
+        }
+    }
+}

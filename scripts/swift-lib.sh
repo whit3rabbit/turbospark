@@ -50,7 +50,7 @@ cp "$root/crates/ffi/include/turbospark.h" "$dest/turbospark.h"
 # also work and costs a full rebuild of the package every time.
 find "$root/swift/TurboSpark/Sources/TurboSpark" \
      "$root/swift/TurboSpark/Tests" \
-     "$root/swift/TurboSparkDemo/Sources" \
+     "$root/swift/TurboSparkApp/Sources" \
      -name '*.swift' -exec touch {} +
 
 printf 'staticlib %s MiB -> %s\n' \

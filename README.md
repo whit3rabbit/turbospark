@@ -38,7 +38,7 @@ The port is tested against the original rather than assumed compatible. Decode t
 - [Supported Features & Models](#supported-features--models)
 - [Architecture & Repository Layout](#architecture--repository-layout)
 - [Getting Started](#getting-started)
-- [Swift Bindings](#swift-bindings)
+- [Swift Bindings & macOS App](#swift-bindings--macos-app)
 - [Documentation](#documentation)
 - [License](#license)
 
@@ -328,7 +328,7 @@ brew install --cask whit3rabbit/tap/turbospark
 cargo install turbospark-cli turbospark-server
 ```
 
-Or grab the [latest release](https://github.com/whit3rabbit/turbospark/releases) directly. The asset is one zip per version, built for `aarch64-apple-darwin`, with a `SHA256SUMS` beside it:
+Or grab the [latest release](https://github.com/whit3rabbit/turbospark/releases) directly. The CLI asset is one zip per version, built for `aarch64-apple-darwin`, with a `SHA256SUMS` beside it:
 
 ```sh
 VER=0.1.0
@@ -340,6 +340,20 @@ unzip "turbospark-${VER}-macos-arm64.zip" -d ~/bin
 # verified" rather than anything about turbospark.
 xattr -d com.apple.quarantine ~/bin/turbospark-* 2>/dev/null
 ```
+
+#### macOS Desktop App (TurboSpark.app)
+
+Pre-built `.dmg` disk images for Apple Silicon (macOS 13.0+) are available on the [Releases](https://github.com/whit3rabbit/turbospark/releases) page:
+
+1. Download `TurboSpark-<version>-arm64.dmg`.
+2. Open the DMG and drag `TurboSpark.app` to `/Applications`.
+3. If Gatekeeper blocks the downloaded application from opening, clear the quarantine attribute:
+   ```sh
+   xattr -d com.apple.quarantine /Applications/TurboSpark.app
+   # or recursively across the bundle:
+   # xattr -cr /Applications/TurboSpark.app
+   ```
+   Alternatively, right-click (or Control-click) `TurboSpark.app` in Finder and select **Open**.
 
 However you installed it, this should now print the model catalog:
 
@@ -476,17 +490,21 @@ The quality gate is calibrated rather than decorative. Shifting one quantization
 
 ---
 
-## Swift Bindings
+## Swift Bindings & macOS App
 
 A C ABI (`crates/ffi`) and a SwiftPM package over it, so a native macOS app
-drives the engine in-process rather than over HTTP. `swift/TurboSparkDemo` is
-a small SwiftUI chat app that exercises the whole thing.
+drives the engine in-process rather than over HTTP. `swift/TurboSparkApp` is
+a full-featured SwiftUI chat and model management desktop app. See
+[`swift/README.md`](swift/README.md) for package and build details.
 
 ```bash
 make swift-lib                                    # build the staticlib + stage the header
-make swift-demo                                   # run the demo chat app
+make swift-app-build                              # build the SwiftUI app (debug)
+make swift-app-release                            # build the SwiftUI app (release)
+make swift-app                                    # run the SwiftUI app
 make swift-test                                   # ABI checks, no model needed
 make swift-test-real MODEL=~/models/gemma4.gturbo # end to end against a real install
+make clean-swift                                  # clean Swift artifacts and staged headers
 ```
 
 ```swift
