@@ -96,6 +96,31 @@ extension AppModel {
         activeSection = .chat
     }
 
+    /// Re-reads machine telemetry (thermal state, memory pressure, Low Power
+    /// Mode). Cheap: two `NSProcessInfo` sends and a sysctl, no allocation.
+    ///
+    /// **Assigns only when the value CHANGED.** `telemetry` is `@Published`
+    /// on a `@MainActor` model, so an unconditional write on every poll would
+    /// fire `objectWillChange` twice a second and re-evaluate the whole
+    /// window body for a reading that did not move.
+    public func refreshTelemetry() {
+        let fresh = TurboSparkSession.systemTelemetry
+        if fresh != telemetry {
+            telemetry = fresh
+        }
+    }
+
+    /// The guard both the loader and the model hub must use.
+    ///
+    /// **One accessor rather than each caller building its own.** The ranking
+    /// and the loader's refusal share one memory budget by construction, and
+    /// that is what makes a hub verdict worth showing; a hub ranking under
+    /// `.relaxed` while sessions open under `.strict` promises a fit the
+    /// loader then refuses, where the user cannot see the two disagree.
+    public var activeLoadGuard: OpenOptions.LoadGuard {
+        runtimeOptions.loadGuard.loadGuard(customBytes: runtimeOptions.loadGuardCustomBytes)
+    }
+
     public func buildOpenOptions() -> OpenOptions {
         var options = OpenOptions()
         if maxContextTokens > 0 {
@@ -105,6 +130,13 @@ extension AppModel {
             options.expertCacheSlots = .fixed(UInt32(runtimeOptions.expertCacheSlots))
         }
         options.powerProfile = runtimeOptions.powerProfile.powerProfile
+        // Always set, including `.relaxed`, so the value the hub RANKED under
+        // and the value a session OPENS under are the same object rather than
+        // two defaults that happen to agree today.
+        options.loadGuard = activeLoadGuard
+        if runtimeOptions.minAutoContextTokens > 0 {
+            options.minAutoContext = runtimeOptions.minAutoContextTokens
+        }
         options.speculation = runtimeOptions.speculation.speculation
         options.speculativeDrafter = runtimeOptions.speculativeDrafter.drafter
         if runtimeOptions.maxTokensPerSec > 0 {

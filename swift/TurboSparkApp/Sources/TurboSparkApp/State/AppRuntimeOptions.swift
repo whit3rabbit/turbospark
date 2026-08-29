@@ -86,6 +86,64 @@ public enum AppPowerProfileOption: String, CaseIterable, Identifiable, Sendable 
     }
 }
 
+/// How much of the machine a model may commit when it loads.
+///
+/// **Deliberately NOT named `AppGuardrailsMode`**, which already exists in
+/// `MacAppSettings` for Forge TOOL-CALL guardrails and is an unrelated
+/// feature. These are memory guardrails; see `docs/LOAD_GUARD.md`.
+public enum AppLoadGuardOption: String, CaseIterable, Identifiable, Sendable {
+    /// No precautions against overcommitting memory.
+    case off = "off"
+    /// Mild precautions. The default, and what shipped before the setting.
+    case relaxed = "relaxed"
+    /// Moderate precautions.
+    case balanced = "balanced"
+    /// Strong precautions.
+    case strict = "strict"
+    /// A user-set ceiling on what the engine may allocate.
+    case custom = "custom"
+
+    /// Unique string identifier.
+    public var id: String { rawValue }
+
+    /// Human-readable menu display label.
+    public var menuLabel: String {
+        switch self {
+        case .off: return "Off (Not Recommended)"
+        case .relaxed: return "Relaxed"
+        case .balanced: return "Balanced"
+        case .strict: return "Strict"
+        case .custom: return "Custom"
+        }
+    }
+
+    /// One-line explanation shown under the label.
+    public var detailText: String {
+        switch self {
+        case .off: return "No precautions against system overload"
+        case .relaxed: return "Mild precautions against system overload"
+        case .balanced: return "Moderate precautions against system overload"
+        case .strict: return "Strong precautions against system overload"
+        case .custom: return "Set your own limit for maximum model size that can be loaded"
+        }
+    }
+
+    /// Converts to the underlying TurboSpark open option.
+    ///
+    /// `customBytes` is read only by `.custom`; a zero there falls back to
+    /// `.relaxed` rather than to a ceiling of nothing, which would refuse
+    /// every model.
+    public func loadGuard(customBytes: UInt64) -> OpenOptions.LoadGuard {
+        switch self {
+        case .off: return .off
+        case .relaxed: return .relaxed
+        case .balanced: return .balanced
+        case .strict: return .strict
+        case .custom: return customBytes > 0 ? .custom(customBytes) : .relaxed
+        }
+    }
+}
+
 /// Speculative decoding block size configuration options.
 public enum AppSpeculationOption: String, CaseIterable, Identifiable, Sendable {
     /// Automatically resolve speculative block size.
@@ -202,6 +260,15 @@ public struct AppRuntimeOptions: Equatable, Sendable {
     public var prefillEnabled: Bool = true
     /// Selected power and thermal profile.
     public var powerProfile: AppPowerProfileOption = .auto
+    /// How much of the machine a model may commit when it loads.
+    public var loadGuard: AppLoadGuardOption = .relaxed
+    /// The ceiling `AppLoadGuardOption.custom` applies, in bytes. Read by
+    /// that tier alone.
+    public var loadGuardCustomBytes: UInt64 = 0
+    /// Refuse to load when an automatically-sized context window resolves
+    /// below this. 0 imposes no floor and does not constrain an explicit
+    /// context length.
+    public var minAutoContextTokens: UInt32 = 0
     /// Selected speculative decoding block configuration.
     public var speculation: AppSpeculationOption = .auto
     /// Selected speculative drafter architecture.
@@ -226,6 +293,9 @@ public struct AppRuntimeOptions: Equatable, Sendable {
         expertCacheSlots: Int = 0,
         prefillEnabled: Bool = true,
         powerProfile: AppPowerProfileOption = .auto,
+        loadGuard: AppLoadGuardOption = .relaxed,
+        loadGuardCustomBytes: UInt64 = 0,
+        minAutoContextTokens: UInt32 = 0,
         speculation: AppSpeculationOption = .auto,
         speculativeDrafter: AppSpeculativeDrafterOption = .auto,
         maxTokensPerSec: Double = 0,
@@ -239,6 +309,9 @@ public struct AppRuntimeOptions: Equatable, Sendable {
         self.expertCacheSlots = expertCacheSlots
         self.prefillEnabled = prefillEnabled
         self.powerProfile = powerProfile
+        self.loadGuard = loadGuard
+        self.loadGuardCustomBytes = loadGuardCustomBytes
+        self.minAutoContextTokens = minAutoContextTokens
         self.speculation = speculation
         self.speculativeDrafter = speculativeDrafter
         self.maxTokensPerSec = maxTokensPerSec

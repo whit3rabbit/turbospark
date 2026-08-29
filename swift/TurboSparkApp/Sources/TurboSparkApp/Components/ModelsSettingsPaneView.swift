@@ -37,6 +37,11 @@ public struct ModelsSettingsPaneView: View {
 
                 // Section 3: Additional Custom Folders
                 CustomModelFoldersSectionView(model: model)
+
+                // Section 4: Local model defaults (AutoFit floor, memory
+                // guardrails). Its own file; this one is near the 400-line
+                // guideline.
+                LocalModelDefaultsSectionView(model: model)
             }
             .padding(20)
         }

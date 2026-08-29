@@ -21,6 +21,9 @@ extension AppModel {
         self.seed = settings.seed
         self.stopSequences = settings.stopSequences
         self.runtimeOptions.powerProfile = AppPowerProfileOption(rawValue: settings.powerProfile) ?? .auto
+        self.runtimeOptions.loadGuard = AppLoadGuardOption(rawValue: settings.loadGuard) ?? .relaxed
+        self.runtimeOptions.loadGuardCustomBytes = settings.loadGuardCustomBytes
+        self.runtimeOptions.minAutoContextTokens = settings.minAutoContextTokens
         self.runtimeOptions.speculation = AppSpeculationOption(rawValue: settings.speculation) ?? .auto
         self.runtimeOptions.speculativeDrafter = AppSpeculativeDrafterOption(rawValue: settings.speculativeDrafter) ?? .auto
         self.runtimeOptions.maxTokensPerSec = settings.maxTokensPerSec
@@ -57,6 +60,9 @@ extension AppModel {
             seed: seed,
             stopSequences: stopSequences,
             powerProfile: runtimeOptions.powerProfile.rawValue,
+            loadGuard: runtimeOptions.loadGuard.rawValue,
+            loadGuardCustomBytes: runtimeOptions.loadGuardCustomBytes,
+            minAutoContextTokens: runtimeOptions.minAutoContextTokens,
             speculation: runtimeOptions.speculation.rawValue,
             speculativeDrafter: runtimeOptions.speculativeDrafter.rawValue,
             maxTokensPerSec: runtimeOptions.maxTokensPerSec,

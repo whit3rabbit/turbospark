@@ -494,3 +494,29 @@ so going through `make` recompiles the whole app every single time. Use
     while every neighbouring Picker in the same section already hid its label.
     A stray truncated word next to a control is worth reading as a missing
     `.labelsHidden()` before it is read as a layout problem.
+
+24. **TWO UNRELATED THINGS IN THIS APP ARE CALLED "GUARDRAILS".**
+    `AppGuardrailsMode` in `State/MacAppSettings.swift` is FORGE TOOL-CALL
+    guardrails: whether a model's tool calls get dialect rescue and schema
+    validation. `AppLoadGuardOption` in `State/AppRuntimeOptions.swift` is
+    MEMORY guardrails: how much of the machine a model may commit when it
+    loads (`docs/LOAD_GUARD.md`). They share no code, no settings key and no
+    UI surface, and the second is deliberately NOT named `AppGuardrailsMode`
+    -- the collision was caught before the type existed rather than after.
+
+    Two consequences. `MacAppSettings` carries BOTH `guardrailsMode` and
+    `loadGuard` as separate persisted keys, so a reader grepping for "the
+    guardrails setting" finds the wrong one half the time. And the memory
+    pane's section is titled "Model loading guardrails" while the tool one is
+    "Forge Guardrails", which is the only thing separating them for a user.
+
+25. **`AppModel.activeLoadGuard` EXISTS SO THE HUB AND THE LOADER CANNOT
+    RESOLVE DIFFERENT TIERS.** `TurboSparkCatalog.recommend` and
+    `ts_session_open` share one memory budget by construction, which is what
+    makes a hub verdict worth showing; a hub ranking under `.relaxed` while
+    sessions open under `.strict` promises a fit the loader then refuses, in
+    the one place a user cannot see the two disagree. All three `recommend`
+    call sites (`ModelHubView`, `CatalogSheet`, `ModelInstallView`) and
+    `buildOpenOptions` read that one accessor. A fourth caller building its
+    own from `runtimeOptions` would compile and be wrong only when the user
+    moves the setting off the default.

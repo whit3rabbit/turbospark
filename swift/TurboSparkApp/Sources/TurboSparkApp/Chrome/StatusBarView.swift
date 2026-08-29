@@ -31,6 +31,13 @@ struct StatusBarView: View {
                 barDivider
                 thermalReadout(thermal)
             }
+            // Shown only when abnormal, exactly as the thermal readout is: a
+            // badge that is always present carries no information, and this
+            // strip is meant to be glanceable.
+            if let pressure = model.telemetry?.memoryPressure, pressure.lowercased() != "normal" {
+                barDivider
+                memoryPressureReadout(pressure)
+            }
         }
         .font(.system(size: 10.5))
         .foregroundStyle(.secondary)
@@ -107,6 +114,11 @@ struct StatusBarView: View {
 
     private func refreshMemory() {
         memoryBytes = model.currentProcessMemoryBytes
+        // Refreshed on the SAME poll rather than only when the model list is
+        // reloaded, which is what used to set it: memory pressure is live
+        // machine state, and a reading taken once at startup would say
+        // nothing about the moment a user is looking at.
+        model.refreshTelemetry()
     }
 
     // MARK: - Context
@@ -179,6 +191,31 @@ struct StatusBarView: View {
         if model.isRunning { return "\(model.liveTokenCount)" }
         if let diagnostics = model.diagnostics { return "\(diagnostics.generatedTokens)" }
         return "\u{2014}"
+    }
+
+    /// The kernel's own memory-pressure verdict.
+    ///
+    /// **This is the machine's state, not this process's.** Another app can
+    /// put the machine under pressure, and the engine's response is the same
+    /// either way: it paces its own decode rate down. It does not unload
+    /// anything, because a session belongs to this app rather than to the
+    /// engine -- deciding to close an idle one is a decision for the person
+    /// reading this strip.
+    private func memoryPressureReadout(_ level: String) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.system(size: 10))
+                .accessibilityHidden(true)
+            Text("Memory \(level.capitalized)")
+        }
+        .foregroundStyle(level.lowercased() == "critical" ? .red : .orange)
+        .help(
+            "The system is short of memory. Generation is being paced down; "
+                + "closing an idle model or another app will relieve it."
+        )
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Memory pressure")
+        .accessibilityValue(level)
     }
 
     private func thermalReadout(_ level: String) -> some View {

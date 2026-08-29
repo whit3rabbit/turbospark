@@ -101,6 +101,16 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
     public var customModelDirectories: [String]
     /// Forge Tool-Call Guardrails global mode ("alwaysOn", "alwaysOff", "select").
     public var guardrailsMode: String
+    /// Memory load guardrail tier ("off", "relaxed", "balanced", "strict",
+    /// "custom"). Unrelated to `guardrailsMode` above, which is about TOOL
+    /// CALLS; see `docs/LOAD_GUARD.md`.
+    public var loadGuard: String
+    /// The ceiling the "custom" tier applies, in bytes. 0 falls back to
+    /// "relaxed" rather than to a ceiling of nothing.
+    public var loadGuardCustomBytes: UInt64
+    /// Minimum tokens an automatically-sized context window must reach, or 0
+    /// for no floor. Does not constrain an explicit context length.
+    public var minAutoContextTokens: UInt32
 
     public init(
         contextTokens: Int = 0,
@@ -119,6 +129,9 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         seed: UInt64 = 0,
         stopSequences: String = "",
         powerProfile: String = "auto",
+        loadGuard: String = "relaxed",
+        loadGuardCustomBytes: UInt64 = 0,
+        minAutoContextTokens: UInt32 = 0,
         speculation: String = "auto",
         speculativeDrafter: String = "auto",
         maxTokensPerSec: Double = 0,
@@ -164,6 +177,9 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.lmStudioDirectory = lmStudioDirectory
         self.customModelDirectories = customModelDirectories
         self.guardrailsMode = guardrailsMode
+        self.loadGuard = loadGuard
+        self.loadGuardCustomBytes = loadGuardCustomBytes
+        self.minAutoContextTokens = minAutoContextTokens
     }
 
     public init(from decoder: Decoder) throws {
@@ -198,6 +214,11 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.lmStudioDirectory = try c.decodeIfPresent(String.self, forKey: .lmStudioDirectory) ?? ""
         self.customModelDirectories = try c.decodeIfPresent([String].self, forKey: .customModelDirectories) ?? []
         self.guardrailsMode = try c.decodeIfPresent(String.self, forKey: .guardrailsMode) ?? "select"
+        self.loadGuard = try c.decodeIfPresent(String.self, forKey: .loadGuard) ?? "relaxed"
+        self.loadGuardCustomBytes =
+            try c.decodeIfPresent(UInt64.self, forKey: .loadGuardCustomBytes) ?? 0
+        self.minAutoContextTokens =
+            try c.decodeIfPresent(UInt32.self, forKey: .minAutoContextTokens) ?? 0
     }
 }
 
