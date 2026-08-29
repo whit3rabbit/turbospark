@@ -172,12 +172,41 @@ from M-V2/M-V5 therefore only needs to fire at image-pad token positions.
 This narrows M-V5's dispatch condition (a text-token position never touches
 the new kernel) without changing its structure.
 
-Still open: the exact bit layout of "interleaved" section selection
-(`_interleaved_position_selector`, `rope_utils.py:352-360`) for computing
-which of the three per-token positions feeds which frequency pair -- needed
-to write `rope_mrope_interleaved`'s CPU reference in M-V2, but not needed to
-prove the degenerate case above (that proof only requires t=h=w, not the
-selection formula). Defer full derivation to M-V2 implementation.
+**RESOLVED 2026-08-28, by reading rather than measuring** (the open item
+below is kept because the deferral is the lesson). The selector is
+`_interleaved_position_selector` at `mlx_vlm/models/rope_utils.py:350-355`,
+and it is six lines:
+
+```python
+selector = [0] * freq_dim                                  # default: t
+for dim, offset in enumerate((1, 2), start=1):             # h then w
+    for idx in range(offset, min(mrope_section[dim] * 3, freq_dim), 3):
+        selector[idx] = dim
+```
+
+For THIS family it collapses to `component = i % 3`. `head_dim` is 256 and
+`partial_rotary_factor` 0.25, so `rotary_dim` is 64 and `freq_dim` is 32;
+`mrope_section` is [11, 11, 10] and sums to exactly 32. Working it through:
+h takes 1, 4, ... 31 (11 indices), w takes 2, 5, ... 29 (10), and t takes the
+remaining 0, 3, ... 30 (11). **The counts fall out as [11, 11, 10], which is
+the declared section** -- an internal cross-check the reading did not assume,
+and what makes this a derivation rather than a plausible-looking transcription
+(`crates/repack` Gotcha 11's failure mode).
+
+Two caveats for whoever writes the kernel. The `i % 3` collapse holds because
+the sections TILE `freq_dim` exactly; the two `min()` clamps never bind here
+and would on a config whose sections do not sum to `freq_dim`, so implement
+the clamps rather than the collapse. And this settles which POSITION feeds
+which frequency pair, not the kernel's dispatch condition -- the degenerate
+proof above already restricts it to image-pad positions.
+
+**THE DEFERRAL IS THE PART TO CARRY.** This paragraph said "defer full
+derivation to M-V2 implementation", M-V2 built the six TOWER kernels and never
+built `rope_mrope_interleaved`, and nothing reddened -- a milestone's gate
+cannot cover a kernel that milestone did not build. The work landed on M-V5
+silently, four milestones after the note that scheduled it. Deferring an item
+INTO a milestone needs something in that milestone's gate that fails without
+it.
 
 ## 3. Activation magnitude probe -- RESOLVED, real forward pass
 
