@@ -85,7 +85,7 @@ cargo test -p turbospark-tokenizer
 ## Crate Gotchas
 
 1. **The Checkpoint's Template Beats the Dialect, and the Template Hides in
-   Two Places** (AGENTS.md Gotcha 41). `ChatDialect` is resolved from the
+   Two Places**. `ChatDialect` is resolved from the
    special-token table and decides IDS and the STOP SET only; it is not
    evidence about chat framing. TinyLlama-1.1B-Chat and Mistral-7B-Instruct
    present the identical `<unk>`/`<s>`/`</s>` table (Zephyr's `<|user|>` is
@@ -180,7 +180,7 @@ cargo test -p turbospark-tokenizer
    shim (`[::-1]`, `[:n]`, `startswith`, `split`, `lstrip` all work) and its
    default `xml` tool format is what `QwenToolCallParser` already expects, so
    nothing here blocks adopting it; the reasons not to are architectural
-   (AGENTS.md Gotcha 41: the checkpoint's template wins, and this port ships
+   (Gotcha 1: the checkpoint's template wins, and this port ships
    none) rather than technical.
 
    **THE SWEEP IS THE REUSABLE PART.**
@@ -284,7 +284,7 @@ cargo test -p turbospark-tokenizer
    "it emits no `<s>`... this gap is inert" because Mistral's real template
    always wins) -- `resolve_llama3` sets `bos_prefix_id: None` to match, so
    `encode(_, add_bos: true)` never doubles it. A real install still always
-   ships its own template and takes the Jinja path (AGENTS.md Gotcha 41), so
+   ships its own template and takes the Jinja path, so
    this fallback is what a malformed install gets, same as every other
    dialect's.
 

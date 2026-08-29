@@ -182,7 +182,7 @@ cargo run --release -p turbospark-cli --bin turbospark-model -- pull tinyllama
    16 GB machine wrong in one direction (it runs, and the slot policy's floor
    exists for exactly that machine) or a 27 GB one wrong in the other.
 
-   **The resident core is in `mapped`, which contradicts AGENTS.md Gotcha 19
+   **The resident core is in `mapped`, which contradicts `crates/bench/CLAUDE.md` Gotcha 1
    and matches every frozen peak.** That gotcha says
    `newBufferWithBytesNoCopy` pins the mapped range into `phys_footprint`;
    Gemma 4 reads 2,175 MiB against a 1.26 GiB core plus 1.5 GiB of slot cache

@@ -75,6 +75,6 @@ cargo test -p turbospark-core
 
 ## Crate Gotchas
 
-1. **Numeric Setters Panic on Invalid Inputs**: Runtime configuration numeric setters abort construction by panicking when a value is outside its allowed set (`ALLOWED_CACHE_SLOTS`, `ALLOWED_CHUNK_SIZES`). Callers accepting unvalidated input must validate first or wrap with `std::panic::catch_unwind`.
+1. **Numeric Setters Panic on Invalid Inputs**: Runtime configuration numeric setters abort construction by panicking when a value is outside its allowed set (`ALLOWED_CACHE_SLOTS`, `ALLOWED_CHUNK_SIZES`). This is an intentional fatal precondition failure: there is no `Result`-returning variant and no clamping. Callers accepting unvalidated input must validate first or wrap with `std::panic::catch_unwind`. Read the allowed values from the const arrays in `src/runtime_config.rs` rather than re-hardcoding the literals. Automatic chunk-size resolution (the three-state rule turning an unknown-or-known input length into one allowed chunk size) lives in `src/chunk_sizing.rs` and reads those same constants rather than redeclaring them.
 2. **Token Interchange Width**: Token IDs cross crate boundaries as signed 32-bit integers (`pub type TokenId = i32`). Keep this interchange width when wiring downstream crates.
 3. **Workspace Import Alias**: Downstream crates import `turbospark-core` as `foundation`. Always use `foundation::...` when importing from core in other crates.

@@ -244,3 +244,12 @@ printf '[{"role":"user","content":"Explain how coastal wetlands reduce flood dam
    it would change what the model writes while reporting success. That makes
    `--speculative` unreachable at this binary's own defaults (T=0.2) until
    rejection sampling lands.
+
+11. **This binary is the process entry point, and the split with
+    `turbospark-invocation` is the whole design.** `turbospark-check` reads
+    `argv`, calls `turbospark_invocation::parse`, and applies that crate's
+    pure exit-status and stream-routing decisions; `invocation` itself
+    touches no filesystem, environment or process state. On macOS this
+    binary additionally attempts real generation against `--model` through
+    `RealForwardRunner`, in all three modes (`--prompt`, `--messages-file`,
+    `--chat`). See `DEVIATIONS.md` for what each mode covers.

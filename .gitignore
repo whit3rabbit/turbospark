@@ -10,7 +10,15 @@ ROADMAP.md
 .syntext/
 .mcp.json
 .agent-config-mcp.json
-.claude/
+# Local Claude Code state, EXCEPT `.claude/docs/`. That directory holds agent
+# context split out of AGENTS.md (the per-family gate matrix, the checkpoint
+# installs, the power harness, the cross-engine KL arms, the header probes),
+# and it is committed because AGENTS.md links to it: a pointer to a file that
+# exists on one machine is a dead link for everyone else. Spelled `.claude/*`
+# rather than `.claude/`, because git does not descend into an excluded
+# directory and so cannot see a re-include underneath one.
+.claude/*
+!.claude/docs/
 .synrepo/
 .zcode/
 

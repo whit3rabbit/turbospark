@@ -75,7 +75,7 @@ cargo test -p turbospark-invocation
 
    **This is the first `auto` on an axis that is NOT throughput-only.** The
    slot count cannot move a digest (output is byte-identical across
-   8/16/24/32 since AGENTS.md Gotcha 27's fix), where a context window
+   8/16/24/32 since `crates/runtime/CLAUDE.md` Gotcha 8's fix), where a context window
    decides how much KV is allocated and how long a prompt is admitted. What
    licenses the sensing default anyway is the resolver's rule that an install
    declaring no trained context resolves to `DEFAULT_MAX_CONTEXT` -- which is

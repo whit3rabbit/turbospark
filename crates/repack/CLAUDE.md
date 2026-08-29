@@ -165,7 +165,7 @@ crates/repack/
 - `gguf_names/`: GGUF-to-canonical name tables (`gemma4.rs`, `gpt_oss.rs`, `llama.rs`, `qwen.rs`), one per family, every row read off a real published file and cross-checked against the corresponding real install's resident index. ROADMAP M5's `gpt-oss` table differs from the `llama` one next door in three ways that would each surface as an unmapped name mid-walk: the post-attention norm is spelled `post_attention_norm` rather than `ffn_norm`, EVERY projection and the router carry a `.bias`, and `attn_sinks.weight` has no counterpart in any other family. Its PER-EXPERT biases map to the ROUTED roles `gate_biases` / `up_biases` / `down_biases`, which the INT4-affine layout already defines and every GGUF install so far has left empty -- so they land in `MoeExpertOffsets`' three unused bias fields with no new plumbing, and the affine-vs-GGUF discriminator still keys on `gate_scales`. Mapping them `Resident` instead would have been silent rather than fatal (the offsets would simply stay 0), which is why that row has its own test.
 - `gguf_config/`: `arch_from_gguf` (`attention.rs`, `masks.rs`, `meta.rs`). Starts from `known_architecture(family)` and overrides ONLY the fields GGUF actually determines, because behavioral fields are hardcoded in llama.cpp's graph builder and absent from the metadata.
 - `gguf_checkpoint/`: the GGUF repack walk (`types.rs`, `plan.rs`, `transcode.rs`, `manifest.rs`). Expert bytes are sliced per expert and copied through with no quantization step. Splits Gemma's fused `ffn_gate_up_exps` at `FUSED_GATE_FIRST`, which is now MEASURED against the real file rather than assumed (gate is the first half; `tests/gguf_fused_gate_network.rs`). The one thing it does NOT carry verbatim is the resident F32 core: `transcode_f32` narrows norms to BF16 and quantizes the router to INT8 affine, because no F32 kernel exists here (Gotcha 6). It also un-does Qwen's V-head ordering (`v_head_axis`, Gotcha 7) and, for the `llama` family, llama.cpp's ROTARY PAIR permutation of `attn_q`/`attn_k` (`unpermute_rotary_rows`, ROADMAP Phase M2) -- both move bytes without changing any.
-- `synthetic_gguf/`: `GgufBuilder` (`builder/`) plus `build_synthetic_gemma4_gguf` (`gemma4.rs`), carrying every name and metadata key the real Gemma 4 GGUF has. `SyntheticGgufShape::mix` picks the block-type mixture (`QuantMix`). `iq_mixed()` is ROADMAP Phase S's, and it is the only fixture mixed along TWO axes: IQ3_XXS gate/up over an IQ4_NL down (the phases of one expert differ) with the LAST layer at IQ4_XS over Q8_0 (the layers differ). Its odd layer is last, not first, because a resolve-once bug would take layer 0's answer and a first-layer difference would hide it. Its IQ tensors are random VALID CODE POINTS rather than quantized weights, since this port has no IQ encoder and will not grow one. `mxfp4()` is ROADMAP M5's: MXFP4 routed experts over a Q8_0 everything-else, the first fixture whose expert type has NO resident GEMV, which is what makes it exercise the split between the manifest gate and the resident dtype backstop. It carries none of gpt-oss's FLOW differences -- it is a Gemma-shaped install with gpt-oss's block types, exactly as `iq_mixed()` is one with the Phase S candidate's -- so it proves the MXFP4 pair dispatches inside a whole forward pass and nothing about the gpt-oss layer. Its `moe_intermediate` is 32 rather than 256 on purpose: MXFP4's block is 32, and a fixture whose every dimension is the largest block in the file cannot catch a kernel striding by the wrong one. `k_quant()` switches it to the mixture a real `Q4_K_M` carries (Q4_K experts and embedding, Q6_K attention, the rest Q8_0), which is the only in-repo way to exercise a MIXED install; its dimensions are all 256 because a K-quant row cannot be a partial superblock, and its weights go through the CPU quantizers at [-0.5, 0.5) for the dynamic-range reason below. Its Q8_0 quants deliberately span only `[-8, 7]` at a scale of 0.0625: at full byte range the weights reach +/-32 and a fixture install overflows FP16 before it reaches the head, which reads as a kernel bug and is not one. The default shape's `moe_intermediate` is 16, which is NOT a whole Q8_0 block, so a test that wants to RUN a fixture install has to widen it (`crates/runtime/tests/gguf_install_refused.rs` does). **`gptoss.rs` is a different KIND of fixture from all of those and that is the point** (ROADMAP M5): the three `QuantMix` variants are Gemma-shaped installs carrying another model's block TYPES, which proves a kernel dispatches and nothing about the layer. `SyntheticGptOssShape` reproduces gpt-oss's tensor INVENTORY instead -- unfused gate/up, a bias beside every projection, a sink vector per block, RANK-2 per-expert biases in the routed blob, an untied head, an alternating window with no published pattern -- so it can be built before the 12.1 GB stream rather than after it. It found two walk holes in milliseconds each that would each have cost a 25-minute re-stream (AGENTS.md Gotcha 42). Its gate/up and down bias widths are deliberately UNEQUAL (32 against 64) where the real 20b has both at 2880: the published file cannot distinguish the bias of a projection that outputs `n_ff` from one that outputs `n_embd`, and a fixture that copied its proportions could not either.
+- `synthetic_gguf/`: `GgufBuilder` (`builder/`) plus `build_synthetic_gemma4_gguf` (`gemma4.rs`), carrying every name and metadata key the real Gemma 4 GGUF has. `SyntheticGgufShape::mix` picks the block-type mixture (`QuantMix`). `iq_mixed()` is ROADMAP Phase S's, and it is the only fixture mixed along TWO axes: IQ3_XXS gate/up over an IQ4_NL down (the phases of one expert differ) with the LAST layer at IQ4_XS over Q8_0 (the layers differ). Its odd layer is last, not first, because a resolve-once bug would take layer 0's answer and a first-layer difference would hide it. Its IQ tensors are random VALID CODE POINTS rather than quantized weights, since this port has no IQ encoder and will not grow one. `mxfp4()` is ROADMAP M5's: MXFP4 routed experts over a Q8_0 everything-else, the first fixture whose expert type has NO resident GEMV, which is what makes it exercise the split between the manifest gate and the resident dtype backstop. It carries none of gpt-oss's FLOW differences -- it is a Gemma-shaped install with gpt-oss's block types, exactly as `iq_mixed()` is one with the Phase S candidate's -- so it proves the MXFP4 pair dispatches inside a whole forward pass and nothing about the gpt-oss layer. Its `moe_intermediate` is 32 rather than 256 on purpose: MXFP4's block is 32, and a fixture whose every dimension is the largest block in the file cannot catch a kernel striding by the wrong one. `k_quant()` switches it to the mixture a real `Q4_K_M` carries (Q4_K experts and embedding, Q6_K attention, the rest Q8_0), which is the only in-repo way to exercise a MIXED install; its dimensions are all 256 because a K-quant row cannot be a partial superblock, and its weights go through the CPU quantizers at [-0.5, 0.5) for the dynamic-range reason below. Its Q8_0 quants deliberately span only `[-8, 7]` at a scale of 0.0625: at full byte range the weights reach +/-32 and a fixture install overflows FP16 before it reaches the head, which reads as a kernel bug and is not one. The default shape's `moe_intermediate` is 16, which is NOT a whole Q8_0 block, so a test that wants to RUN a fixture install has to widen it (`crates/runtime/tests/gguf_install_refused.rs` does). **`gptoss.rs` is a different KIND of fixture from all of those and that is the point** (ROADMAP M5): the three `QuantMix` variants are Gemma-shaped installs carrying another model's block TYPES, which proves a kernel dispatches and nothing about the layer. `SyntheticGptOssShape` reproduces gpt-oss's tensor INVENTORY instead -- unfused gate/up, a bias beside every projection, a sink vector per block, RANK-2 per-expert biases in the routed blob, an untied head, an alternating window with no published pattern -- so it can be built before the 12.1 GB stream rather than after it. It found two walk holes in milliseconds each that would each have cost a 25-minute re-stream (Gotcha 16). Its gate/up and down bias widths are deliberately UNEQUAL (32 against 64) where the real 20b has both at 2880: the published file cannot distinguish the bias of a projection that outputs `n_ff` from one that outputs `n_embd`, and a fixture that copied its proportions could not either.
 
 ## Development & Test Commands
 
@@ -266,7 +266,7 @@ the failure this head has already had once.
 
    **THE SAFETENSORS WALK HAD THE SAME TWO BUGS AND KEPT THEM UNTIL ROADMAP's 1-BIT ENTRY**, because its dense path wrote no quant block at all so nothing could read one. `write_gemma4_install` and `write_gemma4_install_streamed` both routed an empty-layer install through `write_gturbo_install_with_resident_index`, which writes `"quant": null`; both now go through `StreamingGturboWriter` at zero layers with `set_quant`, exactly as the GGUF side does. That immediately exposed the second half: `manifest_quant`'s router probe answers the model's DEFAULT width for a model with no router, and `validate_quant`'s router row accepts 8 only, so the dense `llama` fixture stopped opening the moment it started declaring its quantization. `manifest_quant_for(quant, family, has_experts)` now mirrors the ATTENTION slot into the three MoE slots when there are no experts -- `or_attention` on this side -- and `validate_quant` accepts a slot byte-identical to the attention one as the DEFAULTED statement it is. Found by a fixture in milliseconds; it would have been a 20-minute stream.
 
-9. **The walk NARROWS every unquantized tensor to BF16 and records what that cost, because BF16 is the only unquantized width this port can dispatch.** `narrow_raw_to_bf16` replaced a `raw_dtype_tag` that mapped `BF16`/`F16`/`F32` onto three raw tags, of which `crates/runtime` reads exactly one: every consumer of an unquantized tensor (`norm_view`, `read_bf16_host`, every kernel binding a `device const bfloat*`) identifies it by BYTE SIZE and decodes it as BF16. F16 is the same width, so a verbatim F16 norm is misread rather than refused -- no error, values wrong by up to 2^112. Nothing found it for four checkpoints because all four are BF16 throughout; `prism-ml/Bonsai-27B-mlx-1bit` writes F16 for every unquantized tensor. **This is the GGUF side's `transcode_f32` decision made on the OPPOSITE measurement**, which is why both are worth reading together: that one narrows F32 that llama.cpp had upcast from BF16 and is exactly lossless (Gotcha 6), this one narrows real F16 and is not. Measured off the real header before any code: the five RMS-norm families lose 19.5% of their values at a worst relative error of 0.003891 (2^-8, BF16's quantum) and the gated-DeltaNet tensors lose nothing, because that QAT checkpoint stores them on a grid coarse enough to be exact in both. The real repack reproduces it: 161 tensors narrowed lossily, 546,190 values, 192 GDN tensors clean, reported through the streamed writer's `progress` callback rather than counted in silence. AGENTS.md Gotcha 45 states the rule and the judgement; `tests/synthetic_qwen35.rs`'s two narrowing cases pin it, and the fixture had to be changed to write F16 for them to mean anything -- it was forked from the Qwen 3.6 one and had inherited BF16 norms beside correctly-F16 companions.
+9. **The walk NARROWS every unquantized tensor to BF16 and records what that cost, because BF16 is the only unquantized width this port can dispatch.** `narrow_raw_to_bf16` replaced a `raw_dtype_tag` that mapped `BF16`/`F16`/`F32` onto three raw tags, of which `crates/runtime` reads exactly one: every consumer of an unquantized tensor (`norm_view`, `read_bf16_host`, every kernel binding a `device const bfloat*`) identifies it by BYTE SIZE and decodes it as BF16. F16 is the same width, so a verbatim F16 norm is misread rather than refused -- no error, values wrong by up to 2^112. Nothing found it for four checkpoints because all four are BF16 throughout; `prism-ml/Bonsai-27B-mlx-1bit` writes F16 for every unquantized tensor. **This is the GGUF side's `transcode_f32` decision made on the OPPOSITE measurement**, which is why both are worth reading together: that one narrows F32 that llama.cpp had upcast from BF16 and is exactly lossless (Gotcha 6), this one narrows real F16 and is not. Measured off the real header before any code: the five RMS-norm families lose 19.5% of their values at a worst relative error of 0.003891 (2^-8, BF16's quantum) and the gated-DeltaNet tensors lose nothing, because that QAT checkpoint stores them on a grid coarse enough to be exact in both. The real repack reproduces it: 161 tensors narrowed lossily, 546,190 values, 192 GDN tensors clean, reported through the streamed writer's `progress` callback rather than counted in silence. Gotcha 9 states the rule and the judgement; `tests/synthetic_qwen35.rs`'s two narrowing cases pin it, and the fixture had to be changed to write F16 for them to mean anything -- it was forked from the Qwen 3.6 one and had inherited BF16 norms beside correctly-F16 companions.
 
 10. **`block_count` COUNTS THE MULTI-TOKEN-PREDICTION BLOCK, and the trunk is `block_count - nextn_predict_layers`.** llama.cpp writes a drafter head as one more `blk.<n>.` block: `Ornith-1.5-35B-A3B` reads 41 and 1 for a 40-layer model. Taking `block_count` verbatim derives a 41-layer config whose mask calls index 40 LINEAR when the head is full attention -- structurally valid, wrong graph. Absent means 0 (AGENTS.md Gotcha 39: the default belongs to the FORMAT), so every file installed before Ornith is unchanged. `plan::classify` takes the trunk count for the same reason and skips the head's blocks by name.
 
@@ -276,7 +276,7 @@ the failure this head has already had once.
 
     **THE FAILURE WAS AN INFERENCE, NOT A MISSING FACT, which is what makes it worth a gotcha.** The module recorded correctly that llama.cpp rejects `direction.0` by name and that its apply loop never reaches block 0, then concluded the indices must shift down by one. They do not: block 0 goes unsteered precisely BECAUSE the lowest direction lands on block 1. The old mapping steered block 0 first, contradicting the invariant it cited two sentences earlier -- so the refutation was internal and available from the first commit. A true fact about a reference is not a reading of it, and an honest `UNVERIFIED` beside a derived convention makes it look measured-open rather than reasoned-and-wrong. It survived five sessions on that.
 
-    Two consequences for the code. `turbospark.layer_base` is READ now (1 or absent is llama.cpp's numbering, 0 is this port's old one, anything else refused) where it had been stamped since the first commit and honoured by nothing -- AGENTS.md Gotcha 45's shape, and giving it a consumer is what let the correction land without reinterpreting the vectors already on disk or moving a frozen row. And `write_control_vector` takes a `BTreeMap<usize, Vec<f32>>` rather than a dense slice, because a dense 0-based slice ALWAYS has a block 0 and this format cannot name one; a block-0 entry is refused rather than dropped.
+    Two consequences for the code. `turbospark.layer_base` is READ now (1 or absent is llama.cpp's numbering, 0 is this port's old one, anything else refused) where it had been stamped since the first commit and honoured by nothing -- Gotcha 9's shape, and giving it a consumer is what let the correction land without reinterpreting the vectors already on disk or moving a frozen row. And `write_control_vector` takes a `BTreeMap<usize, Vec<f32>>` rather than a dense slice, because a dense 0-based slice ALWAYS has a block 0 and this format cannot name one; a block-0 entry is refused rather than dropped.
 
 12. **A COMPONENT'S CONFIG SAYS WHAT THE ARCHITECTURE HAS; ONLY THE TENSORS SAY WHAT THE ARTIFACT SHIPS -- AND FOR THE VISION TOWER THE TWO DISAGREE ON A PUBLISHED CHECKPOINT.** ROADMAP M-V3 ingests `vision_tower.*` for the `qwen3_5` family. FIVE published checkpoints declare a `vision_config`, and all five declare the IDENTICAL tower: depth 27, hidden 1152, intermediate 4304 (**not** the 4608 the planning table guessed by analogy with the merger's width), `num_position_embeddings` 2304, `mrope_section` [11, 11, 10] and the same four token ids -- `Qwen/Qwen3.8-27B`, `prism-ml/Bonsai-27B-mlx-1bit`, `prism-ml/Ternary-Bonsai-27B-mlx-2bit`, `ornith-ai/Ornith-1.5-35B-A3B` and `-9B`, read off the published files rather than inferred. **`ornith-ai/Ornith-1.5-35B-A3B-MLX-4bit` ships NO `vision_tower.` tensor at all.** It is `ornith_config.rs`'s own "DECLARED AND UNSHIPPED" note, one component over from `mtp.*`.
     Three consequences, each of which would break something that works today.
@@ -296,3 +296,104 @@ the failure this head has already had once.
     Found by M-V3's own network gate: three consecutive `qwen38` streams died this way. `throttled_status` (429 plus 500/502/503/504) now retries under `throttle_backoff`, which honours the server's `Retry-After` when it sends one and otherwise grows from ONE SECOND rather than the transport ladder's 250ms -- re-hammering a limiter four times a second spends all eight attempts before the window moves, which is how a transient limit reads as a permanent refusal. Capped at 30s, so eight attempts span about two minutes against a walk that already takes twenty. The fourth run passed.
     **THE DIAGNOSIS THAT WAS WRONG IS WORTH KEEPING.** `huggingface.co/resolve` publishes `ratelimit: "resolvers";r=...;t=...` against a `q=3000;w=300` policy, and the dense `qwen38` walk issues roughly 2,900 ranged GETs (851 resident tensors at three planes each, plus 333 vision ones), so "the walk trips the 3000-per-5-minute cap" fits the arithmetic exactly and is FALSE. That bucket read 2,998 of 3,000 remaining at the moment of failure. The 429 comes from the Xet CDN bridge the 302 redirects to, which has a separate quota that no response header here exposes -- so the observable limit and the binding one are different limits, and a number that fits is not evidence that it is the number. Gotcha 30's shape on a network axis.
     A LIST rather than `>= 500`, so a future status stays fatal until someone establishes otherwise: the bug being fixed came from a rule that was too broad, and widening it back by default repeats that mirrored. `a_rate_limit_is_throttled_and_a_missing_range_is_fatal` pins both directions, and a 404 must still fail on the first attempt rather than eight times.
+
+15. **Qwen's `linear_attn.A_log` and `linear_attn.dt_bias` have NO `.weight`
+    suffix**, unlike every other tensor in the checkpoint. They are plain
+    BF16 `[num_v_heads]` parameters, not projections. Appending `.weight` by
+    analogy gets a `MissingTensor` at open, which is the GOOD case; the bad
+    case is a name filter keyed on `.weight` quietly dropping them. Qwen's
+    routed experts also live under `.mlp.switch_mlp.` rather than Gemma's
+    `.experts.switch_glu.`, and THAT one fails silently in the other
+    direction: an unrecognized routed marker makes every expert a resident
+    tensor, which loads and generates fine, just with the whole expert table
+    pinned. `routed_marker` in `gemma4_checkpoint/` owns the mapping, and
+    `tests/synthetic_qwen.rs` pins both families' markers.
+
+16. **A ROUTED SUB-TENSOR IS NOT ALWAYS A MATRIX, AND NOT EVERYTHING IN AN
+    EXPERT BLOB IS A QUANTIZATION SCHEME.** `gpt-oss` is the first checkpoint
+    to put a per-expert BIAS in the routed blob, and both halves of the walk
+    had assumed otherwise since Phase G. Neither assumption was wrong when
+    written; both were unstated defaults one new model turned into refusals.
+    - **`plan.rs` demanded RANK 3.** Every routed tensor before this was
+      `[in, out, experts]`, a matrix per expert. A bias is `[out, experts]`,
+      a VECTOR per expert, and the walk refused it by name. `routed_body_dims`
+      drops the trailing expert axis and takes whatever is left, so the two
+      ranks are one case. The nastier half was the shape RECORD rather than
+      the refusal: `out_total` was read as `dims[1]`, which on a rank-2 bias
+      is the EXPERT COUNT, a plausible number that would have written a
+      correctly-sized blob with a nonsense logical shape. No byte assertion
+      catches that.
+    - **`gguf_manifest_quant` counted the F32 bias planes as routed BLOCK
+      TYPES**, so `validate_quant` refused a runnable install for "F32 has no
+      kernel". A bias is a COMPANION: `moe_gguf.metal` reads it as a plain
+      `device const float*` off an offset the weight's kernel already
+      resolved, exactly as the affine layout's `gate_scales` relates to its
+      packed run. These escaped notice only because an affine blob's sources
+      are not GGUF tensors, so the histogram never saw one. Excluded by ROLE
+      rather than by `dtype != F32`, so a future BF16 bias is classified by
+      what the sub-tensor IS.
+
+    Both cost milliseconds against `SyntheticGptOssShape` and would have cost
+    a 25-minute re-stream apiece against the real 12.1 GB file: Gotcha 8's
+    fixture-before-download rule paying off a second time. Note the fixture
+    had to DIFFER from the real file to be useful. gpt-oss's `hidden` and
+    expert width are both 2880, so the published checkpoint cannot tell a
+    gate/up bias from a down bias, and a fixture copying its proportions
+    could not either.
+
+17. **Two GGUF header facts that bite and are not covered by the transform
+    gotchas above.** The data region is ALIGNED, not adjacent: tensor offsets
+    are relative to the end of the tensor table rounded UP to
+    `general.alignment` (default 32), and skipping the rounding shifts every
+    tensor in the file by up to 31 bytes. And `general.architecture` is the
+    CONVERTER's name rather than the family's: Qwen 3.6 GGUFs say
+    `qwen35moe`, so deriving the string from `ModelFamily::as_str()`
+    recognizes no real Qwen GGUF.
+
+18. **A FIELD ADDED TO THE MANIFEST AND TO `arch_validation` IS NOT YET
+    READABLE, AND `peek_manifest_arch` IS THE THIRD PLACE THAT HAS TO LEARN
+    IT.** M-V3 taught `gturbo_writer` to WRITE the tower's fifteen `vision*`
+    fields and `arch_validation` to CHECK them, and stopped there. The
+    peeker -- which is how `crates/cli`'s real generation path and
+    `crates/bench`'s harness reconstruct an `ArchConfig` from an installed
+    directory -- never read them back, so both resolved a vision install to
+    `VisionConfig::NONE`. The install opened, decoded text correctly, and
+    refused an image as though it were headless: no error, no warning, and a
+    manifest that plainly declares `visionDepth: 27` two feet away.
+
+    Found by M-V4's real-checkpoint parity gate on its first run, minutes into
+    a 15 GB install. `the_manifest_peeker_reads_the_tower_back`
+    (`tests/synthetic_qwen35_vision.rs`) now finds it in milliseconds and
+    mutation-checks clean.
+
+    **Its fallback is `unwrap_or(0)` and NOT the family baseline every other
+    extension field in that function uses**, which is the one place the
+    peeker's own rule does not apply. `arch_validation` compares
+    `a.vision_depth.unwrap_or(0)` for the reason its own comment gives: an
+    absent field means the install declares no tower, and another family's
+    answer about ITS tower is not evidence (AGENTS.md Gotcha 24's shape). The
+    two happen to agree today because every shipped baseline carries `NONE`,
+    so writing it correctly costs nothing now and is what keeps the next
+    multimodal baseline from resolving every other family's installs to its
+    own tower.
+
+    The general rule: a new manifest field has THREE consumers, not two --
+    the writer, the validator, and the peeker -- and only the first two fail
+    loudly when one is missed.
+
+19. **`vision_tower.*` IS NOT CONTIGUOUS IN EVERY CHECKPOINT, AND
+    `fetch_vision_tower.py`'s OVER-FETCH WARNING IS NOW MEASURED RATHER THAN
+    HYPOTHETICAL.** That script issues ONE ranged GET spanning the min..max
+    byte offset of every `vision_tower.` tensor, and its docstring says a
+    future checkpoint interleaving them with trunk tensors would make it
+    over-fetch rather than miss data. `mlx-community/Qwen3.8-27B-4bit` is
+    that checkpoint: the span is 4,885 MiB for 879 MiB of tensors, where
+    `prism-ml/Bonsai-27B-mlx-1bit`'s is 879 for 879. The over-fetch is
+    correct and costs disk, not accuracy.
+
+    It also takes an optional REVISION now, and that is load-bearing for any
+    comparison rather than a convenience. The published towers have IDENTICAL
+    shapes across checkpoints, so pairing a revision-pinned install with a
+    tower fetched at `main` compares two different models and fails nothing
+    loudly -- the same class of silence as Gotcha 12's declared-but-unshipped
+    case.
