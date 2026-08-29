@@ -148,6 +148,19 @@ void ts_string_free(char *s);
  *                       than stylistic: DFlash2 reads 1.43-1.50x on code
  *                       and math and 0.96x throughput at +17.4% J/token on
  *                       PROSE, so it is opt-in.
+ *   loadGuard         "off" | "relaxed" | "balanced" | "strict" | number | null
+ *                       How much of the machine may be committed. A NUMBER is
+ *                       an absolute ceiling in BYTES on what the engine
+ *                       ALLOCATES (slot cache + KV), not on the install's
+ *                       size -- a large install streaming from disk is what
+ *                       this engine is for. null means "relaxed", which is
+ *                       what this ABI did before the key existed and what
+ *                       every published footprint row was measured under.
+ *   minAutoContext    number | null (default 0, meaning no floor)
+ *                       Refuse to open when maxContext is automatic and
+ *                       resolves below this many tokens. Says NOTHING about
+ *                       an explicit maxContext: a caller naming a number has
+ *                       decided how to spend their own machine.
  *   steering          string | null (path to .gguf control vector)
  *   steeringMode      "ablate" | "add" | "clamp" | "renorm" | null
  *   steeringScale     number | null (default 1.0)
@@ -242,7 +255,14 @@ uint64_t ts_peak_footprint_bytes(void);
 /*
  * Hardware and power telemetry for this machine, as JSON:
  *   { "physicalMemoryBytes", "recommendedWorkingSetBytes", "chip",
- *     "lowPowerMode", "thermalLevel" }
+ *     "lowPowerMode", "thermalLevel", "memoryPressure" }
+ *
+ * "memoryPressure" is "normal" | "warn" | "critical", the kernel's own
+ * verdict. POLLED HERE UNCONDITIONALLY, unlike the decode loop's own probe,
+ * which follows the power profile: a session running the default
+ * "performance" profile watches nothing, so the "peakMemoryPressure" on a
+ * generation result is the ABSENCE of a reading rather than a report that
+ * memory was fine. A status panel should read this call.
  */
 int32_t ts_system_info_json(char **out);
 
@@ -329,9 +349,15 @@ int32_t ts_session_fit_window_json(const TsSession *s, const char *messages_json
  * in `*result_json`:
  *
  *   { "promptTokens", "newTokens", "prefillSeconds", "decodeSeconds",
- *     "stopReason", "tokensPerSecond", "content", "reasoning" }
+ *     "stopReason", "tokensPerSecond", "content", "reasoning",
+ *     "peakMemoryPressure" }
  *
  * stopReason is endOfTurn | toolCalls | eos | stopString | maxTokens |
+ * peakMemoryPressure is "normal" | "warn" | "critical", the worst seen while
+ * this turn decoded -- and "normal" when nothing was watching, which is the
+ * default (the in-loop probe follows the power profile). Read
+ * ts_system_info_json for the machine's current state.
+ *
  * cancelled. tokensPerSecond is null when no decoding happened, so a caller
  * cannot plot a rate that was never measured.
  */
@@ -357,8 +383,18 @@ int32_t ts_model_delete(const char *alias);
  * Ranks curated models by hardware fit on this machine for `context_window`
  * tokens (e.g. 4096 or 8192, 0 means default 4096). Returns JSON array of
  * recommendations.
+ *
+ * `options_json` may be NULL, "" or "{}", all meaning every default. One key:
+ *
+ *   loadGuard  same spellings as ts_session_open's, and it MUST be the same
+ *              value the host will OPEN with. This ranking and the loader's
+ *              refusal share one memory budget by construction, which is what
+ *              makes a recommendation trustworthy; ranking under "relaxed"
+ *              while sessions open under "strict" promises a fit the loader
+ *              then refuses, where the user cannot see the two disagree.
  */
-int32_t ts_recommend_json(uint32_t context_window, char **out);
+int32_t ts_recommend_json(uint32_t context_window, const char *options_json,
+                          char **out);
 
 /*
  * Probes a Hugging Face repository by HEADER ALONE: kilobytes and seconds,

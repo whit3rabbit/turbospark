@@ -25,7 +25,7 @@ use std::sync::{Arc, Mutex};
 use tokenizer::MfTokenizer;
 
 use crate::session::{Engine, Session};
-use crate::wire::{sized, OpenOptions, SessionInfo, SpeculationInfo};
+use crate::wire::{load_guard, sized, OpenOptions, SessionInfo, SpeculationInfo};
 
 /// Maps the wire spelling of a power profile.
 fn power_profile(name: &str) -> Result<runtime::PowerProfile, String> {
@@ -169,6 +169,14 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
     // machine.
     let max_context = sized(&options.max_context, "maxContext")?;
     let expert_cache_slots = sized(&options.expert_cache_slots, "expertCacheSlots")?;
+    // Mapped here with the rest, BEFORE anything is read from disk, so a
+    // misspelled tier outranks a bad path in the error -- the rule this file
+    // already follows, and what lets the SwiftPM target reach these spellings
+    // with no install on the machine.
+    let load_policy = runtime::LoadPolicy {
+        guard: load_guard(&options.load_guard)?,
+        min_auto_context: options.min_auto_context.unwrap_or(0),
+    };
     let asked = speculation(&options.speculation)?;
     let requested_drafter = drafter(options.speculative_drafter.as_deref())?;
     let requested_steering_mode = options
@@ -240,6 +248,7 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
         foundation::runtime_config::DEFAULT_MAX_CONTEXT,
         runtime::physical_memory(),
         runtime::committed_bytes(dir),
+        &load_policy,
     )
     .map_err(|e| e.to_string())?;
 

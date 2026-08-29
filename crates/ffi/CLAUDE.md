@@ -87,6 +87,22 @@ make swift-test-real MODEL=~/models/qwen38-27b-mtp.gturbo \
    rows were camelCase and they are snake_case, and nothing on the Rust side
    noticed.
 
+   **THE LOAD-GUARD WORK IS THE SECOND TIME THIS EARNED ITS PLACE, and this
+   one was a SIGNATURE change rather than a field.** `ts_recommend_json` grew
+   an `options_json` argument (`uint32_t, const char *, char **`), which the
+   `rlib` face cannot notice at all -- `tests/c_surface.rs` calls the Rust
+   function directly and would pass against a two-argument declaration in the
+   header forever. Only `swift/TurboSpark/Tests` links the `staticlib` and
+   goes through `turbospark.h`. Anything that changes an ARITY here is
+   unverified until `make swift-test` has run, and `make swift-lib` must run
+   first or that suite links the previous archive (Gotcha 9).
+
+   Note what did NOT need a signature: `loadGuard` and `minAutoContext` are
+   `OpenOptions` fields, so they cost a line in `wire.rs` and a paragraph in
+   the header's comment. That asymmetry is Gotcha 3's whole argument in one
+   change -- the options bag absorbed two knobs for free and the one call
+   taking a bare integer had to break.
+
    A generator (cbindgen) was declined rather than overlooked. It adds a
    build-dependency and a codegen step to a workspace that has declined even
    LTO, and it would only ever restate the Rust side to itself -- the Swift
@@ -217,3 +233,20 @@ make swift-test-real MODEL=~/models/qwen38-27b-mtp.gturbo \
    on a MoE install used to be refused for its missing HEAD rather than its
    architecture, which on a GUI surface is a message telling someone to
    download 4.4 GB that cannot help.
+
+12. **THE LOAD GUARD MUST BE THE SAME ON BOTH CALLS A GUI MAKES.**
+    `ts_recommend_json` ranks under the tier it is given and `ts_session_open`
+    refuses under the tier IT is given, and the two share one memory budget by
+    construction -- which is what makes a hub verdict worth showing. A host
+    ranking under `relaxed` while opening under `strict` promises a fit the
+    loader then refuses, in the one place a user cannot see the two disagree.
+    Neither call can detect the mismatch, so nothing here will ever raise it;
+    the Swift side keeps one `AppModel.activeLoadGuard` accessor for exactly
+    that reason (`swift/CLAUDE.md` Gotcha 25).
+
+    Absent, `null` and `{}` all mean `relaxed` on both calls, which is what
+    this ABI did before the option existed and what every frozen footprint row
+    describes. An unrecognized STRING is refused rather than defaulted, for
+    `sized`'s reason and one of its own: quietly ranking under the default
+    when the caller asked for `strict` is the exact failure the option exists
+    to prevent.

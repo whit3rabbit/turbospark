@@ -119,6 +119,9 @@ options.maxContext = .fixed(8192)          // or .auto, the default
 options.expertCacheSlots = .fixed(16)      // or .auto: 8, 16, 24, 32
 options.powerProfile = .efficiency         // or nil, see below
 options.maxTokensPerSec = 30
+options.loadGuard = .balanced              // or .off, .relaxed (default), .strict,
+                                           // .custom(bytes)
+options.minAutoContext = 8192              // 0, the default, imposes no floor
 options.speculation = .auto                // or .off, .block(2)
 options.speculativeDrafter = .auto         // or .mtp, .dflash
 options.steering = "/path/to/vector.gguf"  // or nil (disabled)
@@ -131,7 +134,7 @@ options.steeringGate = 0.0                 // activation threshold >= 0
 let session = try await TurboSparkSession(modelPath: "gemma4", options: options)
 ```
 
-Everything defaults to automatic, which is what a GUI should want. Four
+Everything defaults to automatic, which is what a GUI should want. Five
 defaults are worth understanding rather than accepting:
 
 **`expertCacheSlots: .auto` climbs, never falls.** It picks the largest
@@ -164,6 +167,35 @@ the checkpoint's own MTP head pays 1.44-1.66x, while DFlash2 at block 2 reads
 workload is code-shaped.
 `.block(n)` is a promise rather than a preference: an install that cannot
 serve it throws from `init` rather than opening quietly without it.
+
+**`loadGuard: .relaxed` is the default and is what shipped before the option
+existed.** It reserves 4 GiB for the rest of the machine and spends a quarter
+of what is left. Every published footprint figure for this engine was
+measured under it, so changing the tier makes your numbers incomparable with
+those -- which is the point of the knob, but worth knowing before you file a
+bug about a peak that moved.
+
+`.off` reserves nothing and, more importantly, declines to REFUSE: a window
+too large for the machine becomes the Metal allocation failure you asked for
+rather than an error with the arithmetic in it. `.custom(bytes)` caps what
+the engine ALLOCATES (slot cache plus KV), not the install's size -- a large
+model streaming its experts from disk is what this engine is for, and a cap
+read against the install would refuse a 13 GB model on a 16 GB machine that
+runs it fine.
+
+**If you also call `TurboSparkCatalog.recommend`, pass it the SAME guard.**
+The ranking and the loader's refusal share one memory budget by construction,
+which is what makes a recommendation worth showing; recommending under
+`.relaxed` while opening under `.strict` promises a fit the loader then
+refuses, in the one place a user cannot see the two disagree.
+
+**`minAutoContext` constrains automatic sizing only.** It refuses to open
+when `maxContext: .auto` resolves below it, and says nothing about an
+explicit `.fixed(2048)` -- a caller naming a number has decided how to spend
+their own machine. The error names which bound was binding (memory, the
+checkpoint's trained context, or an install that declares none), because
+loosening the guard, lowering the floor and picking a different checkpoint
+are three different fixes and only one of them helps.
 
 **`steering` applies a control vector at open.** The vector file is parsed
 and verified against the model architecture before any memory is mapped, and
@@ -382,10 +414,13 @@ phases.expertHitRate      // nil before anything has been requested
 TurboSparkSession.peakFootprintBytes   // process-wide, or nil
 if let sys = TurboSparkSession.systemTelemetry {
     print("RAM: \(sys.physicalMemoryBytes), thermal: \(sys.thermalLevel)")
+    print("memory pressure: \(sys.memoryPressure)")   // normal | warn | critical
 }
+
+result.peakMemoryPressure   // the worst level seen DURING that turn
 ```
 
-Two caveats, both of which make a naive status panel wrong:
+Three caveats, all of which make a naive status panel wrong:
 
 **The phase counters are cumulative over every forward pass, prefill
 included.** A per-call number is an average across the whole context range,
@@ -395,6 +430,22 @@ difference two runs.
 **They cover the inside of the forward pass only.** The sampler and the
 detokenizer run after it returns and appear in none of the buckets, so the
 phase total will not add up to wall-clock decode time.
+
+**`peakMemoryPressure` is `normal` when nothing was watching, which is not
+the same as memory being fine.** The in-loop probe follows the power
+profile's stepping, and the default (`performance`) polls nothing -- so on a
+default session that field is the ABSENCE of a reading. `systemTelemetry`
+polls unconditionally and is what a status panel should read; the field on
+the result exists to catch a SPIKE between polls, which is the event worth
+reacting to.
+
+**The engine paces itself under pressure and never unloads.** Under
+`.balanced` or `.efficiency` it steps its own decode rate down, taking
+whichever of thermal and memory pressure binds harder. It does not close
+sessions, because it does not own them -- your handle is yours, and a session
+that destroyed itself would leave you holding a dead pointer. Deciding to
+call `close()` on an idle session when pressure goes critical is the app's
+job.
 
 `peakFootprintBytes` is the same mach counter every published memory figure
 for this engine uses, so your number and the memory oracle's agree. What it
@@ -413,7 +464,9 @@ artifact is the same either way.
 let rows = try TurboSparkCatalog.available()      // curated table, with `installed`
 let mine = try TurboSparkCatalog.installed()      // what is in ~/.turbospark
 let cost = try TurboSparkCatalog.cost(of: "gemma4")
-let recs = try TurboSparkCatalog.recommend(context: 4096) // ranked by hardware fit
+// Ranked by hardware fit. Pass the SAME guard your sessions open with, or
+// the ranking and the loader's refusal describe different machines.
+let recs = try TurboSparkCatalog.recommend(context: 4096, loadGuard: .balanced)
 let report = try TurboSparkCatalog.probe(repo: "Qwen/Qwen3-30B-A3B-GGUF",
                                          file: "Qwen3-30B-A3B-Q4_K_M.gguf")
 
@@ -538,7 +591,7 @@ byte callback is *also* called concurrently from worker threads.
 | `ts_catalog_json(out)` | every platform |
 | `ts_installed_json(out)` | every platform |
 | `ts_model_delete(alias)` | delete installed model directory and forget row |
-| `ts_recommend_json(context, out)` | rank curated models by hardware fit |
+| `ts_recommend_json(context, options_json, out)` | rank curated models by hardware fit; `options_json` takes `loadGuard` and may be NULL |
 | `ts_probe_json(repo, file, sidecar, out)` | header-only, no download |
 | `ts_install_bytes_json(alias, out)` | cost before committing |
 | `ts_install(alias, cb, ud, out)` | blocks for minutes; cannot resume |
@@ -609,6 +662,8 @@ int main(void) {
   "expertCacheSlots": "auto",
   "powerProfile": "efficiency",
   "maxTokensPerSec": 30,
+  "loadGuard": "balanced",
+  "minAutoContext": 8192,
   "speculation": "auto",
   "speculativeDrafter": "auto",
   "steering": "/path/to/vector.gguf",
@@ -630,6 +685,15 @@ either a number or a string. `speculativeDrafter` accepts `"auto"`, `"mtp"`
 or `"dflash"`. Both are refused by name rather than defaulted when
 misspelled, and both are mapped BEFORE the install is touched, so a bad
 option is reported ahead of a bad path.
+
+`loadGuard` accepts `"off"`, `"relaxed"`, `"balanced"`, `"strict"`, a
+positive NUMBER (an absolute ceiling in bytes on what the engine allocates),
+`null` or absence. Null and absence mean `"relaxed"`. An unrecognized string
+is an error rather than a silent fallback, for `maxContext`'s reason and one
+of its own: quietly ranking or opening under the default when the caller
+asked for `"strict"` is exactly the disagreement the option exists to
+prevent. `minAutoContext` accepts a number or `null`; 0 and absence both mean
+no floor.
 
 `steering` accepts a file path string to a `.gguf` control vector, or `null`.
 `steeringMode` accepts `"ablate"`, `"add"`, `"clamp"`, `"renorm"`.
@@ -804,6 +868,9 @@ Stated so the omissions are decisions on the record rather than gaps.
 - [`docs/MODELS.md`](MODELS.md): the catalog, the probe, and what `pull`
   does
 - [`docs/GTURBO.md`](GTURBO.md): the install format a session opens
+- [`docs/LOAD_GUARD.md`](LOAD_GUARD.md): the tiers behind `loadGuard`, the
+  AutoFit floor, and what the pressure watcher does and deliberately does not
+  do
 - [`docs/BENCHMARKS.md`](BENCHMARKS.md): the frozen throughput, memory and
   quality numbers
 

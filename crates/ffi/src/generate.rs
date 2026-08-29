@@ -421,6 +421,7 @@ pub(crate) fn generate(
             .then(|| result.new_tokens as f64 / result.decode_seconds),
         content,
         reasoning: reasoning_text,
+        peak_memory_pressure: format!("{:?}", result.peak_memory_pressure).to_lowercase(),
     })
 }
 

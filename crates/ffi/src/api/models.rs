@@ -38,14 +38,27 @@ pub unsafe extern "C" fn ts_model_delete(alias: *const c_char) -> c_int {
 
 /// Ranks curated models by hardware fit on this machine.
 #[no_mangle]
-pub unsafe extern "C" fn ts_recommend_json(context_window: u32, out: *mut *mut c_char) -> c_int {
+pub unsafe extern "C" fn ts_recommend_json(
+    context_window: u32,
+    options_json: *const c_char,
+    out: *mut *mut c_char,
+) -> c_int {
     guard_result(|| {
         let ctx = if context_window == 0 {
             None
         } else {
             Some(context_window)
         };
-        let json = models::recommend_json(ctx).map_err(|e| (abi::TS_ERR_GENERATE, e))?;
+        // NULL, empty and `{}` all mean "everything default", which is
+        // `relaxed` -- the tier every frozen row in `models.json` was measured
+        // under, so a caller that passes nothing gets rankings that match
+        // those rows. Read through the same helper `ts_session_open` uses, so
+        // the two options bags cannot disagree about what absent means.
+        let options =
+            abi::parse_json_or_default::<crate::wire::RecommendOptions>(options_json, "options")?;
+        let guard = crate::wire::load_guard(&options.load_guard)
+            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let json = models::recommend_json(ctx, guard).map_err(|e| (abi::TS_ERR_GENERATE, e))?;
         strings::emit(&json, out).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
     })
 }

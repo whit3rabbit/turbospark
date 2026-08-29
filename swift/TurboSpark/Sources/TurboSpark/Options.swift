@@ -70,6 +70,50 @@ public struct OpenOptions: Encodable, Sendable {
         case dflash
     }
 
+    /// How much of the machine may be committed to loading a model.
+    ///
+    /// `relaxed` is the default and is what this binding did before the
+    /// option existed -- every published footprint figure for this engine was
+    /// measured under it. See `docs/LOAD_GUARD.md`.
+    ///
+    /// **If you also call `TurboSparkCatalog.recommend`, pass it the SAME
+    /// value.** The ranking and the loader's refusal share one memory budget
+    /// by construction; recommending under one tier while opening under
+    /// another promises a fit the loader then refuses.
+    public enum LoadGuard: Encodable, Sendable {
+        /// No memory precautions: reserves nothing and, more importantly,
+        /// declines to REFUSE. A window too large for the machine becomes the
+        /// Metal allocation failure you asked for rather than an error.
+        case off
+        /// The shipped behaviour: a 4 GiB reserve and a quarter of the rest.
+        case relaxed
+        /// A larger reserve and a smaller share, so a model and a browser can
+        /// share the machine.
+        case balanced
+        /// Larger still, for a machine running work that must not be
+        /// interrupted.
+        case strict
+        /// `relaxed`'s shares plus an absolute ceiling, in BYTES, on what the
+        /// engine ALLOCATES (slot cache plus KV).
+        ///
+        /// Not on the install's size: a large model streaming its experts
+        /// from disk is what this engine is for, and a cap read against the
+        /// install would refuse a 13 GB model on a 16 GB machine that runs it
+        /// fine.
+        case custom(UInt64)
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            switch self {
+            case .off: try c.encode("off")
+            case .relaxed: try c.encode("relaxed")
+            case .balanced: try c.encode("balanced")
+            case .strict: try c.encode("strict")
+            case .custom(let bytes): try c.encode(bytes)
+            }
+        }
+    }
+
     /// The edit applied along a control vector.
     public enum SteeringMode: String, Encodable, Sendable {
         /// Suppress activations along the control vector.
@@ -91,6 +135,15 @@ public struct OpenOptions: Encodable, Sendable {
     public var powerProfile: PowerProfile?
     /// Maximum throughput generation rate cap in tokens per second.
     public var maxTokensPerSec: Double?
+    /// `nil` means `.relaxed`, which is what shipped before this existed.
+    public var loadGuard: LoadGuard?
+    /// Refuse to open when `maxContext` is `.auto` and resolves below this
+    /// many tokens. `nil` and 0 both mean no floor.
+    ///
+    /// **Constrains AUTOMATIC sizing only.** It says nothing about an
+    /// explicit `.fixed(2048)`: a caller naming a number has decided how to
+    /// spend their own machine.
+    public var minAutoContext: UInt32?
     /// `nil` means `.auto`, which is what the CLI and the server default to.
     public var speculation: Speculation?
     /// `nil` means `.auto`.
@@ -114,6 +167,8 @@ public struct OpenOptions: Encodable, Sendable {
         expertCacheSlots: Sizing? = nil,
         powerProfile: PowerProfile? = nil,
         maxTokensPerSec: Double? = nil,
+        loadGuard: LoadGuard? = nil,
+        minAutoContext: UInt32? = nil,
         speculation: Speculation? = nil,
         speculativeDrafter: SpeculativeDrafter? = nil,
         steering: String? = nil,
@@ -127,6 +182,8 @@ public struct OpenOptions: Encodable, Sendable {
         self.expertCacheSlots = expertCacheSlots
         self.powerProfile = powerProfile
         self.maxTokensPerSec = maxTokensPerSec
+        self.loadGuard = loadGuard
+        self.minAutoContext = minAutoContext
         self.speculation = speculation
         self.speculativeDrafter = speculativeDrafter
         self.steering = steering

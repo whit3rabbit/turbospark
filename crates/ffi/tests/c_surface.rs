@@ -494,13 +494,52 @@ fn deleting_nonexistent_model_returns_error() {
 #[test]
 fn recommend_json_returns_ranked_catalog_rows() {
     let mut out: *mut c_char = ptr::null_mut();
-    let code = unsafe { ts_recommend_json(4096, &mut out) };
+    // NULL options means every default, which is the `relaxed` tier.
+    let code = unsafe { ts_recommend_json(4096, ptr::null(), &mut out) };
     // On platforms without memory probe (or CI), it returns an error or JSON array
     if code == abi::TS_OK {
         let json_str = unsafe { take(out) };
         let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
         assert!(parsed.is_array());
     }
+}
+
+/// The guard reaches the ranking, and a misspelling is REFUSED rather than
+/// quietly honoured as the default -- the rule `sized` already follows for
+/// `"atuo"`, and the one that matters most here: silently ranking under
+/// `relaxed` when the caller asked for `strict` is the exact disagreement
+/// between a recommendation and the open it recommends that this option
+/// exists to prevent.
+#[test]
+fn recommend_json_accepts_a_load_guard_and_refuses_a_misspelling() {
+    for tier in ["off", "relaxed", "balanced", "strict"] {
+        let mut out: *mut c_char = ptr::null_mut();
+        let opts = c(&format!(r#"{{"loadGuard":"{tier}"}}"#));
+        let code = unsafe { ts_recommend_json(4096, opts.as_ptr(), &mut out) };
+        assert_ne!(
+            code,
+            abi::TS_ERR_INVALID_ARGUMENT,
+            "{tier} should be a recognized tier"
+        );
+        if code == abi::TS_OK {
+            let _ = unsafe { take(out) };
+        }
+    }
+
+    // A byte ceiling is the `Custom` tier and is equally legal.
+    let mut out: *mut c_char = ptr::null_mut();
+    let opts = c(r#"{"loadGuard":3221225472}"#);
+    let code = unsafe { ts_recommend_json(4096, opts.as_ptr(), &mut out) };
+    assert_ne!(code, abi::TS_ERR_INVALID_ARGUMENT);
+    if code == abi::TS_OK {
+        let _ = unsafe { take(out) };
+    }
+
+    let mut out: *mut c_char = ptr::null_mut();
+    let opts = c(r#"{"loadGuard":"strcit"}"#);
+    let code = unsafe { ts_recommend_json(4096, opts.as_ptr(), &mut out) };
+    assert_eq!(code, abi::TS_ERR_INVALID_ARGUMENT);
+    assert!(last_error().contains("loadGuard"), "{}", last_error());
 }
 
 #[test]

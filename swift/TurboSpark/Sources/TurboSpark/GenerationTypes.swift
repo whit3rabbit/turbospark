@@ -39,6 +39,46 @@ public struct GenerationResult: Decodable, Sendable, Equatable {
     /// prior-turn `<think>` blocks, so feeding it back sends the model
     /// something it was never trained to read.
     public let reasoning: String
+    /// The WORST memory pressure seen while this turn decoded: `normal`,
+    /// `warn` or `critical`.
+    ///
+    /// **`normal` when nothing was watching, which is the default.** The
+    /// in-loop probe follows the power profile's stepping, and
+    /// `performance` (the default) polls nothing -- so on an ordinary
+    /// session this is the ABSENCE of a reading rather than a report that
+    /// memory was fine. Read `TurboSparkSession.systemTelemetry` for the
+    /// machine's current state; this field exists to catch a SPIKE that
+    /// happened between two of those polls.
+    ///
+    /// Decoded with a default so a binding built against an older engine
+    /// still decodes the rest of the struct.
+    public let peakMemoryPressure: String
+
+    private enum CodingKeys: String, CodingKey {
+        case promptTokens
+        case newTokens
+        case prefillSeconds
+        case decodeSeconds
+        case stopReason
+        case tokensPerSecond
+        case content
+        case reasoning
+        case peakMemoryPressure
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        promptTokens = try c.decode(Int.self, forKey: .promptTokens)
+        newTokens = try c.decode(Int.self, forKey: .newTokens)
+        prefillSeconds = try c.decode(Double.self, forKey: .prefillSeconds)
+        decodeSeconds = try c.decode(Double.self, forKey: .decodeSeconds)
+        stopReason = try c.decode(StopReason.self, forKey: .stopReason)
+        tokensPerSecond = try c.decodeIfPresent(Double.self, forKey: .tokensPerSecond)
+        content = try c.decode(String.self, forKey: .content)
+        reasoning = try c.decodeIfPresent(String.self, forKey: .reasoning) ?? ""
+        peakMemoryPressure =
+            try c.decodeIfPresent(String.self, forKey: .peakMemoryPressure) ?? "normal"
+    }
 }
 
 /// One streamed event during generation.

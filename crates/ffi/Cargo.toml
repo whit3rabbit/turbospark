@@ -29,6 +29,12 @@ serde_json = "1"
 # the table, probe a repository and install a model on any platform even
 # where it cannot then run one.
 catalog = { package = "turbospark-catalog", path = "../catalog", version = "0.1.0" }
+# For `LoadGuard` alone, and portable for the same reason the catalog is: the
+# guard is read by `ts_recommend_json` as well as by `ts_session_open`, and
+# recommending is one of the things a GUI does on a machine that cannot
+# decode. `runtime` re-exports the type but is macOS-only, so naming it
+# through that crate would make the portable half unbuildable.
+model_io = { package = "turbospark-model-io", path = "../model-io", version = "0.1.0" }
 
 # The session only exists where the engine does. Everything else in this
 # crate -- the error slot, the string helpers, the catalog and probe surface

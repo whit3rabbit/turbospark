@@ -151,8 +151,40 @@ public enum TurboSparkCatalog {
     }
 
     /// Ranks curated models by hardware fit for this machine at `context`.
-    public static func recommend(context: UInt32 = 4096) throws -> [ModelRecommendation] {
-        try decode([ModelRecommendation].self, from: try takeString { ts_recommend_json(context, $0) })
+    ///
+    /// **`loadGuard` MUST match what your sessions will OPEN with.** This
+    /// ranking and the loader's refusal share one memory budget by
+    /// construction, which is what makes a recommendation worth showing;
+    /// ranking under `.relaxed` while opening under `.strict` promises a fit
+    /// the loader then refuses, in the one place a user cannot see the two
+    /// disagree. `nil` means `.relaxed`, the default on both sides.
+    public static func recommend(
+        context: UInt32 = 4096,
+        loadGuard: OpenOptions.LoadGuard? = nil
+    ) throws -> [ModelRecommendation] {
+        let json: String?
+        if let loadGuard {
+            let data = try JSONEncoder().encode(RecommendOptions(loadGuard: loadGuard))
+            json = String(decoding: data, as: UTF8.self)
+        } else {
+            json = nil
+        }
+        return try decode(
+            [ModelRecommendation].self,
+            from: try takeString { out in
+                if let json {
+                    return json.withCString { ts_recommend_json(context, $0, out) }
+                }
+                return ts_recommend_json(context, nil, out)
+            })
+    }
+
+    /// The one-key options bag `ts_recommend_json` takes. Private because the
+    /// only caller is `recommend` above; a JSON blob rather than a second C
+    /// argument for the reason every other options bag in this ABI is one --
+    /// a knob added later is a field rather than a break.
+    private struct RecommendOptions: Encodable {
+        let loadGuard: OpenOptions.LoadGuard
     }
 
     /// Installs a catalog row, streaming progress.

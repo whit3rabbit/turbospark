@@ -35,6 +35,46 @@ pub fn sized(value: &Option<serde_json::Value>, name: &str) -> Result<Option<u32
     }
 }
 
+/// Reads a load guard that may be a tier NAME, a byte ceiling, `null`, or
+/// absent.
+///
+/// Absent and `null` mean `relaxed` for [`sized`]'s reason -- a Swift optional
+/// bridges to either -- and, more importantly here, because `relaxed` is what
+/// this binding did before the option existed. An unrecognized STRING is an
+/// error rather than a silent fallback: quietly honouring `"strcit"` as the
+/// default is exactly the trap `sized` refuses.
+pub fn load_guard(value: &Option<serde_json::Value>) -> Result<model_io::LoadGuard, String> {
+    match value {
+        None | Some(serde_json::Value::Null) => Ok(model_io::LoadGuard::default()),
+        Some(serde_json::Value::String(s)) => model_io::LoadGuard::parse(&s.to_ascii_lowercase())
+            .ok_or_else(|| {
+                format!("loadGuard must be off, relaxed, balanced, strict or a byte count, got {s}")
+            }),
+        Some(serde_json::Value::Number(n)) => n
+            .as_u64()
+            .filter(|v| *v > 0)
+            .map(|v| model_io::LoadGuard::Custom {
+                max_counted_bytes: v,
+            })
+            .ok_or_else(|| format!("loadGuard as a byte ceiling must be positive, got {n}")),
+        Some(other) => Err(format!(
+            "loadGuard must be a tier name or a byte count, got {other}"
+        )),
+    }
+}
+
+/// Arguments to `ts_recommend_json`. One field today, and a JSON blob rather
+/// than a second `uint32_t` for the reason this crate takes every other
+/// options bag as JSON: a knob added here is a field rather than an ABI
+/// break, and the header stays readable.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct RecommendOptions {
+    /// Same spellings as `OpenOptions::load_guard`, and it MUST be the same
+    /// value the host will open with; see `models::recommend_json`.
+    pub load_guard: Option<serde_json::Value>,
+}
+
 /// Arguments to `ts_session_open`. Every field is optional; `{}` is valid and
 /// means "everything automatic", which is what the two user-facing binaries
 /// default to.
@@ -47,6 +87,14 @@ pub struct OpenOptions {
     /// which is what a user-facing binary should do (Low Power Mode selects
     /// `efficiency`) and what a measurement harness must not.
     pub power_profile: Option<String>,
+    /// `off` | `relaxed` | `balanced` | `strict`, or a NUMBER, which is an
+    /// absolute ceiling in bytes on what the engine may allocate. Absent
+    /// means `relaxed`, which is what this binding did before the option
+    /// existed -- and what every frozen footprint row describes.
+    pub load_guard: Option<serde_json::Value>,
+    /// Refuse to open when an AUTOMATIC window resolves below this. Says
+    /// nothing about an explicit `maxContext`; see `model_io::LoadPolicy`.
+    pub min_auto_context: Option<u32>,
     pub max_tokens_per_sec: Option<f64>,
     /// `"off"` | `"auto"` | a block size, as a number or a string. Absent
     /// means `auto`, which is what both other front ends default to.
@@ -203,6 +251,15 @@ pub struct GenerateResult {
     pub tokens_per_second: Option<f64>,
     pub content: String,
     pub reasoning: String,
+    /// `normal` | `warn` | `critical`: the WORST memory pressure seen while
+    /// this turn decoded.
+    ///
+    /// **`normal` when nothing was watching, which is the default.** The
+    /// in-loop probe follows the power profile's stepping, so a session on
+    /// `performance` reports the absence of a reading rather than a reading
+    /// of "fine". This field exists to catch a SPIKE between polls;
+    /// `ts_system_info_json` is what a status panel should read.
+    pub peak_memory_pressure: String,
 }
 
 /// What `ts_session_info_json` returns: everything a status panel needs that

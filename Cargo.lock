@@ -2043,6 +2043,7 @@ dependencies = [
  "turbospark-bench",
  "turbospark-catalog",
  "turbospark-core",
+ "turbospark-model-io",
  "turbospark-repack",
  "turbospark-runtime",
  "turbospark-selection",

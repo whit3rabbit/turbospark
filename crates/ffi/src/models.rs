@@ -183,7 +183,16 @@ pub(crate) fn delete(alias: &str) -> Result<(), String> {
 }
 
 /// Ranks curated models by hardware fit for this machine at `context`.
-pub(crate) fn recommend_json(context: Option<u32>) -> Result<String, String> {
+///
+/// **`guard` MUST match what the host will OPEN with.** This ranking and
+/// `ts_session_open`'s refusal share one budget by construction, which is
+/// what makes a recommendation trustworthy; a hub ranking under `relaxed`
+/// while its sessions open under `strict` promises a fit the loader then
+/// refuses, in the one place the user cannot see the two disagree.
+pub(crate) fn recommend_json(
+    context: Option<u32>,
+    guard: model_io::LoadGuard,
+) -> Result<String, String> {
     let physical = runtime::physical_memory();
     if physical == 0 {
         return Err(
@@ -198,6 +207,7 @@ pub(crate) fn recommend_json(context: Option<u32>) -> Result<String, String> {
     let machine = catalog::Machine {
         physical_bytes: physical,
         working_set_bytes: working_set,
+        load_guard: guard,
         chip,
     };
     let catalog = Catalog::embedded()?;

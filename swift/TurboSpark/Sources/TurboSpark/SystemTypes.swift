@@ -59,4 +59,35 @@ public struct SystemTelemetry: Decodable, Sendable, Equatable {
     public let lowPowerMode: Bool
     /// Current macOS thermal pressure level.
     public let thermalLevel: String
+    /// Current memory pressure: `normal`, `warn` or `critical`.
+    ///
+    /// **Polled here unconditionally**, unlike the decode loop's own probe,
+    /// which follows the power profile and therefore does nothing under the
+    /// default `performance`. This is the reading a status panel should
+    /// show; `GenerationResult.peakMemoryPressure` reports `normal` on a
+    /// default session because nothing watched, not because memory was fine.
+    ///
+    /// `decodeIfPresent` with a default, so a binding built against an older
+    /// engine still decodes rather than throwing and losing the whole struct.
+    public let memoryPressure: String
+
+    private enum CodingKeys: String, CodingKey {
+        case physicalMemoryBytes
+        case recommendedWorkingSetBytes
+        case chip
+        case lowPowerMode
+        case thermalLevel
+        case memoryPressure
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        physicalMemoryBytes = try c.decode(UInt64.self, forKey: .physicalMemoryBytes)
+        recommendedWorkingSetBytes = try c.decodeIfPresent(
+            UInt64.self, forKey: .recommendedWorkingSetBytes)
+        chip = try c.decodeIfPresent(String.self, forKey: .chip)
+        lowPowerMode = try c.decodeIfPresent(Bool.self, forKey: .lowPowerMode) ?? false
+        thermalLevel = try c.decodeIfPresent(String.self, forKey: .thermalLevel) ?? "nominal"
+        memoryPressure = try c.decodeIfPresent(String.self, forKey: .memoryPressure) ?? "normal"
+    }
 }

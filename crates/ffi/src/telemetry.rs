@@ -95,12 +95,19 @@ pub(crate) fn system_info_json() -> Result<String, String> {
     };
     let low_power = runtime::low_power_mode_enabled();
     let thermal = format!("{:?}", runtime::thermal_level()).to_lowercase();
+    // **POLLED UNCONDITIONALLY, unlike the decode loop's own probe**, which
+    // follows the power profile's stepping and therefore does nothing under
+    // the default `performance`. So this is the call a status panel reads:
+    // `RawDecodeResult::peak_memory_pressure` is `Normal` on a default
+    // session because nothing watched, not because memory was fine.
+    let memory = format!("{:?}", runtime::memory_pressure()).to_lowercase();
     let info = serde_json::json!({
         "physicalMemoryBytes": physical,
         "recommendedWorkingSetBytes": working_set,
         "chip": if chip.is_empty() { None } else { Some(chip) },
         "lowPowerMode": low_power,
         "thermalLevel": thermal,
+        "memoryPressure": memory,
     });
     serde_json::to_string(&info).map_err(|e| e.to_string())
 }
