@@ -437,11 +437,12 @@ open, by name, rather than silently accepted and ignored.
 | Wired | the `qwen` flow (dense and MoE), `families/llama/` (Mixtral, `qwen3moe`, dense Mistral/Llama), `families/gemma4/`, `gpt-oss`, `museGlimmer` |
 | Refused | `DeepSeek-V4-Flash` |
 
-### Not available today
+### Swift bindings and C ABI
 
-There is no C ABI or Swift binding surface for steering -- it is
-`turbospark-check`/`turbospark-server` only. An app embedding this engine
-through `crates/ffi` cannot drive it yet.
+Steering is available in the C ABI (`ts_session_open` / `ts_session_info_json`)
+and the Swift package (`OpenOptions.steering`, `SessionInfo.steering`). An app
+embedding the engine through `swift/TurboSpark` can configure directional
+steering at session open.
 
 For everything measured about these edits -- throughput cost, the collapse
 mechanism, cross-family and cross-direction replication, and what is still

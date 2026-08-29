@@ -1,4 +1,4 @@
-.PHONY: all build build-debug build-release test test-debug test-release fmt fmt-check clippy check catalog-guard swift-lib swift-test swift-test-real swift-app-build swift-app-release swift-app swift-demo clean clean-cargo clean-swift install uninstall
+.PHONY: all build build-debug build-release test test-debug test-release fmt fmt-check clippy check catalog-guard swift-lib swift-test swift-test-real swift-app-build swift-app-release swift-app swift-demo app-bundle dmg clean clean-cargo clean-swift clean-dist install uninstall
 
 PREFIX ?= $(HOME)/.local
 BINDIR ?= $(PREFIX)/bin
@@ -90,6 +90,22 @@ swift-app: swift-lib
 
 swift-demo: swift-app
 
+# --- Release artifacts (macOS) ----------------------------------------------
+#
+# `app-bundle` turns the bare SwiftPM executable into a real TurboSpark.app,
+# with the three CLI binaries inside it; `dmg` wraps that into the disk image
+# the Homebrew cask installs. Both land in `dist/`. Neither is part of `check`:
+# they build the whole workspace in release plus the Swift app, which is
+# minutes, and CI runs them on its own (see .github/workflows/release.yml).
+#
+# What they produce is documented in docs/RELEASE.md, including the Gatekeeper
+# situation: the bundle is AD-HOC signed, which is not notarization.
+app-bundle:
+	./scripts/make-app-bundle.sh
+
+dmg: app-bundle
+	./scripts/make-dmg.sh
+
 clean-cargo:
 	cargo clean
 
@@ -98,6 +114,9 @@ clean-swift:
 	rm -f swift/TurboSpark/Sources/CTurboSpark/libturbospark_ffi.a
 	rm -f swift/TurboSpark/Sources/CTurboSpark/turbospark.h
 
-clean: clean-cargo clean-swift
+clean-dist:
+	rm -rf dist
+
+clean: clean-cargo clean-swift clean-dist
 
 

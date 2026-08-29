@@ -7,11 +7,25 @@
 [![Platform](https://img.shields.io/badge/platform-macOS%20arm64-lightgrey.svg)](#limitations--out-of-scope)
 [![MSRV](https://img.shields.io/badge/rust-1.82%2B-orange.svg)](rust-toolchain.toml)
 
-`turbospark` is a behavior-compatible **Rust port** of [Mference](https://github.com/NeelM0906/Mference), a Swift LLM inference engine for Apple Silicon, built to the design published in [turbo-fieldfare](https://github.com/drumih/turbo-fieldfare). There is no Swift in this tree: the engine, the expert streamer, the repack pipeline, and the server are all Rust, and the only non-Rust source is the vendored Metal shader code both engines dispatch.
+`turbospark` is a behavior-compatible **Rust port** of [Mference](https://github.com/NeelM0906/Mference/tree/main), a Swift LLM inference engine for Apple Silicon, built to the design and philosophy published in [turbo-fieldfare](https://github.com/drumih/turbo-fieldfare). It is the only pure Rust inference engine for Apple Silicon Metal, pairing high-performance Rust internals with native Swift bindings (`crates/ffi` + SwiftPM) for its macOS chat app (`swift/TurboSparkApp`).
 
-It is specifically designed for **Apple Silicon (macOS Metal)** to execute large language models (LLMs) with **extremely low memory overhead**. Instead of holding full model parameters in unified RAM/VRAM, `turbospark` streams routed expert weights directly from high-speed SSD storage into a lean working memory footprint. This enables Mac users with limited memory (8 GB, 16 GB, 24 GB, or 36 GB) to run large models like **Gemma 4 26B-A4B** and **Qwen 3.6 35B-A3B** locally without exhausting system memory.
+### What Makes TurboSpark Special
+What makes `turbospark` unique is its architecture based on the philosophy of [turbo-fieldfare](https://github.com/drumih/turbo-fieldfare) and [Mference](https://github.com/NeelM0906/Mference/tree/main): instead of holding full model parameters in unified RAM/VRAM, `turbospark` streams routed expert weights on demand directly from high-speed SSD storage into a lean working-memory slot cache. This enables Macs with limited unified memory (8 GB, 16 GB, 24 GB, or 36 GB) to load and run large Mixture-of-Experts (MoE) models like **Gemma 4 26B-A4B** and **Qwen 3.6 35B-A3B** locally in as little as **~1.6 GiB to 2.2 GiB of peak RAM** without exhausting system memory.
 
 The port is tested against the original rather than assumed compatible. Decode throughput lands within 1% of the Swift engine on the same install, every family carries a memory oracle asserting a peak-footprint ceiling, every family but the dense `llama` one carries a frozen quality gate (teacher-forced perplexity plus output digests), and the numerics are cross-checked against `mlx-lm`, `llama.cpp`, and MLX on identical bytes. What the suite proves is in [`docs/TESTING.md`](docs/TESTING.md), and the frozen numbers are in [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md).
+
+### Looking for More Polished Alternatives?
+If you are looking for more polished, general-purpose local LLM runners, GUI desktop applications, or MLX/Python serving frameworks, consider these established alternatives in the ecosystem:
+
+- [Ollama](https://ollama.com/) - Popular CLI, background service, and API for running local models.
+- [LM Studio](https://lmstudio.ai/) - Polished visual desktop application for discovering, downloading, and running LLMs locally.
+- [omlx](https://github.com/jundot/omlx) - Fast MLX-based inference server and desktop client for Apple Silicon.
+- [Unsloth](https://github.com/unslothai/unsloth) - Ultra-fast, memory-efficient LLM fine-tuning and inference framework.
+- [MLX Studio](https://mlx.studio/) - Dedicated graphical interface and workspace for Apple MLX models.
+- [mlxserve](https://mlxserve.com/) - High-performance MLX model serving engine.
+- [RapidMLX](https://rapidmlx.com/) - Accelerated MLX inference framework and utilities.
+- [vMLX](https://vmlx.net/) - Efficient local MLX inference interface and serving tool.
+- [MTPLX](https://github.com/youssofal/MTPLX) - Multi-Token Prediction (MTP) speculative inference engine built on MLX.
 
 > **Where the low-memory win comes from, and where it does not.** The ~2 GB
 > figures are a property of MIXTURE-OF-EXPERTS models: their routed experts
@@ -32,6 +46,7 @@ The port is tested against the original rather than assumed compatible. Decode t
 ## Table of Contents
 
 - [In a hurry](#in-a-hurry)
+- [Looking for More Polished Alternatives?](#looking-for-more-polished-alternatives)
 - [Key Benefits for macOS / Apple Silicon Users](#key-benefits-for-macos--apple-silicon-users)
 - [Memory Footprint & Benchmark Parity](#memory-footprint--benchmark-parity)
 - [GGUF Intake & Custom `.gturbo` Format](#gguf-intake--custom-gturbo-format)
@@ -319,8 +334,17 @@ Four steps, start to finish: install the binaries, pull a model, talk to it, the
 Three ways in. Homebrew is the shortest, and all three put the same three binaries on `PATH`: `turbospark-check` (generate), `turbospark-model` (find and install models), and `turbospark-server` (HTTP).
 
 ```sh
-# Homebrew. One cask, all three binaries.
+# Homebrew. The desktop app in /Applications, plus all three binaries.
 brew install --cask whit3rabbit/tap/turbospark
+
+# ...or the command-line tools alone, no app.
+brew install --cask whit3rabbit/tap/turbospark-cli
+```
+
+Either cask uninstalls in one step, app and commands together. Add `--zap` to also remove the app's settings and chat archive; neither touches your models under `~/.turbospark`.
+
+```sh
+brew uninstall --cask turbospark
 ```
 
 ```sh
@@ -343,17 +367,17 @@ xattr -d com.apple.quarantine ~/bin/turbospark-* 2>/dev/null
 
 #### macOS Desktop App (TurboSpark.app)
 
-Pre-built `.dmg` disk images for Apple Silicon (macOS 13.0+) are available on the [Releases](https://github.com/whit3rabbit/turbospark/releases) page:
+`brew install --cask whit3rabbit/tap/turbospark` above installs the app. To do it by hand, every release also carries a `.dmg` for Apple Silicon on macOS 14 (Sonoma) or later, on the [Releases](https://github.com/whit3rabbit/turbospark/releases) page:
 
 1. Download `TurboSpark-<version>-arm64.dmg`.
 2. Open the DMG and drag `TurboSpark.app` to `/Applications`.
-3. If Gatekeeper blocks the downloaded application from opening, clear the quarantine attribute:
+3. Clear the quarantine flag. **The app is ad-hoc signed and not notarized**, so Gatekeeper refuses to open it until you do, however you installed it:
    ```sh
-   xattr -d com.apple.quarantine /Applications/TurboSpark.app
-   # or recursively across the bundle:
-   # xattr -cr /Applications/TurboSpark.app
+   xattr -dr com.apple.quarantine /Applications/TurboSpark.app
    ```
-   Alternatively, right-click (or Control-click) `TurboSpark.app` in Finder and select **Open**.
+   Or right-click (Control-click) `TurboSpark.app` in Finder and choose **Open**. Installing through Homebrew, `brew install --cask --no-quarantine whit3rabbit/tap/turbospark` avoids the step entirely.
+
+The app carries the same three command-line binaries inside its bundle, and the cask links them onto `PATH` from there, so installing the app is a superset of installing the CLI. That is why the two casks conflict: pick one.
 
 However you installed it, this should now print the model catalog:
 

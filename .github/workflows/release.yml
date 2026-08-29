@@ -45,8 +45,29 @@ jobs:
           echo "VER=${VER}" >> "$GITHUB_OUTPUT"
           echo "OK: ${TAG} matches v${VER}, CHANGELOG.md has an entry for it"
 
+      - name: Check the app's minimum macOS agrees across the three places it is written
+        run: |
+          # LSMinimumSystemVersion (make-app-bundle.sh), the SwiftPM platform
+          # (Package.swift) and `depends_on macos:` (the casks rendered below)
+          # are three copies of one number. Two are greppable and are checked
+          # here; the third is a literal in this file, so keep the mapping in
+          # mind -- Homebrew's :sonoma IS 14. A mismatch ships an app that
+          # brew installs onto a system it cannot launch on.
+          PLIST_MIN=$(sed -nE 's/^min_macos="([0-9]+)\.[0-9]+".*/\1/p' scripts/make-app-bundle.sh)
+          PKG_MIN=$(sed -nE 's/.*platforms: \[\.macOS\(\.v([0-9]+)\)\].*/\1/p' \
+            swift/TurboSparkApp/Package.swift)
+          if [ -z "${PLIST_MIN}" ] || [ -z "${PKG_MIN}" ]; then
+            echo "::error::could not read the minimum macOS from one of the two files (a pattern rotted)"
+            exit 1
+          fi
+          if [ "${PLIST_MIN}" != "${PKG_MIN}" ]; then
+            echo "::error::minimum macOS disagrees: Info.plist says ${PLIST_MIN}, Package.swift says ${PKG_MIN}"
+            exit 1
+          fi
+          echo "OK: app minimum macOS is ${PKG_MIN} in both places; casks must say the matching brew symbol"
+
   build-macos:
-    name: macOS arm64
+    name: macOS arm64 (CLI zip + app DMG)
     needs: [check-version]
     runs-on: macos-14
     steps:
@@ -58,12 +79,20 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Build release binaries
-        run: |
-          cargo build --release --target aarch64-apple-darwin \
-            -p turbospark-cli -p turbospark-server
+      # ONE job builds both artifacts, deliberately. The CLI binaries ship
+      # twice -- loose in the zip, and inside TurboSpark.app for the cask to
+      # link onto PATH -- and building them in two jobs would let the two
+      # copies drift (different cache state, different toolchain patch). Here
+      # they are literally the same files, copied twice.
+      #
+      # make-app-bundle.sh does all three builds: the FFI staticlib
+      # (scripts/swift-lib.sh), the CLI + server, and the Swift app.
+      - name: Build app bundle (also builds the CLI and the server)
+        env:
+          VER: ${{ needs.check-version.outputs.version }}
+        run: ./scripts/make-app-bundle.sh --version "${VER}"
 
-      - name: Stage zip
+      - name: Stage CLI zip
         env:
           VER: ${{ needs.check-version.outputs.version }}
         run: |
@@ -71,19 +100,33 @@ jobs:
           # The archive must contain files named exactly as the cask's binary
           # stanzas, or brew links the wrong names.
           # turbospark-check and turbospark-model are both [[bin]] targets of
-          # the one turbospark-cli package, so `-p turbospark-cli` above
-          # already built both.
+          # the one turbospark-cli package, so one `-p turbospark-cli` build
+          # produces both.
           cp target/aarch64-apple-darwin/release/turbospark-check dist/stage/
           cp target/aarch64-apple-darwin/release/turbospark-model dist/stage/
           cp target/aarch64-apple-darwin/release/turbospark-server dist/stage/
           cd dist/stage && zip "../turbospark-${VER}-macos-arm64.zip" \
             turbospark-check turbospark-model turbospark-server
-          cd .. && rm -rf stage && ls -l
+          cd .. && rm -rf stage
 
+      - name: Build DMG
+        env:
+          VER: ${{ needs.check-version.outputs.version }}
+        run: ./scripts/make-dmg.sh --version "${VER}"
+
+      - name: List artifacts
+        run: ls -l dist/
+
+      # dist/ also holds the unzipped TurboSpark.app that the DMG was built
+      # from. Only the two shippable files are uploaded; the loose bundle
+      # would be a third, redundant, several-hundred-megabyte upload.
       - uses: actions/upload-artifact@v7
         with:
           name: macos-arm64
-          path: dist/
+          path: |
+            dist/*.zip
+            dist/*.dmg
+          if-no-files-found: error
 
   release:
     name: Publish GitHub Release
@@ -210,15 +253,21 @@ jobs:
             echo "available=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Compute SHA256 from the published release asset
+      - name: Compute SHA256 from the published release assets
         if: steps.tap.outputs.available == 'true'
         id: sha
         env:
           VER: ${{ needs.check-version.outputs.version }}
         run: |
-          URL="https://github.com/whit3rabbit/turbospark/releases/download/v${VER}/turbospark-${VER}-macos-arm64.zip"
-          curl -fsSL --retry 5 --retry-delay 5 "${URL}" -o arm64.zip
-          echo "arm=$(sha256sum arm64.zip | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          BASE="https://github.com/whit3rabbit/turbospark/releases/download/v${VER}"
+          # Hashed from what a user will actually download, not from the
+          # build job's local copy: a cask whose sha256 came from anywhere
+          # other than the published asset can be correct and still wrong
+          # about the file brew fetches.
+          curl -fsSL --retry 5 --retry-delay 5 "${BASE}/turbospark-${VER}-macos-arm64.zip" -o cli.zip
+          curl -fsSL --retry 5 --retry-delay 5 "${BASE}/TurboSpark-${VER}-arm64.dmg" -o app.dmg
+          echo "zip=$(sha256sum cli.zip | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          echo "dmg=$(sha256sum app.dmg | awk '{print $1}')" >> "$GITHUB_OUTPUT"
 
       - uses: actions/checkout@v7
         if: steps.tap.outputs.available == 'true'
@@ -227,33 +276,84 @@ jobs:
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           path: homebrew-tap
 
-      - name: Render cask
+      # TWO CASKS, ONE TAP. A cask has exactly one `url`, so "app and CLI" and
+      # "CLI only" cannot be one cask with a flag -- Homebrew has no such
+      # flag. `turbospark` installs the DMG (app in /Applications, plus the
+      # CLI binaries that ship INSIDE the bundle, linked onto PATH from
+      # there); `turbospark-cli` installs the zip and nothing else.
+      # `conflicts_with` is declared on BOTH, because Homebrew does not
+      # infer the reverse edge, and without it the second install would try
+      # to link three binary names the first already owns.
+      - name: Render casks
         if: steps.tap.outputs.available == 'true'
         env:
           VER: ${{ needs.check-version.outputs.version }}
-          ARM: ${{ steps.sha.outputs.arm }}
+          DMG: ${{ steps.sha.outputs.dmg }}
+          ZIP: ${{ steps.sha.outputs.zip }}
         run: |
+          mkdir -p homebrew-tap/Casks
+
           cat > homebrew-tap/Casks/turbospark.rb <<EOF
           cask "turbospark" do
             version "${VER}"
-            sha256 "${ARM}"
+            sha256 "${DMG}"
 
-            url "https://github.com/whit3rabbit/turbospark/releases/download/v#{version}/turbospark-#{version}-macos-arm64.zip"
-            name "turbospark"
+            url "https://github.com/whit3rabbit/turbospark/releases/download/v#{version}/TurboSpark-#{version}-arm64.dmg"
+            name "TurboSpark"
             desc "Apple Silicon MoE inference engine streaming expert weights from SSD"
             homepage "https://github.com/whit3rabbit/turbospark"
 
             depends_on arch: :arm64
             depends_on macos: ">= :sonoma"
 
+            conflicts_with cask: "whit3rabbit/tap/turbospark-cli"
+
+            app "TurboSpark.app"
+
+            # The three CLI binaries ship inside the bundle. Linking them from
+            # there rather than shipping a second copy is what lets one cask
+            # cover both, and it means \`brew uninstall\` removes the app and
+            # unlinks the commands in one step.
+            binary "#{appdir}/TurboSpark.app/Contents/MacOS/turbospark-check"
+            binary "#{appdir}/TurboSpark.app/Contents/MacOS/turbospark-model"
+            binary "#{appdir}/TurboSpark.app/Contents/MacOS/turbospark-server"
+
+            # Only runs under \`brew uninstall --zap\`. Deliberately does NOT
+            # list ~/.turbospark: that is where multi-gigabyte model installs
+            # live, and a zap is not the place to silently delete them.
+            zap trash: [
+              "~/Library/Application Support/TurboSpark",
+              "~/Library/Preferences/com.whit3rabbit.turbospark.plist",
+              "~/Library/Saved Application State/com.whit3rabbit.turbospark.savedState",
+            ]
+          end
+          EOF
+
+          cat > homebrew-tap/Casks/turbospark-cli.rb <<EOF
+          cask "turbospark-cli" do
+            version "${VER}"
+            sha256 "${ZIP}"
+
+            url "https://github.com/whit3rabbit/turbospark/releases/download/v#{version}/turbospark-#{version}-macos-arm64.zip"
+            name "turbospark command-line tools"
+            desc "Apple Silicon MoE inference engine (command-line tools only, no desktop app)"
+            homepage "https://github.com/whit3rabbit/turbospark"
+
+            depends_on arch: :arm64
+            depends_on macos: ">= :sonoma"
+
+            conflicts_with cask: "whit3rabbit/tap/turbospark"
+
             binary "turbospark-check"
             binary "turbospark-model"
             binary "turbospark-server"
           end
           EOF
-          ruby -c homebrew-tap/Casks/turbospark.rb
 
-      - name: Commit and push cask
+          ruby -c homebrew-tap/Casks/turbospark.rb
+          ruby -c homebrew-tap/Casks/turbospark-cli.rb
+
+      - name: Commit and push casks
         if: steps.tap.outputs.available == 'true'
         working-directory: homebrew-tap
         env:
@@ -261,7 +361,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Casks/turbospark.rb
+          git add Casks/turbospark.rb Casks/turbospark-cli.rb
           git diff --cached --quiet && echo "No changes" && exit 0
-          git commit -m "Update turbospark cask to ${VER}"
+          git commit -m "Update turbospark casks to ${VER}"
           git push origin main

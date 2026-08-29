@@ -216,6 +216,29 @@ And the CONTEXT column is load-bearing on the dense rows in particular: KV
 is most of what they measure, so Mistral reads 1,201 MiB at 8,192 and 684
 MiB at 4,096 for the same install and the same model.
 
+### External reference points for the Qwen3.8-27B row
+
+Two independent, uncontrolled community readings of the same checkpoint at
+the same quantization, for context rather than as a parity claim (neither
+runs this port, neither runs on this machine). TerminalBytes (2026-08)
+measured Qwen3.8-27B on a Mac Studio M3 Ultra / 256 GB: Ollama Q4_K_M at
+14.0 tok/s decode, and a 1-bit Unsloth quant at 27 tok/s but unusable for
+tool calling; it corroborates this row's direction (Qwen3.8 slower per
+token than Qwen 3.6) and adds no PP figure either
+(<https://terminalbytes.com/run-qwen-3-8-27b-locally/>). oMLX's community
+build (`Qwen3.8-27B-MTPLX-Optimized-Speed`, 4-bit, 4K context, M3 Max 40c /
+64 GB) is the sharper comparison and the one worth beating: **PP 210.3
+tok/s, TG 17.1 tok/s** (<https://share.google/KzY3rnCKaUxdYwrpz>). This
+port's own row above, on a smaller-memory chip of the same class (M4 Max
+40c / 36 GB), already reads TG **18.6-21.1 tok/s** -- at or above the
+MTPLX-tuned figure -- but has **no PP figure at all**: chunked prefill
+(the "Prefill Batching" work above) serves every family except the qwen
+linear-attention (gated-DeltaNet) flow this checkpoint uses, so today's
+prefill runs the old sequential per-token path and would not be a fair
+number against oMLX's chunked one (`docs/BATCHED_PREFILL.md`). See
+`ROADMAP.md`'s active-tasks table for the follow-up work rather than
+duplicating a TODO here.
+
 ## Expert-cache slots: the one runtime control that moves this
 
 Both engines default to 16 slots and the table above is measured there.

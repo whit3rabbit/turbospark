@@ -34,3 +34,7 @@ compile_flags.txt
 /swift/TurboSpark/Sources/CTurboSpark/libturbospark_ffi.a
 /swift/TurboSpark/Sources/CTurboSpark/turbospark.h
 /swift/*/.build
+
+# Release staging: TurboSpark.app and the DMG, built by scripts/make-app-bundle.sh
+# and scripts/make-dmg.sh (`make dmg`). Fully derived, and large.
+/dist

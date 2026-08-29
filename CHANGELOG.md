@@ -14,6 +14,30 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- macOS app packaging: `scripts/make-app-bundle.sh` assembles
+  `swift/TurboSparkApp`'s bare SwiftPM executable into a real
+  `TurboSpark.app` (Info.plist, `com.whit3rabbit.turbospark` bundle
+  identifier, SwiftPM resource bundles, ad-hoc code signature) with the
+  three CLI binaries inside it, and `scripts/make-dmg.sh` wraps that into
+  `TurboSpark-<ver>-arm64.dmg`, mounting the image and asserting its
+  contents rather than trusting `hdiutil`'s exit code. `make app-bundle`
+  and `make dmg` are the local entry points. Note the bundle identifier
+  moves the app's `@AppStorage` settings to a new preferences domain, so
+  appearance/text-size/language do not carry over from a `swift run`
+  build; the JSON stores under `~/Library/Application Support/TurboSpark/`
+  are unaffected.
+- The DMG is now a release asset beside the CLI zip, built in the same
+  `build-macos` job so the CLI binaries in both are the same build.
+- A second Homebrew cask, `turbospark-cli`: the command-line tools with no
+  desktop app. `brew install --cask whit3rabbit/tap/turbospark` now
+  installs `TurboSpark.app` to `/Applications` plus the three commands
+  (linked from inside the bundle), and uninstalls both together; the two
+  casks declare `conflicts_with` on each other. `--zap` additionally
+  trashes the app's settings and chat archive, and deliberately leaves
+  `~/.turbospark` model installs alone.
+- `package-macos` job in `.github/workflows/ci.yml`: builds the app bundle
+  and the DMG on every push to `main`, so a tag push is not the first
+  thing to exercise the packaging path.
 - Directional steering (`--steering <path.gguf>` on `turbospark-check` and
   `turbospark-server`): runtime abliteration, ActAdd (`add`), feature clamping
   (`clamp`), and norm-preserving projection (`renorm`) via Metal shader

@@ -40,3 +40,36 @@ jobs:
 
       - name: Test
         run: cargo test --workspace
+
+  # The release's packaging path, exercised OUTSIDE a release. Everything from
+  # here to the DMG (Info.plist, the resource-bundle copy, the ad-hoc
+  # signature, the CLI binaries inside the app) is reachable from no other
+  # command in the verification policy, so without this job a tag push would
+  # be the first thing to run it -- which is the wrong place to find out that
+  # `swift build`'s output layout moved. Same scripts release.yml calls, so
+  # they cannot drift apart.
+  #
+  # Push-to-main only: it builds the workspace in release AND the Swift app,
+  # which is minutes, and a PR's Rust legs already cover everything the
+  # bundle's contents come from.
+  package-macos:
+    name: Package app bundle and DMG
+    if: github.event_name == 'push'
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build TurboSpark.app
+        run: ./scripts/make-app-bundle.sh
+
+      # make-dmg.sh mounts what it built and asserts the contents; a green
+      # run here means the image is complete and its signature verifies, not
+      # merely that hdiutil exited 0.
+      - name: Build and verify DMG
+        run: ./scripts/make-dmg.sh

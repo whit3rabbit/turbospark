@@ -35,7 +35,8 @@ read the page before proposing the thing it refutes.
 | `docs/DFLASH2.md` | the DFlash2 block drafter: architecture, state, verify | touching that drafter |
 | `docs/OBLITERATION.md` | live directional steering, with measurement | changing steering |
 | `docs/TRUBOQUANT.md` | sub-4-bit and ternary quantization layout | adding a width |
-| `docs/VISION_PHASE0.md` | the `qwen3_5` vision tower: tensors, mRoPE, patch order | touching the tower |
+| `docs/VISION.md` | the vision PIPELINE: injection, mRoPE dispatch, the four gates, the cross-engine rows | touching anything an image passes through |
+| `docs/VISION_PHASE0.md` | the vision CHECKPOINT: tensors, mRoPE semantics, activation magnitudes, the INT4 decision | reading a tower fact off the checkpoint |
 | `docs/SWIFT_BINDINGS.md` | the C ABI and the Swift package: contract and limits | changing the FFI |
 | `docs/RELEASE.md` | release checklist, versioning, tags, rot guards | cutting a release |
 
@@ -246,6 +247,17 @@ make swift-test-real MODEL=~/models/qwen38-27b-mtp.gturbo \
 # `cd swift/TurboSparkApp && swift run TurboSparkApp`.
 make swift-app
 make swift-demo
+
+# The RELEASE artifacts, and the only way to get a real `.app` out of this
+# tree: `swift build` emits a bare executable, so the Info.plist, the bundle
+# identifier and the resource-bundle copy all live in the script rather than
+# in an Xcode project (`swift/CLAUDE.md` Gotcha 12). `dmg` additionally MOUNTS
+# what it built and asserts the contents, because `hdiutil create` exits 0
+# over an incomplete staging directory. Both land in `dist/` (gitignored) and
+# both are what `.github/workflows/release.yml` calls, so a local run and a
+# release build the same bytes. Minutes each. See `docs/RELEASE.md`.
+make app-bundle
+make dmg
 
 # Formatting check (must stay clean; enforced in verification).
 cargo fmt --check
