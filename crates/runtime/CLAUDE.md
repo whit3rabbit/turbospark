@@ -867,3 +867,70 @@ cargo test -p turbospark-runtime
     correctness. A prefetch that removes the per-block wait makes the
     alternation load-bearing, and the case above becomes a real guard at that
     point rather than a documented no-op.
+
+27. **THE IMAGE INJECTION IS A HOST WRITE INTO `scratch.x`, AND IT IS SOUND
+    BECAUSE OF WHEN RATHER THAN BECAUSE OF A BARRIER.** At an image-pad
+    position `families/qwen/produce.rs` blits the vision tower's FP16 row
+    straight into the residual stream instead of encoding an embedding
+    lookup -- the first code in this repo to write that buffer from outside
+    the decode flow. What makes it safe is that `pass` is not committed until
+    the first router wait far below, the buffer is shared storage, and a host
+    write landing before commit is visible to every dispatch in that command
+    buffer (Gotcha 8's rule in `crates/gpu`, read from the host side). Move it
+    after any `pass.commit()` and it becomes a race the GPU wins silently,
+    with the previous token's residual reaching layer 0.
+
+    **The lookup is REPLACED, not blended.** The placeholder id carries no
+    meaning, so adding the table's row would mix a text embedding into every
+    patch. `a_span_position_ignores_its_token_id_and_a_text_position_does_not`
+    is the guard and the PAIR is the point: the first half alone passes
+    against a flow that ignores token ids entirely, the second alone against
+    one that never blits.
+
+    **This is the family's ONLY embedding call site**, which is what makes
+    one seam sufficient. The qwen flow is the one `supports_chunked_prefill()`
+    answers `false` for, so there is no chunked driver with a second call, and
+    `produce_prefill` is the same inner function under `skip_head`. A family
+    that acquires a chunked driver acquires a second site with it.
+
+28. **THE mRoPE DISPATCH CONDITION IS A PROPERTY OF THE DATA, NOT A
+    CLASSIFICATION OF THE TOKEN.** `RopePosition::Triple(t, h, w)` with
+    `t == h == w` takes the PRE-EXISTING `encode_rope_neox_subdim`, and
+    `get_rope_index` gives every text token of a mixed prompt exactly that --
+    including the text between and after images (`docs/VISION_PHASE0.md` item
+    2). So the divergence test IS the "is this an image pad" test: nothing
+    separate has to be plumbed and the two cannot drift out of step.
+
+    `position` keeps its other two jobs either way. It is still the KV slot
+    index and still the `position + 1` attention span, so only the ANGLE
+    moves and vision reaches this family without touching the cache at all.
+
+    **THE DEGENERATE ARM IS A NO-OP TODAY AND THE MUTATION THAT SAYS SO
+    SURVIVES ON PURPOSE.** The two kernels share `apply_neox_pair`, so
+    `rope_mrope_interleaved` at `t == h == w` produces the identical bits;
+    deleting the short-circuit leaves all nine cases in
+    `tests/vision_inject_synthetic.rs` green, the frozen digest included. That
+    is the PREDICTED result and it is the end-to-end confirmation of what
+    `at_t_equals_h_equals_w_it_is_bit_identical_to_rope_neox_subdim` asserts
+    in `crates/gpu`, reached here through the real trunk. The arm is kept for
+    two reasons that are not numerical: it keeps a text token of a MIXED
+    prompt on the dispatch path the pre-vision engine used, so a future change
+    to the mRoPE kernel cannot reach one at all, and it makes the claim rest
+    on which function is called rather than on the shader compiler continuing
+    to agree. Gotcha 26's shape, one feature over.
+
+29. **`PromptVision` IS CLEARED BY `reset()` AND DELIBERATELY NOT BY
+    `rollback`, and the asymmetry is the whole point.** A new generation is a
+    new prompt and the map is indexed by position within one, so a bulk-OCR
+    loop -- open once, walk pages, which is the workload the vision plan
+    exists for -- would blit page N's rows at page N+1's positions, which are
+    not even placeholders. A speculative rewind stays INSIDE one prompt and
+    still needs the map it was built with. Both halves are pinned by
+    `reset_clears_the_injection_map_and_rollback_does_not`.
+
+    Its six construction checks are refusals rather than tolerances because
+    each is a wrong image reaching the model FLUENTLY: triples covering a
+    different prompt, images and spans disagreeing in count, a span longer
+    than its tower's merged-token count, overlapping spans, a span past the
+    prompt end, and a `rope_delta` that would drive a decode position below
+    zero. Not one of them fails at runtime on its own.

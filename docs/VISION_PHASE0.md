@@ -208,6 +208,24 @@ silently, four milestones after the note that scheduled it. Deferring an item
 INTO a milestone needs something in that milestone's gate that fails without
 it.
 
+**BUILT 2026-08-28 ON M-V5, and the reading above survived contact with the
+kernel.** `rope_mrope_interleaved` implements the two clamps rather than the
+`i % 3` collapse, and `crates/gpu/tests/rope_mrope_parity.rs` holds a case at
+a section triple that does NOT tile `freq_dim` so the clamps are reached at
+all. The walk this settles was then checked against the reference END TO END:
+`mrope_position_triples` diffed against `get_rope_index`'s own `position_ids`
+on all 1,302 positions of a real text+image prompt, zero disagreements, with
+`rope_delta` reading -1240 on both sides (`docs/VISION.md`).
+
+Two things the kernel added to what this item established. The dispatch
+condition turned out to be expressible as `t == h == w`, i.e. as a property of
+the DATA rather than a classification of the token -- so the "only image-pad
+positions" restriction needs nothing plumbed to enforce it. And the section's
+clamp is only OBSERVABLE at a low pair index: at `[4, 4, 4]` it first binds at
+pair 13, whose frequency is 0.0014, so deleting a clamp moved the output ~3e-3
+relative and survived every case in the parity file. The case runs at
+`[1, 1, 1]` for that reason.
+
 ## 3. Activation magnitude probe -- RESOLVED, real forward pass
 
 Ran the actual `VisionModel` from `../mlx-v/mlx-vlm/mlx_vlm/models/qwen3_vl/`

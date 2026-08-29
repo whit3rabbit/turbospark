@@ -291,3 +291,37 @@ cargo test -p turbospark-gpu
     The convention is not a property of the NAME either; it is a property of
     the tensor at a call site, which is why `QkNormConvention` is a
     parameter on that shared function.
+
+11. **`rope_mrope_interleaved` TAKES THREE SCALAR POSITIONS AND RUNS THE
+    SELECTOR IN-SHADER, WHICH IS WHAT BUYS ITS EXACTNESS.** M-V2's kernel
+    table sketched a host-precomputed cos/sin table for the trunk's mRoPE
+    (ROADMAP M-V5, `docs/VISION.md`). The kernel takes `(t, h, w)` plus two
+    `mrope_section` entries instead and calls the SAME `apply_neox_pair`
+    `rope_neox_subdim` calls, so at `t == h == w` it executes the identical
+    float sequence -- BIT-identical, not merely close, which
+    `at_t_equals_h_equals_w_it_is_bit_identical_to_rope_neox_subdim` asserts
+    on `to_bits`. That is what lets `crates/runtime` keep a mixed prompt's
+    TEXT tokens byte-exact against the pre-vision engine. A rewrite that
+    precomputes on the host turns a structural guarantee into a
+    floating-point coincidence.
+
+    **IMPLEMENT THE TWO `min()` CLAMPS AND NOT THE `i % 3` COLLAPSE.** The
+    collapse holds only because this family's `[11, 11, 10]` tiles `freq_dim`
+    32 exactly; a config whose sections sum to less leaves a tail of pairs on
+    `t` that the collapse would hand to `h` and `w`.
+
+    **AND A CLAMP IS ONLY OBSERVABLE AT A LOW PAIR INDEX**, which is the part
+    a reader will not guess. At section `[4, 4, 4]` the clamp first binds at
+    pair 13, whose frequency is `theta^(-26/64)` = 0.0014, so deleting it
+    moves the output ~3e-3 relative -- UNDER the FP16 bar the parity file has
+    to allow, and the mutation survived all five cases. At `[1, 1, 1]` the
+    first wrongly-claimed pair is 4 at frequency 0.133 and the same mutation
+    reddens. The rule generalises past this kernel: a rope fixture can only
+    see a change to a pair whose FREQUENCY is large, so a case about which
+    position drives which pair has to place the disagreement near pair 0. A
+    tolerance-free selector assertion sits beside it for the same reason.
+
+    Its parity file also carries Gotcha 9's shape a second time: the first
+    draft compared per element against an absolute `2e-3` and failed a
+    CORRECT kernel at `cpu 16.882074, gpu 16.875`, a gap under one FP16 ULP
+    at that magnitude. It uses `rel_error` against `FP16_REDUCTION` now.
