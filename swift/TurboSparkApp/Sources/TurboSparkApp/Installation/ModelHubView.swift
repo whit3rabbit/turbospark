@@ -20,7 +20,11 @@ struct ModelHubView: View {
         VStack(spacing: 0) {
             header
             Divider()
-            filterBar
+            ModelHubFilterBarView(
+                filter: $filter,
+                catalog: model.catalog,
+                recommendations: recommendations
+            )
             Divider()
             masterDetailContent
         }
@@ -110,154 +114,6 @@ struct ModelHubView: View {
         .frame(height: 22)
         .background(TurboSparkTheme.surfaceColor, in: Capsule())
         .overlay { Capsule().stroke(TurboSparkTheme.hairlineColor, lineWidth: 0.5) }
-    }
-
-    // MARK: - Filters
-
-    private var filterBar: some View {
-        HStack(spacing: 8) {
-            Picker("View", selection: $filter.tab) {
-                ForEach(ModelHubFilter.Tab.allCases) { tab in
-                    Text(tab.rawValue).tag(tab)
-                }
-            }
-            .pickerStyle(.segmented)
-            .controlSize(.small)
-            .frame(width: 150)
-            .labelsHidden()
-            .accessibilityLabel("Catalog view")
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    filterChip(
-                        title: "Format",
-                        options: ModelHubFilter.formatOptions(for: model.catalog),
-                        selection: $filter.format)
-
-                    filterChip(
-                        title: "Capability",
-                        options: ModelHubFilter.capabilityOptions(for: model.catalog),
-                        selection: $filter.capability)
-
-                    filterChip(
-                        title: "Fit",
-                        options: ModelHubFilter.fitOptions(
-                            for: model.catalog,
-                            recommendations: recommendations),
-                        selection: $filter.fit)
-
-                    sortChip
-
-                    if filter.isNarrowed {
-                        Button {
-                            filter.clearNarrowing()
-                        } label: {
-                            Label("Clear", systemImage: "xmark")
-                                .font(.system(size: 10, weight: .medium))
-                                .labelStyle(.titleOnly)
-                                .padding(.horizontal, 8)
-                                .frame(height: 22)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.secondary)
-                        .help("Clear every filter")
-                        .accessibilityLabel("Clear filters")
-                    }
-                }
-                .padding(.trailing, 4)
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-    }
-
-    /// A dropdown that reads "Format" when inactive and "MLX INT4" when set,
-    /// so an active filter is visible without opening it.
-    private func filterChip(
-        title: String,
-        options: [String],
-        selection: Binding<ModelHubFilter.Selection>
-    ) -> some View {
-        Menu {
-            Button(ModelHubFilter.anyOption) { selection.wrappedValue = nil }
-            if !options.isEmpty {
-                Divider()
-                ForEach(options, id: \.self) { option in
-                    Button {
-                        selection.wrappedValue = option
-                    } label: {
-                        if selection.wrappedValue == option {
-                            Label(option, systemImage: "checkmark")
-                        } else {
-                            Text(option)
-                        }
-                    }
-                }
-            }
-        } label: {
-            HStack(spacing: 4) {
-                Text(selection.wrappedValue ?? title)
-                    .font(.system(size: 11, weight: selection.wrappedValue == nil ? .regular : .medium))
-                    .lineLimit(1)
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 7, weight: .bold))
-                    .foregroundStyle(.tertiary)
-            }
-            .padding(.horizontal, 9)
-            .frame(height: 22)
-            .contentShape(Rectangle())
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .foregroundStyle(selection.wrappedValue == nil ? Color.secondary : TurboSparkTheme.accentColor)
-        .background(
-            selection.wrappedValue == nil
-                ? TurboSparkTheme.surfaceColor
-                : TurboSparkTheme.accentColor.opacity(0.14),
-            in: Capsule())
-        .overlay { Capsule().stroke(TurboSparkTheme.hairlineColor, lineWidth: 0.5) }
-        .disabled(options.isEmpty && selection.wrappedValue == nil)
-        .help("Filter by \(title.lowercased())")
-        .accessibilityLabel("\(title) filter")
-        .accessibilityValue(selection.wrappedValue ?? ModelHubFilter.anyOption)
-    }
-
-    private var sortChip: some View {
-        Menu {
-            ForEach(ModelHubFilter.SortOption.allCases) { option in
-                Button {
-                    filter.sort = option
-                } label: {
-                    if filter.sort == option {
-                        Label(option.rawValue, systemImage: "checkmark")
-                    } else {
-                        Text(option.rawValue)
-                    }
-                }
-            }
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: "arrow.up.arrow.down")
-                    .font(.system(size: 8, weight: .bold))
-                Text(filter.sort.rawValue)
-                    .font(.system(size: 11))
-                    .lineLimit(1)
-            }
-            .padding(.horizontal, 9)
-            .frame(height: 22)
-            .contentShape(Rectangle())
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .foregroundStyle(.secondary)
-        .background(TurboSparkTheme.surfaceColor, in: Capsule())
-        .overlay { Capsule().stroke(TurboSparkTheme.hairlineColor, lineWidth: 0.5) }
-        .help("Sort the list")
-        .accessibilityLabel("Sort order")
-        .accessibilityValue(filter.sort.rawValue)
     }
 
     // MARK: - List and detail

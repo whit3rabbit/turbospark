@@ -24,27 +24,6 @@ struct ProjectSettingsSheet: View {
     @State private var rulesAutoDetectedMessage: String?
     @State private var showingMcpSheet = false
 
-    enum AppProjectGuardrailsOption: String, CaseIterable, Identifiable {
-        case auto = "auto"
-        case enabled = "enabled"
-        case disabled = "disabled"
-
-        var id: String { rawValue }
-
-        var asOptionalBool: Bool? {
-            switch self {
-            case .auto: return nil
-            case .enabled: return true
-            case .disabled: return false
-            }
-        }
-
-        static func from(optionalBool: Bool?) -> AppProjectGuardrailsOption {
-            guard let b = optionalBool else { return .auto }
-            return b ? .enabled : .disabled
-        }
-    }
-
     var body: some View {
         VStack(spacing: 0) {
             header
@@ -53,9 +32,24 @@ struct ProjectSettingsSheet: View {
                 VStack(alignment: .leading, spacing: 20) {
                     generalSection
                     agentSection
-                    permissionsSection
+                    ProjectPermissionsSectionView(
+                        permissionMode: $permissionMode,
+                        fileReadPermission: $fileReadPermission,
+                        fileWritePermission: $fileWritePermission,
+                        terminalPermission: $terminalPermission,
+                        webPermission: $webPermission,
+                        mcpPermission: $mcpPermission,
+                        automationPermission: $automationPermission,
+                        guardrailsOption: $guardrailsOption
+                    )
                     mcpSection
-                    rulesSection
+                    ProjectRulesSectionView(
+                        rootDirectoryPath: rootDirectoryPath,
+                        rulePreference: $rulePreference,
+                        customInstructions: $customInstructions,
+                        rulesAutoDetectedMessage: $rulesAutoDetectedMessage,
+                        onAutoDetect: autoDetectRules
+                    )
                 }
                 .padding(20)
             }
@@ -166,109 +160,6 @@ struct ProjectSettingsSheet: View {
         }
     }
 
-    private var permissionsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Tool Permissions & Risk Policy")
-                    .font(.subheadline.weight(.semibold))
-                    .accessibilityAddTraits(.isHeader)
-                Spacer()
-                Menu("Presets") {
-                    Button("Auto (Recommended)") { applyPreset(.auto) }
-                    Button("Always Ask") { applyPreset(.alwaysAsk) }
-                    Button("Permissive (Allow All)") { applyPreset(.permissive) }
-                    Button("Read Only") { applyPreset(.readOnly) }
-                }
-                .menuStyle(.borderlessButton)
-                .font(.caption)
-                .accessibilityLabel("Permission presets")
-                .accessibilityHint("Applies a recommended set of tool permissions")
-            }
-
-            // Mode Selector
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Execution Mode")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
-
-                Picker("Execution Mode", selection: $permissionMode) {
-                    ForEach(AppPermissionMode.allCases) { mode in
-                        Label(mode.shortLabel, systemImage: mode.systemImage).tag(mode)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .accessibilityLabel("Permission execution mode")
-
-                HStack(alignment: .top, spacing: 8) {
-                    Image(systemName: permissionMode.systemImage)
-                        .foregroundStyle(TurboSparkTheme.accentColor)
-                        .font(.caption)
-                    Text(permissionMode.descriptionText)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-                .padding(8)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 6))
-            }
-
-            // Granular Category Overrides
-            VStack(spacing: 8) {
-                permissionRow(title: "File Reading", desc: "List directories and inspect code files", selection: $fileReadPermission)
-                permissionRow(title: "File Writing", desc: "Create, edit, or modify files", selection: $fileWritePermission)
-                permissionRow(title: "Terminal Commands", desc: "Execute shell commands in project root", selection: $terminalPermission)
-                permissionRow(title: "Web Requests", desc: "Fetch web documentation and search", selection: $webPermission)
-                permissionRow(title: "MCP External Tools", desc: "Invoke external MCP server tools", selection: $mcpPermission)
-                permissionRow(title: "Automation & Crons", desc: "Schedule background tasks and monitors", selection: $automationPermission)
-            }
-            .padding(12)
-            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
-
-            // Forge Guardrails project option
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Forge Tool-Call Guardrails")
-                        .font(.callout.weight(.medium))
-                    Text("Repair malformed dialect calls and validate schemas")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                Picker("", selection: $guardrailsOption) {
-                    Text("Auto (Model Default)").tag(AppProjectGuardrailsOption.auto)
-                    Text("Always Enabled").tag(AppProjectGuardrailsOption.enabled)
-                    Text("Always Disabled").tag(AppProjectGuardrailsOption.disabled)
-                }
-                .pickerStyle(.menu)
-                .frame(width: 175)
-                .accessibilityLabel("Forge Guardrails project preference")
-            }
-            .padding(12)
-            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
-        }
-    }
-
-    private func permissionRow(title: String, desc: String, selection: Binding<AppToolPermission>) -> some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.callout.weight(.medium))
-                Text(desc)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-            Picker("", selection: selection) {
-                ForEach(AppToolPermission.allCases) { perm in
-                    Text(perm.label).tag(perm)
-                }
-            }
-            .pickerStyle(.menu)
-            .frame(width: 175)
-            .accessibilityLabel("\(title) permission")
-        }
-    }
-
     private var mcpSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
@@ -298,55 +189,6 @@ struct ProjectSettingsSheet: View {
             }
             .padding(12)
             .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
-        }
-    }
-
-    private var rulesSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("Project Rules & Instructions")
-                    .font(.subheadline.weight(.semibold))
-                    .accessibilityAddTraits(.isHeader)
-                Spacer()
-                if !rootDirectoryPath.isEmpty {
-                    Button("Detect CLAUDE.md / AGENTS.md") {
-                        autoDetectRules()
-                    }
-                    .font(.caption)
-                    .buttonStyle(.borderless)
-                    .help("Detect project rules from AGENTS.md or CLAUDE.md")
-                }
-            }
-
-            HStack {
-                Text("Conflict Preference")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Picker("Conflict Preference", selection: $rulePreference) {
-                    ForEach(AppRulePreference.allCases) { pref in
-                        Text(pref.label).tag(pref)
-                    }
-                }
-                .pickerStyle(.menu)
-                .frame(width: 180)
-                .accessibilityLabel("Rules conflict preference")
-            }
-
-            if let rulesAutoDetectedMessage {
-                Text(rulesAutoDetectedMessage)
-                    .font(.caption)
-                    .foregroundStyle(TurboSparkTheme.accentColor)
-            }
-
-            TextEditor(text: $customInstructions)
-                .font(.callout.monospaced())
-                .frame(height: 100)
-                .padding(4)
-                .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2), lineWidth: 0.5))
-                .accessibilityLabel("Project rules and instructions")
-                .accessibilityHint("Free-form text sent to the model as project-specific guidance")
         }
     }
 
@@ -394,18 +236,15 @@ struct ProjectSettingsSheet: View {
             agentType = .coder
             rulePreference = .agentsFirst
             guardrailsOption = .auto
-            applyPreset(.auto)
+            let defaultPerms = AppProjectPermissions.auto
+            permissionMode = defaultPerms.mode
+            fileReadPermission = defaultPerms.fileRead
+            fileWritePermission = defaultPerms.fileWrite
+            terminalPermission = defaultPerms.terminal
+            webPermission = defaultPerms.web
+            mcpPermission = defaultPerms.mcp
+            automationPermission = defaultPerms.automation
         }
-    }
-
-    private func applyPreset(_ permissions: AppProjectPermissions) {
-        permissionMode = permissions.mode
-        fileReadPermission = permissions.fileRead
-        fileWritePermission = permissions.fileWrite
-        terminalPermission = permissions.terminal
-        webPermission = permissions.web
-        mcpPermission = permissions.mcp
-        automationPermission = permissions.automation
     }
 
     private func selectFolder() {

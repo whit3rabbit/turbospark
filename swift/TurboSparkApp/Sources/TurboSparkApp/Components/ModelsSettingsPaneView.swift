@@ -36,7 +36,7 @@ public struct ModelsSettingsPaneView: View {
                 lmStudioIntegrationSection
 
                 // Section 3: Additional Custom Folders
-                additionalFoldersSection
+                CustomModelFoldersSectionView(model: model)
             }
             .padding(20)
         }
@@ -98,18 +98,10 @@ public struct ModelsSettingsPaneView: View {
                 .padding(10)
                 .background(Color(nsColor: .controlBackgroundColor))
                 .clipShape(RoundedRectangle(cornerRadius: 8))
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(nsColor: .separatorColor).opacity(0.3), lineWidth: 1))
 
-                HStack {
-                    Text("All new models downloaded via the catalog or HF pull are saved to this folder.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    let size = ModelStorageManager.directorySize(at: activeTurboSparkPath)
-                    Text("Total space: \(MetricFormat.storage(size))")
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                }
+                Text("TurboSpark stores converted .gturbo models and direct GGUF downloads here.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
             .padding(14)
             .background(Color(nsColor: .windowBackgroundColor))
@@ -122,55 +114,41 @@ public struct ModelsSettingsPaneView: View {
     private var lmStudioIntegrationSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Label("LM Studio Library Integration", systemImage: "shippingbox.fill")
+                Label("LM Studio Library Integration", systemImage: "arrow.triangle.2.circlepath")
                     .font(.headline)
                 Spacer()
-
-                if isLmStudioPresent {
-                    HStack(spacing: 4) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(.green)
-                        Text("Detected")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.green)
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(Color.green.opacity(0.12), in: Capsule())
-                } else {
-                    HStack(spacing: 4) {
-                        Image(systemName: "info.circle")
-                            .foregroundStyle(.secondary)
-                        Text("Not Detected")
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(Color(nsColor: .controlBackgroundColor), in: Capsule())
-                }
-            }
-
-            VStack(alignment: .leading, spacing: 12) {
-                Toggle(isOn: Binding(
+                Toggle("", isOn: Binding(
                     get: { model.enableLMStudioDetection },
-                    set: { newVal in
-                        model.enableLMStudioDetection = newVal
+                    set: { val in
+                        model.enableLMStudioDetection = val
                         model.persistSettings()
                         model.refreshModels()
                     }
-                )) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Include LM Studio models in TurboSpark library")
-                            .font(.subheadline.weight(.medium))
-                        Text("Automatically scan and run models stored in LM Studio without copying files.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
+                ))
                 .toggleStyle(.switch)
+                .labelsHidden()
+            }
 
-                Divider()
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Automatically detect and run GGUF models downloaded by LM Studio without copying or redownloading files.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                HStack(spacing: 8) {
+                    Image(systemName: isLmStudioPresent ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                        .foregroundStyle(isLmStudioPresent ? Color.green : Color.orange)
+
+                    Text(isLmStudioPresent ? "LM Studio folder detected" : "Folder not found")
+                        .font(.subheadline.weight(.medium))
+
+                    Spacer()
+
+                    Button(showingCustomLmPath ? "Hide Path" : "Configure Custom Path") {
+                        showingCustomLmPath.toggle()
+                    }
+                    .buttonStyle(.borderless)
+                    .font(.caption)
+                }
 
                 HStack(spacing: 8) {
                     Image(systemName: "folder")
@@ -186,13 +164,13 @@ public struct ModelsSettingsPaneView: View {
                         Button {
                             ModelStorageManager.revealInFinder(path: activeLmStudioPath)
                         } label: {
-                            Label("Reveal in Finder", systemImage: "arrow.up.right.square")
+                            Image(systemName: "arrow.up.right.square")
                         }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
+                        .buttonStyle(.plain)
+                        .help("Reveal in Finder")
                     }
 
-                    Button("Change Path...") {
+                    Button("Select Folder...") {
                         selectLmStudioFolder()
                     }
                     .buttonStyle(.bordered)
@@ -258,87 +236,6 @@ public struct ModelsSettingsPaneView: View {
         }
     }
 
-    // MARK: - Additional Folders
-    private var additionalFoldersSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Label("Additional Model Folders", systemImage: "folder.badge.plus")
-                    .font(.headline)
-                Spacer()
-                Button {
-                    addCustomFolder()
-                } label: {
-                    Label("Add Folder...", systemImage: "plus")
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-            }
-
-            VStack(alignment: .leading, spacing: 10) {
-                if model.customModelDirectories.isEmpty {
-                    HStack {
-                        Spacer()
-                        VStack(spacing: 6) {
-                            Image(systemName: "folder.badge.questionmark")
-                                .font(.title2)
-                                .foregroundStyle(.secondary)
-                            Text("No additional model scan folders configured.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        .padding(.vertical, 16)
-                        Spacer()
-                    }
-                } else {
-                    ForEach(model.customModelDirectories, id: \.self) { dir in
-                        HStack(spacing: 8) {
-                            Image(systemName: "folder")
-                                .foregroundStyle(.secondary)
-                            Text(dir)
-                                .font(.system(.caption, design: .monospaced))
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                            Spacer()
-
-                            let found = ModelStorageManager.scanModels(in: dir, sourceTag: "Custom").count
-                            Text("\(found) model\(found == 1 ? "" : "s")")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-
-                            Button {
-                                ModelStorageManager.revealInFinder(path: dir)
-                            } label: {
-                                Image(systemName: "arrow.up.right.square")
-                            }
-                            .buttonStyle(.plain)
-                            .help("Reveal in Finder")
-
-                            Button {
-                                removeCustomFolder(dir)
-                            } label: {
-                                Image(systemName: "trash")
-                                    .foregroundStyle(.red)
-                            }
-                            .buttonStyle(.plain)
-                            .help("Remove this folder from scan list")
-                        }
-                        .padding(8)
-                        .background(Color(nsColor: .controlBackgroundColor))
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
-                    }
-                }
-
-                Text("Add folders on external drives or secondary locations to scan for .gturbo bundles and .gguf models.")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-            .padding(14)
-            .background(Color(nsColor: .windowBackgroundColor))
-            .clipShape(RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color(nsColor: .separatorColor).opacity(0.4), lineWidth: 1))
-        }
-    }
-
     // MARK: - Folder Picker Helpers
     private func selectTurboSparkFolder() {
         let panel = NSOpenPanel()
@@ -371,31 +268,5 @@ public struct ModelsSettingsPaneView: View {
             model.refreshModels()
             model.showToast("Configured LM Studio folder: \(url.lastPathComponent)", style: .success)
         }
-    }
-
-    private func addCustomFolder() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.prompt = "Add Scan Folder"
-        panel.message = "Select a folder containing models to scan"
-
-        if panel.runModal() == .OK, let url = panel.url {
-            let path = url.path
-            if !model.customModelDirectories.contains(path) {
-                model.customModelDirectories.append(path)
-                model.persistSettings()
-                model.refreshModels()
-                model.showToast("Added model scan folder: \(url.lastPathComponent)", style: .success)
-            }
-        }
-    }
-
-    private func removeCustomFolder(_ folder: String) {
-        model.customModelDirectories.removeAll { $0 == folder }
-        model.persistSettings()
-        model.refreshModels()
-        model.showToast("Removed model scan folder", style: .info)
     }
 }
