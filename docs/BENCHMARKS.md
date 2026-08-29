@@ -272,6 +272,32 @@ the strongest numerics evidence available for this arm -- `qwen38_quality_gate`
 cannot gate it at all, because that gate teacher-forces with `produce` and
 never reaches a chunked driver.
 
+**THE 210.3 BAR IS NOT INFLATED, AND IT IS NO LONGER AN UNCONTROLLED
+READING.** Measured 2026-08-29 on THIS machine, against the exact checkpoint
+this install was streamed from (`mlx-community/Qwen3.8-27B-4bit`, revision
+`3e6447f0`, 4-bit group 64 affine, already in the HF cache), mlx-lm prefills
+a 2,980-token prompt at **195.4 and 201.7 tok/s** (chunked at mlx-lm's own
+default `prefill_step_size` of 512, warmup discarded, same contended machine
+as the rows above). That reproduces the community figure to within 4 to 7%
+and removes every confound the paragraph above hedges against: same silicon,
+same checkpoint, same quantization, same prompt, same conditions. The small
+remainder runs the "wrong" way (they claim 210 on an M3 Max where this reads
+198 on a faster M4 Max), which points at prompt length or their tuned build
+rather than at anything favouring this port.
+
+So the controlled ratio on one machine is **4.94x**, and reading it as
+compute efficiency: mlx-lm sustains 26.7% of the M4 Max's FP16 peak against
+this port's 5.4%. **The single biggest structural term is the micro-batch
+width.** mlx-lm prefills at M=512 and re-reads the 14 GB weight set 6 times
+over this prompt; this port prefills at M=16 -- `gpu::MAX_BATCH_ROWS`, set by
+the batched INT4 GEMM's per-thread accumulator registers, not a tuning
+choice -- and re-reads it 187 times, 2,576 GB against 84 GB. Even at M=16
+that traffic is an 8.8 s floor at decode-observed bandwidth while the arm
+takes 72 s, so a second term sits on top of it: roughly 1.27 million
+one-row kernel launches (norms, RoPE, residual adds, per-head norms,
+`silu_mul`, and one attention dispatch per token per full layer) that the
+seam does not widen.
+
 **IT STILL DOES NOT REACH oMLX**, and the honest ratio is now roughly a
 FIFTH rather than a tenth: 40.79 against 210.3 tok/s. So the GEMV-to-GEMM
 step was worth what it claimed and is not by itself the whole gap. What

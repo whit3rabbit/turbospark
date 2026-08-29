@@ -1834,6 +1834,7 @@ Workspace directory structure and crate layout:
 |   +-- llamacpp_logits.c # its harness: ids in, full-vocab logits out, via libllama
 |   +-- mlx_1bit_oracle.py # MLX 1-bit affine reference oracle generator
 |   +-- mlx_2bit_oracle.py # MLX 2-bit affine reference oracle generator
+|   +-- mlx_prefill.py  # cross-engine PREFILL throughput vs mlx-lm, same machine
 |   +-- mtp_bisect.py  # MTP drafter norm & agreement bisection script
 |   +-- parity.sh      # head-to-head protocol run against the Swift MferenceCLI
 |   +-- qwen3vl_vision_oracle.py # probes mlx-vlm for crates/vision-io's five golden fixtures
