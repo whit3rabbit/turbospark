@@ -68,10 +68,10 @@ pub use config::GenerationConfig;
 // this is where a reader of the decode engine expects to find them named.
 #[cfg(target_os = "macos")]
 pub use model_io::{
-    committed_bytes, kv_bytes_for_context, largest_context_within, resolve_max_context,
-    ContextPlan, ContextTooLarge, ExpertCacheSlots, MaxContext, CONTEXT_BUDGET_FRACTION,
-    CONTEXT_GRANULARITY, CONTEXT_RESERVE_BYTES, HEADROOM_FRACTION, HEADROOM_RESERVE_BYTES,
-    MAX_SUPPORTED_CONTEXT,
+    committed_bytes, kv_bytes_for_context, largest_context_within, resolve_max_context, ContextCap,
+    ContextFloorUnmet, ContextPlan, ContextRefused, ContextTooLarge, ExpertCacheSlots, GuardBudget,
+    LoadGuard, LoadPolicy, MaxContext, CONTEXT_BUDGET_FRACTION, CONTEXT_GRANULARITY,
+    CONTEXT_RESERVE_BYTES, HEADROOM_FRACTION, HEADROOM_RESERVE_BYTES, MAX_SUPPORTED_CONTEXT,
 };
 
 pub use error::RuntimeError;
@@ -81,9 +81,10 @@ pub use families::qwen::{
     DFLASH_BLOCK, DFLASH_SERVING_BLOCK, MOE_SPECULATION_BLOCKER_MARKER,
 };
 pub use power::{
-    low_power_mode_enabled, physical_memory, rate_control_for, recommended_max_working_set,
-    resolve_profile, stepped_cap, thermal_level, PowerProfile, RateControl, ThermalLevel,
-    CRITICAL_TOK_PER_SEC, READING_SPEED_TOK_PER_SEC, SERIOUS_TOK_PER_SEC,
+    low_power_mode_enabled, memory_cap, memory_pressure, physical_memory, rate_control_for,
+    recommended_max_working_set, resolve_profile, stepped_cap, thermal_cap, thermal_level,
+    MemoryPressure, PowerProfile, RateControl, ThermalLevel, CRITICAL_TOK_PER_SEC,
+    READING_SPEED_TOK_PER_SEC, SERIOUS_TOK_PER_SEC,
 };
 pub use producer::{
     ChunkedPrefillRunner, LogitProducer, ScriptedLogitProducer, SpeculativeProducer,

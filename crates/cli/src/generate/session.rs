@@ -66,6 +66,15 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
     // trained context out of the install, the mapped weight region, and this
     // machine's memory.
     let trained = repack::trained_context_meta::peek(model_dir);
+    // The pure parser's mirror mapped to the policy crate's own type, the
+    // same one-place mapping `--max-context` and `--expert-cache-slots`
+    // already get. `Relaxed` and a floor of 0 is what shipped before either
+    // flag existed, so an invocation that names neither resolves exactly the
+    // window it always did.
+    let load_policy = runtime::LoadPolicy {
+        guard: map_load_guard(request.load_guard),
+        min_auto_context: request.min_auto_context,
+    };
     let plan = runtime::resolve_max_context(
         match request.max_context {
             invocation::MaxContext::Auto => runtime::MaxContext::Auto,
@@ -76,11 +85,12 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
         invocation::request::DEFAULT_MAX_CONTEXT,
         runtime::physical_memory(),
         runtime::committed_bytes(model_dir),
+        &load_policy,
     )
     .map_err(|e| e.to_string())?;
 
     if !request.quiet {
-        report_context(&plan, request.max_context);
+        report_context(&plan, request.max_context, &load_policy);
     }
     // Past the checkpoint's trained context is a QUALITY warning and never an
     // error: RoPE extrapolates rather than failing, and an install written
@@ -243,15 +253,32 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
 /// most of the KV footprint, and a reader comparing a peak or a prompt
 /// refusal against another run needs to see both what was asked for and what
 /// the machine and the checkpoint would have allowed.
-fn report_context(plan: &runtime::ContextPlan, requested: invocation::MaxContext) {
+fn report_context(
+    plan: &runtime::ContextPlan,
+    requested: invocation::MaxContext,
+    policy: &runtime::LoadPolicy,
+) {
     let trained = match plan.trained {
         Some(t) => format!("model {t}"),
         // Worth naming rather than omitting: it is why an old install's
         // `auto` reads 4,096 on a machine with room for far more.
         None => "model declares none".to_string(),
     };
+    // The guard is reported for the reason the resolved slot count is
+    // (Gotcha 6): it moves the suggestion, so no `auto` window or KV figure
+    // from this run is comparable to another without knowing which tier
+    // produced it. Named only when it is NOT the default, so the common line
+    // stays the line every existing note quotes.
+    let guard = match policy.guard {
+        runtime::LoadGuard::Relaxed => String::new(),
+        other => format!(", guard {}", other.as_str()),
+    };
+    let floor = match policy.min_auto_context {
+        0 => String::new(),
+        n => format!(", floor {n}"),
+    };
     eprintln!(
-        "context: {} tokens{} ({}, {:.0} MiB of KV; suggested {})",
+        "context: {} tokens{} ({}, {:.0} MiB of KV; suggested {}{guard}{floor})",
         plan.resolved,
         match requested {
             invocation::MaxContext::Auto => " (auto)",
@@ -325,6 +352,23 @@ fn resolve_steering(request: &InvocationRequest) -> Result<runtime::SteeringPoli
         gate_threshold: request.steering_gate,
         set: Some(set),
     })
+}
+
+/// The pure parser's guard mirror onto the policy crate's own type.
+///
+/// The single place the two meet, exactly as [`map_power_profile`] is for the
+/// power profile and for the same reason: `crates/invocation` may not read a
+/// machine or an install, and every tier below is a claim about one.
+fn map_load_guard(guard: invocation::LoadGuard) -> runtime::LoadGuard {
+    match guard {
+        invocation::LoadGuard::Off => runtime::LoadGuard::Off,
+        invocation::LoadGuard::Relaxed => runtime::LoadGuard::Relaxed,
+        invocation::LoadGuard::Balanced => runtime::LoadGuard::Balanced,
+        invocation::LoadGuard::Strict => runtime::LoadGuard::Strict,
+        invocation::LoadGuard::Custom(bytes) => runtime::LoadGuard::Custom {
+            max_counted_bytes: bytes,
+        },
+    }
 }
 
 fn map_power_profile(profile: invocation::PowerProfile) -> runtime::PowerProfile {

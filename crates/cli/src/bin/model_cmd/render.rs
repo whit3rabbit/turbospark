@@ -217,7 +217,19 @@ pub fn recommendations(rows: &[catalog::Recommendation], machine: &catalog::Mach
             None => String::new(),
         }
     );
-    println!("fitting against a {context}-token context\n");
+    // Named only when it is NOT the default, so the common header stays the
+    // line every existing note quotes. Reported at all because the tier moves
+    // the VERDICTS: `strict` on a 10 GiB machine drops a row that `relaxed`
+    // reports as fitting, and nothing else in this output says why.
+    let guard = match machine.load_guard {
+        model_io::LoadGuard::Relaxed => String::new(),
+        model_io::LoadGuard::Custom { max_counted_bytes } => format!(
+            ", load guard custom ({} ceiling)",
+            human_bytes(max_counted_bytes)
+        ),
+        other => format!(", load guard {}", other.as_str()),
+    };
+    println!("fitting against a {context}-token context{guard}\n");
 
     if rows.is_empty() {
         println!("nothing to rank");

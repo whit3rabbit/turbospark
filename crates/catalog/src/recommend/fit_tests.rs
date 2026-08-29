@@ -9,6 +9,22 @@ const M4_MAX: u64 = 36 * GIB;
 /// What `turbospark-bench`'s protocol pins, and therefore the
 /// configuration every frozen peak was taken in.
 const PROTOCOL_SLOTS: model_io::ExpertCacheSlots = model_io::ExpertCacheSlots::Fixed(16);
+/// The tier every case below was written under, and the one every frozen row
+/// in `models.json` was measured under. Named rather than
+/// `LoadGuard::default()` at each site so a future change to the default is a
+/// visible edit here rather than a silent re-interpretation of these numbers.
+const DEFAULT_GUARD: model_io::LoadGuard = model_io::LoadGuard::Relaxed;
+
+/// Gemma 4 26B-A4B, the install every frozen row in `docs/BENCHMARKS.md` and
+/// every guard case below is stated against.
+fn gemma4_shape() -> Shape {
+    Shape {
+        install_bytes: 13_000_000_000,
+        expert_stride: Some(3_355_443),
+        arch: Some(arch(ModelFamily::Gemma4)),
+        measured_counted: None,
+    }
+}
 
 fn arch(family: ModelFamily) -> ArchConfig {
     known_architecture(family)
@@ -73,7 +89,7 @@ fn the_counted_terms_reproduce_the_three_frozen_peaks() {
         ("qwen38-27b", &qwen38, 4096, 661, false),
         ("mistral7b", &mistral, 8192, 1203, false),
     ] {
-        let f = fit(shape, M4_MAX, context, PROTOCOL_SLOTS);
+        let f = fit(shape, M4_MAX, context, PROTOCOL_SLOTS, DEFAULT_GUARD);
         assert_eq!(
             f.slot_cache_bytes > 0,
             slot_cache_expected,
@@ -114,7 +130,13 @@ fn the_estimate_tracks_the_slot_count_a_recommendation_resolves_to() {
         arch: Some(arch(ModelFamily::Gemma4)),
         measured_counted: None,
     };
-    let auto = fit(&gemma, M4_MAX, 4096, model_io::ExpertCacheSlots::Auto);
+    let auto = fit(
+        &gemma,
+        M4_MAX,
+        4096,
+        model_io::ExpertCacheSlots::Auto,
+        DEFAULT_GUARD,
+    );
     assert_eq!(auto.slots, 32, "this machine has headroom for the top rung");
     let counted_terms = auto.counted;
     let measured = 3654 * MIB;
@@ -125,7 +147,7 @@ fn the_estimate_tracks_the_slot_count_a_recommendation_resolves_to() {
     );
     // And the slot term is really what moved: doubling the count roughly
     // doubles it, where the KV is untouched.
-    let pinned = fit(&gemma, M4_MAX, 4096, PROTOCOL_SLOTS);
+    let pinned = fit(&gemma, M4_MAX, 4096, PROTOCOL_SLOTS, DEFAULT_GUARD);
     assert_eq!(auto.slot_cache_bytes, pinned.slot_cache_bytes * 2);
     assert_eq!(auto.kv_bytes, pinned.kv_bytes);
 }
@@ -143,7 +165,13 @@ fn a_coarse_grained_moe_is_refused_on_the_slot_cache_and_not_on_its_size() {
         arch: Some(arch(ModelFamily::Llama)),
         measured_counted: None,
     };
-    let f = fit(&mixtral, M4_MAX, 4096, model_io::ExpertCacheSlots::Auto);
+    let f = fit(
+        &mixtral,
+        M4_MAX,
+        4096,
+        model_io::ExpertCacheSlots::Auto,
+        DEFAULT_GUARD,
+    );
     assert_eq!(f.verdict, FitVerdict::Refused);
     assert!(
         f.slot_cache_bytes > 50 * GIB,
@@ -160,7 +188,8 @@ fn a_coarse_grained_moe_is_refused_on_the_slot_cache_and_not_on_its_size() {
         &fine_grained,
         M4_MAX,
         4096,
-        model_io::ExpertCacheSlots::Auto
+        model_io::ExpertCacheSlots::Auto,
+        DEFAULT_GUARD
     )
     .verdict
     .runs());
@@ -179,12 +208,26 @@ fn a_large_install_on_a_small_machine_streams_rather_than_being_refused() {
         measured_counted: None,
     };
     assert_eq!(
-        fit(&gemma, 16 * GIB, 4096, model_io::ExpertCacheSlots::Auto).verdict,
+        fit(
+            &gemma,
+            16 * GIB,
+            4096,
+            model_io::ExpertCacheSlots::Auto,
+            DEFAULT_GUARD
+        )
+        .verdict,
         FitVerdict::Streams
     );
     // The same install on a machine with room for all of it.
     assert_eq!(
-        fit(&gemma, 64 * GIB, 4096, model_io::ExpertCacheSlots::Auto).verdict,
+        fit(
+            &gemma,
+            64 * GIB,
+            4096,
+            model_io::ExpertCacheSlots::Auto,
+            DEFAULT_GUARD
+        )
+        .verdict,
         FitVerdict::Resident
     );
 }
@@ -200,7 +243,13 @@ fn a_measured_peak_wins_over_the_estimate() {
         arch: Some(arch(ModelFamily::Gemma4)),
         measured_counted: Some(2175 * MIB),
     };
-    let f = fit(&shape, M4_MAX, 4096, model_io::ExpertCacheSlots::Auto);
+    let f = fit(
+        &shape,
+        M4_MAX,
+        4096,
+        model_io::ExpertCacheSlots::Auto,
+        DEFAULT_GUARD,
+    );
     assert_eq!(f.counted, 2175 * MIB);
     assert_eq!(f.counted_source, CountedSource::Measured);
 }
@@ -216,7 +265,13 @@ fn an_unprobed_row_reports_unknown_rather_than_a_free_fit() {
         install_bytes: 13_000_000_000,
         ..Shape::default()
     };
-    let f = fit(&bare, M4_MAX, 4096, model_io::ExpertCacheSlots::Auto);
+    let f = fit(
+        &bare,
+        M4_MAX,
+        4096,
+        model_io::ExpertCacheSlots::Auto,
+        DEFAULT_GUARD,
+    );
     assert_eq!(f.verdict, FitVerdict::Unknown);
     assert_eq!(f.counted_source, CountedSource::Unknown);
     assert!(!f.verdict.runs(), "unknown must never rank as a fit");
@@ -242,13 +297,26 @@ fn the_tight_threshold_decides_the_verdict_at_the_boundary() {
     // Llama's KV at 8,192 is exactly 1,024 MiB (the mistral oracle's own
     // subtraction). Budget is `physical - 4 GiB`, so a 5 GiB machine has
     // 1 GiB of budget and the KV is 100% of it.
-    let f = fit(&shape, 5 * GIB, 8192, model_io::ExpertCacheSlots::Auto);
+    let f = fit(
+        &shape,
+        5 * GIB,
+        8192,
+        model_io::ExpertCacheSlots::Auto,
+        DEFAULT_GUARD,
+    );
     assert_eq!(f.kv_bytes, GIB);
     assert_eq!(f.verdict, FitVerdict::Tight);
     // Widen the budget past the 90% line and it is an ordinary fit;
     // narrow it below the KV and it is refused.
     assert_eq!(
-        fit(&shape, 6 * GIB, 8192, model_io::ExpertCacheSlots::Auto).verdict,
+        fit(
+            &shape,
+            6 * GIB,
+            8192,
+            model_io::ExpertCacheSlots::Auto,
+            DEFAULT_GUARD
+        )
+        .verdict,
         FitVerdict::Resident
     );
     assert_eq!(
@@ -256,7 +324,8 @@ fn the_tight_threshold_decides_the_verdict_at_the_boundary() {
             &shape,
             4 * GIB + 512 * MIB,
             8192,
-            model_io::ExpertCacheSlots::Auto
+            model_io::ExpertCacheSlots::Auto,
+            DEFAULT_GUARD
         )
         .verdict,
         FitVerdict::Refused
@@ -275,7 +344,13 @@ fn the_largest_context_is_the_one_the_engine_would_resolve() {
         arch: Some(arch(ModelFamily::Llama)),
         measured_counted: None,
     };
-    let f = fit(&dense, M4_MAX, 8192, model_io::ExpertCacheSlots::Auto);
+    let f = fit(
+        &dense,
+        M4_MAX,
+        8192,
+        model_io::ExpertCacheSlots::Auto,
+        DEFAULT_GUARD,
+    );
     assert!(
         f.largest_context > 8192,
         "a 36 GB machine affords more than the protocol window: {}",
@@ -286,4 +361,119 @@ fn the_largest_context_is_the_one_the_engine_would_resolve() {
         model_io::largest_context_within(&arch(ModelFamily::Llama), f.budget - f.resident_bytes),
         "and it is the engine's own answer, not a second formula"
     );
+}
+
+/// **THE CROSS-CRATE PIN.** `model_io` owns the tiers and cannot import this
+/// crate to state what `Relaxed`'s tight threshold should be; this crate no
+/// longer reads its own constant. So the two copies are held together here,
+/// and this is the case that reddens if either moves alone.
+#[test]
+fn the_default_guard_reproduces_the_frozen_thresholds() {
+    let b = DEFAULT_GUARD.budget();
+    assert_eq!(b.tight_fraction, TIGHT_FRACTION);
+    assert_eq!(b.reserve_bytes, model_io::CONTEXT_RESERVE_BYTES);
+    assert_eq!(DEFAULT_GUARD, model_io::LoadGuard::default());
+}
+
+/// A tighter tier reserves more, so the same candidate on the same machine
+/// crosses from comfortable to tight to refused without anything about the
+/// candidate changing.
+#[test]
+fn a_tighter_guard_walks_one_candidate_down_the_ladder() {
+    let gemma = gemma4_shape();
+    // 13 GiB is where the tiers actually separate for this install: its
+    // allocation is ~1.8 GiB (1.5 of slot cache at 16 slots plus KV), so
+    // Strict's 12 GiB reserve leaves 1 GiB and refuses while Relaxed's 4 GiB
+    // reserve leaves 9 and does not. Picked by arithmetic rather than by
+    // taste -- a machine large enough for every tier proves nothing.
+    let verdict = |guard| fit(&gemma, 13 * GIB, 4096, PROTOCOL_SLOTS, guard).verdict;
+    assert!(verdict(model_io::LoadGuard::Off).runs());
+    assert!(verdict(model_io::LoadGuard::Relaxed).runs());
+    assert!(verdict(model_io::LoadGuard::Balanced).runs());
+    assert_eq!(verdict(model_io::LoadGuard::Strict), FitVerdict::Refused);
+}
+
+/// `Off` still TIERS -- a caller wants to know a fit is tight even when
+/// nothing will stop them -- and only declines to REFUSE.
+#[test]
+fn off_never_refuses_but_still_reports_the_tier() {
+    let gemma = gemma4_shape();
+    for machine in [4 * GIB, 8 * GIB, 20 * GIB, 64 * GIB] {
+        let f = fit(
+            &gemma,
+            machine,
+            4096,
+            PROTOCOL_SLOTS,
+            model_io::LoadGuard::Off,
+        );
+        assert_ne!(
+            f.verdict,
+            FitVerdict::Refused,
+            "off refused on a {machine}-byte machine"
+        );
+    }
+    // And the tiering is still live: a machine barely larger than the
+    // allocation reports Tight rather than Resident.
+    let counted = fit(
+        &gemma,
+        64 * GIB,
+        4096,
+        PROTOCOL_SLOTS,
+        model_io::LoadGuard::Off,
+    )
+    .counted;
+    let snug = fit(
+        &gemma,
+        counted + counted / 20,
+        4096,
+        PROTOCOL_SLOTS,
+        model_io::LoadGuard::Off,
+    );
+    assert_eq!(snug.verdict, FitVerdict::Tight);
+}
+
+/// `Custom`'s ceiling refuses regardless of headroom: it is the user naming
+/// an allocation they do not want exceeded, not a second estimate of what the
+/// machine holds. The machine here has room to spare either way.
+#[test]
+fn a_custom_ceiling_refuses_independently_of_headroom() {
+    let gemma = gemma4_shape();
+    let baseline = fit(&gemma, M4_MAX, 4096, PROTOCOL_SLOTS, DEFAULT_GUARD);
+    assert!(baseline.verdict.runs());
+    let under = fit(
+        &gemma,
+        M4_MAX,
+        4096,
+        PROTOCOL_SLOTS,
+        model_io::LoadGuard::Custom {
+            max_counted_bytes: baseline.counted - 1,
+        },
+    );
+    assert_eq!(under.verdict, FitVerdict::Refused);
+    let over = fit(
+        &gemma,
+        M4_MAX,
+        4096,
+        PROTOCOL_SLOTS,
+        model_io::LoadGuard::Custom {
+            max_counted_bytes: baseline.counted + 1,
+        },
+    );
+    assert_eq!(over.verdict, baseline.verdict);
+}
+
+/// The tier travels ON the fit, so a caller that substitutes a measured peak
+/// and re-derives the verdict cannot silently apply a different one.
+#[test]
+fn the_fit_remembers_which_tier_produced_it() {
+    for guard in [
+        model_io::LoadGuard::Off,
+        model_io::LoadGuard::Relaxed,
+        model_io::LoadGuard::Strict,
+    ] {
+        assert_eq!(
+            fit(&gemma4_shape(), M4_MAX, 4096, PROTOCOL_SLOTS, guard).guard,
+            guard
+        );
+    }
 }

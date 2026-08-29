@@ -84,6 +84,7 @@ impl RealChatModel {
         drafter: runtime::SpeculativeDrafter,
         guardrails: crate::GuardrailConfig,
         steering: runtime::SteeringPolicy,
+        load_policy: runtime::LoadPolicy,
     ) -> Result<Self, String> {
         let arch = repack::peek_manifest_arch(model_dir)?;
         let context = runtime::resolve_max_context(
@@ -96,6 +97,7 @@ impl RealChatModel {
             foundation::runtime_config::DEFAULT_MAX_CONTEXT,
             runtime::physical_memory(),
             runtime::committed_bytes(model_dir),
+            &load_policy,
         )
         .map_err(|e| e.to_string())?;
         // A quality warning and never an error: RoPE extrapolates rather

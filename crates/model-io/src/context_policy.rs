@@ -29,7 +29,7 @@
 
 use std::path::Path;
 
-use crate::ArchConfig;
+use crate::{ArchConfig, LoadPolicy};
 
 /// Bytes per FP16 KV element. `KvCacheManager` stores K and V as FP16.
 const FP16_SIZE: u64 = 2;
@@ -87,6 +87,12 @@ pub struct ContextTooLarge {
     pub needs: u64,
     /// KV bytes available after the install's own weights and the reserve.
     pub available: u64,
+    /// What the guard held back, which is the term the user can move by
+    /// changing tiers. Carried rather than read off [`CONTEXT_RESERVE_BYTES`]
+    /// at format time, because that constant is only one tier's answer and a
+    /// message quoting it under `strict` would name a number that did not
+    /// produce this refusal.
+    pub reserve: u64,
     /// Physical memory on this machine.
     pub physical: u64,
     /// What the install already commits before any KV: its mapped weight
@@ -109,11 +115,110 @@ impl std::fmt::Display for ContextTooLarge {
             gib(self.available),
             gib(self.physical),
             gib(self.committed),
-            gib(CONTEXT_RESERVE_BYTES),
+            gib(self.reserve),
             self.largest_fitting,
         )
     }
 }
+
+/// Why an AUTOMATIC context resolution was refused for landing below the
+/// caller's floor.
+///
+/// A sibling of [`ContextTooLarge`] rather than a variant of it, because the
+/// two are different kinds of failure and the fix differs: that one says the
+/// machine cannot hold what was asked for, this one says the machine (or the
+/// checkpoint) cannot offer what was required. [`Self::capped_by`] is what
+/// tells them apart, and it is the whole value of the message -- lowering a
+/// floor, changing a guard tier and picking a different checkpoint are three
+/// different actions and only one of them helps.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextFloorUnmet {
+    /// The minimum the caller required.
+    pub floor: u32,
+    /// What `Auto` actually resolved to.
+    pub resolved: u32,
+    /// Which bound produced [`Self::resolved`].
+    pub capped_by: ContextCap,
+    /// The largest window this machine affords at all, ignoring the
+    /// comfortable fraction. Reported because it is the number that says
+    /// whether a looser GUARD would clear the floor, which
+    /// [`Self::resolved`] alone cannot.
+    pub largest_fitting: u32,
+}
+
+/// Which of the three bounds on `Auto` was the binding one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContextCap {
+    /// The checkpoint's own trained context. No guard tier helps; only a
+    /// different checkpoint does.
+    Trained,
+    /// What a quarter (or the tier's fraction) of the pool affords. A looser
+    /// guard, or freeing memory, raises this.
+    Memory,
+    /// [`DEFAULT_MAX_CONTEXT`]'s stand-in for an install that declares no
+    /// trained context. Naming an explicit `--max-context` is the answer.
+    ///
+    /// [`DEFAULT_MAX_CONTEXT`]: foundation::runtime_config::DEFAULT_MAX_CONTEXT
+    Undeclared,
+}
+
+impl ContextCap {
+    /// What to change, in the imperative. Kept beside the enum so the three
+    /// arms cannot drift from the three diagnoses above.
+    fn remedy(self) -> &'static str {
+        match self {
+            Self::Trained => {
+                "the checkpoint was not trained past this; a different checkpoint \
+                              or an explicit --max-context is the only way up"
+            }
+            Self::Memory => {
+                "a looser --load-guard, fewer expert-cache slots, or a smaller \
+                             install would raise it"
+            }
+            Self::Undeclared => {
+                "this install declares no trained context, so `auto` falls back \
+                                 to the default window; name an explicit --max-context"
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for ContextFloorUnmet {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "--min-auto-context {} was not met: `auto` resolved {} \
+             (largest this machine affords: {}). {}",
+            self.floor,
+            self.resolved,
+            self.largest_fitting,
+            self.capped_by.remedy(),
+        )
+    }
+}
+
+/// Either reason [`resolve_max_context`] declines.
+///
+/// One `Display` per arm and one delegating `Display` here, so the three call
+/// sites keep their existing `.map_err(|e| e.to_string())` unchanged.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ContextRefused {
+    /// The window does not fit the machine.
+    TooLarge(ContextTooLarge),
+    /// `Auto` landed below the caller's floor.
+    FloorUnmet(ContextFloorUnmet),
+}
+
+impl std::fmt::Display for ContextRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::TooLarge(e) => e.fmt(f),
+            Self::FloorUnmet(e) => e.fmt(f),
+        }
+    }
+}
+
+impl std::error::Error for ContextRefused {}
 
 /// A resolved context window, with the arithmetic that produced it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -227,6 +332,20 @@ pub const MAX_SUPPORTED_CONTEXT: u32 = 1 << 20;
 /// happens to have free -- a footprint change nobody asked for, on the
 /// strength of no information at all. That is AGENTS.md Gotcha 39's rule: a
 /// default is a claim about what silence MEANS.
+/// **`policy` CARRIES THE GUARD TIER AND THE FLOOR, AND `LoadPolicy::default()`
+/// REPRODUCES THIS FUNCTION AS IT BEHAVED BEFORE EITHER EXISTED.** That is
+/// asserted rather than claimed: every case in `context_policy_tests.rs`
+/// passes the default and is otherwise unchanged, so the file staying green
+/// IS the no-behaviour-change proof (`load_guard`'s own header explains what
+/// a moved default would quietly invalidate).
+///
+/// The two knobs act on different arms. The GUARD moves the reserve and the
+/// comfortable fraction, so it changes what `Auto` suggests and what an
+/// explicit window is refused against; [`LoadGuard::Off`] additionally
+/// declines to refuse at all. The FLOOR acts on `Auto` alone, for the reason
+/// [`ContextFloorUnmet`] gives.
+///
+/// [`LoadGuard::Off`]: crate::LoadGuard::Off
 pub fn resolve_max_context(
     request: MaxContext,
     arch: &ArchConfig,
@@ -234,7 +353,8 @@ pub fn resolve_max_context(
     default_context: u32,
     physical: u64,
     committed: u64,
-) -> Result<ContextPlan, ContextTooLarge> {
+    policy: &LoadPolicy,
+) -> Result<ContextPlan, ContextRefused> {
     // **`physical == 0` means the probe is unavailable, not that the machine
     // has no memory**, which is what `runtime::physical_memory` answers off
     // macOS. Reading it as an empty budget would refuse every explicit
@@ -243,14 +363,16 @@ pub fn resolve_max_context(
     // machine therefore imposes no bound, exactly as an unknown trained
     // context imposes no ceiling.
     let known_machine = physical > 0;
-    let available = physical.saturating_sub(committed.saturating_add(CONTEXT_RESERVE_BYTES));
-    let comfortable = (available as f64 * CONTEXT_BUDGET_FRACTION) as u64;
+    let budget = policy.guard.budget();
+    let available = policy.guard.available(physical, committed);
+    let comfortable = (available as f64 * budget.budget_fraction) as u64;
 
     let ceiling = trained
         .unwrap_or(default_context)
         .min(MAX_SUPPORTED_CONTEXT);
+    let by_memory = largest_context_within(arch, comfortable);
     let suggested = if known_machine {
-        largest_context_within(arch, comfortable).min(ceiling)
+        by_memory.min(ceiling)
     } else {
         ceiling
     };
@@ -261,15 +383,45 @@ pub fn resolve_max_context(
     };
 
     let kv_bytes = kv_bytes_for_context(arch, resolved);
-    if known_machine && kv_bytes > available {
-        return Err(ContextTooLarge {
+    // `refuses` is false on `Off` alone. A budget without a refusal is the
+    // whole content of that tier: the arithmetic still runs and still sizes
+    // `Auto`, and a caller who names a window too large for the machine gets
+    // the allocation failure they asked for rather than a message.
+    if known_machine && budget.refuses && kv_bytes > available {
+        return Err(ContextRefused::TooLarge(ContextTooLarge {
             requested: resolved,
             needs: kv_bytes,
             available,
+            reserve: budget.reserve_bytes,
             physical,
             committed,
             largest_fitting: largest_context_within(arch, available),
-        });
+        }));
+    }
+
+    // The floor applies to `Auto` ALONE, and it applies under every tier
+    // including `Off`: it is not a memory precaution the guard could relax,
+    // it is the caller stating a requirement of their own workload. A
+    // `Fixed` request has already named its number and is not asking to be
+    // told it is small.
+    if request == MaxContext::Auto && policy.min_auto_context > resolved {
+        let capped_by = if known_machine && by_memory < ceiling {
+            ContextCap::Memory
+        } else if trained.is_some() {
+            ContextCap::Trained
+        } else {
+            ContextCap::Undeclared
+        };
+        return Err(ContextRefused::FloorUnmet(ContextFloorUnmet {
+            floor: policy.min_auto_context,
+            resolved,
+            capped_by,
+            largest_fitting: if known_machine {
+                largest_context_within(arch, available)
+            } else {
+                MAX_SUPPORTED_CONTEXT
+            },
+        }));
     }
 
     Ok(ContextPlan {

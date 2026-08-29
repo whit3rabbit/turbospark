@@ -1,5 +1,13 @@
 /// Command line usage and flag description text for `turbospark-server`.
-pub const USAGE: &str = "usage: turbospark-server --model <install-dir|alias> [--port N] [--max-context N|auto] [--expert-cache-slots auto|N] [--bind loopback|tailnet] [--power-profile performance|balanced|efficiency] [--max-tokens-per-sec R] [--speculative off|auto|N] [--speculative-drafter auto|mtp|dflash] [--guardrails on|off] [--steering PATH] [--steering-mode ablate|add|clamp|renorm] [--steering-scale F] [--steering-layers S:E] [--steering-target F] [--steering-gate F]\n       turbospark-server <tokenizer-dir> [port]\n       turbospark-server --help | --version\n\noptions:\n  --model              a .gturbo directory or a turbospark-model alias (`turbospark-model list`)\n  --port               listen port (default 8080)\n  --max-context        context window in tokens, or auto (default auto: the\n                       checkpoint's trained context, capped by what memory\n                       holds, and 4096 when the install declares none)\n  --expert-cache-slots routed-cache slots per layer: auto or 8/16/24/32 (default auto)\n  --bind               loopback or tailnet (default loopback; tailnet is NOT auth)\n  --power-profile      performance, balanced or efficiency\n  --max-tokens-per-sec decode rate cap, greater than 0\n  --speculative        off, auto, or a block size 1-15 (default auto). Speculation\n                       applies to temperature-0 requests only; others decode\n                       sequentially\n  --speculative-drafter auto, mtp or dflash (default auto; auto reports a DFlash2\n                       drafter but does not enable it -- see docs/DFLASH2.md)\n  --guardrails         on or off (default on). Rescues a tool call the decoder\n                       could not parse, checks arguments against the request's\n                       own schema, and re-asks once. A request carrying TOOLS is\n                       buffered rather than streamed while this is on, because a\n                       verdict needs the whole turn; requests without tools are\n                       unaffected\n  --steering           path to a control vector (.gguf, llama.cpp layout). Applies a\n                       directional edit to the residual stream of EVERY request this\n                       process serves; no weight byte is modified. See\n                       docs/OBLITERATION.md\n  --steering-mode      ablate, add, clamp or renorm (default: the vector file's declared mode,\n                       or ablate)\n  --steering-scale     strength (default 1.0 when --steering is given; 0.0 is the exact\n                       identity)\n  --steering-layers    START:END, inclusive and 0-based (default every layer the\n                       vector covers)\n  --steering-target    coefficient --steering-mode clamp pins the stream to (default 0)\n  --steering-gate      only steer where the coefficient reaches this magnitude\n                       (default 0, meaning always)\n  --help               print this text and exit\n  --version            print the version and exit";
+pub const USAGE: &str = "usage: turbospark-server --model <install-dir|alias> [--port N] [--max-context N|auto] [--load-guard TIER|BYTES] [--min-auto-context N] [--expert-cache-slots auto|N] [--bind loopback|tailnet] [--power-profile performance|balanced|efficiency] [--max-tokens-per-sec R] [--speculative off|auto|N] [--speculative-drafter auto|mtp|dflash] [--guardrails on|off] [--steering PATH] [--steering-mode ablate|add|clamp|renorm] [--steering-scale F] [--steering-layers S:E] [--steering-target F] [--steering-gate F]\n       turbospark-server <tokenizer-dir> [port]\n       turbospark-server --help | --version\n\noptions:\n  --model              a .gturbo directory or a turbospark-model alias (`turbospark-model list`)\n  --port               listen port (default 8080)\n  --max-context        context window in tokens, or auto (default auto: the\n                       checkpoint's trained context, capped by what memory\n                       holds, and 4096 when the install declares none)\n  --load-guard         how much of the machine a session may commit: off,
+                       relaxed (default), balanced, strict, or a byte ceiling on
+                       what the engine ALLOCATES. relaxed is what shipped before
+                       this flag and what every published memory figure was
+                       measured under; see docs/LOAD_GUARD.md
+  --min-auto-context   refuse to open when --max-context auto resolves below this
+                       many tokens (default 0, no floor). Says nothing about an
+                       explicit --max-context
+  --expert-cache-slots routed-cache slots per layer: auto or 8/16/24/32 (default auto)\n  --bind               loopback or tailnet (default loopback; tailnet is NOT auth)\n  --power-profile      performance, balanced or efficiency\n  --max-tokens-per-sec decode rate cap, greater than 0\n  --speculative        off, auto, or a block size 1-15 (default auto). Speculation\n                       applies to temperature-0 requests only; others decode\n                       sequentially\n  --speculative-drafter auto, mtp or dflash (default auto; auto reports a DFlash2\n                       drafter but does not enable it -- see docs/DFLASH2.md)\n  --guardrails         on or off (default on). Rescues a tool call the decoder\n                       could not parse, checks arguments against the request's\n                       own schema, and re-asks once. A request carrying TOOLS is\n                       buffered rather than streamed while this is on, because a\n                       verdict needs the whole turn; requests without tools are\n                       unaffected\n  --steering           path to a control vector (.gguf, llama.cpp layout). Applies a\n                       directional edit to the residual stream of EVERY request this\n                       process serves; no weight byte is modified. See\n                       docs/OBLITERATION.md\n  --steering-mode      ablate, add, clamp or renorm (default: the vector file's declared mode,\n                       or ablate)\n  --steering-scale     strength (default 1.0 when --steering is given; 0.0 is the exact\n                       identity)\n  --steering-layers    START:END, inclusive and 0-based (default every layer the\n                       vector covers)\n  --steering-target    coefficient --steering-mode clamp pins the stream to (default 0)\n  --steering-gate      only steer where the coefficient reaches this magnitude\n                       (default 0, meaning always)\n  --help               print this text and exit\n  --version            print the version and exit";
 
 pub use crate::bind::BindMode;
 
@@ -23,6 +31,10 @@ pub struct ModelArgs {
     /// ROADMAP Phase P2. Process-level, like every other flag here: there
     /// is one runner per process, so there is nothing per-request to vary.
     pub power_profile: Option<runtime::PowerProfile>,
+    /// How much of the machine may be committed, and the floor under an
+    /// automatic window. `Default` is `relaxed` with no floor, which is what
+    /// this binary did before either flag existed.
+    pub load_policy: runtime::LoadPolicy,
     pub max_tokens_per_sec: Option<f64>,
     /// Process-level for the same reason the two above are, and one more:
     /// the drafter's state is allocated at OPEN, so there is nothing a
@@ -69,6 +81,7 @@ pub fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
         expert_cache_slots: None,
         bind: BindMode::Loopback,
         power_profile: None,
+        load_policy: runtime::LoadPolicy::default(),
         max_tokens_per_sec: None,
         speculation: runtime::Speculation::Auto,
         drafter: runtime::SpeculativeDrafter::Auto,
@@ -126,6 +139,26 @@ pub fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
                     }
                 }
             }
+            // A tier word or a byte ceiling, one flag, for the reason
+            // `crates/invocation`'s arm gives: a separate bytes flag would let
+            // a caller name a tier and a ceiling that disagree.
+            "--load-guard" => {
+                parsed.load_policy.guard = match runtime::LoadGuard::parse(value) {
+                    Some(g) => g,
+                    None => match value.parse::<u64>() {
+                        Ok(n) if n > 0 => runtime::LoadGuard::Custom {
+                            max_counted_bytes: n,
+                        },
+                        _ => {
+                            return Err(format!(
+                                "--load-guard must be off, relaxed, balanced, strict, \
+                                 or a positive byte ceiling, not {value}"
+                            ))
+                        }
+                    },
+                };
+            }
+            "--min-auto-context" => parsed.load_policy.min_auto_context = number()?,
             "--power-profile" => {
                 let profile = runtime::PowerProfile::parse(value).ok_or_else(|| {
                     format!("--power-profile must be a profile name, not {value}")

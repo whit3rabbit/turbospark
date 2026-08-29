@@ -52,6 +52,8 @@ than one, is a parse error.
 | --- | --- | --- | --- |
 | `--max-new` | positive integer | `1024` | generated-token limit |
 | `--max-context` | positive integer, or `auto` | `auto` | context window; `auto` resolves to the checkpoint's own trained context, capped by what memory holds, and `4096` when the install declares none |
+| `--load-guard` | `off\|relaxed\|balanced\|strict`, or a size in bytes | `relaxed` | how much of the machine a session may commit. A size is an absolute ceiling on what the engine ALLOCATES (expert cache + KV), never on the install's size. `relaxed` is what shipped before this flag and what every published memory figure was measured under; see `docs/LOAD_GUARD.md` |
+| `--min-auto-context` | non-negative integer | `0` | refuse to open when `--max-context auto` resolves below this. Says nothing about an explicit `--max-context`: a caller naming a number has decided how to spend their own machine |
 | `--temperature` | float | `0.2` | sampling temperature; `0.0` is greedy |
 | `--top-k` | integer, `0`-`256` | `64` | rank-based candidate count, `0` disables |
 | `--top-p` | float, `(0, 1]` | `0.95` | cumulative-probability threshold (sub-1.0 threshold requires `--top-k > 0`) |
@@ -182,7 +184,7 @@ turbospark-model <command> [flags...]
 | `list` | none | `--filter TEXT` | prints every curated catalog row, marks installed ones |
 | `info` | `<alias>` | none | prints one catalog row in full, including its gate targets |
 | `probe` | `<repo>[@rev]` | `--file NAME.gguf`, `--sidecar-repo REPO[@rev]` | reads a Hugging Face repo's headers only, no download; reports whether this engine would run it |
-| `recommend` | none | `--context N`, `--budget BYTES`, `--probe`, `--discover [N]` | ranks models by whether they fit this machine and how much is known about them; `--budget` accepts bare bytes or suffixes (`36G`, `36GB`, `36GiB`); `--context` defaults to `4096`; `--probe` reads every curated row's header for exact numbers, `--discover` also ranks the N most-downloaded GGUF repos on Hugging Face (default `20`) through the same probe |
+| `recommend` | none | `--context N`, `--budget BYTES`, `--load-guard TIER`, `--probe`, `--discover [N]` | ranks models by whether they fit this machine and how much is known about them; `--load-guard` MUST match what the session will open with, since the ranking and the loader's refusal share one memory budget; `--budget` accepts bare bytes or suffixes (`36G`, `36GB`, `36GiB`); `--context` defaults to `4096`; `--probe` reads every curated row's header for exact numbers, `--discover` also ranks the N most-downloaded GGUF repos on Hugging Face (default `20`) through the same probe |
 | `pull` | `<alias>`, or `--repo REPO[@rev] --alias NAME` | `--out DIR`, `--file NAME.gguf`, `--sidecar-repo REPO[@rev]`, `--force` | installs a curated model, or any repository the probe accepts; `--out` overrides install destination; `--force` installs past a probe refusal |
 | `path` | `<alias>` | none | prints the install directory (fails loudly if not installed) |
 | `rm` | `<alias>` | `--yes` / `-y` | deletes an install; without `--yes`, prompts for the alias name to confirm |
@@ -210,6 +212,8 @@ process).
 | `--model` | path or alias | required | same resolution as `turbospark-check`'s |
 | `--port` | u16 | `8080` | listen port |
 | `--max-context` | integer, or `auto` | `auto` | same semantics as `turbospark-check`'s |
+| `--load-guard` | `off\|relaxed\|balanced\|strict`, or a size | `relaxed` | same as `turbospark-check`'s, resolved once at startup |
+| `--min-auto-context` | non-negative integer | `0` | same as `turbospark-check`'s |
 | `--expert-cache-slots` | `8\|16\|24\|32`, or `auto` | `auto` | same semantics as `turbospark-check`'s |
 | `--bind` | `loopback\|tailnet` | `loopback` | `tailnet` binds this machine's Tailscale IPv4 address; there is no authentication and no TLS either way -- the Tailnet ACL is the only access control under `tailnet` |
 | `--power-profile` | `performance\|balanced\|efficiency` | unset | same as `turbospark-check`'s |

@@ -152,9 +152,24 @@ pub struct Fit {
     /// [`model_io::largest_context_within`]. Zero when the shape is unknown.
     pub largest_context: u32,
     pub verdict: FitVerdict,
+    /// The tier this fit was reached under. Carried so a caller re-deriving
+    /// the verdict after substituting a measurement cannot silently apply a
+    /// different one, which is the failure [`verdict_for_counted`] exists to
+    /// prevent one field over.
+    pub guard: model_io::LoadGuard,
 }
 
 /// Fraction of the budget above which a fit is reported as tight.
+///
+/// **Now [`model_io::LoadGuard::Relaxed`]'s answer rather than the only
+/// answer**, kept as a named constant because it is what every verdict in
+/// `docs/BENCHMARKS.md` and every `measured` row was reached under.
+/// `the_default_guard_reproduces_the_frozen_thresholds` pins the two
+/// together, since `model_io` cannot import this crate to state it there.
+/// Test-only because nothing in the arithmetic reads it any more -- the value
+/// arrives on `GuardBudget` -- and a live constant nothing reads is the shape
+/// that silently stops matching the thing it claims to mirror.
+#[cfg(test)]
 const TIGHT_FRACTION: f64 = 0.9;
 
 /// Where a candidate lands on a machine with `physical_bytes` of memory, at
@@ -168,13 +183,24 @@ const TIGHT_FRACTION: f64 = 0.9;
 /// a 55% overestimate. Every caller that recommends passes `Auto`, because
 /// that is what `open()` will do; a caller comparing against a measurement
 /// has to pin what the measurement pinned.
+///
+/// **`guard` MUST BE THE SAME TIER THE LOADER WILL OPEN WITH.** This function
+/// and `model_io::resolve_max_context` share a budget by construction, and
+/// that is the whole reason a recommendation can be trusted: a hub that
+/// recommended under `relaxed` while the session opened under `strict` would
+/// promise a fit the loader then refuses, in the one place a user has no way
+/// to see the disagreement. `model_io::LoadGuard::default()` is the pre-guard
+/// arithmetic and is what every caller that has not been told otherwise
+/// passes.
 pub fn fit(
     shape: &Shape,
     physical_bytes: u64,
     context: u32,
     slot_policy: model_io::ExpertCacheSlots,
+    guard: model_io::LoadGuard,
 ) -> Fit {
-    let budget = physical_bytes.saturating_sub(model_io::CONTEXT_RESERVE_BYTES);
+    let guard_budget = guard.budget();
+    let budget = physical_bytes.saturating_sub(guard_budget.reserve_bytes);
 
     let (layers, experts) = match &shape.arch {
         Some(arch) => (
@@ -218,7 +244,13 @@ pub fn fit(
         })
         .unwrap_or(0);
 
-    let verdict = verdict_for(counted, counted_source, shape.install_bytes, budget);
+    let verdict = verdict_for(
+        counted,
+        counted_source,
+        shape.install_bytes,
+        budget,
+        &guard_budget,
+    );
 
     Fit {
         resident_bytes,
@@ -231,6 +263,7 @@ pub fn fit(
         budget,
         largest_context,
         verdict,
+        guard,
     }
 }
 
@@ -241,21 +274,42 @@ pub fn fit(
 /// measured peak and left the verdict alone would report a number and a
 /// judgement that disagree, which is the worst of the three possible states.
 pub(super) fn verdict_for_counted(f: &Fit) -> FitVerdict {
-    verdict_for(f.counted, f.counted_source, f.mapped, f.budget)
+    verdict_for(
+        f.counted,
+        f.counted_source,
+        f.mapped,
+        f.budget,
+        &f.guard.budget(),
+    )
 }
 
 /// The tier ladder. Adapted from shoehorn's `verdict_for` (see `NOTICE`),
 /// which tiers on achievable bits-per-weight; the shape of the function is
 /// the same and every threshold is different, because the quantity being
 /// tiered is not the same quantity.
-fn verdict_for(counted: u64, source: CountedSource, mapped: u64, budget: u64) -> FitVerdict {
+fn verdict_for(
+    counted: u64,
+    source: CountedSource,
+    mapped: u64,
+    budget: u64,
+    guard: &model_io::GuardBudget,
+) -> FitVerdict {
     if source == CountedSource::Unknown {
         return FitVerdict::Unknown;
     }
-    if budget == 0 || counted > budget {
+    // The Custom tier's ceiling is checked BEFORE the budget and refuses
+    // regardless of headroom: it is the user naming an allocation they do not
+    // want exceeded, not a second estimate of what the machine holds.
+    if guard.hard_cap.is_some_and(|cap| counted > cap) {
         return FitVerdict::Refused;
     }
-    if counted as f64 > budget as f64 * TIGHT_FRACTION {
+    // `Off` is the one tier that declines to refuse. It still TIERS -- a
+    // caller wants to know a fit is tight even when nothing will stop them --
+    // so only the refusal arm is skipped.
+    if guard.refuses && (budget == 0 || counted > budget) {
+        return FitVerdict::Refused;
+    }
+    if budget > 0 && counted as f64 > budget as f64 * guard.tight_fraction {
         return FitVerdict::Tight;
     }
     if counted.saturating_add(mapped) <= budget {

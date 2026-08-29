@@ -57,6 +57,15 @@ pub struct Machine {
     /// What the Metal device says it will hold. Advisory: reported so the
     /// gap is visible, never budgeted from. `None` off macOS.
     pub working_set_bytes: Option<u64>,
+    /// How much of this machine may be committed.
+    ///
+    /// **Here rather than a parameter on [`fit`] alone, because a
+    /// recommendation and the `open()` it recommends must share a tier.** A
+    /// hub ranking under `relaxed` while the session opens under `strict`
+    /// promises a fit the loader then refuses, in the one place a user cannot
+    /// see the two disagree. `Default` is `Relaxed`, which is the arithmetic
+    /// every frozen row in `models.json` was measured under.
+    pub load_guard: model_io::LoadGuard,
     /// The chip's brand string, used to find the matching [`Measured`] row.
     /// Empty means no measured row can match, which is correct rather than
     /// unfortunate: a peak measured on an M4 Max says nothing about an M2.
@@ -197,6 +206,7 @@ pub fn from_entry(
         machine.physical_bytes,
         context,
         model_io::ExpertCacheSlots::Auto,
+        machine.load_guard,
     );
 
     // **A MEASURED PEAK APPLIES AT ONE CONTEXT AND ONE SLOT COUNT, AND

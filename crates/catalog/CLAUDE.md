@@ -210,6 +210,21 @@ cargo run --release -p turbospark-cli --bin turbospark-model -- pull tinyllama
    policy as a PARAMETER: the accuracy gate has to pin what the protocol
    pinned, and passing `Auto` there reads as a 55% overestimate.
 
+    **THE LOAD GUARD IS A THIRD SUCH PARAMETER AND CARRIES A SHARPER VERSION
+    OF THE RULE.** `fit()` takes a `model_io::LoadGuard` and `Machine` carries
+    one, because this ranking and `resolve_max_context`'s refusal share a
+    memory budget BY CONSTRUCTION -- that is what makes a recommendation worth
+    showing. A hub ranking under `relaxed` while its sessions open under
+    `strict` promises a fit the loader then refuses, in the one place a user
+    has no way to see the two disagree. Measured rather than argued: `strict`
+    on a 10 GiB machine drops `gptoss-20b` off the top of a table that
+    `relaxed` reports as fitting. `Fit` therefore CARRIES the tier that
+    produced it, so `verdict_for_counted` cannot re-derive a verdict under a
+    different one after a caller substitutes a measured peak. The default is
+    `Relaxed`, the arithmetic every `measured` block in `models.json` was
+    taken under (`model-io` Gotcha 3), and `render.rs` names the tier in the
+    header only when it is not the default. See `docs/LOAD_GUARD.md`.
+
 10. **THE FAMILY BASELINE IS NOT A SUBSTITUTE FOR A CHECKPOINT'S OWN SHAPE.**
     `known_architecture(family)` is right there and would turn every offline
     `unknown` into a number, and it is wrong for the same reason AGENTS.md

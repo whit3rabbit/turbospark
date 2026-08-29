@@ -93,6 +93,18 @@ printf '[{"role":"user","content":"Explain how coastal wetlands reduce flood dam
 
    The mapping is the same shape as Gotcha 2's `map_power_profile`: two enums, one in the pure parser crate and one in `runtime`, meeting in exactly one place. The parser may not look at the machine or the install, and sizing needs both.
 
+   **`--load-guard` AND `--min-auto-context` FOLLOW THE SAME SHAPE, and the
+   startup line reports the guard for this bullet's reason.**
+   `map_load_guard` is the third instance of the two-enums-one-mapping
+   pattern, and `report_context` names the tier only when it is NOT
+   `relaxed` -- so the common line stays byte-identical to what every
+   existing note quotes, which is also the CLI-level proof that the default
+   moved nothing. The tier is worth reporting at all because it moves the
+   SUGGESTION: the same install and the same machine resolve a different
+   `auto` window under `balanced` than under `relaxed`, and no KV figure is
+   comparable across runs without it. `--min-auto-context` is scoped to
+   `auto` alone and prints as `floor N`; see `docs/LOAD_GUARD.md`.
+
 5. **`--model` takes a path OR a catalog alias, and the PATH always wins.**
    Resolution lives in `generate.rs` via `catalog::resolve_model_arg`, not in
    `turbospark-invocation`, which is pure and whose contract keeps the value an

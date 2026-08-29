@@ -160,6 +160,7 @@ fn consider(
         machine.physical_bytes,
         options.context,
         model_io::ExpertCacheSlots::Auto,
+        machine.load_guard,
     );
     // A refusal upstream of the arithmetic outranks the arithmetic: a model
     // with no decode flow does not "fit" whatever its footprint would be.

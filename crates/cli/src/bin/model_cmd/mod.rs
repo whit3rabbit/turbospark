@@ -368,6 +368,7 @@ fn machine(options: &Options) -> catalog::Machine {
     catalog::Machine {
         physical_bytes: options.budget.unwrap_or_else(runtime::physical_memory),
         working_set_bytes: working_set,
+        load_guard: options.load_guard,
         chip,
     }
 }
@@ -377,6 +378,7 @@ fn machine(options: &Options) -> catalog::Machine {
     catalog::Machine {
         physical_bytes: options.budget.unwrap_or(0),
         working_set_bytes: None,
+        load_guard: options.load_guard,
         chip: String::new(),
     }
 }

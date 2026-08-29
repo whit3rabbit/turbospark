@@ -45,6 +45,10 @@ OPTIONS:
     --filter <TEXT>             substring match for `list`
     --context <N>               window to fit against for `recommend` (4096)
     --budget <BYTES>            override the memory probe for `recommend`
+    --load-guard <TIER|BYTES>   how much of the machine a session may commit:
+                                off, relaxed (default), balanced, strict, or a
+                                size that caps what the engine allocates. MUST
+                                match what the session will open with.
     --discover [N]              also rank the N most-downloaded GGUF repos on
                                 Hugging Face, filtered through the probe
     --probe                     read every curated row's header too, which is
@@ -101,6 +105,13 @@ pub struct Options {
     pub out: Option<String>,
     pub context: Option<u32>,
     pub budget: Option<u64>,
+    /// How much of the machine a session would be allowed to commit.
+    ///
+    /// **`recommend` MUST rank under the tier the session will OPEN with.**
+    /// The two share a budget by construction, which is what makes a
+    /// recommendation trustworthy; ranking under `relaxed` while sessions
+    /// open under `strict` promises a fit the loader then refuses.
+    pub load_guard: model_io::LoadGuard,
     pub discover: Option<usize>,
     pub probe: bool,
     pub alias: Option<String>,
@@ -156,7 +167,7 @@ fn run(args: &[String]) -> Result<(), Error> {
             model_cmd::probe(&client, &repo, options.file.as_deref(), sidecars.as_ref())
         }
         "recommend" => {
-            options.reject_unused(&["context", "budget", "discover", "probe"])?;
+            options.reject_unused(&["context", "budget", "load-guard", "discover", "probe"])?;
             if !positionals.is_empty() {
                 return Err(Error::Usage(
                     "recommend takes no arguments; it describes this machine".to_string(),
@@ -277,6 +288,26 @@ fn parse(args: &[String]) -> Result<(Vec<String>, Options), Error> {
                         Error::Usage(format!("--context {value:?} is not a number"))
                     })?);
                 seen.push("context");
+            }
+            // A tier word or a byte ceiling, one flag, for the reason
+            // `crates/invocation`'s arm gives.
+            "--load-guard" => {
+                let value = value_for(&mut index, "--load-guard")?;
+                options.load_guard = match model_io::LoadGuard::parse(&value) {
+                    Some(g) => g,
+                    None => match parse_bytes(&value) {
+                        Some(n) if n > 0 => model_io::LoadGuard::Custom {
+                            max_counted_bytes: n,
+                        },
+                        _ => {
+                            return Err(Error::Usage(format!(
+                                "--load-guard {value:?} is not off, relaxed, balanced, \
+                                 strict or a size"
+                            )))
+                        }
+                    },
+                };
+                seen.push("load-guard");
             }
             "--budget" => {
                 let value = value_for(&mut index, "--budget")?;

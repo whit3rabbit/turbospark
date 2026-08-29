@@ -7,6 +7,7 @@ fn m4_max() -> Machine {
     Machine {
         physical_bytes: 36 * GIB,
         working_set_bytes: Some(27 * GIB),
+        load_guard: model_io::LoadGuard::default(),
         chip: "Apple M4 Max".to_string(),
     }
 }
@@ -109,6 +110,7 @@ fn an_unrecognized_chip_borrows_nobody_elses_measurements() {
     let machine = Machine {
         physical_bytes: 16 * GIB,
         working_set_bytes: None,
+        load_guard: model_io::LoadGuard::default(),
         chip: "Some Other Silicon".to_string(),
     };
     for r in ranked(&machine, 4096) {

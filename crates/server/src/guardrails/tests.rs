@@ -45,6 +45,7 @@ fn generated(text: &str, calls: Vec<ParsedToolCall>) -> Generated {
             decode_seconds: 0.0,
             kv_position: 0,
             kv_backed_token_ids: Vec::new(),
+            peak_memory_pressure: runtime::MemoryPressure::Normal,
         },
     }
 }

@@ -15,6 +15,7 @@ mod context_policy;
 mod error;
 mod expert_cache_policy;
 mod install_receipt;
+mod load_guard;
 mod manifest;
 mod packed_experts_layout;
 mod resident_buffer;
@@ -32,9 +33,9 @@ pub use arch_config::{
     ModelFamily, RopeScalingConfig, VisionConfig,
 };
 pub use context_policy::{
-    committed_bytes, kv_bytes_for_context, largest_context_within, resolve_max_context,
-    ContextPlan, ContextTooLarge, MaxContext, CONTEXT_BUDGET_FRACTION, CONTEXT_GRANULARITY,
-    CONTEXT_RESERVE_BYTES, MAX_SUPPORTED_CONTEXT,
+    committed_bytes, kv_bytes_for_context, largest_context_within, resolve_max_context, ContextCap,
+    ContextFloorUnmet, ContextPlan, ContextRefused, ContextTooLarge, MaxContext,
+    CONTEXT_BUDGET_FRACTION, CONTEXT_GRANULARITY, CONTEXT_RESERVE_BYTES, MAX_SUPPORTED_CONTEXT,
 };
 pub use error::ModelError;
 pub use expert_cache_policy::{ExpertCacheSlots, HEADROOM_FRACTION, HEADROOM_RESERVE_BYTES};
@@ -44,6 +45,7 @@ pub use install_receipt::{
     FileEntry as InstallReceiptFileEntry, ModelIntegrityPolicy, VerifiedInstallReceipt,
     DEFAULT_MAX_BYTES as INSTALL_RECEIPT_DEFAULT_MAX_BYTES,
 };
+pub use load_guard::{GuardBudget, LoadGuard, LoadPolicy};
 pub use manifest::{
     known_flags, load as load_manifest, peek_family, validate as validate_manifest, Manifest,
     ManifestArch, ManifestFileEntry, ManifestQuant, ManifestQuantSlot, DEFAULT_MAX_BYTES,

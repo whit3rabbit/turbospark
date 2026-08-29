@@ -1,5 +1,5 @@
 use super::*;
-use crate::{known_architecture, ModelFamily};
+use crate::{known_architecture, LoadGuard, LoadPolicy, ModelFamily};
 
 const GIB: u64 = 1024 * 1024 * 1024;
 const DEFAULT: u32 = 4096;
@@ -148,6 +148,7 @@ fn auto_without_a_declared_trained_context_stays_at_the_default() {
         DEFAULT,
         36 * GIB,
         13 * GIB,
+        &LoadPolicy::default(),
     )
     .unwrap();
     assert_eq!(plan.resolved, DEFAULT);
@@ -166,6 +167,7 @@ fn auto_takes_the_trained_context_when_memory_allows() {
         DEFAULT,
         36 * GIB,
         13 * GIB,
+        &LoadPolicy::default(),
     )
     .unwrap();
     assert_eq!(plan.resolved, 131_072);
@@ -184,6 +186,7 @@ fn auto_takes_the_machine_when_it_is_the_smaller_bound() {
         DEFAULT,
         36 * GIB,
         4 * GIB,
+        &LoadPolicy::default(),
     )
     .unwrap();
     // (36 - 4 - 4) GiB = 28 available, a quarter is 7 GiB, at 128 KiB
@@ -205,6 +208,7 @@ fn a_named_context_may_exceed_the_comfortable_share() {
         DEFAULT,
         36 * GIB,
         4 * GIB,
+        &LoadPolicy::default(),
     )
     .unwrap();
     assert_eq!(plan.resolved, 100_000);
@@ -224,6 +228,7 @@ fn past_the_trained_context_resolves_and_flags_itself() {
         DEFAULT,
         36 * GIB,
         13 * GIB,
+        &LoadPolicy::default(),
     )
     .unwrap();
     assert_eq!(plan.resolved, 200_000);
@@ -242,8 +247,12 @@ fn past_what_memory_holds_is_refused_with_the_arithmetic() {
         DEFAULT,
         36 * GIB,
         4 * GIB,
+        &LoadPolicy::default(),
     )
     .unwrap_err();
+    let ContextRefused::TooLarge(err) = err else {
+        panic!("expected a memory refusal, got {err:?}");
+    };
     assert_eq!(err.requested, 1_000_000);
     assert_eq!(err.available, 28 * GIB);
     assert!(err.needs > err.available);
@@ -271,6 +280,7 @@ fn auto_never_resolves_to_something_the_machine_refuses() {
                         DEFAULT,
                         physical,
                         resident,
+                        &LoadPolicy::default(),
                     );
                     // The one legitimate failure is a machine with no
                     // room at all, where the default itself does not
@@ -301,8 +311,12 @@ fn a_machine_smaller_than_its_install_refuses_rather_than_underflowing() {
         DEFAULT,
         8 * GIB,
         13 * GIB,
+        &LoadPolicy::default(),
     )
     .unwrap_err();
+    let ContextRefused::TooLarge(err) = err else {
+        panic!("expected a memory refusal, got {err:?}");
+    };
     assert_eq!(err.available, 0);
     assert_eq!(err.largest_fitting, 0);
 }
@@ -320,6 +334,7 @@ fn an_unknown_machine_constrains_nothing() {
         DEFAULT,
         0,
         13 * GIB,
+        &LoadPolicy::default(),
     )
     .unwrap();
     assert_eq!(
@@ -335,13 +350,23 @@ fn an_unknown_machine_constrains_nothing() {
         DEFAULT,
         0,
         13 * GIB,
+        &LoadPolicy::default(),
     )
     .unwrap();
     assert_eq!(plan.resolved, 200_000);
 
     // With NEITHER a machine nor a trained context, `Auto` is the
     // documented default and nothing else.
-    let plan = resolve_max_context(MaxContext::Auto, &dense_7b(), None, DEFAULT, 0, 0).unwrap();
+    let plan = resolve_max_context(
+        MaxContext::Auto,
+        &dense_7b(),
+        None,
+        DEFAULT,
+        0,
+        0,
+        &LoadPolicy::default(),
+    )
+    .unwrap();
     assert_eq!(plan.resolved, DEFAULT);
 }
 
@@ -357,8 +382,220 @@ fn the_default_is_auto() {
 #[test]
 fn fixed_is_returned_untouched() {
     for n in [512u32, 4096, 8192] {
-        let plan = resolve_max_context(MaxContext::Fixed(n), &gemma4(), None, DEFAULT, 36 * GIB, 0)
-            .unwrap();
+        let plan = resolve_max_context(
+            MaxContext::Fixed(n),
+            &gemma4(),
+            None,
+            DEFAULT,
+            36 * GIB,
+            0,
+            &LoadPolicy::default(),
+        )
+        .unwrap();
         assert_eq!(plan.resolved, n);
+    }
+}
+
+/// **THE NO-BEHAVIOUR-CHANGE PROOF, stated once rather than left implicit in
+/// the twelve cases above.** Every one of them passes `LoadPolicy::default()`
+/// and asserts the numbers this module produced before a guard existed; this
+/// case says out loud that the default IS `Relaxed` and that its arithmetic
+/// is the pre-guard arithmetic, so a reader does not have to infer it from
+/// the other file.
+#[test]
+fn the_default_policy_is_the_pre_guard_arithmetic() {
+    assert_eq!(LoadPolicy::default().guard, LoadGuard::Relaxed);
+    let b = LoadGuard::Relaxed.budget();
+    assert_eq!(b.reserve_bytes, CONTEXT_RESERVE_BYTES);
+    assert_eq!(b.budget_fraction, CONTEXT_BUDGET_FRACTION);
+}
+
+/// A tighter guard reserves more and spends a smaller share of what is left,
+/// so the same machine and the same checkpoint afford a smaller window. The
+/// dense 7B is the right subject: its KV is 128 KiB per token, so the tiers
+/// separate by tens of thousands of tokens rather than by rounding.
+#[test]
+fn a_tighter_guard_resolves_a_smaller_auto_window() {
+    let window = |guard| {
+        resolve_max_context(
+            MaxContext::Auto,
+            &dense_7b(),
+            Some(131_072),
+            DEFAULT,
+            36 * GIB,
+            4 * GIB,
+            &LoadPolicy::new(guard),
+        )
+        .unwrap()
+        .resolved
+    };
+    // The default arm reproduces the untiered case above exactly.
+    assert_eq!(window(LoadGuard::Relaxed), 57_344);
+    assert!(window(LoadGuard::Off) > window(LoadGuard::Relaxed));
+    assert!(window(LoadGuard::Relaxed) > window(LoadGuard::Balanced));
+    assert!(window(LoadGuard::Balanced) > window(LoadGuard::Strict));
+}
+
+/// `Off` is the one tier that declines to refuse. The request below needs
+/// far more KV than the machine has, and under every other tier that is the
+/// refusal with the subtraction in it.
+#[test]
+fn off_admits_a_window_every_other_tier_refuses() {
+    let ask = |guard| {
+        resolve_max_context(
+            MaxContext::Fixed(1_000_000),
+            &dense_7b(),
+            Some(1_000_000),
+            DEFAULT,
+            36 * GIB,
+            4 * GIB,
+            &LoadPolicy::new(guard),
+        )
+    };
+    assert_eq!(ask(LoadGuard::Off).unwrap().resolved, 1_000_000);
+    for guard in [LoadGuard::Relaxed, LoadGuard::Balanced, LoadGuard::Strict] {
+        assert!(
+            matches!(ask(guard), Err(ContextRefused::TooLarge(_))),
+            "{guard:?} should refuse a million-token window on a 36 GiB machine"
+        );
+    }
+}
+
+/// The refusal quotes the reserve that actually produced it. Reading
+/// `CONTEXT_RESERVE_BYTES` at format time would print `Relaxed`'s 4 GiB under
+/// every tier, naming a number that did not cause the failure.
+#[test]
+fn the_refusal_quotes_the_tiers_own_reserve() {
+    let err = resolve_max_context(
+        MaxContext::Fixed(1_000_000),
+        &dense_7b(),
+        Some(1_000_000),
+        DEFAULT,
+        36 * GIB,
+        4 * GIB,
+        &LoadPolicy::new(LoadGuard::Strict),
+    )
+    .unwrap_err();
+    let ContextRefused::TooLarge(err) = err else {
+        panic!("expected a memory refusal, got {err:?}");
+    };
+    assert_eq!(err.reserve, 12 * GIB);
+    assert_eq!(err.available, 20 * GIB);
+    assert!(err.to_string().contains("12.0 GiB"), "{err}");
+}
+
+/// The floor refuses an `Auto` that lands under it, and names MEMORY as the
+/// cap when memory is what bound the window.
+#[test]
+fn a_floor_above_what_memory_affords_is_refused_naming_memory() {
+    let err = resolve_max_context(
+        MaxContext::Auto,
+        &dense_7b(),
+        Some(131_072),
+        DEFAULT,
+        36 * GIB,
+        4 * GIB,
+        &LoadPolicy {
+            guard: LoadGuard::Relaxed,
+            min_auto_context: 65_536,
+        },
+    )
+    .unwrap_err();
+    let ContextRefused::FloorUnmet(err) = err else {
+        panic!("expected a floor refusal, got {err:?}");
+    };
+    assert_eq!(err.floor, 65_536);
+    assert_eq!(err.resolved, 57_344);
+    assert_eq!(err.capped_by, ContextCap::Memory);
+    // The largest the machine affords ignoring the comfortable fraction, so
+    // the reader can see whether a looser guard would clear the floor.
+    assert!(err.largest_fitting > err.resolved);
+    assert!(err.to_string().contains("--load-guard"), "{err}");
+}
+
+/// The same floor against a checkpoint that was simply never trained that
+/// far names the CHECKPOINT, because no guard tier moves that bound.
+#[test]
+fn a_floor_above_the_trained_context_is_refused_naming_the_checkpoint() {
+    let err = resolve_max_context(
+        MaxContext::Auto,
+        &gemma4(),
+        Some(8_192),
+        DEFAULT,
+        36 * GIB,
+        13 * GIB,
+        &LoadPolicy {
+            guard: LoadGuard::Relaxed,
+            min_auto_context: 32_768,
+        },
+    )
+    .unwrap_err();
+    let ContextRefused::FloorUnmet(err) = err else {
+        panic!("expected a floor refusal, got {err:?}");
+    };
+    assert_eq!(err.resolved, 8_192);
+    assert_eq!(err.capped_by, ContextCap::Trained);
+    assert!(err.to_string().contains("different checkpoint"), "{err}");
+}
+
+/// **The floor is scoped to `Auto`, and this is the case that says so.** A
+/// caller naming 2,048 has decided how to spend their own machine; refusing
+/// it for being under an AutoFit minimum would be the setting acting outside
+/// what its name claims.
+#[test]
+fn an_explicit_window_below_the_floor_is_not_refused() {
+    let plan = resolve_max_context(
+        MaxContext::Fixed(2_048),
+        &dense_7b(),
+        Some(131_072),
+        DEFAULT,
+        36 * GIB,
+        4 * GIB,
+        &LoadPolicy {
+            guard: LoadGuard::Relaxed,
+            min_auto_context: 65_536,
+        },
+    )
+    .unwrap();
+    assert_eq!(plan.resolved, 2_048);
+}
+
+/// The floor survives `Off`, because it is not a memory precaution the guard
+/// could relax -- it is the caller stating a requirement of their workload.
+/// `Off` raises what memory affords, so the case has to put the floor above
+/// even that.
+#[test]
+fn the_floor_applies_under_every_tier_including_off() {
+    let err = resolve_max_context(
+        MaxContext::Auto,
+        &dense_7b(),
+        Some(1_000_000),
+        DEFAULT,
+        8 * GIB,
+        0,
+        &LoadPolicy {
+            guard: LoadGuard::Off,
+            min_auto_context: 500_000,
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(err, ContextRefused::FloorUnmet(_)), "{err:?}");
+}
+
+/// A floor of zero is what silence means and must never refuse, including on
+/// a machine with no probe at all (where `Auto` falls back to the default).
+#[test]
+fn a_zero_floor_never_refuses() {
+    for physical in [0, 8 * GIB, 36 * GIB] {
+        assert!(resolve_max_context(
+            MaxContext::Auto,
+            &dense_7b(),
+            None,
+            DEFAULT,
+            physical,
+            0,
+            &LoadPolicy::default(),
+        )
+        .is_ok());
     }
 }

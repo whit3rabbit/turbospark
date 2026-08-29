@@ -32,6 +32,7 @@ read the page before proposing the thing it refutes.
 | `docs/GTURBO.md` | the `.gturbo` install format this port reads and writes | changing the writer |
 | `docs/MODEL_FAMILY.md` | GGUF `general.architecture` and HF `model_type` tables | adding an architecture row |
 | `docs/DECODE_BUDGET.md` | where a decoded token's time goes; three decode dead ends | optimizing decode |
+| `docs/LOAD_GUARD.md` | the memory guardrail tiers, the AutoFit floor, the pressure watcher | changing what a session may commit |
 | `docs/DFLASH2.md` | the DFlash2 block drafter: architecture, state, verify | touching that drafter |
 | `docs/OBLITERATION.md` | live directional steering, with measurement | changing steering |
 | `docs/TRUBOQUANT.md` | sub-4-bit and ternary quantization layout | adding a width |

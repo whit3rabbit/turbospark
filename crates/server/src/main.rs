@@ -62,6 +62,7 @@ fn open_real_model(args: &ModelArgs) -> Result<Arc<dyn turbospark_server::ChatMo
         args.drafter,
         args.guardrails,
         args.steering.clone(),
+        args.load_policy,
     )?;
     // Both sized figures are the RESOLVED ones, never `args`: under `auto`
     // the request carries no number, and each has to be readable beside any
@@ -70,7 +71,7 @@ fn open_real_model(args: &ModelArgs) -> Result<Arc<dyn turbospark_server::ChatMo
     // what explains an `auto` of 4,096 on a machine with room for more.
     let context = model.context_plan();
     eprintln!(
-        "model open (max_context {}{} [{}, {:.0} MiB of KV, suggested {}], \
+        "model open (max_context {}{} [{}, {:.0} MiB of KV, suggested {}{}{}], \
          {} expert cache slots{}, {} profile, rate cap {})",
         context.resolved,
         if args.max_context.is_none() {
@@ -84,6 +85,18 @@ fn open_real_model(args: &ModelArgs) -> Result<Arc<dyn turbospark_server::ChatMo
         },
         context.kv_bytes as f64 / (1024.0 * 1024.0),
         context.suggested,
+        // Named only when it is not the default, matching `turbospark-check`'s
+        // line. Reported for the reason the slot count beside it is: the tier
+        // moves the suggestion, so no window or KV figure from this process is
+        // comparable to another without it.
+        match args.load_policy.guard {
+            runtime::LoadGuard::Relaxed => String::new(),
+            other => format!(", guard {}", other.as_str()),
+        },
+        match args.load_policy.min_auto_context {
+            0 => String::new(),
+            n => format!(", floor {n}"),
+        },
         model.expert_cache_slots(),
         if args.expert_cache_slots.is_none() {
             " (auto)"
