@@ -83,8 +83,20 @@ impl HttpRangeSource {
             .send()
             .map_err(|e| DownloadError::Request(e.to_string()))?;
         if response.status().as_u16() != 206 {
+            let status = response.status().as_u16();
+            // `Retry-After` is read HERE because it is a property of this
+            // response and is gone by the time the ladder sees the error.
+            // Seconds form only: the HTTP-date form is legal and no CDN in
+            // this walk's path uses it, so parsing one would be untested code
+            // guarding an unobserved case.
+            let retry_after = response
+                .headers()
+                .get(reqwest::header::RETRY_AFTER)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.trim().parse::<u64>().ok());
             return Err(DownloadError::UnexpectedStatus {
-                status: response.status().as_u16(),
+                status,
+                retry_after,
             });
         }
         let bytes = response
@@ -105,9 +117,26 @@ impl HttpRangeSource {
     }
 
     /// [`Self::read_chunk`] under the retry ladder: [`RANGE_ATTEMPTS`]
-    /// attempts with an exponential backoff capped at four seconds. A range
-    /// the server will not serve at all is not going to start working, so
-    /// `UnexpectedStatus` is fatal; everything else is treated as transport.
+    /// attempts with an exponential backoff capped at four seconds.
+    ///
+    /// **A STATUS IS FATAL OR THROTTLED, AND FOR THE LIFE OF THIS SURFACE
+    /// EVERY STATUS WAS FATAL.** The reasoning this replaces was sound for the
+    /// case it was written for -- "a range the server will not serve at all is
+    /// not going to start working" is true of 404 and 416 -- and it swept in
+    /// the one status that means the exact opposite. 429 is the canonical
+    /// "back off and retry"; treating it as permanent aborts a twenty-minute
+    /// walk on its first occurrence, and this walk CANNOT RESUME, so the whole
+    /// stream restarts.
+    ///
+    /// Found by M-V3's own gate: three consecutive 16 GB `qwen38` streams died
+    /// on a 429 from the Xet CDN bridge (NOT from `huggingface.co/resolve`,
+    /// whose `ratelimit` header read 2998 of 3000 remaining at the moment of
+    /// failure -- the two have separate quotas and only one of them is
+    /// observable from a response header).
+    ///
+    /// 5xx joins it for the same reason: a gateway error is the server saying
+    /// "not now". Everything else stays fatal, so a 404 still fails on the
+    /// first attempt rather than eight times.
     fn read_chunk_retrying(
         &self,
         start: u64,
@@ -118,6 +147,18 @@ impl HttpRangeSource {
         for attempt in 0..RANGE_ATTEMPTS {
             match self.read_chunk(start, end_exclusive, dst) {
                 Ok(()) => return Ok(()),
+                Err(DownloadError::UnexpectedStatus {
+                    status,
+                    retry_after,
+                }) if throttled_status(status) => {
+                    last = Some(DownloadError::UnexpectedStatus {
+                        status,
+                        retry_after,
+                    });
+                    if attempt + 1 < RANGE_ATTEMPTS {
+                        std::thread::sleep(throttle_backoff(attempt, retry_after));
+                    }
+                }
                 Err(e @ DownloadError::UnexpectedStatus { .. }) => return Err(e),
                 Err(e) => {
                     last = Some(e);
@@ -131,6 +172,36 @@ impl HttpRangeSource {
     }
 }
 
+/// Whether a non-206 status is the server asking to be retried later.
+///
+/// 429 is the whole point (see [`HttpRangeSource::read_chunk_retrying`]); the
+/// 5xx pair are gateway failures that a CDN recovers from. A LIST rather than
+/// a `>= 500` range, so a future status is fatal until someone establishes it
+/// is not -- the failure this replaces came from a rule that was too broad,
+/// and widening it back by default would repeat that in the other direction.
+fn throttled_status(status: u16) -> bool {
+    matches!(status, 429 | 500 | 502 | 503 | 504)
+}
+
+/// How long to wait before re-issuing a throttled range.
+///
+/// The server's own `Retry-After` wins when it sent one, because it knows its
+/// window and this side is guessing. Otherwise an exponential backoff from ONE
+/// SECOND, which is deliberately slower than the 250ms transport ladder: that
+/// one recovers from a dropped connection, and re-hammering a rate limiter at
+/// 250ms simply spends the retries before the window moves.
+///
+/// Capped at 30s so eight attempts span about a minute at worst, which is
+/// bounded against a walk that already takes twenty.
+fn throttle_backoff(attempt: usize, retry_after: Option<u64>) -> std::time::Duration {
+    const CAP: u64 = 30;
+    let seconds = match retry_after {
+        Some(after) => after.min(CAP),
+        None => (1u64 << attempt.min(5)).min(CAP),
+    };
+    std::time::Duration::from_secs(seconds)
+}
+
 impl RangeSource for HttpRangeSource {
     fn read_range(&self, start: u64, end_exclusive: u64) -> Result<Vec<u8>, DownloadError> {
         let chunks = chunk_ranges(start, end_exclusive, MAX_RANGE_BYTES);
@@ -142,5 +213,70 @@ impl RangeSource for HttpRangeSource {
             |chunk_start, chunk_end, dst| self.read_chunk_retrying(chunk_start, chunk_end, dst),
         )?;
         Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{throttle_backoff, throttled_status};
+
+    /// 429 retries and 404 does not, which is the whole correction.
+    ///
+    /// The old ladder returned on ANY non-206, so a rate limit killed a
+    /// twenty-minute unresumable walk on its first occurrence. Both directions
+    /// are asserted, because widening the rule until everything retries would
+    /// make a 404 cost eight backoffs and is the same mistake mirrored.
+    #[test]
+    fn a_rate_limit_is_throttled_and_a_missing_range_is_fatal() {
+        assert!(
+            throttled_status(429),
+            "429 is the canonical back-off status"
+        );
+        for s in [500, 502, 503, 504] {
+            assert!(
+                throttled_status(s),
+                "{s} is a gateway failure, not a verdict"
+            );
+        }
+        for s in [400, 401, 403, 404, 416, 451] {
+            assert!(!throttled_status(s), "{s} will not start working");
+        }
+    }
+
+    /// The server's own window wins over this side's guess.
+    #[test]
+    fn retry_after_overrides_the_backoff_and_both_are_capped() {
+        assert_eq!(throttle_backoff(0, Some(7)).as_secs(), 7);
+        assert_eq!(
+            throttle_backoff(5, Some(3)).as_secs(),
+            3,
+            "the header wins even late"
+        );
+        // Capped, so a server naming an hour cannot park a walk for one.
+        assert_eq!(throttle_backoff(0, Some(3600)).as_secs(), 30);
+    }
+
+    /// Without a header the wait grows, and starts a full second rather than
+    /// the transport ladder's 250ms.
+    ///
+    /// Re-hammering a rate limiter four times a second spends every retry
+    /// before the window moves, which is exactly how eight attempts can fail
+    /// in under three seconds and read as a permanent refusal.
+    #[test]
+    fn the_default_backoff_grows_from_one_second_and_saturates() {
+        let secs: Vec<u64> = (0..8)
+            .map(|a| throttle_backoff(a, None).as_secs())
+            .collect();
+        assert_eq!(secs, vec![1, 2, 4, 8, 16, 30, 30, 30]);
+        assert!(
+            secs[0] >= 1,
+            "starting below a second re-hammers the limiter"
+        );
+        // Bounded: eight attempts span about two minutes, against a walk that
+        // already takes twenty.
+        assert!(
+            secs.iter().sum::<u64>() < 150,
+            "the ladder must stay bounded"
+        );
     }
 }

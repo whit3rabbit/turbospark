@@ -790,14 +790,19 @@ fn repacks_the_real_qwen38_27b_checkpoint_with_its_vision_tower() {
         // fc2 [h, i] + bias [h]
         + h * i + h
         );
-    assert!(
-        blocks.expert_stride >= expected_block_bytes,
-        "stride {} is below the {expected_block_bytes} bytes a block needs",
-        blocks.expert_stride
-    );
-    assert!(
-        blocks.expert_stride - expected_block_bytes < 4096,
-        "stride {} pads more than one page over the {expected_block_bytes} needed",
+    // Asserted EXACTLY rather than as a range, which is both stronger and the
+    // rule the writer actually applies: the stride is that byte count rounded
+    // up to `GTURBO_PAGE_BYTES`. Taken from the constant rather than a literal
+    // -- this format pages to 16 KiB, not to the OS's 4 KiB, and a hardcoded
+    // 4096 here reads as a plausible near-miss (measured: 30,490,624 against
+    // 30,479,008, an 11,616-byte gap that is one 16 KiB page and not three
+    // 4 KiB ones).
+    let page = turbospark_repack::GTURBO_PAGE_BYTES;
+    assert_eq!(
+        blocks.expert_stride,
+        expected_block_bytes.div_ceil(page) * page,
+        "stride {} is not the {expected_block_bytes} bytes a block needs, \
+         rounded up to the {page}-byte page",
         blocks.expert_stride
     );
 

@@ -18,6 +18,10 @@ pub enum DownloadError {
     Request(String),
     UnexpectedStatus {
         status: u16,
+        /// The server's `Retry-After` in seconds, when it sent one. Read at
+        /// the response rather than reconstructed, since the header is gone
+        /// by the time the retry ladder sees this error.
+        retry_after: Option<u64>,
     },
     ShortRead {
         expected: u64,
@@ -36,9 +40,19 @@ impl std::fmt::Display for DownloadError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             DownloadError::Request(detail) => write!(f, "request failed: {detail}"),
-            DownloadError::UnexpectedStatus { status } => {
-                write!(f, "unexpected HTTP status {status}")
-            }
+            DownloadError::UnexpectedStatus {
+                status,
+                retry_after,
+            } => match retry_after {
+                // Reported, because a walk that gave up after eight backoffs
+                // wants to say the server named a window rather than leaving
+                // the reader to guess whether waiting would help.
+                Some(after) => write!(
+                    f,
+                    "unexpected HTTP status {status} (server asked for {after}s)"
+                ),
+                None => write!(f, "unexpected HTTP status {status}"),
+            },
             DownloadError::ShortRead { expected, actual } => {
                 write!(f, "short read: expected {expected} bytes, got {actual}")
             }

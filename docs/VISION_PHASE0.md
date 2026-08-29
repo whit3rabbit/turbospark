@@ -13,6 +13,32 @@ are identical; the two differ only in the trunk's quantization, consistent
 with `crates/model-io/CLAUDE.md`'s existing note that both share one
 baseline.
 
+## 0. What M-V3 measured against these facts (2026-08-27)
+
+Everything in this document was read off headers and reference source. The
+M-V3 intake then ran the real ingest, and three of the items below moved from
+"read" to "exercised". Recorded here because a fact nobody has run against a
+real walk is a different kind of fact.
+
+- **The 333-tensor inventory is exactly 27 x 12 + 9.** The twelve per-block
+  roles and the nine non-block tensors account for the whole tower with
+  nothing left over, checked as arithmetic rather than trusted.
+- **`intermediate_size` really is 4304.** The per-block stride the shapes
+  predict is 30,479,008 bytes and the walk wrote 30,490,624 -- that number
+  rounded up to the format's 16 KiB page. At 4608 the prediction would have
+  missed by 1.4 MB per block.
+- **The tower is BF16 in this checkpoint and FP16 in Bonsai**, so the intake
+  needs both arms. Converting BF16 to FP16 is EXACT in FP16's normal range
+  (the mantissa widens 7 bits to 10, so it cannot round); all 7,680 BF16
+  values in [2^-14, 65504] round-trip bit-for-bit. On the real tower the
+  overflow refusal never fired and 126 of 333 tensors carried 167,167 values
+  in the subnormal range, where FP16's mantissa is truncated.
+- **`patch_embed.proj.weight` is rank 5** and the resident index carries four
+  dims, so it is recorded flattened at `(1152, 1536)` -- which is also the
+  shape it is used at, the conv having kernel == stride.
+
+---
+
 ## 1. Vision tensor inventory
 
 - Prefix: `vision_tower.` (2,180 total tensors, 333 under this prefix, one
