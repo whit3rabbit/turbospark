@@ -3,7 +3,7 @@
 The C ABI a native GUI drives the engine through, and the SwiftPM package
 over it. Produces a `staticlib` plus a hand-written
 `include/turbospark.h`; `swift/TurboSpark` wraps it and
-`swift/TurboSparkDemo` is a SwiftUI chat app that verifies the stack end to
+`swift/TurboSparkApp` is a SwiftUI chat app that verifies the stack end to
 end.
 
 ## Safety
@@ -20,15 +20,21 @@ crates/ffi/
 +-- include/
 |   \-- turbospark.h        # THE CONTRACT. Hand-written; see Gotcha 2.
 +-- src/
-|   +-- lib.rs              # every `extern "C"` entry point
-|   +-- abi.rs              # status codes, the per-thread error slot, `guard`
+|   +-- lib.rs              # crate root, type aliases, re-exports
+|   +-- abi.rs              # status codes, the per-thread error slot, `guard`, ABI helpers
 |   +-- strings.rs          # borrowing C strings in, handing owned ones out
 |   +-- wire.rs             # the JSON shapes (camelCase)
 |   +-- session.rs          # the opaque handle; where the cancel flag lives
 |   +-- open.rs             # opening an install (macOS)
 |   +-- generate.rs         # one turn: render, decode, stream, report
 |   +-- models.rs           # catalog, probe, install (portable)
-|   \-- telemetry.rs        # phase counters and peak footprint
+|   +-- telemetry.rs        # phase counters and peak footprint
+|   +-- testing.rs          # session_for_testing (scripted testing harness)
+|   \-- api/                # C ABI entry points (extern "C")
+|       +-- core.rs         # errors, strings, system telemetry
+|       +-- session.rs      # session lifecycle and introspection
+|       +-- generate.rs     # generation, prompt rendering, tokenization, window fit
+|       \-- models.rs       # catalog, recommendations, probe, install
 \-- tests/
     \-- c_surface.rs        # the C entry points, through the `rlib` face
 ```
@@ -158,7 +164,7 @@ make swift-test-real MODEL=~/models/qwen38-27b-mtp.gturbo \
 8. **A SwiftPM `-L` FLAG IS RESOLVED AGAINST THE PACKAGE BEING BUILT, NOT
    THE ONE THAT DECLARED IT.** So `swift/TurboSpark`'s own
    `-LSources/CTurboSpark` is correct when its tests link and wrong for
-   every consumer, and `swift/TurboSparkDemo` has to repeat the flag with
+   every consumer, and `swift/TurboSparkApp` has to repeat the flag with
    its own view of the same directory. That is a SwiftPM limitation rather
    than a mistake; the fix for a published package is an `.xcframework`
    binary target, which resolves paths for its consumers properly. A

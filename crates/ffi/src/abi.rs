@@ -111,3 +111,25 @@ pub fn guard(body: impl FnOnce() -> c_int) -> c_int {
         }
     }
 }
+
+/// Shared spine: run `body` under the panic guard, recording its error.
+pub fn guard_result(body: impl FnOnce() -> Result<(), (c_int, String)>) -> c_int {
+    guard(|| match body() {
+        Ok(()) => TS_OK,
+        Err((code, message)) => fail(code, message),
+    })
+}
+
+/// Parses an optional JSON argument, defaulting when it is null or empty.
+///
+/// # Safety
+/// `ptr` must be null or point to a valid NUL-terminated C string.
+pub unsafe fn parse_json_or_default<T: Default + serde::de::DeserializeOwned>(
+    ptr: *const c_char,
+    name: &str,
+) -> Result<T, (c_int, String)> {
+    match crate::strings::optional(ptr, name).map_err(|e| (TS_ERR_INVALID_ARGUMENT, e))? {
+        None => Ok(T::default()),
+        Some(text) => serde_json::from_str(text).map_err(|e| (TS_ERR_JSON, format!("{name}: {e}"))),
+    }
+}
