@@ -35,55 +35,121 @@ changed, no argument buffer changed, no shader changed.
 Apple M4 Max, 36 GB, macOS 26.5.2. Real `~/models/gemma4.gturbo` (Gemma 4
 26B-A4B, 128 experts of 3.2 MiB over 30 layers, 12.3 GB expert table).
 
+**RE-MEASURED 2026-08-29** on AC. The original capture (2026-08-23) predates
+`--prefill-chunk` becoming the default on 2026-08-26, so it described a
+configuration nobody runs; the superseded pair was 3,721 -> 606 MiB and
+51.9 -> 69.8 tok/s. Both halves reproduced within drift, and the conclusion is
+unchanged.
+
 ### Memory
 
 `/usr/bin/time -l`'s `peak memory footprint` line, which IS `phys_footprint`.
-Slot count `auto`, resolving to 32 on this machine.
+Slot count `auto`, resolving to 32 on this machine -- recorded because a frozen
+peak is a peak at ONE context window and ONE slot count (AGENTS.md Gotcha 58),
+and the protocol's own runs pin 16 rather than 32.
 
 | | streamed | mapped |
 |---|---:|---:|
-| peak phys_footprint | 3,721 MiB | **606 MiB** |
-| maximum resident set size | 3,529 MiB | 419 MiB |
+| peak phys_footprint | 3,652 MiB | **559 MiB** |
+| maximum resident set size | 3,448 MiB | 432 MiB |
 
-The 3,115 MiB difference is the slot cache: `32 slots x 30 layers x 3.2 MiB`.
+Two runs of each arm, and this is the reproducible half: the streamed peak read
+3,652.5 and 3,652.0 MiB (0.01% apart) and the mapped 560.9 and 557.5 (0.6%).
+
+The 3,093 MiB difference is the slot cache, and the arithmetic says so rather
+than the label: `32 slots x 30 layers x 3.2 MiB` is 3,072 MiB.
 
 ### Throughput
 
-Three interleaved pairs after a discarded warmup, greedy, 400 new tokens.
+Interleaved pairs after a discarded warmup, greedy, 400 new tokens.
 Interleaved rather than batched because run-to-run spread here is wider than
-many single changes (CLAUDE.local.md's standing rule).
+many single changes (CLAUDE.local.md's standing rule) -- and on this capture
+that rule is what made the number readable at all.
 
-| pair | streamed tok/s | mapped tok/s |
-|---|---:|---:|
-| 1 | 51.693 | 69.900 |
-| 2 | 51.725 | 69.646 |
-| 3 | 52.168 | 69.947 |
-| spread | 0.9% | 0.4% |
+| pair | streamed tok/s | mapped tok/s | ratio |
+|---|---:|---:|---:|
+| 1 | *35.668* | 69.660 | *1.95* |
+| 2 | 53.240 | 69.678 | 1.31 |
+| 3 | 53.725 | 68.740 | 1.28 |
+| 4 | 53.804 | 67.778 | 1.26 |
+| 5 | *47.752* | 68.456 | *1.43* |
+| 6 | 54.335 | 70.003 | 1.29 |
 
-**1.35x decode.** The sampled arm at the CLI defaults reads 48.839 against
-68.684, i.e. 1.41x.
+**1.28x decode**, from the four pairs in roman type: 1.31 / 1.28 / 1.26 / 1.29,
+spread 3.8%. Median 53.8 tok/s streamed against 68.7 mapped.
 
-**The first measurement of this read 1.99x and was wrong**, because the
-streamed arm was the first run after a build and paid both a cold GPU and a
-cold page cache (AGENTS.md Gotcha 20). Discarding a warmup and interleaving
-took it to 1.35x. The 2x figure should not be quoted.
+**THE TWO ITALICISED PAIRS ARE EXCLUDED AND THE REASON IS IN THE STREAMED
+COLUMN, NOT THE RATIO.** Pair 1's streamed arm reads 35.668 against a 53.2-54.3
+cluster and pair 5's reads 47.752; the mapped column is flat across all six
+(67.8-70.0, 3.2%). So both excluded ratios are a depressed DENOMINATOR rather
+than a better numerator, which is what a ratio column alone cannot show and a
+mean over all six would have hidden -- it would read 1.42x, higher than any
+clean pair.
+
+**Pair 1 is the trap this page already recorded, reproduced.** The first
+measurement of this feature read 1.99x and was wrong, because its streamed arm
+paid a cold GPU and a cold page cache (AGENTS.md Gotcha 20); pair 1 here reads
+1.95x for the same reason, one warmup being enough for the GPU and not for the
+page cache after the mapped footprint runs. The 2x figure should not be quoted.
+
+**THE MACHINE WAS NOT QUIET AND THAT BIASES THIS UPWARD, not down.** Another
+session was compiling throughout (two `rustc` at ~33%, load average ~4.5), and
+the reproducibility gate this capture opened with -- three identical streamed
+arms, `crates/bench` Gotcha 23 -- FAILED it at 52.2 / 46.8 / 43.8, a 19% spread.
+Interleaving is what rescued it, and it licenses the RATIO rather than the
+absolute rows. The direction of the residual bias is knowable: CPU contention
+depresses throughput, the streamed arm does `pread` (CPU work) where the mapped
+arm does none, so contention costs the streamed arm more and 1.28x is a ceiling
+on the honest figure rather than a floor. Re-measure on a genuinely idle machine
+before tightening it.
+
+The mapped arm's own stability across all six pairs is a result in itself: no
+`pread` means no cache-warming variance, which is the same property the phase
+counters show directly below.
 
 ### Byte-identity
 
-Every arm above reproduces the standing frozen digests exactly:
+**A THREE-WAY comparison per sampling mode, not on-vs-off** (2026-08-29). An
+on-vs-off comparison inside ONE binary cannot say the default path did not
+move: both of its arms carry whatever the change did. The third arm is a
+binary built from the commit before this landed, which is the only one that
+can (`crates/runtime` Gotcha 22 set the precedent for the MXFP4 pair).
 
-| arm | md5 of generated text |
-|---|---|
-| greedy, streamed | `b2f166110a3c402dbc509f73b6c51c4a` |
-| greedy, mapped | `b2f166110a3c402dbc509f73b6c51c4a` |
-| sampled, streamed | `0c383ac0bd490b0e6adff0b3d55cf98d` |
-| sampled, mapped | `0c383ac0bd490b0e6adff0b3d55cf98d` |
+| arm | greedy | sampled |
+|---|---|---|
+| PRE-CHANGE binary | `cf23477ee3eb8fa753322c93544ee517` | `3b02cc85dccc90f8e985eb7ed525d168` |
+| post-change, seam off | `cf23477ee3eb8fa753322c93544ee517` | `3b02cc85dccc90f8e985eb7ed525d168` |
+| post-change, mapped | `cf23477ee3eb8fa753322c93544ee517` | `3b02cc85dccc90f8e985eb7ed525d168` |
 
-That is expected STRUCTURALLY rather than hoped for: the same bytes reach the
-same kernels in the same order. The routed slots are still dispatched in the
-router's own ranking in both modes, which is what keeps output stable across
-residency modes for exactly the reason it is stable across slot counts
+Both modes are run, because greedy is `argmax` and `argmax` is invariant under
+every monotone transform of the distribution -- it stays byte-identical to
+correct through bugs that destroy sampling entirely (AGENTS.md Gotcha 16).
+
+That identity is expected STRUCTURALLY rather than hoped for: the same bytes
+reach the same kernels in the same order. The routed slots are still dispatched
+in the router's own ranking in both modes, which is what keeps output stable
+across residency modes for exactly the reason it is stable across slot counts
 (AGENTS.md Gotcha 27).
+
+### The mapped arm is proven to have ENGAGED
+
+Byte-identity is necessary and NOT sufficient, and on this feature the
+insufficiency is the whole hazard: a seam that silently did nothing would also
+be byte-identical, and would then be measured as the streamed engine and
+reported under the mapped label. That is not hypothetical --
+`MFERENCE_ROUTED_BATCH` shipped with exactly that failure on the MoE `llama`
+family (`crates/runtime` Gotcha 22).
+
+`MFERENCE_PHASES=1` on the same install and prompt, 60 new tokens, settles it:
+
+| | streamed | mapped |
+|---|---:|---:|
+| expert io (`pread`) | 605.6 ms (32.3% of the run) | **0.0 ms (0.0%)** |
+| expert cache | 19,200 requests, 15,078 hits (78.5%), 4,122 misses | 19,200 requests, 19,200 hits (100%), 0 misses |
+
+Zero `pread` time and a 100% hit rate are what "every expert is already
+addressable" looks like from the counters, and neither is reachable by a mode
+that quietly fell through to the streamer.
 
 ## The footprint result, stage by stage
 
