@@ -48,6 +48,52 @@ impl ThermalLevel {
     }
 }
 
+/// macOS memory pressure, as `kern.memorystatus_vm_pressure_level` reports
+/// it.
+///
+/// **A SIBLING OF [`ThermalLevel`] AND NOT A SECOND SPELLING OF IT.** The two
+/// answer different questions and can move independently: a machine can be
+/// cool and short of memory (another process just opened a model) or hot and
+/// comfortable. [`stepped_cap`] therefore takes both and applies whichever is
+/// worse, rather than one standing in for the other.
+///
+/// Three levels rather than four, because that is what the kernel publishes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub enum MemoryPressure {
+    /// Nothing to report. **Also what an ABSENT probe answers**, which is the
+    /// right reading: a reading nobody could take must not pace a decode
+    /// loop. That is the same rule `physical_memory()` follows when it
+    /// answers 0 off macOS -- an unknown machine imposes no bound.
+    #[default]
+    Normal,
+    /// The kernel is asking processes to release memory.
+    Warn,
+    /// The kernel is about to start killing them.
+    Critical,
+}
+
+impl MemoryPressure {
+    /// Maps the sysctl's 1/2/4 ladder. **The values are a BITMASK and not a
+    /// sequence**, which is why this is a match on three literals rather than
+    /// a range: there is no level 3, and reading `>= 2` as "warn or worse"
+    /// happens to work today only because 4 is the sole value above 2.
+    ///
+    /// Everything unrecognized -- including the 0 an unavailable probe
+    /// returns -- reads as [`Self::Normal`]. That is the safe direction here
+    /// and the OPPOSITE of [`ThermalLevel::from_raw`]'s clamp, deliberately:
+    /// an unknown thermal value above the range means hotter still, while an
+    /// unknown memory value means the kernel did not answer, and capping a
+    /// decode loop on the strength of a failed syscall would be pacing on no
+    /// information.
+    pub fn from_raw(raw: i64) -> Self {
+        match raw {
+            2 => Self::Warn,
+            4 => Self::Critical,
+            _ => Self::Normal,
+        }
+    }
+}
+
 /// The user-facing power profiles.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PowerProfile {
@@ -99,7 +145,11 @@ impl PowerProfile {
 /// The thermal ladder: nominal and fair leave the base cap alone, serious
 /// and critical impose a ceiling. An UNCAPPED base still gets capped under
 /// pressure, which is the whole point of `balanced`.
-pub fn stepped_cap(base: Option<f64>, level: ThermalLevel) -> Option<f64> {
+///
+/// Kept as its own function rather than folded into [`stepped_cap`] because
+/// it is what the five cases below assert and what every published power row
+/// was measured under.
+pub fn thermal_cap(base: Option<f64>, level: ThermalLevel) -> Option<f64> {
     let ceiling = match level {
         ThermalLevel::Nominal | ThermalLevel::Fair => return base,
         ThermalLevel::Serious => SERIOUS_TOK_PER_SEC,
@@ -108,10 +158,55 @@ pub fn stepped_cap(base: Option<f64>, level: ThermalLevel) -> Option<f64> {
     Some(base.map_or(ceiling, |base| base.min(ceiling)))
 }
 
+/// The memory ladder. `Warn` is where the kernel starts ASKING processes to
+/// release memory and `Critical` is where it starts killing them, so the two
+/// map onto the same two ceilings thermal pressure uses rather than onto
+/// invented ones -- there is no measurement here that would justify a third
+/// pair of numbers, and a cap is a cap whatever drove it.
+pub fn memory_cap(base: Option<f64>, level: MemoryPressure) -> Option<f64> {
+    let ceiling = match level {
+        MemoryPressure::Normal => return base,
+        MemoryPressure::Warn => SERIOUS_TOK_PER_SEC,
+        MemoryPressure::Critical => CRITICAL_TOK_PER_SEC,
+    };
+    Some(base.map_or(ceiling, |base| base.min(ceiling)))
+}
+
+/// Both ladders, whichever binds harder.
+///
+/// **THE MINIMUM AND NOT A PRECEDENCE.** The two signals are independent --
+/// a machine can be cool and short of memory, or hot and comfortable -- so
+/// asking which one "wins" is the wrong question: each states a ceiling that
+/// is true on its own terms, and honouring the looser of two true ceilings
+/// would ignore one of them.
+pub fn stepped_cap(
+    base: Option<f64>,
+    thermal: ThermalLevel,
+    memory: MemoryPressure,
+) -> Option<f64> {
+    match (thermal_cap(base, thermal), memory_cap(base, memory)) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (a, b) => a.or(b),
+    }
+}
+
 /// Current thermal pressure. Always `Nominal` off macOS.
 #[cfg(target_os = "macos")]
 pub fn thermal_level() -> ThermalLevel {
     ThermalLevel::from_raw(gpu::thermal_state_raw())
+}
+
+/// Current memory pressure. Always `Normal` off macOS, where there is no
+/// probe -- absence of a reading, never a reading of "fine".
+#[cfg(target_os = "macos")]
+pub fn memory_pressure() -> MemoryPressure {
+    MemoryPressure::from_raw(gpu::memory_pressure_raw())
+}
+
+/// Current memory pressure. Always `Normal` off macOS.
+#[cfg(not(target_os = "macos"))]
+pub fn memory_pressure() -> MemoryPressure {
+    MemoryPressure::Normal
 }
 
 /// Current thermal pressure. Always `Nominal` off macOS.
@@ -203,6 +298,14 @@ pub fn rate_control_for(profile: PowerProfile, explicit_cap: Option<f64>) -> Rat
         thermal_probe: profile
             .thermal_stepping()
             .then_some(thermal_level as fn() -> ThermalLevel),
+        // Paired with the thermal probe rather than given its own switch:
+        // both are "step down when the machine is under strain", the profile
+        // already answers whether this run does that, and a profile that
+        // stepped for heat and not for memory would be a fourth policy
+        // nobody asked for.
+        memory_probe: profile
+            .thermal_stepping()
+            .then_some(memory_pressure as fn() -> MemoryPressure),
     }
 }
 
@@ -221,12 +324,18 @@ pub struct RateControl {
     /// Polled every `THERMAL_POLL_TOKENS` tokens, or `None` for no
     /// stepping.
     pub thermal_probe: Option<fn() -> ThermalLevel>,
+    /// The same, for memory pressure. Polled in the SAME block as
+    /// `thermal_probe`, so the watcher costs no extra call site and no extra
+    /// sleep.
+    pub memory_probe: Option<fn() -> MemoryPressure>,
 }
 
 impl RateControl {
     /// Whether the loop needs a pacer at all.
     pub fn is_active(&self) -> bool {
-        self.max_tokens_per_sec.is_some() || self.thermal_probe.is_some()
+        self.max_tokens_per_sec.is_some()
+            || self.thermal_probe.is_some()
+            || self.memory_probe.is_some()
     }
 }
 
@@ -273,16 +382,78 @@ mod tests {
 
     #[test]
     fn the_thermal_ladder_only_ever_lowers_the_cap() {
-        assert_eq!(stepped_cap(None, ThermalLevel::Nominal), None);
-        assert_eq!(stepped_cap(None, ThermalLevel::Fair), None);
-        assert_eq!(stepped_cap(None, ThermalLevel::Serious), Some(10.0));
-        assert_eq!(stepped_cap(None, ThermalLevel::Critical), Some(5.0));
-        assert_eq!(stepped_cap(Some(20.0), ThermalLevel::Fair), Some(20.0));
-        assert_eq!(stepped_cap(Some(20.0), ThermalLevel::Serious), Some(10.0));
-        assert_eq!(stepped_cap(Some(20.0), ThermalLevel::Critical), Some(5.0));
+        assert_eq!(thermal_cap(None, ThermalLevel::Nominal), None);
+        assert_eq!(thermal_cap(None, ThermalLevel::Fair), None);
+        assert_eq!(thermal_cap(None, ThermalLevel::Serious), Some(10.0));
+        assert_eq!(thermal_cap(None, ThermalLevel::Critical), Some(5.0));
+        assert_eq!(thermal_cap(Some(20.0), ThermalLevel::Fair), Some(20.0));
+        assert_eq!(thermal_cap(Some(20.0), ThermalLevel::Serious), Some(10.0));
+        assert_eq!(thermal_cap(Some(20.0), ThermalLevel::Critical), Some(5.0));
         // Already below the ceiling: pressure must not RAISE a cap.
-        assert_eq!(stepped_cap(Some(4.0), ThermalLevel::Serious), Some(4.0));
-        assert_eq!(stepped_cap(Some(4.0), ThermalLevel::Critical), Some(4.0));
+        assert_eq!(thermal_cap(Some(4.0), ThermalLevel::Serious), Some(4.0));
+        assert_eq!(thermal_cap(Some(4.0), ThermalLevel::Critical), Some(4.0));
+    }
+
+    #[test]
+    fn raw_memory_levels_map_the_kernels_bitmask_and_default_to_normal() {
+        assert_eq!(MemoryPressure::from_raw(1), MemoryPressure::Normal);
+        assert_eq!(MemoryPressure::from_raw(2), MemoryPressure::Warn);
+        assert_eq!(MemoryPressure::from_raw(4), MemoryPressure::Critical);
+        // 0 is what an unavailable sysctl answers, and 3 is not a level the
+        // kernel publishes. Both mean "no reading", never "critical" -- the
+        // opposite of the thermal clamp, for the reason `from_raw` gives.
+        assert_eq!(MemoryPressure::from_raw(0), MemoryPressure::Normal);
+        assert_eq!(MemoryPressure::from_raw(3), MemoryPressure::Normal);
+        assert_eq!(MemoryPressure::from_raw(-1), MemoryPressure::Normal);
+        assert_eq!(MemoryPressure::from_raw(99), MemoryPressure::Normal);
+        assert_eq!(MemoryPressure::default(), MemoryPressure::Normal);
+    }
+
+    #[test]
+    fn the_memory_ladder_only_ever_lowers_the_cap() {
+        assert_eq!(memory_cap(None, MemoryPressure::Normal), None);
+        assert_eq!(memory_cap(None, MemoryPressure::Warn), Some(10.0));
+        assert_eq!(memory_cap(None, MemoryPressure::Critical), Some(5.0));
+        assert_eq!(memory_cap(Some(20.0), MemoryPressure::Warn), Some(10.0));
+        assert_eq!(memory_cap(Some(4.0), MemoryPressure::Critical), Some(4.0));
+    }
+
+    /// **The two signals are independent and the combined ladder takes the
+    /// MINIMUM.** Each case here is one a single-signal ladder gets wrong:
+    /// cool-and-short and hot-and-comfortable both cap, and a run under both
+    /// takes the harder of the two rather than whichever was checked last.
+    #[test]
+    fn the_combined_ladder_takes_whichever_signal_binds_harder() {
+        // Neither: untouched, which is the default decode path.
+        assert_eq!(
+            stepped_cap(None, ThermalLevel::Nominal, MemoryPressure::Normal),
+            None
+        );
+        // Cool and short of memory. A thermal-only ladder misses this.
+        assert_eq!(
+            stepped_cap(None, ThermalLevel::Nominal, MemoryPressure::Critical),
+            Some(5.0)
+        );
+        // Hot and comfortable. A memory-only ladder misses this.
+        assert_eq!(
+            stepped_cap(None, ThermalLevel::Critical, MemoryPressure::Normal),
+            Some(5.0)
+        );
+        // Both, disagreeing: the harder ceiling wins in either direction, so
+        // neither argument order nor a last-writer-wins bug can pass.
+        assert_eq!(
+            stepped_cap(None, ThermalLevel::Serious, MemoryPressure::Critical),
+            Some(5.0)
+        );
+        assert_eq!(
+            stepped_cap(None, ThermalLevel::Critical, MemoryPressure::Warn),
+            Some(5.0)
+        );
+        // And an explicit cap already below both is not raised by either.
+        assert_eq!(
+            stepped_cap(Some(2.0), ThermalLevel::Critical, MemoryPressure::Critical),
+            Some(2.0)
+        );
     }
 
     #[test]
@@ -290,11 +461,16 @@ mod tests {
         let performance = rate_control_for(PowerProfile::Performance, None);
         assert_eq!(performance.max_tokens_per_sec, None);
         assert!(performance.thermal_probe.is_none());
+        // The memory watcher follows the profile's stepping, so the default
+        // decode path stays exactly the statement sequence it was: no probe,
+        // not active, no pacer built.
+        assert!(performance.memory_probe.is_none());
         assert!(!performance.is_active());
 
         let balanced = rate_control_for(PowerProfile::Balanced, None);
         assert_eq!(balanced.max_tokens_per_sec, None);
         assert!(balanced.thermal_probe.is_some());
+        assert!(balanced.memory_probe.is_some());
         assert!(balanced.is_active());
 
         let efficiency = rate_control_for(PowerProfile::Efficiency, None);
@@ -303,6 +479,7 @@ mod tests {
             Some(READING_SPEED_TOK_PER_SEC)
         );
         assert!(efficiency.thermal_probe.is_some());
+        assert!(efficiency.memory_probe.is_some());
 
         // An explicit cap overrides the profile's own, in both directions.
         let overridden = rate_control_for(PowerProfile::Efficiency, Some(3.0));
@@ -310,6 +487,7 @@ mod tests {
         let capped_performance = rate_control_for(PowerProfile::Performance, Some(8.0));
         assert_eq!(capped_performance.max_tokens_per_sec, Some(8.0));
         assert!(capped_performance.thermal_probe.is_none());
+        assert!(capped_performance.memory_probe.is_none());
         assert!(capped_performance.is_active());
     }
 

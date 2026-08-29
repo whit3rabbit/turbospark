@@ -65,6 +65,51 @@ pub fn physical_memory() -> u64 {
     }
 }
 
+/// `kern.memorystatus_vm_pressure_level`, raw: 1 normal, 2 warn, 4 critical.
+/// Returned unmapped for [`thermal_state_raw`]'s reason -- the meaning of a
+/// level is decided once, in `runtime::MemoryPressure::from_raw`. `0` when
+/// the sysctl is unavailable, which that mapping reads as "no reading" and
+/// never as "no pressure".
+///
+/// **THIS IS THE KERNEL'S OWN VERDICT AND NOT A FREE-PAGE COUNT, WHICH IS
+/// WHAT MAKES IT USABLE HERE.** [`physical_memory`]'s doc declines
+/// `host_statistics64`'s free pages on the grounds that a number moving
+/// second to second makes two runs incomparable -- correct, and about a
+/// BUDGET, which has to be stable across opens or no two footprints can be
+/// compared. A watcher is the opposite job: it exists to see the thing that
+/// moves. Reading a three-valued OS verdict rather than a page count keeps
+/// the two from being the same instrument, and nothing here budgets from it.
+///
+/// There is no `NSProcessInfo` property for this the way there is for
+/// thermal state, so this is a sysctl where its neighbours are message
+/// sends. `DISPATCH_SOURCE_TYPE_MEMORYPRESSURE` is the push form and is not
+/// used: the decode loop already polls on a token boundary, and a callback
+/// would need a channel and a thread to reach it.
+pub fn memory_pressure_raw() -> i64 {
+    let mut level: libc::c_int = 0;
+    let mut size = std::mem::size_of::<libc::c_int>();
+    // SAFETY: `kern.memorystatus_vm_pressure_level` is a documented read-only
+    // integer sysctl. The name is a NUL-terminated literal, the output
+    // pointer is a live local of exactly `size` bytes, and no new value is
+    // written (null pointer, zero length). A non-zero return leaves `level`
+    // at its initialized 0, which the mapping reads as "no reading".
+    #[allow(unsafe_code)]
+    let rc = unsafe {
+        libc::sysctlbyname(
+            c"kern.memorystatus_vm_pressure_level".as_ptr(),
+            (&mut level as *mut libc::c_int).cast(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if rc == 0 {
+        level as i64
+    } else {
+        0
+    }
+}
+
 // See `thermal_state_raw` for the allow.
 #[allow(unexpected_cfgs)]
 /// `NSProcessInfo.processInfo.isLowPowerModeEnabled`.

@@ -214,7 +214,9 @@ pub use moe_prefill_batch_gguf::{
     encode_moe_prefill_phase2_fused_mxfp4, new_routed_blobs_wide as new_routed_blobs_wide_mxfp4,
 };
 #[cfg(target_os = "macos")]
-pub use power_state::{low_power_mode_enabled, physical_memory, thermal_state_raw};
+pub use power_state::{
+    low_power_mode_enabled, memory_pressure_raw, physical_memory, thermal_state_raw,
+};
 #[cfg(target_os = "macos")]
 pub use prefill_scratch::{PrefillChunkScratchBuffers, PrefillChunkScratchLayout};
 #[cfg(target_os = "macos")]

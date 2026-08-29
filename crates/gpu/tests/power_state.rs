@@ -26,3 +26,30 @@ fn low_power_mode_probe_resolves() {
     let enabled = low_power_mode_enabled();
     assert!(enabled || !enabled);
 }
+
+/// The kernel's own pressure verdict, on the machine running the test.
+///
+/// **Asserts the SET rather than a value**, because this is live machine
+/// state: a test demanding `1` fails on a genuinely busy machine, which is
+/// the one condition the probe exists for. `0` is in the accepted set and
+/// means the sysctl did not answer -- distinguishable from every real level,
+/// which is what `runtime::MemoryPressure::from_raw` needs.
+#[test]
+fn memory_pressure_reads_one_of_the_documented_levels() {
+    let raw = turbospark_gpu::memory_pressure_raw();
+    assert!(
+        matches!(raw, 0 | 1 | 2 | 4),
+        "kern.memorystatus_vm_pressure_level answered {raw}, \
+         which is not a documented level"
+    );
+}
+
+/// Two reads in a row must not disagree about whether the probe WORKS. The
+/// level may legitimately move between them; whether the sysctl exists may
+/// not, and a flapping zero would mean the call is failing intermittently.
+#[test]
+fn the_probe_is_available_or_not_consistently() {
+    let a = turbospark_gpu::memory_pressure_raw();
+    let b = turbospark_gpu::memory_pressure_raw();
+    assert_eq!(a == 0, b == 0, "the probe answered {a} then {b}");
+}
