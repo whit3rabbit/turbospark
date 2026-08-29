@@ -77,6 +77,7 @@ extension InspectorView {
                     }
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .help("Architecture: \(visuals.family)")
                 }
             }
         }
@@ -139,19 +140,30 @@ extension InspectorView {
                 }
             }
 
+            // `.labelsHidden()` is load-bearing, not cosmetic: on macOS a
+            // TextField's title is a VISIBLE LABEL rather than a placeholder,
+            // so "Uncapped" was drawn beside the field and clipped to "Un-"
+            // by the inspector's width. Every other control in this section
+            // already hides its label for the same reason.
             LabeledContent("Rate Cap") {
                 HStack(spacing: 6) {
                     TextField("Uncapped", value: $model.runtimeOptions.maxTokensPerSec, format: .number)
+                        .labelsHidden()
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 70)
                         .multilineTextAlignment(.trailing)
                         .accessibilityLabel("Rate cap in tokens per second")
-                    Text("tok/s")
+                        .accessibilityValue(rateCapIsUncapped ? "Uncapped" : "\(model.runtimeOptions.maxTokensPerSec) tokens per second")
+                    // Zero is the uncapped sentinel, and a bare "0" next to
+                    // "tok/s" reads as a cap of zero tokens per second.
+                    Text(rateCapIsUncapped ? "uncapped" : "tok/s")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .accessibilityHidden(true)
                 }
+                .fixedSize()
             }
+            .help("Tokens per second ceiling. 0 leaves generation uncapped.")
 
             if model.canReloadModel {
                 Button("Apply Options & Reload") {
@@ -161,6 +173,11 @@ extension InspectorView {
             }
         }
         .disabled(model.isRunning)
+    }
+
+    /// Zero is the engine's "no cap" sentinel for `maxTokensPerSec`.
+    private var rateCapIsUncapped: Bool {
+        model.runtimeOptions.maxTokensPerSec <= 0
     }
 
     var steeringSection: some View {

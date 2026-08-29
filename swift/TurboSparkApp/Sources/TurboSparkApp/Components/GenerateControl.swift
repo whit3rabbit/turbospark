@@ -1,5 +1,9 @@
 import SwiftUI
 
+/// Primary generation action button and live progress/cancellation pill.
+///
+/// Switches between "Generate" (Cmd+Return) when idle and a live progress pill
+/// showing tokens/sec or prefill counts with a Stop button (Cmd+.) while running.
 struct GenerateControl: View {
     @ObservedObject var model: AppModel
     @ScaledMetric private var controlHeight: CGFloat = 34
@@ -34,7 +38,7 @@ struct GenerateControl: View {
         .keyboardShortcut(.return, modifiers: .command)
         .disabled(!model.canRun)
         .opacity(model.canRun ? 1 : 0.62)
-        .help(model.canRun ? "Generate (⌘↩)" : "Generate (disabled)")
+        .help(model.canRun ? "Generate (Cmd+Return)" : "Generate (disabled)")
     }
 
     private var runningPill: some View {
@@ -74,7 +78,7 @@ struct GenerateControl: View {
         }
         .keyboardShortcut(".", modifiers: .command)
         .disabled(!model.canCancel)
-        .help("Stop generation (⌘.)")
+        .help("Stop generation (Cmd+.)")
         // The pill combines live status text and a stop icon. VoiceOver
         // should hear the live value as the action's current state and
         // know the button is "Stop", not whatever symbol happens to be on it.

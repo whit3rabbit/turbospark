@@ -1,5 +1,6 @@
 import SwiftUI
 
+/// Diagnostics inspector section presenting prefill/decode timing, token counts, tok/s speed, and GPU phase breakdown.
 struct RunnerDiagnosticsSection: View {
     let diagnostics: AppDiagnostics?
 
@@ -61,11 +62,8 @@ private struct DiagnosticRow: View {
     var body: some View {
         LabeledContent(label) {
             Text(value)
-                .font(.caption)
-                .monospacedDigit()
+                .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
-                .textSelection(.enabled)
-                .multilineTextAlignment(.trailing)
         }
     }
 }

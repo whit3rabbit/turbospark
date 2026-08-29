@@ -1,5 +1,6 @@
 import SwiftUI
 
+/// Dismissible top error banner view presenting active inference or application errors with VoiceOver announcements.
 struct ErrorBanner: View {
     @ObservedObject var model: AppModel
 
@@ -29,6 +30,7 @@ struct ErrorBanner: View {
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
+                .help("Dismiss error")
                 .accessibilityLabel("Dismiss error")
                 .accessibilityHint("Removes the error message")
             }

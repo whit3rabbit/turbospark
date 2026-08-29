@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 
+/// Supported application localization languages and text direction handling.
 public enum AppLanguage: String, CaseIterable, Identifiable, Sendable {
     case system = "system"
     case english = "en"
@@ -17,10 +18,12 @@ public enum AppLanguage: String, CaseIterable, Identifiable, Sendable {
     case arabic = "ar"
     case hindi = "hi"
 
+    /// UserDefaults key where language preference is persisted.
     public static let storageKey = "TurboSpark.language"
 
     public var id: String { rawValue }
 
+    /// Native / localized display label for language pickers.
     public var label: String {
         switch self {
         case .system: return "System Default"
@@ -40,8 +43,7 @@ public enum AppLanguage: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
-
-
+    /// System Locale instance for the selected language.
     public var locale: Locale {
         switch self {
         case .system:
@@ -51,6 +53,7 @@ public enum AppLanguage: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
+    /// Whether the language uses right-to-left layout.
     public var isRTL: Bool {
         switch self {
         case .arabic:
@@ -67,11 +70,12 @@ public enum AppLanguage: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
-
+    /// Text and component layout direction.
     public var layoutDirection: LayoutDirection {
         isRTL ? .rightToLeft : .leftToRight
     }
 
+    /// Resolves stored raw string value into an `AppLanguage` instance.
     public static func resolve(_ storedValue: String) -> Self {
         Self(rawValue: storedValue) ?? .system
     }

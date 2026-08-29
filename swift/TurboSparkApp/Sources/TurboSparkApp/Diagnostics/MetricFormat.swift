@@ -50,4 +50,21 @@ enum MetricFormat {
     static func storage(_ bytes: UInt64) -> String {
         storageFormatter.string(fromByteCount: Int64(clamping: bytes))
     }
+
+    /// Formats a single file's size, KB included.
+    ///
+    /// Separate from `storage` on purpose: that one is for MODEL installs and
+    /// deliberately floors at MB, which reads a 27 KB document as "0 MB".
+    static func fileSize(_ bytes: Int?) -> String? {
+        guard let bytes, bytes > 0 else { return nil }
+        return fileSizeFormatter.string(fromByteCount: Int64(clamping: bytes))
+    }
+
+    private static let fileSizeFormatter: ByteCountFormatter = {
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        formatter.allowedUnits = [.useKB, .useMB, .useGB]
+        formatter.isAdaptive = true
+        return formatter
+    }()
 }

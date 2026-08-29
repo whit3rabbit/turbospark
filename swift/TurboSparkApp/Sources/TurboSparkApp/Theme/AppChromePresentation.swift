@@ -30,18 +30,31 @@ public struct AppSidebarControlPresentation: Equatable, Sendable {
 }
 
 public enum AppChromeLayout {
-    public static let primaryMinimumWidth: CGFloat = 560
-    public static let chatSidebarWidth: CGFloat = 272
+    public static let primaryMinimumWidth: CGFloat = 520
+    public static let chatSidebarWidth: CGFloat = 260
     public static let inspectorWidth: CGFloat = 320
     public static let dividerWidth: CGFloat = 1
     public static let minimumHeight: CGFloat = 520
-    public static let headerHorizontalPadding: CGFloat = 20
+
+    /// Width of the always-visible icon rail holding the top-level sections.
+    public static let navigationRailWidth: CGFloat = 52
+    /// Height of the flat top bar carrying the model loader.
+    public static let topBarHeight: CGFloat = 44
+    /// Height of the bottom status strip carrying memory and throughput.
+    public static let statusBarHeight: CGFloat = 26
+    /// Leading inset the top bar needs so its first control clears the traffic
+    /// lights, which a `.hiddenTitleBar` window still draws over the content.
+    /// The zoom button's right edge sits near x = 66 and the rail is 52 wide,
+    /// so 26 puts the first control at 78.
+    public static let trafficLightClearance: CGFloat = 26
 
     public static func minimumWindowWidth(
         isChatSidebarVisible: Bool,
         isInspectorVisible: Bool
     ) -> CGFloat {
-        primaryMinimumWidth
+        navigationRailWidth
+            + dividerWidth
+            + primaryMinimumWidth
             + (isChatSidebarVisible ? chatSidebarWidth + dividerWidth : 0)
             + (isInspectorVisible ? inspectorWidth + dividerWidth : 0)
     }

@@ -1,67 +1,78 @@
 import AppKit
 import SwiftUI
 
+@MainActor
 public enum TurboSparkTheme {
-    /// Adaptive brand accent color: vibrant emerald green in dark mode (7.2:1 contrast)
-    /// and deep forest green in light mode (5.1:1 contrast) for WCAG 2.1 AA compliance,
-    /// with enhanced high-contrast variants for accessibilityHighContrast appearances (9.5:1+).
-    public static let accentNSColor = NSColor(name: nil) { appearance in
-        let match = appearance.bestMatch(from: [
-            .accessibilityHighContrastDarkAqua,
-            .accessibilityHighContrastAqua,
-            .darkAqua,
-            .aqua
-        ])
-        let isDark = match == .darkAqua || match == .accessibilityHighContrastDarkAqua
-        let isHighContrast = match == .accessibilityHighContrastDarkAqua || match == .accessibilityHighContrastAqua
+    /// Adaptive brand accent color resolved dynamically from active appearance settings.
+    public static var accentColor: Color {
+        let isDark = NSApp.effectiveAppearance.name.rawValue.lowercased().contains("dark")
+        return AppearanceManager.shared.activeAccentColor(isDark: isDark)
+    }
 
-        if isHighContrast {
-            if isDark {
-                return NSColor(
-                    srgbRed: 130.0 / 255.0,
-                    green: 225.0 / 255.0,
-                    blue: 140.0 / 255.0,
-                    alpha: 1.0)
-            } else {
-                return NSColor(
-                    srgbRed: 20.0 / 255.0,
-                    green: 95.0 / 255.0,
-                    blue: 35.0 / 255.0,
-                    alpha: 1.0)
-            }
-        } else if isDark {
-            return NSColor(
-                srgbRed: 106.0 / 255.0,
-                green: 186.0 / 255.0,
-                blue: 113.0 / 255.0,
-                alpha: 1.0)
+    public static var accentNSColor: NSColor {
+        NSColor(accentColor)
+    }
+
+    public static var sidebarBackgroundColor: Color {
+        let isDark = NSApp.effectiveAppearance.name.rawValue.lowercased().contains("dark")
+        let config = AppearanceManager.shared.activeConfig(isDark: isDark)
+        if config.translucentSidebar {
+            return Color(nsColor: .windowBackgroundColor).opacity(0.82)
         } else {
-            return NSColor(
-                srgbRed: 35.0 / 255.0,
-                green: 125.0 / 255.0,
-                blue: 50.0 / 255.0,
-                alpha: 1.0)
+            return AppearanceManager.shared.activeBackgroundColor(isDark: isDark)
         }
     }
 
-    public static let accentColor = Color(nsColor: accentNSColor)
-
-    public static var sidebarBackgroundColor: Color {
-        if #available(macOS 15.0, *) {
-            return Color(nsColor: .windowBackgroundColor).mix(with: accentColor, by: 0.025)
+    /// Background of the leftmost icon rail: slightly differentiated from the sidebar.
+    public static var railBackgroundColor: Color {
+        let isDark = NSApp.effectiveAppearance.name.rawValue.lowercased().contains("dark")
+        let config = AppearanceManager.shared.activeConfig(isDark: isDark)
+        if config.translucentSidebar {
+            return Color(nsColor: .windowBackgroundColor).opacity(0.7)
         } else {
-            return Color(nsColor: .windowBackgroundColor)
+            if #available(macOS 15.0, *) {
+                return AppearanceManager.shared.activeBackgroundColor(isDark: isDark).mix(with: .black, by: 0.06)
+            } else {
+                return Color(nsColor: .underPageBackgroundColor)
+            }
         }
+    }
+
+    /// Background of the flat top bar and bottom status strip.
+    public static var barBackgroundColor: Color {
+        let isDark = NSApp.effectiveAppearance.name.rawValue.lowercased().contains("dark")
+        return AppearanceManager.shared.activeBackgroundColor(isDark: isDark)
+    }
+
+    /// Fill for cards, chips and the composer: the raised surface in the app.
+    public static var surfaceColor: Color {
+        Color(nsColor: .controlBackgroundColor)
+    }
+
+    /// Hairline used between every chrome band.
+    public static var hairlineColor: Color {
+        let isDark = NSApp.effectiveAppearance.name.rawValue.lowercased().contains("dark")
+        let config = AppearanceManager.shared.activeConfig(isDark: isDark)
+        let opacity = 0.25 + (config.contrast / 100.0) * 0.55
+        return Color(nsColor: .separatorColor).opacity(opacity)
     }
 
     /// Returns high-contrast compliant text styling for metadata and captions (WCAG 2.1 AA >= 4.5:1).
     public static func metadataForeground(contrast: ColorSchemeContrast = .standard) -> Color {
-        contrast == .increased ? Color.primary.opacity(0.85) : Color.secondary
+        let isDark = NSApp.effectiveAppearance.name.rawValue.lowercased().contains("dark")
+        let config = AppearanceManager.shared.activeConfig(isDark: isDark)
+        if contrast == .increased || config.contrast > 70 {
+            return Color.primary.opacity(0.9)
+        } else {
+            return Color.secondary
+        }
     }
 
     /// Returns high-contrast compliant secondary border stroke opacity.
     public static func borderStrokeOpacity(contrast: ColorSchemeContrast = .standard) -> Double {
-        contrast == .increased ? 0.85 : 0.45
+        let isDark = NSApp.effectiveAppearance.name.rawValue.lowercased().contains("dark")
+        let config = AppearanceManager.shared.activeConfig(isDark: isDark)
+        let base = (config.contrast / 100.0) * 0.85
+        return contrast == .increased ? max(0.85, base) : max(0.3, base)
     }
 }
-

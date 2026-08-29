@@ -1,5 +1,6 @@
 import SwiftUI
 
+/// Floating notification toast overlay presenting dismissible status, error, or confirmation banners.
 public struct ToastOverlayView: View {
     @ObservedObject var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -52,6 +53,7 @@ public struct ToastOverlayView: View {
                     .contentShape(Circle())
             }
             .buttonStyle(.plain)
+            .help("Dismiss notification")
             .accessibilityLabel("Dismiss notification")
             .accessibilityHint("Dismisses the current status message")
         }

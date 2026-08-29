@@ -1,9 +1,18 @@
 import Foundation
 
+/// Fast streaming SAX XML parser that extracts linear text from Word (.docx)
+/// and PowerPoint (.pptx) XML document parts.
+///
+/// Handles paragraph boundaries (`<w:p>`, `<a:p>`), text runs (`<w:t>`, `<a:t>`),
+/// explicit line breaks (`<w:br>`), and tabs (`<w:tab>`).
 final class FlowingTextXMLParser: NSObject, XMLParserDelegate {
     private var output = ""
     private var capturedText: String?
 
+    /// Parses XML data and returns extracted plain text.
+    ///
+    /// - Parameter data: Raw XML bytes from a document part.
+    /// - Returns: Reconstructed text with whitespace and line breaks preserved.
     func parse(_ data: Data) throws -> String {
         output = ""
         capturedText = nil
@@ -58,11 +67,19 @@ final class FlowingTextXMLParser: NSObject, XMLParserDelegate {
     }
 }
 
+/// SAX parser for Excel `xl/sharedStrings.xml` tables.
+///
+/// OpenXML Excel stores repeated string literals in a global shared string table (`<sst>`).
+/// Each entry (`<si>`) contains one or more text runs (`<t>`).
 final class SharedStringsXMLParser: NSObject, XMLParserDelegate {
     private var strings: [String] = []
     private var currentString: String?
     private var capturedText: String?
 
+    /// Parses shared strings XML into an indexed array of strings.
+    ///
+    /// - Parameter data: Raw XML bytes for `xl/sharedStrings.xml`.
+    /// - Returns: Array of strings indexed by 0-based integer IDs.
     func parse(_ data: Data) throws -> [String] {
         strings = []
         currentString = nil
@@ -117,6 +134,10 @@ final class SharedStringsXMLParser: NSObject, XMLParserDelegate {
     }
 }
 
+/// SAX parser for Excel worksheet parts (`xl/worksheets/sheet*.xml`).
+///
+/// Decodes cell values (`<c>`), formulas (`<f>`), inline strings (`<inlineStr>`),
+/// shared string lookups (`s`), and boolean flags (`b`), outputting tab-separated rows.
 final class WorksheetXMLParser: NSObject, XMLParserDelegate {
     private struct Cell {
         var reference = ""
@@ -133,10 +154,17 @@ final class WorksheetXMLParser: NSObject, XMLParserDelegate {
     private var capturedElement: String?
     private var capturedText = ""
 
+    /// Initializes a worksheet parser with a preloaded shared string table.
+    ///
+    /// - Parameter sharedStrings: Array of shared strings indexed by cell values.
     init(sharedStrings: [String]) {
         self.sharedStrings = sharedStrings
     }
 
+    /// Parses worksheet XML data into tab-delimited row text.
+    ///
+    /// - Parameter data: Raw XML bytes for a worksheet part.
+    /// - Returns: Extracted table text formatted as lines of tab-separated cells.
     func parse(_ data: Data) throws -> String {
         output = ""
         rowCells = []
@@ -235,7 +263,7 @@ final class WorksheetXMLParser: NSObject, XMLParserDelegate {
         if !cell.formula.isEmpty {
             renderedValue = value.isEmpty
                 ? "=\(cell.formula)"
-                : "=\(cell.formula) → \(value)"
+                : "=\(cell.formula) -> \(value)"
         } else {
             renderedValue = value
         }
@@ -246,12 +274,17 @@ final class WorksheetXMLParser: NSObject, XMLParserDelegate {
     }
 }
 
+/// Description of an Excel sheet pairing its user-facing name and archive entry path.
 struct WorkbookSheet {
     let name: String
     let entry: String
 }
 
+/// SAX parser for Excel `xl/workbook.xml` structure.
+///
+/// Extracts sheet declarations and their corresponding relationship IDs (`r:id`).
 final class WorkbookXMLParser: NSObject, XMLParserDelegate {
+    /// Reference to a sheet defined in `xl/workbook.xml`.
     struct SheetReference {
         let name: String
         let relationshipID: String
@@ -259,6 +292,10 @@ final class WorkbookXMLParser: NSObject, XMLParserDelegate {
 
     private var sheets: [SheetReference] = []
 
+    /// Parses workbook XML to list sheets and their relationship IDs.
+    ///
+    /// - Parameter data: Raw XML bytes for `xl/workbook.xml`.
+    /// - Returns: List of sheet references with names and relationship IDs.
     func parse(_ data: Data) throws -> [SheetReference] {
         sheets = []
         let parser = XMLParser(data: data)
@@ -286,9 +323,16 @@ final class WorkbookXMLParser: NSObject, XMLParserDelegate {
     }
 }
 
+/// SAX parser for OpenXML `.rels` relationship maps.
+///
+/// Maps relationship identifiers (`Id="rId1"`) to target relative paths (`Target="worksheets/sheet1.xml"`).
 final class RelationshipsXMLParser: NSObject, XMLParserDelegate {
     private var relationships: [String: String] = [:]
 
+    /// Parses relationships XML data.
+    ///
+    /// - Parameter data: Raw XML bytes for a `.rels` part.
+    /// - Returns: Dictionary mapping relationship ID to target relative path.
     func parse(_ data: Data) throws -> [String: String] {
         relationships = [:]
         let parser = XMLParser(data: data)
@@ -316,10 +360,20 @@ final class RelationshipsXMLParser: NSObject, XMLParserDelegate {
     }
 }
 
+/// Extracts the local element or attribute name by stripping XML namespace prefixes.
+///
+/// - Parameter qualifiedName: Fully qualified tag name (e.g. `w:t` or `a:p`).
+/// - Returns: Local tag name (e.g. `t` or `p`).
 func localName(_ qualifiedName: String) -> String {
     qualifiedName.split(separator: ":").last.map(String.init) ?? qualifiedName
 }
 
+/// Searches an XML attribute dictionary for a key matching a local name regardless of namespace prefix.
+///
+/// - Parameters:
+///   - attributes: Dictionary of XML attribute key-value pairs.
+///   - name: Unprefixed local attribute name to find.
+/// - Returns: Attribute string value if found, or nil.
 func attribute(_ attributes: [String: String], localName name: String) -> String? {
     attributes.first { localName($0.key) == name }?.value
 }

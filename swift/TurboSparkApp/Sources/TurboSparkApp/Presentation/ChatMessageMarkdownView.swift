@@ -41,7 +41,7 @@ extension Theme {
         .blockquote { configuration in
             HStack(spacing: 0) {
                 RoundedRectangle(cornerRadius: 2)
-                    .fill(TurboSparkTheme.accentColor.opacity(0.7))
+                    .fill(Color.accentColor.opacity(0.7))
                     .relativeFrame(width: .em(0.25))
                 configuration.label
                     .markdownTextStyle {
@@ -105,9 +105,10 @@ private struct CodeBlockContainer<Content: View>: View {
                         Text(isCopied ? "Copied" : "Copy")
                     }
                     .font(.caption2.weight(.medium))
-                    .foregroundStyle(isCopied ? TurboSparkTheme.accentColor : Color.secondary)
+                    .foregroundStyle(isCopied ? Color.accentColor : Color.secondary)
                 }
                 .buttonStyle(.plain)
+                .help("Copy code block to clipboard")
                 .accessibilityLabel(isCopied ? "Copied \(language ?? "code")" : "Copy \(language ?? "code") block")
                 .accessibilityHint("Copies the code block to the clipboard")
             }

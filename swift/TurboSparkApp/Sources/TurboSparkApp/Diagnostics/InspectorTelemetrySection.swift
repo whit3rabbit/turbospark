@@ -3,6 +3,7 @@ import SwiftUI
 import TurboSpark
 
 extension InspectorView {
+    /// Inspector sidebar section displaying hardware RAM, chip details, thermal pressure, and model architecture metadata.
     var telemetrySection: some View {
         Section("Session Telemetry & Introspection") {
             if let t = model.telemetry {
@@ -93,8 +94,8 @@ extension InspectorView {
                 if !info.specialTokens.stopTokenIds.isEmpty {
                     LabeledContent("Stop Token IDs") {
                         Text(info.specialTokens.stopTokenIds.map { "\($0)" }.joined(separator: ", "))
-                            .font(.caption2.monospacedDigit())
-                            .foregroundStyle(.secondary)
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
                     }
                 }
             }
