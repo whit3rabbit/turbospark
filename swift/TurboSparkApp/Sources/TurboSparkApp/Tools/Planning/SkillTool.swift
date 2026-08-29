@@ -2,7 +2,9 @@ import Foundation
 
 // MARK: - Skill Tool (OpenCode Compatible)
 
+/// Input parameters for loading a specialized workflow skill.
 public struct SkillInput: Codable, Sendable, Equatable {
+    /// Name of the skill to load from the project or global skill catalog.
     public var name: String
 
     public init(name: String) {
@@ -10,9 +12,13 @@ public struct SkillInput: Codable, Sendable, Equatable {
     }
 }
 
+/// Output returned when a skill is loaded and injected into prompt context.
 public struct SkillOutput: Codable, Sendable, Equatable {
+    /// Name of the activated skill.
     public var name: String
+    /// Source directory where the skill definition was located.
     public var directory: String
+    /// Textual instructions, guides, and workflow rules of the skill.
     public var output: String
 
     public init(name: String, directory: String = "", output: String) {
@@ -24,6 +30,7 @@ public struct SkillOutput: Codable, Sendable, Equatable {
 
 // MARK: - OpenAI Tool Definition for Skill
 
+/// OpenAI tool definition schemas for the skill loading subsystem.
 public enum SkillToolDefinitions {
     public static let skill = OpenAITool.function(
         name: "skill",

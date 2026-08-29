@@ -2,10 +2,15 @@ import Foundation
 
 // MARK: - FileRead Tool
 
+/// Input payload for reading files from disk, with optional pagination, limits, and PDF page ranges.
 public struct FileReadInput: Codable, Sendable, Equatable {
+    /// File path to read (relative to project root or absolute).
     public var filePath: String
+    /// Starting line offset (1-indexed).
     public var offset: Int?
+    /// Maximum line count to read.
     public var limit: Int?
+    /// Page range for PDF documents (e.g. "1-5").
     public var pages: String?
 
     enum CodingKeys: String, CodingKey {
@@ -23,6 +28,7 @@ public struct FileReadInput: Codable, Sendable, Equatable {
     }
 }
 
+/// Output payload from reading file content across supported document formats.
 public enum FileReadOutput: Codable, Sendable, Equatable {
     case text(TextPayload)
     case image(ImagePayload)
@@ -31,6 +37,7 @@ public enum FileReadOutput: Codable, Sendable, Equatable {
     case parts(PartsPayload)
     case fileUnchanged(UnchangedPayload)
 
+    /// Text file content payload with line metadata.
     public struct TextPayload: Codable, Sendable, Equatable {
         public var filePath: String
         public var content: String
@@ -59,6 +66,7 @@ public enum FileReadOutput: Codable, Sendable, Equatable {
         }
     }
 
+    /// Base64 encoded image content payload.
     public struct ImagePayload: Codable, Sendable, Equatable {
         public var base64: String
         public var type: String
@@ -71,6 +79,7 @@ public enum FileReadOutput: Codable, Sendable, Equatable {
         }
     }
 
+    /// Jupyter notebook summary payload.
     public struct NotebookPayload: Codable, Sendable, Equatable {
         public var filePath: String
         public var cellCount: Int
@@ -81,6 +90,7 @@ public enum FileReadOutput: Codable, Sendable, Equatable {
         }
     }
 
+    /// Base64 encoded PDF payload.
     public struct PDFPayload: Codable, Sendable, Equatable {
         public var filePath: String
         public var base64: String
@@ -93,6 +103,7 @@ public enum FileReadOutput: Codable, Sendable, Equatable {
         }
     }
 
+    /// Multi-part or paginated document payload.
     public struct PartsPayload: Codable, Sendable, Equatable {
         public var filePath: String
         public var originalSize: Int
@@ -109,6 +120,7 @@ public enum FileReadOutput: Codable, Sendable, Equatable {
         }
     }
 
+    /// Unchanged status payload when file cache matches disk.
     public struct UnchangedPayload: Codable, Sendable, Equatable {
         public var filePath: String
         public var source: String?
@@ -119,6 +131,7 @@ public enum FileReadOutput: Codable, Sendable, Equatable {
         }
     }
 
+    /// Artifact version reference payload.
     public struct ArtifactReadRef: Codable, Sendable, Equatable {
         public var slug: String
         public var ver: String
@@ -132,8 +145,11 @@ public enum FileReadOutput: Codable, Sendable, Equatable {
 
 // MARK: - FileWrite Tool
 
+/// Input payload for writing entire file contents to a path.
 public struct FileWriteInput: Codable, Sendable, Equatable {
+    /// Destination file path.
     public var filePath: String
+    /// New file content text.
     public var content: String
 
     enum CodingKeys: String, CodingKey {
@@ -147,6 +163,7 @@ public struct FileWriteInput: Codable, Sendable, Equatable {
     }
 }
 
+/// Structured diff hunk description.
 public struct StructuredDiffPatch: Codable, Sendable, Equatable {
     public var oldStart: Int
     public var oldLines: Int
@@ -163,6 +180,7 @@ public struct StructuredDiffPatch: Codable, Sendable, Equatable {
     }
 }
 
+/// Git diff statistics summary for a modified file.
 public struct GitDiffSummary: Codable, Sendable, Equatable {
     public var filename: String
     public var status: String
@@ -191,6 +209,7 @@ public struct GitDiffSummary: Codable, Sendable, Equatable {
     }
 }
 
+/// Output payload returned after writing a file.
 public struct FileWriteOutput: Codable, Sendable, Equatable {
     public var type: String
     public var filePath: String
@@ -221,10 +240,15 @@ public struct FileWriteOutput: Codable, Sendable, Equatable {
 
 // MARK: - FileEdit Tool
 
+/// Input payload for editing an existing file via target string replacement.
 public struct FileEditInput: Codable, Sendable, Equatable {
+    /// File path to edit.
     public var filePath: String
+    /// Exact text sequence to find and replace.
     public var oldString: String
+    /// Replacement text sequence.
     public var newString: String
+    /// Whether to replace all occurrences or just the first.
     public var replaceAll: Bool?
 
     enum CodingKeys: String, CodingKey {
@@ -242,6 +266,7 @@ public struct FileEditInput: Codable, Sendable, Equatable {
     }
 }
 
+/// Output payload returned after performing string replacement on a file.
 public struct FileEditOutput: Codable, Sendable, Equatable {
     public var filePath: String
     public var oldString: String
@@ -275,6 +300,7 @@ public struct FileEditOutput: Codable, Sendable, Equatable {
 
 // MARK: - OpenAI Tool Definitions for File Read/Write Operations
 
+/// OpenAI tool definition schemas for FileRead, FileWrite, and FileEdit operations.
 public enum FileReadWriteToolDefinitions {
     public static let fileRead = OpenAITool.function(
         name: "FileRead",

@@ -2,13 +2,21 @@ import Foundation
 
 // MARK: - Projects Tool
 
+/// Input payload for querying and managing project documents, instructions, and search indexes.
 public struct ProjectsInput: Codable, Sendable, Equatable {
+    /// Operation method ("project_info", "project_read", "project_search", "project_write", "project_delete").
     public var method: String
+    /// Relative path of the document inside the project's knowledge store.
     public var path: String?
+    /// Inline document text content for write operations.
     public var content: String?
+    /// Local filesystem path for importing/syncing external files.
     public var localPath: String?
+    /// Whether the document should be highlighted as a primary user deliverable.
     public var presentToUser: Bool?
+    /// Search query string for semantic/keyword retrieval over project documents.
     public var query: String?
+    /// Maximum count of search hits to return.
     public var n: Int?
 
     enum CodingKeys: String, CodingKey {
@@ -40,8 +48,11 @@ public struct ProjectsInput: Codable, Sendable, Equatable {
     }
 }
 
+/// Metadata description of a document stored in project knowledge.
 public struct ProjectDocInfo: Codable, Sendable, Equatable {
+    /// Relative document path.
     public var path: String
+    /// ISO timestamp when the document was added.
     public var createdAt: String?
 
     enum CodingKeys: String, CodingKey {
@@ -55,9 +66,13 @@ public struct ProjectDocInfo: Codable, Sendable, Equatable {
     }
 }
 
+/// Search hit returned from project knowledge retrieval.
 public struct ProjectSearchHit: Codable, Sendable, Equatable {
+    /// Document file name or title.
     public var name: String?
+    /// Unique document ID.
     public var docUuid: String?
+    /// Matching text excerpt from the document.
     public var text: String?
 
     enum CodingKeys: String, CodingKey {
@@ -73,20 +88,35 @@ public struct ProjectSearchHit: Codable, Sendable, Equatable {
     }
 }
 
+/// Output payload from a project document or knowledge base operation.
 public struct ProjectsOutput: Codable, Sendable, Equatable {
+    /// Executed method name.
     public var method: String
+    /// Informational or warning notice text.
     public var notice: String?
+    /// Project display name.
     public var name: String?
+    /// Project summary description.
     public var description: String?
+    /// Project custom instructions and guidelines.
     public var instructions: String?
+    /// Discovered document listing.
     public var docs: [ProjectDocInfo]?
+    /// Document relative path.
     public var path: String?
+    /// Document textual content.
     public var content: String?
+    /// Local filesystem file path.
     public var localPath: String?
+    /// Whether RAG indexing is active for this document.
     public var rag: Bool?
+    /// Search result hits if method was project_search.
     public var hits: [ProjectSearchHit]?
+    /// Document unique ID.
     public var docUuid: String?
+    /// Whether an existing document was overwritten.
     public var replaced: Bool?
+    /// Whether the document was deleted.
     public var deleted: Bool?
 
     enum CodingKeys: String, CodingKey {
@@ -141,6 +171,7 @@ public struct ProjectsOutput: Codable, Sendable, Equatable {
 
 // MARK: - OpenAI Tool Definitions for Project Documents
 
+/// OpenAI tool definition schemas for project document knowledge operations.
 public enum ProjectDocDefinitions {
     public static let projects = OpenAITool.function(
         name: "Projects",

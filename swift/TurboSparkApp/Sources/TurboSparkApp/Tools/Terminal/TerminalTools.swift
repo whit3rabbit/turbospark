@@ -2,11 +2,17 @@ import Foundation
 
 // MARK: - Bash / Terminal Command Tool
 
+/// Input parameters for executing a command in the local shell.
 public struct BashInput: Codable, Sendable, Equatable {
+    /// Shell command string to execute.
     public var command: String
+    /// Optional execution timeout in milliseconds.
     public var timeout: Int?
+    /// Concise explanation of why the command is being run.
     public var description: String?
+    /// Whether the process should be launched asynchronously as a background task.
     public var runInBackground: Bool?
+    /// Whether sandboxing restrictions should be bypassed.
     public var dangerouslyDisableSandbox: Bool?
 
     enum CodingKeys: String, CodingKey {
@@ -32,15 +38,25 @@ public struct BashInput: Codable, Sendable, Equatable {
     }
 }
 
+/// Output returned upon completion or interruption of a shell command.
 public struct BashOutput: Codable, Sendable, Equatable {
+    /// Standard output text.
     public var stdout: String
+    /// Standard error text.
     public var stderr: String
+    /// File path where full raw output was persisted if large.
     public var rawOutputPath: String?
+    /// Whether the command execution was cancelled or interrupted.
     public var interrupted: Bool
+    /// Whether stdout contains binary image data.
     public var isImage: Bool?
+    /// Task identifier if dispatched as a background task.
     public var backgroundTaskId: String?
+    /// Timeout duration reached if timed out.
     public var timedOutAfterMs: Int?
+    /// Human-readable explanation of non-zero exit code if applicable.
     public var returnCodeInterpretation: String?
+    /// Process numeric exit status code.
     public var exitCode: Int?
 
     public init(
@@ -68,9 +84,13 @@ public struct BashOutput: Codable, Sendable, Equatable {
 
 // MARK: - REPL Tool
 
+/// Input parameters for evaluating code in a persistent interactive REPL session.
 public struct REPLInput: Codable, Sendable, Equatable {
+    /// Source code snippet to evaluate.
     public var code: String
+    /// Optional summary of what the code performs.
     public var description: String?
+    /// Execution timeout in milliseconds.
     public var timeout: Int?
 
     public init(code: String, description: String? = nil, timeout: Int? = nil) {
@@ -80,12 +100,19 @@ public struct REPLInput: Codable, Sendable, Equatable {
     }
 }
 
+/// Output returned from interactive REPL code evaluation.
 public struct REPLOutput: Codable, Sendable, Equatable {
+    /// Code snippet evaluated.
     public var code: String
+    /// Standard output from execution.
     public var stdout: String
+    /// Standard error output.
     public var stderr: String
+    /// Error message string if execution failed.
     public var error: String?
+    /// Whether execution was dispatched asynchronously.
     public var asyncDispatched: Bool?
+    /// Any dynamic tools registered during evaluation.
     public var registeredTools: [String]?
 
     public init(
@@ -107,6 +134,7 @@ public struct REPLOutput: Codable, Sendable, Equatable {
 
 // MARK: - OpenAI Tool Definitions for Terminal Operations
 
+/// OpenAI tool definition schemas for Bash and REPL execution.
 public enum TerminalToolDefinitions {
     public static let bash = OpenAITool.function(
         name: "Bash",

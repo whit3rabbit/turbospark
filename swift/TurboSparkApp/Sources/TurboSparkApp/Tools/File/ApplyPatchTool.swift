@@ -2,7 +2,9 @@ import Foundation
 
 // MARK: - ApplyPatch Tool (OpenCode Compatible)
 
+/// Input payload for applying unified diff or multi-file patches.
 public struct ApplyPatchInput: Codable, Sendable, Equatable {
+    /// Raw patch text containing diff headers and chunk operations.
     public var patchText: String
 
     enum CodingKeys: String, CodingKey {
@@ -13,7 +15,7 @@ public struct ApplyPatchInput: Codable, Sendable, Equatable {
         self.patchText = patchText
     }
 
-    // Support both patchText and patch_text decodings
+    /// Custom decoder supporting `patch_text`, `patchText`, or wrapped dictionary structures.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         if let text = try container.decodeIfPresent(String.self, forKey: .patchText) {
@@ -30,9 +32,13 @@ public struct ApplyPatchInput: Codable, Sendable, Equatable {
     }
 }
 
+/// Description of a single file operation executed as part of a patch.
 public struct AppliedPatchOperation: Codable, Sendable, Equatable {
-    public var type: String // "add", "update", "delete"
+    /// Operation kind ("add", "update", "delete").
+    public var type: String
+    /// Type of resource affected.
     public var resource: String
+    /// Target file path modified by the operation.
     public var target: String
 
     public init(type: String, resource: String, target: String) {
@@ -42,9 +48,13 @@ public struct AppliedPatchOperation: Codable, Sendable, Equatable {
     }
 }
 
+/// Output result summarizing applied patch modifications.
 public struct ApplyPatchOutput: Codable, Sendable, Equatable {
+    /// Individual patch operations applied.
     public var applied: [AppliedPatchOperation]
+    /// Diff statistics per modified file.
     public var files: [GitDiffSummary]
+    /// Human-readable summary of applied edits.
     public var summary: String
 
     public init(
@@ -60,6 +70,7 @@ public struct ApplyPatchOutput: Codable, Sendable, Equatable {
 
 // MARK: - OpenAI Tool Definition for ApplyPatch
 
+/// OpenAI tool definition schema for workspace patching.
 public enum ApplyPatchToolDefinitions {
     public static let applyPatch = OpenAITool.function(
         name: "apply_patch",

@@ -2,9 +2,13 @@ import Foundation
 
 // MARK: - Task Management Tools
 
+/// Input parameters for creating a new structured project task item.
 public struct TaskCreateInput: Codable, Sendable, Equatable {
+    /// Brief summary title of the task.
     public var subject: String
+    /// Detailed description and acceptance criteria.
     public var description: String
+    /// Present continuous activity label shown while working on the task.
     public var activeForm: String?
 
     public init(subject: String, description: String, activeForm: String? = nil) {
@@ -14,8 +18,11 @@ public struct TaskCreateInput: Codable, Sendable, Equatable {
     }
 }
 
+/// Output payload returned upon creating a new task.
 public struct TaskCreateOutput: Codable, Sendable, Equatable {
+    /// Newly allocated task identifier.
     public var taskId: String
+    /// Subject title of created task.
     public var subject: String
 
     public init(taskId: String, subject: String) {
@@ -24,7 +31,9 @@ public struct TaskCreateOutput: Codable, Sendable, Equatable {
     }
 }
 
+/// Input payload for fetching a specific task item.
 public struct TaskGetInput: Codable, Sendable, Equatable {
+    /// Task identifier.
     public var taskId: String
 
     public init(taskId: String) {
@@ -32,12 +41,19 @@ public struct TaskGetInput: Codable, Sendable, Equatable {
     }
 }
 
+/// Detailed state information for a tracked task item.
 public struct TaskItemInfo: Codable, Sendable, Equatable {
+    /// Task ID.
     public var id: String
+    /// Subject title.
     public var subject: String
+    /// Detailed description.
     public var description: String
+    /// Current task status ("pending", "in_progress", "completed", "deleted").
     public var status: String
+    /// Task IDs blocked by this task.
     public var blocks: [String]
+    /// Task IDs that block this task.
     public var blockedBy: [String]
 
     public init(
@@ -57,7 +73,9 @@ public struct TaskItemInfo: Codable, Sendable, Equatable {
     }
 }
 
+/// Output payload containing fetched task details.
 public struct TaskGetOutput: Codable, Sendable, Equatable {
+    /// Retrieved task info, or nil if not found.
     public var task: TaskItemInfo?
 
     public init(task: TaskItemInfo? = nil) {
@@ -65,14 +83,23 @@ public struct TaskGetOutput: Codable, Sendable, Equatable {
     }
 }
 
+/// Input parameters for modifying an existing task item.
 public struct TaskUpdateInput: Codable, Sendable, Equatable {
+    /// Target task identifier.
     public var taskId: String
+    /// Updated title.
     public var subject: String?
+    /// Updated description.
     public var description: String?
+    /// Updated activity label.
     public var activeForm: String?
+    /// New status ("pending", "in_progress", "completed", "deleted").
     public var status: String?
+    /// Tasks to mark as blocked by this task.
     public var addBlocks: [String]?
+    /// Tasks that block this task.
     public var addBlockedBy: [String]?
+    /// Assigned owner label.
     public var owner: String?
 
     public init(
@@ -96,10 +123,15 @@ public struct TaskUpdateInput: Codable, Sendable, Equatable {
     }
 }
 
+/// Output returned upon updating a task item.
 public struct TaskUpdateOutput: Codable, Sendable, Equatable {
+    /// Whether the update was applied.
     public var success: Bool
+    /// Updated task identifier.
     public var taskId: String
+    /// List of property names changed.
     public var updatedFields: [String]
+    /// Error message if update failed.
     public var error: String?
 
     public init(
@@ -115,13 +147,16 @@ public struct TaskUpdateOutput: Codable, Sendable, Equatable {
     }
 }
 
+/// Input payload for listing all tasks.
 public struct TaskListInput: Codable, Sendable, Equatable {
     public init() {}
 }
 
+/// Output payload containing all project tasks.
 public struct TaskListOutput: Codable, Sendable, Equatable {
     public var tasks: [TaskSummary]
 
+    /// Summary info for a task item in listing.
     public struct TaskSummary: Codable, Sendable, Equatable {
         public var id: String
         public var subject: String
@@ -149,8 +184,11 @@ public struct TaskListOutput: Codable, Sendable, Equatable {
     }
 }
 
+/// Input payload for terminating a background task.
 public struct TaskStopInput: Codable, Sendable, Equatable {
+    /// Task identifier to terminate.
     public var taskId: String?
+    /// Shell session identifier.
     public var shellId: String?
 
     enum CodingKeys: String, CodingKey {
@@ -164,9 +202,13 @@ public struct TaskStopInput: Codable, Sendable, Equatable {
     }
 }
 
+/// Output returned after stopping a task.
 public struct TaskStopOutput: Codable, Sendable, Equatable {
+    /// Status message.
     public var message: String
+    /// Stopped task identifier.
     public var taskId: String
+    /// Kind of task stopped ("process", "subagent").
     public var taskType: String
 
     enum CodingKeys: String, CodingKey {
@@ -182,9 +224,13 @@ public struct TaskStopOutput: Codable, Sendable, Equatable {
     }
 }
 
+/// Input parameters for querying output from a background task.
 public struct TaskOutputInput: Codable, Sendable, Equatable {
+    /// Task identifier.
     public var taskId: String
+    /// Whether to block waiting for completion.
     public var block: Bool
+    /// Maximum wait timeout in milliseconds.
     public var timeout: Int
 
     enum CodingKeys: String, CodingKey {
@@ -202,9 +248,13 @@ public struct TaskOutputInput: Codable, Sendable, Equatable {
 
 // MARK: - TodoWrite Tool
 
+/// A single checklist todo item.
 public struct TodoItem: Codable, Sendable, Equatable {
+    /// Task item description.
     public var content: String
+    /// Status ("pending", "in_progress", "completed").
     public var status: String
+    /// Active progress description.
     public var activeForm: String
 
     public init(content: String, status: String = "pending", activeForm: String = "") {
@@ -214,7 +264,9 @@ public struct TodoItem: Codable, Sendable, Equatable {
     }
 }
 
+/// Input payload for updating the interactive todo list.
 public struct TodoWriteInput: Codable, Sendable, Equatable {
+    /// Array of updated todo items.
     public var todos: [TodoItem]
 
     public init(todos: [TodoItem] = []) {
@@ -222,8 +274,11 @@ public struct TodoWriteInput: Codable, Sendable, Equatable {
     }
 }
 
+/// Output payload from updating the todo checklist.
 public struct TodoWriteOutput: Codable, Sendable, Equatable {
+    /// Previous list of todos.
     public var oldTodos: [TodoItem]
+    /// New list of todos.
     public var newTodos: [TodoItem]
 
     public init(oldTodos: [TodoItem] = [], newTodos: [TodoItem] = []) {
@@ -234,6 +289,7 @@ public struct TodoWriteOutput: Codable, Sendable, Equatable {
 
 // MARK: - OpenAI Tool Definitions for Task Management
 
+/// OpenAI tool definition schemas for TaskCreate, TaskGet, TaskUpdate, TaskList, TaskStop, TaskOutput, and TodoWrite.
 public enum TaskItemToolDefinitions {
     public static let taskCreate = OpenAITool.function(
         name: "TaskCreate",

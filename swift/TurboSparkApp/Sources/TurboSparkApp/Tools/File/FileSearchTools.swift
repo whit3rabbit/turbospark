@@ -2,8 +2,11 @@ import Foundation
 
 // MARK: - Glob Tool
 
+/// Input payload for searching workspace files using a filename pattern.
 public struct GlobInput: Codable, Sendable, Equatable {
+    /// Glob matching pattern (e.g. `**/*.swift` or `src/*.rs`).
     public var pattern: String
+    /// Base directory path to search from (defaults to workspace root).
     public var path: String?
 
     public init(pattern: String, path: String? = nil) {
@@ -12,12 +15,19 @@ public struct GlobInput: Codable, Sendable, Equatable {
     }
 }
 
+/// Output payload containing matching file paths.
 public struct GlobOutput: Codable, Sendable, Equatable {
+    /// Execution duration in milliseconds.
     public var durationMs: Double
+    /// Count of matched files.
     public var numFiles: Int
+    /// List of matched relative file paths.
     public var filenames: [String]
+    /// Whether results were truncated by a limit.
     public var truncated: Bool
+    /// Total matches found before truncation.
     public var totalMatches: Int?
+    /// Whether the total match count is definitive.
     public var countIsComplete: Bool?
 
     public init(
@@ -39,16 +49,27 @@ public struct GlobOutput: Codable, Sendable, Equatable {
 
 // MARK: - Grep Tool
 
+/// Input payload for regular expression pattern searching across files.
 public struct GrepInput: Codable, Sendable, Equatable {
+    /// Regular expression or exact query pattern.
     public var pattern: String
+    /// File or directory path to search.
     public var path: String?
+    /// Glob filter pattern restricting searched file paths.
     public var glob: String?
+    /// Output mode ("content", "files_with_matches", "count").
     public var outputMode: String?
+    /// Number of context lines before and after match.
     public var context: Int?
+    /// Case-insensitive search flag.
     public var caseInsensitive: Bool?
+    /// File type filter name.
     public var type: String?
+    /// Maximum count of results returned.
     public var headLimit: Int?
+    /// Pagination offset.
     public var offset: Int?
+    /// Multiline match support.
     public var multiline: Bool?
 
     enum CodingKeys: String, CodingKey {
@@ -89,16 +110,27 @@ public struct GrepInput: Codable, Sendable, Equatable {
     }
 }
 
+/// Output payload containing regex match lines or filenames.
 public struct GrepOutput: Codable, Sendable, Equatable {
+    /// Applied output formatting mode.
     public var mode: String?
+    /// Number of matching files.
     public var numFiles: Int
+    /// Matched file paths.
     public var filenames: [String]
+    /// Formatted content text with line numbers and snippets.
     public var content: String?
+    /// Number of matched lines.
     public var numLines: Int?
+    /// Total match occurrences.
     public var numMatches: Int?
+    /// Total files searched.
     public var totalFiles: Int?
+    /// Total lines examined.
     public var totalLines: Int?
+    /// Applied result limit.
     public var appliedLimit: Int?
+    /// Applied result offset.
     public var appliedOffset: Int?
 
     public init(
@@ -128,11 +160,17 @@ public struct GrepOutput: Codable, Sendable, Equatable {
 
 // MARK: - NotebookEdit Tool
 
+/// Input payload for reading and mutating Jupyter notebook cells.
 public struct NotebookEditInput: Codable, Sendable, Equatable {
+    /// File path to `.ipynb` notebook.
     public var notebookPath: String
+    /// Cell ID to target.
     public var cellId: String?
+    /// Replacement or new cell content text.
     public var newSource: String
+    /// Type of cell ("code" or "markdown").
     public var cellType: String?
+    /// Edit operation ("replace", "insert", "delete").
     public var editMode: String?
 
     enum CodingKeys: String, CodingKey {
@@ -158,14 +196,23 @@ public struct NotebookEditInput: Codable, Sendable, Equatable {
     }
 }
 
+/// Output payload describing result of notebook modification.
 public struct NotebookEditOutput: Codable, Sendable, Equatable {
+    /// Updated cell source.
     public var newSource: String
+    /// Previous cell source prior to edit.
     public var oldSource: String?
+    /// Cell identifier.
     public var cellId: String?
+    /// Cell type.
     public var cellType: String
+    /// Programming language of the notebook kernel.
     public var language: String
+    /// Operation mode applied.
     public var editMode: String
+    /// Error message if modification failed.
     public var error: String?
+    /// Notebook path.
     public var notebookPath: String
 
     enum CodingKeys: String, CodingKey {
@@ -202,6 +249,7 @@ public struct NotebookEditOutput: Codable, Sendable, Equatable {
 
 // MARK: - OpenAI Tool Definitions for File Search Operations
 
+/// OpenAI tool definition schemas for Glob, Grep, and NotebookEdit.
 public enum FileSearchToolDefinitions {
     public static let glob = OpenAITool.function(
         name: "Glob",

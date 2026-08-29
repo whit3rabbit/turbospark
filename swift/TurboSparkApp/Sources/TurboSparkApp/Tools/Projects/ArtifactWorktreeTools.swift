@@ -2,22 +2,39 @@ import Foundation
 
 // MARK: - Artifact Tool
 
+/// Input payload for publishing, viewing, or managing interactive visual HTML artifacts and media assets.
 public struct ArtifactInput: Codable, Sendable, Equatable {
+    /// Action method ("publish", "list", "read", "watch", "unwatch", "status", "upload_asset", "list_assets", "read_asset", "delete_asset").
     public var action: String?
+    /// Path to file or asset to publish.
     public var filePath: String?
+    /// Favicon icon symbol or URL.
     public var favicon: String?
+    /// Result limit for listing artifacts.
     public var limit: Int?
+    /// Scope identifier.
     public var scope: String?
+    /// Artifact header title.
     public var title: String?
+    /// Artifact description text.
     public var description: String?
+    /// Badge label.
     public var label: String?
+    /// Additional note text.
     public var note: String?
+    /// Target artifact URL link.
     public var url: String?
+    /// Contextual prompt for artifact generation.
     public var prompt: String?
+    /// Force overwrite flag.
     public var force: Bool?
+    /// Output directory path.
     public var outDir: String?
+    /// Target asset identifier.
     public var assetId: String?
+    /// Timestamp filter.
     public var after: String?
+    /// Artifact contract schema.
     public var contract: String?
 
     enum CodingKeys: String, CodingKey {
@@ -76,11 +93,17 @@ public struct ArtifactInput: Codable, Sendable, Equatable {
     }
 }
 
+/// Summary item representing an artifact in list queries.
 public struct ArtifactItemSummary: Codable, Sendable, Equatable {
+    /// Artifact display title.
     public var title: String
+    /// Artifact web URL.
     public var url: String
+    /// Favicon icon image or symbol.
     public var favicon: String?
+    /// ISO timestamp when last updated.
     public var updatedAt: String?
+    /// Relative path or link relationship.
     public var rel: String?
 
     public init(
@@ -98,14 +121,23 @@ public struct ArtifactItemSummary: Codable, Sendable, Equatable {
     }
 }
 
+/// Output payload from artifact management commands.
 public struct ArtifactOutput: Codable, Sendable, Equatable {
+    /// Rendered artifact URL.
     public var url: String?
+    /// On-disk path to artifact.
     public var path: String?
+    /// Unique artifact identifier.
     public var artifactId: String?
+    /// Artifact title.
     public var title: String?
+    /// Version string.
     public var version: String?
+    /// Discovered artifacts list.
     public var artifacts: [ArtifactItemSummary]?
+    /// Whether output was truncated.
     public var truncated: Bool?
+    /// Scope identifier.
     public var scope: String?
 
     enum CodingKeys: String, CodingKey {
@@ -142,8 +174,11 @@ public struct ArtifactOutput: Codable, Sendable, Equatable {
 
 // MARK: - Git Worktree Tools
 
+/// Input payload for creating or switching into an isolated git worktree branch.
 public struct EnterWorktreeInput: Codable, Sendable, Equatable {
+    /// Worktree branch name.
     public var name: String?
+    /// Destination worktree folder path.
     public var path: String?
 
     public init(name: String? = nil, path: String? = nil) {
@@ -152,9 +187,13 @@ public struct EnterWorktreeInput: Codable, Sendable, Equatable {
     }
 }
 
+/// Output returned when switching into a git worktree.
 public struct EnterWorktreeOutput: Codable, Sendable, Equatable {
+    /// Local directory path of the active worktree.
     public var worktreePath: String
+    /// Checked out git branch name in worktree.
     public var worktreeBranch: String?
+    /// Status message.
     public var message: String
 
     public init(worktreePath: String, worktreeBranch: String? = nil, message: String) {
@@ -164,8 +203,11 @@ public struct EnterWorktreeOutput: Codable, Sendable, Equatable {
     }
 }
 
+/// Input payload for leaving a git worktree and returning to main repository root.
 public struct ExitWorktreeInput: Codable, Sendable, Equatable {
+    /// Action ("keep" to preserve worktree, "remove" to delete branch/worktree).
     public var action: String
+    /// Whether uncommitted changes should be discarded if removing.
     public var discardChanges: Bool?
 
     enum CodingKeys: String, CodingKey {
@@ -179,12 +221,19 @@ public struct ExitWorktreeInput: Codable, Sendable, Equatable {
     }
 }
 
+/// Output returned upon exiting a git worktree.
 public struct ExitWorktreeOutput: Codable, Sendable, Equatable {
+    /// Executed exit action.
     public var action: String
+    /// Restored working directory path.
     public var originalCwd: String
+    /// Path of worktree that was exited.
     public var worktreePath: String
+    /// Branch name of the exited worktree.
     public var worktreeBranch: String?
+    /// Number of modified files discarded if applicable.
     public var discardedFiles: Int?
+    /// Status message.
     public var message: String
 
     public init(
@@ -206,6 +255,7 @@ public struct ExitWorktreeOutput: Codable, Sendable, Equatable {
 
 // MARK: - OpenAI Tool Definitions for Artifacts and Worktrees
 
+/// OpenAI tool definition schemas for Artifact publishing and Git Worktree branching.
 public enum ArtifactWorktreeDefinitions {
     public static let artifact = OpenAITool.function(
         name: "Artifact",

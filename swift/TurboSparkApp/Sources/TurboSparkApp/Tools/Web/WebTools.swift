@@ -2,9 +2,13 @@ import Foundation
 
 // MARK: - WebSearch Tool
 
+/// Input parameters for web search queries.
 public struct WebSearchInput: Codable, Sendable, Equatable {
+    /// Search query string.
     public var query: String
+    /// Optional whitelist of domains to restrict results to.
     public var allowedDomains: [String]?
+    /// Optional blacklist of domains to filter out from results.
     public var blockedDomains: [String]?
 
     enum CodingKeys: String, CodingKey {
@@ -20,9 +24,13 @@ public struct WebSearchInput: Codable, Sendable, Equatable {
     }
 }
 
+/// Single result item returned from a web search query.
 public struct WebSearchResultItem: Codable, Sendable, Equatable {
+    /// Web page title.
     public var title: String
+    /// Target URL link.
     public var url: String
+    /// Contextual snippet or summary of the result.
     public var snippet: String?
 
     public init(title: String, url: String, snippet: String? = nil) {
@@ -32,10 +40,15 @@ public struct WebSearchResultItem: Codable, Sendable, Equatable {
     }
 }
 
+/// Output payload from a web search invocation.
 public struct WebSearchOutput: Codable, Sendable, Equatable {
+    /// Executed search query.
     public var query: String
+    /// Discovered search result items.
     public var results: [WebSearchResultItem]
+    /// Duration of search request in seconds.
     public var durationSeconds: Double
+    /// Total count of matching search hits if available.
     public var searchCount: Int?
 
     public init(
@@ -53,8 +66,11 @@ public struct WebSearchOutput: Codable, Sendable, Equatable {
 
 // MARK: - WebFetch Tool
 
+/// Input payload for fetching and scraping a web page.
 public struct WebFetchInput: Codable, Sendable, Equatable {
+    /// URL to retrieve.
     public var url: String
+    /// Extraction instruction guiding what content or answer to extract.
     public var prompt: String
 
     public init(url: String, prompt: String) {
@@ -63,12 +79,19 @@ public struct WebFetchInput: Codable, Sendable, Equatable {
     }
 }
 
+/// Output payload containing fetched web page content.
 public struct WebFetchOutput: Codable, Sendable, Equatable {
+    /// Number of bytes fetched.
     public var bytes: Int
+    /// HTTP status code.
     public var code: Int
+    /// HTTP status description.
     public var codeText: String
+    /// Extracted page markdown or text content.
     public var result: String
+    /// Request round-trip time in milliseconds.
     public var durationMs: Double
+    /// Final fetched URL after redirects.
     public var url: String
 
     public init(
@@ -90,6 +113,7 @@ public struct WebFetchOutput: Codable, Sendable, Equatable {
 
 // MARK: - OpenAI Tool Definitions for Web Operations
 
+/// OpenAI tool definition schemas for web search and content fetching.
 public enum WebToolDefinitions {
     public static let webSearch = OpenAITool.function(
         name: "WebSearch",

@@ -2,13 +2,21 @@ import Foundation
 
 // MARK: - Agent Tool
 
+/// Input parameters for spawning an autonomous subagent session.
 public struct AgentInput: Codable, Sendable, Equatable {
+    /// Concise summary of the subagent's objective.
     public var description: String
+    /// Complete prompt and task instructions provided to the subagent.
     public var prompt: String
+    /// Role profile or specialization template for the subagent.
     public var subagentType: String?
+    /// Optional checkpoint model identifier override.
     public var model: String?
+    /// Whether the subagent executes in background without blocking the parent conversation.
     public var runInBackground: Bool?
+    /// Name or identifier label assigned to the spawned agent.
     public var name: String?
+    /// Worktree or filesystem isolation policy.
     public var isolation: String?
 
     enum CodingKeys: String, CodingKey {
@@ -40,11 +48,13 @@ public struct AgentInput: Codable, Sendable, Equatable {
     }
 }
 
+/// Result returned from spawning or completing a subagent task.
 public enum AgentOutput: Codable, Sendable, Equatable {
     case completed(CompletedPayload)
     case asyncLaunched(AsyncPayload)
     case remoteLaunched(RemotePayload)
 
+    /// Summary payload for a synchronously completed subagent task.
     public struct CompletedPayload: Codable, Sendable, Equatable {
         public var agentId: String
         public var status: String
@@ -70,6 +80,7 @@ public enum AgentOutput: Codable, Sendable, Equatable {
         }
     }
 
+    /// Status payload when a subagent is launched asynchronously.
     public struct AsyncPayload: Codable, Sendable, Equatable {
         public var status: String
         public var agentId: String
@@ -92,6 +103,7 @@ public enum AgentOutput: Codable, Sendable, Equatable {
         }
     }
 
+    /// Status payload when a subagent is dispatched to a remote worker.
     public struct RemotePayload: Codable, Sendable, Equatable {
         public var status: String
         public var taskId: String
@@ -117,6 +129,7 @@ public enum AgentOutput: Codable, Sendable, Equatable {
 
 // MARK: - OpenAI Tool Definition for Agent
 
+/// OpenAI tool definition schema for subagent task invocation.
 public enum AgentToolDefinitions {
     public static let agent = OpenAITool.function(
         name: "Agent",

@@ -2,10 +2,15 @@ import Foundation
 
 // MARK: - Monitor Tool
 
+/// Input payload for starting an asynchronous monitoring job.
 public struct MonitorInput: Codable, Sendable, Equatable {
+    /// Description of the process or event stream being monitored.
     public var description: String
+    /// Maximum duration to monitor in milliseconds.
     public var timeoutMs: Int
+    /// Whether the monitor should persist across turns until explicitly stopped.
     public var persistent: Bool
+    /// Shell command or process to monitor.
     public var command: String?
 
     enum CodingKeys: String, CodingKey {
@@ -23,9 +28,13 @@ public struct MonitorInput: Codable, Sendable, Equatable {
     }
 }
 
+/// Output returned when a background monitor is registered.
 public struct MonitorOutput: Codable, Sendable, Equatable {
+    /// Dispatched task identifier.
     public var taskId: String
+    /// Configured timeout in milliseconds.
     public var timeoutMs: Int
+    /// Persistence status of the monitor task.
     public var persistent: Bool?
 
     public init(taskId: String, timeoutMs: Int, persistent: Bool? = nil) {
@@ -37,9 +46,13 @@ public struct MonitorOutput: Codable, Sendable, Equatable {
 
 // MARK: - Notifications & Remote Triggers
 
+/// Input payload for registering or clearing remote event triggers.
 public struct RemoteTriggerInput: Codable, Sendable, Equatable {
+    /// Action method ("poll", "cancel", "listen").
     public var action: String
+    /// Unique trigger identifier.
     public var triggerId: String?
+    /// Associated session identifier.
     public var sessionId: String?
 
     enum CodingKeys: String, CodingKey {
@@ -55,9 +68,13 @@ public struct RemoteTriggerInput: Codable, Sendable, Equatable {
     }
 }
 
+/// Output payload from remote trigger polling or registration.
 public struct RemoteTriggerOutput: Codable, Sendable, Equatable {
+    /// Response status code.
     public var status: Int
+    /// Raw JSON payload.
     public var json: String
+    /// Human-readable trigger event summary.
     public var summary: String?
 
     public init(status: Int, json: String, summary: String? = nil) {
@@ -67,14 +84,20 @@ public struct RemoteTriggerOutput: Codable, Sendable, Equatable {
     }
 }
 
+/// Input payload for draining pending system notifications.
 public struct ReadNotificationsInput: Codable, Sendable, Equatable {
     public init() {}
 }
 
+/// A queued system notification event item.
 public struct NotificationItem: Codable, Sendable, Equatable {
+    /// Unique notification identifier.
     public var notificationId: String
+    /// Source origin or subsystem of the notification.
     public var origin: String
+    /// ISO timestamp when the event was queued.
     public var queuedAt: String
+    /// Notification text message.
     public var content: String
 
     enum CodingKeys: String, CodingKey {
@@ -92,8 +115,11 @@ public struct NotificationItem: Codable, Sendable, Equatable {
     }
 }
 
+/// Output payload returning queued notification items.
 public struct ReadNotificationsOutput: Codable, Sendable, Equatable {
+    /// Array of retrieved notification events.
     public var notifications: [NotificationItem]
+    /// Count of remaining unread notifications.
     public var remaining: Int
 
     public init(notifications: [NotificationItem] = [], remaining: Int = 0) {
@@ -102,8 +128,11 @@ public struct ReadNotificationsOutput: Codable, Sendable, Equatable {
     }
 }
 
+/// Input payload for posting a proactive user notification banner.
 public struct PushNotificationInput: Codable, Sendable, Equatable {
+    /// Message body text displayed in the notification.
     public var message: String
+    /// Notification status classification.
     public var status: String
 
     public init(message: String, status: String = "proactive") {
@@ -112,9 +141,13 @@ public struct PushNotificationInput: Codable, Sendable, Equatable {
     }
 }
 
+/// Output returned after sending a user push notification.
 public struct PushNotificationOutput: Codable, Sendable, Equatable {
+    /// Sent message text.
     public var message: String
+    /// Whether delivery was successfully dispatched.
     public var pushSent: Bool?
+    /// ISO timestamp when the notification was posted.
     public var sentAt: String?
 
     public init(message: String, pushSent: Bool? = true, sentAt: String? = nil) {
@@ -124,12 +157,16 @@ public struct PushNotificationOutput: Codable, Sendable, Equatable {
     }
 }
 
+/// Input for presenting the interactive onboarding role picker.
 public struct ShowOnboardingRolePickerInput: Codable, Sendable, Equatable {
     public init() {}
 }
 
+/// Output returned from the onboarding role picker sheet.
 public struct ShowOnboardingRolePickerOutput: Codable, Sendable, Equatable {
+    /// Selected role name if chosen.
     public var role: String?
+    /// Whether the user dismissed the picker without choosing.
     public var dismissed: Bool?
 
     public init(role: String? = nil, dismissed: Bool? = nil) {
@@ -138,7 +175,9 @@ public struct ShowOnboardingRolePickerOutput: Codable, Sendable, Equatable {
     }
 }
 
+/// Input payload for Claude Design integration operations.
 public struct ClaudeDesignInput: Codable, Sendable, Equatable {
+    /// Design tool operation name.
     public var operation: String
 
     public init(operation: String) {
@@ -146,8 +185,11 @@ public struct ClaudeDesignInput: Codable, Sendable, Equatable {
     }
 }
 
+/// Output payload from Claude Design tool invocation.
 public struct ClaudeDesignOutput: Codable, Sendable, Equatable {
+    /// Executed operation.
     public var operation: String
+    /// Whether an error occurred.
     public var isError: Bool?
 
     public init(operation: String, isError: Bool? = false) {
@@ -158,6 +200,7 @@ public struct ClaudeDesignOutput: Codable, Sendable, Equatable {
 
 // MARK: - OpenAI Tool Definitions for Monitoring and Notifications
 
+/// OpenAI tool definition schemas for background monitoring and user notifications.
 public enum MonitoringNotificationDefinitions {
     public static let monitor = OpenAITool.function(
         name: "Monitor",
