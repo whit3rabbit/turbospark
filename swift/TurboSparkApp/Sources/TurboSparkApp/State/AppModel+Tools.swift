@@ -34,6 +34,17 @@ extension AppModel {
         let toolsPrompt = AppToolRegistry.systemPromptAddendum(for: agentType)
         sections.append(toolsPrompt)
 
+        let skills = effectiveSkills
+        if !skills.isEmpty {
+            var skillLines: [String] = ["## Available Skills"]
+            skillLines.append("The following specialized skills are available in the workspace. You can load any of them using the `skill` tool:")
+            for s in skills {
+                let scopeTag = s.scope.isProjectScope ? "[Project]" : "[User]"
+                skillLines.append("- `\(s.name)` \(scopeTag): \(s.skillDescription)")
+            }
+            sections.append(skillLines.joined(separator: "\n"))
+        }
+
         return sections.joined(separator: "\n\n")
     }
 

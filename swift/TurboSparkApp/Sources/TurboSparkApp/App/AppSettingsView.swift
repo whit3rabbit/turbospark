@@ -17,6 +17,7 @@ public struct AppSettingsView: View {
         case models = "Models & Storage"
         case engine = "Engine"
         case mcp = "MCP Servers"
+        case skills = "Skills"
         case hooks = "Hooks & Lifecycle"
 
         public var id: String { rawValue }
@@ -32,6 +33,7 @@ public struct AppSettingsView: View {
             case .models: return "cylinder.split.1x2"
             case .engine: return "cpu"
             case .mcp: return "server.rack"
+            case .skills: return "wand.and.stars"
             case .hooks: return "link.badge.plus"
             }
         }
@@ -40,7 +42,7 @@ public struct AppSettingsView: View {
             switch self {
             case .general, .appearance, .shortcuts, .permissions:
                 return "Personal"
-            case .models, .engine, .mcp, .hooks:
+            case .models, .engine, .mcp, .skills, .hooks:
                 return "Engine & Coding"
             }
         }
@@ -181,9 +183,15 @@ public struct AppSettingsView: View {
             engineSettingsTab
         case .mcp:
             mcpSettingsTab
+        case .skills:
+            skillsSettingsTab
         case .hooks:
             hooksSettingsTab
         }
+    }
+
+    private var skillsSettingsTab: some View {
+        SkillsSettingsPaneView(model: model)
     }
 
     private var hooksSettingsTab: some View {

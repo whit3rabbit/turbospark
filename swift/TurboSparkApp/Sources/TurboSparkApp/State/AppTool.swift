@@ -238,8 +238,26 @@ public enum AppToolRegistry {
                 output = try await runCommand(command: command, rootURL: rootURL)
 
             case "skill":
-                let skillName = call.arguments["name"] ?? "unspecified"
-                output = "Skill '\(skillName)' loaded into context."
+                guard let skillName = call.arguments["name"] ?? call.arguments["skill_name"] else {
+                    throw NSError(domain: "TurboSparkTool", code: 18, userInfo: [NSLocalizedDescriptionKey: "Missing 'name' argument for skill tool call."])
+                }
+                let effectiveSkills = SkillManager.shared.resolveEffectiveSkills(projectURL: project?.rootDirectoryURL)
+                if let matched = effectiveSkills.first(where: { $0.name.lowercased() == skillName.lowercased() }) {
+                    let expanded = SkillManager.shared.substituteArguments(
+                        content: matched.content,
+                        arguments: call.arguments,
+                        skillDirectoryURL: matched.skillDirectoryURL,
+                        sessionID: nil
+                    )
+                    var res = "### Skill: \(matched.name) (\(matched.scope.label))\n\(expanded)"
+                    if !matched.referenceFiles.isEmpty {
+                        res += "\n\n*Reference Files in skill directory:* \(matched.referenceFiles.joined(separator: ", "))"
+                    }
+                    output = res
+                } else {
+                    let available = effectiveSkills.map { "- \($0.name): \($0.skillDescription)" }.joined(separator: "\n")
+                    output = "Skill '\(skillName)' was not found.\n\nAvailable skills:\n\(available.isEmpty ? "(No skills currently installed)" : available)"
+                }
 
             case "todowrite", "todo_write":
                 output = "Todo list updated."

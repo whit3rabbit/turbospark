@@ -90,6 +90,12 @@ public final class AppModel: ObservableObject {
     /// Live tool calls executed during the active generation turn.
     @Published public var liveToolCalls: [AppToolCall] = []
 
+    // Skills State
+    /// User-scoped skills (~/.turbospark/skills and user agent directories).
+    @Published public var userSkills: [AppSkill] = []
+    /// Project-scoped skills for the currently selected project.
+    @Published public var projectSkills: [AppSkill] = []
+
     // Multi-chat State
     /// All user chat conversations.
     @Published public var chats: [AppChat] = []
@@ -204,6 +210,7 @@ public final class AppModel: ObservableObject {
         loadProjects()
         loadChats()
         loadGlobalMcpServers()
+        reloadSkills()
         refreshModels()
     }
 

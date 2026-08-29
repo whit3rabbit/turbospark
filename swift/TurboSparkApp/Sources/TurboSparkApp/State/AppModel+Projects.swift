@@ -42,6 +42,7 @@ extension AppModel {
         projects.insert(project, at: 0)
         selectedProjectID = project.id
         persistProjects()
+        reloadSkills()
 
         // Create initial chat for this project
         createChat(projectID: project.id)
@@ -53,6 +54,7 @@ extension AppModel {
         guard !generating else { return }
         selectedProjectID = id
         persistProjects()
+        reloadSkills()
 
         // If the currently selected chat doesn't belong to the newly selected project, switch selection
         if let id {
@@ -72,6 +74,7 @@ extension AppModel {
         updated.updatedAt = Date()
         projects[index] = updated
         persistProjects()
+        reloadSkills()
     }
 
     /// Deletes a project and optionally clears project references from its chats.
@@ -86,6 +89,7 @@ extension AppModel {
         }
         persistProjects()
         persistChats()
+        reloadSkills()
     }
 
     /// Scans a local codebase directory for AGENTS.md, CLAUDE.md, or rules files according to preference.
