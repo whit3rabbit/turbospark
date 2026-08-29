@@ -320,19 +320,20 @@ impl RealGptOssState {
         let top_k = arch.top_k_experts as usize;
         let hidden = arch.hidden_size as usize;
         let moe_inter = arch.moe_intermediate_size.max(1) as usize;
-        // `true` matches `moe.rs`'s own note: `use_silu` is dead for this
-        // family (the MXFP4 pair takes its activation from
-        // `Mxfp4Activation::GPT_OSS`), but the argument-buffer encoder and
-        // the dispatches must agree on it or they miss the pipeline cache.
+        // The silu specialization is a constant inside the MXFP4 batched
+        // module itself, so the argument-buffer encoder and the dispatches
+        // cannot disagree on the pipeline-cache key.
         let wide_blobs =
-            gpu::new_routed_blobs_wide_mxfp4(context, true).map_err(RealForwardError::Gpu)?;
+            gpu::new_routed_blobs_wide_mxfp4(context).map_err(RealForwardError::Gpu)?;
         let halfs = |n: usize| context.new_output_buffer((n.max(1) * 2) as u64);
         let batch_rows = |per_token: usize| halfs(MAX_PREFILL_BATCH * per_token);
         self.batched = Some(BatchedRoutedScratch {
             batch_acts: batch_rows(top_k * moe_inter),
             batch_y: batch_rows(hidden),
             batch_routing_w: batch_rows(top_k),
-            batch_routes: context.new_output_buffer((MAX_PREFILL_BATCH * top_k * 16) as u64),
+            batch_routes: context.new_output_buffer(
+                (MAX_PREFILL_BATCH * top_k * gpu::MoePrefillRoute::STRIDE_BYTES) as u64,
+            ),
             batch_zero: {
                 let bytes = MAX_PREFILL_BATCH * hidden.max(1) * 2;
                 let buffer = context.new_output_buffer(bytes as u64);

@@ -61,6 +61,19 @@ pub const PHASE2_MXFP4: &str = "moe_prefill_phase2_fused_mxfp4";
 const ROWS_PER_THREADGROUP: u64 = 8;
 const THREADS_PER_GROUP: u64 = 256;
 
+/// The silu function constant this module's pipelines specialize on, fixed
+/// rather than taken as a parameter. `FC_MOE_ACT_SILU` reaches these kernels
+/// only through `moe_activate_mxfp4`'s PLAIN arm (`alpha <= 0`); the family
+/// that owns this pair runs `Mxfp4Activation::GPT_OSS`, where the flag is
+/// dead. What the value DOES decide is which pipeline specialization
+/// compiles: the argument encoder and every dispatch must agree on
+/// `constants_key`, and a caller free to pass either value could silently
+/// compile a second copy of the seven-file concatenation mid-prefill
+/// (Gotcha 1's cost). `true` matches the runtime's choice for this family
+/// (`families/gptoss/moe.rs`: silu is the nearer wrong answer if a layout
+/// ever resolved to a non-MXFP4 kernel).
+const USE_SILU: bool = true;
+
 /// Allocates the wide routed-blobs argument buffer this pair reads,
 /// encoded by [`PHASE1_MXFP4`] out of [`SOURCE`].
 ///
@@ -70,9 +83,8 @@ const THREADS_PER_GROUP: u64 = 256;
 /// a differently-encoded pointer array.
 pub fn new_routed_blobs_wide(
     context: &mut MetalContext,
-    use_silu: bool,
 ) -> Result<RoutedBlobsWideBuffer, GpuError> {
-    RoutedBlobsWideBuffer::new_for(context, SOURCE, PHASE1_MXFP4, use_silu)
+    RoutedBlobsWideBuffer::new_for(context, SOURCE, PHASE1_MXFP4, USE_SILU)
 }
 
 /// Points this pair's argument buffer at `blobs`, the sub-batch's resident
@@ -81,10 +93,9 @@ pub fn new_routed_blobs_wide(
 pub fn bind_routed_blobs_wide(
     buffer: &RoutedBlobsWideBuffer,
     context: &mut MetalContext,
-    use_silu: bool,
     blobs: &[(&metal::Buffer, u64)],
 ) -> Result<(), GpuError> {
-    buffer.bind_for(context, SOURCE, PHASE1_MXFP4, use_silu, blobs)
+    buffer.bind_for(context, SOURCE, PHASE1_MXFP4, USE_SILU, blobs)
 }
 
 /// Phase 1 over a route list, MXFP4 blobs: for each route
@@ -110,7 +121,6 @@ pub fn encode_moe_prefill_phase1_mxfp4(
     f_dim: u32,
     top_k: u32,
     route_count: u32,
-    use_silu: bool,
     act: Mxfp4Activation,
 ) -> Result<(), GpuError> {
     assert_eq!(d_dim as usize % MXFP4_BLOCK_ELEMS, 0);
@@ -119,8 +129,8 @@ pub fn encode_moe_prefill_phase1_mxfp4(
     let pipeline = context.pipeline(
         SOURCE,
         PHASE1_MXFP4,
-        &moe_function_constants(use_silu),
-        &constants_key(use_silu),
+        &moe_function_constants(USE_SILU),
+        &constants_key(USE_SILU),
     )?;
     let rows = (route_count * f_dim) as u64;
     let has_bias = u32::from(act.has_bias);
@@ -172,7 +182,6 @@ pub fn encode_moe_prefill_phase2_fused_mxfp4(
     f_dim: u32,
     top_k: u32,
     tokens: u32,
-    use_silu: bool,
     has_bias: bool,
 ) -> Result<(), GpuError> {
     assert_eq!(f_dim as usize % MXFP4_BLOCK_ELEMS, 0);
@@ -180,8 +189,8 @@ pub fn encode_moe_prefill_phase2_fused_mxfp4(
     let pipeline = context.pipeline(
         SOURCE,
         PHASE2_MXFP4,
-        &moe_function_constants(use_silu),
-        &constants_key(use_silu),
+        &moe_function_constants(USE_SILU),
+        &constants_key(USE_SILU),
     )?;
     let has_bias = u32::from(has_bias);
     // One threadgroup per (d, token) output, 256 threads = 8 SIMD groups,

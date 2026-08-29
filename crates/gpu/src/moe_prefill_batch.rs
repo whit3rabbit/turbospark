@@ -52,9 +52,15 @@ pub struct MoePrefillRoute {
 }
 
 impl MoePrefillRoute {
+    /// Byte stride of one encoded route: three u32 fields plus u32 padding,
+    /// matching the shader struct. Buffer sizing and per-sub-batch offsets
+    /// must use this, or a struct change silently shears every route past
+    /// the first.
+    pub const STRIDE_BYTES: usize = 16;
+
     /// Serializes a slice of prefill routes into little-endian byte representation.
     pub fn bytes(routes: &[MoePrefillRoute]) -> Vec<u8> {
-        let mut out = Vec::with_capacity(routes.len() * 16);
+        let mut out = Vec::with_capacity(routes.len() * Self::STRIDE_BYTES);
         for r in routes {
             out.extend_from_slice(&r.token.to_le_bytes());
             out.extend_from_slice(&r.rank.to_le_bytes());

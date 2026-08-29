@@ -119,9 +119,8 @@ impl BatchedScratch {
                 batch_h1: halfs(hidden),
                 batch_gate_logit: halfs(1),
                 batch_routing_w: halfs(top_k),
-                // 16 bytes per encoded route (token, rank, slot, reserved),
-                // matching `MoePrefillRoute::bytes` and the shader struct.
-                batch_routes: context.new_output_buffer(b * top_k * 16),
+                batch_routes: context
+                    .new_output_buffer(b * top_k * gpu::MoePrefillRoute::STRIDE_BYTES as u64),
                 batch_router_logits_f32: context
                     .new_output_buffer(b * arch.num_experts.max(1) as u64 * 4),
                 wide_blobs,

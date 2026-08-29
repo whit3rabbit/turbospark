@@ -242,9 +242,9 @@ impl RealGemmaState {
             batch_y: batch_rows(hidden),
             batch_h1: batch_rows(hidden),
             batch_routing_w: batch_rows(top_k),
-            // 16 bytes per encoded route (token, rank, slot, reserved),
-            // matching `MoePrefillRoute::bytes` and the shader struct.
-            batch_routes: context.new_output_buffer((MAX_PREFILL_BATCH * top_k * 16) as u64),
+            batch_routes: context.new_output_buffer(
+                (MAX_PREFILL_BATCH * top_k * gpu::MoePrefillRoute::STRIDE_BYTES) as u64,
+            ),
             batch_zero: {
                 let bytes = MAX_PREFILL_BATCH * hidden.max(1) * 2;
                 let buffer = context.new_output_buffer(bytes as u64);

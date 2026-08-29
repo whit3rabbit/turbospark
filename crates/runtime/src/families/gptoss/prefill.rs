@@ -128,6 +128,14 @@ impl RealForwardRunner {
         // the GPU is still reading. This is the A/B seam that separates the
         // batched arm's miss drop into its two candidate causes
         // (docs/BATCHED_PREFILL.md, step 5's miss-drop paragraph).
+        // `banks == 1` does not make every slot count safe (see
+        // `routed_pipeline_banks`'s doc and AGENTS.md Gotcha 64): a stale
+        // `protect` set from the previous token can still exhaust the
+        // cache. This family's top_k of 4 means `ALLOWED_CACHE_SLOTS`'
+        // floor of 8 already satisfies `>= 2 * top_k`, so the CLI cannot
+        // reach the failing branch here -- but a caller passing
+        // `expert_cache_slots` directly below `2 * top_k` (a test or bench
+        // harness, not the CLI) still can.
         let banks = if self.routed_pipeline {
             routed_pipeline_banks(self.expert_cache_slots, top_k)
         } else {

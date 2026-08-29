@@ -457,9 +457,8 @@ mod mxfp4 {
                 .collect();
             let routes_buf = context.new_buffer_with_data(&MoePrefillRoute::bytes(&routes));
             let wide: RoutedBlobsWideBuffer =
-                new_routed_blobs_wide_mxfp4(&mut context, false).expect("wide arg buffer");
-            bind_routed_blobs_wide_mxfp4(&wide, &mut context, false, &blob_refs)
-                .expect("bind wide blobs");
+                new_routed_blobs_wide_mxfp4(&mut context).expect("wide arg buffer");
+            bind_routed_blobs_wide_mxfp4(&wide, &mut context, &blob_refs).expect("bind wide blobs");
             let bat_acts = context.new_output_buffer((m * TOP_K * F * 2) as u64);
             let bat_y = context.new_output_buffer((m * D * 2) as u64);
             // Zero seed: `gpt-oss` has no shared expert, so the engine's own
@@ -482,7 +481,6 @@ mod mxfp4 {
                     F as u32,
                     TOP_K as u32,
                     (m * TOP_K) as u32,
-                    false,
                     act,
                 )
                 .expect("batched phase1");
@@ -500,7 +498,6 @@ mod mxfp4 {
                     F as u32,
                     TOP_K as u32,
                     m as u32,
-                    false,
                     act.has_bias,
                 )
                 .expect("batched phase2");

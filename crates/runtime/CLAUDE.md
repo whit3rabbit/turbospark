@@ -26,6 +26,13 @@ crates/runtime/
 |   +-- router_hist.rs          # MoE expert activation routing histogram collector
 |   +-- ffn_hist.rs             # Dense FFN neuron activation mass & sparsity collector
 |   +-- resid_capture.rs        # Per-layer residual stream at the last prompt token (steering)
+|   +-- vision/                 # The qwen3_5 vision tower's streamed forward pass (M-V4)
+|   |   +-- mod.rs              # VisionTower, lazy open, the block-loop driver, VisionEmbedding
+|   |   +-- shape.rs            # VisionShape: derived dims and the refusals they justify
+|   |   +-- weights.rs          # The 9 resident tensors and the 12 per-block roles, FP16-checked
+|   |   +-- scratch.rs          # VisionScratch: per-page buffers, sized and dropped per image
+|   |   +-- block.rs            # One block: ln1/qkv/rope/attn/proj/res/ln2/fc1/gelu/fc2/res
+|   |   \-- stages.rs           # Patch embed, the host-side position blend, the merger
 |   +-- real_forward.rs         # RealForwardRunner struct, constructor, and dispatch
 |   +-- real_forward_open.rs    # RealForwardRunner open_inner implementation
 |   +-- real_forward_rollback.rs# RollbackPoint state capture and rewind methods
@@ -140,6 +147,7 @@ crates/runtime/
   consumes them. `power.rs` keeps the two OS probes (`physical_memory`,
   `recommended_max_working_set`) -- those are the one place that asks the
   machine, and the policies take the answer as a parameter.
+- `vision/`: the `qwen3_5` vision tower's streamed forward pass (ROADMAP M-V4, `docs/VISION.md`). Opens a 2-slot `PreadExpertStreamer` over the 27 blocks M-V3 wrote into `packed_vision/` and runs patch-embed, the block loop, and the merger, returning the `[merged_tokens, 5120]` FP16 rows M-V5 will inject. **NO NEW I/O CODE**, which was M-V3's design bet: `packed_vision/` reuses the `PackedExpertsLayout` schema verbatim and `StreamLayout` interprets neither "layer" nor "expert", so a tower is one layer of `depth` fixed-stride blobs and the existing streamer serves it unchanged. Reached through `RealForwardRunner::encode_image`, which OPENS THE TOWER LAZILY -- `arch.vision` is read by nothing else here, so an eager open would charge every text-only session on a vision install 58 MiB of pinned slots for a component it never touches, and `self.vision.is_none()` therefore means "no image yet" rather than "no tower" (that question is `arch.vision.is_active()`). It is also the ONLY reader of `vision.` resident tensors, which is what makes `readable_resident_dtype`'s name-scoped FP16 exception safe (Gotcha 24).
 - `error.rs`: `RuntimeError` enum.
 
 ## Development & Test Commands
@@ -238,6 +246,11 @@ cargo test -p turbospark-runtime
 6. **Phase Profiling Divisor**: `MFERENCE_PHASES=1` averages GPU phase timings over ALL forward passes (prefill tokens + decode tokens). To measure per-token decode cost at long contexts, run two tests with different `--max-new` lengths and calculate the delta.
 7. **Execution Pipeline Flags**:
    - `MFERENCE_PHASES=1`: Prints GPU wait, router readback, expert `pread`, and routed bind timing breakdowns.
+   - `MFERENCE_DISPATCH_PROFILE=1`: ranks the individual dispatches INSIDE each command buffer
+     (`crates/gpu/src/dispatch_profile.rs`), which a per-buffer number cannot tell you. Apple GPUs
+     sample counters only at encoder boundaries, so this mode encodes one compute encoder per dispatch
+     and waits on every buffer to resolve timestamps: read its module doc before quoting an absolute
+     number. A debugging aid, never a throughput measurement.
    - `MFERENCE_SHARED_CB=0`: Toggles overlapping the shared expert command buffer with host expert `pread`.
    - `MFERENCE_ROUTED_PIPELINE=0`: Toggles one-layer-pipelined routed command buffer execution (Gemma 4's sequential decode). Since 2026-08-27 it also governs the `gpt-oss` chunked driver's PER-TOKEN routed loop: off means banks = 1 AND an empty `RoutedSlot::protect` set, the two moving together because retire-before-plan is what makes the empty set sound. Wired as the A/B seam that separated the batched arm's 28% miss drop -- and the answer EXONERATED the protect set (9,024 misses with it, 9,400 without, stdout md5-identical): the drop is real union dedup, this engine's one family-scoped exception to "the union saves nothing" (`docs/BATCHED_PREFILL.md`, step 5's miss-drop paragraphs).
    - `MFERENCE_ROUTER_HIST=/path.json`: Dumps a per-layer expert-selection histogram on runner drop (`router_hist.rs`, analyzed by `scripts/router_hist.py`). Diagnostic only; the 2026-08-08 measurement it exists for (domain-concentrated routing) came back negative, see `docs/EXPERT_ROUTING.md`.
@@ -249,7 +262,7 @@ cargo test -p turbospark-runtime
    - `MFERENCE_PREFILL_CHUNK=<tokens>`: routes prefill through `run_raw_completion_chunked` and `RealForwardRunner`'s chunk driver (Gotcha 14). An A/B seam like the two above it, not a feature flag: both arms must produce identical tokens. Unset, unparsable or 0 is the sequential path. **`--prefill-chunk` IS wired now (2026-08-26), and this env var still wins over it when set.** `crates/cli`'s `resolve_chunk_tokens` and `crates/server`'s `RealChatModel::run_completion` both check the env var first, then fall through to the flag's resolved value (`invocation::PrefillChunk::resolved`: `Fixed(n) -> n`, `Auto -> DEFAULT_CHUNK_SIZE`) ONLY when `RealForwardRunner::supports_chunked_prefill()` says the open install's family can serve it, and to the sequential path with no error otherwise -- the flag carries a default on every invocation whether or not the caller typed it, so an unsupported family must not become an error for a caller who asked for nothing. That predicate is the SAME one `ChunkedPrefillRunner::prefill_chunk`'s own hard refusal uses (`real_forward_api.rs`), so a caller deciding whether to route here and the driver's own refusal can never disagree. Two families today: Gemma 4 and the dense half of `llama` (Gotcha 14).
    - `MFERENCE_ROUTED_BATCH=1`: inside the chunk driver, runs each layer's routed half as ONE route-list dispatch pair per union-bounded sub-batch instead of per token (`docs/BATCHED_PREFILL.md` steps 2 and 3, `families/gemma4/moe_batch.rs`). **TWO families since 2026-08-27**: Gemma 4 on INT4-affine blobs, and `gpt-oss` on MXFP4 ones (step 5's first arm, `families/gptoss/moe_batch.rs`). Each refuses the OTHER's layout by name rather than looping, so neither can silently measure the per-token engine. `qwen3moe`'s Q4_K/Q6_K blobs are still refused by layout: that arm was scoped by measurement and deliberately not built (Gotcha 22).
    - `MFERENCE_BATCHED_GEMV=1`: the same driver's RESIDENT GEMVs as M-row GEMMs through `encode_gemm_any` (step 6, the 29.7% row of the prefill dispatch ranking). **It moves the four attention projections always and the shared expert's three only when `MFERENCE_ROUTED_BATCH` is also on** -- the per-token routed pass reads a single-row `h1` at offset 0 and that read is on the DECODE path's signature, so widening it would be a decode change. Norms, RoPE, attention, the residual adds and the router GEMV stay per token. INT4-affine only, refused by name otherwise (which the DEFAULT synthetic fixture triggers: it writes its shared MLP at eight bits where the real install declares four). Output is byte-identical on both arms and that is measured rather than structural -- the batched and single-row INT4 kernels agree bit-for-bit on a fixture built to see reassociation, against a positive control that does not.
-8. **A layer's routed slots are dispatched in the ROUTER'S RANKING, and that is a correctness constraint, not a style choice.** Phase 2 reduces `blob[slot] * routing_w[slot]` in slot-index order and FP addition is not associative, so the slot order is the summation order. The Gemma flow used to order slots misses-first so the resident hits' phase-1 GEMV could ride its own command buffer (`MFERENCE_HIT_CB`, now removed); because the hit/miss split follows CACHE STATE rather than the prompt, the same prompt could decode to different text across warm runs in one process. Measured 2026-08-08: 4 distinct outputs in 6 runs on a Q8_0 GGUF install at 16 slots, 2 in 6 on the MLX install at 32. Both families are now byte-identical across 8/16/32 slots and cold vs warm. Before adding a decode-path optimization that reorders slots, ask what its ordering is a function of. See AGENTS.md Gotcha 27.
+8. **A layer's routed slots are dispatched in the ROUTER'S RANKING, and that is a correctness constraint, not a style choice.** Phase 2 reduces `blob[slot] * routing_w[slot]` in slot-index order and FP addition is not associative, so the slot order is the summation order. The Gemma flow used to order slots misses-first so the resident hits' phase-1 GEMV could ride its own command buffer (`MFERENCE_HIT_CB`, now removed); because the hit/miss split follows CACHE STATE rather than the prompt, the same prompt could decode to different text across warm runs in one process. Measured 2026-08-08: 4 distinct outputs in 6 runs on a Q8_0 GGUF install at 16 slots, 2 in 6 on the MLX install at 32. Both families are now byte-identical across 8/16/32 slots and cold vs warm. Before adding a decode-path optimization that reorders slots, ask what its ordering is a function of.
 9. **The one `thread::sleep` in this crate is in `decode`, and where it sits is load-bearing.** ROADMAP Phase P2's rate cap paces AFTER the loop has decided to continue and BEFORE the next `produce`. After, so the final token of a generation never pays a sleep nobody waits through, and the stop branches break out above it. Before `produce`, so the idle window falls between forward passes rather than inside one, which is the entire point on the energy axis: the GPU has to be idle during it. It is also strictly downstream of `selection::select`, `history.push` and the progress callback, which is why pacing cannot move a token and why no quality gate is needed for a change to it (`raw_completion.rs`'s `pacing_polls_thermal_pressure_without_changing_the_tokens` is the guard). `RateControl::is_active` gates the whole block, so the default config executes the identical statement sequence it did before the feature existed. A timing test on this may only assert a LOWER bound: a cap is a floor on spacing, never a promise about the ceiling.
 
 10. **Nothing about a GGUF install's block types is decided once. Every one of them is read per tensor, and the routed ones per LAYER and per PHASE.** Resident tensors key on the resident entry's dtype tag at the dispatch site (`encode_gemv_any`, `encode_embed_any`), because a real `Q4_K_M` mixes three block types in one file. The routed experts used to be the exception -- one `routed_layout: RoutedBlobLayout` off `manifest.quant.routedExpert`, on the sound premise that the blobs were uniform -- and ROADMAP Phase S broke the premise twice. Its candidate reads IQ3_XXS gate/up against an IQ4_NL down in the SAME expert (the two phases differ), and its layer 29 is IQ4_XS over Q8_0 (the layers differ), so the manifest's single `ggmlType` cannot name the kernel a dispatch wants. `routed_layouts: Vec<RoutedLayerLayout>` and `moe_offsets: Vec<MoeExpertOffsets>` are both per layer now, resolved at open from `packed_experts/layout.json`, which records a dtype per sub-tensor. Affine and GGUF are told apart by the presence of the SCALE COMPANIONS, not by the dtype string: an affine blob has nine sub-tensors and a GGUF blob three, so the test cannot drift, where a dtype allowlist would have to track that the affine writers spell their packed run `"U32"`. The dispatch sites still go through `encode_moe_phase1_any` / `encode_moe_phase2_any`, so a layout cannot disagree between two call sites and read one blob two ways. A GGUF entry has NO scale or bias companions, so its `scale_offset` is zero and `offset - index_size` underflows: resolve companion offsets inside the affine arm, never before the branch.
@@ -286,7 +299,7 @@ cargo test -p turbospark-runtime
 
     **THE RESIDENT GEMVS BATCH TOO, BEHIND A SECOND SEAM** (`docs/BATCHED_PREFILL.md` step 6, `MFERENCE_BATCHED_GEMV`). The four attention projections become M-row GEMMs through `encode_gemm_any`, and so do the shared expert's three when the routed half is batched as well; that second half is also where the host saving is largest, since the per-token shared branch opens and commits its OWN command buffer per token. Everything with no weights to amortize -- norms, per-head norms, RoPE, attention, the residual adds, the router GEMV -- still loops. Two hazards it added, both silent if unguarded: a batched K/V projection can STRADDLE a sliding-window ring's wrap (`k_slot` validates one row, so it would run past the layer's buffer), which `ring_spans` splits; and `batch_q` is sized at the model's WIDEST head, because Gemma 4's five full layers are 512-wide against the sliding window's 256 and no fixture here has `head_dim != full_head_dim` to catch a wrong sizing, so a length check at the dispatch stands in for the test that cannot exist.
 
-    **Do not reach for the expert-union plan.** An earlier design had one `plan_experts_cached` over the chunk's union replacing M per-token plans, worth "25.2% of prefill cut 3.3x". Measured, prefill's union is 41.5 distinct experts per layer at M=16 against the 24.1 the sequential path already loads at 32 slots, so it saves nothing -- and 41.5 requests against 32 slots trips the assert above. The hit rate before and after the driver landed reads 81.2% against 81.4%, which is the third independent confirmation. See AGENTS.md Gotcha 54.
+    **Do not reach for the expert-union plan.** An earlier design had one `plan_experts_cached` over the chunk's union replacing M per-token plans, worth "25.2% of prefill cut 3.3x". Measured, prefill's union is 41.5 distinct experts per layer at M=16 against the 24.1 the sequential path already loads at 32 slots, so it saves nothing -- and 41.5 requests against 32 slots trips the assert above. The hit rate before and after the driver landed reads 81.2% against 81.4%, which is the third independent confirmation. See Gotcha 14.
 
 15. **The context window is sized by a POLICY too, and its two failure modes
     are deliberately different kinds of thing.** `MaxContext::Auto` is the
@@ -566,7 +579,7 @@ cargo test -p turbospark-runtime
     The union bound is what CAPS the block size and is not a limitation to
     work around: at top-8 a block of M tokens reads up to `8M` experts, so
     M=2 wants 16 and M=4 wants 32, and `ExpertCache::plan_if_possible`
-    ASSERTS rather than degrading (AGENTS.md Gotcha 54) -- which is why the
+    ASSERTS rather than degrading (Gotcha 14) -- which is why the
     driver bounds its own sub-batches. Small blocks are what pay on this
     engine, measured independently on both speculative pages.
 
@@ -749,3 +762,108 @@ cargo test -p turbospark-runtime
     are right to, because `MFERENCE_ROUTED_BATCH` asks for the routed half
     as one dispatch pair and a dense family has no routed half to refer to.
     Refuse where the request is MEANINGFUL and unserved.
+
+23. **EVERY TEST IN A PERTURBATION-STYLE FIXTURE FILE CAN BE SELF-RELATIVE,
+    AND THEN THE FILE CATCHES ALMOST NOTHING.** The reachability pattern
+    `docs/NEW_MODEL.md` recommends (perturb a tensor, require the logits to
+    move) rebuilds its own baseline inside the same binary, so a mutation
+    changing the MATH for every arm equally leaves every case green: the
+    baseline carries it too. Measured on `tests/real_forward_muse.rs`,
+    2026-08-15: six mutations, one reddened, and that one only because
+    dropping the attention output gate makes a tensor UNREACHABLE. Dropping
+    a Q scale, rotating a NoPE layer, swapping a norm convention, dropping
+    an output multiplier and collapsing two epsilons all survived twelve
+    tests.
+
+    The fix is one number: a FROZEN DIGEST over a deterministic synthetic
+    install's logits, the only assertion in such a file that compares
+    against something computed BEFORE the mutation. It took the same six to
+    five reddening. It is a CHANGE DETECTOR and not a correctness claim
+    (untrained weights cannot say the arithmetic is right, only that it is
+    what it was), so re-freezing needs a stated reason and a digest updated
+    reflexively protects nothing.
+
+    **Its POSITION matters, which the digest pattern does not warn about.**
+    The obvious implementation reuses the file's `first_logits` helper, which
+    produces at position 0, where a softmax over one key is exactly 1.0: so
+    attention returns V alone and no q/k transform is observable. Measured,
+    at a single position the correct model and one with flipped q/k norms
+    digest IDENTICALLY (`312e17a0`); over eight positions they differ. A
+    digest is only a change detector for changes its inputs can reach.
+
+    Two limits worth knowing. Collapsing an RMS epsilon of 1e-5 into 1e-8
+    survives even the digest: at FP16 with `mean_sq` near 1 those differ by
+    ~5e-6 relative, an order of magnitude under FP16's resolution. Epsilon
+    VALUES are pinnable offline against the checkpoint's `config.json`, but
+    which epsilon reaches which norm site is a question only a real-model
+    quality gate answers. And a file with no digest at all catches nothing of
+    this class: `real_forward_qwen35.rs` was seven reachability cases, so
+    flipping that flow's q/k norms to the centered convention left it green,
+    left `real_forward_qwen.rs`'s eight green, and was caught only by
+    `qwen38_quality_gate` on a real 14 GB install.
+
+24. **THE VISION TOWER IS THE ONLY READER OF `vision.` TENSORS, AND THAT IS A
+    CONSTRAINT RATHER THAN AN OBSERVATION.** `readable_resident_dtype` takes
+    the tensor's NAME as well as its dtype tag, accepting FP16 (tag 2) under
+    `vision.` and refusing it everywhere else. The hazard it scopes around is
+    real and unchanged for text: `norm_view` and `read_bf16_host` are
+    dtype-BLIND, resolving an unquantized tensor by BYTE WIDTH and decoding it
+    as BF16, so a tag-2 tensor either of them reaches is MISREAD rather than
+    rejected -- values wrong by up to 2^112, from an install that opened
+    cleanly (AGENTS.md Gotcha 45). Granting tag 2 outright is not a narrower
+    bug than the one the refusal prevents; it is the same one.
+
+    What makes the scoping true is that `vision/weights.rs` is the whole of
+    what reads those tensors, and its `fp16_view` checks the TAG as well as
+    the width so it cannot quietly become the general reader. **Any new reader
+    of a `vision.` tensor owes the same check**, and any text-path helper that
+    grows a `vision.` call site reopens the case the exception was written to
+    close.
+
+    Two refusals in the same file exist for failures nothing else catches. A
+    block sub-tensor whose dtype is not `"fp16"` is refused BY NAME, because a
+    same-width BF16 run passes every length check and reads as a different
+    number -- the mirror of the hazard above, pointing the other way. And a
+    role offset that is not 4-BYTE ALIGNED is refused, because sub-tensors
+    pack back-to-back with no per-role padding: alignment is an accident of
+    the preceding tensors' sizes rather than a property of the format, the
+    real tower's element counts are all even so every offset happens to land,
+    and Metal's `setBuffer:offset:` requires it. A violation would be a
+    validation-layer abort a long way from the layout that produced it.
+
+25. **NO COMPOSITION TEST IN THIS REPO CAN SEE WHICH GELU THE VISION TOWER
+    USES, AT EITHER LEVEL, AND BOTH LEVELS SAY SO AS AN ASSERTION.** The
+    tower uses BOTH forms -- tanh in each block's MLP, the exact erf form in
+    the merger -- and they agree to about 3e-4. A block's output already
+    carries the accumulated FP16 error of two norms, five GEMMs and an
+    attention; a whole TOWER's carries 27 of those, measured at 8.4e-3
+    relative on the synthetic fixture. So the signal is more than an order of
+    magnitude under the bound either parity assertion has to allow, and no
+    tightening fixes it: the bound is measuring the storage, not the choice.
+
+    Found by MUTATION rather than by review, twice. Swapping either GELU for
+    the other leaves all nine cases in `tests/vision_tower_synthetic.rs` green,
+    exactly as it leaves `crates/gpu/tests/vision_block_parity.rs` green one
+    level down (that crate's Gotcha 9). `the_gelu_choice_is_invisible_at_this_
+    bound` states the limitation as a test -- the two towers differ, and by
+    less than the parity case's own bar -- so a reader cannot assume the
+    composition test covers it. What DOES pin the choice is the pair of
+    per-kernel cases in `crates/gpu/tests/vision_parity.rs` plus the one-line
+    call site in `vision/block.rs` and `vision/stages.rs`, and nothing else.
+
+26. **THE TOWER'S SECOND STREAMER SLOT IS NOT LOAD-BEARING YET, AND THE
+    MUTATION THAT SAYS SO SURVIVES ON PURPOSE.** `VisionTower::run` reads
+    block `n` into slot `n % VISION_SLOTS` and commits-and-waits per block, so
+    the host cannot overwrite a slot the GPU is still reading -- because the
+    GPU has finished. ONE slot would be correct today. The second is the shape
+    the later read-pool prefetch needs, and alternating now makes that a
+    one-line change rather than a restructure.
+
+    Replacing `n % VISION_SLOTS` with `0` leaves every case in the synthetic
+    gate green, which is the PREDICTED result and is recorded here so nobody
+    reads the double buffer as doing something it is not. The same run's
+    residency case still asserts `2 x block_stride`, because that is the
+    footprint the milestone commits to rather than a consequence of
+    correctness. A prefetch that removes the per-block wait makes the
+    alternation load-bearing, and the case above becomes a real guard at that
+    point rather than a documented no-op.

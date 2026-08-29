@@ -15,8 +15,7 @@
 use std::collections::HashSet;
 use std::time::Instant;
 
-use half::f16;
-
+use crate::moe_prefill_pipeline::{encode_routes, next_routed_sub_batch};
 use crate::real_forward::RealForwardRunner;
 use crate::real_forward_dispatch::router_topk_gemma4;
 use crate::real_forward_layout::RoutedBlobLayout;
@@ -188,84 +187,16 @@ impl RealForwardRunner {
             // by an in-flight dispatch: wait out the previous sub-batch's
             // command buffer before planning this one.
             self.retire_routed(&mut committed);
-            let mut seen: HashSet<usize> = selected_all[sub_start].iter().copied().collect();
-            if seen.len() > cap {
-                return Err(RealForwardError::Unsupported(format!(
-                    "layer {layer}: one token routes {top_k} experts against {cap} slots"
-                )));
-            }
-            let mut sub_len = 1usize;
-            while sub_start + sub_len < m {
-                let new = selected_all[sub_start + sub_len]
-                    .iter()
-                    .filter(|e| !seen.contains(*e))
-                    .count();
-                if seen.len() + new > cap {
-                    break;
-                }
-                seen.extend(selected_all[sub_start + sub_len].iter().copied());
-                sub_len += 1;
-            }
-
-            // One plan and one pread round for the sub-batch's union, in
-            // first-seen order. The plan order cannot move bytes: the
-            // fused phase 2 reduces over RANKS per token, never over
-            // slots, so cache-slot assignment is numerically invisible
-            // here -- a stronger property than the decode kernel has.
-            let mut union: Vec<usize> = Vec::with_capacity(seen.len());
-            let mut in_union = HashSet::new();
-            for selected in &selected_all[sub_start..sub_start + sub_len] {
-                for &e in selected {
-                    if in_union.insert(e) {
-                        union.push(e);
-                    }
-                }
-            }
-            let t_io = Instant::now();
-            let streamer = self.streamers[layer].as_mut().ok_or_else(|| {
-                RealForwardError::Unsupported(format!(
-                    "real Gemma 4 layer {layer} has no packed-expert streamer"
-                ))
-            })?;
-            let plan = streamer.plan_experts_cached(&union, &HashSet::new());
-            self.phases.expert_requests += plan.experts.len() as u64;
-            self.phases.expert_hits += plan.hits as u64;
-            let streamer = self.streamers[layer]
-                .as_mut()
-                .expect("streamer presence checked above");
-            let slots = streamer
-                .execute_expert_cache_plan(&plan)
-                .map_err(|e| RealForwardError::Unsupported(format!("expert stream: {e}")))?;
-            self.phases.expert_io_nanos += t_io.elapsed().as_nanos() as u64;
-            let slot_of: std::collections::HashMap<usize, usize> =
-                union.iter().copied().zip(slots).collect();
-
-            // Routes stay in PAIR order (token-major, rank within): the
-            // fused phase 2 looks its routes up BY PAIR, so a
-            // blob-locality sort would break it -- and each blob is
-            // ~3.2 MB against caches far smaller, so the sort would buy
-            // nothing anyway.
-            let mut routes = Vec::with_capacity(sub_len * top_k);
-            let mut routing16 = Vec::with_capacity(sub_len * top_k);
-            for i in 0..sub_len {
-                for r in 0..top_k {
-                    let expert = selected_all[sub_start + i][r];
-                    routes.push(gpu::MoePrefillRoute {
-                        token: i as u32,
-                        rank: r as u32,
-                        slot: *slot_of
-                            .get(&expert)
-                            .expect("plan assigned every union expert a slot")
-                            as u32,
-                    });
-                    routing16.push(f16::from_f32(weights_all[sub_start + i][r]));
-                }
-            }
+            let sub = next_routed_sub_batch(&selected_all, sub_start, cap, layer, top_k)?;
+            let slot_of = self.plan_routed_union(layer, "real Gemma 4", &sub.union)?;
+            let (routes, routing16) =
+                encode_routes(&selected_all, &weights_all, &sub, &slot_of, top_k);
+            let sub_len = sub.sub_len;
             let real = self.real.as_ref().expect("real state present");
             let x_off = (sub_start * hidden * 2) as u64;
             let acts_off = (sub_start * top_k * moe_inter_us * 2) as u64;
             let rw_off = (sub_start * top_k * 2) as u64;
-            let routes_off = (sub_start * top_k * 16) as u64;
+            let routes_off = (sub_start * top_k * gpu::MoePrefillRoute::STRIDE_BYTES) as u64;
             gpu::write_buffer_bytes(
                 &real.batched().batch_routing_w,
                 rw_off as usize,

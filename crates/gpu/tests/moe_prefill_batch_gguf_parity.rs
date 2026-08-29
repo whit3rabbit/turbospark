@@ -242,7 +242,13 @@ impl Fixture {
             .new_buffer_with_data(&vec![0u8; MAX_STREAMED_EXPERTS * f * 2]);
         let residual_buf = self.context.new_buffer_with_data(&to_le(&self.residual));
         let y_buf = self.context.new_output_buffer((d * 2) as u64);
-        let routed = RoutedBlobsBuffer::new(&mut self.context, false).expect("arg buffer");
+        // `use_silu` is TRUE on this oracle to match the batched pair, whose
+        // silu specialization is a module-private constant. The flag reaches
+        // the kernels only through `moe_activate_mxfp4`'s PLAIN arm
+        // (`alpha <= 0`), so the `GPT_OSS` cases cannot see it -- but the
+        // plain-activation case can, and bit-identity requires both arms to
+        // compute the same activation there.
+        let routed = RoutedBlobsBuffer::new(&mut self.context, true).expect("arg buffer");
 
         for t in 0..tokens {
             let row: Vec<(usize, f32)> = (0..top_k)
@@ -261,7 +267,7 @@ impl Fixture {
                 .map(|&(slot, _)| (&self.blobs[slot], 0u64))
                 .collect();
             routed
-                .bind(&mut self.context, false, &blob_refs)
+                .bind(&mut self.context, true, &blob_refs)
                 .expect("bind blobs");
 
             let pass = self.context.begin_pass();
@@ -278,7 +284,7 @@ impl Fixture {
                 d as u32,
                 f as u32,
                 top_k as u32,
-                false,
+                true,
                 self.act,
             )
             .expect("decode phase1");
@@ -293,7 +299,7 @@ impl Fixture {
                 (&y_buf, 0),
                 d as u32,
                 f as u32,
-                false,
+                true,
                 self.act.has_bias,
             )
             .expect("decode phase2");
@@ -329,10 +335,9 @@ impl Fixture {
         let residual_buf = self.context.new_buffer_with_data(&to_le(&self.residual));
 
         let routed: RoutedBlobsWideBuffer =
-            new_routed_blobs_wide_mxfp4(&mut self.context, false).expect("arg buffer");
+            new_routed_blobs_wide_mxfp4(&mut self.context).expect("arg buffer");
         let blob_refs: Vec<(&Buffer, u64)> = self.blobs.iter().map(|b| (b, 0u64)).collect();
-        bind_routed_blobs_wide_mxfp4(&routed, &mut self.context, false, &blob_refs)
-            .expect("bind blobs");
+        bind_routed_blobs_wide_mxfp4(&routed, &mut self.context, &blob_refs).expect("bind blobs");
 
         let pass = self.context.begin_pass();
         for blob in &self.blobs {
@@ -350,7 +355,6 @@ impl Fixture {
             f as u32,
             top_k as u32,
             route_count as u32,
-            false,
             self.act,
         )
         .expect("batched phase1");
@@ -368,7 +372,6 @@ impl Fixture {
             f as u32,
             top_k as u32,
             tokens as u32,
-            false,
             self.act.has_bias,
         )
         .expect("batched phase2");

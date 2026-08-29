@@ -134,6 +134,11 @@ impl RealForwardRunner {
             )));
         }
 
+        // `banks == 1` does not make every slot count safe here: see
+        // `routed_pipeline_banks`'s doc and AGENTS.md Gotcha 64.
+        // `--expert-cache-slots == top_k` panics on the first multi-token
+        // prefill (Qwen3-30B-A3B's top_k of 8 hits it; Mixtral's top_k of 2
+        // does not, since 8 >= 2 * 2).
         let banks = routed_pipeline_banks(self.expert_cache_slots, top_k);
 
         let embed_name = "language_model.model.embed_tokens.weight";

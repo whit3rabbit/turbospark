@@ -214,12 +214,51 @@ pub struct CommittedPass {
     command_buffer: metal::CommandBuffer,
 }
 
+/// `waitUntilCompleted` returns NORMALLY on a buffer whose work the GPU
+/// aborted (fault, timeout, or a device-wide restart another process
+/// triggered), leaving whatever was written before the fault in the output
+/// buffers -- which decodes as fluent wrong tokens with no error anywhere.
+/// Observed 2026-08-28 as a greedy divergence under concurrent Metal test
+/// load (AGENTS.md Gotcha 27's class, but the hidden state was the GPU's,
+/// not the cache's). Warn loudly rather than panic: the check must not be
+/// able to change tokens, only to make a corrupted run attributable.
+// The allow is for objc's `sel_impl!`, whose expansion carries a
+// `cfg(feature = "cargo-clippy")` this crate does not declare.
+#[allow(unexpected_cfgs)]
+fn warn_on_command_buffer_error(command_buffer: &metal::CommandBufferRef) {
+    use metal::objc::{msg_send, sel, sel_impl};
+    let status = command_buffer.status();
+    if status == metal::MTLCommandBufferStatus::Completed {
+        return;
+    }
+    // SAFETY: `error` is a documented `NSError*` accessor on
+    // `MTLCommandBuffer`, called on a live, waited-on buffer; `code` is a
+    // documented NSInteger accessor on NSError, called only when non-nil.
+    #[allow(unsafe_code)]
+    let code: i64 = unsafe {
+        let err: *mut metal::objc::runtime::Object = msg_send![command_buffer, error];
+        if err.is_null() {
+            0
+        } else {
+            msg_send![err, code]
+        }
+    };
+    eprintln!(
+        "[gpu] command buffer '{}' finished with status {:?} (error code {}); \
+         its outputs are not trustworthy and this generation may be corrupt",
+        command_buffer.label(),
+        status,
+        code
+    );
+}
+
 impl CommittedPass {
     /// Blocks until this buffer finishes. Its shared-storage outputs are
     /// CPU-readable after this returns; buffers committed after it may
     /// still be running.
     pub fn wait(self) {
         self.command_buffer.wait_until_completed();
+        warn_on_command_buffer_error(&self.command_buffer);
     }
 
     /// [`Self::wait`] that also reports the buffer's GPU-side busy
@@ -235,6 +274,7 @@ impl CommittedPass {
     pub fn wait_with_gpu_time(self) -> f64 {
         use metal::objc::{msg_send, sel, sel_impl};
         self.command_buffer.wait_until_completed();
+        warn_on_command_buffer_error(&self.command_buffer);
         // SAFETY: `GPUStartTime`/`GPUEndTime` are documented
         // `CFTimeInterval` (f64) accessors on `MTLCommandBuffer`, called
         // on a live, completed buffer.

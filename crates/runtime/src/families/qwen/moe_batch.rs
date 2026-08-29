@@ -32,14 +32,13 @@
 //! shape on both speculative pages: small blocks are what pay on this
 //! engine.
 
-use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
-use half::f16;
 use model_io::ResidentIndex;
 
 use crate::families::qwen::batched_scratch::BatchedScratch;
 use crate::families::qwen::{layer_tensor, RealQwenState};
+use crate::moe_prefill_pipeline::{encode_routes, next_routed_sub_batch, plan_and_stream_union};
 use crate::real_forward_dispatch::{encode_gemv_any, router_topk_gemma4};
 use crate::real_forward_layout::{RoutedBlobLayout, RoutedLayerLayout};
 use crate::real_forward_types::{DecodeScratch, PhaseCounters, RealForwardError};
@@ -154,74 +153,17 @@ pub(crate) fn encode_qwen_layer_moe_batched(
             prev.wait();
             phases.pipeline_wait_nanos += t_wait.elapsed().as_nanos() as u64;
         }
-        let mut seen: HashSet<usize> = selected_all[sub_start].iter().copied().collect();
-        if seen.len() > cap {
-            return Err(RealForwardError::Unsupported(format!(
-                "layer {layer}: one token routes {top_k} experts against {cap} slots"
-            )));
-        }
-        let mut sub_len = 1usize;
-        while sub_start + sub_len < batch {
-            let new = selected_all[sub_start + sub_len]
-                .iter()
-                .filter(|e| !seen.contains(*e))
-                .count();
-            if seen.len() + new > cap {
-                break;
-            }
-            seen.extend(selected_all[sub_start + sub_len].iter().copied());
-            sub_len += 1;
-        }
-
-        // One plan and one pread round for the sub-batch's union, in
-        // first-seen order. Plan order cannot move bytes here: the fused
-        // phase 2 reduces over RANKS per token and never over slots, so
-        // cache-slot assignment is numerically invisible -- a stronger
-        // property than the decode kernel has (Gotcha 27).
-        let mut union: Vec<usize> = Vec::with_capacity(seen.len());
-        let mut in_union = HashSet::new();
-        for selected in &selected_all[sub_start..sub_start + sub_len] {
-            for &e in selected {
-                if in_union.insert(e) {
-                    union.push(e);
-                }
-            }
-        }
-        let t_io = Instant::now();
+        let sub = next_routed_sub_batch(&selected_all, sub_start, cap, layer, top_k)?;
         let streamer = streamers[layer].as_mut().ok_or_else(|| {
             RealForwardError::Unsupported(format!("real Qwen layer {layer} has no expert streamer"))
         })?;
-        let plan = streamer.plan_experts_cached(&union, &HashSet::new());
-        phases.expert_requests += plan.experts.len() as u64;
-        phases.expert_hits += plan.hits as u64;
-        let slots = streamer
-            .execute_expert_cache_plan(&plan)
-            .map_err(|e| RealForwardError::Unsupported(format!("expert stream: {e}")))?;
-        phases.expert_io_nanos += t_io.elapsed().as_nanos() as u64;
-        let slot_of: HashMap<usize, usize> = union.iter().copied().zip(slots).collect();
-
-        // PAIR order (token-major, rank within): the fused phase 2 looks
-        // its routes up by pair, so a blob-locality sort would break it.
-        let mut routes = Vec::with_capacity(sub_len * top_k);
-        let mut routing16 = Vec::with_capacity(sub_len * top_k);
-        for i in 0..sub_len {
-            for r in 0..top_k {
-                let expert = selected_all[sub_start + i][r];
-                routes.push(gpu::MoePrefillRoute {
-                    token: i as u32,
-                    rank: r as u32,
-                    slot: *slot_of
-                        .get(&expert)
-                        .expect("plan assigned every union expert a slot")
-                        as u32,
-                });
-                routing16.push(f16::from_f32(weights_all[sub_start + i][r]));
-            }
-        }
+        let slot_of = plan_and_stream_union(streamer, phases, &sub.union)?;
+        let (routes, routing16) = encode_routes(&selected_all, &weights_all, &sub, &slot_of, top_k);
+        let sub_len = sub.sub_len;
         let x_off = (sub_start * hidden * 2) as u64;
         let acts_off = (sub_start * top_k * moe_inter_us * 2) as u64;
         let rw_off = (sub_start * top_k * 2) as u64;
-        let routes_off = (sub_start * top_k * 16) as u64;
+        let routes_off = (sub_start * top_k * gpu::MoePrefillRoute::STRIDE_BYTES) as u64;
         gpu::write_buffer_bytes(
             &routed.batch_routing_w,
             rw_off as usize,
