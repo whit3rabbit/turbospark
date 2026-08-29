@@ -5,10 +5,11 @@ What is built, what it measures, and the traps. Facts about the CHECKPOINT
 live in `docs/VISION_PHASE0.md` and are not repeated here; this page is about
 the IMPLEMENTATION.
 
-Status as of 2026-08-28: milestones M-V0 through M-V4 are done. The tower runs
-and agrees with mlx-vlm. **Nothing consumes its output yet** -- injecting the
-rows into the trunk is M-V5, and until that lands no image can reach a
-generated token.
+Status as of 2026-08-28: milestones M-V0 through M-V5 are done. The tower runs,
+agrees with mlx-vlm, and **its rows now reach a generated token**. What is
+missing is the front doors: nothing yet BUILDS a text+image prompt, so an
+image reaches the model only through `set_prompt_vision` called by hand
+(M-V6 is the tokenizer splice, M-V7 the CLI, M-V8 the server).
 
 ## The pipeline, end to end
 
@@ -43,6 +44,67 @@ out  = merger(h)                            # norm over 1152 per row, reshape, f
 Real shapes: depth 27, hidden 1152, 16 heads of 72, intermediate **4304**
 (not 4608, which is the merger's width), out_hidden 5120, patch 16, temporal
 2, merge 2, position grid 48x48, LayerNorm eps 1e-6.
+
+## Injection: how those rows become a token (M-V5)
+
+Two seams in `families/qwen/`, and one inherent method to set them up.
+
+`RealForwardRunner::set_prompt_vision(embeddings, positions, prompt_len)`
+takes the tower's output plus
+`turbospark_vision_io::mrope_position_triples`' walk of the prompt's ids, and
+builds a `vision::PromptVision`. Additive: no trait changed, because
+`LogitProducer` is implemented by a scripted mock with no notion of an image.
+
+**The embedding blit**, at the single `encode_embed_any` call in
+`produce.rs`. At an image-pad position the tower's row IS the embedding, so
+the table lookup is REPLACED and not blended -- the placeholder id carries no
+meaning. It is a host write into `scratch.x`, the first in the repo from
+outside the decode flow, and it is sound because of WHEN rather than because
+of a barrier: the pass is not committed until the first router wait far below,
+so a host write landing before commit is visible to every dispatch in it.
+
+**The mRoPE dispatch**, at the single `encode_rope_neox_subdim` call in
+`attn.rs`, mask-1 layers only. `position` keeps its other two jobs unchanged
+-- the KV slot index and the `position + 1` attention span -- so only the
+angle moves and the cache is untouched.
+
+### The dispatch condition is a property of the DATA
+
+`RopePosition::Triple(t, h, w)` with `t == h == w` takes the PRE-EXISTING
+kernel. `get_rope_index` gives every text token of a mixed prompt exactly
+that, including the text between and after images, so the divergence test IS
+the "is this an image pad" test. Nothing separate has to be plumbed and
+nothing can drift out of step.
+
+The two kernels share `apply_neox_pair`, so the boundary is exact rather than
+approximate. Two things are asserted on that:
+`at_t_equals_h_equals_w_it_is_bit_identical_to_rope_neox_subdim` compares
+`to_bits`, and `a_degenerate_position_table_is_byte_identical_to_no_table_at_all`
+reaches the same claim through the real trunk.
+
+**The degenerate arm is therefore a no-op today and the mutation that says so
+survives on purpose.** Deleting it -- so every triple reaches the new kernel
+-- leaves all nine synthetic cases green, the frozen digest included. It is
+kept so a future change to the mRoPE kernel cannot reach a text token at all,
+and so the claim rests on which function is called rather than on the shader
+compiler continuing to agree.
+
+### Decode continues at `position + rope_delta`
+
+An image block advances the position clock by its LARGEST axis rather than by
+its token count, so a prompt's positions run behind its token indices.
+`rope_delta` is `max_position + 1 - len` (negative on any prompt with an
+image) and a position past the prompt resolves to `(p, p, p)` with
+`p = position + rope_delta`. A decode step that used its cache index would
+jump.
+
+### The map is cleared by `reset()` and NOT by `rollback`
+
+A new generation is a new prompt, and a bulk-OCR loop is exactly the caller
+that opens once and walks pages -- page N's spans against page N+1's tokens
+blit the wrong image at positions that are not even placeholders. A
+speculative rewind stays inside one prompt and still needs its map. Both
+halves are pinned.
 
 ## Six things that are one mutation from a fluent wrong model
 
@@ -113,7 +175,7 @@ This is measured rather than argued: the single-slot mutation survives every
 case in the synthetic gate, which is the predicted result and is recorded so
 nobody concludes the double buffer is doing something it is not.
 
-## Two gates, in this order
+## Four gates, in this order
 
 **Stage 1, `crates/runtime/tests/vision_tower_synthetic.rs`** (1.4 s, no
 network). The GPU tower against `compute::vision` reading the SAME install
@@ -139,6 +201,84 @@ rows. Setup is in the test's own header. Measured 2026-08-28:
 
 **That merger figure is AT the reference's own FP16-vs-FP32 floor of
 0.999993** for this tower, not above it. There is no gap left to attribute.
+
+**Stage 3, `crates/runtime/tests/vision_inject_synthetic.rs`** (1.1 s, no
+network). Nine cases over the same synthetic fixture, covering the two seams
+M-V5 adds. Three of them are the ones worth naming.
+
+A vision install handed no image reproduces a SEPARATELY BUILT no-tower
+install's logits exactly, which says the tower's presence moves no trunk byte.
+A degenerate position table reproduces the no-table run byte for byte, which
+is the dispatch condition itself. And the blit REPLACES the lookup rather than
+riding beside it: changing the token id at an image position must move
+nothing, and changing one at a text position must move something -- the pair
+is the point, since the first half alone passes against a flow ignoring token
+ids and the second alone against one that never blits.
+
+**Stage 4, `crates/bench/tests/vision_logit_dump.rs` + `scripts/kld_mlx_vlm.py`**
+(`#[ignore]`d). The full model against mlx-vlm on a text+image prompt. Stage 2
+stops at the merger, so this is the only instrument that reaches which rows
+land at which positions, which angle each position gets, and whether the mRoPE
+selector agrees with the reference's.
+
+It replays the reference's IDS and its PIXELS, and neither is optional.
+Preprocessing is held to the reference by `crates/vision-io`'s golden fixtures
+and the tower by stage 2, so letting either back in would make a gap
+unattributable between four candidates instead of one.
+
+**The reference runs FIRST here, unlike every sibling `kld_*.py`, and it is
+temporary.** M-V6 does not exist, so this port cannot build a text+image id
+sequence at all and the processor is the authority on the splice. Flip it when
+M-V6 lands, and compare the two splices rather than taking one on trust.
+
+Measured 2026-08-28, `mlx-community/Qwen3.8-27B-4bit` at revision `3e6447f0`,
+the 1024x1280 page (grid 1x80x64, 5,120 patches, 1,280 merged tokens spliced
+into a 1,302-token prompt):
+
+| arm | mean nats | top-1 |
+|---|---|---|
+| **shape floor** (the reference against ITSELF, batched vs cached) | 0.1437 | 95.00% |
+| **B: the reference's own merger rows** through this port | **0.1339** | **96.08%** |
+| **A: this port's own tower**, the whole pipeline | 0.4214 | 89.70% |
+| greedy continuation, 48 tokens, arm A | -- | **100%** |
+
+**Arm B is BELOW the floor**, so the injection, the position table, the mRoPE
+dispatch and the trunk have no gap left to attribute. Arm A's residual is the
+TOWER's storage difference (this port FP16, the reference BF16) amplified
+through 64 trunk layers -- which is why the two arms exist. A composite gap
+localizes only when its stages can be substituted one at a time.
+
+**READ THE FLOOR BEFORE READING THE HEADLINE.** 0.1437 nats at 95% top-1 is
+enormous next to this family's text floor of 0.0000024, and it is not a
+defect: 1,280 image positions predict near-tied continuations, so batched
+versus cached flips 5% of the argmaxes inside ONE engine. An image prompt's
+floor has to be measured on the image prompt; quoting the family's text row
+here would understate it by five orders of magnitude.
+
+**AND THE GREEDY ARM IS WHY 0.42 IS NOT ALARMING.** The two engines produce
+the SAME transcription -- the same table rows, the same figures, the same word
+sequence -- differing only by one leading whitespace token. 0.42 mean nats at
+89.7% top-1 sounds like a broken model until the output is read.
+
+### The position table was checked against the reference directly
+
+`mrope_position_triples` was diffed against `get_rope_index`'s own
+`position_ids` on all 1,302 positions of this prompt: zero disagreements, and
+`rope_delta` reads -1240 on both sides. Comparing the INTERMEDIATE is what
+made the remaining gap attributable; inferring the table's correctness from
+the logits would have left it as one candidate among four.
+
+### Two metrics failed correct implementations on the way here
+
+Both are recorded because the pattern has now appeared three times on this
+feature. The greedy comparison was POSITIONAL and called two identical
+transcriptions 10.42% agreement diverging at token 0, because this port emits
+a leading newline the reference does not; it aligns within a small window now
+and prints the shift. And `prepare`'s first version wrote the processor's raw
+`pixel_values` without permuting them to this port's `(T, P_h, P_w, C)` row
+order -- 18.87 mean nats on the image positions against a near-exact 0.00026
+median on the text ones, which is `crates/vision-io` Gotcha 1 arriving in a
+measurement script rather than in the pipeline.
 
 ### Read the cosine, not a magnitude-relative error
 
@@ -249,13 +389,12 @@ evidence.
 
 ## What is not built
 
-M-V5 through M-V9. See the milestone plan; in one line each:
+M-V6 through M-V9. See the milestone plan; in one line each:
 
-- **M-V5** injection: blit the merger rows into the residual stream at
-  image-pad positions, plus the trunk's mRoPE. **This is what makes an image
-  reach a token.**
 - **M-V6** tokenizer and template: the post-tokenization splice that expands
-  one `<|image_pad|>` into `merged_tokens` copies.
+  one `<|image_pad|>` into `merged_tokens` copies. **Until it lands nothing
+  builds a text+image prompt**, which is why `vision_logit_dump.rs` takes its
+  ids from the reference's processor rather than producing them.
 - **M-V7** CLI: `--image`, and image parts in `--messages-file`.
 - **M-V8** server: stop dropping image parts on both endpoints.
 - **M-V9** the memory oracle's multi-page loop, and hardening.
