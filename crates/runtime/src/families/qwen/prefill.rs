@@ -5,16 +5,42 @@
 //! `families/museglimmer/prefill.rs` -- loop the EXISTING per-token kernels
 //! inside a micro-batch, batching command buffers rather than GEMVs.
 //!
-//! **This is a different design than `families/qwen/batched.rs`.** That file
-//! implements `docs/BATCHED_PREFILL.md` steps 2-6 (GEMVs become GEMMs) for
-//! the MTP/DFlash2 verify pass, sized for tiny block depths and allocated
-//! only when a drafter is open. This driver needs neither: it calls
-//! `attn::encode_linear_block` / `attn::encode_full_attention_block` and
-//! `dense::encode_qwen_layer_dense` exactly as the sequential flow
+//! **THE DEFAULT ARM IS A DIFFERENT DESIGN THAN `families/qwen/batched.rs`.**
+//! That file implements `docs/BATCHED_PREFILL.md` steps 2-6 (GEMVs become
+//! GEMMs) for the MTP/DFlash2 verify pass, sized for tiny block depths and
+//! allocated only when a drafter is open. The default arm needs neither: it
+//! calls `attn::encode_linear_block` / `attn::encode_full_attention_block`
+//! and `dense::encode_qwen_layer_dense` exactly as the sequential flow
 //! (`produce.rs`) does, once per token, inside one command buffer per
 //! micro-batch instead of one per token. **No new kernel, no new buffer.**
 //!
-//! Three properties make that safe.
+//! **`MFERENCE_BATCHED_GEMV` IS THE SECOND ARM, AND IT IS THAT FILE'S
+//! MACHINERY REUSED RATHER THAN A SECOND COPY OF IT** (step 6, wired
+//! 2026-08-29). `batched_layers.rs`'s three encoders already take the
+//! parameters this driver has, already read and write `scratch.x` at the
+//! `t * hidden * 2` row convention this driver uses, and already carry the
+//! GDN recurrence's multi-row kernels -- so the arm is a branch in the layer
+//! loop plus a lazily-allocated `BatchedScratch`, with NO new dispatch code
+//! and no new kernel. The one constant that makes it fit exactly is that
+//! `MAX_PREFILL_BATCH` IS `gpu::MAX_BATCH_ROWS` (both 16), so a full
+//! micro-batch is one GEMM dispatch and never needs sub-batching.
+//!
+//! **THE TWO ARMS ARE NOT BYTE-IDENTICAL ON A REAL INSTALL, AND THAT IS A
+//! FLOOR RATHER THAN A DEFECT.** `produce_batched` and `produce` differ by
+//! 6.2e-8 to 1.5e-5 nats with the argmax agreeing on every row, against a
+//! measured dense batched-vs-cached shape floor of 7.4e-6 for this same
+//! architecture on MLX (`crates/bench/tests/batched_forward_probe.rs`,
+//! commit `e8deb6c`) -- every engine's batched and cached passes disagree by
+//! about this much. So the batched arm's gate is the QUALITY gate, not the
+//! md5 identity every other chunked driver was verified with; what must stay
+//! byte-identical is the DEFAULT arm, which is what the caller who sets no
+//! env var gets. The synthetic fixture cannot see the floor at all (it reads
+//! 0 differing logits at every span,
+//! `tests/real_forward_qwen35_batched_onset.rs`), so a fixture-level
+//! byte-identity case pins the WIRING -- rows, offsets, ordering -- and must
+//! not be read as evidence about the arithmetic.
+//!
+//! Three properties make the default arm safe.
 //!
 //! `attn.rs`'s two block encoders read `scratch.normed` / write `scratch.o`
 //! at offset 0 and never touch `scratch.x` directly, so they need no change
@@ -67,6 +93,9 @@ use foundation::LogitValue;
 use super::attn::{
     encode_full_attention_block, encode_linear_block, QkNormConvention, RopePosition,
 };
+use super::batched_layers::{
+    encode_dense_ffn_batched, encode_full_attention_block_batched, encode_linear_block_batched,
+};
 use super::{dense, layer_tensor, RMS_EPS, TRUNK_PREFIX};
 use crate::real_forward::RealForwardRunner;
 use crate::real_forward_dispatch::{encode_embed_any, encode_gemv_any};
@@ -108,19 +137,34 @@ impl RealForwardRunner {
                     .to_string(),
             ));
         }
-        // REFUSED BY NAME rather than ignored, matching every other chunked
-        // driver (`crates/runtime/CLAUDE.md` Gotcha 22): this seam names the
-        // driver's RESIDENT GEMVs, which every family has, and the M-row GEMM
-        // for those is wired in Gemma 4's driver alone. Running the per-token
-        // loop anyway would measure the unbatched engine under the batched
-        // arm's label.
         if self.batched_gemv_prefill {
-            return Err(RealForwardError::Unsupported(
-                "MFERENCE_BATCHED_GEMV is not wired for this family: the M-row resident GEMM \
-                 exists in the gemma4 chunked driver alone, and this driver keeps every \
-                 resident GEMV per token"
-                    .to_string(),
-            ));
+            // INT4-AFFINE ONLY, and refused UP FRONT rather than at the first
+            // dispatch. `encode_gemm_any` is the per-tensor backstop and
+            // refuses by name on its own, but it would do so mid-encode, so a
+            // caller who set the seam on the 1-bit or 2-bit checkpoint of
+            // THIS SAME ARCHITECTURE (which have no batched kernel at all)
+            // learns it before any KV row is written. One probe cannot see a
+            // mixed-width install; that is what the backstop is for.
+            let probe = layer_tensor(0, "mlp.gate_proj.weight");
+            let dtype = crate::real_forward_utils::entry(&self.index, &probe)?.dtype;
+            if dtype != 4 {
+                return Err(RealForwardError::Unsupported(format!(
+                    "MFERENCE_BATCHED_GEMV needs INT4-affine (dtype 4) weights and {probe} is \
+                     dtype {dtype}: the M-row GEMM has no kernel at this width, and looping the \
+                     per-token GEMVs anyway would measure the unbatched engine under the \
+                     batched arm's label"
+                )));
+            }
+            // The ONE place this arm's M-row scratch is allocated, and it is
+            // here rather than at open so a run that never sets the seam
+            // never pays for it. Idempotent, and ahead of the loop so every
+            // `batched_prefill()` below it is infallible.
+            let arch = self.arch.clone();
+            let context = &mut self.context;
+            self.real_qwen
+                .as_mut()
+                .ok_or_else(|| RealForwardError::Unsupported("not a Qwen install".to_string()))?
+                .ensure_batched_prefill(context, &arch)?;
         }
         let mut offset = 0usize;
         while offset < tokens.len() {
@@ -187,6 +231,40 @@ impl RealForwardRunner {
             )));
         }
 
+        let batched_gemv = self.batched_gemv_prefill;
+        // A BACKSTOP THAT BELONGS TO THE BATCHED ARM ALONE, and only that arm
+        // can trip it. `encode_full_attention_block_batched`'s k/v projections
+        // write M ADJACENT KV slots in one dispatch, so M consecutive
+        // positions have to be M consecutive rows -- true only while
+        // `position % capacity` does not roll over inside the micro-batch.
+        // This family has no sliding window, so its full layers address the
+        // cache linearly, but "linear" still wraps at `max_context`, and a
+        // projection straddling that boundary scatters into row 0 with no
+        // symptom beyond wrong attention. `produce_batched` carries the
+        // identical check for the identical reason.
+        //
+        // It should be unreachable during prefill -- a prompt longer than
+        // `max_context` is refused upstream, so `start_position + m` never
+        // exceeds capacity and the modulo is the identity -- but "should be
+        // unreachable" is what this repo asks be asserted rather than
+        // assumed, and the check is one comparison per layer.
+        if batched_gemv {
+            for layer in 0..arch.num_layers as usize {
+                if arch.layer_is_linear(layer) {
+                    continue;
+                }
+                let capacity = self.kv.capacity(layer);
+                if start_position % capacity + m > capacity {
+                    return Err(RealForwardError::Unsupported(format!(
+                        "MFERENCE_BATCHED_GEMV: a micro-batch of {m} rows at position \
+                         {start_position} wraps layer {layer}'s KV capacity {capacity}; the \
+                         batched projection writes M adjacent slots and cannot straddle the \
+                         boundary"
+                    )));
+                }
+            }
+        }
+
         let embed_name = "language_model.model.embed_tokens.weight";
 
         let pass = self.context.begin_pass_labeled("qwen dense chunk cb");
@@ -232,6 +310,107 @@ impl RealForwardRunner {
                 hidden,
             )?;
             let is_linear = arch.layer_is_linear(layer);
+
+            if batched_gemv {
+                // STEP 6: the resident GEMVs as M-row GEMMs, through the
+                // encoders `batched_layers.rs` already owns. Everything with
+                // no weights to amortize -- the two norms, the residual add,
+                // the GDN recurrence, attention itself -- still loops, inside
+                // those encoders where it does not here, which is the same
+                // split the measured compute breakdown chose for the verify
+                // pass (GEMV 93.1%, attention 0.6%).
+                let batched = qwen.batched_prefill();
+                for t in 0..m {
+                    gpu::encode_rms_norm_bf16w(
+                        context,
+                        &pass,
+                        (&scratch.x, (t * hidden * 2) as u64),
+                        input_norm,
+                        (&batched.normed, (t * hidden * 2) as u64),
+                        hidden as u32,
+                        RMS_EPS,
+                    )
+                    .map_err(gpu_err)?;
+                }
+
+                if is_linear {
+                    // The recurrence still runs in token order -- it is
+                    // inside `gdn_conv_prefill` / `gdn_delta_prefill` rather
+                    // than in this loop, which is the whole reason those
+                    // multi-row kernels exist. What batches is the input
+                    // projection either side of it.
+                    encode_linear_block_batched(
+                        context, &pass, weights, index, &arch, qwen, batched, layer, m,
+                    )?;
+                } else {
+                    encode_full_attention_block_batched(
+                        context,
+                        &pass,
+                        weights,
+                        index,
+                        &arch,
+                        qwen,
+                        scratch,
+                        batched,
+                        kv,
+                        layer,
+                        start_position,
+                        m,
+                    )?;
+                }
+
+                for t in 0..m {
+                    let x_off = (t * hidden * 2) as u64;
+                    // RAW residual add, as in the per-token arm: this family
+                    // has no sandwich norms.
+                    gpu::encode_residual_add(
+                        context,
+                        &pass,
+                        (&scratch.x, x_off),
+                        (&batched.o, x_off),
+                        hidden as u32,
+                    )
+                    .map_err(gpu_err)?;
+                    gpu::encode_rms_norm_bf16w(
+                        context,
+                        &pass,
+                        (&scratch.x, x_off),
+                        post_attn_norm,
+                        (&batched.moe_x, x_off),
+                        hidden as u32,
+                        RMS_EPS,
+                    )
+                    .map_err(gpu_err)?;
+                }
+
+                // Encodes its own per-row residual add back into `scratch.x`,
+                // so the layer's output lands where the next one reads it.
+                encode_dense_ffn_batched(
+                    context, &pass, weights, index, scratch, batched, layer, hidden, inter,
+                    use_silu, m,
+                )?;
+
+                // ONE M-row steering dispatch rather than m, because the
+                // kernel is row-parallel already (`produce_batched` does the
+                // same at the same boundary). A block whose rows are not ALL
+                // steered would emit a run of tokens from two models.
+                encode_steering(context, &pass, scratch, steering, layer, hidden, m, 0)?;
+                // The capture stays per row and UNCONDITIONAL, so overwrite
+                // order leaves the micro-batch's last token as the one
+                // `record_pass` reads back (Gotcha 21).
+                for t in 0..m {
+                    encode_resid_capture(
+                        context,
+                        &pass,
+                        scratch,
+                        resid_capture,
+                        layer,
+                        hidden,
+                        (t * hidden * 2) as u64,
+                    )?;
+                }
+                continue;
+            }
 
             for t in 0..m {
                 let position = start_position + t;

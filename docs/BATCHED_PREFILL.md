@@ -680,6 +680,71 @@ So this is one phase followed by an optional one, rather than a fork:
    OFF and the interleaved pairs are owed on a quiet machine, alongside the
    prefill energy capture.
 
+   **A SECOND FAMILY WIRED TO THIS SEAM 2026-08-29, THE DENSE HALF OF THE
+   QWEN LINEAR-ATTENTION FLOW, AND IT COST NO DISPATCH CODE AT ALL** --
+   less than Gemma 4's did, which needed new batched encoders written.
+   `families/qwen/batched_layers.rs` had already built all three (the
+   full-attention block, the GDN linear block, the dense FFN) for the
+   MTP/DFlash2 verify pass, and they take the parameters the chunk driver
+   has and use the `t * hidden * 2` row convention it already writes. So
+   the arm is a branch in `families/qwen/prefill.rs`'s layer loop plus a
+   lazily-allocated `BatchedScratch`. The constant that makes it fit
+   exactly is that `MAX_PREFILL_BATCH` IS `gpu::MAX_BATCH_ROWS`, both 16,
+   so a full micro-batch is one GEMM dispatch and never sub-batches.
+
+   **ITS GATE IS NOT BYTE-IDENTITY, AND THAT IS THE ONE REAL DIFFERENCE
+   FROM GEMMA 4'S.** The claim four paragraphs up -- that this seam is a
+   throughput axis only, because the GEMM and the GEMV agree bit-for-bit --
+   is about those two KERNELS and does not extend to this family's pass as
+   a whole. `produce_batched` and `produce` differ here by 6.2e-8 to 1.5e-5
+   nats with the argmax agreeing on every row, which commit `e8deb6c`
+   measured against a dense batched-vs-cached shape floor of 7.4e-6 on MLX
+   for this same architecture and concluded is a FLOOR every engine has,
+   not a defect. The eliminations behind that verdict are worth not
+   re-deriving: present at M=1, so batch width was never the variable;
+   absent at one and two keys and present from three; not the INT4 GEMM, not
+   the GDN multi-row kernels, not the split-KV combine, not stale scratch.
+   What is left is the attention reduction.
+
+   **MEASURED 1.86x TO 2.13x ON PREFILL**, which is the first throughput
+   number this step has on any family (Gemma 4's is still owed). Real
+   `qwen38-27b` install, 2,940-token `long-synthesis` prompt, interleaved
+   pairs with the warmup discarded: 157.28s/73.91s and 137.41s/72.08s, i.e.
+   18.69 -> 39.78 and 21.40 -> 40.79 tok/s. The machine was NOT quiet, and
+   the dispersion says which arm that hurt -- 14.5% between the default
+   arm's two readings against 2.5% between the batched arm's -- so per
+   Gotcha 43 (contention depresses tok/s) the pairs are a LOWER bound. All
+   four runs plus the warmup produced byte-identical text. Full row in
+   `docs/BENCHMARKS.md`, which also records that this leaves PP at roughly a
+   fifth of the oMLX community build's 210.3 tok/s rather than closing it;
+   what is still unbatched here is attention, which is step 4.
+
+   Two consequences. The DEFAULT arm is what must stay byte-identical, and
+   it is what a caller who sets no env var gets. And the synthetic fixture
+   cannot see the floor at all (`real_forward_qwen35_batched_onset.rs` reads
+   0 differing logits of 128 at every span on the same builder at the same
+   width), so `real_forward_qwen35_chunked.rs`'s batched byte-identity cases
+   pin the WIRING -- rows, offsets, ordering, the GDN state's advance -- and
+   are documented as not being evidence about the arithmetic.
+
+   Three guards the qwen arm carries that Gemma 4's does not need. The
+   width is refused UP FRONT rather than at the first dispatch, because the
+   1-bit and 2-bit checkpoints of this same architecture reach no M-row
+   GEMM and a caller should learn that before any KV row is written
+   (`encode_gemm_any` stays the per-tensor backstop for a mixed-width
+   install one probe cannot see). The KV-wrap check `produce_batched`
+   carries is copied in: this family has no sliding window, but "linear"
+   still wraps at `max_context`, and a batched k/v projection straddling
+   that boundary scatters into row 0. And the M-row scratch is allocated
+   ONLY when the seam is on, which is stricter than Gemma 4's
+   `ensure_batched` (that one also serves `MFERENCE_ROUTED_BATCH`, so its
+   driver allocates unconditionally) -- `BatchedScratch` is ~10 MiB on the
+   real install, most of it a `batch * vocab` logits plane this driver never
+   reads, and `qwen38_memory_oracle`'s frozen row has to keep describing the
+   engine that shipped before the arm existed. That is asserted with the
+   buffer-allocation counter rather than argued, because a footprint ceiling
+   with 87 MiB of headroom could not see it.
+
 ## Gates this owes
 
 Prefill changes the logits the first decoded token is sampled from, so it

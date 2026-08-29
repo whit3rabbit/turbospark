@@ -14,7 +14,7 @@
 
 use model_io::{ArchConfig, ResidentIndex};
 
-use crate::families::qwen::layer_tensor;
+use crate::families::qwen::{layer_tensor, BatchedScratch};
 use crate::real_forward::RealForwardError;
 use crate::real_forward_utils::entry;
 
@@ -68,6 +68,21 @@ pub(crate) struct RealQwenState {
     pub(crate) h2: gpu::MetalBuffer,
     /// One half: the shared expert's scalar gate logit.
     pub(crate) shared_gate_logit: gpu::MetalBuffer,
+    /// The M-row scratch the chunked-prefill driver's batched-GEMV arm
+    /// writes (`MFERENCE_BATCHED_GEMV`, `docs/BATCHED_PREFILL.md` step 6).
+    ///
+    /// **Allocated on FIRST USE, and only when the seam is ON**, which is a
+    /// stronger condition than the Gemma 4 sibling this otherwise copies:
+    /// `RealGemmaState::batched` serves `MFERENCE_ROUTED_BATCH` as well, so
+    /// its driver allocates at the entry point unconditionally. Here the one
+    /// consumer is the seam, and `qwen38_memory_oracle`'s frozen row has to
+    /// keep describing the engine that shipped before this arm existed --
+    /// this struct is the same [`BatchedScratch`] the drafters allocate, so
+    /// it is ~10 MiB on the real install rather than a rounding error.
+    ///
+    /// It is never allocated BESIDE a drafter's copy: the chunked driver
+    /// refuses an open drafter by name, so at most one of the two exists.
+    pub(crate) batched_prefill: Option<BatchedScratch>,
 }
 
 impl RealQwenState {
@@ -265,7 +280,51 @@ impl RealQwenState {
             h1: halfs(hidden),
             h2: halfs(hidden),
             shared_gate_logit: halfs(1),
+            batched_prefill: None,
         })
+    }
+
+    /// Allocates the chunked driver's M-row scratch the first time its
+    /// batched-GEMV arm asks for it, and is a no-op afterwards.
+    ///
+    /// Idempotent rather than "call once", because the entry point that
+    /// calls it (`prefill_chunk_real_qwen_dense`) is reached once per CHUNK
+    /// and not once per run -- `RealGemmaState::ensure_batched`'s reason,
+    /// verbatim.
+    ///
+    /// Sized at [`crate::real_forward_types::MAX_PREFILL_BATCH`], which is
+    /// `gpu::MAX_BATCH_ROWS` and not a second 16 that agrees by luck: the
+    /// batched INT4 GEMM caps a dispatch at its per-thread accumulator
+    /// array, and the driver's micro-batch is capped at the same constant,
+    /// so a full micro-batch is exactly one dispatch with no sub-batching.
+    pub(crate) fn ensure_batched_prefill(
+        &mut self,
+        context: &mut gpu::MetalContext,
+        arch: &ArchConfig,
+    ) -> Result<(), RealForwardError> {
+        if self.batched_prefill.is_some() {
+            return Ok(());
+        }
+        self.batched_prefill = Some(
+            BatchedScratch::new(
+                context,
+                arch,
+                self.shape,
+                crate::real_forward_types::MAX_PREFILL_BATCH,
+            )
+            .map_err(RealForwardError::Gpu)?,
+        );
+        Ok(())
+    }
+
+    /// The chunked driver's M-row scratch, reachable only from inside that
+    /// driver's batched arm -- downstream of the `ensure_batched_prefill` at
+    /// its entry point, so the `expect` is a structural invariant rather
+    /// than a hope.
+    pub(crate) fn batched_prefill(&self) -> &BatchedScratch {
+        self.batched_prefill.as_ref().expect(
+            "prefill_chunk_real_qwen_dense calls ensure_batched_prefill before any layer runs",
+        )
     }
 
     /// Rewinds the recurrent state to empty context. Both the delta rule

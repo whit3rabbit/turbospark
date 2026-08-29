@@ -247,10 +247,41 @@ lands close to this install's OWN TG throughput rather than near a
 GEMM-batched engine's -- removing scheduling overhead does not change that
 each token still runs its own GEMV. Closing this gap needs the GEMV-to-GEMM
 widening this repo calls "steps 2-6" (`MFERENCE_BATCHED_GEMV` and friends,
-built for Gemma 4's affine blobs already) ported to this family, which is
-tracked as a distinct follow-up in `ROADMAP.md` rather than assumed to fall
-out of the chunking work above. See `ROADMAP.md`'s active-tasks table for
-that follow-up rather than duplicating a TODO here.
+built for Gemma 4's affine blobs already) ported to this family.
+
+**THAT WIDENING LANDED THE SAME DAY AND ROUGHLY DOUBLES PP: 40.79 tok/s**
+(same 2,940-token `long-synthesis` prompt, same install, 72.08s under
+`MFERENCE_PREFILL_CHUNK=128 MFERENCE_BATCHED_GEMV=1`). Measured as
+INTERLEAVED PAIRS rather than consecutive batches, warmup discarded, which
+is what makes it readable at all here: the machine was NOT quiet (load
+average 2.3-4.2, an unrelated concurrent session building), and the tell is
+in the dispersion -- the default arm's two readings differ by 14.5%
+(157.28s and 137.41s) while the batched arm's differ by 2.5% (73.91s and
+72.08s). Per Gotcha 43 CPU contention DEPRESSES throughput rather than
+inflating it, so the pair-wise speedup is a lower bound:
+
+| pair | default arm | batched arm | speedup |
+|---|---|---|---|
+| 1 | 157.28s (18.69 tok/s) | 73.91s (39.78 tok/s) | 2.13x |
+| 2 | 137.41s (21.40 tok/s) | 72.08s (40.79 tok/s) | 1.91x |
+| worst case (fastest default vs slowest batched) | 137.41s | 73.91s | 1.86x |
+
+All four runs, plus the warmup, produced BYTE-IDENTICAL generated text
+(md5 `2fb0aabe...` at 16 greedy tokens off a 2,940-token prompt), which is
+the strongest numerics evidence available for this arm -- `qwen38_quality_gate`
+cannot gate it at all, because that gate teacher-forces with `produce` and
+never reaches a chunked driver.
+
+**IT STILL DOES NOT REACH oMLX**, and the honest ratio is now roughly a
+FIFTH rather than a tenth: 40.79 against 210.3 tok/s. So the GEMV-to-GEMM
+step was worth what it claimed and is not by itself the whole gap. What
+remains unbatched in this driver is everything with no weights to amortize
+-- the norms, RoPE, the residual adds, and ATTENTION, which is
+`docs/BATCHED_PREFILL.md` step 4 and the one remaining item that is real
+new-kernel work rather than wiring. Note also that the 21.31 above and the
+40.79 here are a CROSS-CAPTURE comparison (different machine conditions,
+Gotcha 22), so the 1.86-2.13x pairs are the figure to quote and not the
+ratio of those two numbers.
 
 ## Expert-cache slots: the one runtime control that moves this
 
