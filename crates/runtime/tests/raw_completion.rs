@@ -200,6 +200,16 @@ fn stop_string_truncates_visible_output() {
 /// installs this probe.
 static THERMAL_POLLS: AtomicUsize = AtomicUsize::new(0);
 
+static MEMORY_POLLS: AtomicUsize = AtomicUsize::new(0);
+
+/// Always `Critical`, so the memory ladder is unambiguously the thing
+/// imposing the cap. A probe returning `Normal` would leave the run
+/// indistinguishable from one with no memory watcher at all.
+fn counting_critical_memory_probe() -> turbospark_runtime::MemoryPressure {
+    MEMORY_POLLS.fetch_add(1, Ordering::Relaxed);
+    turbospark_runtime::MemoryPressure::Critical
+}
+
 fn counting_nominal_probe() -> ThermalLevel {
     THERMAL_POLLS.fetch_add(1, Ordering::Relaxed);
     ThermalLevel::Nominal
@@ -264,6 +274,7 @@ fn a_rate_cap_holds_decode_to_at_least_its_schedule() {
         rate: RateControl {
             max_tokens_per_sec: Some(50.0),
             thermal_probe: None,
+            memory_probe: None,
         },
         ..greedy_config(6)
     };
@@ -305,6 +316,7 @@ fn pacing_polls_thermal_pressure_without_changing_the_tokens() {
                 // `pacing.rs`.
                 max_tokens_per_sec: Some(400.0),
                 thermal_probe: Some(counting_nominal_probe),
+                memory_probe: None,
             },
             ..greedy_config(MAX_NEW as u32)
         },
@@ -318,5 +330,72 @@ fn pacing_polls_thermal_pressure_without_changing_the_tokens() {
     assert_eq!(
         paced, uncapped,
         "pacing runs after selection and must not move a single token"
+    );
+}
+
+/// The memory watcher rides the SAME poll block as the thermal one, on the
+/// same cadence, and is subject to the same rule: pacing runs downstream of
+/// selection, so it must not move a token.
+///
+/// **The memory probe alone, with no thermal probe**, which is the case a
+/// shared `if let Some(probe) = thermal_probe` guard silently drops: the
+/// block would never run, the cap would never be applied, and the watcher
+/// would be dead code that every other assertion still passes over.
+#[test]
+fn the_memory_watcher_polls_on_the_same_cadence_without_changing_the_tokens() {
+    let tokenizer = load_tokenizer();
+    const MAX_NEW: usize = 40;
+
+    let uncapped = run_ids(&tokenizer, &greedy_config(MAX_NEW as u32), MAX_NEW);
+
+    MEMORY_POLLS.store(0, Ordering::Relaxed);
+    let watched = run_ids(
+        &tokenizer,
+        &GenerationConfig {
+            rate: RateControl {
+                max_tokens_per_sec: Some(400.0),
+                thermal_probe: None,
+                memory_probe: Some(counting_critical_memory_probe),
+            },
+            ..greedy_config(MAX_NEW as u32)
+        },
+        MAX_NEW,
+    );
+
+    // Once before the loop, then every 16th token: the same 3 the thermal
+    // case counts, which is what says the two share one block rather than
+    // each having acquired its own schedule.
+    assert_eq!(MEMORY_POLLS.load(Ordering::Relaxed), 3);
+    assert_eq!(
+        watched, uncapped,
+        "the memory watcher runs after selection and must not move a token"
+    );
+}
+
+/// A run with no probes reports `Normal`, which is the ABSENCE of a reading.
+/// Asserting this is what stops a host reading the default decode path as a
+/// positive report that memory was fine.
+#[test]
+fn an_unwatched_run_reports_normal_pressure() {
+    let tokenizer = load_tokenizer();
+    let prompt_ids = tokenizer.encode("hi", false);
+    let h_id = tokenizer
+        .token_to_id("h")
+        .expect("'h' is in the base vocab") as usize;
+    let mut producer =
+        ScriptedLogitProducer::new(repeating_steps(&tokenizer, prompt_ids.len(), h_id, 4));
+    let result = run_raw_completion(
+        &mut producer,
+        &tokenizer,
+        &prompt_ids,
+        &greedy_config(4),
+        4096,
+        tokenizer.vocab_size,
+        |_| {},
+    )
+    .unwrap();
+    assert_eq!(
+        result.peak_memory_pressure,
+        turbospark_runtime::MemoryPressure::Normal
     );
 }

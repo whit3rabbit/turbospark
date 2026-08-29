@@ -75,6 +75,20 @@ pub const OPTIONS: &[OptionDecl] = &[
         usage_hint: "context-size limit, positive integer, or auto (default auto: the checkpoint's trained context, capped by what memory holds, and 4096 when the install declares none)",
     },
     OptionDecl {
+        flag: "--load-guard",
+        takes_value: true,
+        is_required: false,
+        is_mode_selecting: false,
+        usage_hint: "how much memory may be committed: off, relaxed, balanced, strict, or a byte ceiling on what the engine allocates (default relaxed, which is what shipped before this flag existed)",
+    },
+    OptionDecl {
+        flag: "--min-auto-context",
+        takes_value: true,
+        is_required: false,
+        is_mode_selecting: false,
+        usage_hint: "refuse to open when `--max-context auto` resolves below this many tokens; 0 imposes no floor and does not constrain an explicit --max-context (default 0)",
+    },
+    OptionDecl {
         flag: "--temperature",
         takes_value: true,
         is_required: false,

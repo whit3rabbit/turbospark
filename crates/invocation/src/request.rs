@@ -300,6 +300,48 @@ pub enum MaxContext {
     Auto,
 }
 
+/// How much of the machine may be committed to loading a model.
+///
+/// The mirror of `model_io::LoadGuard`, spelled again here for the reason
+/// [`MaxContext`] and [`ExpertCacheSlots`] are: this crate is pure and may
+/// not read a machine or an install, so it cannot depend on the crate that
+/// owns the arithmetic. `crates/cli` maps between the two.
+///
+/// **[`Self::Relaxed`] is the default and is what shipped before this flag
+/// existed.** The other tiers are a user choice and none of them is the
+/// baseline any measurement in this repo was taken under.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LoadGuard {
+    /// No memory precautions; nothing is refused for size.
+    Off,
+    /// The shipped behaviour.
+    #[default]
+    Relaxed,
+    /// A larger reserve and a smaller share of what is left.
+    Balanced,
+    /// Larger still.
+    Strict,
+    /// `Relaxed`'s shares plus an absolute ceiling, in bytes, on what the
+    /// engine may ALLOCATE. Not on the install's size: exceeding memory with
+    /// the mapped install is the streaming this engine is built around.
+    Custom(u64),
+}
+
+impl LoadGuard {
+    /// The flag spelling. `None` for anything else, including a byte count,
+    /// which the parser tries next -- so an unrecognized word and an
+    /// unparsable number produce one diagnostic rather than two.
+    pub fn parse(text: &str) -> Option<Self> {
+        match text {
+            "off" => Some(Self::Off),
+            "relaxed" => Some(Self::Relaxed),
+            "balanced" => Some(Self::Balanced),
+            "strict" => Some(Self::Strict),
+            _ => None,
+        }
+    }
+}
+
 /// A fully populated, validated invocation.
 #[derive(Debug, Clone, PartialEq)]
 pub struct InvocationRequest {
@@ -313,6 +355,13 @@ pub struct InvocationRequest {
     pub max_new: u32,
     /// The context-size limit, or `Auto` to size it at open.
     pub max_context: MaxContext,
+    /// How much of the machine may be committed to loading the model.
+    pub load_guard: LoadGuard,
+    /// The fewest tokens an AUTOMATIC context resolution may land on, or 0
+    /// for no floor. Deliberately says nothing about an explicit
+    /// `--max-context`: a caller naming a number has decided how to spend
+    /// their own machine.
+    pub min_auto_context: u32,
     /// The sampling temperature.
     pub temperature: f64,
     /// The rank-based candidate count; zero means disabled.

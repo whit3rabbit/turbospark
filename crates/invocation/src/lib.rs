@@ -24,7 +24,7 @@ pub use failure::ParseFailure;
 pub use options::{OptionDecl, OPTIONS};
 pub use parser::{parse, ParseOutcome};
 pub use request::{
-    ExpertCacheSlots, InvocationRequest, MaxContext, Mode, PowerProfile, PrefillChunk,
+    ExpertCacheSlots, InvocationRequest, LoadGuard, MaxContext, Mode, PowerProfile, PrefillChunk,
     ReadAheadMode, ReasoningEffort, Speculation, SpeculativeDrafter, SteeringMode,
     ALLOWED_SPECULATION_BLOCKS,
 };

@@ -17,7 +17,7 @@ use tokenizer::MfTokenizer;
 use crate::config::GenerationConfig;
 use crate::error::RuntimeError;
 use crate::pacing::{Pacer, THERMAL_POLL_TOKENS};
-use crate::power::{stepped_cap, ThermalLevel};
+use crate::power::{stepped_cap, MemoryPressure, ThermalLevel};
 use crate::producer::LogitProducer;
 pub use crate::raw_completion_chunked::{
     run_raw_completion_chunked, run_raw_completion_chunked_cancellable,
@@ -89,6 +89,19 @@ pub struct RawDecodeResult {
     pub kv_position: usize,
     /// List of token IDs currently resident in the KV cache.
     pub kv_backed_token_ids: Vec<TokenId>,
+    /// The WORST memory pressure observed while this turn decoded.
+    ///
+    /// **Always `Normal` when the profile does no stepping**, which is the
+    /// default: no probe runs, so this is the absence of a reading rather
+    /// than a reading of "fine". A host deciding whether to unload something
+    /// should read `ts_system_info_json` as well, which polls unconditionally.
+    ///
+    /// Reported rather than acted on. The engine caps its own decode rate
+    /// (that is [`crate::stepped_cap`]); it does not close sessions, because
+    /// it does not own them -- the FFI's handle belongs to the caller and a
+    /// session that destroyed itself would leave every host holding a dead
+    /// pointer it never asked to be given.
+    pub peak_memory_pressure: MemoryPressure,
 }
 
 pub(crate) fn check_admission(
@@ -132,6 +145,8 @@ pub(crate) fn cancelled_during_prefill(
         reason: StopReason::Cancelled,
         kv_position: position,
         kv_backed_token_ids: history,
+        // Decoding never started, so nothing was ever polled.
+        peak_memory_pressure: MemoryPressure::Normal,
     }
 }
 
@@ -270,13 +285,25 @@ pub(crate) fn decode<P: LogitProducer + ?Sized>(
     // ROADMAP Phase P2. `None` for the default uncapped config, which
     // leaves the loop below executing exactly the statement sequence it
     // did before rate control existed.
+    //
+    // The WORST memory pressure seen across the run, reported on the result.
+    // A watcher that only exposed the level at the moment a caller happened
+    // to ask would miss a spike entirely, and a spike is the whole event
+    // worth telling a host about -- it is what makes unloading something
+    // else the right response.
+    let mut peak_memory_pressure = MemoryPressure::Normal;
     let mut pacer = config.rate.is_active().then(|| {
         let level = config
             .rate
             .thermal_probe
             .map_or(ThermalLevel::Nominal, |probe| probe());
+        let memory = config
+            .rate
+            .memory_probe
+            .map_or(MemoryPressure::Normal, |probe| probe());
+        peak_memory_pressure = peak_memory_pressure.max(memory);
         Pacer::new(
-            stepped_cap(config.rate.max_tokens_per_sec, level),
+            stepped_cap(config.rate.max_tokens_per_sec, level, memory),
             decode_start,
         )
     });
@@ -300,11 +327,25 @@ pub(crate) fn decode<P: LogitProducer + ?Sized>(
         // rather than inside one.
         if let Some(pacer) = pacer.as_mut() {
             pacer.note_token();
-            if let Some(probe) = config.rate.thermal_probe {
-                if sink.generated % THERMAL_POLL_TOKENS == 0 {
-                    let cap = stepped_cap(config.rate.max_tokens_per_sec, probe());
-                    pacer.apply_cap(cap, Instant::now());
-                }
+            // ONE poll block for both signals, on the boundary that already
+            // existed. Giving memory its own cadence would add a second
+            // syscall schedule for a reading whose ladder shares these
+            // ceilings, and would make the two able to disagree about which
+            // token they describe.
+            let watching =
+                config.rate.thermal_probe.is_some() || config.rate.memory_probe.is_some();
+            if watching && sink.generated % THERMAL_POLL_TOKENS == 0 {
+                let level = config
+                    .rate
+                    .thermal_probe
+                    .map_or(ThermalLevel::Nominal, |probe| probe());
+                let memory = config
+                    .rate
+                    .memory_probe
+                    .map_or(MemoryPressure::Normal, |probe| probe());
+                peak_memory_pressure = peak_memory_pressure.max(memory);
+                let cap = stepped_cap(config.rate.max_tokens_per_sec, level, memory);
+                pacer.apply_cap(cap, Instant::now());
             }
             if let Some(wait) = pacer.due_in(Instant::now()) {
                 std::thread::sleep(wait);
@@ -325,5 +366,6 @@ pub(crate) fn decode<P: LogitProducer + ?Sized>(
         reason,
         kv_position: position,
         kv_backed_token_ids: sink.history,
+        peak_memory_pressure,
     })
 }

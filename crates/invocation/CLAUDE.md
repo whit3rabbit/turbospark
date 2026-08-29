@@ -30,6 +30,13 @@ crates/invocation/
 - `options.rs`: Table of supported command-line options (`OPTIONS`).
 - `parser.rs`: Pure command-line flag parser and value translator.
 - `request.rs`: `InvocationRequest` structure holding validated parameters.
+  It also carries the pure MIRRORS of types the engine owns -- `MaxContext`,
+  `ExpertCacheSlots`, `PowerProfile`, and (with the load-guard work)
+  `LoadGuard`. Each exists because this crate may not read a machine or an
+  install and every one of those is a claim about one; `crates/cli` maps
+  between the two spellings in exactly one place per type. A mirror is not a
+  duplicate to be tidied away: deleting it would mean depending on
+  `turbospark-model-io`, which is what keeps this crate pure.
 - `failure.rs`: `InvocationFailure` enum for typed parse or usage errors.
 - `diagnostics.rs`: Formats diagnostic and error messages.
 - `usage.rs`: Renders command-line usage text.

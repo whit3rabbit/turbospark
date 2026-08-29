@@ -8,7 +8,7 @@
 use crate::failure::ParseFailure;
 use crate::options::OPTIONS;
 use crate::request::{
-    ExpertCacheSlots, InvocationRequest, MaxContext, Mode, PowerProfile, PrefillChunk,
+    ExpertCacheSlots, InvocationRequest, LoadGuard, MaxContext, Mode, PowerProfile, PrefillChunk,
     ReadAheadMode, ReasoningEffort, Speculation, SpeculativeDrafter, SteeringMode,
     ALLOWED_SPECULATION_BLOCKS, DEFAULT_MAX_NEW, DEFAULT_REPETITION_PENALTY, DEFAULT_TEMPERATURE,
     DEFAULT_TOP_K, DEFAULT_TOP_P, MAX_TOP_K,
@@ -55,6 +55,8 @@ pub fn parse(tokens: &[String]) -> ParseOutcome {
     let mut system_parts: Vec<String> = Vec::new();
     let mut max_new = DEFAULT_MAX_NEW;
     let mut max_context = MaxContext::default();
+    let mut load_guard = LoadGuard::default();
+    let mut min_auto_context = 0u32;
     let mut temperature = DEFAULT_TEMPERATURE;
     let mut top_k = DEFAULT_TOP_K;
     let mut top_p = DEFAULT_TOP_P;
@@ -143,6 +145,21 @@ pub fn parse(tokens: &[String]) -> ParseOutcome {
                     }
                 }
             }
+            // A bare integer is `Custom`'s byte ceiling. The tier words and
+            // a number are the same flag because they answer one question --
+            // how much may be committed -- and a separate `--load-guard-bytes`
+            // would let a caller name a tier and a ceiling that disagree.
+            "--load-guard" => match LoadGuard::parse(value) {
+                Some(g) => load_guard = g,
+                None => match value.parse::<u64>() {
+                    Ok(n) if n > 0 => load_guard = LoadGuard::Custom(n),
+                    _ => return invalid("--load-guard", value),
+                },
+            },
+            "--min-auto-context" => match value.parse::<u32>() {
+                Ok(n) => min_auto_context = n,
+                _ => return invalid("--min-auto-context", value),
+            },
             "--temperature" => match value.parse::<f64>() {
                 Ok(t) if t.is_finite() && t >= 0.0 => temperature = t,
                 _ => return invalid("--temperature", value),
@@ -372,6 +389,8 @@ pub fn parse(tokens: &[String]) -> ParseOutcome {
         system,
         max_new,
         max_context,
+        load_guard,
+        min_auto_context,
         temperature,
         top_k,
         top_p,
