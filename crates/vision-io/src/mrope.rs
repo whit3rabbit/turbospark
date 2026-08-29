@@ -45,6 +45,104 @@ pub struct MropePositions {
     pub spans: Vec<ImageSpan>,
 }
 
+/// Expand each image placeholder into that image's merged-token count
+/// (ROADMAP M-V6).
+///
+/// # Why this is a token-id pass and not a text splice
+///
+/// The checkpoint's template renders exactly ONE `<|image_pad|>` per image,
+/// not N (`docs/VISION_PHASE0.md` item 6), so the expansion cannot happen
+/// before the template runs. It also must not happen by editing the rendered
+/// STRING: `<|image_pad|>` spelled into prose tokenizes as its angle brackets
+/// and letters rather than as the special token, which produces a prompt of
+/// roughly the right length carrying none of the right ids.
+///
+/// So the pipeline is render -> encode -> splice, and this is the splice. It
+/// runs before [`mrope_position_triples`], which needs the expanded sequence
+/// to find its spans.
+///
+/// # Errors
+///
+/// [`VisionIoError::PlaceholderMismatch`] when the number of placeholders in
+/// `ids` and the number of `merged_tokens` entries disagree. Checked rather
+/// than zipped: a silent `zip` would leave a trailing placeholder unexpanded
+/// on one side and an image unplaced on the other, and both produce a prompt
+/// that runs.
+///
+/// A count of ZERO for some image is also refused. A template emitted a
+/// placeholder for it, so dropping the placeholder entirely would renumber
+/// every later span while leaving the prompt fluent.
+pub fn splice_image_placeholders(
+    ids: &[TokenId],
+    image_token_id: TokenId,
+    merged_tokens: &[usize],
+) -> Result<Vec<TokenId>, VisionIoError> {
+    let placeholders = ids.iter().filter(|&&id| id == image_token_id).count();
+    if placeholders != merged_tokens.len() {
+        return Err(VisionIoError::PlaceholderMismatch {
+            placeholders,
+            grids: merged_tokens.len(),
+        });
+    }
+    if let Some(index) = merged_tokens.iter().position(|&n| n == 0) {
+        return Err(VisionIoError::InvalidDimensions {
+            detail: format!("image {index} expands to zero tokens"),
+        });
+    }
+
+    let extra: usize = merged_tokens.iter().sum::<usize>() - placeholders;
+    let mut out = Vec::with_capacity(ids.len() + extra);
+    let mut image = 0usize;
+    for &id in ids {
+        if id == image_token_id {
+            out.extend(std::iter::repeat_n(id, merged_tokens[image]));
+            image += 1;
+        } else {
+            out.push(id);
+        }
+    }
+    Ok(out)
+}
+
+/// A rendered prompt after the splice: the ids a model consumes, and the
+/// position table that goes with them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SplicedPrompt {
+    /// The expanded id sequence.
+    pub ids: Vec<TokenId>,
+    /// [`mrope_position_triples`]' answer for `ids`.
+    pub positions: MropePositions,
+}
+
+/// [`splice_image_placeholders`] then [`mrope_position_triples`], deriving
+/// each image's merged-token count from its own grid (ROADMAP M-V6).
+///
+/// **THIS EXISTS TO REMOVE A DISAGREEMENT, not to save two lines.** Called
+/// separately, the splice takes merged-token COUNTS and the walk takes GRIDS,
+/// and nothing makes a caller derive the first from the second: pass counts
+/// that do not match the grids and both calls succeed, the placeholder run is
+/// the wrong length, and the walk's spans describe a picture of a different
+/// size. The prompt is fluent and the model reads torn rows. Here the counts
+/// cannot be anything but the grids' own.
+///
+/// Every front end should reach for this rather than the two halves.
+pub fn splice_and_walk(
+    ids: &[TokenId],
+    grids: &[crate::patchify::GridThw],
+    special: VisionSpecialIds,
+    merge_size: usize,
+) -> Result<SplicedPrompt, VisionIoError> {
+    if merge_size == 0 {
+        return Err(VisionIoError::InvalidDimensions {
+            detail: "merge size must be positive".into(),
+        });
+    }
+    let counts: Vec<usize> = grids.iter().map(|g| g.merged_tokens(merge_size)).collect();
+    let ids = splice_image_placeholders(ids, special.image_pad, &counts)?;
+    let positions = mrope_position_triples(&ids, grids, special, merge_size)?;
+    Ok(SplicedPrompt { ids, positions })
+}
+
 /// Walk an id sequence and assign every token its mRoPE triple.
 ///
 /// # The walk

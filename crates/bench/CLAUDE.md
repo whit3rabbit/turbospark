@@ -695,3 +695,38 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
    by the printed numbers not matching their own labels and fixed before
    these values were taken; the assertion itself, which compares the raw
    `f64`s directly, was never affected.
+
+26. **THE 8-SLOT RATIO ARM IS THE FLAKIEST ASSERTION IN THIS CRATE, AND ITS
+   FLOOR SITS INSIDE THE RANGE ONE MACHINE PRODUCES IN ONE SESSION.**
+   Gotcha 15 says derive a tok/s floor from two readings and take the slower;
+   Gotcha 23 says gate on the reference arm's own spread. This is the case
+   where both rules were needed at once and the arm still went red on a
+   correct tree.
+
+   Measured 2026-08-29, `quality_gate.rs` on the real Gemma 4 install, three
+   runs inside one hour on one machine: the constrained-vs-16-slot ratio read
+   **0.27x, 0.68x and 0.85x** against a 0.50x floor. Two of the three passed.
+   All three produced the IDENTICAL perplexity (37.4176) and the identical
+   greedy, sampled and constrained digests -- so nothing about the model
+   moved, and the arm was measuring the machine.
+
+   **The contaminating load was Gatekeeper, and the trigger is in the workflow
+   rather than in the environment.** `syspolicyd` verifies each freshly built
+   test binary on first execution (`CLAUDE.local.md`), so running
+   `cargo test --workspace` and then this gate puts hundreds of new binaries
+   into verification exactly while the 8-slot arm is timing decode. The 0.27x
+   run followed a full workspace test; the 0.85x run did not.
+
+   **TWO THINGS TO DO WHEN THIS ARM FAILS.** Read the DIGESTS first: they are
+   printed above the panic, and if they match the frozen row then no numerics
+   moved and the failure is throughput alone. Then re-run on a settled machine
+   before believing it -- and if a diff is in flight, `git stash push` the
+   change and run the gate at HEAD, which is what separated "mine" from
+   "the machine" here in one run.
+
+   **8 slots is also structurally the worst case on this family**, which is
+   why the ratio is wide rather than merely noisy: Gemma 4 is top_k 8, so
+   `slots >= 2 * top_k` fails at 8, the pipelined routed branch does not
+   engage, and the arm measures the fallback (AGENTS.md Gotcha 64). The floor
+   is guarding a real property; it is the VARIANCE that makes 0.50x a
+   coin-flip on a busy machine.

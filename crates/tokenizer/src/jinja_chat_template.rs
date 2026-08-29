@@ -33,7 +33,34 @@ fn raise_exception(message: String) -> Result<String, minijinja::Error> {
 fn message_to_json(message: &Message) -> JsonValue {
     let mut obj = serde_json::Map::new();
     obj.insert("role".to_string(), json!(message.role.as_str()));
-    obj.insert("content".to_string(), json!(message.content));
+    // A MULTIMODAL message renders as HF's content-part LIST; a text one
+    // renders as the bare string it always did (ROADMAP M-V6).
+    //
+    // The shape is the template's, not this port's invention: qwen3_5's
+    // `render_content` macro branches on `content is string` first and falls
+    // through to `content is iterable`, testing each item for an `image` key
+    // or `item.type == 'image'`. Emitting `{"type": "image"}` hits that arm;
+    // emitting a bare string with markup in it would put the markup through
+    // the text arm and tokenize the ANGLE BRACKETS rather than the special
+    // token.
+    //
+    // A text-only message takes the `content` branch byte for byte, which is
+    // what leaves every frozen digest in `crates/bench` where it is.
+    if message.content_parts.is_empty() {
+        obj.insert("content".to_string(), json!(message.content));
+    } else {
+        let parts: Vec<JsonValue> = message
+            .content_parts
+            .iter()
+            .map(|part| match part {
+                crate::chat_template::ContentPart::Text(text) => {
+                    json!({"type": "text", "text": text})
+                }
+                crate::chat_template::ContentPart::Image => json!({"type": "image"}),
+            })
+            .collect();
+        obj.insert("content".to_string(), JsonValue::Array(parts));
+    }
     if let Some(id) = &message.tool_call_id {
         obj.insert("tool_call_id".to_string(), json!(id));
     }
@@ -76,8 +103,15 @@ fn tool_to_json(tool: &FunctionDefinition) -> JsonValue {
 /// call site passes: `messages`, `tools` (only when non-empty; absent
 /// otherwise, so a template's `{% if tools %}` branch behaves the same way
 /// it does upstream), `add_generation_prompt`, `enable_thinking`,
-/// `bos_token`, `eos_token`, and `add_vision_id` (always `false` — this
-/// port has no vision input path).
+/// `bos_token`, `eos_token`, and `add_vision_id` (always `false`).
+///
+/// `add_vision_id` stays hardcoded now that a vision input path exists, and
+/// that is Phase 0 item 6's finding rather than an omission: the flag only
+/// controls an optional `"Picture N: "` text prefix before the marker run,
+/// and it DEFAULTS to falsy when a caller sets nothing -- so `false` is
+/// already what upstream sends for the unlabeled case. Threading a context
+/// variable for it would change the rendered bytes of every image prompt to
+/// match no reference.
 ///
 /// `reasoning` adds the two effort keys ON TOP of that shape, and only when
 /// a level is asked for: at [`ReasoningEffort::Off`] the context is exactly

@@ -134,6 +134,11 @@ fn to_message(message: &ChatMessage) -> Option<Message> {
     Some(Message {
         role: role_from(&message.role),
         content,
+        // EMPTY, and still empty at M-V6: this handler drops image parts a few
+        // lines up (`visible_text`), which is M-V8's job to change. Filling it
+        // here without that would build a prompt whose `<|image_pad|>` run has
+        // no tower rows behind it.
+        content_parts: Vec::new(),
         tool_calls,
         tool_call_id: message.tool_call_id.clone(),
         name: message.name.clone(),

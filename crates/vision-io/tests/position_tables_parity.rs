@@ -13,7 +13,8 @@ mod mrope_oracle {
 
 use turbospark_vision_io::{
     mrope::VisionSpecialIds, mrope_position_triples, pos_embed_weights,
-    rope::vision_rope_freq_rows, GridThw, PreprocessParams,
+    rope::vision_rope_freq_rows, splice_and_walk, splice_image_placeholders, GridThw, ImageSpan,
+    PreprocessParams,
 };
 
 fn params(merge_size: usize) -> PreprocessParams {
@@ -446,4 +447,124 @@ fn an_image_costs_fewer_positions_than_tokens() {
     assert_eq!(got.spans[0].len, 16);
     assert!(got.rope_delta < 0, "rope_delta {}", got.rope_delta);
     assert_eq!(got.rope_delta, mrope_oracle::SQUARE_IMAGE_ROPE_DELTA);
+}
+
+// ---------------------------------------------------------------------------
+// The splice (ROADMAP M-V6)
+// ---------------------------------------------------------------------------
+
+/// The splice and the walk are two halves of one pipeline, so the case that
+/// matters is the COMPOSITION: a template's one-placeholder-per-image output,
+/// expanded, must produce the spans the walk then finds.
+#[test]
+fn the_splice_feeds_the_walk_the_spans_it_expects() {
+    let special = VisionSpecialIds {
+        vision_start: mrope_oracle::VISION_START_ID,
+        image_pad: mrope_oracle::IMAGE_PAD_ID,
+    };
+    // What a template renders: ONE placeholder, whatever the image's size.
+    let rendered = [
+        1000,
+        mrope_oracle::VISION_START_ID,
+        mrope_oracle::IMAGE_PAD_ID,
+        1001,
+        1002,
+    ];
+    // Grid 1x4x6 at merge 2 is 2x3 = 6 merged tokens.
+    let grid = GridThw::new(1, 4, 6);
+    let merged = grid.merged_tokens(2);
+    assert_eq!(merged, 6);
+
+    let spliced = splice_image_placeholders(&rendered, mrope_oracle::IMAGE_PAD_ID, &[merged])
+        .expect("splices");
+    assert_eq!(spliced.len(), rendered.len() - 1 + merged);
+    let walked = mrope_position_triples(&spliced, &[grid], special, 2).expect("walks");
+    assert_eq!(walked.spans, vec![ImageSpan { start: 2, len: 6 }]);
+    // The block spent max(1, 2, 3) = 3 positions for its 6 tokens, so the two
+    // text tokens after it resume at 5 rather than at 8.
+    assert_eq!(walked.triples[8..], [(5, 5, 5), (6, 6, 6)]);
+}
+
+/// Order is preserved and each image gets its OWN count. A splice that used
+/// one count for every image passes the single-image case above.
+#[test]
+fn two_images_expand_to_their_own_counts_in_order() {
+    let pad = mrope_oracle::IMAGE_PAD_ID;
+    let ids = [1000, pad, 1001, pad, 1002];
+    let got = splice_image_placeholders(&ids, pad, &[2, 5]).expect("splices");
+    let mut want = vec![1000];
+    want.extend(std::iter::repeat_n(pad, 2));
+    want.push(1001);
+    want.extend(std::iter::repeat_n(pad, 5));
+    want.push(1002);
+    assert_eq!(got, want);
+}
+
+/// A count of one is the identity, which is worth pinning because it is the
+/// shape a caller reaches for when an image is tiny and it must not become a
+/// special case.
+#[test]
+fn a_single_merged_token_leaves_the_sequence_unchanged() {
+    let pad = mrope_oracle::IMAGE_PAD_ID;
+    let ids = [1000, pad, 1001];
+    assert_eq!(
+        splice_image_placeholders(&ids, pad, &[1]).expect("splices"),
+        ids.to_vec()
+    );
+}
+
+#[test]
+fn a_placeholder_count_mismatch_is_refused_in_both_directions() {
+    let pad = mrope_oracle::IMAGE_PAD_ID;
+    // Two placeholders, one count.
+    assert!(splice_image_placeholders(&[pad, 1000, pad], pad, &[4]).is_err());
+    // One placeholder, two counts.
+    assert!(splice_image_placeholders(&[pad, 1000], pad, &[4, 4]).is_err());
+    // And a zero count, which would DROP the placeholder and renumber every
+    // later span while leaving the prompt fluent.
+    assert!(splice_image_placeholders(&[pad], pad, &[0]).is_err());
+}
+
+/// A prompt with no images is untouched, which is the path every text-only
+/// caller takes and the one that must cost nothing.
+#[test]
+fn a_text_only_sequence_passes_through() {
+    let pad = mrope_oracle::IMAGE_PAD_ID;
+    let ids = [1000, 1001, 1002];
+    assert_eq!(
+        splice_image_placeholders(&ids, pad, &[]).expect("splices"),
+        ids.to_vec()
+    );
+}
+
+/// The composed helper must agree with calling the two halves by hand, and
+/// must derive its counts from the GRIDS rather than accepting them.
+#[test]
+fn splice_and_walk_derives_its_counts_from_the_grids() {
+    let special = VisionSpecialIds {
+        vision_start: mrope_oracle::VISION_START_ID,
+        image_pad: mrope_oracle::IMAGE_PAD_ID,
+    };
+    let rendered = [
+        1000,
+        mrope_oracle::VISION_START_ID,
+        mrope_oracle::IMAGE_PAD_ID,
+        1001,
+    ];
+    let grids = [GridThw::new(1, 4, 6)];
+
+    let composed = splice_and_walk(&rendered, &grids, special, 2).expect("composes");
+    let by_hand = splice_image_placeholders(
+        &rendered,
+        mrope_oracle::IMAGE_PAD_ID,
+        &[grids[0].merged_tokens(2)],
+    )
+    .expect("splices");
+    assert_eq!(composed.ids, by_hand);
+    assert_eq!(
+        composed.positions,
+        mrope_position_triples(&by_hand, &grids, special, 2).expect("walks")
+    );
+    // And the count really came from the grid: 1x4x6 at merge 2 is 6.
+    assert_eq!(composed.positions.spans[0].len, 6);
 }

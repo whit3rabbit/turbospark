@@ -5,7 +5,7 @@
 use std::path::PathBuf;
 
 use turbospark_tokenizer::{
-    render_generic_chat_template, Message, MfTokenizer, ReasoningEffort, Role,
+    render_generic_chat_template, ContentPart, Message, MfTokenizer, ReasoningEffort, Role,
 };
 
 fn load() -> MfTokenizer {
@@ -212,4 +212,146 @@ fn the_shim_is_a_no_op_on_templates_that_do_not_need_it() {
         ),
         "<user:hi>"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Multimodal content parts (ROADMAP M-V6)
+//
+// The fixture's template is the real Qwen one and already carries the
+// `render_content` macro, image branch and all -- so these exercise the
+// checkpoint's own arm rather than a stub written to agree with this port.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn an_image_part_renders_the_checkpoints_marker_run() {
+    let tok = load();
+    let messages = vec![Message::with_parts(
+        Role::User,
+        vec![
+            ContentPart::Image,
+            ContentPart::Text("what is this?".to_string()),
+        ],
+    )];
+    let rendered =
+        render_generic_chat_template(&tok, &messages, &[], true, ReasoningEffort::Off).unwrap();
+
+    // ONE placeholder, not N. The expansion is a token-id pass
+    // (`vision_io::splice_image_placeholders`), which is what
+    // `docs/VISION_PHASE0.md` item 6 established.
+    assert_eq!(rendered.matches("<|image_pad|>").count(), 1);
+    assert!(
+        rendered.contains("<|vision_start|><|image_pad|><|vision_end|>what is this?"),
+        "rendered = {rendered}"
+    );
+}
+
+/// The parts are ORDERED and the template emits the marker where the part
+/// sits. Swapping them moves the image after the question, which changes
+/// every mRoPE position past it -- fluently.
+#[test]
+fn the_part_order_decides_where_the_image_lands() {
+    let tok = load();
+    let render = |parts: Vec<ContentPart>| {
+        render_generic_chat_template(
+            &tok,
+            &[Message::with_parts(Role::User, parts)],
+            &[],
+            true,
+            ReasoningEffort::Off,
+        )
+        .unwrap()
+    };
+    let image_first = render(vec![
+        ContentPart::Image,
+        ContentPart::Text("caption".to_string()),
+    ]);
+    let text_first = render(vec![
+        ContentPart::Text("caption".to_string()),
+        ContentPart::Image,
+    ]);
+
+    assert!(image_first.contains("<|vision_end|>caption"));
+    assert!(text_first.contains("caption<|vision_start|>"));
+    assert_ne!(image_first, text_first);
+}
+
+/// Several images in one turn each get their own marker run, which is what
+/// the splice then expands one at a time.
+#[test]
+fn two_images_in_one_turn_render_two_marker_runs() {
+    let tok = load();
+    let messages = vec![Message::with_parts(
+        Role::User,
+        vec![
+            ContentPart::Image,
+            ContentPart::Text(" and ".to_string()),
+            ContentPart::Image,
+        ],
+    )];
+    let rendered =
+        render_generic_chat_template(&tok, &messages, &[], true, ReasoningEffort::Off).unwrap();
+    assert_eq!(rendered.matches("<|image_pad|>").count(), 2);
+    assert!(rendered.contains("<|vision_end|> and <|vision_start|>"));
+}
+
+/// **THE INVARIANT THAT KEEPS EVERY FROZEN DIGEST WHERE IT IS.** A text-only
+/// message takes the template's `content is string` branch exactly as it did
+/// before content parts existed, so nothing about a text prompt moved.
+#[test]
+fn a_text_only_message_renders_identically_through_both_constructors() {
+    let tok = load();
+    let plain = render_generic_chat_template(
+        &tok,
+        &[Message::new(Role::User, "hi")],
+        &[],
+        true,
+        ReasoningEffort::Off,
+    )
+    .unwrap();
+    let parts = render_generic_chat_template(
+        &tok,
+        &[Message::with_parts(
+            Role::User,
+            vec![ContentPart::Text("hi".to_string())],
+        )],
+        &[],
+        true,
+        ReasoningEffort::Off,
+    )
+    .unwrap();
+    assert_eq!(plain, parts);
+}
+
+/// The template's own guard, reached through the new path. Worth pinning
+/// because it is the one place the port hands a structure the template can
+/// REFUSE, and the refusal has to arrive as an error rather than as a panic.
+#[test]
+fn an_image_in_a_system_message_is_refused_by_the_template() {
+    let tok = load();
+    let messages = vec![
+        Message::with_parts(Role::System, vec![ContentPart::Image]),
+        Message::new(Role::User, "hi"),
+    ];
+    let err = render_generic_chat_template(&tok, &messages, &[], true, ReasoningEffort::Off)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("System message cannot contain images"),
+        "{err}"
+    );
+}
+
+/// The FALLBACK renderer has no vision markers, so it refuses rather than
+/// rendering the text alone -- which would produce a prompt with no
+/// placeholder for the splice to expand and a model answering about a picture
+/// it never saw.
+#[test]
+fn the_fallback_renderer_refuses_an_image_rather_than_dropping_it() {
+    let tok = load();
+    let messages = vec![Message::with_parts(Role::User, vec![ContentPart::Image])];
+    let err = tok
+        .apply_dialect_chat_template(&messages)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("carries an image"), "{err}");
 }

@@ -23,13 +23,21 @@
 //!
 //! What is left in the gap is exactly what M-V5 added.
 //!
-//! # The reference runs FIRST here, unlike every sibling, and it is temporary
+//! # THIS PORT BUILDS THE IDS AND THE REFERENCE'S ARE THE ORACLE (M-V6)
 //!
-//! `logit_dump.rs` writes `meta.json` and Python replays it. M-V6 does not
-//! exist, so this port cannot build a text+image id sequence at all -- no
-//! splice, no `--image`, no server arm -- and the processor is the authority on
-//! the ids until it does. Flip this to match its siblings when M-V6 lands, and
-//! compare the two splices rather than taking one on trust.
+//! Until M-V6 this file REPLAYED the processor's id sequence, because nothing
+//! here could produce one. It renders the prompt through the checkpoint's own
+//! template, encodes it, and expands the placeholder run itself now, and the
+//! equality against `header.input_ids` is M-V6's whole gate -- `splice_and_walk`
+//! is what closed it.
+//!
+//! Everything downstream then runs on the port's OWN ids, so a splice that
+//! agreed on length and disagreed on placement cannot hide behind a replayed
+//! sequence.
+//!
+//! The reference still runs FIRST, which is now only about the ORDER of the two
+//! commands rather than about who owns the prompt: `prepare` needs to write the
+//! pixels and the question before this can read them.
 //!
 //! # Setup
 //!
@@ -57,7 +65,7 @@ use std::path::{Path, PathBuf};
 use foundation::LogitValue;
 use runtime::LogitProducer;
 use turbospark_bench::protocol::{PROTOCOL_EXPERT_CACHE_SLOTS, PROTOCOL_MAX_CONTEXT};
-use turbospark_vision_io::{mrope_position_triples, GridThw, PreprocessedImage, VisionSpecialIds};
+use turbospark_vision_io::{GridThw, PreprocessedImage};
 
 /// Tokens to generate past the prompt, for the end-to-end arm.
 ///
@@ -183,6 +191,80 @@ fn load_f32(dir: &Path, name: &str, want: usize) -> Vec<f32> {
         .collect()
 }
 
+/// Render the prompt this port's own way, encode it, and expand the
+/// placeholder run (ROADMAP M-V6).
+///
+/// **THE TOKENIZER COMES FROM A SEPARATE DIRECTORY BY DEFAULT**, because
+/// `qwen38-27b-vision.gturbo` was streamed for its tower and carries no
+/// sidecars. `TURBOSPARK_VISION_TOKENIZER_DIR` points at one that does;
+/// `~/models/qwen38-27b.gturbo` is the same checkpoint
+/// (`mlx-community/Qwen3.8-27B-4bit`) and its `tokenizer.json` and
+/// `chat_template.jinja` are BYTE-IDENTICAL to the reference snapshot's,
+/// which is what makes borrowing them correct rather than convenient.
+/// Pointing it somewhere wrong is self-checking: the assertion against the
+/// processor's ids fails loudly.
+///
+/// The message shape mirrors what `apply_chat_template(processor, config,
+/// question, num_images=1)` builds -- ONE user turn whose content is
+/// `[image, text]`, in that order. The order is not cosmetic: the template
+/// emits the marker run where the part sits, so swapping them moves the image
+/// after the question and changes every position past it.
+fn build_prompt_ids(
+    install: &Path,
+    dir: &Path,
+    header: &Header,
+) -> turbospark_vision_io::SplicedPrompt {
+    let tokenizer_dir =
+        env_dir("TURBOSPARK_VISION_TOKENIZER_DIR").unwrap_or_else(|| install.to_path_buf());
+    let tokenizer = tokenizer::MfTokenizer::load_from_dir(&tokenizer_dir).unwrap_or_else(|e| {
+        panic!(
+            "no tokenizer in {}: {e}\n  the vision install carries no sidecars; set \
+             TURBOSPARK_VISION_TOKENIZER_DIR to an install of the same checkpoint",
+            tokenizer_dir.display()
+        )
+    });
+
+    let question = header.raw["question"]
+        .as_str()
+        .expect("header.json carries the question `prepare` rendered")
+        .to_string();
+    let messages = [tokenizer::Message::with_parts(
+        tokenizer::Role::User,
+        vec![
+            tokenizer::ContentPart::Image,
+            tokenizer::ContentPart::Text(question),
+        ],
+    )];
+    let rendered = tokenizer
+        .apply_chat_template(&messages)
+        .expect("the checkpoint's template renders an image part");
+    let encoded = tokenizer.encode(&rendered, false);
+
+    // ONE placeholder in, `merged_tokens` out, with the count derived from the
+    // GRID rather than from the reference's own placeholder run -- taking it
+    // from the dump would make the splice agree with the oracle by
+    // construction and test nothing.
+    let params = params_from(&repack::peek_manifest_arch(install).expect("peeks"));
+    let spliced = turbospark_vision_io::splice_and_walk(
+        &encoded,
+        &[header.grid],
+        turbospark_vision_io::VisionSpecialIds {
+            vision_start: header.vision_start_token_id,
+            image_pad: header.image_token_id,
+        },
+        params.merge_size,
+    )
+    .expect("one placeholder expands to the grid's merged-token count");
+    eprintln!(
+        "vision_logit_dump: rendered {} ids, spliced to {} ({} merged tokens)",
+        encoded.len(),
+        spliced.ids.len(),
+        header.grid.merged_tokens(params.merge_size),
+    );
+    let _ = dir;
+    spliced
+}
+
 #[test]
 #[ignore = "needs a real vision install (TURBOSPARK_QWEN38_VISION_INSTALL_DIR) \
             and a prepared dump (TURBOSPARK_VISION_KLD_DIR)"]
@@ -199,11 +281,25 @@ fn dump_text_and_image_logits() {
     };
 
     let header = load_header(&dir);
-    let ids = header.input_ids.clone();
     assert_eq!(
         header.rows,
-        ids.len() - 1,
+        header.input_ids.len() - 1,
         "the reference dropped a different number of rows than there are ids"
+    );
+
+    // THIS PORT BUILDS THE ID SEQUENCE, and the reference's is the ORACLE
+    // (ROADMAP M-V6). Until M-V6 this test REPLAYED the reference's ids
+    // because nothing here could produce them; the splice is what flipped
+    // that, and comparing the two sequences is the milestone's own gate.
+    //
+    // Everything downstream then runs on the port's OWN ids, so a splice that
+    // agreed on length and disagreed on placement could not hide behind a
+    // replayed sequence.
+    let prompt = build_prompt_ids(&install, &dir, &header);
+    let ids = prompt.ids.clone();
+    assert_eq!(
+        ids, header.input_ids,
+        "this port's rendered-and-spliced prompt differs from the processor's"
     );
 
     // Opened DIRECTLY rather than through `open_model_runner`, which also
@@ -295,16 +391,7 @@ fn dump_text_and_image_logits() {
     // This IS one of the things under test: the walk is a port of
     // `get_rope_index` and a disagreement with it moves every angle past the
     // image.
-    let positions = mrope_position_triples(
-        &ids,
-        &[header.grid],
-        VisionSpecialIds {
-            vision_start: header.vision_start_token_id,
-            image_pad: header.image_token_id,
-        },
-        params.merge_size,
-    )
-    .expect("the walk places the reference's image");
+    let positions = prompt.positions;
     eprintln!(
         "vision_logit_dump: {} span(s), rope_delta {}",
         positions.spans.len(),
