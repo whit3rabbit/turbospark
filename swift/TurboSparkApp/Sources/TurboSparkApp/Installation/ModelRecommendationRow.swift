@@ -38,6 +38,7 @@ struct ModelRecommendationRow: View {
                         .padding(.vertical, 1.5)
                         .background(Color.purple.opacity(0.18), in: RoundedRectangle(cornerRadius: 4))
                         .foregroundStyle(Color.purple)
+                        .help("Streams weights dynamically with minimal RAM footprint")
                     }
 
                     RecommendationVerdictBadge(verdict: recommendation.verdict)
@@ -56,6 +57,7 @@ struct ModelRecommendationRow: View {
                     }
                     .font(.caption2.weight(.medium))
                     .foregroundStyle(.secondary)
+                    .help("Estimated unified memory footprint")
 
                     Text("-")
                         .font(.caption2)
@@ -68,6 +70,7 @@ struct ModelRecommendationRow: View {
                     }
                     .font(.caption2.weight(.medium))
                     .foregroundStyle(.secondary)
+                    .help("On-disk installation size")
 
                     if let minRate = recommendation.toksPerSecondMin, let maxRate = recommendation.toksPerSecondMax {
                         Text("-")
@@ -96,6 +99,7 @@ struct ModelRecommendationRow: View {
             .buttonStyle(.borderedProminent)
             .controlSize(.regular)
             .disabled(model.isInstallingModel)
+            .help("Install and start \(recommendation.alias)")
             .accessibilityLabel("Install and start \(recommendation.alias)")
             .accessibilityHint("Downloads the model and starts a new chat with it")
         }
@@ -146,6 +150,7 @@ struct RecommendationVerdictBadge: View {
             .padding(.vertical, 1.5)
             .background(Color.green.opacity(0.18), in: RoundedRectangle(cornerRadius: 4))
             .foregroundStyle(.green)
+            .help("Fits entirely in unified memory")
         case .streams:
             HStack(spacing: 3) {
                 Image(systemName: "bolt.fill")
@@ -157,6 +162,7 @@ struct RecommendationVerdictBadge: View {
             .padding(.vertical, 1.5)
             .background(Color.blue.opacity(0.18), in: RoundedRectangle(cornerRadius: 4))
             .foregroundStyle(.blue)
+            .help("Streams experts dynamically from fast NVMe storage")
         case .tight:
             HStack(spacing: 3) {
                 Image(systemName: "exclamationmark.triangle.fill")
@@ -168,6 +174,7 @@ struct RecommendationVerdictBadge: View {
             .padding(.vertical, 1.5)
             .background(Color.orange.opacity(0.18), in: RoundedRectangle(cornerRadius: 4))
             .foregroundStyle(.orange)
+            .help("Fits with tight memory headroom")
         case .refused:
             HStack(spacing: 3) {
                 Image(systemName: "xmark.octagon.fill")
@@ -179,6 +186,7 @@ struct RecommendationVerdictBadge: View {
             .padding(.vertical, 1.5)
             .background(Color.red.opacity(0.18), in: RoundedRectangle(cornerRadius: 4))
             .foregroundStyle(.red)
+            .help("Exceeds available system memory")
         case .unknown:
             EmptyView()
         }

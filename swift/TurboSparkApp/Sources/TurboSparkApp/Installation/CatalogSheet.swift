@@ -1,6 +1,7 @@
 import SwiftUI
 import TurboSpark
 
+/// Modal sheet for browsing the curated catalog, viewing local installs, and streaming Hugging Face models.
 struct CatalogSheet: View {
     @ObservedObject var model: AppModel
     @Environment(\.dismiss) private var dismiss
@@ -115,7 +116,7 @@ struct CatalogSheet: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(item.alias)
                                     .font(.callout.weight(.medium))
-                                Text("\(visuals.family) • \(MetricFormat.storage(item.installBytes))")
+                                Text("\(visuals.family) | \(MetricFormat.storage(item.installBytes))")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
@@ -131,6 +132,7 @@ struct CatalogSheet: View {
                         }
                         .controlSize(.small)
                         .disabled(model.isInstallingModel || model.isRunning)
+                        .help("Delete model from disk")
                         .accessibilityLabel("Delete \(item.alias)")
                         .accessibilityHint("Removes this installed model from disk")
                     }
@@ -171,7 +173,7 @@ struct CatalogSheet: View {
                             Text(entry.name)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
-                            Text("Download: \(MetricFormat.storage(entry.downloadBytes)) • Disk: \(MetricFormat.storage(entry.installBytes))")
+                            Text("Download: \(MetricFormat.storage(entry.downloadBytes)) | Disk: \(MetricFormat.storage(entry.installBytes))")
                                 .font(.caption2)
                                 .foregroundStyle(.tertiary)
                         }
@@ -188,6 +190,7 @@ struct CatalogSheet: View {
                         .buttonStyle(.borderedProminent)
                         .controlSize(.small)
                         .disabled(model.isInstallingModel || model.isRunning)
+                        .help("Install \(entry.alias)")
                         .accessibilityLabel("Install \(entry.alias)")
                         .accessibilityHint("Downloads and installs \(entry.name)")
                     }
@@ -224,9 +227,10 @@ struct CatalogSheet: View {
 
     private var footer: some View {
         HStack {
-            Button("Choose Local Folder…") {
+            Button("Choose Local Folder...") {
                 ModelLocationPicker.choose(for: model)
             }
+            .help("Select an existing model directory")
             .accessibilityHint("Opens a folder picker for an already-installed model")
 
             Spacer()
@@ -234,6 +238,7 @@ struct CatalogSheet: View {
             Button("Refresh") {
                 model.refreshModels()
             }
+            .help("Reload model catalog")
             .accessibilityHint("Reloads the model catalog from disk")
         }
         .padding(12)

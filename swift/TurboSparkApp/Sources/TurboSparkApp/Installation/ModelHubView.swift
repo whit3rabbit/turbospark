@@ -2,58 +2,31 @@ import AppKit
 import SwiftUI
 import TurboSpark
 
-/// The complete Unsloth Studio-style Model Hub and Library.
+/// The Models section: browse the catalog, see what fits this machine, install.
+///
+/// The chrome matches the Files section rather than carrying its own: no page
+/// title block, no telemetry pills. Chip and RAM used to be repeated here and
+/// now live in the window's status strip, which is on screen in every section
+/// (`swift/CLAUDE.md` Gotcha 17).
 struct ModelHubView: View {
     @ObservedObject var model: AppModel
 
-    enum HubTab: String, CaseIterable, Identifiable {
-        case discover = "Discover"
-        case onDevice = "On Device"
-        var id: String { rawValue }
-    }
-
-    enum FormatFilter: String, CaseIterable, Identifiable {
-        case all = "All Formats"
-        case mlx = "MLX INT4"
-        case gguf = "GGUF"
-        var id: String { rawValue }
-    }
-
-    enum CapabilityFilter: String, CaseIterable, Identifiable {
-        case all = "All Capabilities"
-        case conversational = "Conversational"
-        case reasoning = "Reasoning"
-        case moe = "MoE"
-        case dense = "Dense"
-        case coding = "Coding"
-        var id: String { rawValue }
-    }
-
-    enum SortOption: String, CaseIterable, Identifiable {
-        case recommended = "Recommended"
-        case name = "Name (A-Z)"
-        case size = "Smallest Size"
-        var id: String { rawValue }
-    }
-
-    @State private var selectedTab: HubTab = .discover
-    @State private var searchText = ""
-    @State private var formatFilter: FormatFilter = .all
-    @State private var capabilityFilter: CapabilityFilter = .all
-    @State private var sortOption: SortOption = .recommended
-    @State private var selectedAlias: String? = nil
+    @State private var filter = ModelHubFilter()
+    @State private var selectedAlias: String?
     @State private var recommendations: [String: ModelRecommendation] = [:]
     @State private var showingProbeSheet = false
 
     var body: some View {
         VStack(spacing: 0) {
-            headerBar
+            header
             Divider()
-            toolbarFilterRow
+            filterBar
             Divider()
             masterDetailContent
         }
-        .frame(minWidth: 540, minHeight: 460)
+        .sheet(isPresented: $showingProbeSheet) {
+            ModelProbeSheet(model: model)
+        }
         .task {
             loadRecommendations()
             if selectedAlias == nil {
@@ -62,346 +35,369 @@ struct ModelHubView: View {
         }
     }
 
-    private var headerBar: some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 8) {
-                    Text("Model hub")
-                        .font(.title2.weight(.bold))
-                    Text("LOCAL")
-                        .font(.caption2.weight(.heavy))
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 2)
-                        .background(Color.accentColor.opacity(0.18), in: RoundedRectangle(cornerRadius: 4))
-                        .foregroundStyle(Color.accentColor)
-                }
-                Text("Discover, download, and run inference models locally.")
-                    .font(.caption)
+    // MARK: - Header
+
+    private var header: some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Models")
+                    .font(.system(size: 14, weight: .semibold))
+                    .accessibilityAddTraits(.isHeader)
+                Text(summaryText)
+                    .font(.system(size: 10))
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
             }
 
             Spacer(minLength: 8)
 
-            telemetryPills
+            searchField
+
+            Button {
+                showingProbeSheet = true
+            } label: {
+                Label("Probe HF", systemImage: "magnifyingglass")
+                    .font(.system(size: 11, weight: .medium))
+                    .frame(height: 22)
+                    .padding(.horizontal, 9)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .background(TurboSparkTheme.accentColor.opacity(0.14), in: Capsule())
+            .foregroundStyle(TurboSparkTheme.accentColor)
+            .help("Probe an arbitrary Hugging Face repository by header alone")
+            .accessibilityLabel("Probe a Hugging Face repository")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
     }
 
-    private var telemetryPills: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                if let telemetry = model.telemetry {
-                    HStack(spacing: 4) {
-                        Image(systemName: "memorychip")
-                        Text(telemetry.chip ?? "Apple Silicon")
-                    }
-                    .font(.caption2.weight(.medium))
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3.5)
-                    .background(Color(nsColor: .controlBackgroundColor), in: Capsule())
-                    .overlay(Capsule().stroke(Color(nsColor: .separatorColor).opacity(0.5), lineWidth: 0.5))
-                }
-
-                HStack(spacing: 4) {
-                    Image(systemName: "internaldrive")
-                    Text("\(model.installed.count) Local")
-                }
-                .font(.caption2.weight(.medium))
-                .padding(.horizontal, 7)
-                .padding(.vertical, 3.5)
-                .background(Color(nsColor: .controlBackgroundColor), in: Capsule())
-                .overlay(Capsule().stroke(Color(nsColor: .separatorColor).opacity(0.5), lineWidth: 0.5))
-
-                if let mem = model.currentProcessMemoryBytes {
-                    HStack(spacing: 4) {
-                        Image(systemName: "chart.bar.fill")
-                        Text("\(MetricFormat.storage(mem)) RAM")
-                    }
-                    .font(.caption2.weight(.medium))
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3.5)
-                    .background(Color(nsColor: .controlBackgroundColor), in: Capsule())
-                    .overlay(Capsule().stroke(Color(nsColor: .separatorColor).opacity(0.5), lineWidth: 0.5))
-                }
-
-                Button {
-                    showingProbeSheet = true
-                } label: {
-                    Label("Probe HF…", systemImage: "magnifyingglass.circle")
-                        .font(.caption2.weight(.medium))
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .help("Probe an arbitrary Hugging Face repository by header")
-            }
+    private var summaryText: String {
+        let installed = model.installed
+        var parts = ["\(model.catalog.count) in catalog"]
+        parts.append("\(installed.count) installed")
+        let onDisk = installed.reduce(UInt64(0)) { $0 + $1.installBytes }
+        if onDisk > 0 {
+            parts.append("\(MetricFormat.storage(onDisk)) on disk")
         }
-        .sheet(isPresented: $showingProbeSheet) {
-            ModelProbeSheet(model: model)
-        }
+        return parts.joined(separator: " \u{2022} ")
     }
 
-    private var toolbarFilterRow: some View {
-        HStack(spacing: 10) {
-            Picker("Tab", selection: $selectedTab) {
-                ForEach(HubTab.allCases) { tab in
+    private var searchField: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
+                .accessibilityHidden(true)
+            TextField("Filter", text: $filter.searchText)
+                .textFieldStyle(.plain)
+                .font(.system(size: 11))
+                .frame(width: 130)
+                .accessibilityLabel("Search models")
+                .accessibilityHint("Filters by alias, name, family or notes")
+            if !filter.searchText.isEmpty {
+                Button {
+                    filter.searchText = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 10))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.tertiary)
+                .accessibilityLabel("Clear search")
+            }
+        }
+        .padding(.horizontal, 8)
+        .frame(height: 22)
+        .background(TurboSparkTheme.surfaceColor, in: Capsule())
+        .overlay { Capsule().stroke(TurboSparkTheme.hairlineColor, lineWidth: 0.5) }
+    }
+
+    // MARK: - Filters
+
+    private var filterBar: some View {
+        HStack(spacing: 8) {
+            Picker("View", selection: $filter.tab) {
+                ForEach(ModelHubFilter.Tab.allCases) { tab in
                     Text(tab.rawValue).tag(tab)
                 }
             }
             .pickerStyle(.segmented)
-            .frame(width: 155)
+            .controlSize(.small)
+            .frame(width: 150)
+            .labelsHidden()
             .accessibilityLabel("Catalog view")
 
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(.secondary)
-                    .font(.caption)
-                    .accessibilityHidden(true)
-                TextField("Search models…", text: $searchText)
-                    .textFieldStyle(.plain)
-                    .font(.callout)
-                    .accessibilityLabel("Search models")
-                    .accessibilityHint("Filters the model catalog by name, family, or notes")
-                if !searchText.isEmpty {
-                    Button {
-                        searchText = ""
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(.secondary)
-                            .font(.caption)
-                            .accessibilityHidden(true)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Clear search")
-                    .accessibilityHint("Empties the search field")
-                }
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
-            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(nsColor: .separatorColor).opacity(0.5), lineWidth: 0.5))
-            .frame(minWidth: 100)
-
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    Picker("Format", selection: $formatFilter) {
-                        ForEach(FormatFilter.allCases) { f in
-                            Text(f.rawValue).tag(f)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .frame(width: 110)
-                    .accessibilityLabel("Format filter")
+                HStack(spacing: 6) {
+                    filterChip(
+                        title: "Format",
+                        options: ModelHubFilter.formatOptions(for: model.catalog),
+                        selection: $filter.format)
 
-                    Picker("Capability", selection: $capabilityFilter) {
-                        ForEach(CapabilityFilter.allCases) { c in
-                            Text(c.rawValue).tag(c)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .frame(width: 125)
-                    .accessibilityLabel("Capability filter")
+                    filterChip(
+                        title: "Capability",
+                        options: ModelHubFilter.capabilityOptions(for: model.catalog),
+                        selection: $filter.capability)
 
-                    Picker("Sort", selection: $sortOption) {
-                        ForEach(SortOption.allCases) { s in
-                            Text(s.rawValue).tag(s)
+                    filterChip(
+                        title: "Fit",
+                        options: ModelHubFilter.fitOptions(
+                            for: model.catalog,
+                            recommendations: recommendations),
+                        selection: $filter.fit)
+
+                    sortChip
+
+                    if filter.isNarrowed {
+                        Button {
+                            filter.clearNarrowing()
+                        } label: {
+                            Label("Clear", systemImage: "xmark")
+                                .font(.system(size: 10, weight: .medium))
+                                .labelStyle(.titleOnly)
+                                .padding(.horizontal, 8)
+                                .frame(height: 22)
+                                .contentShape(Rectangle())
                         }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                        .help("Clear every filter")
+                        .accessibilityLabel("Clear filters")
                     }
-                    .pickerStyle(.menu)
-                    .frame(width: 120)
-                    .accessibilityLabel("Sort order")
                 }
+                .padding(.trailing, 4)
             }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
-        .background(Color(nsColor: .windowBackgroundColor))
     }
+
+    /// A dropdown that reads "Format" when inactive and "MLX INT4" when set,
+    /// so an active filter is visible without opening it.
+    private func filterChip(
+        title: String,
+        options: [String],
+        selection: Binding<ModelHubFilter.Selection>
+    ) -> some View {
+        Menu {
+            Button(ModelHubFilter.anyOption) { selection.wrappedValue = nil }
+            if !options.isEmpty {
+                Divider()
+                ForEach(options, id: \.self) { option in
+                    Button {
+                        selection.wrappedValue = option
+                    } label: {
+                        if selection.wrappedValue == option {
+                            Label(option, systemImage: "checkmark")
+                        } else {
+                            Text(option)
+                        }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Text(selection.wrappedValue ?? title)
+                    .font(.system(size: 11, weight: selection.wrappedValue == nil ? .regular : .medium))
+                    .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 7, weight: .bold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 9)
+            .frame(height: 22)
+            .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .foregroundStyle(selection.wrappedValue == nil ? Color.secondary : TurboSparkTheme.accentColor)
+        .background(
+            selection.wrappedValue == nil
+                ? TurboSparkTheme.surfaceColor
+                : TurboSparkTheme.accentColor.opacity(0.14),
+            in: Capsule())
+        .overlay { Capsule().stroke(TurboSparkTheme.hairlineColor, lineWidth: 0.5) }
+        .disabled(options.isEmpty && selection.wrappedValue == nil)
+        .help("Filter by \(title.lowercased())")
+        .accessibilityLabel("\(title) filter")
+        .accessibilityValue(selection.wrappedValue ?? ModelHubFilter.anyOption)
+    }
+
+    private var sortChip: some View {
+        Menu {
+            ForEach(ModelHubFilter.SortOption.allCases) { option in
+                Button {
+                    filter.sort = option
+                } label: {
+                    if filter.sort == option {
+                        Label(option.rawValue, systemImage: "checkmark")
+                    } else {
+                        Text(option.rawValue)
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "arrow.up.arrow.down")
+                    .font(.system(size: 8, weight: .bold))
+                Text(filter.sort.rawValue)
+                    .font(.system(size: 11))
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 9)
+            .frame(height: 22)
+            .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .foregroundStyle(.secondary)
+        .background(TurboSparkTheme.surfaceColor, in: Capsule())
+        .overlay { Capsule().stroke(TurboSparkTheme.hairlineColor, lineWidth: 0.5) }
+        .help("Sort the list")
+        .accessibilityLabel("Sort order")
+        .accessibilityValue(filter.sort.rawValue)
+    }
+
+    // MARK: - List and detail
 
     private var masterDetailContent: some View {
         HStack(spacing: 0) {
             masterList
-                .frame(minWidth: 260, idealWidth: 310, maxWidth: 360)
+                .frame(minWidth: 250, idealWidth: 300, maxWidth: 340)
                 .frame(maxHeight: .infinity)
 
-            Divider()
+            Rectangle()
+                .fill(TurboSparkTheme.hairlineColor)
+                .frame(width: AppChromeLayout.dividerWidth)
 
             detailPane
-                .frame(minWidth: 280, maxWidth: .infinity, maxHeight: .infinity)
+                .frame(minWidth: 260, maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
     private var masterList: some View {
         ScrollView {
-            LazyVStack(spacing: 6) {
-                HStack {
-                    Text(selectedTab == .discover ? "Curated Models" : "On Device Models")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Text("\(filteredEntries.count) available")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
-                .padding(.horizontal, 12)
-                .padding(.top, 10)
-                .padding(.bottom, 4)
-
+            LazyVStack(spacing: 3) {
                 if filteredEntries.isEmpty {
-                    VStack(spacing: 8) {
-                        Image(systemName: "tray")
-                            .font(.largeTitle)
-                            .foregroundStyle(.secondary)
-                            .accessibilityHidden(true)
-                        Text("No matching models found.")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.top, 60)
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("No matching models found")
+                    emptyListState
                 } else {
                     ForEach(filteredEntries) { entry in
-                        let isInst = model.installed.contains(where: { $0.alias == entry.alias }) || entry.installed
-                        let isAct = model.selected?.alias == entry.alias && model.session != nil
-                        let isDownloading = model.isInstallingModel
-                        let fraction = model.installProgressFraction
-                        let rec = recommendations[entry.alias]
-
-                        ModelCardView(
-                            alias: entry.alias,
-                            name: entry.name,
-                            family: entry.family,
-                            downloadBytes: entry.downloadBytes,
-                            isInstalled: isInst,
-                            isActive: isAct,
-                            isDownloading: isDownloading,
-                            downloadFraction: fraction,
-                            recommendation: rec,
-                            isSelected: selectedAlias == entry.alias,
-                            onSelect: {
-                                selectedAlias = entry.alias
-                            }
-                        )
-                        .padding(.horizontal, 8)
+                        cardView(for: entry)
                     }
                 }
             }
-            .padding(.bottom, 12)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 8)
         }
-        .background(Color(nsColor: .controlBackgroundColor).opacity(0.3))
+    }
+
+    private func cardView(for entry: CatalogEntry) -> some View {
+        let isInstalled = model.installed.contains(where: { $0.alias == entry.alias }) || entry.installed
+        let isActive = model.selected?.alias == entry.alias && model.session != nil
+        let rec = recommendations[entry.alias]
+        let isSelected = selectedAlias == entry.alias
+
+        return ModelCardView(
+            alias: entry.alias,
+            name: entry.name,
+            family: entry.family,
+            status: entry.status,
+            downloadBytes: entry.downloadBytes,
+            isInstalled: isInstalled,
+            isActive: isActive,
+            isDownloading: model.isInstallingModel,
+            downloadFraction: model.installProgressFraction,
+            recommendation: rec,
+            isSelected: isSelected,
+            onSelect: { selectedAlias = entry.alias }
+        )
+    }
+
+    private var emptyListState: some View {
+        VStack(spacing: 8) {
+            Image(systemName: filter.tab == .onDevice ? "internaldrive" : "tray")
+                .font(.system(size: 26))
+                .foregroundStyle(.quaternary)
+                .accessibilityHidden(true)
+            Text(emptyTitle)
+                .font(.callout.weight(.medium))
+            Text(emptyDetail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            if filter.isNarrowed {
+                Button("Clear filters") { filter.clearNarrowing() }
+                    .buttonStyle(.link)
+                    .font(.caption)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 16)
+        .padding(.top, 48)
+        .accessibilityElement(children: .contain)
+    }
+
+    private var emptyTitle: String {
+        if filter.tab == .onDevice && !filter.isNarrowed { return "No models installed" }
+        return "No matching models"
+    }
+
+    private var emptyDetail: String {
+        if filter.tab == .onDevice && !filter.isNarrowed {
+            return "Switch to Discover to browse the catalog and install one."
+        }
+        return "Nothing in this view matches the current filters."
     }
 
     @ViewBuilder
     private var detailPane: some View {
         if let selectedEntry {
-            let inst = model.installed.first(where: { $0.alias == selectedEntry.alias })
-            let rec = recommendations[selectedEntry.alias]
             ModelDetailPaneView(
                 model: model,
                 entry: selectedEntry,
-                installedModel: inst,
-                recommendation: rec
-            )
+                installedModel: model.installed.first(where: { $0.alias == selectedEntry.alias }),
+                recommendation: recommendations[selectedEntry.alias])
         } else {
-            VStack(spacing: 12) {
-                Image(systemName: "square.grid.2x2")
-                    .font(.system(size: 40))
+            VStack(spacing: 8) {
+                Image(systemName: "shippingbox")
+                    .font(.system(size: 30))
+                    .foregroundStyle(.quaternary)
+                    .accessibilityHidden(true)
+                Text("No model selected")
+                    .font(.callout.weight(.medium))
+                Text("Pick a row to see what it costs and whether it fits this machine.")
+                    .font(.caption)
                     .foregroundStyle(.secondary)
-                Text("Select a model to view details and manage installation.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 320)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .accessibilityElement(children: .combine)
         }
     }
 
+    /// The selected row, falling back to the first visible one so the detail
+    /// pane never shows an entry the filters just hid.
     private var selectedEntry: CatalogEntry? {
-        if let selectedAlias, let entry = model.catalog.first(where: { $0.alias == selectedAlias }) {
+        if let selectedAlias, let entry = filteredEntries.first(where: { $0.alias == selectedAlias }) {
             return entry
         }
         return filteredEntries.first
     }
 
     private var filteredEntries: [CatalogEntry] {
-        var list = model.catalog
-
-        if selectedTab == .onDevice {
-            list = list.filter { entry in
-                model.installed.contains(where: { $0.alias == entry.alias }) || entry.installed
-            }
-        }
-
-        if !searchText.isEmpty {
-            let query = searchText.lowercased()
-            list = list.filter { entry in
-                entry.alias.lowercased().contains(query)
-                    || entry.name.lowercased().contains(query)
-                    || entry.family.lowercased().contains(query)
-                    || (entry.notes?.lowercased().contains(query) ?? false)
-            }
-        }
-
-        switch formatFilter {
-        case .all:
-            break
-        case .mlx:
-            list = list.filter { !($0.alias.contains("gguf") || $0.name.contains("GGUF")) }
-        case .gguf:
-            list = list.filter { $0.alias.contains("gguf") || $0.name.contains("GGUF") }
-        }
-
-        switch capabilityFilter {
-        case .all:
-            break
-        case .conversational:
-            break
-        case .reasoning:
-            list = list.filter { $0.alias.contains("gptoss") || $0.alias.contains("museglimmer") || $0.alias.contains("qwen36") }
-        case .moe:
-            list = list.filter { $0.alias.contains("gemma") || $0.alias.contains("qwen") || $0.alias.contains("ornith") || $0.alias.contains("mixtral") || $0.alias.contains("ternary") || $0.alias.contains("gptoss") }
-        case .dense:
-            list = list.filter { $0.alias.contains("mistral") || $0.alias.contains("tinyllama") || $0.alias.contains("bonsai") || $0.alias.contains("museglimmer") }
-        case .coding:
-            list = list.filter { $0.alias.contains("gemma") || $0.alias.contains("qwen") || $0.alias.contains("mistral") }
-        }
-
-        switch sortOption {
-        case .recommended:
-            list.sort { lhs, rhs in
-                let lhsRank = verdictRank(recommendations[lhs.alias]?.verdict)
-                let rhsRank = verdictRank(recommendations[rhs.alias]?.verdict)
-                if lhsRank != rhsRank { return lhsRank < rhsRank }
-                return lhs.alias < rhs.alias
-            }
-        case .name:
-            list.sort { $0.alias < $1.alias }
-        case .size:
-            list.sort { $0.downloadBytes < $1.downloadBytes }
-        }
-
-        return list
-    }
-
-    private func verdictRank(_ verdict: ModelRecommendation.FitVerdict?) -> Int {
-        switch verdict {
-        case .resident: return 0
-        case .streams: return 1
-        case .tight: return 2
-        case .unknown, .none: return 3
-        case .refused: return 4
-        }
+        filter.apply(
+            to: model.catalog,
+            installedAliases: Set(model.installed.map(\.alias)),
+            recommendations: recommendations)
     }
 
     private func loadRecommendations() {
-        if let recs = try? TurboSparkCatalog.recommend() {
-            var map: [String: ModelRecommendation] = [:]
-            for r in recs {
-                map[r.alias] = r
-            }
-            recommendations = map
-        }
+        guard let recommended = try? TurboSparkCatalog.recommend() else { return }
+        recommendations = Dictionary(
+            recommended.map { ($0.alias, $0) },
+            uniquingKeysWith: { first, _ in first })
     }
 }

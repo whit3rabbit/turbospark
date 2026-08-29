@@ -6,6 +6,8 @@ struct ModelCardView: View {
     let alias: String
     let name: String
     let family: String
+    /// The catalog row's own `status`: `verified`, `runs` or `caveat`.
+    let status: String
     let downloadBytes: UInt64
     let isInstalled: Bool
     let isActive: Bool
@@ -31,11 +33,7 @@ struct ModelCardView: View {
                             .foregroundStyle(.primary)
                             .lineLimit(1)
 
-                        Image(systemName: "checkmark.seal.fill")
-                            .font(.caption2)
-                            .foregroundStyle(Color.accentColor)
-                            .help("Verified model in TurboSpark catalog")
-                            .accessibilityHidden(true)
+                        statusSeal
 
                         Spacer(minLength: 2)
 
@@ -81,6 +79,8 @@ struct ModelCardView: View {
                             Text(visuals.parameterTag)
                         }
                         .font(.caption2.weight(.medium))
+                        .lineLimit(1)
+                        .fixedSize()
                         .padding(.horizontal, 4)
                         .padding(.vertical, 1.5)
                         .background(Color(nsColor: .quaternaryLabelColor).opacity(0.35), in: RoundedRectangle(cornerRadius: 4))
@@ -88,6 +88,8 @@ struct ModelCardView: View {
 
                         Text(visuals.formatLabel)
                             .font(.caption2.weight(.medium))
+                            .lineLimit(1)
+                            .fixedSize()
                             .padding(.horizontal, 4)
                             .padding(.vertical, 1.5)
                             .background(Color(nsColor: .quaternaryLabelColor).opacity(0.35), in: RoundedRectangle(cornerRadius: 4))
@@ -101,6 +103,8 @@ struct ModelCardView: View {
 
                         Text(MetricFormat.storage(downloadBytes))
                             .font(.caption2.monospacedDigit())
+                            .lineLimit(1)
+                            .fixedSize()
                             .foregroundStyle(.tertiary)
                     }
                 }
@@ -123,6 +127,7 @@ struct ModelCardView: View {
                     lineWidth: 1
                 )
         )
+        .help("Select \(alias) (\(name))")
         .accessibilityLabel("\(alias), \(visuals.family)")
         .accessibilityValue(cardAccessibilityValue)
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
@@ -130,6 +135,7 @@ struct ModelCardView: View {
 
     private var cardAccessibilityValue: String {
         var parts: [String] = [name]
+        if let statusAccessibilityText { parts.append(statusAccessibilityText) }
         if isActive { parts.append("Active") }
         if isInstalled && !isActive { parts.append("Installed") }
         if isDownloading { parts.append("Downloading") }
@@ -150,6 +156,43 @@ struct ModelCardView: View {
         ModelLogoView(visuals: visuals, size: 36, cornerRadius: 8)
     }
 
+    /// The catalog's own verdict on the row.
+    ///
+    /// This used to be an unconditional `checkmark.seal.fill` captioned
+    /// "Verified model in TurboSpark catalog" on EVERY row, which is a claim
+    /// about a field the view never read: `models.json` marks rows `verified`,
+    /// `runs` or `caveat`, and one of the shipped rows is a caveat. An
+    /// always-on badge is the same failure as an always-true filter -- it
+    /// looks like information and carries none.
+    @ViewBuilder
+    private var statusSeal: some View {
+        switch status {
+        case "verified":
+            Image(systemName: "checkmark.seal.fill")
+                .font(.caption2)
+                .foregroundStyle(TurboSparkTheme.accentColor)
+                .help("Verified: this port has run this row end to end")
+                .accessibilityHidden(true)
+        case "caveat":
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.caption2)
+                .foregroundStyle(.orange)
+                .help("Runs with a caveat; see the notes in the detail pane")
+                .accessibilityHidden(true)
+        default:
+            EmptyView()
+        }
+    }
+
+    /// Spoken form of the status seal, which is decorative for sighted users.
+    private var statusAccessibilityText: String? {
+        switch status {
+        case "verified": return "Verified"
+        case "caveat": return "Has a caveat"
+        default: return nil
+        }
+    }
+
     @ViewBuilder
     private func verdictBadge(_ verdict: ModelRecommendation.FitVerdict) -> some View {
         switch verdict {
@@ -160,10 +203,13 @@ struct ModelCardView: View {
                 Text("Resident")
             }
             .font(.caption2.weight(.semibold))
+            .lineLimit(1)
+            .fixedSize()
             .padding(.horizontal, 4)
             .padding(.vertical, 1.5)
             .background(Color.green.opacity(0.18), in: RoundedRectangle(cornerRadius: 4))
             .foregroundStyle(.green)
+            .help("Fits entirely in unified memory")
         case .streams:
             HStack(spacing: 2) {
                 Image(systemName: "bolt.fill")
@@ -171,10 +217,13 @@ struct ModelCardView: View {
                 Text("Streams")
             }
             .font(.caption2.weight(.semibold))
+            .lineLimit(1)
+            .fixedSize()
             .padding(.horizontal, 4)
             .padding(.vertical, 1.5)
             .background(Color.blue.opacity(0.18), in: RoundedRectangle(cornerRadius: 4))
             .foregroundStyle(.blue)
+            .help("Streams experts dynamically from NVMe storage (~2-4 GB RAM)")
         case .tight:
             HStack(spacing: 2) {
                 Image(systemName: "exclamationmark.triangle.fill")
@@ -182,10 +231,13 @@ struct ModelCardView: View {
                 Text("Tight")
             }
             .font(.caption2.weight(.semibold))
+            .lineLimit(1)
+            .fixedSize()
             .padding(.horizontal, 4)
             .padding(.vertical, 1.5)
             .background(Color.orange.opacity(0.18), in: RoundedRectangle(cornerRadius: 4))
             .foregroundStyle(.orange)
+            .help("Runs with tight memory headroom")
         case .refused:
             HStack(spacing: 2) {
                 Image(systemName: "xmark.octagon.fill")
@@ -193,10 +245,13 @@ struct ModelCardView: View {
                 Text("Too Large")
             }
             .font(.caption2.weight(.semibold))
+            .lineLimit(1)
+            .fixedSize()
             .padding(.horizontal, 4)
             .padding(.vertical, 1.5)
             .background(Color.red.opacity(0.18), in: RoundedRectangle(cornerRadius: 4))
             .foregroundStyle(.red)
+            .help("Exceeds available system memory")
         case .unknown:
             EmptyView()
         }

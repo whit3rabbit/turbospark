@@ -22,6 +22,9 @@ struct ModelInstallView: View {
         ScrollView {
             VStack(spacing: 20) {
                 headerSection
+                if ModelStorageManager.isLMStudioDirectoryPresent(customPath: model.lmStudioDirectory) {
+                    lmStudioDetectedBanner
+                }
                 HardwareScanCard(telemetry: model.telemetry)
                 MoESpotlightCard()
 
@@ -44,11 +47,42 @@ struct ModelInstallView: View {
 
     // MARK: - Header & Identity
 
+    private var lmStudioDetectedBanner: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "shippingbox.fill")
+                .font(.title2)
+                .foregroundStyle(Color.accentColor)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("LM Studio Library Detected")
+                    .font(.subheadline.weight(.semibold))
+                Text("Found models at ~/.lmstudio/models. TurboSpark can run your LM Studio models directly without copying files.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            Button("Scan LM Studio") {
+                model.enableLMStudioDetection = true
+                model.persistSettings()
+                model.refreshModels()
+                model.showToast("Scanned LM Studio models folder", style: .success)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+        }
+        .padding(12)
+        .background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.accentColor.opacity(0.3), lineWidth: 1))
+    }
+
     private var headerSection: some View {
         VStack(spacing: 8) {
             Image(systemName: "bolt.horizontal.circle.fill")
                 .font(.system(size: 42))
                 .foregroundStyle(TurboSparkTheme.accentColor)
+                .help("TurboSpark Local Inference")
                 .accessibilityHidden(true)
 
             Text("Welcome to TurboSpark")
@@ -118,6 +152,7 @@ struct ModelInstallView: View {
                 Label("Rescan Storage", systemImage: "arrow.clockwise")
             }
             .buttonStyle(.bordered)
+            .help("Rescan storage for local models")
             .accessibilityHint("Rescans local model directories and reloads recommendations")
 
             Button {
@@ -126,6 +161,7 @@ struct ModelInstallView: View {
                 Label("Choose Existing Model Folder...", systemImage: "folder")
             }
             .buttonStyle(.bordered)
+            .help("Select an existing model directory")
             .accessibilityHint("Opens a folder picker for an already-installed model")
 
             Spacer()
@@ -136,6 +172,7 @@ struct ModelInstallView: View {
                 Label("Browse Full Model Hub", systemImage: "square.grid.2x2")
             }
             .buttonStyle(.bordered)
+            .help("Open the model catalog")
             .accessibilityHint("Opens the full model catalog in the sidebar")
         }
         .controlSize(.regular)

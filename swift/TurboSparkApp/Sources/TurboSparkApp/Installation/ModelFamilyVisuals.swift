@@ -14,13 +14,36 @@ public struct ModelFamilyVisuals {
     public let capabilities: [String]
     public let description: String
 
+    /// The quantization format, READ OFF the catalog row's own name.
+    ///
+    /// Every branch below used to state this by hand and most of them were
+    /// wrong, because a family and a format are independent: `mistral7b` and
+    /// `tinyllama` are GGUF rows that the Mistral and TinyLlama branches both
+    /// labelled "MLX INT4", `gemma4-gguf` is Q8_0 shown as "Q4_K_M", and
+    /// `bonsai27b` is MLX affine 1-bit shown as INT4. The name is where the
+    /// catalog states the format ("Gemma 4 26B-A4B Instruct (MLX INT4, group
+    /// 64)"), so the parenthesised suffix up to the first comma IS the label
+    /// and there is nothing to keep in sync.
+    public static func formatLabel(alias: String, name: String) -> String {
+        if let open = name.lastIndex(of: "("),
+           let close = name[open...].firstIndex(of: ")") {
+            let inside = name[name.index(after: open)..<close]
+            let head = inside.split(separator: ",", maxSplits: 1).first.map(String.init) ?? ""
+            let trimmed = head.trimmingCharacters(in: .whitespaces)
+            if !trimmed.isEmpty { return trimmed }
+        }
+        // No parenthesised format: fall back to the coarse signal rather than
+        // inventing a precision the row never stated.
+        let haystack = (name + " " + alias).lowercased()
+        return haystack.contains("gguf") ? "GGUF" : "MLX"
+    }
+
     public static func resolve(alias: String, family: String, name: String) -> ModelFamilyVisuals {
         let lAlias = alias.lowercased()
-        let lName = name.lowercased()
         let lFamily = family.lowercased()
+        let derivedFormat = formatLabel(alias: alias, name: name)
 
         if lAlias.contains("gemma") || lFamily.contains("gemma") {
-            let isGguf = lAlias.contains("gguf") || lAlias.contains("iq3")
             return ModelFamilyVisuals(
                 family: "Gemma 4",
                 letter: "G",
@@ -29,7 +52,7 @@ public struct ModelFamilyVisuals {
                 accentColor: Color.purple,
                 parameterTag: "26B-A4B",
                 architectureType: "MoE 4/128",
-                formatLabel: isGguf ? (lAlias.contains("iq3") ? "GGUF IQ3_M" : "GGUF Q4_K_M") : "MLX INT4",
+                formatLabel: derivedFormat,
                 capabilities: ["Conversational", "Text Generation", "Coding", "MoE"],
                 description: "Google Gemma 4 mixture-of-experts model optimized with INT4 quantization and fast local streaming."
             )
@@ -42,12 +65,11 @@ public struct ModelFamilyVisuals {
                 accentColor: Color.cyan,
                 parameterTag: "27B-A2B",
                 architectureType: "MTP Speculative",
-                formatLabel: "MLX INT4",
+                formatLabel: derivedFormat,
                 capabilities: ["Conversational", "Speculative Drafter", "MTP Head", "MoE"],
                 description: "Qwen 3.8 with multi-token-prediction drafter head achieving up to 1.66x speculative speedup."
             )
         } else if lAlias.contains("qwen36") || lFamily == "qwen36" {
-            let isGguf = lAlias.contains("gguf")
             return ModelFamilyVisuals(
                 family: "Qwen 3.6",
                 letter: "Q",
@@ -56,7 +78,7 @@ public struct ModelFamilyVisuals {
                 accentColor: Color.blue,
                 parameterTag: "35B-A3B",
                 architectureType: "Gated-DeltaNet MoE",
-                formatLabel: isGguf ? "GGUF Q4_K_M" : "MLX INT4",
+                formatLabel: derivedFormat,
                 capabilities: ["Conversational", "Linear Attention", "Reasoning", "MoE"],
                 description: "Alibaba Qwen 3.6 with Gated-DeltaNet linear attention on 30 of 40 layers for extreme throughput."
             )
@@ -69,7 +91,7 @@ public struct ModelFamilyVisuals {
                 accentColor: Color.indigo,
                 parameterTag: "30B-A3B",
                 architectureType: "MoE 48-Layer",
-                formatLabel: "GGUF Q4_K_M",
+                formatLabel: derivedFormat,
                 capabilities: ["Conversational", "General", "MoE"],
                 description: "Qwen3 30B MoE packed in GGUF format with 48 layers and efficient slot caching."
             )
@@ -82,7 +104,7 @@ public struct ModelFamilyVisuals {
                 accentColor: Color.green,
                 parameterTag: "20B",
                 architectureType: "Harmony MoE",
-                formatLabel: "MLX INT4",
+                formatLabel: derivedFormat,
                 capabilities: ["Reasoning", "Chain of Thought", "Conversational", "MoE"],
                 description: "GPT-OSS 20B with Harmony reasoning analysis channel before output generation."
             )
@@ -95,7 +117,7 @@ public struct ModelFamilyVisuals {
                 accentColor: Color.orange,
                 parameterTag: "27B",
                 architectureType: "1.58-bit MoE",
-                formatLabel: "MLX 1.58b",
+                formatLabel: derivedFormat,
                 capabilities: ["Ultra Low Bit", "Experimental", "MoE"],
                 description: "Extreme low-bit quantized model using ternary 1.58-bit weights for minimal memory consumption."
             )
@@ -108,13 +130,12 @@ public struct ModelFamilyVisuals {
                 accentColor: Color.pink,
                 parameterTag: "30B",
                 architectureType: "Dense Reasoning",
-                formatLabel: "MLX INT4",
+                formatLabel: derivedFormat,
                 capabilities: ["Reasoning", "Dense 30B", "Conversational", "Long Context"],
                 description: "High-parameter dense reasoning model featuring internal self-reflection and 8k context window."
             )
         } else if lAlias.contains("ornith") || (lFamily == "qwen35" && lAlias.contains("ornith")) {
             let is9b = lAlias.contains("9b")
-            let isGguf = lAlias.contains("gguf")
             return ModelFamilyVisuals(
                 family: is9b ? "Ornith 9B" : "Ornith 35B",
                 letter: "O",
@@ -123,7 +144,7 @@ public struct ModelFamilyVisuals {
                 accentColor: Color.teal,
                 parameterTag: is9b ? "9B-A1B" : "35B-A3B",
                 architectureType: is9b ? "Lightweight MoE" : "35B MoE",
-                formatLabel: isGguf ? "GGUF Q4_K_M" : "MLX INT4",
+                formatLabel: derivedFormat,
                 capabilities: is9b ? ["Fast", "Small MoE", "Low Memory"] : ["Conversational", "MoE", "General"],
                 description: is9b ? "Compact Ornith MoE designed for instant response and low memory footprint." : "Full-sized Ornith MoE balanced for high generation quality."
             )
@@ -136,7 +157,7 @@ public struct ModelFamilyVisuals {
                 accentColor: Color.red,
                 parameterTag: "7B Dense",
                 architectureType: "Dense Transformer",
-                formatLabel: "MLX INT4",
+                formatLabel: derivedFormat,
                 capabilities: ["Conversational", "Dense 7B", "Coding", "Fast"],
                 description: "Mistral 7B Instruct v0.3 dense transformer with 8,192 token context window and high single-stream speed."
             )
@@ -149,7 +170,7 @@ public struct ModelFamilyVisuals {
                 accentColor: Color.yellow,
                 parameterTag: "1.1B Dense",
                 architectureType: "Compact Dense",
-                formatLabel: "MLX INT4",
+                formatLabel: derivedFormat,
                 capabilities: ["Ultra Compact", "Fast", "Low Memory", "1.1B"],
                 description: "Ultra-compact 1.1B parameter model with instant load times and negligible RAM footprint."
             )
@@ -162,7 +183,7 @@ public struct ModelFamilyVisuals {
                 accentColor: Color.orange,
                 parameterTag: "8x7B MoE",
                 architectureType: "Classic MoE",
-                formatLabel: "GGUF Q4_K_M",
+                formatLabel: derivedFormat,
                 capabilities: ["Conversational", "8x7B MoE", "Code"],
                 description: "Mixtral 8x7B classic mixture-of-experts model running via GGUF format."
             )
@@ -175,7 +196,7 @@ public struct ModelFamilyVisuals {
                 accentColor: Color.mint,
                 parameterTag: "27B Dense",
                 architectureType: "Dense 27B",
-                formatLabel: "MLX INT4",
+                formatLabel: derivedFormat,
                 capabilities: ["Dense 27B", "General", "Text Generation"],
                 description: "Bonsai 27B dense model offering broad capabilities and deep knowledge."
             )
@@ -188,7 +209,7 @@ public struct ModelFamilyVisuals {
                 accentColor: Color.orange,
                 parameterTag: "Dense LLaMA",
                 architectureType: "LLaMA Architecture",
-                formatLabel: "MLX INT4",
+                formatLabel: derivedFormat,
                 capabilities: ["Dense", "Text Generation", "General"],
                 description: name
             )
@@ -201,7 +222,7 @@ public struct ModelFamilyVisuals {
                 accentColor: Color.blue,
                 parameterTag: "DeepSeek MoE",
                 architectureType: "DeepSeek Architecture",
-                formatLabel: "MLX INT4",
+                formatLabel: derivedFormat,
                 capabilities: ["Reasoning", "Coding", "MoE"],
                 description: name
             )
@@ -214,7 +235,7 @@ public struct ModelFamilyVisuals {
                 accentColor: Color.blue,
                 parameterTag: "Phi Dense",
                 architectureType: "SLM Architecture",
-                formatLabel: "MLX INT4",
+                formatLabel: derivedFormat,
                 capabilities: ["Reasoning", "Compact", "Coding"],
                 description: name
             )
@@ -222,7 +243,6 @@ public struct ModelFamilyVisuals {
 
         // Generic fallback
         let initial = String(alias.prefix(1)).uppercased()
-        let isGguf = lName.contains("gguf") || lAlias.contains("gguf")
         return ModelFamilyVisuals(
             family: family.isEmpty ? "Transformer" : family.capitalized,
             letter: initial.isEmpty ? "M" : initial,
@@ -231,7 +251,7 @@ public struct ModelFamilyVisuals {
             accentColor: Color.accentColor,
             parameterTag: "Transformer",
             architectureType: family.isEmpty ? "Neural Model" : family,
-            formatLabel: isGguf ? "GGUF" : "MLX INT4",
+            formatLabel: derivedFormat,
             capabilities: ["Text Generation", "Conversational"],
             description: name
         )

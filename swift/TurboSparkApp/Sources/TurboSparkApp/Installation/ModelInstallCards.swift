@@ -11,6 +11,7 @@ struct HardwareScanCard: View {
                 Image(systemName: "memorychip")
                     .font(.headline)
                     .foregroundStyle(TurboSparkTheme.accentColor)
+                    .help("Apple Silicon unified memory and hardware analysis")
                     .accessibilityHidden(true)
                 Text("Hardware & Memory Analysis")
                     .font(.headline)
@@ -89,6 +90,7 @@ struct MoESpotlightCard: View {
                 Image(systemName: "sparkles")
                     .font(.headline)
                     .foregroundStyle(Color.purple)
+                    .help("Mixture of Experts architecture details")
                     .accessibilityHidden(true)
                 Text("MoE (Mixture of Experts) Architecture Spotlight")
                     .font(.subheadline.weight(.bold))
@@ -166,6 +168,7 @@ struct ActiveInstallCard: View {
                 Button("Cancel", action: model.cancelInstall)
                     .buttonStyle(.bordered)
                     .controlSize(.small)
+                    .help("Cancel model download")
                     .accessibilityLabel("Cancel download")
                     .accessibilityHint("Stops the model download and keeps any verified progress")
             }

@@ -115,6 +115,7 @@ struct ModelProbeSheet: View {
                 runProbe()
             }
             .disabled(repo.isEmpty || isProbing)
+            .help("Fetch repository headers and inspect model compatibility")
             .accessibilityHint("Fetches checkpoint headers without downloading the model")
 
             Spacer()
@@ -124,6 +125,7 @@ struct ModelProbeSheet: View {
             }
             .buttonStyle(.borderedProminent)
             .disabled(repo.isEmpty || alias.isEmpty || isProbing || model.isInstallingModel)
+            .help("Download and install probed repository")
             .accessibilityHint("Downloads and installs the probed repository")
         }
         .padding(16)
