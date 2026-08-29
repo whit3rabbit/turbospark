@@ -176,3 +176,33 @@ globally and nothing enters this workspace.
     being gathered live in GPU buffers this crate cannot see. Keep it that
     way -- the split is what lets the index arithmetic, which is where the
     conventions hide, be tested against the reference with no model loaded.
+
+12. **THE PLACEHOLDER EXPANSION IS A TOKEN-ID PASS, NOT A TEXT SPLICE**
+    (ROADMAP M-V6). `splice_image_placeholders` turns the ONE `<|image_pad|>`
+    a template renders per image into that image's `merged_tokens` copies.
+    It cannot happen earlier: the template emits one marker whatever the
+    image's size (`docs/VISION_PHASE0.md` item 6), so the count is not known
+    until preprocessing has run. It must not happen on the rendered STRING
+    either -- `<|image_pad|>` spelled into prose tokenizes as its angle
+    brackets and letters rather than as the special token, giving a prompt of
+    roughly the right length carrying none of the right ids.
+
+    **REACH FOR `splice_and_walk` RATHER THAN THE TWO HALVES.** Called
+    separately, the splice takes merged-token COUNTS and
+    `mrope_position_triples` takes GRIDS, with nothing forcing a caller to
+    derive the first from the second: pass counts that disagree with the grids
+    and BOTH calls succeed, the placeholder run is the wrong length, and the
+    spans describe a picture of a different size. The prompt is fluent and the
+    trunk reads torn rows. The composed helper derives the counts from the
+    grids, so they cannot disagree.
+
+    Two refusals worth knowing. A placeholder/count mismatch is checked rather
+    than zipped, because a silent `zip` leaves a trailing placeholder
+    unexpanded on one side and an image unplaced on the other. And a count of
+    ZERO is refused rather than dropping the placeholder, which would renumber
+    every later span while leaving the prompt fluent.
+
+    Measured end to end on the real page: 23 rendered ids expand to 1,302,
+    BYTE-IDENTICAL to the mlx-vlm processor's own sequence
+    (`crates/bench/tests/vision_logit_dump.rs`, and `docs/VISION.md` for the
+    numbers).

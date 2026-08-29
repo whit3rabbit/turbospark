@@ -72,13 +72,42 @@ pub struct FunctionDefinition {
     pub parameters: JsonValue,
 }
 
+/// One ordered piece of a multimodal message's content (ROADMAP M-V6).
+///
+/// **An image is a PLACEHOLDER here and carries no pixels.** A template
+/// renders it as one marker run and the tower's rows are injected later, by
+/// position (`runtime::vision::PromptVision`), so the two halves meet at the
+/// id sequence rather than inside this type. That is also why there is no
+/// path, no bytes and no grid on this variant: everything about the image
+/// except WHERE it sits is somebody else's business.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ContentPart {
+    /// Literal text.
+    Text(String),
+    /// One image, in prompt order.
+    Image,
+}
+
 /// Single chat message in a conversation sequence.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Message {
     /// Sender role.
     pub role: Role,
     /// Text content string if present.
+    ///
+    /// On a message built by [`Message::with_parts`] this is the TEXT-ONLY
+    /// view, kept so a consumer that summarizes or counts still sees prose.
+    /// It is not what renders -- see `content_parts`.
     pub content: Option<String>,
+    /// Ordered content parts, EMPTY on every text-only message.
+    ///
+    /// **Non-empty is what makes this a multimodal message, and then this
+    /// field is the one that renders**: `content` becomes a summary and is
+    /// ignored by the template. Two fields rather than one because
+    /// `content: Option<String>` is read in over fifty places that have
+    /// nothing to do with vision, and widening it would put a content-part
+    /// match in all of them to serve one family.
+    pub content_parts: Vec<ContentPart>,
     /// Tool calls invoked by assistant.
     pub tool_calls: Vec<HistoricalToolCall>,
     /// Tool call ID if role is Tool.
@@ -93,10 +122,42 @@ impl Message {
         Self {
             role,
             content: Some(content.into()),
+            content_parts: Vec::new(),
             tool_calls: Vec::new(),
             tool_call_id: None,
             name: None,
         }
+    }
+
+    /// Constructs a multimodal message from ordered content parts.
+    ///
+    /// `content` is set to the parts' TEXT joined, so a consumer reading it
+    /// for a summary sees prose rather than `None`; the parts are what the
+    /// template renders.
+    pub fn with_parts(role: Role, parts: Vec<ContentPart>) -> Self {
+        let text: String = parts
+            .iter()
+            .filter_map(|p| match p {
+                ContentPart::Text(t) => Some(t.as_str()),
+                ContentPart::Image => None,
+            })
+            .collect();
+        Self {
+            role,
+            content: Some(text),
+            content_parts: parts,
+            tool_calls: Vec::new(),
+            tool_call_id: None,
+            name: None,
+        }
+    }
+
+    /// Images this message carries, in order.
+    pub fn image_count(&self) -> usize {
+        self.content_parts
+            .iter()
+            .filter(|p| matches!(p, ContentPart::Image))
+            .count()
     }
 }
 
@@ -178,10 +239,26 @@ impl MfTokenizer {
 
     /// The hand-written per-dialect render, bypassing any installed
     /// template. Public so the guard test can compare the two.
+    ///
+    /// **AN IMAGE PART IS REFUSED HERE RATHER THAN DROPPED** (ROADMAP M-V6).
+    /// None of the renderers below emits a vision marker, so a multimodal
+    /// message would render as its text alone -- and then the id sequence
+    /// carries no `<|image_pad|>` for the splice to expand, `PromptVision`
+    /// receives spans that do not exist, and the model answers about a
+    /// picture it was never shown. Every real vision install ships its own
+    /// template and takes the Jinja path, so this refusal is what a
+    /// MALFORMED install gets, exactly as the per-dialect refusals above are.
     pub fn apply_dialect_chat_template(
         &self,
         messages: &[Message],
     ) -> Result<String, TokenizerError> {
+        if let Some(index) = messages.iter().position(|m| m.image_count() > 0) {
+            return Err(TokenizerError::UnsupportedForDialect(format!(
+                "message {index} carries an image, but this checkpoint ships no chat template \
+                 and the {:?} fallback renderer has no vision markers to emit",
+                self.dialect
+            )));
+        }
         match self.dialect {
             ChatDialect::Gemma => gemma::gemma_chat_template(messages),
             ChatDialect::ChatMl => chatml::chatml_chat_template(messages),

@@ -51,7 +51,10 @@ pub mod smart_resize;
 
 pub use decode::{decode_image_bytes, decode_image_file, Rgb8Image, MAX_IMAGE_DIM};
 pub use error::VisionIoError;
-pub use mrope::{mrope_position_triples, ImageSpan, MropePositions, VisionSpecialIds};
+pub use mrope::{
+    mrope_position_triples, splice_and_walk, splice_image_placeholders, ImageSpan, MropePositions,
+    SplicedPrompt, VisionSpecialIds,
+};
 pub use params::{PreprocessParams, MAX_ASPECT_RATIO};
 pub use patchify::{patch_rows, GridThw};
 pub use pos_embed::{pos_embed_weights, PosEmbedTable};

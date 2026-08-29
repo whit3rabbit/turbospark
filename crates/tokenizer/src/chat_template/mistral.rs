@@ -76,6 +76,7 @@ mod mistral_template_tests {
         Message {
             role,
             content: Some(content.to_string()),
+            content_parts: Vec::new(),
             tool_calls: Vec::new(),
             tool_call_id: None,
             name: None,

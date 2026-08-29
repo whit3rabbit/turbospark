@@ -17,7 +17,7 @@ mod stop_matcher;
 mod structured_decoder;
 mod tool_call;
 
-pub use chat_template::{FunctionDefinition, HistoricalToolCall, Message, Role};
+pub use chat_template::{ContentPart, FunctionDefinition, HistoricalToolCall, Message, Role};
 pub use detokenizer::MfDetokenizer;
 pub use dialect::{ChatDialect, MfTokenizer, NO_SUCH_TOKEN_ID};
 pub use error::{TokenizerError, ToolCallParserError};

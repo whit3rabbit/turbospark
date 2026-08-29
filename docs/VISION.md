@@ -226,10 +226,12 @@ Preprocessing is held to the reference by `crates/vision-io`'s golden fixtures
 and the tower by stage 2, so letting either back in would make a gap
 unattributable between four candidates instead of one.
 
-**The reference runs FIRST here, unlike every sibling `kld_*.py`, and it is
-temporary.** M-V6 does not exist, so this port cannot build a text+image id
-sequence at all and the processor is the authority on the splice. Flip it when
-M-V6 lands, and compare the two splices rather than taking one on trust.
+**Since M-V6 this port BUILDS the id sequence and the processor's is the
+ORACLE.** The gate used to replay the reference's ids because nothing here
+could produce one; it renders, encodes and splices itself now, and asserts
+equality. The reference still runs first, which is only about the order of two
+commands rather than about who owns the prompt: `prepare` has to write the
+pixels and the question before the Rust side can read them.
 
 Measured 2026-08-28, `mlx-community/Qwen3.8-27B-4bit` at revision `3e6447f0`,
 the 1024x1280 page (grid 1x80x64, 5,120 patches, 1,280 merged tokens spliced
@@ -387,14 +389,70 @@ extension field uses, matching `arch_validation`: an absent field means the
 install declares no tower, and another family's answer about ITS tower is not
 evidence.
 
+## Building the prompt (M-V6)
+
+Three steps, in this order, and the order is forced: the splice needs each
+image's `merged_tokens`, which only preprocessing knows.
+
+```text
+preprocess(image)            -> grid, merged_tokens
+apply_chat_template(msgs)    -> ONE <|image_pad|> per image
+encode(rendered)             -> ids
+splice_and_walk(ids, grids)  -> expanded ids + spans + position triples
+```
+
+**The expansion is a TOKEN-ID pass and not a text splice**
+(`docs/VISION_PHASE0.md` item 6). The template renders exactly one
+`<|image_pad|>` per image whatever its size, so the expansion cannot happen
+before the template runs -- and it must not happen by editing the rendered
+STRING either, because `<|image_pad|>` spelled into prose tokenizes as its
+angle brackets and letters rather than as the special token. That produces a
+prompt of roughly the right length carrying none of the right ids.
+
+`add_vision_id` stays hardcoded `false`. It only controls an optional
+`"Picture N: "` prefix and defaults to falsy upstream, so `false` is already
+what the reference sends for the unlabeled case.
+
+### A message carries ORDERED parts
+
+`Message::with_parts(role, [ContentPart::Image, ContentPart::Text(q)])` is
+what a multimodal turn looks like. The order is not cosmetic: the template
+emits the marker run where the part sits, so moving the image after the
+question moves every mRoPE position past it -- fluently.
+
+`content_parts` is EMPTY on every text message, and then the template takes
+the `content is string` branch it always took. That is what leaves every
+frozen digest where it is, and
+`a_text_only_message_renders_identically_through_both_constructors` pins it.
+
+### `splice_and_walk` exists to remove a disagreement
+
+Called separately, the splice takes merged-token COUNTS and the walk takes
+GRIDS, with nothing forcing a caller to derive the first from the second.
+Pass counts that do not match and both calls succeed, the placeholder run is
+the wrong length, and the spans describe a picture of a different size. The
+composed helper derives the counts from the grids, so they cannot disagree.
+Every front end should reach for it rather than the two halves.
+
+### The fallback renderer REFUSES an image
+
+None of the per-dialect renderers emits a vision marker, so a multimodal
+message would render as its text alone -- and then there is no placeholder to
+expand, `PromptVision` gets spans that do not exist, and the model answers
+about a picture it never saw. A real vision install always ships its own
+template, so the refusal is what a MALFORMED install gets.
+
+### Measured: the port's prompt IS the processor's
+
+`vision_logit_dump.rs` renders, encodes and splices, and asserts the result
+equals `header.input_ids`. On the 1024x1280 page: 23 rendered ids expand to
+**1,302, byte-identical to the mlx-vlm processor's**. Everything downstream
+then runs on the port's own ids, and the cross-engine numbers above did not
+move by a digit -- which is what says the two sequences really are the same.
+
 ## What is not built
 
-M-V6 through M-V9. See the milestone plan; in one line each:
-
-- **M-V6** tokenizer and template: the post-tokenization splice that expands
-  one `<|image_pad|>` into `merged_tokens` copies. **Until it lands nothing
-  builds a text+image prompt**, which is why `vision_logit_dump.rs` takes its
-  ids from the reference's processor rather than producing them.
+M-V7 through M-V9. See the milestone plan; in one line each:
 - **M-V7** CLI: `--image`, and image parts in `--messages-file`.
 - **M-V8** server: stop dropping image parts on both endpoints.
 - **M-V9** the memory oracle's multi-page loop, and hardening.

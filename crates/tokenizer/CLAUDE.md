@@ -301,3 +301,45 @@ cargo test -p turbospark-tokenizer
     in those unions. `ChatDialect::Llama3` needed none of them (no
     tool-calling or thinking markup to decode), which is why it is not the
     worked example for that half.
+
+12. **A MULTIMODAL MESSAGE RENDERS THROUGH A CONTENT-PART LIST, AND A
+    TEXT-ONLY ONE STILL RENDERS THROUGH THE BARE STRING** (ROADMAP M-V6).
+    `Message::content_parts` is EMPTY on every text message, and
+    `message_to_json` branches on that: empty takes the `content is string`
+    arm every template has always taken, non-empty emits HF's
+    `[{"type": "image"}, {"type": "text", ...}]` list. That is what leaves
+    every frozen digest in `crates/bench` where it is, and
+    `a_text_only_message_renders_identically_through_both_constructors` pins
+    it.
+
+    **The shape is the TEMPLATE's, not this port's invention.** qwen3_5's
+    `render_content` macro branches on `content is string` first and falls
+    through to `content is iterable`, testing each item for an `image` key or
+    `item.type == 'image'`. Emitting a bare string with the markup spelled
+    into it would take the TEXT arm and tokenize the angle brackets rather
+    than the special token -- a prompt of roughly the right length carrying
+    none of the right ids.
+
+    **The parts are ORDERED and the order is load-bearing.** The template
+    emits the marker run where the part sits, so
+    `[Image, Text(q)]` and `[Text(q), Image]` are different prompts and the
+    second moves every mRoPE position past the image.
+
+    **`add_vision_id` stays hardcoded `false` and that is Phase 0's finding
+    rather than an omission**: it controls only an optional `"Picture N: "`
+    prefix and defaults to falsy upstream, so `false` is what the reference
+    sends for the unlabeled case. Threading a context variable would change
+    the rendered bytes of every image prompt to match no reference.
+
+    **THE FALLBACK RENDERERS REFUSE AN IMAGE RATHER THAN DROPPING IT.** None
+    of them emits a vision marker, so a multimodal message would render as its
+    text alone -- and then the id sequence has no `<|image_pad|>` for the
+    splice to expand, `PromptVision` gets spans that do not exist, and the
+    model answers about a picture it never saw. Every real vision install
+    ships its own template, so this is what a MALFORMED install gets, exactly
+    as the Harmony and Muse Glimmer refusals are.
+
+    Adding a `ContentPart` variant (video is the obvious next one) touches
+    `message_to_json`'s match and nothing else that is compiler-enforced;
+    `Message::image_count` and the fallback refusal both key on `Image`
+    specifically, so decide by hand whether a new variant belongs in them.
