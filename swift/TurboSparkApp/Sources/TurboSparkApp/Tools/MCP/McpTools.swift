@@ -2,7 +2,9 @@ import Foundation
 
 // MARK: - MCP Tool Definitions & Models
 
+/// Input payload for listing data resources across connected MCP servers.
 public struct ListMcpResourcesInput: Codable, Sendable, Equatable {
+    /// Optional server name filter.
     public var server: String?
 
     public init(server: String? = nil) {
@@ -10,11 +12,17 @@ public struct ListMcpResourcesInput: Codable, Sendable, Equatable {
     }
 }
 
+/// Metadata description of a single resource provided by an MCP server.
 public struct McpResourceSummary: Codable, Sendable, Equatable {
+    /// Unique resource URI.
     public var uri: String
+    /// Display name of the resource.
     public var name: String
+    /// MIME type of the content.
     public var mimeType: String?
+    /// Description of the resource.
     public var description: String?
+    /// Server identifier providing the resource.
     public var server: String
 
     public init(
@@ -32,7 +40,9 @@ public struct McpResourceSummary: Codable, Sendable, Equatable {
     }
 }
 
+/// Output payload containing discovered MCP resources.
 public struct ListMcpResourcesOutput: Codable, Sendable, Equatable {
+    /// Array of resource summaries.
     public var resources: [McpResourceSummary]
 
     public init(resources: [McpResourceSummary] = []) {
@@ -40,8 +50,11 @@ public struct ListMcpResourcesOutput: Codable, Sendable, Equatable {
     }
 }
 
+/// Input payload for reading an MCP resource by URI.
 public struct ReadMcpResourceInput: Codable, Sendable, Equatable {
+    /// Server identifier hosting the resource.
     public var server: String
+    /// Target resource URI.
     public var uri: String
 
     public init(server: String, uri: String) {
@@ -50,10 +63,15 @@ public struct ReadMcpResourceInput: Codable, Sendable, Equatable {
     }
 }
 
+/// Content payload extracted from an MCP resource.
 public struct McpResourceContent: Codable, Sendable, Equatable {
+    /// Resource URI.
     public var uri: String
+    /// MIME type.
     public var mimeType: String?
+    /// Plain text content.
     public var text: String?
+    /// Local file path if binary blob was saved to disk.
     public var blobSavedTo: String?
 
     public init(
@@ -69,8 +87,11 @@ public struct McpResourceContent: Codable, Sendable, Equatable {
     }
 }
 
+/// Output payload containing retrieved resource contents.
 public struct ReadMcpResourceOutput: Codable, Sendable, Equatable {
+    /// Extracted content items.
     public var contents: [McpResourceContent]
+    /// Error message string if retrieval failed.
     public var error: String?
 
     public init(contents: [McpResourceContent] = [], error: String? = nil) {
@@ -79,8 +100,11 @@ public struct ReadMcpResourceOutput: Codable, Sendable, Equatable {
     }
 }
 
+/// Input payload for listing child entries under an MCP directory URI.
 public struct ReadMcpResourceDirInput: Codable, Sendable, Equatable {
+    /// MCP server name.
     public var server: String
+    /// Directory resource URI.
     public var uri: String
 
     public init(server: String, uri: String) {
@@ -89,8 +113,11 @@ public struct ReadMcpResourceDirInput: Codable, Sendable, Equatable {
     }
 }
 
+/// Output payload containing child resource entries in a directory.
 public struct ReadMcpResourceDirOutput: Codable, Sendable, Equatable {
+    /// Discovered child resources.
     public var resources: [McpResourceSummary]
+    /// Error message if directory listing failed.
     public var error: String?
 
     public init(resources: [McpResourceSummary] = [], error: String? = nil) {
@@ -99,7 +126,9 @@ public struct ReadMcpResourceDirOutput: Codable, Sendable, Equatable {
     }
 }
 
+/// Input payload for triggering tool schema refresh across connected MCP servers.
 public struct RefreshMcpToolsInput: Codable, Sendable, Equatable {
+    /// Optional server name to refresh specifically.
     public var server: String?
 
     public init(server: String? = nil) {
@@ -107,12 +136,19 @@ public struct RefreshMcpToolsInput: Codable, Sendable, Equatable {
     }
 }
 
+/// Refresh status report for an individual MCP server.
 public struct McpServerRefreshStatus: Codable, Sendable, Equatable {
+    /// Server identifier.
     public var server: String
+    /// Status description.
     public var status: String
+    /// Number of active tools.
     public var toolCount: Int?
+    /// Tool names added.
     public var added: [String]?
+    /// Tool names removed.
     public var removed: [String]?
+    /// Error message if refresh failed.
     public var error: String?
 
     public init(
@@ -132,7 +168,9 @@ public struct McpServerRefreshStatus: Codable, Sendable, Equatable {
     }
 }
 
+/// Output payload from refreshing MCP server tool schemas.
 public struct RefreshMcpToolsOutput: Codable, Sendable, Equatable {
+    /// Per-server refresh status items.
     public var servers: [McpServerRefreshStatus]
 
     public init(servers: [McpServerRefreshStatus] = []) {
@@ -140,9 +178,13 @@ public struct RefreshMcpToolsOutput: Codable, Sendable, Equatable {
     }
 }
 
+/// Input payload for executing a generic dynamic MCP tool call.
 public struct McpGenericInput: Codable, Sendable, Equatable {
+    /// Server identifier.
     public var server: String
+    /// Tool name.
     public var toolName: String
+    /// Tool string arguments dictionary.
     public var arguments: [String: String]
 
     public init(server: String, toolName: String, arguments: [String: String] = [:]) {
@@ -152,8 +194,11 @@ public struct McpGenericInput: Codable, Sendable, Equatable {
     }
 }
 
+/// Output returned from dynamic MCP tool execution.
 public struct McpGenericOutput: Codable, Sendable, Equatable {
+    /// Output text payload.
     public var text: String
+    /// Whether the tool execution resulted in an error.
     public var isError: Bool
 
     public init(text: String, isError: Bool = false) {
@@ -164,6 +209,7 @@ public struct McpGenericOutput: Codable, Sendable, Equatable {
 
 // MARK: - OpenAI Tool Definitions for MCP
 
+/// OpenAI tool definition schemas for MCP resource queries and tool refresh.
 public enum McpToolDefinitions {
     public static let listMcpResources = OpenAITool.function(
         name: "ListMcpResources",
