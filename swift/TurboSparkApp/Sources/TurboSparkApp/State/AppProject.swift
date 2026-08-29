@@ -262,6 +262,8 @@ public struct AppProject: Identifiable, Codable, Equatable, Sendable {
     public var rootDirectoryPath: String?
     /// Selected agent behavior profile.
     public var agentType: AppAgentType
+    /// Preference for resolving instructions (AGENTS.md vs CLAUDE.md).
+    public var rulePreference: AppRulePreference
     /// User-supplied custom system prompt or project rules.
     public var customInstructions: String
     /// Tool execution permissions for this project.
@@ -278,6 +280,7 @@ public struct AppProject: Identifiable, Codable, Equatable, Sendable {
         name: String,
         rootDirectoryPath: String? = nil,
         agentType: AppAgentType = .coder,
+        rulePreference: AppRulePreference = .agentsFirst,
         customInstructions: String = "",
         permissions: AppProjectPermissions = .standard,
         maxAutonomousSteps: Int = 5,
@@ -288,11 +291,31 @@ public struct AppProject: Identifiable, Codable, Equatable, Sendable {
         self.name = name
         self.rootDirectoryPath = rootDirectoryPath
         self.agentType = agentType
+        self.rulePreference = rulePreference
         self.customInstructions = customInstructions
         self.permissions = permissions
         self.maxAutonomousSteps = maxAutonomousSteps
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, rootDirectoryPath, agentType, rulePreference, customInstructions
+        case permissions, maxAutonomousSteps, createdAt, updatedAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        self.name = try container.decode(String.self, forKey: .name)
+        self.rootDirectoryPath = try container.decodeIfPresent(String.self, forKey: .rootDirectoryPath)
+        self.agentType = try container.decodeIfPresent(AppAgentType.self, forKey: .agentType) ?? .coder
+        self.rulePreference = try container.decodeIfPresent(AppRulePreference.self, forKey: .rulePreference) ?? .agentsFirst
+        self.customInstructions = try container.decodeIfPresent(String.self, forKey: .customInstructions) ?? ""
+        self.permissions = try container.decodeIfPresent(AppProjectPermissions.self, forKey: .permissions) ?? .standard
+        self.maxAutonomousSteps = try container.decodeIfPresent(Int.self, forKey: .maxAutonomousSteps) ?? 5
+        self.createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        self.updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
     }
 
     /// Resolved URL to the root directory if configured.

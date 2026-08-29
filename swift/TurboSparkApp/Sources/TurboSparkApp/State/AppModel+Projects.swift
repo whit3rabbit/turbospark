@@ -15,6 +15,7 @@ extension AppModel {
         name: String,
         rootDirectoryPath: String? = nil,
         agentType: AppAgentType = .coder,
+        rulePreference: AppRulePreference = .agentsFirst,
         customInstructions: String = "",
         permissions: AppProjectPermissions = .standard,
         maxAutonomousSteps: Int = 5
@@ -22,7 +23,7 @@ extension AppModel {
         var instructions = customInstructions
         if instructions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
            let path = rootDirectoryPath,
-           let autoRules = detectProjectRules(directoryPath: path) {
+           let autoRules = detectProjectRules(directoryPath: path, preference: rulePreference) {
             instructions = autoRules
         }
 
@@ -30,6 +31,7 @@ extension AppModel {
             name: name,
             rootDirectoryPath: rootDirectoryPath,
             agentType: agentType,
+            rulePreference: rulePreference,
             customInstructions: instructions,
             permissions: permissions,
             maxAutonomousSteps: maxAutonomousSteps
@@ -84,21 +86,19 @@ extension AppModel {
         persistChats()
     }
 
-    /// Scans a local codebase directory for AGENTS.md, CLAUDE.md, or rules files.
-    public func detectProjectRules(directoryPath: String) -> String? {
-        let candidates = ["AGENTS.md", "CLAUDE.md", ".rules", "RULES.md"]
-        let rootURL = URL(fileURLWithPath: directoryPath, isDirectory: true)
+    /// Scans a local codebase directory for AGENTS.md, CLAUDE.md, or rules files according to preference.
+    public func detectProjectRules(
+        directoryPath: String,
+        preference: AppRulePreference = .agentsFirst
+    ) -> String? {
+        ProjectRuleDetector.detectRules(in: directoryPath, preference: preference)?.content
+    }
 
-        for candidate in candidates {
-            let fileURL = rootURL.appendingPathComponent(candidate)
-            if FileManager.default.fileExists(atPath: fileURL.path),
-               let content = try? String(contentsOf: fileURL, encoding: .utf8) {
-                let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !trimmed.isEmpty {
-                    return String(trimmed.prefix(6000))
-                }
-            }
-        }
-        return nil
+    /// Scans a local codebase directory and returns full detection details (conflicts, symlinks, status).
+    public func detectProjectRulesDetails(
+        directoryPath: String,
+        preference: AppRulePreference = .agentsFirst
+    ) -> ProjectRulesDetectionResult? {
+        ProjectRuleDetector.detectRules(in: directoryPath, preference: preference)
     }
 }
