@@ -1,13 +1,16 @@
 import Foundation
 import SwiftUI
 
+/// Ephemeral in-app toast notification model.
 public struct AppToast: Identifiable, Equatable, Sendable {
+    /// Visual style indicating the severity or purpose of the toast.
     public enum Style: String, Sendable {
         case info
         case success
         case warning
         case error
 
+        /// SF Symbol name for the style indicator.
         public var systemImage: String {
             switch self {
             case .info: return "info.circle.fill"
@@ -17,6 +20,7 @@ public struct AppToast: Identifiable, Equatable, Sendable {
             }
         }
 
+        /// Tint color for the style indicator icon.
         public var tintColor: Color {
             switch self {
             case .info: return .accentColor
@@ -27,9 +31,13 @@ public struct AppToast: Identifiable, Equatable, Sendable {
         }
     }
 
+    /// Unique identifier for the toast instance.
     public let id: UUID
+    /// Message body displayed to the user.
     public let message: String
+    /// Toast visual severity style.
     public let style: Style
+    /// Display duration in seconds before auto-dismissal.
     public let duration: TimeInterval
 
     public init(

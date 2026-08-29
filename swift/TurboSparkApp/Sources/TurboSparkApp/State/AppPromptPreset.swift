@@ -1,8 +1,12 @@
 import Foundation
 
+/// Canned prompt preset used for quick model verification and sample generations in the empty state.
 public struct AppPromptPreset: Identifiable, Decodable, Sendable, Equatable {
+    /// Unique preset identifier.
     public let id: String
+    /// Short display title shown in prompt pills.
     public let title: String
+    /// Full prompt text injected into the composer.
     public let prompt: String
 
     public init(id: String, title: String, prompt: String) {
@@ -11,6 +15,7 @@ public struct AppPromptPreset: Identifiable, Decodable, Sendable, Equatable {
         self.prompt = prompt
     }
 
+    /// Loads all prompt presets from the resource bundle or falls back to default built-ins.
     public static var all: [AppPromptPreset] {
         if let url = Bundle.module.url(forResource: "app-prompts", withExtension: "json"),
            let data = try? Data(contentsOf: url),
@@ -20,14 +25,17 @@ public struct AppPromptPreset: Identifiable, Decodable, Sendable, Equatable {
         return defaultPresets
     }
 
+    /// Primary quick-action presets shown directly above the empty composer.
     public static var primary: [AppPromptPreset] {
         Array(all.prefix(3))
     }
 
+    /// Additional presets shown in extended menus.
     public static var secondary: [AppPromptPreset] {
         Array(all.dropFirst(3))
     }
 
+    /// Built-in fallback presets covering travel planning, code generation, and factual explanation.
     public static let defaultPresets: [AppPromptPreset] = [
         AppPromptPreset(
             id: "paris",

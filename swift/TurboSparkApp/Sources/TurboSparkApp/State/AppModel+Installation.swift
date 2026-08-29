@@ -2,6 +2,7 @@ import Foundation
 import TurboSpark
 
 extension AppModel {
+    /// Initiates a background download and build of a model catalog alias.
     public func installModel(alias: String) {
         guard !isInstallingModel, !generating else { return }
         isInstallingModel = true
@@ -39,29 +40,49 @@ extension AppModel {
                 self.installStageText = "Installation cancelled"
                 self.showToast("Installation cancelled", style: .warning)
             } catch {
-                let msg = "Installation failed: \(error.localizedDescription)"
-                self.error = msg
-                self.showToast(msg, style: .error, duration: 5.0)
+                self.error = error.localizedDescription
+                self.installStageText = nil
+                self.showToast("Installation failed: \(error.localizedDescription)", style: .error, duration: 5.0)
             }
             self.isInstallingModel = false
+            self.installProgressFraction = nil
+            self.installDownloadedBytes = nil
+            self.installTotalBytes = nil
+            self.installETAText = nil
             self.installTask = nil
         }
     }
 
-    public func installRepo(repo: String, alias: String, file: String? = nil, sidecarRepo: String? = nil) {
+    /// Initiates download and packaging of an arbitrary Hugging Face GGUF repository.
+    public func installRepo(
+        repo: String,
+        alias: String,
+        file: String? = nil,
+        sidecarRepo: String? = nil
+    ) {
         guard !isInstallingModel, !generating else { return }
+        let trimmedRepo = repo.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedAlias = alias.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedRepo.isEmpty, !trimmedAlias.isEmpty else { return }
+
         isInstallingModel = true
-        installStageText = "Preparing repository download..."
+        installStageText = "Connecting to Hugging Face..."
         installProgressFraction = nil
         installDownloadedBytes = nil
         installTotalBytes = nil
+        installETAText = nil
         error = nil
-        showToast("Starting download for '\(alias)' from Hugging Face...", style: .info)
+        showToast("Pulling '\(trimmedRepo)'...", style: .info)
 
         installTask = Task {
             do {
                 var maxBytes: UInt64 = 0
-                for try await event in TurboSparkCatalog.install(repo: repo, alias: alias, file: file, sidecarRepo: sidecarRepo) {
+                for try await event in TurboSparkCatalog.install(
+                    repo: trimmedRepo,
+                    alias: trimmedAlias,
+                    file: file,
+                    sidecarRepo: sidecarRepo
+                ) {
                     switch event {
                     case .stage(let text):
                         self.installStageText = text
@@ -84,30 +105,28 @@ extension AppModel {
                 self.installStageText = "Installation cancelled"
                 self.showToast("Installation cancelled", style: .warning)
             } catch {
-                let msg = "Installation failed: \(error.localizedDescription)"
-                self.error = msg
-                self.showToast(msg, style: .error, duration: 5.0)
+                self.error = error.localizedDescription
+                self.installStageText = nil
+                self.showToast("Installation failed: \(error.localizedDescription)", style: .error, duration: 5.0)
             }
             self.isInstallingModel = false
+            self.installProgressFraction = nil
+            self.installDownloadedBytes = nil
+            self.installTotalBytes = nil
+            self.installETAText = nil
             self.installTask = nil
         }
     }
 
+    /// Cancels any currently active model installation task.
     public func cancelInstall() {
         installTask?.cancel()
         installTask = nil
         isInstallingModel = false
-        installStageText = "Cancelled"
-        showToast("Installation cancelled", style: .warning)
-    }
-
-
-    public func discardModelDownload() {
-        cancelInstall()
-        refreshModels()
-    }
-
-    public func recheckModelAtCurrentLocation() {
-        refreshModels()
+        installStageText = nil
+        installProgressFraction = nil
+        installDownloadedBytes = nil
+        installTotalBytes = nil
+        installETAText = nil
     }
 }

@@ -155,6 +155,27 @@ extension AppModel {
 
             let result = await AppToolRegistry.execute(call: call, in: self.selectedProject)
             call.status = result.isError ? .failed : .completed
+
+            // Dispatch PostToolUse & PostToolUseFailure lifecycle hooks
+            await self.dispatchLifecycleHook(
+                event: .postToolUse,
+                toolName: call.name,
+                toolArguments: call.arguments,
+                toolOutput: result.output,
+                toolDurationSeconds: result.durationSeconds,
+                isError: result.isError
+            )
+            if result.isError {
+                await self.dispatchLifecycleHook(
+                    event: .postToolUseFailure,
+                    toolName: call.name,
+                    toolArguments: call.arguments,
+                    toolOutput: result.output,
+                    toolDurationSeconds: result.durationSeconds,
+                    isError: true
+                )
+            }
+
             self.appendToolExecutionTurn(call: call, result: result)
             self.continueAgentLoop()
         }

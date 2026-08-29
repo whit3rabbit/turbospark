@@ -254,8 +254,28 @@ public enum AppToolRegistry {
             case "askuserquestion", "ask_user_question", "question":
                 output = "Question submitted to user."
 
+            case "call_mcp_tool", "callmcptool", "mcp_tool":
+                guard let serverName = call.arguments["server"] ?? call.arguments["server_name"] else {
+                    throw NSError(domain: "TurboSparkTool", code: 5, userInfo: [NSLocalizedDescriptionKey: "Missing 'server' argument for MCP tool call."])
+                }
+                guard let toolName = call.arguments["toolName"] ?? call.arguments["tool"] ?? call.arguments["name"] else {
+                    throw NSError(domain: "TurboSparkTool", code: 6, userInfo: [NSLocalizedDescriptionKey: "Missing 'toolName' argument for MCP tool call."])
+                }
+                output = try await executeMcpCall(serverName: serverName, toolName: toolName, arguments: call.arguments, project: project, rootURL: rootURL)
+
             default:
-                output = "Executed \(call.name) successfully."
+                if call.name.contains("__") && call.name.lowercased().hasPrefix("mcp__") {
+                    let parts = call.name.components(separatedBy: "__")
+                    if parts.count >= 3 {
+                        let serverName = parts[1]
+                        let toolName = parts[2...].joined(separator: "__")
+                        output = try await executeMcpCall(serverName: serverName, toolName: toolName, arguments: call.arguments, project: project, rootURL: rootURL)
+                    } else {
+                        output = "Executed \(call.name) successfully."
+                    }
+                } else {
+                    output = "Executed \(call.name) successfully."
+                }
             }
 
             let elapsed = Date().timeIntervalSince(startTime)
@@ -264,5 +284,33 @@ public enum AppToolRegistry {
             let elapsed = Date().timeIntervalSince(startTime)
             return AppToolResult(callID: call.id, output: "Error: \(error.localizedDescription)", isError: true, durationSeconds: elapsed)
         }
+    }
+
+    private static func executeMcpCall(
+        serverName: String,
+        toolName: String,
+        arguments: [String: String],
+        project: AppProject?,
+        rootURL: URL
+    ) async throws -> String {
+        // Search in project servers first, then global servers
+        let globalServers = GlobalMcpFileStore.load().servers
+        let projectServers = project?.mcpServers ?? []
+        let allServers = projectServers + globalServers
+
+        guard let matchedServer = allServers.first(where: { $0.name.lowercased() == serverName.lowercased() }) else {
+            throw NSError(domain: "TurboSparkTool", code: 7, userInfo: [NSLocalizedDescriptionKey: "MCP server '\(serverName)' not found in project or global configurations."])
+        }
+
+        guard matchedServer.isEnabled else {
+            throw NSError(domain: "TurboSparkTool", code: 8, userInfo: [NSLocalizedDescriptionKey: "MCP server '\(serverName)' is currently disabled."])
+        }
+
+        return try await McpClientEngine.shared.callTool(
+            config: matchedServer,
+            toolName: toolName,
+            arguments: arguments,
+            workingDirectory: rootURL
+        )
     }
 }

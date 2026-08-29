@@ -1,19 +1,90 @@
 import AppKit
 import SwiftUI
 
+/// The window shell: icon rail, top bar, working panes, status strip.
+///
+/// The chrome is banded rather than floating. Sections live in the rail so the
+/// chat sidebar can be hidden without stranding navigation, and every live
+/// metric lives in the bottom strip so nothing next to the model loader
+/// updates once per token.
 struct RootView: View {
     @ObservedObject var model: AppModel
     @State private var conversationChromeHeight: CGFloat = 0
-    @State private var showingCatalogSheet = false
     @AppStorage("TurboSpark.chatSidebarVisible")
     private var isChatSidebarVisible = true
     @AppStorage("TurboSpark.inspectorVisible")
     private var isInspectorVisible = true
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ObservedObject private var appearanceManager = AppearanceManager.shared
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+
+    private var effectiveReduceMotion: Bool {
+        appearanceManager.shouldReduceMotion(systemReduceMotion: systemReduceMotion)
+    }
 
     var body: some View {
         HStack(spacing: 0) {
-            if isChatSidebarVisible {
+            NavigationRailView(model: model)
+
+            Rectangle()
+                .fill(TurboSparkTheme.hairlineColor)
+                .frame(width: AppChromeLayout.dividerWidth)
+
+            VStack(spacing: 0) {
+                TopBarView(
+                    model: model,
+                    isChatSidebarVisible: isChatSidebarVisible,
+                    isInspectorVisible: isInspectorVisible,
+                    toggleChatSidebar: { isChatSidebarVisible.toggle() },
+                    toggleInspector: { isInspectorVisible.toggle() })
+
+                workingArea
+
+                StatusBarView(model: model)
+            }
+        }
+        .frame(
+            minWidth: AppChromeLayout.minimumWindowWidth(
+                isChatSidebarVisible: isChatSidebarVisible && showsChatSidebar,
+                isInspectorVisible: isInspectorVisible || model.previewAttachment != nil),
+            minHeight: AppChromeLayout.minimumHeight)
+        .clipped()
+        .background(Color(nsColor: .windowBackgroundColor))
+        .tint(TurboSparkTheme.accentColor)
+        .animation(effectiveReduceMotion ? nil : .smooth(duration: 0.2), value: isChatSidebarVisible)
+        .animation(effectiveReduceMotion ? nil : .smooth(duration: 0.2), value: isInspectorVisible)
+        .animation(effectiveReduceMotion ? nil : .smooth(duration: 0.2), value: model.previewAttachmentID)
+        .overlay(alignment: .top) {
+            ToastOverlayView(model: model)
+                .padding(.top, AppChromeLayout.topBarHeight + 10)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .toggleChatSidebar)) { _ in
+            isChatSidebarVisible.toggle()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .toggleInspector)) { _ in
+            // The preview owns the right column while it is open, so the same
+            // key has to be able to close it: otherwise the shortcut silently
+            // toggles a pane the user cannot see.
+            if model.previewAttachment != nil {
+                model.dismissPreview()
+            } else {
+                isInspectorVisible.toggle()
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
+            model.unloadModel()
+            model.persistChats()
+            model.persistSettings()
+        }
+    }
+
+    /// The chat list is only meaningful beside a conversation.
+    private var showsChatSidebar: Bool {
+        model.activeSection == .chat
+    }
+
+    private var workingArea: some View {
+        HStack(spacing: 0) {
+            if isChatSidebarVisible && showsChatSidebar {
                 ChatSidebarView(model: model)
                     .frame(width: AppChromeLayout.chatSidebarWidth)
                     .frame(maxHeight: .infinity)
@@ -21,10 +92,9 @@ struct RootView: View {
                     .clipped()
                     .layoutPriority(1)
                     .zIndex(1)
-                    .transition(reduceMotion ? .opacity : .move(edge: .leading).combined(with: .opacity))
+                    .transition(effectiveReduceMotion ? .opacity : .move(edge: .leading).combined(with: .opacity))
 
-                Divider()
-                    .zIndex(1)
+                verticalHairline
             }
 
             primaryContent
@@ -35,80 +105,57 @@ struct RootView: View {
                 .clipped()
                 .layoutPriority(0)
 
-            if isInspectorVisible {
-                Divider()
-                    .zIndex(1)
+            rightColumn
+        }
+        .frame(maxHeight: .infinity)
+    }
 
-                InspectorView(model: model)
-                    .frame(width: AppChromeLayout.inspectorWidth)
-                    .frame(maxHeight: .infinity)
-                    .background(Color(nsColor: .windowBackgroundColor))
-                    .clipped()
-                    .layoutPriority(1)
-                    .zIndex(1)
-                    .transition(reduceMotion ? .opacity : .move(edge: .trailing).combined(with: .opacity))
-            }
-        }
-        .frame(
-            minWidth: AppChromeLayout.minimumWindowWidth(
-                isChatSidebarVisible: isChatSidebarVisible,
-                isInspectorVisible: isInspectorVisible),
-            minHeight: AppChromeLayout.minimumHeight)
-        .clipped()
-        .background(
-            LinearGradient(
-                colors: [
-                    Color(nsColor: .windowBackgroundColor),
-                    Color(nsColor: .windowBackgroundColor).opacity(0.95),
-                ],
-                startPoint: .top,
-                endPoint: .bottom)
-        )
-        .tint(TurboSparkTheme.accentColor)
-        .animation(reduceMotion ? nil : .smooth(duration: 0.22), value: isChatSidebarVisible)
-        .animation(reduceMotion ? nil : .smooth(duration: 0.22), value: isInspectorVisible)
-        .sheet(isPresented: $showingCatalogSheet) {
-            CatalogSheet(model: model)
-        }
-        .overlay(alignment: .top) {
-            ToastOverlayView(model: model)
-                .padding(.top, 60)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .toggleChatSidebar)) { _ in
-            isChatSidebarVisible.toggle()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .toggleInspector)) { _ in
-            isInspectorVisible.toggle()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
-            model.unloadModel()
-            model.persistChats()
-            model.persistSettings()
+    @ViewBuilder
+    private var rightColumn: some View {
+        if let attachment = model.previewAttachment {
+            verticalHairline
+
+            FilePreviewView(model: model, attachment: attachment)
+                .frame(width: AppChromeLayout.inspectorWidth)
+                .frame(maxHeight: .infinity)
+                .clipped()
+                .layoutPriority(1)
+                .zIndex(1)
+                .transition(effectiveReduceMotion ? .opacity : .move(edge: .trailing).combined(with: .opacity))
+        } else if isInspectorVisible {
+            verticalHairline
+
+            InspectorView(model: model)
+                .frame(width: AppChromeLayout.inspectorWidth)
+                .frame(maxHeight: .infinity)
+                .background(Color(nsColor: .windowBackgroundColor))
+                .clipped()
+                .layoutPriority(1)
+                .zIndex(1)
+                .transition(effectiveReduceMotion ? .opacity : .move(edge: .trailing).combined(with: .opacity))
         }
     }
 
+    private var verticalHairline: some View {
+        Rectangle()
+            .fill(TurboSparkTheme.hairlineColor)
+            .frame(width: AppChromeLayout.dividerWidth)
+            .zIndex(1)
+    }
 
-
+    @ViewBuilder
     private var primaryContent: some View {
-        Group {
-            switch model.activeSection {
-            case .modelHub:
-                ModelHubView(model: model)
-            case .chat:
-                if model.requiresModelInstallation && !model.isInstallingModel {
-                    ModelInstallView(model: model)
-                } else {
-                    conversationView
-                }
+        switch model.activeSection {
+        case .modelHub:
+            ModelHubView(model: model)
+        case .files:
+            FilesSectionView(model: model)
+        case .chat:
+            if model.requiresModelInstallation && !model.isInstallingModel {
+                ModelInstallView(model: model)
+            } else {
+                conversationView
             }
-        }
-        .safeAreaInset(edge: .top, spacing: 0) {
-            StatusHUDView(
-                model: model,
-                isChatSidebarVisible: isChatSidebarVisible,
-                isInspectorVisible: isInspectorVisible,
-                toggleChatSidebar: { isChatSidebarVisible.toggle() },
-                toggleInspector: { isInspectorVisible.toggle() })
         }
     }
 
@@ -147,12 +194,12 @@ struct RootView: View {
     }
 
     private var conversationChrome: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 8) {
             ErrorBanner(model: model)
             PromptComposerView(model: model)
         }
-        .padding(.horizontal, 20)
-        .padding(.bottom, 16)
+        .padding(.horizontal, 16)
+        .padding(.bottom, 12)
     }
 }
 

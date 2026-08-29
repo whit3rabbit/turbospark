@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 
+/// Interactive message card component rendering agent tool executions, JSON arguments, risk badges, and approval actions.
 struct ToolCallCardView: View {
     @ObservedObject var model: AppModel
     let call: AppToolCall
@@ -56,6 +57,7 @@ struct ToolCallCardView: View {
             Image(systemName: call.category.systemImage)
                 .font(.callout)
                 .foregroundStyle(TurboSparkTheme.accentColor)
+                .help("\(call.category.label) tool")
                 .accessibilityHidden(true)
 
             Text(call.name)
@@ -85,6 +87,7 @@ struct ToolCallCardView: View {
         .padding(.vertical, 2)
         .background(risk.level == .high ? Color.red.opacity(0.15) : Color.orange.opacity(0.12), in: Capsule())
         .foregroundStyle(risk.level == .high ? Color.red : Color.orange)
+        .help("Security risk: \(risk.level.label)")
     }
 
     private func riskWarningBox(_ risk: ToolRiskAssessment) -> some View {
@@ -191,6 +194,7 @@ struct ToolCallCardView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(isHighRisk ? Color.orange : TurboSparkTheme.accentColor)
+                .help("Approve this tool call once")
                 .accessibilityLabel("Approve once \(call.name)")
                 .accessibilityHint("Allows this single tool call to execute")
 
@@ -200,6 +204,7 @@ struct ToolCallCardView: View {
                     Label("Always Allow", systemImage: "checkmark.circle")
                 }
                 .buttonStyle(.bordered)
+                .help("Always allow this tool and command in this session")
                 .accessibilityLabel("Always allow \(call.name) in this session")
                 .accessibilityHint("Allows this tool and command prefix to run without asking for the rest of this session")
 
@@ -207,6 +212,7 @@ struct ToolCallCardView: View {
                     model.denyPendingToolCall(id: call.id)
                 }
                 .buttonStyle(.bordered)
+                .help("Deny this tool call execution")
                 .accessibilityLabel("Deny \(call.name)")
                 .accessibilityHint("Rejects this tool call and tells the model to continue without it")
             }
@@ -245,6 +251,7 @@ struct ToolCallCardView: View {
                     }
                     .buttonStyle(.borderless)
                     .foregroundStyle(.secondary)
+                    .help("Copy tool output to clipboard")
                     .accessibilityLabel(isCopied ? "Copied output" : "Copy tool output")
                     .accessibilityHint("Copies the tool's output text to the clipboard")
                 }

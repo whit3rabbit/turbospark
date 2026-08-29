@@ -64,6 +64,7 @@ struct OutputPaneView: View {
             Image(systemName: "cube.transparent")
                 .font(.system(size: 38))
                 .foregroundStyle(.quaternary)
+                .help("TurboSpark Inference Engine")
                 .accessibilityHidden(true)
 
             if model.session == nil {
@@ -324,6 +325,7 @@ private struct ReasoningDisclosureView: View {
             }
         }
         .padding(.vertical, 2)
+        .help("Model thought process and reasoning trace")
         .accessibilityLabel("Thought process")
         .accessibilityHint("Expands to reveal the model's chain-of-thought reasoning")
     }

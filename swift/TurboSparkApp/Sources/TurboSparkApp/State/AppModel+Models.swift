@@ -4,7 +4,65 @@ import TurboSpark
 extension AppModel {
     public func refreshModels() {
         do {
-            installed = try TurboSparkCatalog.installed()
+            var combinedInstalled = (try? TurboSparkCatalog.installed()) ?? []
+            var existingPaths = Set(combinedInstalled.map { (try? URL(fileURLWithPath: $0.path).standardizedFileURL.path) ?? $0.path })
+            var existingAliases = Set(combinedInstalled.map { $0.alias })
+
+            // Scan LM Studio library if enabled
+            if enableLMStudioDetection {
+                let lmPath = lmStudioDirectory.isEmpty ? ModelStorageManager.defaultLMStudioModelsDirectory : lmStudioDirectory
+                let lmModels = ModelStorageManager.scanModels(in: lmPath, sourceTag: "LM Studio")
+                for m in lmModels {
+                    let stdPath = (try? URL(fileURLWithPath: m.path).standardizedFileURL.path) ?? m.path
+                    if !existingPaths.contains(stdPath) {
+                        existingPaths.insert(stdPath)
+                        // Make sure alias is unique
+                        var uniqueAlias = m.alias
+                        if existingAliases.contains(uniqueAlias) {
+                            uniqueAlias = "\(m.alias) (LM Studio)"
+                        }
+                        existingAliases.insert(uniqueAlias)
+                        let adjustedModel = InstalledModel(
+                            alias: uniqueAlias,
+                            repo: m.repo,
+                            revision: m.revision,
+                            path: m.path,
+                            family: m.family,
+                            installBytes: m.installBytes,
+                            installedOn: m.installedOn
+                        )
+                        combinedInstalled.append(adjustedModel)
+                    }
+                }
+            }
+
+            // Scan any configured custom directories
+            for dir in customModelDirectories where !dir.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                let customModels = ModelStorageManager.scanModels(in: dir, sourceTag: "Custom")
+                for m in customModels {
+                    let stdPath = (try? URL(fileURLWithPath: m.path).standardizedFileURL.path) ?? m.path
+                    if !existingPaths.contains(stdPath) {
+                        existingPaths.insert(stdPath)
+                        var uniqueAlias = m.alias
+                        if existingAliases.contains(uniqueAlias) {
+                            uniqueAlias = "\(m.alias) (Custom)"
+                        }
+                        existingAliases.insert(uniqueAlias)
+                        let adjustedModel = InstalledModel(
+                            alias: uniqueAlias,
+                            repo: m.repo,
+                            revision: m.revision,
+                            path: m.path,
+                            family: m.family,
+                            installBytes: m.installBytes,
+                            installedOn: m.installedOn
+                        )
+                        combinedInstalled.append(adjustedModel)
+                    }
+                }
+            }
+
+            installed = combinedInstalled
             catalog = try TurboSparkCatalog.available()
             telemetry = TurboSparkSession.systemTelemetry
             if selected == nil || !installed.contains(where: { $0.alias == selected?.alias }) {

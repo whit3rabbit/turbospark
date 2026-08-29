@@ -17,6 +17,7 @@ struct ChatSidebarView: View {
     @State private var chatPendingDeletion: AppChat?
     @State private var showingProjectSettingsSheet = false
     @State private var projectBeingEdited: AppProject?
+    @State private var projectForMcpSettings: AppProject?
 
     @ScaledMetric private var actionButtonSize: CGFloat = 26
     @ScaledMetric private var projectActionSize: CGFloat = 22
@@ -26,13 +27,12 @@ struct ChatSidebarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            sectionNav
-            Divider()
+            // No app title and no section list here: the rail owns navigation
+            // and the top bar owns the model. This pane is conversations only.
             newChatButton
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-            Divider()
+                .padding(.horizontal, 10)
+                .padding(.top, 10)
+                .padding(.bottom, 8)
             projectsSection
             Divider()
             chatList
@@ -46,6 +46,15 @@ struct ChatSidebarView: View {
                 onDismiss: {
                     showingProjectSettingsSheet = false
                     projectBeingEdited = nil
+                }
+            )
+        }
+        .sheet(item: $projectForMcpSettings) { proj in
+            ProjectMcpSettingsSheet(
+                model: model,
+                projectID: proj.id,
+                onDismiss: {
+                    projectForMcpSettings = nil
                 }
             )
         }
@@ -77,120 +86,33 @@ struct ChatSidebarView: View {
         }
     }
 
-    private var header: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "bolt.horizontal.circle.fill")
-                .font(.title3)
-                .foregroundStyle(TurboSparkTheme.accentColor)
-                .accessibilityHidden(true)
-            Text("TurboSpark")
-                .font(.headline)
-                .lineLimit(1)
-                .accessibilityAddTraits(.isHeader)
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 14)
-        .padding(.top, 38)
-        .padding(.bottom, 12)
-    }
-
-    private var sectionNav: some View {
-        VStack(spacing: 4) {
-            navButton(
-                title: "Chat",
-                systemImage: "bubble.left.and.bubble.right.fill",
-                section: .chat
-            )
-
-            navButton(
-                title: "Model hub",
-                systemImage: "square.grid.2x2.fill",
-                section: .modelHub,
-                badge: "\(model.installed.count)"
-            )
-        }
-        .padding(.horizontal, 12)
-        .padding(.bottom, 8)
-    }
-
-    private func navButton(
-        title: String,
-        systemImage: String,
-        section: AppModel.AppNavigationSection,
-        badge: String? = nil
-    ) -> some View {
-        let isSelected = model.activeSection == section
-        return Button {
-            model.activeSection = section
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: systemImage)
-                    .font(.callout)
-                    .foregroundStyle(isSelected ? TurboSparkTheme.accentColor : .secondary)
-                    .frame(width: 20)
-                    .accessibilityHidden(true)
-                Text(title)
-                    .font(.callout.weight(isSelected ? .semibold : .medium))
-                    .foregroundStyle(isSelected ? .primary : .secondary)
-                Spacer()
-                if let badge {
-                    Text(badge)
-                        .font(.caption2.weight(.bold))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 1.5)
-                        .background(
-                            isSelected ? TurboSparkTheme.accentColor.opacity(0.2) : Color(nsColor: .quaternaryLabelColor).opacity(0.3),
-                            in: Capsule()
-                        )
-                        .foregroundStyle(isSelected ? TurboSparkTheme.accentColor : .secondary)
-                }
-            }
-            .padding(.horizontal, 10)
-            .frame(maxWidth: .infinity, minHeight: 32)
-            .contentShape(.rect)
-        }
-        .buttonStyle(.plain)
-        .background(
-            isSelected ? Color(nsColor: .controlBackgroundColor) : Color.clear,
-            in: RoundedRectangle(cornerRadius: 8)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(isSelected ? Color(nsColor: .separatorColor).opacity(0.5) : Color.clear, lineWidth: 0.5)
-        )
-        .accessibilityLabel(title)
-        // Tell VoiceOver which sidebar is the current page so users get the
-        // same selection feedback they get visually from the accent color.
-        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
-        .accessibilityHint("Switches the main pane to \(title)")
-    }
-
     private var newChatButton: some View {
         Button {
             model.createChat()
         } label: {
-            HStack(spacing: 10) {
+            HStack(spacing: 8) {
                 Image(systemName: "square.and.pencil")
+                    .font(.system(size: 12))
                     .accessibilityHidden(true)
                 Text("New chat")
-                    .fontWeight(.medium)
+                    .font(.system(size: 12, weight: .medium))
                 Spacer()
                 Text("⌘N")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
                     .accessibilityHidden(true)
             }
-            .padding(.horizontal, 12)
-            .frame(maxWidth: .infinity, minHeight: 42)
+            .padding(.horizontal, 10)
+            .frame(maxWidth: .infinity, minHeight: 30)
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
         .background(
-            Color(nsColor: .controlBackgroundColor),
-            in: .rect(cornerRadius: 10))
+            TurboSparkTheme.surfaceColor,
+            in: .rect(cornerRadius: 8))
         .overlay {
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(.separator.opacity(0.45), lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(TurboSparkTheme.hairlineColor, lineWidth: 0.5)
         }
         .disabled(model.isRunning)
         .help("Create a new chat (⌘N)")
@@ -261,6 +183,7 @@ struct ChatSidebarView: View {
             isSelected ? TurboSparkTheme.accentColor.opacity(0.12) : Color.clear,
             in: .rect(cornerRadius: 8)
         )
+        .help("Show all conversations")
         .accessibilityLabel("All chats")
         .accessibilityValue("\(model.chats.count) total")
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
@@ -296,6 +219,7 @@ struct ChatSidebarView: View {
                 .contentShape(.rect)
             }
             .buttonStyle(.plain)
+            .help("Switch to project \(project.name)")
             .accessibilityLabel("Project \(project.name)")
             .accessibilityValue("\(project.agentType.label)\(isSelected ? ", selected" : "")")
             .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
@@ -304,6 +228,9 @@ struct ChatSidebarView: View {
                 Button("Project Settings", systemImage: "gearshape") {
                     projectBeingEdited = project
                     showingProjectSettingsSheet = true
+                }
+                Button("Manage MCP Servers...", systemImage: "server.rack") {
+                    projectForMcpSettings = project
                 }
                 if let path = project.rootDirectoryPath {
                     Button("Reveal in Finder", systemImage: "folder") {
@@ -324,6 +251,7 @@ struct ChatSidebarView: View {
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .fixedSize()
+            .help("Project actions for \(project.name)")
             // Always reachable from VoiceOver, even though sighted users
             // only see the button when hovering or when the row is selected.
             .accessibilityLabel("Project actions for \(project.name)")
@@ -418,6 +346,7 @@ struct ChatSidebarView: View {
             }
             .buttonStyle(.plain)
             .disabled(model.isRunning && !isSelected)
+            .help("Switch to \(chat.title)")
             .accessibilityLabel(chat.title)
             .accessibilityValue(chat.preview.isEmpty
                                 ? (isSelected ? "Selected" : "")
@@ -442,6 +371,7 @@ struct ChatSidebarView: View {
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .fixedSize()
+            .help("Chat actions for \(chat.title)")
             // Always reachable from VoiceOver, even though sighted users
             // only see the button when hovering or when the row is selected.
             .accessibilityLabel("Chat actions for \(chat.title)")
@@ -482,6 +412,7 @@ struct ChatSidebarView: View {
         .foregroundStyle(.secondary)
         .padding(.horizontal, 16)
         .frame(minHeight: sidebarFooterMinHeight)
+        .help("Local chat history stored on device")
     }
 
 

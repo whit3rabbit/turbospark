@@ -8,12 +8,11 @@ struct PromptComposerView: View {
     @State private var isImportingDocuments = false
     @State private var isExtractingDocuments = false
     @State private var documentImportError: String?
+    @State private var measuredTextHeight: CGFloat = 0
 
     @ScaledMetric private var iconButtonSize: CGFloat = 28
-    @ScaledMetric private var emptyEditorMinHeight: CGFloat = 44
-    @ScaledMetric private var filledEditorMinHeight: CGFloat = 76
-    @ScaledMetric private var emptyEditorMaxHeight: CGFloat = 60
-    @ScaledMetric private var filledEditorMaxHeight: CGFloat = 180
+    @ScaledMetric private var editorMinHeight: CGFloat = 34
+    @ScaledMetric private var editorMaxHeight: CGFloat = 200
 
 
     var body: some View {
@@ -30,13 +29,13 @@ struct PromptComposerView: View {
             editor
             footer
         }
-        .padding(14)
+        .padding(10)
         .background {
-            RoundedRectangle(cornerRadius: 22)
-                .fill(Color(nsColor: .controlBackgroundColor))
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(TurboSparkTheme.surfaceColor)
                 .overlay {
-                    RoundedRectangle(cornerRadius: 22)
-                        .stroke(.separator.opacity(0.5), lineWidth: 0.5)
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(TurboSparkTheme.hairlineColor, lineWidth: 0.5)
                 }
         }
         .fileImporter(
@@ -52,24 +51,60 @@ struct PromptComposerView: View {
         }
     }
 
+    /// The editor grows with its text between a one-line floor and a scroll
+    /// ceiling.
+    ///
+    /// `TextEditor` is greedy vertically and has no intrinsic height, so a
+    /// plain `maxHeight` frame makes an empty composer as tall as a full one.
+    /// So the height is MEASURED: a hidden `Text` with the same font and
+    /// insets, sized with `fixedSize(vertical:)` at the editor's own width,
+    /// reports its ideal height through a preference and the editor gets that
+    /// height clamped into range. Two shapes that look like they would work
+    /// and do not: a ZStack sizes to its largest child, which is the greedy
+    /// editor, and `.frame(minHeight:maxHeight:)` is FLEXIBLE -- it reports
+    /// the proposal clamped, not the child's ideal, so it always lands on the
+    /// maximum.
     private var editor: some View {
-        TextEditor(text: $model.promptText)
-            .accessibilityLabel("Prompt")
-            .accessibilityHint("Type your message here. Press Return to send, Shift-Return for a new line.")
-            .font(.body)
-            .scrollContentBackground(.hidden)
-            .focused($promptFocused)
-            .frame(minHeight: editorMinHeight, maxHeight: editorMaxHeight)
-            .overlay(alignment: .topLeading) {
-                if model.promptText.isEmpty {
-                    Text("Ask a question, request code, or explore ideas...")
-                        .font(.body)
-                        .foregroundStyle(.tertiary)
-                        .padding(.leading, 5)
-                        .allowsHitTesting(false)
-                        .accessibilityHidden(true)
-                }
+        Color.clear
+            .frame(height: min(max(measuredTextHeight, editorMinHeight), editorMaxHeight))
+            .background(alignment: .topLeading) {
+                Text(model.promptText.isEmpty ? " " : model.promptText)
+                    .font(.body)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .background {
+                        GeometryReader { geometry in
+                            Color.clear.preference(
+                                key: PromptTextHeightKey.self,
+                                value: geometry.size.height)
+                        }
+                    }
+                    .hidden()
+                    .accessibilityHidden(true)
             }
+            .onPreferenceChange(PromptTextHeightKey.self) { height in
+                measuredTextHeight = height
+            }
+            .overlay(alignment: .topLeading) {
+                TextEditor(text: $model.promptText)
+                .accessibilityLabel("Prompt")
+                .accessibilityHint("Type your message here. Press Return to send, Shift-Return for a new line.")
+                .font(.body)
+                .scrollContentBackground(.hidden)
+                .focused($promptFocused)
+                .overlay(alignment: .topLeading) {
+                    if model.promptText.isEmpty {
+                        Text("Ask a question, request code, or explore ideas...")
+                            .font(.body)
+                            .foregroundStyle(.tertiary)
+                            .padding(.leading, 5)
+                            .padding(.vertical, 8)
+                            .allowsHitTesting(false)
+                            .accessibilityHidden(true)
+                    }
+                }
             .onKeyPress(phases: .down) { press in
                 if press.key == .escape {
                     if model.isRunning && model.canCancel {
@@ -90,16 +125,8 @@ struct PromptComposerView: View {
                     return .handled
                 }
                 return .ignored
+                }
             }
-
-    }
-
-    private var editorMinHeight: CGFloat {
-        model.promptText.isEmpty ? emptyEditorMinHeight : filledEditorMinHeight
-    }
-
-    private var editorMaxHeight: CGFloat {
-        model.promptText.isEmpty ? emptyEditorMaxHeight : filledEditorMaxHeight
     }
 
 
@@ -107,6 +134,7 @@ struct PromptComposerView: View {
         HStack(spacing: 10) {
             attachDocumentAction
             promptTips
+            forgeGuardrailsControl
             if let project = model.selectedProject {
                 HStack(spacing: 4) {
                     Image(systemName: project.agentType.systemImage)
@@ -120,6 +148,7 @@ struct PromptComposerView: View {
                 .padding(.horizontal, 7)
                 .padding(.vertical, 3)
                 .background(TurboSparkTheme.accentColor.opacity(0.1), in: Capsule())
+                .help("Active project: \(project.name) (\(project.agentType.label))")
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel("Active project: \(project.name), \(project.agentType.label)")
             }
@@ -127,6 +156,7 @@ struct PromptComposerView: View {
                 Text("\(model.estimatedPromptTokens) tokens")
                     .font(.caption2.monospacedDigit())
                     .foregroundStyle(.tertiary)
+                    .help("Estimated prompt length: \(model.estimatedPromptTokens) tokens")
                     .accessibilityLabel("Estimated prompt length: \(model.estimatedPromptTokens) tokens")
             }
             Spacer()
@@ -135,45 +165,130 @@ struct PromptComposerView: View {
         }
     }
 
+    private var forgeGuardrailsControl: some View {
+        let isEnabled = model.effectiveForgeGuardrailsEnabled
+        let isGlobalFixed = model.guardrailsMode == .alwaysOn || model.guardrailsMode == .alwaysOff
+        return HStack(spacing: 4) {
+            Button {
+                if !isGlobalFixed {
+                    model.setForgeGuardrailsEnabled(!isEnabled)
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: isEnabled ? "shield.checkmark.fill" : "shield.slash")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(isEnabled ? TurboSparkTheme.accentColor : Color.secondary)
+
+                    Text("Guardrails: \(isEnabled ? "On" : "Off")")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(isEnabled ? Color.primary : Color.secondary)
+                }
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background(
+                    isEnabled ? TurboSparkTheme.accentColor.opacity(0.12) : Color.primary.opacity(0.04),
+                    in: Capsule()
+                )
+                .overlay(
+                    Capsule()
+                        .stroke(isEnabled ? TurboSparkTheme.accentColor.opacity(0.3) : TurboSparkTheme.hairlineColor, lineWidth: 0.5)
+                )
+            }
+            .buttonStyle(.plain)
+            .disabled(isGlobalFixed)
+            .help(isGlobalFixed
+                  ? "Forge Guardrails is fixed to \(model.guardrailsMode.label) in Settings"
+                  : (isEnabled ? "Forge Guardrails active: click to disable" : "Forge Guardrails disabled: click to enable"))
+            .accessibilityLabel("Forge Guardrails: \(isEnabled ? "Enabled" : "Disabled")")
+            .accessibilityHint(isGlobalFixed ? "Managed by global settings" : "Toggles tool-call guardrails for this context")
+
+            Button {
+                model.openSettings(tab: .engine)
+            } label: {
+                Image(systemName: "info.circle")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .help("Tool-call guardrails are active by default for models supporting tools. You can change this behavior in Settings. Click to open Settings.")
+            .accessibilityLabel("Forge Guardrails information")
+            .accessibilityHint("Opens Engine Settings to configure Guardrails")
+        }
+    }
+
     private var attachments: some View {
         ScrollView(.horizontal) {
-            HStack(spacing: 8) {
+            HStack(spacing: 6) {
                 ForEach(model.promptAttachments) { attachment in
-                    HStack(spacing: 7) {
-                        Image(systemName: "doc.text")
-                            .foregroundStyle(.secondary)
-                            .accessibilityHidden(true)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(attachment.fileName)
-                                .font(.caption.weight(.medium))
-                                .lineLimit(1)
-                            Text(attachmentDetail(attachment))
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
-                        Button {
-                            model.removePromptAttachment(id: attachment.id)
-                        } label: {
-                            Label("Remove \(attachment.fileName)", systemImage: "xmark.circle.fill")
-                                .labelStyle(.iconOnly)
-                        }
-                        .buttonStyle(.borderless)
-                        .foregroundStyle(.secondary)
-                        .disabled(model.isRunning)
-                        .accessibilityLabel("Remove attachment \(attachment.fileName)")
-                        .accessibilityHint("Detaches this document from the prompt")
-                    }
-                    .padding(.leading, 10)
-                    .padding(.trailing, 7)
-                    .padding(.vertical, 7)
-                    .background(.quaternary.opacity(0.35), in: .capsule)
-                    .overlay {
-                        Capsule().stroke(.separator.opacity(0.4), lineWidth: 0.5)
-                    }
+                    attachmentChip(attachment)
                 }
             }
+            .padding(.bottom, 2)
         }
         .scrollIndicators(.hidden)
+    }
+
+    /// The chip body OPENS THE PREVIEW rather than doing nothing: a document
+    /// the model is about to read should be readable by the user too, and the
+    /// character count alone never said whether extraction worked.
+    private func attachmentChip(_ attachment: AppPromptAttachment) -> some View {
+        let isPreviewing = model.previewAttachmentID == attachment.id
+        return HStack(spacing: 6) {
+            Button {
+                model.showPreview(attachmentID: attachment.id)
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: attachment.symbolName)
+                        .font(.system(size: 11))
+                        .foregroundStyle(isPreviewing ? TurboSparkTheme.accentColor : Color.secondary)
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(attachment.fileName)
+                            .font(.system(size: 11, weight: .medium))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Text(attachmentDetail(attachment))
+                            .font(.system(size: 9))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Preview \(attachment.fileName)")
+            .accessibilityLabel("Preview \(attachment.fileName)")
+            .accessibilityValue(attachmentDetail(attachment))
+            .accessibilityHint("Opens this document in the preview pane")
+
+            Button {
+                model.removePromptAttachment(id: attachment.id)
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 8, weight: .bold))
+                    .frame(width: 14, height: 14)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.tertiary)
+            .disabled(model.isRunning)
+            .help("Remove \(attachment.fileName)")
+            .accessibilityLabel("Remove attachment \(attachment.fileName)")
+            .accessibilityHint("Detaches this document from the prompt")
+        }
+        .frame(maxWidth: 220, alignment: .leading)
+        .padding(.leading, 8)
+        .padding(.trailing, 6)
+        .padding(.vertical, 5)
+        .background(
+            isPreviewing ? TurboSparkTheme.accentColor.opacity(0.12) : Color.primary.opacity(0.05),
+            in: .rect(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(
+                    isPreviewing ? TurboSparkTheme.accentColor.opacity(0.4) : TurboSparkTheme.hairlineColor,
+                    lineWidth: 0.5)
+        }
     }
 
     private var attachDocumentAction: some View {
@@ -270,32 +385,11 @@ struct PromptComposerView: View {
         documentImportError = nil
 
         Task {
-            let outcomes = await Task.detached(priority: .userInitiated) {
-                urls.map { url -> (URL, Result<ExtractedPromptDocument, Error>) in
-                    do {
-                        return (url, .success(try DocumentTextExtractor.extract(from: url)))
-                    } catch {
-                        return (url, .failure(error))
-                    }
-                }
-            }.value
-
-            var failures: [String] = []
-            for (url, outcome) in outcomes {
-                switch outcome {
-                case .success(let document):
-                    model.addPromptAttachment(
-                        AppPromptAttachment(
-                            fileName: document.fileName,
-                            formatLabel: document.formatLabel,
-                            extractedText: document.text,
-                            wasTruncatedDuringExtraction: document.wasTruncated),
-                        toChatID: targetChatID)
-                case .failure(let error):
-                    failures.append("\(url.lastPathComponent): \(error.localizedDescription)")
-                }
-            }
-            documentImportError = failures.isEmpty ? nil : failures.joined(separator: "\n")
+            let outcome = await AttachmentImporter.importDocuments(
+                urls,
+                into: model,
+                chatID: targetChatID)
+            documentImportError = outcome.errorText
             isExtractingDocuments = false
         }
     }
@@ -333,4 +427,13 @@ struct PromptComposerView: View {
         }
     }
 
+}
+
+/// Ideal height of the composer's text, measured off a hidden sizer.
+private struct PromptTextHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
 }

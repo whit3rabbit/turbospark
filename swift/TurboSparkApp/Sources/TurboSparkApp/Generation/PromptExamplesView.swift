@@ -1,5 +1,6 @@
 import SwiftUI
 
+/// Preset prompt suggestions grid rendered above the composer in an empty conversation state.
 struct PromptExamplesView: View {
     let select: (AppPromptPreset) -> Void
 
@@ -58,38 +59,39 @@ struct PromptExamplesView: View {
                 .contentShape(.rect)
             }
             .buttonStyle(.plain)
-            .background(.quaternary.opacity(0.25), in: .rect(cornerRadius: 12))
-            .overlay {
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(.separator.opacity(0.35), lineWidth: 0.5)
+            .background {
+                RoundedRectangle(cornerRadius: 14)
+                    .fill(Color(nsColor: .windowBackgroundColor))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 14)
+                            .stroke(.separator.opacity(0.4), lineWidth: 0.5)
+                    }
             }
-            .help("Load this prompt")
-            .accessibilityLabel(preset.title)
-            .accessibilityValue(preset.prompt)
-            .accessibilityHint("Copies this prompt into the prompt editor")
+            .help(preset.title)
+            .accessibilityLabel("\(preset.title): \(preset.prompt)")
+            .accessibilityHint("Populates the prompt composer with this example")
         }
-    }
-
-    private var columns: [GridItem] {
-        Array(repeating: GridItem(.flexible(minimum: 0), spacing: 10, alignment: .top), count: 3)
     }
 
     private var moreExamples: some View {
-        Menu("More examples") {
+        Menu {
             ForEach(AppPromptPreset.secondary) { preset in
-                Button {
+                Button(preset.title) {
                     select(preset)
-                } label: {
-                    VStack(alignment: .leading) {
-                        Text(preset.title)
-                        Text(preset.prompt)
-                    }
                 }
             }
+        } label: {
+            Label("More", systemImage: "ellipsis")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
+        .help("More prompt examples")
         .accessibilityLabel("More prompt examples")
-        .accessibilityHint("Shows additional prompts")
+    }
+
+    private var columns: [GridItem] {
+        [GridItem(.adaptive(minimum: 180, maximum: 240), spacing: 10)]
     }
 }

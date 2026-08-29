@@ -18,7 +18,8 @@ extension AppModel {
         rulePreference: AppRulePreference = .agentsFirst,
         customInstructions: String = "",
         permissions: AppProjectPermissions = .standard,
-        maxAutonomousSteps: Int = 5
+        maxAutonomousSteps: Int = 5,
+        forgeGuardrailsEnabled: Bool? = nil
     ) -> AppProject {
         var instructions = customInstructions
         if instructions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
@@ -34,7 +35,8 @@ extension AppModel {
             rulePreference: rulePreference,
             customInstructions: instructions,
             permissions: permissions,
-            maxAutonomousSteps: maxAutonomousSteps
+            maxAutonomousSteps: maxAutonomousSteps,
+            forgeGuardrailsEnabled: forgeGuardrailsEnabled
         )
 
         projects.insert(project, at: 0)

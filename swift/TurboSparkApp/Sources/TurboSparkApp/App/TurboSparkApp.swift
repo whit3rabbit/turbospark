@@ -16,8 +16,7 @@ private final class ForegroundAppDelegate: NSObject, NSApplicationDelegate {
 struct TurboSparkApp: App {
     @NSApplicationDelegateAdaptor private var appDelegate: ForegroundAppDelegate
     @StateObject private var model = AppModel()
-    @AppStorage(AppAppearance.storageKey)
-    private var appearanceRawValue = AppAppearance.system.rawValue
+    @ObservedObject private var appearanceManager = AppearanceManager.shared
     @AppStorage(AppTextSize.storageKey)
     private var textSizeRawValue = AppTextSize.standard.rawValue
     @AppStorage(AppLanguage.storageKey)
@@ -27,7 +26,7 @@ struct TurboSparkApp: App {
         let currentLanguage = AppLanguage.resolve(languageRawValue)
         Window("TurboSpark", id: "main") {
             RootView(model: model)
-                .preferredColorScheme(AppAppearance.resolve(appearanceRawValue).preferredColorScheme)
+                .preferredColorScheme(appearanceManager.appearance.preferredColorScheme)
                 .dynamicTypeSize(AppTextSize.resolve(textSizeRawValue).dynamicTypeSize)
                 .environment(\.locale, currentLanguage.locale)
                 .environment(\.layoutDirection, currentLanguage.layoutDirection)
@@ -43,10 +42,15 @@ struct TurboSparkApp: App {
                 }
                 .keyboardShortcut("1", modifiers: .command)
 
-                Button("Model Hub") {
-                    model.activeSection = .modelHub
+                Button("Files") {
+                    model.activeSection = .files
                 }
                 .keyboardShortcut("2", modifiers: .command)
+
+                Button("Models") {
+                    model.activeSection = .modelHub
+                }
+                .keyboardShortcut("3", modifiers: .command)
 
                 Divider()
 
@@ -143,10 +147,10 @@ struct TurboSparkApp: App {
             }
 
             CommandMenu("Appearance") {
-                Picker("Appearance", selection: $appearanceRawValue) {
+                Picker("Appearance", selection: $appearanceManager.appearance) {
                     ForEach(AppAppearance.allCases) { appearance in
                         Label(appearance.label, systemImage: appearance.systemImage)
-                            .tag(appearance.rawValue)
+                            .tag(appearance)
                     }
                 }
 
@@ -172,7 +176,7 @@ struct TurboSparkApp: App {
 
         Settings {
             AppSettingsView(model: model)
-                .preferredColorScheme(AppAppearance.resolve(appearanceRawValue).preferredColorScheme)
+                .preferredColorScheme(appearanceManager.appearance.preferredColorScheme)
                 .dynamicTypeSize(AppTextSize.resolve(textSizeRawValue).dynamicTypeSize)
                 .environment(\.locale, currentLanguage.locale)
                 .environment(\.layoutDirection, currentLanguage.layoutDirection)
@@ -191,5 +195,8 @@ extension Notification.Name {
 
     /// Posted to toggle the visibility of the right-hand inspector.
     static let toggleInspector = Notification.Name("TurboSpark.toggleInspector")
+
+    /// Posted to request opening the settings window on a specific tab.
+    public static let openSettingsTab = Notification.Name("TurboSpark.openSettingsTab")
 }
 

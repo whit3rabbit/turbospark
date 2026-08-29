@@ -105,6 +105,12 @@ extension AppModel {
             options.stop = customStops
         }
 
+        if step == 1 {
+            Task {
+                _ = await self.dispatchLifecycleHook(event: .userPromptSubmit)
+            }
+        }
+
         runTask = Task {
             do {
                 let fitted = try await session.fitWindow(rawHistory, reasoning: self.reasoning)
@@ -142,20 +148,64 @@ extension AppModel {
 
                         let generatedContent = self.outputText
                         let generatedReasoning = self.outputReasoningText
-                        let toolCalls = self.extractToolCalls(from: generatedContent)
+                        let parsedCalls = self.extractToolCalls(from: generatedContent)
 
-                        if let firstCall = toolCalls.first {
-                            self.handleExtractedToolCall(firstCall, fullContent: generatedContent, reasoning: generatedReasoning, result: result, currentStep: step)
+                        if self.effectiveForgeGuardrailsEnabled {
+                            let availableSpecs = AppToolCatalog.tools(for: self.activeAgentType)
+                            let verdict = ForgeGuardrailsEngine.inspect(
+                                text: generatedContent,
+                                parsedCalls: parsedCalls,
+                                availableTools: availableSpecs,
+                                requiresCall: false
+                            )
+
+                            switch verdict {
+                            case .accept:
+                                if let firstCall = parsedCalls.first {
+                                    self.handleExtractedToolCall(firstCall, fullContent: generatedContent, reasoning: generatedReasoning, result: result, currentStep: step)
+                                } else {
+                                    self.finishProseTurn(content: generatedContent, reasoning: generatedReasoning, result: result)
+                                }
+                            case .rescued(let rescuedCalls, let sanitizedText):
+                                if let firstCall = rescuedCalls.first {
+                                    self.handleExtractedToolCall(firstCall, fullContent: sanitizedText, reasoning: generatedReasoning, result: result, currentStep: step)
+                                } else {
+                                    self.finishProseTurn(content: sanitizedText, reasoning: generatedReasoning, result: result)
+                                }
+                            case .retry(let nudge):
+                                let maxSteps = self.selectedProject?.maxAutonomousSteps ?? 5
+                                if step + 1 < maxSteps && !nudge.isEmpty {
+                                    if let idx = self.selectedChatIndex {
+                                        self.chats[idx].messages.append(AppChatMessage(
+                                            role: .assistant,
+                                            content: generatedContent,
+                                            reasoning: generatedReasoning,
+                                            stopReason: "guardrail_retry"
+                                        ))
+                                        self.chats[idx].messages.append(AppChatMessage(
+                                            role: .user,
+                                            content: nudge
+                                        ))
+                                        self.chats[idx].updatedAt = Date()
+                                        self.persistChats()
+                                    }
+                                    self.outputText = ""
+                                    self.outputReasoningText = ""
+                                    self.continueAgentLoop(step: step + 1)
+                                    return
+                                } else {
+                                    if let firstCall = parsedCalls.first {
+                                        self.handleExtractedToolCall(firstCall, fullContent: generatedContent, reasoning: generatedReasoning, result: result, currentStep: step)
+                                    } else {
+                                        self.finishProseTurn(content: generatedContent, reasoning: generatedReasoning, result: result)
+                                    }
+                                }
+                            }
                         } else {
-                            if let idx = self.selectedChatIndex {
-                                self.chats[idx].messages.append(AppChatMessage(
-                                    role: .assistant,
-                                    content: generatedContent,
-                                    reasoning: generatedReasoning,
-                                    stopReason: result.stopReason.rawValue
-                                ))
-                                self.chats[idx].updatedAt = Date()
-                                self.persistChats()
+                            if let firstCall = parsedCalls.first {
+                                self.handleExtractedToolCall(firstCall, fullContent: generatedContent, reasoning: generatedReasoning, result: result, currentStep: step)
+                            } else {
+                                self.finishProseTurn(content: generatedContent, reasoning: generatedReasoning, result: result)
                             }
                         }
 
@@ -177,11 +227,58 @@ extension AppModel {
         }
     }
 
+    private func finishProseTurn(content: String, reasoning: String, result: GenerationResult) {
+        if let idx = self.selectedChatIndex {
+            self.chats[idx].messages.append(AppChatMessage(
+                role: .assistant,
+                content: content,
+                reasoning: reasoning,
+                stopReason: result.stopReason.rawValue
+            ))
+            self.chats[idx].updatedAt = Date()
+            self.persistChats()
+        }
+        Task {
+            _ = await self.dispatchLifecycleHook(event: .stop)
+        }
+    }
+
     private func handleExtractedToolCall(_ call: AppToolCall, fullContent: String, reasoning: String, result: GenerationResult, currentStep: Int) {
         let sessionID = selectedChatID.uuidString
         let cmd = call.arguments["command"] ?? call.arguments["cmd"]
 
         Task { @MainActor in
+            // Evaluate PreToolUse lifecycle hooks first
+            let hookDecision = await self.evaluatePreToolUseHooks(toolName: call.name, toolArguments: call.arguments)
+            if hookDecision.behavior == .deny {
+                let reason = hookDecision.reason ?? "Blocked by PreToolUse hook"
+                let deniedResult = AppToolResult(
+                    callID: call.id,
+                    output: "Tool execution blocked by hook: \(reason)",
+                    isError: true,
+                    durationSeconds: 0.0
+                )
+                var deniedCall = call
+                deniedCall.status = .denied
+                if let idx = self.selectedChatIndex {
+                    self.chats[idx].messages.append(AppChatMessage(
+                        role: .assistant,
+                        content: fullContent,
+                        reasoning: reasoning,
+                        stopReason: "tool_use",
+                        toolCalls: [deniedCall],
+                        toolResults: [deniedResult]
+                    ))
+                    self.chats[idx].updatedAt = Date()
+                    self.persistChats()
+                }
+                let maxSteps = self.selectedProject?.maxAutonomousSteps ?? 5
+                if currentStep + 1 < maxSteps {
+                    self.continueAgentLoop(step: currentStep + 1)
+                }
+                return
+            }
+
             let sessionApproved = await SessionApprovalStore.shared.isApproved(sessionID: sessionID, toolName: call.name, command: cmd)
             let decision = AppToolPermissionEngine.evaluate(call: call, project: self.selectedProject, sessionApproved: sessionApproved)
 
@@ -208,6 +305,26 @@ extension AppModel {
                 runningCall.status = .running
                 let toolResult = await AppToolRegistry.execute(call: runningCall, in: self.selectedProject)
                 runningCall.status = toolResult.isError ? .failed : .completed
+
+                // Dispatch PostToolUse & PostToolUseFailure lifecycle hooks
+                await self.dispatchLifecycleHook(
+                    event: .postToolUse,
+                    toolName: runningCall.name,
+                    toolArguments: runningCall.arguments,
+                    toolOutput: toolResult.output,
+                    toolDurationSeconds: toolResult.durationSeconds,
+                    isError: toolResult.isError
+                )
+                if toolResult.isError {
+                    await self.dispatchLifecycleHook(
+                        event: .postToolUseFailure,
+                        toolName: runningCall.name,
+                        toolArguments: runningCall.arguments,
+                        toolOutput: toolResult.output,
+                        toolDurationSeconds: toolResult.durationSeconds,
+                        isError: true
+                    )
+                }
 
                 if let idx = self.selectedChatIndex {
                     self.chats[idx].messages.append(AppChatMessage(

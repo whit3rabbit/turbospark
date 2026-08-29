@@ -22,6 +22,9 @@ extension AppModel {
         outputPromptText = ""
         persistChats()
         updateTokenEstimate()
+        Task {
+            _ = await self.dispatchLifecycleHook(event: .sessionStart)
+        }
         return chat.id
     }
 

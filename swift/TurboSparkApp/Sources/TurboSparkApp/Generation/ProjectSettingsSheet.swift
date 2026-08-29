@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 
+/// Modal configuration sheet for editing project metadata, permissions, agent profiles, rules, and MCP servers.
 struct ProjectSettingsSheet: View {
     @ObservedObject var model: AppModel
     let editingProject: AppProject?
@@ -19,7 +20,30 @@ struct ProjectSettingsSheet: View {
     @State private var automationPermission: AppToolPermission = .ask
     @State private var maxAutonomousSteps: Double = 5
     @State private var rulePreference: AppRulePreference = .agentsFirst
+    @State private var guardrailsOption: AppProjectGuardrailsOption = .auto
     @State private var rulesAutoDetectedMessage: String?
+    @State private var showingMcpSheet = false
+
+    enum AppProjectGuardrailsOption: String, CaseIterable, Identifiable {
+        case auto = "auto"
+        case enabled = "enabled"
+        case disabled = "disabled"
+
+        var id: String { rawValue }
+
+        var asOptionalBool: Bool? {
+            switch self {
+            case .auto: return nil
+            case .enabled: return true
+            case .disabled: return false
+            }
+        }
+
+        static func from(optionalBool: Bool?) -> AppProjectGuardrailsOption {
+            guard let b = optionalBool else { return .auto }
+            return b ? .enabled : .disabled
+        }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -30,6 +54,7 @@ struct ProjectSettingsSheet: View {
                     generalSection
                     agentSection
                     permissionsSection
+                    mcpSection
                     rulesSection
                 }
                 .padding(20)
@@ -39,6 +64,15 @@ struct ProjectSettingsSheet: View {
         }
         .frame(width: 580, height: 680)
         .onAppear(perform: populateInitialValues)
+        .sheet(isPresented: $showingMcpSheet) {
+            if let project = editingProject {
+                ProjectMcpSettingsSheet(
+                    model: model,
+                    projectID: project.id,
+                    onDismiss: { showingMcpSheet = false }
+                )
+            }
+        }
     }
 
     private var header: some View {
@@ -86,6 +120,7 @@ struct ProjectSettingsSheet: View {
                         selectFolder()
                     }
                     .buttonStyle(.bordered)
+                    .help("Choose codebase root folder")
                     .accessibilityLabel("Choose codebase root folder")
                     .accessibilityHint("Opens folder picker to select root directory")
                 }
@@ -188,6 +223,28 @@ struct ProjectSettingsSheet: View {
             }
             .padding(12)
             .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+
+            // Forge Guardrails project option
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Forge Tool-Call Guardrails")
+                        .font(.callout.weight(.medium))
+                    Text("Repair malformed dialect calls and validate schemas")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Picker("", selection: $guardrailsOption) {
+                    Text("Auto (Model Default)").tag(AppProjectGuardrailsOption.auto)
+                    Text("Always Enabled").tag(AppProjectGuardrailsOption.enabled)
+                    Text("Always Disabled").tag(AppProjectGuardrailsOption.disabled)
+                }
+                .pickerStyle(.menu)
+                .frame(width: 175)
+                .accessibilityLabel("Forge Guardrails project preference")
+            }
+            .padding(12)
+            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
         }
     }
 
@@ -212,6 +269,38 @@ struct ProjectSettingsSheet: View {
         }
     }
 
+    private var mcpSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("MCP External Servers & Detection")
+                        .font(.subheadline.weight(.semibold))
+                        .accessibilityAddTraits(.isHeader)
+                    let count = editingProject?.mcpServers.count ?? 0
+                    Text(count > 0 ? "\(count) server(s) configured for this project." : "Import .mcp.json or configure codebase MCP tools.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if editingProject != nil {
+                    Button {
+                        showingMcpSheet = true
+                    } label: {
+                        Label("Manage MCPs...", systemImage: "server.rack")
+                    }
+                    .buttonStyle(.bordered)
+                    .help("Manage MCP servers for this project")
+                } else {
+                    Text("Save project to configure MCPs")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(12)
+            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+        }
+    }
+
     private var rulesSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
@@ -225,6 +314,7 @@ struct ProjectSettingsSheet: View {
                     }
                     .font(.caption)
                     .buttonStyle(.borderless)
+                    .help("Detect project rules from AGENTS.md or CLAUDE.md")
                 }
             }
 
@@ -298,10 +388,12 @@ struct ProjectSettingsSheet: View {
             mcpPermission = editing.permissions.mcp
             automationPermission = editing.permissions.automation
             maxAutonomousSteps = Double(editing.maxAutonomousSteps)
+            guardrailsOption = AppProjectGuardrailsOption.from(optionalBool: editing.forgeGuardrailsEnabled)
         } else {
             name = "New Project"
             agentType = .coder
             rulePreference = .agentsFirst
+            guardrailsOption = .auto
             applyPreset(.auto)
         }
     }
@@ -355,6 +447,7 @@ struct ProjectSettingsSheet: View {
 
         let trimmedPath = rootDirectoryPath.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedPath = trimmedPath.isEmpty ? nil : trimmedPath
+        let guardrailsPref = guardrailsOption.asOptionalBool
 
         if let editing = editingProject {
             var updated = editing
@@ -365,6 +458,7 @@ struct ProjectSettingsSheet: View {
             updated.customInstructions = customInstructions
             updated.permissions = perms
             updated.maxAutonomousSteps = Int(maxAutonomousSteps)
+            updated.forgeGuardrailsEnabled = guardrailsPref
             model.updateProject(updated)
         } else {
             model.createProject(
@@ -374,7 +468,8 @@ struct ProjectSettingsSheet: View {
                 rulePreference: rulePreference,
                 customInstructions: customInstructions,
                 permissions: perms,
-                maxAutonomousSteps: Int(maxAutonomousSteps)
+                maxAutonomousSteps: Int(maxAutonomousSteps),
+                forgeGuardrailsEnabled: guardrailsPref
             )
         }
         onDismiss()

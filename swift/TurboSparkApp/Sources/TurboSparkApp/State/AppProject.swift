@@ -270,6 +270,10 @@ public struct AppProject: Identifiable, Codable, Equatable, Sendable {
     public var permissions: AppProjectPermissions
     /// Maximum autonomous tool-execution iterations per turn.
     public var maxAutonomousSteps: Int
+    /// Project-specific MCP external servers.
+    public var mcpServers: [McpServerConfig]
+    /// Project-specific Forge Guardrails override (nil = auto/model default).
+    public var forgeGuardrailsEnabled: Bool?
     /// Timestamp when the project was created.
     public var createdAt: Date
     /// Timestamp when the project was last updated.
@@ -284,6 +288,8 @@ public struct AppProject: Identifiable, Codable, Equatable, Sendable {
         customInstructions: String = "",
         permissions: AppProjectPermissions = .standard,
         maxAutonomousSteps: Int = 5,
+        mcpServers: [McpServerConfig] = [],
+        forgeGuardrailsEnabled: Bool? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -295,13 +301,15 @@ public struct AppProject: Identifiable, Codable, Equatable, Sendable {
         self.customInstructions = customInstructions
         self.permissions = permissions
         self.maxAutonomousSteps = maxAutonomousSteps
+        self.mcpServers = mcpServers
+        self.forgeGuardrailsEnabled = forgeGuardrailsEnabled
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
 
     enum CodingKeys: String, CodingKey {
         case id, name, rootDirectoryPath, agentType, rulePreference, customInstructions
-        case permissions, maxAutonomousSteps, createdAt, updatedAt
+        case permissions, maxAutonomousSteps, mcpServers, forgeGuardrailsEnabled, createdAt, updatedAt
     }
 
     public init(from decoder: Decoder) throws {
@@ -314,6 +322,8 @@ public struct AppProject: Identifiable, Codable, Equatable, Sendable {
         self.customInstructions = try container.decodeIfPresent(String.self, forKey: .customInstructions) ?? ""
         self.permissions = try container.decodeIfPresent(AppProjectPermissions.self, forKey: .permissions) ?? .standard
         self.maxAutonomousSteps = try container.decodeIfPresent(Int.self, forKey: .maxAutonomousSteps) ?? 5
+        self.mcpServers = try container.decodeIfPresent([McpServerConfig].self, forKey: .mcpServers) ?? []
+        self.forgeGuardrailsEnabled = try container.decodeIfPresent(Bool.self, forKey: .forgeGuardrailsEnabled)
         self.createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         self.updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
     }

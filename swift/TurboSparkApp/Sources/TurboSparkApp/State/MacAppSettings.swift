@@ -1,31 +1,106 @@
 import Foundation
 
+/// Configuration mode for Forge tool-call guardrails.
+public enum AppGuardrailsMode: String, Codable, CaseIterable, Identifiable, Sendable {
+    /// Always active for all tool generations.
+    case alwaysOn = "alwaysOn"
+    /// Disabled across all tool generations.
+    case alwaysOff = "alwaysOff"
+    /// Selectable per model / project (defaults to on for tool-calling capable LLMs).
+    case select = "select"
+
+    public var id: String { rawValue }
+
+    public var label: String {
+        switch self {
+        case .alwaysOn: return "Always On"
+        case .alwaysOff: return "Always Off"
+        case .select: return "Select (Per Model / Project)"
+        }
+    }
+
+    public var shortLabel: String {
+        switch self {
+        case .alwaysOn: return "Always On"
+        case .alwaysOff: return "Always Off"
+        case .select: return "Select"
+        }
+    }
+
+    public var descriptionText: String {
+        switch self {
+        case .alwaysOn:
+            return "Forge Guardrails are always active. Tool calls in any format are rescued, argument schemas are strictly checked, and malformed calls are automatically retried."
+        case .alwaysOff:
+            return "Forge Guardrails are turned off. Model tool calls pass directly without dialect rescue or argument schema validation."
+        case .select:
+            return "Automatically enabled for LLMs that support tool calling. Can be toggled per project or underneath the prompt composer."
+        }
+    }
+}
+
+/// Persistent model generation parameters, speculation settings, steering vectors, and directory paths for the macOS app.
 public struct MacAppSettings: Codable, Equatable, Sendable {
+    /// Context window limit in tokens (0 = auto / checkpoint trained context).
     public var contextTokens: Int
+    /// Expert cache slot capacity override (0 = auto).
     public var expertCacheSlots: Int
+    /// Sampling temperature (0.0 = deterministic greedy).
     public var temperature: Double
+    /// Whether top-k sampling is active.
     public var topKEnabled: Bool
+    /// Top-k token candidate count.
     public var topK: Int
+    /// Whether nucleus top-p filtering is active.
     public var topPEnabled: Bool
+    /// Nucleus top-p cumulative probability threshold.
     public var topP: Double
+    /// Whether batched/chunked prefill optimization is enabled.
     public var prefillEnabled: Bool
+    /// Thinking / reasoning effort level ("off", "low", "medium", "high").
     public var reasoning: String
+    /// Maximum number of output tokens generated per turn.
     public var maxNewTokens: Int
+    /// Whether repetition penalty is applied.
     public var repetitionPenaltyEnabled: Bool
+    /// Repetition penalty factor.
     public var repetitionPenalty: Double
+    /// Whether a fixed random seed is specified.
     public var seedEnabled: Bool
+    /// Explicit RNG seed for reproducible generation.
     public var seed: UInt64
+    /// Comma-separated custom stop sequence tokens/strings.
     public var stopSequences: String
+    /// GPU power profile setting ("auto", "low", "high").
     public var powerProfile: String
+    /// Speculative decoding mode ("off", "auto", or integer token budget).
     public var speculation: String
+    /// Speculative drafter engine ("auto", "mtp", "dflash").
     public var speculativeDrafter: String
+    /// Output generation rate cap in tokens/second (0 = uncapped).
     public var maxTokensPerSec: Double
+    /// File path to steering vector tensor file.
     public var steeringPath: String
+    /// Steering vector application mode ("ablate", "add", "project").
     public var steeringMode: String
+    /// Scaling multiplier for directional steering.
     public var steeringScale: Double
+    /// Layer index range for activation steering (e.g. "10..20").
     public var steeringLayers: String
+    /// Target projection magnitude for steering.
     public var steeringTarget: Double
+    /// Activation gate threshold for steering.
     public var steeringGate: Double
+    /// Default root directory path for local model installs.
+    public var modelsDirectory: String
+    /// Whether auto-discovery of LM Studio model repositories is enabled.
+    public var enableLMStudioDetection: Bool
+    /// Custom path to LM Studio models folder if not in default location.
+    public var lmStudioDirectory: String
+    /// User-configured custom model storage folder paths.
+    public var customModelDirectories: [String]
+    /// Forge Tool-Call Guardrails global mode ("alwaysOn", "alwaysOff", "select").
+    public var guardrailsMode: String
 
     public init(
         contextTokens: Int = 0,
@@ -52,7 +127,12 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         steeringScale: Double = 1.0,
         steeringLayers: String = "",
         steeringTarget: Double = 0.0,
-        steeringGate: Double = 0.0
+        steeringGate: Double = 0.0,
+        modelsDirectory: String = "",
+        enableLMStudioDetection: Bool = true,
+        lmStudioDirectory: String = "",
+        customModelDirectories: [String] = [],
+        guardrailsMode: String = "select"
     ) {
         self.contextTokens = contextTokens
         self.expertCacheSlots = expertCacheSlots
@@ -79,6 +159,11 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.steeringLayers = steeringLayers
         self.steeringTarget = steeringTarget
         self.steeringGate = steeringGate
+        self.modelsDirectory = modelsDirectory
+        self.enableLMStudioDetection = enableLMStudioDetection
+        self.lmStudioDirectory = lmStudioDirectory
+        self.customModelDirectories = customModelDirectories
+        self.guardrailsMode = guardrailsMode
     }
 
     public init(from decoder: Decoder) throws {
@@ -108,9 +193,15 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.steeringLayers = try c.decodeIfPresent(String.self, forKey: .steeringLayers) ?? ""
         self.steeringTarget = try c.decodeIfPresent(Double.self, forKey: .steeringTarget) ?? 0.0
         self.steeringGate = try c.decodeIfPresent(Double.self, forKey: .steeringGate) ?? 0.0
+        self.modelsDirectory = try c.decodeIfPresent(String.self, forKey: .modelsDirectory) ?? ""
+        self.enableLMStudioDetection = try c.decodeIfPresent(Bool.self, forKey: .enableLMStudioDetection) ?? true
+        self.lmStudioDirectory = try c.decodeIfPresent(String.self, forKey: .lmStudioDirectory) ?? ""
+        self.customModelDirectories = try c.decodeIfPresent([String].self, forKey: .customModelDirectories) ?? []
+        self.guardrailsMode = try c.decodeIfPresent(String.self, forKey: .guardrailsMode) ?? "select"
     }
 }
 
+/// JSON persistence storage provider for `MacAppSettings` under `~/Library/Application Support/TurboSpark/settings.json`.
 public enum MacAppSettingsFileStore {
     private static var settingsDirectory: URL {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
@@ -123,6 +214,7 @@ public enum MacAppSettingsFileStore {
         settingsDirectory.appendingPathComponent("settings.json")
     }
 
+    /// Loads application settings from disk or returns defaults if uninitialized.
     public static func load() -> MacAppSettings {
         guard let data = try? Data(contentsOf: settingsFileURL),
               let settings = try? JSONDecoder().decode(MacAppSettings.self, from: data) else {
@@ -131,6 +223,7 @@ public enum MacAppSettingsFileStore {
         return settings
     }
 
+    /// Writes application settings to disk atomically as JSON.
     public static func save(_ settings: MacAppSettings) {
         if let data = try? JSONEncoder().encode(settings) {
             try? data.write(to: settingsFileURL, options: .atomic)

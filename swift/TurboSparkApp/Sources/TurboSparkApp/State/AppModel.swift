@@ -19,25 +19,50 @@ public final class AppModel: ObservableObject {
     /// Primary top-level navigation destination in the application.
     public enum AppNavigationSection: String, CaseIterable, Identifiable, Sendable {
         case chat
+        case files
         case modelHub
 
         public var id: String { rawValue }
         public var title: String {
             switch self {
             case .chat: return "Chat"
-            case .modelHub: return "Model hub"
+            case .files: return "Files"
+            case .modelHub: return "Models"
             }
         }
         public var systemImage: String {
             switch self {
             case .chat: return "bubble.left.and.bubble.right"
-            case .modelHub: return "square.grid.2x2"
+            case .files: return "folder"
+            case .modelHub: return "shippingbox"
+            }
+        }
+        /// Filled variant used when the section is the active one.
+        public var selectedSystemImage: String {
+            switch self {
+            case .chat: return "bubble.left.and.bubble.right.fill"
+            case .files: return "folder.fill"
+            case .modelHub: return "shippingbox.fill"
+            }
+        }
+        /// Keyboard shortcut character shown in the rail tooltip.
+        public var shortcutKey: Character {
+            switch self {
+            case .chat: return "1"
+            case .files: return "2"
+            case .modelHub: return "3"
             }
         }
     }
 
     /// Currently active navigation section in the main window.
     @Published public var activeSection: AppNavigationSection = .chat
+
+    /// Attachment currently shown in the right-hand preview pane, if any.
+    ///
+    /// Non-nil is what makes the preview pane visible; there is no second
+    /// visibility flag that could disagree with it.
+    @Published public var previewAttachmentID: UUID? = nil
 
     // Model management
     /// Models currently installed locally on disk.
@@ -58,6 +83,8 @@ public final class AppModel: ObservableObject {
     @Published public var projects: [AppProject] = []
     /// Currently active project filter (nil = all chats).
     @Published public var selectedProjectID: UUID? = nil
+    /// Global application-level MCP server configurations.
+    @Published public var globalMcpServers: [McpServerConfig] = []
     /// Currently pending tool call requiring user approval.
     @Published public var pendingToolCall: AppToolCall? = nil
     /// Live tool calls executed during the active generation turn.
@@ -137,6 +164,20 @@ public final class AppModel: ObservableObject {
     @Published public var stopSequences: String = ""
     /// Path to activation steering vectors file.
     @Published public var steeringPath: String? = nil
+    /// Forge Tool-Call Guardrails global mode ("alwaysOn", "alwaysOff", "select").
+    @Published public var guardrailsMode: AppGuardrailsMode = .select
+    /// Per-session manual override for guardrails when not in a project workspace.
+    @Published public var composerGuardrailsOverride: Bool? = nil
+
+    // Storage and Model Discovery Settings
+    /// Custom TurboSpark primary models directory (empty uses default ~/.turbospark/models).
+    @Published public var modelsDirectory: String = ""
+    /// Whether to automatically scan and include models from LM Studio library.
+    @Published public var enableLMStudioDetection: Bool = true
+    /// Custom LM Studio models directory (empty uses default ~/.lmstudio/models).
+    @Published public var lmStudioDirectory: String = ""
+    /// Additional custom directories to scan for models without copying.
+    @Published public var customModelDirectories: [String] = []
 
     // Installation State
     /// Whether a model download and installation task is currently running.
@@ -162,7 +203,17 @@ public final class AppModel: ObservableObject {
         loadSettings()
         loadProjects()
         loadChats()
+        loadGlobalMcpServers()
         refreshModels()
+    }
+
+    /// Combined list of all currently active (enabled) MCP servers from global settings and active project.
+    public var activeMcpServers: [McpServerConfig] {
+        var list = globalMcpServers.filter { $0.isEnabled }
+        if let proj = selectedProject {
+            list.append(contentsOf: proj.mcpServers.filter { $0.isEnabled })
+        }
+        return list
     }
 
     /// Currently selected project if any.
@@ -257,6 +308,58 @@ public final class AppModel: ObservableObject {
         info?.reasoningSupport != SessionInfo.ReasoningSupport.none
     }
 
+    /// Whether the active model supports tool calling and structured function invocation.
+    public var isToolCallingSupported: Bool {
+        guard let selectedModel = selected ?? installed.first else {
+            return true
+        }
+        let family = selectedModel.family.lowercased()
+        let dialect = info?.dialect.lowercased() ?? ""
+        let toolFamilies: Set<String> = ["gemma4", "qwen36", "qwen3moe", "qwen35", "gptoss", "llama"]
+        if toolFamilies.contains(family) {
+            return true
+        }
+        if dialect.contains("chatml") || dialect.contains("harmony") || dialect.contains("llama") || dialect.contains("gemma") || dialect.contains("mistral") {
+            return true
+        }
+        return false
+    }
+
+    /// Effective resolution of whether Forge Guardrails is active for the current context.
+    public var effectiveForgeGuardrailsEnabled: Bool {
+        switch guardrailsMode {
+        case .alwaysOn:
+            return true
+        case .alwaysOff:
+            return false
+        case .select:
+            if let projectOverride = selectedProject?.forgeGuardrailsEnabled {
+                return projectOverride
+            }
+            if let composerOverride = composerGuardrailsOverride {
+                return composerOverride
+            }
+            return isToolCallingSupported
+        }
+    }
+
+    /// Toggles or sets the Forge Guardrails active state for the current project or draft.
+    public func setForgeGuardrailsEnabled(_ enabled: Bool) {
+        if var proj = selectedProject {
+            proj.forgeGuardrailsEnabled = enabled
+            proj.updatedAt = Date()
+            updateProject(proj)
+        } else {
+            composerGuardrailsOverride = enabled
+        }
+    }
+
+    /// Opens the application Settings window and navigates to the requested tab.
+    public func openSettings(tab: AppSettingsView.SettingsTab = .engine) {
+        NotificationCenter.default.post(name: .openSettingsTab, object: tab)
+        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+    }
+
     /// Live decode throughput in tokens per second.
     public var liveTokensPerSecond: Double {
         liveElapsedDecodeSeconds > 0 ? Double(liveTokenCount) / liveElapsedDecodeSeconds : 0
@@ -270,6 +373,18 @@ public final class AppModel: ObservableObject {
     /// Whether there is any conversation history or live output to display.
     public var hasOutputTranscript: Bool {
         !selectedChat.messages.isEmpty || !outputText.isEmpty || !outputReasoningText.isEmpty
+    }
+
+    /// Rough token count of everything that would be sent on the next turn.
+    ///
+    /// A four-characters-per-token approximation over the committed transcript
+    /// plus the live estimate of the draft. It is a STATUS reading and never a
+    /// budget: the real window fit is decided by `fitConversationWindow` on the
+    /// engine side against the real tokenizer.
+    public var estimatedContextTokens: Int {
+        let transcriptCharacters = selectedChat.messages.reduce(0) { $0 + $1.content.count }
+        let attachmentCharacters = promptAttachments.reduce(0) { $0 + $1.characterCount }
+        return transcriptCharacters / 4 + attachmentCharacters / 4 + estimatedPromptTokens
     }
 
     /// Resolved context token limit when in automatic mode.
@@ -321,5 +436,86 @@ public final class AppModel: ObservableObject {
     public func dismissToast() {
         activeToast = nil
     }
+
+    // MARK: - MCP Server Management
+
+    /// Adds a new global MCP server.
+    public func addGlobalMcpServer(_ config: McpServerConfig) {
+        globalMcpServers.append(config)
+        persistGlobalMcpServers()
+    }
+
+    /// Updates an existing global MCP server.
+    public func updateGlobalMcpServer(_ config: McpServerConfig) {
+        if let index = globalMcpServers.firstIndex(where: { $0.id == config.id }) {
+            globalMcpServers[index] = config
+            persistGlobalMcpServers()
+        }
+    }
+
+    /// Deletes a global MCP server by ID.
+    public func deleteGlobalMcpServer(id: UUID) {
+        globalMcpServers.removeAll { $0.id == id }
+        persistGlobalMcpServers()
+    }
+
+    /// Toggles the enabled state of a global MCP server.
+    public func toggleGlobalMcpServer(id: UUID, isEnabled: Bool) {
+        if let index = globalMcpServers.firstIndex(where: { $0.id == id }) {
+            globalMcpServers[index].isEnabled = isEnabled
+            globalMcpServers[index].updatedAt = Date()
+            persistGlobalMcpServers()
+        }
+    }
+
+    /// Adds or imports an MCP server into a specific project.
+    public func addProjectMcpServer(projectID: UUID, config: McpServerConfig) {
+        if let index = projects.firstIndex(where: { $0.id == projectID }) {
+            projects[index].mcpServers.append(config)
+            projects[index].updatedAt = Date()
+            persistProjects()
+        }
+    }
+
+    /// Updates an MCP server within a specific project.
+    public func updateProjectMcpServer(projectID: UUID, config: McpServerConfig) {
+        if let pIndex = projects.firstIndex(where: { $0.id == projectID }),
+           let sIndex = projects[pIndex].mcpServers.firstIndex(where: { $0.id == config.id }) {
+            projects[pIndex].mcpServers[sIndex] = config
+            projects[pIndex].updatedAt = Date()
+            persistProjects()
+        }
+    }
+
+    /// Deletes an MCP server from a specific project.
+    public func deleteProjectMcpServer(projectID: UUID, serverID: UUID) {
+        if let pIndex = projects.firstIndex(where: { $0.id == projectID }) {
+            projects[pIndex].mcpServers.removeAll { $0.id == serverID }
+            projects[pIndex].updatedAt = Date()
+            persistProjects()
+        }
+    }
+
+    /// Toggles the enabled state of an MCP server within a specific project.
+    public func toggleProjectMcpServer(projectID: UUID, serverID: UUID, isEnabled: Bool) {
+        if let pIndex = projects.firstIndex(where: { $0.id == projectID }),
+           let sIndex = projects[pIndex].mcpServers.firstIndex(where: { $0.id == serverID }) {
+            projects[pIndex].mcpServers[sIndex].isEnabled = isEnabled
+            projects[pIndex].mcpServers[sIndex].updatedAt = Date()
+            projects[pIndex].updatedAt = Date()
+            persistProjects()
+        }
+    }
+
+    /// Tests connection to an MCP server and queries its available tools.
+    public func testMcpServer(_ config: McpServerConfig, workingDirectory: URL? = nil) async -> Result<[McpDiscoveredTool], Error> {
+        do {
+            let tools = try await McpClientEngine.shared.discoverTools(for: config, workingDirectory: workingDirectory)
+            return .success(tools)
+        } catch {
+            return .failure(error)
+        }
+    }
 }
+
 

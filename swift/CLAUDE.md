@@ -40,23 +40,43 @@ swift/
 \-- TurboSparkApp/                   # the app (executable)
     +-- Package.swift                # platforms .macOS(.v14); repeats the -L
     +-- Package.resolved             # pins swift-markdown-ui
-    \-- Sources/TurboSparkApp/
-        +-- App/                     # @main scene, RootView three-pane shell
-        +-- State/                   # AppModel (@MainActor) + 7 extensions,
-        |                            # AppChat/AppProject/AppTool, file stores
-        +-- Generation/              # composer, output pane, chat sidebar
-        +-- Installation/            # model hub, catalog sheet, probe, ETA
-        +-- Diagnostics/             # inspector, status HUD, phase counters
-        +-- Presentation/            # markdown render, docx/xlsx/pdf extract
-        +-- Components/ Theme/       # badges, banners, layout tokens
-        \-- Resources/               # app-prompts.json, Logos/ (Bundle.module)
+    +-- Sources/TurboSparkApp/
+    |   +-- App/                     # @main scene, RootView, AppSettingsView
+    |   +-- Chrome/                  # NavigationRailView, TopBarView,
+    |   |                            # StatusBarView, ModelLoaderControl
+    |   +-- Files/                   # AttachmentImporter, FilePreviewView,
+    |   |                            # FilesSectionView
+    |   +-- State/                   # AppModel (@MainActor) + extensions,
+    |   |                            # AppChat/AppProject/AppTool,
+    |   |                            # GlobalMcpFileStore, SystemPermissionsManager
+    |   +-- Generation/              # composer, output pane, chat sidebar, tool cards,
+    |   |                            # ProjectSettingsSheet, ProjectMcpSettingsSheet
+    |   +-- Installation/            # model hub, catalog sheet, probe, ETA cards
+    |   +-- Diagnostics/             # inspector options, metric formatting, phase counters
+    |   +-- Presentation/            # markdown render, docx/xlsx/pdf extract
+    |   +-- Components/              # AppearanceSettingsPaneView, McpSettingsPaneView,
+    |   |                            # McpServerEditorSheet, PermissionsSettingsPaneView,
+    |   |                            # ToastOverlayView, ErrorBanner
+    |   +-- Theme/                   # AppearanceSettings, TurboSparkTheme,
+    |   |                            # AppChromePresentation, PointerCursorModifier,
+    |   |                            # ThemeCodePreviewView
+    |   +-- Tools/                   # AppToolCatalog, AppToolRegistry,
+    |   |   +-- Core/                # AppToolPermissionEngine, OpenAIToolSchema
+    |   |   +-- MCP/                 # McpClientEngine, McpServerSpec, ProjectMcpDetector
+    |   |   +-- File/                # FileReadWriteTools
+    |   |   \-- Web/                 # WebTools
+    |   \-- Resources/               # app-prompts.json, Logos/ (Bundle.module)
+    \-- Tests/TurboSparkAppTests/    # 44+ unit tests: AppearanceSettingsTests,
+                                     # McpClientEngineTests, ProjectMcpDetectionTests,
+                                     # ProjectRulesDetectionTests, SystemPermissionsTests,
+                                     # ToolPermissionsTests
 ```
 
-`AppModel` is split across `AppModel.swift` plus `AppModel+{Chat, Generation,
-Installation, Models, Persistence, Projects, Tools}.swift`. Published state
-and derived properties live in the base file; every behaviour is an
-extension. Add new behaviour as a new extension file rather than growing the
-base one.
+`AppModel` is split across `AppModel.swift` plus `AppModel+{Chat, Files,
+Generation, Installation, Models, Persistence, Projects, Tools}.swift`.
+Published state and derived properties live in the base file; every behaviour
+is an extension. Add new behaviour as a new extension file rather than growing
+the base one.
 
 ## Build, test, dev commands
 
@@ -86,6 +106,11 @@ make swift-test-real MODEL=~/models/gemma4.gturbo
 make swift-test-real MODEL=~/models/qwen38-27b-mtp.gturbo \
                      BLOCKED=~/models/ornith35b.gturbo
 
+# Run the TurboSparkApp test suite (44+ unit tests covering appearance settings,
+# MCP client engine, project MCP detection, rules detection, system
+# permissions, and tool permissions).
+cd swift/TurboSparkApp && swift test
+
 # The app.
 make swift-app-build        # debug
 make swift-app-release      # release
@@ -107,10 +132,6 @@ That is not a shortcut for convenience alone. `make swift-app` depends on
 `swift-lib`, which `touch`es every `.swift` file in both packages (Gotcha 3),
 so going through `make` recompiles the whole app every single time. Use
 `make` when the Rust side moved and SwiftPM when it did not.
-
-There is no `swift test` target in `TurboSparkApp`: the app has no tests, so
-`make swift-test` covers the binding and nothing above it. A change to
-`State/` is verified by running the app.
 
 ## Gotchas
 
@@ -248,16 +269,40 @@ There is no `swift test` target in `TurboSparkApp`: the app has no tests, so
     the root has to be resolved as well as the target, or a project under a
     symlinked path (`/tmp` is one on macOS) fails its own containment test.
 
-12. **`swift run` PRODUCES A BARE EXECUTABLE, NOT AN `.app` BUNDLE.** There
-    is no `Info.plist`, no entitlements file and no bundle identifier
-    anywhere in this tree; `ForegroundAppDelegate` calls
+12. **`swift run` PRODUCES A BARE EXECUTABLE, NOT AN `.app` BUNDLE, AND THE
+    SHIPPED APP IS ASSEMBLED BY A SCRIPT.** `ForegroundAppDelegate` calls
     `NSApp.setActivationPolicy(.regular)` at launch precisely so a
     command-line-launched binary gets a Dock icon and a menu bar. Resources
-    still work (`Bundle.module` is SwiftPM's generated bundle, which is how
-    `Logos/` and `app-prompts.json` are found), but anything needing a real
-    bundle identity (code signing, notarization, Keychain, sandbox
-    entitlements, `NSUserNotification`) does not exist yet and is not a
-    one-line addition.
+    still work under `swift run` (`Bundle.module` is SwiftPM's generated
+    bundle, which is how `Logos/` and `app-prompts.json` are found).
+
+    **`scripts/make-app-bundle.sh` is the only place a bundle identity
+    exists**: it writes the tree's one `Info.plist`, sets
+    `CFBundleIdentifier` to `com.whit3rabbit.turbospark`, copies every
+    `*.bundle` from `.build/release` into `Contents/Resources`, drops the
+    three CLI binaries into `Contents/MacOS`, and ad-hoc signs the result.
+    `scripts/make-dmg.sh` wraps that for release. `docs/RELEASE.md` is the
+    home for both.
+
+    **THE IDENTIFIER MOVES THE PREFERENCES DOMAIN, and that is invisible
+    until someone compares two installs.** A `swift run` build writes
+    `~/Library/Preferences/TurboSparkApp.plist`; the bundle writes
+    `com.whit3rabbit.turbospark.plist` (measured by launching it, not
+    inferred from the docs). So every `@AppStorage` key -- appearance, text
+    size, language -- reads as unset the first time a developer opens the
+    installed app, while their `swift run` settings sit intact in the other
+    file. Gotcha 13's three JSON stores are NOT affected: those paths are
+    hardcoded `"TurboSpark"` under Application Support and have no bundle
+    input at all. Anything needing a REAL identity beyond a name -- Developer
+    ID signing, notarization, Keychain, sandbox entitlements -- still does
+    not exist; the signing seam is `CODESIGN_IDENTITY`, which defaults to
+    ad-hoc.
+
+    **`LSMinimumSystemVersion` IS THE THIRD COPY OF A NUMBER.** The script
+    writes `14.0`, `TurboSparkApp/Package.swift` declares
+    `platforms: [.macOS(.v14)]`, and both Homebrew casks say
+    `depends_on macos: ">= :sonoma"`. Change one and change all three;
+    Gotcha 14 is the same hazard on the deployment-target axis.
 
 13. **ALL APP STATE LIVES IN THREE JSON FILES UNDER
     `~/Library/Application Support/TurboSpark/`** (`settings.json`,
@@ -267,7 +312,23 @@ There is no `swift test` target in `TurboSparkApp`: the app has no tests, so
     change that is not backwards-compatible silently discards the user's
     chats rather than erroring: add fields with `decodeIfPresent` and a
     default, the way `MacAppSettings`'s hand-written `init(from:)` already
-    does. And `persistChats()` re-encodes the entire archive on every
+    does.
+
+    **THAT HAZARD WAS NOT HYPOTHETICAL AND HAD ALREADY FIRED** (found
+    2026-08-29 on the archive on this machine). `AppChatMessage` gained
+    `toolCalls` and `toolResults` as non-optional arrays on the synthesized
+    decoder, so ONE message written before those fields existed threw
+    `keyNotFound`, `load()` swallowed it, and the app came up with an empty
+    chat list while a four-message conversation sat intact on disk -- which
+    the next `persistChats()` would have overwritten for real. Note the shape
+    of the symptom, because it is what makes this class expensive: nothing
+    errors, nothing is logged, and the user reads it as "the app lost my
+    chats" rather than as a decode failure. `AppChatMessage` and `AppChat`
+    now carry hand-written tolerant `init(from:)`s and `load()` REPORTS the
+    error to stderr before falling back. Every field added to either struct
+    from now on gets `decodeIfPresent` and a default.
+
+    And `persistChats()` re-encodes the entire archive on every
     keystroke of the draft, since `promptText`'s setter calls it; that is
     fine at current sizes and is the first thing to look at if typing ever
     feels heavy.
@@ -283,8 +344,9 @@ There is no `swift test` target in `TurboSparkApp`: the app has no tests, so
     past a consumer's, so change the script and both manifests together.
 
 15. **THE 400-LINE GUIDELINE IS ALREADY BROKEN ON THE VIEW SIDE.**
-    `ChatSidebarView` (522), `ModelDetailPaneView` (432), `ModelHubView`
-    (407) and `InspectorOptionsSection` (406) are over it. Split by
+    `ChatSidebarView` (476, down from 522 once the rail took its section
+    list), `ModelDetailPaneView` (432), `ModelHubView` (407) and
+    `InspectorOptionsSection` (406) are over it. Split by
     subview when touching one of them rather than adding to it. Nothing in
     `TurboSpark/` is anywhere near the limit and should stay that way: the
     binding is thin on purpose, and logic that creeps into it is logic no
@@ -300,3 +362,129 @@ There is no `swift test` target in `TurboSparkApp`: the app has no tests, so
     `ChatMessageMarkdownView` are where that cost is; measure there before
     blaming the engine for slow-looking decode. `session.cancel()` is called
     directly (not through the actor) and is why Stop is immediate.
+
+17. **THE WINDOW IS FOUR CHROME BANDS AND EACH ONE OWNS ONE QUESTION.**
+    `RootView` is a rail (sections), a top bar (which model, and is it
+    loaded), the working panes, and a status strip (memory, context fill,
+    tok/s). Two rules fall out of that split and both were arrived at by
+    looking at the running app. Sections live in the RAIL so the chat
+    sidebar can be hidden without stranding navigation, which is why
+    `showsChatSidebar` is gated on `activeSection == .chat`. And the top bar
+    is LEFT-ALIGNED rather than centred: the phase indicator appears and
+    disappears once per turn, and a centred model loader slides sideways
+    every time it does.
+
+    The right column is one slot, not two: `previewAttachment != nil` takes
+    it from the inspector. That is why `.toggleInspector` closes the preview
+    first -- a shortcut that toggles a pane hidden behind another one reads
+    as a broken shortcut.
+
+    Traffic lights are the layout constraint nobody remembers. The window is
+    `.hiddenTitleBar`, so the system still draws them over the content at
+    roughly x = 13 to 66; `AppChromeLayout.trafficLightClearance` is what
+    keeps the top bar's first control clear of them, and the rail starts
+    below `topBarHeight` for the same reason.
+
+18. **`TextEditor` HAS NO INTRINSIC HEIGHT, AND THE TWO OBVIOUS WAYS TO GIVE
+    IT ONE BOTH SILENTLY PICK THE MAXIMUM.** It is greedy vertically, so an
+    empty composer renders exactly as tall as a full one. A ZStack with a
+    hidden sizer `Text` behind it does not help (a ZStack sizes to its
+    LARGEST child, which is the editor), and neither does
+    `.frame(minHeight:maxHeight:)` -- that frame is FLEXIBLE, reporting the
+    proposal clamped into range rather than the child's ideal, so with a tall
+    proposal it always lands on `maxHeight`. Both look correct in code review
+    and are only visible in a screenshot.
+
+    `PromptComposerView.editor` measures instead: a hidden `Text` with the
+    same font and insets, `fixedSize(horizontal: false, vertical: true)`,
+    reports its ideal height through a `PreferenceKey`, and the editor gets
+    `min(max(measured, floor), ceiling)`. Reach for the measurement whenever
+    a SwiftUI view has to size to content that a greedy child would otherwise
+    swallow.
+
+19. **macOS TCC AND PROTECTED FOLDER ACCESS.** Access to `~/Documents`,
+    `~/Downloads`, and `~/Desktop` is governed by macOS Transparency, Consent,
+    and Control (TCC). `SystemPermissionsManager` probes directory readability
+    via `contentsOfDirectory(atPath:)` and triggers interactive `NSOpenPanel`
+    approval or deep-links directly to macOS System Settings
+    (`Privacy_FilesAndFolders`, `Privacy_AllFiles`). Users can also authorize
+    custom project directories in the Files & Permissions settings tab.
+
+20. **MCP SERVERS AND STREAMS (STDIO AND SSE).** `McpClientEngine` handles
+    Model Context Protocol JSON-RPC 2.0 initialization and tool calls for
+    both stdio subprocesses and HTTP/SSE endpoints. Environment variables in
+    config (`${HOME}`, `${workspaceFolder}`) expand before spawning, and
+    server-level `autoApprove` flags bypass interactive approval prompts unless
+    an operation is classified as high-risk.
+
+21. **DYNAMIC THEME AND ACCENT INJECTIONS.** `AppearanceManager` controls
+    dark/light mode, custom theme presets, and accent colors. Custom accent
+    colors inject dynamically into controls via `activeAccentColor(isDark:)`
+    and `TurboSparkTheme`.
+
+22. **A BADGE OR A FILTER THAT CANNOT FAIL CARRIES NO INFORMATION, AND THE
+    MODEL HUB SHIPPED THREE OF THEM.** All three read as working features and
+    all three were found by writing the first unit test over the code rather
+    than by looking at it (`ModelHubFilterTests`).
+
+    `ModelCardView` drew an unconditional `checkmark.seal.fill` captioned
+    "Verified model in TurboSpark catalog" on EVERY row, while `models.json`
+    marks rows `verified`, `runs` or `caveat` and the view never read the
+    field. `ModelHubView`'s capability filter matched alias SUBSTRINGS, so
+    `.conversational` fell through to `break` and returned the whole catalog,
+    `museGlimmer` was listed under both "Reasoning" and "Dense", and the fit
+    filter offered "Too large" on machines where no row is refused -- a
+    choice that can only ever return an empty list.
+
+    **THE FORMAT LABEL WAS THE EXPENSIVE ONE, because it is the field a user
+    picks a row by.** `ModelFamilyVisuals.resolve` stated `formatLabel` by
+    hand in each of its 16 family branches, and a family and a quantization
+    are INDEPENDENT: `mistral7b` and `tinyllama` are GGUF rows that both
+    rendered "MLX INT4", `ornith9b` is GGUF Q8_0 rendered as MLX because its
+    alias has no "gguf" in it, `gemma4-gguf` is Q8_0 rendered as "Q4_K_M",
+    and `bonsai27b` is MLX affine 1-bit rendered as INT4. Wrong on a majority
+    of the shipped rows, and wrong in the direction that matters.
+
+    The fix is one derivation instead of sixteen assertions:
+    `ModelFamilyVisuals.formatLabel(alias:name:)` reads the parenthesised
+    suffix of the catalog row's own `name` up to the first comma, which IS
+    where the catalog states the format. Nothing to keep in sync, and adding
+    a row needs no code change. `ModelHubFilter` then builds its dropdown
+    options from that same call, so the badge and the filter cannot disagree.
+
+    Two rules out of it. **Derive a display value from the data or read it
+    off the row; never restate it per branch** -- the restatement is correct
+    on the day it is written and silently wrong at the next checkpoint. And
+    **build a filter's options from what is present**, not from the full enum,
+    or the UI offers choices that match nothing.
+
+23. **A ZERO FROM AN ABSENT MEASUREMENT IS NOT A MEASUREMENT OF ZERO, AND THE
+    MODEL DETAIL PANE PRESENTED THREE OF THEM AS FACTS.** A `.unknown` fit
+    verdict means the sizing could not be determined, and the numeric fields
+    that arrive with it are zeros. `ModelDetailPaneView` rendered them through
+    the same grid as a real reading, so an unsized row advertised "Unified
+    Memory: Zero KB" and "Max Context: 0 tokens" beside a summary that said
+    "unknown (probe it)".
+
+    **The slot count is the dangerous one and it does not even look wrong.**
+    With no architecture read there is no expert stride, `Auto` divides by
+    nothing and returns `DEFAULT_CACHE_SLOTS`, so the pane showed "Expert
+    Slots: 16 slots" -- an answer arrived at BY IGNORANCE that is
+    indistinguishable from a measured 16 (root `CLAUDE.md` Gotcha 58). The
+    card now branches on `fitIsKnown`, every cell is guarded on being
+    non-zero, and the unsized state shows only what the CATALOG states plus
+    the command that would produce the rest.
+
+    There is deliberately no Probe button on that card. `ts_recommend_json` is
+    offline-only and this binding exposes no probing call, so the button would
+    have to lie about what it does; the pane names
+    `turbospark-model recommend --probe` instead. **Check that the work exists
+    before adding the control that claims to do it.**
+
+    A smaller sibling in the same pane: `TextField`'s title on macOS is a
+    VISIBLE LABEL, not a placeholder. `InspectorOptionsSection`'s rate-cap
+    field passed "Uncapped" as that title without `.labelsHidden()`, so it was
+    drawn beside the field and clipped to "Un-" by the inspector's width,
+    while every neighbouring Picker in the same section already hid its label.
+    A stray truncated word next to a control is worth reading as a missing
+    `.labelsHidden()` before it is read as a layout problem.

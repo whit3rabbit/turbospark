@@ -2,6 +2,7 @@ import Foundation
 import TurboSpark
 
 extension AppModel {
+    /// Loads persisted generation parameters, execution options, and model paths from disk.
     func loadSettings() {
         let settings = MacAppSettingsFileStore.load()
         self.maxContextTokens = settings.contextTokens
@@ -30,8 +31,14 @@ extension AppModel {
         self.runtimeOptions.steeringTarget = settings.steeringTarget
         self.runtimeOptions.steeringGate = settings.steeringGate
         self.steeringPath = self.runtimeOptions.steeringPath
+        self.modelsDirectory = settings.modelsDirectory
+        self.enableLMStudioDetection = settings.enableLMStudioDetection
+        self.lmStudioDirectory = settings.lmStudioDirectory
+        self.customModelDirectories = settings.customModelDirectories
+        self.guardrailsMode = AppGuardrailsMode(rawValue: settings.guardrailsMode) ?? .select
     }
 
+    /// Persists current runtime options, steering parameters, and directory paths to disk.
     public func persistSettings() {
         let settings = MacAppSettings(
             contextTokens: maxContextTokens,
@@ -58,30 +65,51 @@ extension AppModel {
             steeringScale: runtimeOptions.steeringScale,
             steeringLayers: runtimeOptions.steeringLayers,
             steeringTarget: runtimeOptions.steeringTarget,
-            steeringGate: runtimeOptions.steeringGate
+            steeringGate: runtimeOptions.steeringGate,
+            modelsDirectory: modelsDirectory,
+            enableLMStudioDetection: enableLMStudioDetection,
+            lmStudioDirectory: lmStudioDirectory,
+            customModelDirectories: customModelDirectories,
+            guardrailsMode: guardrailsMode.rawValue
         )
         MacAppSettingsFileStore.save(settings)
     }
 
+    /// Loads persisted chat threads and the active selected conversation ID.
     func loadChats() {
         let archive = AppChatFileStore.load()
         self.chats = archive.chats
         self.selectedChatID = archive.selectedChatID
     }
 
+    /// Persists all conversation threads and active selection to disk.
     public func persistChats() {
         let archive = AppChatArchive(selectedChatID: selectedChatID, chats: chats)
         AppChatFileStore.save(archive)
     }
 
+    /// Loads persisted project configurations and selected project ID.
     func loadProjects() {
         let archive = AppProjectFileStore.load()
         self.projects = archive.projects
         self.selectedProjectID = archive.selectedProjectID
     }
 
+    /// Persists all project workspaces and active project selection.
     public func persistProjects() {
         let archive = AppProjectArchive(selectedProjectID: selectedProjectID, projects: projects)
         AppProjectFileStore.save(archive)
+    }
+
+    /// Loads global Model Context Protocol server configurations.
+    func loadGlobalMcpServers() {
+        let archive = GlobalMcpFileStore.load()
+        self.globalMcpServers = archive.servers
+    }
+
+    /// Persists global MCP servers to application support directory.
+    public func persistGlobalMcpServers() {
+        let archive = GlobalMcpArchive(servers: globalMcpServers)
+        GlobalMcpFileStore.save(archive)
     }
 }
