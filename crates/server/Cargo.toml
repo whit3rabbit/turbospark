@@ -27,6 +27,11 @@ foundation = { package = "turbospark-core", path = "../core", version = "0.1.0" 
 runtime = { package = "turbospark-runtime", path = "../runtime", version = "0.1.0" }
 selection = { package = "turbospark-selection", path = "../selection", version = "0.1.0" }
 tokenizer = { package = "turbospark-tokenizer", path = "../tokenizer", version = "0.1.0" }
+# Image content parts on both endpoints (ROADMAP M-V8): decode, preprocess,
+# the placeholder splice and the mRoPE walk. PORTABLE -- this crate compiles
+# off macOS and so does this dependency, which is why it sits here rather
+# than in the `cfg(target_os = "macos")` block beside `repack`.
+turbospark-vision-io = { path = "../vision-io", version = "0.1.0" }
 # Anthropic <-> OpenAI translation, and the OpenAI wire types this server's
 # envelopes are built from. Default features only: that is the pure, IO-free
 # core (serde/thiserror/tracing/uuid). The `middleware` feature is deliberately

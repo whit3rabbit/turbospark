@@ -114,10 +114,16 @@ pub async fn chat_completions(
     // Planned here as well as inside `run_guarded` so an unparseable request
     // is still refused with a 400 before any generation starts. The guarded
     // path re-plans because a retry turn changes the messages.
-    let (prompt_ids, config) = match plan(&model, &request) {
+    let planned = match plan(&model, &request) {
         Ok(p) => p,
         Err(e) => return error_response(axum::http::StatusCode::BAD_REQUEST, e),
     };
+    let (prompt_ids, config, images, dropped_images) = (
+        planned.prompt_ids,
+        planned.config,
+        planned.images,
+        planned.dropped_images,
+    );
 
     let tools = tool_names(&request);
     // Re-read rather than threaded out of `plan`: `plan` already REFUSED an
@@ -136,6 +142,7 @@ pub async fn chat_completions(
             model,
             prompt_ids,
             config,
+            images,
             tools,
             effort,
             &request,
@@ -148,7 +155,7 @@ pub async fn chat_completions(
         Err(e) => return gen_error_response(e),
     };
 
-    Json(completion_response(
+    let mut response = Json(completion_response(
         format!("chatcmpl-{}", now_unix()),
         now_unix(),
         request.model,
@@ -159,7 +166,18 @@ pub async fn chat_completions(
         generated.decode.prompt_tokens as u32,
         generated.decode.new_tokens as u32,
     ))
-    .into_response()
+    .into_response();
+    // **AN IMAGE THIS SERVER COULD NOT SERVE IS REPORTED** (ROADMAP M-V8), on
+    // the same header `/v1/messages` uses. OpenAI's own spec has no such
+    // field, so this is an extension rather than a translation -- and the
+    // alternative is what shipped before: a text answer to a question about a
+    // picture, with nothing anywhere saying the picture was dropped.
+    if let Some(note) = dropped_images.as_deref().and_then(|n| n.parse().ok()) {
+        response
+            .headers_mut()
+            .insert(crate::DEGRADATION_HEADER, note);
+    }
+    response
 }
 
 /// **A TOOL-CARRYING REQUEST IS BUFFERED WHEN GUARDRAILS ARE ON, and every
@@ -182,10 +200,12 @@ pub async fn chat_completions(
 /// The condition is keyed on the request carrying tools, which is what keeps
 /// ordinary chat traffic on the live path byte for byte (the same shape as
 /// Gotcha 12's third condition and Gotcha 7's prompt split).
+#[allow(clippy::too_many_arguments)]
 fn stream_response(
     model: AppState,
     prompt_ids: Vec<foundation::TokenId>,
     config: GenerationConfig,
+    images: Option<crate::vision::RequestImages>,
     tools: HashSet<String>,
     effort: ReasoningEffort,
     request: &ChatCompletionRequest,
@@ -213,23 +233,31 @@ fn stream_response(
         ));
 
         let mut call_index = 0u32;
-        let result = stream_blocking(&model, &prompt_ids, &config, &tools, effort, &mut |piece| {
-            let delta = match piece {
-                Piece::Text(text) => text_delta(text),
-                Piece::Reasoning(text) => reasoning_delta(text),
-                Piece::Tool(call) => {
-                    call_index += 1;
-                    tool_call_delta(call_index - 1, call)
-                }
-            };
-            send(completion_chunk(
-                id.clone(),
-                created,
-                model_name.clone(),
-                delta,
-                None,
-            ));
-        });
+        let result = stream_blocking(
+            &model,
+            &prompt_ids,
+            &config,
+            images.as_ref(),
+            &tools,
+            effort,
+            &mut |piece| {
+                let delta = match piece {
+                    Piece::Text(text) => text_delta(text),
+                    Piece::Reasoning(text) => reasoning_delta(text),
+                    Piece::Tool(call) => {
+                        call_index += 1;
+                        tool_call_delta(call_index - 1, call)
+                    }
+                };
+                send(completion_chunk(
+                    id.clone(),
+                    created,
+                    model_name.clone(),
+                    delta,
+                    None,
+                ));
+            },
+        );
 
         match result {
             Ok(r) => {

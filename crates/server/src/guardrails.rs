@@ -322,12 +322,13 @@ pub(crate) async fn run_guarded(
         // prompt has to be re-rendered through the template rather than
         // patched. `plan` already succeeded on the caller's own request, so a
         // failure here belongs to the nudge turn and is reported as one.
-        let (prompt_ids, gen_config) =
+        let planned =
             plan(&model, &attempt).map_err(|e| GenError::Join(format!("guardrail replan: {e}")))?;
         let generated = run_full(
             model.clone(),
-            prompt_ids,
-            gen_config,
+            planned.prompt_ids,
+            planned.config,
+            planned.images,
             offered.clone(),
             effort,
         )

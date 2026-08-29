@@ -17,6 +17,14 @@ mod model;
 #[cfg(target_os = "macos")]
 mod real_model;
 mod response;
+pub mod vision;
+
+/// The header both routes report a degraded request on.
+///
+/// `anyllm_translate`'s own spelling, kept for `/v1/messages` where it
+/// originated, and reused on `/v1/chat/completions` since ROADMAP M-V8 --
+/// one client-visible mechanism rather than two names for the same signal.
+pub(crate) const DEGRADATION_HEADER: &str = "x-anyllm-degradation";
 
 /// Tool-call guardrail configuration: rescue parsing, argument validation,
 /// and the retry budget.

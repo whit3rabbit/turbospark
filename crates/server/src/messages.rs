@@ -15,10 +15,13 @@
 //! `tool_use` block. Images and a request's `thinking` CONFIG have no
 //! backend here and are dropped in translation; a RESPONSE's thinking is a
 //! different matter, and `gpt-oss` produces one (see `handler::exec`'s
-//! `needs_decoder`). `x-anyllm-degradation` reports only what
+//! `needs_decoder`). `x-anyllm-degradation` reports what
 //! `compute_request_warnings` knows about (`top_k`, `thinking`,
-//! `cache_control`, document blocks, truncated stop sequences); dropped
-//! images are NOT among them. See `DEVIATIONS.md`.
+//! `cache_control`, document blocks, truncated stop sequences) AND, since
+//! ROADMAP M-V8, an image this server could not serve -- appended by this
+//! module rather than by the vendored function, which has no notion of a
+//! local install's capabilities. An image on an install WITH a tower is
+//! served rather than reported.
 
 use std::collections::HashSet;
 
@@ -51,7 +54,7 @@ use crate::response::{
     tool_call_delta,
 };
 
-const DEGRADATION_HEADER: &str = "x-anyllm-degradation";
+pub(crate) use crate::DEGRADATION_HEADER;
 
 fn error_body(status: StatusCode, kind: ErrorType, message: String) -> Response {
     (status, Json(create_anthropic_error(kind, message, None))).into_response()
@@ -110,9 +113,26 @@ pub async fn messages(
         }
     };
 
-    let (prompt_ids, config) = match plan(&model, &openai) {
+    let planned = match plan(&model, &openai) {
         Ok(p) => p,
         Err(e) => return error_body(StatusCode::BAD_REQUEST, ErrorType::InvalidRequestError, e),
+    };
+    let (prompt_ids, config, images, dropped_images) = (
+        planned.prompt_ids,
+        planned.config,
+        planned.images,
+        planned.dropped_images,
+    );
+    // **THE HEADER FINALLY NAMES A DROPPED IMAGE** (ROADMAP M-V8). This
+    // module's own header used to record that `compute_request_warnings`
+    // knows nothing about images, which was true and was the gap: a client
+    // sending a picture to a text-only install got a plausible text answer
+    // and no signal at all. Appended rather than replacing, so the vendored
+    // warnings keep theirs.
+    let degraded = match (&degraded, &dropped_images) {
+        (_, None) => degraded,
+        (None, Some(note)) => Some(note.clone()),
+        (Some(existing), Some(note)) => Some(format!("{existing}; {note}")),
     };
 
     let tools = tool_names(&openai);
@@ -124,6 +144,7 @@ pub async fn messages(
             model,
             prompt_ids,
             config,
+            images,
             tools,
             effort,
             &openai,
@@ -169,13 +190,19 @@ async fn full_response(
     Json(translate_response(&openai_response, &client_model)).into_response()
 }
 
-/// A tool-carrying request is BUFFERED when guardrails are on, exactly as the
-/// OpenAI stream is and for the same reason (see `handler::stream_response`).
+/// Anthropic SSE stream over the model's token-by-token decode.
+///
+/// **Guardrailed requests are BUFFERED rather than streamed here**, by
+/// design: a rescued call has to replace the turn before anything is sent,
+/// and streaming it would leak the un-rescued syntax error as text before the
+/// tool-call event can arrive (`crates/server/CLAUDE.md` Gotcha 18).
 /// Everything else keeps the live path byte for byte.
+#[allow(clippy::too_many_arguments)]
 fn stream_response(
     model: AppState,
     prompt_ids: Vec<foundation::TokenId>,
     config: GenerationConfig,
+    images: Option<crate::vision::RequestImages>,
     tools: HashSet<String>,
     effort: ReasoningEffort,
     openai: &ChatCompletionRequest,
@@ -216,22 +243,30 @@ fn stream_response(
         );
 
         let mut call_index = 0u32;
-        let result = stream_blocking(&model, &prompt_ids, &config, &tools, effort, &mut |piece| {
-            let delta = match piece {
-                Piece::Text(text) => text_delta(text),
-                // The translator turns this into a `thinking` content block,
-                // opened on the first one and closed on the first text delta.
-                Piece::Reasoning(text) => reasoning_delta(text),
-                Piece::Tool(call) => {
-                    call_index += 1;
-                    tool_call_delta(call_index - 1, call)
-                }
-            };
-            send(
-                completion_chunk(id.clone(), created, backend_model.clone(), delta, None),
-                &mut translator,
-            );
-        });
+        let result = stream_blocking(
+            &model,
+            &prompt_ids,
+            &config,
+            images.as_ref(),
+            &tools,
+            effort,
+            &mut |piece| {
+                let delta = match piece {
+                    Piece::Text(text) => text_delta(text),
+                    // The translator turns this into a `thinking` content block,
+                    // opened on the first one and closed on the first text delta.
+                    Piece::Reasoning(text) => reasoning_delta(text),
+                    Piece::Tool(call) => {
+                        call_index += 1;
+                        tool_call_delta(call_index - 1, call)
+                    }
+                };
+                send(
+                    completion_chunk(id.clone(), created, backend_model.clone(), delta, None),
+                    &mut translator,
+                );
+            },
+        );
 
         match result {
             Ok(r) => {

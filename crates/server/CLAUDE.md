@@ -278,3 +278,64 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
    `--ignored`, needs `TURBOSPARK_GEMMA4_INSTALL_DIR`): both the streaming and
    non-streaming cases pass with this dispatch live, which is the first time
    that test has exercised anything but `run_raw_completion` on this backend.
+
+20. **IMAGES REACH BOTH ENDPOINTS THROUGH ONE DECODER, AND THAT IS THE
+   VENDORED CRATE'S DOING RATHER THAN THIS CRATE'S** (ROADMAP M-V8).
+   `/v1/messages` translates into the OpenAI request the chat route already
+   understands, and `anyllm_translate`'s `message_map/request.rs` maps an
+   Anthropic `ContentBlock::Image` onto `ChatContentPart::ImageUrl`: a base64
+   source becomes `data:<media_type>;base64,<data>`, a URL source passes
+   through. So `src/vision.rs` handles one shape and both endpoints work.
+
+   Gotcha 4's rule paid again, and it nearly did not: a first grep of
+   `mapping/message_map.rs` (16 lines, a module stub) found no `Image` arm and
+   suggested the Anthropic path lost images before this server saw them. The
+   arm is in `mapping/message_map/request.rs`. Grep the DIRECTORY, not the
+   file that shares its name.
+
+   **A REMOTE URL IS REFUSED RATHER THAN FETCHED.** Fetching would make this
+   server an HTTP client driven by request content -- an SSRF surface, a
+   timeout budget and a redirect policy, none of which belongs in a local
+   inference server.
+
+   **THE URL SHAPE IS VALIDATED WHATEVER THE BACKEND CAN SERVE, and the
+   payload is decoded only when it can.** A remote URL is a malformed request
+   for this server however it is configured, so refusing it on a vision
+   install and accepting it on a text-only one would leave a client unable to
+   tell which problem it had. Splitting `split_data_url` from
+   `decode_data_url` is what makes that free: a text-only backend pays nothing
+   for a multi-megabyte data URL it will discard. The first version validated
+   only when a tower was present and returned 200 on a remote URL, which the
+   integration tests caught.
+
+   **AN IMAGE THIS SERVER CANNOT SERVE IS REPORTED** on
+   `x-anyllm-degradation`, now on BOTH routes -- OpenAI's spec has no such
+   field, so that half is an extension rather than a translation. This
+   module's own header used to record that `compute_request_warnings` knows
+   nothing about images, which was true and was the gap. The turn still
+   SUCCEEDS: the text half is answerable, and refusing would break every
+   client that sends an incidental image.
+
+21. **`run_completion` TAKES THE IMAGES BECAUSE THE ENCODE AND THE GENERATION
+   MUST SHARE ONE LOCK.** A backend serializes on its one runner per call
+   (Gotcha 1), so `set_prompt_vision` followed by `run_completion` would be
+   two locks with a GAP: a second request landing in it overwrites the map,
+   and the first generation then prefills the second request's picture. Both
+   answer fluently and no test of either request alone can see it.
+   `RealChatModel::run_with_images` takes the lock once and holds it across
+   the encode, the injection and the decode, then CLEARS the map whether the
+   generation succeeded or not.
+
+   Speculation and chunked prefill are both skipped on that path, deliberately:
+   the qwen family this tower belongs to serves neither, so composing them
+   would be untested code on an unreachable path.
+
+   **THE GATE ASSERTS ON OUTPUT, NOT ON SHAPE, and that is M-V7's lesson
+   rather than a preference.** `tests/images.rs` covers every refusal with a
+   scripted backend and no model; it structurally cannot tell whether a
+   picture reaches the model. That is exactly the gap M-V5's injection bug
+   lived in for two milestones -- lengths and counts all agreed while the
+   model answered about a page it had never seen.
+   `real_backend.rs`'s `real_backend_reads_an_image_sent_over_both_endpoints`
+   asserts the transcription contains the page's own line numbers, and both
+   endpoints return byte-identical text on the real install.

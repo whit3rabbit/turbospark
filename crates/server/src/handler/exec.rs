@@ -82,25 +82,30 @@ pub(crate) async fn run_full(
     model: AppState,
     prompt_ids: Vec<foundation::TokenId>,
     config: GenerationConfig,
+    images: Option<crate::vision::RequestImages>,
     tools: HashSet<String>,
     effort: ReasoningEffort,
 ) -> Result<Generated, GenError> {
-    let joined =
-        tokio::task::spawn_blocking(move || {
-            let mut text = String::new();
-            let mut reasoning = String::new();
-            let mut calls = Vec::new();
-            let result =
-                stream_blocking(&model, &prompt_ids, &config, &tools, effort, &mut |piece| {
-                    match piece {
-                        Piece::Text(delta) => text.push_str(&delta),
-                        Piece::Reasoning(delta) => reasoning.push_str(&delta),
-                        Piece::Tool(call) => calls.push(call),
-                    }
-                });
-            (result, text, reasoning, calls)
-        })
-        .await;
+    let joined = tokio::task::spawn_blocking(move || {
+        let mut text = String::new();
+        let mut reasoning = String::new();
+        let mut calls = Vec::new();
+        let result = stream_blocking(
+            &model,
+            &prompt_ids,
+            &config,
+            images.as_ref(),
+            &tools,
+            effort,
+            &mut |piece| match piece {
+                Piece::Text(delta) => text.push_str(&delta),
+                Piece::Reasoning(delta) => reasoning.push_str(&delta),
+                Piece::Tool(call) => calls.push(call),
+            },
+        );
+        (result, text, reasoning, calls)
+    })
+    .await;
 
     match joined {
         Ok((Ok(decode), text, reasoning, calls)) => Ok(Generated {
@@ -133,6 +138,7 @@ pub(crate) fn stream_blocking(
     model: &AppState,
     prompt_ids: &[foundation::TokenId],
     config: &GenerationConfig,
+    images: Option<&crate::vision::RequestImages>,
     tools: &HashSet<String>,
     effort: ReasoningEffort,
     on_piece: &mut dyn FnMut(Piece),
@@ -165,7 +171,7 @@ pub(crate) fn stream_blocking(
     // `&mut dyn LogitProducer` (`ChatModel::run_completion`). The default
     // implementation is the sequential loop this line used to spell out, so
     // the scripted backend's path is unchanged.
-    let result = model.run_completion(prompt_ids, config, &mut |e| {
+    let result = model.run_completion(prompt_ids, config, images, &mut |e| {
         let (id, text) = match e {
             RawDecodeProgress::Token { id, delta, .. } => (id, delta),
             // `-1` is the tokenizer's "no such token": a flushed tail

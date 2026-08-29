@@ -22,8 +22,8 @@ fn request(body: serde_json::Value) -> ChatCompletionRequest {
 }
 
 fn prompt(model: &AppState, body: serde_json::Value) -> String {
-    let (ids, _) = plan(model, &request(body)).expect("plan should succeed");
-    model.tokenizer().decode(&ids, false)
+    let planned = plan(model, &request(body)).expect("plan should succeed");
+    model.tokenizer().decode(&planned.prompt_ids, false)
 }
 
 fn weather_tool() -> serde_json::Value {
@@ -154,7 +154,8 @@ fn no_tools_keeps_the_text_only_template() {
         "messages": [{"role": "system", "content": "Be brief."},
                      {"role": "user", "content": "hi"}]
     });
-    let (ids, _) = plan(&model, &request(body)).expect("plan should succeed");
+    let planned = plan(&model, &request(body)).expect("plan should succeed");
+    let ids = planned.prompt_ids;
 
     let messages = vec![
         tokenizer::Message::new(tokenizer::Role::System, "Be brief."),
@@ -209,7 +210,8 @@ fn a_generated_tool_call_is_decoded_out_of_the_stream() {
         4096,
         Vec::new(),
     ));
-    let (prompt_ids, config) = plan(&planning_model, &request).expect("plan should succeed");
+    let planned = plan(&planning_model, &request).expect("plan should succeed");
+    let (prompt_ids, config) = (planned.prompt_ids, planned.config);
 
     let mut ids = tok.encode("<tool_call>\n<function=get_weather>\n", false);
     ids.extend(tok.encode("<parameter=city>\nOslo\n</parameter>\n", false));
@@ -229,6 +231,7 @@ fn a_generated_tool_call_is_decoded_out_of_the_stream() {
         &model,
         &prompt_ids,
         &config,
+        None,
         &tool_names(&request),
         ReasoningEffort::Off,
         &mut |piece| pieces.push(piece),

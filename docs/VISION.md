@@ -5,11 +5,10 @@ What is built, what it measures, and the traps. Facts about the CHECKPOINT
 live in `docs/VISION_PHASE0.md` and are not repeated here; this page is about
 the IMPLEMENTATION.
 
-Status as of 2026-08-28: milestones M-V0 through M-V5 are done. The tower runs,
-agrees with mlx-vlm, and **its rows now reach a generated token**. What is
-missing is the front doors: nothing yet BUILDS a text+image prompt, so an
-image reaches the model only through `set_prompt_vision` called by hand
-(M-V6 is the tokenizer splice, M-V7 the CLI, M-V8 the server).
+Status as of 2026-08-29: milestones M-V0 through M-V8 are done. The tower
+runs, agrees with mlx-vlm, and an image reaches a generated token from the
+CLI and from both server endpoints. M-V9 (the multi-page memory oracle and
+hardening) is what is left.
 
 ## The pipeline, end to end
 
@@ -98,13 +97,20 @@ image) and a position past the prompt resolves to `(p, p, p)` with
 `p = position + rope_delta`. A decode step that used its cache index would
 jump.
 
-### The map is cleared by `reset()` and NOT by `rollback`
+### The map survives `reset()`, and M-V5 had that backwards
 
-A new generation is a new prompt, and a bulk-OCR loop is exactly the caller
-that opens once and walks pages -- page N's spans against page N+1's tokens
-blit the wrong image at positions that are not even placeholders. A
-speculative rewind stays inside one prompt and still needs its map. Both
-halves are pinned.
+The original rule was "reset clears it", so a bulk-OCR loop could not inherit
+page N's spans. `run_raw_completion` calls `producer.reset()` at ENTRY and a
+caller sets the map just before that call -- so the clear landed on the map
+for the very prompt about to be prefilled. **Every image run prefilled
+placeholder embeddings and answered fluently about a page it had not seen**,
+with the right prompt length and no error anywhere. M-V7's first end-to-end
+run found it; every test until then drove `produce` directly.
+
+The CALLER consumes the map instead, per page. A caller who forgets gets NO
+injection rather than the previous page's -- vague answers instead of
+confident wrong ones. `rollback` keeps it either way, since a speculative
+rewind stays inside one prompt.
 
 ## Six things that are one mutation from a fluent wrong model
 
@@ -450,9 +456,71 @@ equals `header.input_ids`. On the 1024x1280 page: 23 rendered ids expand to
 then runs on the port's own ids, and the cross-engine numbers above did not
 move by a digit -- which is what says the two sequences really are the same.
 
+## The server (M-V8)
+
+Both endpoints accept images, and one decoder serves them: `/v1/messages`
+translates into the OpenAI request the chat route already understands, and
+`anyllm_translate` maps an Anthropic `ContentBlock::Image` onto
+`ChatContentPart::ImageUrl` on the way. A base64 source becomes
+`data:<media_type>;base64,<data>`; a URL source passes through.
+
+**A remote URL is REFUSED rather than fetched.** Fetching one would make the
+server an HTTP client driven by request content: an SSRF surface, a timeout
+budget and a redirect policy, none of which belongs in a local inference
+server.
+
+**The URL SHAPE is validated whether or not this server can serve images**,
+and the payload is decoded only when it can. A remote URL is a malformed
+request for this server however it is configured, so refusing it on a vision
+install and accepting it on a text-only one would leave a client unable to
+tell which problem it had. Splitting the check from the decode means a
+text-only backend pays nothing for a multi-megabyte data URL it will discard.
+
+**An image this server cannot serve is REPORTED**, on `x-anyllm-degradation`,
+on both routes. That header existed for `/v1/messages` and its own module doc
+recorded that dropped images were not among the things it knew about -- which
+was the gap: a client sending a picture to a text-only install got a fluent
+text answer and no signal at all. The turn still succeeds, because the text
+half is answerable and refusing it would break every client that sends an
+incidental image.
+
+### The encode and the generation share ONE lock
+
+`ChatModel::run_completion` takes the images rather than exposing a separate
+"set the images" call, and that is a concurrency property rather than a style
+choice. A backend serializes on its one runner per call, so `set_prompt_vision`
+followed by `run_completion` would be two locks with a gap -- a second request
+arriving in that gap overwrites the map, and the first generation prefills the
+second's picture. Both answer fluently.
+
+The map is cleared at the END of the generation, whether it succeeded or not,
+which is the contract M-V7 established the hard way.
+
+### Measured, both wire formats
+
+Against the real install on the 1024x1280 page, `max_tokens: 48`,
+`temperature: 0`:
+
+```text
+openai    00012 | parity streaming streaming oracle fixture tensor kernel oracle manifest ... | 8316.48
+anthropic 00012 | parity streaming streaming oracle fixture tensor kernel oracle manifest ... | 8316.48
+```
+
+Identical to each other, to the CLI's transcription, and to what both engines
+produced in M-V5's greedy comparison.
+
+**The gate asserts on the OUTPUT rather than on a shape**, and that is the
+lesson M-V7 paid for: M-V5's injection bug lived through two milestones
+because every test drove `produce` directly, the lengths and counts all
+agreed, and the model answered fluently about a page it had never seen. A
+server dropping the image answers from the question alone and matches none of
+the page's line numbers.
+
 ## What is not built
 
-M-V7 through M-V9. See the milestone plan; in one line each:
-- **M-V7** CLI: `--image`, and image parts in `--messages-file`.
-- **M-V8** server: stop dropping image parts on both endpoints.
-- **M-V9** the memory oracle's multi-page loop, and hardening.
+M-V9. See the milestone plan; in one line each:
+- **M-V9** the memory oracle's multi-page loop, and hardening. The CLI's
+  `--image-batch` already walks pages over one open runner with the tower's
+  scratch dropped per page; what M-V9 adds is the oracle ASSERTING that the
+  peak is flat across them, plus NaN-safe parity instruments and an FP16
+  overflow capture.

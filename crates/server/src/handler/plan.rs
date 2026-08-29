@@ -10,7 +10,7 @@ use anyllm_translate::openai::{
 use runtime::GenerationConfig;
 use selection::ShapingConfig;
 use tokenizer::{
-    FunctionDefinition, HistoricalToolCall, JsonValue, Message, ReasoningEffort, Role,
+    ContentPart, FunctionDefinition, HistoricalToolCall, JsonValue, Message, ReasoningEffort, Role,
 };
 
 use crate::model::ChatModel;
@@ -134,15 +134,33 @@ fn to_message(message: &ChatMessage) -> Option<Message> {
     Some(Message {
         role: role_from(&message.role),
         content,
-        // EMPTY, and still empty at M-V6: this handler drops image parts a few
-        // lines up (`visible_text`), which is M-V8's job to change. Filling it
-        // here without that would build a prompt whose `<|image_pad|>` run has
-        // no tower rows behind it.
+        // Filled by `plan` when the backend HAS a tower and the request
+        // carries images; empty otherwise, which keeps every text request on
+        // the branch it has always taken. It is not filled here because
+        // whether images can be served is the BACKEND's answer, and this
+        // function does not see one.
         content_parts: Vec::new(),
         tool_calls,
         tool_call_id: message.tool_call_id.clone(),
         name: message.name.clone(),
     })
+}
+
+/// Rebuild one message's content as ordered parts, with `count` images before
+/// its text.
+///
+/// **PREPENDED, matching the reference processor** (`[image, text]`), which
+/// is what the CLI does and what `vision_logit_dump.rs` asserts against
+/// mlx-vlm. Appending moves every mRoPE position past the image and produces
+/// a different prompt for the same request.
+fn with_images(message: Message, count: usize) -> Message {
+    let mut parts: Vec<ContentPart> = (0..count).map(|_| ContentPart::Image).collect();
+    if let Some(text) = message.content.clone() {
+        if !text.is_empty() {
+            parts.push(ContentPart::Text(text));
+        }
+    }
+    Message::with_parts(message.role, parts)
 }
 
 fn tool_definition(tool: &ChatTool) -> FunctionDefinition {
@@ -203,11 +221,60 @@ pub(crate) fn reasoning_effort(request: &ChatCompletionRequest) -> Result<Reason
 }
 
 /// Renders the chat template, encodes it, and resolves the shaping config.
-pub(crate) fn plan(
-    model: &AppState,
-    request: &ChatCompletionRequest,
-) -> Result<(Vec<foundation::TokenId>, GenerationConfig), String> {
-    let messages: Vec<Message> = request.messages.iter().filter_map(to_message).collect();
+/// What `plan` produces: the ids to prefill, the sampling config, and any
+/// images the backend must encode before it does.
+pub(crate) struct Planned {
+    pub(crate) prompt_ids: Vec<foundation::TokenId>,
+    pub(crate) config: GenerationConfig,
+    pub(crate) images: Option<crate::vision::RequestImages>,
+    /// Set when the request carried images this backend cannot serve.
+    ///
+    /// REPORTED rather than silent: a caller who sent a picture and got a
+    /// text answer reads it as the model ignoring the image. The handler
+    /// turns this into a degradation header.
+    pub(crate) dropped_images: Option<String>,
+}
+
+pub(crate) fn plan(model: &AppState, request: &ChatCompletionRequest) -> Result<Planned, String> {
+    let mut messages: Vec<Message> = request.messages.iter().filter_map(to_message).collect();
+
+    // IMAGES, before anything is rendered: the splice needs each one's
+    // merged-token count, and the template renders one marker whatever the
+    // size (`docs/VISION_PHASE0.md` item 6).
+    //
+    // Decoding and preprocessing are PURE, so a malformed image costs a 400
+    // rather than the one runner this process has.
+    let carries_images = request.messages.iter().any(crate::vision::has_images);
+    let vision_info = if carries_images { model.vision() } else { None };
+    let mut dropped_images = None;
+    let mut per_message: Vec<usize> = Vec::new();
+    let mut encoded: Vec<Vec<u8>> = Vec::new();
+    if carries_images {
+        // SHAPE FIRST, whatever this backend can serve. A remote URL is a
+        // malformed request for this server however it is configured, so
+        // refusing it on a vision install and accepting it on a text-only one
+        // would leave a client unable to tell which problem it had. No
+        // payload is decoded here.
+        for message in &request.messages {
+            crate::vision::validate_urls(message)?;
+        }
+        match &vision_info {
+            Some(_) => {
+                for message in &request.messages {
+                    let bytes = crate::vision::image_bytes(message)?;
+                    per_message.push(bytes.len());
+                    encoded.extend(bytes);
+                }
+            }
+            None => {
+                dropped_images = Some(
+                    "this server's model has no vision tower, so image content parts were \
+                     ignored; run it against an install whose checkpoint carries one"
+                        .to_string(),
+                );
+            }
+        }
+    }
 
     let is_none_choice =
         matches!(&request.tool_choice, Some(ChatToolChoice::Simple(s)) if s == "none");
@@ -234,8 +301,43 @@ pub(crate) fn plan(
     // renderer that can express them (it already speaks OpenAI's shape:
     // `tool_calls` on an assistant turn, a forward scan of `tool` turns).
     // Without them, the text-only path stays exactly as it was.
+    // Attach the parts to the messages that carried them, IN ORDER. Only
+    // reached when the backend can serve images; a text-only backend leaves
+    // every message on the branch it has always taken.
+    if vision_info.is_some() && !per_message.is_empty() {
+        // `to_message` drops a message with no renderable content, so the
+        // request's messages and `messages` are not index-aligned. Walk them
+        // together the same way, which is what keeps an image-only turn's
+        // parts on the turn that sent them.
+        let mut counts = per_message.iter().copied();
+        let mut rebuilt = Vec::with_capacity(messages.len());
+        let mut planned = messages.into_iter();
+        for source in &request.messages {
+            let count = counts.next().unwrap_or(0);
+            match to_message(source) {
+                Some(_) => {
+                    let message = planned.next().expect("one planned message per kept source");
+                    rebuilt.push(if count > 0 {
+                        with_images(message, count)
+                    } else {
+                        message
+                    });
+                }
+                // An image-only turn: `to_message` drops it for having no
+                // text, and dropping it here would lose the picture too. It
+                // is rebuilt as a parts-only message.
+                None if count > 0 => rebuilt.push(Message::with_parts(
+                    role_from(&source.role),
+                    (0..count).map(|_| ContentPart::Image).collect(),
+                )),
+                None => {}
+            }
+        }
+        messages = rebuilt;
+    }
+
     let reasoning = reasoning_effort(request)?;
-    let prompt_ids = if tools.is_empty() {
+    let mut prompt_ids = if tools.is_empty() {
         let prompt = model
             .tokenizer()
             .apply_chat_template_with_reasoning(&messages, reasoning)
@@ -253,5 +355,34 @@ pub(crate) fn plan(
 
     let mut config = build_config(request)?;
     config.rate = model.rate_control();
-    Ok((prompt_ids, config))
+
+    // The SPLICE, once the template has rendered one marker per image.
+    // Everything above produced `prompt_ids` for a prompt whose placeholders
+    // are single tokens; the model sees `merged_tokens` copies of each.
+    let images = match (&vision_info, encoded.is_empty()) {
+        (Some(info), false) => {
+            let preprocessed = crate::vision::preprocess_all(&encoded, info)?;
+            let grids: Vec<_> = preprocessed.iter().map(|p| p.grid).collect();
+            let spliced = turbospark_vision_io::splice_and_walk(
+                &prompt_ids,
+                &grids,
+                info.specials,
+                info.params.merge_size,
+            )
+            .map_err(|e| format!("cannot place {} image(s): {e}", grids.len()))?;
+            prompt_ids = spliced.ids;
+            Some(crate::vision::RequestImages {
+                images: preprocessed,
+                positions: spliced.positions,
+            })
+        }
+        _ => None,
+    };
+
+    Ok(Planned {
+        prompt_ids,
+        config,
+        images,
+        dropped_images,
+    })
 }

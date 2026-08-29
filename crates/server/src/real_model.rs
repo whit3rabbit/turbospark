@@ -44,6 +44,14 @@ pub struct RealChatModel {
     drafter: runtime::SpeculativeDrafter,
     /// Tool-call guardrails, resolved once at open like the rate cap.
     guardrails: crate::GuardrailConfig,
+    /// The checkpoint's own image preprocessing parameters, read from the
+    /// install's `preprocessor_config.json` at open (ROADMAP M-V8).
+    ///
+    /// `None` on an install with no tower OR one whose sidecar is missing,
+    /// and the two are deliberately the same answer HERE: both mean this
+    /// server cannot serve an image, and the handler reports the drop either
+    /// way. The startup line distinguishes them.
+    preprocess_params: Option<turbospark_vision_io::PreprocessParams>,
 }
 
 impl RealChatModel {
@@ -175,7 +183,80 @@ impl RealChatModel {
             speculation: plan,
             drafter: choice.drafter,
             guardrails,
+            // Read at OPEN rather than per request: it is a property of the
+            // install, and a per-request read would put a file access on the
+            // hot path for a value that cannot change.
+            preprocess_params: std::fs::read_to_string(model_dir.join("preprocessor_config.json"))
+                .ok()
+                .and_then(|json| {
+                    turbospark_vision_io::PreprocessParams::from_preprocessor_config_json(&json)
+                        .ok()
+                }),
         })
+    }
+
+    /// Encode the images, inject them, and generate -- all under ONE lock.
+    ///
+    /// **The single lock is the whole point** (see `run_completion`'s doc).
+    /// `set_prompt_vision` and the generation are two mutations of one
+    /// runner, and a concurrent request landing between them would overwrite
+    /// the map: the first generation then prefills the second's picture, with
+    /// both requests answering fluently about the wrong thing.
+    ///
+    /// The map is CLEARED at the end rather than at the start, which is the
+    /// contract M-V7 established the hard way: `run_raw_completion` resets the
+    /// producer at ENTRY, so a clear there lands on the map for the prompt
+    /// about to be prefilled (`crates/runtime/src/real_forward_traits.rs`).
+    ///
+    /// Speculation and chunked prefill are BOTH skipped here, deliberately.
+    /// The qwen family this tower belongs to serves neither
+    /// (`supports_chunked_prefill` answers `false` for it, and no published
+    /// MoE conversion carries an ingestible drafter), so composing them would
+    /// be untested code on an unreachable path.
+    fn run_with_images(
+        &self,
+        prompt_ids: &[foundation::TokenId],
+        config: &GenerationConfig,
+        images: &crate::vision::RequestImages,
+        on_progress: &mut dyn FnMut(RawDecodeProgress),
+    ) -> Result<RawDecodeResult, RuntimeError> {
+        let Some(params) = self.preprocess_params.clone() else {
+            return Err(RuntimeError::Producer(
+                "this install declares no image preprocessing config; re-stream it with its \
+                 sidecars"
+                    .to_string(),
+            ));
+        };
+        let mut runner = self
+            .runner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        let mut embeddings = Vec::with_capacity(images.images.len());
+        for (i, image) in images.images.iter().enumerate() {
+            embeddings.push(
+                runner
+                    .encode_image(image, &params)
+                    .map_err(|e| RuntimeError::Producer(format!("image {i}: {e}")))?,
+            );
+        }
+        runner
+            .set_prompt_vision(&embeddings, &images.positions, prompt_ids.len())
+            .map_err(|e| RuntimeError::Producer(e.to_string()))?;
+
+        let result = run_raw_completion(
+            &mut *runner,
+            &self.tokenizer,
+            prompt_ids,
+            config,
+            self.context.resolved,
+            self.vocab_size,
+            &mut *on_progress,
+        );
+        // CONSUMED, whether the generation succeeded or not: a map left
+        // behind would apply to whatever text request arrives next.
+        runner.clear_prompt_vision();
+        result
     }
 
     /// What speculation this process resolved to, for the startup line.
@@ -276,12 +357,45 @@ impl ChatModel for RealChatModel {
     /// case is noise that trains an operator to ignore the startup line that
     /// matters. Refusing would be worse still: it turns a valid request into
     /// an error for a setting the caller never sent.
+    fn vision(&self) -> Option<crate::vision::VisionInfo> {
+        let runner = self
+            .runner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if !runner.has_vision_tower() {
+            return None;
+        }
+        let v = runner.vision_config();
+        Some(crate::vision::VisionInfo {
+            // Read off the INSTALL, never recalled. The pixel budget in
+            // particular has no safe default: the generic library pair is
+            // wrong for this family by a factor of 16 on the ceiling, which
+            // resizes every page to a fraction of its resolution and produces
+            // a correct-looking worse answer (`crates/vision-io` Gotcha 6).
+            params: self.preprocess_params.clone()?,
+            specials: turbospark_vision_io::VisionSpecialIds {
+                vision_start: v.vision_start_token_id as i32,
+                image_pad: v.image_token_id as i32,
+            },
+        })
+    }
+
     fn run_completion(
         &self,
         prompt_ids: &[foundation::TokenId],
         config: &GenerationConfig,
+        images: Option<&crate::vision::RequestImages>,
         on_progress: &mut dyn FnMut(RawDecodeProgress),
     ) -> Result<RawDecodeResult, RuntimeError> {
+        // IMAGES FIRST, AND UNDER THE SAME LOCK AS THE GENERATION. Encoding
+        // through the tower and then generating in two separately-locked calls
+        // leaves a gap a concurrent request can land in, overwriting the map
+        // between them -- so the first generation would prefill the second
+        // request's picture, fluently. `run_with_images` takes the lock once
+        // and holds it across the encode, the injection and the decode.
+        if let Some(images) = images {
+            return self.run_with_images(prompt_ids, config, images, on_progress);
+        }
         let block = match &self.speculation {
             runtime::SpeculationPlan::Enabled { block } if config.shaping.is_deterministic() => {
                 *block

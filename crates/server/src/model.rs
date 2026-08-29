@@ -50,12 +50,44 @@ pub trait ChatModel: Send + Sync {
     /// byte for byte what every caller did before this method existed --
     /// `ScriptedChatModel` therefore needs no implementation and every
     /// integration test keeps the exact path it had.
+    /// This install's vision configuration, or `None` where it has no tower.
+    ///
+    /// Read off the INSTALL by the backend: the pixel budget and the special
+    /// ids are per-checkpoint, and a constant in the handler would be
+    /// AGENTS.md Gotcha 38's shape. `None` is what makes an image request a
+    /// reported DROP rather than a silent one.
+    fn vision(&self) -> Option<crate::vision::VisionInfo> {
+        None
+    }
+
+    /// Runs one generation, and owns the choice of WHICH decode loop.
+    ///
+    /// **`images` CANNOT BE A SEPARATE CALL, and that is a concurrency
+    /// property rather than a style choice.** A backend serializes on its one
+    /// runner per call (Gotcha 1), so `set_prompt_vision` followed by
+    /// `run_completion` would be two locks with a gap: a second request
+    /// arriving in that gap overwrites the map, and the first generation then
+    /// prefills the second's picture. Both are fluent. Passing the images
+    /// here is what puts the encode, the injection and the decode inside ONE
+    /// lock.
     fn run_completion(
         &self,
         prompt_ids: &[foundation::TokenId],
         config: &GenerationConfig,
+        images: Option<&crate::vision::RequestImages>,
         on_progress: &mut dyn FnMut(RawDecodeProgress),
     ) -> Result<RawDecodeResult, RuntimeError> {
+        if images.is_some() {
+            // The DEFAULT backend is the scripted one, which has no tower and
+            // no runner to encode with. Refused BY NAME rather than dropped:
+            // a caller who sent a picture and got a text answer would read it
+            // as the model ignoring the image.
+            return Err(RuntimeError::Producer(
+                "this backend cannot encode images; run the server against a .gturbo install \
+                 whose checkpoint carries a vision tower"
+                    .to_string(),
+            ));
+        }
         self.with_producer(&mut |producer| {
             run_raw_completion(
                 producer,
