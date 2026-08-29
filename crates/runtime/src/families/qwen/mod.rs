@@ -18,7 +18,7 @@ mod mtp_state;
 mod produce;
 mod state;
 
-pub(crate) use attn::{encode_full_attention_block, QkNormConvention};
+pub(crate) use attn::{encode_full_attention_block, QkNormConvention, RopePosition};
 pub(crate) use batched_scratch::BatchedScratch;
 pub(crate) use dflash::DflashState;
 pub use dflash_state::{install_has_dflash, DflashDraftPolicy, DFLASH_BLOCK, DFLASH_SERVING_BLOCK};

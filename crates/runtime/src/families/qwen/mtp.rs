@@ -54,8 +54,8 @@ use super::mtp_state::{
     dump_dir, FC, FINAL_NORM, PRE_FC_NORM_EMBEDDING, PRE_FC_NORM_HIDDEN, TRUNK_FINAL_NORM,
 };
 use crate::families::qwen::{
-    dense, encode_full_attention_block, prefixed_layer_tensor, QkNormConvention, MTP_PREFIX,
-    RMS_EPS,
+    dense, encode_full_attention_block, prefixed_layer_tensor, QkNormConvention, RopePosition,
+    MTP_PREFIX, RMS_EPS,
 };
 use crate::real_forward::{RealForwardError, RealForwardRunner};
 use crate::real_forward_dispatch::{encode_embed_any, encode_gemv_any};
@@ -320,6 +320,13 @@ impl RealForwardRunner {
             0,
             position,
             QkNormConvention::Centered,
+            // SEQUENTIAL, and it stays that way even under an image prompt.
+            // The head drafts from `h_t` at one decode position past the
+            // prompt, where the trunk's own rope position is already
+            // sequential again -- and `speculation_blocker` refuses every
+            // install this could reach beside a tower today. If a drafter ever
+            // does run inside an image span, this is the line to revisit.
+            RopePosition::Sequential,
         )?;
         // RAW residual add. This family has `ffn_sandwich_norms: false`, and
         // normalizing here is the mutation that took the Qwen 3.6 reference

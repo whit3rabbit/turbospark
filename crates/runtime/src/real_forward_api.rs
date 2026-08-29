@@ -106,6 +106,53 @@ impl RealForwardRunner {
         tower.run_with_stages(&mut self.context, &self.weights, image, params)
     }
 
+    /// Hand this runner one prompt's image rows and mRoPE position table, so
+    /// the next prefill injects them (ROADMAP M-V5).
+    ///
+    /// Call it AFTER [`Self::encode_image`] for every image in the prompt and
+    /// BEFORE producing the prompt's first token. It is inherent rather than a
+    /// trait method on purpose: `LogitProducer` is implemented by a scripted
+    /// mock with no notion of an image, and widening it would put a vision
+    /// concept in every producer to serve one family.
+    ///
+    /// Two things about the lifetime. It survives a [`Self::rollback`],
+    /// because a speculative rewind stays inside the prompt the map describes.
+    /// It does NOT survive `reset()`, which is what makes a bulk-OCR loop safe
+    /// -- page N+1's prefill cannot inherit page N's spans.
+    pub fn set_prompt_vision(
+        &mut self,
+        embeddings: &[crate::vision::VisionEmbedding],
+        positions: &turbospark_vision_io::MropePositions,
+        prompt_len: usize,
+    ) -> Result<(), RealForwardError> {
+        // Validated against the TRUNK's width rather than the tower's declared
+        // `out_hidden_size`, because the row is about to be written into
+        // `scratch.x`. A checkpoint whose two disagree is the case worth
+        // catching, and reading the config for both sides would not catch it.
+        let hidden = self.arch.hidden_size as usize;
+        self.prompt_vision = Some(crate::vision::PromptVision::new(
+            embeddings, positions, prompt_len, hidden,
+        )?);
+        Ok(())
+    }
+
+    /// Drop the injection map without resetting the KV cache.
+    ///
+    /// `reset()` already does this and is what an ordinary generation loop
+    /// calls. This is for a caller that wants to continue the SAME context
+    /// with the images behind it -- past the last span every position is text
+    /// anyway, so the only thing still being read is `rope_position`, and
+    /// dropping the map would silently move it back to the raw token index.
+    /// Reach for it only when that is what you mean.
+    pub fn clear_prompt_vision(&mut self) {
+        self.prompt_vision = None;
+    }
+
+    /// The injection map currently set, if any.
+    pub fn prompt_vision(&self) -> Option<&crate::vision::PromptVision> {
+        self.prompt_vision.as_ref()
+    }
+
     fn open_vision_tower(&mut self) -> Result<(), RealForwardError> {
         if !self.arch.vision.is_active() {
             return Err(RealForwardError::Unsupported(

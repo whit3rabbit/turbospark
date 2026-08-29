@@ -160,6 +160,7 @@ impl RealForwardRunner {
             steering: None,
             install_dir: dir.to_path_buf(),
             vision: None,
+            prompt_vision: None,
             skip_head: false,
         };
         match runner.arch.family {

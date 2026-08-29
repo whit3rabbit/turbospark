@@ -4,7 +4,9 @@ use std::time::Instant;
 
 use foundation::LogitValue;
 
-use super::attn::{encode_full_attention_block, encode_linear_block, QkNormConvention};
+use super::attn::{
+    encode_full_attention_block, encode_linear_block, QkNormConvention, RopePosition,
+};
 use super::dense;
 use super::moe;
 use super::{layer_tensor, RMS_EPS, TRUNK_PREFIX};
@@ -61,17 +63,53 @@ impl RealForwardRunner {
         let base = self.index.header.index_size;
 
         let mut pass = self.context.begin_pass_labeled("cb1 (attn+router)");
-        encode_embed_any(
-            &mut self.context,
-            &pass,
-            &self.weights,
-            &self.index,
-            embed_name,
-            (&self.scratch.x, 0),
-            token as u32,
-            hidden as u32,
-            1.0,
-        )?;
+        // THE IMAGE INJECTION (ROADMAP M-V5). At an image-pad position the
+        // vision tower's row IS this token's embedding, so the table lookup is
+        // replaced rather than added to -- the placeholder id carries no
+        // meaning and blending the two would mix a text embedding into every
+        // patch.
+        //
+        // **A HOST WRITE INTO `scratch.x`, and the first one in this repo from
+        // outside the decode flow.** It is sound because of WHEN it happens,
+        // not because of any barrier: `pass` is not committed until the first
+        // router wait far below, the buffer is shared storage, and a host write
+        // that lands before commit is visible to every dispatch in that buffer.
+        // Move this after any `pass.commit()` and it becomes a race the GPU
+        // wins silently, with the previous token's residual reaching the first
+        // layer.
+        //
+        // This is the family's ONLY embedding call. The qwen flow is the one
+        // `supports_chunked_prefill()` answers `false` for, so there is no
+        // chunked driver with a second site, and `produce_prefill` is this
+        // same function under `skip_head`.
+        match self
+            .prompt_vision
+            .as_ref()
+            .and_then(|pv| pv.row_for(position))
+        {
+            Some(row) => gpu::write_buffer_bytes(&self.scratch.x, 0, row),
+            None => encode_embed_any(
+                &mut self.context,
+                &pass,
+                &self.weights,
+                &self.index,
+                embed_name,
+                (&self.scratch.x, 0),
+                token as u32,
+                hidden as u32,
+                1.0,
+            )?,
+        }
+        // Resolved ONCE per token, before the borrow split below hands
+        // `self`'s fields out piecewise. `Sequential` with no image prompt set,
+        // which is every text-only run and every install that carries no tower.
+        let rope_position = match self.prompt_vision.as_ref() {
+            Some(pv) => {
+                let (t, h, w) = pv.rope_position(position);
+                RopePosition::Triple(t, h, w)
+            }
+            None => RopePosition::Sequential,
+        };
 
         let qwen = self.real_qwen.as_ref().expect("real Qwen state present");
         let qwen_rotary_dim = qwen.rotary_dim;
@@ -152,6 +190,10 @@ impl RealForwardRunner {
                     // The TRUNK's q/k norms are plain. Its MTP head's, which
                     // carry the same names through the same call, are not.
                     QkNormConvention::Plain,
+                    // Mask-1 layers only, which is where this call already is:
+                    // a mask-2 GDN layer keeps its history in a recurrent
+                    // accumulator and has no rope at all.
+                    rope_position,
                 )?;
             }
 

@@ -226,6 +226,22 @@ pub struct RealForwardRunner {
     /// touches. **`None` therefore means "not yet asked for", never "this
     /// install has none"** -- that question is `arch.vision.is_active()`.
     pub(crate) vision: Option<crate::vision::VisionTower>,
+    /// One prompt's image rows and mRoPE position table (ROADMAP M-V5), set
+    /// by [`RealForwardRunner::set_prompt_vision`] between encoding the images
+    /// and prefilling the prompt they belong to.
+    ///
+    /// **`None` is the whole degenerate-equivalence guarantee.** Every text
+    /// prompt, every install without a tower, and every caller that has not
+    /// asked for injection leaves it unset, and the two sites that read it
+    /// (the embedding blit and the rope position, both in
+    /// `families/qwen/produce.rs`) then execute exactly the statements they
+    /// executed before vision existed.
+    ///
+    /// Cleared by `reset()` and NOT by `rollback`: a new generation is a new
+    /// prompt, where a stale span map would blit one page's rows into the
+    /// next page's prefill, while a speculative rewind stays inside one
+    /// prompt and still needs the map it was built with.
+    pub(crate) prompt_vision: Option<crate::vision::PromptVision>,
     /// Set for the duration of one [`LogitProducer::produce_prefill`] call:
     /// the caller is discarding this token's logits, so the output head
     /// (final norm, full-vocab GEMV, softcap, host readback) is skipped.

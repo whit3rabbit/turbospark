@@ -25,6 +25,13 @@ impl LogitProducer for RealForwardRunner {
         if let Some(capture) = self.resid_capture.as_mut() {
             capture.note_generation_start();
         }
+        // A new generation is a new PROMPT, and the injection map is indexed
+        // by position within one. Carrying it over is what a bulk-OCR loop
+        // does by default -- open once, walk pages -- and page N's spans
+        // against page N+1's tokens blits the wrong image at positions that
+        // are not even placeholders, fluently. `rollback` deliberately does
+        // NOT do this; that one stays inside a prompt.
+        self.prompt_vision = None;
     }
 
     fn produce(

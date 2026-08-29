@@ -163,6 +163,33 @@ pub(crate) enum QkNormConvention {
     Centered,
 }
 
+/// Which position, or positions, this block's RoPE rotates by.
+///
+/// **The `position` argument keeps its other two jobs either way**: it is the
+/// KV slot index and the `position + 1` attention span, and neither moves for
+/// an image. Only the ANGLE differs, which is what lets vision reach this
+/// family without touching the cache at all.
+///
+/// A parameter rather than a field on `RealQwenState`, following
+/// [`QkNormConvention`]'s precedent one call site over: the MTP head runs
+/// through this same function and has no prompt of its own to index.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum RopePosition {
+    /// Rotate by the `position` argument. Every caller before ROADMAP M-V5,
+    /// and every caller on a text-only prompt.
+    Sequential,
+    /// Rotate by this `(t, h, w)`, which an image prompt's own position table
+    /// supplies (`vision::PromptVision::rope_position`).
+    ///
+    /// **`t == h == w` here still takes the EXISTING kernel**, and that is the
+    /// whole dispatch rule. It is a property of the DATA rather than a
+    /// classification of the token: `get_rope_index` gives every text token of
+    /// a mixed prompt the same number in all three slots, so the divergence
+    /// test IS the "is this an image pad" test, with nothing extra to plumb
+    /// and nothing to get out of step.
+    Triple(i32, i32, i32),
+}
+
 /// Mask-1 layer: gated full attention.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn encode_full_attention_block(
@@ -178,6 +205,7 @@ pub(crate) fn encode_full_attention_block(
     layer: usize,
     position: usize,
     qk_norms: QkNormConvention,
+    rope_position: RopePosition,
 ) -> Result<(), RealForwardError> {
     let gpu_err = RealForwardError::Gpu;
     let hidden = arch.hidden_size as usize;
@@ -243,21 +271,69 @@ pub(crate) fn encode_full_attention_block(
     }
 
     let theta = arch.full_rope_theta as f32;
+    // The mRoPE kernel fires only where the three components actually differ,
+    // which on a real prompt is image-pad positions and nothing else. A text
+    // token of a MIXED prompt takes this same `encode_rope_neox_subdim` call
+    // it always took (`docs/VISION_PHASE0.md` item 2 proves `t == h == w`
+    // there), so the pre-vision engine's bytes survive an image appearing
+    // earlier in the same prompt -- not merely a prompt with no image in it.
+    //
+    // The two kernels share `apply_neox_pair`, so the boundary between these
+    // arms is exact rather than approximate; `rope_mrope_interleaved` at
+    // `t == h == w` produces the identical bits.
+    //
+    // **THE DEGENERATE ARM IS THEREFORE A NO-OP TODAY, AND THE MUTATION THAT
+    // SAYS SO SURVIVES ON PURPOSE.** Deleting it -- so every `Triple` reaches
+    // the new kernel, degenerate or not -- leaves all nine cases in
+    // `tests/vision_inject_synthetic.rs` green, the frozen digest of a run
+    // with three genuinely divergent image positions included. That is the
+    // PREDICTED result and it is the end-to-end confirmation of what
+    // `at_t_equals_h_equals_w_it_is_bit_identical_to_rope_neox_subdim` asserts
+    // one crate down, reached here through the real trunk rather than a
+    // fixture. The arm is kept for two reasons that are not numerical: it
+    // keeps a text-only mixed prompt on the dispatch path the pre-vision
+    // engine used, so a future change to the mRoPE kernel cannot reach a text
+    // token at all, and it means the claim rests on which function is called
+    // rather than on the shader compiler continuing to agree.
+    let mrope = match rope_position {
+        RopePosition::Sequential => None,
+        RopePosition::Triple(t, h, w) if t == h && h == w => None,
+        RopePosition::Triple(t, h, w) => Some((t as u32, h as u32, w as u32)),
+    };
+    let scalar = match rope_position {
+        RopePosition::Sequential => position as u32,
+        RopePosition::Triple(t, _, _) => t as u32,
+    };
+    let section = arch.vision.mrope_section;
     for (data, heads) in [
         ((&scratch.q, 0u64), num_heads),
         ((k_buf, k_off as u64), num_kv),
     ] {
-        gpu::encode_rope_neox_subdim(
-            context,
-            pass,
-            data,
-            position as u32,
-            heads,
-            head_dim,
-            qwen.rotary_dim,
-            theta,
-        )
-        .map_err(gpu_err)?;
+        match mrope {
+            Some(positions) => gpu::encode_rope_mrope_interleaved(
+                context,
+                pass,
+                data,
+                positions,
+                heads,
+                head_dim,
+                qwen.rotary_dim,
+                (section[0] as u32, section[1] as u32, section[2] as u32),
+                theta,
+            )
+            .map_err(gpu_err)?,
+            None => gpu::encode_rope_neox_subdim(
+                context,
+                pass,
+                data,
+                scalar,
+                heads,
+                head_dim,
+                qwen.rotary_dim,
+                theta,
+            )
+            .map_err(gpu_err)?,
+        }
     }
 
     gpu::encode_attention_decode(

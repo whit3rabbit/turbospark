@@ -36,10 +36,13 @@
 //! quietly become a general one.
 
 mod block;
+mod inject;
 mod scratch;
 mod shape;
 mod stages;
 mod weights;
+
+pub use inject::PromptVision;
 
 use std::path::Path;
 
