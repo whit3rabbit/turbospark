@@ -275,4 +275,39 @@ final class ToolPermissionsTests: XCTestCase {
         approved = await store.isApproved(sessionID: sessionID, toolName: "web_fetch")
         XCTAssertFalse(approved)
     }
+
+    func testMcpServerAutoApprovePermission() {
+        let server = McpServerConfig(
+            name: "trusted-mcp",
+            transport: .stdio(command: "node", args: ["server.js"]),
+            isEnabled: true,
+            autoApprove: true
+        )
+        let project = AppProject(
+            name: "Project with MCP",
+            permissions: .standard, // ask for mcp by default
+            mcpServers: [server]
+        )
+
+        let safeCall = AppToolCall(
+            name: "mcp__trusted-mcp__read_data",
+            arguments: ["query": "select count"],
+            category: .mcp
+        )
+        let decision = AppToolPermissionEngine.evaluate(call: safeCall, project: project)
+        XCTAssertEqual(decision, .allow, "Trusted MCP server with autoApprove=true should allow safe calls.")
+
+        let dangerousCall = AppToolCall(
+            name: "mcp__trusted-mcp__delete_user",
+            arguments: ["id": "123"],
+            category: .mcp
+        )
+        let dangerousDecision = AppToolPermissionEngine.evaluate(call: dangerousCall, project: project)
+        if case .ask = dangerousDecision {
+            // Expected
+        } else {
+            XCTFail("Destructive MCP call should still prompt for approval, got \(dangerousDecision)")
+        }
+    }
 }
+

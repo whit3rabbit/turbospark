@@ -115,7 +115,26 @@ public enum AppToolPermissionEngine {
             return .deny(reason: "The \(category.label) category is set to Deny in project settings.")
         }
 
-        // 5. Always Ask Mode: Prompts on any mutating or external action
+        // 5. MCP Server-level Auto-Approval Check
+        if category == .mcp {
+            let serverName: String?
+            if call.name.hasPrefix("mcp__") {
+                let parts = call.name.components(separatedBy: "__")
+                serverName = parts.count >= 2 ? parts[1] : nil
+            } else {
+                serverName = call.arguments["server"] ?? call.arguments["server_name"]
+            }
+
+            if let sName = serverName {
+                let allServers = (project?.mcpServers ?? []) + GlobalMcpFileStore.load().servers
+                if let server = allServers.first(where: { $0.name.lowercased() == sName.lowercased() }),
+                   server.autoApprove && !risk.isHighRisk {
+                    return .allow
+                }
+            }
+        }
+
+        // 6. Always Ask Mode: Prompts on any mutating or external action
         if permissions.mode == .ask || categoryPermission == .ask {
             if category == .fileRead && risk.level == .safe {
                 return .allow
@@ -124,7 +143,7 @@ public enum AppToolPermissionEngine {
             return .ask(assessment: risk, reason: reason)
         }
 
-        // 6. Auto Mode ("Approve for me" - Unsloth Studio default):
+        // 7. Auto Mode ("Approve for me" - Unsloth Studio default):
         // Automatically runs safe and low-risk operations; pauses for approval on high-risk operations.
         if permissions.mode == .auto {
             if risk.isHighRisk {
