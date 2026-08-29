@@ -83,7 +83,7 @@ reaches the same claim through the real trunk.
 
 **The degenerate arm is therefore a no-op today and the mutation that says so
 survives on purpose.** Deleting it -- so every triple reaches the new kernel
--- leaves all nine synthetic cases green, the frozen digest included. It is
+-- leaves all ten synthetic cases green, the frozen digest included. It is
 kept so a future change to the mRoPE kernel cannot reach a text token at all,
 and so the claim rests on which function is called rather than on the shader
 compiler continuing to agree.
@@ -162,11 +162,13 @@ The tower opens LAZILY, on the first image. A text-only session on a vision
 install pays none of the above, which is why `arch.vision.is_active()` and not
 `runner.vision.is_none()` is the question "does this install have a tower".
 
-**The lever if the extreme page ever matters is row-tiling the MLP.**
-`fc1 -> gelu -> fc2` is row-independent, so a fixed row tile caps the 555 MB
-term at that size with identical arithmetic. Attention cannot be tiled the
-same way -- it is bidirectional over the whole page -- so that lever bounds
-the MLP term alone.
+**The lever if the extreme page ever matters is row-tiling the MLP.** The
+largest single allocation in that 1.9 GB is `VisionScratch::h1`, the
+`[patches, 4304]` FP16 intermediate, which is 555 MB at 64,516 patches.
+`fc1 -> gelu -> fc2` is row-independent, so a fixed row tile caps that term at
+the tile's size with identical arithmetic. Attention cannot be tiled the same
+way -- it is bidirectional over the whole page -- so the lever bounds the MLP
+term alone.
 
 ## The second slot is not load-bearing yet
 
@@ -209,8 +211,8 @@ rows. Setup is in the test's own header. Measured 2026-08-28:
 0.999993** for this tower, not above it. There is no gap left to attribute.
 
 **Stage 3, `crates/runtime/tests/vision_inject_synthetic.rs`** (1.1 s, no
-network). Nine cases over the same synthetic fixture, covering the two seams
-M-V5 adds. Three of them are the ones worth naming.
+network). Ten cases over the same synthetic fixture, covering the two seams
+M-V5 adds plus the lifetime rule M-V7 corrected. Four of them are worth naming.
 
 A vision install handed no image reproduces a SEPARATELY BUILT no-tower
 install's logits exactly, which says the tower's presence moves no trunk byte.
@@ -220,6 +222,16 @@ riding beside it: changing the token id at an image position must move
 nothing, and changing one at a text position must move something -- the pair
 is the point, since the first half alone passes against a flow ignoring token
 ids and the second alone against one that never blits.
+
+The fourth arrived with M-V7 and is the only one that drives the GENERATION
+LOOP rather than `produce`:
+`an_injected_map_survives_the_generation_loops_own_reset` calls
+`run_raw_completion` and requires the injection to still be there afterwards.
+The nine cases that preceded it could not see the `reset()` bug described
+above, because not one of them called the function that calls `reset()`. Its
+sibling
+`only_an_explicit_clear_drops_the_injection_map` states the other half of the
+contract, so the map's lifetime is pinned from both ends.
 
 **Stage 4, `crates/bench/tests/vision_logit_dump.rs` + `scripts/kld_mlx_vlm.py`**
 (`#[ignore]`d). The full model against mlx-vlm on a text+image prompt. Stage 2
@@ -248,7 +260,7 @@ into a 1,302-token prompt):
 | **shape floor** (the reference against ITSELF, batched vs cached) | 0.1437 | 95.00% |
 | **B: the reference's own merger rows** through this port | **0.1339** | **96.08%** |
 | **A: this port's own tower**, the whole pipeline | 0.4214 | 89.70% |
-| greedy continuation, 48 tokens, arm A | -- | **100%** |
+| greedy continuation, arm A, 48 tokens each side | -- | **100%** |
 
 **Arm B is BELOW the floor**, so the injection, the position table, the mRoPE
 dispatch and the trunk have no gap left to attribute. Arm A's residual is the
@@ -267,6 +279,11 @@ here would understate it by five orders of magnitude.
 the SAME transcription -- the same table rows, the same figures, the same word
 sequence -- differing only by one leading whitespace token. 0.42 mean nats at
 89.7% top-1 sounds like a broken model until the output is read.
+
+The exact accounting, since "100%" over an aligned comparison needs its
+denominator stated: 48 tokens generated on each side, best alignment at shift
+-1, **47 compared and 47 equal, first divergence `None`**. The shift is this
+port's own leading token, which a greedy continuation is free to emit.
 
 ### The position table was checked against the reference directly
 

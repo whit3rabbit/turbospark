@@ -1,10 +1,22 @@
 # Vision Phase 0 findings (qwen3_5 vision tower)
 
 Fact-finding for the vision bring-up (see the approved plan at milestone
-M-V0). Everything below is read off real checkpoint headers, real config
-files, and the vendored `mlx-vlm` reference source at `../mlx-v/mlx-vlm`
-(no model weights downloaded, no forward pass run). Items 3 and 4 need an
-actual forward pass and are left open pending a download decision.
+M-V0). The numbered items below were read off real checkpoint headers, real
+config files, and the vendored `mlx-vlm` reference source at `../mlx-v/mlx-vlm`
+-- at the time they were written, with no model weights downloaded and no
+forward pass run.
+
+**Nothing in this document is open any more.** Items 3 and 4 said they needed a
+forward pass and were waiting on a download decision; both were run and both
+are marked RESOLVED in place. Sections 0, 0b and 0c record what running the
+real ingest, the real tower and the real end-to-end pipeline did to the
+readings, including the one instrument this document's own numbers corrected.
+Read a numbered item WITH the section above it that names the milestone that
+exercised it.
+
+This page stays the home for facts about the CHECKPOINT. Facts about the
+IMPLEMENTATION -- the pipeline, the four gates, the injection seams, the
+cross-engine rows -- live in `docs/VISION.md` and are not duplicated here.
 
 Checkpoints probed: `prism-ml/Bonsai-27B-mlx-1bit` (1-bit) and
 `mlx-community/Qwen3.8-27B-4bit` (INT4). Their `vision_config`,
@@ -92,6 +104,53 @@ interleaving the tower with trunk tensors would make it over-fetch rather than
 miss data. That is now measured rather than hypothetical: the span is 4,885
 MiB for 879 MiB of tensors on `mlx-community/Qwen3.8-27B-4bit`, where Bonsai's
 is 879 for 879. The over-fetch is correct and costs disk, not accuracy.
+
+## 0c. What M-V5 through M-V8 settled, and the two items it CLOSES (2026-08-29)
+
+M-V4 ran the tower in isolation; M-V5 through M-V8 ran the whole pipeline, so
+the readings below stop being predictions. Numbers and implementation live in
+`docs/VISION.md`; what belongs here is which of THIS document's claims got
+exercised.
+
+**Item 2's mRoPE derivation survived contact with a kernel and with the
+reference's own table.** `rope_mrope_interleaved` implements the two `min()`
+clamps rather than the `i % 3` collapse, exactly as the item's caveat required,
+and `mrope_position_triples` was then diffed against `get_rope_index`'s own
+`position_ids` on all 1,302 positions of a real text+image prompt: zero
+disagreements, `rope_delta` -1240 on both sides. The item's closing paragraph
+about the deferral is unchanged and is still the lesson.
+
+**Item 6's post-tokenization splice is what M-V6 built**, and the reason it had
+to be one was sharper than the item stated. The template renders exactly one
+`<|image_pad|>` per image whatever its size, so the expansion cannot precede
+the template -- and it must not be done by editing the rendered STRING either,
+because `<|image_pad|>` spelled into prose tokenizes as its angle brackets and
+letters rather than as the special token, yielding a prompt of roughly the
+right length carrying none of the right ids. Measured: 23 rendered ids expand
+to **1,302, byte-identical to the mlx-vlm processor's**.
+
+**Item 5's `(T, P_h, P_w, C)` requirement bit a MEASUREMENT SCRIPT rather than
+the pipeline**, which is the one outcome the item did not anticipate. It warned
+that a mismatch is silent wrong numerics, and `crates/vision-io` got it right;
+`scripts/kld_mlx_vlm.py`'s first version then wrote the processor's raw
+`pixel_values` without permuting them and read 18.87 mean nats on the image
+positions against a near-exact 0.00026 median on the text ones. A convention
+this document establishes has to hold in the instruments too.
+
+**Item 4's deferred OCR measurement is CLOSED AS MOOT, not answered.** That
+item deferred "the full end-to-end OCR-text-diff" to M-V5's gate, meaning the
+INT4 tail it measured. M-V5's gate ran, and it ran on the FP16 tower the same
+item recommended -- so what exists is a 100% greedy agreement with mlx-vlm over
+47 aligned tokens at FP16, and no INT4 number at all. The INT4 tail is
+unmeasured end to end and stays that way unless someone re-opens INT4, in which
+case that measurement is the first thing owed. Recorded as moot rather than
+deleted, because "the gate we deferred it to has run" reads like an answer.
+
+**Item 3's FP16 decision is exercised rather than merely argued.** The
+extreme-page probe put peak activations at 13.8% of FP16's ceiling; the tower
+has since run FP16 end to end through a real page on two checkpoints with no
+overflow, and `docs/VISION.md`'s "what is not built" still lists an FP16
+overflow CAPTURE as owed -- the headroom is measured, the guard is not.
 
 ---
 
@@ -283,7 +342,9 @@ M-V2's own gate was to rerun the probe before finalizing FP16. **That has
 now been run and FP16 is confirmed.**
 
 A dense 4064x4064 OCR page (16,516,096 px, just under the 16,777,216
-ceiling; `/tmp/vision-probe/make_extreme_image.py`) resizes to
+ceiling; `scripts/make_vision_test_page.py`, which is that throwaway
+`/tmp/vision-probe/make_extreme_image.py` moved into the repo so this row is
+reproducible rather than quotable) resizes to
 `grid_thw=[1,254,254]` -- **64,516 patches, 12.6x this section's original
 5,120** and essentially the largest input the processor will accept.
 
@@ -387,6 +448,15 @@ which GEMM kernel path the tower needs (plain FP16 batched matmul, not the
 INT4 kernel M-V2's table assumed) and removes one risk item while
 introducing none.
 
+**CONFIRMED AND SHIPPED.** M-V2 built the plain FP16 batched matmul and M-V3's
+walk writes the tower at FP16 (dtype tag 2), narrowly: `readable_resident_dtype`
+accepts that tag under the `vision.` prefix and refuses it everywhere else,
+because `norm_view` and `read_bf16_host` are dtype-BLIND and would MISREAD an
+FP16 tensor rather than reject it (`docs/VISION.md`). The `fc2` group-size
+problem this item found is gone with the quantization that caused it, and the
+INT4 tail it measured is now the only reason to re-open the question -- see
+section 0c for why its deferred end-to-end number was never taken.
+
 ## 5. Resize semantics -- RESOLVED
 
 Read directly from `../mlx-v/mlx-vlm/mlx_vlm/models/qwen3_vl/processing_qwen3_vl.py`
@@ -478,7 +548,19 @@ token ids, not on prompt text). This is simpler than the plan's original
 "splice N pad tokens into message content before render" framing; update
 M-V6 to splice at the token-id level instead.
 
+**BUILT ON M-V6 AS DESCRIBED** (`turbospark_vision_io::splice_and_walk`), and
+the ordering constraint this item derives is what forced the helper's shape:
+called separately, the splice takes merged-token COUNTS while the walk takes
+GRIDS, and nothing makes a caller derive the first from the second. The
+composed helper derives them, so a wrong-length placeholder run and a
+wrong-size position table cannot be produced independently. `add_vision_id`
+stayed hardcoded `false`, exactly as this item said it could.
+
 ## Corrections to the approved plan (M-V2/M-V3 kernel table and risk register)
+
+**All seven landed as written.** Kept as a record of what the plan got wrong
+rather than as a task list; each one was a silent-wrong-numerics trap at the
+time it was caught.
 
 1. `intermediate_size` is **4304**, not 4608 (fc1/fc2 shapes in the kernel
    table). 4608 is only the merger's hidden width (`hidden_size *
@@ -512,21 +594,63 @@ M-V6 to splice at the token-id level instead.
 
 Both ran against the real `prism-ml/Bonsai-27B-mlx-1bit` vision tower
 (879 MiB, fetched by ranged HTTP -- the 27B text trunk was never
-downloaded) and a synthetic rendered OCR page, via:
+downloaded) and a synthetic rendered OCR page.
+
+**The paths below are NOT the ones the original run used.** It wrote to
+`/tmp/vision-probe`, that directory was cleared, and a later handoff sent a
+session looking for it. The durable cache is `~/models/vision-probe` and it
+holds the TOWER ALONE -- no `config.json`, no page -- so a re-run supplies
+both. The config is safe to take from the Qwen3.8 cache: item 0 established
+that the two checkpoints' `vision_config` blocks are identical, which is the
+same fact that lets one baseline serve both.
 
 ```sh
+# The tower, if it is not already at ~/models/vision-probe.
 uv run --python 3.12 --with requests -- \
-  python scripts/fetch_vision_tower.py prism-ml/Bonsai-27B-mlx-1bit /tmp/vision-probe
+  python scripts/fetch_vision_tower.py prism-ml/Bonsai-27B-mlx-1bit \
+    ~/models/vision-probe
+
+# The page. 1024x1280 for this section's original rows, the 4064x4064
+# default for the extreme-page table. The generator writes the file it is
+# given and does not create its parent.
+mkdir -p ~/models/vision-probe/imgs
+uv run --python 3.12 --with pillow -- \
+  scripts/make_vision_test_page.py ~/models/vision-probe/imgs/ocr_page.png \
+    --size 1024 1280
 
 uv run --python 3.12 --with mlx --with numpy --with pillow --with transformers -- \
   python scripts/vision_tower_probe.py \
     --vendor-root ../mlx-v/mlx-vlm \
-    --config /tmp/vision-probe/config.json \
-    --tower-dir /tmp/vision-probe \
-    --image /tmp/vision-probe/imgs/ocr_page.png \
+    --config ~/models/vision-probe-qwen38/config.json \
+    --tower-dir ~/models/vision-probe \
+    --image ~/models/vision-probe/imgs/ocr_page.png \
     --mode activation   # or --mode int4
 ```
 
-**Not yet run: the 4096x4096 extreme-page-size activation check** flagged
-in item 3, and the full end-to-end OCR-text-diff measurement flagged in
-item 4 (needs the text trunk, deferred to M-V5).
+A page rendered at a different seed or point size is a different input, and
+the probe's answer depends on the input as much as on the tower -- the
+generator's own docstring records why the page is dense small text rather
+than mostly blank. Expect the rows to reproduce in SHAPE (the two step jumps,
+at blocks 8-9 and 25-26) rather than to the digit.
+
+### What this section used to say was not yet run
+
+**Both items are settled, and the paragraph is replaced rather than deleted
+because of HOW it went stale.** It listed two open measurements. Item 3's own
+body was later rewritten in place with the answer to the first, and this
+closing note was not touched, so the same page asserted a measurement was
+outstanding a few paragraphs after reporting it. A status line at the FOOT of
+a document does not get re-read when the body above it is edited; prefer
+marking an item resolved where it lives.
+
+The 4096x4096 extreme-page activation check RAN on 2026-08-26 and is in item 3
+above: 64,516 patches, block 26 absmax 9,024, FP16 confirmed with a factor of
+7.3 in hand. The end-to-end OCR-text-diff is CLOSED AS MOOT rather than
+answered -- it was a question about the INT4 tower, the recommendation was to
+ship FP16, and section 0c records what exists in its place and what would be
+owed if INT4 were ever re-opened.
+
+The Bonsai tower these two items were measured on is cached durably at
+`~/models/vision-probe` (879 MiB), not in `/tmp`; the Qwen3.8 tower the
+implementation gates pair against is `~/models/vision-probe-qwen38`. A previous
+handoff pointed the next session at a `/tmp` cache that had been cleared.
