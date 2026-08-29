@@ -18,6 +18,7 @@ struct ProjectSettingsSheet: View {
     @State private var mcpPermission: AppToolPermission = .ask
     @State private var automationPermission: AppToolPermission = .ask
     @State private var maxAutonomousSteps: Double = 5
+    @State private var rulePreference: AppRulePreference = .agentsFirst
     @State private var rulesAutoDetectedMessage: String?
 
     var body: some View {
@@ -227,6 +228,21 @@ struct ProjectSettingsSheet: View {
                 }
             }
 
+            HStack {
+                Text("Conflict Preference")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Picker("Conflict Preference", selection: $rulePreference) {
+                    ForEach(AppRulePreference.allCases) { pref in
+                        Text(pref.label).tag(pref)
+                    }
+                }
+                .pickerStyle(.menu)
+                .frame(width: 180)
+                .accessibilityLabel("Rules conflict preference")
+            }
+
             if let rulesAutoDetectedMessage {
                 Text(rulesAutoDetectedMessage)
                     .font(.caption)
@@ -272,6 +288,7 @@ struct ProjectSettingsSheet: View {
             name = editing.name
             rootDirectoryPath = editing.rootDirectoryPath ?? ""
             agentType = editing.agentType
+            rulePreference = editing.rulePreference
             customInstructions = editing.customInstructions
             permissionMode = editing.permissions.mode
             fileReadPermission = editing.permissions.fileRead
@@ -284,6 +301,7 @@ struct ProjectSettingsSheet: View {
         } else {
             name = "New Project"
             agentType = .coder
+            rulePreference = .agentsFirst
             applyPreset(.auto)
         }
     }
@@ -316,9 +334,9 @@ struct ProjectSettingsSheet: View {
 
     private func autoDetectRules() {
         guard !rootDirectoryPath.isEmpty else { return }
-        if let detected = model.detectProjectRules(directoryPath: rootDirectoryPath) {
-            customInstructions = detected
-            rulesAutoDetectedMessage = "Imported rules from workspace."
+        if let result = model.detectProjectRulesDetails(directoryPath: rootDirectoryPath, preference: rulePreference) {
+            customInstructions = result.content
+            rulesAutoDetectedMessage = result.statusDescription
         } else {
             rulesAutoDetectedMessage = "No AGENTS.md / CLAUDE.md found in folder."
         }
@@ -343,6 +361,7 @@ struct ProjectSettingsSheet: View {
             updated.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
             updated.rootDirectoryPath = resolvedPath
             updated.agentType = agentType
+            updated.rulePreference = rulePreference
             updated.customInstructions = customInstructions
             updated.permissions = perms
             updated.maxAutonomousSteps = Int(maxAutonomousSteps)
@@ -352,6 +371,7 @@ struct ProjectSettingsSheet: View {
                 name: name.trimmingCharacters(in: .whitespacesAndNewlines),
                 rootDirectoryPath: resolvedPath,
                 agentType: agentType,
+                rulePreference: rulePreference,
                 customInstructions: customInstructions,
                 permissions: perms,
                 maxAutonomousSteps: Int(maxAutonomousSteps)
