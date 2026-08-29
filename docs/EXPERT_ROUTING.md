@@ -109,3 +109,190 @@ edit for behavior steering. That is ROADMAP Later/Optional ("Directional
 Weight Steering"); it changes behavior rather than memory and would be
 judged by the Phase Q perplexity/digest gate and the logit-dump KL
 machinery.
+
+## The prefetch ceiling, and the death of the previous-token predictor
+
+A second, independent question reached this page on 2026-08-29, prompted by
+`JustVugg/colibri`'s PILOT: it runs layer L+1's router GEMV on layer L's
+post-attention residual and reports 71.6-75.8% recall, against 41.3% for a
+previous-token predictor. `DEVIATIONS.md` already rejects expert prefetch,
+but on a DIFFERENT predictor -- one that copies layer L's selected expert
+ids (Jaccard 0.039). An id-copy predictor and a stale-state router
+evaluation are not the same experiment, so that record does not close this.
+
+Before building a predictor, the CEILING was measured, because a prefetcher
+can only ever convert a miss into a hit and the miss count is a property of
+the trace and the cache policy alone.
+
+### Instrument
+
+`scripts/pilot_ceiling.py` replays an `MFERENCE_ROUTER_TRACE` capture through
+a port of `ExpertCache`'s LFU policy and reports hit rate, miss composition,
+and what a previous-token predictor would have covered. Stdlib only.
+
+Capture: real 26B install, greedy (`--seed 1 --temperature 0.0001 --top-k
+1`), 21 prompt + 200 generated tokens, 220 passes on all 30 routed layers,
+36.6 tok/s. The capture reconciles exactly (52,800 = 220 x 30 x 8) and the
+script refuses one that does not.
+
+### The simulator reproduces the engine's own recorded numbers
+
+This is what makes the rest of the table worth reading, and it was checked
+against figures nothing in the script can see:
+
+| quantity | recorded | this simulation |
+|---|---|---|
+| misses per layer, 32 slots | 1.3 (`crates/streaming/CLAUDE.md` Gotcha 3) | 1.23 decode-only, 1.37 all-pass |
+| bytes per token, 32 slots | 125 MiB (same Gotcha) | 118 MiB decode-only, 132 MiB all-pass |
+| hit rate, 32 slots | ~84% (this page, above) | 84.6% decode-only |
+
+Expert stride is the install's own: `layer_00.bin` is 429,916,160 bytes over
+128 experts, so 3.203 MiB each, which is where the MiB column comes from
+rather than from Gotcha 36's rounded ~3.2.
+
+### Measurement
+
+Decode only (prefill warms the cache but is excluded, per AGENTS.md Gotcha
+21's divisor rule):
+
+| slots | hit rate | misses/layer/pass | cold | evicted | covered by previous pass |
+|---|---|---|---|---|---|
+| 16 | 66.3% | 2.70 | 6.0% | 94.0% | **0.0%** |
+| 32 | 84.6% | 1.23 | 13.1% | 86.9% | **0.0%** |
+
+### Three findings
+
+**The ceiling is large enough to be worth chasing.** At 32 slots the misses
+are 118 MiB/token, which `crates/streaming/CLAUDE.md` Gotcha 3 times at
+5.26 ms for its own 125 MiB at that same slot count. Read that against a
+decode step AT 32 SLOTS and not against this capture's 36.6 tok/s, which was
+taken at the pinned 16 (Gotcha 58's rule: a frozen number belongs to its
+configuration). At the ~42 tok/s that 32 slots buys (`DEVIATIONS.md`'s +15%)
+the step is ~24 ms, so expert io is about a fifth of decode. At 16 slots the
+miss count is 2.2x higher. A perfect prefetcher hides at most that, and
+`MFERENCE_ROUTED_PIPELINE` has already taken 1.1 ms of it, so the remaining
+prize is real but smaller than the raw bucket suggests.
+
+**The previous-token predictor is dead STRUCTURALLY, not statistically.**
+Zero of 7,359 misses at 32 slots, and zero of 16,100 at 16, were named by
+the previous pass at that layer. Not approximately zero. The reason is a
+property of the policy rather than of the data: an expert the previous pass
+requested was inserted with a fresh clock and an incremented count, so it
+cannot be the LFU victim one pass later. No tuning rescues this predictor,
+which is the sharper form of the claim `DEVIATIONS.md:793` inherited from
+upstream and is now independently re-derived here.
+
+**Routing turnover matches colibri's model closely enough that its PILOT
+number may transfer.** Previous-token recall reads 41.3% all-pass and 41.5%
+decode-only, against random chance of 8/128 = 6.25%. colibri reports 41.3%
+for the same predictor on GLM-5.2, a different architecture (256 experts,
+top-8) under a different engine. The agreement to the decimal is
+coincidence; the agreement in MAGNITUDE is the finding, and it says the
+~59% of the top-k that turns over every token is the set a stale-state
+router would have to name.
+
+## PILOT measured: the predictor works, and it still loses
+
+`MFERENCE_PILOT_PROBE=1` runs layer L+1's router on layer L's
+post-attention residual and records the guess beside the actual selection.
+It costs ONE extra GEMV per MoE layer rather than a norm plus a GEMV,
+because Gemma's router pre-norm is `encode_rms_norm_no_scale` -- weightless,
+carrying no per-layer tensor, so the `router_x` layer L already computed IS
+the input layer L+1's router would see. A family whose router norm has a
+weight owes its own norm encode.
+
+### The predictor reproduces colibri's number
+
+**70.6% top-k recall**, against colibri's reported 71.6% on GLM-5.2 -- a
+different architecture (256 experts against 128), a different engine, and
+an independent implementation. Together with the 41.3% previous-token
+agreement above, the routing structure PILOT exploits is clearly present
+here.
+
+### And it reads more bytes than it saves, at every width
+
+Coverage is not the metric; a prediction naming an expert that is already
+resident buys nothing, and at 84.6% hit rate most of the top-k is resident.
+Priced in reads, at 32 slots:
+
+| PILOT_K | miss coverage | reads per hit saved | total bytes vs baseline |
+|---|---|---|---|
+| 1 | 12.5% | 1.26 | **1.03x** |
+| 2 | 20.7% | 1.39 | 1.08x |
+| 4 | 35.9% | 1.65 | 1.23x |
+| 6 | 49.0% | 1.96 | 1.47x |
+| 8 (full) | 60.4% | 2.40 | **1.85x** |
+
+Nothing dips below 1.00x. The same sweep at the pinned 16 slots runs 1.02x
+to 1.59x, so the shape is not an artifact of one cache size.
+
+**The mechanism, which is the part that generalises.** A prefetcher's COST
+scales with its prediction width (it reads top-k experts whether or not they
+were going to miss) while its BENEFIT scales with the MISS RATE. Here the
+LFU cache already answers 84.6% of requests, so the engine is guessing 8
+experts wide to catch 1.23 misses, and the ~2.4 of 8 guesses that are wrong
+each cost a full 3.2 MiB read. colibri wins the same trade because its cache
+is far colder -- it streams 370 GB from NVMe with a small resident fraction,
+so its miss rate is near 100% and almost every prefetched byte is a byte it
+needed anyway.
+
+**The second half of the trade is what kind of cost the read is.** colibri
+spends bandwidth to hide NVMe LATENCY, which is a good trade when a demand
+read blocks. This engine's expert read is a page-cache memcpy at ~23.8 GiB/s
+(`crates/streaming/CLAUDE.md` Gotcha 3), so the cost is BANDWIDTH, on a
+unified-memory machine where the GPU's matmuls are competing for it. Buying
+overlap with 1.03x to 1.85x the bytes is the wrong direction.
+
+### Standing decision, and the condition that would reverse it
+
+Router-lookahead prefetch is closed on this engine WARM, on the terms above
+rather than on the id-copy predictor's terms that `DEVIATIONS.md:793`
+closed. The honest bound at the best operating point (`PILOT_K=1`): 12.5% of
+a 5.26 ms io bucket is 0.66 ms of a ~24 ms step, so 2.7% BEFORE subtracting
+the extra 3% of bytes and the per-layer GEMV dispatch. That is inside the
+noise of the +2.5% `MFERENCE_ROUTED_PIPELINE` has already banked, and
+distinguishing it from zero would need an interleaved A/B that the ceiling
+does not justify building.
+
+It would reverse on a machine where the expert read is genuinely disk-bound
+rather than a page-cache memcpy -- a cold cache, or a host too memory-tight
+to hold the expert table -- because that changes the cost from bandwidth to
+latency and raises the miss rate, which is both of the terms above at once.
+The probe stays wired for exactly that re-measurement.
+
+### The instrument nearly reported a false negative
+
+The first wiring read **7.7% recall against a 6.25% random baseline** --
+indistinguishable from "PILOT does not transfer", and it would have been
+published as a negative. It was an off-by-one: the probe buffer written
+during layer L's attention holds the guess about L+1, and it was being filed
+against layer L. AGENTS.md Gotcha 57's rule caught it (near-random means
+UNRELATED, so suspect the instrument before believing the finding).
+
+`MFERENCE_PILOT_PROBE=self` is the guard that now exists because of it: it
+aims the probe at the layer it is already running in, so the prediction
+reproduces the production router and recall MUST read 100%. It does, and the
+same run pins the analysis script's cost accounting at exactly 1.00 read per
+hit -- a case whose answer is known a priori, which caught a second bug where
+residency was sampled AFTER the plan had already installed the misses and
+every prefetch therefore looked free.
+
+### Mutation check
+
+The simulator was mutated three ways before its numbers were believed.
+Swapping LFU for pure LRU moves the answer (84.6% -> 83.2%, 7,359 -> 8,002
+misses), so the policy port is load-bearing. Two mutations SURVIVED, both
+because an invariant does the work rather than because the measurement is
+weak, and both are findings about the Rust rather than about the script:
+
+- Removing the empty-slots-first arm changes nothing, because an occupied
+  slot always holds an expert whose count was incremented when it was
+  placed, so `count >= 1` sorts it behind an empty slot's 0 anyway. Verified
+  on the real trace: zero occupied slots ever carry `use_count == 0`.
+- Incrementing the use counts BEFORE computing the eviction order instead of
+  after changes nothing, because no evictable slot can hold an expert this
+  pass requested: requested experts are either hits (whose slots are
+  reserved) or misses (resident nowhere).
+
+Both details are worth keeping in `expert_cache.rs` for readability, but
+neither can change an answer, so neither is worth defending in a test.
