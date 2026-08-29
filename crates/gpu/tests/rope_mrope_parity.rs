@@ -56,6 +56,19 @@ fn to_f16(values: &[f32]) -> Vec<f16> {
 /// `rope_parity.rs` holds the same kernel family to.
 fn assert_matches(gpu: &[f16], cpu: &[f32]) {
     let gpu_f32: Vec<f32> = gpu.iter().map(|v| v.to_f32()).collect();
+    // Finiteness at the point the measurement is taken (AGENTS.md Gotcha 59):
+    // `rel_error`'s `max_abs_diff` folds with `f32::max`, which silently
+    // returns the non-NaN operand -- so a NaN entry is invisible to the
+    // comparison below rather than failing it, exactly the "NaN reads as a
+    // perfect score" shape.
+    assert!(
+        gpu_f32.iter().all(|v| v.is_finite()),
+        "this port produced a non-finite value"
+    );
+    assert!(
+        cpu.iter().all(|v| v.is_finite()),
+        "the cpu reference produced a non-finite value"
+    );
     let err = turbospark_compute::rel_error(&gpu_f32, cpu);
     assert!(
         err < turbospark_compute::Tolerance::FP16_REDUCTION,

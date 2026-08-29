@@ -535,9 +535,61 @@ the page's line numbers.
 
 ## What is not built
 
-M-V9. See the milestone plan; in one line each:
-- **M-V9** the memory oracle's multi-page loop, and hardening. The CLI's
-  `--image-batch` already walks pages over one open runner with the tower's
-  scratch dropped per page; what M-V9 adds is the oracle ASSERTING that the
-  peak is flat across them, plus NaN-safe parity instruments and an FP16
-  overflow capture.
+Nothing, as of 2026-08-29: M-V9 landed, all three items, each verified
+against the real `qwen38-27b-vision.gturbo` install. Read the last
+paragraph of this section before assuming it has reached `main`.
+
+- **NaN-safe parity instruments.** The two remaining ungated files
+  (`crates/gpu/tests/vision_block_parity.rs`, `crates/gpu/tests/rope_mrope_parity.rs`)
+  now guard with `is_finite`, matching every other vision parity file. The
+  gap was real rather than cosmetic: `turbospark_compute::rel_error`'s
+  `max_abs_diff` folds with `f32::max`, which silently returns the
+  non-NaN operand on a NaN input -- AGENTS.md Gotcha 59's "NaN reads as a
+  perfect score" shape, on a second instrument.
+- **The multi-page memory oracle.** `crates/bench/tests/vision_memory_oracle.rs`
+  (new): four rounds over one open runner (large 1536x1536 -> medium
+  1024x1280 -> small 512x640 -> large again), asserting peak
+  `phys_footprint` does not grow past what the largest page establishes
+  AND that each round's transcription contains a marker unique to that
+  page (the M-V5 shape a memory-shape-only oracle cannot see by
+  construction). Measured peaks: 785.3-871.5 MiB across two full runs;
+  the REPEATED largest-page round came in BELOW the first (-69.6 MiB), so
+  the flat-peak claim holds decisively rather than marginally. Ceiling
+  set to 950 MiB (measured max plus ~8%).
+
+  **The content-assertion marker took three iterations, and the mechanism
+  is worth keeping.** A marker drawn from a page's THIRD (last-requested)
+  line failed on a genuinely correct transcription that stopped early; a
+  marker from the FIRST line's own trailing number failed the same way
+  one line earlier. What reproduces reliably across every round of both
+  real runs -- even under the worst observed truncation (40 generated
+  tokens, every line cut mid-word) -- is a four-word phrase from the very
+  OPENING of line 1. This model does not reliably complete a multi-line
+  transcription request at greedy/T=0, so a content check has to anchor
+  on what it reliably reaches rather than on what it was asked to finish.
+- **FP16 overflow capture.** `crates/runtime/src/vision/overflow.rs`
+  (new), `MFERENCE_VISION_OVERFLOW=/path.json`-gated on the
+  `resid_capture.rs` / `ffn_hist.rs` pattern: zero cost and zero readback
+  when unset (confirmed by the synthetic suite's frozen-digest test
+  staying byte-identical), reads back `scratch.x` after every block,
+  fails loudly and immediately on a non-finite value (AGENTS.md Gotcha
+  60), warns past 50% of FP16's 65,504 ceiling.
+
+**Verified**: both parity files' tests, the full `turbospark-runtime` /
+`turbospark-gpu` / `turbospark-bench` suites, `vision_tower_parity`
+against the real install (merger cosine reproduces the documented
+0.99999334 exactly), and text-only greedy/sampled smoke on
+`qwen38-27b.gturbo`. **NOT yet done**: the whole-workspace gate
+(`cargo build --workspace && cargo test --workspace`) and a commit -- a
+concurrent session's `LoadPolicy` / `LoadGuard` refactor was mid-flight
+across several unrelated crates for most of the session this landed in,
+so verification was scoped to the five files this milestone touched
+(`crates/gpu/tests/{vision_block_parity,rope_mrope_parity}.rs`,
+`crates/runtime/src/vision/{mod,overflow}.rs`,
+`crates/bench/tests/vision_memory_oracle.rs`). Re-run the workspace gate
+and commit before treating this as landed on `main`.
+
+No `models.json` catalog row exists yet for `qwen38-27b-vision.gturbo`,
+so there is no `assert_agrees_with_catalog` test alongside the oracle
+above, unlike every other family's oracle. Add both once this ceiling
+has stood for a while.

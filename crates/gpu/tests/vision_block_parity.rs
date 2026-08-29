@@ -414,6 +414,19 @@ fn one_whole_block_matches_the_cpu_reference() {
     let cpu = cpu_block(&x, &w, &freqs);
     let gpu = gpu_block(&mut context, &x, &w, &freqs);
     assert_eq!(gpu.len(), cpu.len());
+    // Finiteness at the point the measurement is taken: NaN reads as a
+    // perfect score on the `worst`-abs-diff fold below (`f32::max`-style
+    // comparisons silently skip a NaN entry rather than surfacing it),
+    // which is AGENTS.md Gotcha 59 one level down from the real-model
+    // instruments that already guard this way.
+    assert!(
+        gpu.iter().all(|v| v.is_finite()),
+        "this port's block produced a non-finite value"
+    );
+    assert!(
+        cpu.iter().all(|v| v.is_finite()),
+        "the cpu reference produced a non-finite value"
+    );
 
     // A block is two norms, five GEMMs of up to 4,304 terms, an attention and
     // two residual adds, every intermediate rounded to FP16. The error
@@ -518,6 +531,10 @@ fn rope_reaches_q_and_k_but_not_v() {
     );
     let cpu = cpu_block(&x, &w, &freqs);
     let gpu = gpu_block(&mut context, &x, &w, &freqs);
+    assert!(
+        gpu.iter().all(|v| v.is_finite()),
+        "this port's block produced a non-finite value"
+    );
 
     let scale = cpu.iter().fold(1.0f32, |m, v| m.max(v.abs()));
     let bound = 2e-2 * scale;

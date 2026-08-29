@@ -37,6 +37,7 @@
 
 mod block;
 mod inject;
+mod overflow;
 mod scratch;
 mod shape;
 mod stages;
@@ -133,6 +134,12 @@ pub struct VisionTower {
     /// compared the formula against itself would assert nothing, and the
     /// formula is what a caller sizing a page budget would use.
     pub(crate) last_scratch_bytes: u64,
+    /// `Some` only when `MFERENCE_VISION_OVERFLOW` named an output path at
+    /// open. `None` means every call site below dispatches no readback at
+    /// all, which is what keeps the ordinary path byte-identical to the
+    /// engine that shipped before this existed (`overflow.rs`'s module
+    /// doc).
+    overflow: Option<overflow::VisionOverflowCapture>,
 }
 
 impl VisionTower {
@@ -252,6 +259,7 @@ impl VisionTower {
             shape,
             slot_bytes: VISION_SLOTS as u64 * layer.expert_stride,
             last_scratch_bytes: 0,
+            overflow: overflow::VisionOverflowCapture::from_env(),
         })
     }
 
@@ -372,6 +380,9 @@ impl VisionTower {
             if let Some(c) = capture.as_mut() {
                 c.patch_embed = read_stage(&s.x, wide);
             }
+            if let Some(o) = self.overflow.as_mut() {
+                o.note_image_start();
+            }
 
             for n in 0..self.shape.depth {
                 let slot = n % VISION_SLOTS;
@@ -399,6 +410,9 @@ impl VisionTower {
                     if n + 1 == self.shape.depth {
                         c.block_last = read_stage(&s.x, wide);
                     }
+                }
+                if let Some(o) = self.overflow.as_mut() {
+                    o.check_block(n, &s.x, wide)?;
                 }
             }
 
