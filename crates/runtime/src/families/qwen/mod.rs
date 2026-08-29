@@ -16,8 +16,10 @@ mod mtp;
 mod mtp_dump;
 mod mtp_state;
 mod prefill;
+mod prefill_layers;
 mod produce;
 mod state;
+mod verify_layers;
 
 pub(crate) use attn::{encode_full_attention_block, QkNormConvention, RopePosition};
 pub(crate) use batched_scratch::BatchedScratch;

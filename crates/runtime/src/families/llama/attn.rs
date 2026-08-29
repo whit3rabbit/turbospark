@@ -147,3 +147,121 @@ pub(crate) fn encode_attention_block(
         (&scratch.o, 0),
     )
 }
+
+impl crate::real_forward::RealForwardRunner {
+    /// Encodes the attention and router GEMV pass (`cb1`) for a single token `t`
+    /// at `position` within a micro-batch.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn encode_llama_layer_attn_and_router(
+        &mut self,
+        pass: &gpu::PassEncoder,
+        layer: usize,
+        position: usize,
+        t: usize,
+        hidden: usize,
+        num_experts: usize,
+    ) -> Result<(), RealForwardError> {
+        let gpu_err = RealForwardError::Gpu;
+        let x_off = (t * hidden * 2) as u64;
+        let input_norm = crate::real_forward_utils::norm_view(
+            &self.weights,
+            &self.index,
+            &layer_tensor(layer, "input_layernorm.weight"),
+            hidden,
+        )?;
+        let post_attn_norm = crate::real_forward_utils::norm_view(
+            &self.weights,
+            &self.index,
+            &layer_tensor(layer, "post_attention_layernorm.weight"),
+            hidden,
+        )?;
+        let llama = self.real_llama.as_ref().expect("real llama state present");
+
+        gpu::encode_rms_norm_bf16w(
+            &mut self.context,
+            pass,
+            (&self.scratch.x, x_off),
+            input_norm,
+            (&self.scratch.normed, 0),
+            hidden as u32,
+            llama.rms_eps,
+        )
+        .map_err(gpu_err)?;
+
+        encode_attention_block(
+            &mut self.context,
+            pass,
+            &self.weights,
+            &self.index,
+            &self.arch,
+            llama,
+            &self.scratch,
+            &self.kv,
+            layer,
+            position,
+        )?;
+
+        // RAW residual add, matching the sequential flow: this
+        // architecture normalizes neither the attention output nor
+        // the FFN output on the way back into the stream.
+        gpu::encode_residual_add(
+            &mut self.context,
+            pass,
+            (&self.scratch.x, x_off),
+            (&self.scratch.o, 0),
+            hidden as u32,
+        )
+        .map_err(gpu_err)?;
+
+        // The post-attention norm feeds the router AND the routed
+        // experts, and both happen after `cb1` commits, so it needs
+        // this token's OWN row (`RealLlamaState::moe_x` is M-row,
+        // matching `RealGemmaState::routed_x`).
+        let llama = self.real_llama.as_ref().expect("real llama state present");
+        gpu::encode_rms_norm_bf16w(
+            &mut self.context,
+            pass,
+            (&self.scratch.x, x_off),
+            post_attn_norm,
+            (&llama.moe_x, x_off),
+            hidden as u32,
+            llama.rms_eps,
+        )
+        .map_err(gpu_err)?;
+
+        let router_name = layer_tensor(layer, "mlp.gate.weight");
+        let router = crate::real_forward_utils::entry(&self.index, &router_name)?;
+        if router.dtype != 5 || router.size_bytes as usize != num_experts * hidden {
+            return Err(RealForwardError::Unsupported(format!(
+                "{router_name}: expected INT8 (dtype 5) {num_experts}x{hidden}, got \
+                 dtype {} with {} packed bytes",
+                router.dtype, router.size_bytes
+            )));
+        }
+        let base = self.index.header.index_size;
+        gpu::encode_router_gemv_gemma4(
+            &mut self.context,
+            pass,
+            (
+                self.weights.buffer(),
+                self.weights.gpu_offset(router.file_offset - base),
+            ),
+            (
+                self.weights.buffer(),
+                self.weights.gpu_offset(router.scale_offset - base),
+            ),
+            (
+                self.weights.buffer(),
+                self.weights.gpu_offset(router.bias_offset - base),
+            ),
+            (&llama.moe_x, x_off),
+            (&llama.router_ones, 0),
+            (&llama.router_logits_f32, (t * num_experts * 4) as u64),
+            num_experts as u32,
+            hidden as u32,
+        )
+        .map_err(gpu_err)?;
+
+        Ok(())
+    }
+}

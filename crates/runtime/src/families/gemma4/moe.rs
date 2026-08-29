@@ -44,7 +44,39 @@ impl RealForwardRunner {
         );
         let (selected, route_weights) =
             router_topk_gemma4(&router_logits, top_k, &real.per_expert_scale[layer]);
+        // The one-layer-ahead prediction THIS layer's attention encoded, read
+        // at the same commit boundary as the production logits above. It is
+        // about layer+1, so it is recorded against layer+1 and must be read
+        // HERE rather than there: layer+1's own attention overwrites the
+        // single probe buffer with its prediction about layer+2 before
+        // layer+1's MoE ever runs. Recording it against `layer` instead
+        // reads as a predictor no better than chance (7.7% against a 6.25%
+        // random baseline), which is what this comment exists to prevent
+        // anyone re-deriving.
+        //
+        // The top-k uses layer+1's `per_expert_scale`, because the logits in
+        // the buffer came from layer+1's router.
+        let next = layer
+            + self
+                .router_hist
+                .as_ref()
+                .map_or(1, crate::router_hist::RouterHistogram::pilot_offset);
+        let predicted = self
+            .router_hist
+            .as_ref()
+            .is_some_and(crate::router_hist::RouterHistogram::pilot_enabled)
+            .then(|| {
+                let real = self.real.as_ref().expect("real state present");
+                real.per_expert_scale.get(next).map(|scale| {
+                    let logits = gpu::read_f32_buffer_at(&real.pilot_logits_f32, 0, num_experts);
+                    router_topk_gemma4(&logits, top_k, scale).0
+                })
+            })
+            .flatten();
         if let Some(hist) = self.router_hist.as_mut() {
+            if let Some(predicted) = predicted {
+                hist.record_prediction(next, &predicted);
+            }
             hist.record(layer, &selected);
         }
         let layer_scalar = real.layer_scalar[layer];

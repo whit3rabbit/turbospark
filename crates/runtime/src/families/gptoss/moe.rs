@@ -199,3 +199,117 @@ pub(crate) fn encode_gpt_oss_layer_moe(
     // `encode_gemma4_layer_routed_moe`'s exact reasoning.
     Ok(ordered.iter().map(|&(cache_slot, _)| cache_slot).collect())
 }
+
+impl crate::real_forward::RealForwardRunner {
+    /// Pipelined routed MoE loop across micro-batch tokens for one layer.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn encode_gpt_oss_layer_routed_moe_pipelined(
+        &mut self,
+        pending_routed: &mut Option<gpu::CommittedPass>,
+        layer: usize,
+        hidden: usize,
+        moe_inter: u32,
+        num_experts: usize,
+        top_k: usize,
+        banks: usize,
+        m: usize,
+    ) -> Result<(), RealForwardError> {
+        let mut previous_slots: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        for t in 0..m {
+            if banks == 1 {
+                self.retire_routed(pending_routed);
+            }
+            let slot = RoutedSlot {
+                token: t,
+                bank: t % banks,
+                // Empty when pipelining is off: retire-before-plan has
+                // already run (banks == 1 above), so no slot is in
+                // flight for the plan to avoid.
+                protect: if self.routed_pipeline {
+                    previous_slots.clone()
+                } else {
+                    std::collections::HashSet::new()
+                },
+            };
+            let routed_pass = self.context.begin_pass_labeled("gpt-oss routed cb");
+            let (
+                context,
+                scratch,
+                state,
+                streamers,
+                slot_buffers,
+                routed_blobs,
+                routed_blobs_banks,
+                moe_offsets,
+                routed_layouts,
+                router_hist,
+                phases,
+            ) = (
+                &mut self.context,
+                &self.scratch,
+                self.real_gpt_oss
+                    .as_ref()
+                    .expect("real gpt-oss state present"),
+                &mut self.streamers,
+                &self.slot_buffers,
+                &self.routed_blobs,
+                &self.routed_blobs_banks,
+                &self.moe_offsets,
+                &self.routed_layouts,
+                &mut self.router_hist,
+                &mut self.phases,
+            );
+            let used = encode_gpt_oss_layer_moe(
+                context,
+                &routed_pass,
+                scratch,
+                state,
+                streamers,
+                slot_buffers,
+                routed_blobs.as_ref(),
+                routed_blobs_banks,
+                moe_offsets,
+                routed_layouts,
+                router_hist,
+                phases,
+                layer,
+                hidden,
+                moe_inter,
+                num_experts,
+                top_k,
+                &slot,
+            )?;
+
+            // This token's OWN row, matching Gemma 4's and llama-MoE's
+            // chunked drivers.
+            let x_off = (t * hidden * 2) as u64;
+            crate::steering::encode_steering(
+                &mut self.context,
+                &routed_pass,
+                &self.scratch,
+                self.steering.as_ref(),
+                layer,
+                hidden,
+                1,
+                x_off,
+            )?;
+            crate::resid_capture::encode_resid_capture(
+                &mut self.context,
+                &routed_pass,
+                &self.scratch,
+                self.resid_capture.as_ref(),
+                layer,
+                hidden,
+                x_off,
+            )?;
+
+            if banks > 1 {
+                self.retire_routed(pending_routed);
+            }
+            debug_assert!(pending_routed.is_none(), "routed pipeline depth is 1");
+            *pending_routed = Some(routed_pass.commit());
+            previous_slots = used.into_iter().collect();
+        }
+        Ok(())
+    }
+}

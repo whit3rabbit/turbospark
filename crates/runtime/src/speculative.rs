@@ -392,5 +392,10 @@ pub fn run_raw_completion_speculative_cancellable<P: SpeculativeProducer>(
         reason,
         kv_position: position,
         kv_backed_token_ids: sink.history,
+        // The speculative loop does not pace: acceptance is exact only at
+        // temperature 0, so a run that reaches here is deterministic and
+        // uncapped by construction. Reporting `Normal` is the absence of a
+        // reading, consistent with every other unpolled path.
+        peak_memory_pressure: crate::power::MemoryPressure::Normal,
     })
 }

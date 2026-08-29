@@ -65,75 +65,14 @@
 
 use foundation::LogitValue;
 
-use super::batched_layers::{
-    encode_dense_ffn_batched, encode_full_attention_block_batched, encode_linear_block_batched,
-};
+use super::batched_layers::encode_dense_ffn_batched;
 pub(crate) use super::BatchedScratch;
-use crate::families::qwen::{layer_tensor, RMS_EPS};
+use crate::families::qwen::layer_tensor;
 use crate::real_forward::RealForwardRunner;
-use crate::real_forward_dispatch::{encode_embed_any, encode_gemm_any};
+use crate::real_forward_dispatch::encode_embed_any;
 use crate::real_forward_types::RealForwardError;
 use crate::real_forward_utils::norm_view;
 use crate::steering::encode_steering;
-
-/// One token's router GEMV, into row `m` of the batch's own logits
-/// buffer.
-///
-/// It LOOPS rather than batching for the same reason the norms do: the
-/// router is `num_experts x hidden` against this family's 2048 hidden and
-/// 256 experts, which is a rounding error beside the expert GEMVs it
-/// selects, and `router_gemv_gemma4_r4` has no M-row form.
-#[allow(clippy::too_many_arguments)]
-fn encode_router_gemv_batched(
-    context: &mut gpu::MetalContext,
-    pass: &gpu::PassEncoder,
-    weights: &gpu::ResidentGpuWeights,
-    index: &model_io::ResidentIndex,
-    router_name: &str,
-    qwen: &super::RealQwenState,
-    batched: &BatchedScratch,
-    m: usize,
-    hidden: usize,
-    num_experts: usize,
-) -> Result<(), RealForwardError> {
-    let routed = batched.routed.as_ref().ok_or_else(|| {
-        RealForwardError::Unsupported("routed scratch missing on a MoE install".to_string())
-    })?;
-    let router = crate::real_forward_utils::entry(index, router_name)?;
-    if router.dtype != 5 || router.size_bytes as usize != num_experts * hidden {
-        return Err(RealForwardError::Unsupported(format!(
-            "{router_name}: expected INT8 (dtype 5) {num_experts}x{hidden}, got dtype {} \
-             with {} packed bytes",
-            router.dtype, router.size_bytes
-        )));
-    }
-    let base = index.header.index_size;
-    gpu::encode_router_gemv_gemma4(
-        context,
-        pass,
-        (
-            weights.buffer(),
-            weights.gpu_offset(router.file_offset - base),
-        ),
-        (
-            weights.buffer(),
-            weights.gpu_offset(router.scale_offset - base),
-        ),
-        (
-            weights.buffer(),
-            weights.gpu_offset(router.bias_offset - base),
-        ),
-        (&batched.moe_x, (m * hidden * 2) as u64),
-        (&qwen.router_ones, 0),
-        (
-            &routed.batch_router_logits_f32,
-            (m * num_experts * 4) as u64,
-        ),
-        num_experts as u32,
-        hidden as u32,
-    )
-    .map_err(RealForwardError::Gpu)
-}
 
 impl RealForwardRunner {
     /// Runs `tokens` through the trunk in ONE pass, writing `tokens.len() *
@@ -299,70 +238,29 @@ impl RealForwardRunner {
                 &layer_tensor(layer, "input_layernorm.weight"),
                 hidden,
             )?;
-            for m in 0..batch {
-                gpu::encode_rms_norm_bf16w(
-                    context,
-                    &pass,
-                    (&scratch.x, (m * hidden) as u64 * 2),
-                    input_norm,
-                    (&batched.normed, (m * hidden) as u64 * 2),
-                    hidden as u32,
-                    RMS_EPS,
-                )
-                .map_err(gpu_err)?;
-            }
-
-            if arch.layer_is_linear(layer) {
-                encode_linear_block_batched(
-                    context, &pass, weights, index, &arch, qwen, batched, layer, batch,
-                )?;
-            } else {
-                encode_full_attention_block_batched(
-                    context,
-                    &pass,
-                    weights,
-                    index,
-                    &arch,
-                    qwen,
-                    scratch,
-                    batched,
-                    kv,
-                    layer,
-                    start_position,
-                    batch,
-                )?;
-            }
-
             let post_attn = norm_view(
                 weights,
                 index,
                 &layer_tensor(layer, "post_attention_layernorm.weight"),
                 hidden,
             )?;
-            for m in 0..batch {
-                let row = (m * hidden) as u64 * 2;
-                // RAW residual add: this family has no sandwich norms, and
-                // normalizing here took the Qwen 3.6 reference perplexity
-                // from 6.25 to 255,409 once already (crate Gotcha 11).
-                gpu::encode_residual_add(
-                    context,
-                    &pass,
-                    (&scratch.x, row),
-                    (&batched.o, row),
-                    hidden as u32,
-                )
-                .map_err(gpu_err)?;
-                gpu::encode_rms_norm_bf16w(
-                    context,
-                    &pass,
-                    (&scratch.x, row),
-                    post_attn,
-                    (&batched.moe_x, row),
-                    hidden as u32,
-                    RMS_EPS,
-                )
-                .map_err(gpu_err)?;
-            }
+            super::verify_layers::encode_qwen_layer_attn_and_norms_batched(
+                context,
+                &pass,
+                weights,
+                index,
+                scratch,
+                batched,
+                qwen,
+                kv,
+                &arch,
+                input_norm,
+                post_attn,
+                layer,
+                hidden,
+                start_position,
+                batch,
+            )?;
 
             if num_experts == 0 {
                 // A dense layer stays in the SAME command buffer: nothing
@@ -375,39 +273,9 @@ impl RealForwardRunner {
                     use_silu, batch,
                 )?;
             } else {
-                // M router GEMVs into the batch's own logits rows, then
-                // COMMIT AND WAIT: the top-k below is a host decision and
-                // cannot be encoded.
-                let router_name = layer_tensor(layer, "mlp.gate.weight");
-                for m in 0..batch {
-                    encode_router_gemv_batched(
-                        context,
-                        &pass,
-                        weights,
-                        index,
-                        &router_name,
-                        qwen,
-                        batched,
-                        m,
-                        hidden,
-                        num_experts,
-                    )?;
-                }
-                let t_wait = std::time::Instant::now();
-                phases.cb1_gpu_nanos += (pass.commit().wait_with_gpu_time() * 1e9) as u64;
-                phases.gpu_wait_nanos += t_wait.elapsed().as_nanos() as u64;
-
-                // Retire the PREVIOUS layer's routed buffer. It has
-                // provably completed already -- it was committed before
-                // this layer's attention buffer on the same queue, and
-                // that one was just waited out -- so this costs nothing
-                // and is taken for the GPU-time ATTRIBUTION, exactly as
-                // the Gemma chunk driver's `retire_routed` is.
-                if let Some(prev) = routed_in_flight.take() {
-                    phases.routed_cb_gpu_nanos += (prev.wait_with_gpu_time() * 1e9) as u64;
-                }
-                routed_in_flight = Some(super::moe_batch::encode_qwen_layer_moe_batched(
+                pass = super::verify_layers::encode_qwen_moe_layer_batched_step(
                     context,
+                    pass,
                     weights,
                     index,
                     scratch,
@@ -428,8 +296,8 @@ impl RealForwardRunner {
                     top_k,
                     use_silu,
                     batch,
-                )?);
-                pass = context.begin_pass_labeled("batched verify");
+                    &mut routed_in_flight,
+                )?;
             }
 
             // THE STEERING EDIT at M rows, at the same boundary and in the
@@ -473,34 +341,8 @@ impl RealForwardRunner {
             phases.routed_cb_gpu_nanos += (last.wait_with_gpu_time() * 1e9) as u64;
         }
 
-        let final_norm = norm_view(weights, index, "language_model.model.norm.weight", hidden)?;
-        for m in 0..batch {
-            gpu::encode_rms_norm_bf16w(
-                context,
-                &pass,
-                (&scratch.x, (m * hidden) as u64 * 2),
-                final_norm,
-                (&batched.normed, (m * hidden) as u64 * 2),
-                hidden as u32,
-                RMS_EPS,
-            )
-            .map_err(gpu_err)?;
-        }
-        let head_name = if arch.tie_word_embeddings {
-            embed_name.to_string()
-        } else {
-            "language_model.lm_head.weight".to_string()
-        };
-        encode_gemm_any(
-            context,
-            &pass,
-            weights,
-            index,
-            &head_name,
-            vocab,
-            hidden,
-            (&batched.normed, 0),
-            (&batched.logits, 0),
+        super::verify_layers::encode_qwen_batched_head(
+            context, &pass, weights, index, scratch, batched, &arch, embed_name, hidden, vocab,
             batch,
         )?;
 

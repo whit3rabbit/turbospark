@@ -90,19 +90,14 @@ use std::time::Instant;
 
 use foundation::LogitValue;
 
-use super::attn::{
-    encode_full_attention_block, encode_linear_block, QkNormConvention, RopePosition,
+use super::layer_tensor;
+use super::prefill_layers::{
+    encode_qwen_dense_layer_batched_prefill, encode_qwen_dense_layer_per_token_prefill,
 };
-use super::batched_layers::{
-    encode_dense_ffn_batched, encode_full_attention_block_batched, encode_linear_block_batched,
-};
-use super::{dense, layer_tensor, RMS_EPS, TRUNK_PREFIX};
 use crate::real_forward::RealForwardRunner;
-use crate::real_forward_dispatch::{encode_embed_any, encode_gemv_any};
+use crate::real_forward_dispatch::encode_embed_any;
 use crate::real_forward_types::{RealForwardError, MAX_PREFILL_BATCH};
 use crate::real_forward_utils::norm_view;
-use crate::resid_capture::encode_resid_capture;
-use crate::steering::encode_steering;
 
 impl RealForwardRunner {
     /// Runs a whole prefill chunk through the dense qwen flow, writing the
@@ -210,7 +205,6 @@ impl RealForwardRunner {
         let inter = arch.intermediate_size as usize;
         let vocab = arch.vocab_size as usize;
         let use_silu = arch.hidden_activation.contains("silu");
-        let gpu_err = RealForwardError::Gpu;
         let m = tokens.len();
 
         if !self.real_qwen.as_ref().is_some_and(|s| s.dense) {
@@ -309,223 +303,55 @@ impl RealForwardRunner {
                 &layer_tensor(layer, "post_attention_layernorm.weight"),
                 hidden,
             )?;
-            let is_linear = arch.layer_is_linear(layer);
 
             if batched_gemv {
-                // STEP 6: the resident GEMVs as M-row GEMMs, through the
-                // encoders `batched_layers.rs` already owns. Everything with
-                // no weights to amortize -- the two norms, the residual add,
-                // the GDN recurrence, attention itself -- still loops, inside
-                // those encoders where it does not here, which is the same
-                // split the measured compute breakdown chose for the verify
-                // pass (GEMV 93.1%, attention 0.6%).
-                let batched = qwen.batched_prefill();
-                for t in 0..m {
-                    gpu::encode_rms_norm_bf16w(
-                        context,
-                        &pass,
-                        (&scratch.x, (t * hidden * 2) as u64),
-                        input_norm,
-                        (&batched.normed, (t * hidden * 2) as u64),
-                        hidden as u32,
-                        RMS_EPS,
-                    )
-                    .map_err(gpu_err)?;
-                }
-
-                if is_linear {
-                    // The recurrence still runs in token order -- it is
-                    // inside `gdn_conv_prefill` / `gdn_delta_prefill` rather
-                    // than in this loop, which is the whole reason those
-                    // multi-row kernels exist. What batches is the input
-                    // projection either side of it.
-                    encode_linear_block_batched(
-                        context, &pass, weights, index, &arch, qwen, batched, layer, m,
-                    )?;
-                } else {
-                    encode_full_attention_block_batched(
-                        context,
-                        &pass,
-                        weights,
-                        index,
-                        &arch,
-                        qwen,
-                        scratch,
-                        batched,
-                        kv,
-                        layer,
-                        start_position,
-                        m,
-                    )?;
-                }
-
-                for t in 0..m {
-                    let x_off = (t * hidden * 2) as u64;
-                    // RAW residual add, as in the per-token arm: this family
-                    // has no sandwich norms.
-                    gpu::encode_residual_add(
-                        context,
-                        &pass,
-                        (&scratch.x, x_off),
-                        (&batched.o, x_off),
-                        hidden as u32,
-                    )
-                    .map_err(gpu_err)?;
-                    gpu::encode_rms_norm_bf16w(
-                        context,
-                        &pass,
-                        (&scratch.x, x_off),
-                        post_attn_norm,
-                        (&batched.moe_x, x_off),
-                        hidden as u32,
-                        RMS_EPS,
-                    )
-                    .map_err(gpu_err)?;
-                }
-
-                // Encodes its own per-row residual add back into `scratch.x`,
-                // so the layer's output lands where the next one reads it.
-                encode_dense_ffn_batched(
-                    context, &pass, weights, index, scratch, batched, layer, hidden, inter,
-                    use_silu, m,
-                )?;
-
-                // ONE M-row steering dispatch rather than m, because the
-                // kernel is row-parallel already (`produce_batched` does the
-                // same at the same boundary). A block whose rows are not ALL
-                // steered would emit a run of tokens from two models.
-                encode_steering(context, &pass, scratch, steering, layer, hidden, m, 0)?;
-                // The capture stays per row and UNCONDITIONAL, so overwrite
-                // order leaves the micro-batch's last token as the one
-                // `record_pass` reads back (Gotcha 21).
-                for t in 0..m {
-                    encode_resid_capture(
-                        context,
-                        &pass,
-                        scratch,
-                        resid_capture,
-                        layer,
-                        hidden,
-                        (t * hidden * 2) as u64,
-                    )?;
-                }
-                continue;
-            }
-
-            for t in 0..m {
-                let position = start_position + t;
-                let x_off = (t * hidden * 2) as u64;
-
-                gpu::encode_rms_norm_bf16w(
-                    context,
-                    &pass,
-                    (&scratch.x, x_off),
-                    input_norm,
-                    (&scratch.normed, 0),
-                    hidden as u32,
-                    RMS_EPS,
-                )
-                .map_err(gpu_err)?;
-
-                if is_linear {
-                    // Mask-2: gated DeltaNet. No position, no RoPE, no KV --
-                    // the recurrent state advances once per call, in the
-                    // order this loop calls it, which is this module's
-                    // whole correctness argument (see the file doc comment).
-                    encode_linear_block(
-                        context, &pass, weights, index, &arch, qwen, scratch, layer,
-                    )?;
-                } else {
-                    encode_full_attention_block(
-                        context,
-                        &pass,
-                        weights,
-                        index,
-                        &arch,
-                        qwen,
-                        scratch,
-                        kv,
-                        TRUNK_PREFIX,
-                        layer,
-                        position,
-                        QkNormConvention::Plain,
-                        // Text-only: refused above when `prompt_vision` is set.
-                        RopePosition::Sequential,
-                    )?;
-                }
-
-                // RAW residual add, matching the sequential flow: this
-                // family has no sandwich norms.
-                gpu::encode_residual_add(
-                    context,
-                    &pass,
-                    (&scratch.x, x_off),
-                    (&scratch.o, 0),
-                    hidden as u32,
-                )
-                .map_err(gpu_err)?;
-
-                gpu::encode_rms_norm_bf16w(
-                    context,
-                    &pass,
-                    (&scratch.x, x_off),
-                    post_attn_norm,
-                    (&qwen.moe_x, 0),
-                    hidden as u32,
-                    RMS_EPS,
-                )
-                .map_err(gpu_err)?;
-
-                dense::encode_qwen_layer_dense(
+                encode_qwen_dense_layer_batched_prefill(
                     context,
                     &pass,
                     weights,
                     index,
                     scratch,
+                    kv,
                     qwen,
-                    &scratch.x,
-                    x_off,
-                    TRUNK_PREFIX,
+                    &arch,
+                    resid_capture,
+                    steering,
+                    input_norm,
+                    post_attn_norm,
                     layer,
                     hidden,
                     inter,
                     use_silu,
+                    start_position,
+                    m,
                 )?;
-
-                encode_steering(context, &pass, scratch, steering, layer, hidden, 1, x_off)?;
-                encode_resid_capture(context, &pass, scratch, resid_capture, layer, hidden, x_off)?;
+            } else {
+                encode_qwen_dense_layer_per_token_prefill(
+                    context,
+                    &pass,
+                    weights,
+                    index,
+                    scratch,
+                    kv,
+                    qwen,
+                    &arch,
+                    resid_capture,
+                    steering,
+                    input_norm,
+                    post_attn_norm,
+                    layer,
+                    hidden,
+                    inter,
+                    use_silu,
+                    start_position,
+                    m,
+                )?;
             }
         }
 
         if want_head {
-            pass.relabel("qwen dense final cb (head)");
-            let last_off = ((m - 1) * hidden * 2) as u64;
-            let final_norm = norm_view(weights, index, "language_model.model.norm.weight", hidden)?;
-            gpu::encode_rms_norm_bf16w(
-                context,
-                &pass,
-                (&scratch.x, last_off),
-                final_norm,
-                (&scratch.normed, 0),
-                hidden as u32,
-                RMS_EPS,
-            )
-            .map_err(gpu_err)?;
-            let head_name = if arch.tie_word_embeddings {
-                embed_name.to_string()
-            } else {
-                "language_model.lm_head.weight".to_string()
-            };
-            encode_gemv_any(
-                context,
-                &pass,
-                weights,
-                index,
-                &head_name,
-                vocab,
-                hidden,
-                (&scratch.normed, 0),
-                (&scratch.logits, 0),
+            super::prefill_layers::encode_qwen_dense_chunk_head(
+                context, &pass, weights, index, scratch, &arch, embed_name, hidden, vocab, m,
             )?;
             // No softcap: `RealQwenState::build` refuses an install that
             // declares one, matching the sequential flow.

@@ -34,19 +34,15 @@
 //! **No shared expert**, matching `llama`'s MoE half: phase 2's residual
 //! seed is `scratch.zero_hidden`.
 
-use std::collections::HashSet;
 use std::time::Instant;
 
 use foundation::LogitValue;
 
-use super::{attn, layer_tensor, moe};
-use crate::moe_prefill_pipeline::{routed_pipeline_banks, RoutedSlot};
+use crate::moe_prefill_pipeline::routed_pipeline_banks;
 use crate::real_forward::RealForwardRunner;
 use crate::real_forward_dispatch::{encode_embed_any, encode_gemv_any};
 use crate::real_forward_types::{RealForwardError, MAX_PREFILL_BATCH};
 use crate::real_forward_utils::norm_view;
-use crate::resid_capture::encode_resid_capture;
-use crate::steering::encode_steering;
 
 impl RealForwardRunner {
     /// Runs a whole prefill chunk through the `gpt-oss` flow, writing the
@@ -195,114 +191,16 @@ impl RealForwardRunner {
 
         let mut pending_routed: Option<gpu::CommittedPass> = None;
         for layer in 0..arch.num_layers as usize {
-            let input_norm = norm_view(
-                &self.weights,
-                &self.index,
-                &layer_tensor(layer, "input_layernorm.weight"),
-                hidden,
-            )?;
-            let post_attn_norm = norm_view(
-                &self.weights,
-                &self.index,
-                &layer_tensor(layer, "post_attention_layernorm.weight"),
-                hidden,
-            )?;
-
             for t in 0..m {
                 let position = start_position + t;
-                let x_off = (t * hidden * 2) as u64;
-                let state = self
-                    .real_gpt_oss
-                    .as_ref()
-                    .expect("real gpt-oss state present");
-
-                gpu::encode_rms_norm_bf16w(
-                    &mut self.context,
+                self.encode_gpt_oss_layer_attn_and_router(
                     &pass,
-                    (&self.scratch.x, x_off),
-                    input_norm,
-                    (&self.scratch.normed, 0),
-                    hidden as u32,
-                    state.rms_eps,
-                )
-                .map_err(gpu_err)?;
-
-                attn::encode_attention_block(
-                    &mut self.context,
-                    &pass,
-                    &self.weights,
-                    &self.index,
-                    &arch,
-                    state,
-                    &self.scratch,
-                    &self.kv,
                     layer,
                     position,
+                    t,
+                    hidden,
+                    num_experts,
                 )?;
-
-                // RAW residual add, matching the sequential flow.
-                gpu::encode_residual_add(
-                    &mut self.context,
-                    &pass,
-                    (&self.scratch.x, x_off),
-                    (&self.scratch.o, 0),
-                    hidden as u32,
-                )
-                .map_err(gpu_err)?;
-
-                // The post-attention norm feeds the router AND the routed
-                // experts, and both happen after `cb1` commits, so it needs
-                // this token's OWN row (`RealGptOssState::moe_x` is M-row).
-                let state = self
-                    .real_gpt_oss
-                    .as_ref()
-                    .expect("real gpt-oss state present");
-                gpu::encode_rms_norm_bf16w(
-                    &mut self.context,
-                    &pass,
-                    (&self.scratch.x, x_off),
-                    post_attn_norm,
-                    (&state.moe_x, x_off),
-                    hidden as u32,
-                    state.rms_eps,
-                )
-                .map_err(gpu_err)?;
-
-                // The router GEMV runs on the GPU; its BIAS is added on the
-                // host in `moe.rs`'s per-token routed loop, between the
-                // readback and the top-k.
-                let router_name = layer_tensor(layer, "mlp.gate.weight");
-                let router = crate::real_forward_utils::entry(&self.index, &router_name)?;
-                if router.dtype != 5 || router.size_bytes as usize != num_experts * hidden {
-                    return Err(RealForwardError::Unsupported(format!(
-                        "{router_name}: expected INT8 (dtype 5) {num_experts}x{hidden}, got \
-                         dtype {} with {} packed bytes",
-                        router.dtype, router.size_bytes
-                    )));
-                }
-                let base = self.index.header.index_size;
-                gpu::encode_router_gemv_gemma4(
-                    &mut self.context,
-                    &pass,
-                    (
-                        self.weights.buffer(),
-                        self.weights.gpu_offset(router.file_offset - base),
-                    ),
-                    (
-                        self.weights.buffer(),
-                        self.weights.gpu_offset(router.scale_offset - base),
-                    ),
-                    (
-                        self.weights.buffer(),
-                        self.weights.gpu_offset(router.bias_offset - base),
-                    ),
-                    (&state.moe_x, x_off),
-                    (&state.router_ones, 0),
-                    (&state.router_logits_f32, (t * num_experts * 4) as u64),
-                    num_experts as u32,
-                    hidden as u32,
-                )
-                .map_err(gpu_err)?;
             }
 
             let cb1 = pass.commit();
@@ -329,107 +227,17 @@ impl RealForwardRunner {
                     top_k,
                     m,
                 )?);
-                pass = self
-                    .context
-                    .begin_pass_labeled("gpt-oss chunk cb1 (attn+router)");
-                continue;
-            }
-
-            let mut previous_slots: HashSet<usize> = HashSet::new();
-            for t in 0..m {
-                if banks == 1 {
-                    self.retire_routed(&mut pending_routed);
-                }
-                let slot = RoutedSlot {
-                    token: t,
-                    bank: t % banks,
-                    // Empty when pipelining is off: retire-before-plan has
-                    // already run (banks == 1 above), so no slot is in
-                    // flight for the plan to avoid.
-                    protect: if self.routed_pipeline {
-                        previous_slots.clone()
-                    } else {
-                        HashSet::new()
-                    },
-                };
-                let routed_pass = self.context.begin_pass_labeled("gpt-oss routed cb");
-                let (
-                    context,
-                    scratch,
-                    state,
-                    streamers,
-                    slot_buffers,
-                    routed_blobs,
-                    routed_blobs_banks,
-                    moe_offsets,
-                    routed_layouts,
-                    router_hist,
-                    phases,
-                ) = (
-                    &mut self.context,
-                    &self.scratch,
-                    self.real_gpt_oss
-                        .as_ref()
-                        .expect("real gpt-oss state present"),
-                    &mut self.streamers,
-                    &self.slot_buffers,
-                    &self.routed_blobs,
-                    &self.routed_blobs_banks,
-                    &self.moe_offsets,
-                    &self.routed_layouts,
-                    &mut self.router_hist,
-                    &mut self.phases,
-                );
-                let used = moe::encode_gpt_oss_layer_moe(
-                    context,
-                    &routed_pass,
-                    scratch,
-                    state,
-                    streamers,
-                    slot_buffers,
-                    routed_blobs.as_ref(),
-                    routed_blobs_banks,
-                    moe_offsets,
-                    routed_layouts,
-                    router_hist,
-                    phases,
+            } else {
+                self.encode_gpt_oss_layer_routed_moe_pipelined(
+                    &mut pending_routed,
                     layer,
                     hidden,
                     moe_inter,
                     num_experts,
                     top_k,
-                    &slot,
+                    banks,
+                    m,
                 )?;
-
-                // This token's OWN row, matching Gemma 4's and llama-MoE's
-                // chunked drivers.
-                let x_off = (t * hidden * 2) as u64;
-                encode_steering(
-                    &mut self.context,
-                    &routed_pass,
-                    &self.scratch,
-                    self.steering.as_ref(),
-                    layer,
-                    hidden,
-                    1,
-                    x_off,
-                )?;
-                encode_resid_capture(
-                    &mut self.context,
-                    &routed_pass,
-                    &self.scratch,
-                    self.resid_capture.as_ref(),
-                    layer,
-                    hidden,
-                    x_off,
-                )?;
-
-                if banks > 1 {
-                    self.retire_routed(&mut pending_routed);
-                }
-                debug_assert!(pending_routed.is_none(), "routed pipeline depth is 1");
-                pending_routed = Some(routed_pass.commit());
-                previous_slots = used.into_iter().collect();
             }
 
             pass = self

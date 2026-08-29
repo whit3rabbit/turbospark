@@ -20,6 +20,12 @@ pub(crate) struct RealGemmaState {
     /// are read back together, after the ONE command buffer that produced
     /// them; that readback is what the chunk driver exists to amortize.
     pub(crate) router_logits_f32: gpu::MetalBuffer,
+    /// Destination for the one-layer-ahead router probe
+    /// (`MFERENCE_PILOT_PROBE`): layer L+1's router run early, on layer L's
+    /// post-attention residual. Allocated unconditionally (one token of
+    /// f32s) but only ever WRITTEN when the probe is on, so the default
+    /// decode path dispatches exactly the kernels it always did.
+    pub(crate) pilot_logits_f32: gpu::MetalBuffer,
     /// `[hidden]` FP16 branch scratch, one row per token of a prefill
     /// micro-batch: both are written in the attention half of a layer and
     /// read in the routed half, which the driver runs as two separate
@@ -197,6 +203,9 @@ impl RealGemmaState {
         Ok(Self {
             router_logits_f32: context
                 .new_output_buffer((num_experts * 4 * MAX_PREFILL_BATCH) as u64),
+            // One token's worth only: the probe is a decode-path diagnostic
+            // and the batched prefill encoders never fill it.
+            pilot_logits_f32: context.new_output_buffer((num_experts * 4) as u64),
             dense_x: halfs(hidden * MAX_PREFILL_BATCH),
             routed_x: halfs(hidden * MAX_PREFILL_BATCH),
             router_x: halfs(hidden),

@@ -317,6 +317,69 @@ impl RealForwardRunner {
         )
         .map_err(gpu_err)?;
 
+        self.encode_gemma4_pilot_probe(pass, layer, hidden, num_experts, base)?;
+
+        Ok(())
+    }
+
+    /// One-layer-ahead router probe (`MFERENCE_PILOT_PROBE`), the measurement
+    /// behind `docs/EXPERT_ROUTING.md`'s prefetch-ceiling section.
+    ///
+    /// Runs layer L+1's router on layer L's post-attention residual, which is
+    /// colibri's PILOT predictor. It costs ONE extra GEMV rather than a norm
+    /// plus a GEMV because Gemma's router pre-norm is
+    /// `encode_rms_norm_no_scale` -- weightless, so it carries no per-layer
+    /// tensor and `real.router_x` computed here IS already the input layer
+    /// L+1's router would see if it ran now. A family whose router norm has a
+    /// weight cannot reuse the buffer this way and owes its own norm encode.
+    ///
+    /// Encoded into the SAME pass as the production router deliberately: the
+    /// MoE encoder reads both results after this command buffer commits, so
+    /// the probe needs no synchronisation of its own and cannot read a value
+    /// the GPU has not written.
+    fn encode_gemma4_pilot_probe(
+        &mut self,
+        pass: &gpu::PassEncoder,
+        layer: usize,
+        hidden: usize,
+        num_experts: usize,
+        base: u64,
+    ) -> Result<(), RealForwardError> {
+        if !self
+            .router_hist
+            .as_ref()
+            .is_some_and(crate::router_hist::RouterHistogram::pilot_enabled)
+        {
+            return Ok(());
+        }
+        // `streamers` carries one entry per layer, so this single lookup
+        // answers both guards: out of range (the last layer, which predicts
+        // nothing) and present-but-dense (no router to borrow).
+        let next = layer
+            + self
+                .router_hist
+                .as_ref()
+                .map_or(1, crate::router_hist::RouterHistogram::pilot_offset);
+        if self.streamers.get(next).is_none_or(Option::is_none) {
+            return Ok(());
+        }
+        let gpu_err = RealForwardError::Gpu;
+        let next_name = layer_tensor(next, "router.proj.weight");
+        let (w, scale, bias) = self.router_offsets_gemma4(&next_name, num_experts, hidden)?;
+        let real = self.real.as_ref().expect("real state present");
+        gpu::encode_router_gemv_gemma4(
+            &mut self.context,
+            pass,
+            (self.weights.buffer(), self.weights.gpu_offset(w - base)),
+            (self.weights.buffer(), self.weights.gpu_offset(scale - base)),
+            (self.weights.buffer(), self.weights.gpu_offset(bias - base)),
+            (&real.router_x, 0),
+            (&real.effective_scale[next], 0),
+            (&real.pilot_logits_f32, 0),
+            num_experts as u32,
+            hidden as u32,
+        )
+        .map_err(gpu_err)?;
         Ok(())
     }
 
