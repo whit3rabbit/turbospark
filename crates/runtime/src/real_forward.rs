@@ -213,6 +213,19 @@ pub struct RealForwardRunner {
     /// The directional-steering state, `None` unless a caller passed a
     /// policy carrying a direction set. Built at open; see `steering.rs`.
     pub(crate) steering: Option<crate::steering::SteeringState>,
+    /// The install's own directory, kept so the vision tower can open its
+    /// `packed_vision/` streamer lazily. Nothing else needs it: every other
+    /// file is read at `open` and mapped or parsed there.
+    pub(crate) install_dir: std::path::PathBuf,
+    /// The vision tower (ROADMAP M-V4), built on the FIRST image rather than
+    /// at open.
+    ///
+    /// Lazy because `arch.vision` is read by nothing else in this crate, so
+    /// an eager open would charge every text-only session on a vision install
+    /// the tower's pinned slots and layout parse for a component it never
+    /// touches. **`None` therefore means "not yet asked for", never "this
+    /// install has none"** -- that question is `arch.vision.is_active()`.
+    pub(crate) vision: Option<crate::vision::VisionTower>,
     /// Set for the duration of one [`LogitProducer::produce_prefill`] call:
     /// the caller is discarding this token's logits, so the output head
     /// (final norm, full-vocab GEMV, softcap, host readback) is skipped.

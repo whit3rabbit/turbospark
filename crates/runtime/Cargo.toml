@@ -22,6 +22,11 @@ gpu = { package = "turbospark-gpu", path = "../gpu", version = "0.1.0" }
 model_io = { package = "turbospark-model-io", path = "../model-io", version = "0.1.0" }
 compute = { package = "turbospark-compute", path = "../compute", version = "0.1.0" }
 streaming = { package = "turbospark-streaming", path = "../streaming", version = "0.1.0" }
+# The vision tower's preprocessing and position tables (ROADMAP M-V4).
+# PORTABLE, and still declared here rather than as an unconditional
+# dependency: `src/vision/` is macOS-gated like every other consumer of
+# `gpu`, so a non-macOS build of this crate has nothing to call it from.
+turbospark-vision-io = { path = "../vision-io", version = "0.1.0" }
 half = "2"
 
 [dev-dependencies]

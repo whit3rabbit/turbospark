@@ -49,6 +49,8 @@ mod speculative;
 #[cfg(target_os = "macos")]
 pub mod steering;
 mod token_sink;
+#[cfg(target_os = "macos")]
+pub mod vision;
 
 pub use config::GenerationConfig;
 // The two sizing policies LIVE IN `model_io` and are re-exported here.

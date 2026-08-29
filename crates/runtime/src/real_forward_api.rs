@@ -26,6 +26,84 @@ impl RealForwardRunner {
         self.context.buffer_allocation_count()
     }
 
+    /// Whether this install declares a vision tower.
+    ///
+    /// Asks the ARCH rather than whether one has been opened: the tower is
+    /// built lazily, so `self.vision.is_none()` means "no image yet" on an
+    /// install that has one.
+    pub fn has_vision_tower(&self) -> bool {
+        self.arch.vision.is_active()
+    }
+
+    /// Bytes the vision tower's slot cache pins, `VISION_SLOTS x
+    /// block_stride`. `None` until the tower has been opened.
+    ///
+    /// This plus [`Self::vision_last_scratch_bytes`] is the whole of the
+    /// tower's residency: the blocks stream, so nothing else about the tower
+    /// is held between images.
+    pub fn vision_slot_bytes(&self) -> Option<u64> {
+        self.vision.as_ref().map(|v| v.slot_bytes)
+    }
+
+    /// What the last page's scratch actually allocated.
+    pub fn vision_last_scratch_bytes(&self) -> Option<u64> {
+        self.vision.as_ref().map(|v| v.last_scratch_bytes)
+    }
+
+    /// What a page of `seq` patches WOULD cost in scratch, predicted rather
+    /// than measured.
+    ///
+    /// The sizing a caller budgeting a page would use, and the thing
+    /// [`Self::vision_last_scratch_bytes`] is worth checking against -- a
+    /// formula compared only against itself asserts nothing.
+    pub fn vision_scratch_bytes_for(&self, seq: usize) -> Option<u64> {
+        self.vision.as_ref().map(|v| v.scratch_bytes(seq))
+    }
+
+    /// Run one preprocessed image through the vision tower (ROADMAP M-V4).
+    ///
+    /// Returns the `[merged_tokens, out_hidden_size]` FP16 rows the trunk's
+    /// residual stream wants; M-V5 is what injects them at the image-pad
+    /// positions. Nothing in the decode path reads them yet, so calling this
+    /// changes no generated token.
+    ///
+    /// Opens the tower on first use and keeps it for the runner's life --
+    /// `VISION_SLOTS x block_stride` of pinned host memory, ~58 MiB on the
+    /// real 27B, which a text-only session on the same install never pays.
+    /// The per-page scratch is allocated and dropped inside this call.
+    ///
+    /// An install with no tower is refused BY NAME rather than answering an
+    /// empty embedding: a caller that passed an image and silently got no
+    /// rows would build a prompt whose image spans are filled with the
+    /// placeholder token's own embedding, which reads as a model ignoring the
+    /// picture rather than as an install that cannot see one.
+    pub fn encode_image(
+        &mut self,
+        image: &turbospark_vision_io::PreprocessedImage,
+        params: &turbospark_vision_io::PreprocessParams,
+    ) -> Result<crate::vision::VisionEmbedding, RealForwardError> {
+        if !self.arch.vision.is_active() {
+            return Err(RealForwardError::Unsupported(
+                "this install declares no vision tower; repack the checkpoint with its \
+                 vision_tower.* tensors to get one"
+                    .to_string(),
+            ));
+        }
+        if self.vision.is_none() {
+            self.vision = Some(crate::vision::VisionTower::open(
+                &self.install_dir,
+                &self.context,
+                &self.weights,
+                &self.index,
+                &self.arch,
+            )?);
+        }
+        // Two disjoint fields of `self`, which is what lets the tower take
+        // the context mutably while it is itself borrowed mutably.
+        let tower = self.vision.as_mut().expect("opened just above");
+        tower.run(&mut self.context, &self.weights, image, params)
+    }
+
     /// Whether [`crate::producer::ChunkedPrefillRunner::prefill_chunk`] would
     /// serve this install rather than refuse it by name.
     ///

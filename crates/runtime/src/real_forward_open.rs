@@ -158,6 +158,8 @@ impl RealForwardRunner {
             ffn_hist,
             resid_capture,
             steering: None,
+            install_dir: dir.to_path_buf(),
+            vision: None,
             skip_head: false,
         };
         match runner.arch.family {
