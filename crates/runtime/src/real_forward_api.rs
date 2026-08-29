@@ -82,6 +82,31 @@ impl RealForwardRunner {
         image: &turbospark_vision_io::PreprocessedImage,
         params: &turbospark_vision_io::PreprocessParams,
     ) -> Result<crate::vision::VisionEmbedding, RealForwardError> {
+        self.open_vision_tower()?;
+        // Two disjoint fields of `self`, which is what lets the tower take
+        // the context mutably while it is itself borrowed mutably.
+        let tower = self.vision.as_mut().expect("opened just above");
+        tower.run(&mut self.context, &self.weights, image, params)
+    }
+
+    /// [`Self::encode_image`] plus the residual stream at three intermediate
+    /// points, for the cross-engine parity gate.
+    ///
+    /// Diagnostic, and reached from nothing else. It costs three readbacks of
+    /// `[patches, hidden]` and the ordinary entry point pays none of them --
+    /// there is no flag that could be left on.
+    pub fn encode_image_with_stages(
+        &mut self,
+        image: &turbospark_vision_io::PreprocessedImage,
+        params: &turbospark_vision_io::PreprocessParams,
+    ) -> Result<(crate::vision::VisionEmbedding, crate::vision::VisionStages), RealForwardError>
+    {
+        self.open_vision_tower()?;
+        let tower = self.vision.as_mut().expect("opened just above");
+        tower.run_with_stages(&mut self.context, &self.weights, image, params)
+    }
+
+    fn open_vision_tower(&mut self) -> Result<(), RealForwardError> {
         if !self.arch.vision.is_active() {
             return Err(RealForwardError::Unsupported(
                 "this install declares no vision tower; repack the checkpoint with its \
@@ -98,10 +123,7 @@ impl RealForwardRunner {
                 &self.arch,
             )?);
         }
-        // Two disjoint fields of `self`, which is what lets the tower take
-        // the context mutably while it is itself borrowed mutably.
-        let tower = self.vision.as_mut().expect("opened just above");
-        tower.run(&mut self.context, &self.weights, image, params)
+        Ok(())
     }
 
     /// Whether [`crate::producer::ChunkedPrefillRunner::prefill_chunk`] would

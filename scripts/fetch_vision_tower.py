@@ -18,8 +18,13 @@ Writes two files to --out-dir:
                                 offsets relative to vision_tower.bin
 
 Usage:
-    uv run --python 3.12 --with requests \
-      scripts/fetch_vision_tower.py prism-ml/Bonsai-27B-mlx-1bit /tmp/vision-probe
+    python3 scripts/fetch_vision_tower.py prism-ml/Bonsai-27B-mlx-1bit ~/models/vision-probe
+
+An optional third argument pins the REVISION, which a parity comparison needs
+and a magnitude probe does not:
+
+    python3 scripts/fetch_vision_tower.py mlx-community/Qwen3.8-27B-4bit \
+      ~/models/vision-probe-qwen38 3e6447f082e89cc7f0bc6e5441afd38dfce760ff
 """
 
 import json
@@ -40,13 +45,19 @@ def _read_header(shard_url: str) -> dict:
 
 
 def main() -> None:
-    if len(sys.argv) != 3:
+    if len(sys.argv) not in (3, 4):
         print(__doc__)
         sys.exit(1)
     repo, out_dir = sys.argv[1], Path(sys.argv[2])
+    # PIN THE REVISION when the tower is going to be compared against an
+    # install streamed from a pinned one (M-V4's parity gate). `main` is fine
+    # for a magnitude probe, where a point release moving the weights changes
+    # a reported number; it is not fine for a comparison, where it silently
+    # makes the two sides different models.
+    revision = sys.argv[3] if len(sys.argv) == 4 else "main"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    base = f"https://huggingface.co/{repo}/resolve/main"
+    base = f"https://huggingface.co/{repo}/resolve/{revision}"
     try:
         index = json.loads(urllib.request.urlopen(f"{base}/model.safetensors.index.json").read())
         weight_map = index["weight_map"]

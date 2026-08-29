@@ -37,6 +37,62 @@ real walk is a different kind of fact.
   dims, so it is recorded flattened at `(1152, 1536)` -- which is also the
   shape it is used at, the conv having kernel == stride.
 
+## 0b. What M-V4 measured, and the one number below that it CORRECTS (2026-08-28)
+
+M-V3 wrote the tower into an install; M-V4 ran it. The forward pass now
+exists (`crates/runtime/src/vision/`) and has been compared against mlx-vlm on
+the same checkpoint's bytes, the same revision, and the same patch rows
+(`crates/runtime/tests/vision_tower_parity.rs`).
+
+**Per-stage agreement with mlx-vlm**, `mlx-community/Qwen3.8-27B-4bit` at
+revision `3e6447f0`, the 1024x1280 page of item 3 (grid 1x80x64, 5,120
+patches):
+
+| stage | rms | absmax | worst | worst/absmax | cosine |
+|---|---|---|---|---|---|
+| patch embed + pos | 0.5043 | 8.9453 | 0.0078 | 0.000873 | 0.99999995 |
+| block 0 | 0.7971 | 11.2500 | 0.0195 | 0.001736 | 0.99999970 |
+| block 26 | 116.6840 | 7904.0000 | 152.0000 | 0.019231 | 0.99999383 |
+| merger | 0.6821 | 140.8750 | 1.4375 | 0.010204 | 0.99999334 |
+
+**The merger's 0.99999334 is AT item 3's own FP16-vs-FP32 floor of 0.999993**,
+not above it: this port differs from mlx-vlm's FP16 by about what mlx-vlm's
+FP16 differs from its own FP32. There is no gap left to attribute.
+
+**Item 3's activation shape reproduced on a DIFFERENT checkpoint.** That
+section's trace is Bonsai's tower; this one is Qwen3.8's, and it shows the
+same two-step profile at the same places -- block 0 at absmax 11.3, block 26
+at 7,904 (against Bonsai's 8,384), and the merger's own LayerNorm resetting
+the scale to 141. So the outlier-feature reading is a property of the
+ARCHITECTURE rather than of one publisher's weights, which is what licenses
+the FP16 decision for both.
+
+**AND IT CORRECTS AN INSTRUMENT, not a fact.** The parity gate's first draft
+gated on `worst_absolute / rms` and FAILED on a correct tower, reading 1.30 at
+block 26 while the cosine read 0.999994. Block 26's absmax is 68x its RMS
+precisely because of the outlier features this document measured, so the worst
+error lands on the outlier -- where FP16's own quantum near 8,192 is 8 -- and
+comparing it against a typical element answers a question nobody asked. Any
+future instrument on this tower has to be scale-aware for the same reason;
+`worst/absmax` is reported beside the cosine for that.
+
+**Two things the intake did NOT predict, both found by running it.**
+
+`peek_manifest_arch` did not read the tower back. M-V3 added the vision fields
+to `manifest.json` and to `arch_validation` and not to the peeker, so every
+caller that resolves an install's `ArchConfig` that way -- the CLI's real
+generation path and the bench harness -- saw `VisionConfig::NONE` on an
+install that carries a tower. The install opened, decoded text correctly, and
+refused an image as though it were headless. Fixed, with an offline guard
+(`the_manifest_peeker_reads_the_tower_back`).
+
+`vision_tower.*` is NOT contiguous in this checkpoint. `fetch_vision_tower.py`
+spans min..max offset and warns in its own docstring that a future checkpoint
+interleaving the tower with trunk tensors would make it over-fetch rather than
+miss data. That is now measured rather than hypothetical: the span is 4,885
+MiB for 879 MiB of tensors on `mlx-community/Qwen3.8-27B-4bit`, where Bonsai's
+is 879 for 879. The over-fetch is correct and costs disk, not accuracy.
+
 ---
 
 ## 1. Vision tensor inventory

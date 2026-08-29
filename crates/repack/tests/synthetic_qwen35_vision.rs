@@ -470,3 +470,49 @@ fn the_rank_five_patch_embedding_records_a_shape_that_matches_its_bytes() {
         (vision.num_position_embeddings, vision.hidden_size)
     );
 }
+
+/// `peek_manifest_arch` reads the tower back, and a text-only install still
+/// reads back as having none.
+///
+/// **THIS WAS MISSING AND THE FAILURE WAS SILENT.** M-V3 added the vision
+/// fields to `manifest.json` and to `arch_validation` and not to the peeker,
+/// so every caller that resolves an install's `ArchConfig` that way -- the
+/// CLI's real generation path and the bench harness -- got
+/// `VisionConfig::NONE` from an install that carries a tower. The install
+/// opened, decoded text correctly, and refused an image as though it had no
+/// tower. M-V4's real-checkpoint parity gate found it on its first run,
+/// minutes into a 15 GB install; this finds it in milliseconds.
+///
+/// Both directions, because the fallback here is `unwrap_or(0)` and not the
+/// family baseline every OTHER extension field uses: an absent field means
+/// the install declares no tower, and another family's answer about ITS tower
+/// is not evidence (`arch_validation`'s own reasoning, AGENTS.md Gotcha 24).
+#[test]
+fn the_manifest_peeker_reads_the_tower_back() {
+    let (dir, arch) = build_streamed();
+    let peeked = turbospark_repack::peek_manifest_arch(&dir).expect("peek a vision install");
+    assert!(
+        peeked.vision.is_active(),
+        "the peeker resolved a vision install to no tower"
+    );
+    assert_eq!(
+        peeked.vision, arch.vision,
+        "the peeked tower is not the one the walk was given"
+    );
+
+    let text_only = temp_dir();
+    turbospark_repack::build_synthetic_qwen_gdn_dense_install(
+        &text_only,
+        VOCAB,
+        LAYERS,
+        "qwen35-textonly-peek",
+    )
+    .expect("text-only install");
+    let peeked = turbospark_repack::peek_manifest_arch(&text_only).expect("peek a text install");
+    assert!(
+        !peeked.vision.is_active(),
+        "an install with no vision fields must read back as having no tower, not as \
+         inheriting one from a baseline"
+    );
+    assert_eq!(peeked.vision, model_io::VisionConfig::NONE);
+}

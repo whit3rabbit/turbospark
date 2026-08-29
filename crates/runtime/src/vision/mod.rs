@@ -79,6 +79,29 @@ pub struct VisionEmbedding {
     pub grid: turbospark_vision_io::GridThw,
 }
 
+/// The residual stream at three points inside the tower, for the
+/// cross-engine parity gate.
+///
+/// Each is `[patches, hidden]` FP16 bits. Not a debugging aid left on by
+/// default and not an env var: it is reached through
+/// [`VisionTower::run_with_stages`] alone, so the ordinary path cannot
+/// acquire it.
+///
+/// **The naming is by POSITION, not by number.** `block_last` rather than
+/// `block_26`, because the depth is the checkpoint's -- a comparison against
+/// a reference that named a fixed index would silently compare the wrong
+/// block on a tower of another depth.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct VisionStages {
+    /// After the patch embedding AND the position add, which is where the
+    /// reference's own trace takes it: `h = patch_embed(x); h = h + pos`.
+    pub patch_embed: Vec<u16>,
+    /// After block 0.
+    pub block_first: Vec<u16>,
+    /// After the last block, before the merger.
+    pub block_last: Vec<u16>,
+}
+
 /// The tower: its streamer, its weights, and the position table.
 pub struct VisionTower {
     /// One zero-copy `MTLBuffer` per slot, wrapped once over the slot's
@@ -250,6 +273,47 @@ impl VisionTower {
         image: &PreprocessedImage,
         params: &PreprocessParams,
     ) -> Result<VisionEmbedding, RealForwardError> {
+        self.run_inner(context, weights, image, params, None)
+            .map(|(e, _)| e)
+    }
+
+    /// [`Self::run`] plus the residual stream at three intermediate points.
+    ///
+    /// The cross-engine parity gate's entry point and nothing else's. A gap
+    /// that shows as 0.99 at the merger localizes immediately when the patch
+    /// embedding is exact and block 26 is not; merger-only cannot do that,
+    /// and bisecting it by rebuilding the tower per stage would cost a run
+    /// per stage.
+    ///
+    /// It costs three extra readbacks of `[seq, hidden]` and NOTHING on the
+    /// ordinary path, which passes `None` -- there is no flag to leave on by
+    /// accident. The reads need no extra synchronization: the driver already
+    /// waits on every stage's command buffer.
+    pub(crate) fn run_with_stages(
+        &mut self,
+        context: &mut gpu::MetalContext,
+        weights: &gpu::ResidentGpuWeights,
+        image: &PreprocessedImage,
+        params: &PreprocessParams,
+    ) -> Result<(VisionEmbedding, VisionStages), RealForwardError> {
+        let (embedding, stages) = self.run_inner(
+            context,
+            weights,
+            image,
+            params,
+            Some(VisionStages::default()),
+        )?;
+        Ok((embedding, stages.expect("requested just above")))
+    }
+
+    fn run_inner(
+        &mut self,
+        context: &mut gpu::MetalContext,
+        weights: &gpu::ResidentGpuWeights,
+        image: &PreprocessedImage,
+        params: &PreprocessParams,
+        mut capture: Option<VisionStages>,
+    ) -> Result<(VisionEmbedding, Option<VisionStages>), RealForwardError> {
         // The caller preprocessed with SOME parameters and the tower was
         // built from the install's. If they disagree the patch rows are the
         // wrong width or the merge windows the wrong size, and both produce
@@ -301,6 +365,10 @@ impl VisionTower {
             let pass = context.begin_pass();
             stages::encode_patch_embed(context, &pass, weights, &self.resident, &s, &self.shape)?;
             pass.commit_and_wait();
+            let wide = seq * self.shape.hidden;
+            if let Some(c) = capture.as_mut() {
+                c.patch_embed = read_stage(&s.x, wide);
+            }
 
             for n in 0..self.shape.depth {
                 let slot = n % VISION_SLOTS;
@@ -321,6 +389,14 @@ impl VisionTower {
                     &self.shape,
                 )?;
                 pass.commit_and_wait();
+                if let Some(c) = capture.as_mut() {
+                    if n == 0 {
+                        c.block_first = read_stage(&s.x, wide);
+                    }
+                    if n + 1 == self.shape.depth {
+                        c.block_last = read_stage(&s.x, wide);
+                    }
+                }
             }
 
             let pass = context.begin_pass();
@@ -328,16 +404,19 @@ impl VisionTower {
             pass.commit_and_wait();
 
             let count = s.merged * self.shape.out_hidden;
-            let rows = gpu::read_buffer_f16(&s.out, 0, count)
+            let rows: Vec<u16> = gpu::read_buffer_f16(&s.out, 0, count)
                 .into_iter()
                 .map(|v| v.to_bits())
                 .collect();
-            Ok(VisionEmbedding {
-                rows,
-                merged_tokens: s.merged,
-                out_hidden: self.shape.out_hidden,
-                grid: image.grid,
-            })
+            Ok((
+                VisionEmbedding {
+                    rows,
+                    merged_tokens: s.merged,
+                    out_hidden: self.shape.out_hidden,
+                    grid: image.grid,
+                },
+                capture,
+            ))
         })
     }
 
@@ -358,6 +437,14 @@ impl VisionTower {
             + merged * self.shape.merger_input() as u64
             + merged * self.shape.out_hidden as u64)
     }
+}
+
+/// Read `count` FP16 values out of a GPU buffer as raw bits.
+fn read_stage(buffer: &gpu::MetalBuffer, count: usize) -> Vec<u16> {
+    gpu::read_buffer_f16(buffer, 0, count)
+        .into_iter()
+        .map(|v| v.to_bits())
+        .collect()
 }
 
 /// Decode a resident FP16 tensor to host `f32`.

@@ -84,5 +84,43 @@ pub fn peek_manifest_arch(model_dir: &Path) -> Result<ArchConfig, String> {
         value_head_dim: m.linear_value_head_dim.unwrap_or(0),
         conv_kernel_size: m.linear_conv_kernel_size.unwrap_or(0),
     };
+
+    // THE VISION TOWER, AND `unwrap_or(0)` RATHER THAN THE BASELINE, which is
+    // the one place this function's own fallback rule does not apply.
+    //
+    // Every other family-extension field above falls back to the resolved
+    // family's baseline, because that is what `arch_validation` does for an
+    // omitted one. For the tower it does NOT: `arch_validation` compares
+    // `a.vision_depth.unwrap_or(0)`, because an absent field means the
+    // install declares no tower and another family's answer about ITS tower
+    // is not evidence. Reading it the baseline way costs nothing today (every
+    // shipped baseline carries `NONE`) and would be wrong the moment one does
+    // not.
+    //
+    // **This block was MISSING for a release and the failure was silent.**
+    // M-V3 added the fields to the manifest and to `arch_validation` and not
+    // here, so every caller of this function -- the CLI's real generation
+    // path and the bench harness -- resolved a vision install to
+    // `VisionConfig::NONE`. The install opened, decoded text correctly, and
+    // refused an image as though it carried no tower. Found by M-V4's parity
+    // gate on the first real run; nothing else asks this function about a
+    // component the peeker was never taught.
+    arch.vision = model_io::VisionConfig {
+        depth: m.vision_depth.unwrap_or(0),
+        hidden_size: m.vision_hidden_size.unwrap_or(0),
+        intermediate_size: m.vision_intermediate_size.unwrap_or(0),
+        num_heads: m.vision_num_heads.unwrap_or(0),
+        patch_size: m.vision_patch_size.unwrap_or(0),
+        temporal_patch_size: m.vision_temporal_patch_size.unwrap_or(0),
+        in_channels: m.vision_in_channels.unwrap_or(0),
+        spatial_merge_size: m.vision_spatial_merge_size.unwrap_or(0),
+        num_position_embeddings: m.vision_num_position_embeddings.unwrap_or(0),
+        out_hidden_size: m.vision_out_hidden_size.unwrap_or(0),
+        mrope_section: m.vision_mrope_section.unwrap_or([0, 0, 0]),
+        vision_start_token_id: m.vision_start_token_id.unwrap_or(0),
+        vision_end_token_id: m.vision_end_token_id.unwrap_or(0),
+        image_token_id: m.vision_image_token_id.unwrap_or(0),
+        video_token_id: m.vision_video_token_id.unwrap_or(0),
+    };
     Ok(arch)
 }
