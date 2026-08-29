@@ -59,6 +59,24 @@ public struct InstalledModel: Decodable, Sendable, Identifiable, Equatable {
     /// `YYYY-MM-DD`. Whole days only.
     public let installedOn: String
 
+    public init(
+        alias: String,
+        repo: String,
+        revision: String = "main",
+        path: String,
+        family: String,
+        installBytes: UInt64 = 0,
+        installedOn: String = ""
+    ) {
+        self.alias = alias
+        self.repo = repo
+        self.revision = revision
+        self.path = path
+        self.family = family
+        self.installBytes = installBytes
+        self.installedOn = installedOn
+    }
+
     enum CodingKeys: String, CodingKey {
         case alias, repo, revision, path, family
         case installBytes = "install_bytes"
