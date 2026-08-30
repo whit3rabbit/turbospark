@@ -109,6 +109,137 @@ async fn malformed_request_body_is_rejected() {
 }
 
 #[tokio::test]
+async fn health_endpoint_reports_ready_without_a_body() {
+    let base = spawn_server(Vec::new()).await;
+    let client = reqwest::Client::new();
+    let response = client.get(format!("{base}/health")).send().await.unwrap();
+    assert_eq!(response.status(), 200);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["status"], "ok");
+    assert_eq!(body["model"], "scripted");
+    assert_eq!(body["state"], "ready");
+    assert!(body["version"].is_string());
+}
+
+/// **THE DISCRIMINATING HALF**: a request that asks for nothing this server
+/// declines must carry no header at all, or the signal below means nothing.
+#[tokio::test]
+async fn a_plain_request_carries_no_degradation_header() {
+    let tok = load_tokenizer();
+    let steps = h_steps(&tok, 50);
+    let base = spawn_server(steps).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{base}/v1/chat/completions"))
+        .json(&serde_json::json!({
+            "model": "m", "max_tokens": 2, "temperature": 0.0,
+            "messages": [{"role": "user", "content": "hi"}]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    assert!(response.headers().get("x-anyllm-degradation").is_none());
+}
+
+/// A non-text `response_format`, `n > 1`, and both penalty fields are
+/// accepted rather than rejected -- OpenAI clients that always send them
+/// must not 400 -- but every one of them is reported, since none is
+/// actually honoured.
+#[tokio::test]
+async fn unsupported_openai_fields_are_reported_on_the_degradation_header() {
+    let tok = load_tokenizer();
+    let steps = h_steps(&tok, 50);
+    let base = spawn_server(steps).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{base}/v1/chat/completions"))
+        .json(&serde_json::json!({
+            "model": "m", "max_tokens": 2, "temperature": 0.0,
+            "messages": [{"role": "user", "content": "hi"}],
+            "response_format": {"type": "json_object"},
+            "n": 2,
+            "presence_penalty": 0.5,
+            "frequency_penalty": 0.5
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let header = response
+        .headers()
+        .get("x-anyllm-degradation")
+        .expect("unsupported fields must be reported")
+        .to_str()
+        .unwrap()
+        .to_string();
+    // `n` is checked as a whole comma-separated item rather than a
+    // substring: every other label here contains the letter `n`.
+    let items: Vec<&str> = header.split(", ").collect();
+    assert!(header.contains("response_format"), "{header}");
+    assert!(items.contains(&"n"), "{header}");
+    assert!(header.contains("presence_penalty"), "{header}");
+    assert!(header.contains("frequency_penalty"), "{header}");
+}
+
+/// `n: 1` is the field's own default and this server already returns one
+/// choice, so it must not be reported -- the discriminating half of the
+/// case above.
+#[tokio::test]
+async fn n_equal_to_one_is_not_reported() {
+    let tok = load_tokenizer();
+    let steps = h_steps(&tok, 50);
+    let base = spawn_server(steps).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{base}/v1/chat/completions"))
+        .json(&serde_json::json!({
+            "model": "m", "max_tokens": 2, "temperature": 0.0,
+            "messages": [{"role": "user", "content": "hi"}],
+            "n": 1
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    assert!(response.headers().get("x-anyllm-degradation").is_none());
+}
+
+/// The degradation header applies identically on the streaming path, not
+/// just the non-streaming one it was first wired against.
+#[tokio::test]
+async fn streaming_responses_also_carry_the_degradation_header() {
+    let tok = load_tokenizer();
+    let steps = h_steps(&tok, 50);
+    let base = spawn_server(steps).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{base}/v1/chat/completions"))
+        .json(&serde_json::json!({
+            "model": "m", "max_tokens": 2, "temperature": 0.0, "stream": true,
+            "messages": [{"role": "user", "content": "hi"}],
+            "presence_penalty": 0.2
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let header = response
+        .headers()
+        .get("x-anyllm-degradation")
+        .expect("a streaming response must carry the header too")
+        .to_str()
+        .unwrap()
+        .to_string();
+    assert!(header.contains("presence_penalty"), "{header}");
+    // The header is set on the response before the body streams, so it says
+    // nothing about whether generation itself succeeded; check that too.
+    let body = response.text().await.unwrap();
+    assert!(body.contains("[DONE]"), "{body}");
+    assert!(!body.contains("server_error"), "{body}");
+}
+
+#[tokio::test]
 async fn get_models_list_and_model_detail_endpoint() {
     let base = spawn_server(Vec::new()).await;
     let client = reqwest::Client::new();

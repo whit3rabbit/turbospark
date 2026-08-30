@@ -1411,13 +1411,20 @@ live network).
   `<tokenizer-dir>` scripted mode (which Swift does not have), which always
   binds loopback. Like Swift's, it is not authentication: the server has no
   auth and no TLS, so access is governed entirely by the Tailnet ACL.
-- The server's sampling knob surface is narrower than the CLI's: no
-  request-settable `top_k` (it defaults to 64, the CLI's default, because
-  `ShapingConfig` rejects a `top_p` below 1.0 when `top_k` is 0, which
-  would 400 every plain OpenAI request carrying only `top_p`) and no
-  `repetition_penalty` (fixed at its identity value). That matches plain
-  OpenAI Chat Completions' request shape rather than
-  `turbospark-invocation`'s fuller option set.
+- The server's sampling knob surface is narrower than the CLI's, but less so
+  than it once was: `top_k` and `repetition_penalty` ARE request-settable
+  (`handler::plan::build_config` reads both out of the request's `extra`
+  flatten map, since neither has an explicit field on
+  `anyllm_translate`'s OpenAI request type), defaulting to 64 and 1.0
+  respectively when absent -- 64 because `ShapingConfig` rejects a `top_p`
+  below 1.0 when `top_k` is 0, which would 400 every plain OpenAI request
+  carrying only `top_p`. Still missing: `presence_penalty` and
+  `frequency_penalty` (both accepted on the wire, both ignored;
+  `handler::plan::openai_request_warnings` reports either on
+  `x-anyllm-degradation` rather than silently dropping it) and `min_p`.
+  That is narrower than `turbospark-invocation`'s fuller option set, but
+  wider than plain OpenAI Chat Completions' own request shape, which has no
+  `top_k` field at all.
 - **Anthropic `POST /v1/messages`: implemented, text and tool calling, and
   an addition rather than a port.** Swift's server has no such endpoint. It exists here
   because `turbospark-server` took a dependency on `anyllm_translate`
@@ -1481,13 +1488,18 @@ live network).
   secret redaction, and step/prerequisite enforcement -- the last because it
   needs forge to own the agent loop, and here the CLIENT owns it.
 
-  What is still dropped: image and document content blocks, and `thinking`.
-  A replayed `thinking` block is dropped from the prompt rather than
-  rendered as assistant prose (`ChatMessage::effective_text` would fall
-  back to `reasoning_content`; `handler::visible_text` does not). Of these,
-  only `thinking` and document blocks appear on the
-  `x-anyllm-degradation` response header -- `compute_request_warnings` has
-  no notion of a dropped image, so that one is silent. A message with
+  What is still dropped: document content blocks and `thinking`. A replayed
+  `thinking` block is dropped from the prompt rather than rendered as
+  assistant prose (`ChatMessage::effective_text` would fall back to
+  `reasoning_content`; `handler::visible_text` does not). Both appear on
+  the `x-anyllm-degradation` response header via `compute_request_warnings`.
+  An image this server cannot serve is dropped too, but NOT silently since
+  ROADMAP M-V8: `handler::plan::Planned::dropped_images` is appended to the
+  same header on both endpoints (`messages::messages`,
+  `handler::chat_completions`) -- `compute_request_warnings` itself still
+  has no notion of an image, since it only sees the Anthropic-shaped
+  request `/v1/messages` translates from, so the note is computed
+  separately and merged in. A message with
   neither text nor tool calls is dropped rather than rendered as an empty
   turn; one with tool calls and no text is kept.
 

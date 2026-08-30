@@ -1,9 +1,9 @@
 # turbospark-server
 
 HTTP server (`turbospark-server`) on Axum, speaking two wire formats against one
-local backend: OpenAI `/v1/chat/completions`, Anthropic `/v1/messages`, and
-`/v1/models`. Both generation endpoints support non-streaming and Server-Sent
-Events (SSE) streaming output.
+local backend: OpenAI `/v1/chat/completions`, Anthropic `/v1/messages`,
+`/v1/models`, and a lock-free `GET /health`. Both generation endpoints
+support non-streaming and Server-Sent Events (SSE) streaming output.
 
 The wire types are `anyllm_translate`'s (crates.io 0.16, default features:
 pure, IO-free), not hand-rolled. An Anthropic request is translated into the
@@ -20,8 +20,8 @@ crates/server/
 |   +-- args.rs                 # Command line parsing and host binding resolution
 |   +-- main_tests.rs           # Unit tests for CLI args and host binding
 |   +-- lib.rs                  # Library root: router, re-exported wire types
-|   +-- handler/                # /v1/chat/completions + /v1/models, and the shared generation core
-|   |   +-- mod.rs              # The two Axum handlers and the router wiring
+|   +-- handler/                # /v1/chat/completions + /v1/models + /health, and the shared generation core
+|   |   +-- mod.rs              # The Axum handlers and the router wiring
 |   |   +-- plan.rs             # `plan`: chat template, encode, shaping config
 |   |   +-- exec.rs             # `run_full` and `stream_blocking`
 |   |   \-- tests.rs            # Unit tests for the two above
@@ -45,7 +45,7 @@ crates/server/
 ## Key Modules
 
 - `main.rs`: Server binary entry point and CLI option handling (`--model` real mode, legacy positional scripted mode, port, `--bind loopback|tailnet`).
-- `handler/`: the `/v1/chat/completions` and `/v1/models` handlers, plus the generation core both endpoints share -- `plan.rs` (chat template, encode, shaping config) and `exec.rs`'s `run_full` and `stream_blocking` (which owns the `StructuredAssistantDecoder` when a request carries tools).
+- `handler/`: the `/v1/chat/completions`, `/v1/models`, and `/health` handlers, plus the generation core both generation endpoints share -- `plan.rs` (chat template, encode, shaping config, and `openai_request_warnings`/`merge_degradation` for the OpenAI-side half of `x-anyllm-degradation`, Gotcha 22) and `exec.rs`'s `run_full` and `stream_blocking` (which owns the `StructuredAssistantDecoder` when a request carries tools).
 - `messages.rs`: the Anthropic `/v1/messages` handler, wrapping the same core in `translate_request` / `translate_response` / `new_stream_translator`.
 - `guardrails.rs`: tool-call rescue parsing, argument validation against the request's own schema, and the one-retry loop, over `forge-guardrails` (see Gotcha 18). `inspect` is the pure verdict; `run_guarded` is the loop that acts on it.
 - `model.rs`: the `ChatModel` trait and `ScriptedChatModel`, bridging Axum handlers to `turbospark-runtime`. The trait owns WHICH decode loop runs (`run_completion`, Gotcha 17), not just which producer.
@@ -59,6 +59,7 @@ crates/server/
 cargo test -p turbospark-server
 
 # Smoke the two generation endpoints against a running --model server.
+curl -s localhost:8080/health
 curl -s localhost:8080/v1/models
 curl -s localhost:8080/v1/messages -H 'content-type: application/json' \
   -d '{"model":"claude-sonnet-4-6","max_tokens":120,"messages":[{"role":"user","content":"hi"}]}'
@@ -339,3 +340,38 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
    `real_backend.rs`'s `real_backend_reads_an_image_sent_over_both_endpoints`
    asserts the transcription contains the page's own line numbers, and both
    endpoints return byte-identical text on the real install.
+
+22. **`/health` READS ONLY A FIELD, NOT THE RUNNER, ON PURPOSE.**
+    `handler::health` calls `ChatModel::model_id()` alone, which every
+    backend answers from a plain `&str` field (`RealChatModel::model_id`
+    never touches its `Mutex<RealForwardRunner>`). A liveness probe that
+    queued behind the one generation this process can run at a time would
+    answer the wrong question -- "is the process alive" needs to stay true
+    while a request is mid-decode, not just between requests.
+
+    **THE OpenAI HALF OF `x-anyllm-degradation` HAS NO VENDORED
+    COUNTERPART, BECAUSE `anyllm_translate::compute_request_warnings` ONLY
+    EVER SEES THE ANTHROPIC-SHAPED REQUEST `/v1/messages` TRANSLATES
+    FROM.** A field like `response_format: {"type": "json_object"}` or
+    `presence_penalty` arrives on `/v1/chat/completions` directly, with no
+    Anthropic translation step to warn about it. `handler::plan::
+    openai_request_warnings` is that gap's fix, built on the same
+    `anyllm_translate::TranslationWarnings` type (comma-joined items) rather
+    than a hand-rolled string, so the two halves of the header read alike.
+    `merge_degradation` (`"; "`-joined) replaces the ad hoc match both
+    `chat_completions` and `messages::messages` used to write inline for
+    combining it with a dropped-image note -- one function, both call sites.
+
+    Every warning here is conditioned on the DEFAULT the server already
+    produces matching the field's own OpenAI default: `n` warns past 1, not
+    at 1 (this server already returns one choice), `response_format` warns
+    past `"text"`, not at it. `presence_penalty` and `frequency_penalty`
+    warn UNCONDITIONALLY whenever present, because neither reaches
+    `selection::shaping` yet -- delete those two arms the day they do.
+
+    **SSE keep-alive (`Sse::keep_alive`, 15s interval) is on all four SSE
+    constructions** (`handler::mod`'s two, `messages`'s two) for the same
+    reason a long prefill needs it most: the gap between a request landing
+    and its first token can run several seconds at this engine's decode
+    rates, long enough for a loopback proxy or an idle-conservative client
+    to give up on a connection that has sent nothing yet.

@@ -37,7 +37,7 @@ use anyllm_translate::{
 };
 use axum::extract::State;
 use axum::http::StatusCode;
-use axum::response::sse::{Event, Sse};
+use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use futures::stream::{Stream, StreamExt};
@@ -46,8 +46,8 @@ use tokenizer::ReasoningEffort;
 
 use crate::guardrails::run_guarded;
 use crate::handler::{
-    now_unix, plan, reasoning_effort, status_for, stream_blocking, tool_names, AppState, GenError,
-    Piece,
+    merge_degradation, now_unix, plan, reasoning_effort, status_for, stream_blocking, tool_names,
+    AppState, GenError, Piece, SSE_KEEP_ALIVE,
 };
 use crate::response::{
     completion_chunk, completion_response, finish_reason, reasoning_delta, role_delta, text_delta,
@@ -129,11 +129,7 @@ pub async fn messages(
     // sending a picture to a text-only install got a plausible text answer
     // and no signal at all. Appended rather than replacing, so the vendored
     // warnings keep theirs.
-    let degraded = match (&degraded, &dropped_images) {
-        (_, None) => degraded,
-        (None, Some(note)) => Some(note.clone()),
-        (Some(existing), Some(note)) => Some(format!("{existing}; {note}")),
-    };
+    let degraded = merge_degradation(degraded, dropped_images);
 
     let tools = tool_names(&openai);
     // See the OpenAI handler: `plan` has already rejected a bad value.
@@ -303,7 +299,9 @@ fn stream_response(
     let stream: std::pin::Pin<
         Box<dyn Stream<Item = Result<Event, std::convert::Infallible>> + Send>,
     > = Box::pin(tokio_stream::wrappers::UnboundedReceiverStream::new(rx).map(Ok));
-    Sse::new(stream).into_response()
+    Sse::new(stream)
+        .keep_alive(KeepAlive::new().interval(SSE_KEEP_ALIVE))
+        .into_response()
 }
 
 /// The guarded generation, pushed through the Anthropic translator in the
@@ -387,5 +385,7 @@ fn buffered_stream_response(
     let stream: std::pin::Pin<
         Box<dyn Stream<Item = Result<Event, std::convert::Infallible>> + Send>,
     > = Box::pin(tokio_stream::wrappers::UnboundedReceiverStream::new(rx).map(Ok));
-    Sse::new(stream).into_response()
+    Sse::new(stream)
+        .keep_alive(KeepAlive::new().interval(SSE_KEEP_ALIVE))
+        .into_response()
 }

@@ -223,6 +223,57 @@ pub(crate) fn reasoning_effort(
     })
 }
 
+/// The OpenAI request fields this server accepts on the wire but does not
+/// act on, as a comma-separated note for [`crate::DEGRADATION_HEADER`] --
+/// the OpenAI-side counterpart to `anyllm_translate::compute_request_warnings`,
+/// which only ever sees the Anthropic-shaped request `/v1/messages`
+/// translates from.
+///
+/// `response_format` warns only past `"text"` (the default the server
+/// already produces); `n` only past 1 (the default it already returns);
+/// `presence_penalty` and `frequency_penalty` warn unconditionally because
+/// neither reaches `selection::shaping` yet -- remove both once that lands.
+pub(crate) fn openai_request_warnings(request: &ChatCompletionRequest) -> Option<String> {
+    let mut warnings = anyllm_translate::TranslationWarnings::default();
+    if request
+        .response_format
+        .as_ref()
+        .is_some_and(|f| f.format_type != "text")
+    {
+        warnings.add("response_format");
+    }
+    if request.extra.get("n").and_then(|v| v.as_u64()).unwrap_or(1) > 1 {
+        warnings.add("n");
+    }
+    if request.extra.contains_key("logprobs") {
+        warnings.add("logprobs");
+    }
+    if request.extra.contains_key("top_logprobs") {
+        warnings.add("top_logprobs");
+    }
+    if request.extra.contains_key("logit_bias") {
+        warnings.add("logit_bias");
+    }
+    if request.presence_penalty.is_some() {
+        warnings.add("presence_penalty");
+    }
+    if request.frequency_penalty.is_some() {
+        warnings.add("frequency_penalty");
+    }
+    warnings.as_header_value()
+}
+
+/// Combines two independently-computed degradation notes into one header
+/// value, `"; "`-joined so a reader can tell the vendored (comma-joined)
+/// half from the locally-appended half.
+pub(crate) fn merge_degradation(warnings: Option<String>, note: Option<String>) -> Option<String> {
+    match (&warnings, &note) {
+        (_, None) => warnings,
+        (None, Some(n)) => Some(n.clone()),
+        (Some(existing), Some(n)) => Some(format!("{existing}; {n}")),
+    }
+}
+
 /// Renders the chat template, encodes it, and resolves the shaping config.
 /// What `plan` produces: the ids to prefill, the sampling config, and any
 /// images the backend must encode before it does.

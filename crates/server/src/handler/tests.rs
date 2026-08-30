@@ -271,3 +271,76 @@ fn one_hot(vocab_size: usize, index: usize) -> Vec<foundation::LogitValue> {
     v[index] = foundation::LogitValue::from_f32(1.0);
     v
 }
+
+#[test]
+fn a_plain_request_has_no_openai_warnings() {
+    let request = request(serde_json::json!({
+        "model": "m", "messages": [{"role": "user", "content": "hi"}]
+    }));
+    assert_eq!(openai_request_warnings(&request), None);
+}
+
+#[test]
+fn response_format_json_is_reported_but_text_is_not() {
+    let text = request(serde_json::json!({
+        "model": "m", "messages": [{"role": "user", "content": "hi"}],
+        "response_format": {"type": "text"}
+    }));
+    assert_eq!(openai_request_warnings(&text), None);
+
+    let json = request(serde_json::json!({
+        "model": "m", "messages": [{"role": "user", "content": "hi"}],
+        "response_format": {"type": "json_object"}
+    }));
+    assert_eq!(
+        openai_request_warnings(&json),
+        Some("response_format".to_string())
+    );
+}
+
+#[test]
+fn n_greater_than_one_is_reported_but_one_and_absent_are_not() {
+    let absent = request(serde_json::json!({
+        "model": "m", "messages": [{"role": "user", "content": "hi"}]
+    }));
+    assert_eq!(openai_request_warnings(&absent), None);
+
+    let one = request(serde_json::json!({
+        "model": "m", "messages": [{"role": "user", "content": "hi"}], "n": 1
+    }));
+    assert_eq!(openai_request_warnings(&one), None);
+
+    let two = request(serde_json::json!({
+        "model": "m", "messages": [{"role": "user", "content": "hi"}], "n": 2
+    }));
+    assert_eq!(openai_request_warnings(&two), Some("n".to_string()));
+}
+
+#[test]
+fn presence_and_frequency_penalty_are_both_reported_together() {
+    let request = request(serde_json::json!({
+        "model": "m", "messages": [{"role": "user", "content": "hi"}],
+        "presence_penalty": 0.1, "frequency_penalty": -0.1
+    }));
+    assert_eq!(
+        openai_request_warnings(&request),
+        Some("presence_penalty, frequency_penalty".to_string())
+    );
+}
+
+#[test]
+fn merge_degradation_joins_two_notes_with_a_semicolon_and_passes_one_through() {
+    assert_eq!(merge_degradation(None, None), None);
+    assert_eq!(
+        merge_degradation(Some("a".to_string()), None),
+        Some("a".to_string())
+    );
+    assert_eq!(
+        merge_degradation(None, Some("b".to_string())),
+        Some("b".to_string())
+    );
+    assert_eq!(
+        merge_degradation(Some("a".to_string()), Some("b".to_string())),
+        Some("a; b".to_string())
+    );
+}

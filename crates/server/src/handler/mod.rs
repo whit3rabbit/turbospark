@@ -14,15 +14,23 @@ mod plan;
 mod tests;
 
 use std::collections::HashSet;
+use std::time::Duration;
 
 use anyllm_translate::openai::ChatCompletionRequest;
 use axum::extract::{Path, State};
-use axum::response::sse::{Event, Sse};
+use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use futures::stream::{Stream, StreamExt};
 use runtime::{GenerationConfig, RuntimeError};
 use tokenizer::ReasoningEffort;
+
+/// How often an idle SSE stream sends a comment line to keep loopback
+/// proxies and clients from timing out a connection that has nothing to
+/// say yet -- most visibly the gap between the request landing and the
+/// first token, which at this engine's decode rates can run several
+/// seconds on a long prompt.
+pub(crate) const SSE_KEEP_ALIVE: Duration = Duration::from_secs(15);
 
 pub(crate) use exec::*;
 pub use plan::AppState;
@@ -61,6 +69,20 @@ pub(crate) fn gen_error_response(e: GenError) -> Response {
         GenError::Runtime(e) => error_response(status_for(&e), e.to_string()),
         GenError::Join(m) => error_response(axum::http::StatusCode::INTERNAL_SERVER_ERROR, m),
     }
+}
+
+/// `GET /health`. Reads only per-process fields the backend resolved at
+/// open (`model_id`), so it answers even while a generation holds the
+/// runner's lock -- the point of a liveness probe is to say the process is
+/// alive, not to queue behind whatever request got there first.
+pub async fn health(State(model): State<AppState>) -> Response {
+    Json(serde_json::json!({
+        "status": "ok",
+        "model": model.model_id(),
+        "state": "ready",
+        "version": env!("CARGO_PKG_VERSION"),
+    }))
+    .into_response()
 }
 
 /// `GET /v1/models`. One backend per process, so the list has one entry.
@@ -138,8 +160,18 @@ pub async fn chat_completions(
         .map(|o| o.include_usage)
         .unwrap_or(false);
 
-    if request.stream.unwrap_or(false) {
-        return stream_response(
+    // **AN IMAGE THIS SERVER COULD NOT SERVE, OR AN OpenAI FIELD THIS
+    // SERVER DOES NOT HONOUR, IS REPORTED** (ROADMAP M-V8, then widened
+    // here) -- on the same header `/v1/messages` uses. Neither has a place
+    // in OpenAI's own response shape, so this is an extension rather than a
+    // translation, and the alternative is what shipped before: a plausible
+    // answer with nothing anywhere saying part of the request was ignored.
+    // Computed once, before either branch, so it applies identically to the
+    // streaming and non-streaming responses below.
+    let degraded = merge_degradation(openai_request_warnings(&request), dropped_images);
+
+    let mut response = if request.stream.unwrap_or(false) {
+        stream_response(
             model,
             prompt_ids,
             config,
@@ -148,32 +180,26 @@ pub async fn chat_completions(
             effort,
             &request,
             include_usage,
-        );
-    }
-
-    let generated = match run_guarded(model, &request, effort).await {
-        Ok(r) => r,
-        Err(e) => return gen_error_response(e),
+        )
+    } else {
+        let generated = match run_guarded(model, &request, effort).await {
+            Ok(r) => r,
+            Err(e) => return gen_error_response(e),
+        };
+        Json(completion_response(
+            format!("chatcmpl-{}", now_unix()),
+            now_unix(),
+            request.model,
+            generated.text,
+            generated.reasoning,
+            generated.calls,
+            generated.decode.reason,
+            generated.decode.prompt_tokens as u32,
+            generated.decode.new_tokens as u32,
+        ))
+        .into_response()
     };
-
-    let mut response = Json(completion_response(
-        format!("chatcmpl-{}", now_unix()),
-        now_unix(),
-        request.model,
-        generated.text,
-        generated.reasoning,
-        generated.calls,
-        generated.decode.reason,
-        generated.decode.prompt_tokens as u32,
-        generated.decode.new_tokens as u32,
-    ))
-    .into_response();
-    // **AN IMAGE THIS SERVER COULD NOT SERVE IS REPORTED** (ROADMAP M-V8), on
-    // the same header `/v1/messages` uses. OpenAI's own spec has no such
-    // field, so this is an extension rather than a translation -- and the
-    // alternative is what shipped before: a text answer to a question about a
-    // picture, with nothing anywhere saying the picture was dropped.
-    if let Some(note) = dropped_images.as_deref().and_then(|n| n.parse().ok()) {
+    if let Some(note) = degraded.and_then(|v| v.parse().ok()) {
         response
             .headers_mut()
             .insert(crate::DEGRADATION_HEADER, note);
@@ -294,7 +320,9 @@ fn stream_response(
     let stream: std::pin::Pin<
         Box<dyn Stream<Item = Result<Event, std::convert::Infallible>> + Send>,
     > = Box::pin(tokio_stream::wrappers::UnboundedReceiverStream::new(rx).map(Ok));
-    Sse::new(stream).into_response()
+    Sse::new(stream)
+        .keep_alive(KeepAlive::new().interval(SSE_KEEP_ALIVE))
+        .into_response()
 }
 
 /// The guarded generation, re-framed as the SSE sequence the live path would
@@ -374,5 +402,7 @@ fn buffered_stream_response(
     let stream: std::pin::Pin<
         Box<dyn Stream<Item = Result<Event, std::convert::Infallible>> + Send>,
     > = Box::pin(tokio_stream::wrappers::UnboundedReceiverStream::new(rx).map(Ok));
-    Sse::new(stream).into_response()
+    Sse::new(stream)
+        .keep_alive(KeepAlive::new().interval(SSE_KEEP_ALIVE))
+        .into_response()
 }
