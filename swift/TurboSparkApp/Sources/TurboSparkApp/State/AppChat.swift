@@ -116,6 +116,8 @@ public struct AppChatMessage: Identifiable, Codable, Equatable, Sendable {
     public var toolCalls: [AppToolCall]
     /// Results of executed tool calls for this message turn.
     public var toolResults: [AppToolResult]
+    /// Timestamp when this message turn was created.
+    public var createdAt: Date
 
     /// Creates a chat message turn.
     public init(
@@ -125,7 +127,8 @@ public struct AppChatMessage: Identifiable, Codable, Equatable, Sendable {
         reasoning: String = "",
         stopReason: String? = nil,
         toolCalls: [AppToolCall] = [],
-        toolResults: [AppToolResult] = []
+        toolResults: [AppToolResult] = [],
+        createdAt: Date = Date()
     ) {
         self.id = id
         self.role = role
@@ -134,6 +137,7 @@ public struct AppChatMessage: Identifiable, Codable, Equatable, Sendable {
         self.stopReason = stopReason
         self.toolCalls = toolCalls
         self.toolResults = toolResults
+        self.createdAt = createdAt
     }
 
     /// Tolerant decode: every field added after the first release is read with
@@ -156,6 +160,7 @@ public struct AppChatMessage: Identifiable, Codable, Equatable, Sendable {
         stopReason = try container.decodeIfPresent(String.self, forKey: .stopReason)
         toolCalls = try container.decodeIfPresent([AppToolCall].self, forKey: .toolCalls) ?? []
         toolResults = try container.decodeIfPresent([AppToolResult].self, forKey: .toolResults) ?? []
+        createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
     }
 }
 

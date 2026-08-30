@@ -47,10 +47,15 @@ struct TurboSparkApp: App {
                 }
                 .keyboardShortcut("2", modifiers: .command)
 
-                Button("Models") {
-                    model.activeSection = .modelHub
+                Button("Installed Models") {
+                    model.activeSection = .modelManager
                 }
                 .keyboardShortcut("3", modifiers: .command)
+
+                Button("Discover Models") {
+                    model.activeSection = .modelHub
+                }
+                .keyboardShortcut("4", modifiers: .command)
 
                 Divider()
 
@@ -63,6 +68,14 @@ struct TurboSparkApp: App {
                     NotificationCenter.default.post(name: .toggleInspector, object: nil)
                 }
                 .keyboardShortcut("i", modifiers: [.command, .shift])
+
+                Divider()
+
+                Picker("Status Bar Benchmarks", selection: $appearanceManager.statusBarViewMode) {
+                    ForEach(StatusBarViewMode.allCases) { mode in
+                        Label(mode.label, systemImage: mode.systemImage).tag(mode)
+                    }
+                }
 
                 Divider()
 

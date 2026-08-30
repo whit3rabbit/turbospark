@@ -85,9 +85,19 @@ public struct McpSettingsPaneView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Plugins & MCPs")
                     .font(.title2.weight(.bold))
-                Text("Manage Model Context Protocol servers, external tools, and integrations.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 4) {
+                    Text("Manage Model Context Protocol servers, external tools, and integrations.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if let url = URL(string: "https://modelcontextprotocol.io") {
+                        Link("Documentation", destination: url)
+                            .font(.caption)
+                            .help("Open MCP official documentation: https://modelcontextprotocol.io")
+                            .accessibilityLabel("MCP Documentation")
+                            .accessibilityHint("Opens Model Context Protocol documentation in web browser")
+                            .accessibilityAddTraits(.isLink)
+                    }
+                }
             }
             Spacer()
             Button {
@@ -99,6 +109,8 @@ public struct McpSettingsPaneView: View {
             .buttonStyle(.borderedProminent)
             .controlSize(.regular)
             .help("Add a new global MCP server")
+            .accessibilityLabel("Add MCP Server")
+            .accessibilityHint("Opens editor sheet to configure a new MCP server")
         }
     }
 

@@ -47,6 +47,15 @@ cp -R "$app" "$staging/TurboSpark.app"
 # and the user is expected to know where to put it.
 ln -s /Applications "$staging/Applications"
 
+# DMG custom volume icon if available
+if [ -f "$root/assets/icons/AppIcon.icns" ]; then
+  cp "$root/assets/icons/AppIcon.icns" "$staging/.VolumeIcon.icns"
+  if command -v SetFile >/dev/null 2>&1; then
+    SetFile -a C "$staging" || true
+    SetFile -a V "$staging/.VolumeIcon.icns" || true
+  fi
+fi
+
 echo "==> hdiutil create $dmg"
 mkdir -p "$out_dir"
 rm -f "$dmg"

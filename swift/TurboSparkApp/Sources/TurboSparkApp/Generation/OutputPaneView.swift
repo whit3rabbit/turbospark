@@ -136,6 +136,7 @@ private struct ChatTranscriptView: View {
 
                     if model.isRunning || !model.outputText.isEmpty || !model.outputReasoningText.isEmpty {
                         ActiveStreamingRowView(
+                            model: model,
                             output: model.outputText,
                             reasoning: model.outputReasoningText,
                             isRunning: model.isRunning
@@ -166,26 +167,60 @@ private struct ChatTranscriptView: View {
     }
 }
 
-/// View displaying a committed conversation message turn.
+/// View displaying a committed conversation message turn with Claude-style layout and hover actions.
 private struct MessageRowView: View {
     @ObservedObject var model: AppModel
     let message: AppChatMessage
+    @State private var isHovered = false
+    @ObservedObject private var speechManager = AppSpeechSynthesizer.shared
+
+    private var isCurrentlySpeakingThis: Bool {
+        speechManager.isSpeaking && speechManager.speakingMessageID == message.id
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             if message.role == .user {
-                HStack {
-                    Spacer(minLength: 40)
-                    Text(message.content)
-                        .font(.body)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 10)
-                        .background(Color.primary.opacity(0.06))
-                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                        .textSelection(.enabled)
+                HStack(alignment: .top, spacing: 0) {
+                    Spacer(minLength: 48)
+                    VStack(alignment: .trailing, spacing: 6) {
+                        CollapsibleMessageContentView(
+                            text: message.content,
+                            isUser: true
+                        )
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
+                        .background(Color(nsColor: .controlBackgroundColor).opacity(0.85))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        .shadow(color: Color.black.opacity(0.03), radius: 3, x: 0, y: 1)
+
+                        if isHovered || isCurrentlySpeakingThis {
+                            MessageActionBarView(
+                                text: message.content,
+                                messageID: message.id,
+                                date: message.createdAt
+                            )
+                            .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                        }
+                    }
                 }
             } else {
                 VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "sparkles")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(TurboSparkTheme.accentColor)
+                            .accessibilityHidden(true)
+                        Text(model.selected?.alias ?? "TurboSpark")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.bottom, -2)
+
                     if !message.reasoning.isEmpty {
                         ReasoningDisclosureView(reasoning: message.reasoning)
                     }
@@ -198,59 +233,32 @@ private struct MessageRowView: View {
                     }
 
                     if !message.content.isEmpty && message.toolCalls.isEmpty {
-                        ChatMessageMarkdownView(message.content)
+                        CollapsibleMessageContentView(text: message.content, isUser: false, maxHeight: 380)
                     } else if !message.content.isEmpty && !message.content.starts(with: "<tool_call>") && !message.content.starts(with: "Invoking tool") {
-                        ChatMessageMarkdownView(message.content)
+                        CollapsibleMessageContentView(text: message.content, isUser: false, maxHeight: 380)
                     }
 
-                    HStack(spacing: 8) {
-                        MessageCopyButton(text: message.content)
-                        Spacer()
+                    if isHovered || isCurrentlySpeakingThis {
+                        HStack(spacing: 6) {
+                            MessageActionBarView(
+                                text: message.content,
+                                messageID: message.id,
+                                date: message.createdAt
+                            )
+                            Spacer()
+                        }
+                        .padding(.top, 2)
+                        .transition(.opacity.combined(with: .scale(scale: 0.98)))
                     }
-                    .padding(.top, 2)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-    }
-}
-
-/// Small copy button displayed beneath message results.
-private struct MessageCopyButton: View {
-    let text: String
-    @State private var isCopied = false
-
-    var body: some View {
-        Button {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(text, forType: .string)
+        .padding(.vertical, 4)
+        .contentShape(Rectangle())
+        .onHover { hovering in
             withAnimation(.easeInOut(duration: 0.15)) {
-                isCopied = true
-            }
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
-                    .font(.system(size: 11, weight: .medium))
-                    .accessibilityHidden(true)
-                Text(isCopied ? "Copied" : "Copy")
-                    .font(.caption2.weight(.medium))
-            }
-            .foregroundStyle(isCopied ? TurboSparkTheme.accentColor : Color.secondary)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 4)
-            .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help("Copy message text")
-        .accessibilityLabel(isCopied ? "Copied" : "Copy message")
-        .accessibilityHint("Copies this message to the clipboard")
-        .task(id: isCopied) {
-            guard isCopied else { return }
-            try? await Task.sleep(for: .seconds(1.5))
-            guard !Task.isCancelled else { return }
-            withAnimation(.easeOut(duration: 0.15)) {
-                isCopied = false
+                isHovered = hovering
             }
         }
     }
@@ -258,12 +266,24 @@ private struct MessageCopyButton: View {
 
 /// View rendering live streaming output and prefill animations.
 private struct ActiveStreamingRowView: View {
+    @ObservedObject var model: AppModel
     let output: String
     let reasoning: String
     let isRunning: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: "sparkles")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(TurboSparkTheme.accentColor)
+                    .accessibilityHidden(true)
+                Text(model.selected?.alias ?? "TurboSpark")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.bottom, -2)
+
             if isRunning && output.isEmpty && reasoning.isEmpty {
                 HStack(spacing: 8) {
                     ProgressView()
@@ -284,6 +304,11 @@ private struct ActiveStreamingRowView: View {
                 if !output.isEmpty {
                     ChatMessageMarkdownView(output)
                 }
+            }
+
+            if isRunning {
+                StreamingStatusFooterView(model: model)
+                    .padding(.top, 2)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

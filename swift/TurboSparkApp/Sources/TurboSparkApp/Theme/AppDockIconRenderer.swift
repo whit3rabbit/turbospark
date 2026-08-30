@@ -14,6 +14,17 @@ public enum AppDockIconRenderer {
 
         switch icon {
         case .emeraldSpark:
+            image.unlockFocus()
+            if let url = Bundle.module.url(forResource: "AppIcon", withExtension: "png"),
+               let bundled = NSImage(contentsOf: url) {
+                NSApplication.shared.applicationIconImage = bundled
+                return
+            } else if let appIcon = NSImage(named: "AppIcon") {
+                NSApplication.shared.applicationIconImage = appIcon
+                return
+            }
+            image.lockFocus()
+
             let bgGradient = NSGradient(
                 starting: NSColor(srgbRed: 0.08, green: 0.16, blue: 0.10, alpha: 1.0),
                 ending: NSColor(srgbRed: 0.02, green: 0.06, blue: 0.03, alpha: 1.0)

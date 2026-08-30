@@ -125,6 +125,10 @@ public struct HooksSettingsPaneView: View {
                     }
                     .font(.caption)
                     .buttonStyle(.link)
+                    .help("Open Hooks Documentation: https://docs.anthropic.com/en/docs/agents-and-tools/claude-code/overview#hooks")
+                    .accessibilityLabel("Learn more about hooks")
+                    .accessibilityHint("Opens Claude Code hooks documentation in web browser")
+                    .accessibilityAddTraits(.isLink)
                 }
             }
 

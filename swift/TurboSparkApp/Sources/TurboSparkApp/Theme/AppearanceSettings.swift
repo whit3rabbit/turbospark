@@ -20,6 +20,7 @@ public final class AppearanceManager: ObservableObject {
     private static let keyCodeFontSize = "TurboSpark.prefs.codeFontSize"
     private static let keyDiffMarkers = "TurboSpark.prefs.diffMarkers"
     private static let keyFontSmoothing = "TurboSpark.prefs.fontSmoothing"
+    private static let keyStatusBarViewMode = "TurboSpark.prefs.statusBarViewMode"
 
     /// Resolved app appearance mode (system, light, dark).
     @Published public var appearance: AppAppearance {
@@ -34,6 +35,11 @@ public final class AppearanceManager: ObservableObject {
     /// Theme styling configuration used when dark mode is active.
     @Published public var darkConfig: ThemeModeConfig {
         didSet { saveDarkConfig() }
+    }
+
+    /// Presentation mode for bottom toolbar benchmarks (numbers or live graphs).
+    @Published public var statusBarViewMode: StatusBarViewMode {
+        didSet { defaults.set(statusBarViewMode.rawValue, forKey: Self.keyStatusBarViewMode) }
     }
 
     /// Whether interactive buttons and clickable controls display a pointer cursor on hover.
@@ -94,6 +100,9 @@ public final class AppearanceManager: ObservableObject {
         } else {
             self.darkConfig = .defaultDark
         }
+
+        let statusViewStr = defaults.string(forKey: Self.keyStatusBarViewMode) ?? StatusBarViewMode.text.rawValue
+        self.statusBarViewMode = StatusBarViewMode(rawValue: statusViewStr) ?? .text
 
         self.usePointerCursors = defaults.object(forKey: Self.keyUsePointerCursors) as? Bool ?? false
 

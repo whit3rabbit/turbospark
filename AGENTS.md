@@ -1762,6 +1762,75 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
     and the failure mode does not exist at that width. Do not read a
     passing oracle at 16 slots as evidence that 8 works.
 
+65. **WHEN A REFERENCE KERNEL DIFFERS ON SEVERAL AXES AT ONCE, CHANGING ONE
+    IS NOT A CONTROLLED EXPERIMENT -- IT IS A THIRD, WORSE KERNEL.**
+    Measured 2026-08-29. MLX's `qmm_t_impl` beats this port's
+    `dequant_int4_gemm_mma` by 3.0x and differs from it in three ways at
+    once: 128 threads in four SIMD groups against one, `BM` 16 to 128
+    against `kMmaTile = 8`, and BOTH operands staged into threadgroup
+    memory against only the weights. Staging `x` was isolated and built
+    first, on the reasoning that a transposed `simdgroup_load` from device
+    with row stride N is a strided gather in the innermost loop and
+    therefore the obvious cause. **It lost 3.3x to 5.9x, on every shape and
+    every width, with the penalty GROWING in B.** Apple's tile load handles
+    that access fine; hand-staging the same bytes through 32 LANES is a
+    serial copy of thousands of halfs per n-block. MLX stages `x` and wins
+    because it has 128 threads to do the staging and a `BM` of 32 to 128 to
+    amortize it over -- so staging is a CONSEQUENCE of the wider
+    threadgroup, not a separate lever, and the axes are not orthogonal.
+    The rule: before isolating one difference against a faster reference,
+    ask whether that difference is load-bearing ON ITS OWN or only in
+    combination. When the answer is "only in combination", a one-variable
+    A/B measures a kernel nobody would ship and its null (or negative)
+    result says nothing about the question. This kernel has now punished
+    the same instinct three times -- its header already records that
+    widening the staged K block eightfold "changed nothing" and that
+    running past M=16 to 32 and 64 "changed nothing".
+
+    **AND THE KERNEL'S OWN EXPLANATION OF ITSELF SURVIVED BECAUSE NOBODY DID
+    THE ARITHMETIC.** Its header attributed the plateau to dequant work being
+    "independent of B", and the natural fix that follows is a bigger weight
+    tile. One threadgroup there dequantizes `8 * N` elements to produce
+    `8 * B` outputs, so dequant per output is `N / B` -- a function of the
+    TOKEN count, not of the weight rows per threadgroup. MLX's is `K / BM`
+    with `BM` also the token tile: **the same number at the same width.**
+    The kernel already runs at B=64, already sits where MLX sits at BM=64,
+    and is still 3.5x behind. So the amortization story is refuted by two
+    lines of counting, the `kMmaTile` lever it implies is refuted with it,
+    and the real mechanism remains unidentified. Do the counting before
+    accepting a performance explanation that arrives as prose -- Gotcha 62's
+    rule, applied to a mechanism rather than to a measured value.
+
+    **THE COROLLARY IS THAT A DEAD-END VERDICT INHERITS THE SCOPE OF THE
+    SHAPE IT WAS MEASURED AT**, which is Gotcha 62's shape at the level of
+    a kernel rather than a number. "`simdgroup_matrix` is a measured dead
+    end" was true of `kMmaTile = 8` with one SIMD group and was written as
+    though it were true of matrix hardware. The tell is that nothing about
+    the verdict had to change for it to become misleading, only the arrival
+    of a reference measured at a different tile.
+
+66. **AN INSTRUMENT THAT SERIALIZES WHAT IT MEASURES CANNOT PRICE A HOT
+    PATH, AND THE COST DOES NOT FALL WITH THE INPUT.**
+    `MFERENCE_DISPATCH_PROFILE=1` is the only surface in this repo that
+    attributes GPU time BY KERNEL NAME, so it is the obvious answer to
+    "what share does kernel X hold". It "waits on every command buffer at
+    commit" (`crates/gpu/src/dispatch_profile.rs`), which destroys exactly
+    the pipelining that makes prefill fast. Measured on the real
+    `qwen38-27b` install: 2,940 tokens ran 17.5 min without reaching the
+    report, 582 tokens 17.5 min, ~150 tokens over 12 min. **Shortening the
+    prompt is not the fix** -- that was the natural next move and it bought
+    nothing, because the overhead is per command buffer rather than per
+    token. A session that starts down this road loses an hour.
+    What worked instead was a targeted bench: time the suspect kernel
+    against its neighbours at the REAL shapes and weight by the real layer
+    counts, no model and no install
+    (`crates/gpu/tests/gdn_prefill_share_bench.rs`, **0.45 seconds**, and
+    its answer of 4.66% agreed with an independent traffic calculation to
+    0.2 points). The general form: the profiler is for finding the kernel
+    you did NOT suspect; once you have a suspect, price it directly. And
+    prefer two cheap independent methods over one expensive one -- their
+    agreement is what makes a share believable, and neither alone was.
+
 ## Per-Crate Documentation
 
 When working on code inside a specific crate, refer to that crate's `CLAUDE.md` file for crate-specific architecture, key modules, dev commands, and localized gotchas. The Swift tree is not a crate and has one too:
@@ -1839,6 +1908,7 @@ Workspace directory structure and crate layout:
 |   +-- mlx_1bit_oracle.py # MLX 1-bit affine reference oracle generator
 |   +-- mlx_2bit_oracle.py # MLX 2-bit affine reference oracle generator
 |   +-- mlx_prefill.py  # cross-engine PREFILL throughput vs mlx-lm, same machine
+|   +-- mlx_qmm_reference.py # the same one level down: MLX's own c(M) at this port's GEMM shapes
 |   +-- mtp_bisect.py  # MTP drafter norm & agreement bisection script
 |   +-- parity.sh      # head-to-head protocol run against the Swift MferenceCLI
 |   +-- qwen3vl_vision_oracle.py # probes mlx-vlm for crates/vision-io's five golden fixtures

@@ -89,9 +89,15 @@ struct ModelLoaderControl: View {
             Divider()
 
             Button {
+                model.activeSection = .modelManager
+            } label: {
+                Label("Manage installed models…", systemImage: "internaldrive")
+            }
+
+            Button {
                 model.activeSection = .modelHub
             } label: {
-                Label("Browse models…", systemImage: "shippingbox")
+                Label("Discover new models…", systemImage: "shippingbox")
             }
 
             Button {

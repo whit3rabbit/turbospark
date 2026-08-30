@@ -163,16 +163,31 @@ struct FilePreviewView: View {
             Spacer(minLength: 0)
 
             if attachment.sourceExists {
-                footerButton("Reveal", systemImage: "folder") {
+                footerButton(
+                    "Reveal in Finder",
+                    systemImage: "folder",
+                    hint: "Opens Finder showing \(attachment.fileName)",
+                    traits: .isLink
+                ) {
                     model.revealAttachmentInFinder(attachment)
                 }
-                footerButton("Open", systemImage: "arrow.up.forward.app") {
+                footerButton(
+                    "Open with default app",
+                    systemImage: "arrow.up.forward.app",
+                    hint: "Opens \(attachment.fileName) in its default viewer",
+                    traits: .isLink
+                ) {
                     model.openAttachmentExternally(attachment)
                 }
             }
 
             if let reference = model.attachmentReference(id: attachment.id) {
-                footerButton("Remove", systemImage: "trash", role: .destructive) {
+                footerButton(
+                    "Remove",
+                    systemImage: "trash",
+                    role: .destructive,
+                    hint: "Detaches this document from the chat"
+                ) {
                     model.removeAttachment(reference: reference)
                 }
                 .disabled(model.isRunning)
@@ -186,6 +201,8 @@ struct FilePreviewView: View {
         _ title: String,
         systemImage: String,
         role: ButtonRole? = nil,
+        hint: String? = nil,
+        traits: AccessibilityTraits = [],
         action: @escaping () -> Void
     ) -> some View {
         Button(role: role, action: action) {
@@ -199,6 +216,8 @@ struct FilePreviewView: View {
         .foregroundStyle(role == .destructive ? Color.red.opacity(0.85) : Color.secondary)
         .help(title)
         .accessibilityLabel("\(title) \(attachment.fileName)")
+        .accessibilityHint(hint ?? title)
+        .accessibilityAddTraits(traits)
     }
 }
 

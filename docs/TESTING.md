@@ -8,7 +8,7 @@ What the suite covers, how it is gated, and how to run each part.
 cargo test --workspace
 ```
 
-1,435 tests as of 2026-08-29, all passing, plus 144 that are `#[ignore]`d
+1,435 tests as of 2026-08-29, all passing, plus 147 that are `#[ignore]`d
 (see below). **Re-count before quoting either number.** Both were stale by more
 than 2x when this line was last corrected (they read 458 and 18, unchanged
 since 2026-08-08 while eleven families and phases landed), and nothing goes
@@ -145,13 +145,24 @@ idiom (real implementation plus a stub that exits 2).
 
 ### Ignored (expensive or needs external data)
 
-79 targets carry `#[ignore]`d tests, 144 functions between them as of
-2026-08-29 (`bench` 35/52, `repack` 33/61, `gpu` 3/12, `runtime` 2/6,
+80 targets carry `#[ignore]`d tests, 147 functions between them as of
+2026-08-29 (`bench` 35/52, `repack` 33/61, `gpu` 4/15, `runtime` 2/6,
 `selection` 2/4, `catalog` 2/3, `server` 1/3, `tokenizer` 1/3). Each has a reason string and
-a module doc with the exact command. The commands below are the ones that are gates. The two that are
-not are documented in `docs/BENCHMARKS.md` instead: `crates/selection`'s
-`rank_top_k` (a sampler microbenchmark) and `crates/gpu`'s
-`attention_chunk_bench` (the split-KV chunk sweep).
+a module doc with the exact command. The commands below are the ones that are gates.
+
+**The BENCHMARK targets are not gates and report rather than assert**, so
+they are listed here and documented where their numbers live rather than
+being run in the handoff loop. `crates/selection`'s `rank_top_k` (a sampler
+microbenchmark) and `crates/gpu`'s `attention_chunk_bench` (the split-KV
+chunk sweep) are in `docs/BENCHMARKS.md`; `crates/gpu`'s
+`gemv_bandwidth_bench` (weight-read headroom, `c(M)`, `c(R, M)`) and
+`moe_prefill_batch_bench` are in `docs/BATCHED_PREFILL.md`, as is
+`gdn_prefill_share_bench`. That last one exists because the obvious
+instrument does not work: it prices `gdn_delta_step_prefill` against the
+INT4 matrices a prefill micro-batch walks in **0.45 seconds**, where
+`MFERENCE_DISPATCH_PROFILE=1` -- the only surface that names kernels -- waits
+on every command buffer at commit and did not finish a 150-token prefill in
+12 minutes.
 
 ```sh
 # Real ~14.6 GB Gemma 4 checkpoint download plus full repack.

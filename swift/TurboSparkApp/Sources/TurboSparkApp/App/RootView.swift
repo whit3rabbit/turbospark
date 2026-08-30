@@ -146,6 +146,8 @@ struct RootView: View {
     @ViewBuilder
     private var primaryContent: some View {
         switch model.activeSection {
+        case .modelManager:
+            ModelManagerView(model: model)
         case .modelHub:
             ModelHubView(model: model)
         case .files:

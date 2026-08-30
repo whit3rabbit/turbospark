@@ -1,37 +1,18 @@
 import AppKit
 import SwiftUI
 
-/// Interactive message card component rendering agent tool executions, JSON arguments, risk badges, and approval actions.
+/// Interactive message card component rendering agent tool executions, compact diff summaries,
+/// JSON arguments, risk badges, and approval actions in Claude-style aesthetics.
 struct ToolCallCardView: View {
     @ObservedObject var model: AppModel
     let call: AppToolCall
     let result: AppToolResult?
 
-    @State private var isOutputExpanded: Bool = true
+    @State private var isExpanded: Bool = false
     @State private var isCopied: Bool = false
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            header
-            argumentsPreview
-            if let risk = call.riskAssessment, !risk.reasons.isEmpty, isPendingApproval {
-                riskWarningBox(risk)
-            }
-            if isPendingApproval {
-                approvalPrompt
-            }
-            if let result {
-                outputSection(result)
-            }
-        }
-        .padding(12)
-        .background(Color(nsColor: .controlBackgroundColor).opacity(0.8))
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(borderColor, lineWidth: 1)
-        )
-        .frame(maxWidth: .infinity, alignment: .leading)
+    private var summary: ToolCallSummaryInfo {
+        ToolCallDiffFormatter.summarize(callName: call.name, arguments: call.arguments)
     }
 
     private var isPendingApproval: Bool {
@@ -49,42 +30,110 @@ struct ToolCallCardView: View {
         if let result, result.isError {
             return Color.red.opacity(0.4)
         }
-        return Color(nsColor: .separatorColor).opacity(0.4)
+        return Color(nsColor: .separatorColor).opacity(0.35)
     }
 
-    private var header: some View {
-        HStack(spacing: 8) {
-            Image(systemName: call.category.systemImage)
-                .font(.callout)
-                .foregroundStyle(TurboSparkTheme.accentColor)
-                .help("\(call.category.label) tool")
-                .accessibilityHidden(true)
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            summaryHeaderButton
 
-            Text(call.name)
-                .font(.callout.weight(.semibold).monospaced())
-
-            if let risk = call.riskAssessment, risk.level != .safe {
-                riskBadge(risk)
+            if isExpanded || isPendingApproval {
+                VStack(alignment: .leading, spacing: 8) {
+                    argumentsPreview
+                    if let risk = call.riskAssessment, !risk.reasons.isEmpty, isPendingApproval {
+                        riskWarningBox(risk)
+                    }
+                    if isPendingApproval {
+                        approvalPrompt
+                    }
+                    if let result {
+                        outputSection(result)
+                    }
+                }
+                .padding(.top, 4)
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
-
-            Spacer()
-
-            statusBadge
         }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(Color(nsColor: .controlBackgroundColor).opacity(0.85))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(borderColor, lineWidth: 1)
+        )
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // MARK: - Compact Claude-Style Summary Row
+
+    private var summaryHeaderButton: some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.18)) {
+                isExpanded.toggle()
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: call.category.systemImage)
+                    .font(.caption)
+                    .foregroundStyle(TurboSparkTheme.accentColor)
+                    .accessibilityHidden(true)
+
+                Text(summary.action)
+                    .font(.callout.weight(.medium))
+                    .foregroundStyle(.primary)
+
+                Text(summary.target)
+                    .font(.callout.monospaced().weight(.semibold))
+                    .foregroundStyle(.primary)
+
+                if let additions = summary.additions {
+                    Text("+\(additions)")
+                        .font(.caption.monospaced().weight(.bold))
+                        .foregroundStyle(Color.green)
+                }
+
+                if let deletions = summary.deletions {
+                    Text("-\(deletions)")
+                        .font(.caption.monospaced().weight(.bold))
+                        .foregroundStyle(Color.red)
+                }
+
+                if let range = summary.lineRange {
+                    Text(range)
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.secondary)
+                }
+
+                if let risk = call.riskAssessment, risk.level != .safe {
+                    riskBadge(risk)
+                }
+
+                Spacer()
+
+                statusBadge
+
+                Image(systemName: (isExpanded || isPendingApproval) ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Tool call \(call.name)")
+        .accessibilityLabel("\(summary.action) \(summary.target)")
         .accessibilityValue(statusLabel)
     }
 
     private func riskBadge(_ risk: ToolRiskAssessment) -> some View {
         HStack(spacing: 4) {
             Image(systemName: risk.level.systemImage)
-                .font(.caption2)
+                .font(.system(size: 9))
             Text(risk.level.label)
-                .font(.caption2.weight(.semibold))
+                .font(.system(size: 10, weight: .semibold))
         }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 2)
+        .padding(.horizontal, 5)
+        .padding(.vertical, 1)
         .background(risk.level == .high ? Color.red.opacity(0.15) : Color.orange.opacity(0.12), in: Capsule())
         .foregroundStyle(risk.level == .high ? Color.red : Color.orange)
         .help("Security risk: \(risk.level.label)")
@@ -101,7 +150,7 @@ struct ToolCallCardView: View {
                     .foregroundStyle(risk.level == .high ? Color.red : Color.orange)
             }
             ForEach(risk.reasons, id: \.self) { reason in
-                Text("• \(reason)")
+                Text("- \(reason)")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
@@ -122,8 +171,8 @@ struct ToolCallCardView: View {
             Text(statusLabel)
                 .font(.caption2.weight(.medium))
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 3)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 2)
         .background(statusBackground, in: Capsule())
         .foregroundStyle(statusForeground)
     }
@@ -196,7 +245,6 @@ struct ToolCallCardView: View {
                 .tint(isHighRisk ? Color.orange : TurboSparkTheme.accentColor)
                 .help("Approve this tool call once")
                 .accessibilityLabel("Approve once \(call.name)")
-                .accessibilityHint("Allows this single tool call to execute")
 
                 Button {
                     model.approvePendingToolCall(id: call.id, alwaysAllowSession: true)
@@ -206,7 +254,6 @@ struct ToolCallCardView: View {
                 .buttonStyle(.bordered)
                 .help("Always allow this tool and command in this session")
                 .accessibilityLabel("Always allow \(call.name) in this session")
-                .accessibilityHint("Allows this tool and command prefix to run without asking for the rest of this session")
 
                 Button("Deny", role: .cancel) {
                     model.denyPendingToolCall(id: call.id)
@@ -214,7 +261,6 @@ struct ToolCallCardView: View {
                 .buttonStyle(.bordered)
                 .help("Deny this tool call execution")
                 .accessibilityLabel("Deny \(call.name)")
-                .accessibilityHint("Rejects this tool call and tells the model to continue without it")
             }
             .controlSize(.small)
         }
@@ -222,50 +268,37 @@ struct ToolCallCardView: View {
     }
 
     private func outputSection(_ res: AppToolResult) -> some View {
-        DisclosureGroup(isExpanded: $isOutputExpanded) {
-            VStack(alignment: .leading, spacing: 6) {
-                ScrollView(.horizontal) {
-                    Text(res.output)
-                        .font(.caption.monospaced())
-                        .foregroundStyle(res.isError ? .red : .primary)
-                        .textSelection(.enabled)
-                }
-                .frame(maxHeight: 180)
-                .padding(8)
-                .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
-
-                HStack {
-                    if res.durationSeconds > 0 {
-                        Text(String(format: "Execution: %.2fs", res.durationSeconds))
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                    }
-                    Spacer()
-                    Button {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(res.output, forType: .string)
-                        isCopied = true
-                    } label: {
-                        Label(isCopied ? "Copied" : "Copy Output", systemImage: isCopied ? "checkmark" : "doc.on.doc")
-                            .font(.caption2)
-                    }
-                    .buttonStyle(.borderless)
-                    .foregroundStyle(.secondary)
-                    .help("Copy tool output to clipboard")
-                    .accessibilityLabel(isCopied ? "Copied output" : "Copy tool output")
-                    .accessibilityHint("Copies the tool's output text to the clipboard")
-                }
+        VStack(alignment: .leading, spacing: 6) {
+            ScrollView(.horizontal) {
+                Text(res.output)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(res.isError ? .red : .primary)
+                    .textSelection(.enabled)
             }
-            .padding(.top, 4)
-        } label: {
-            HStack(spacing: 6) {
-                Text(res.isError ? "Error output" : "Tool output")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(res.isError ? .red : .secondary)
+            .frame(maxHeight: 180)
+            .padding(8)
+            .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
+
+            HStack {
+                if res.durationSeconds > 0 {
+                    Text(String(format: "Execution: %.2fs", res.durationSeconds))
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+                Spacer()
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(res.output, forType: .string)
+                    isCopied = true
+                } label: {
+                    Label(isCopied ? "Copied" : "Copy Output", systemImage: isCopied ? "checkmark" : "doc.on.doc")
+                        .font(.caption2)
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(.secondary)
+                .help("Copy tool output to clipboard")
             }
         }
-        .padding(.top, 2)
-        .accessibilityLabel(res.isError ? "Tool output (error)" : "Tool output")
-        .accessibilityHint("Expands to reveal the tool's output text")
+        .padding(.top, 4)
     }
 }

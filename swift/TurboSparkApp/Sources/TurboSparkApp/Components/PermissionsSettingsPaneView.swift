@@ -311,6 +311,10 @@ public struct PermissionsSettingsPaneView: View {
         }
         .buttonStyle(.plain)
         .appPointerCursor()
+        .help("Open macOS \(title) Settings in System Settings")
+        .accessibilityLabel("macOS System Settings: \(title)")
+        .accessibilityHint("Opens \(title) privacy settings pane in macOS System Settings")
+        .accessibilityAddTraits(.isLink)
     }
 
     // MARK: - Security Model Callout

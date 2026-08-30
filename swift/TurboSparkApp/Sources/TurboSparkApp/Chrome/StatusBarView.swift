@@ -1,43 +1,44 @@
 import SwiftUI
 
-/// Slim bottom strip carrying live memory, context fill and throughput.
-///
-/// Memory lives here rather than in the top bar because it is a background
-/// reading: it should be glanceable without competing with the model loader.
+/// Slim bottom strip carrying live benchmarks: memory, CPU, context fill, throughput, and thermal telemetry.
+/// Supports both compact numeric text and real-time sparkline graph visualization modes.
 struct StatusBarView: View {
     @ObservedObject var model: AppModel
+    @ObservedObject private var appearanceManager = AppearanceManager.shared
 
-    /// Polled rather than published: the footprint is read straight from the
-    /// mach counter through the FFI on every call, so nothing mutates a
-    /// `@Published` property when it changes and no view would refresh.
+    /// Polled rather than published: footprint and CPU are read straight from
+    /// the mach counters on every poll.
     @State private var memoryBytes: UInt64?
+    @State private var cpuPercent: Double?
+
+    /// Historical ring buffers for live sparkline graphs (up to 16 data points).
+    @State private var memoryHistory: [Double] = []
+    @State private var cpuHistory: [Double] = []
+    @State private var throughputHistory: [Double] = []
 
     private let poll = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
 
     var body: some View {
         HStack(spacing: 0) {
             memoryReadout
+            barDivider
+            cpuReadout
             if let contextFill {
                 barDivider
                 contextReadout(contextFill)
             }
             Spacer(minLength: 12)
-            if showsThroughput {
-                throughputReadout
-                barDivider
-                tokenReadout
-            }
-            if let thermal = model.telemetry?.thermalLevel, thermal.lowercased() != "nominal" {
-                barDivider
-                thermalReadout(thermal)
-            }
-            // Shown only when abnormal, exactly as the thermal readout is: a
-            // badge that is always present carries no information, and this
-            // strip is meant to be glanceable.
+            throughputReadout
+            barDivider
+            tokenReadout
+            barDivider
+            thermalReadout(model.telemetry?.thermalLevel ?? "nominal")
             if let pressure = model.telemetry?.memoryPressure, pressure.lowercased() != "normal" {
                 barDivider
                 memoryPressureReadout(pressure)
             }
+            barDivider
+            viewModeToggleButton
         }
         .font(.system(size: 10.5))
         .foregroundStyle(.secondary)
@@ -49,9 +50,9 @@ struct StatusBarView: View {
                 .fill(TurboSparkTheme.hairlineColor)
                 .frame(height: 0.5)
         }
-        .onAppear { refreshMemory() }
-        .onReceive(poll) { _ in refreshMemory() }
-        .onChange(of: model.liveTokenCount) { refreshMemory() }
+        .onAppear { refreshMetrics() }
+        .onReceive(poll) { _ in refreshMetrics() }
+        .onChange(of: model.liveTokenCount) { refreshMetrics() }
     }
 
     private var barDivider: some View {
@@ -61,6 +62,35 @@ struct StatusBarView: View {
             .padding(.horizontal, 9)
     }
 
+    private var isGraphMode: Bool {
+        appearanceManager.statusBarViewMode == .graphs
+    }
+
+    // MARK: - View Mode Switcher
+
+    private var viewModeToggleButton: some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.15)) {
+                appearanceManager.statusBarViewMode = isGraphMode ? .text : .graphs
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: isGraphMode ? "chart.xyaxis.line" : "number")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(isGraphMode ? TurboSparkTheme.accentColor : Color.secondary)
+            }
+            .padding(.horizontal, 4)
+            .padding(.vertical, 2)
+            .background(isGraphMode ? TurboSparkTheme.accentColor.opacity(0.12) : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: 4))
+        }
+        .buttonStyle(.plain)
+        .help(isGraphMode ? "Benchmarks view: Live Graphs (click to switch to Numbers)" : "Benchmarks view: Numbers (click to switch to Live Graphs)")
+        .accessibilityLabel("Toggle benchmarks graph view")
+        .accessibilityValue(isGraphMode ? "Live Graphs" : "Numbers")
+        .appPointerCursor()
+    }
+
     // MARK: - Memory
 
     private var memoryReadout: some View {
@@ -68,10 +98,16 @@ struct StatusBarView: View {
             Image(systemName: "memorychip")
                 .font(.system(size: 10))
                 .accessibilityHidden(true)
+            if isGraphMode {
+                MiniSparklineView(
+                    samples: memoryHistory,
+                    tint: memoryFraction.map { memoryTint($0) } ?? TurboSparkTheme.accentColor
+                )
+            }
             Text(MetricFormat.memory(memoryBytes))
                 .monospacedDigit()
                 .foregroundStyle(.primary)
-            if let fraction = memoryFraction {
+            if !isGraphMode, let fraction = memoryFraction {
                 MeterBar(fraction: fraction, tint: memoryTint(fraction))
                     .frame(width: 44)
                 Text(MetricFormat.percent(fraction * 100))
@@ -112,13 +148,64 @@ struct StatusBarView: View {
         return "\(MetricFormat.memory(memoryBytes)), \(MetricFormat.percent(fraction * 100)) of system memory"
     }
 
-    private func refreshMemory() {
-        memoryBytes = model.currentProcessMemoryBytes
-        // Refreshed on the SAME poll rather than only when the model list is
-        // reloaded, which is what used to set it: memory pressure is live
-        // machine state, and a reading taken once at startup would say
-        // nothing about the moment a user is looking at.
+    // MARK: - CPU
+
+    private var cpuReadout: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "cpu")
+                .font(.system(size: 10))
+                .accessibilityHidden(true)
+            if isGraphMode {
+                MiniSparklineView(
+                    samples: cpuHistory,
+                    tint: .cyan,
+                    fixedMax: 100
+                )
+            }
+            Text(cpuText)
+                .monospacedDigit()
+                .foregroundStyle(.primary)
+            if !isGraphMode {
+                Text("CPU")
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .help("Current CPU utilization of the TurboSpark process")
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Process CPU usage")
+        .accessibilityValue(cpuText)
+    }
+
+    private var cpuText: String {
+        guard let cpuPercent else { return "\u{2014}" }
+        return MetricFormat.percent(cpuPercent)
+    }
+
+    private func refreshMetrics() {
+        let mem = model.currentProcessMemoryBytes
+        memoryBytes = mem
+        if let mem {
+            let mb = Double(mem) / (1024 * 1024)
+            appendSample(mb, to: &memoryHistory)
+        }
+
+        let cpu = model.currentProcessCPUUsage
+        cpuPercent = cpu
+        if let cpu {
+            appendSample(cpu, to: &cpuHistory)
+        }
+
+        let rate = model.phase == .decode ? model.liveTokensPerSecond : (model.diagnostics?.tokensPerSecond ?? 0.0)
+        appendSample(rate, to: &throughputHistory)
+
         model.refreshTelemetry()
+    }
+
+    private func appendSample(_ value: Double, to array: inout [Double], maxCount: Int = 16) {
+        array.append(value)
+        if array.count > maxCount {
+            array.removeFirst(array.count - maxCount)
+        }
     }
 
     // MARK: - Context
@@ -137,7 +224,7 @@ struct StatusBarView: View {
                 .font(.system(size: 10))
                 .accessibilityHidden(true)
             MeterBar(fraction: fraction, tint: fraction > 0.9 ? .orange : TurboSparkTheme.accentColor)
-                .frame(width: 44)
+                .frame(width: 38)
             Text("\(model.estimatedContextTokens.formatted(.number.notation(.compactName))) / \(model.resolvedContextTokens.formatted(.number.notation(.compactName)))")
                 .monospacedDigit()
         }
@@ -149,19 +236,24 @@ struct StatusBarView: View {
 
     // MARK: - Throughput
 
-    private var showsThroughput: Bool {
-        model.isRunning || model.diagnostics != nil
-    }
-
     private var throughputReadout: some View {
         HStack(spacing: 5) {
+            Image(systemName: "gauge.with.dots.needle.bottom.50percent")
+                .font(.system(size: 10))
+                .accessibilityHidden(true)
+            if isGraphMode {
+                MiniSparklineView(
+                    samples: throughputHistory,
+                    tint: TurboSparkTheme.accentColor
+                )
+            }
             Text(rateText)
                 .monospacedDigit()
                 .foregroundStyle(.primary)
             Text("tok/s")
                 .foregroundStyle(.tertiary)
         }
-        .help("Live decoding rate (tokens per second)")
+        .help("Live or last run decoding throughput (tokens per second)")
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Decode rate")
         .accessibilityValue("\(rateText) tokens per second")
@@ -193,14 +285,44 @@ struct StatusBarView: View {
         return "\u{2014}"
     }
 
+    // MARK: - Thermal / Temp
+
+    private func thermalReadout(_ level: String) -> some View {
+        let isAbnormal = level.lowercased() != "nominal"
+        let tintColor: Color = {
+            switch level.lowercased() {
+            case "critical": return .red
+            case "serious", "fair": return .orange
+            default: return .secondary
+            }
+        }()
+
+        return HStack(spacing: 5) {
+            Image(systemName: isAbnormal ? "thermometer.high" : "thermometer.medium")
+                .font(.system(size: 10))
+                .foregroundStyle(tintColor)
+                .accessibilityHidden(true)
+            Text(level.capitalized)
+                .foregroundStyle(isAbnormal ? tintColor : .primary)
+            Text("Temp")
+                .foregroundStyle(.tertiary)
+        }
+        .help(thermalHelp(level))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Thermal status")
+        .accessibilityValue(level)
+    }
+
+    private func thermalHelp(_ level: String) -> String {
+        if level.lowercased() == "nominal" {
+            return "Thermal status is Nominal: machine is operating at normal temperature and full performance."
+        }
+        return "Thermal pressure is \(level.capitalized); engine throughput and power figures may throttle down."
+    }
+
+    // MARK: - Memory Pressure
+
     /// The kernel's own memory-pressure verdict.
-    ///
-    /// **This is the machine's state, not this process's.** Another app can
-    /// put the machine under pressure, and the engine's response is the same
-    /// either way: it paces its own decode rate down. It does not unload
-    /// anything, because a session belongs to this app rather than to the
-    /// engine -- deciding to close an idle one is a decision for the person
-    /// reading this strip.
     private func memoryPressureReadout(_ level: String) -> some View {
         HStack(spacing: 5) {
             Image(systemName: "exclamationmark.triangle")
@@ -217,19 +339,75 @@ struct StatusBarView: View {
         .accessibilityLabel("Memory pressure")
         .accessibilityValue(level)
     }
+}
 
-    private func thermalReadout(_ level: String) -> some View {
-        HStack(spacing: 5) {
-            Image(systemName: "thermometer.medium")
-                .font(.system(size: 10))
-                .accessibilityHidden(true)
-            Text(level.capitalized)
+/// Mini sparkline chart rendering live historical data samples with gradient fill area and line curve.
+private struct MiniSparklineView: View {
+    let samples: [Double]
+    let tint: Color
+    var fixedMax: Double? = nil
+    var minRange: Double = 1.0
+
+    var body: some View {
+        GeometryReader { proxy in
+            let w = proxy.size.width
+            let h = proxy.size.height
+            let validSamples = samples.isEmpty ? [0.0, 0.0] : (samples.count == 1 ? [samples[0], samples[0]] : samples)
+            let minVal = 0.0
+            let calculatedMax = validSamples.max() ?? 1.0
+            let maxVal = max(fixedMax ?? calculatedMax, minVal + minRange)
+
+            let points: [CGPoint] = validSamples.enumerated().map { index, val in
+                let x = w * CGFloat(index) / CGFloat(max(1, validSamples.count - 1))
+                let normalized = max(0.0, min(1.0, (val - minVal) / maxVal))
+                let y = h - (CGFloat(normalized) * (h - 3) + 1.5)
+                return CGPoint(x: x, y: y)
+            }
+
+            ZStack {
+                // Gradient fill area under curve
+                Path { path in
+                    guard let first = points.first else { return }
+                    path.move(to: CGPoint(x: first.x, y: h))
+                    path.addLine(to: first)
+                    for pt in points.dropFirst() {
+                        path.addLine(to: pt)
+                    }
+                    if let last = points.last {
+                        path.addLine(to: CGPoint(x: last.x, y: h))
+                    }
+                    path.closeSubpath()
+                }
+                .fill(
+                    LinearGradient(
+                        colors: [tint.opacity(0.35), tint.opacity(0.04)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+
+                // Sparkline stroke
+                Path { path in
+                    guard let first = points.first else { return }
+                    path.move(to: first)
+                    for pt in points.dropFirst() {
+                        path.addLine(to: pt)
+                    }
+                }
+                .stroke(tint, style: StrokeStyle(lineWidth: 1.2, lineCap: .round, lineJoin: .round))
+
+                // End pulse indicator
+                if let last = points.last {
+                    Circle()
+                        .fill(tint)
+                        .frame(width: 2.5, height: 2.5)
+                        .position(last)
+                }
+            }
         }
-        .foregroundStyle(.orange)
-        .help("Thermal pressure has left Nominal; throughput and power figures are not comparable to a clean run.")
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Thermal pressure")
-        .accessibilityValue(level)
+        .frame(width: 38, height: 13)
+        .clipped()
+        .accessibilityHidden(true)
     }
 }
 

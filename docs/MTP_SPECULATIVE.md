@@ -273,6 +273,18 @@ already in a loadable format, not a better tiling.
 So the exact kernel wins on both axes, faster and bit-identical to a
 sequential decode, and the trade `docs/SPECULATIVE_DECODING.md` worried
 about does not have to be made. **Treat "use simdgroup_matrix" as closed.**
+
+**THAT VERDICT IS CORRECT FOR SPECULATION AND WAS RE-SCOPED FOR PREFILL ON
+2026-08-29.** For a verify pass it is closed twice over: the matrix kernel
+is slower AND it forfeits bit-identity, so there is nothing to trade. For
+PREFILL, where bit-identity is already not the bar, the reasoning above was
+found to be scoped to one tile -- `kMmaTile = 8` with ONE SIMD group -- and
+its stated mechanism ("dequant work independent of B") is refuted by
+arithmetic and by deletion. MLX's `qmm_t_impl` is the same algorithm at
+128 threads with `BM` 32-128 and reaches `c` 0.145 where this reads 0.52.
+Three of the four candidate levers are now measured dead ends
+(`ROADMAP.md` "Do Not Revisit" 13-14); the fourth, the matrix path itself,
+is untried. None of that reopens the speculation question.
 The kernel and its bench are kept precisely so it is not re-proposed; the
 tolerance-based parity test beside it (`dequant_int4_mma_parity.rs`) also
 documents what the reassociation would have cost, 0.09% of the output range.

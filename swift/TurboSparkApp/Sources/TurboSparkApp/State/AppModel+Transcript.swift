@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import SwiftUI
 import TurboSpark
@@ -13,6 +14,38 @@ extension AppModel {
     /// Peak resident process memory footprint in bytes.
     public var currentProcessMemoryBytes: UInt64? {
         TurboSparkSession.peakFootprintBytes
+    }
+
+    /// Current process CPU usage percentage across all active threads.
+    public var currentProcessCPUUsage: Double? {
+        var threadsList: thread_act_array_t?
+        var threadsCount: mach_msg_type_number_t = 0
+        let kernReturn = withUnsafeMutablePointer(to: &threadsList) {
+            $0.withMemoryRebound(to: thread_act_array_t?.self, capacity: 1) {
+                task_threads(mach_task_self_, $0, &threadsCount)
+            }
+        }
+        guard kernReturn == KERN_SUCCESS, let threads = threadsList else { return nil }
+        defer {
+            let size = vm_size_t(threadsCount * UInt32(MemoryLayout<thread_t>.stride))
+            vm_deallocate(mach_task_self_, vm_address_t(UInt(bitPattern: threads)), size)
+        }
+
+        var totalUsage: Double = 0.0
+        for i in 0..<Int(threadsCount) {
+            var threadInfo = thread_basic_info()
+            var threadInfoCount = mach_msg_type_number_t(THREAD_INFO_MAX)
+            let infoReturn = withUnsafeMutablePointer(to: &threadInfo) {
+                $0.withMemoryRebound(to: integer_t.self, capacity: 1) {
+                    thread_info(threads[i], thread_flavor_t(THREAD_BASIC_INFO), $0, &threadInfoCount)
+                }
+            }
+            guard infoReturn == KERN_SUCCESS else { continue }
+            if threadInfo.flags & TH_FLAGS_IDLE == 0 {
+                totalUsage += Double(threadInfo.cpu_usage) / Double(TH_USAGE_SCALE) * 100.0
+            }
+        }
+        return totalUsage
     }
 
     /// Whether there is any conversation history or live output to display.

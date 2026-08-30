@@ -31,7 +31,24 @@ public struct AppearancePreferencesCardView: View {
 
             Divider().padding(.leading, 16)
 
-            // 2. Dock icon
+            // 2. Status bar benchmarks view mode
+            preferenceRow(
+                title: "Status bar benchmarks",
+                description: "Display bottom toolbar metrics as numeric text or live sparkline graphs"
+            ) {
+                Picker("", selection: $manager.statusBarViewMode) {
+                    ForEach(StatusBarViewMode.allCases) { mode in
+                        Label(mode.label, systemImage: mode.systemImage).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 175)
+                .labelsHidden()
+            }
+
+            Divider().padding(.leading, 16)
+
+            // 3. Dock icon
             preferenceRow(
                 title: "Dock icon",
                 description: "Choose the icon the app will use in the dock"

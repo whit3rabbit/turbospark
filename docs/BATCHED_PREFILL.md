@@ -1308,3 +1308,193 @@ that as a measured negative so it is not re-attempted. What survives is one
 narrow guard worth keeping: `static_threadgroup_memory_length` must stay 0,
 which is the cheap check against note 1's threadgroup staging being re-added
 unmeasured.
+
+## Step 7 candidates read off oMLX, and two of the three are closed
+
+Reviewed 2026-08-29 against `jundot/omlx`'s `omlx/custom_kernels/qwen35_prefill`
+(Apache-2.0), which targets this exact model family and is the build behind
+the 210.3 tok/s bar in `docs/BENCHMARKS.md`. Three of its four kernel groups
+are refuted, two of them by measurements that already existed here and one by
+oMLX's own shipping choice. Recorded so none is re-proposed.
+
+**The GEMM is the only live item, and it is not their kernel.**
+`qwen35_qmm.metal` calls MLX's `qmm_t_impl`; the contribution is a tile sweep
+worth less than the noise band between this machine's mlx-lm reading and the
+community 210.3. What the review DID produce is
+`scripts/mlx_qmm_reference.py` and the measured reference curve in
+`docs/BENCHMARKS.md`, which replaces this doc's extrapolated 2.2x / 2.3x pair
+with a same-session 1.50x kernel term at M=16 and a 2.00x width term from
+M=16 to M=32. It also fixes the saturation point: **M=32, not M=36 or M=64**,
+read off a `ms` column that is identical at M=16 and M=32 and exactly linear
+past it, which is a `BM=32` tile paying for empty rows.
+
+**Step 4 (batched attention) stays closed on this family.** oMLX ships an
+`fa256` prefill attention, and 35 of its 35 lines are `instantiate_kernel`
+over MLX's steel `attention` at `bd=256`. It targets the term measured at
+**2.6%** of this family's prefill, in the 16 of 64 layers that have attention
+at all. Cost an optimization by the terms it does not touch.
+
+**The chunked-WY gated DeltaNet is a negative on THEIR side, which is the
+cheapest kind of finding to accept.** `gdn.py` ships ~270 lines implementing
+the flash-linear-attention chunked WY representation as two Metal kernels,
+and its own module docstring says the production path is
+`gated_delta_blocked_seq`, "the exact sequential recurrence used by mlx-lm",
+at "half the FLOPs of the WY-chunked path". So the reformulation was built,
+measured and declined by the people who wrote it. Do not build it here.
+
+**What their blocked-sequential kernel does carry is a traffic argument that
+applies to `gdn_delta_step_prefill` verbatim, and it is UNMEASURED here.**
+They name the stock shape as re-reading k/q from device "once per
+(Dv/4)-slice threadgroup => 32x redundant traffic (~13 GB per 16k-token
+layer)", and fix it with a `DB=32` Dv block plus threadgroup staging of
+q/k/v in token blocks. This port dispatches that kernel at exactly `(Hv,
+Dv/4)` threadgroups and reads q/k straight from device in its token loop.
+
+**IT IS 4.66%, AND THE ITEM IS CLOSED.** Measured by
+`crates/gpu/tests/gdn_prefill_share_bench.rs`, which times
+`gdn_delta_step_prefill` at the real `Hk=16, Hv=48, Dk=128, Dv=128` geometry
+against every INT4 matrix a 16-token micro-batch walks, weighted by the real
+layer counts (48 gated-DeltaNet, 16 attention, 64 FFN), at the shipped
+`best_row_block(16) = 4`:
+
+| kernel | per call ms | x layers | total ms |
+|---|---|---|---|
+| `gdn_delta_step_prefill` | 0.1577 | 48 | **7.569** |
+| gate/up 17408x5120 | 0.8212 | 64 | 52.558 |
+| down 5120x17408 | 0.8003 | 64 | 51.217 |
+| gdn_inproj 16480x5120 | 0.7801 | 48 | 37.445 |
+| packed_q 12288x5120 | 0.5639 | 16 | 9.022 |
+| o_proj 5120x6144 | 0.2851 | 16 | 4.562 |
+
+**4.66% of (GEMM + GDN), and that is an UPPER BOUND** -- the denominator
+omits norms, the conv pair, RoPE, attention and the gated norm, every one of
+which is real prefill cost the bench does not encode, so the true share is
+smaller. Under this review's own decision rule the threadgroup-staging
+rewrite is closed. Note what it would be worth even if it worked perfectly:
+oMLX claims an 8x traffic reduction on a term holding under 4.66%, so the
+ceiling is about 4% of prefill, against a GEMM holding 85.4%.
+
+**TWO INDEPENDENT METHODS AGREE, which is why this is stated as settled
+rather than as one reading.** Before the bench existed the same question was
+answered by arithmetic: at `Hv=48, Dk=128` the uncached q/k re-read is 512 B
+per threadgroup per token across `48 x 32` threadgroups, ~37.7 MB per token
+over 48 GDN layers, against ~844 MB per token of weight traffic at a
+16-token micro-batch, i.e. **4.5%**. The bench says 4.66%. A traffic
+calculation and a clock landing within 0.2 points of each other is the
+strongest form this kind of claim takes here.
+
+**THE INSTRUMENT NOTE IS THE PART WORTH CARRYING.** The obvious way to get
+this number is `MFERENCE_DISPATCH_PROFILE=1`, which is the only surface that
+names kernels (`PhaseCounters` has no GDN bucket). It "waits on every command
+buffer at commit" -- its own module doc -- which serializes exactly the
+pipelining that makes prefill fast. Three attempts on the real `qwen38-27b`
+install were abandoned: 2,940 tokens ran 17.5 min without reaching the
+report, 582 tokens 17.5 min, and ~150 tokens over 12 min. **The cost does not
+fall with prompt length**, so shortening the prompt is not the fix, and a
+session that starts down that road loses an hour. The bench above answers the
+same question in **0.45 seconds** with no model and no install. When the
+question is "what share does kernel X hold", prefer timing X against its
+neighbours at the real shapes over profiling a whole forward pass; the
+profiler is for finding the kernel you did not suspect, not for pricing the
+one you did.
+
+### Staging `x` in the matrix kernel: measured, and a 3.3x to 5.9x LOSS
+
+The reference curve above says MLX's `qmm_t_impl` reaches `c` 0.145 where
+this port's matrix kernel plateaus at ~0.52, and names three structural
+differences: it runs 128 threads in four SIMD groups against this kernel's
+one, its `BM` is 32 to 128 against `kMmaTile = 8`, and it stages BOTH
+operands where this one stages only the weights and `simdgroup_load`s `x`
+transposed straight from device.
+
+Staging `x` was the cheapest to try and the one predicted most likely to be
+the cause: a transposed device load with row stride N, issued once per
+`(n0, kt)`, reads like a strided gather in the innermost loop. Built behind
+`FC_MMA_STAGE_X` (function constant 110) so both shapes live in one binary
+and interleave pair by pair in one process, and asserted bit-identical to
+the un-staged arm (`dequant_int4_mma_parity.rs::staging_x_through_threadgroup_memory_moves_no_bits`,
+mutation-checked with an off-by-one that reddens only that case).
+
+**It loses on every shape and every width, and the penalty grows with B**
+(gate/up 17408x5120; the other five shapes agree to a few tenths):
+
+| M | mma | mma + stageX | staged/plain |
+|---|---|---|---|
+| 2 | 3.54x | 12.49x | 3.52x |
+| 4 | 1.78x | 6.27x | 3.52x |
+| 8 | 0.89x | 3.19x | 3.58x |
+| 16 | 0.66x | 2.53x | 3.81x |
+| 32 | 0.54x | 2.25x | 4.14x |
+| 64 | 0.52x | 2.71x | 5.19x |
+
+**THE FINDING IS THAT THE THREE DELTAS ARE NOT INDEPENDENT, and testing one
+alone was the wrong experiment.** A transposed `simdgroup_load` from device
+is not the naive gather it reads as; Apple's tile load handles it. Staging
+the same bytes by hand through 32 LANES is a serial copy of
+`col_tiles * kMmaTile * kMmaK` halfs per n-block, 10,240 loads per lane at
+B=64 over the whole K walk. MLX stages `x` as well and wins because it has
+128 threads to do the staging and a `BM` of 32 to 128 to amortize it over.
+So staging is a CONSEQUENCE of the wider threadgroup rather than a separate
+lever. The remaining two deltas have to move together or not at all.
+
+This is the second time this kernel has punished a one-variable change: its
+header already records that widening the staged K block from 8 to 64
+"changed nothing" and that running past M=16 to 32 and 64 "changed nothing".
+The pattern is consistent -- its shape is a package, and picking one piece
+out of it measures the piece rather than the question. Anyone re-opening the
+matrix line should change the threadgroup width and `kMmaTile` in the same
+step, and expect to keep `FC_MMA_STAGE_X` on when they do, since a
+four-SIMD-group kernel has the threads that make staging pay.
+
+**What it does NOT change:** the exact kernel still wins on both axes, it is
+still what every wired call site dispatches, and the bit-exactness objection
+to the matrix kernel (`AGENTS.md` Gotcha 27) is untouched. `FC_MMA_STAGE_X`
+defaults to OFF and no production path sets it.
+
+### Splitting the matrix kernel by deletion: the dequant is not the cost
+
+Two explanations for `dequant_int4_gemm_mma`'s plateau died in one session,
+leaving the mechanism unidentified: its own header's "dequant work is
+independent of B" is refuted by arithmetic (dequant per output is `N / B`
+here and `K / BM` in MLX, the same number at the same token width), and
+staging `x` lost 3.3x to 5.9x. Total dequant work is `N * K` in both
+engines and MLX spreads it over FEWER threads, so parallelism is not it
+either.
+
+`FC_MMA_SKIP_DEQUANT` (function constant 111) settles it by DELETION: fill
+the weight tile with a constant, leave every barrier, `simdgroup_load` and
+`simdgroup_multiply_accumulate` exactly where they were, and what remains is
+the matrix path's cost with the unpack removed. Output is meaningless under
+it, which `dequant_int4_mma_parity.rs::the_skip_dequant_diagnostic_is_reachable_and_its_output_is_wrong`
+asserts rather than leaves implicit -- an unreachable diagnostic constant
+would time the unmodified kernel twice and report "the dequant is free",
+which is a wrong answer shaped exactly like a finding.
+
+| M | exact | mma | mma, no dequant | nodq/mma |
+|---|---|---|---|---|
+| 2 | 0.50x | 3.59x | 2.30x | 0.64 |
+| 8 | 0.43x | 0.90x | 0.58x | 0.65 |
+| 16 | 0.38x | 0.68x | 0.51x | 0.76 |
+| 32 | -- | 0.56x | 0.48x | 0.86 |
+| 64 | -- | 0.56x | 0.50x | 0.89 |
+
+gate/up 17408x5120; all six shapes agree to 0.03.
+
+**The dequant is 36% of this kernel at M=2 and 11% at M=64** -- its share
+shrinks as B grows, the opposite of the original story.
+
+**THE DECISIVE NUMBER IS THE MIDDLE COLUMN AND NOT THE RATIO.** With the
+dequant entirely free the kernel still reads **0.46 to 0.50** past M=16
+against MLX's **0.145**. A perfect loader leaves it 3.2x behind, so
+`QuantizedBlockLoader` is not the thing to copy. It is also still slower
+with a free dequant (0.51 at M=16) than the plain scalar
+`dequant_int4_gemm_simd` is with a real one (0.38).
+
+**What that leaves, and what it closes.** Three candidate levers entered
+this session and two are now settled dead ends: the loader (measured here)
+and `kMmaTile` (refuted by arithmetic -- it scales dequant and outputs
+together). What remains is the matrix path itself: one SIMD group per
+threadgroup, `simdgroup_barrier` twice per 64-element K block, and eight
+`simdgroup_float8x8` accumulators owned by 32 lanes. A re-tile has to change
+THAT, and anyone starting one now knows which three things not to spend a
+day on.
