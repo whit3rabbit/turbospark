@@ -452,6 +452,52 @@ documentation in `AppSkillStateSchema.fields` (one string each), not the
 validator, which cannot see the difference between a good decomposition and
 a lazy one.
 
+## Two questions this attracts
+
+**"Do I have to write a schema?" No.** One generic schema ships hardcoded in
+`AppSkillStateSchema` and covers general coding-agent work; turning the
+project toggle on is the whole setup. A PER-PROJECT authored schema is the
+paper's own model and is deliberately NOT built: it would be unusable until
+someone wrote one, so the default experience would be unchanged. Build it only
+when a specialized agent turns up that the five generic fields do not fit, and
+note that `AppSkillStateSchema` is the single source for both the prompt text
+and the validator, so a second schema path means keeping that property twice.
+
+**"Would steering vectors help here?" No, and the reason is worth stating so
+it is not re-derived.** This is REASONING rather than a measurement, which is
+the weaker kind of claim (Gotcha 62's warning about a derived convention that
+reads plausibly and is wrong), so it is stated with its argument attached
+rather than as a result.
+
+Steering (`docs/OBLITERATION.md`) is an edit to the RESIDUAL STREAM: a
+direction extracted offline as a difference of means over paired prompt sets,
+applied per layer at runtime. That page is explicit that it "changes behaviour
+and costs throughput" and is representation engineering. A schema is a
+contract about the SHAPE OF EMITTED TEXT, enforced by prompt wording plus a
+deterministic validator on the way back. Nothing about it lives in activation
+space.
+
+The deeper mismatch is the shape of the two problems. A steering vector is one
+direction pushing globally on every token of a generation. Schema compliance is
+discrete and positional: this brace closes here, this key is spelled `facts`,
+this value is a list and not a string. That is the problem shape
+grammar-constrained decoding addresses by masking the vocabulary per token, and
+it is not the shape a single direction addresses. Steering would be the wrong
+instrument even if it were free, and it is not: 1.72% of decode with all layers
+steered, and it is wired for five of eight families.
+
+**And there is no problem here to solve.** Compliance measured 1.00 on three
+installs across 200 steps and 6 of 6 on the shipped schema, so a mechanism
+aimed at it would be optimizing a number already at its ceiling.
+
+The one place an argument for steering could be constructed is the
+decomposition wrinkle recorded above: the model favours one flat `facts` list
+over the structured fields, which the validator structurally cannot see. That
+is a quality-of-decomposition question rather than a compliance one. The cheap
+lever is the one-line field documentation in `AppSkillStateSchema.fields`,
+which is what the model is actually reading; try that and measure with
+`AppSkillStateRealModelTests` before reaching for anything in activation space.
+
 ## Verifying a change to this
 
 ```sh
