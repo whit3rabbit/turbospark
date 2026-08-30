@@ -15,6 +15,10 @@ struct ModelLoaderControl: View {
     var body: some View {
         HStack(spacing: 0) {
             chooser
+            if model.isReasoningSupported {
+                separator
+                reasoningPicker
+            }
             if model.session != nil {
                 separator
                 ejectButton
@@ -29,6 +33,47 @@ struct ModelLoaderControl: View {
             Capsule().stroke(TurboSparkTheme.hairlineColor, lineWidth: 0.5)
         }
         .fixedSize()
+    }
+
+    private var reasoningPicker: some View {
+        Menu {
+            Section("Reasoning Effort") {
+                ForEach(GenerateOptions.Reasoning.allCases) { level in
+                    Button {
+                        model.setReasoning(level)
+                    } label: {
+                        if model.reasoning == level {
+                            Label(level.label + " - " + level.descriptionText, systemImage: "checkmark")
+                        } else {
+                            Text(level.label + " - " + level.descriptionText)
+                        }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: model.reasoning != .off ? "brain.head.profile" : "brain")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(model.reasoning != .off ? TurboSparkTheme.accentColor : Color.secondary)
+
+                Text(model.reasoning != .off ? model.reasoning.label : "Off")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(model.reasoning != .off ? Color.primary : Color.secondary)
+
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 7, weight: .bold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 8)
+            .frame(maxHeight: .infinity)
+            .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Reasoning effort: \(model.reasoning.label). Click to change (takes effect immediately without reloading model).")
+        .accessibilityLabel("Reasoning effort: \(model.reasoning.label)")
+        .accessibilityHint("Select reasoning depth")
     }
 
     private var separator: some View {

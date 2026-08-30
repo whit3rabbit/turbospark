@@ -200,7 +200,7 @@ public struct GenerateOptions: Encodable, Sendable {
     /// The accepted set is the CHECKPOINT'S, not this library's. Qwen 3.8
     /// rejects `.high` and its top setting is `.xhigh`; Harmony and Muse
     /// Glimmer accept `.high`. A level a template rejects throws, naming it.
-    public enum Reasoning: String, Encodable, Sendable, CaseIterable {
+    public enum Reasoning: String, Encodable, Sendable, CaseIterable, Identifiable {
         /// Reasoning turned off.
         case off
         /// Low reasoning effort.
@@ -211,6 +211,28 @@ public struct GenerateOptions: Encodable, Sendable {
         case high
         /// Extra high reasoning effort.
         case xhigh
+
+        public var id: String { rawValue }
+
+        public var label: String {
+            switch self {
+            case .off: return "Off"
+            case .low: return "Low"
+            case .medium: return "Medium"
+            case .high: return "High"
+            case .xhigh: return "Extra High"
+            }
+        }
+
+        public var descriptionText: String {
+            switch self {
+            case .off: return "No internal reasoning (fastest)"
+            case .low: return "Brief, focused thinking"
+            case .medium: return "Standard balanced reasoning"
+            case .high: return "Deep multi-step reasoning"
+            case .xhigh: return "Maximum thorough reasoning (Qwen 3.8)"
+            }
+        }
     }
 
     /// Maximum new tokens to emit.

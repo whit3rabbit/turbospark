@@ -1,4 +1,5 @@
 import SwiftUI
+import TurboSpark
 
 public struct AppSettingsView: View {
     @ObservedObject var model: AppModel
@@ -306,6 +307,22 @@ public struct AppSettingsView: View {
                         .frame(width: 40, alignment: .trailing)
                         .foregroundStyle(model.topPEnabled ? .primary : .secondary)
                 }
+            }
+
+            Section("Thinking & Reasoning Effort") {
+                Picker("Default Reasoning Level", selection: Binding(
+                    get: { model.reasoning },
+                    set: { model.setReasoning($0) }
+                )) {
+                    ForEach(GenerateOptions.Reasoning.allCases) { level in
+                        Text(level.label).tag(level)
+                    }
+                }
+                .pickerStyle(.menu)
+
+                Text("Controls internal chain-of-thought depth for reasoning-capable models. Changing this takes effect immediately on subsequent responses without requiring a model reload.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Forge Tool-Call Guardrails") {

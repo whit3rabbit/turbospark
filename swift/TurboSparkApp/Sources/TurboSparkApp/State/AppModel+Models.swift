@@ -161,6 +161,16 @@ extension AppModel {
         return options
     }
 
+    public func restoreReasoningPreference(for model: InstalledModel) {
+        if let saved = modelReasoningDefaults[model.alias],
+           let level = GenerateOptions.Reasoning(rawValue: saved) {
+            self.reasoning = level
+        } else if let saved = modelReasoningDefaults[model.path],
+                  let level = GenerateOptions.Reasoning(rawValue: saved) {
+            self.reasoning = level
+        }
+    }
+
     public func open(_ model: InstalledModel) async {
         guard !generating else { return }
         opening = true
@@ -173,6 +183,10 @@ extension AppModel {
             session = try await TurboSparkSession(modelPath: model.path, options: options)
             selected = model
             modelPathText = model.path
+            restoreReasoningPreference(for: model)
+            if session?.info.reasoningSupport == SessionInfo.ReasoningSupport.none {
+                self.reasoning = .off
+            }
             updateTokenEstimate()
             showToast("Loaded \(model.alias)", style: .success)
         } catch {

@@ -1,4 +1,68 @@
 import SwiftUI
+import TurboSpark
+
+/// Reasoning effort pill button in the prompt composer footer with quick popup menu selection.
+struct PromptReasoningPillControl: View {
+    @ObservedObject var model: AppModel
+
+    var body: some View {
+        let isThinkingActive = model.reasoning != .off
+
+        Menu {
+            Section("Thinking / Reasoning Effort") {
+                ForEach(GenerateOptions.Reasoning.allCases) { level in
+                    Button {
+                        model.setReasoning(level)
+                    } label: {
+                        if model.reasoning == level {
+                            Label(level.label + " - " + level.descriptionText, systemImage: "checkmark")
+                        } else {
+                            Text(level.label + " - " + level.descriptionText)
+                        }
+                    }
+                }
+            }
+
+            Divider()
+
+            Button {
+                model.openSettings(tab: .engine)
+            } label: {
+                Label("Engine settings...", systemImage: "gearshape")
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: isThinkingActive ? "brain.head.profile" : "brain")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(isThinkingActive ? TurboSparkTheme.accentColor : Color.secondary)
+
+                Text(isThinkingActive ? "Thinking: \(model.reasoning.label)" : "Thinking: Off")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(isThinkingActive ? Color.primary : Color.secondary)
+
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(
+                isThinkingActive ? TurboSparkTheme.accentColor.opacity(0.12) : Color.primary.opacity(0.04),
+                in: Capsule()
+            )
+            .overlay(
+                Capsule()
+                    .stroke(isThinkingActive ? TurboSparkTheme.accentColor.opacity(0.3) : TurboSparkTheme.hairlineColor, lineWidth: 0.5)
+            )
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Reasoning effort level for \(model.selected?.alias ?? "the model"): currently \(model.reasoning.label). Click to change.")
+        .accessibilityLabel("Reasoning effort: \(model.reasoning.label)")
+        .accessibilityHint("Selects thinking depth for the next response without requiring model reload")
+    }
+}
 
 /// Forge Guardrails status pill button with toggling and settings popover link.
 struct ForgeGuardrailsPillControl: View {

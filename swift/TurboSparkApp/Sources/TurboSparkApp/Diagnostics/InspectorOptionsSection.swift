@@ -243,11 +243,14 @@ extension InspectorView {
 
     var generationSection: some View {
         Section("Generation Sampling") {
-            if model.reasoningAvailable {
+            if model.isReasoningSupported {
                 LabeledContent("Thinking") {
-                    Picker("Thinking", selection: $model.reasoning) {
-                        ForEach(GenerateOptions.Reasoning.allCases, id: \.self) { level in
-                            Text(level.rawValue.capitalized).tag(level)
+                    Picker("Thinking", selection: Binding(
+                        get: { model.reasoning },
+                        set: { model.setReasoning($0) }
+                    )) {
+                        ForEach(GenerateOptions.Reasoning.allCases) { level in
+                            Text(level.label).tag(level)
                         }
                     }
                     .pickerStyle(.menu)

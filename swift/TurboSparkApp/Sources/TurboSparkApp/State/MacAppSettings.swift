@@ -111,6 +111,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
     /// Minimum tokens an automatically-sized context window must reach, or 0
     /// for no floor. Does not constrain an explicit context length.
     public var minAutoContextTokens: UInt32
+    /// Remembered reasoning effort setting per model alias or path.
+    public var modelReasoningDefaults: [String: String]
 
     public init(
         contextTokens: Int = 0,
@@ -145,7 +147,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         enableLMStudioDetection: Bool = true,
         lmStudioDirectory: String = "",
         customModelDirectories: [String] = [],
-        guardrailsMode: String = "select"
+        guardrailsMode: String = "select",
+        modelReasoningDefaults: [String: String] = [:]
     ) {
         self.contextTokens = contextTokens
         self.expertCacheSlots = expertCacheSlots
@@ -180,6 +183,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.loadGuard = loadGuard
         self.loadGuardCustomBytes = loadGuardCustomBytes
         self.minAutoContextTokens = minAutoContextTokens
+        self.modelReasoningDefaults = modelReasoningDefaults
     }
 
     public init(from decoder: Decoder) throws {
@@ -219,6 +223,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
             try c.decodeIfPresent(UInt64.self, forKey: .loadGuardCustomBytes) ?? 0
         self.minAutoContextTokens =
             try c.decodeIfPresent(UInt32.self, forKey: .minAutoContextTokens) ?? 0
+        self.modelReasoningDefaults =
+            try c.decodeIfPresent([String: String].self, forKey: .modelReasoningDefaults) ?? [:]
     }
 }
 

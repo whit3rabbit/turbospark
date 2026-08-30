@@ -139,6 +139,9 @@ struct PromptComposerView: View {
                 iconButtonSize: iconButtonSize,
                 showingTips: $showingPromptTips
             )
+            if model.isReasoningSupported {
+                PromptReasoningPillControl(model: model)
+            }
             ForgeGuardrailsPillControl(model: model)
             if let project = model.selectedProject {
                 HStack(spacing: 4) {

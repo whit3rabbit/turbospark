@@ -39,6 +39,7 @@ extension AppModel {
         self.lmStudioDirectory = settings.lmStudioDirectory
         self.customModelDirectories = settings.customModelDirectories
         self.guardrailsMode = AppGuardrailsMode(rawValue: settings.guardrailsMode) ?? .select
+        self.modelReasoningDefaults = settings.modelReasoningDefaults
     }
 
     /// Persists current runtime options, steering parameters, and directory paths to disk.
@@ -76,7 +77,8 @@ extension AppModel {
             enableLMStudioDetection: enableLMStudioDetection,
             lmStudioDirectory: lmStudioDirectory,
             customModelDirectories: customModelDirectories,
-            guardrailsMode: guardrailsMode.rawValue
+            guardrailsMode: guardrailsMode.rawValue,
+            modelReasoningDefaults: modelReasoningDefaults
         )
         MacAppSettingsFileStore.save(settings)
     }

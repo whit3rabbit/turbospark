@@ -156,6 +156,8 @@ public final class AppModel: ObservableObject {
     @Published public var topP: Double = 0.95
     /// Reasoning effort level for reasoning-capable models.
     @Published public var reasoning: GenerateOptions.Reasoning = .off
+    /// Remembered reasoning default preferences per model alias or path.
+    @Published public var modelReasoningDefaults: [String: String] = [:]
     /// Maximum new tokens to generate per response.
     @Published public var maxNewTokens: Int = 2048
     /// Whether repetition penalty is enabled.
@@ -313,6 +315,29 @@ public final class AppModel: ObservableObject {
     /// Whether the loaded model supports reasoning output.
     public var reasoningAvailable: Bool {
         info?.reasoningSupport != SessionInfo.ReasoningSupport.none
+    }
+
+    /// Whether the active model or currently selected model supports reasoning output.
+    public var isReasoningSupported: Bool {
+        if let info = info {
+            return info.reasoningSupport != SessionInfo.ReasoningSupport.none
+        }
+        guard let selectedModel = selected ?? installed.first else {
+            return false
+        }
+        let family = selectedModel.family.lowercased()
+        let reasoningFamilies: Set<String> = ["gptoss", "museglimmer", "qwen38", "qwen36", "qwen3moe", "qwen35", "gemma4"]
+        return reasoningFamilies.contains(family) || family.contains("reason")
+    }
+
+    /// Updates the current reasoning effort level and saves it as the preferred default for the active model.
+    public func setReasoning(_ level: GenerateOptions.Reasoning) {
+        self.reasoning = level
+        if let key = selected?.alias ?? (selected?.path.isEmpty == false ? selected?.path : nil) {
+            modelReasoningDefaults[key] = level.rawValue
+        }
+        persistSettings()
+        updateTokenEstimate()
     }
 
     /// Whether the active model supports tool calling and structured function invocation.
