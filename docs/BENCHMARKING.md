@@ -407,3 +407,37 @@ Carried over from the Swift protocol, worth repeating:
   consecutive batches carry thermal drift.
 - No profiler, trace, or experimental control active during a run that
   will be quoted.
+- **Record the PAGE-CACHE STATE of a streamed install, the way a power row
+  records its power source and its cooling.** An MoE install's expert reads
+  are a page-cache memcpy at ~23.8 GiB/s when warm and real device I/O when
+  not, and the difference is not a margin: `docs/BENCHMARKS.md` records a
+  34 GB install reading **8.5 tok/s cold against 22 warm**, a 2.6x error,
+  found by accident rather than by an instrument. AGENTS.md Gotcha 20's
+  discard-a-warmup rule was written for a cold GPU and applies at least as
+  hard here.
+
+  Since 2026-08-29 this is measurable rather than inferred. Add
+  `MFERENCE_EXPERT_DISK_IO=1` to a `MFERENCE_PHASES=1` run and the
+  `expert bytes` row reports requested MiB/token, physical MiB/token and
+  their ratio; near-zero physical is the warm regime and anything
+  approaching the requested figure is the disk-bound one. It costs a syscall
+  pair per read batch, so it is off by default and does not belong in a run
+  being quoted for tok/s.
+
+  `MFERENCE_EXPERT_NOCACHE=1` establishes the disk-bound arm deliberately,
+  in the shape of `scripts/power.sh COOLING=max`. Two caveats that make it a
+  SEPARATE published row rather than a replacement: it is an operating point
+  no user occupies, and `F_NOCACHE` prevents retention without evicting, so
+  a blob already faulted in stays resident and needs `sudo purge` beside it.
+  Confirm from `bytes_physical`, never from the flag
+  (`crates/streaming/CLAUDE.md` Gotcha 8). Measured on the real Gemma 4
+  install at 16 slots: warm reads 0.0 MiB/token physical against 274.9
+  requested, and `F_NOCACHE` after a purge reads 274.9 of 274.9 (1.00x).
+
+  **DO NOT INTERLEAVE THOSE TWO ARMS, which is an exception to the rule
+  three bullets up.** A caching run repopulates the buffer cache and
+  `F_NOCACHE` does not evict, so a bypassed run that FOLLOWS a warm one is
+  served from memory and reads 0.00x -- the comparison destroys its own
+  condition. Observed in one sitting: 1.00x, 1.00x, then two caching runs,
+  then 0.00x, 0.00x. Run the bypassed arms consecutively after a purge and
+  the warm arms afterwards, and carry Gotcha 22's cross-capture caveat.

@@ -802,6 +802,22 @@ live network).
     <https://github.com/drumih/turbo-fieldfare/tree/main/docs/experiments>).
     `crates/streaming`'s speculative APIs exist for
     parity and stay uncalled by the runtime on purpose.
+    **A SECOND, DIFFERENT PREDICTOR WAS MEASURED HERE ON 2026-08-29 AND ALSO
+    LOSES, ON DIFFERENT TERMS.** Everything above rejects predictors that
+    guess from expert IDS. colibri's PILOT does not: it RUNS layer L+1's
+    router GEMV on layer L's post-attention residual, which is a different
+    experiment and is not closed by the Jaccard 0.039 result. Measured on the
+    real 26B install it reproduces colibri's own recall (70.6% against their
+    reported 71.6%) and covers 60.4% of misses at 32 slots -- and still loses,
+    because a prefetcher's COST scales with its prediction width while its
+    BENEFIT scales with the miss rate, and the LFU cache already answers
+    84.6%. Every `PILOT_K` from 1 to 8 reads MORE total expert bytes than the
+    demand path (1.03x to 1.85x), so there is no operating point that pays.
+    The reversal condition is a machine where the expert read is genuinely
+    disk-bound instead of a page-cache memcpy. Method, the full sweep, and the
+    off-by-one that nearly published it as a false negative:
+    `docs/EXPERT_ROUTING.md`. The probe stays wired
+    (`MFERENCE_PILOT_PROBE=1`, and `=self` to validate the instrument).
     The OFFLINE sibling of that idea, a domain-restricted expert set
     (profile which experts a coding corpus routes to, then prune or
     pre-warm that set), was measured to its own dead end on 2026-08-08:

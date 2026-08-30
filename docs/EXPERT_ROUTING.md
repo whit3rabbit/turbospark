@@ -260,6 +260,47 @@ to hold the expert table -- because that changes the cost from bandwidth to
 latency and raises the miss rate, which is both of the terms above at once.
 The probe stays wired for exactly that re-measurement.
 
+**THAT CONDITION IS NOW CREATABLE ON DEMAND, AND WHICH ONE A RUN WAS IN IS
+NOW READABLE.** Both were prose until 2026-08-29 (`crates/streaming/CLAUDE.md`
+Gotchas 8 and 3): nothing in the tree could establish the disk-bound arm, and
+nothing could say afterwards whether it had been established, which is the
+same gap AGENTS.md Gotcha 28 records for thermal pressure and Gotcha 43 for
+background load. The two seams are
+
+```sh
+MFERENCE_PHASES=1 MFERENCE_EXPERT_DISK_IO=1 MFERENCE_EXPERT_NOCACHE=1 \
+  ./target/release/turbospark-check --model ~/models/gemma4.gturbo \
+  --messages-file /tmp/p.json --max-new 200 --expert-cache-slots 16
+```
+
+and the `expert bytes` row of the phase footer reports requested MiB/token,
+physical MiB/token and their ratio. Read the physical number rather than the
+flag: `F_NOCACHE` prevents RETENTION and does not evict, so a blob a previous
+run already faulted in stays resident and needs `sudo purge` beside it.
+
+**The condition has been established once, and the arithmetic above is
+confirmed to describe the warm case only.** Real Gemma 4, 16 slots: warm
+reads 0.0 MiB/token physical against 274.9 requested, and the purged
+bypassed arm reads 274.9 of 274.9 (1.00x), i.e. every routed byte off the
+device. That 1.00x is also the answer to a question this page never asked --
+`F_RDADVISE` is not over-reading, since the disk-bound arm pulls exactly the
+strides the cache asked for and no more.
+
+**Re-running the PILOT sweep under that condition is OWED and has not been
+done.** The cost model above is a warm-cache measurement throughout, and both
+of its terms are expected to move: the miss rate rises, and each miss stops
+being a ~23.8 GiB/s memcpy. Until that sweep exists, the standing decision is
+scoped to the warm case and says nothing about the cold one.
+
+Note also what does NOT reopen it. `garnermccloud/sglang-ssd-stream` reports
+164.7 tok/s streaming a 47.68 GiB lookup table from NVMe and hiding the reads
+behind GPU compute, which reads like a refutation and is not one: its row
+addresses are a function of the INPUT TOKEN IDS and are therefore known
+before the consuming block, so its prefetch wastes no bytes by construction.
+A routed expert set is the router's OUTPUT for that layer, so lookahead here
+is a PREDICTION and pays the cost model above. Their result is evidence about
+overlap, not about prediction.
+
 ### The instrument nearly reported a false negative
 
 The first wiring read **7.7% recall against a 6.25% random baseline** --

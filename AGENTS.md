@@ -20,7 +20,7 @@ read the page before proposing the thing it refutes.
 | `docs/BENCHMARKING.md` | the three `turbospark-bench` modes, peak-memory measurement, the memory oracle | quoting a throughput or footprint number |
 | `docs/BENCHMARKS.md` | the frozen rows: quality, throughput, memory, cross-engine KL | re-freezing anything |
 | `docs/POWER_BASELINE.md` | watts and joules-per-token; the one page measured on BATTERY | reading a power row |
-| `docs/EXPERT_ROUTING.md` | domain-restricted expert sets, measured negative | proposing expert pruning or pinning |
+| `docs/EXPERT_ROUTING.md` | domain-restricted expert sets AND router-lookahead prefetch, two measured negatives | proposing expert pruning, pinning, or prefetch |
 | `docs/ACTIVATION_SPARSITY.md` | dense-FFN neuron caching, measured negative | proposing to load "only what the token uses" |
 | `docs/SPECULATIVE_DECODING.md` | speculative decoding and DFlash on the MoE family | proposing a drafter |
 | `docs/MTP_SPECULATIVE.md` | the same question for the DENSE family, where the answer differs | re-costing that decision |
