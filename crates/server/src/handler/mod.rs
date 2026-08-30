@@ -130,7 +130,8 @@ pub async fn chat_completions(
     // unparseable value, so this cannot fail by the time it is reached, and
     // the pairing with `tool_names` above keeps both request-derived inputs
     // to the decoder in one place.
-    let effort = reasoning_effort(&request).unwrap_or_default();
+    let effort = reasoning_effort(&request, model.default_reasoning())
+        .unwrap_or_else(|_| model.default_reasoning());
     let include_usage = request
         .stream_options
         .as_ref()

@@ -2,8 +2,19 @@
 //! `MferenceCLI/Run.swift` `runChat`. The model is loaded once and every
 //! turn re-renders the whole history through the tokenizer's own chat
 //! template, so the REPL follows whichever dialect the loaded checkpoint
-//! uses. Each turn starts from a reset KV cache (`run_raw_completion` resets
-//! the producer itself), so no state leaks between turns.
+//! uses.
+//!
+//! Turns CONTINUE from each other's KV where they can (`set_prefix_reuse`,
+//! `runtime::kv_prefix`): re-rendering the transcript means turn N's prompt
+//! usually begins with exactly the tokens turn N-1 was built from, and
+//! re-prefilling those costs the whole conversation again every message. A
+//! turn whose prompt diverges anywhere -- `/clear`, an edited history, or a
+//! re-tokenization that lands differently -- falls back to the full prefill
+//! and is byte-identical to it, which is what
+//! `crates/runtime/tests/prefix_reuse_real.rs` pins on the real install.
+//!
+//! This is the ONE caller that opts in by default, because it is the one
+//! that is multi-turn by construction and is named by no frozen row.
 
 use std::io::BufRead;
 
@@ -23,6 +34,7 @@ pub fn run(request: &InvocationRequest) {
             return;
         }
     };
+    session.runner.set_prefix_reuse(true);
 
     let opening: Vec<Message> = request
         .system
@@ -136,6 +148,15 @@ fn take_turn(
             fitted.removed_turn_count()
         );
     }
+    // How much of this turn continues from the last one's KV. Reported
+    // because the match RATE is an empirical property of the checkpoint's
+    // template and tokenizer, not something the mechanism can promise: the
+    // assistant's reply is re-tokenized from TEXT on its way back in, and
+    // where that lands differently from the ids that were generated, the
+    // record diverges there and the turn re-prefills. Without this line a
+    // reader cannot tell a working reuse from one that never fires -- the two
+    // differ only in wall-clock, which thermal drift alone can cover
+    // (`MFERENCE_PREFIX_REUSE=quiet` silences it).
     // NOT committed to `history` yet. A render or generation failure here
     // must leave the history as it was: committing first strands the new user
     // message in it, so the natural retry sends two consecutive `user` turns,
@@ -143,9 +164,17 @@ fn take_turn(
     let fitted_history = fitted.retained_turns().to_vec();
 
     let prompt_ids = render_prompt(&session.tokenizer, &fitted_history, reasoning)?;
+
     let max_new = clamp_max_new(session, request, prompt_ids.len())?;
     let (reply, result) =
         stream_turn(session, request, &prompt_ids, max_new).map_err(|e| format!("error: {e}"))?;
+    if !request.quiet && std::env::var("MFERENCE_PREFIX_REUSE").as_deref() != Ok("quiet") {
+        eprintln!(
+            "[prefix-reuse] {}/{} prompt tokens continued from the previous turn",
+            result.reused_prefix_tokens,
+            prompt_ids.len()
+        );
+    }
     print_footer(&result, request.quiet);
     *history = fitted_history;
     if !reply.is_empty() {
