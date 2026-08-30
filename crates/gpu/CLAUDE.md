@@ -177,20 +177,66 @@ crates/gpu/
     which is why it is written as a reading of an existing table and not as a
     measurement.
 
-    **`FC_GEMM_R` (constant 104) IS THE FIRST ATTEMPT AT THAT ARITHMETIC
-    INTENSITY, AND IT IS UNMEASURED ON PURPOSE.** One SIMD group owns
-    `row_block` CONTIGUOUS output rows, which divides the per-block
-    activation loads by R and hoists `sum = e0 + ... + e7` out of the row
-    loop -- it depends on `bi` alone, and the one-row kernel recomputes it
-    once per row. The irreducible term is the 8 `fma` per `(r, bi)`.
-    `MAX_GEMM_ROW_BLOCK` is 4 and the DEFAULT is 1, so every wired call site
-    dispatches the shape it dispatched before the axis existed;
-    `encode_dequant_int4_gemm_resident_blocked` is reachable from the bench
-    and the tests only until `c_of_r_and_m_for_the_batched_kernel` has run on
-    AC. It moves no bits at any width, which is asserted on the hostile
-    fixture with the MMA positive control rather than argued from the source
+    **`FC_GEMM_R` (constant 104) IS THAT ARITHMETIC INTENSITY, AND IT IS
+    MEASURED: 1.30x AT THE WIDTH THE PREFILL DRIVER ALREADY USES.** One SIMD
+    group owns `row_block` CONTIGUOUS output rows, which divides the
+    per-block activation loads by R and hoists `sum = e0 + ... + e7` out of
+    the row loop -- it depends on `bi` alone, and the one-row kernel
+    recomputes it once per row. The irreducible term is the 8 `fma` per
+    `(r, bi)`. It moves no bits at any width, asserted on the hostile fixture
+    with the MMA positive control
     (`row_blocking_does_not_move_a_single_bit`), so its gate is the parity
     test and it owes no quality gate.
+
+    `c(R, M)` on AC, 2026-08-29, mean of four runs, gate/up 17408x5120 (the
+    other five shapes agree to 0.03 and the spread within a cell is 0.00 to
+    0.05):
+
+    |  M  |  R=1  |  R=2  |  R=4  | best gain |
+    |---|---|---|---|---|
+    |  2  | 0.510 | 0.505 | 0.617 |  1.01x    |
+    |  4  | 0.607 | **0.307** | 0.365 |  1.98x    |
+    |  8  | 0.502 | 0.448 | 0.427 |  1.18x    |
+    | 16  | 0.487 | 0.425 | **0.375** |  1.30x    |
+
+    **R=4 IS THE ANSWER AT M=16 AND R=2 AT M=4; R=4 AT M=2 IS A LOSS**
+    (0.51 to 0.62) and at M=1 a bigger one (1.00 to 1.22). So the width is
+    chosen per batch by `best_row_block` -- a TABLE, not the global constant
+    the M=16 row alone would suggest, because the widths R=4 regresses are
+    exactly the ones the MTP and DFlash2 verify run at through the same
+    entry point. That selection is legitimate here and forbidden for the
+    matrix kernel next door, for a reason spelled out on the function.
+
+    Wired 2026-08-29 and measured end to end on the real install: the
+    frozen `long-synthesis` prompt prefills in 69.75 s against 87.80 s,
+    three interleaved pairs, **1.26x** against the 1.24x the GEMM's 85.4%
+    share predicted. Byte-identical output, verified THROUGH the batched arm
+    -- plain decode is M=1 GEMV and never enters this kernel, so a smoke run
+    without `MFERENCE_BATCHED_GEMV=1` cannot see a change to it.
+
+    **THE M=4 CELL IS THE BEST NUMBER IN THE TABLE AND IS NOT A LICENCE TO
+    NARROW THE MICRO-BATCH.** 0.307 against M=16/R=4's 0.375 is a further
+    1.23x on the GEMM alone, and `c` is comparable across M here (verified:
+    re-running with `groups` FIXED at 64, so every M moves identical weight
+    bytes, reproduces the table cell for cell). But prefill's per-micro-batch
+    costs -- command-buffer commits, host encode -- scale with the NUMBER of
+    micro-batches, and going 16 to 4 quadruples them. This bench prices the
+    GEMM and cannot see that, so the M=4 route needs an end-to-end run before
+    anyone believes it. Note also WHY M=4 is special: `unroll_count(4)` makes
+    `b_dim == 4` exactly one full unroll, and the R=1 column's own bump at
+    M=4 (0.607 against 0.50 either side) is that interaction going badly,
+    which R=2 removes.
+
+    **THE FROZEN `count(4)` ROW IS NOT COMPARABLE ACROSS SESSIONS, measured
+    the same day.** That table reads 0.50 / 0.55 / 0.46 / 0.44 and the
+    IDENTICAL code read 0.51 / 0.61 / 0.50 / 0.49 here -- up to 11% apart on
+    the same machine and the same shapes. It is not a regression from
+    `FC_GEMM_R`, and the check that says so is an interleaved A/B against
+    `aa094b4^`: three pairs, baseline and R=1 agreeing to 0.01 on every cell.
+    So the 2-D `acc[kMaxRowBlock][kMaxBatchRows]` declaration DOES collapse
+    at R=1 (the thing no static instrument here could confirm), and Gotcha
+    22's rule holds -- read a `c(M)` number against arms measured beside it,
+    never against a frozen row from another day.
 
     **PIPELINE REFLECTION CANNOT PRICE IT. MEASURED NEGATIVE, 2026-08-29.**
     The register file is this kernel's binding constraint and every statement

@@ -62,17 +62,34 @@
 // accumulator, and the 32-lane partition of K feeding `simd_sum` is
 // untouched; only which SIMD GROUP owns the row changes.
 //
-// R=1 must reproduce the pre-FC_GEMM_R kernel exactly in BITS, which
-// `row_blocking_does_not_move_a_single_bit` asserts. Whether it also
-// reproduces it in REGISTER PRESSURE is currently UNVERIFIED and is not an
-// oversight: `acc` is declared at `[kMaxRowBlock][kMaxBatchRows]` on the
-// same "the optimizer drops what is never written" reasoning the 1-D
-// version already relied on, and no static instrument on this device can
-// check it. `maxTotalThreadsPerThreadgroup` reads 1024 even for an
-// `acc[64][16]` that fits no register file anywhere, so it is at its rail;
-// `pipeline_reflection_cannot_see_this_kernels_register_pressure` records
-// that measurement. The R=1 arm of a `c(R, B)` sweep on AC is what closes
-// it, by reproducing the `count(4)` row below.
+// MEASURED ON AC, 2026-08-29, mean of four runs on gate/up 17408x5120
+// (the other five QWEN38_SHAPES agree to 0.03; within-cell spread 0.00-0.05):
+//
+//   R      M=2    M=4    M=8   M=16
+//   1     0.510  0.607  0.502  0.487   <- the shape shipped before this
+//   2     0.505  0.307  0.448  0.425
+//   4     0.617  0.365  0.427  0.375
+//
+// R=4 wins at M=16 (1.30x) and M=8, R=2 wins at M=4 (1.98x), and R=4 LOSES
+// at M=2 -- so nothing selects a width by heuristic. Read the M=4 column
+// with the unroll table below: `unroll_count(4)` makes `b_dim == 4` exactly
+// one full unroll, and R=1's bump there (0.607 against 0.50 either side) is
+// that interaction going badly rather than a property of the width.
+//
+// R=1 reproduces the pre-FC_GEMM_R kernel in BITS
+// (`row_blocking_does_not_move_a_single_bit`) and, now, in SPEED: an
+// interleaved A/B against `aa094b4^`, three pairs, agrees to 0.01 on every
+// cell. That is what says `acc[kMaxRowBlock][kMaxBatchRows]` collapses at
+// R=1, and it had to be a timing because no static instrument on this
+// device can see register pressure --
+// `maxTotalThreadsPerThreadgroup` reads 1024 even for an `acc[64][16]` that
+// fits no register file anywhere, which
+// `pipeline_reflection_cannot_see_this_kernels_register_pressure` records.
+//
+// THE `count(4)` TABLE BELOW IS FROM ANOTHER SESSION AND IS ~11% OPTIMISTIC
+// AGAINST TODAY'S MACHINE. The identical code read 0.51 / 0.61 / 0.50 / 0.49
+// here against its 0.50 / 0.55 / 0.46 / 0.44. Compare arms measured beside
+// each other, never against these rows (AGENTS.md Gotcha 22).
 //
 // Layouts. `x` is [B, N] and `y` is [B, M], both token-major, so each
 // token's vectors stay contiguous and a caller can hand one row of either
