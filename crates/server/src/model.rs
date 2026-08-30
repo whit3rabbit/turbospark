@@ -13,8 +13,8 @@
 //! the duration of a request, not handed out by value.
 
 use runtime::{
-    run_raw_completion, GenerationConfig, LogitProducer, RawDecodeProgress, RawDecodeResult,
-    RuntimeError,
+    run_raw_completion_cancellable, CancelFlag, GenerationConfig, LogitProducer, RawDecodeProgress,
+    RawDecodeResult, RuntimeError,
 };
 use tokenizer::MfTokenizer;
 
@@ -70,11 +70,18 @@ pub trait ChatModel: Send + Sync {
     /// prefills the second's picture. Both are fluent. Passing the images
     /// here is what puts the encode, the injection and the decode inside ONE
     /// lock.
+    ///
+    /// `cancel` is polled once per prefill and decoded token by the runtime
+    /// loop underneath; a caller with nothing to cancel on passes `&|| false`,
+    /// which is the same statement sequence this ran before cancellation
+    /// existed (`runtime::run_raw_completion`'s own `NEVER` constant, not
+    /// exported past that crate, is exactly this).
     fn run_completion(
         &self,
         prompt_ids: &[foundation::TokenId],
         config: &GenerationConfig,
         images: Option<&crate::vision::RequestImages>,
+        cancel: CancelFlag<'_>,
         on_progress: &mut dyn FnMut(RawDecodeProgress),
     ) -> Result<RawDecodeResult, RuntimeError> {
         if images.is_some() {
@@ -89,13 +96,14 @@ pub trait ChatModel: Send + Sync {
             ));
         }
         self.with_producer(&mut |producer| {
-            run_raw_completion(
+            run_raw_completion_cancellable(
                 producer,
                 self.tokenizer(),
                 prompt_ids,
                 config,
                 self.max_context(),
                 self.vocab_size(),
+                cancel,
                 &mut *on_progress,
             )
         })

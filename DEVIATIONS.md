@@ -1396,7 +1396,15 @@ live network).
   costs a multi-gigabyte mapping plus a Metal pipeline compile to open and
   takes `&mut self`, so there is one per process behind a `Mutex` and
   concurrent requests queue on it (each waiter pinning a tokio blocking
-  thread). A client that disconnects mid-stream does not abort generation.
+  thread). A client that disconnects mid-stream now DOES shorten the
+  generation it was waiting on: `ChatModel::run_completion` takes a
+  `runtime::CancelFlag`, polled once per prefill and decoded token, that a
+  dropped request sets (`crates/server/src/cancel.rs`,
+  `crates/server/CLAUDE.md` Gotcha 25). The lock itself is still held until
+  that generation actually stops -- queued requests wait less, not zero --
+  and cancelling is not an error: the run returns a normal result with
+  `StopReason::Cancelled` and whatever it had generated, discarded silently
+  by every caller since the client that would read it is already gone.
   `ScriptedChatModel` remains the portable backend the integration tests
   drive; on non-macOS it is the only one.
 - **Tailnet bind: implemented, `--model` mode only.** `--bind

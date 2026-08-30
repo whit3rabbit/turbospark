@@ -6,19 +6,23 @@
 //! cheap to open nor safe to share; a mutex serializes generation and
 //! concurrent requests queue on it (each waiter holding a tokio blocking
 //! thread). That is the right shape for a loopback single-user server, not
-//! for a fleet one. Two known limitations follow from it: throughput is one
-//! request at a time, and a client that disconnects mid-stream does not
-//! abort generation -- the run finishes and only then releases the lock.
-//! A `--max-tokens-per-sec` cap lengthens the lock hold in proportion,
-//! which is acceptable for the same reason: the queue is already serial.
+//! for a fleet one. So throughput is one request at a time regardless, and
+//! a `--max-tokens-per-sec` cap lengthens the lock hold in proportion, which
+//! is acceptable for the same reason: the queue is already serial. A client
+//! that disconnects mid-stream DOES now abort the queued or in-flight
+//! generation it was waiting on -- `run_completion`'s `cancel` predicate,
+//! polled once per prefill and decoded token, is what a waiter's dropped
+//! request sets (`crates/server/CLAUDE.md` Gotcha 25) -- but the lock itself
+//! is still held until that generation actually stops, so a cancel shortens
+//! the wait rather than skipping the queue.
 
 use std::path::Path;
 use std::sync::Mutex;
 
 use runtime::{
-    run_raw_completion, run_raw_completion_chunked, run_raw_completion_speculative,
-    GenerationConfig, LogitProducer, RateControl, RawDecodeProgress, RawDecodeResult,
-    RealForwardRunner, RuntimeError,
+    run_raw_completion_cancellable, run_raw_completion_chunked_cancellable,
+    run_raw_completion_speculative_cancellable, CancelFlag, GenerationConfig, LogitProducer,
+    RateControl, RawDecodeProgress, RawDecodeResult, RealForwardRunner, RuntimeError,
 };
 use tokenizer::MfTokenizer;
 
@@ -219,6 +223,7 @@ impl RealChatModel {
         prompt_ids: &[foundation::TokenId],
         config: &GenerationConfig,
         images: &crate::vision::RequestImages,
+        cancel: CancelFlag<'_>,
         on_progress: &mut dyn FnMut(RawDecodeProgress),
     ) -> Result<RawDecodeResult, RuntimeError> {
         let Some(params) = self.preprocess_params.clone() else {
@@ -245,13 +250,14 @@ impl RealChatModel {
             .set_prompt_vision(&embeddings, &images.positions, prompt_ids.len())
             .map_err(|e| RuntimeError::Producer(e.to_string()))?;
 
-        let result = run_raw_completion(
+        let result = run_raw_completion_cancellable(
             &mut *runner,
             &self.tokenizer,
             prompt_ids,
             config,
             self.context.resolved,
             self.vocab_size,
+            cancel,
             &mut *on_progress,
         );
         // CONSUMED, whether the generation succeeded or not: a map left
@@ -390,6 +396,7 @@ impl ChatModel for RealChatModel {
         prompt_ids: &[foundation::TokenId],
         config: &GenerationConfig,
         images: Option<&crate::vision::RequestImages>,
+        cancel: CancelFlag<'_>,
         on_progress: &mut dyn FnMut(RawDecodeProgress),
     ) -> Result<RawDecodeResult, RuntimeError> {
         // IMAGES FIRST, AND UNDER THE SAME LOCK AS THE GENERATION. Encoding
@@ -399,7 +406,7 @@ impl ChatModel for RealChatModel {
         // request's picture, fluently. `run_with_images` takes the lock once
         // and holds it across the encode, the injection and the decode.
         if let Some(images) = images {
-            return self.run_with_images(prompt_ids, config, images, on_progress);
+            return self.run_with_images(prompt_ids, config, images, cancel, on_progress);
         }
         let block = match &self.speculation {
             runtime::SpeculationPlan::Enabled { block } if config.shaping.is_deterministic() => {
@@ -421,7 +428,7 @@ impl ChatModel for RealChatModel {
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner());
                 if runner.supports_chunked_prefill() {
-                    return run_raw_completion_chunked(
+                    return run_raw_completion_chunked_cancellable(
                         &mut *runner,
                         &self.tokenizer,
                         prompt_ids,
@@ -429,18 +436,20 @@ impl ChatModel for RealChatModel {
                         self.context.resolved,
                         self.vocab_size,
                         foundation::DEFAULT_CHUNK_SIZE as usize,
+                        cancel,
                         &mut *on_progress,
                     );
                 }
                 drop(runner);
                 return self.with_producer(&mut |producer| {
-                    run_raw_completion(
+                    run_raw_completion_cancellable(
                         producer,
                         &self.tokenizer,
                         prompt_ids,
                         config,
                         self.context.resolved,
                         self.vocab_size,
+                        cancel,
                         &mut *on_progress,
                     )
                 });
@@ -453,7 +462,7 @@ impl ChatModel for RealChatModel {
             .runner
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        run_raw_completion_speculative(
+        run_raw_completion_speculative_cancellable(
             &mut *runner,
             &self.tokenizer,
             prompt_ids,
@@ -461,6 +470,7 @@ impl ChatModel for RealChatModel {
             self.context.resolved,
             self.vocab_size,
             block,
+            cancel,
             &mut *on_progress,
         )
     }

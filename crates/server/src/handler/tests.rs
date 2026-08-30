@@ -239,6 +239,7 @@ fn a_generated_tool_call_is_decoded_out_of_the_stream() {
         None,
         &tool_names(&request),
         ReasoningEffort::Off,
+        &|| false,
         &mut |piece| pieces.push(piece),
     )
     .expect("generation should succeed");

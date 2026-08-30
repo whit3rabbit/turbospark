@@ -22,6 +22,7 @@ crates/server/
 |   +-- args.rs                 # Command line parsing and host binding resolution
 |   +-- main_tests.rs           # Unit tests for CLI args and host binding
 |   +-- lib.rs                  # Library root: router, re-exported wire types
+|   +-- cancel.rs               # Cancel/CancelOnDrop/CancelGuard: client-disconnect cancellation (Gotcha 25)
 |   +-- handler/                # /v1/chat/completions + /v1/models + /health, and the shared generation core
 |   |   +-- mod.rs              # The Axum handlers and the router wiring
 |   |   +-- plan.rs             # `plan`: chat template, encode, shaping config
@@ -44,6 +45,7 @@ crates/server/
     +-- harmony_channels.rs     # gpt-oss reasoning -> thinking/reasoning_content, and its tool calls
     +-- reasoning_channels.rs   # Streaming & non-streaming reasoning channel translation tests
     +-- guardrails.rs           # Rescue/validate/retry end to end, both endpoints, no model
+    +-- cancellation.rs         # Drop a streaming response mid-generation, assert it stopped short
     +-- real_backend.rs         # Gated real-model end-to-end test (macOS, #[ignore]d)
     \-- fixtures/               # Test tokenizer fixtures for integration tests
 ```
@@ -58,6 +60,7 @@ crates/server/
 - `guardrails.rs`: tool-call rescue parsing, argument validation against the request's own schema, and the one-retry loop, over `forge-guardrails` (see Gotcha 18). `inspect` is the pure verdict; `run_guarded` is the loop that acts on it.
 - `model.rs`: the `ChatModel` trait and `ScriptedChatModel`, bridging Axum handlers to `turbospark-runtime`. The trait owns WHICH decode loop runs (`run_completion`, Gotcha 17), not just which producer.
 - `real_model.rs`: `RealChatModel`, a `RealForwardRunner` behind the same trait (macOS only).
+- `cancel.rs`: `Cancel` (the `Arc<AtomicBool>` threaded through every async call chain), `CancelOnDrop` (wraps an SSE stream, sets it when axum drops the stream), and `CancelGuard` (sets it if a non-streaming handler's own future is dropped before `.defuse()`) -- the client-disconnect cancellation mechanism (Gotcha 25).
 - `response.rs`: constructors for `anyllm_translate::openai`'s response and SSE chunk envelopes, filling the many fields this server never populates in one place.
 
 ## Development & Test Commands
@@ -531,3 +534,57 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
     was rescued from. `buffered_stream_response` re-frames a `Generated` the
     same event shapes the live path builds incrementally, just one delta per
     item instead of one per token.
+
+25. **A CLIENT DISCONNECT NOW SHORTENS THE GENERATION IT WAS WAITING ON, AND
+    THE MECHANISM IS SPLIT ACROSS AN OWNED FLAG AND A BORROWED PREDICATE
+    BECAUSE THE TWO CANNOT CROSS THE SAME BOUNDARY.**
+    `runtime::CancelFlag<'a>` (`&'a dyn Fn() -> bool`, polled once per
+    prefill and decoded token inside `run_raw_completion_cancellable` and
+    its chunked/speculative siblings) is not `Send`, so it cannot be
+    captured by a `spawn_blocking` `move` closure -- only the
+    `Arc<AtomicBool>` it reads from can. `crates/server/src/cancel.rs`'s
+    `Cancel` type alias is that `Arc`, threaded through every async-visible
+    signature in the crate (`guardrails::run_guarded`, `handler::exec::
+    run_full`, every handler and `stream_response`/`buffered_stream_response`
+    pair); `as_cancel_flag` builds the actual `CancelFlag` closure exactly
+    ONCE, on the blocking thread the generation runs on, and `&flag` is what
+    gets passed down through `ChatModel::run_completion` into
+    `RealChatModel`'s four internal dispatch sites (images, chunked,
+    sequential, speculative -- all four switched to their `_cancellable`
+    runtime entry point in the same commit) and `model.rs`'s default
+    sequential-loop impl.
+
+    **TWO INDEPENDENT DETECTORS SET THE FLAG, AND NEITHER SUBSUMES THE
+    OTHER'S REASON FOR EXISTING EVEN THOUGH EITHER ALONE CAUGHT THIS CRATE'S
+    OWN TEST.** `CancelOnDrop` (wrapping the SSE stream `Sse::new` returns,
+    on every streaming construction in the crate) fires when axum DROPS that
+    stream, which is the disconnect signal itself and fires independent of
+    whether any chunk was ever in flight -- the only signal a BUFFERED path
+    has at all, since nothing is sent until the whole generation is done.
+    The `tx.send(...).is_err()` check inside each live path's `send` closure
+    is the faster, redundant detector for the per-token path: measured with
+    `tests/cancellation.rs`'s `CountingModel` (a `LogitProducer` that counts
+    every `produce` call rather than replaying a fixed script, so it can run
+    past any scripted step budget), disabling EITHER detector alone left the
+    test passing -- dropping the plain (unwrapped) receiver stream still
+    drops the inner `mpsc::Receiver`, so the very next sequential path's
+    send fails anyway -- and only disabling BOTH reddened it, turning a
+    0.3s test into one that still had not finished after three minutes.
+    That timing gap, not a numeric assertion, is the proof: an abandoned
+    `max_tokens: 1_000_000` request left running for real minutes is exactly
+    the cost this feature removes, and `CancelGuard` (a local guard that
+    sets the same flag if dropped before `.defuse()`, covering the
+    non-streaming and buffered paths where it is the HANDLER's own future
+    that gets dropped, not the SSE stream) closes the same gap for the two
+    request shapes that never open one.
+
+    **CANCELLING IS NOT AN ERROR AND NOTHING HERE REPORTS ONE.** The runtime
+    returns a normal `RawDecodeResult` with `StopReason::Cancelled` and
+    whatever it had generated; every caller checks that reason and discards
+    the result silently rather than sending a finish chunk, an error event,
+    or (in `guardrails::run_guarded`) treating a truncated turn as one worth
+    a guardrail retry -- the client that would read any of those is the
+    same one already gone. The lock `RealChatModel`'s one runner serializes
+    on is still held until the cancelled generation actually stops, so a
+    disconnect shortens a queued waiter's wait rather than skipping it
+    outright.

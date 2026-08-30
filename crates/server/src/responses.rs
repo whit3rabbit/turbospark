@@ -586,11 +586,17 @@ pub async fn responses(
     let streaming = request.stream.unwrap_or(false);
     let degraded = responses_warnings(&request, streaming && may_produce_reasoning(&model, effort));
     let request_model = request.model.clone();
+    let cancel = crate::cancel::new_cancel();
 
     let mut response = if streaming {
-        stream_response(model, chat_request, tools, effort, request_model)
+        stream_response(model, chat_request, tools, effort, request_model, cancel)
     } else {
-        match run_guarded(model, &chat_request, effort).await {
+        // Set if THIS future is dropped (client gone) before `run_guarded`
+        // resolves; defused right after, whatever it returned.
+        let mut guard = crate::cancel::CancelGuard::new(cancel.clone());
+        let result = run_guarded(model, &chat_request, effort, cancel).await;
+        guard.defuse();
+        match result {
             Ok(generated) => Json(build_response(
                 format!("resp_{}", now_unix()),
                 request_model,
@@ -608,15 +614,17 @@ pub async fn responses(
     response
 }
 
+#[allow(clippy::too_many_arguments)]
 fn stream_response(
     model: AppState,
     chat_request: ChatCompletionRequest,
     tools: HashSet<String>,
     effort: ReasoningEffort,
     request_model: String,
+    cancel: crate::cancel::Cancel,
 ) -> Response {
     if !tools.is_empty() && model.guardrails().active() {
-        return buffered_stream_response(model, chat_request, effort, request_model);
+        return buffered_stream_response(model, chat_request, effort, request_model, cancel);
     }
     let planned = match plan(&model, &chat_request) {
         Ok(p) => p,
@@ -626,10 +634,17 @@ fn stream_response(
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
     let id = format!("resp_{}", now_unix());
     let model_name = request_model;
+    let cancel_for_task = cancel.clone();
 
     tokio::task::spawn_blocking(move || {
-        let send = move |ev: Event| {
-            let _ = tx.send(ev);
+        let send = |ev: Event| {
+            // Fast-path disconnect detection: `CancelOnDrop` below catches
+            // the same event even with no chunk in flight (a long prefill
+            // sends none), so this is a speed-up rather than the only
+            // detector.
+            if tx.send(ev).is_err() {
+                cancel_for_task.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
         };
         send(created_event(&id, &model_name));
 
@@ -637,6 +652,7 @@ fn stream_response(
         let mut text_acc = String::new();
         let mut call_index: u32 = 0;
 
+        let flag = crate::cancel::as_cancel_flag(&cancel_for_task);
         let result = stream_blocking(
             &model,
             &planned.prompt_ids,
@@ -644,6 +660,7 @@ fn stream_response(
             planned.images.as_ref(),
             &tools,
             effort,
+            &flag,
             &mut |piece| match piece {
                 // Dropped in v1: OpenAI defines no delta event for a
                 // Responses reasoning summary, and `responses_warnings`
@@ -674,6 +691,9 @@ fn stream_response(
         );
 
         match result {
+            // Discarded silently: the client that would read
+            // `response.completed` is the one already gone.
+            Ok(decode) if decode.reason == runtime::StopReason::Cancelled => (),
             Ok(decode) => {
                 if message_open {
                     close_message_events(&send, &text_acc);
@@ -693,7 +713,13 @@ fn stream_response(
 
     let stream: std::pin::Pin<
         Box<dyn Stream<Item = Result<Event, std::convert::Infallible>> + Send>,
-    > = Box::pin(tokio_stream::wrappers::UnboundedReceiverStream::new(rx).map(Ok));
+    > = Box::pin(
+        crate::cancel::CancelOnDrop::new(
+            tokio_stream::wrappers::UnboundedReceiverStream::new(rx),
+            cancel,
+        )
+        .map(Ok),
+    );
     Sse::new(stream)
         .keep_alive(KeepAlive::new().interval(SSE_KEEP_ALIVE))
         .into_response()
@@ -711,10 +737,12 @@ fn buffered_stream_response(
     chat_request: ChatCompletionRequest,
     effort: ReasoningEffort,
     request_model: String,
+    cancel: crate::cancel::Cancel,
 ) -> Response {
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
     let id = format!("resp_{}", now_unix());
     let model_name = request_model;
+    let cancel_for_stream = cancel.clone();
 
     tokio::spawn(async move {
         let send = move |ev: Event| {
@@ -722,7 +750,12 @@ fn buffered_stream_response(
         };
         send(created_event(&id, &model_name));
 
-        match run_guarded(model, &chat_request, effort).await {
+        // Nothing is sent until the whole generation is done, so
+        // `CancelOnDrop` below is the only signal this path has that the
+        // client is gone.
+        match run_guarded(model, &chat_request, effort, cancel).await {
+            // Discarded silently, same contract as the live path.
+            Ok(generated) if generated.decode.reason == runtime::StopReason::Cancelled => (),
             Ok(generated) => {
                 if !generated.text.is_empty() {
                     send(open_message_event());
@@ -747,7 +780,13 @@ fn buffered_stream_response(
 
     let stream: std::pin::Pin<
         Box<dyn Stream<Item = Result<Event, std::convert::Infallible>> + Send>,
-    > = Box::pin(tokio_stream::wrappers::UnboundedReceiverStream::new(rx).map(Ok));
+    > = Box::pin(
+        crate::cancel::CancelOnDrop::new(
+            tokio_stream::wrappers::UnboundedReceiverStream::new(rx),
+            cancel_for_stream,
+        )
+        .map(Ok),
+    );
     Sse::new(stream)
         .keep_alive(KeepAlive::new().interval(SSE_KEEP_ALIVE))
         .into_response()

@@ -10,6 +10,7 @@
 //! `RealForwardRunner` forward pass against a `.gturbo` install). Model
 //! dialect auto-selection is the tokenizer's job here, not the server's.
 
+mod cancel;
 mod completions;
 mod guardrails;
 mod handler;

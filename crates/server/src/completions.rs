@@ -120,18 +120,22 @@ async fn run_full(
     model: AppState,
     prompt_ids: Vec<foundation::TokenId>,
     config: GenerationConfig,
+    cancel: crate::cancel::Cancel,
 ) -> Result<(String, RawDecodeResult), crate::handler::GenError> {
-    let joined = tokio::task::spawn_blocking(move || {
-        let mut text = String::new();
-        let result =
-            model.run_completion(&prompt_ids, &config, None, &mut |progress| match progress {
-                RawDecodeProgress::Token { delta, .. } => text.push_str(&delta),
-                RawDecodeProgress::Tail(tail) => text.push_str(&tail),
-                RawDecodeProgress::Prefill { .. } => {}
+    let joined =
+        tokio::task::spawn_blocking(move || {
+            let mut text = String::new();
+            let flag = crate::cancel::as_cancel_flag(&cancel);
+            let result = model.run_completion(&prompt_ids, &config, None, &flag, &mut |progress| {
+                match progress {
+                    RawDecodeProgress::Token { delta, .. } => text.push_str(&delta),
+                    RawDecodeProgress::Tail(tail) => text.push_str(&tail),
+                    RawDecodeProgress::Prefill { .. } => {}
+                }
             });
-        (result, text)
-    })
-    .await;
+            (result, text)
+        })
+        .await;
     match joined {
         Ok((Ok(decode), text)) => Ok((text, decode)),
         Ok((Err(e), _)) => Err(crate::handler::GenError::Runtime(e)),
@@ -165,17 +169,26 @@ fn stream_response(
     prompt_ids: Vec<foundation::TokenId>,
     config: GenerationConfig,
     model_name: String,
+    cancel: crate::cancel::Cancel,
 ) -> Response {
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
     let id = format!("cmpl-{}", now_unix());
     let created = now_unix();
+    let cancel_for_task = cancel.clone();
 
     tokio::task::spawn_blocking(move || {
         let send = |text: String, finish: Option<&'static str>| {
             let chunk = text_completion_chunk(&id, created, &model_name, text, finish);
-            let _ = tx.send(Event::default().data(chunk.to_string()));
+            // Fast-path disconnect detection: `CancelOnDrop` below catches
+            // the same event even with no chunk in flight (a long prefill
+            // sends none), so this is a speed-up rather than the only
+            // detector.
+            if tx.send(Event::default().data(chunk.to_string())).is_err() {
+                cancel_for_task.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
         };
-        let result = model.run_completion(&prompt_ids, &config, None, &mut |progress| {
+        let flag = crate::cancel::as_cancel_flag(&cancel_for_task);
+        let result = model.run_completion(&prompt_ids, &config, None, &flag, &mut |progress| {
             let text = match progress {
                 RawDecodeProgress::Token { delta, .. } => delta,
                 RawDecodeProgress::Tail(tail) => tail,
@@ -186,6 +199,9 @@ fn stream_response(
             }
         });
         match result {
+            // Discarded silently: the client that would read the finish
+            // chunk is the one already gone.
+            Ok(r) if r.reason == runtime::StopReason::Cancelled => return,
             // OpenAI's legacy shape reports the finish reason with no final
             // text delta rather than an empty one; the chunk above already
             // sent the last piece of content.
@@ -212,7 +228,13 @@ fn stream_response(
 
     let stream: std::pin::Pin<
         Box<dyn Stream<Item = Result<Event, std::convert::Infallible>> + Send>,
-    > = Box::pin(tokio_stream::wrappers::UnboundedReceiverStream::new(rx).map(Ok));
+    > = Box::pin(
+        crate::cancel::CancelOnDrop::new(
+            tokio_stream::wrappers::UnboundedReceiverStream::new(rx),
+            cancel,
+        )
+        .map(Ok),
+    );
     Sse::new(stream)
         .keep_alive(KeepAlive::new().interval(SSE_KEEP_ALIVE))
         .into_response()
@@ -247,11 +269,17 @@ pub async fn completions(
         Err(e) => return error_response(StatusCode::BAD_REQUEST, e),
     };
     let prompt_ids = model.tokenizer().encode(&prompt, true);
+    let cancel = crate::cancel::new_cancel();
 
     let mut response = if request.stream.unwrap_or(false) {
-        stream_response(model, prompt_ids, config, request.model)
+        stream_response(model, prompt_ids, config, request.model, cancel)
     } else {
-        match run_full(model, prompt_ids, config).await {
+        // Set if THIS future is dropped (client gone) before `run_full`
+        // resolves; defused right after, whatever it returned.
+        let mut guard = crate::cancel::CancelGuard::new(cancel.clone());
+        let result = run_full(model, prompt_ids, config, cancel).await;
+        guard.defuse();
+        match result {
             Ok((text, decode)) => Json(text_completion_full(
                 format!("cmpl-{}", now_unix()),
                 now_unix(),

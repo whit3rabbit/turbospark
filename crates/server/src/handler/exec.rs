@@ -2,12 +2,13 @@
 
 use std::collections::HashSet;
 
-use runtime::{GenerationConfig, RawDecodeProgress, RawDecodeResult, RuntimeError};
+use runtime::{CancelFlag, GenerationConfig, RawDecodeProgress, RawDecodeResult, RuntimeError};
 use tokenizer::{
     ParsedToolCall, ReasoningEffort, StructuredAssistantDecoder, StructuredAssistantEvent,
 };
 
 use super::plan::AppState;
+use crate::cancel::Cancel;
 
 /// A generation that never started, as distinct from one that failed.
 pub(crate) enum GenError {
@@ -85,11 +86,17 @@ pub(crate) async fn run_full(
     images: Option<crate::vision::RequestImages>,
     tools: HashSet<String>,
     effort: ReasoningEffort,
+    cancel: Cancel,
 ) -> Result<Generated, GenError> {
     let joined = tokio::task::spawn_blocking(move || {
         let mut text = String::new();
         let mut reasoning = String::new();
         let mut calls = Vec::new();
+        // Built HERE, on the blocking thread the generation itself runs on:
+        // `runtime::CancelFlag` is a borrowed `&dyn Fn`, not `Send`, so it
+        // cannot be captured by THIS closure's own `move` -- only the `Arc`
+        // it reads from can cross that boundary.
+        let flag = crate::cancel::as_cancel_flag(&cancel);
         let result = stream_blocking(
             &model,
             &prompt_ids,
@@ -97,6 +104,7 @@ pub(crate) async fn run_full(
             images.as_ref(),
             &tools,
             effort,
+            &flag,
             &mut |piece| match piece {
                 Piece::Text(delta) => text.push_str(&delta),
                 Piece::Reasoning(delta) => reasoning.push_str(&delta),
@@ -134,6 +142,7 @@ pub(crate) async fn run_full(
 /// emits the opening token and a decoder starting in the visible channel
 /// reports the whole scratchpad as the reply
 /// (`StructuredAssistantDecoder::new`).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn stream_blocking(
     model: &AppState,
     prompt_ids: &[foundation::TokenId],
@@ -141,6 +150,7 @@ pub(crate) fn stream_blocking(
     images: Option<&crate::vision::RequestImages>,
     tools: &HashSet<String>,
     effort: ReasoningEffort,
+    cancel: CancelFlag<'_>,
     on_piece: &mut dyn FnMut(Piece),
 ) -> Result<RawDecodeResult, RuntimeError> {
     // Ids only have to be unique within one assistant turn: a `tool` turn is
@@ -171,7 +181,7 @@ pub(crate) fn stream_blocking(
     // `&mut dyn LogitProducer` (`ChatModel::run_completion`). The default
     // implementation is the sequential loop this line used to spell out, so
     // the scripted backend's path is unchanged.
-    let result = model.run_completion(prompt_ids, config, images, &mut |e| {
+    let result = model.run_completion(prompt_ids, config, images, cancel, &mut |e| {
         let (id, text) = match e {
             RawDecodeProgress::Token { id, delta, .. } => (id, delta),
             // `-1` is the tokenizer's "no such token": a flushed tail

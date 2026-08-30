@@ -36,6 +36,7 @@ use forge_guardrails::{
 };
 use tokenizer::{JsonValue, ParsedToolCall, ReasoningEffort};
 
+use crate::cancel::Cancel;
 use crate::handler::{plan, run_full, tool_names, AppState, GenError, Generated};
 
 /// Which guardrails run, and how many times a bad turn may be re-asked.
@@ -305,6 +306,7 @@ pub(crate) async fn run_guarded(
     model: AppState,
     request: &ChatCompletionRequest,
     effort: ReasoningEffort,
+    cancel: Cancel,
 ) -> Result<Generated, GenError> {
     let config = model.guardrails();
     let offered = tool_names(request);
@@ -331,10 +333,16 @@ pub(crate) async fn run_guarded(
             planned.images,
             offered.clone(),
             effort,
+            cancel.clone(),
         )
         .await?;
 
-        if !config.active() {
+        // A cancelled generation is not a bad one to retry -- the client
+        // that would read the retry is the one already gone. Discarded here
+        // rather than let `inspect` read a truncated turn as prose worth a
+        // nudge, which would spend this process's one runner on a second
+        // generation nobody is waiting for.
+        if generated.decode.reason == runtime::StopReason::Cancelled || !config.active() {
             return Ok(generated);
         }
 
