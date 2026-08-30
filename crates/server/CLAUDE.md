@@ -1,11 +1,11 @@
 # turbospark-server
 
-HTTP server (`turbospark-server`) on Axum, speaking two wire formats against one
-local backend: OpenAI `/v1/chat/completions` and legacy `/v1/completions`,
-Anthropic `/v1/messages` and `/v1/messages/count_tokens`, `/v1/models`, and
-a lock-free `GET /health`. Every generation endpoint supports non-streaming
-and Server-Sent Events (SSE) streaming output; `count_tokens` never
-generates at all.
+HTTP server (`turbospark-server`) on Axum, speaking three wire formats against
+one local backend: OpenAI `/v1/chat/completions`, legacy `/v1/completions`,
+and `/v1/responses`; Anthropic `/v1/messages` and `/v1/messages/count_tokens`;
+`/v1/models`; and a lock-free `GET /health`. Every generation endpoint
+supports non-streaming and Server-Sent Events (SSE) streaming output;
+`count_tokens` never generates at all.
 
 The wire types are `anyllm_translate`'s (crates.io 0.16, default features:
 pure, IO-free), not hand-rolled. An Anthropic request is translated into the
@@ -29,6 +29,7 @@ crates/server/
 |   |   \-- tests.rs            # Unit tests for the two above
 |   +-- messages.rs             # Anthropic /v1/messages + /v1/messages/count_tokens: translate in, generate (or just plan), translate out
 |   +-- completions.rs          # OpenAI legacy /v1/completions: raw prompt, no chat template
+|   +-- responses.rs            # OpenAI /v1/responses: item-shaped request/response, typed SSE event sequence
 |   +-- guardrails.rs           # Tool-call rescue, argument validation, the retry loop
 |   |   \-- tests.rs            # Unit tests for the verdict (pure, no model)
 |   +-- model.rs                # ChatModel trait and the ScriptedChatModel backend
@@ -38,6 +39,7 @@ crates/server/
 \-- tests/
     +-- chat_completions.rs     # Integration tests for the OpenAI endpoint
     +-- completions.rs          # Integration tests for /v1/completions, incl. the not-templated assertion
+    +-- responses.rs            # Integration tests for /v1/responses, incl. the exact SSE event-order assertion
     +-- messages.rs             # Integration tests for /v1/messages, count_tokens, /v1/models, wider OpenAI shapes
     +-- harmony_channels.rs     # gpt-oss reasoning -> thinking/reasoning_content, and its tool calls
     +-- reasoning_channels.rs   # Streaming & non-streaming reasoning channel translation tests
@@ -52,6 +54,7 @@ crates/server/
 - `handler/`: the `/v1/chat/completions`, `/v1/models`, and `/health` handlers, plus the generation core both generation endpoints share -- `plan.rs` (chat template, encode, shaping config, and `openai_request_warnings`/`merge_degradation` for the OpenAI-side half of `x-anyllm-degradation`, Gotcha 22) and `exec.rs`'s `run_full` and `stream_blocking` (which owns the `StructuredAssistantDecoder` when a request carries tools).
 - `messages.rs`: the Anthropic `/v1/messages` handler, wrapping the same core in `translate_request` / `translate_response` / `new_stream_translator`, plus `count_tokens`, which runs `translate_request` + `plan` and stops there -- no generation, so no `ChatModel` call past that point.
 - `completions.rs`: the legacy OpenAI `/v1/completions` handler -- a hand-rolled request type (`anyllm_translate` has none for this endpoint), `tokenizer.encode(_, add_bos: true)` with no chat template, and its own minimal `run_full`/`stream_response` with no decoder (Gotcha 23).
+- `responses.rs`: the OpenAI `/v1/responses` handler -- `responses_to_chat_request` folds `anyllm_translate::openai::responses::ResponsesRequest` (which the vendored crate ships but never maps onto Chat Completions itself) down onto the same `ChatCompletionRequest` `handler::plan` renders, and the streaming path emits a hand-built typed `ResponsesStreamEvent` sequence (Gotcha 24).
 - `guardrails.rs`: tool-call rescue parsing, argument validation against the request's own schema, and the one-retry loop, over `forge-guardrails` (see Gotcha 18). `inspect` is the pure verdict; `run_guarded` is the loop that acts on it.
 - `model.rs`: the `ChatModel` trait and `ScriptedChatModel`, bridging Axum handlers to `turbospark-runtime`. The trait owns WHICH decode loop runs (`run_completion`, Gotcha 17), not just which producer.
 - `real_model.rs`: `RealChatModel`, a `RealForwardRunner` behind the same trait (macOS only).
@@ -74,6 +77,10 @@ curl -s localhost:8080/v1/messages/count_tokens -H 'content-type: application/js
   -d '{"model":"claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}]}'
 curl -s localhost:8080/v1/completions -H 'content-type: application/json' \
   -d '{"model":"m","prompt":"The capital of France is","max_tokens":10}'
+curl -s localhost:8080/v1/responses -H 'content-type: application/json' \
+  -d '{"model":"m","input":"hi","max_output_tokens":40}'
+curl -sN localhost:8080/v1/responses -H 'content-type: application/json' \
+  -d '{"model":"m","input":"hi","max_output_tokens":40,"stream":true}'
 
 # The point of /v1/messages: an Anthropic-native client, no proxy.
 ANTHROPIC_BASE_URL=http://127.0.0.1:8080 ANTHROPIC_API_KEY=unused \
@@ -442,3 +449,85 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
     `/v1/messages` would -- so the count is definitionally what a real call
     on this request would prefill, not a separately-maintained estimate that
     can drift from it.
+
+24. **`anyllm_translate` SHIPS THE RESPONSES WIRE TYPES AND NEITHER HALF OF
+    THE MAPPING THIS SERVER NEEDS.** `openai::responses::{ResponsesRequest,
+    ResponsesResponse, ResponsesUsage}` and
+    `mapping::responses_streaming_map::ResponsesStreamEvent` exist because
+    the crate translates Anthropic<->Responses
+    (`responses_message_map::{anthropic_to_responses_request,
+    responses_to_anthropic_response}`, `translate_request_responses` /
+    `translate_response_responses` in `translate.rs`) -- there is no
+    Responses<->Chat-Completions mapping anywhere in it, because nothing
+    upstream needed one. This server generates through Chat Completions
+    shape only (`handler::plan` renders and shapes THAT type, for all three
+    endpoints), so `responses.rs` hand-writes both directions itself, reusing
+    only the wire TYPES.
+
+    **THE ANTHROPIC-FACING MAPPING WAS STILL WORTH READING FIRST** (crate
+    Gotcha 4's rule), because Responses' `input`/`output` shapes are the same
+    whichever OTHER API is on the far end: a tool call and its result are
+    ROOT-LEVEL items (`function_call`, `function_call_output`), not content
+    blocks nested on a message, which `responses_message_map::
+    convert_blocks_to_items` and `extract_output_item` show without having
+    to derive it from OpenAI's docs. `item_to_message` and `output_items`-
+    equivalent construction here read the same three item types that pair
+    exercises, in the same flattened shape.
+
+    **A Responses TOOL IS FLAT WHERE A CHAT COMPLETIONS ONE IS NESTED.**
+    `{"type":"function","name":...,"parameters":...}` against
+    `{"type":"function","function":{"name":...}}` -- one extra layer,
+    `flat_tool_to_chat_tool`'s whole job.
+
+    **`top_p`, `tool_choice`, AND `stop` HAVE NO FIELD ON `ResponsesRequest`
+    AT ALL**, unlike Chat Completions' explicit ones -- they arrive only in
+    Responses' own `extra` flatten map. `responses_to_chat_request` pulls
+    them OUT of a clone of that map into the `ChatCompletionRequest` fields
+    `handler::plan` and `build_config` actually read, and removes them from
+    what is forwarded so nothing downstream reads a Responses-shaped value
+    under the same key twice. Everything else in `extra` (`top_k`,
+    `repetition_penalty`, `seed`, `reasoning_effort`, `n`, ...) passes
+    through unchanged, because it is already the map shape those readers
+    expect.
+
+    **`previous_response_id` IS REFUSED RATHER THAN IGNORED.** This server
+    keeps no prior turn on disk to continue; silently starting a fresh
+    conversation under a client-supplied continuation id would answer a
+    DIFFERENT question than the one the client thinks it asked, and do so
+    with no error anywhere. A stateless server that ignored the field would
+    be indistinguishable from a stateful one that lost the turn.
+
+    **REASONING IS AN OUTPUT ITEM ON THE NON-STREAMING PATH AND DROPPED ON
+    THE STREAMING ONE**, and that asymmetry is not an oversight: OpenAI
+    defines no delta EVENT for a Responses reasoning summary (there is a
+    `reasoning` item type but no `response.reasoning_summary.delta` in the
+    documented event set this crate's reference,
+    `mapping::responses_streaming_map.rs`, consumes), so streaming one would
+    be an invented shape on both the producer and any real client's parser.
+    `may_produce_reasoning` -- NOT `handler::exec::needs_decoder`, whose
+    first condition (`!tools.is_empty()`) fires for call-parsing reasons that
+    have nothing to do with whether reasoning is actually produced -- decides
+    ahead of the stream whether THIS request's dialect would have separated
+    one out, and reports it on `x-anyllm-degradation` before the body starts,
+    which is the only point in a streaming response headers can still be set.
+
+    **THE TYPED EVENT SEQUENCE IS THE ACTUAL CONTRACT, so the test that
+    matters asserts the exact ORDER, not just that the right names
+    appeared.** `tests/responses.rs`'s
+    `streaming_response_emits_events_in_the_documented_order` compares the
+    full `Vec<&str>` of `event:` lines against a literal sequence; mutating
+    `close_message_events` to emit `output_item.done` before
+    `content_part.done` passed every other test in the file and reddened
+    only that one. A client's own state machine (this crate's Anthropic-
+    Anthropic case, `messages::StreamingTranslator`, is the local example of
+    exactly that kind of consumer) would misparse the swapped order the same
+    way.
+
+    **THE LIVE AND BUFFERED STREAMING PATHS ARE SEPARATE FUNCTIONS ON THE
+    SAME REASON `handler::mod` and `messages.rs` HAVE PAIRS OF THEIR OWN**
+    (Gotcha 12's third condition, Gotcha 18): a tool-carrying request under
+    active guardrails buffers the whole generation before framing it as
+    events, so a rescued or re-asked call never streams the syntax error it
+    was rescued from. `buffered_stream_response` re-frames a `Generated` the
+    same event shapes the live path builds incrementally, just one delta per
+    item instead of one per token.

@@ -18,6 +18,7 @@ mod model;
 #[cfg(target_os = "macos")]
 mod real_model;
 mod response;
+mod responses;
 pub mod vision;
 
 /// The header both routes report a degraded request on.
@@ -54,6 +55,7 @@ use axum::Router;
 /// - `GET /health`: liveness/readiness probe, no generation lock taken
 /// - `POST /v1/chat/completions`: OpenAI-compatible chat completion endpoint
 /// - `POST /v1/completions`: OpenAI's legacy raw-prompt completion endpoint
+/// - `POST /v1/responses`: OpenAI's Responses API endpoint
 /// - `POST /v1/messages`: Anthropic-compatible messages endpoint
 /// - `POST /v1/messages/count_tokens`: Anthropic's count-only endpoint (no generation)
 /// - `GET /v1/models`: OpenAI-compatible list of available models
@@ -63,6 +65,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/health", get(handler::health))
         .route("/v1/chat/completions", post(handler::chat_completions))
         .route("/v1/completions", post(completions::completions))
+        .route("/v1/responses", post(responses::responses))
         .route("/v1/messages", post(messages::messages))
         .route("/v1/messages/count_tokens", post(messages::count_tokens))
         .route("/v1/models", get(handler::models))

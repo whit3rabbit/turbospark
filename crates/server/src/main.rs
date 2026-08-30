@@ -207,6 +207,7 @@ async fn main() -> std::process::ExitCode {
     eprintln!("  GET  /health");
     eprintln!("  POST /v1/chat/completions   (OpenAI)");
     eprintln!("  POST /v1/completions        (OpenAI legacy)");
+    eprintln!("  POST /v1/responses          (OpenAI)");
     eprintln!("  POST /v1/messages           (Anthropic)");
     eprintln!("  POST /v1/messages/count_tokens  (Anthropic)");
     eprintln!("  GET  /v1/models");

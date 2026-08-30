@@ -1532,6 +1532,26 @@ live network).
   `prompt_ids.len()` -- the same template split, encode, and image splice a
   real `/v1/messages` call on the same request would run, so the count
   cannot drift from what that call would actually prefill.
+- **`POST /v1/responses`: implemented, text and tool calling.** OpenAI's
+  item-shaped Responses API, translated to and from Chat Completions by
+  hand (`anyllm_translate` ships the Responses wire TYPES but only ever
+  maps them onto Anthropic, never onto Chat Completions). `previous_response_id`
+  is refused with a 400 -- this server is stateless and keeps no prior turn
+  to continue -- and `store: true` is accepted and reported on
+  `x-anyllm-degradation` rather than honoured. Reasoning is included as its
+  own `reasoning` output item on the non-streaming path; on the streaming
+  path it is dropped rather than invented as an undocumented delta event,
+  and reported ahead of the stream (via the response headers, the only
+  point a streaming response can still set one) whenever the checkpoint's
+  dialect would have produced one for the request. Streaming emits OpenAI's
+  own typed `response.*` event sequence (`response.created` ->
+  `response.output_item.added` -> `response.content_part.added` ->
+  `response.output_text.delta` -> ... -> `response.completed`, no `[DONE]`
+  sentinel) rather than Chat Completions' flat chunk shape; a tool call
+  streams as one `function_call_arguments.delta` carrying the whole
+  argument string, the same single-chunk contract every tool call on this
+  server has, for the same reason (the decoder only yields a call once its
+  closing marker arrives). Swift's server has no such endpoint.
 - **None of these new endpoints add authentication.** Same posture as
   `/v1/chat/completions`: loopback by default, and under `--bind tailnet`
   the Tailnet ACL remains the only access control.
