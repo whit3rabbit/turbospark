@@ -98,11 +98,36 @@ public final class AppModel: ObservableObject {
     /// default.
     @Published public var serverAPIKeyInput: String = ""
 
+    /// Primary user interface interaction mode.
+    public enum AppInteractionMode: String, Codable, CaseIterable, Identifiable, Sendable {
+        case chat
+        case cowork
+
+        public var id: String { rawValue }
+        public var title: String {
+            switch self {
+            case .chat: return "Chat"
+            case .cowork: return "Cowork"
+            }
+        }
+        public var systemImage: String {
+            switch self {
+            case .chat: return "bubble.left.and.bubble.right"
+            case .cowork: return "chevron.left.forwardslash.chevron.right"
+            }
+        }
+    }
+
+    /// Current UI interaction mode (Chat vs Cowork / Coding).
+    @Published public var interactionMode: AppInteractionMode = .cowork
+
     // Project and Agent State
     /// All configured codebase projects.
     @Published public var projects: [AppProject] = []
     /// Currently active project filter (nil = all chats).
     @Published public var selectedProjectID: UUID? = nil
+    /// Working tree model for git status and diffs when a project is selected.
+    @Published public var worktree: WorktreeModel? = nil
     /// Global application-level MCP server configurations.
     @Published public var globalMcpServers: [McpServerConfig] = []
     /// Currently pending tool call requiring user approval.
@@ -268,6 +293,13 @@ public final class AppModel: ObservableObject {
     /// cancel IT (state#15).
     var installEpoch: Int = 0
 
+    /// Consecutive times a `Stop` hook has blocked and re-entered the
+    /// current turn (`AppModel+Generation.swift`'s
+    /// `dispatchStopAndContinueIfBlocked`). Reset when a turn starts and
+    /// when a `Stop` dispatch is not blocked; capped at 8 (Claude Code's
+    /// own cap) so a hook that always blocks cannot loop forever.
+    var stopHookReentryCount: Int = 0
+
     /// Creates and initializes the application model, restoring saved settings and chats.
     public init() {
         loadSettings()
@@ -276,6 +308,10 @@ public final class AppModel: ObservableObject {
         loadGlobalMcpServers()
         reloadSkills()
         refreshModels()
+        AppHookStore.shared.refresh(projectDirectory: selectedProject?.rootDirectoryPath)
+        Task {
+            _ = await self.dispatchLifecycleHook(event: .sessionStart, source: "startup")
+        }
     }
 
     /// Combined list of all currently active (enabled) MCP servers from global settings and active project.

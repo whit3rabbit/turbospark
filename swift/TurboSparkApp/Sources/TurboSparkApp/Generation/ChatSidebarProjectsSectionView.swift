@@ -116,7 +116,26 @@ struct ChatSidebarProjectsSectionView: View {
             .accessibilityValue("\(project.agentType.label)\(isSelected ? ", selected" : "")")
             .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
 
+            if showsActions {
+                Button {
+                    model.createChat(projectID: project.id)
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: projectActionSize, height: projectActionSize)
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .help("New chat in \(project.name)")
+                .accessibilityLabel("New chat in \(project.name)")
+            }
+
             Menu {
+                Button("New Chat", systemImage: "plus") {
+                    model.createChat(projectID: project.id)
+                }
+                Divider()
                 Button("Project Settings", systemImage: "gearshape") {
                     projectBeingEdited = project
                     showingProjectSettingsSheet = true

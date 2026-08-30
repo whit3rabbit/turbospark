@@ -125,14 +125,20 @@ struct RootView: View {
         } else if isInspectorVisible {
             verticalHairline
 
-            InspectorView(model: model)
-                .frame(width: AppChromeLayout.inspectorWidth)
-                .frame(maxHeight: .infinity)
-                .background(Color(nsColor: .windowBackgroundColor))
-                .clipped()
-                .layoutPriority(1)
-                .zIndex(1)
-                .transition(effectiveReduceMotion ? .opacity : .move(edge: .trailing).combined(with: .opacity))
+            Group {
+                if model.interactionMode == .cowork, let worktree = model.worktree {
+                    WorktreeView(model: model, worktree: worktree)
+                } else {
+                    InspectorView(model: model)
+                }
+            }
+            .frame(width: AppChromeLayout.inspectorWidth)
+            .frame(maxHeight: .infinity)
+            .background(Color(nsColor: .windowBackgroundColor))
+            .clipped()
+            .layoutPriority(1)
+            .zIndex(1)
+            .transition(effectiveReduceMotion ? .opacity : .move(edge: .trailing).combined(with: .opacity))
         }
     }
 
@@ -162,35 +168,31 @@ struct RootView: View {
     }
 
     private var conversationView: some View {
-        GeometryReader { geometry in
-            ZStack(alignment: .bottom) {
-                if model.hasOutputTranscript {
+        GeometryReader { _ in
+            if model.hasOutputTranscript {
+                ZStack(alignment: .bottom) {
                     OutputPaneView(model: model)
                         .padding(.bottom, conversationChromeHeight)
-                } else if conversationChromeHeight > 0 {
-                    OutputPaneView(model: model)
-                        .frame(height: max(0, geometry.size.height - conversationChromeHeight))
-                        .frame(maxHeight: .infinity, alignment: .top)
-                } else {
-                    OutputPaneView(model: model)
-                }
 
-                conversationChrome
-                    .background {
-                        GeometryReader { chromeGeometry in
-                            Color.clear.preference(
-                                key: ConversationChromeHeightKey.self,
-                                value: chromeGeometry.size.height)
+                    conversationChrome
+                        .background {
+                            GeometryReader { chromeGeometry in
+                                Color.clear.preference(
+                                    key: ConversationChromeHeightKey.self,
+                                    value: chromeGeometry.size.height)
+                            }
                         }
-                    }
-            }
-            .onPreferenceChange(ConversationChromeHeightKey.self) { height in
-                guard height > 0 else { return }
-                var transaction = Transaction()
-                transaction.disablesAnimations = true
-                withTransaction(transaction) {
-                    conversationChromeHeight = height
                 }
+                .onPreferenceChange(ConversationChromeHeightKey.self) { height in
+                    guard height > 0 else { return }
+                    var transaction = Transaction()
+                    transaction.disablesAnimations = true
+                    withTransaction(transaction) {
+                        conversationChromeHeight = height
+                    }
+                }
+            } else {
+                OutputPaneView(model: model)
             }
         }
     }

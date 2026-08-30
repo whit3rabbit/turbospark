@@ -1,6 +1,157 @@
 import SwiftUI
 import TurboSpark
 
+/// Segmented control switching between Chat and Cowork modes right in the composer.
+struct PromptInteractionModeSegment: View {
+    @ObservedObject var model: AppModel
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(AppModel.AppInteractionMode.allCases) { mode in
+                let isSelected = model.interactionMode == mode
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        model.interactionMode = mode
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: mode.systemImage)
+                            .font(.system(size: 10, weight: .semibold))
+                        Text(mode.title)
+                            .font(.system(size: 11, weight: isSelected ? .semibold : .medium))
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .foregroundStyle(isSelected ? Color.primary : Color.secondary)
+                    .background(
+                        isSelected ? Color.primary.opacity(0.12) : Color.clear,
+                        in: Capsule()
+                    )
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Mode: \(mode.title)")
+                .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+            }
+        }
+        .padding(2)
+        .background(Color.primary.opacity(0.04), in: Capsule())
+        .overlay(Capsule().stroke(TurboSparkTheme.hairlineColor, lineWidth: 0.5))
+        .help("Switch between conversational Chat mode and agentic Cowork / Coding mode")
+    }
+}
+
+/// Compact model selector dropdown pill inside the composer footer.
+struct PromptModelSelectorPill: View {
+    @ObservedObject var model: AppModel
+
+    var body: some View {
+        Menu {
+            Section("Installed Models") {
+                if model.installed.isEmpty {
+                    Text("No models installed")
+                } else {
+                    ForEach(model.installed) { installed in
+                        Button {
+                            model.selectModel(installed)
+                        } label: {
+                            if model.selected?.alias == installed.alias {
+                                Label(installed.alias, systemImage: "checkmark")
+                            } else {
+                                Text(installed.alias)
+                            }
+                        }
+                    }
+                }
+            }
+
+            Divider()
+
+            Button {
+                model.activeSection = .modelManager
+            } label: {
+                Label("Manage models...", systemImage: "internaldrive")
+            }
+
+            Button {
+                model.activeSection = .modelHub
+            } label: {
+                Label("Discover models...", systemImage: "shippingbox")
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(TurboSparkTheme.accentColor)
+
+                Text(model.selected?.alias ?? "Select Model")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(Color.primary.opacity(0.04), in: Capsule())
+            .overlay(Capsule().stroke(TurboSparkTheme.hairlineColor, lineWidth: 0.5))
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Select model for generation")
+        .accessibilityLabel("Selected model: \(model.selected?.alias ?? "None")")
+    }
+}
+
+/// Project context pill in the prompt composer showing project name, branch, and live git diff stats.
+struct PromptProjectContextPill: View {
+    @ObservedObject var model: AppModel
+
+    var body: some View {
+        if let project = model.selectedProject {
+            HStack(spacing: 6) {
+                Image(systemName: project.agentType.systemImage)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(TurboSparkTheme.accentColor)
+
+                Text(project.name)
+                    .font(.system(size: 11, weight: .semibold))
+                    .lineLimit(1)
+
+                if let worktree = model.worktree, worktree.isGitRepository {
+                    Text(worktree.currentBranch)
+                        .font(.system(size: 10, weight: .medium).monospaced())
+                        .foregroundStyle(.secondary)
+
+                    if worktree.totalAdditions > 0 || worktree.totalDeletions > 0 {
+                        HStack(spacing: 2) {
+                            if worktree.totalAdditions > 0 {
+                                Text("+\(worktree.totalAdditions)")
+                                    .font(.system(size: 10, weight: .bold).monospacedDigit())
+                                    .foregroundStyle(.green)
+                            }
+                            if worktree.totalDeletions > 0 {
+                                Text("-\(worktree.totalDeletions)")
+                                    .font(.system(size: 10, weight: .bold).monospacedDigit())
+                                    .foregroundStyle(.red)
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(TurboSparkTheme.accentColor.opacity(0.1), in: Capsule())
+            .overlay(Capsule().stroke(TurboSparkTheme.accentColor.opacity(0.25), lineWidth: 0.5))
+            .help("Active project: \(project.name)")
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Active project: \(project.name)")
+        }
+    }
+}
+
 /// Reasoning effort pill button in the prompt composer footer with quick popup menu selection.
 struct PromptReasoningPillControl: View {
     @ObservedObject var model: AppModel

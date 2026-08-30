@@ -10,6 +10,17 @@ public final class AppHookStore: ObservableObject {
     @Published public internal(set) var trustedHashes: Set<String> = []
     @Published public internal(set) var optionValues: [String: [String: String]] = [:] // [SourceID: [OptionKey: OptionValue]]
     @Published public internal(set) var sourceGroups: [AppHookSourceGroup] = []
+    /// Config entries discovery could not parse (unknown `type`, missing
+    /// `command`), so a broken settings.json reads as "hooks are silently
+    /// missing" no longer -- surfaced here for the settings UI to show.
+    @Published public internal(set) var discoveryDiagnostics: [String] = []
+
+    /// The project directory `refresh(projectDirectory:)` was last called
+    /// with. Every mutation that calls `recomputeSourceGroups` afterward
+    /// (toggling a hook, trusting a group, adding a custom hook, ...) reads
+    /// this instead of passing `nil`, or the project config group's title
+    /// and membership would revert to "no project" on the very next edit.
+    public internal(set) var lastProjectDirectory: String?
 
     let fileManager = FileManager.default
 
@@ -33,14 +44,14 @@ public final class AppHookStore: ObservableObject {
     public func trustHook(_ hook: AppHookCommand) {
         trustedHashes.insert(hook.contentHash)
         saveTrustedHashes()
-        recomputeSourceGroups(projectDirectory: nil)
+        recomputeSourceGroups(projectDirectory: lastProjectDirectory)
     }
 
     /// Revokes trust for a hook.
     public func untrustHook(_ hook: AppHookCommand) {
         trustedHashes.remove(hook.contentHash)
         saveTrustedHashes()
-        recomputeSourceGroups(projectDirectory: nil)
+        recomputeSourceGroups(projectDirectory: lastProjectDirectory)
     }
 
     /// Trusts all currently unreviewed hooks in a source group.
@@ -50,7 +61,7 @@ public final class AppHookStore: ObservableObject {
                 trustedHashes.insert(hook.contentHash)
             }
             saveTrustedHashes()
-            recomputeSourceGroups(projectDirectory: nil)
+            recomputeSourceGroups(projectDirectory: lastProjectDirectory)
         }
     }
 
@@ -62,7 +73,7 @@ public final class AppHookStore: ObservableObject {
             if hooks[index].sourceType == .custom {
                 saveCustomHooks()
             }
-            recomputeSourceGroups(projectDirectory: nil)
+            recomputeSourceGroups(projectDirectory: lastProjectDirectory)
         }
     }
 
@@ -86,20 +97,20 @@ public final class AppHookStore: ObservableObject {
         hooks.append(newHook)
         saveCustomHooks()
         saveTrustedHashes()
-        recomputeSourceGroups(projectDirectory: nil)
+        recomputeSourceGroups(projectDirectory: lastProjectDirectory)
     }
 
     public func updateCustomHook(_ hook: AppHookCommand) {
         if let index = hooks.firstIndex(where: { $0.id == hook.id }) {
             hooks[index] = hook
             saveCustomHooks()
-            recomputeSourceGroups(projectDirectory: nil)
+            recomputeSourceGroups(projectDirectory: lastProjectDirectory)
         }
     }
 
     public func deleteCustomHook(id: UUID) {
         hooks.removeAll { $0.id == id }
         saveCustomHooks()
-        recomputeSourceGroups(projectDirectory: nil)
+        recomputeSourceGroups(projectDirectory: lastProjectDirectory)
     }
 }

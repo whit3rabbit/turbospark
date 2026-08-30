@@ -192,8 +192,13 @@ public struct AppHookCommand: Identifiable, Codable, Sendable, Equatable {
     }
 
     /// Computes a cryptographic SHA-256 hash representing the immutable identity and executable content of this hook.
+    ///
+    /// Widened to include `timeoutSeconds` and `isAsync`: both change what
+    /// the hook actually does (how long it may block, whether its decision
+    /// can gate a call at all), so a change to either must re-trigger the
+    /// trust prompt rather than silently keep the old approval.
     public var contentHash: String {
-        let content = "\(event.rawValue):\(type.rawValue):\(command):\(ifCondition ?? ""):\(matcher ?? ""):\(shell.rawValue)"
+        let content = "\(event.rawValue):\(type.rawValue):\(command):\(ifCondition ?? ""):\(matcher ?? ""):\(shell.rawValue):\(timeoutSeconds):\(isAsync)"
         let digest = SHA256.hash(data: Data(content.utf8))
         return digest.compactMap { String(format: "%02x", $0) }.joined()
     }
@@ -286,15 +291,25 @@ public struct AppHookPreToolUseDecision: Sendable {
     public var behavior: AppHookPermissionBehavior
     public var reason: String?
     public var blockedByHookName: String?
+    /// `PreToolUse`'s `updatedInput`: replaces the corresponding keys in the
+    /// tool call's arguments before it runs.
+    public var updatedInput: [String: String]?
+    /// Extra context a hook attached, folded beside the tool result rather
+    /// than into the permission reason.
+    public var additionalContext: String?
 
     public init(
         behavior: AppHookPermissionBehavior = .passthrough,
         reason: String? = nil,
-        blockedByHookName: String? = nil
+        blockedByHookName: String? = nil,
+        updatedInput: [String: String]? = nil,
+        additionalContext: String? = nil
     ) {
         self.behavior = behavior
         self.reason = reason
         self.blockedByHookName = blockedByHookName
+        self.updatedInput = updatedInput
+        self.additionalContext = additionalContext
     }
 }
 
@@ -306,7 +321,10 @@ public struct AppHookExecutionResult: Sendable {
     public var stdout: String
     public var stderr: String
     public var durationSeconds: Double
-    public var decision: AppHookPreToolUseDecision?
+    /// The interpreted outcome of this one hook's run, per
+    /// `AppHookResponseParser`. `AppHookDecisionAggregator` is what folds
+    /// several hooks' outcomes for the same event into one verdict.
+    public var outcome: AppHookOutcome?
 
     public var isSuccess: Bool { exitCode == 0 }
 
@@ -318,7 +336,7 @@ public struct AppHookExecutionResult: Sendable {
         stdout: String,
         stderr: String,
         durationSeconds: Double,
-        decision: AppHookPreToolUseDecision? = nil
+        outcome: AppHookOutcome? = nil
     ) {
         self.hookID = hookID
         self.hookName = hookName
@@ -327,6 +345,6 @@ public struct AppHookExecutionResult: Sendable {
         self.stdout = stdout
         self.stderr = stderr
         self.durationSeconds = durationSeconds
-        self.decision = decision
+        self.outcome = outcome
     }
 }

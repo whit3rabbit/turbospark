@@ -17,7 +17,7 @@ public struct StreamingStatusFooterView: View {
 
     public var body: some View {
         HStack(spacing: 8) {
-            breathingLogo
+            TaskProgressFlameIcon(size: 15)
 
             HStack(spacing: 6) {
                 if elapsedSeconds > 0 {
@@ -49,9 +49,6 @@ public struct StreamingStatusFooterView: View {
         .padding(.horizontal, 4)
         .onAppear {
             startTime = Date()
-            withAnimation(.easeInOut(duration: 1.3).repeatForever(autoreverses: true)) {
-                isBreathing = true
-            }
         }
         .onReceive(timer) { _ in
             if let start = startTime {
@@ -64,21 +61,6 @@ public struct StreamingStatusFooterView: View {
                 elapsedSeconds = 0
             }
         }
-    }
-
-    private var breathingLogo: some View {
-        Circle()
-            .fill(Color(red: 0.85, green: 0.45, blue: 0.35))
-            .frame(width: 8, height: 8)
-            .scaleEffect(isBreathing ? 1.25 : 0.8)
-            .opacity(isBreathing ? 1.0 : 0.4)
-            .overlay(
-                Circle()
-                    .stroke(Color(red: 0.85, green: 0.45, blue: 0.35).opacity(0.3), lineWidth: isBreathing ? 2.5 : 0)
-                    .scaleEffect(isBreathing ? 1.6 : 1.0)
-                    .opacity(isBreathing ? 0.0 : 0.8)
-            )
-            .accessibilityHidden(true)
     }
 
     private var dotSeparator: some View {

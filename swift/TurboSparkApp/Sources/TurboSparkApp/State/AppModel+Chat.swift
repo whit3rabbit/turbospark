@@ -23,7 +23,7 @@ extension AppModel {
         persistChats()
         updateTokenEstimate()
         Task {
-            _ = await self.dispatchLifecycleHook(event: .sessionStart)
+            _ = await self.dispatchLifecycleHook(event: .sessionStart, source: "clear")
         }
         return chat.id
     }
@@ -67,6 +67,9 @@ extension AppModel {
         outputReasoningText = ""
         persistChats()
         updateTokenEstimate()
+        Task {
+            _ = await self.dispatchSessionEnd(reason: "clear")
+        }
     }
 
     public func clearOutput() {
@@ -83,6 +86,9 @@ extension AppModel {
         error = nil
         persistChats()
         updateTokenEstimate()
+        Task {
+            _ = await self.dispatchSessionEnd(reason: "clear")
+        }
     }
 
     public func addPromptAttachment(_ attachment: AppPromptAttachment, toChatID chatID: UUID? = nil) {

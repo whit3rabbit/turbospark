@@ -173,27 +173,26 @@ extension AppModel {
                 }
             }
 
-            let result = await AppToolRegistry.execute(call: call, in: self.selectedProject)
+            var result = await AppToolRegistry.execute(call: call, in: self.selectedProject)
             call.status = result.isError ? .failed : .completed
 
-            // Dispatch PostToolUse & PostToolUseFailure lifecycle hooks
-            await self.dispatchLifecycleHook(
-                event: .postToolUse,
+            let postVerdict = await self.dispatchPostToolUseVerdict(
                 toolName: call.name,
                 toolArguments: call.arguments,
                 toolOutput: result.output,
                 toolDurationSeconds: result.durationSeconds,
                 isError: result.isError
             )
-            if result.isError {
-                await self.dispatchLifecycleHook(
-                    event: .postToolUseFailure,
-                    toolName: call.name,
-                    toolArguments: call.arguments,
-                    toolOutput: result.output,
-                    toolDurationSeconds: result.durationSeconds,
-                    isError: true
-                )
+            // Exit-2 stderr (or `decision: "block"`) from a PostToolUse hook
+            // is feedback, never a block -- the tool already ran. Folded
+            // into the result the same way `runApprovedCall` in
+            // `AppModel+Generation.swift` does, so both approval paths feed
+            // the model the same shape of note.
+            if let note = postVerdict.blockReason ?? postVerdict.feedbackMessage, !note.isEmpty {
+                result.output += "\n\n<hook_feedback>\n\(note)\n</hook_feedback>"
+            }
+            if let ctx = postVerdict.additionalContext, !ctx.isEmpty {
+                result.output += "\n\n<hook_context>\n\(ctx)\n</hook_context>"
             }
 
             self.appendToolExecutionTurn(call: call, result: result, chatID: chatID)
@@ -217,6 +216,9 @@ extension AppModel {
             durationSeconds: 0.0
         )
         self.appendToolExecutionTurn(call: call, result: result, chatID: chatID)
+        Task {
+            _ = await self.dispatchNotification(message: "Tool call '\(call.name)' was denied by the user.")
+        }
         self.continueAgentLoop(step: originStep + 1)
     }
 
@@ -235,5 +237,6 @@ extension AppModel {
         chats[chatIndex].messages.append(turn)
         chats[chatIndex].updatedAt = Date()
         persistChats()
+        worktree?.refresh()
     }
 }

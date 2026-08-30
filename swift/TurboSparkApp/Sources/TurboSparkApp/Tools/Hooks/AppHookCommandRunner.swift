@@ -11,19 +11,28 @@ extension AppHookExecutionEngine {
         toolDurationSeconds: Double?,
         isError: Bool?,
         workingDirectory: String?,
+        prompt: String?,
+        source: String?,
+        reason: String?,
+        stopHookActive: Bool?,
         startTime: Date
     ) async -> AppHookExecutionResult {
-        let payloadDict: [String: Any] = [
-            "event": event.rawValue,
-            "session_id": sessionID,
-            "tool_name": toolName ?? "",
-            "tool_input": toolArguments ?? [:],
-            "tool_output": toolOutput ?? "",
-            "tool_duration_seconds": toolDurationSeconds ?? 0.0,
-            "is_error": isError ?? false,
-            "cwd": workingDirectory ?? FileManager.default.currentDirectoryPath,
-            "timestamp": ISO8601DateFormatter().string(from: Date())
-        ]
+        let cwd = (workingDirectory?.isEmpty == false) ? workingDirectory! : FileManager.default.currentDirectoryPath
+        let payloadDict = AppHookStdinPayload.build(
+            event: event,
+            sessionID: sessionID,
+            transcriptPath: AppHookStdinPayload.transcriptPath,
+            cwd: cwd,
+            toolName: toolName,
+            toolArguments: toolArguments,
+            toolOutput: toolOutput,
+            toolDurationSeconds: toolDurationSeconds,
+            isError: isError,
+            prompt: prompt,
+            source: source,
+            reason: reason,
+            stopHookActive: stopHookActive
+        )
 
         guard let payloadData = try? JSONSerialization.data(withJSONObject: payloadDict, options: []) else {
             return AppHookExecutionResult(
@@ -37,7 +46,7 @@ extension AppHookExecutionEngine {
             )
         }
 
-        // Variable substitution (${user_config.KEY})
+        // Variable substitution (${user_config.KEY}, ${CLAUDE_PROJECT_DIR})
         let store = await AppHookStore.shared
         let allOptions = await store.optionValues
         var commandText = hook.command
@@ -46,6 +55,9 @@ extension AppHookExecutionEngine {
 
         for (k, v) in options {
             commandText = commandText.replacingOccurrences(of: "${user_config.\(k)}", with: v)
+        }
+        if let workingDirectory, !workingDirectory.isEmpty {
+            commandText = commandText.replacingOccurrences(of: "${CLAUDE_PROJECT_DIR}", with: workingDirectory)
         }
 
         let executableURL: URL
@@ -69,7 +81,10 @@ extension AppHookExecutionEngine {
         env["TURBOSPARK_HOOK_EVENT"] = event.rawValue
         env["TURBOSPARK_SESSION_ID"] = sessionID
         if let toolName { env["TURBOSPARK_TOOL_NAME"] = toolName }
-        if let workingDirectory { env["TURBOSPARK_PROJECT_DIR"] = workingDirectory }
+        if let workingDirectory {
+            env["TURBOSPARK_PROJECT_DIR"] = workingDirectory
+            env["CLAUDE_PROJECT_DIR"] = workingDirectory
+        }
 
         for (k, v) in options {
             let normalized = k.uppercased().replacingOccurrences(of: "-", with: "_")
@@ -77,12 +92,16 @@ extension AppHookExecutionEngine {
             env["CLAUDE_PLUGIN_OPTION_\(normalized)"] = v
         }
 
-        let timeout = hook.timeoutSeconds > 0 ? hook.timeoutSeconds : 30.0
+        // Claude Code's own default is 600s. `SessionEnd` is capped far
+        // tighter: nothing is waiting on its result, and a slow hook there
+        // would hold up chat deletion / clearing for the whole timeout.
+        var timeout = hook.timeoutSeconds > 0 ? hook.timeoutSeconds : 600.0
+        if event == .sessionEnd { timeout = min(timeout, 1.5) }
         let workingDirectoryURL = (workingDirectory?.isEmpty == false) ? URL(fileURLWithPath: workingDirectory!) : nil
 
         do {
             // `ProcessExecutor` writes stdin off this call's thread and drains
-            // stdout/stderr concurrently with the timeout wait. The previous
+            // stdout/stderr concurrently with the timeout wait. A previous
             // synchronous `pipeIn.write(contentsOf:)` embedded the tool's own
             // output in the hook payload and could block on it alone, before
             // the timeout loop even started; and reading stdout/stderr only
@@ -111,10 +130,12 @@ extension AppHookExecutionEngine {
             }
 
             let duration = Date().timeIntervalSince(startTime)
-            var parsedDecision: AppHookPreToolUseDecision? = nil
-            if event == .preToolUse {
-                parsedDecision = parsePreToolUseOutput(stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode, hookName: hook.name)
-            }
+            let outcome = AppHookResponseParser.parseHookOutput(
+                stdout: result.stdout,
+                stderr: result.stderr,
+                exitCode: result.exitCode,
+                event: event
+            )
 
             return AppHookExecutionResult(
                 hookID: hook.id,
@@ -124,7 +145,7 @@ extension AppHookExecutionEngine {
                 stdout: result.stdout,
                 stderr: result.stderr,
                 durationSeconds: duration,
-                decision: parsedDecision
+                outcome: outcome
             )
         } catch {
             return AppHookExecutionResult(
@@ -146,6 +167,11 @@ extension AppHookExecutionEngine {
         toolName: String?,
         toolArguments: [String: String]?,
         toolOutput: String?,
+        workingDirectory: String?,
+        prompt: String?,
+        source: String?,
+        reason: String?,
+        stopHookActive: Bool?,
         startTime: Date
     ) async -> AppHookExecutionResult {
         guard let url = URL(string: hook.command) else {
@@ -164,15 +190,20 @@ extension AppHookExecutionEngine {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        let payloadDict: [String: Any] = [
-            "event": event.rawValue,
-            "session_id": sessionID,
-            "tool_name": toolName ?? "",
-            "tool_input": toolArguments ?? [:],
-            "tool_output": toolOutput ?? "",
-            "timestamp": ISO8601DateFormatter().string(from: Date())
-        ]
-
+        let cwd = (workingDirectory?.isEmpty == false) ? workingDirectory! : FileManager.default.currentDirectoryPath
+        let payloadDict = AppHookStdinPayload.build(
+            event: event,
+            sessionID: sessionID,
+            transcriptPath: AppHookStdinPayload.transcriptPath,
+            cwd: cwd,
+            toolName: toolName,
+            toolArguments: toolArguments,
+            toolOutput: toolOutput,
+            prompt: prompt,
+            source: source,
+            reason: reason,
+            stopHookActive: stopHookActive
+        )
         request.httpBody = try? JSONSerialization.data(withJSONObject: payloadDict, options: [])
 
         do {
@@ -182,6 +213,17 @@ extension AppHookExecutionEngine {
             let stdout = String(data: data, encoding: .utf8) ?? ""
             let isSuccess = statusCode >= 200 && statusCode < 300
 
+            // An HTTP hook has no exit code of its own, so a non-2xx status
+            // maps to "exit 1" for the purposes of the shared parser -- an
+            // HTTP hook cannot use Claude Code's exit-2 blocking convention
+            // at all, only the JSON `hookSpecificOutput`/`decision` fields.
+            let outcome = AppHookResponseParser.parseHookOutput(
+                stdout: stdout,
+                stderr: isSuccess ? "" : "HTTP status \(statusCode)",
+                exitCode: isSuccess ? 0 : 1,
+                event: event
+            )
+
             return AppHookExecutionResult(
                 hookID: hook.id,
                 hookName: hook.name,
@@ -189,7 +231,8 @@ extension AppHookExecutionEngine {
                 exitCode: isSuccess ? 0 : 1,
                 stdout: stdout,
                 stderr: isSuccess ? "" : "HTTP status \(statusCode)",
-                durationSeconds: Date().timeIntervalSince(startTime)
+                durationSeconds: Date().timeIntervalSince(startTime),
+                outcome: outcome
             )
         } catch {
             return AppHookExecutionResult(

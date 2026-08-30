@@ -6,6 +6,14 @@ public final class AppHookExecutionEngine: Sendable {
 
     public init() {}
 
+    /// Events where an `async: true` command hook is still awaited
+    /// synchronously, because the caller is about to act on its decision:
+    /// `PreToolUse`/`PermissionRequest` gate whether a call runs, and
+    /// `UserPromptSubmit`/`Stop` gate whether the turn proceeds or ends.
+    /// Every other event is a notification nothing is waiting on, so
+    /// `async: true` there really does run in the background.
+    private static let blockingEvents: Set<AppHookEvent> = [.preToolUse, .userPromptSubmit, .stop, .permissionRequest]
+
     /// Dispatches a lifecycle event to all matching, enabled, and trusted hooks.
     public func dispatch(
         event: AppHookEvent,
@@ -15,7 +23,11 @@ public final class AppHookExecutionEngine: Sendable {
         toolOutput: String? = nil,
         toolDurationSeconds: Double? = nil,
         isError: Bool? = nil,
-        workingDirectory: String? = nil
+        workingDirectory: String? = nil,
+        prompt: String? = nil,
+        source: String? = nil,
+        reason: String? = nil,
+        stopHookActive: Bool? = nil
     ) async -> [AppHookExecutionResult] {
         let store = await AppHookStore.shared
         let allHooks = await store.hooks
@@ -33,14 +45,7 @@ public final class AppHookExecutionEngine: Sendable {
                 continue
             }
 
-            // A PreToolUse hook's whole purpose is to gate whether the call
-            // may proceed, so its decision must always be awaited: running
-            // it via `Task.detached` (as `hook.isAsync` requests) discarded
-            // the result entirely, which meant an async PreToolUse hook
-            // could never deny or ask -- a silent no-op gate (T11).
-            // `async: true` still applies to every other event, where the
-            // dispatch is a notification and nothing is waiting on it.
-            if hook.isAsync && event != .preToolUse {
+            if hook.isAsync && !Self.blockingEvents.contains(event) {
                 Task.detached {
                     _ = await self.executeSingleHook(
                         hook: hook,
@@ -51,10 +56,19 @@ public final class AppHookExecutionEngine: Sendable {
                         toolOutput: toolOutput,
                         toolDurationSeconds: toolDurationSeconds,
                         isError: isError,
-                        workingDirectory: workingDirectory
+                        workingDirectory: workingDirectory,
+                        prompt: prompt,
+                        source: source,
+                        reason: reason,
+                        stopHookActive: stopHookActive
                     )
                 }
             } else {
+                // Every matching hook runs (no short-circuit on a deny/ask):
+                // Claude Code's own semantics are "deny beats ask beats
+                // allow across ALL hooks for the event", which
+                // `AppHookDecisionAggregator` implements over the full
+                // result set rather than this loop picking one early.
                 let result = await executeSingleHook(
                     hook: hook,
                     event: event,
@@ -64,14 +78,13 @@ public final class AppHookExecutionEngine: Sendable {
                     toolOutput: toolOutput,
                     toolDurationSeconds: toolDurationSeconds,
                     isError: isError,
-                    workingDirectory: workingDirectory
+                    workingDirectory: workingDirectory,
+                    prompt: prompt,
+                    source: source,
+                    reason: reason,
+                    stopHookActive: stopHookActive
                 )
                 results.append(result)
-
-                // If this is PreToolUse and the hook made a blocking denial, stop evaluating remaining hooks
-                if event == .preToolUse, let dec = result.decision, dec.behavior == .deny || dec.behavior == .ask {
-                    break
-                }
             }
         }
 
@@ -93,27 +106,13 @@ public final class AppHookExecutionEngine: Sendable {
             workingDirectory: workingDirectory
         )
 
-        for result in results {
-            if let decision = result.decision {
-                if decision.behavior == .deny {
-                    return decision
-                } else if decision.behavior == .ask {
-                    return decision
-                }
-            }
-            if result.exitCode == 2 {
-                let reason = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    ? result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-                    : result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
-                return AppHookPreToolUseDecision(
-                    behavior: .deny,
-                    reason: reason.isEmpty ? "Blocked by hook `\(result.hookName)`" : reason,
-                    blockedByHookName: result.hookName
-                )
-            }
-        }
-
-        return AppHookPreToolUseDecision(behavior: .allow)
+        let verdict = AppHookDecisionAggregator.aggregate(results, event: .preToolUse)
+        return AppHookPreToolUseDecision(
+            behavior: verdict.permissionDecision ?? .allow,
+            reason: verdict.permissionReason,
+            updatedInput: verdict.updatedInput,
+            additionalContext: verdict.additionalContext
+        )
     }
 
     // MARK: - Single Hook Execution
@@ -127,7 +126,11 @@ public final class AppHookExecutionEngine: Sendable {
         toolOutput: String?,
         toolDurationSeconds: Double?,
         isError: Bool?,
-        workingDirectory: String?
+        workingDirectory: String?,
+        prompt: String?,
+        source: String?,
+        reason: String?,
+        stopHookActive: Bool?
     ) async -> AppHookExecutionResult {
         let start = Date()
 
@@ -143,6 +146,10 @@ public final class AppHookExecutionEngine: Sendable {
                 toolDurationSeconds: toolDurationSeconds,
                 isError: isError,
                 workingDirectory: workingDirectory,
+                prompt: prompt,
+                source: source,
+                reason: reason,
+                stopHookActive: stopHookActive,
                 startTime: start
             )
         case .http:
@@ -153,18 +160,25 @@ public final class AppHookExecutionEngine: Sendable {
                 toolName: toolName,
                 toolArguments: toolArguments,
                 toolOutput: toolOutput,
+                workingDirectory: workingDirectory,
+                prompt: prompt,
+                source: source,
+                reason: reason,
+                stopHookActive: stopHookActive,
                 startTime: start
             )
         case .prompt:
+            // Out of scope for now (root task: "prompt"/"agent" hook types
+            // are not evaluated): a `nil` outcome makes this a no-op in
+            // `AppHookDecisionAggregator` rather than fabricating a verdict.
             return AppHookExecutionResult(
                 hookID: hook.id,
                 hookName: hook.name,
                 event: event,
                 exitCode: 0,
-                stdout: "Evaluated prompt hook: \(hook.command)",
+                stdout: "Prompt hook type is not evaluated by this client.",
                 stderr: "",
-                durationSeconds: Date().timeIntervalSince(start),
-                decision: AppHookPreToolUseDecision(behavior: .allow)
+                durationSeconds: Date().timeIntervalSince(start)
             )
         }
     }

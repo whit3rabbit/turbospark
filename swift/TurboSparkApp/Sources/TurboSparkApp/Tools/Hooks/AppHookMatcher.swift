@@ -1,27 +1,27 @@
 import Foundation
 
 extension AppHookExecutionEngine {
+    /// Whether `hook` fires for this call, per Claude Code's matcher
+    /// dispatch order (https://code.claude.com/docs/en/hooks): empty/`*`/
+    /// omitted matches everything; a pattern made only of letters, digits,
+    /// `_`, `-`, spaces, `,` and `|` is an exact name or a comma/pipe
+    /// separated list; anything else is an unanchored regex. Every name is
+    /// checked through `AppHookToolNameAliases` so a matcher written for
+    /// Claude Code's own tool names (`Bash`, `Write`, ...) fires on this
+    /// app's tool names too, and vice versa.
     func matchesCondition(hook: AppHookCommand, toolName: String?, toolArguments: [String: String]?) -> Bool {
-        // If matcher is set (e.g. "Write|Edit" or "Bash")
         if let matcher = hook.matcher, !matcher.isEmpty, let toolName {
-            let parts = matcher.split(separator: "|").map { $0.trimmingCharacters(in: .whitespaces) }
-            // EXACT (case-insensitive) match on tool name, not a bidirectional
-            // substring test (T17): the previous
-            // `toolName.contains(part) || part.contains(toolName)` matched
-            // whenever either string happened to be a substring of the
-            // other, so a matcher for one tool could fire for an unrelated
-            // tool whose name happened to share characters with it.
-            let matched = parts.contains("*") || parts.contains { part in
-                part.caseInsensitiveCompare(toolName) == .orderedSame
-            }
-            if !matched { return false }
+            guard AppHookMatcherEvaluator.matches(pattern: matcher, toolName: toolName) else { return false }
         }
 
         // If 'ifCondition' is set (e.g. "Bash(git *)")
         if let ifCond = hook.ifCondition, !ifCond.isEmpty, let toolName {
             if ifCond.contains("(") && ifCond.hasSuffix(")") {
                 let toolPrefix = ifCond.prefix(while: { $0 != "(" })
-                if !toolName.localizedCaseInsensitiveContains(toolPrefix) {
+                let aliases = AppHookToolNameAliases.equivalentNames(for: toolName)
+                let prefixMatches = aliases.contains(String(toolPrefix).lowercased())
+                    || toolName.localizedCaseInsensitiveContains(toolPrefix)
+                if !prefixMatches {
                     return false
                 }
                 if let innerStart = ifCond.firstIndex(of: "("), let innerEnd = ifCond.lastIndex(of: ")") {
@@ -58,36 +58,38 @@ extension AppHookExecutionEngine {
         }
         return normalizedText == normalize(pattern)
     }
+}
 
-    func parsePreToolUseOutput(stdout: String, stderr: String, exitCode: Int32, hookName: String) -> AppHookPreToolUseDecision {
-        if exitCode == 2 {
-            let reason = stderr.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                ? stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-                : stderr.trimmingCharacters(in: .whitespacesAndNewlines)
-            return AppHookPreToolUseDecision(
-                behavior: .deny,
-                reason: reason.isEmpty ? "Blocked by hook `\(hookName)`" : reason,
-                blockedByHookName: hookName
-            )
+/// Evaluates one matcher pattern against a tool name, per the dispatch order
+/// documented on `AppHookExecutionEngine.matchesCondition`.
+enum AppHookMatcherEvaluator {
+    static func matches(pattern: String, toolName: String) -> Bool {
+        let trimmed = pattern.trimmingCharacters(in: .whitespaces)
+        if trimmed.isEmpty || trimmed == "*" { return true }
+
+        let aliases = AppHookToolNameAliases.equivalentNames(for: toolName)
+
+        let listCharset = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_- ,|"))
+        let isListLike = trimmed.unicodeScalars.allSatisfy { listCharset.contains($0) }
+
+        if isListLike {
+            let parts = trimmed.components(separatedBy: CharacterSet(charactersIn: ",|"))
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+            if parts.isEmpty || parts.contains("*") { return true }
+            return parts.contains { aliases.contains($0.lowercased()) }
         }
 
-        if let data = stdout.data(using: .utf8),
-           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            if let decision = json["permissionDecision"] as? String {
-                let reason = json["permissionDecisionReason"] as? String
-                switch decision.lowercased() {
-                case "deny", "block":
-                    return AppHookPreToolUseDecision(behavior: .deny, reason: reason, blockedByHookName: hookName)
-                case "ask":
-                    return AppHookPreToolUseDecision(behavior: .ask, reason: reason, blockedByHookName: hookName)
-                case "allow":
-                    return AppHookPreToolUseDecision(behavior: .allow, reason: reason, blockedByHookName: hookName)
-                default:
-                    break
-                }
-            }
+        // Regex path: unanchored, matched against every alias so a
+        // Claude-Code-style matcher (`^Notebook`, `mcp__.*`) still fires on
+        // this app's own tool vocabulary, and against the raw tool name for
+        // a pattern (e.g. `mcp__.*`) that has no alias entry at all.
+        guard let regex = try? NSRegularExpression(pattern: trimmed) else { return false }
+        for candidate in aliases {
+            let range = NSRange(candidate.startIndex..., in: candidate)
+            if regex.firstMatch(in: candidate, range: range) != nil { return true }
         }
-
-        return AppHookPreToolUseDecision(behavior: .allow)
+        let rawRange = NSRange(toolName.startIndex..., in: toolName)
+        return regex.firstMatch(in: toolName, range: rawRange) != nil
     }
 }

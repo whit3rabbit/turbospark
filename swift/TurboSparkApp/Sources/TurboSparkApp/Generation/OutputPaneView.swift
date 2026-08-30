@@ -60,46 +60,11 @@ struct OutputPaneView: View {
     }
 
     private var placeholder: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "cube.transparent")
-                .font(.system(size: 38))
-                .foregroundStyle(.quaternary)
-                .help("TurboSpark Inference Engine")
-                .accessibilityHidden(true)
-
-            if model.session == nil {
-                if model.installed.isEmpty {
-                    Text("No models installed.")
-                        .font(.headline)
-                    Text("Click 'Install...' to browse the catalog and download a model.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("Model ready to load.")
-                        .font(.headline)
-                    Text("Ask a question or enter a prompt to begin.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                    if let selected = model.selected {
-                        Button("Load \(selected.alias)") {
-                            model.loadModel()
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.large)
-                        .accessibilityHint("Opens the selected model into memory")
-                    }
-                }
-            } else {
-                Text("Start a conversation")
-                    .font(.headline)
-                Text("Ask a question, write code, or explore ideas.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-            }
+        ScrollView {
+            WelcomeHeroView(model: model)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(.vertical, 24)
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 20)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
@@ -286,8 +251,7 @@ private struct ActiveStreamingRowView: View {
 
             if isRunning && output.isEmpty && reasoning.isEmpty {
                 HStack(spacing: 8) {
-                    ProgressView()
-                        .controlSize(.small)
+                    TaskProgressFlameIcon(size: 16)
                     Text("Thinking...")
                         .font(.callout)
                         .foregroundStyle(.secondary)

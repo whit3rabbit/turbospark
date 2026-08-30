@@ -41,8 +41,14 @@ extension AppModel {
 
         projects.insert(project, at: 0)
         selectedProjectID = project.id
+        if let path = project.rootDirectoryPath, !path.isEmpty {
+            worktree = WorktreeModel(rootDirectoryPath: path)
+        } else {
+            worktree = nil
+        }
         persistProjects()
         reloadSkills()
+        AppHookStore.shared.refresh(projectDirectory: project.rootDirectoryPath)
 
         // Create initial chat for this project
         createChat(projectID: project.id)
@@ -53,8 +59,18 @@ extension AppModel {
     public func selectProject(id: UUID?) {
         guard !generating else { return }
         selectedProjectID = id
+        if let id, let proj = projects.first(where: { $0.id == id }), let path = proj.rootDirectoryPath, !path.isEmpty {
+            if let existing = worktree {
+                existing.updateRoot(path: path)
+            } else {
+                worktree = WorktreeModel(rootDirectoryPath: path)
+            }
+        } else {
+            worktree = nil
+        }
         persistProjects()
         reloadSkills()
+        AppHookStore.shared.refresh(projectDirectory: selectedProject?.rootDirectoryPath)
 
         // If the currently selected chat doesn't belong to the newly selected project, switch selection
         if let id {
@@ -75,6 +91,9 @@ extension AppModel {
         projects[index] = updated
         persistProjects()
         reloadSkills()
+        if selectedProjectID == project.id {
+            AppHookStore.shared.refresh(projectDirectory: updated.rootDirectoryPath)
+        }
     }
 
     /// Deletes a project and optionally clears project references from its chats.

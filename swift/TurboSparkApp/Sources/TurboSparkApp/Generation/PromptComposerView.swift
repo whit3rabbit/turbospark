@@ -125,7 +125,7 @@ struct PromptComposerView: View {
     }
 
     private var footer: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             PromptAttachDocumentButton(
                 iconButtonSize: iconButtonSize,
                 isRunning: model.isRunning,
@@ -135,31 +135,17 @@ struct PromptComposerView: View {
                     isImportingDocuments = true
                 }
             )
-            PromptTipsButton(
-                iconButtonSize: iconButtonSize,
-                showingTips: $showingPromptTips
-            )
+            PromptInteractionModeSegment(model: model)
+            PromptProjectContextPill(model: model)
+            PromptModelSelectorPill(model: model)
             if model.isReasoningSupported {
                 PromptReasoningPillControl(model: model)
             }
             ForgeGuardrailsPillControl(model: model)
-            if let project = model.selectedProject {
-                HStack(spacing: 4) {
-                    Image(systemName: project.agentType.systemImage)
-                        .font(.caption2)
-                        .accessibilityHidden(true)
-                    Text("\(project.name) (\(project.agentType.label))")
-                        .font(.caption2.weight(.medium))
-                        .lineLimit(1)
-                }
-                .foregroundStyle(TurboSparkTheme.accentColor)
-                .padding(.horizontal, 7)
-                .padding(.vertical, 3)
-                .background(TurboSparkTheme.accentColor.opacity(0.1), in: Capsule())
-                .help("Active project: \(project.name) (\(project.agentType.label))")
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel("Active project: \(project.name), \(project.agentType.label)")
-            }
+            PromptTipsButton(
+                iconButtonSize: iconButtonSize,
+                showingTips: $showingPromptTips
+            )
             if model.estimatedPromptTokens > 0 {
                 Text("\(model.estimatedPromptTokens) tokens")
                     .font(.caption2.monospacedDigit())
@@ -167,7 +153,7 @@ struct PromptComposerView: View {
                     .help("Estimated prompt length: \(model.estimatedPromptTokens) tokens")
                     .accessibilityLabel("Estimated prompt length: \(model.estimatedPromptTokens) tokens")
             }
-            Spacer()
+            Spacer(minLength: 4)
             clearAction
             GenerateControl(model: model)
         }
