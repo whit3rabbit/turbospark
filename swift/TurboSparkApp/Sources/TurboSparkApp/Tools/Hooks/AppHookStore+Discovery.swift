@@ -99,7 +99,8 @@ extension AppHookStore {
             }
         }
 
-        // Sort groups: User Config first, Project Config second, Custom third, then Plugins
+        // Sort groups: User Config, Project Config, Local Config (all
+        // config-derived), then Custom, then Plugins.
         let sorted = groups.values.sorted { g1, g2 in
             let order1 = sortOrder(for: g1.sourceType)
             let order2 = sortOrder(for: g2.sourceType)
@@ -116,8 +117,8 @@ extension AppHookStore {
         switch type {
         case .userConfig: return 0
         case .projectConfig: return 1
-        case .custom: return 2
-        case .localConfig: return 3
+        case .localConfig: return 2
+        case .custom: return 3
         case .plugin: return 4
         }
     }

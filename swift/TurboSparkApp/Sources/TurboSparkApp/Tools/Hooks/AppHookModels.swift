@@ -164,6 +164,14 @@ public struct AppHookCommand: Identifiable, Codable, Sendable, Equatable {
         ifCondition: String? = nil,
         matcher: String? = nil,
         shell: AppHookShell = .zsh,
+        // Hand-authored/editor default: fail fast rather than let a human
+        // typo in a custom hook silently block the UI for minutes. Hooks
+        // DISCOVERED from a Claude Code config file get 600.0 when their
+        // "timeout" key is absent instead, for Claude Code parity -- see
+        // AppHookStore+Discovery.swift's parseHookObject and
+        // AppHookCommandRunner.swift's runtime fallback (both commented
+        // "Claude Code parity"). The two defaults serve different trust
+        // contexts on purpose; do not unify them.
         timeoutSeconds: Double = 30.0,
         statusMessage: String? = nil,
         isAsync: Bool = false,

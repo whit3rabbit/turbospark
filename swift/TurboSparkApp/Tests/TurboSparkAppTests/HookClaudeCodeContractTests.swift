@@ -315,4 +315,22 @@ final class HookClaudeCodeContractTests: XCTestCase {
 
         XCTAssertTrue(store.discoveryDiagnostics.contains { $0.contains("PreToolUse") })
     }
+
+    // MARK: - Source group ordering
+
+    @MainActor
+    func testSourceGroupOrderingPlacesLocalConfigBeforeCustom() async throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let claudeDir = tempDir.appendingPathComponent(".claude")
+        try FileManager.default.createDirectory(at: claudeDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let store = await AppHookStore.shared
+        store.refresh(projectDirectory: tempDir.path)
+        defer { store.refresh(projectDirectory: nil) }
+
+        let expectedIDsInOrder = ["user_config", "project_config", "local_config", "custom"]
+        let actualOrder = store.sourceGroups.map { $0.id }.filter { expectedIDsInOrder.contains($0) }
+        XCTAssertEqual(actualOrder, expectedIDsInOrder)
+    }
 }

@@ -41,6 +41,14 @@ final class HookSystemTests: XCTestCase {
         XCTAssertNotEqual(hook1.contentHash, hook3.contentHash)
     }
 
+    func testHandAuthoredHookDefaultTimeoutIsThirtySecondsByDesign() {
+        let hook = AppHookCommand(name: "test", event: .preToolUse, command: "echo hi")
+        XCTAssertEqual(
+            hook.timeoutSeconds, 30.0,
+            "Editor/struct default intentionally differs from the 600s Claude-Code-parity fallback used only for discovered hooks; see AppHookModels.swift doc comment before changing this."
+        )
+    }
+
     func testTrustManagement() async {
         let store = await AppHookStore.shared
 

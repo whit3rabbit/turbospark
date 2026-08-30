@@ -9,6 +9,7 @@ public struct HooksSettingsPaneView: View {
     @State private var selectedGroupID: String? = nil
     @State private var showingAddHookSheet = false
     @State private var activeDetailGroup: AppHookSourceGroup? = nil
+    @State private var showDiagnosticsDetail = false
 
     public init(model: AppModel) {
         self.model = model
@@ -33,6 +34,9 @@ public struct HooksSettingsPaneView: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             headerBar
+            if !hookStore.discoveryDiagnostics.isEmpty {
+                discoveryDiagnosticsBanner
+            }
             searchBar
             Divider()
 
@@ -170,6 +174,50 @@ public struct HooksSettingsPaneView: View {
             .buttonStyle(.borderedProminent)
             .controlSize(.regular)
         }
+    }
+
+    // MARK: - Discovery Diagnostics Banner
+
+    private var discoveryDiagnosticsBanner: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                showDiagnosticsDetail.toggle()
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                    Text("\(hookStore.discoveryDiagnostics.count) discovery issue\(hookStore.discoveryDiagnostics.count == 1 ? "" : "s") found while scanning hook config files")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.orange)
+                    Spacer()
+                    Image(systemName: showDiagnosticsDetail ? "chevron.up" : "chevron.down")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.orange)
+                }
+            }
+            .buttonStyle(.plain)
+            .appPointerCursor()
+
+            if showDiagnosticsDetail {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(Array(hookStore.discoveryDiagnostics.enumerated()), id: \.offset) { _, message in
+                        Text(message)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(Color.orange.opacity(0.12))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(Color.orange.opacity(0.3), lineWidth: 1)
+        )
     }
 
     // MARK: - Search Bar

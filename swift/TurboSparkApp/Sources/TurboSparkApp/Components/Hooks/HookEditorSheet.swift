@@ -146,6 +146,9 @@ public struct HookEditorSheet: View {
                             TextField("30", value: $timeoutSeconds, format: .number)
                                 .textFieldStyle(.roundedBorder)
                                 .frame(width: 80)
+                            Text("Hooks discovered from Claude Code config default to 600s when unset.")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
                         }
 
                         VStack(alignment: .leading, spacing: 6) {
