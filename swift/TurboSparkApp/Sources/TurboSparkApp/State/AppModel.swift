@@ -89,6 +89,10 @@ public final class AppModel: ObservableObject {
     @Published public var pendingToolCall: AppToolCall? = nil
     /// Live tool calls executed during the active generation turn.
     @Published public var liveToolCalls: [AppToolCall] = []
+    /// Why the last SKILL.state patch was rejected, or nil if the last one
+    /// merged. Surfaced rather than swallowed: a dropped patch means the run
+    /// lost a step's bookkeeping, which is invisible in the transcript.
+    @Published public var skillStateLastError: String? = nil
 
     // Skills State
     /// User-scoped skills (~/.turbospark/skills and user agent directories).

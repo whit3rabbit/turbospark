@@ -394,6 +394,72 @@ appearing on these installs. Scaling the probe's shelf and item counts is the
 cheap way to look, and the harness takes them as constants at the top of the
 file.
 
+## What shipped
+
+Implemented 2026-08-30 in the Swift app, opt-in per project and OFF by
+default, so the append-only path is byte-identical when the toggle is unset.
+
+- `State/AppSkillState.swift`: the state document, an RFC 7386 merge, the
+  schema, the validator, and the fence-stripping extractor. Semantics mirror
+  `scripts/skill_state_probe.py` deliberately, since that script is the
+  evidence.
+- `State/AppModel+SkillState.swift`: the bounded prompt and the patch
+  application.
+- `AppModel+Generation.swift`: the one branch, at the context assembly, plus
+  the patch merge on turn finish.
+- `AppProject.skillStateEnabled` and `AppChat.skillState`, both with tolerant
+  decoding (swift/CLAUDE.md Gotcha 13), and a toggle in project settings.
+
+**The schema is generic rather than per domain**, which is a departure from
+the paper and a considered one. The paper authors a schema per domain and
+names "no fixed schema known in advance" as its first limitation, which a
+general coding assistant arguably is. The five fields (`goal`, `files`,
+`facts`, `commands`, `next`) are close in shape to the paper's own five-field
+InterCode CTF schema. `AppSkillStateSchema` is the single source for both the
+prompt text and the validator, so the two cannot drift.
+
+**The growth from two keys to five was verified rather than assumed**, because
+this page names schema comprehension as the class most likely to reappear as a
+schema grows. `AppSkillStateRealModelTests` drives a six-step coding run
+through a real server using the SHIPPED protocol text and the SHIPPED
+validator, so the app is its own oracle and no second spelling of the schema
+exists to rot. Against gemma4: 6 of 6 patches valid, state accumulated
+correctly, and the deliberately irrelevant observation changed nothing.
+
+```sh
+./target/release/turbospark-server --model ~/models/gemma4.gturbo \
+    --port 8123 --max-context 4096
+cd swift/TurboSparkApp && TURBOSPARK_SKILL_STATE_SERVER=http://127.0.0.1:8123 \
+    swift test --filter AppSkillStateRealModelTests
+```
+
+**One quality wrinkle that run turned up, recorded because it is not a
+validity failure and no assertion catches it.** gemma4 put everything into
+`facts` and used neither `files` nor `commands`, and it left `next` holding a
+step it had already done. So the state stays CORRECT and drifts toward being
+one flat list, which is a weaker structure than the schema offers. Nothing
+here depends on it yet. If it matters later, the lever is the field
+documentation in `AppSkillStateSchema.fields` (one string each), not the
+validator, which cannot see the difference between a good decomposition and
+a lazy one.
+
+## Verifying a change to this
+
+```sh
+cd swift/TurboSparkApp && swift test --filter AppSkillStateTests   # 21, offline
+```
+
+Those cases mirror the probe's `--selfcheck` and were mutation-checked five
+ways, each mutation asserted to apply exactly once and each reddening only its
+own cases. Two traps worth keeping if this code is touched:
+
+- **The patch merges BEFORE tool calls are parsed.** The patch is JSON in the
+  same reply as a possible tool call, so parsing calls first lets the tool
+  parser see it and take it for one.
+- **An invalid patch is DROPPED, never partially applied.** A bad merge
+  silently corrupts every step after it; a dropped one loses one step's
+  bookkeeping and surfaces on `skillStateLastError`.
+
 ## What this page is not
 
 - Not a reproduction of the paper. The numbers in "What the paper claims" are

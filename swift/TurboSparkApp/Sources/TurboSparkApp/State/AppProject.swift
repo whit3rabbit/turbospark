@@ -274,6 +274,9 @@ public struct AppProject: Identifiable, Codable, Equatable, Sendable {
     public var mcpServers: [McpServerConfig]
     /// Project-specific Forge Guardrails override (nil = auto/model default).
     public var forgeGuardrailsEnabled: Bool?
+    /// Carry a bounded execution state between agent steps instead of the full
+    /// transcript (docs/SKILL_STATE.md). Opt-in: off leaves the loop unchanged.
+    public var skillStateEnabled: Bool
     /// Timestamp when the project was created.
     public var createdAt: Date
     /// Timestamp when the project was last updated.
@@ -290,6 +293,7 @@ public struct AppProject: Identifiable, Codable, Equatable, Sendable {
         maxAutonomousSteps: Int = 5,
         mcpServers: [McpServerConfig] = [],
         forgeGuardrailsEnabled: Bool? = nil,
+        skillStateEnabled: Bool = false,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -303,13 +307,15 @@ public struct AppProject: Identifiable, Codable, Equatable, Sendable {
         self.maxAutonomousSteps = maxAutonomousSteps
         self.mcpServers = mcpServers
         self.forgeGuardrailsEnabled = forgeGuardrailsEnabled
+        self.skillStateEnabled = skillStateEnabled
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
 
     enum CodingKeys: String, CodingKey {
         case id, name, rootDirectoryPath, agentType, rulePreference, customInstructions
-        case permissions, maxAutonomousSteps, mcpServers, forgeGuardrailsEnabled, createdAt, updatedAt
+        case permissions, maxAutonomousSteps, mcpServers, forgeGuardrailsEnabled
+        case skillStateEnabled, createdAt, updatedAt
     }
 
     public init(from decoder: Decoder) throws {
@@ -324,6 +330,7 @@ public struct AppProject: Identifiable, Codable, Equatable, Sendable {
         self.maxAutonomousSteps = try container.decodeIfPresent(Int.self, forKey: .maxAutonomousSteps) ?? 5
         self.mcpServers = try container.decodeIfPresent([McpServerConfig].self, forKey: .mcpServers) ?? []
         self.forgeGuardrailsEnabled = try container.decodeIfPresent(Bool.self, forKey: .forgeGuardrailsEnabled)
+        self.skillStateEnabled = try container.decodeIfPresent(Bool.self, forKey: .skillStateEnabled) ?? false
         self.createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         self.updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
     }

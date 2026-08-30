@@ -175,6 +175,9 @@ public struct AppChat: Identifiable, Codable, Equatable, Sendable {
     public var messages: [AppChatMessage]
     /// Optional context summary or metadata.
     public var contextSummary: String?
+    /// Bounded execution state, when the project runs in SKILL.state mode.
+    /// Per chat rather than per project: it describes one agent run.
+    public var skillState: AppSkillState?
     /// Timestamp when the chat was created.
     public var createdAt: Date
     /// Timestamp when the chat was last modified.
@@ -189,6 +192,7 @@ public struct AppChat: Identifiable, Codable, Equatable, Sendable {
         draftAttachments: [AppPromptAttachment] = [],
         messages: [AppChatMessage] = [],
         contextSummary: String? = nil,
+        skillState: AppSkillState? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -199,6 +203,7 @@ public struct AppChat: Identifiable, Codable, Equatable, Sendable {
         self.draftAttachments = draftAttachments
         self.messages = messages
         self.contextSummary = contextSummary
+        self.skillState = skillState
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
@@ -216,6 +221,7 @@ public struct AppChat: Identifiable, Codable, Equatable, Sendable {
             [AppPromptAttachment].self, forKey: .draftAttachments) ?? []
         messages = try container.decodeIfPresent([AppChatMessage].self, forKey: .messages) ?? []
         contextSummary = try container.decodeIfPresent(String.self, forKey: .contextSummary)
+        skillState = try container.decodeIfPresent(AppSkillState.self, forKey: .skillState)
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
     }
