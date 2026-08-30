@@ -326,3 +326,28 @@ printf '[{"role":"user","content":"Explain how coastal wetlands reduce flood dam
    the correct table, so the two paths disagreeing localized it in one step.
    A vision feature needs an end-to-end arm whose output someone can READ;
    shapes and lengths all agreed here.
+
+14. **`--chat` IS THE ONE CALLER THAT OPTS INTO PREFIX KV REUSE, and it does
+    so unconditionally.** `run()` calls `session.runner.set_prefix_reuse(true)`
+    right after `open_session`, so each turn continues from the previous
+    turn's KV wherever the re-rendered transcript agrees with the ids that
+    built it (`crates/runtime/CLAUDE.md` Gotcha 30). Measured on the real
+    Gemma 4 install over three turns: 0/17, then 13/33, then 29/49 tokens
+    continued, with stdout byte-identical to the same session run with reuse
+    off. The un-reused remainder is the generation-prompt suffix, which the
+    template rewrites every turn.
+
+    Unconditional rather than a flag because this mode is multi-turn by
+    construction and is named by no frozen row: the benchmark protocol, both
+    oracles and both quality gates run one generation per process, where
+    reuse cannot fire at all. `--prompt` and `--messages-file` do NOT opt in,
+    and their output is byte-identical across this change (verified against
+    the standing greedy capture).
+
+    The `[prefix-reuse] N/M` line on stderr is not cosmetic. The match RATE
+    is an empirical property of the checkpoint's template and tokenizer
+    rather than something the mechanism can promise, and a reuse that never
+    fires differs from a working one only in wall-clock -- which thermal
+    drift alone can cover (AGENTS.md Gotcha 28). It read 0/33 through TWO
+    rounds of apparently-working implementation. `MFERENCE_PREFIX_REUSE=quiet`
+    silences it; `--quiet` already does.

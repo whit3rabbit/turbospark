@@ -221,6 +221,7 @@ process).
 | `--speculative` | `off\|auto`, or `1`-`15` | `auto` | resolved ONCE at process open, not per request; acceptance is exact only at temperature 0, so a request sampled above that falls back to sequential decode silently |
 | `--speculative-drafter` | `auto\|mtp\|dflash` | `auto` | same as `turbospark-check`'s |
 | `--guardrails` | `on\|off` | `on` | tool-call rescue, argument validation, one retry (see [`docs/FORGE_GUARDRAILS.md`](FORGE_GUARDRAILS.md)); a request carrying `tools` is BUFFERED rather than streamed while this is on, since a verdict needs the whole turn -- a request without tools streams exactly as it always did |
+| `--reasoning` | `off\|low\|medium\|high\|xhigh` | `off` | default reasoning effort when a request omits `reasoning_effort` |
 | `--steering` | path to `.gguf` | none | see [Steering (obliteration)](#steering-obliteration) |
 | `--steering-mode` | `ablate\|add\|clamp\|renorm` | `ablate`, or the file's own | as above |
 | `--steering-scale` | float | `1.0` | as above |
@@ -232,10 +233,10 @@ process).
 **Not present on the server:** `--prefill-chunk`, `--rdadvise`, and `--quiet`
 (chunked prefill, streaming read-ahead hint, and quiet mode have no server-side
 flags). Per-turn generation parameters (`--temperature`, `--top-k`, `--top-p`,
-`--max-new`, `--stop`, `--reasoning`, `--seed`) are not server CLI flags either --
+`--max-new`, `--stop`, `--seed`) are not server CLI flags --
 they are received per-request on the OpenAI and Anthropic wire protocols rather
-than pinned for the process, unlike `--steering` and `--speculative` which are
-resolved once at open and apply to every request the process serves for its whole life.
+than pinned for the process, unlike `--steering`, `--speculative` and `--reasoning` which are
+resolved once at open and configure defaults/capabilities for requests the process serves.
 
 The legacy positional form (`turbospark-server <tokenizer-dir> [port]`) runs
 the portable scripted backend against canned completions rather than a real
