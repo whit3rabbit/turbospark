@@ -84,10 +84,22 @@ extension AppModel {
     }
 
     /// Loads persisted chat threads and the active selected conversation ID.
+    ///
+    /// Validates `selectedChatID` against the loaded chats rather than
+    /// trusting it outright: an archive whose selection points at nothing
+    /// (corrupt state, or a chat removed by some other path) used to be
+    /// silently repaired later by `selectedChat`'s getter mutating
+    /// `@Published` state on read (state#7). Fixing it up front, once, at
+    /// the one place `chats` is genuinely being (re)established keeps that
+    /// getter pure.
     func loadChats() {
         let archive = AppChatFileStore.load()
         self.chats = archive.chats
-        self.selectedChatID = archive.selectedChatID
+        if archive.chats.isEmpty || archive.chats.contains(where: { $0.id == archive.selectedChatID }) {
+            self.selectedChatID = archive.selectedChatID
+        } else {
+            self.selectedChatID = archive.chats[0].id
+        }
     }
 
     /// Persists all conversation threads and active selection to disk.

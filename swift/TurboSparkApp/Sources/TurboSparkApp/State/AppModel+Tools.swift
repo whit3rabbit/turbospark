@@ -151,8 +151,17 @@ extension AppModel {
         guard var call = pendingToolCall, call.id == id else { return }
         call.status = .running
         pendingToolCall = nil
+        // Captured before clearing: the chat the call was PROPOSED in and
+        // the step it was proposed AT, never whatever `selectedChatID`/loop
+        // position happen to be at approval time -- the user may have
+        // switched chats while this call sat waiting (state#9), and
+        // resuming at step 1 unconditionally defeats `maxAutonomousSteps`
+        // by resetting the counter on every approval (state#6).
+        let chatID = pendingToolCallChatID ?? selectedChatID
+        let originStep = pendingToolCallStep
+        pendingToolCallChatID = nil
 
-        let sessionID = selectedChatID.uuidString
+        let sessionID = chatID.uuidString
         let toolName = call.name
         let cmd = call.arguments["command"] ?? call.arguments["cmd"]
 
@@ -187,8 +196,8 @@ extension AppModel {
                 )
             }
 
-            self.appendToolExecutionTurn(call: call, result: result)
-            self.continueAgentLoop()
+            self.appendToolExecutionTurn(call: call, result: result, chatID: chatID)
+            self.continueAgentLoop(step: originStep + 1)
         }
     }
 
@@ -197,6 +206,9 @@ extension AppModel {
         guard var call = pendingToolCall, call.id == id else { return }
         call.status = .denied
         pendingToolCall = nil
+        let chatID = pendingToolCallChatID ?? selectedChatID
+        let originStep = pendingToolCallStep
+        pendingToolCallChatID = nil
 
         let result = AppToolResult(
             callID: call.id,
@@ -204,13 +216,14 @@ extension AppModel {
             isError: true,
             durationSeconds: 0.0
         )
-        self.appendToolExecutionTurn(call: call, result: result)
-        self.continueAgentLoop()
+        self.appendToolExecutionTurn(call: call, result: result, chatID: chatID)
+        self.continueAgentLoop(step: originStep + 1)
     }
 
     /// Appends the tool execution and result turn to the conversation history.
-    public func appendToolExecutionTurn(call: AppToolCall, result: AppToolResult) {
-        guard let chatIndex = selectedChatIndex else { return }
+    public func appendToolExecutionTurn(call: AppToolCall, result: AppToolResult, chatID: UUID? = nil) {
+        let targetID = chatID ?? selectedChatID
+        guard let chatIndex = chats.firstIndex(where: { $0.id == targetID }) else { return }
         let turn = AppChatMessage(
             role: .assistant,
             content: "Invoking tool `\(call.name)` (\(call.argumentsSummary))",

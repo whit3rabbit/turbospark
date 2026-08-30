@@ -110,6 +110,36 @@ final class ForgeGuardrailsTests: XCTestCase {
         XCTAssertEqual(rescued[0].arguments["path"], "crates/server")
     }
 
+    // MARK: - Allowlist Enforcement (T6)
+
+    func testRescueXmlFunctionDialectRejectsAToolOutsideTheAllowlist() {
+        // Previously `availableToolNames.contains(name) || !name.isEmpty`
+        // accepted ANY non-empty name, so a rescued call could manufacture
+        // a real AppToolCall for a tool the current agent type was never
+        // granted.
+        let text = "<function=delete_everything>\n{}\n</function>"
+        let available: Set<String> = ["read_file", "write_file", "bash"]
+        let rescued = ForgeGuardrailsEngine.rescueToolCalls(from: text, availableToolNames: available)
+        XCTAssertTrue(rescued.isEmpty, "A tool name outside the granted set must never be rescued into a real call.")
+    }
+
+    func testRescueJsonDialectsRejectAToolOutsideTheAllowlist() {
+        let mistral = "[TOOL_CALLS] [{\"name\": \"delete_everything\", \"arguments\": {}}]"
+        XCTAssertTrue(ForgeGuardrailsEngine.rescueToolCalls(from: mistral, availableToolNames: ["bash"]).isEmpty)
+
+        let markdown = "```tool_call\n{\"name\": \"delete_everything\", \"arguments\": {}}\n```"
+        XCTAssertTrue(ForgeGuardrailsEngine.rescueToolCalls(from: markdown, availableToolNames: ["bash"]).isEmpty)
+
+        let bare = "{\"name\": \"delete_everything\", \"arguments\": {}}"
+        XCTAssertTrue(ForgeGuardrailsEngine.rescueToolCalls(from: bare, availableToolNames: ["bash"]).isEmpty)
+    }
+
+    func testAllowlistCheckIsCaseInsensitive() {
+        XCTAssertTrue(ForgeGuardrailsEngine.isToolNameAllowed("Read_File", in: ["read_file"]))
+        XCTAssertFalse(ForgeGuardrailsEngine.isToolNameAllowed("", in: ["read_file"]))
+        XCTAssertFalse(ForgeGuardrailsEngine.isToolNameAllowed("anything", in: []))
+    }
+
     func testRescueBareJsonObject() {
         let text = "{\"name\": \"read_file\", \"arguments\": {\"path\": \"README.md\"}}"
         let available: Set<String> = ["read_file"]

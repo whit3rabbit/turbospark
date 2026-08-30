@@ -249,6 +249,16 @@ public struct AppChatArchive: Codable, Sendable {
     public static func empty() -> AppChatArchive {
         AppChatArchive(selectedChatID: UUID(), chats: [])
     }
+
+    /// Tolerant decode, same reasoning as `AppChatMessage.init(from:)`
+    /// above: a future field added to the top-level archive should not be
+    /// able to fail this decode any more than a field added to a nested
+    /// message can.
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        selectedChatID = try container.decodeIfPresent(UUID.self, forKey: .selectedChatID) ?? UUID()
+        chats = try container.decodeIfPresent([AppChat].self, forKey: .chats) ?? []
+    }
 }
 
 /// Filesystem storage utilities for saving and loading chat archives.

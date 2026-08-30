@@ -48,7 +48,12 @@ struct TopBarView: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(isChatSidebarVisible ? Color.primary : Color.secondary)
-        .keyboardShortcut("s", modifiers: [.command, .control])
+        // No `.keyboardShortcut` here (U7): the "View" menu's "Toggle Chat
+        // Sidebar" command already claims Cmd+Ctrl+S, and SwiftUI does not
+        // define which of two identical shortcuts on different controls
+        // wins -- a second declaration here is at best redundant and at
+        // worst a dead or double-firing shortcut. The menu is the one
+        // source of truth for this key.
         .help(presentation.help)
         .accessibilityLabel(presentation.title)
         .accessibilityHint(presentation.help)
@@ -67,7 +72,14 @@ struct TopBarView: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(isInspectorVisible ? Color.primary : Color.secondary)
-        .keyboardShortcut("i", modifiers: [.command, .shift])
+        // No `.keyboardShortcut` here (U7): the "View" menu's "Toggle
+        // Inspector" command claims the same Cmd+Shift+I and, unlike this
+        // button's plain `toggleInspector` closure, its handler
+        // (RootView's `.toggleInspector` notification receiver) also
+        // dismisses an open attachment preview first. Two controls
+        // registering the identical shortcut with DIFFERENT behavior is
+        // the double-toggle/dead-shortcut bug; the menu is the one that
+        // does the right thing, so it is the one that keeps the key.
         .help(presentation.help)
         .accessibilityLabel(presentation.title)
         .accessibilityHint(presentation.help)

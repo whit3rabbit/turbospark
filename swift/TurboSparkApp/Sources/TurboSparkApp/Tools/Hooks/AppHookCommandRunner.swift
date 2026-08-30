@@ -48,25 +48,21 @@ extension AppHookExecutionEngine {
             commandText = commandText.replacingOccurrences(of: "${user_config.\(k)}", with: v)
         }
 
-        // Run process via Process
-        let process = Process()
-        let pipeOut = Pipe()
-        let pipeErr = Pipe()
-        let pipeIn = Pipe()
-
+        let executableURL: URL
+        let arguments: [String]
         switch hook.shell {
         case .bash:
-            process.executableURL = URL(fileURLWithPath: "/bin/bash")
-            process.arguments = ["-c", commandText]
+            executableURL = URL(fileURLWithPath: "/bin/bash")
+            arguments = ["-c", commandText]
         case .zsh:
-            process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-            process.arguments = ["-c", commandText]
+            executableURL = URL(fileURLWithPath: "/bin/zsh")
+            arguments = ["-c", commandText]
         case .sh:
-            process.executableURL = URL(fileURLWithPath: "/bin/sh")
-            process.arguments = ["-c", commandText]
+            executableURL = URL(fileURLWithPath: "/bin/sh")
+            arguments = ["-c", commandText]
         case .pwsh:
-            process.executableURL = URL(fileURLWithPath: "/usr/local/bin/pwsh")
-            process.arguments = ["-Command", commandText]
+            executableURL = URL(fileURLWithPath: "/usr/local/bin/pwsh")
+            arguments = ["-Command", commandText]
         }
 
         var env = ProcessInfo.processInfo.environment
@@ -81,61 +77,52 @@ extension AppHookExecutionEngine {
             env["CLAUDE_PLUGIN_OPTION_\(normalized)"] = v
         }
 
-        process.environment = env
-        if let workingDirectory, !workingDirectory.isEmpty {
-            process.currentDirectoryURL = URL(fileURLWithPath: workingDirectory)
-        }
-
-        process.standardInput = pipeIn
-        process.standardOutput = pipeOut
-        process.standardError = pipeErr
+        let timeout = hook.timeoutSeconds > 0 ? hook.timeoutSeconds : 30.0
+        let workingDirectoryURL = (workingDirectory?.isEmpty == false) ? URL(fileURLWithPath: workingDirectory!) : nil
 
         do {
-            try process.run()
-            try? pipeIn.fileHandleForWriting.write(contentsOf: payloadData)
-            try? pipeIn.fileHandleForWriting.close()
+            // `ProcessExecutor` writes stdin off this call's thread and drains
+            // stdout/stderr concurrently with the timeout wait. The previous
+            // synchronous `pipeIn.write(contentsOf:)` embedded the tool's own
+            // output in the hook payload and could block on it alone, before
+            // the timeout loop even started; and reading stdout/stderr only
+            // after `waitUntilExit()` meant a hook that wrote more than one
+            // pipe buffer to stdout hung until the timeout fired and was then
+            // misreported as "timed out" rather than as blocked on IO.
+            let result = try await ProcessExecutor.run(
+                executableURL: executableURL,
+                arguments: arguments,
+                currentDirectoryURL: workingDirectoryURL,
+                environment: env,
+                stdin: payloadData,
+                timeoutSeconds: timeout
+            )
 
-            // Handle timeout
-            let timeout = hook.timeoutSeconds > 0 ? hook.timeoutSeconds : 30.0
-            let deadline = Date().addingTimeInterval(timeout)
-
-            while process.isRunning && Date() < deadline {
-                try? await Task.sleep(nanoseconds: 20_000_000)
-            }
-
-            if process.isRunning {
-                process.terminate()
+            if result.timedOut {
                 return AppHookExecutionResult(
                     hookID: hook.id,
                     hookName: hook.name,
                     event: event,
                     exitCode: 124, // Timeout exit code
-                    stdout: "",
+                    stdout: result.stdout,
                     stderr: "Hook execution timed out after \(timeout) seconds.",
                     durationSeconds: Date().timeIntervalSince(startTime)
                 )
             }
 
-            let outData = pipeOut.fileHandleForReading.readDataToEndOfFile()
-            let errData = pipeErr.fileHandleForReading.readDataToEndOfFile()
-
-            let stdout = String(data: outData, encoding: .utf8) ?? ""
-            let stderr = String(data: errData, encoding: .utf8) ?? ""
-            let exitCode = process.terminationStatus
             let duration = Date().timeIntervalSince(startTime)
-
             var parsedDecision: AppHookPreToolUseDecision? = nil
             if event == .preToolUse {
-                parsedDecision = parsePreToolUseOutput(stdout: stdout, stderr: stderr, exitCode: exitCode, hookName: hook.name)
+                parsedDecision = parsePreToolUseOutput(stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode, hookName: hook.name)
             }
 
             return AppHookExecutionResult(
                 hookID: hook.id,
                 hookName: hook.name,
                 event: event,
-                exitCode: exitCode,
-                stdout: stdout,
-                stderr: stderr,
+                exitCode: result.exitCode,
+                stdout: result.stdout,
+                stderr: result.stderr,
                 durationSeconds: duration,
                 decision: parsedDecision
             )

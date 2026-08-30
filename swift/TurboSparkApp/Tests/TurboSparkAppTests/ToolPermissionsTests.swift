@@ -76,6 +76,57 @@ final class ToolPermissionsTests: XCTestCase {
         }
     }
 
+    // MARK: - Commands That Look Read-Only But Are Not (T9)
+
+    // `TerminalCommandClassifier.isCollapsible` is a UI presentation
+    // heuristic (first-word-only), not a security oracle: each of these
+    // commands has a base command in `searchCommands`/`readCommands` but an
+    // argument that mutates or executes.
+    let readLookingButDangerousCommands = [
+        "find . -delete",
+        "find /tmp -name '*.log' -exec rm {} \\;",
+        "awk 'BEGIN{system(\"id\")}'",
+        "perl -e 'system(\"whoami\")'",
+        "sed -i 's/a/b/' important.txt",
+        "sort -o /etc/passwd data.txt",
+        "cat secrets.txt | tee /tmp/leaked.txt"
+    ]
+
+    func testCommandsThatLookReadOnlyButMutateOrExecuteAreHighRisk() {
+        for cmd in readLookingButDangerousCommands {
+            let assessment = ToolRiskClassifier.assessTerminalCommand(cmd)
+            XCTAssertTrue(
+                assessment.isHighRisk,
+                "'\(cmd)' has a read-looking base command but mutates or executes; must be high risk."
+            )
+        }
+    }
+
+    // MARK: - Unknown Tool Names Must Not Fail Open (T13)
+
+    func testUnknownToolNameDoesNotResolveToFileRead() {
+        for name in ["CronCreate", "ScheduleWakeup", "SomeFutureTool", "TaskCreate"] {
+            let category = AppToolCatalog.category(for: name)
+            XCTAssertNotEqual(
+                category, .fileRead,
+                "Unrecognized tool '\(name)' must not fail open into .fileRead, which is allowed outright in Strict Read-Only mode."
+            )
+        }
+    }
+
+    func testUnknownToolNameIsDeniedInReadOnlyMode() {
+        let project = AppProject(name: "TestProject", permissions: .readOnly)
+        let call = AppToolCall(
+            name: "CronCreate",
+            arguments: [:],
+            category: AppToolCatalog.category(for: "CronCreate")
+        )
+        let decision = AppToolPermissionEngine.evaluate(call: call, project: project)
+        if case .deny = decision {} else {
+            XCTFail("Expected an unrecognized tool to be denied in Strict Read-Only mode, got \(decision)")
+        }
+    }
+
     // MARK: - Sensitive Files and Paths
 
     func testSensitivePathClassification() {
@@ -274,6 +325,89 @@ final class ToolPermissionsTests: XCTestCase {
         await store.clear(sessionID: sessionID)
         approved = await store.isApproved(sessionID: sessionID, toolName: "web_fetch")
         XCTAssertFalse(approved)
+    }
+
+    // MARK: - Session Approval Cannot Bypass High Risk (T1)
+
+    func testSessionApprovalDoesNotCoverALaterHighRiskCallUnderTheSameToolName() {
+        let project = AppProject(name: "TestProject", permissions: .auto)
+
+        // A benign call is approved with "always allow this session" for run_command.
+        let benignCall = AppToolCall(
+            name: "run_command",
+            arguments: ["command": "git status"],
+            category: .terminal
+        )
+        let benignDecision = AppToolPermissionEngine.evaluate(call: benignCall, project: project, sessionApproved: false)
+        XCTAssertEqual(benignDecision, .allow)
+
+        // A later call under the SAME tool name, but destructive, must still
+        // be asked even though the session has a standing "always allow"
+        // grant for run_command by bare tool name.
+        let dangerousCall = AppToolCall(
+            name: "run_command",
+            arguments: ["command": "rm -rf ~/Documents"],
+            category: .terminal
+        )
+        let decision = AppToolPermissionEngine.evaluate(call: dangerousCall, project: project, sessionApproved: true)
+        if case .ask(let assessment, _) = decision {
+            XCTAssertTrue(assessment.isHighRisk, "High-risk command must still be flagged high risk even with sessionApproved=true.")
+        } else {
+            XCTFail("Session approval for a bare tool name must not bypass a high-risk call. Got \(decision)")
+        }
+    }
+
+    func testSessionApprovalStillCoversARepeatOfALowRiskCall() {
+        let project = AppProject(name: "TestProject", permissions: .alwaysAsk)
+        let call = AppToolCall(
+            name: "run_command",
+            arguments: ["command": "cargo check"],
+            category: .terminal
+        )
+        // Without session approval, always-ask mode asks.
+        let firstDecision = AppToolPermissionEngine.evaluate(call: call, project: project, sessionApproved: false)
+        if case .ask = firstDecision {} else {
+            XCTFail("Expected .ask before session approval, got \(firstDecision)")
+        }
+        // With session approval, a repeat of the SAME low-risk call is allowed.
+        let secondDecision = AppToolPermissionEngine.evaluate(call: call, project: project, sessionApproved: true)
+        XCTAssertEqual(secondDecision, .allow)
+    }
+
+    // MARK: - No-Project Default Permissions (state#3)
+
+    func testNoProjectDefaultsToStandardNotAuto() {
+        // A plain chat with no project must not silently run terminal or
+        // file-write actions; it should fall back to `.standard` (ask),
+        // never to the wide-open `.auto` permission set.
+        let terminalCall = AppToolCall(
+            name: "run_command",
+            arguments: ["command": "cargo build"],
+            category: .terminal
+        )
+        let terminalDecision = AppToolPermissionEngine.evaluate(call: terminalCall, project: nil)
+        if case .ask = terminalDecision {} else {
+            XCTFail("Expected .ask for a terminal command with no project selected, got \(terminalDecision)")
+        }
+
+        let writeCall = AppToolCall(
+            name: "write_file",
+            arguments: ["path": "a.txt", "content": "hi"],
+            category: .fileWrite
+        )
+        let writeDecision = AppToolPermissionEngine.evaluate(call: writeCall, project: nil)
+        if case .ask = writeDecision {} else {
+            XCTFail("Expected .ask for a file write with no project selected, got \(writeDecision)")
+        }
+
+        // Reads remain allowed under `.standard`.
+        let readCall = AppToolCall(
+            name: "read_file",
+            arguments: ["path": "README.md"],
+            category: .fileRead
+        )
+        let readDecision = AppToolPermissionEngine.evaluate(call: readCall, project: nil)
+        XCTAssertEqual(readDecision, .allow)
     }
 
     func testMcpServerAutoApprovePermission() {

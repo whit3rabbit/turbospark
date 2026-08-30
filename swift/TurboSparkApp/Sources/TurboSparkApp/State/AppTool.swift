@@ -88,6 +88,30 @@ public struct AppToolCall: Identifiable, Codable, Equatable, Sendable {
         self.createdAt = createdAt
     }
 
+    /// Tolerant decode: every field is read with `decodeIfPresent` and a
+    /// default, for the same reason `AppChatMessage.init(from:)` is
+    /// hand-written (`swift/CLAUDE.md` Gotcha 13). The synthesized decoder
+    /// this replaced required every field, so ONE `AppToolCall` written
+    /// before a field like `category` or `riskAssessment` existed threw
+    /// while decoding the `toolCalls` ARRAY inside a message -- and because
+    /// that throw propagates up through `AppChatMessage`'s own tolerant
+    /// `decodeIfPresent(forKey: .toolCalls)`, the whole chat still failed to
+    /// decode. A tolerant decoder one level down is what a tolerant
+    /// container one level up actually needs to be tolerant.
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        approvalID = try container.decodeIfPresent(String.self, forKey: .approvalID)
+            ?? UUID().uuidString.prefix(16).lowercased()
+        name = try container.decodeIfPresent(String.self, forKey: .name) ?? ""
+        arguments = try container.decodeIfPresent([String: String].self, forKey: .arguments) ?? [:]
+        rawInvocation = try container.decodeIfPresent(String.self, forKey: .rawInvocation) ?? ""
+        status = try container.decodeIfPresent(AppToolCallStatus.self, forKey: .status) ?? .completed
+        category = try container.decodeIfPresent(AppToolCategory.self, forKey: .category) ?? .fileRead
+        riskAssessment = try container.decodeIfPresent(ToolRiskAssessment.self, forKey: .riskAssessment)
+        createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+    }
+
     /// Single line summary of call arguments for display.
     public var argumentsSummary: String {
         if let path = arguments["path"] ?? arguments["file_path"] {
@@ -123,6 +147,19 @@ public struct AppToolResult: Identifiable, Codable, Equatable, Sendable {
         self.output = output
         self.isError = isError
         self.durationSeconds = durationSeconds
+    }
+
+    /// Tolerant decode, for the same reason as `AppToolCall.init(from:)`
+    /// above: this struct is stored inside `AppChatMessage.toolResults`, and
+    /// a required field failing to decode there would take the whole chat
+    /// archive down with it.
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        callID = try container.decodeIfPresent(UUID.self, forKey: .callID) ?? UUID()
+        output = try container.decodeIfPresent(String.self, forKey: .output) ?? ""
+        isError = try container.decodeIfPresent(Bool.self, forKey: .isError) ?? false
+        durationSeconds = try container.decodeIfPresent(Double.self, forKey: .durationSeconds) ?? 0.0
     }
 }
 
@@ -174,6 +211,38 @@ public enum AppToolRegistry {
         return AppToolCatalog.category(for: toolName)
     }
 
+    /// Tool names `execute(call:in:)` actually has a real handler for,
+    /// independent of which `OpenAITool` DEFINITIONS `AppToolCatalog`
+    /// advertises to the model. A name outside this set (and not a dynamic
+    /// `mcp__server__tool` call, which resolves through `executeMcpCall`
+    /// rather than a static name) falls to `execute`'s default case, which
+    /// reports `isError` rather than fabricating success (T5). This set is
+    /// also what lets `AppToolCatalog` avoid advertising a tool with no
+    /// backing executor in the first place -- keep it in sync with the
+    /// `switch` in `execute(call:in:)` below.
+    static let supportedToolNames: Set<String> = [
+        "list_directory", "list_dir", "ls", "glob",
+        "read_file", "view_file", "cat", "fileread", "read",
+        "write_file", "save_file", "filewrite", "write",
+        "edit_file", "fileedit", "edit",
+        "apply_patch", "applypatch",
+        "search_code", "grep", "search",
+        "run_command", "bash", "shell", "exec", "terminal",
+        "skill",
+        "todowrite", "todo_write",
+        "taskcreate", "task_create",
+        "tasklist", "task_list",
+        "askuserquestion", "ask_user_question", "question",
+        "call_mcp_tool", "callmcptool", "mcp_tool"
+    ]
+
+    /// Whether `execute(call:in:)` has a real handler for `toolName`.
+    public static func isImplemented(_ toolName: String) -> Bool {
+        let lower = toolName.lowercased()
+        if lower.contains("__") && lower.hasPrefix("mcp__") { return true }
+        return supportedToolNames.contains(lower)
+    }
+
     /// Generates system prompt instructions for tool use.
     public static func systemPromptAddendum(for agentType: AppAgentType, tools: [AppToolDefinition] = standardTools) -> String {
         return AppToolCatalog.systemPromptAddendum(for: agentType)
@@ -182,7 +251,13 @@ public enum AppToolRegistry {
     /// Executes a tool call asynchronously within the given project context.
     public static func execute(call: AppToolCall, in project: AppProject?) async -> AppToolResult {
         let startTime = Date()
-        let rootURL = project?.rootDirectoryURL ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        // `FileManager.default.currentDirectoryPath` is "/" for a
+        // Finder-launched (non-Terminal) process, which would make the
+        // sandbox containment check in `resolveSecurePath` a no-op: every
+        // path on disk is "inside" a root of "/". Fall back to the user's
+        // home directory instead, which is still broad with no project
+        // configured but is never the whole filesystem.
+        let rootURL = project?.rootDirectoryURL ?? FileManager.default.homeDirectoryForCurrentUser
 
         do {
             let output: String
@@ -235,7 +310,8 @@ public enum AppToolRegistry {
                 guard let command = call.arguments["command"] ?? call.arguments["cmd"] else {
                     throw NSError(domain: "TurboSparkTool", code: 4, userInfo: [NSLocalizedDescriptionKey: "Missing 'command' argument."])
                 }
-                output = try await runCommand(command: command, rootURL: rootURL)
+                let timeoutMs = Int(call.arguments["timeout"] ?? "")
+                output = try await runCommand(command: command, rootURL: rootURL, timeoutMs: timeoutMs)
 
             case "skill":
                 guard let skillName = call.arguments["name"] ?? call.arguments["skill_name"] else {
@@ -243,6 +319,15 @@ public enum AppToolRegistry {
                 }
                 let effectiveSkills = SkillManager.shared.resolveEffectiveSkills(projectURL: project?.rootDirectoryURL)
                 if let matched = effectiveSkills.first(where: { $0.name.lowercased() == skillName.lowercased() }) {
+                    // `resolveEffectiveSkills` reports a skill's persisted
+                    // `isEnabled`; this call site was the second half of
+                    // state#12, ignoring that flag entirely and running a
+                    // user-disabled skill just the same as an enabled one.
+                    guard matched.isEnabled else {
+                        throw NSError(domain: "TurboSparkTool", code: 18, userInfo: [
+                            NSLocalizedDescriptionKey: "Skill '\(matched.name)' is disabled and cannot be invoked."
+                        ])
+                    }
                     let expanded = SkillManager.shared.substituteArguments(
                         content: matched.content,
                         arguments: call.arguments,
@@ -289,10 +374,19 @@ public enum AppToolRegistry {
                         let toolName = parts[2...].joined(separator: "__")
                         output = try await executeMcpCall(serverName: serverName, toolName: toolName, arguments: call.arguments, project: project, rootURL: rootURL)
                     } else {
-                        output = "Executed \(call.name) successfully."
+                        throw NSError(domain: "TurboSparkTool", code: 19, userInfo: [
+                            NSLocalizedDescriptionKey: "Malformed MCP tool name: '\(call.name)'."
+                        ])
                     }
                 } else {
-                    output = "Executed \(call.name) successfully."
+                    // Fabricating "Executed successfully" for a tool with no
+                    // real handler let the model believe hallucinated results
+                    // were verified (T5). An honest error is the only
+                    // response `execute` can give for a name it does not
+                    // implement.
+                    throw NSError(domain: "TurboSparkTool", code: 19, userInfo: [
+                        NSLocalizedDescriptionKey: "Tool '\(call.name)' is not implemented by this client and was not executed."
+                    ])
                 }
             }
 

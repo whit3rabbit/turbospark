@@ -51,6 +51,18 @@ extension AppModel {
     func executeGenerationTurn(step: Int) {
         guard let session, let chatIndex = selectedChatIndex else { return }
 
+        // Captured once, up front: every append this turn produces (prose,
+        // tool call, denial, pending-approval) targets THIS chat, never
+        // whatever `selectedChatID` resolves to at the moment of appending.
+        // `generating` goes false as soon as a tool call is proposed
+        // (state#9), so the UI treats a chat switch as legal in between;
+        // without this capture, an approval or a prose reply lands in
+        // whatever chat the user has since switched to.
+        let turnChatID = chats[chatIndex].id
+
+        generationEpoch += 1
+        let myEpoch = generationEpoch
+
         outputPromptText = chats[chatIndex].messages.last(where: { $0.role == .user })?.content ?? ""
         outputText = ""
         outputReasoningText = ""
@@ -105,7 +117,11 @@ extension AppModel {
             options.stop = customStops
         }
 
-        if step == 1 {
+        // `run()` enters the loop at step 0, and a plain prose turn never
+        // reaches any other step -- `step == 1` fired only for turns that
+        // followed a tool call, so this hook never ran on the common case
+        // (a single-turn reply) at all (state#8).
+        if step == 0 {
             Task {
                 _ = await self.dispatchLifecycleHook(event: .userPromptSubmit)
             }
@@ -162,20 +178,20 @@ extension AppModel {
                             switch verdict {
                             case .accept:
                                 if let firstCall = parsedCalls.first {
-                                    self.handleExtractedToolCall(firstCall, fullContent: generatedContent, reasoning: generatedReasoning, result: result, currentStep: step)
+                                    self.handleExtractedToolCall(firstCall, fullContent: generatedContent, reasoning: generatedReasoning, result: result, currentStep: step, chatID: turnChatID)
                                 } else {
-                                    self.finishProseTurn(content: generatedContent, reasoning: generatedReasoning, result: result)
+                                    self.finishProseTurn(content: generatedContent, reasoning: generatedReasoning, result: result, chatID: turnChatID)
                                 }
                             case .rescued(let rescuedCalls, let sanitizedText):
                                 if let firstCall = rescuedCalls.first {
-                                    self.handleExtractedToolCall(firstCall, fullContent: sanitizedText, reasoning: generatedReasoning, result: result, currentStep: step)
+                                    self.handleExtractedToolCall(firstCall, fullContent: sanitizedText, reasoning: generatedReasoning, result: result, currentStep: step, chatID: turnChatID)
                                 } else {
-                                    self.finishProseTurn(content: sanitizedText, reasoning: generatedReasoning, result: result)
+                                    self.finishProseTurn(content: sanitizedText, reasoning: generatedReasoning, result: result, chatID: turnChatID)
                                 }
                             case .retry(let nudge):
                                 let maxSteps = self.selectedProject?.maxAutonomousSteps ?? 5
                                 if step + 1 < maxSteps && !nudge.isEmpty {
-                                    if let idx = self.selectedChatIndex {
+                                    if let idx = self.chats.firstIndex(where: { $0.id == turnChatID }) {
                                         self.chats[idx].messages.append(AppChatMessage(
                                             role: .assistant,
                                             content: generatedContent,
@@ -195,17 +211,17 @@ extension AppModel {
                                     return
                                 } else {
                                     if let firstCall = parsedCalls.first {
-                                        self.handleExtractedToolCall(firstCall, fullContent: generatedContent, reasoning: generatedReasoning, result: result, currentStep: step)
+                                        self.handleExtractedToolCall(firstCall, fullContent: generatedContent, reasoning: generatedReasoning, result: result, currentStep: step, chatID: turnChatID)
                                     } else {
-                                        self.finishProseTurn(content: generatedContent, reasoning: generatedReasoning, result: result)
+                                        self.finishProseTurn(content: generatedContent, reasoning: generatedReasoning, result: result, chatID: turnChatID)
                                     }
                                 }
                             }
                         } else {
                             if let firstCall = parsedCalls.first {
-                                self.handleExtractedToolCall(firstCall, fullContent: generatedContent, reasoning: generatedReasoning, result: result, currentStep: step)
+                                self.handleExtractedToolCall(firstCall, fullContent: generatedContent, reasoning: generatedReasoning, result: result, currentStep: step, chatID: turnChatID)
                             } else {
-                                self.finishProseTurn(content: generatedContent, reasoning: generatedReasoning, result: result)
+                                self.finishProseTurn(content: generatedContent, reasoning: generatedReasoning, result: result, chatID: turnChatID)
                             }
                         }
 
@@ -219,6 +235,7 @@ extension AppModel {
                 self.error = error.localizedDescription
                 self.finishCancelled()
             }
+            guard self.generationEpoch == myEpoch else { return }
             self.generating = false
             self.phase = .idle
             self.isCancellationPending = false
@@ -227,8 +244,8 @@ extension AppModel {
         }
     }
 
-    private func finishProseTurn(content: String, reasoning: String, result: GenerationResult) {
-        if let idx = self.selectedChatIndex {
+    private func finishProseTurn(content: String, reasoning: String, result: GenerationResult, chatID: UUID) {
+        if let idx = self.chats.firstIndex(where: { $0.id == chatID }) {
             self.chats[idx].messages.append(AppChatMessage(
                 role: .assistant,
                 content: content,
@@ -243,8 +260,12 @@ extension AppModel {
         }
     }
 
-    private func handleExtractedToolCall(_ call: AppToolCall, fullContent: String, reasoning: String, result: GenerationResult, currentStep: Int) {
-        let sessionID = selectedChatID.uuidString
+    // `internal` rather than `private`: exercised directly by
+    // AgentLoopRoutingTests / HookDecisionRoutingTests via `@testable
+    // import`, since it is otherwise reachable only from inside a live
+    // generation `Task` that needs a real model session.
+    func handleExtractedToolCall(_ call: AppToolCall, fullContent: String, reasoning: String, result: GenerationResult, currentStep: Int, chatID: UUID) {
+        let sessionID = chatID.uuidString
         let cmd = call.arguments["command"] ?? call.arguments["cmd"]
 
         Task { @MainActor in
@@ -260,7 +281,7 @@ extension AppModel {
                 )
                 var deniedCall = call
                 deniedCall.status = .denied
-                if let idx = self.selectedChatIndex {
+                if let idx = self.chats.firstIndex(where: { $0.id == chatID }) {
                     self.chats[idx].messages.append(AppChatMessage(
                         role: .assistant,
                         content: fullContent,
@@ -279,6 +300,40 @@ extension AppModel {
                 return
             }
 
+            // A hook that asked for confirmation was previously ignored
+            // outright -- only `.deny` was checked above, so `.ask` fell
+            // through to the ordinary permission evaluation below, which
+            // could return `.allow` and run the call with no prompt at all
+            // (T10). Route it into the same pending-approval UI the normal
+            // engine's own `.ask` uses, folding the hook's reason into the
+            // call's risk assessment rather than replacing it.
+            if hookDecision.behavior == .ask {
+                var pending = call
+                pending.status = .pendingApproval
+                let baseAssessment = call.riskAssessment ?? ToolRiskClassifier.assessRisk(name: call.name, arguments: call.arguments)
+                let hookReason = hookDecision.reason ?? "A PreToolUse hook requested confirmation before this call runs."
+                pending.riskAssessment = ToolRiskAssessment(
+                    level: baseAssessment.level,
+                    category: baseAssessment.category,
+                    reasons: baseAssessment.reasons + [hookReason]
+                )
+                self.pendingToolCall = pending
+                self.pendingToolCallChatID = chatID
+                self.pendingToolCallStep = currentStep
+                if let idx = self.chats.firstIndex(where: { $0.id == chatID }) {
+                    self.chats[idx].messages.append(AppChatMessage(
+                        role: .assistant,
+                        content: fullContent,
+                        reasoning: reasoning,
+                        stopReason: "tool_use",
+                        toolCalls: [pending]
+                    ))
+                    self.chats[idx].updatedAt = Date()
+                    self.persistChats()
+                }
+                return
+            }
+
             let sessionApproved = await SessionApprovalStore.shared.isApproved(sessionID: sessionID, toolName: call.name, command: cmd)
             let decision = AppToolPermissionEngine.evaluate(call: call, project: self.selectedProject, sessionApproved: sessionApproved)
 
@@ -288,7 +343,9 @@ extension AppModel {
                 pending.status = .pendingApproval
                 pending.riskAssessment = assessment
                 self.pendingToolCall = pending
-                if let idx = self.selectedChatIndex {
+                self.pendingToolCallChatID = chatID
+                self.pendingToolCallStep = currentStep
+                if let idx = self.chats.firstIndex(where: { $0.id == chatID }) {
                     self.chats[idx].messages.append(AppChatMessage(
                         role: .assistant,
                         content: fullContent,
@@ -326,7 +383,7 @@ extension AppModel {
                     )
                 }
 
-                if let idx = self.selectedChatIndex {
+                if let idx = self.chats.firstIndex(where: { $0.id == chatID }) {
                     self.chats[idx].messages.append(AppChatMessage(
                         role: .assistant,
                         content: fullContent,
@@ -353,7 +410,7 @@ extension AppModel {
                 )
                 var deniedCall = call
                 deniedCall.status = .denied
-                if let idx = self.selectedChatIndex {
+                if let idx = self.chats.firstIndex(where: { $0.id == chatID }) {
                     self.chats[idx].messages.append(AppChatMessage(
                         role: .assistant,
                         content: fullContent,
@@ -374,8 +431,17 @@ extension AppModel {
     }
 
     /// Continues multi-turn autonomous loop after tool execution.
-    public func continueAgentLoop(step: Int = 1) {
-        guard !generating, session != nil else { return }
+    ///
+    /// Does NOT gate on `!generating`: by the time anything calls this
+    /// (the allow/deny paths above, or an approved/denied pending call),
+    /// the CURRENT turn's token stream has already finished -- `generating`
+    /// reads `true` here only because the ORIGINAL turn's own `runTask`
+    /// tail (which resets it) has not yet run, a race against this very
+    /// call (state#10). The `generationEpoch` guard on that tail is what
+    /// keeps it from clobbering the state a reentrant call here is about
+    /// to set up.
+    public func continueAgentLoop(step: Int) {
+        guard session != nil else { return }
         executeGenerationTurn(step: step)
     }
 

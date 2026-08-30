@@ -5,8 +5,45 @@ public final class SkillManager: @unchecked Sendable {
     public static let shared = SkillManager()
 
     private let fileManager = FileManager.default
+    private static let disabledSkillsDefaultsKey = "TurboSpark.disabledSkillNames"
 
     public init() {}
+
+    // MARK: - Enabled/Disabled Persistence
+    //
+    // `SkillParser` hardcodes `isEnabled: true` when reading a skill file --
+    // there is no such field in the SKILL.md frontmatter format, on purpose:
+    // it is a per-USER preference, not something that belongs in a file
+    // meant to be shared or checked into a repo. `AppModel.toggleSkillEnabled`
+    // used to flip `isEnabled` only on the in-memory `AppSkill` copy, which
+    // `reloadSkills()` (switching projects, importing a skill, anything that
+    // re-scans disk) silently discarded back to enabled (state#12). Persisted
+    // here, keyed by lowercased name, and applied uniformly in
+    // `scanDirectory` so every discovery path -- `AppModel.reloadSkills()`
+    // AND `resolveEffectiveSkills` (what the `skill` tool itself resolves
+    // through) -- sees the same state.
+
+    private var disabledSkillNames: Set<String> {
+        get { Set(UserDefaults.standard.stringArray(forKey: Self.disabledSkillsDefaultsKey) ?? []) }
+        set { UserDefaults.standard.set(Array(newValue), forKey: Self.disabledSkillsDefaultsKey) }
+    }
+
+    /// Whether the given skill name is persisted as user-disabled.
+    public func isSkillDisabled(name: String) -> Bool {
+        disabledSkillNames.contains(name.lowercased())
+    }
+
+    /// Persists the enabled/disabled state for a skill name.
+    public func setSkillEnabled(_ enabled: Bool, name: String) {
+        var names = disabledSkillNames
+        let key = name.lowercased()
+        if enabled {
+            names.remove(key)
+        } else {
+            names.insert(key)
+        }
+        disabledSkillNames = names
+    }
 
     // MARK: - Standard Directories
 
@@ -122,6 +159,15 @@ public final class SkillManager: @unchecked Sendable {
         return skills.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
+    /// Overrides a freshly-parsed skill's `isEnabled` (always `true` out of
+    /// `SkillParser`) with the persisted per-user preference, if any.
+    private func applyingPersistedEnabledState(to skill: AppSkill) -> AppSkill {
+        guard isSkillDisabled(name: skill.name) else { return skill }
+        var updated = skill
+        updated.isEnabled = false
+        return updated
+    }
+
     /// Scans a specific skills directory for both folder-based (SKILL.md) and single-file (.md) skills.
     public func scanDirectory(_ dirURL: URL, scope: SkillScope, defaultAgent: SkillSourceAgent) -> [AppSkill] {
         guard let entries = try? fileManager.contentsOfDirectory(atPath: dirURL.path) else { return [] }
@@ -149,12 +195,12 @@ public final class SkillManager: @unchecked Sendable {
                 }
 
                 if let targetURL, let skill = try? SkillParser.parseFile(at: targetURL, scope: scope, agentOrigin: defaultAgent) {
-                    results.append(skill)
+                    results.append(applyingPersistedEnabledState(to: skill))
                 }
             } else if itemURL.pathExtension.lowercased() == "md" {
                 // Single-file skill format: <name>.md
                 if let skill = try? SkillParser.parseFile(at: itemURL, scope: scope, agentOrigin: defaultAgent) {
-                    results.append(skill)
+                    results.append(applyingPersistedEnabledState(to: skill))
                 }
             }
         }

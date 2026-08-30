@@ -82,13 +82,19 @@ extension AppModel {
         }
     }
 
-    /// Toggles the enabled state of a skill in memory.
+    /// Toggles and PERSISTS the enabled state of a skill.
+    ///
+    /// A skill file has no `enabled` field (deliberately -- it is a
+    /// per-user preference, not something that belongs in a file meant to
+    /// be shared or checked into a repo), so the state lives in
+    /// `SkillManager`'s own store instead. Toggling only the in-memory
+    /// `AppSkill` copy here used to be silently discarded by the next
+    /// `reloadSkills()` -- switching projects, importing a skill, anything
+    /// that re-scans disk -- which always came back `isEnabled: true`
+    /// (state#12).
     public func toggleSkillEnabled(_ skill: AppSkill) {
-        if let idx = userSkills.firstIndex(where: { $0.id == skill.id }) {
-            userSkills[idx].isEnabled.toggle()
-        } else if let idx = projectSkills.firstIndex(where: { $0.id == skill.id }) {
-            projectSkills[idx].isEnabled.toggle()
-        }
+        SkillManager.shared.setSkillEnabled(!skill.isEnabled, name: skill.name)
+        reloadSkills()
     }
 
     /// Imports a skill from an external directory into user or project scope.

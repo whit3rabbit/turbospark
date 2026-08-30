@@ -68,7 +68,24 @@ public enum ToolRiskClassifier {
         // Process termination of PID 1 or mass kill
         #"\b(kill(\s+-[a-zA-Z0-9]+)*\s+1\b|pkill\s+-[a-zA-Z0-9]+|killall\s+-[a-zA-Z0-9]+)"#,
         // Fork bomb pattern
-        #":\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:"#
+        #":\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:"#,
+        // `find` invoked with an action flag rather than pure filtering:
+        // `-delete`/`-exec`/`-execdir`/`-ok`/`-okdir`/`-fprintf` mutate or
+        // execute rather than list, but `find` sits in
+        // `TerminalCommandClassifier.searchCommands` and its first-word
+        // check has no idea an action flag is present (T9).
+        #"\bfind\b[^\n;&|]*\s-(delete|exec|execdir|ok|okdir|fprintf)\b"#,
+        // `awk`/`sed`/`perl` are read-oriented text tools, but all three can
+        // shell out: awk/perl via `system(`/`exec(`, sed via its `e` command
+        // or GNU `-i` in-place edit (T9).
+        #"\b(awk|perl)\b[^\n;&|]*\b(system|exec)\s*\("#,
+        #"\bsed\b[^\n;&|]*\s-[a-zA-Z]*i"#,
+        // `sort`/`tee` writing output to an arbitrary path: `sort` sits in
+        // `TerminalCommandClassifier.readCommands`, but `-o`/`--output`
+        // overwrites whatever file is named, including outside the sandbox
+        // the tool call otherwise believes it is confined to (T9).
+        #"\bsort\b[^\n;&|]*\s(-o\b|--output\b)"#,
+        #"\|\s*tee\b"#
     ]
 
     private static let dangerousRegexes: [NSRegularExpression] = {

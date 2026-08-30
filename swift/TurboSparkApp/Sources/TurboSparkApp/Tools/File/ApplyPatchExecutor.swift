@@ -14,9 +14,23 @@ public enum ApplyPatchExecutor {
         var isDeleteFile = false
         
         func flushCurrentFile() throws {
+            // Reset ALL per-file state on every exit path, including the
+            // early return below. Without this, `isDeleteFile` from a file
+            // whose `currentFile` was never set (e.g. because the delete
+            // header wasn't recognized) survived into the NEXT file's
+            // flush, which then got `removeItem`'d instead of edited.
+            defer {
+                currentFile = nil
+                currentHunkLines.removeAll()
+                isNewFile = false
+                isDeleteFile = false
+            }
             guard let fileRelPath = currentFile else { return }
-            let secureURL = try resolveSecurePath(relPath: fileRelPath, rootURL: rootURL)
-            
+            let secureURL = try AppToolRegistry.resolveSecurePath(relPath: fileRelPath, rootURL: rootURL)
+            // A delete is exactly as destructive as a write; both go through
+            // the same sandbox check `writeFile`/`editFile` already use.
+            try AppToolSandbox.validateWritePath(secureURL, rootURL: rootURL)
+
             if isDeleteFile {
                 if FileManager.default.fileExists(atPath: secureURL.path) {
                     try FileManager.default.removeItem(at: secureURL)
@@ -69,13 +83,8 @@ public enum ApplyPatchExecutor {
                     patch: currentHunkLines.joined(separator: "\n")
                 ))
             }
-            
-            currentFile = nil
-            currentHunkLines.removeAll()
-            isNewFile = false
-            isDeleteFile = false
         }
-        
+
         for line in lines {
             if line.hasPrefix("diff --git ") {
                 try flushCurrentFile()
@@ -83,6 +92,13 @@ public enum ApplyPatchExecutor {
                 let pathPart = line.replacingOccurrences(of: "--- ", with: "").trimmingCharacters(in: .whitespaces)
                 if pathPart == "/dev/null" {
                     isNewFile = true
+                } else {
+                    // Also the ONLY place a delete hunk's path is stated
+                    // (its `+++` line is `/dev/null`), so a delete with no
+                    // `currentFile` ever set is what let a stale
+                    // `isDeleteFile` flag attach itself to the next file.
+                    let cleaned = pathPart.hasPrefix("a/") ? String(pathPart.dropFirst(2)) : pathPart
+                    currentFile = cleaned
                 }
             } else if line.hasPrefix("+++ ") {
                 let pathPart = line.replacingOccurrences(of: "+++ ", with: "").trimmingCharacters(in: .whitespaces)
@@ -103,56 +119,102 @@ public enum ApplyPatchExecutor {
         return ApplyPatchOutput(applied: appliedOps, files: diffSummaries, summary: summary)
     }
     
+    /// Matches a unified diff hunk header: `@@ -oldStart[,oldCount] +newStart[,newCount] @@`,
+    /// tolerating trailing context text some diff tools append after the closing `@@`.
+    private static let hunkHeaderRegex = try! NSRegularExpression(
+        pattern: #"^@@ -(\d+)(?:,(\d+))? \+\d+(?:,\d+)? @@"#
+    )
+
+    /// Applies one or more hunks against `original`, honoring each hunk's
+    /// stated starting line rather than assuming every hunk starts at the
+    /// top of the file, and verifying that every context/removal line
+    /// actually matches the file before touching it.
+    ///
+    /// The previous version walked the WHOLE original file sequentially from
+    /// index 0 regardless of what a hunk's `@@` header said, so any patch
+    /// whose hunk did not start at line 1 (i.e. almost all of them) applied
+    /// its changes at the wrong offset and silently scrambled the file while
+    /// still reporting success.
     private static func applyHunkLines(original: String, hunkLines: [String]) throws -> String {
         let origLines = original.components(separatedBy: .newlines)
         var resultLines: [String] = []
         var origIdx = 0
-        var insideHunk = false
-        
-        for hLine in hunkLines {
-            if hLine.hasPrefix("@@") {
-                insideHunk = true
-                continue
+        var i = 0
+
+        while i < hunkLines.count {
+            let headerLine = hunkLines[i]
+            guard headerLine.hasPrefix("@@") else { i += 1; continue }
+
+            let nsHeader = headerLine as NSString
+            guard let match = hunkHeaderRegex.firstMatch(
+                in: headerLine, options: [], range: NSRange(location: 0, length: nsHeader.length)
+            ), let oldStart = Int(nsHeader.substring(with: match.range(at: 1))) else {
+                throw NSError(domain: "TurboSparkTool", code: 20, userInfo: [
+                    NSLocalizedDescriptionKey: "Malformed patch hunk header: '\(headerLine)'"
+                ])
             }
-            if !insideHunk { continue }
-            
-            if hLine.hasPrefix(" ") {
-                let expected = String(hLine.dropFirst())
-                if origIdx < origLines.count {
+            let oldCountRange = match.range(at: 2)
+            let oldCount = oldCountRange.location != NSNotFound ? (Int(nsHeader.substring(with: oldCountRange)) ?? 1) : 1
+
+            // A hunk with a zero old-side count is a pure insertion; per the
+            // unified diff convention its `oldStart` already IS the count of
+            // preceding lines (not a 1-indexed line number to convert), e.g.
+            // `@@ -0,0 +1,3 @@` inserts before line 1. A nonzero count means
+            // `oldStart` is the ordinary 1-indexed line of the hunk's first
+            // context/removed line.
+            let targetIdx = oldCount == 0 ? oldStart : max(0, oldStart - 1)
+
+            guard targetIdx >= origIdx else {
+                throw NSError(domain: "TurboSparkTool", code: 21, userInfo: [
+                    NSLocalizedDescriptionKey: "Patch hunk '\(headerLine)' is out of order or overlaps the previous hunk."
+                ])
+            }
+            guard targetIdx <= origLines.count else {
+                throw NSError(domain: "TurboSparkTool", code: 22, userInfo: [
+                    NSLocalizedDescriptionKey: "Patch hunk '\(headerLine)' starts past the end of the file (\(origLines.count) lines)."
+                ])
+            }
+
+            // Copy everything between the previous hunk (or file start) and
+            // this hunk's start verbatim.
+            while origIdx < targetIdx {
+                resultLines.append(origLines[origIdx])
+                origIdx += 1
+            }
+
+            i += 1
+            while i < hunkLines.count, !hunkLines[i].hasPrefix("@@") {
+                let hLine = hunkLines[i]
+                if hLine.hasPrefix(" ") {
+                    let expected = String(hLine.dropFirst())
+                    guard origIdx < origLines.count, origLines[origIdx] == expected else {
+                        throw NSError(domain: "TurboSparkTool", code: 23, userInfo: [
+                            NSLocalizedDescriptionKey: "Patch context mismatch at line \(origIdx + 1): the file has changed since the patch was generated."
+                        ])
+                    }
                     resultLines.append(origLines[origIdx])
                     origIdx += 1
-                } else {
-                    resultLines.append(expected)
-                }
-            } else if hLine.hasPrefix("-") {
-                if origIdx < origLines.count {
+                } else if hLine.hasPrefix("-") {
+                    let expected = String(hLine.dropFirst())
+                    guard origIdx < origLines.count, origLines[origIdx] == expected else {
+                        throw NSError(domain: "TurboSparkTool", code: 23, userInfo: [
+                            NSLocalizedDescriptionKey: "Patch removal mismatch at line \(origIdx + 1): the file has changed since the patch was generated."
+                        ])
+                    }
                     origIdx += 1
+                } else if hLine.hasPrefix("+") {
+                    resultLines.append(String(hLine.dropFirst()))
                 }
-            } else if hLine.hasPrefix("+") {
-                resultLines.append(String(hLine.dropFirst()))
+                // Any other line (e.g. "\ No newline at end of file") is skipped.
+                i += 1
             }
         }
-        
+
         while origIdx < origLines.count {
             resultLines.append(origLines[origIdx])
             origIdx += 1
         }
-        
+
         return resultLines.joined(separator: "\n")
-    }
-    
-    private static func resolveSecurePath(relPath: String, rootURL: URL) throws -> URL {
-        let cleaned = relPath.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !cleaned.hasPrefix("/"), !cleaned.hasPrefix("~") else {
-            throw NSError(domain: "TurboSparkTool", code: 1, userInfo: [NSLocalizedDescriptionKey: "Refusing absolute or tilde path: '\(relPath)'"])
-        }
-        let candidate = rootURL.appendingPathComponent(cleaned).standardizedFileURL
-        let realCandidate = candidate.resolvingSymlinksInPath().path
-        let realRoot = rootURL.standardizedFileURL.resolvingSymlinksInPath().path
-        let rootPrefix = realRoot.hasSuffix("/") ? realRoot : realRoot + "/"
-        guard realCandidate == realRoot || realCandidate.hasPrefix(rootPrefix) else {
-            throw NSError(domain: "TurboSparkTool", code: 1, userInfo: [NSLocalizedDescriptionKey: "Path '\(relPath)' resolves outside workspace root."])
-        }
-        return candidate
     }
 }

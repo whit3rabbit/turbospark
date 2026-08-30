@@ -27,6 +27,18 @@ public enum AppToolCatalog {
     public static let automationTools: [OpenAITool] = WorkflowCronDefinitions.all + MonitoringNotificationDefinitions.all
 
     /// Full suite of all supported OpenAI tool definitions.
+    ///
+    /// Filtered to `AppToolRegistry.isImplemented`: several definition
+    /// lists above (web, task/agent, project/artifact, MCP-resource,
+    /// planning) declare tools -- WebFetch, WebSearch, Agent, REPL,
+    /// NotebookEdit, Cron*, Task{Get,Output,Stop,Update}, the MCP resource
+    /// tools, and more -- with no executor behind them in
+    /// `AppToolRegistry.execute`. Advertising them to the model let it call
+    /// one, receive a fabricated "Executed successfully", and trust a
+    /// result that never happened (T5); dropping them here means the model
+    /// never sees them as an option in the first place. Add a name to
+    /// `AppToolRegistry.supportedToolNames` (and a real `case` in
+    /// `execute`) before removing it from this filter.
     public static let allTools: [OpenAITool] = {
         var tools: [OpenAITool] = []
         tools.append(contentsOf: fileTools)
@@ -37,42 +49,46 @@ public enum AppToolCatalog {
         tools.append(contentsOf: mcpTools)
         tools.append(contentsOf: planningInteractiveTools)
         tools.append(contentsOf: automationTools)
-        return tools
+        return tools.filter { AppToolRegistry.isImplemented($0.function.name) }
     }()
 
     /// Filters available tools appropriate for a specific agent profile.
     public static func tools(for agentType: AppAgentType) -> [OpenAITool] {
+        let list: [OpenAITool]
         switch agentType {
         case .coder:
-            var list: [OpenAITool] = []
-            list.append(contentsOf: fileTools)
-            list.append(contentsOf: terminalTools)
-            list.append(contentsOf: taskAgentTools)
-            list.append(contentsOf: projectArtifactTools)
-            list.append(contentsOf: webTools)
-            list.append(contentsOf: planningInteractiveTools)
-            return list
+            var l: [OpenAITool] = []
+            l.append(contentsOf: fileTools)
+            l.append(contentsOf: terminalTools)
+            l.append(contentsOf: taskAgentTools)
+            l.append(contentsOf: projectArtifactTools)
+            l.append(contentsOf: webTools)
+            l.append(contentsOf: planningInteractiveTools)
+            list = l
 
         case .researcher:
-            var list: [OpenAITool] = []
-            list.append(contentsOf: fileTools)
-            list.append(contentsOf: webTools)
-            list.append(contentsOf: projectArtifactTools)
-            list.append(contentsOf: mcpTools)
-            list.append(contentsOf: planningInteractiveTools)
-            return list
+            var l: [OpenAITool] = []
+            l.append(contentsOf: fileTools)
+            l.append(contentsOf: webTools)
+            l.append(contentsOf: projectArtifactTools)
+            l.append(contentsOf: mcpTools)
+            l.append(contentsOf: planningInteractiveTools)
+            list = l
 
         case .autonomous:
             return allTools
 
         case .general, .custom:
-            var list: [OpenAITool] = []
-            list.append(contentsOf: fileTools)
-            list.append(contentsOf: terminalTools)
-            list.append(contentsOf: webTools)
-            list.append(contentsOf: taskAgentTools)
-            return list
+            var l: [OpenAITool] = []
+            l.append(contentsOf: fileTools)
+            l.append(contentsOf: terminalTools)
+            l.append(contentsOf: webTools)
+            l.append(contentsOf: taskAgentTools)
+            list = l
         }
+        // See `allTools` above: a definition with no real executor is never
+        // advertised to the model, whatever agent profile is active.
+        return list.filter { AppToolRegistry.isImplemented($0.function.name) }
     }
 
     /// Resolves the permission category for any tool name.
@@ -95,7 +111,14 @@ public enum AppToolCatalog {
         case "read_file", "view_file", "cat", "fileread", "read", "list_directory", "list_dir", "ls", "glob", "search_code", "grep", "search", "grep_search":
             return .fileRead
         default:
-            return .fileRead
+            // An UNRECOGNIZED tool name (e.g. "CronCreate", "ScheduleWakeup" --
+            // neither matches the exact-string `"cron"`/`"schedule"` cases
+            // above) must not fail open into `.fileRead`, which is allowed
+            // outright in Strict Read-Only mode. `.automation` is denied
+            // under Strict Read-Only and asked-for under `.standard`/`.auto`,
+            // so an unknown tool gets the more conservative default rather
+            // than being treated as if it were provably a read.
+            return .automation
         }
     }
 
