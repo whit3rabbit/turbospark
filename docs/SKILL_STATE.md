@@ -1,5 +1,14 @@
 # SKILL.state: Bounded-State Agent Runtime (Measured Positive)
 
+**In English: an agent doing 50 tool steps finishes instead of dying at step
+30-35 with an HTTP 400. It costs 3-5x fewer tokens, and every step costs the
+same as the first. The compounding row is the one that matters: the
+append-only loop costs 1.5x more at ten steps, 5.1x more at forty. Short tasks
+lose nothing by staying on the old loop. It saves no memory and moves no
+benchmark row.**
+
+Shipped as an opt-in per-project toggle, default off (see "What shipped").
+
 The question this page answers: can SKILL.state (arXiv 2608.26263, "SKILL.state:
 Scalable Long-Horizon Agent Skills", Badhe/Tiwari/Chung, Google + Purdue,
 Aug 2026) be applied to this engine and the local models it runs, and what
