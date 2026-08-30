@@ -321,8 +321,33 @@ Its shipped `c(M)` row is `M=2 0.50, M=4 0.55, M=8 0.46, M=16 0.44`
 looks like and says the width is already spent. So the two terms above are
 not independent after all: widening M pays only once the kernel term is
 fixed, and the order of work is the kernel first, then whatever `c(R, B)`
-then says the width is worth. Read as a caveat on an existing table rather
-than as a measurement; it is unconfirmed on AC as of 2026-08-29.
+then says the width is worth.
+
+**MEASURED ON AC THE SAME DAY, AND THE KERNEL TERM MOVED WITHOUT THE WIDTH
+MOVING AT ALL.** `FC_GEMM_R` gives one SIMD group R contiguous output rows,
+which divides the per-block activation loads by R and hoists the activation
+sum out of the row loop. At the M=16 the prefill driver already uses, R=4
+takes `c` from **0.487 to 0.375, a 1.30x** (mean of four runs, gate/up
+17408x5120; the other five shapes agree to 0.03). That kernel is 85.4% of
+prefill GPU device time, which predicted 1.24x end to end and **measured
+1.26x** on the real install: the frozen `long-synthesis` prompt (2,940
+tokens) prefills in 69.75 s against 87.80 s, three interleaved pairs, 33.5 to
+**42.1 prefill tok/s**. No wider micro-batch, no driver change, no footprint
+change, and byte-identical output (verified through the batched arm, where
+the kernel is actually reached).
+
+It is WIRED as a per-width table (`gpu::best_row_block`) rather than as a
+global constant, because "R=4 is best" is false at the narrow end: R=4 is a
+straight loss at M=1 (1.00 to 1.22) and a 29% one at M=2, which are exactly
+the widths the MTP and DFlash2 verify run at through the same entry point.
+The full 1..16 sweep, the three traps in reading it, and the two measurement
+notes (the frozen `count(4)` row is 11% optimistic across sessions; pipeline
+reflection cannot price a row block) are in `docs/BATCHED_PREFILL.md`, "Step
+6's kernel term".
+
+Which also settles the width question in the direction the flat row
+predicted: the remaining prefill gap is the kernel, and this is the first
+bite out of it that cost no memory.
 
 The kernel term is legible as effective WEIGHT BANDWIDTH, the same quantity
 on both paths: `dequant_int4_gemv_simd` sustains **294 GB/s** at M=1 on the

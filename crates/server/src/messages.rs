@@ -137,7 +137,8 @@ pub async fn messages(
 
     let tools = tool_names(&openai);
     // See the OpenAI handler: `plan` has already rejected a bad value.
-    let effort = reasoning_effort(&openai).unwrap_or_default();
+    let effort = reasoning_effort(&openai, model.default_reasoning())
+        .unwrap_or_else(|_| model.default_reasoning());
     let streaming = request.stream.unwrap_or(false);
     let mut response = if streaming {
         stream_response(

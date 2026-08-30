@@ -38,6 +38,7 @@ fn generated(text: &str, calls: Vec<ParsedToolCall>) -> Generated {
         reasoning: String::new(),
         calls,
         decode: RawDecodeResult {
+            reused_prefix_tokens: 0,
             reason: StopReason::EndOfTurn,
             prompt_tokens: 1,
             new_tokens: 1,

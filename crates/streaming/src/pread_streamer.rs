@@ -19,6 +19,7 @@ use std::os::unix::fs::FileExt;
 use std::os::unix::io::AsRawFd;
 
 use crate::aligned_slot::AlignedSlot;
+use crate::disk_io::{self, ExpertIoStats};
 use crate::error::StreamerError;
 use crate::expert_cache::{
     coalesced_adjacent_advice_ranges, ExpertCache, ExpertCachePlan, ExpertCachePolicy,
@@ -39,6 +40,13 @@ pub struct PreadExpertStreamer {
     slots: Vec<AlignedSlot>,
     cache: ExpertCache,
     next_slot: usize,
+    io_stats: ExpertIoStats,
+    /// Whether this streamer's descriptor is actually bypassing the unified
+    /// buffer cache. Distinct from `disk_io::nocache_requested()`: the
+    /// `fcntl` can be refused, and a run that silently measured the warm
+    /// path under `MFERENCE_EXPERT_NOCACHE=1` would be the worst outcome
+    /// available (a published disk-bound row that is not one).
+    nocache: bool,
 }
 
 impl PreadExpertStreamer {
@@ -71,6 +79,11 @@ impl PreadExpertStreamer {
             .map(|_| AlignedSlot::allocate(layout.expert_stride as usize))
             .collect::<Result<Vec<_>, _>>()?;
         let cache = ExpertCache::new(slot_count, cache_policy, layout.experts_per_layer);
+        // The experimental disk-bound condition, established once per open
+        // rather than per read: `F_NOCACHE` is a property of the
+        // DESCRIPTOR, so it cannot be toggled between batches, and reading
+        // the env once matches the `MFERENCE_READ_QOS` seam next door.
+        let nocache = disk_io::nocache_requested() && disk_io::set_nocache(file.as_raw_fd());
         Ok(Self {
             layout,
             file,
@@ -78,7 +91,25 @@ impl PreadExpertStreamer {
             slots,
             cache,
             next_slot: 0,
+            io_stats: ExpertIoStats::default(),
+            nocache,
         })
+    }
+
+    /// Cumulative miss-read byte accounting for this streamer. Zero
+    /// `samples` means the physical-I/O probe was off or unavailable, so
+    /// `bytes_physical` says nothing at all rather than saying "no disk
+    /// reads" (`disk_io::ExpertIoStats`).
+    pub fn io_stats(&self) -> ExpertIoStats {
+        self.io_stats
+    }
+
+    /// Whether this streamer's reads are actually bypassing the buffer
+    /// cache. False when the seam was never asked for AND when the `fcntl`
+    /// was refused; the caller reporting a disk-bound arm must print this
+    /// rather than the env variable.
+    pub fn nocache_active(&self) -> bool {
+        self.nocache
     }
 
     /// The stream layout this streamer was built with (expert stride,
@@ -238,7 +269,27 @@ impl PreadExpertStreamer {
             }
         }
 
-        read_pool::run_batch(&self.file, &chunks)?;
+        // Requested bytes are free to count and always counted: misses
+        // only, since a hit reads nothing. Physical bytes cost a syscall
+        // pair per batch, so they are sampled only under the seam.
+        self.io_stats.bytes_requested += (plan.misses.len() * stride) as u64;
+        self.io_stats.batches += 1;
+        let physical_before = disk_io::measure_physical_io()
+            .then(disk_io::process_disk_bytes_read)
+            .flatten();
+
+        let result = read_pool::run_batch(&self.file, &chunks);
+
+        // Sampled even when the batch FAILED: the bytes a partial read
+        // pulled off the device were still pulled, and a probe that only
+        // fires on the happy path is the shape AGENTS.md Gotcha 38 calls
+        // close to no guard at all.
+        if let (Some(before), Some(after)) = (physical_before, disk_io::process_disk_bytes_read()) {
+            self.io_stats.bytes_physical += after.saturating_sub(before);
+            self.io_stats.samples += 1;
+        }
+        result?;
+
         self.cache.commit_plan(plan);
         Ok(plan.assigned_slots.clone())
     }
@@ -321,6 +372,19 @@ impl PreadExpertStreamer {
     }
 
     fn advise_ranges(&self, ranges: &[(u64, u64)], requested: usize) -> ExpertIoAdviceResult {
+        // Readahead and cache-bypass are contradictory instructions about
+        // the same descriptor: `F_RDADVISE` asks the kernel to populate the
+        // buffer cache and `F_NOCACHE` asks it not to keep anything there.
+        // A run issuing both measures neither condition cleanly, so the
+        // disk-bound arm reports every range as SKIPPED rather than
+        // quietly warming the cache it was supposed to be bypassing.
+        if self.nocache {
+            let bytes = ranges
+                .iter()
+                .map(|&(_, count)| rdadvice::clipped_byte_count(count))
+                .sum();
+            return ExpertIoAdviceResult::skipped(requested, bytes);
+        }
         let coalesced = coalesced_adjacent_advice_ranges(ranges);
         let mut failed = 0;
         let mut bytes = 0u64;

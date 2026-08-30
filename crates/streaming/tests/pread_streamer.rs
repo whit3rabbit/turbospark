@@ -92,7 +92,17 @@ fn advise_experts_reports_one_coalesced_call_for_adjacent_experts() {
     let streamer = PreadExpertStreamer::open(layout(&path), 4, ExpertCachePolicy::Lfu).unwrap();
     let result = streamer.advise_experts(&[0, 1]);
     assert_eq!(result.requested, 2);
-    assert_eq!(result.calls, 1);
+    // Coalescing is a WARM-path contract. Under `MFERENCE_EXPERT_NOCACHE=1`
+    // the streamer issues no advice at all (readahead and cache-bypass are
+    // contradictory instructions about one descriptor), and reports every
+    // range as skipped instead -- which is the assertion worth making in
+    // that arm, since a silent zero would look like a coalescing bug.
+    if streamer.nocache_active() {
+        assert_eq!(result.calls, 0);
+        assert_eq!(result.skipped, 2);
+    } else {
+        assert_eq!(result.calls, 1);
+    }
 }
 
 /// A stride large enough that one expert's blob splits into several
@@ -372,4 +382,93 @@ fn the_stream_window_spans_the_highest_offset_not_the_expert_count() {
     // The count-based window would have been 3 * STRIDE, i.e. too small for
     // expert 0 by two whole strides.
     assert!(layout.expert_offset(0, 0) + STRIDE <= layout.stream_size);
+}
+
+/// `bytes_requested` prices the READS, so a hit must add nothing. Getting
+/// this backwards would make the amplification ratio a function of the
+/// cache hit rate rather than of the kernel's readahead, which is the one
+/// thing the instrument exists to separate.
+///
+/// This case SURVIVES a mutation of the counter to `plan.experts.len()`,
+/// and an INVARIANT is why: `execute_expert_cache_plan` returns early on an
+/// all-hit plan, before any accounting runs, so the second request here
+/// never reaches the mutated line. The observable contract is still worth
+/// pinning, but the discriminating case is the MIXED one below.
+#[test]
+fn requested_bytes_count_misses_and_not_hits() {
+    let path = write_layer_file();
+    let mut streamer = PreadExpertStreamer::open(layout(&path), 4, ExpertCachePolicy::Lfu).unwrap();
+    assert_eq!(streamer.io_stats(), Default::default());
+
+    streamer.load_experts_cached(&[0, 1]).unwrap();
+    let after_misses = streamer.io_stats();
+    assert_eq!(after_misses.bytes_requested, 2 * EXPERT_STRIDE);
+    assert_eq!(after_misses.batches, 1);
+
+    // Both resident now, so this plan reads nothing.
+    streamer.load_experts_cached(&[0, 1]).unwrap();
+    assert_eq!(streamer.io_stats(), after_misses);
+}
+
+/// A plan that misses on ONE of two requested experts pays for one stride,
+/// not two and not none. The mixed case is the common one in production and
+/// is the only one that can tell a per-plan counter from a per-expert one.
+#[test]
+fn a_partially_resident_plan_pays_for_the_miss_alone() {
+    let path = write_layer_file();
+    let mut streamer = PreadExpertStreamer::open(layout(&path), 4, ExpertCachePolicy::Lfu).unwrap();
+    streamer.load_experts_cached(&[0]).unwrap();
+    let after_first = streamer.io_stats();
+
+    streamer.load_experts_cached(&[0, 3]).unwrap();
+    let after_second = streamer.io_stats();
+    assert_eq!(
+        after_second.bytes_requested - after_first.bytes_requested,
+        EXPERT_STRIDE
+    );
+    assert_eq!(after_second.batches - after_first.batches, 1);
+}
+
+/// The physical-I/O probe is off unless `MFERENCE_EXPERT_DISK_IO=1`, which
+/// is read once per process and therefore cannot be toggled from inside a
+/// test. Both arms are asserted rather than only the default one, so
+/// re-running this suite under the seam actually EXERCISES the sampling
+/// path instead of silently skipping past it:
+///
+/// ```sh
+/// MFERENCE_EXPERT_DISK_IO=1 cargo test -p turbospark-streaming
+/// ```
+#[test]
+fn physical_io_is_sampled_only_under_the_seam() {
+    let path = write_layer_file();
+    let mut streamer = PreadExpertStreamer::open(layout(&path), 4, ExpertCachePolicy::Lfu).unwrap();
+    streamer.load_experts_cached(&[0, 1, 2]).unwrap();
+
+    let stats = streamer.io_stats();
+    assert!(stats.bytes_requested > 0);
+    if std::env::var("MFERENCE_EXPERT_DISK_IO").as_deref() == Ok("1") {
+        // A sample was TAKEN. Its value is not asserted: these blobs are
+        // 64 bytes and were just written, so the honest expectation is
+        // zero physical bytes, and a machine reading anything at all here
+        // would be reporting another thread's I/O (the counter is
+        // process-wide by construction).
+        assert_eq!(stats.samples, stats.batches);
+        assert!(stats.amplification().is_some());
+    } else {
+        assert_eq!(stats.samples, 0);
+        assert_eq!(stats.bytes_physical, 0);
+        assert_eq!(stats.amplification(), None);
+    }
+}
+
+/// `nocache_active` reports the DESCRIPTOR's state, not the environment's
+/// request. Under the default environment it must be false, so a run that
+/// never asked for the disk-bound arm cannot report having been in it.
+#[test]
+fn nocache_is_inactive_unless_requested() {
+    let path = write_layer_file();
+    let streamer = PreadExpertStreamer::open(layout(&path), 2, ExpertCachePolicy::Lfu).unwrap();
+    if std::env::var("MFERENCE_EXPERT_NOCACHE").as_deref() != Ok("1") {
+        assert!(!streamer.nocache_active());
+    }
 }

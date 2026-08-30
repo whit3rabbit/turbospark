@@ -2,11 +2,12 @@
 //! policy, and readahead advice. Ported from `Infrastructure/Streaming`.
 //!
 //! Allowed a narrow amount of `unsafe` and platform `cfg` (the macOS
-//! `F_RDADVISE` `fcntl` in `rdadvice`), per the workspace's cross-cutting
-//! rule that streaming is one of the few crates where that trade-off is
-//! made.
+//! `F_RDADVISE` `fcntl` in `rdadvice`, and `disk_io`'s `proc_pid_rusage`
+//! and `F_NOCACHE`), per the workspace's cross-cutting rule that streaming
+//! is one of the few crates where that trade-off is made.
 
 mod aligned_slot;
+mod disk_io;
 mod error;
 mod expert_cache;
 mod pread_streamer;
@@ -15,6 +16,7 @@ mod read_pool;
 mod stream_layout;
 
 pub use aligned_slot::AlignedSlot;
+pub use disk_io::ExpertIoStats;
 pub use error::StreamerError;
 pub use expert_cache::{
     coalesced_adjacent_advice_ranges, ExpertCache, ExpertCachePlan, ExpertCachePolicy,

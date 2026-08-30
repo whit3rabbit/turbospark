@@ -174,6 +174,29 @@ pub(crate) fn print_phases(session: &Session) {
             p.expert_requests - p.expert_hits
         );
     }
+    // Bytes, not wall clock: a THIRD axis alongside the `gpu busy` rows,
+    // deliberately outside the named-bucket sum above. This is what says
+    // whether `expert io` above was a page-cache memcpy or real disk I/O,
+    // which is a question the ms/token figure cannot answer on its own.
+    if p.expert_io_bytes_requested > 0 {
+        let mib_per_token = |bytes: u64| bytes as f64 / (1024.0 * 1024.0) / p.calls.max(1) as f64;
+        // An unmeasured run must not read as a proven-warm one: without a
+        // sample there is no physical number to print at all.
+        let physical = if p.expert_io_samples > 0 {
+            format!(
+                "{:.1} MiB/token, {:.2}x amplification",
+                mib_per_token(p.expert_io_bytes_physical),
+                p.expert_io_bytes_physical as f64 / p.expert_io_bytes_requested as f64
+            )
+        } else {
+            "n/a (set MFERENCE_EXPERT_DISK_IO=1)".to_string()
+        };
+        eprintln!(
+            "  expert bytes: requested {:.1} MiB/token, physical {}",
+            mib_per_token(p.expert_io_bytes_requested),
+            physical
+        );
+    }
     // One level below the buffer buckets above: which dispatch inside a
     // buffer owns its time. Off unless MFERENCE_DISPATCH_PROFILE=1, which
     // perturbs the run it measures -- read the module doc before quoting

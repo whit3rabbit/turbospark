@@ -131,9 +131,14 @@ fn a_misspelled_reasoning_effort_is_refused_rather_than_ignored() {
     let model = state();
     let base = serde_json::json!({"model": "m", "messages": [{"role": "user", "content": "hi"}]});
     assert_eq!(
-        reasoning_effort(&request(base.clone())).unwrap(),
+        reasoning_effort(&request(base.clone()), ReasoningEffort::Off).unwrap(),
         ReasoningEffort::Off,
         "an absent key is the default, not an error"
+    );
+    assert_eq!(
+        reasoning_effort(&request(base.clone()), ReasoningEffort::Low).unwrap(),
+        ReasoningEffort::Low,
+        "an absent key inherits the server configured default"
     );
 
     for bad in [serde_json::json!("xhi"), serde_json::json!(true)] {

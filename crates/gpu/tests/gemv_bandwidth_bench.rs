@@ -38,7 +38,8 @@
 use metal::{FunctionConstantValues, MTLDataType};
 use turbospark_gpu::{
     autorelease_pool, encode_dequant_int4_gemm_mma_resident, encode_dequant_int4_gemm_resident,
-    encode_dequant_int4_gemv_resident, Int4ResidentMatrix, MetalContext, MAX_BATCH_ROWS,
+    encode_dequant_int4_gemm_resident_blocked, encode_dequant_int4_gemv_resident,
+    Int4ResidentMatrix, MetalContext, MAX_BATCH_ROWS,
 };
 
 const INT4_SOURCE: &str = include_str!("../src/shaders/dequant_int4.metal");
@@ -574,6 +575,35 @@ impl MatrixPool {
         })
     }
 
+    /// The same, at `row_block` output rows per SIMD group. Interchangeable
+    /// with `time_gemm` in every sense that matters: the two produce
+    /// bit-identical output (`dequant_int4_gemm_parity.rs`), so the ratio
+    /// between them is pure throughput and needs no numerics caveat.
+    fn time_gemm_blocked(
+        &self,
+        context: &mut MetalContext,
+        groups: usize,
+        batch: usize,
+        row_block: usize,
+    ) -> f64 {
+        autorelease_pool(|| {
+            let pass = context.begin_pass();
+            for group in 0..groups {
+                encode_dequant_int4_gemm_resident_blocked(
+                    context,
+                    &pass,
+                    &self.matrix(group),
+                    (&self.x_batch, 0),
+                    (&self.y_batch, 0),
+                    batch,
+                    row_block,
+                )
+                .unwrap();
+            }
+            pass.commit_and_wait_with_gpu_time()
+        })
+    }
+
     /// The same, through the MATRIX-hardware kernel. Not interchangeable
     /// with `time_gemm`: that one is bit-exact against the GEMV and this
     /// one reassociates the K reduction, so the two answer different
@@ -881,5 +911,79 @@ fn c_of_m_matrix_against_exact_at_qwen38_shapes() {
         "\nThe third column is what matters. Below 1.00 the matrix kernel is\n\
          faster and the question is whether the margin buys giving up a\n\
          provably-lossless verify; at or above 1.00 there is nothing to buy.\n"
+    );
+}
+
+/// **`c(R, B)`: THE ONE COMMAND THE AC SESSION RUNS.**
+///
+/// `docs/BENCHMARKS.md` decomposes this port's 4.94x prefill gap against
+/// mlx-lm into 2.3x of micro-batch WIDTH and 2.2x of KERNEL quality, and
+/// `FC_GEMM_R` is the first attempt at the second term: `row_block` rows per
+/// SIMD group divides the per-block activation loads by R and hoists
+/// `e0 + ... + e7` out of the row loop, which is 7 of ~17 inner ALU ops.
+/// Output is bit-identical at every width, so this is a pure throughput
+/// question and the only instrument that can answer it is a clock.
+///
+/// **READ THE `R=1` COLUMN FIRST.** It must reproduce
+/// `dequant_int4_batch.metal`'s `count(4)` row (0.50 / 0.55 / 0.46 / 0.44 at
+/// M=2/4/8/16 on gate/up). If it does not, the 2-D `acc` declaration stopped
+/// collapsing and the shipped shape regressed -- which no parity case can
+/// see, and which no static instrument on this device can see either
+/// (`dequant_int4_gemm_parity.rs`'s
+/// `pipeline_reflection_cannot_see_this_kernels_register_pressure`).
+///
+/// **AND READ THE `R=1` ROW ACROSS B BEFORE COSTING A WIDER `MAX_BATCH_ROWS`.**
+/// That row is FLAT in the frozen table, which is what a compute-bound
+/// kernel looks like: if it is still flat, widening M amortizes weight bytes
+/// that were never the cost, and a cap raise buys footprint and no
+/// throughput. The published "width target M=64" is derived from mlx-lm's
+/// 1.32 ms compute floor, which needs FP16 matrix hardware this scalar-FP32
+/// kernel does not use, so it is not this kernel's crossover.
+///
+/// **RUN CONDITIONS, and they are not optional here.** AC power, a quiet
+/// machine, `--release`. Discard the first pass on an idle GPU (Gotcha 20:
+/// cold vs warm is 53% on this machine) -- the sweep does one untimed run
+/// per cell for that. Effects under a few percent cannot be measured on
+/// battery at all (Gotcha 28), and the widths being compared here may well
+/// differ by less than that.
+#[test]
+#[ignore = "benchmark: needs a real Metal device on AC, reports rather than asserts"]
+fn c_of_r_and_m_for_the_batched_kernel() {
+    let mut context = MetalContext::new().expect("Metal device");
+    const ROW_BLOCKS: [usize; 3] = [1, 2, 4];
+
+    println!("\nshape                     R   c(M) per token, against M sequential passes");
+    for (label, rows, cols) in QWEN38_SHAPES {
+        if rows > 32768 {
+            println!("{label}    SKIPPED: pool would need 11.4 GB of Metal buffers");
+            continue;
+        }
+        let pool = MatrixPool::new(&context, rows, cols);
+        let dispatches = ((TARGET_BYTES / weight_bytes(rows, cols)).max(64) as usize).max(256);
+
+        pool.time(&mut context, dispatches, 1);
+        let sequential = pool.time(&mut context, dispatches, 1) / dispatches as f64;
+
+        for row_block in ROW_BLOCKS {
+            print!("{label}  {row_block:>2}  ");
+            for batch in BATCH_SIZES {
+                let groups = (dispatches / batch).max(1);
+                // Untimed warmup per cell, then the reading. Interleaving
+                // the R arms WITHIN one batch would be better still; this
+                // orders them R-major because each cell compiles its own
+                // pipeline and a cold compile inside a timed region is a
+                // bigger error than the drift between adjacent cells.
+                pool.time_gemm_blocked(&mut context, groups, batch, row_block);
+                let batched = pool.time_gemm_blocked(&mut context, groups, batch, row_block)
+                    / (groups * batch) as f64;
+                print!("  M={batch} {:>5.2}x", batched / sequential);
+            }
+            println!();
+        }
+    }
+    println!(
+        "\nR=1 must reproduce the frozen count(4) row before any other column is\n\
+         read. A row that is FLAT in M is compute-bound, and says the width term\n\
+         is already spent on this kernel whatever mlx-lm's crossover is.\n"
     );
 }

@@ -11,6 +11,8 @@ mod families;
 #[cfg(target_os = "macos")]
 mod ffn_hist;
 #[cfg(target_os = "macos")]
+mod kv_prefix;
+#[cfg(target_os = "macos")]
 mod moe_prefill_pipeline;
 mod pacing;
 mod power;
@@ -31,7 +33,6 @@ mod real_forward_init;
 mod real_forward_layout;
 #[cfg(target_os = "macos")]
 mod real_forward_open;
-#[cfg(target_os = "macos")]
 mod real_forward_rollback;
 #[cfg(target_os = "macos")]
 mod real_forward_traits;

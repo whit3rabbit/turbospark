@@ -59,6 +59,7 @@ async fn real_backend_serves_streaming_and_non_streaming_requests() {
         // not be able to acquire one by default.
         runtime::SteeringPolicy::off(),
         runtime::LoadPolicy::default(),
+        tokenizer::ReasoningEffort::Off,
     )
     .expect("real install should open");
     let model: Arc<dyn turbospark_server::ChatModel> = Arc::new(model);
@@ -170,6 +171,7 @@ async fn real_backend_reads_an_image_sent_over_both_endpoints() {
         turbospark_server::GuardrailConfig::OFF,
         runtime::SteeringPolicy::off(),
         runtime::LoadPolicy::default(),
+        tokenizer::ReasoningEffort::Off,
     )
     .expect("the vision install should open");
     let model: Arc<dyn turbospark_server::ChatModel> = Arc::new(model);

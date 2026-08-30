@@ -123,6 +123,11 @@ pub trait ChatModel: Send + Sync {
     fn guardrails(&self) -> crate::guardrails::GuardrailConfig {
         crate::guardrails::GuardrailConfig::default()
     }
+
+    /// Default reasoning effort level when a request omits `reasoning_effort`.
+    fn default_reasoning(&self) -> tokenizer::ReasoningEffort {
+        tokenizer::ReasoningEffort::Off
+    }
 }
 
 /// Always replays the same scripted logit sequence, regardless of the
@@ -133,6 +138,7 @@ pub struct ScriptedChatModel {
     vocab_size: usize,
     max_context: u32,
     steps: Vec<Vec<foundation::LogitValue>>,
+    default_reasoning: tokenizer::ReasoningEffort,
 }
 
 impl ScriptedChatModel {
@@ -147,7 +153,13 @@ impl ScriptedChatModel {
             vocab_size,
             max_context,
             steps,
+            default_reasoning: tokenizer::ReasoningEffort::Off,
         }
+    }
+
+    pub fn with_default_reasoning(mut self, reasoning: tokenizer::ReasoningEffort) -> Self {
+        self.default_reasoning = reasoning;
+        self
     }
 }
 
@@ -166,6 +178,10 @@ impl ChatModel for ScriptedChatModel {
 
     fn model_id(&self) -> &str {
         "scripted"
+    }
+
+    fn default_reasoning(&self) -> tokenizer::ReasoningEffort {
+        self.default_reasoning
     }
 
     fn with_producer(

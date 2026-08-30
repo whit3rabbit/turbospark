@@ -1143,3 +1143,168 @@ asserted: `MFERENCE_ROUTED_BATCH` asks for the routed half as one dispatch
 pair, and a dense family has no routed half for it to refer to. The rule is
 "refuse where the request is meaningful and unserved", not "refuse
 everywhere unwired".
+
+## Step 6's kernel term: row blocking, measured and wired
+
+Step 6 made prefill's resident GEMVs into M-row GEMMs and won 1.86-2.13x on
+the real dense `qwen38-27b` install. `docs/BENCHMARKS.md` then decomposed
+what was LEFT -- a 4.94x gap against mlx-lm on the same machine and
+checkpoint -- into two nearly equal factors, 2.3x of micro-batch WIDTH and
+2.2x of KERNEL quality, and named M=64 as the width target.
+
+**The width half of that reading was wrong, and the artifact said so before
+anything was built.** `dequant_int4_gemm_simd`'s shipped `c(M)` row is
+`M=2 0.50, M=4 0.55, M=8 0.46, M=16 0.44` -- FLAT. A per-row cost that does
+not fall with M is what a COMPUTE-bound kernel looks like, so widening M
+amortizes weight bytes that were never the cost. M=36 is mlx-lm's crossover,
+computed from its 1.32 ms compute floor, and that floor is ~41 TFLOP/s on
+this model: FP16 matrix hardware. This kernel is scalar FP32 `fma` and its
+own floor is several times higher, crossed at a much smaller M. So the two
+terms are not independent, the order of work is the kernel first, and the
+same reading applies to the `simdgroup_matrix` form -- which was ALREADY
+measured at M=32 (c=0.52) and M=64 (0.58), both worse than the SIMD kernel
+at M=16, by `gemv_bandwidth_bench.rs`'s
+`c_of_m_matrix_against_exact_at_qwen38_shapes`.
+
+### What was built
+
+`FC_GEMM_R` (function constant 104): one SIMD group owns `row_block`
+CONTIGUOUS output rows instead of one. Two terms move, both per (block, lane):
+
+- the two `half4` activation loads drop from `R*B` to `B`, because R rows now
+  share one read of `x` instead of sitting in R separate SIMD groups;
+- `sum = e0 + ... + e7` drops from `R*B` to `B`. It depends on `bi` alone,
+  and the one-row kernel recomputed it once per ROW -- 7 of ~17 inner ALU ops.
+
+The dot product's 8 `fma` per `(r, bi)` is the actual arithmetic and does not
+shrink.
+
+**It moves no bits at any width.** Each output `(row, bi)` still walks the
+same blocks in the same order into one FP32 accumulator, and the 32-lane
+partition of K feeding `simd_sum` is untouched; only which SIMD GROUP owns
+the row changes. That is asserted rather than argued --
+`row_blocking_does_not_move_a_single_bit` runs the whole `(R, B)` grid on the
+ragged fixture built to SEE a reassociation, with `dequant_int4_gemm_mma`
+required to differ on the same data as the positive control.
+
+Note this is the second attempt at row blocking and the first one lost. The
+shader header's note 2 held `float e[8][kMaxBatchRows]` -- a whole M-wide
+activation TILE, ~208 floats of register array declared at the cap whatever R
+was -- and measured worse even at R=1. The failure was the declared live set,
+not the idea; `acc[R][B] + qv[R][8]` carries nothing per-row that scales with
+B.
+
+### Measured, AC, 2026-08-29
+
+Three runs over three real shapes (gate/up 17408x5120, down 5120x17408,
+packed_q 12288x5120), every batch width 1 to 16. Mean `c` per width; spread
+within a cell 0.00 to 0.03.
+
+|  M   |  R=1  |  R=2  |  R=4  | chosen | gain over R=1 |
+|---|---|---|---|---|---|
+|  1   | 1.004 | 1.043 | 1.222 |   1    | --      |
+|  2   | 0.539 | 0.504 | 0.650 |   2    | 1.07x   |
+|  3   | 0.508 | 0.356 | 0.459 |   2    | 1.43x   |
+|  4   | 0.623 | 0.313 | 0.374 |   2    | 1.99x   |
+|  5   | 0.534 | 0.520 | 0.488 |   4    | 1.10x   |
+|  6   | 0.508 | 0.489 | 0.436 |   4    | 1.17x   |
+|  7   | 0.506 | 0.469 | 0.428 |   4    | 1.18x   |
+|  8   | 0.504 | 0.456 | 0.414 |   4    | 1.22x   |
+|  9   | 0.491 | 0.467 | 0.441 |   4    | 1.11x   |
+| 10   | 0.488 | 0.459 | 0.421 |   4    | 1.16x   |
+| 11   | 0.490 | 0.448 | 0.424 |   4    | 1.15x   |
+| 12   | 0.494 | 0.439 | 0.392 |   4    | 1.26x   |
+| 13   | 0.484 | 0.449 | 0.449 |   4    | 1.08x   |
+| 14   | 0.484 | 0.446 | 0.418 |   4    | 1.16x   |
+| 15   | 0.481 | 0.436 | 0.419 |   4    | 1.15x   |
+| 16   | 0.493 | 0.427 | 0.370 |   4    | 1.33x   |
+
+**At the M=16 the prefill driver already uses, R=4 is 1.30-1.33x.** That
+kernel is 85.4% of prefill GPU device time, which predicts **1.24x of
+end-to-end prefill**.
+
+### End to end on the real install
+
+Predicted 1.24x, measured **1.26x**. Real `~/models/qwen38-27b.gturbo`, the
+frozen `long-synthesis` prompt (2,940 tokens), `MFERENCE_PREFILL_CHUNK=128
+MFERENCE_BATCHED_GEMV=1` on BOTH arms, AC, three interleaved pairs after a
+discarded warmup per arm:
+
+| pair | R=1 | per-width table | |
+| ---: | ---: | ---: | ---: |
+| 1 | 88.93 s | 70.81 s | 1.256x |
+| 2 | 88.87 s | 70.31 s | 1.264x |
+| 3 | 85.61 s | 68.14 s | 1.256x |
+| mean | 87.80 s | **69.75 s** | **1.26x** |
+| prefill tok/s | 33.5 | **42.1** | |
+
+The prediction and the measurement agreeing to 2% is the check that says the
+decomposition was right, not merely that the change helped: 1.30x on a term
+independently measured at 85.4% of GPU device time has to land at 1.24x, and
+it did.
+
+**Output is BYTE-IDENTICAL across the change**, which is the gate this owes
+instead of a quality gate. Real install, three ways: greedy and sampled at
+the CLI defaults on a short prompt (`c908ca69...`, `4857cbb5...`), and the
+2,940-token prompt THROUGH the batched arm, where the kernel is actually
+reached (`fe37059f...`). The short-prompt arms matter less than they look --
+plain decode is M=1 GEMV and never enters this kernel at all, so a smoke
+test without `MFERENCE_BATCHED_GEMV=1` cannot see a change to it. That is
+this repo's recurring "the fixture cannot reach the mutation" trap, and it is
+why the third arm exists.
+
+### Three things in that table that a summary would lose
+
+**"R=4 is best" IS FALSE AT THE NARROW END, and a global constant would have
+shipped two regressions.** At M=1 a wider block is a straight loss (1.00 to
+1.22) and at M=2 it is a 29% one (0.504 to 0.650). Those are exactly the
+widths a speculative verify runs at -- `docs/DFLASH2.md`'s published block
+sizes are 2 to 8 -- and `encode_dequant_int4_gemm_resident` serves the MTP
+and DFlash2 verify through `encode_gemm_any` as well as prefill. So the
+choice is a per-width TABLE (`gpu::best_row_block`: 1 at M=1, 2 at M=2..4, 4
+above), pinned by `the_chosen_width_is_never_one_the_measurement_calls_a_loss`.
+
+**Selecting a kernel shape by batch width is safe here and is forbidden one
+file over.** `dequant_int4_mma.metal` says "never make this a fast path
+selected by a heuristic -- that would make the generated bytes a function of
+a shape". That is correct OF THAT KERNEL, which reduces K in hardware and is
+not bit-exact against the GEMV. `FC_GEMM_R` is bit-exact at every width, so
+the table cannot move a byte -- which is precisely why the axis was built as
+a function constant on one kernel rather than as a second kernel.
+
+**M=4/R=2 (0.313) is the best cell in the table and is NOT a licence to
+narrow the micro-batch.** It is a further 1.19x on the GEMM against
+M=16/R=4's 0.370, and `c` is genuinely comparable across M here (verified by
+re-running with `groups` FIXED at 64, so every M moves identical weight
+bytes: the table reproduces cell for cell). But prefill's per-micro-batch
+costs -- command-buffer commits, host encode -- scale with the NUMBER of
+micro-batches, and 16 to 4 quadruples them. This bench prices the GEMM and
+cannot see that, so the M=4 route needs an end-to-end run before it is
+believed. Why M=4 is special at all: `unroll_count(4)` makes `b_dim == 4`
+exactly one full unroll, and the R=1 column's own bump there (0.623 against
+~0.51 either side) is that interaction going badly, which R=2 removes.
+
+### Two measurement notes worth not re-deriving
+
+**The frozen `count(4)` table in `dequant_int4_batch.metal` is not comparable
+across sessions.** It reads 0.50 / 0.55 / 0.46 / 0.44 and the IDENTICAL code
+read 0.51 / 0.61 / 0.50 / 0.49 on the day above -- up to 11% apart, same
+machine, same shapes. The R=1 column looked like a regression from
+`FC_GEMM_R` because of it. What settled that is an interleaved A/B against
+`aa094b4^`, three pairs, baseline and R=1 agreeing to 0.01 on every cell --
+which also confirms that `acc[kMaxRowBlock][kMaxBatchRows]` collapses at R=1.
+AGENTS.md Gotcha 22, in a place nobody expected it: compare arms measured
+beside each other, never against a frozen row from another day.
+
+**Pipeline reflection cannot price a row block, and the check that says so is
+the point.** `maxTotalThreadsPerThreadgroup` looked like a static answer to
+"does this width spill" -- a Metal device, no model, no clock. It reads 1024
+on every `(R, B)` shape, and raising `kMaxRowBlock` to 64 to declare an
+`acc[64][16]` that fits no register file on any GPU STILL reads 1024. An
+instrument reporting its ceiling on an impossible configuration is at its
+rail (AGENTS.md Gotcha 59's shape), Metal exposes no register count publicly,
+and `pipeline_reflection_cannot_see_this_kernels_register_pressure` records
+that as a measured negative so it is not re-attempted. What survives is one
+narrow guard worth keeping: `static_threadgroup_memory_length` must stay 0,
+which is the cheap check against note 1's threadgroup staging being re-added
+unmeasured.

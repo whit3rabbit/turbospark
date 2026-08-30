@@ -1,10 +1,13 @@
-use foundation::LogitValue;
+use foundation::{LogitValue, TokenId};
 
 use super::real_forward::{RealForwardRunner, RollbackPoint};
 use crate::producer::{ChunkedPrefillRunner, LogitProducer, SpeculativeProducer};
 
 impl LogitProducer for RealForwardRunner {
     fn reset(&mut self) {
+        // Cleared HERE, beside the cache it describes, so the two can never
+        // disagree about what the state holds.
+        self.kv_prefix.clear();
         self.kv.reset();
         if let Some(qwen) = self.real_qwen.as_mut() {
             qwen.reset();
@@ -52,8 +55,64 @@ impl LogitProducer for RealForwardRunner {
         position: usize,
         logits: &mut [LogitValue],
     ) -> Result<(), String> {
-        gpu::autorelease_pool(|| self.produce_inner(token, position, logits))
-            .map_err(|e| e.to_string())
+        let result = gpu::autorelease_pool(|| self.produce_inner(token, position, logits))
+            .map_err(|e| e.to_string());
+        // Recorded only on SUCCESS, and after the call: a failed forward may
+        // have left the KV half-written, and a record naming a position the
+        // pass did not complete is the one lie this whole mechanism exists to
+        // avoid. `produce_prefill` routes through here, so this is the single
+        // recording point for both.
+        if result.is_ok() {
+            self.kv_prefix.record(&[token], position);
+        } else {
+            self.kv_prefix.taint();
+        }
+        result
+    }
+
+    /// See `crate::kv_prefix`. Answers 0 unless the host opted in with
+    /// [`RealForwardRunner::set_prefix_reuse`], so every existing caller
+    /// keeps resetting and prefilling from position 0.
+    ///
+    /// COMMITS by moving the KV cursor back to the agreed prefix, and the
+    /// two refusals around that are the whole safety argument:
+    ///
+    /// - a family with RECURRENT state (the gated-DeltaNet layers on the
+    ///   qwen flows) folds history into a fixed-size accumulator through a
+    ///   non-invertible update, so there is no going back without the ~60 MiB
+    ///   snapshot `RollbackPoint` carries -- and nobody took one last turn.
+    ///   `rewind_by` would leave that state describing tokens the KV no
+    ///   longer holds, which is fluent wrong output rather than an error.
+    /// - a SLIDING-WINDOW ring can only go back as far as its slack
+    ///   (`max_safe_rewind`); past that the rows were overwritten by this
+    ///   generation and attending over them is the same silent failure.
+    ///
+    /// Both refuse by returning 0, which costs a full prefill and nothing
+    /// else.
+    fn try_reuse_prefix(&mut self, prompt_ids: &[TokenId]) -> usize {
+        if !self.prefix_reuse_enabled {
+            return 0;
+        }
+        let keep = self.kv_prefix.common_prefix(prompt_ids);
+        if keep == 0 {
+            return 0;
+        }
+        let cursor = self.kv.position();
+        if keep > cursor {
+            return 0;
+        }
+        let back = cursor - keep;
+        if back > 0 {
+            if self.real_qwen.is_some() {
+                return 0;
+            }
+            if back > self.kv.max_safe_rewind() {
+                return 0;
+            }
+            self.kv.rewind_by(back);
+            self.kv_prefix.rewind_to(keep);
+        }
+        keep
     }
 
     fn produce_prefill(
@@ -165,8 +224,18 @@ impl SpeculativeProducer for RealForwardRunner {
         base: usize,
         logits: &mut [LogitValue],
     ) -> Result<(), String> {
-        self.produce_batched(feed, base, logits)
-            .map_err(|e| e.to_string())
+        let result = self
+            .produce_batched(feed, base, logits)
+            .map_err(|e| e.to_string());
+        // TAINTED rather than recorded. A verify feeds a whole block and the
+        // caller then rolls back whatever the target rejected, so the record
+        // would have to track an accept count this method is not told. The
+        // only caller is `run_raw_completion_speculative`, which does not
+        // offer prefix reuse anyway, so refusing costs nothing real and is
+        // the safe direction: a wrong record answers the next turn from
+        // another conversation's state, silently.
+        self.kv_prefix.taint();
+        result
     }
 }
 
@@ -181,6 +250,28 @@ impl ChunkedPrefillRunner for RealForwardRunner {
     /// refusal uses, so a caller deciding whether to route here at all and
     /// this method's own hard refusal can never disagree.
     fn prefill_chunk(
+        &mut self,
+        tokens: &[i32],
+        start_position: usize,
+        logits: &mut [LogitValue],
+    ) -> Result<(), String> {
+        let result = self.prefill_chunk_inner(tokens, start_position, logits);
+        // The server routes long prompts through here rather than through
+        // `produce`, so without this the case prefix reuse exists for would
+        // record nothing and never fire.
+        if result.is_ok() {
+            self.kv_prefix.record(tokens, start_position);
+        } else {
+            self.kv_prefix.taint();
+        }
+        result
+    }
+}
+
+impl RealForwardRunner {
+    /// The family dispatch, split out so [`ChunkedPrefillRunner::prefill_chunk`]
+    /// above is just "run it, then record what was fed".
+    fn prefill_chunk_inner(
         &mut self,
         tokens: &[i32],
         start_position: usize,

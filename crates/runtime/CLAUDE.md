@@ -23,6 +23,7 @@ crates/runtime/
 |   +-- speculative.rs          # Multi-token speculative decoding generation loop orchestrator
 |   +-- speculation_policy.rs   # Speculative decoding policy and drafter configuration
 |   +-- speculation_policy_tests.rs # Unit tests for speculative decoding policy
+|   +-- kv_prefix.rs            # What the KV holds, by token id, for cross-turn reuse
 |   +-- router_hist.rs          # MoE expert activation routing histogram collector
 |   +-- ffn_hist.rs             # Dense FFN neuron activation mass & sparsity collector
 |   +-- resid_capture.rs        # Per-layer residual stream at the last prompt token (steering)

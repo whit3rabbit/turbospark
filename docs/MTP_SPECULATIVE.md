@@ -195,8 +195,40 @@ already recorded in that kernel's header arriving through a different door.
 A fixed count of 4 keeps ~32 activation floats live regardless of B, and is
 what makes the row monotonic in M for the first time.
 
+**AND A THIRD STEP LANDED 2026-08-29, WHICH MATTERS MOST AT EXACTLY THE
+BLOCK SIZES THIS PAGE CARES ABOUT.** `FC_GEMM_R` gives one SIMD group
+`row_block` contiguous output rows, dividing the per-block activation loads
+by R and hoisting the activation sum out of the row loop. The width is now
+chosen per batch (`gpu::best_row_block`), and at a verify's block sizes the
+gain is larger than at prefill's M=16:
+
+| M | before (R=1) | chosen R | after | gain |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 | 1.004 | 1 | 1.004 | -- |
+| 2 | 0.539 | 2 | 0.504 | 1.07x |
+| 3 | 0.508 | 2 | 0.356 | **1.43x** |
+| 4 | 0.623 | 2 | 0.313 | **1.99x** |
+| 8 | 0.504 | 4 | 0.414 | 1.22x |
+| 16 | 0.493 | 4 | 0.370 | 1.33x |
+
+**Read the M=1 and M=2 rows before touching the table.** A wider block is a
+straight LOSS at M=1 (1.00 to 1.22) and a 29% one at M=2, so the obvious
+global `row_block = 4` -- the reading off prefill's M=16 row -- would have
+regressed the narrow end this page lives at. That is why the choice is a
+per-width table rather than a constant.
+
+The M=4 cell is the largest single gain anywhere in this kernel's history,
+and it is a repair rather than a new win: the R=1 column has a BUMP at M=4
+(0.623 against ~0.51 either side), which is `unroll_count(4)` meeting
+`b_dim == 4` -- exactly one full unroll -- and going badly. R=2 removes it.
+Note also that the frozen tables above were taken in another session and read
+up to 11% optimistic against the machine that measured this one; compare arms
+measured beside each other, never across sessions (AGENTS.md Gotcha 22). The
+full 1..16 sweep is in `docs/BATCHED_PREFILL.md`, "Step 6's kernel term".
+
 **Parity is still exact**, not tolerant: `dequant_int4_gemm_parity.rs` compares
-the batched kernel bit-for-bit against B separate GEMV calls, which is the
+the batched kernel bit-for-bit against B separate GEMV calls at EVERY row
+block as well as every batch width, which is the
 property that makes speculative output provably identical to non-speculative
 output. Specialization does not reorder any sum.
 

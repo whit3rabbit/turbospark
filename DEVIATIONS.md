@@ -1010,10 +1010,21 @@ live network).
   fixture, which exists for exactly this reason (decoupling loop control
   flow from the kernel stack).
 - **Chunked prefill: wired** (see Phase 6 above, `run_raw_completion_chunked`
-  plus `ChunkedPrefillRunner`). **No cached-prompt continuation** — that
-  still needs a `ContinuableLogitProducer`-capable producer and is
-  unstarted. Off-mode (`run_raw_completion`) still feeds every prefill
-  token to the producer one at a time, unchanged.
+  plus `ChunkedPrefillRunner`). Off-mode (`run_raw_completion`) still feeds
+  every prefill token to the producer one at a time, unchanged.
+- **Cached-prompt continuation: WIRED as of 2026-08-29**, and NOT by porting
+  `ContinuableLogitProducer`. This entry used to say it was unstarted and
+  needed that protocol; what landed instead is `runtime::kv_prefix` plus one
+  defaulted seam on the existing `LogitProducer`
+  (`try_reuse_prefix`), so no producer had to change shape and every
+  implementor that does not reuse answers 0 and behaves exactly as before.
+  Both prefill loops consult it. Measured on the real 26B install: prefill
+  1.777s -> 0.153s on a transcript-shaped prompt, with the generated tokens
+  byte-identical to the re-prefilled reference. Opt-in per session
+  (`RealForwardRunner::set_prefix_reuse`); `--chat` is the only caller that
+  takes it today, and the server is the open item.
+  `crates/runtime/CLAUDE.md` Gotcha 30 has the design and the three
+  measured false starts.
 - **Throughput benchmark harness: implemented, in three modes.** The
   scripted default: `crates/bench`'s `turbospark-bench` runs the real
   `run_raw_completion` loop, not a simulation of it, against a
@@ -1070,18 +1081,23 @@ live network).
   Swift original's `[stop=... prefill=... tok/s=...]` footer to stderr,
   silenced by `--quiet`. Proven end to end (real compiled-binary
   invocation, real `.gturbo` install, real generated output) for every mode
-  by `crates/cli/tests/real_generation.rs`. What's still not wired: KV
-  reuse across chat turns (each turn re-prefills from a reset cache, as in
-  Swift, since `ContinuableLogitProducer` is unported), chunked prefill
-  (`--prefill-chunk` stays parsed-and-printed-only), the tool-calling/Jinja
-  template path, and — since it inherits `RealForwardRunner`'s own scope —
-  the layer kinds that runner rejects.
-- `RawDecodeResult` drops the Swift original's cached-prompt-continuation
-  bookkeeping fields (`cachedPromptTokens`, `computedPrefillTokens`,
-  `uncommittedBoundaryTokenIDs`) since continuation is unimplemented; the
-  fields that remain (`prompt_tokens`, `new_tokens`, timings, `reason`,
-  `kv_position`, `kv_backed_token_ids`) cover everything the current loop
-  shape produces.
+  by `crates/cli/tests/real_generation.rs`. What's still not wired: the
+  tool-calling path beyond what `ChannelSplit` decodes, and -- since it
+  inherits `RealForwardRunner`'s own scope -- the layer kinds that runner
+  rejects. **Two items this sentence used to list have since landed and are
+  recorded where they were done rather than here**: chunked prefill
+  (`--prefill-chunk`, wired 2026-08-26, `crates/cli/CLAUDE.md` Gotcha 7) and
+  KV reuse across chat turns (wired 2026-08-29, same file's Gotcha 14 --
+  `--chat` no longer re-prefills from a reset cache).
+- `RawDecodeResult` carries ONE of the Swift original's three
+  cached-prompt-continuation bookkeeping fields. `reused_prefix_tokens` is
+  `cachedPromptTokens` under another name and landed with prefix reuse;
+  `computedPrefillTokens` is derivable (`prompt_tokens - reused_prefix_tokens`)
+  and `uncommittedBoundaryTokenIDs` has no analogue here, because this port's
+  reuse is forward continuation plus a bounded cursor rewind rather than a
+  committed/uncommitted boundary. The rest (`prompt_tokens`, `new_tokens`,
+  timings, `reason`, `kv_position`, `kv_backed_token_ids`,
+  `peak_memory_pressure`) cover everything the current loop shape produces.
 
 ## Phase 8 (repack, server)
 

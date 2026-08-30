@@ -14,6 +14,23 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- Prefix KV reuse (cached-prompt continuation): a turn continues from the
+  previous turn's KV cache wherever the two prompts agree on their leading
+  token ids, instead of resetting and re-prefilling the whole transcript.
+  Both prefill loops consult it. Off unless a caller opts in per session
+  (`RealForwardRunner::set_prefix_reuse`); `turbospark-check --chat` is the
+  only caller that does today, and reports `[prefix-reuse] N/M` per turn on
+  stderr (silenced by `--quiet` or `MFERENCE_PREFIX_REUSE=quiet`).
+  `--prompt` and `--messages-file` are unaffected and their output is
+  byte-identical. Measured on a real Gemma 4 install: prefill 1.777s to
+  0.153s on a transcript-shaped prompt, with the generated tokens identical
+  to the re-prefilled reference. `RawDecodeResult` gains
+  `reused_prefix_tokens`.
+- `MFERENCE_PILOT_PROBE`: diagnostic that records a one-layer-ahead router
+  prediction beside the actual expert selection in an `MFERENCE_ROUTER_HIST`
+  capture (Gemma 4 only), analysed by `scripts/pilot_ceiling.py`. Used to
+  measure router-lookahead expert prefetch to a negative result, recorded in
+  `docs/EXPERT_ROUTING.md`; `=self` validates the instrument itself.
 - macOS app packaging: `scripts/make-app-bundle.sh` assembles
   `swift/TurboSparkApp`'s bare SwiftPM executable into a real
   `TurboSpark.app` (Info.plist, `com.whit3rabbit.turbospark` bundle

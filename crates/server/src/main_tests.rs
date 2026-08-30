@@ -421,3 +421,25 @@ fn an_inverted_layer_range_is_refused() {
     ])
     .is_err());
 }
+
+#[test]
+fn reasoning_flag_defaults_to_off_and_parses_documented_levels() {
+    let d = parse(&["--model", "/tmp/m"]).unwrap().unwrap();
+    assert_eq!(d.reasoning, tokenizer::ReasoningEffort::Off);
+
+    for (arg, expected) in [
+        ("off", tokenizer::ReasoningEffort::Off),
+        ("low", tokenizer::ReasoningEffort::Low),
+        ("medium", tokenizer::ReasoningEffort::Medium),
+        ("high", tokenizer::ReasoningEffort::High),
+        ("xhigh", tokenizer::ReasoningEffort::XHigh),
+    ] {
+        let p = parse(&["--model", "/tmp/m", "--reasoning", arg])
+            .unwrap()
+            .unwrap();
+        assert_eq!(p.reasoning, expected, "failed for --reasoning {arg}");
+    }
+
+    assert!(parse(&["--model", "/tmp/m", "--reasoning", "max"]).is_err());
+    assert!(parse(&["--model", "/tmp/m", "--reasoning", "true"]).is_err());
+}

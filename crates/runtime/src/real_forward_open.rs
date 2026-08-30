@@ -129,6 +129,8 @@ impl RealForwardRunner {
         let ffn_hist = crate::ffn_hist::FfnActHist::from_env(&context, &expecting);
         let resid_capture = crate::resid_capture::ResidCapture::from_env(&context, &expecting);
         let mut runner = Self {
+            kv_prefix: crate::kv_prefix::KvPrefix::default(),
+            prefix_reuse_enabled: false,
             context,
             weights,
             index,

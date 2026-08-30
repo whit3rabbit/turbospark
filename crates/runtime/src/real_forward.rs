@@ -77,6 +77,19 @@ pub(crate) const PACKED_LAYOUT_MAX_BYTES: u64 = 64 * 1024 * 1024;
 pub(crate) const DEFAULT_MAX_CONTEXT: usize = 4096;
 
 pub struct RealForwardRunner {
+    /// The token ids behind the current KV contents, so a following turn can
+    /// continue from it instead of re-prefilling the whole transcript. See
+    /// `crate::kv_prefix`; consulted only through
+    /// `LogitProducer::reusable_prefix`, and only when the caller opted in.
+    pub(crate) kv_prefix: crate::kv_prefix::KvPrefix,
+    /// Whether [`crate::LogitProducer::reusable_prefix`] may answer non-zero.
+    /// Off by default: a reusing producer is NOT reset between turns, so it
+    /// carries state across generations that every frozen row in
+    /// `docs/BENCHMARKS.md` was measured without. The multi-turn callers
+    /// (server, app, chat REPL) opt in; the benchmark protocol, both oracles
+    /// and both quality gates run one generation per process, where reuse
+    /// could never fire anyway.
+    pub(crate) prefix_reuse_enabled: bool,
     pub(crate) context: gpu::MetalContext,
     /// The whole resident region as one zero-copy `MTLBuffer` over the
     /// mmap (see `gpu::ResidentGpuWeights`); every GPU projection binds

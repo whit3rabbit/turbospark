@@ -208,9 +208,12 @@ pub(crate) fn tool_names(request: &ChatCompletionRequest) -> HashSet<String> {
 /// (Gotcha 10), and the contrast is the point: a power setting is a property
 /// of the machine, while how hard to think is a property of the caller's
 /// task. It is also what OpenAI's own API does with this field.
-pub(crate) fn reasoning_effort(request: &ChatCompletionRequest) -> Result<ReasoningEffort, String> {
+pub(crate) fn reasoning_effort(
+    request: &ChatCompletionRequest,
+    default: ReasoningEffort,
+) -> Result<ReasoningEffort, String> {
     let Some(value) = request.extra.get("reasoning_effort") else {
-        return Ok(ReasoningEffort::Off);
+        return Ok(default);
     };
     let Some(text) = value.as_str() else {
         return Err(format!("reasoning_effort must be a string, got {value}"));
@@ -336,7 +339,7 @@ pub(crate) fn plan(model: &AppState, request: &ChatCompletionRequest) -> Result<
         messages = rebuilt;
     }
 
-    let reasoning = reasoning_effort(request)?;
+    let reasoning = reasoning_effort(request, model.default_reasoning())?;
     let mut prompt_ids = if tools.is_empty() {
         let prompt = model
             .tokenizer()
