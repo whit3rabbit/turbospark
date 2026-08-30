@@ -255,6 +255,8 @@ cargo test -p turbospark-runtime
    - `MFERENCE_ROUTED_PIPELINE=0`: Toggles one-layer-pipelined routed command buffer execution (Gemma 4's sequential decode). Since 2026-08-27 it also governs the `gpt-oss` chunked driver's PER-TOKEN routed loop: off means banks = 1 AND an empty `RoutedSlot::protect` set, the two moving together because retire-before-plan is what makes the empty set sound. Wired as the A/B seam that separated the batched arm's 28% miss drop -- and the answer EXONERATED the protect set (9,024 misses with it, 9,400 without, stdout md5-identical): the drop is real union dedup, this engine's one family-scoped exception to "the union saves nothing" (`docs/BATCHED_PREFILL.md`, step 5's miss-drop paragraphs).
    - `MFERENCE_ROUTER_HIST=/path.json`: Dumps a per-layer expert-selection histogram on runner drop (`router_hist.rs`, analyzed by `scripts/router_hist.py`). Diagnostic only; the 2026-08-08 measurement it exists for (domain-concentrated routing) came back negative, see `docs/EXPERT_ROUTING.md`.
    - `MFERENCE_ROUTER_TRACE=1`: adds the top-k ids IN PASS ORDER to that same file (`scripts/router_window.py` analyzes it). The counts cannot answer ROADMAP's speculative-decoding question, because a batched verify of M tokens reads the UNION of their routes and a histogram has already discarded which pass each selection came from.
+   - `MFERENCE_PILOT_PROBE=1`: adds the ONE-LAYER-AHEAD prediction to that same file -- layer L+1's router run early, on layer L's post-attention residual (colibri's PILOT). Gemma only; one extra router GEMV per MoE layer, and nothing is written or dispatched when it is unset. Analyzed by `scripts/pilot_ceiling.py`, which also simulates the expert cache to price the guess in BYTES. The 2026-08-29 measurement it exists for came back negative (the predictor works at 70.6% recall and still reads 1.03x to 1.85x the expert bytes); `docs/EXPERT_ROUTING.md` has the sweep and the reversal condition.
+   - `MFERENCE_PILOT_PROBE=self`: aims that probe at the layer it is already running in, so it reproduces the production router and recall MUST read 100%. It exists because the first wiring read 7.7% against a 6.25% random baseline -- an off-by-one in which layer the guess was filed against, which is indistinguishable from a real negative result (AGENTS.md Gotcha 57). Run it before believing any number this probe reports.
    - `MFERENCE_FFN_HIST=/path.json`: dense-FFN activation census on runner drop (`ffn_hist.rs`, analyzed by `scripts/ffn_sparsity.py`; museGlimmer only, the one flow that feeds its capture). Redirects `silu_mul` into a per-layer capture buffer, so it changes no math and no output bytes; costs ~30% of decode throughput while on. The 2026-08-16 measurement it exists for (a PowerInfer-style neuron cache) came back negative, see `docs/ACTIVATION_SPARSITY.md`.
    - `MFERENCE_RESID_CAPTURE=/path.json`: lifts the residual stream at the OUTPUT of every layer, at the LAST PROMPT TOKEN, into a JSON header plus a raw `.f32` sidecar (`resid_capture.rs`, extracted by `scripts/extract_direction.py`). This is ROADMAP item 9's stated prerequisite, the activation-capture surface a steering direction is derived FROM. **FIVE FLOWS since 2026-08-25**: the qwen one (both halves), `families/llama/` (Mixtral, `qwen3moe`, and the dense Mistral / Llama 2 / 3.x half), `families/gemma4/` (sequential decode, the chunked-prefill driver's per-token routed loop, and its batched-routed tail -- Gotcha 21), `families/gptoss/` (its one call site, the routed-MoE tail's raw residual add), and `families/museglimmer/` (its one call site, the FFN-half sandwich tail's residual add). The guard reads `steering::family_dispatches_steering`, the SAME predicate the steering refusal reads rather than a second list, because the capture and the edit land on one boundary and a family wired for one and not the other measures where it does not steer -- which is exactly why the last two picked up capture automatically the moment the predicate flipped to `true` for them, with no second list to update. It is guarded the way `MFERENCE_FFN_HIST` is and for its reason: a family whose flow contains no copy would write a file of ZEROS, which extracts as a zero direction, which `steering::inv_norm` then makes inert -- so the whole pipeline would run and steer nothing, with no error anywhere. It adds NO kernel (`encode_dflash_copy_rows` is already a generic strided FP16 row copy and the drafter already lifts `scratch.x` with it at this exact boundary) and no dispatch when unset. A copy cannot change what it copies, so output is byte-identical with it on -- measured on the real `qwen38-27b`, greedy md5 `f4654068...` both ways, not merely argued. **Which pass it keeps is the part to understand**: exactly one per generation, the FIRST with `skip_head` false, which is `produce(prompt[n-1])`. Keying on that transition rather than on "the last pass of the run" is what makes it independent of `--max-new`; the obvious alternative silently captures a GENERATED token's activation at any budget above 1, and a corpus half-captured at the wrong positions yields a plausible wrong direction. Re-armed by `reset()`, so one open can walk a corpus.
    - `MFERENCE_MTP_DRAFT=<depth>`: builds `families/qwen/mtp.rs`'s `MtpState` and lets `RealForwardRunner::mtp_draft_step` run (`docs/MTP_SPECULATIVE.md`, step 2; `qwen3_5` only). Unset, unparsable or 0 allocates NOTHING and encodes nothing, so the off path is identical in bytes and in footprint to the engine that shipped before the module existed -- which is what lets `qwen38_memory_oracle`'s frozen row stand rather than needing a new one. A depth asked for on an install with no head is an ERROR at open naming `mtp.fc.weight`, never a silent no-op: a caller that asked for speculation and quietly got none would measure the non-speculative engine and report it as the speculative one (Gotcha 14's argument, one feature over).
@@ -962,3 +964,69 @@ cargo test -p turbospark-runtime
     than its tower's merged-token count, overlapping spans, a span past the
     prompt end, and a `rope_delta` that would drive a decode position below
     zero. Not one of them fails at runtime on its own.
+
+30. **PREFIX KV REUSE LIVES IN `kv_prefix.rs`, AND THE THREE THINGS THAT
+    NEARLY MADE IT USELESS ARE ALL "THE OBVIOUS DESIGN IS THE WRONG ONE".**
+    A chat client resends the whole transcript every turn and
+    `run_raw_completion` reset and re-prefilled it every time, so a message
+    cost the whole conversation again; on a streaming MoE install every
+    replayed position also re-read its experts. `LogitProducer::try_reuse_prefix`
+    is the seam, off by default, opted into per session with
+    `RealForwardRunner::set_prefix_reuse`. Measured on the real 26B install:
+    prefill 1.777s -> 0.153s (**11.63x**) on a 65-token prompt with a 54-token
+    shared body, and turn 2's tokens byte-identical to the re-prefilled
+    reference on every arm.
+
+    **THE RECORD IS THE IDS THAT WERE FED, never a count derived from the
+    caller's bookkeeping.** Whether the last sampled token was fed back,
+    whether a chunked prefill ran to completion and whether generation
+    stopped early all differ per caller, and the failure mode of getting it
+    wrong is not a crash: it answers the next turn from a state belonging to
+    a different conversation. `kv_prefix` records in `produce` and
+    `prefill_chunk`, on success only, and TAINTS on anything ids cannot
+    describe -- `set_prompt_vision` (a placeholder span has the same ids
+    whatever picture filled it, so an id match would call two images equal)
+    and `verify` (a speculative block whose accept count this seam is not
+    told).
+
+    **IT MUST BE THE LONGEST COMMON PREFIX, NOT AN ALL-OR-NOTHING MATCH.**
+    The first design required the whole record to be a prefix of the new
+    prompt, which is correct, ships, passes every test, and NEVER FIRES: the
+    record covers the previous prompt AND its reply, and the next prompt
+    carries that reply back as re-rendered TEXT, so re-tokenizing it does not
+    reproduce the generated ids. Measured in the real chat REPL at 0/33 and
+    0/49 over three turns. LCP plus a cursor rewind reads 13/33 and 29/49 on
+    the same transcript, and the gap to the full prompt is just the
+    generation-prompt suffix. The rewind is what buys it, and
+    `try_reuse_prefix` refuses it in two cases: a family with RECURRENT state
+    (the qwen flows' gated DeltaNet folds history non-invertibly and nobody
+    took the ~60 MiB snapshot last turn) and a SLIDING-WINDOW ring past its
+    slack (`max_safe_rewind`). Both return 0 and cost a full prefill.
+
+    **AND IT HAS TO BE WIRED INTO THE LOOP CALLERS ACTUALLY TAKE.** Wiring it
+    into `run_raw_completion` alone left the REPL at 0/33 for a third
+    measurement: every family that supports chunked prefill routes through
+    `run_raw_completion_chunked`, so the CLI and the server never reached the
+    optimised path. Two arithmetic traps live in that second wiring, and
+    `prefill_chunk_spans` makes both easy: the walk is given `reused` as its
+    base so `start_position` is ABSOLUTE, while `token_offset` and
+    `completed_count` count from the walk's own start and need `reused` added.
+
+    **THE MEMORY SIDE IS A HIGHER TROUGH, NOT A HIGHER PEAK, and no frozen
+    row can move.** `KvCacheManager::reset` calls `advise_dontneed` over
+    every K/V buffer, so skipping it leaves those pages resident between
+    turns. The buffers themselves are allocated once at `open` and a single
+    turn already reaches the same high-water mark, so the PEAK the oracles
+    measure is unchanged; what rises is the floor between turns. Reasoned
+    rather than measured, and safe to leave that way because no harness opts
+    in: the protocol, both oracles and both quality gates run one generation
+    per process, and `--messages-file` does not enable reuse at all.
+
+    **THE MUTATION CHECK IS THE POINT OF THAT LAST PARAGRAPH.** All three
+    chunked mutations (spans from 0, position not made absolute, chunk sliced
+    from the wrong base) SURVIVED the real-model suite, because every test in
+    it drove the sequential loop and could not see the chunked one at all.
+    `chunked_prefill_reuse_generates_the_same_tokens_and_actually_fires`
+    closes it, and asserts the reuse HAPPENED as well as that the tokens
+    match -- without that clause the equality is the trivial one, two full
+    prefills agreeing with each other.
