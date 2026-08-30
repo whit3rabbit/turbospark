@@ -152,4 +152,23 @@ python3 scripts/router_window.py /tmp/rq.json 22 2,4,8,16
 #    ratios against the same kernel at a large row count, never against a
 #    spec number; read its module doc before quoting an absolute GiB/s.
 cargo test -p turbospark-gpu --test gemv_bandwidth_bench --release -- --ignored --nocapture
+
+# MAPPED EXPERT RESIDENCY (`docs/EXPERT_RESIDENCY.md`): the routed experts
+# read IN PLACE out of one `mmap` per layer instead of `pread`-copied into a
+# pinned slot. Gemma 4 only so far, OFF by default, an A/B seam in the shape
+# `MFERENCE_ROUTED_BATCH` has -- both arms MUST produce identical tokens.
+# Every other family REFUSES it by name rather than ignoring it, so a caller
+# cannot measure the streamed engine and report it under the mapped label.
+# NOTE the first mapped run on a cold page cache pays its faults up front
+# (prefill 74.8s against 2.5s); warm it is slower on prefill and faster on
+# decode, so it is a one-time cost for a faster steady state.
+MFERENCE_EXPERT_RESIDENCY=mapped ./target/release/turbospark-check \
+  --model ~/models/gemma4.gturbo --messages-file /tmp/p.json --max-new 400
+
+# The measurement that licensed it, and the one that refuted `crates/bench`
+# Gotcha 1 as it stood: map the whole 12.3 GB expert table, wrap all 30 layer
+# files in Metal buffers, read an expert on each through the GPU, and sample
+# phys_footprint at every stage. ~6 s, no decode.
+TURBOSPARK_PROBE_INSTALL_DIR=~/models/gemma4.gturbo \
+  cargo test -p turbospark-bench --test mapped_expert_probe --release -- --ignored --nocapture
 ```

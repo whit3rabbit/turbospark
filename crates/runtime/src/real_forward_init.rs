@@ -53,7 +53,72 @@ pub(crate) type ExpertStreamersResult = (
     // caller because `Auto` reads the machine, so a second evaluation is not
     // guaranteed to agree with the one the buffers were allocated against.
     usize,
+    // MAPPED residency, `None` per layer unless the seam is on. Carries the
+    // Metal buffers FIRST so they drop before the mappings they alias, the
+    // same declaration-order contract `slot_buffers` has against `streamers`.
+    MappedResidency,
 );
+
+/// The routed experts read in place out of an `mmap` rather than `pread`-copied
+/// into pinned slots (`streaming::MappedExpertLayer`).
+///
+/// Empty unless `MFERENCE_EXPERT_RESIDENCY=mapped`. When it is on, NO streamer
+/// is opened and no slot is allocated -- which is the entire point, since the
+/// slot cache is 70-90% of the measured peak of every MoE install. Both halves
+/// stay `Vec`s indexed by layer so the decode path branches on
+/// `buffers[layer].is_some()` and never on a mode flag it could disagree with.
+#[derive(Default)]
+pub(crate) struct MappedResidency {
+    /// Declared BEFORE `layers` so the buffers drop first: each aliases its
+    /// mapping with no deallocator, so the mapping must outlive it
+    /// (`gpu::resident_metal`'s module docs).
+    pub(crate) buffers: Vec<Option<gpu::MetalBuffer>>,
+    pub(crate) layers: Vec<Option<streaming::MappedExpertLayer>>,
+}
+
+/// Reads the residency seam. UNSET is the `pread` streamer, so an install that
+/// opened before this existed opens the same way and no frozen footprint row
+/// moves without someone asking for it (AGENTS.md Gotcha 35's discipline: the
+/// harnesses that measure this must not sense it).
+///
+/// Deliberately an env seam rather than a CLI flag for now, matching how
+/// `MFERENCE_ROUTED_BATCH` and `MFERENCE_BATCHED_GEMV` landed: both arms must
+/// produce identical tokens, so it is an A/B seam first and a feature second.
+pub(crate) fn mapped_residency_requested() -> bool {
+    std::env::var("MFERENCE_EXPERT_RESIDENCY")
+        .map(|v| v.eq_ignore_ascii_case("mapped"))
+        .unwrap_or(false)
+}
+
+/// REFUSED BY NAME, NEVER IGNORED, AND NEVER LEFT TO FAIL DOWNSTREAM.
+///
+/// The mapped arm exists at exactly one dispatch site
+/// (`families/gemma4/moe.rs`), and `open_expert_streamers` nulls EVERY
+/// streamer when this mode engages -- so an unwired family would reach its own
+/// `.ok_or_else` and report "layer N has no packed-expert streamer", blaming
+/// the INSTALL for a mode the caller chose. It is also one code change away
+/// from the silent-ignore failure `MFERENCE_ROUTED_BATCH` actually shipped
+/// with on the MoE `llama` family, where a caller measured the per-token
+/// engine and would have reported it under the batched label (Gotcha 22).
+/// Refuse where the request is MEANINGFUL and unserved.
+///
+/// A pure function of the family rather than an inline check, so the rule is
+/// testable without an env var, a GPU or an install -- and so WIDENING it is
+/// one edit here plus the family's own dispatch arm, with the test that names
+/// every unwired family reddening until both are done.
+pub(crate) fn mapped_residency_refusal(
+    family: model_io::ModelFamily,
+) -> Result<(), RealForwardError> {
+    if family == model_io::ModelFamily::Gemma4 {
+        return Ok(());
+    }
+    Err(RealForwardError::Unsupported(format!(
+        "MFERENCE_EXPERT_RESIDENCY=mapped is wired for the gemma4 family only, not {}; \
+         unset it to use the pread expert streamer. Widening it is ROADMAP item 9, and \
+         each family REPLACES this refusal rather than adding a branch to a silent path",
+        family.as_str()
+    )))
+}
 
 pub(crate) fn open_expert_streamers(
     dir: &Path,
@@ -82,6 +147,59 @@ pub(crate) fn open_expert_streamers(
     // working set is reported in the error when the streamer cannot get its
     // memory, because "cannot allocate" without the number sends the reader
     // looking for a leak instead of at the arithmetic.
+    // MAPPED RESIDENCY SHORT-CIRCUITS ALL OF THE ARITHMETIC BELOW, because
+    // there is no slot cache to size: the kernels read each expert in place
+    // out of its layer's mapping. Measured on the real Gemma 4 install, that
+    // mapping costs 2.9 MiB of `phys_footprint` for the 30 buffer objects and
+    // 0.1 MiB for the pages the GPU actually reads, against the 1.5-3.0 GiB
+    // the slot cache pins for the same model (AGENTS.md Gotcha 19).
+    //
+    // The resolved slot count is still reported as the policy's answer rather
+    // than 0, because it is what a caller printing a startup line has always
+    // shown and a 0 there would read as "the cache is broken" rather than
+    // "there is no cache".
+    if mapped_residency_requested() && layout.num_layers > 0 {
+        mapped_residency_refusal(expecting.family)?;
+        // The OTHER refusal this mode owes -- mapped residency against the
+        // batched routed pair -- lives at that driver's own entry
+        // (`families/gemma4/moe_batch.rs`) rather than here, because
+        // `set_routed_batch_prefill` can flip that seam after open and an
+        // env read here would miss the setter.
+        let mut mapped = MappedResidency::default();
+        for layer in 0..num_layers {
+            let entry = layout
+                .layers
+                .iter()
+                .find(|l| l.layer == layer)
+                .ok_or_else(|| {
+                    RealForwardError::Unsupported(format!(
+                        "packed_experts layout missing layer {layer}"
+                    ))
+                })?;
+            let stream_layout = streaming::StreamLayout::from_packed_experts_layer(entry, dir);
+            let mapped_layer = streaming::MappedExpertLayer::open(stream_layout).map_err(|e| {
+                RealForwardError::Unsupported(format!("mapped expert layer {layer}: {e}"))
+            })?;
+            let bytes = mapped_layer.page_aligned_bytes();
+            let buffer =
+                gpu::wrap_page_aligned_no_copy(context.device(), bytes.as_ptr(), bytes.len())
+                    .map_err(RealForwardError::Gpu)?;
+            mapped.buffers.push(Some(buffer));
+            mapped.layers.push(Some(mapped_layer));
+        }
+        let resolved = expert_cache_slots
+            .resolve(
+                gpu::physical_memory(),
+                resident_bytes,
+                layout.layers.iter().map(|l| l.expert_stride).sum::<u64>(),
+            )
+            .min(layout.experts_per_layer.max(1));
+        let mut streamers: Vec<Option<streaming::PreadExpertStreamer>> = Vec::new();
+        streamers.resize_with(num_layers, || None);
+        let slot_buffers = vec![Vec::new(); num_layers];
+        return Ok((streamers, slot_buffers, Some(layout), resolved, mapped));
+    }
+
     let experts_per_layer = layout.experts_per_layer.max(1);
     // ONE additional slot costs this much across the whole model, which is
     // the quantity the `Auto` policy divides its budget by. Summed over the
@@ -149,5 +267,73 @@ pub(crate) fn open_expert_streamers(
         }
     }
 
-    Ok((streamers, slot_buffers, experts_layout, expert_cache_slots))
+    Ok((
+        streamers,
+        slot_buffers,
+        experts_layout,
+        expert_cache_slots,
+        MappedResidency::default(),
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::mapped_residency_refusal;
+    use model_io::ModelFamily;
+
+    /// EVERY family is listed, not a sample, so adding a `ModelFamily`
+    /// variant without deciding this question leaves it out of the sweep and
+    /// the count assertion below reddens. The alternative -- a wildcard or a
+    /// three-family sample -- is what lets a new family inherit an answer
+    /// nobody gave it (AGENTS.md Gotchas 24, 37 and 39, and `crates/bench`
+    /// Gotcha 16's no-wildcard-arm rule).
+    const EVERY_FAMILY: &[ModelFamily] = &[
+        ModelFamily::Gemma4,
+        ModelFamily::QwenGdnMoe,
+        ModelFamily::QwenGdnDense,
+        ModelFamily::DeepseekV4Flash,
+        ModelFamily::Llama,
+        ModelFamily::Qwen3Moe,
+        ModelFamily::GptOss,
+        ModelFamily::MuseGlimmer,
+    ];
+
+    #[test]
+    fn mapped_residency_is_served_on_gemma4_and_refused_by_name_everywhere_else() {
+        assert_eq!(
+            EVERY_FAMILY.len(),
+            8,
+            "a ModelFamily variant was added without deciding whether it serves \
+             mapped expert residency; add it to EVERY_FAMILY and to the dispatch \
+             site, or leave it refused deliberately"
+        );
+        for &family in EVERY_FAMILY {
+            match mapped_residency_refusal(family) {
+                Ok(()) => assert_eq!(
+                    family,
+                    ModelFamily::Gemma4,
+                    "{} accepts mapped residency but has no mapped arm at its \
+                     dispatch site; a family that accepts it and does not serve it \
+                     runs the streamed engine under the mapped label",
+                    family.as_str()
+                ),
+                Err(err) => {
+                    assert_ne!(family, ModelFamily::Gemma4);
+                    let text = err.to_string();
+                    // The seam the caller actually SET has to appear, or the
+                    // message cannot be connected to the thing that caused it
+                    // -- which is the whole difference between this and the
+                    // downstream "layer N has no packed-expert streamer".
+                    assert!(
+                        text.contains("MFERENCE_EXPERT_RESIDENCY"),
+                        "the refusal must name the seam; got {text}"
+                    );
+                    assert!(
+                        text.contains(family.as_str()),
+                        "the refusal must name the family it declined; got {text}"
+                    );
+                }
+            }
+        }
+    }
 }
