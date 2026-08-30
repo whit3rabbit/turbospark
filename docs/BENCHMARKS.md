@@ -312,6 +312,18 @@ overtakes the `1/M` bandwidth floor, so M=64 captures the entire width
 benefit and mlx-lm's 512 buys it nothing over 64. This is the part worth not
 re-deriving: the answer is not "copy their 512".
 
+**BUT M=36 IS mlx-lm's CROSSOVER, NOT THIS PORT'S, AND THE TWO ENGINES DO NOT
+SHARE A COMPUTE FLOOR.** 1.32 ms per row is ~41 TFLOP/s on this model, which
+needs FP16 matrix hardware; `dequant_int4_gemm_simd` is scalar FP32 `fma`, so
+its own floor sits several times higher and is crossed at a much smaller M.
+Its shipped `c(M)` row is `M=2 0.50, M=4 0.55, M=8 0.46, M=16 0.44`
+(`dequant_int4_batch.metal`) -- flat, which is what a COMPUTE-bound kernel
+looks like and says the width is already spent. So the two terms above are
+not independent after all: widening M pays only once the kernel term is
+fixed, and the order of work is the kernel first, then whatever `c(R, B)`
+then says the width is worth. Read as a caveat on an existing table rather
+than as a measurement; it is unconfirmed on AC as of 2026-08-29.
+
 The kernel term is legible as effective WEIGHT BANDWIDTH, the same quantity
 on both paths: `dequant_int4_gemv_simd` sustains **294 GB/s** at M=1 on the
 decode path, while `dequant_int4_gemm_simd` sustains **35.7 GB/s** at M=16

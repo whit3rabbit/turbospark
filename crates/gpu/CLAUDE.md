@@ -130,29 +130,97 @@ crates/gpu/
 - `dequant_2bit_gemv.rs`: the MLX `affine` GEMV plus embedding lookup at TWO bits (`prism-ml/Ternary-Bonsai-27B-mlx-2bit`, ROADMAP's ternary entry step 2). PORT-LOCAL for the 1-bit sibling's reason, and its contract is `turbospark_compute::quant_2bit`. It inherits that sibling's three departures from the INT4 GEMV -- `half` companions rather than `bfloat` (same width, so a misread reads this checkpoint's 0.0137 scales as 7e-18), the checkpoint's group size as a runtime UNIFORM rather than a compile-time 64, and a byte holding several elements so the LSB-first field order is load-bearing -- and differs from it in one: **TWO kernels, not three.** The checkpoint is TERNARY (`bias == -scale` in every probed group, level 3 never used), so the analogue of the 1-bit `+/-1` fast path exists mathematically and is deliberately not built: it would reassociate the sum the same way (AGENTS.md Gotcha 27), and the 1-bit one is already reachable from no decode flow, so a second dead kernel buys nothing. **The GEMV is the GENERAL affine form and decodes level 3 correctly**, which `the_fourth_level_is_decoded_not_clamped` pins -- a kernel written from the ternary description could mask the top bit and pass every other case. `tests/dequant_2bit_gemv_parity.rs` holds the numbers, with the two trap cases (field order, companion dtype) constructing discriminating data and then ASSERTING that it discriminates, because at two bits a wrong field order permutes within a run of four and leaves every magnitude, every group scale and the whole level histogram untouched.
 - `dequant_int4_batch.rs`: `dequant_int4_gemm_simd`, the M-row batched form of the above (ROADMAP Phase D2's verify kernel). Not on any decode path -- decode is M=1 -- and kept because a tile-kernel phase would otherwise rebuild it. **Read its header before optimizing it**: threadgroup staging of `x` and register blocking over rows are both measured LOSSES on every shape. Since 2026-08-17 it bakes M, N and **B** as function constants (100-103) and bounds its inner unroll at 4, which together roughly HALVED `c(M)` -- 0.85 to 0.46 at M=8 on the dense 27B shapes (`docs/MTP_SPECULATIVE.md`). B is the one that matters and the unroll bound is not optional: baking B lets the compiler unroll fully, and a full unroll at B=16 holds ~128 activation floats live beside `acc[16]` and SPILLS, reading 1.14 where the bounded form reads 0.44. The factor was swept (2/4/8/full), not chosen. Parity against the GEMV stays EXACT; `tests/dequant_int4_gemm_parity.rs` pins that. **IT DOES NOT FOLLOW THAT A BATCHED VERIFY IS BIT-IDENTICAL TO A SEQUENTIAL DECODE, and this line used to say it did.** Measured 2026-08-20 on the real `qwen3_5` DFlash2 install: a greedy speculative stream tracks a greedy sequential one for ~154 tokens and then diverges. Block sizes 2, 4, 7 and 8 all produce IDENTICAL text to each other and part from sequential at the same token, which says the batch WIDTH is not the variable. **THIS KERNEL WAS BLAMED FOR IT AND HAS BEEN EXONERATED, measured 2026-08-21.** The attribution was an inference from reading two files, and it is wrong twice over. Reading cannot settle it at all -- Metal's fast-math reassociates freely, so rewriting a sum in the opposite order compiles to identical code (verified: that mutation survives every case in the parity file) and SOURCE order does not determine COMPILED order in either kernel. And the measurement goes the other way: `the_gemm_and_the_gemv_agree_on_data_that_can_see_reassociation` runs both on ragged BF16 companions and full-mantissa FP16 activations spanning ~1e-3 to ~1e2 with alternating signs, and they agree BIT-FOR-BIT on every output at B=1, 2, 8 and 16. Its positive control is what makes that green mean something: `dequant_int4_gemm_mma`, which reduces in an order Apple does not document, differs from the GEMV on ~39% of outputs on the SAME fixture. So a fixture that can see a reassociation sees none here. The `gdn.metal` multi-row kernels were the next suspect and are also exact (0 of 896 outputs differ bitwise in `gdn_parity.rs`'s prefill-vs-decode case, so its 5e-2 state tolerance is conservative rather than descriptive). **AND THE DIVERGENCE IS THIS PORT'S SHAPE FLOOR RATHER THAN A DEFECT**, measured the same day: `produce_batched` and `produce` differ by 6.2e-8 to 1.5e-5 NATS with the argmax agreeing on every row, against a dense batched-vs-cached shape floor of 7.4e-6 measured on MLX for this architecture and 1.57e-5 for this repo's own cross-engine result on the family, published as no detectable gap. The differing-LOGIT COUNT is the wrong unit and reading it as the magnitude is what made this look worth bisecting -- 88% of a vocabulary moving at 1e-5 nats is a tiny distributional difference, and the argmax never moved. Its cause is bounded to the attention reduction: present at M=1 (so not the batch width), absent at one and two keys and present from three (and a two-key softmax exposes the score in full, so q, k and V are exact there), and not the split-KV combine, which does not run until span 32. `crates/bench/tests/batched_forward_probe.rs` is the instrument. There is nothing to make bit-identical here that every engine does not also have. The same test also pins, in `a_second_shape_in_one_process_does_not_reuse_the_first_shapes_pipeline`, that the cache key carries all three baked values (mutation-checked on each). Beside it, `dequant_int4_mma.metal`'s `dequant_int4_gemm_mma` is the `simdgroup_matrix` form and is a MEASURED DEAD END kept so it is not re-proposed: it loses at every batch width (6.6x at M=2, 1.33x at M=16) and PLATEAUS at ~0.5 past M=16, worse than the exact kernel, because a packed INT4 run cannot be `simdgroup_load`ed and the dequant-into-threadgroup work it therefore needs is independent of B while the MACs matrix hardware accelerates scale with B. Nothing dispatches it. `tests/dequant_int4_mma_parity.rs` is the repo's only NON-exact batched-kernel test and says why in its header; its fixture deliberately uses non-power-of-two companions, and asserts that it discriminates, because the exact test's fixture sums exactly in FP32 and cannot see reassociation at all (the first run read 4096/4096 bit-identical and bounded nothing).
 
-    **EVERY MEASUREMENT IN THIS BULLET WAS TAKEN AT M<=16, WHICH IS THE
-    VERIFY REGIME AND NOT THE PREFILL ONE, AND THE CONCLUSIONS DO NOT CARRY.**
-    This kernel was built for a speculative block of 2 to 8 rows, so "losses
-    on every shape" means every shape anyone tried, and nobody tried the shape
-    prefill wants. Measured 2026-08-29 on the real `qwen38-27b` install
-    (`docs/BENCHMARKS.md`, the Qwen3.8-27B external reference points): this
-    kernel's per-row cost PLATEAUS at `c ~ 0.5` and stays there, so 16 rows
-    cost 8.2 single-row passes and the batched prefill arm wins only 1.94x
-    where the width promises 16x. Against mlx-lm on the SAME machine and
-    checkpoint it is 8.2x off its own roofline where mlx-lm is 3.8x off its
-    own, and that plus the width accounts for the whole 4.94x prefill gap in
-    two nearly equal factors of 2.2x and 2.3x.
+    **EVERY MEASUREMENT OF `dequant_int4_gemm_simd` WAS TAKEN AT M<=16,
+    WHICH IS THE VERIFY REGIME AND NOT THE PREFILL ONE.** That is true BY
+    CONSTRUCTION rather than by oversight -- the host asserts
+    `1..=MAX_BATCH_ROWS` -- so this kernel's "losses on every shape" means
+    every shape it can currently be dispatched at, and prefill wants a wider
+    one. Measured 2026-08-29 on the real `qwen38-27b` install
+    (`docs/BENCHMARKS.md`, the Qwen3.8-27B external reference points): its
+    per-row cost PLATEAUS at `c ~ 0.5` and stays there, so 16 rows cost 8.2
+    single-row passes and the batched prefill arm wins only 1.94x where the
+    width promises 16x. Against mlx-lm on the SAME machine and checkpoint it
+    is 8.2x off its own roofline where mlx-lm is 3.8x off its own, and that
+    plus the width accounts for the whole 4.94x prefill gap in two nearly
+    equal factors of 2.2x and 2.3x.
 
-    Two things follow for anyone optimizing it. **The `simdgroup_matrix` form
-    next door is a dead end only in the regime it was measured in**, and this
-    bullet's own stated mechanism predicts it: its dequant-into-threadgroup
-    cost is independent of B while the matrix hardware's benefit scales with
-    B, so B=64 amortizes what B=8 could not. Re-measure before believing the
-    dead-end label at a prefill width. **And the width target is M=64, not
-    mlx-lm's 512**: the `1/M` bandwidth floor crosses this model's compute
-    floor at M=36, so everything past ~64 is free of benefit and only costs
-    registers -- which is the pressure that produced the spill this bullet
-    already documents.
+    **THE SCOPING ABOVE DOES NOT EXTEND TO THE `simdgroup_matrix` SIBLING,
+    AND A COMMIT MESSAGE SAID IT DID.** `9b0aad6` wrote "every measurement in
+    this bullet was taken at M<=16 ... nobody tried the shape prefill wants"
+    and sent the next reader off to re-measure `dequant_int4_gemm_mma` at
+    B=64 before believing its dead-end label. That kernel was ALREADY measured
+    there: `MMA_MAX_BATCH_ROWS` is 64, `gemv_bandwidth_bench.rs`'s
+    `c_of_m_matrix_against_exact_at_qwen38_shapes` sweeps
+    `[2, 4, 8, 16, 32, 64]`, and `dequant_int4_mma.metal`'s header records
+    **0.52 at M=32 and 0.58 at M=64** -- a plateau ABOVE the SIMD kernel's
+    0.44 at M=16, with "running past the SIMD kernel's register cap to M=32
+    and 64 changed nothing" stated in the same table. The prediction that
+    B=64 would amortize what B=8 could not is therefore already refuted, by
+    the mechanism this bullet names two sentences earlier: the dequant into
+    threadgroup memory is proportional to `rows x K` and independent of B, so
+    a bigger B grows only the term matrix hardware was already accelerating.
+    AGENTS.md Gotcha 62, arriving in the note rather than in the artifact --
+    the numbers were one file away from the sentence that denied them.
+
+    **AND THE M=64 WIDTH TARGET IS DOWNSTREAM OF THE KERNEL RATHER THAN
+    INDEPENDENT OF IT.** `docs/BENCHMARKS.md` derives it from mlx-lm's 1.32 ms
+    compute floor, which is ~41 TFLOP/s on this model and needs FP16 matrix
+    hardware; this kernel is scalar FP32 `fma`, so its own compute floor is
+    several times higher and is crossed at a much smaller M. The shipped
+    `count(4)` row in `dequant_int4_batch.metal` reads
+    `M=2 0.50, M=4 0.55, M=8 0.46, M=16 0.44`, which is FLAT -- time scaling
+    linearly in M is what a COMPUTE-bound kernel looks like, and it says
+    widening M amortizes weight bytes that were not the cost. So raise the
+    kernel's arithmetic intensity first and let the measured `c(R, B)` decide
+    the width; a cap raise taken on its own buys footprint and no throughput.
+    Unconfirmed on AC as of 2026-08-29 (battery, load 4.6, swap 3.0/4.1 GB),
+    which is why it is written as a reading of an existing table and not as a
+    measurement.
+
+    **`FC_GEMM_R` (constant 104) IS THE FIRST ATTEMPT AT THAT ARITHMETIC
+    INTENSITY, AND IT IS UNMEASURED ON PURPOSE.** One SIMD group owns
+    `row_block` CONTIGUOUS output rows, which divides the per-block
+    activation loads by R and hoists `sum = e0 + ... + e7` out of the row
+    loop -- it depends on `bi` alone, and the one-row kernel recomputes it
+    once per row. The irreducible term is the 8 `fma` per `(r, bi)`.
+    `MAX_GEMM_ROW_BLOCK` is 4 and the DEFAULT is 1, so every wired call site
+    dispatches the shape it dispatched before the axis existed;
+    `encode_dequant_int4_gemm_resident_blocked` is reachable from the bench
+    and the tests only until `c_of_r_and_m_for_the_batched_kernel` has run on
+    AC. It moves no bits at any width, which is asserted on the hostile
+    fixture with the MMA positive control rather than argued from the source
+    (`row_blocking_does_not_move_a_single_bit`), so its gate is the parity
+    test and it owes no quality gate.
+
+    **PIPELINE REFLECTION CANNOT PRICE IT. MEASURED NEGATIVE, 2026-08-29.**
+    The register file is this kernel's binding constraint and every statement
+    about it in this bullet was read off a TIMING, so
+    `maxTotalThreadsPerThreadgroup` looked like a way to answer "does this
+    width spill" statically -- a Metal device, no model, no clock. It reads
+    **1024 on every `(R, B)` shape**, and the discrimination check is what
+    settles it rather than the table: raising `kMaxRowBlock` to 64 and
+    probing R=64 at B=16 declares `acc[64][16]`, a thousand floats per lane
+    that fit no register file on any GPU, and it still reads 1024. An
+    instrument at its ceiling on an impossible configuration is at its rail
+    (Gotcha 59's shape), and Metal exposes no register or occupancy count
+    publicly, so there is no second instrument. What survives is narrower and
+    is asserted: `static_threadgroup_memory_length` must stay 0, which is the
+    one cheap guard against note 1's threadgroup staging being re-added
+    unmeasured. `c(R, B)` on AC remains the only instrument that can price a
+    row block, R=1 included.
+
+    **AND THE DISPATCH ARITHMETIC NEEDED ITS OWN TEST, WHICH IS THE PART
+    WORTH CARRYING.** Dropping `* row_block` from the threadgroup count
+    survived every parity case, because it OVER-dispatches: the surplus
+    threadgroups compute a `row0` past `M` and return at the kernel's first
+    branch, so the output stays bit-correct and only the COST moves, by a
+    factor of R. That is the worst shape a bug can have on an axis whose
+    whole purpose is to be timed -- the variant would read as "row blocking
+    does not help" and the axis would close on a measurement of the mistake.
+    `gemm_threadgroups` is a named function asserted as arithmetic instead,
+    on the precedent `steering.rs` set for its row partition, and the
+    assertion that catches it is the no-idle-threadgroup half rather than the
+    coverage half.
 - `dequant_iq_gemv.rs`: the IQ3_XXS / IQ4_NL / IQ4_XS codebook GEMV dispatches (ROADMAP Phase S), whose tables are GENERATED from libggml by `scripts/ggml_tables.c` rather than transcribed, so the CPU and MSL copies cannot drift. `tests/dequant_iq_gemv_parity.rs`.
 - `dequant_q8_0_gemv.rs`: the GGUF Q8_0 GEMV dispatch (ROADMAP Phase G Stage 2). PORT-LOCAL, not vendored -- the Swift engine has no GGUF intake, so its only contract is `turbospark_compute::dequant_q8_0_gemv`. Shorter than the INT8 sibling because a Q8_0 row is ONE byte run: the scale lives inside each 34-byte block, so there are no scale or bias planes to bind and no group size to agree on. 32 lanes over a 32-element block, one weight per lane.
 - `dequant_q4_k_gemv.rs`: the GGUF Q4_K GEMV dispatch, port-local for the same reason. Same 32-lane shape for a DIFFERENT reason: a lane owns one of the 32 nibble BYTES in a group, hence two elements 32 apart that belong to two different sub-blocks. Q4_K is two-level (f16 `d`/`dmin` per 256-element superblock, 6-bit scale and 6-bit min per 32-element sub-block, packed 12 bytes and split across bytes for sub-blocks 4..8) and asymmetric (`w = d*sc*q - dmin*m`, unsigned quants), so none of the Q8_0 habits carry over.
