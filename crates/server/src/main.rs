@@ -158,7 +158,7 @@ async fn main() -> std::process::ExitCode {
         return std::process::ExitCode::SUCCESS;
     }
 
-    let (model, port, bind) = match parse_model_args(&args) {
+    let (model, port, bind, api_key) = match parse_model_args(&args) {
         Err(e) => {
             eprintln!("{e}");
             return std::process::ExitCode::from(2);
@@ -174,18 +174,23 @@ async fn main() -> std::process::ExitCode {
                     return std::process::ExitCode::from(2);
                 }
             };
+            let api_key = parsed.api_key.clone();
             match open_real_model(&parsed) {
-                Ok(m) => (m, parsed.port, host),
+                Ok(m) => (m, parsed.port, host, api_key),
                 Err(e) => {
                     eprintln!("{e}");
                     return std::process::ExitCode::from(2);
                 }
             }
         }
+        // `--api-key` is `--model` mode only, matching `--bind`: the
+        // portable scripted mode has no `ModelArgs` to carry it and always
+        // binds loopback unauthenticated, exactly as it did before this
+        // flag existed.
         Ok(None) => {
             let port: u16 = args.get(1).and_then(|p| p.parse().ok()).unwrap_or(8080);
             match open_scripted(&args[0]) {
-                Ok(m) => (m, port, "127.0.0.1".to_string()),
+                Ok(m) => (m, port, "127.0.0.1".to_string(), None),
                 Err(e) => {
                     eprintln!("{e}");
                     return std::process::ExitCode::from(1);
@@ -194,7 +199,22 @@ async fn main() -> std::process::ExitCode {
         }
     };
 
-    let router = turbospark_server::build_router(model);
+    // `--api-key` first, `$TURBOSPARK_API_KEY` second (keeps the key out of
+    // `ps`), resolved here rather than inside `parse_model_args` so that
+    // pure parser stays testable without the test process's own environment
+    // leaking in (`args.rs`'s `api_key` field doc explains the same split
+    // for `power_profile`). Empty is treated as absent: an operator whose
+    // shell exported the variable empty gets no auth rather than a key
+    // nothing can ever match.
+    let api_key = api_key
+        .or_else(|| std::env::var("TURBOSPARK_API_KEY").ok())
+        .filter(|k| !k.is_empty());
+    let router = turbospark_server::build_router_with_options(
+        model,
+        turbospark_server::RouterOptions {
+            api_key: api_key.clone(),
+        },
+    );
     let addr = format!("{bind}:{port}");
     let listener = match tokio::net::TcpListener::bind(&addr).await {
         Ok(l) => l,
@@ -204,6 +224,14 @@ async fn main() -> std::process::ExitCode {
         }
     };
     eprintln!("turbospark-server listening on http://{addr}");
+    eprintln!(
+        "  auth: {}",
+        if api_key.is_some() {
+            "on (x-api-key or Authorization: Bearer required, except /health)"
+        } else {
+            "off"
+        }
+    );
     eprintln!("  GET  /health");
     eprintln!("  POST /v1/chat/completions   (OpenAI)");
     eprintln!("  POST /v1/completions        (OpenAI legacy)");

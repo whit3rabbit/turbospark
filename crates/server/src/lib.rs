@@ -10,6 +10,7 @@
 //! `RealForwardRunner` forward pass against a `.gturbo` install). Model
 //! dialect auto-selection is the tokenizer's job here, not the server's.
 
+mod auth;
 mod cancel;
 mod completions;
 mod guardrails;
@@ -51,9 +52,35 @@ pub use anyllm_translate::openai::{
 use axum::routing::{get, post};
 use axum::Router;
 
+/// Options [`build_router_with_options`] takes beyond the shared
+/// [`AppState`]. A struct rather than a bare `Option<String>` parameter so a
+/// future option (a CORS policy, say) has somewhere to land without another
+/// signature change; `Default` gives `build_router` its zero-option case for
+/// free.
+#[derive(Default, Clone)]
+pub struct RouterOptions {
+    /// Require this key on every request except `GET /health`. `None`
+    /// (the default) leaves the router exactly as unauthenticated as it was
+    /// before this option existed.
+    pub api_key: Option<String>,
+}
+
+/// [`build_router`] with no options: no auth. Every existing caller of this
+/// function -- the integration tests in `tests/`, and the FFI's future
+/// in-process server -- keeps the exact behavior it had before
+/// [`RouterOptions`] existed.
+///
+/// See [`build_router_with_options`] for the route list.
+pub fn build_router(state: AppState) -> Router {
+    build_router_with_options(state, RouterOptions::default())
+}
+
 /// Builds the Axum router bound to `state` with the following routes:
 ///
-/// - `GET /health`: liveness/readiness probe, no generation lock taken
+/// - `GET /health`: liveness/readiness probe, no generation lock taken,
+///   and NEVER behind `options.api_key` -- an auth check answers "who are
+///   you", and a liveness probe answering "no" to an unauthenticated caller
+///   would be indistinguishable from the process being down.
 /// - `POST /v1/chat/completions`: OpenAI-compatible chat completion endpoint
 /// - `POST /v1/completions`: OpenAI's legacy raw-prompt completion endpoint
 /// - `POST /v1/responses`: OpenAI's Responses API endpoint
@@ -61,16 +88,32 @@ use axum::Router;
 /// - `POST /v1/messages/count_tokens`: Anthropic's count-only endpoint (no generation)
 /// - `GET /v1/models`: OpenAI-compatible list of available models
 /// - `GET /v1/models/:model`: OpenAI-compatible model detail endpoint
-pub fn build_router(state: AppState) -> Router {
-    Router::new()
-        .route("/health", get(handler::health))
+///
+/// With `options.api_key` set, every route above `/health` requires
+/// `x-api-key: <key>` or `Authorization: Bearer <key>` (`crates/server/src/
+/// auth.rs`, `crates/server/CLAUDE.md` Gotcha 26); the layer is applied to a
+/// sub-router BEFORE it merges with the unauthenticated `/health` route, so
+/// merging cannot leak it onto that one.
+pub fn build_router_with_options(state: AppState, options: RouterOptions) -> Router {
+    let protected = Router::new()
         .route("/v1/chat/completions", post(handler::chat_completions))
         .route("/v1/completions", post(completions::completions))
         .route("/v1/responses", post(responses::responses))
         .route("/v1/messages", post(messages::messages))
         .route("/v1/messages/count_tokens", post(messages::count_tokens))
         .route("/v1/models", get(handler::models))
-        .route("/v1/models/:model", get(handler::model_detail))
+        .route("/v1/models/:model", get(handler::model_detail));
+    let protected = match options.api_key {
+        Some(key) => protected.layer(axum::middleware::from_fn_with_state(
+            auth::ApiKey(key.into()),
+            auth::require_api_key,
+        )),
+        None => protected,
+    };
+
+    Router::new()
+        .route("/health", get(handler::health))
+        .merge(protected)
         .with_state(state)
 }
 

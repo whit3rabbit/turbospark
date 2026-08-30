@@ -13,6 +13,27 @@ fn legacy_positional_mode_is_left_alone() {
     assert!(parse(&["/tmp/tok", "9000"]).unwrap().is_none());
 }
 
+/// The parser reads only `--api-key`, never `$TURBOSPARK_API_KEY` -- the env
+/// fallback is `main`'s job, applied once after parsing, so a test asserting
+/// what a given argv parses to is not at the mercy of whatever the test
+/// process's own environment happens to carry.
+#[test]
+fn api_key_defaults_to_absent_and_reads_the_flag_value() {
+    let d = parse(&["--model", "/tmp/m"]).unwrap().unwrap();
+    assert_eq!(d.api_key, None);
+
+    let o = parse(&["--model", "/tmp/m", "--api-key", "sk-test-123"])
+        .unwrap()
+        .unwrap();
+    assert_eq!(o.api_key.as_deref(), Some("sk-test-123"));
+}
+
+#[test]
+fn an_empty_api_key_is_refused() {
+    let err = parse(&["--model", "/tmp/m", "--api-key", ""]).unwrap_err();
+    assert!(err.contains("--api-key"), "{err}");
+}
+
 /// `--model` reaches the catalog store, so one install serves this
 /// binary and `turbospark-check` under one alias.
 ///

@@ -1,5 +1,5 @@
 /// Command line usage and flag description text for `turbospark-server`.
-pub const USAGE: &str = "usage: turbospark-server --model <install-dir|alias> [--port N] [--max-context N|auto] [--load-guard TIER|BYTES] [--min-auto-context N] [--expert-cache-slots auto|N] [--bind loopback|tailnet] [--power-profile performance|balanced|efficiency] [--max-tokens-per-sec R] [--speculative off|auto|N] [--speculative-drafter auto|mtp|dflash] [--guardrails on|off] [--reasoning off|low|medium|high|xhigh] [--steering PATH] [--steering-mode ablate|add|clamp|renorm] [--steering-scale F] [--steering-layers S:E] [--steering-target F] [--steering-gate F]\n       turbospark-server <tokenizer-dir> [port]\n       turbospark-server --help | --version\n\noptions:\n  --model              a .gturbo directory or a turbospark-model alias (`turbospark-model list`)\n  --port               listen port (default 8080)\n  --max-context        context window in tokens, or auto (default auto: the\n                       checkpoint's trained context, capped by what memory\n                       holds, and 4096 when the install declares none)\n  --load-guard         how much of the machine a session may commit: off,
+pub const USAGE: &str = "usage: turbospark-server --model <install-dir|alias> [--port N] [--max-context N|auto] [--load-guard TIER|BYTES] [--min-auto-context N] [--expert-cache-slots auto|N] [--bind loopback|tailnet] [--power-profile performance|balanced|efficiency] [--max-tokens-per-sec R] [--speculative off|auto|N] [--speculative-drafter auto|mtp|dflash] [--guardrails on|off] [--reasoning off|low|medium|high|xhigh] [--api-key KEY] [--steering PATH] [--steering-mode ablate|add|clamp|renorm] [--steering-scale F] [--steering-layers S:E] [--steering-target F] [--steering-gate F]\n       turbospark-server <tokenizer-dir> [port]\n       turbospark-server --help | --version\n\noptions:\n  --model              a .gturbo directory or a turbospark-model alias (`turbospark-model list`)\n  --port               listen port (default 8080)\n  --max-context        context window in tokens, or auto (default auto: the\n                       checkpoint's trained context, capped by what memory\n                       holds, and 4096 when the install declares none)\n  --load-guard         how much of the machine a session may commit: off,
                        relaxed (default), balanced, strict, or a byte ceiling on
                        what the engine ALLOCATES. relaxed is what shipped before
                        this flag and what every published memory figure was
@@ -7,7 +7,11 @@ pub const USAGE: &str = "usage: turbospark-server --model <install-dir|alias> [-
   --min-auto-context   refuse to open when --max-context auto resolves below this
                        many tokens (default 0, no floor). Says nothing about an
                        explicit --max-context
-  --expert-cache-slots routed-cache slots per layer: auto or 8/16/24/32 (default auto)\n  --bind               loopback or tailnet (default loopback; tailnet is NOT auth)\n  --power-profile      performance, balanced or efficiency\n  --max-tokens-per-sec decode rate cap, greater than 0\n  --speculative        off, auto, or a block size 1-15 (default auto). Speculation\n                       applies to temperature-0 requests only; others decode\n                       sequentially\n  --speculative-drafter auto, mtp or dflash (default auto; auto reports a DFlash2\n                       drafter but does not enable it -- see docs/DFLASH2.md)\n  --guardrails         on or off (default on). Rescues a tool call the decoder\n                       could not parse, checks arguments against the request's\n                       own schema, and re-asks once. A request carrying TOOLS is\n                       buffered rather than streamed while this is on, because a\n                       verdict needs the whole turn; requests without tools are\n                       unaffected\n  --reasoning          default reasoning effort for requests that do not specify\n                       reasoning_effort: off, low, medium, high or xhigh\n                       (default off)\n  --steering           path to a control vector (.gguf, llama.cpp layout). Applies a\n                       directional edit to the residual stream of EVERY request this\n                       process serves; no weight byte is modified. See\n                       docs/OBLITERATION.md\n  --steering-mode      ablate, add, clamp or renorm (default: the vector file's declared mode,\n                       or ablate)\n  --steering-scale     strength (default 1.0 when --steering is given; 0.0 is the exact\n                       identity)\n  --steering-layers    START:END, inclusive and 0-based (default every layer the\n                       vector covers)\n  --steering-target    coefficient --steering-mode clamp pins the stream to (default 0)\n  --steering-gate      only steer where the coefficient reaches this magnitude\n                       (default 0, meaning always)\n  --help               print this text and exit\n  --version            print the version and exit";
+  --expert-cache-slots routed-cache slots per layer: auto or 8/16/24/32 (default auto)\n  --bind               loopback or tailnet (default loopback; tailnet is NOT auth)\n  --power-profile      performance, balanced or efficiency\n  --max-tokens-per-sec decode rate cap, greater than 0\n  --speculative        off, auto, or a block size 1-15 (default auto). Speculation\n                       applies to temperature-0 requests only; others decode\n                       sequentially\n  --speculative-drafter auto, mtp or dflash (default auto; auto reports a DFlash2\n                       drafter but does not enable it -- see docs/DFLASH2.md)\n  --guardrails         on or off (default on). Rescues a tool call the decoder\n                       could not parse, checks arguments against the request's\n                       own schema, and re-asks once. A request carrying TOOLS is\n                       buffered rather than streamed while this is on, because a\n                       verdict needs the whole turn; requests without tools are\n                       unaffected\n  --reasoning          default reasoning effort for requests that do not specify\n                       reasoning_effort: off, low, medium, high or xhigh\n                       (default off)\n  --api-key            require this key on every request except GET /health,
+                       as `Authorization: Bearer <key>` or `x-api-key: <key>`.
+                       Falls back to $TURBOSPARK_API_KEY when absent (keeps
+                       the key out of `ps`); with neither, the server has no
+                       auth at all, same as before this flag existed\n  --steering           path to a control vector (.gguf, llama.cpp layout). Applies a\n                       directional edit to the residual stream of EVERY request this\n                       process serves; no weight byte is modified. See\n                       docs/OBLITERATION.md\n  --steering-mode      ablate, add, clamp or renorm (default: the vector file's declared mode,\n                       or ablate)\n  --steering-scale     strength (default 1.0 when --steering is given; 0.0 is the exact\n                       identity)\n  --steering-layers    START:END, inclusive and 0-based (default every layer the\n                       vector covers)\n  --steering-target    coefficient --steering-mode clamp pins the stream to (default 0)\n  --steering-gate      only steer where the coefficient reaches this magnitude\n                       (default 0, meaning always)\n  --help               print this text and exit\n  --version            print the version and exit";
 
 pub use crate::bind::BindMode;
 
@@ -59,6 +63,14 @@ pub struct ModelArgs {
     pub guardrails: turbospark_server::GuardrailConfig,
     /// Default reasoning effort for requests that do not specify reasoning_effort.
     pub reasoning: tokenizer::ReasoningEffort,
+    /// The `--api-key` flag's OWN value, or `None` if absent. Deliberately
+    /// NOT resolved against `$TURBOSPARK_API_KEY` here: this parser reads
+    /// only `args`, matching `power_profile`'s split (`None` here,
+    /// resolved against the OS at `open_real_model`) so a test asserting
+    /// what a given argv parses to is not at the mercy of whatever the test
+    /// process's environment happens to carry. `main` applies the env
+    /// fallback once, after parsing.
+    pub api_key: Option<String>,
 }
 
 /// Parses the `--model` mode's flags. Returns `Ok(None)` when the first
@@ -90,6 +102,7 @@ pub fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
         guardrails: turbospark_server::GuardrailConfig::default(),
         steering: runtime::SteeringPolicy::off(),
         reasoning: tokenizer::ReasoningEffort::Off,
+        api_key: None,
     };
     // Held aside because `--steering-layers` may be given BEFORE or AFTER
     // `--steering`, and the restriction has to survive either order: the
@@ -300,6 +313,15 @@ pub fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
                 parsed.reasoning = tokenizer::ReasoningEffort::parse(value).ok_or_else(|| {
                     format!("--reasoning must be off, low, medium, high or xhigh, not {value}")
                 })?;
+            }
+            "--api-key" => {
+                if value.is_empty() {
+                    return Err(
+                        "--api-key must not be empty; an empty key authenticates every request"
+                            .to_string(),
+                    );
+                }
+                parsed.api_key = Some(value.clone());
             }
             other => return Err(format!("unknown option {other}\n{USAGE}")),
         }

@@ -5,7 +5,10 @@ one local backend: OpenAI `/v1/chat/completions`, legacy `/v1/completions`,
 and `/v1/responses`; Anthropic `/v1/messages` and `/v1/messages/count_tokens`;
 `/v1/models`; and a lock-free `GET /health`. Every generation endpoint
 supports non-streaming and Server-Sent Events (SSE) streaming output;
-`count_tokens` never generates at all.
+`count_tokens` never generates at all. `--api-key` adds opt-in
+`x-api-key`/`Authorization: Bearer` auth on every route except `/health`
+(Gotcha 26); with no flag the server has no auth at all, same as before it
+existed.
 
 The wire types are `anyllm_translate`'s (crates.io 0.16, default features:
 pure, IO-free), not hand-rolled. An Anthropic request is translated into the
@@ -23,6 +26,7 @@ crates/server/
 |   +-- main_tests.rs           # Unit tests for CLI args and host binding
 |   +-- lib.rs                  # Library root: router, re-exported wire types
 |   +-- cancel.rs               # Cancel/CancelOnDrop/CancelGuard: client-disconnect cancellation (Gotcha 25)
+|   +-- auth.rs                 # x-api-key/Bearer middleware for --api-key (Gotcha 26)
 |   +-- handler/                # /v1/chat/completions + /v1/models + /health, and the shared generation core
 |   |   +-- mod.rs              # The Axum handlers and the router wiring
 |   |   +-- plan.rs             # `plan`: chat template, encode, shaping config
@@ -46,6 +50,7 @@ crates/server/
     +-- reasoning_channels.rs   # Streaming & non-streaming reasoning channel translation tests
     +-- guardrails.rs           # Rescue/validate/retry end to end, both endpoints, no model
     +-- cancellation.rs         # Drop a streaming response mid-generation, assert it stopped short
+    +-- auth.rs                 # 401/200 both header spellings, /health exempt, build_router untouched
     +-- real_backend.rs         # Gated real-model end-to-end test (macOS, #[ignore]d)
     \-- fixtures/               # Test tokenizer fixtures for integration tests
 ```
@@ -61,6 +66,7 @@ crates/server/
 - `model.rs`: the `ChatModel` trait and `ScriptedChatModel`, bridging Axum handlers to `turbospark-runtime`. The trait owns WHICH decode loop runs (`run_completion`, Gotcha 17), not just which producer.
 - `real_model.rs`: `RealChatModel`, a `RealForwardRunner` behind the same trait (macOS only).
 - `cancel.rs`: `Cancel` (the `Arc<AtomicBool>` threaded through every async call chain), `CancelOnDrop` (wraps an SSE stream, sets it when axum drops the stream), and `CancelGuard` (sets it if a non-streaming handler's own future is dropped before `.defuse()`) -- the client-disconnect cancellation mechanism (Gotcha 25).
+- `auth.rs`: `require_api_key`, an `axum::middleware::from_fn_with_state` layer applied to a sub-router in `lib.rs::build_router_with_options` -- everything except `GET /health`. Accepts `x-api-key` or `Authorization: Bearer`; compares with a local constant-time byte loop rather than the `subtle` crate (Gotcha 26).
 - `response.rs`: constructors for `anyllm_translate::openai`'s response and SSE chunk envelopes, filling the many fields this server never populates in one place.
 
 ## Development & Test Commands
@@ -84,6 +90,14 @@ curl -s localhost:8080/v1/responses -H 'content-type: application/json' \
   -d '{"model":"m","input":"hi","max_output_tokens":40}'
 curl -sN localhost:8080/v1/responses -H 'content-type: application/json' \
   -d '{"model":"m","input":"hi","max_output_tokens":40,"stream":true}'
+
+# --api-key: run the server with `--api-key sk-test` (or export
+# TURBOSPARK_API_KEY=sk-test first) to try these. Every route above 401s
+# without one of the two headers below once that flag is set.
+curl -s localhost:8080/v1/models -H 'x-api-key: sk-test'
+curl -s localhost:8080/v1/models -H 'authorization: Bearer sk-test'
+curl -s -o /dev/null -w '%{http_code}\n' localhost:8080/v1/models   # 401, no key
+curl -s localhost:8080/health                                       # 200, /health is exempt
 
 # The point of /v1/messages: an Anthropic-native client, no proxy.
 ANTHROPIC_BASE_URL=http://127.0.0.1:8080 ANTHROPIC_API_KEY=unused \
@@ -588,3 +602,67 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
     on is still held until the cancelled generation actually stops, so a
     disconnect shortens a queued waiter's wait rather than skipping it
     outright.
+
+26. **`--api-key` IS A SUB-ROUTER AND A LAYER, NOT A PER-HANDLER CHECK, AND
+    THE ORDER `lib.rs::build_router_with_options` DOES THINGS IN IS THE
+    WHOLE REASON `/health` STAYS EXEMPT.** `protected` (every route except
+    `/health`) is built, `.layer(axum::middleware::from_fn_with_state(...))`
+    is applied to IT ALONE when `options.api_key` is `Some`, and only THEN
+    does `Router::new().route("/health", ...).merge(protected)` combine the
+    two -- `/health` was never a member of the router the layer wrapped, so
+    no request to it can reach `auth::require_api_key` however the merge is
+    ordered. Registering `/health` inside `protected` (even innocuously,
+    alongside the other routes, before the `.layer()` call) puts it back
+    under the layer and reddens `tests/auth.rs`'s
+    `health_is_exempt_from_the_api_key_requirement` with a 401 -- the
+    mutation this crate's tests were checked against. Registering it a
+    SECOND time on the merged router is worse: axum panics at router-build
+    time (`Overlapping method route`) rather than silently preferring
+    either one, which is a good failure mode to know about rather than
+    stumble into while refactoring this function.
+
+    **`build_router` (no options) IS THE DEFAULT, AND EVERY EXISTING CALLER
+    KEEPS IT.** It is `build_router_with_options(state, RouterOptions::
+    default())` -- `RouterOptions::api_key` defaults to `None`, `protected`
+    skips the `.layer()` call entirely, and the router this crate served
+    before `--api-key` existed is exactly what every test file except
+    `tests/auth.rs` still gets, unauthenticated. This matters beyond the
+    test suite: `RouterOptions` is the shape the FFI's future in-process
+    server (the omlx-parity plan's F1) is meant to pass its own
+    `apiKey: Option<String>` through as, so `build_router`'s zero-option
+    case staying inert is what keeps that integration from having to
+    special-case "no key" on its own side.
+
+    **`x-api-key` IS CHECKED BEFORE `Authorization: Bearer`, AND THAT ORDER
+    IS DELIBERATE RATHER THAN ARBITRARY.** Anthropic-native clients --
+    Claude Code among them, via `ANTHROPIC_API_KEY` /
+    `ANTHROPIC_BASE_URL` -- send `x-api-key`, which is the walkthrough this
+    crate's own docs point at (`docs/CLI.md`'s "The point of `/v1/messages`"
+    example). `Authorization: Bearer` is accepted as the generic/OpenAI
+    fallback for clients that only know that spelling, checked second so
+    neither header shadows the other when a caller sends both (a stray
+    default `Authorization` header from an HTTP client library, say) --
+    `presented_key` reads `x-api-key` first and never looks at
+    `Authorization` once it has found one.
+
+    **THE COMPARISON IS A LOCAL EIGHT-LINE FUNCTION RATHER THAN THE
+    `subtle` CRATE, AND THE REASON IS SCOPE RATHER THAN NOT-INVENTED-HERE.**
+    `subtle`'s `ConstantTimeEq` is built for comparing against a TABLE of
+    secrets (its `Choice` type composes across multiple comparisons without
+    ever branching on any one of them); this process holds exactly ONE key
+    for its whole lifetime, so there is nothing to compose. `constant_time_eq`
+    still refuses to short-circuit on the first differing byte -- `diff |= x
+    ^ y` folds the whole comparison into one accumulator read only once, at
+    the end -- which is the actual property worth keeping: a naive `==`
+    would let a timing side channel narrow the key character by character.
+    **THE LENGTH CHECK IS A SEPARATE FAST PATH AND A TEST HAS TO ACCOUNT FOR
+    IT SEPARATELY**, or a wrong-key test proves nothing about the loop
+    beneath it: `constant_time_eq` returns `false` on `a.len() != b.len()`
+    before the loop ever runs, so a wrong key of a DIFFERENT length from the
+    real one is refused by that check alone and would still be refused if
+    the loop's body were deleted outright. `tests/auth.rs`'s
+    `a_wrong_key_of_the_same_length_is_refused` sends a key matching
+    `"sk-correct"`'s own length for exactly this reason -- mutating the loop
+    to `true` reddened that test and left every different-length case
+    passing, which is what proved the length check and the loop are two
+    independent things a test has to cover separately, not one.

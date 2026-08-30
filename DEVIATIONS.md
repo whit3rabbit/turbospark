@@ -1560,9 +1560,20 @@ live network).
   argument string, the same single-chunk contract every tool call on this
   server has, for the same reason (the decoder only yields a call once its
   closing marker arrives). Swift's server has no such endpoint.
-- **None of these new endpoints add authentication.** Same posture as
-  `/v1/chat/completions`: loopback by default, and under `--bind tailnet`
-  the Tailnet ACL remains the only access control.
+- **`--api-key`: implemented, opt-in bearer/`x-api-key` auth, `--model` mode
+  only.** Requires the given key (or `$TURBOSPARK_API_KEY` when the flag is
+  absent) as `x-api-key: <key>` or `Authorization: Bearer <key>` on every
+  route except `GET /health`, which stays reachable unauthenticated so a
+  liveness probe never reads "process down" for "wrong credential". A local
+  constant-time byte comparison rather than the `subtle` crate: one short
+  function against the ONE key this process holds for its lifetime, not the
+  table-of-many-secrets problem `subtle`'s API is built for. With no flag
+  and no env var the server has no auth at all, the same posture it had
+  before this existed; under `--bind tailnet` it composes with the Tailnet
+  ACL rather than replacing it. Swift's server has no such flag.
+- **Every OTHER route above adds no authentication of its own.** Loopback
+  by default, and under `--bind tailnet` the Tailnet ACL remains the only
+  access control unless `--api-key` is also given.
 
 ## Not ported at all
 

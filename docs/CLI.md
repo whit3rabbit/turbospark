@@ -219,7 +219,8 @@ while a generation is in flight. `/v1/responses` is stateless: it refuses
 | `--load-guard` | `off\|relaxed\|balanced\|strict`, or a size | `relaxed` | same as `turbospark-check`'s, resolved once at startup |
 | `--min-auto-context` | non-negative integer | `0` | same as `turbospark-check`'s |
 | `--expert-cache-slots` | `8\|16\|24\|32`, or `auto` | `auto` | same semantics as `turbospark-check`'s |
-| `--bind` | `loopback\|tailnet` | `loopback` | `tailnet` binds this machine's Tailscale IPv4 address; there is no authentication and no TLS either way -- the Tailnet ACL is the only access control under `tailnet` |
+| `--bind` | `loopback\|tailnet` | `loopback` | `tailnet` binds this machine's Tailscale IPv4 address; there is no authentication and no TLS either way -- the Tailnet ACL is the only access control under `tailnet`, unless `--api-key` is also given |
+| `--api-key` | string | unset, `$TURBOSPARK_API_KEY` | require this key, as `x-api-key: <key>` or `Authorization: Bearer <key>`, on every route except `GET /health`; see [Bearer/x-api-key auth](#bearerx-api-key-auth) |
 | `--power-profile` | `performance\|balanced\|efficiency` | unset | same as `turbospark-check`'s |
 | `--max-tokens-per-sec` | float `> 0` | uncapped | same as `turbospark-check`'s |
 | `--speculative` | `off\|auto`, or `1`-`15` | `auto` | resolved ONCE at process open, not per request; acceptance is exact only at temperature 0, so a request sampled above that falls back to sequential decode silently |
@@ -244,12 +245,34 @@ resolved once at open and configure defaults/capabilities for requests the proce
 
 The legacy positional form (`turbospark-server <tokenizer-dir> [port]`) runs
 the portable scripted backend against canned completions rather than a real
-install, and always binds loopback regardless of `--bind`.
+install, and always binds loopback regardless of `--bind`, unauthenticated
+regardless of `--api-key` -- neither flag exists in that mode's `ModelArgs`.
 
 ```sh
 turbospark-server --model ~/models/gemma4.gturbo
 turbospark-server --model gemma4 --bind tailnet --port 8080
 turbospark-server --model gemma4 --guardrails off
+```
+
+### Bearer/x-api-key auth
+
+`--api-key KEY` (or `$TURBOSPARK_API_KEY`, checked when the flag is absent so
+the key never appears in `ps`) requires that key on every route except
+`GET /health`, as either `x-api-key: KEY` (what Anthropic-native clients,
+including Claude Code, send) or `Authorization: Bearer KEY`. A missing or
+wrong key gets a 401 with an OpenAI-shaped error body. `--model` mode only;
+the legacy scripted mode has no `--api-key`.
+
+`--bind tailnet` on its own is NOT authentication -- the Tailnet ACL is the
+only access control, and anyone the ACL admits can reach the server
+unauthenticated. `--bind tailnet --api-key KEY` together add a real
+credential on top of that: an operator whose Tailnet grants broader access
+than they want this one server to have (a shared tailnet, a guest node) gets
+a second gate rather than relying on the ACL alone.
+
+```sh
+TURBOSPARK_API_KEY=sk-... turbospark-server --model gemma4 --bind tailnet
+curl -H 'x-api-key: sk-...' http://100.x.y.z:8080/v1/models
 ```
 
 ## `turbospark-bench`
