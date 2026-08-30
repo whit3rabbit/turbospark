@@ -14,6 +14,26 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- Server-side `presence_penalty`, `frequency_penalty`, and `min_p` on
+  `POST /v1/chat/completions`, honored end to end by `turbospark-selection`.
+  The two penalties follow llama.cpp's convention (the GENERATED suffix of
+  history only, never the prompt) rather than OpenAI's whole-context one.
+  `POST /v1/completions` accepts `min_p` but not the two penalties, since its
+  legacy wire shape has no such fields. See `DEVIATIONS.md`'s sampling-knob
+  entry and `crates/selection/CLAUDE.md`.
+- `crates/ffi`: `ts_server_start` / `ts_server_stop` / `ts_server_info_json`,
+  an in-process HTTP server sharing an already-open `ts_session_open`
+  session's engine rather than opening a second one -- serves the same
+  OpenAI/Anthropic-compatible routes `turbospark-server` does, minus vision
+  and tool-call guardrails. `Session` split into a thin `Arc` handle over a
+  `SessionCore` to make the sharing possible; see `crates/ffi/CLAUDE.md`
+  Gotcha 13.
+- `swift/TurboSpark`: `TurboSparkSession.startServer(options:)` and
+  `TurboSparkServer`, the Swift wrapper over the above. The macOS app's
+  Engine settings tab gained an "In-Process Server" section (a toggle, the
+  bound port once running, and an optional API key); loading a different
+  model or unloading stops a running server rather than leaving it pinned to
+  a model the UI no longer shows as loaded.
 - Prefix KV reuse (cached-prompt continuation): a turn continues from the
   previous turn's KV cache wherever the two prompts agree on their leading
   token ids, instead of resetting and re-prefilling the whole transcript.

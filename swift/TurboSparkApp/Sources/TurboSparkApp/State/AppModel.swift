@@ -77,6 +77,21 @@ public final class AppModel: ObservableObject {
     @Published public var opening: Bool = false
     /// Custom filesystem path entered for manual model loading.
     @Published public var modelPathText: String = ""
+    /// The in-process HTTP server, when one is running against `session`.
+    /// It shares `session`'s engine rather than opening a second one, and
+    /// OUTLIVES `session` if `session` is cleared without also calling
+    /// `stopServer()` (`TurboSparkServer`'s own doc) -- `unloadModel()` and
+    /// `setModelURL(_:)` both stop it first for exactly that reason, so a
+    /// user clicking "Unload" actually releases the resident model rather
+    /// than leaving it pinned by a server nothing in the UI still shows.
+    @Published public var server: TurboSparkServer?
+    /// Whether `startServer()`/`stopServer()` is in flight.
+    @Published public var serverBusy: Bool = false
+    /// Bearer / `x-api-key` value to require on the server, or empty for no
+    /// auth. Read at `startServer()` time, not persisted: a key typed for
+    /// one session sharing a machine is not something to write to disk by
+    /// default.
+    @Published public var serverAPIKeyInput: String = ""
 
     // Project and Agent State
     /// All configured codebase projects.

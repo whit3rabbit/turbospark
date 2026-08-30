@@ -520,3 +520,21 @@ so going through `make` recompiles the whole app every single time. Use
     `buildOpenOptions` read that one accessor. A fourth caller building its
     own from `runtimeOptions` would compile and be wrong only when the user
     moves the setting off the default.
+
+26. **`AppModel.server` OUTLIVES `AppModel.session` UNLESS SOMETHING STOPS IT
+    FIRST, AND THAT SOMETHING IS EVERY CALLER THAT CLEARS `session`.** Added
+    2026-08-30 (`TurboSparkServer`, `AppModel+Server.swift`). A
+    `TurboSparkServer` holds its own reference to the engine on the Rust
+    side (`crates/ffi/CLAUDE.md` Gotcha 13's whole design), so `session = nil`
+    alone does not stop a server started against it -- the model stays
+    resident and the server keeps answering requests for a model the UI no
+    longer shows as loaded. `open(_:)`, `unloadModel()` and
+    `setModelURL(_:)` all call `stopServer()` before clearing `session` for
+    exactly this reason; a fourth call site that clears `session` directly
+    (rather than through one of those three) would compile and leak the
+    old model for as long as the server keeps running. `TurboSparkServer`
+    itself guards the OTHER direction: `ts_server_stop` frees its C handle,
+    so `stop()` and `deinit` both route through one `NSLock`-guarded
+    idempotent path rather than each calling the C function directly, which
+    would double-free if a caller stopped it explicitly and then let it go
+    out of scope.

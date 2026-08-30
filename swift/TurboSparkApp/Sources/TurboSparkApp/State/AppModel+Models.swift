@@ -175,6 +175,11 @@ extension AppModel {
         guard !generating else { return }
         opening = true
         error = nil
+        // Stopped rather than merely dropped: `session = nil` alone would
+        // leave a running server pinned to the OLD model's engine (it holds
+        // its own reference -- `TurboSparkServer`'s doc) while the UI now
+        // shows a different one loaded.
+        stopServer()
         session = nil
         defer { opening = false }
 
@@ -212,6 +217,7 @@ extension AppModel {
 
     public func unloadModel() {
         guard !generating else { return }
+        stopServer()
         session = nil
         showToast("Model unloaded", style: .info)
     }
@@ -220,6 +226,7 @@ extension AppModel {
         guard !generating else { return }
         let path = url.standardizedFileURL.path
         modelPathText = path
+        stopServer()
         session = nil
         opening = true
         defer { opening = false }

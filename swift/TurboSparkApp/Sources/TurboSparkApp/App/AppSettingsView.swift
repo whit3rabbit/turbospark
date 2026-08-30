@@ -348,6 +348,45 @@ public struct AppSettingsView: View {
                     }
                 }
             }
+
+            Section("In-Process Server") {
+                HStack {
+                    Toggle("Enable server", isOn: Binding(
+                        get: { model.server != nil },
+                        set: { $0 ? model.startServer() : model.stopServer() }
+                    ))
+                    .disabled(model.session == nil || model.serverBusy)
+
+                    if model.serverBusy {
+                        ProgressView()
+                            .controlSize(.small)
+                            .padding(.leading, 4)
+                    }
+                }
+
+                if let port = model.serverPort {
+                    HStack {
+                        Text("Address")
+                        Spacer()
+                        Text("http://127.0.0.1:\(port)")
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    }
+                }
+
+                SecureField("API key (optional)", text: $model.serverAPIKeyInput)
+                    .disabled(model.server != nil)
+
+                Text(
+                    "Serves the currently loaded model over OpenAI- and Anthropic-compatible "
+                        + "HTTP endpoints on loopback, sharing the same engine this app's chat "
+                        + "uses -- not a second copy of the model. Loading a different model, "
+                        + "or unloading, stops the server."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
         .padding(16)

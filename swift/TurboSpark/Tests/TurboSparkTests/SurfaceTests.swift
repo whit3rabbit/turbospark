@@ -310,6 +310,28 @@ final class SurfaceTests: XCTestCase {
         let statusDetokenize = ts_session_detokenize_json(nil, nil, false, &out)
         XCTAssertEqual(statusDetokenize, TS_ERR_INVALID_ARGUMENT)
     }
+
+    /// The in-process server's three C ABI entry points, called through the
+    /// STATICLIB rather than the rlib (this file, not `c_surface.rs`), which
+    /// is the only thing that can catch a signature mismatch between
+    /// `turbospark.h` and the Rust side (`crates/ffi/CLAUDE.md` Gotcha 2).
+    /// `ts_server_start` and `ts_server_info_json` need only a null argument
+    /// to validate; real usage against an open session is
+    /// `RealModelTests`'s job, gated on an install being present.
+    func testServerCABISymbolsLinkAndValidateNullArgs() {
+        var out: UnsafeMutablePointer<CChar>?
+        var server: OpaquePointer?
+        let statusStart = ts_server_start(nil, nil, &server)
+        XCTAssertEqual(statusStart, TS_ERR_INVALID_ARGUMENT)
+        XCTAssertNil(server)
+
+        let statusInfo = ts_server_info_json(nil, &out)
+        XCTAssertEqual(statusInfo, TS_ERR_INVALID_ARGUMENT)
+
+        // NULL is a documented no-op, not an error to check a status code
+        // for.
+        ts_server_stop(nil)
+    }
 }
 
 

@@ -155,6 +155,41 @@ public final class TurboSparkSession: @unchecked Sendable {
         }
     }
 
+    /// Starts an in-process HTTP server sharing THIS session's engine, and
+    /// returns a handle to it.
+    ///
+    /// **THE SERVER OUTLIVES THIS `TurboSparkSession` IF YOU LET IT.** It
+    /// holds its own reference to the underlying engine on the Rust side, so
+    /// this session going out of scope (and closing) after this call frees
+    /// only this Swift object -- the model stays resident and the server
+    /// keeps serving it until `TurboSparkServer.stop()` (or its `deinit`)
+    /// releases the last reference. Keep a strong reference to the returned
+    /// `TurboSparkServer` for as long as it should keep running.
+    ///
+    /// Serves the same OpenAI/Anthropic-compatible routes the standalone
+    /// `turbospark-server` binary does, EXCEPT vision and the standalone
+    /// binary's tool-call guardrails: a session opened through this type
+    /// carries no vision wiring, so an image request the server receives is
+    /// refused by name rather than silently dropped.
+    public func startServer(options: ServerOptions = ServerOptions()) async throws
+        -> TurboSparkServer
+    {
+        let optionsJSON = try Self.encode(options)
+        return try await withCheckedThrowingContinuation { cont in
+            queue.async { [handle] in
+                var out: OpaquePointer?
+                let status = optionsJSON.withCString { opts in
+                    ts_server_start(handle.raw, opts, &out)
+                }
+                guard status == 0, let out else {
+                    cont.resume(throwing: TurboSparkError.fromLastError(status))
+                    return
+                }
+                cont.resume(returning: TurboSparkServer(raw: out))
+            }
+        }
+    }
+
     /// The decode phase breakdown. Cheap enough to poll for a status panel.
     public func phases() async throws -> PhaseReport {
         try await withCheckedThrowingContinuation { cont in
