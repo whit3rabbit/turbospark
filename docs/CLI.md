@@ -203,10 +203,12 @@ turbospark-server --model <path-or-alias> [flags...]
 turbospark-server <tokenizer-dir> [port]   # legacy scripted mode, see below
 ```
 
-Serves OpenAI `/v1/chat/completions`, Anthropic `/v1/messages`,
-`/v1/models`, and `GET /health` from one open install, one request at a
-time (one runner per process). `/health` takes no lock and answers even
-while a generation is in flight.
+Serves OpenAI `/v1/chat/completions`, OpenAI's legacy raw-prompt
+`/v1/completions`, Anthropic `/v1/messages` and `/v1/messages/count_tokens`
+(no generation, just the prefill token count), `/v1/models`, and
+`GET /health` from one open install, one request at a time (one runner per
+process). `/health` takes no lock and answers even while a generation is
+in flight.
 
 | Flag | Takes | Default | Meaning |
 | --- | --- | --- | --- |

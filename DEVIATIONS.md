@@ -1514,7 +1514,25 @@ live network).
   `RealChatModel` and `scripted` for `ScriptedChatModel`; `manifest.json`
   has no model-name field to read instead. Swift's server has no such
   endpoint either.
-- **Neither new endpoint adds authentication.** Same posture as
+- **`GET /health`: implemented, no lock taken.** Reads only a per-process
+  `&str` field (`ChatModel::model_id`), so it answers even while a
+  generation holds `RealChatModel`'s runner mutex. Swift's server has no
+  such endpoint.
+- **`POST /v1/completions`: implemented, another addition rather than a
+  port.** OpenAI's legacy raw-prompt endpoint, no chat template applied
+  (`tokenizer.encode(prompt, add_bos: true)`, the same convention
+  `turbospark-check --prompt` uses). `suffix` and `n > 1` are refused with a
+  400; `logprobs`, `best_of`, and `echo` are accepted and reported on
+  `x-anyllm-degradation` rather than honoured. A batched `prompt` array is
+  accepted only at length 1 -- this server has one runner per process, so
+  answering only the first of a longer batch would silently drop the rest
+  rather than answering all of them.
+- **`POST /v1/messages/count_tokens`: implemented, no generation.** Runs
+  `translate_request` + `handler::plan::plan` and stops there, returning
+  `prompt_ids.len()` -- the same template split, encode, and image splice a
+  real `/v1/messages` call on the same request would run, so the count
+  cannot drift from what that call would actually prefill.
+- **None of these new endpoints add authentication.** Same posture as
   `/v1/chat/completions`: loopback by default, and under `--bind tailnet`
   the Tailnet ACL remains the only access control.
 

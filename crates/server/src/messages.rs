@@ -157,6 +157,56 @@ pub async fn messages(
     response
 }
 
+/// `POST /v1/messages/count_tokens`. What a real request would prefill,
+/// with no generation and no `max_tokens` budget required.
+///
+/// **A `serde_json::Value` FIRST, NOT `Json<MessageCreateRequest>` DIRECTLY,
+/// because `MessageCreateRequest::max_tokens` is a REQUIRED `u32` on the
+/// wire type** -- correct for `/v1/messages`, where a real generation needs
+/// a budget, and wrong here: Anthropic's own `count_tokens` endpoint takes a
+/// request with no `max_tokens` at all. A placeholder is injected only when
+/// the field is absent, so a request that DID send one is unaffected.
+///
+/// Reuses `handler::plan` rather than a separate encode path, which is what
+/// makes the count MEAN something: it is definitionally the same template
+/// split, the same `encode(_, add_bos: false)`, and the same image splice a
+/// real `/v1/messages` call on this request would run.
+pub async fn count_tokens(
+    State(model): State<AppState>,
+    Json(mut body): Json<serde_json::Value>,
+) -> Response {
+    if let Some(object) = body.as_object_mut() {
+        if !object.contains_key("max_tokens") {
+            object.insert("max_tokens".to_string(), serde_json::json!(1));
+        }
+    }
+    let request: MessageCreateRequest = match serde_json::from_value(body) {
+        Ok(r) => r,
+        Err(e) => {
+            return error_body(
+                StatusCode::BAD_REQUEST,
+                ErrorType::InvalidRequestError,
+                e.to_string(),
+            )
+        }
+    };
+    let openai = match translate_request(&request, &TranslationConfig::default()) {
+        Ok(r) => r,
+        Err(e) => {
+            return error_body(
+                StatusCode::BAD_REQUEST,
+                ErrorType::InvalidRequestError,
+                e.to_string(),
+            )
+        }
+    };
+    let planned = match plan(&model, &openai) {
+        Ok(p) => p,
+        Err(e) => return error_body(StatusCode::BAD_REQUEST, ErrorType::InvalidRequestError, e),
+    };
+    Json(serde_json::json!({"input_tokens": planned.prompt_ids.len()})).into_response()
+}
+
 async fn full_response(
     model: AppState,
     openai: &ChatCompletionRequest,

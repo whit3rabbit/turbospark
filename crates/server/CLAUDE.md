@@ -1,9 +1,11 @@
 # turbospark-server
 
 HTTP server (`turbospark-server`) on Axum, speaking two wire formats against one
-local backend: OpenAI `/v1/chat/completions`, Anthropic `/v1/messages`,
-`/v1/models`, and a lock-free `GET /health`. Both generation endpoints
-support non-streaming and Server-Sent Events (SSE) streaming output.
+local backend: OpenAI `/v1/chat/completions` and legacy `/v1/completions`,
+Anthropic `/v1/messages` and `/v1/messages/count_tokens`, `/v1/models`, and
+a lock-free `GET /health`. Every generation endpoint supports non-streaming
+and Server-Sent Events (SSE) streaming output; `count_tokens` never
+generates at all.
 
 The wire types are `anyllm_translate`'s (crates.io 0.16, default features:
 pure, IO-free), not hand-rolled. An Anthropic request is translated into the
@@ -25,7 +27,8 @@ crates/server/
 |   |   +-- plan.rs             # `plan`: chat template, encode, shaping config
 |   |   +-- exec.rs             # `run_full` and `stream_blocking`
 |   |   \-- tests.rs            # Unit tests for the two above
-|   +-- messages.rs             # Anthropic /v1/messages: translate in, generate, translate out
+|   +-- messages.rs             # Anthropic /v1/messages + /v1/messages/count_tokens: translate in, generate (or just plan), translate out
+|   +-- completions.rs          # OpenAI legacy /v1/completions: raw prompt, no chat template
 |   +-- guardrails.rs           # Tool-call rescue, argument validation, the retry loop
 |   |   \-- tests.rs            # Unit tests for the verdict (pure, no model)
 |   +-- model.rs                # ChatModel trait and the ScriptedChatModel backend
@@ -34,7 +37,8 @@ crates/server/
 |   \-- response_tests.rs       # Unit tests for response and chunk serialization
 \-- tests/
     +-- chat_completions.rs     # Integration tests for the OpenAI endpoint
-    +-- messages.rs             # Integration tests for /v1/messages, /v1/models, wider OpenAI shapes
+    +-- completions.rs          # Integration tests for /v1/completions, incl. the not-templated assertion
+    +-- messages.rs             # Integration tests for /v1/messages, count_tokens, /v1/models, wider OpenAI shapes
     +-- harmony_channels.rs     # gpt-oss reasoning -> thinking/reasoning_content, and its tool calls
     +-- reasoning_channels.rs   # Streaming & non-streaming reasoning channel translation tests
     +-- guardrails.rs           # Rescue/validate/retry end to end, both endpoints, no model
@@ -46,7 +50,8 @@ crates/server/
 
 - `main.rs`: Server binary entry point and CLI option handling (`--model` real mode, legacy positional scripted mode, port, `--bind loopback|tailnet`).
 - `handler/`: the `/v1/chat/completions`, `/v1/models`, and `/health` handlers, plus the generation core both generation endpoints share -- `plan.rs` (chat template, encode, shaping config, and `openai_request_warnings`/`merge_degradation` for the OpenAI-side half of `x-anyllm-degradation`, Gotcha 22) and `exec.rs`'s `run_full` and `stream_blocking` (which owns the `StructuredAssistantDecoder` when a request carries tools).
-- `messages.rs`: the Anthropic `/v1/messages` handler, wrapping the same core in `translate_request` / `translate_response` / `new_stream_translator`.
+- `messages.rs`: the Anthropic `/v1/messages` handler, wrapping the same core in `translate_request` / `translate_response` / `new_stream_translator`, plus `count_tokens`, which runs `translate_request` + `plan` and stops there -- no generation, so no `ChatModel` call past that point.
+- `completions.rs`: the legacy OpenAI `/v1/completions` handler -- a hand-rolled request type (`anyllm_translate` has none for this endpoint), `tokenizer.encode(_, add_bos: true)` with no chat template, and its own minimal `run_full`/`stream_response` with no decoder (Gotcha 23).
 - `guardrails.rs`: tool-call rescue parsing, argument validation against the request's own schema, and the one-retry loop, over `forge-guardrails` (see Gotcha 18). `inspect` is the pure verdict; `run_guarded` is the loop that acts on it.
 - `model.rs`: the `ChatModel` trait and `ScriptedChatModel`, bridging Axum handlers to `turbospark-runtime`. The trait owns WHICH decode loop runs (`run_completion`, Gotcha 17), not just which producer.
 - `real_model.rs`: `RealChatModel`, a `RealForwardRunner` behind the same trait (macOS only).
@@ -65,6 +70,10 @@ curl -s localhost:8080/v1/messages -H 'content-type: application/json' \
   -d '{"model":"claude-sonnet-4-6","max_tokens":120,"messages":[{"role":"user","content":"hi"}]}'
 curl -sN localhost:8080/v1/messages -H 'content-type: application/json' \
   -d '{"model":"claude-sonnet-4-6","max_tokens":40,"stream":true,"messages":[{"role":"user","content":"hi"}]}'
+curl -s localhost:8080/v1/messages/count_tokens -H 'content-type: application/json' \
+  -d '{"model":"claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}]}'
+curl -s localhost:8080/v1/completions -H 'content-type: application/json' \
+  -d '{"model":"m","prompt":"The capital of France is","max_tokens":10}'
 
 # The point of /v1/messages: an Anthropic-native client, no proxy.
 ANTHROPIC_BASE_URL=http://127.0.0.1:8080 ANTHROPIC_API_KEY=unused \
@@ -369,9 +378,67 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
     warn UNCONDITIONALLY whenever present, because neither reaches
     `selection::shaping` yet -- delete those two arms the day they do.
 
-    **SSE keep-alive (`Sse::keep_alive`, 15s interval) is on all four SSE
-    constructions** (`handler::mod`'s two, `messages`'s two) for the same
-    reason a long prefill needs it most: the gap between a request landing
-    and its first token can run several seconds at this engine's decode
-    rates, long enough for a loopback proxy or an idle-conservative client
-    to give up on a connection that has sent nothing yet.
+    **SSE keep-alive (`Sse::keep_alive`, 15s interval) is on every SSE
+    construction in the crate** (`handler::mod`'s two, `messages`'s two,
+    `completions`'s one -- five as of Gotcha 23) for the same reason a long
+    prefill needs it most: the gap between a request landing and its first
+    token can run several seconds at this engine's decode rates, long
+    enough for a loopback proxy or an idle-conservative client to give up on
+    a connection that has sent nothing yet.
+
+23. **`/v1/completions` HAS NO CHAT TEMPLATE, WHICH IS WHY IT NEEDS ITS OWN
+    `run_full`/`stream_response` RATHER THAN `handler::exec`'S.** Every other
+    generation path in this crate goes through `handler::plan::plan`, which
+    renders the checkpoint's Jinja template and therefore always has a
+    prompt shaped like a chat turn. This endpoint's whole reason to exist is
+    a prompt that is NOT one -- `tokenizer.encode(prompt, add_bos: true)`,
+    the same convention `turbospark-check --prompt` uses (`crates/cli`) and
+    the ONE call site in this crate that passes `true` rather than `false`
+    (every chat path sets `add_bos: false` because the template emits its
+    own `<bos>`; nothing emits one here, so the tokenizer has to). Sharing
+    `handler::exec::run_full` would have meant threading a "skip the
+    template" flag through `plan` for a caller that needs none of what
+    `plan` does past encoding -- no images, no tools, no reasoning, no
+    `StructuredAssistantDecoder`. A second, smaller `run_full` costs less
+    than that flag would.
+
+    **THE ONE THING WORTH SHARING IS SHAPING, AND IT MOVED OUT OF `plan.rs`
+    RATHER THAN BEING COPIED.** `handler::plan::build_shaping` (temperature,
+    top_p, top_k, repetition_penalty, seed) takes primitives rather than a
+    `ChatCompletionRequest`, because `/v1/completions`'s hand-rolled request
+    type has no such struct to hand it -- both callers pass their own
+    `extra` flatten map. `stop_strings` moved `pub(crate)` for the same
+    reason: one OpenAI-shaped `stop` field (bare string or array), one
+    parser, two callers.
+
+    **THIS ENDPOINT IS WHERE OpenAI's `n`, `suffix`, `logprobs`, `best_of`,
+    AND `echo` ACTUALLY LIVE ON THE WIRE**, unlike the chat endpoint where
+    most of that set is `/v1/chat/completions`-flavoured. `n > 1` and
+    `suffix` (fill-in-the-middle, which no kernel here implements) are
+    refused with a 400 rather than silently answering the wrong shape;
+    `logprobs`, `best_of`, and `echo` are accepted and reported on
+    `x-anyllm-degradation` via a second, endpoint-local
+    `completion_warnings` -- NOT `handler::plan::openai_request_warnings`,
+    because the two endpoints don't share a request type to read the fields
+    off of, only the pattern (`anyllm_translate::TranslationWarnings`).
+
+    **PROVING "NO TEMPLATE" NEEDED AN INDIRECT TEST, because the scripted
+    backend cannot report what it received.** `tests/completions.rs`'s
+    `the_prompt_is_not_chat_templated` sends the same text to both endpoints
+    and asserts `/v1/completions`'s `usage.prompt_tokens` comes out LOWER --
+    a ChatML wrapper adds `<|im_start|>user\n...<|im_end|>\n<|im_start|>
+    assistant\n` on top of the content, so a leaked template would inflate
+    the raw endpoint's count rather than leave it alone. A shape-only
+    assertion (200, right `object` field) cannot see a template leak at all.
+
+    **`count_tokens` (`messages.rs`) IS THE MIRROR CASE: A CALLER THAT NEEDS
+    `plan` TO RUN AND STOP THERE.** `MessageCreateRequest::max_tokens` is a
+    required `u32` on the wire type -- correct for `/v1/messages`, where a
+    real generation needs a budget, and wrong for `count_tokens`, whose own
+    Anthropic spec accepts a request with none. The handler takes
+    `Json<serde_json::Value>` rather than `Json<MessageCreateRequest>`
+    directly, injects `"max_tokens": 1` ONLY when the key is absent, then
+    deserializes and runs `translate_request` + `plan` exactly as
+    `/v1/messages` would -- so the count is definitionally what a real call
+    on this request would prefill, not a separately-maintained estimate that
+    can drift from it.

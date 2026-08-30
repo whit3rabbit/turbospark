@@ -35,8 +35,11 @@ fn role_from(role: &ChatRole) -> Role {
     }
 }
 
-/// `stop` is untagged on the wire: a bare string or an array.
-fn stop_strings(stop: Option<&Stop>) -> Vec<String> {
+/// `stop` is untagged on the wire: a bare string or an array. `pub(crate)`
+/// because `/v1/completions` (`completions.rs`) reads the same shape off its
+/// own hand-rolled request type -- one OpenAI-compatible `stop` field, one
+/// parser.
+pub(crate) fn stop_strings(stop: Option<&Stop>) -> Vec<String> {
     match stop {
         Some(Stop::Single(s)) => vec![s.clone()],
         Some(Stop::Multiple(v)) => v.clone(),
@@ -44,30 +47,42 @@ fn stop_strings(stop: Option<&Stop>) -> Vec<String> {
     }
 }
 
-fn build_config(request: &ChatCompletionRequest) -> Result<GenerationConfig, String> {
+/// `temperature` / `top_p` / `top_k` / `repetition_penalty` / `seed`
+/// resolution, shared between `/v1/chat/completions` (whose `extra` flatten
+/// map is `anyllm_translate`'s) and `/v1/completions` (whose `extra` is its
+/// own hand-rolled type's, same shape). `top_k` and `repetition_penalty`
+/// have no field on either wire type, only a place in `extra`; `pub(crate)`
+/// for the same reason as `stop_strings`.
+pub(crate) fn build_shaping(
+    temperature: Option<f32>,
+    top_p: Option<f32>,
+    extra: &serde_json::Map<String, serde_json::Value>,
+) -> Result<ShapingConfig, String> {
     // top_k defaults to 64 if unspecified, but can be overridden via `top_k` in extra.
-    let top_k = request
-        .extra
+    let top_k = extra
         .get("top_k")
         .and_then(|v| v.as_u64())
         .map(|v| v as u32)
         .unwrap_or(64);
 
-    let repetition_penalty = request
-        .extra
+    let repetition_penalty = extra
         .get("repetition_penalty")
         .and_then(|v| v.as_f64())
         .unwrap_or(1.0);
 
-    let shaping = ShapingConfig::new(
-        request.temperature.map(f64::from).unwrap_or(1.0),
+    ShapingConfig::new(
+        temperature.map(f64::from).unwrap_or(1.0),
         top_k,
-        request.top_p.map(f64::from),
+        top_p.map(f64::from),
         repetition_penalty,
         // `seed` has no field on the OpenAI request type: it lands in the `extra` flatten map.
-        request.extra.get("seed").and_then(|v| v.as_u64()),
+        extra.get("seed").and_then(|v| v.as_u64()),
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| e.to_string())
+}
+
+fn build_config(request: &ChatCompletionRequest) -> Result<GenerationConfig, String> {
+    let shaping = build_shaping(request.temperature, request.top_p, &request.extra)?;
 
     Ok(GenerationConfig {
         shaping,

@@ -206,7 +206,9 @@ async fn main() -> std::process::ExitCode {
     eprintln!("turbospark-server listening on http://{addr}");
     eprintln!("  GET  /health");
     eprintln!("  POST /v1/chat/completions   (OpenAI)");
+    eprintln!("  POST /v1/completions        (OpenAI legacy)");
     eprintln!("  POST /v1/messages           (Anthropic)");
+    eprintln!("  POST /v1/messages/count_tokens  (Anthropic)");
     eprintln!("  GET  /v1/models");
     if let Err(e) = axum::serve(listener, router).await {
         eprintln!("server error: {e}");

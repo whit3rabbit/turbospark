@@ -168,6 +168,99 @@ async fn models_lists_the_loaded_backend() {
     assert_eq!(body["data"][0]["object"], "model");
 }
 
+#[tokio::test]
+async fn count_tokens_reports_the_prompt_length_with_no_max_tokens_sent() {
+    let base = spawn_server(Vec::new()).await;
+    let client = reqwest::Client::new();
+    let response = client
+        .post(format!("{base}/v1/messages/count_tokens"))
+        .json(&serde_json::json!({
+            "model": "claude-sonnet-4-6",
+            "messages": [{"role": "user", "content": "hi"}]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body: serde_json::Value = response.json().await.unwrap();
+    let count = body["input_tokens"]
+        .as_u64()
+        .expect("input_tokens should be a number");
+    assert!(count > 0, "{body}");
+}
+
+/// **THE DISCRIMINATING CASE**: a request that already carries `max_tokens`
+/// must not have it overwritten -- the injected placeholder only fills a gap,
+/// it does not clobber a real value that would otherwise change what
+/// `translate_request` does with it.
+#[tokio::test]
+async fn count_tokens_leaves_an_explicit_max_tokens_alone() {
+    let base = spawn_server(Vec::new()).await;
+    let client = reqwest::Client::new();
+    let response = client
+        .post(format!("{base}/v1/messages/count_tokens"))
+        .json(&serde_json::json!({
+            "model": "claude-sonnet-4-6",
+            "max_tokens": 500,
+            "messages": [{"role": "user", "content": "hi"}]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+}
+
+/// A longer prompt must count higher than a shorter one -- the number is not
+/// a constant that happens to be reported regardless of the request.
+#[tokio::test]
+async fn count_tokens_grows_with_the_prompt() {
+    let base = spawn_server(Vec::new()).await;
+    let client = reqwest::Client::new();
+    let short = client
+        .post(format!("{base}/v1/messages/count_tokens"))
+        .json(&serde_json::json!({
+            "model": "claude-sonnet-4-6",
+            "messages": [{"role": "user", "content": "hi"}]
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    let long = client
+        .post(format!("{base}/v1/messages/count_tokens"))
+        .json(&serde_json::json!({
+            "model": "claude-sonnet-4-6",
+            "messages": [{"role": "user", "content": "hi there, how are you doing today my friend?"}]
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    assert!(
+        long["input_tokens"].as_u64().unwrap() > short["input_tokens"].as_u64().unwrap(),
+        "short={short} long={long}"
+    );
+}
+
+#[tokio::test]
+async fn count_tokens_rejects_a_malformed_body() {
+    let base = spawn_server(Vec::new()).await;
+    let client = reqwest::Client::new();
+    let response = client
+        .post(format!("{base}/v1/messages/count_tokens"))
+        .header("content-type", "application/json")
+        .body("not json")
+        .send()
+        .await
+        .unwrap();
+    assert!(response.status().is_client_error());
+}
+
 /// The three OpenAI request shapes the hand-rolled envelope used to reject:
 /// `stop` as a bare string, `max_completion_tokens` instead of `max_tokens`,
 /// and `content` as an array of parts.

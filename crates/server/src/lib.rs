@@ -10,6 +10,7 @@
 //! `RealForwardRunner` forward pass against a `.gturbo` install). Model
 //! dialect auto-selection is the tokenizer's job here, not the server's.
 
+mod completions;
 mod guardrails;
 mod handler;
 mod messages;
@@ -52,14 +53,18 @@ use axum::Router;
 ///
 /// - `GET /health`: liveness/readiness probe, no generation lock taken
 /// - `POST /v1/chat/completions`: OpenAI-compatible chat completion endpoint
+/// - `POST /v1/completions`: OpenAI's legacy raw-prompt completion endpoint
 /// - `POST /v1/messages`: Anthropic-compatible messages endpoint
+/// - `POST /v1/messages/count_tokens`: Anthropic's count-only endpoint (no generation)
 /// - `GET /v1/models`: OpenAI-compatible list of available models
 /// - `GET /v1/models/:model`: OpenAI-compatible model detail endpoint
 pub fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(handler::health))
         .route("/v1/chat/completions", post(handler::chat_completions))
+        .route("/v1/completions", post(completions::completions))
         .route("/v1/messages", post(messages::messages))
+        .route("/v1/messages/count_tokens", post(messages::count_tokens))
         .route("/v1/models", get(handler::models))
         .route("/v1/models/:model", get(handler::model_detail))
         .with_state(state)
