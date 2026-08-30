@@ -8,7 +8,7 @@
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
-use crate::session::{self, Session};
+use crate::session::{self, Session, SessionCore};
 use crate::wire;
 
 /// A session over a scripted producer.
@@ -26,7 +26,7 @@ pub fn session_for_testing(
     vocab_size: usize,
     max_context: u32,
 ) -> Session {
-    Session {
+    Session::new(SessionCore {
         engine: Mutex::new(session::Engine::Scripted(Box::new(
             runtime::ScriptedLogitProducer::new(steps),
         ))),
@@ -61,5 +61,5 @@ pub fn session_for_testing(
             },
         },
         tokenizer,
-    }
+    })
 }

@@ -23,10 +23,11 @@ use foundation::LogitValue;
 use tokenizer::MfTokenizer;
 use turbospark_ffi::{
     abi, session_for_testing, ts_generate, ts_last_error, ts_model_delete, ts_probe_json,
-    ts_recommend_json, ts_session_cancel, ts_session_count_text_tokens, ts_session_count_tokens,
-    ts_session_detokenize_json, ts_session_fit_window_json, ts_session_info_json, ts_session_open,
-    ts_session_render_prompt, ts_session_tokenize_json, ts_string_free, ts_system_info_json,
-    Session, TS_EVENT_CONTENT, TS_EVENT_PREFILL,
+    ts_recommend_json, ts_server_info_json, ts_server_start, ts_server_stop, ts_session_cancel,
+    ts_session_count_text_tokens, ts_session_count_tokens, ts_session_detokenize_json,
+    ts_session_fit_window_json, ts_session_info_json, ts_session_open, ts_session_render_prompt,
+    ts_session_tokenize_json, ts_string_free, ts_system_info_json, Server, Session,
+    TS_EVENT_CONTENT, TS_EVENT_PREFILL,
 };
 
 fn fixture() -> MfTokenizer {
@@ -596,6 +597,126 @@ fn session_info_includes_special_tokens() {
     assert!(special.get("stopTokenIds").is_some());
     let stop_ids = special["stopTokenIds"].as_array().unwrap();
     assert!(!stop_ids.is_empty());
+}
+
+// ----------------------------------------------------- in-process server
+
+/// Starts a server over `session` and asserts success, returning the handle.
+unsafe fn start_server(session: *const Session, options: &str) -> *mut Server {
+    let opts = c(options);
+    let mut server: *mut Server = ptr::null_mut();
+    let code = ts_server_start(session, opts.as_ptr(), &mut server);
+    assert_eq!(code, abi::TS_OK, "{}", last_error());
+    assert!(!server.is_null(), "a successful start must write a handle");
+    server
+}
+
+/// Reads back the ACTUALLY bound port (`port: 0` in the options asks the OS
+/// to choose one) and builds a base URL from it.
+fn server_base_url(server: *const Server) -> String {
+    let mut out: *mut c_char = ptr::null_mut();
+    let code = unsafe { ts_server_info_json(server, &mut out) };
+    assert_eq!(code, abi::TS_OK, "{}", last_error());
+    let json: serde_json::Value = serde_json::from_str(&unsafe { take(out) }).unwrap();
+    let port = json["port"].as_u64().unwrap();
+    assert_ne!(port, 0, "port 0 must resolve to the actually bound port");
+    format!("http://127.0.0.1:{port}")
+}
+
+/// A real HTTP round trip through the server this session started, proving
+/// `ts_server_start` actually serves requests rather than merely building a
+/// `Router` nothing is listening on.
+#[tokio::test]
+async fn a_server_started_from_a_session_serves_that_sessions_model() {
+    let session = endless_session(fixture(), "h", 32);
+    let server = unsafe { start_server(&session, "{}") };
+    let base = server_base_url(server);
+
+    let response = reqwest::Client::new()
+        .post(format!("{base}/v1/chat/completions"))
+        .json(&serde_json::json!({
+            "model": "m", "max_tokens": 4, "temperature": 0.0,
+            "messages": [{"role": "user", "content": "hi"}]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body: serde_json::Value = response.json().await.unwrap();
+    let content = body["choices"][0]["message"]["content"]
+        .as_str()
+        .expect("a chat completion response carries message.content");
+    assert!(!content.is_empty());
+
+    unsafe { ts_server_stop(server) };
+}
+
+/// **THE PROPERTY THE `SessionCore` SPLIT EXISTS FOR.** Dropping the
+/// `Session` handle that started a server must not take the engine down
+/// with it: the server holds its own `Arc<SessionCore>` clone
+/// (`session.rs`'s module doc), independent of the handle a caller passed to
+/// `ts_server_start`. If this regressed to a borrow, this test would not
+/// compile; if it regressed to sharing state without a true clone, the
+/// request below would fail against a dropped engine instead of succeeding.
+#[tokio::test]
+async fn closing_the_session_does_not_stop_a_server_still_serving_it() {
+    let session = endless_session(fixture(), "h", 32);
+    let server = unsafe { start_server(&session, "{}") };
+    let base = server_base_url(server);
+
+    drop(session);
+
+    let response = reqwest::Client::new()
+        .post(format!("{base}/v1/chat/completions"))
+        .json(&serde_json::json!({
+            "model": "m", "max_tokens": 2, "temperature": 0.0,
+            "messages": [{"role": "user", "content": "hi"}]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        200,
+        "the server's own Arc<SessionCore> clone must keep the engine alive \
+         after the session handle that started it was dropped"
+    );
+
+    unsafe { ts_server_stop(server) };
+}
+
+/// `ts_server_stop` blocks until the background thread has actually exited
+/// (`Server::stop`'s doc), so a connection attempt afterward must fail to
+/// connect at all rather than merely time out waiting on a reply.
+#[tokio::test]
+async fn ts_server_stop_actually_stops_serving() {
+    let session = endless_session(fixture(), "h", 4);
+    let server = unsafe { start_server(&session, "{}") };
+    let base = server_base_url(server);
+
+    unsafe { ts_server_stop(server) };
+
+    let result = reqwest::Client::new()
+        .get(format!("{base}/health"))
+        .send()
+        .await;
+    assert!(
+        result.is_err(),
+        "a request after ts_server_stop should fail to connect, got {result:?}"
+    );
+}
+
+#[test]
+fn server_options_accept_an_api_key_and_report_it_enabled() {
+    let session = endless_session(fixture(), "h", 4);
+    let server = unsafe { start_server(&session, r#"{"apiKey":"sk-test"}"#) };
+    let mut out: *mut c_char = ptr::null_mut();
+    let code = unsafe { ts_server_info_json(server, &mut out) };
+    assert_eq!(code, abi::TS_OK, "{}", last_error());
+    let json: serde_json::Value = serde_json::from_str(&unsafe { take(out) }).unwrap();
+    assert_eq!(json["authEnabled"], true);
+    assert_eq!(json["modelId"], "<scripted>");
+    unsafe { ts_server_stop(server) };
 }
 
 #[test]

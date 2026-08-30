@@ -35,6 +35,8 @@ mod generate;
 mod models;
 #[cfg(target_os = "macos")]
 mod open;
+mod server;
+mod server_model;
 mod session;
 mod strings;
 mod telemetry;
@@ -45,12 +47,16 @@ pub mod wire;
 pub use api::*;
 pub use generate::{TS_EVENT_CONTENT, TS_EVENT_PREFILL, TS_EVENT_REASONING};
 pub use models::{TS_INSTALL_BYTES, TS_INSTALL_STAGE};
+pub use server::Server;
 pub use session::Session;
 #[doc(hidden)]
 pub use testing::session_for_testing;
 
 /// The opaque handle a caller holds. `TsSession *` in C.
 pub type TsSession = Session;
+
+/// The opaque in-process-server handle a caller holds. `TsServer *` in C.
+pub type TsServer = Server;
 
 /// One streamed event. `kind` is one of the `TS_EVENT_*` constants; `text`
 /// is UTF-8 of length `len` and is NOT NUL-terminated and NOT owned by the

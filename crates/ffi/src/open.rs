@@ -24,7 +24,7 @@ use std::sync::{Arc, Mutex};
 
 use tokenizer::MfTokenizer;
 
-use crate::session::{Engine, Session};
+use crate::session::{Engine, Session, SessionCore};
 use crate::wire::{load_guard, sized, OpenOptions, SessionInfo, SpeculationInfo};
 
 /// Maps the wire spelling of a power profile.
@@ -381,7 +381,7 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
         },
     };
 
-    Ok(Session {
+    Ok(Session::new(SessionCore {
         engine: Mutex::new(Engine::Real(Box::new(runner))),
         tokenizer,
         cancel: Arc::new(AtomicBool::new(false)),
@@ -389,7 +389,7 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
         rate,
         speculation_block,
         info,
-    })
+    }))
 }
 
 /// The option MAPPERS, which are the half of this module reachable without a

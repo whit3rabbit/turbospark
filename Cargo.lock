@@ -2038,8 +2038,11 @@ dependencies = [
 name = "turbospark-ffi"
 version = "0.1.0"
 dependencies = [
+ "axum",
+ "reqwest",
  "serde",
  "serde_json",
+ "tokio",
  "turbospark-bench",
  "turbospark-catalog",
  "turbospark-core",
@@ -2047,6 +2050,7 @@ dependencies = [
  "turbospark-repack",
  "turbospark-runtime",
  "turbospark-selection",
+ "turbospark-server",
  "turbospark-tokenizer",
  "turbospark-window-fit",
 ]

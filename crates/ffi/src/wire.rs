@@ -297,6 +297,35 @@ pub struct SessionInfo {
     pub special_tokens: SpecialTokensInfo,
 }
 
+/// Arguments to `ts_server_start`. `{}` is valid and means "an OS-assigned
+/// port, no auth" -- the same "everything automatic" convention
+/// `OpenOptions` uses.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ServerOptions {
+    /// 0 (the default, and what an absent key also means) asks the OS for an
+    /// ephemeral port; read the one actually bound back from
+    /// `ts_server_info_json`.
+    pub port: u16,
+    /// Require this key on every request except `GET /health`, exactly as
+    /// `turbospark-server --api-key` does. `None` (the default) leaves the
+    /// server unauthenticated, appropriate for a server bound to loopback
+    /// and reachable only by the process embedding it.
+    pub api_key: Option<String>,
+}
+
+/// What `ts_server_info_json` returns.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerInfo {
+    /// The port ACTUALLY bound, never the one requested: `port: 0` in
+    /// `ServerOptions` asks for an OS-assigned one, so this is the only
+    /// place that number is knowable.
+    pub port: u16,
+    pub model_id: String,
+    pub auth_enabled: bool,
+}
+
 /// What `ts_session_phases_json` returns: `MFERENCE_PHASES=1`'s breakdown.
 ///
 /// **Cumulative over every forward pass the runner has served, PREFILL

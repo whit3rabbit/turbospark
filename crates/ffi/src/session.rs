@@ -14,7 +14,25 @@
 //! is not. `Mutex` supplies that, and it is the same arrangement
 //! `crates/server`'s `RealChatModel` uses for the same reason: one runner per
 //! process, `&mut self` to decode, so callers queue rather than run.
+//!
+//! **`Session` IS A THIN, CLONEABLE HANDLE OVER `SessionCore`, AND THAT SPLIT
+//! IS WHAT LETS `ts_server_start` SHARE THE MODEL WITHOUT OPENING A SECOND
+//! ONE.** `SessionCore` carries the engine, the tokenizer and everything
+//! resolved at open; `Session` is an `Arc<SessionCore>` newtype. Field access
+//! through `Session` reaches `SessionCore` by ordinary `Deref` autoref, so
+//! every existing `session.tokenizer` / `session.engine` / ... call site
+//! needed no change. What the split buys: `Session::core` hands out an
+//! `Arc<SessionCore>` clone that `crate::server::Server` can hold on its own
+//! background thread, independent of the opaque `TsSession *`'s lifetime --
+//! `ts_session_close` drops the caller's `Arc` reference, and the underlying
+//! engine stays alive for as long as a running server (or any other clone)
+//! still holds one. Opening a SECOND `RealForwardRunner` to serve the same
+//! install through HTTP was considered and declined: it would double the
+//! resident mapping and the Metal pipeline compile for an install that can
+//! already be double-digit gigabytes, on a machine the GUI itself is running
+//! on.
 
+use std::ops::Deref;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -37,8 +55,14 @@ pub(crate) enum Engine {
     Scripted(Box<runtime::ScriptedLogitProducer>),
 }
 
-/// Everything one opened model needs, and the thing `TsSession *` points at.
-pub struct Session {
+/// Everything one opened model needs. Shared, never mutated by value after
+/// construction -- interior mutability (`Mutex`, the cancel `AtomicBool`) is
+/// how a clone reaches the live state.
+///
+/// `pub` rather than `pub(crate)` only because `Session`'s `Deref::Target`
+/// must be at least as visible as `Session` itself; every FIELD stays
+/// `pub(crate)`, so nothing outside this crate can actually read one.
+pub struct SessionCore {
     /// The engine, serialized. A turn holds this for its whole duration.
     pub(crate) engine: Mutex<Engine>,
     pub(crate) tokenizer: MfTokenizer,
@@ -71,9 +95,9 @@ pub struct Session {
     pub(crate) speculation_block: Option<usize>,
 }
 
-impl Session {
+impl SessionCore {
     /// Raises the cancel flag. Wait-free, and safe from any thread.
-    pub fn cancel(&self) {
+    pub(crate) fn cancel(&self) {
         // `Release` pairs with the decode loop's `Acquire`: everything this
         // thread did before pressing Stop is visible to the thread that
         // observes the flag. Nothing here depends on that today, but a
@@ -102,6 +126,31 @@ impl Session {
             o.seed,
         )
         .map_err(|e| e.to_string())
+    }
+}
+
+/// The opaque handle `TsSession *` points at. See the module doc for why
+/// this is a thin `Arc` wrapper rather than the state itself.
+pub struct Session(pub(crate) Arc<SessionCore>);
+
+impl Session {
+    pub(crate) fn new(core: SessionCore) -> Self {
+        Session(Arc::new(core))
+    }
+
+    /// Clones the shared core out from under this handle's own lifetime, for
+    /// `ts_server_start` to hold on a background thread. The clone keeps the
+    /// engine alive even after `ts_session_close` drops this `Session`.
+    pub(crate) fn core(&self) -> Arc<SessionCore> {
+        Arc::clone(&self.0)
+    }
+}
+
+impl Deref for Session {
+    type Target = SessionCore;
+
+    fn deref(&self) -> &SessionCore {
+        &self.0
     }
 }
 

@@ -24,17 +24,20 @@ crates/ffi/
 |   +-- abi.rs              # status codes, the per-thread error slot, `guard`, ABI helpers
 |   +-- strings.rs          # borrowing C strings in, handing owned ones out
 |   +-- wire.rs             # the JSON shapes (camelCase)
-|   +-- session.rs          # the opaque handle; where the cancel flag lives
+|   +-- session.rs          # the opaque handle (Session over shared SessionCore); the cancel flag
 |   +-- open.rs             # opening an install (macOS)
 |   +-- generate.rs         # one turn: render, decode, stream, report
 |   +-- models.rs           # catalog, probe, install (portable)
+|   +-- server.rs           # the in-process HTTP server: background thread, tokio runtime, lifecycle
+|   +-- server_model.rs     # ChatModel adapter over SessionCore, for server.rs
 |   +-- telemetry.rs        # phase counters and peak footprint
 |   +-- testing.rs          # session_for_testing (scripted testing harness)
 |   \-- api/                # C ABI entry points (extern "C")
 |       +-- core.rs         # errors, strings, system telemetry
 |       +-- session.rs      # session lifecycle and introspection
 |       +-- generate.rs     # generation, prompt rendering, tokenization, window fit
-|       \-- models.rs       # catalog, recommendations, probe, install
+|       +-- models.rs       # catalog, recommendations, probe, install
+|       \-- server.rs       # ts_server_start / ts_server_stop / ts_server_info_json
 \-- tests/
     \-- c_surface.rs        # the C entry points, through the `rlib` face
 ```
@@ -250,3 +253,69 @@ make swift-test-real MODEL=~/models/qwen38-27b-mtp.gturbo \
     `sized`'s reason and one of its own: quietly ranking under the default
     when the caller asked for `strict` is the exact failure the option exists
     to prevent.
+
+13. **`ts_server_start` SHARES THE OPEN MODEL RATHER THAN OPENING A SECOND
+    ONE, AND THAT IS WHY `Session` SPLIT INTO A THIN HANDLE OVER
+    `SessionCore`.** Added 2026-08-30. The alternative -- have this crate open
+    a full `turbospark_server::RealChatModel` of its own -- would reuse 100%
+    of that crate's tested speculation/chunked-prefill/vision/guardrail logic
+    with zero duplication, and was declined: a GUI already holding one
+    `RealForwardRunner` open (Gotcha 1's whole design assumes this) would pay
+    a SECOND multi-gigabyte mapping and Metal pipeline compile just to expose
+    the same model over HTTP, which is not survivable on the machine the GUI
+    itself is running on for a double-digit-gigabyte install.
+
+    `SessionCore` carries the engine, the tokenizer and everything resolved
+    at open; `Session` is `Arc<SessionCore>` behind a newtype, reachable via
+    `Deref` so every pre-existing `session.tokenizer` / `session.engine` /
+    ... call site needed no change (Rust's field-access autoderef, same
+    mechanism method-call autoderef uses). `Session::core()` hands a clone of
+    that `Arc` to `server::Server::start`, which builds an `FfiChatModel`
+    (`server_model.rs`) around it and passes that to
+    `turbospark_server::build_router_with_options` -- the SAME router
+    function the standalone binary uses. `ts_session_close` on the handle
+    that started the server drops only the caller's own reference; the
+    engine stays resident until `ts_server_stop` (or process exit) releases
+    the server's clone. `tests/c_surface.rs`'s
+    `closing_the_session_does_not_stop_a_server_still_serving_it` is the
+    end-to-end proof: it drops the `Session` and then makes a real HTTP
+    request against the server that outlived it.
+
+    **`FfiChatModel` IS A SECOND, SCOPED-DOWN COPY OF
+    `RealChatModel::run_completion`'S DISPATCH, NOT A REUSE OF IT.** It
+    replicates speculation and chunked prefill (both already live on this
+    crate's own `generate.rs` for the SAME session, so skipping either here
+    would make the in-process server slower than a direct `ts_generate` call
+    for no reason a caller could see) but carries neither vision nor
+    `RealChatModel`'s image-under-one-lock handling: a session opened through
+    `ts_session_open` has no vision wiring reachable from this crate at all,
+    so an in-process server built on one would be lying about a capability it
+    cannot serve. An image request is refused BY NAME
+    (`FfiChatModel::run_completion`'s first check), the same shape
+    `ChatModel`'s own default implementation uses for a backend with no
+    tower.
+
+    **THE BIND CANNOT HAPPEN ON THE CALLING THREAD, and the first version of
+    this got that wrong.** `Server::start` originally called
+    `rt.block_on(TcpListener::bind(..))` on the thread `ts_server_start`
+    itself runs on, to read the resolved port back before spawning the
+    long-lived server thread. That is exactly
+    `tokio::runtime::Runtime::block_on`'s documented panic -- "Cannot start a
+    runtime from within a runtime" -- and it fired immediately, not on some
+    exotic caller: `tests/c_surface.rs`'s own `#[tokio::test]` server tests
+    hit it on the first run, because the test body itself runs inside a
+    Tokio runtime and `ts_server_start` tried to start a SECOND one on top of
+    it. A C caller is never inside a Tokio runtime, so this specific trap
+    could not have reached a real Swift host, but the fix is not a test
+    workaround: any async Rust host embedding this library through the
+    `rlib` face would have hit the identical panic. The bind now happens
+    ON the background thread, inside its OWN runtime, and the resolved
+    port (or a bind failure) is sent back to `start`'s caller over a plain
+    `std::sync::mpsc::channel` -- a blocking OS-level wait with no
+    restriction on which thread or runtime calls `recv()` on it, unlike
+    `tokio::sync`'s channels or `block_on`.
+
+    Guardrails are NOT overridden and take whatever `ChatModel::guardrails()`
+    trait default is (on), matching `ScriptedChatModel`'s own choice to leave
+    it alone rather than reason about a feature this session's `generate.rs`
+    never exercises either.

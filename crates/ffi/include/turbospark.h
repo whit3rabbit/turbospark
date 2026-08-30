@@ -86,6 +86,7 @@ extern "C" {
 /* ---- handle ---- */
 
 typedef struct TsSession TsSession;
+typedef struct TsServer TsServer;
 
 /*
  * One streamed generation event.
@@ -364,6 +365,54 @@ int32_t ts_session_fit_window_json(const TsSession *s, const char *messages_json
 int32_t ts_generate(const TsSession *s, const char *messages_json,
                     const char *options_json, TsEventCallback cb,
                     void *userdata, char **result_json);
+
+/* ---- in-process HTTP server ---- */
+
+/*
+ * Starts an in-process HTTP server sharing `s`'s ALREADY-OPEN model, and
+ * writes a handle to `*out`. Serves the same OpenAI/Anthropic-compatible
+ * routes turbospark-server does: GET /health, POST /v1/chat/completions,
+ * POST /v1/completions, POST /v1/responses, POST /v1/messages,
+ * POST /v1/messages/count_tokens, GET /v1/models.
+ *
+ * `options_json` may be NULL or "{}". Recognised keys:
+ *   port    number (default 0, meaning let the OS choose; read the port
+ *             ACTUALLY bound back from ts_server_info_json)
+ *   apiKey  string | null (default null, meaning no auth -- appropriate for
+ *             a server bound to loopback and reachable only by the process
+ *             embedding it)
+ *
+ * THE SERVER OUTLIVES `s`. It holds its own reference to the underlying
+ * engine, so calling ts_session_close(s) after this call frees only the
+ * caller's own handle -- the model stays resident and the server keeps
+ * serving it until ts_server_stop() releases the last reference. Stop the
+ * server explicitly if the model should actually be freed.
+ *
+ * This server carries NEITHER vision NOR the standalone binary's tool-call
+ * guardrails: a session opened through ts_session_open has no vision wiring
+ * reachable from this library, and an image request is refused by name
+ * rather than silently dropped.
+ *
+ * Blocks until the socket is bound (or binding fails), not until the first
+ * request is served.
+ */
+int32_t ts_server_start(const TsSession *s, const char *options_json,
+                        TsServer **out);
+
+/*
+ * Signals the server to stop, blocks until its background thread has
+ * actually exited, and frees the handle. NULL is a no-op.
+ */
+void ts_server_stop(TsServer *server);
+
+/*
+ * { "port", "modelId", "authEnabled" } as JSON.
+ *
+ * "port" is the port ACTUALLY bound, never the one requested: port 0 in
+ * ts_server_start's options asks the OS to choose one, so this is the only
+ * place that number is knowable.
+ */
+int32_t ts_server_info_json(const TsServer *server, char **out);
 
 /* ---- model management (available on every platform) ---- */
 

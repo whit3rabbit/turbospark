@@ -35,6 +35,22 @@ catalog = { package = "turbospark-catalog", path = "../catalog", version = "0.1.
 # decode. `runtime` re-exports the type but is macOS-only, so naming it
 # through that crate would make the portable half unbuildable.
 model_io = { package = "turbospark-model-io", path = "../model-io", version = "0.1.0" }
+# For `ts_server_start`'s in-process HTTP server: the same `ChatModel` trait,
+# router and OpenAI/Anthropic envelopes `turbospark-server` serves standalone
+# with, wrapped here around this crate's own already-open `SessionCore`
+# rather than a second `RealForwardRunner` (`session.rs`'s module doc). This
+# crate compiles `turbospark-server` itself, not its binary, and that crate
+# is portable off macOS (its `RealChatModel` half is the only part gated),
+# so this stays an unconditional dependency like `catalog` and `model_io`
+# above.
+turbospark-server = { path = "../server", version = "0.1.0" }
+# Versions and features matched to `crates/server/Cargo.toml` on purpose: two
+# copies of axum/tokio at different versions in one binary is silent bloat
+# rather than a build error, and `ts_server_start` hands `turbospark-server`
+# a `Router` built from ITS axum, so this crate's `axum::serve` call has to
+# be literally the same crate version, not just API-compatible.
+axum = { version = "0.7", features = ["json"] }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "macros", "sync"] }
 
 # The session only exists where the engine does. Everything else in this
 # crate -- the error slot, the string helpers, the catalog and probe surface
@@ -49,3 +65,8 @@ bench = { package = "turbospark-bench", path = "../bench", version = "0.1.0" }
 
 [dev-dependencies]
 serde_json = "1"
+# For `tests/c_surface.rs`'s in-process server tests: a real HTTP client is
+# the only way to prove `ts_server_start` actually served a request, rather
+# than merely constructing a `Router`. Same spec as `crates/server`'s own
+# dev-dependency.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
