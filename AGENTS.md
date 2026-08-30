@@ -128,10 +128,13 @@ only the structural and configuration contracts are exercised by the tests,
 except where a real CPU-vs-GPU parity test exists (`crates/gpu`'s
 `rms_norm_parity.rs`).
 
-The four commands above cover everything except the `#[ignore]`d tests
-(the checkpoint downloads, the two memory oracles, the two quality gates,
-and the quality sensitivity proof), which are opt-in and not part of the
-handoff gate. Run an oracle when a change could move memory or decode
+The four commands above cover everything except the `#[ignore]`d tests,
+which are opt-in and not part of the handoff gate. They are the checkpoint
+downloads, the per-family memory oracles and quality gates, the quality
+sensitivity proof, the cross-engine dumps, and the real-install behaviour
+gates (prefix KV reuse is one). **That list is deliberately not exhaustive
+and the COUNT lives in `docs/TESTING.md`, not here** -- it has rotted past
+2x twice, because nothing goes red when a number in prose goes stale. Run an oracle when a change could move memory or decode
 throughput, and a quality gate when it could move numerics. The
 sensitivity test is not part of routine verification: run it when the
 gate's own credibility is in question, for example after changing the

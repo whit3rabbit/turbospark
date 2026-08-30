@@ -8,8 +8,8 @@ What the suite covers, how it is gated, and how to run each part.
 cargo test --workspace
 ```
 
-941 tests as of 2026-08-18, all passing, plus 98 that are `#[ignore]`d (see
-below). **Re-count before quoting either number.** Both were stale by more
+1,435 tests as of 2026-08-29, all passing, plus 144 that are `#[ignore]`d
+(see below). **Re-count before quoting either number.** Both were stale by more
 than 2x when this line was last corrected (they read 458 and 18, unchanged
 since 2026-08-08 while eleven families and phases landed), and nothing goes
 red when they rot: a count is prose. The one-liners that produce them are
@@ -145,9 +145,9 @@ idiom (real implementation plus a stub that exits 2).
 
 ### Ignored (expensive or needs external data)
 
-58 targets carry `#[ignore]`d tests, 98 functions between them as of
-2026-08-18 (`repack` 27/50, `bench` 23/27, `gpu` 2/9, `selection` 2/4,
-`catalog` 2/3, `tokenizer` 1/3, `server` 1/2). Each has a reason string and
+79 targets carry `#[ignore]`d tests, 144 functions between them as of
+2026-08-29 (`bench` 35/52, `repack` 33/61, `gpu` 3/12, `runtime` 2/6,
+`selection` 2/4, `catalog` 2/3, `server` 1/3, `tokenizer` 1/3). Each has a reason string and
 a module doc with the exact command. The commands below are the ones that are gates. The two that are
 not are documented in `docs/BENCHMARKS.md` instead: `crates/selection`'s
 `rank_top_k` (a sampler microbenchmark) and `crates/gpu`'s
@@ -257,6 +257,16 @@ TURBOSPARK_QWEN36_GGUF_INSTALL_DIR=~/models/qwen36-gguf.gturbo \
 # that block is ever out of date too.
 TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
   cargo test -p turbospark-bench --test memory_oracle --release -- --ignored --nocapture
+
+# Prefix KV reuse against the real install. NOT a memory or numerics gate --
+# it is a BEHAVIOURAL one, and the only thing that can make its claim: a turn
+# that continues from the previous turn's KV must generate the tokens a full
+# re-prefill generates. A scripted producer has no KV to be wrong about, so
+# the sliding-window ring and the cursor rewind are unreachable without an
+# install. Run it on any change to the generation loops, `kv_prefix`, or the
+# KV cursor. Seconds, not minutes.
+TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
+  cargo test -p turbospark-runtime --test prefix_reuse_real --release -- --ignored --nocapture
 TURBOSPARK_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
   cargo test -p turbospark-bench --test qwen36_memory_oracle --release -- --ignored --nocapture
 
@@ -388,7 +398,7 @@ attention) so it cannot rot silently; only the timings are advisory.
 
 | Variable | Read by | Effect |
 | --- | --- | --- |
-| `TURBOSPARK_GEMMA4_INSTALL_DIR` | `gemma4_checkpoint_network`, `memory_oracle`, `quality_gate`, `quality_sensitivity`, `logit_dump`, `real_backend`, `gguf_checkpoint_network`, `gguf_fused_gate_network` | Where the real `.gturbo` install lives. The oracle, the quality gate, the logit dump, and the server test skip (with a note) when unset; the repack test falls back to a temp dir. The two GGUF tests use the install as an independent REFERENCE rather than as a subject: `gguf_checkpoint_network` cross-checks names and `ArchConfig` against it and skips those two checks when unset, and `gguf_fused_gate_network` correlates against its expert weights and skips entirely. Both accept a leading `~/`. |
+| `TURBOSPARK_GEMMA4_INSTALL_DIR` | `gemma4_checkpoint_network`, `memory_oracle`, `quality_gate`, `quality_sensitivity`, `logit_dump`, `real_backend`, `gguf_checkpoint_network`, `gguf_fused_gate_network`, `prefix_reuse_real` | Where the real `.gturbo` install lives. The oracle, the quality gate, the logit dump, and the server test skip (with a note) when unset; the repack test falls back to a temp dir. The two GGUF tests use the install as an independent REFERENCE rather than as a subject: `gguf_checkpoint_network` cross-checks names and `ArchConfig` against it and skips those two checks when unset, and `gguf_fused_gate_network` correlates against its expert weights and skips entirely. Both accept a leading `~/`. |
 | `TURBOSPARK_QWEN36_INSTALL_DIR` | `qwen36_checkpoint_network`, `qwen36_memory_oracle`, `qwen36_quality_gate`, `logit_dump` | Where the repacked Qwen 3.6 install lives. The oracle and the quality gate skip (with a note) when unset; the repack test falls back to a temp dir. Deliberately a second variable rather than a generalized one, so both installs can coexist and each target asserts its own family's row. `logit_dump` takes it as a fallback when the Gemma variable is unset; its cross-engine reference is `scripts/kld_mlx_affine.py`'s `qwen36` row, not `scripts/kld.py` (that driver has no guard that an MoE reference loaded quantized, and this checkpoint is one). |
 | `TURBOSPARK_QWEN3MOE_INSTALL_DIR` | `gguf_qwen3moe_install_network`, `qwen3moe_memory_oracle`, `qwen3moe_quality_gate`, `logit_dump` | Where the real Qwen3-30B-A3B Q4_K_M GGUF install lives (ROADMAP M3). A FOURTH variable for the same reason as the two below it: each family's oracle asserts its own ceiling (2,900 MiB here against Gemma's 2,300, because 48 layers of slot cache is not 30) and its own frozen digests. The install test refuses to write to any of the pinned variables. `logit_dump` takes it as the third fallback, which is how the cross-engine KL against llama.cpp is run on this family. |
 | `TURBOSPARK_GEMMA4_IQ_INSTALL_DIR` | `gguf_iq_install_network`, `iq3_quality_gate` | Where the 3-bit (IQ3_XXS/IQ4_NL) Gemma 4 install lives (ROADMAP Phase S). A THIRD variable rather than a reuse of the Gemma one, for the reason `iq3_quality_gate` documents: the quality rows are keyed on the chip and freeze the MLX INT4 goldens, so pointing an existing variable at a different artifact asserts the wrong digests. The install test refuses to write to either of the two variables above, and both readers skip or fall back to a temp dir when unset. |
