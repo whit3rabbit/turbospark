@@ -166,7 +166,7 @@ Every row is checkable with the named file or a grep; none of it is inferred.
 | A retry-on-invalid loop | Exists: `run_guarded` (`crates/server/src/guardrails.rs:304`), default budget 1, re-renders the whole prompt with the failed turn plus a nudge appended. Note requests carrying tools are BUFFERED rather than streamed while guardrails are on. |
 | Grammar-constrained decoding | Absent, and documented as absent (docs/FORGE_GUARDRAILS.md, DEVIATIONS.md). No vocabulary masking of any kind exists: no logit_bias (the OpenAI field is swept into `extra` and never read), no allowed-token set, no grammar. |
 | Structured-output API (`response_format` / `json_schema`) | Absent on both server endpoints. |
-| Prefix KV reuse | Documented design only, NOT in this tree: commit `0443d7b` is docs-only and `kv_prefix.rs` does not exist (checked 2026-08-29). See the interaction section below. |
+| Prefix KV reuse | Implemented (`crates/runtime/src/kv_prefix.rs`, `LogitProducer::try_reuse_prefix`, opted in per session via `set_prefix_reuse`; `--chat` is a caller). It was docs-only when this page was first written on 2026-08-29 and landed on `main` the next day, which is why the section below reads as a projection. See it for what SKILL.state does to the reusable prefix. |
 
 The measurement below says constrained decoding is NOT needed for this, so
 what follows is a located seam for a future question rather than a proposal.
@@ -211,9 +211,12 @@ Three candidate homes, in order of fit:
 
 ## Interaction with prefix KV reuse
 
-The documented (not yet implemented) prefix reuse design is a
-longest-common-prefix mechanism keyed on fed token ids
-(`crates/runtime/CLAUDE.md` Gotcha 30). A SKILL.state prompt is
+Prefix reuse is a longest-common-prefix mechanism keyed on fed token ids
+(`crates/runtime/src/kv_prefix.rs`, `crates/runtime/CLAUDE.md` Gotcha 30). It
+landed on `main` in `a7274a3`, one day after this page first described it as
+unimplemented; nothing below was re-measured against it, so read this section
+as the arithmetic of the two mechanisms rather than as a reading of the
+shipped one. A SKILL.state prompt is
 [fixed P][mutating Sigma][fresh O], so the LCP ends at the first byte where
 the serialized state differs from the previous step: only P would ever be
 reused, which is also the paper's own stated limitation of prefix caching
