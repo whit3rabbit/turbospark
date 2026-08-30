@@ -144,7 +144,25 @@ impl RealForwardRunner {
         self.prompt_vision = Some(crate::vision::PromptVision::new(
             embeddings, positions, prompt_len, hidden,
         )?);
+        // A placeholder span carries the same token ids whatever picture
+        // filled it, so a state that consumed one is not described by its
+        // ids and must never be reused (`crate::kv_prefix`'s TAINT). Without
+        // this, turn two of a two-image chat answers from turn one's pixels
+        // -- Gotcha 29's failure mode reached through a different door.
+        self.kv_prefix.taint();
         Ok(())
+    }
+
+    /// Let the NEXT turn continue from this turn's KV when its prompt begins
+    /// with exactly the tokens that built it, instead of re-prefilling the
+    /// whole transcript (`crate::kv_prefix`).
+    ///
+    /// Off by default. A reusing runner is not reset between generations, so
+    /// it carries state across them; every frozen row here was measured
+    /// without that, and the harnesses run one generation per process where
+    /// this could never fire anyway. Multi-turn callers opt in.
+    pub fn set_prefix_reuse(&mut self, enabled: bool) {
+        self.prefix_reuse_enabled = enabled;
     }
 
     /// Drop the injection map without resetting the KV cache.
@@ -236,8 +254,22 @@ impl RealForwardRunner {
 
     /// Cumulative phase timings across every `produce` call so far. See
     /// [`PhaseCounters`] for what each bucket covers.
+    ///
+    /// The expert BYTE counters are summed from the streamers here rather
+    /// than folded per layer beside `expert_io_nanos`: each streamer already
+    /// keeps its own running total, so reading them once at report time
+    /// costs nothing on the decode path and leaves all five routed call
+    /// sites untouched.
     pub fn phase_counters(&self) -> PhaseCounters {
-        self.phases
+        let mut phases = self.phases;
+        let mut io = streaming::ExpertIoStats::default();
+        for streamer in self.streamers.iter().flatten() {
+            io.accumulate(&streamer.io_stats());
+        }
+        phases.expert_io_bytes_requested = io.bytes_requested;
+        phases.expert_io_bytes_physical = io.bytes_physical;
+        phases.expert_io_samples = io.samples;
+        phases
     }
 
     /// Flips the shared-expert command buffer (`MFERENCE_SHARED_CB`) after

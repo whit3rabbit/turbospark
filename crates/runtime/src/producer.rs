@@ -18,6 +18,34 @@ pub trait LogitProducer {
     /// Clear any per-generation state (e.g. a KV cache).
     fn reset(&mut self);
 
+    /// COMMIT to continuing from this producer's current state for the
+    /// leading `N` tokens of `prompt_ids`, returning that `N`. `0` means no
+    /// reuse, which is what every producer without a real KV cache returns
+    /// and is why this defaults to it.
+    ///
+    /// Takes `&mut self` because it is not a query: a producer whose state
+    /// runs PAST the agreed prefix has to move its cursor back to it before
+    /// returning, and it must answer 0 when it cannot. That case is the
+    /// normal one rather than the exception -- the state covers the previous
+    /// reply, and the next prompt carries that reply back re-tokenized from
+    /// text, which is where the two diverge.
+    ///
+    /// **A producer answering this MUST key on the token ids it actually
+    /// FED**, never on a count it derives from its own bookkeeping. Whether
+    /// the last sampled token was fed back, whether a chunked prefill ran to
+    /// completion, and whether generation stopped early all differ per
+    /// caller, and getting the arithmetic wrong does not crash: it answers
+    /// the next turn from a state belonging to a different conversation.
+    ///
+    /// It must also return 0 for a state that consumed anything the ids do
+    /// not DESCRIBE. Injected image embeddings are the case that exists here
+    /// (`RealForwardRunner::set_prompt_vision`): a placeholder span has the
+    /// same ids whatever picture filled it, so an id comparison would call
+    /// two different images equal.
+    fn try_reuse_prefix(&mut self, _prompt_ids: &[TokenId]) -> usize {
+        0
+    }
+
     /// Run one token at `position`, writing FP16 logits into `logits`
     /// (length == vocab size).
     fn produce(

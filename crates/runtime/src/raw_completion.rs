@@ -4,9 +4,11 @@
 //! the Swift original); [`run_raw_completion_chunked`] instead splits the
 //! prompt into fixed-size chunks (`foundation::prefill_chunk_spans`) and
 //! hands each whole chunk to a [`ChunkedPrefillRunner`] in one call,
-//! mirroring the Swift original's `chunked` prefill mode. Cached-prompt
-//! continuation (`ContinuableLogitProducer`) is not ported — see
-//! `DEVIATIONS.md`.
+//! mirroring the Swift original's `chunked` prefill mode. BOTH loops offer
+//! cached-prompt continuation (`crate::kv_prefix`): a turn continues from
+//! the previous turn's KV wherever the two prompts agree, instead of
+//! resetting. It is off unless the producer opts in, so the default path is
+//! the reset-and-prefill-from-zero one this loop has always run.
 
 use std::time::Instant;
 
@@ -89,6 +91,16 @@ pub struct RawDecodeResult {
     pub kv_position: usize,
     /// List of token IDs currently resident in the KV cache.
     pub kv_backed_token_ids: Vec<TokenId>,
+    /// How many leading prompt tokens this turn CONTINUED from the previous
+    /// one instead of prefilling (`crate::kv_prefix`). Zero unless the
+    /// producer opted in and found a match, which is every caller by default.
+    ///
+    /// Reported because the match RATE is an empirical property of the
+    /// checkpoint's template and tokenizer rather than something the
+    /// mechanism can promise, and because a reuse that silently never fires
+    /// differs from a working one only in wall-clock -- which thermal drift
+    /// alone can cover (AGENTS.md Gotcha 28).
+    pub reused_prefix_tokens: usize,
     /// The WORST memory pressure observed while this turn decoded.
     ///
     /// **Always `Normal` when the profile does no stepping**, which is the
@@ -134,6 +146,7 @@ pub(crate) fn cancelled_during_prefill(
     position: usize,
     prompt_tokens: usize,
     prefill_start: Instant,
+    reused: usize,
 ) -> RawDecodeResult {
     RawDecodeResult {
         prompt_tokens,
@@ -145,6 +158,7 @@ pub(crate) fn cancelled_during_prefill(
         reason: StopReason::Cancelled,
         kv_position: position,
         kv_backed_token_ids: history,
+        reused_prefix_tokens: reused,
         // Decoding never started, so nothing was ever polled.
         peak_memory_pressure: MemoryPressure::Normal,
     }
@@ -208,19 +222,35 @@ pub fn run_raw_completion_cancellable(
 ) -> Result<RawDecodeResult, RuntimeError> {
     check_admission(prompt_ids, config, max_context)?;
 
-    producer.reset();
+    // How much of this prompt the producer's state already covers. Zero
+    // unless the producer both opted in and can prove a prefix match, so the
+    // default path resets and prefills from 0 exactly as it always did.
+    // Clamped to `len() - 1` rather than `len()`: reuse must leave at least
+    // one token to feed, because `decode` starts by sampling from `logits`
+    // and a zero-token prefill would hand it the PREVIOUS turn's.
+    let reused = producer
+        .try_reuse_prefix(prompt_ids)
+        .min(prompt_ids.len() - 1);
+    if reused == 0 {
+        producer.reset();
+    }
     let mut history: Vec<TokenId> =
         Vec::with_capacity(prompt_ids.len() + config.max_new_tokens as usize);
     let mut logits = vec![LogitValue::from_f32(0.0); vocab_size];
 
     let prefill_start = Instant::now();
-    let mut position = 0usize;
+    // The reused positions are already in the producer's KV, so the cursor
+    // starts past them and `history` is seeded with the ids that built them.
+    // Both have to agree with the producer or the returned `kv_position`
+    // describes a cache that does not exist.
+    let mut position = reused;
+    history.extend_from_slice(&prompt_ids[..reused]);
     // Only the last prompt token's logits are ever read (`decode` starts by
     // sampling from `logits`), so every earlier one goes through
     // `produce_prefill` and lets the producer skip its output head.
     // `check_admission` rejected an empty prompt, so this cannot underflow.
     let last = prompt_ids.len() - 1;
-    for (i, &token) in prompt_ids.iter().enumerate() {
+    for (i, &token) in prompt_ids.iter().enumerate().skip(reused) {
         if i == last {
             producer.produce(token, position, &mut logits)
         } else {
@@ -244,12 +274,13 @@ pub fn run_raw_completion_cancellable(
                 position,
                 prompt_ids.len(),
                 prefill_start,
+                reused,
             ));
         }
     }
     let prefill_seconds = prefill_start.elapsed().as_secs_f64();
 
-    decode(
+    let mut result = decode(
         producer,
         tokenizer,
         config,
@@ -260,7 +291,9 @@ pub fn run_raw_completion_cancellable(
         prefill_seconds,
         cancel,
         on_progress,
-    )
+    )?;
+    result.reused_prefix_tokens = reused;
+    Ok(result)
 }
 
 /// The decode loop shared by both prefill modes: sample, stop-check,
@@ -359,6 +392,9 @@ pub(crate) fn decode<P: LogitProducer + ?Sized>(
     }
 
     Ok(RawDecodeResult {
+        // `decode` is shared by all three prefill loops and knows nothing
+        // about reuse; the one loop that reuses patches this on the way out.
+        reused_prefix_tokens: 0,
         prompt_tokens,
         new_tokens: sink.generated,
         prefill_seconds,

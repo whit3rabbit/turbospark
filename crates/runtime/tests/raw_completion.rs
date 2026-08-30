@@ -399,3 +399,123 @@ fn an_unwatched_run_reports_normal_pressure() {
         turbospark_runtime::MemoryPressure::Normal
     );
 }
+
+/// A producer that records every `(token, position)` it is fed and answers
+/// `reusable_prefix` from a length the test sets, so the LOOP's half of
+/// prefix reuse is observable without a GPU.
+///
+/// Deliberately not `ScriptedLogitProducer` with a flag bolted on: what
+/// needs asserting is which positions were re-fed, and only a producer that
+/// records its inputs can say.
+struct RecordingProducer {
+    fed: Vec<(i32, usize)>,
+    reusable: usize,
+    resets: usize,
+    vocab: usize,
+    next: usize,
+}
+
+impl RecordingProducer {
+    fn new(vocab: usize, reusable: usize, next: usize) -> Self {
+        Self {
+            fed: Vec::new(),
+            reusable,
+            resets: 0,
+            vocab,
+            next,
+        }
+    }
+}
+
+impl turbospark_runtime::LogitProducer for RecordingProducer {
+    fn reset(&mut self) {
+        self.resets += 1;
+    }
+
+    fn try_reuse_prefix(&mut self, _prompt_ids: &[i32]) -> usize {
+        self.reusable
+    }
+
+    fn produce(
+        &mut self,
+        token: i32,
+        position: usize,
+        logits: &mut [LogitValue],
+    ) -> Result<(), String> {
+        self.fed.push((token, position));
+        logits.copy_from_slice(&one_hot(self.vocab, self.next));
+        Ok(())
+    }
+}
+
+fn run_with(
+    producer: &mut RecordingProducer,
+    prompt: &[i32],
+) -> turbospark_runtime::RawDecodeResult {
+    let tokenizer = load_tokenizer();
+    let config = GenerationConfig {
+        shaping: ShapingConfig::new(0.0, 0, None, 1.0, None).unwrap(),
+        max_new_tokens: 1,
+        stop_strings: Vec::new(),
+        extra_stop_tokens: Vec::new(),
+        rate: RateControl::default(),
+    };
+    let vocab = producer.vocab;
+    run_raw_completion(producer, &tokenizer, prompt, &config, 4096, vocab, |_| {})
+        .expect("run should succeed")
+}
+
+#[test]
+fn a_reusable_prefix_skips_those_positions_and_the_reset() {
+    let tokenizer = load_tokenizer();
+    let vocab = tokenizer.vocab_size;
+    let mut producer = RecordingProducer::new(vocab, 3, 7);
+    let result = run_with(&mut producer, &[10, 11, 12, 13, 14]);
+
+    // Only the tail was fed, at its ORIGINAL positions -- a reused prefix
+    // that re-based the cursor would attend over the wrong rows.
+    assert_eq!(producer.fed, vec![(13, 3), (14, 4)]);
+    // And the state was NOT cleared, which is the whole point.
+    assert_eq!(producer.resets, 0);
+    // The result still describes the full prompt, not just the tail: a
+    // caller computing tokens-per-second or a context budget from this must
+    // see the conversation, not this turn's slice of it.
+    assert_eq!(result.prompt_tokens, 5);
+    // 5, not 6: the one sampled token is never fed back, so the KV holds
+    // positions 0..4 only. Worth pinning, because it is exactly the kind of
+    // per-caller arithmetic that `kv_prefix` refuses to derive a reuse
+    // length from -- the producer records what it was FED instead.
+    assert_eq!(result.kv_position, 5);
+    assert_eq!(result.kv_backed_token_ids[..5], [10, 11, 12, 13, 14]);
+}
+
+#[test]
+fn no_reusable_prefix_resets_and_feeds_every_position() {
+    let tokenizer = load_tokenizer();
+    let vocab = tokenizer.vocab_size;
+    let mut producer = RecordingProducer::new(vocab, 0, 7);
+    run_with(&mut producer, &[10, 11, 12, 13, 14]);
+
+    assert_eq!(
+        producer.fed,
+        vec![(10, 0), (11, 1), (12, 2), (13, 3), (14, 4)]
+    );
+    assert_eq!(producer.resets, 1);
+}
+
+#[test]
+fn a_prefix_covering_the_whole_prompt_is_clamped_so_one_token_is_always_fed() {
+    // `decode` samples from `logits` before generating, so a prefill that
+    // fed nothing would hand it the PREVIOUS turn's logits and emit a token
+    // this prompt never justified. The loop clamps to `len - 1` rather than
+    // trusting the producer, because the two guards protect different
+    // things: the producer's is about what its cache holds, the loop's is
+    // about its own next statement.
+    let tokenizer = load_tokenizer();
+    let vocab = tokenizer.vocab_size;
+    let mut producer = RecordingProducer::new(vocab, 99, 7);
+    run_with(&mut producer, &[10, 11, 12]);
+
+    assert_eq!(producer.fed, vec![(12, 2)]);
+    assert_eq!(producer.resets, 0);
+}

@@ -60,20 +60,39 @@ pub fn run_raw_completion_chunked_cancellable(
 ) -> Result<RawDecodeResult, RuntimeError> {
     check_admission(prompt_ids, config, max_context)?;
 
-    producer.reset();
+    // Same contract as the sequential loop's: 0 unless the producer opted in
+    // and found a match, and the reset is skipped exactly when it did.
+    //
+    // THIS loop is the one that matters for reuse in practice. Every family
+    // that supports chunked prefill routes here, so the CLI and the server
+    // reach it rather than `run_raw_completion` -- wiring reuse only there
+    // left the measured match rate at 0/33 and 0/49 in the real chat REPL,
+    // an optimisation of the path nobody takes.
+    let reused = producer
+        .try_reuse_prefix(prompt_ids)
+        .min(prompt_ids.len() - 1);
+    if reused == 0 {
+        producer.reset();
+    }
     let mut history: Vec<TokenId> =
         Vec::with_capacity(prompt_ids.len() + config.max_new_tokens as usize);
     let mut logits = vec![LogitValue::from_f32(0.0); vocab_size];
     let mut commit_state = PrefillChunkCommitState::new();
 
     let prefill_start = Instant::now();
-    let spans = prefill_chunk_spans(prompt_ids.len(), 0, chunk_tokens);
-    let mut position = 0usize;
+    // Spans start at the reused offset, so the first chunk begins where the
+    // previous turn's state ended rather than at 0.
+    let spans = prefill_chunk_spans(prompt_ids.len() - reused, reused, chunk_tokens);
+    history.extend_from_slice(&prompt_ids[..reused]);
+    let mut position = reused;
     for span in &spans {
         commit_state
             .require_clean("chunked prefill")
             .map_err(|e| RuntimeError::Producer(e.to_string()))?;
-        let chunk = &prompt_ids[span.token_offset..span.token_offset + span.token_count];
+        // `token_offset` is relative to the span walk's own start, which is
+        // the reused offset rather than 0.
+        let base = reused + span.token_offset;
+        let chunk = &prompt_ids[base..base + span.token_count];
         commit_state.mark_dirty(span.start_position, span.token_count);
         producer
             .prefill_chunk(chunk, span.start_position, &mut logits)
@@ -81,7 +100,11 @@ pub fn run_raw_completion_chunked_cancellable(
         commit_state.mark_committed();
 
         history.extend_from_slice(chunk);
-        position = span.completed_count;
+        // `completed_count` counts from the WALK's start, which is `reused`,
+        // while `position` is the absolute KV cursor. `start_position` above
+        // is already absolute (the walk was given `reused` as its base), so
+        // only this one needs the offset added.
+        position = reused + span.completed_count;
         on_progress(RawDecodeProgress::Prefill {
             done: position,
             total: prompt_ids.len(),
@@ -96,12 +119,13 @@ pub fn run_raw_completion_chunked_cancellable(
                 position,
                 prompt_ids.len(),
                 prefill_start,
+                reused,
             ));
         }
     }
     let prefill_seconds = prefill_start.elapsed().as_secs_f64();
 
-    decode(
+    let mut result = decode(
         producer,
         tokenizer,
         config,
@@ -112,5 +136,7 @@ pub fn run_raw_completion_chunked_cancellable(
         prefill_seconds,
         cancel,
         on_progress,
-    )
+    )?;
+    result.reused_prefix_tokens = reused;
+    Ok(result)
 }

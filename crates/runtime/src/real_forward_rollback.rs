@@ -50,6 +50,11 @@ impl RealForwardRunner {
             "rollback target is ahead of the cursor"
         );
         self.kv.rewind_by(self.kv.position() - point.position);
+        // The record describes the KV, so it rewinds with it. Without this a
+        // speculative round that rolled back would leave the record claiming
+        // the rejected tokens, and the next turn would match a prefix the
+        // cache no longer holds.
+        self.kv_prefix.rewind_to(point.position);
         if let (Some(qwen), Some(snapshot)) = (self.real_qwen.as_mut(), point.gdn.as_ref()) {
             qwen.gdn.restore(snapshot);
         }

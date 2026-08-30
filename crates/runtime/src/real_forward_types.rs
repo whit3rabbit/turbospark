@@ -90,6 +90,25 @@ pub struct PhaseCounters {
     /// `--expert-cache-slots` buys.
     pub expert_requests: u64,
     pub expert_hits: u64,
+    /// Byte-level accounting for the same reads `expert_io_nanos` times,
+    /// summed across every layer's streamer. A THIRD axis, like the
+    /// `*_gpu_nanos` buckets: bytes, never part of the wall-clock sum.
+    ///
+    /// `bytes_requested` is always collected and is one expert stride per
+    /// cache MISS (a hit reads nothing). `bytes_physical` is what actually
+    /// came off the device and is zero-and-meaningless unless
+    /// `MFERENCE_EXPERT_DISK_IO=1` -- check `io_samples` before dividing,
+    /// because an unmeasured run and a perfectly cache-resident one are
+    /// indistinguishable in `bytes_physical` alone.
+    ///
+    /// The ratio is what settles a question this port has been asserting
+    /// rather than measuring: whether a given run's expert reads were a
+    /// page-cache memcpy (`crates/streaming/CLAUDE.md` Gotcha 3) or genuine
+    /// disk I/O, which is the condition `docs/EXPERT_ROUTING.md` names as
+    /// the one that would reverse the prefetch decision.
+    pub expert_io_bytes_requested: u64,
+    pub expert_io_bytes_physical: u64,
+    pub expert_io_samples: u64,
 }
 
 /// How many prompt tokens a chunked prefill may carry through one layer
