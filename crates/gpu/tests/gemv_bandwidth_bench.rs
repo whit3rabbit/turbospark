@@ -626,6 +626,54 @@ impl MatrixPool {
         })
     }
 
+    /// The matrix kernel with `x` staged through threadgroup memory
+    /// (`FC_MMA_STAGE_X`). Bit-identical to the arm above
+    /// (`dequant_int4_mma_parity.rs`), so the ratio between them is pure
+    /// throughput and needs no numerics caveat.
+    fn time_gemm_mma_staged(&self, context: &mut MetalContext, groups: usize, batch: usize) -> f64 {
+        autorelease_pool(|| {
+            let pass = context.begin_pass();
+            for group in 0..groups {
+                turbospark_gpu::encode_dequant_int4_gemm_mma_resident_staged(
+                    context,
+                    &pass,
+                    &self.matrix(group),
+                    (&self.x_batch, 0),
+                    (&self.y_batch, 0),
+                    batch,
+                    true,
+                )
+                .unwrap();
+            }
+            pass.commit_and_wait_with_gpu_time()
+        })
+    }
+
+    /// The matrix kernel with the DEQUANT DELETED (`FC_MMA_SKIP_DEQUANT`).
+    /// Output is meaningless; the time is the matrix path's cost alone.
+    fn time_gemm_mma_no_dequant(
+        &self,
+        context: &mut MetalContext,
+        groups: usize,
+        batch: usize,
+    ) -> f64 {
+        autorelease_pool(|| {
+            let pass = context.begin_pass();
+            for group in 0..groups {
+                turbospark_gpu::encode_dequant_int4_gemm_mma_resident_skip_dequant(
+                    context,
+                    &pass,
+                    &self.matrix(group),
+                    (&self.x_batch, 0),
+                    (&self.y_batch, 0),
+                    batch,
+                )
+                .unwrap();
+            }
+            pass.commit_and_wait_with_gpu_time()
+        })
+    }
+
     /// [`Self::time`] measured on the wall clock, so it compares
     /// like-for-like against the hand-built concurrent arm.
     fn time_wall(&self, context: &mut MetalContext, groups: usize, batch: usize) -> f64 {
@@ -985,5 +1033,167 @@ fn c_of_r_and_m_for_the_batched_kernel() {
         "\nR=1 must reproduce the frozen count(4) row before any other column is\n\
          read. A row that is FLAT in M is compute-bound, and says the width term\n\
          is already spent on this kernel whatever mlx-lm's crossover is.\n"
+    );
+}
+
+/// **DOES STAGING `x` EXPLAIN THE MATRIX KERNEL'S PLATEAU?**
+///
+/// `dequant_int4_mma.metal` plateaus at `c ~ 0.5` past M=16 and its header
+/// attributes that to dequant work being independent of B. That attribution
+/// is scoped to its tile (`kMmaTile = 8`, ONE SIMD group); MLX's
+/// `qmm_t_impl` reaches 0.145 at M=32 on the same shapes
+/// (`scripts/mlx_qmm_reference.py`, `docs/BENCHMARKS.md`) at `WM = WN = 2`,
+/// `BM` up to 128, with BOTH operands staged.
+///
+/// This prices the FIRST of the three differences on its own. The un-staged
+/// arm `simdgroup_load`s `x` transposed straight from device with row stride
+/// N, once per `(n0, kt)` -- a strided device gather in the innermost loop.
+/// The staged arm reads the same rows once per `n0` block, coalesced, and
+/// transposes out of threadgroup memory.
+///
+/// **Both arms are BIT-IDENTICAL** (`dequant_int4_mma_parity.rs`,
+/// mutation-checked), so the third column is pure throughput. They are timed
+/// in ONE process against the same matrices and interleaved width by width,
+/// which is what makes a few-percent difference readable at all (AGENTS.md
+/// Gotchas 22 and 28). AC, quiet machine, `--release`, warmup discarded.
+///
+/// **READ IT AGAINST THE EXACT KERNEL, NOT ONLY AGAINST ITSELF.** Staging
+/// could win handily and still leave this kernel behind
+/// `dequant_int4_gemm_simd`, which is the only comparison that decides
+/// whether the matrix line is worth re-opening.
+#[test]
+#[ignore = "benchmark: needs a real Metal device on AC, reports rather than asserts"]
+fn c_of_m_matrix_staged_against_unstaged() {
+    let mut context = MetalContext::new().expect("Metal device");
+
+    println!("\nshape                    M   exact   mma   mma+stageX   staged/plain");
+    for (label, rows, cols) in QWEN38_SHAPES {
+        if rows > 32768 {
+            continue;
+        }
+        let pool = MatrixPool::new(&context, rows, cols);
+        let dispatches = ((TARGET_BYTES / weight_bytes(rows, cols)).max(64) as usize).max(256);
+
+        pool.time(&mut context, dispatches, 1);
+        let sequential = pool.time(&mut context, dispatches, 1) / dispatches as f64;
+
+        for batch in [2usize, 4, 8, 16, 32, 64] {
+            let groups = (dispatches / batch).max(1);
+            let exact = if batch <= MAX_BATCH_ROWS {
+                pool.time_gemm_blocked(
+                    &mut context,
+                    groups,
+                    batch,
+                    turbospark_gpu::best_row_block(batch),
+                );
+                Some(
+                    pool.time_gemm_blocked(
+                        &mut context,
+                        groups,
+                        batch,
+                        turbospark_gpu::best_row_block(batch),
+                    ) / (groups * batch) as f64,
+                )
+            } else {
+                None
+            };
+            // Interleaved: warm each arm, then time each, so thermal drift
+            // lands on both rather than on whichever ran last.
+            pool.time_gemm_mma(&mut context, groups, batch);
+            pool.time_gemm_mma_staged(&mut context, groups, batch);
+            let plain = pool.time_gemm_mma(&mut context, groups, batch) / (groups * batch) as f64;
+            let staged =
+                pool.time_gemm_mma_staged(&mut context, groups, batch) / (groups * batch) as f64;
+            let exact_col = match exact {
+                Some(e) => format!("{:>5.2}x", e / sequential),
+                None => "    --".to_string(),
+            };
+            println!(
+                "{label}  {batch:>3}  {exact_col}  {:>5.2}x  {:>9.2}x  {:>11.2}x",
+                plain / sequential,
+                staged / sequential,
+                staged / plain
+            );
+        }
+    }
+    println!(
+        "\nLast column below 1.00 means staging helped. The question it \
+         answers is\nwhether the strided device gather of `x` is what \
+         plateaus this kernel;\nthe `exact` column is what says whether \
+         any of it is worth wiring.\n"
+    );
+}
+
+/// **WHICH HALF OF THE MATRIX KERNEL IS THE COST: the dequant, or the
+/// matrix path?**
+///
+/// The kernel's header ends at an unidentified mechanism. Its own
+/// explanation (dequant work independent of B) is refuted by arithmetic --
+/// dequant per output is `N / B` here and `K / BM` in MLX, the same number
+/// at the same width -- and staging `x`, the cheapest structural
+/// difference, lost 3.3x to 5.9x. Total dequant work is `N * K` in both
+/// engines and MLX spreads it over FEWER threads, so parallelism is not it
+/// either.
+///
+/// This splits the cost by DELETION. `FC_MMA_SKIP_DEQUANT` fills the weight
+/// tile with a constant and leaves every barrier, `simdgroup_load` and
+/// `simdgroup_multiply_accumulate` exactly where they were, so the third
+/// column is the matrix path with the unpack removed. **Its output is
+/// meaningless and it is never dispatched outside this bench.**
+///
+/// Read the last column. Near 1.00 means the dequant is nearly free and the
+/// matrix path is the whole cost, so a re-tile must change the matrix side
+/// (threadgroup width, accumulator reuse). Near 0 means the dequant
+/// dominates and the loader is what to fix. Anything in between splits it.
+#[test]
+#[ignore = "benchmark: needs a real Metal device on AC, reports rather than asserts"]
+fn c_of_m_matrix_with_and_without_the_dequant() {
+    let mut context = MetalContext::new().expect("Metal device");
+
+    println!("\nshape                    M   exact     mma   mma-no-dequant   nodq/mma");
+    for (label, rows, cols) in QWEN38_SHAPES {
+        if rows > 32768 {
+            continue;
+        }
+        let pool = MatrixPool::new(&context, rows, cols);
+        let dispatches = ((TARGET_BYTES / weight_bytes(rows, cols)).max(64) as usize).max(256);
+
+        pool.time(&mut context, dispatches, 1);
+        let sequential = pool.time(&mut context, dispatches, 1) / dispatches as f64;
+
+        for batch in [2usize, 8, 16, 32, 64] {
+            let groups = (dispatches / batch).max(1);
+            let exact = if batch <= MAX_BATCH_ROWS {
+                let r = turbospark_gpu::best_row_block(batch);
+                pool.time_gemm_blocked(&mut context, groups, batch, r);
+                Some(
+                    pool.time_gemm_blocked(&mut context, groups, batch, r)
+                        / (groups * batch) as f64,
+                )
+            } else {
+                None
+            };
+            pool.time_gemm_mma(&mut context, groups, batch);
+            pool.time_gemm_mma_no_dequant(&mut context, groups, batch);
+            let full = pool.time_gemm_mma(&mut context, groups, batch) / (groups * batch) as f64;
+            let nodq = pool.time_gemm_mma_no_dequant(&mut context, groups, batch)
+                / (groups * batch) as f64;
+            let exact_col = match exact {
+                Some(e) => format!("{:>5.2}x", e / sequential),
+                None => "    --".to_string(),
+            };
+            println!(
+                "{label}  {batch:>3}  {exact_col}  {:>6.2}x  {:>13.2}x  {:>9.2}",
+                full / sequential,
+                nodq / sequential,
+                nodq / full
+            );
+        }
+    }
+    println!(
+        "\nLast column: the fraction of this kernel's time that is NOT the\n\
+         dequant. Near 1.00 the matrix path is the whole cost and the loader\n\
+         is not worth fixing; near 0 the dequant is, and the threadgroup\n\
+         width is the wrong lever.\n"
     );
 }

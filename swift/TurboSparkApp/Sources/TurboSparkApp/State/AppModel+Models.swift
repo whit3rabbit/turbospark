@@ -2,6 +2,26 @@ import Foundation
 import TurboSpark
 
 extension AppModel {
+    /// Appends `(suffix)` to `base`, and if that still collides, keeps
+    /// numbering (`(suffix 2)`, `(suffix 3)`, ...) until it finds a name not
+    /// already in `existing`. The one-shot version of this (try the plain
+    /// suffix once, insert whatever comes out) collided silently on a THIRD
+    /// model sharing the same base alias -- `existingAliases.insert` on an
+    /// already-present value is a no-op, so two distinct `InstalledModel`
+    /// rows ended up with the identical alias, which is exactly the field
+    /// `selectModel`/`deleteModel` used to key off of (state#14).
+    // `internal` rather than `private`: exercised directly by
+    // ModelIdentityTests via `@testable import`.
+    func uniqueAlias(base: String, suffix: String, existing: Set<String>) -> String {
+        var candidate = "\(base) (\(suffix))"
+        var counter = 2
+        while existing.contains(candidate) {
+            candidate = "\(base) (\(suffix) \(counter))"
+            counter += 1
+        }
+        return candidate
+    }
+
     public func refreshModels() {
         do {
             var combinedInstalled = (try? TurboSparkCatalog.installed()) ?? []
@@ -17,13 +37,13 @@ extension AppModel {
                     if !existingPaths.contains(stdPath) {
                         existingPaths.insert(stdPath)
                         // Make sure alias is unique
-                        var uniqueAlias = m.alias
-                        if existingAliases.contains(uniqueAlias) {
-                            uniqueAlias = "\(m.alias) (LM Studio)"
+                        var resolvedAlias = m.alias
+                        if existingAliases.contains(resolvedAlias) {
+                            resolvedAlias = uniqueAlias(base: m.alias, suffix: "LM Studio", existing: existingAliases)
                         }
-                        existingAliases.insert(uniqueAlias)
+                        existingAliases.insert(resolvedAlias)
                         let adjustedModel = InstalledModel(
-                            alias: uniqueAlias,
+                            alias: resolvedAlias,
                             repo: m.repo,
                             revision: m.revision,
                             path: m.path,
@@ -43,13 +63,13 @@ extension AppModel {
                     let stdPath = (try? URL(fileURLWithPath: m.path).standardizedFileURL.path) ?? m.path
                     if !existingPaths.contains(stdPath) {
                         existingPaths.insert(stdPath)
-                        var uniqueAlias = m.alias
-                        if existingAliases.contains(uniqueAlias) {
-                            uniqueAlias = "\(m.alias) (Custom)"
+                        var resolvedAlias = m.alias
+                        if existingAliases.contains(resolvedAlias) {
+                            resolvedAlias = uniqueAlias(base: m.alias, suffix: "Custom", existing: existingAliases)
                         }
-                        existingAliases.insert(uniqueAlias)
+                        existingAliases.insert(resolvedAlias)
                         let adjustedModel = InstalledModel(
-                            alias: uniqueAlias,
+                            alias: resolvedAlias,
                             repo: m.repo,
                             revision: m.revision,
                             path: m.path,
@@ -65,7 +85,15 @@ extension AppModel {
             installed = combinedInstalled
             catalog = try TurboSparkCatalog.available()
             telemetry = TurboSparkSession.systemTelemetry
-            if selected == nil || !installed.contains(where: { $0.alias == selected?.alias }) {
+            // Keyed on `path`, not `alias` (state#14/U5/U6): `InstalledModel.id`
+            // is the alias, and a scanned LM Studio/Custom row's alias is not
+            // guaranteed unique across sources the way the catalog's own is,
+            // so alias-based lookups can silently rebind to the WRONG row
+            // once two rows happen to share one. Path is the one field that
+            // actually identifies a single file on disk.
+            if let currentPath = selected?.path, !installed.contains(where: { $0.path == currentPath }) {
+                selected = installed.first
+            } else if selected == nil {
                 selected = installed.first
             }
             if let selected {
@@ -77,7 +105,11 @@ extension AppModel {
     }
 
     public func selectModel(_ model: InstalledModel) {
-        guard !generating, selected?.alias != model.alias else { return }
+        // Keyed on path (state#14): two distinct rows can share an alias
+        // when one is a scanned LM Studio/Custom entry, so alias equality
+        // here could read "already selected" for a DIFFERENT model on disk
+        // and silently refuse to switch to it.
+        guard !generating, selected?.path != model.path else { return }
         selected = model
         modelPathText = model.path
         Task {
@@ -90,7 +122,7 @@ extension AppModel {
     }
 
     public func openChatWithModel(_ model: InstalledModel) {
-        if selected?.alias != model.alias {
+        if selected?.path != model.path {
             selectModel(model)
         }
         activeSection = .chat
@@ -229,32 +261,88 @@ extension AppModel {
         stopServer()
         session = nil
         opening = true
-        defer { opening = false }
         Task {
+            // `defer` here, inside the async work, not around this whole
+            // (synchronous) function: the previous placement fired the
+            // moment `setModelURL` returned -- immediately after spawning
+            // this Task -- so `opening` flipped back to `false` before the
+            // awaited `TurboSparkSession` init had even started, and the
+            // loading indicator never rendered (state#11).
+            defer { self.opening = false }
             do {
-                let options = buildOpenOptions()
-                session = try await TurboSparkSession(modelPath: path, options: options)
-                refreshModels()
-                showToast("Opened model at \(url.lastPathComponent)", style: .success)
+                let options = self.buildOpenOptions()
+                self.session = try await TurboSparkSession(modelPath: path, options: options)
+                self.refreshModels()
+                self.showToast("Opened model at \(url.lastPathComponent)", style: .success)
             } catch {
                 let msg = "Failed to open custom model path: \(error.localizedDescription)"
                 self.error = msg
-                showToast(msg, style: .error)
+                self.showToast(msg, style: .error)
             }
         }
     }
 
     public func deleteModel(_ model: InstalledModel) {
+        if selected?.alias == model.alias || selected?.path == model.path {
+            unloadModel()
+            selected = nil
+        }
+
+        // Only a model this app actually installed through `TurboSparkCatalog`
+        // may have its file bytes removed. A row that only ever came from
+        // scanning LM Studio's library or a user's custom folder
+        // (`refreshModels()`'s LM Studio/Custom merge) is not in the
+        // catalog's own install list; deleting it used to fall through to an
+        // unconditional `removeItem` on whatever path the scan found, which
+        // destroys files the app never wrote and only discovered by walking
+        // a directory it was pointed at -- the opposite of the "without
+        // copying any bytes" promise that scan makes.
+        let stdPath = (try? URL(fileURLWithPath: model.path).standardizedFileURL.path) ?? model.path
+        let catalogInstalled = (try? TurboSparkCatalog.installed()) ?? []
+        let isCatalogTracked = catalogInstalled.contains { entry in
+            let entryPath = (try? URL(fileURLWithPath: entry.path).standardizedFileURL.path) ?? entry.path
+            return entryPath == stdPath || entry.alias == model.alias
+        }
+
+        guard isCatalogTracked else {
+            ModelOrganizationStore.shared.removeMetadata(for: model.alias, path: model.path)
+            refreshModels()
+            showToast("Removed '\(model.alias)' from TurboSpark. The file was left on disk at \(model.path).", style: .info)
+            return
+        }
+
+        var deleted = false
+        var lastError: Error?
+
+        // 1. Try TurboSparkCatalog delete
         do {
             try TurboSparkCatalog.delete(model.alias)
-            if selected?.alias == model.alias {
-                session = nil
-                selected = nil
-            }
-            refreshModels()
-            showToast("Deleted model '\(model.alias)'", style: .info)
+            deleted = true
         } catch {
-            let msg = "Failed to delete model: \(error.localizedDescription)"
+            lastError = error
+        }
+
+        // 2. If catalog delete failed or model is an external file, try direct filesystem removal
+        if !deleted {
+            let expanded = ModelStorageManager.expandPath(model.path)
+            if FileManager.default.fileExists(atPath: expanded) {
+                do {
+                    try FileManager.default.removeItem(atPath: expanded)
+                    deleted = true
+                    lastError = nil
+                } catch {
+                    lastError = error
+                }
+            }
+        }
+
+        ModelOrganizationStore.shared.removeMetadata(for: model.alias, path: model.path)
+        refreshModels()
+
+        if deleted {
+            showToast("Deleted model '\(model.alias)'", style: .info)
+        } else if let err = lastError {
+            let msg = "Failed to delete model: \(err.localizedDescription)"
             self.error = msg
             showToast(msg, style: .error)
         }

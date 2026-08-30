@@ -349,6 +349,64 @@ Which also settles the width question in the direction the flat row
 predicted: the remaining prefill gap is the kernel, and this is the first
 bite out of it that cost no memory.
 
+### The reference curve, measured rather than inferred (2026-08-29)
+
+Every number in the three bullets above about mlx-lm's `c(M)` was a READING
+of one data point at M=512, extrapolated. `scripts/mlx_qmm_reference.py` runs
+MLX's own `mx.quantized_matmul` over the seven `QWEN38_SHAPES` at the same
+4-bit group-64 affine quantization, on this machine, against the same
+yardstick (`c(M) = (time for M rows) / M / (time for one M=1 call)`), best of
+three interleaved rounds:
+
+| shape | M=1 | M=2 | M=4 | M=8 | M=16 | M=32 | M=64 | M=128 | M=512 |
+|---|---|---|---|---|---|---|---|---|---|
+| gate/up 17408x5120 | 1.000 | 0.523 | 0.391 | 0.517 | 0.289 | **0.145** | 0.147 | 0.146 | 0.143 |
+| down 5120x17408 | 1.000 | 0.645 | 0.582 | 0.585 | 0.299 | 0.152 | 0.146 | 0.148 | 0.146 |
+| gdn_inproj 16480x5120 | 1.000 | 0.521 | 0.391 | 0.470 | 0.287 | 0.146 | 0.144 | 0.143 | 0.145 |
+| head 248320x5120 | 1.000 | 0.525 | 0.396 | 0.480 | 0.252 | 0.128 | 0.126 | 0.125 | 0.125 |
+
+**THE SATURATION IS M=32, NOT M=36 OR M=64, AND THE ms COLUMN SAYS WHY.**
+Unnormalized, gate/up costs `0.48 ms at M=8, 0.54 at M=16, 0.54 at M=32`,
+then `1.10 / 2.17 / 4.29 / 8.56` at 64 / 128 / 256 / 512 -- exactly linear
+past 32 and FLAT from 16 to 32. A tile that costs the same for 16 rows as for
+32 is a **BM=32 tile paying for empty rows**, which is `qmm_t_impl`'s
+`BM` template parameter and not an inference. So M=32 captures the entire
+width term, M=512 buys nothing over it, and the "not copy their 512" note
+above is right for a sharper reason than the compute-floor argument it was
+derived from.
+
+**THE TWO ENGINES' M=1 BASELINES AGREE TO 1.16x, which is what makes any of
+this comparable.** Measured in the same session: this port's
+`int4_gemv_headroom_at_qwen38_shapes` reads **335.0 GiB/s** on gate/up, i.e.
+0.139 ms for its 47.81 MiB, against MLX's 0.12 ms. Both are near roofline at
+M=1, so `c` is a ratio of like against like and the gap it reports is the
+BATCHED path's alone.
+
+**THE CONTROLLED DECOMPOSITION, both arms measured the same day on gate/up:**
+
+| | this port | MLX | ratio |
+|---|---|---|---|
+| `c` at M=16 (this port's cap) | 0.375 | 0.289 | **1.50x** kernel |
+| `c` at each engine's own floor | 0.375 (M=16) | 0.145 (M=32) | **3.00x** total |
+| width alone, MLX 16 -> 32 | -- | 0.289 -> 0.145 | **2.00x** |
+
+in ms per token: **0.0521 against 0.0174**. That replaces the earlier
+2.2x / 2.3x pair, which was a cross-width extrapolation, with a same-session
+1.50x kernel term and a 2.00x width term. The two still multiply rather than
+add, and the order of work is unchanged -- the width is unreachable at
+`MAX_BATCH_ROWS = 16` and would buy nothing on a kernel whose own `c` is flat
+across 2..16.
+
+**oMLX's CUSTOM KERNELS ARE NOT A THIRD DATA POINT.**
+`jundot/omlx`'s `omlx/custom_kernels/qwen35_prefill` is the build behind the
+210.3 bar, and its `qwen35_qmm.metal` is 184 lines of macro whose body is one
+call to MLX's own `qmm_t_impl<T, 64, bits, true, BM, BK, BN>`. What it adds
+is ten `(BM, BK, BN)` instantiations stock MLX does not ship plus a runtime
+selector (`qwen_q_affine_variant`), defaulting to `{64, 32, 64}` against
+MLX's 32/32/32. Since the controlled mlx-lm reading on this machine (195.4 to
+201.7 tok/s) is within 4 to 7% of that 210.3, the tile sweep sits inside the
+noise band: **the gap is against stock MLX, and the table above is the bar.**
+
 The kernel term is legible as effective WEIGHT BANDWIDTH, the same quantity
 on both paths: `dequant_int4_gemv_simd` sustains **294 GB/s** at M=1 on the
 decode path, while `dequant_int4_gemm_simd` sustains **35.7 GB/s** at M=16
@@ -372,6 +430,17 @@ FAMILY**, despite being the biggest remaining kernel on that list. It is 48
 of 64 layers with no attention at all (they are gated DeltaNet, already fully
 batched inside `encode_linear_block_batched`), and the 16 that have it spend
 2.6% of prefill there. Cost an optimization by the terms it does not touch.
+
+**AND THE GDN RECURRENCE, THE ONE KERNEL THAT PROFILE LEFT UNNAMED, IS
+4.66%** (`crates/gpu/tests/gdn_prefill_share_bench.rs`, 2026-08-29):
+`gdn_delta_step_prefill` costs 0.1577 ms per 16-token micro-batch across 48
+layers, 7.569 ms against the 154.8 ms of INT4 matrices the same micro-batch
+walks. That is an upper bound -- the denominator excludes norms, the conv
+pair, RoPE, attention and the gated norm -- and it closes the one idea oMLX's
+`gdn.py` offers that this port does not already have (threadgroup-staged
+q/k/v against the `(Hv, Dv/4)` re-read). The bucket list now accounts for
+essentially all of prefill: **85.4% GEMM, ~8% one-row launches, 4.66% GDN,
+2.6% attention.**
 
 **IT STILL DOES NOT REACH oMLX**, and the honest ratio is now roughly a
 FIFTH rather than a tenth: 40.79 against 210.3 tok/s. So the GEMV-to-GEMM

@@ -32,7 +32,111 @@
 // not the cost. It would take weights that are already in a loadable
 // format, not a better tiling.
 //
-// So the exact kernel wins on BOTH axes: it is faster AND it is
+// **THAT LAST SENTENCE IS SCOPED TO THIS TILE, AND THE SCOPE WAS NOT
+// STATED UNTIL 2026-08-29.** Every number above was taken at
+// `kMmaTile = 8` with ONE SIMD group, and "independent of B" is a property
+// of that shape rather than of the approach. MLX's production kernel for
+// the same operation
+// (`qmm_t_impl`, `mlx/backend/metal/kernels/quantized.h`) is the same
+// algorithm at a different shape -- `WM = WN = 2` so 128 threads and FOUR
+// SIMD groups, `BM` 16 to 128, and BOTH operands staged into threadgroup
+// memory through `BlockLoader` / `QuantizedBlockLoader` before the
+// `BlockMMA`. This kernel stages only the weights and `simdgroup_load`s
+// `x` TRANSPOSED STRAIGHT FROM DEVICE, once per `(n0, kt)`, which is a
+// strided device gather in the innermost loop.
+//
+// So the honest verdict is "this tile loses", not "matrix hardware
+// loses". `scripts/mlx_qmm_reference.py` measures what the other shape
+// reaches on this machine: `c` = 0.145 at M=32 on gate/up, flat to M=512,
+// against this port's 0.375 at M=16 (`docs/BENCHMARKS.md`, "The reference
+// curve, measured rather than inferred"). That is 3.0x, of which 2.0x is
+// width this port cannot reach at `MAX_BATCH_ROWS = 16` and 1.50x is the
+// kernel at equal width. Re-opening the line means changing the shape --
+// stage `x`, widen the threadgroup, raise `kMmaTile`. Nothing above refutes
+// that. **What HAS been tried is the first of the three ON ITS OWN, and the
+// result below says that was the wrong experiment**: measure them together,
+// not separately.
+//
+// The bit-exactness objection below is UNCHANGED by any of that and is the
+// reason a winning re-tile would still be prefill-only.
+//
+// **THE FIRST OF THE THREE WAS BUILT AND MEASURED, 2026-08-29, AND IT IS A
+// LARGE LOSS: staging `x` costs 3.3x to 5.9x.** `FC_MMA_STAGE_X` (110)
+// reads each `x` row once per `n0` block into threadgroup memory, coalesced,
+// instead of `simdgroup_load`ing it transposed from device once per
+// `(n0, kt)`. That was the cheapest of the three deltas against MLX's shape
+// and the one predicted most likely to be the cause. It is not the cause,
+// and the prediction was backwards.
+//
+//   M      mma    mma+stageX   staged/plain      (gate/up 17408x5120)
+//   2     3.54x     12.49x        3.52x
+//   4     1.78x      6.27x        3.52x
+//   8     0.89x      3.19x        3.58x
+//   16    0.66x      2.53x        3.81x
+//   32    0.54x      2.25x        4.14x
+//   64    0.52x      2.71x        5.19x
+//
+// Every shape agrees to within a few tenths and the penalty GROWS with B.
+// `c_of_m_matrix_staged_against_unstaged` in `gemv_bandwidth_bench.rs` is
+// the table; the arms are bit-identical (`dequant_int4_mma_parity.rs`,
+// mutation-checked), so this is pure throughput.
+//
+// **WHAT IT TEACHES IS THAT THE THREE DELTAS ARE NOT INDEPENDENT.** A
+// transposed `simdgroup_load` from device is not the naive strided gather it
+// reads as -- Apple's tile load handles it -- while hand-staging the same
+// bytes through 32 LANES is a serial copy of `col_tiles * kMmaTile * kMmaK`
+// halfs per n-block, and at B=64 that is 10,240 loads per lane over the
+// whole K walk. MLX stages `x` too and wins, because it has 128 threads
+// doing it and a `BM` of 32 to 128 to amortize it over. So staging is a
+// consequence of the wider threadgroup rather than a separate lever, and
+// trying it alone was the wrong experiment. The remaining deltas -- four
+// SIMD groups, and a wider `kMmaTile` -- have to move TOGETHER or not at
+// all, and neither has been tried.
+//
+// **AND THE DEQUANT-AMORTIZATION STORY IS REFUTED BY ARITHMETIC, which is
+// worth stating because it was this file's own explanation and it was the
+// obvious next lever.** One threadgroup here dequantizes `8 * N` elements
+// (`N / kMmaK` blocks of `kMmaTile * kMmaK`) to produce `8 * B` outputs, so
+// dequant per output is `N / B` -- a function of the TOKEN count, not of
+// the weight rows per threadgroup. MLX's is `K / BM`, with `BM` also the
+// token tile. **They are the same number at the same width**: 320 at 16
+// tokens, 80 at 64. This kernel ALREADY runs at B=64, already sits at that
+// 80, and still reads 0.52 against MLX's 0.147. So amortization is not the
+// differentiator and raising `kMmaTile` cannot be the lever -- it scales
+// dequant and outputs together and changes the ratio not at all.
+//
+// **AND THE DEQUANT IS NOT THE COST EITHER. MEASURED BY DELETION,
+// 2026-08-29.** `FC_MMA_SKIP_DEQUANT` (111) fills the weight tile with a
+// constant and leaves every barrier, `simdgroup_load` and
+// `simdgroup_multiply_accumulate` in place, so what it times is the matrix
+// path with the unpack removed (`c_of_m_matrix_with_and_without_the_dequant`):
+//
+//   M     mma    mma-no-dequant   nodq/mma      (gate/up 17408x5120)
+//   2    3.59x       2.30x          0.64
+//   8    0.90x       0.58x          0.65
+//   16   0.68x       0.51x          0.76
+//   32   0.56x       0.48x          0.86
+//   64   0.56x       0.50x          0.89
+//
+// The dequant is 36% of this kernel at M=2 and **11% at M=64** -- its share
+// SHRINKS as B grows, which is the opposite of the header's original story
+// and consistent with the arithmetic above. All six shapes agree to 0.03.
+//
+// **THE DECISIVE NUMBER IS THE MIDDLE COLUMN, NOT THE RATIO: with the
+// dequant entirely FREE this kernel still reads 0.46 to 0.50 past M=16,
+// against MLX's 0.145.** So a perfect loader -- vectorized reads, hoisted
+// scale lookups, anything -- leaves it 3.2x behind, and
+// `QuantizedBlockLoader` is not what to copy. It is also still SLOWER with a
+// free dequant (0.51 at M=16) than the plain scalar `dequant_int4_gemm_simd`
+// is with a real one (0.38), which is the sharpest statement of the problem.
+//
+// What is left is the matrix path itself: ONE SIMD group per threadgroup,
+// `simdgroup_barrier` twice per 64-element K block, and eight
+// `simdgroup_float8x8` accumulators owned by 32 lanes. That is where a
+// re-tile has to go, and the loader and `kMmaTile` are both settled dead
+// ends now rather than untried levers.
+//
+// So the exact kernel still wins on BOTH axes: it is faster AND it is
 // bit-identical to a sequential decode. Nothing dispatches this one.
 //
 // `dequant_int4_gemm_mma` is the matrix-hardware form of
@@ -85,6 +189,61 @@ constant constexpr uint kMmaMaxColTiles = 8;
 constant constexpr uint kMmaK = 64;
 constant constexpr uint kMmaKTiles = kMmaK / kMmaTile;
 
+// **STAGE `x` THROUGH THREADGROUP MEMORY (110).** The un-staged form
+// `simdgroup_load`s `x` TRANSPOSED STRAIGHT FROM DEVICE with row stride N,
+// once per `(n0, kt)` -- a strided device gather in the innermost loop, and
+// the sharpest structural difference between this kernel and MLX's
+// `qmm_t_impl`, which stages BOTH operands (`BlockLoader` for x,
+// `QuantizedBlockLoader` for w) before its `BlockMMA`. Staged, the same rows
+// are read once per `n0` block, coalesced along n (x is [B, N] row-major, so
+// a row's `kMmaK` run is contiguous), and the transpose happens out of
+// threadgroup memory where it is free.
+//
+// It is a FUNCTION CONSTANT rather than a replacement so both shapes live in
+// one binary and can be interleaved pair by pair in ONE process, which is
+// the only way a few-percent difference is readable here (AGENTS.md Gotchas
+// 22 and 28). Its byte is in the pipeline-cache key; a shared key would hand
+// back whichever compiled first (crate Gotcha 1).
+//
+// **IT DOES NOT CHANGE THE ARITHMETIC.** Same values, same `simdgroup_load`
+// order, same `simdgroup_multiply_accumulate` sequence -- only where the
+// bytes are read from. So the two arms must agree BIT FOR BIT with each
+// other, which `dequant_int4_mma_parity.rs` asserts. That is a stronger
+// claim than this kernel's tolerance against the GEMV and is deliberately
+// separate from it: the tolerance is about hardware K reduction, this is
+// about a memory path.
+constant bool FC_MMA_STAGE_X [[function_constant(110)]];
+
+// **SKIP THE DEQUANT (111). A DIAGNOSTIC, AND IT PRODUCES WRONG NUMBERS BY
+// DESIGN.** The header above ends at an unidentified mechanism: total
+// dequant work is `N * K` in both engines and MLX spreads it over fewer
+// threads, so neither amortization nor parallelism explains a 3.5x. The two
+// live candidates are the dequant inner loop's own efficiency and the
+// matrix side's register reuse, and they are separable by DELETION: fill
+// the weight tile with a constant instead of unpacking it, leaving every
+// barrier, every `simdgroup_load` and every
+// `simdgroup_multiply_accumulate` exactly where they were. What remains is
+// the matrix path's cost with the dequant removed.
+//
+// Near the full kernel's time means the dequant is NOT the cost and the
+// matrix path is; far below it means the opposite. This is the one
+// measurement that tells a re-tiling attempt which half to change, and it
+// is cheaper than either rewrite.
+//
+// It is NEVER dispatched by anything but the bench. `y` is meaningless
+// under it, which `dequant_int4_mma_parity.rs` asserts rather than leaves
+// implicit -- an unreachable diagnostic constant would read as measured
+// evidence while measuring the unmodified kernel twice.
+constant bool FC_MMA_SKIP_DEQUANT [[function_constant(111)]];
+
+inline bool mma_skip_dequant() {
+    return is_function_constant_defined(FC_MMA_SKIP_DEQUANT) && FC_MMA_SKIP_DEQUANT;
+}
+
+inline bool mma_stage_x() {
+    return is_function_constant_defined(FC_MMA_STAGE_X) && FC_MMA_STAGE_X;
+}
+
 kernel void dequant_int4_gemm_mma(
     device const uint8_t* W      [[buffer(0)]],
     device const bfloat*  scales [[buffer(1)]],
@@ -114,6 +273,11 @@ kernel void dequant_int4_gemm_mma(
     // compile against a `simdgroup_float8x8`. The narrowing to `y`'s half
     // happens in the copy-out below, which is where the GEMV does it too.
     threadgroup float y_tile[kMmaTile * kMmaTile];
+    // Sized for the widest B this kernel accepts (kMmaMaxColTiles tiles of
+    // kMmaTile rows) because threadgroup arrays need a compile-time bound;
+    // only `col_tiles * kMmaTile` rows are ever written or read. 64 x 64
+    // halfs is 8 KiB, well inside Metal's 32 KiB.
+    threadgroup half x_tile[kMmaMaxColTiles * kMmaTile * kMmaK];
 
     simdgroup_float8x8 acc[kMmaMaxColTiles];
     for (uint t = 0; t < kMmaMaxColTiles; ++t) {
@@ -134,7 +298,13 @@ kernel void dequant_int4_gemm_mma(
             const uint k = e % kMmaK;
             const uint row = row0 + m;
             half value = 0.0h;
-            if (row < M) {
+            if (mma_skip_dequant()) {
+                // Same store, same tile, no unpack: isolates the matrix
+                // path. Deliberately not `0.0h`, so a compiler cannot fold
+                // the multiply away and report a floor that is really a
+                // deleted kernel.
+                value = half(0.5h);
+            } else if (row < M) {
                 const uint n = n0 + k;
                 const uint8_t byte = W[uint(row) * row_bytes + (n >> 1)];
                 const uint q = (n & 1u) ? uint(byte >> 4) : uint(byte & 0x0Fu);
@@ -144,6 +314,20 @@ kernel void dequant_int4_gemm_mma(
                 value = half(fma(float(q), s, b));
             }
             w_tile[e] = value;
+        }
+        // Stage this n-block's slice of `x` alongside the weight tile, so
+        // the inner loop reads no device memory at all. Coalesced: adjacent
+        // lanes take adjacent k within one row, and a row's kMmaK run is
+        // contiguous in [B, N]. The rows past B are the same ones the
+        // un-staged arm reads through `col_tiles`, which the caller sizes
+        // for, so both arms touch the identical bytes.
+        if (mma_stage_x()) {
+            const uint staged = col_tiles * kMmaTile * kMmaK;
+            for (uint e = lane; e < staged; e += 32u) {
+                const uint b = e / kMmaK;
+                const uint k = e % kMmaK;
+                x_tile[e] = x[b * N + n0 + k];
+            }
         }
         simdgroup_barrier(mem_flags::mem_threadgroup);
 
@@ -158,11 +342,22 @@ kernel void dequant_int4_gemm_mma(
                 // sizes `x` for a whole number of tiles, which the host
                 // documents and the test honours.
                 simdgroup_half8x8 x_mat;
-                simdgroup_load(x_mat,
-                               x + uint(t) * kMmaTile * N + n0 + kt * kMmaTile,
-                               N,
-                               ulong2(0, 0),
-                               true);
+                if (mma_stage_x()) {
+                    // Same tile, same transpose, out of threadgroup memory:
+                    // row stride is kMmaK here rather than N.
+                    simdgroup_load(x_mat,
+                                   x_tile + uint(t) * kMmaTile * kMmaK
+                                          + kt * kMmaTile,
+                                   kMmaK,
+                                   ulong2(0, 0),
+                                   true);
+                } else {
+                    simdgroup_load(x_mat,
+                                   x + uint(t) * kMmaTile * N + n0 + kt * kMmaTile,
+                                   N,
+                                   ulong2(0, 0),
+                                   true);
+                }
                 simdgroup_multiply_accumulate(acc[t], w_mat, x_mat, acc[t]);
             }
         }

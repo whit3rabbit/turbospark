@@ -33,7 +33,14 @@ public final class AppHookExecutionEngine: Sendable {
                 continue
             }
 
-            if hook.isAsync {
+            // A PreToolUse hook's whole purpose is to gate whether the call
+            // may proceed, so its decision must always be awaited: running
+            // it via `Task.detached` (as `hook.isAsync` requests) discarded
+            // the result entirely, which meant an async PreToolUse hook
+            // could never deny or ask -- a silent no-op gate (T11).
+            // `async: true` still applies to every other event, where the
+            // dispatch is a notification and nothing is waiting on it.
+            if hook.isAsync && event != .preToolUse {
                 Task.detached {
                     _ = await self.executeSingleHook(
                         hook: hook,

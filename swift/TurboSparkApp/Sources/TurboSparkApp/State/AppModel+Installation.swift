@@ -5,6 +5,8 @@ extension AppModel {
     /// Initiates a background download and build of a model catalog alias.
     public func installModel(alias: String) {
         guard !isInstallingModel, !generating else { return }
+        installEpoch += 1
+        let myEpoch = installEpoch
         isInstallingModel = true
         installStageText = "Preparing install..."
         installProgressFraction = nil
@@ -44,6 +46,7 @@ extension AppModel {
                 self.installStageText = nil
                 self.showToast("Installation failed: \(error.localizedDescription)", style: .error, duration: 5.0)
             }
+            guard self.installEpoch == myEpoch else { return }
             self.isInstallingModel = false
             self.installProgressFraction = nil
             self.installDownloadedBytes = nil
@@ -65,6 +68,8 @@ extension AppModel {
         let trimmedAlias = alias.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedRepo.isEmpty, !trimmedAlias.isEmpty else { return }
 
+        installEpoch += 1
+        let myEpoch = installEpoch
         isInstallingModel = true
         installStageText = "Connecting to Hugging Face..."
         installProgressFraction = nil
@@ -109,6 +114,7 @@ extension AppModel {
                 self.installStageText = nil
                 self.showToast("Installation failed: \(error.localizedDescription)", style: .error, duration: 5.0)
             }
+            guard self.installEpoch == myEpoch else { return }
             self.isInstallingModel = false
             self.installProgressFraction = nil
             self.installDownloadedBytes = nil
@@ -128,5 +134,11 @@ extension AppModel {
         installDownloadedBytes = nil
         installTotalBytes = nil
         installETAText = nil
+        // Cancellation is cooperative: the cancelled Task keeps running
+        // until its next suspension point notices, so its own tail can
+        // still fire after this call returns. Bumping the epoch here too
+        // (on top of each new install bumping it at its own start) means
+        // that stale tail is a no-op even if nothing new has started yet.
+        installEpoch += 1
     }
 }

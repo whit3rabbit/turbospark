@@ -69,10 +69,17 @@ extension AppToolRegistry {
         let allLines = content.components(separatedBy: "\n")
 
         let sLine = max(1, startLine ?? 1)
-        let eLine = min(allLines.count, endLine ?? (sLine + 120))
         if sLine > allLines.count {
             return "File has \(allLines.count) lines. Requested start line \(sLine) is out of bounds."
         }
+        // `endLine` is aliased from `limit`, which callers pass as a COUNT
+        // (Claude/OpenAI convention) rather than an absolute line number, so
+        // it is resolved relative to `sLine` rather than to line 1. Clamping
+        // here (rather than trusting a model-supplied `end_line`/`limit`)
+        // is what keeps `(sLine - 1)..<eLine` a valid, non-empty range: an
+        // unclamped `eLine < sLine - 1` previously trapped the process.
+        let requestedCount = endLine ?? 120
+        let eLine = min(allLines.count, max(sLine, sLine + requestedCount - 1))
 
         let slice = allLines[(sLine - 1)..<eLine]
         var outputLines: [String] = ["File: \(relPath) (lines \(sLine)-\(eLine) of \(allLines.count))"]
@@ -160,31 +167,39 @@ extension AppToolRegistry {
         return "Found \(matches.count) matches:\n" + matches.joined(separator: "\n")
     }
 
-    static func runCommand(command: String, rootURL: URL) async throws -> String {
-        return try await withCheckedThrowingContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
-                let process = Process()
-                process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-                process.arguments = ["-c", command]
-                process.currentDirectoryURL = rootURL
-
-                let pipe = Pipe()
-                process.standardOutput = pipe
-                process.standardError = pipe
-
-                do {
-                    try process.run()
-                    process.waitUntilExit()
-                    let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                    let output = String(data: data, encoding: .utf8) ?? ""
-                    let status = process.terminationStatus
-                    let interp = TerminalCommandClassifier.interpretExitCode(status)
-                    let formatted = output.isEmpty ? "(Command finished: \(interp))" : output
-                    continuation.resume(returning: formatted)
-                } catch {
-                    continuation.resume(throwing: error)
-                }
-            }
+    static func runCommand(command: String, rootURL: URL, timeoutMs: Int? = nil) async throws -> String {
+        // `timeoutMs` is the model-supplied `BashInput.timeout` (milliseconds);
+        // 0 or absent falls back to a generous default rather than blocking
+        // forever. `ProcessExecutor` drains stdout/stderr concurrently with
+        // the wait, which is what makes the deadline actually fire: the
+        // previous `waitUntilExit()` + `readDataToEndOfFile()` pair hung
+        // indefinitely the moment a command wrote more than one pipe buffer
+        // (~64KB) before exiting, since nothing was reading it meanwhile.
+        let timeoutSeconds: TimeInterval
+        if let timeoutMs, timeoutMs > 0 {
+            timeoutSeconds = TimeInterval(timeoutMs) / 1000.0
+        } else {
+            timeoutSeconds = ProcessExecutor.defaultTimeoutSeconds
         }
+
+        let result = try await ProcessExecutor.run(
+            executableURL: URL(fileURLWithPath: "/bin/zsh"),
+            arguments: ["-c", command],
+            currentDirectoryURL: rootURL,
+            timeoutSeconds: timeoutSeconds
+        )
+
+        if result.timedOut {
+            let combined = [result.stdout, result.stderr].filter { !$0.isEmpty }.joined(separator: "\n")
+            let prefix = "(Command timed out after \(Int(timeoutSeconds))s and was terminated.)"
+            return combined.isEmpty ? prefix : "\(prefix)\n\(combined)"
+        }
+
+        let combined = [result.stdout, result.stderr].filter { !$0.isEmpty }.joined(separator: "\n")
+        if combined.isEmpty {
+            let interp = TerminalCommandClassifier.interpretExitCode(result.exitCode)
+            return "(Command finished: \(interp))"
+        }
+        return combined
     }
 }

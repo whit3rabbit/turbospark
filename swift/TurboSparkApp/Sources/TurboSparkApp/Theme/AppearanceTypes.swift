@@ -1,6 +1,27 @@
 import AppKit
 import SwiftUI
 
+/// Display mode for live benchmarks in the bottom status bar (numbers or live graphs).
+public enum StatusBarViewMode: String, CaseIterable, Identifiable, Codable, Sendable {
+    case text = "text"
+    case graphs = "graphs"
+
+    public var id: String { rawValue }
+    public var label: String {
+        switch self {
+        case .text: return "Numbers"
+        case .graphs: return "Live Graphs"
+        }
+    }
+
+    public var systemImage: String {
+        switch self {
+        case .text: return "number"
+        case .graphs: return "chart.xyaxis.line"
+        }
+    }
+}
+
 /// Preference for how git / artifact diffs represent additions and deletions.
 public enum DiffMarkerPreference: String, CaseIterable, Identifiable, Codable, Sendable {
     case color = "color"

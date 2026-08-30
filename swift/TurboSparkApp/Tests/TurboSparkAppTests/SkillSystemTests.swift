@@ -317,6 +317,52 @@ final class SkillSystemTests: XCTestCase {
         XCTAssertTrue(result.output.contains("Execute `sqlx migrate run` on target DB postgres_dev."))
     }
 
+    // MARK: - Disable Persistence & Enforcement (state#12)
+
+    func testDisablingASkillPersistsAcrossRediscoveryAndBlocksTheToolCall() async throws {
+        // A unique name so this test's disabled-state write to
+        // `SkillManager`'s shared (UserDefaults-backed) store cannot leak
+        // into any other test's fixture.
+        let skillName = "disable-test-\(UUID().uuidString.prefix(8))"
+        defer { SkillManager.shared.setSkillEnabled(true, name: skillName) }
+
+        let skillDir = tempDirURL.appendingPathComponent(".turbospark/skills/\(skillName)", isDirectory: true)
+        try FileManager.default.createDirectory(at: skillDir, withIntermediateDirectories: true)
+        try """
+        ---
+        name: \(skillName)
+        description: A throwaway skill for the disable-persistence test.
+        ---
+        Do the thing.
+        """.write(to: skillDir.appendingPathComponent("SKILL.md"), atomically: true, encoding: .utf8)
+
+        // Freshly discovered, it is enabled (the parser's own default).
+        let beforeDisable = SkillManager.shared.discoverProjectSkills(projectRootURL: tempDirURL)
+        XCTAssertEqual(beforeDisable.first(where: { $0.name == skillName })?.isEnabled, true)
+
+        SkillManager.shared.setSkillEnabled(false, name: skillName)
+
+        // The OLD bug: toggling only mutated an in-memory AppSkill copy, so
+        // a fresh discovery (what reloadSkills() does on any project switch)
+        // came back enabled again. Re-discovering here must see `false`.
+        let afterDisable = SkillManager.shared.discoverProjectSkills(projectRootURL: tempDirURL)
+        XCTAssertEqual(afterDisable.first(where: { $0.name == skillName })?.isEnabled, false)
+
+        // The OTHER half of state#12: the `skill` tool executor must itself
+        // refuse to run a disabled skill, not just report it as disabled.
+        let project = AppProject(name: "TestProject", rootDirectoryPath: tempDirURL.path)
+        let call = AppToolCall(name: "skill", arguments: ["name": skillName])
+        let result = await AppToolRegistry.execute(call: call, in: project)
+        XCTAssertTrue(result.isError, "Invoking a disabled skill must fail, not run it anyway.")
+        XCTAssertTrue(result.output.contains("disabled"))
+
+        // Re-enabling restores normal execution.
+        SkillManager.shared.setSkillEnabled(true, name: skillName)
+        let resultAfterReenable = await AppToolRegistry.execute(call: call, in: project)
+        XCTAssertFalse(resultAfterReenable.isError)
+        XCTAssertTrue(resultAfterReenable.output.contains("Do the thing."))
+    }
+
     func testNativeSkillToolExecutionNotFound() async {
         let project = AppProject(
             name: "EmptyProject",

@@ -5,8 +5,14 @@ extension AppHookExecutionEngine {
         // If matcher is set (e.g. "Write|Edit" or "Bash")
         if let matcher = hook.matcher, !matcher.isEmpty, let toolName {
             let parts = matcher.split(separator: "|").map { $0.trimmingCharacters(in: .whitespaces) }
+            // EXACT (case-insensitive) match on tool name, not a bidirectional
+            // substring test (T17): the previous
+            // `toolName.contains(part) || part.contains(toolName)` matched
+            // whenever either string happened to be a substring of the
+            // other, so a matcher for one tool could fire for an unrelated
+            // tool whose name happened to share characters with it.
             let matched = parts.contains("*") || parts.contains { part in
-                toolName.localizedCaseInsensitiveContains(part) || part.localizedCaseInsensitiveContains(toolName)
+                part.caseInsensitiveCompare(toolName) == .orderedSame
             }
             if !matched { return false }
         }
@@ -21,7 +27,7 @@ extension AppHookExecutionEngine {
                 if let innerStart = ifCond.firstIndex(of: "("), let innerEnd = ifCond.lastIndex(of: ")") {
                     let pattern = String(ifCond[ifCond.index(after: innerStart)..<innerEnd]).trimmingCharacters(in: .whitespaces)
                     let cmdArg = toolArguments?["command"] ?? toolArguments?["cmd"] ?? toolArguments?["path"] ?? ""
-                    if pattern != "*" && !cmdArg.localizedCaseInsensitiveContains(pattern.replacingOccurrences(of: "*", with: "")) {
+                    if pattern != "*" && !matchesCommandGlob(pattern, against: cmdArg) {
                         return false
                     }
                 }
@@ -29,6 +35,28 @@ extension AppHookExecutionEngine {
         }
 
         return true
+    }
+
+    /// Matches `text` against a simple glob whose only wildcard is a
+    /// trailing `*` (a prefix match), after normalizing whitespace on both
+    /// sides. Replaces a bare "contains the pattern with `*` stripped,
+    /// anywhere" check that both UNDER-matched a command whose whitespace
+    /// did not line up byte-for-byte with the pattern (`"git  push"` against
+    /// `"git *"`) and OVER-matched any command that merely mentioned the
+    /// pattern text as a substring (`echo "git push "` against the same
+    /// pattern) rather than actually being that command (T17).
+    func matchesCommandGlob(_ pattern: String, against text: String) -> Bool {
+        func normalize(_ s: String) -> String {
+            s.trimmingCharacters(in: .whitespacesAndNewlines)
+                .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+                .lowercased()
+        }
+        let normalizedText = normalize(text)
+        if pattern.hasSuffix("*") {
+            let prefix = normalize(String(pattern.dropLast()))
+            return normalizedText.hasPrefix(prefix)
+        }
+        return normalizedText == normalize(pattern)
     }
 
     func parsePreToolUseOutput(stdout: String, stderr: String, exitCode: Int32, hookName: String) -> AppHookPreToolUseDecision {

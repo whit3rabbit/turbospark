@@ -59,5 +59,6 @@ struct NavigationRailView: View {
         .buttonStyle(.plain)
         .help("Settings (⌘,)")
         .accessibilityLabel("Settings")
+        .accessibilityHint("Opens application settings window")
     }
 }

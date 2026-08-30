@@ -106,6 +106,11 @@ for bin in turbospark-check turbospark-model turbospark-server; do
   cp "$src" "$contents/MacOS/$bin"
 done
 
+# Copy application icon if available
+if [ -f "$root/assets/icons/AppIcon.icns" ]; then
+  cp "$root/assets/icons/AppIcon.icns" "$contents/Resources/AppIcon.icns"
+fi
+
 cat > "$contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -117,6 +122,10 @@ cat > "$contents/Info.plist" <<PLIST
     <string>TurboSpark</string>
     <key>CFBundleExecutable</key>
     <string>TurboSparkApp</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>CFBundleIconName</key>
+    <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
     <string>${bundle_id}</string>
     <key>CFBundleInfoDictionaryVersion</key>

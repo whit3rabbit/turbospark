@@ -114,7 +114,12 @@ final class ProjectMcpDetectionTests: XCTestCase {
         XCTAssertNotNil(server)
         XCTAssertEqual(server?.name, "opencode-array")
         XCTAssertEqual(server?.isEnabled, true)
-        XCTAssertEqual(server?.autoApprove, true)
+        // T14: `autoApprove` is NEVER trusted from a repo-controlled config
+        // file, even when the file explicitly declares it, because the
+        // permission engine reads this flag to skip confirmation entirely.
+        // A cloned `.mcp.json`/`opencode.json` must not be able to grant
+        // itself silent tool execution just by being imported.
+        XCTAssertEqual(server?.autoApprove, false)
 
         if case .stdio(let cmd, let args, _) = server?.transport {
             XCTAssertEqual(cmd, "npx")
@@ -173,6 +178,28 @@ final class ProjectMcpDetectionTests: XCTestCase {
         let allServerNames = detected.flatMap { $0.servers.map(\.name) }
         XCTAssertTrue(allServerNames.contains("srv1"))
         XCTAssertTrue(allServerNames.contains("srv2"))
+    }
+
+    // MARK: - autoApprove Is Never Trusted From a Repo Config (T14)
+
+    func testAutoApproveIsStrippedRegardlessOfSpelling() throws {
+        let content = """
+        {
+          "mcpServers": {
+            "claude-spelling": { "command": "npx", "args": [], "autoApprove": true },
+            "alt-spelling-1": { "command": "npx", "args": [], "auto_approve": true },
+            "alt-spelling-2": { "command": "npx", "args": [], "alwaysAllow": true }
+          }
+        }
+        """
+        let fileURL = tempDirURL.appendingPathComponent(".mcp.json")
+        try content.write(to: fileURL, atomically: true, encoding: .utf8)
+
+        let servers = ProjectMcpDetector.detectInProject(rootURL: tempDirURL).first?.servers ?? []
+        XCTAssertEqual(servers.count, 3)
+        for server in servers {
+            XCTAssertFalse(server.autoApprove, "'\(server.name)' must not inherit autoApprove from an untrusted config file, whatever key spelling it used.")
+        }
     }
 
     func testAppProjectBackwardCompatibilityWithMcp() throws {

@@ -118,6 +118,32 @@ when this file gets updated relative to the version bump and the tag.
 - Documentation: `docs/OBLITERATION.md` (runtime steering design, refutations,
   measurements, and interop), `docs/MODELS.md` (the catalog, the probe, adding a
   row), and `docs/RELEASE.md` (how a release is cut).
+- `scripts/mlx_qmm_reference.py`: MLX's own `mx.quantized_matmul` `c(M)` at this
+  port's seven INT4 GEMM shapes, on the same machine and the same yardstick as
+  `crates/gpu`'s bench. It replaces an extrapolation with a measurement, and the
+  saturation point moved: mlx's curve is FLAT from M=32 to M=512, not M=36 or
+  M=64, and its `ms` column is identical at M=16 and M=32, which is a `BM=32`
+  tile paying for empty rows. Numbers in `docs/BENCHMARKS.md`.
+- `crates/gpu/tests/gdn_prefill_share_bench.rs`: prices `gdn_delta_step_prefill`
+  against the INT4 matrices one prefill micro-batch walks, weighted by the real
+  layer counts. **4.66%**, an upper bound, which closes the gated-DeltaNet
+  threadgroup-staging idea. It exists because `MFERENCE_DISPATCH_PROFILE=1`
+  waits on every command buffer at commit and did not finish a 150-token
+  prefill in 12 minutes; this answers the same question in 0.45 s.
+- `FC_MMA_STAGE_X` (function constant 110) on `dequant_int4_gemm_mma`, with
+  `encode_dequant_int4_gemm_mma_resident_staged`: stages `x` through
+  threadgroup memory instead of `simdgroup_load`ing it transposed from device.
+  Bit-identical to the un-staged arm and **a measured 3.3x to 5.9x LOSS at
+  every width**, kept behind a default-off constant so the negative is
+  reproducible rather than a note. Nothing dispatches it.
+- `FC_MMA_SKIP_DEQUANT` (function constant 111) and
+  `encode_dequant_int4_gemm_mma_resident_skip_dequant`: a DIAGNOSTIC that
+  fills the matrix kernel's weight tile with a constant, so its time is the
+  matrix path with the unpack deleted. Output is meaningless and a test
+  asserts it. It settles where that kernel's cost lives: the dequant is 36%
+  at M=2 and 11% at M=64, and **with the dequant entirely free the kernel
+  still reads 0.46 to 0.50 past M=16 against MLX's 0.145** -- so the loader
+  is not the lever, and neither is `kMmaTile`.
 
 ### Changed
 - The release workflow requires a `CHANGELOG.md` entry for the tag, publishes

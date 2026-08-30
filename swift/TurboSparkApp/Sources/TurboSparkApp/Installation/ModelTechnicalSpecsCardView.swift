@@ -33,7 +33,26 @@ struct ModelTechnicalSpecsCardView: View {
                 specRow(label: "Download Size", value: MetricFormat.storage(entry.downloadBytes))
                 specRow(label: "Estimated Install", value: MetricFormat.storage(entry.installBytes))
                 if let inst = installedModel {
-                    specRow(label: "Installed Path", value: inst.path)
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("Installed Path")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer(minLength: 16)
+                        Button {
+                            ModelStorageManager.revealInFinder(path: inst.path)
+                        } label: {
+                            Text(inst.path)
+                                .font(.caption.monospaced())
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .foregroundStyle(Color.accentColor)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Reveal in Finder: \(inst.path)")
+                        .accessibilityLabel("Installed path: \(inst.path)")
+                        .accessibilityHint("Opens Finder to show model directory")
+                        .accessibilityAddTraits(.isLink)
+                    }
                     specRow(label: "Installed On", value: inst.installedOn)
                 }
             }

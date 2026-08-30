@@ -20,6 +20,7 @@ public final class AppModel: ObservableObject {
     public enum AppNavigationSection: String, CaseIterable, Identifiable, Sendable {
         case chat
         case files
+        case modelManager
         case modelHub
 
         public var id: String { rawValue }
@@ -27,13 +28,15 @@ public final class AppModel: ObservableObject {
             switch self {
             case .chat: return "Chat"
             case .files: return "Files"
-            case .modelHub: return "Models"
+            case .modelManager: return "Installed"
+            case .modelHub: return "Discover"
             }
         }
         public var systemImage: String {
             switch self {
             case .chat: return "bubble.left.and.bubble.right"
             case .files: return "folder"
+            case .modelManager: return "internaldrive"
             case .modelHub: return "shippingbox"
             }
         }
@@ -42,6 +45,7 @@ public final class AppModel: ObservableObject {
             switch self {
             case .chat: return "bubble.left.and.bubble.right.fill"
             case .files: return "folder.fill"
+            case .modelManager: return "internaldrive.fill"
             case .modelHub: return "shippingbox.fill"
             }
         }
@@ -50,7 +54,8 @@ public final class AppModel: ObservableObject {
             switch self {
             case .chat: return "1"
             case .files: return "2"
-            case .modelHub: return "3"
+            case .modelManager: return "3"
+            case .modelHub: return "4"
             }
         }
     }
@@ -102,6 +107,16 @@ public final class AppModel: ObservableObject {
     @Published public var globalMcpServers: [McpServerConfig] = []
     /// Currently pending tool call requiring user approval.
     @Published public var pendingToolCall: AppToolCall? = nil
+    /// The chat the pending tool call was proposed in, captured at proposal
+    /// time. Approving/denying appends to THIS chat, never to whatever
+    /// `selectedChatID` happens to be when the user responds -- `generating`
+    /// goes false as soon as the call is proposed (state#9), so a chat
+    /// switch in between is possible and must not misroute the result.
+    @Published public var pendingToolCallChatID: UUID? = nil
+    /// The agent-loop step the pending tool call was proposed at (state#6):
+    /// resuming after approval continues from HERE, not from step 1, or
+    /// `maxAutonomousSteps` resets every time a call needs confirmation.
+    @Published public var pendingToolCallStep: Int = 0
     /// Live tool calls executed during the active generation turn.
     @Published public var liveToolCalls: [AppToolCall] = []
 
@@ -115,7 +130,19 @@ public final class AppModel: ObservableObject {
     /// All user chat conversations.
     @Published public var chats: [AppChat] = []
     /// Unique identifier of the currently active chat conversation.
-    @Published public var selectedChatID: UUID = UUID()
+    ///
+    /// `didSet` keeps `activeDraftChat`'s identity in step with every
+    /// assignment (load, select, create, delete), which is what lets
+    /// `selectedChat` below be a PURE getter: the repair used to happen
+    /// lazily inside that getter, mutating `@Published` state while a
+    /// SwiftUI view was reading it (state#7).
+    @Published public var selectedChatID: UUID = UUID() {
+        didSet {
+            if activeDraftChat.id != selectedChatID {
+                activeDraftChat = AppChat(id: selectedChatID)
+            }
+        }
+    }
     /// Transient active chat draft when chats list is empty.
     private var activeDraftChat = AppChat()
 
@@ -221,6 +248,26 @@ public final class AppModel: ObservableObject {
     var tokenEstimateTask: Task<Void, Never>?
     var decodeStartTime: Date?
 
+    /// Bumped once per `executeGenerationTurn` call. A turn's own
+    /// `runTask` compares its captured value against this at its tail
+    /// before resetting `generating`/`phase`/`runTask`; if a NEWER turn has
+    /// already started (the tool-call-continuation trampoline reenters
+    /// `executeGenerationTurn` while the previous turn's tail is still
+    /// pending), the stale tail is a no-op instead of clobbering the new
+    /// turn's state out from under it (state#10).
+    var generationEpoch: Int = 0
+
+    /// Same shape as `generationEpoch`, for installs. `cancelInstall()`
+    /// cancels the running `Task` cooperatively -- the task keeps running
+    /// until its next suspension point notices -- so a user who cancels and
+    /// immediately starts a NEW install can have the OLD task's delayed
+    /// `CancellationError` tail run AFTER the new install's own `installTask`
+    /// is already in flight. Without this guard that tail unconditionally
+    /// reset `isInstallingModel`/`installTask` to nil, silently clobbering
+    /// the new install's state and dropping the only reference that could
+    /// cancel IT (state#15).
+    var installEpoch: Int = 0
+
     /// Creates and initializes the application model, restoring saved settings and chats.
     public init() {
         loadSettings()
@@ -257,16 +304,17 @@ public final class AppModel: ObservableObject {
     }
 
     /// The currently selected chat conversation.
+    ///
+    /// Pure: no mutation of `@Published` state on read (state#7 -- "Publishing
+    /// changes from within view updates" is undefined behavior, and this
+    /// getter is read from SwiftUI view bodies). `selectedChatID` is kept
+    /// valid at the points where `chats` actually changes -- `loadChats()`,
+    /// `selectChat`, `createChat`, `deleteChat` -- rather than patched
+    /// lazily here; `activeDraftChat`'s identity is kept in sync by
+    /// `selectedChatID`'s own `didSet` above.
     public var selectedChat: AppChat {
         if let index = selectedChatIndex {
             return chats[index]
-        }
-        if let first = chats.first {
-            selectedChatID = first.id
-            return first
-        }
-        if activeDraftChat.id != selectedChatID {
-            activeDraftChat.id = selectedChatID
         }
         return activeDraftChat
     }

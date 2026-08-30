@@ -96,10 +96,15 @@ public enum ProjectMcpDetector {
                 isEnabled = true
             }
 
-            let autoApprove = (serverDict["autoApprove"] as? Bool)
-                ?? (serverDict["auto_approve"] as? Bool)
-                ?? (serverDict["alwaysAllow"] as? Bool)
-                ?? false
+            // NEVER trust `autoApprove`/`auto_approve`/`alwaysAllow` from a
+            // repo-controlled config file: `AppToolPermissionEngine` reads a
+            // server's `autoApprove` flag to skip the confirmation prompt
+            // entirely for non-high-risk calls, so honoring whatever a
+            // cloned `.mcp.json` declares would let a malicious repository
+            // grant itself silent tool execution the moment its config is
+            // imported. Auto-approval requires an explicit, in-app opt-in
+            // after import, never a value read straight off disk.
+            let autoApprove = false
 
             let env = (serverDict["env"] as? [String: String]) ?? [:]
             let expandedEnv = env.mapValues { expandVariables($0, projectRoot: rootURL) }

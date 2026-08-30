@@ -25,6 +25,10 @@ extension Theme {
             FontSize(.em(0.88))
             BackgroundColor(Color.primary.opacity(0.06))
         }
+        .link {
+            ForegroundColor(Color.accentColor)
+            UnderlineStyle(.single)
+        }
         .codeBlock { configuration in
             CodeBlockContainer(
                 language: configuration.language,

@@ -241,3 +241,186 @@ fn the_fixture_can_see_reassociation_at_all() {
     );
     println!("forward {forward} vs backward {backward}: the fixture discriminates");
 }
+
+/// **STAGING `x` THROUGH THREADGROUP MEMORY MOVES NO BITS.**
+///
+/// `FC_MMA_STAGE_X` (110) changes only where the right-hand side is read
+/// from: the same values reach the same `simdgroup_load` in the same order,
+/// so the two arms must agree BIT FOR BIT with each other. That is a
+/// stronger claim than this file's other case, which allows a tolerance
+/// against the GEMV because `simdgroup_multiply_accumulate` reduces K in an
+/// order Apple does not document. The tolerance is about hardware
+/// reduction; this is about a memory path, and a memory path has no licence
+/// to change a value.
+///
+/// It also pins the pipeline-cache key. Both arms run in ONE process at the
+/// same `(M, N, B)`, so if `stage_x` were missing from the key the second
+/// dispatch would silently reuse the first's pipeline and the comparison
+/// would be a shape against itself -- green, and proving nothing (crate
+/// Gotcha 1). The widths deliberately include one that is NOT a multiple of
+/// the 8-row tile (5), because the staging loop bounds itself on
+/// `col_tiles * kMmaTile` rather than on `B` and an off-by-one there would
+/// only show at a ragged width.
+#[test]
+fn staging_x_through_threadgroup_memory_moves_no_bits() {
+    let rows = 128usize;
+    let cols = 256usize;
+    let mut context = MetalContext::new().expect("Metal device");
+
+    let scales_offset = (rows * cols / 2) as u64;
+    let biases_offset = scales_offset + (rows * cols / 64 * 2) as u64;
+    let total = biases_offset + (rows * cols / 64 * 2) as u64;
+
+    let mut blob = fill(0xD1A5, scales_offset as usize);
+    blob.extend_from_slice(&bf16_small(0xBEEF, rows * cols / 64));
+    blob.extend_from_slice(&bf16_small(0xF00D, rows * cols / 64));
+    assert_eq!(blob.len(), total as usize);
+    let weights = context.new_buffer_with_data(&blob);
+
+    let mut compared = 0usize;
+    for batch in [1usize, 2, 5, 8, MAX_BATCH_ROWS, 32, 64] {
+        let col_tiles = batch.div_ceil(8);
+        let x_rows = col_tiles * 8;
+        let x_values: Vec<f16> = (0..x_rows * cols).map(activation).collect();
+        let x = context.new_buffer_with_data(&half_bytes(&x_values));
+
+        let run = |context: &mut MetalContext, stage_x: bool| {
+            let y = context.new_output_buffer((batch * rows * 2) as u64);
+            autorelease_pool(|| {
+                let pass = context.begin_pass();
+                turbospark_gpu::encode_dequant_int4_gemm_mma_resident_staged(
+                    context,
+                    &pass,
+                    &Int4ResidentMatrix {
+                        buffer: &weights,
+                        weights_offset: 0,
+                        scales_offset,
+                        biases_offset,
+                        rows,
+                        cols,
+                    },
+                    (&x, 0),
+                    (&y, 0),
+                    batch,
+                    stage_x,
+                )
+                .expect("mma dispatch");
+                pass.commit_and_wait();
+            });
+            turbospark_gpu::read_buffer_f16(&y, 0, batch * rows)
+        };
+
+        let plain = run(&mut context, false);
+        let staged = run(&mut context, true);
+        assert_eq!(
+            plain.len(),
+            staged.len(),
+            "batch {batch}: arms disagree on length"
+        );
+        for (i, (a, b)) in plain.iter().zip(staged.iter()).enumerate() {
+            assert_eq!(
+                a.to_bits(),
+                b.to_bits(),
+                "batch {batch}, element {i}: staged {b} != unstaged {a}"
+            );
+            compared += 1;
+        }
+    }
+
+    // The fixture has to actually produce varied, non-zero output, or
+    // bit-equality is a comparison of two runs of zeros.
+    assert!(compared >= 128 * 7, "compared only {compared} outputs");
+}
+
+/// **THE SKIP-DEQUANT DIAGNOSTIC IS REACHABLE, AND ITS OUTPUT IS WRONG.**
+///
+/// `FC_MMA_SKIP_DEQUANT` (111) fills the weight tile with a constant so
+/// `gemv_bandwidth_bench.rs` can time the matrix path with the unpack
+/// removed. The whole value of that measurement rests on the constant
+/// actually reaching the kernel: if it did not, the bench would compile one
+/// pipeline, time it twice, and report a ratio of 1.00 that reads as
+/// "the dequant is free" -- a wrong answer that looks like a finding.
+///
+/// So this asserts the two DIFFER, which is the opposite of every other
+/// case in this file and is deliberate. It also pins the pipeline-cache
+/// key: both run in one process at the same `(M, N, B)`, so a key missing
+/// the flag would hand back the first pipeline and the assertion would
+/// fail loudly rather than silently pass.
+#[test]
+fn the_skip_dequant_diagnostic_is_reachable_and_its_output_is_wrong() {
+    let rows = 128usize;
+    let cols = 256usize;
+    let batch = 8usize;
+    let mut context = MetalContext::new().expect("Metal device");
+
+    let scales_offset = (rows * cols / 2) as u64;
+    let biases_offset = scales_offset + (rows * cols / 64 * 2) as u64;
+    let total = biases_offset + (rows * cols / 64 * 2) as u64;
+    let mut blob = fill(0xD1A5, scales_offset as usize);
+    blob.extend_from_slice(&bf16_small(0xBEEF, rows * cols / 64));
+    blob.extend_from_slice(&bf16_small(0xF00D, rows * cols / 64));
+    assert_eq!(blob.len() as u64, total);
+    let weights = context.new_buffer_with_data(&blob);
+
+    let x_values: Vec<f16> = (0..batch * cols).map(activation).collect();
+    let x = context.new_buffer_with_data(&half_bytes(&x_values));
+
+    let matrix = || Int4ResidentMatrix {
+        buffer: &weights,
+        weights_offset: 0,
+        scales_offset,
+        biases_offset,
+        rows,
+        cols,
+    };
+
+    let y_real = context.new_output_buffer((batch * rows * 2) as u64);
+    let y_diag = context.new_output_buffer((batch * rows * 2) as u64);
+    autorelease_pool(|| {
+        let pass = context.begin_pass();
+        encode_dequant_int4_gemm_mma_resident(
+            &mut context,
+            &pass,
+            &matrix(),
+            (&x, 0),
+            (&y_real, 0),
+            batch,
+        )
+        .expect("real");
+        pass.commit_and_wait();
+    });
+    autorelease_pool(|| {
+        let pass = context.begin_pass();
+        turbospark_gpu::encode_dequant_int4_gemm_mma_resident_skip_dequant(
+            &mut context,
+            &pass,
+            &matrix(),
+            (&x, 0),
+            (&y_diag, 0),
+            batch,
+        )
+        .expect("diagnostic");
+        pass.commit_and_wait();
+    });
+
+    let real = turbospark_gpu::read_buffer_f16(&y_real, 0, batch * rows);
+    let diag = turbospark_gpu::read_buffer_f16(&y_diag, 0, batch * rows);
+    let differing = real
+        .iter()
+        .zip(diag.iter())
+        .filter(|(a, b)| a.to_bits() != b.to_bits())
+        .count();
+    assert!(
+        differing > real.len() / 2,
+        "only {differing} of {} outputs differ: the skip-dequant constant is \
+         not reaching the kernel, so any timing taken with it measures the \
+         unmodified kernel twice",
+        real.len()
+    );
+    // And the real arm must not be trivially zero, or "they differ" is
+    // satisfied by a fixture that proves nothing.
+    assert!(
+        real.iter().any(|v| v.to_f32().abs() > 1e-3),
+        "the real arm produced no signal"
+    );
+}

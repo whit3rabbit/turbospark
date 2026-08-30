@@ -59,6 +59,50 @@ final class McpClientEngineTests: XCTestCase {
         }
     }
 
+    // MARK: - Transport Robustness (T7, T16)
+
+    /// A server that never writes a response must be abandoned at the
+    /// stated deadline, not hang forever. The previous implementation read
+    /// the pipe directly (`pipe.fileHandleForReading.availableData`) inside
+    /// the polling loop, so the loop's own deadline check could only run
+    /// BETWEEN blocking reads -- if the child never wrote again, the
+    /// deadline was never re-evaluated.
+    func testDiscoverToolsTimesOutRatherThanHangingOnASilentServer() async {
+        let engine = McpClientEngine()
+        let config = McpServerConfig(
+            name: "silent-server",
+            transport: .stdio(command: "/bin/sh", args: ["-c", "sleep 30"])
+        )
+        let start = Date()
+        do {
+            _ = try await engine.discoverTools(for: config, timeoutSeconds: 0.5)
+            XCTFail("Expected a timeout error from a server that never responds.")
+        } catch {
+            // Expected.
+        }
+        let elapsed = Date().timeIntervalSince(start)
+        XCTAssertLessThan(elapsed, 5.0, "A 0.5s timeout must fire well before the fake server's 30s sleep.")
+    }
+
+    /// A server that exits immediately makes every subsequent stdin write
+    /// hit a closed pipe (EPIPE). The legacy `FileHandle.write(Data)`
+    /// overload raises an uncatchable Objective-C exception on that, which
+    /// would crash this very test process rather than being catchable as a
+    /// Swift error.
+    func testCallingAToolThatDiesImmediatelyThrowsRatherThanCrashing() async {
+        let engine = McpClientEngine()
+        let config = McpServerConfig(
+            name: "dies-immediately",
+            transport: .stdio(command: "/bin/sh", args: ["-c", "exit 0"])
+        )
+        do {
+            _ = try await engine.callTool(config: config, toolName: "anything", arguments: [:], timeoutSeconds: 2.0)
+            XCTFail("Expected an error calling a tool on a server that has already exited.")
+        } catch {
+            // Expected: a normal Swift error, not a crash.
+        }
+    }
+
     func testVariableExpansion() {
         let projectURL = URL(fileURLWithPath: "/Users/test/Code/MyProject")
         let rawArg = "${workspaceFolder}/data/files"

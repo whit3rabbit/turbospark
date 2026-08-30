@@ -97,7 +97,12 @@ public enum ForgeGuardrailsEngine {
                     let body = nsString.substring(with: match.range(at: 2)).trimmingCharacters(in: .whitespacesAndNewlines)
                     let raw = nsString.substring(with: match.range(at: 0))
 
-                    if availableToolNames.contains(name) || !name.isEmpty {
+                    // `|| !name.isEmpty` made this condition true for ANY
+                    // non-empty tool name, so a rescued XML-dialect call
+                    // could manufacture a real `AppToolCall` for a tool the
+                    // current agent type was never granted (T6). The
+                    // allowlist is the whole point of this check.
+                    if isToolNameAllowed(name, in: availableToolNames) {
                         let args = parseArgumentsString(body)
                         let category = AppToolRegistry.category(for: name)
                         let risk = ToolRiskClassifier.assessRisk(name: name, arguments: args)
@@ -255,9 +260,18 @@ public enum ForgeGuardrailsEngine {
         return nil
     }
 
+    /// Case-insensitive membership check against the tools actually granted
+    /// to the current agent type. Every dialect-rescue path must call this
+    /// before manufacturing an `AppToolCall`: a rescued call is API-identical
+    /// to one the model produced through normal parsing, so skipping this
+    /// check lets rescued text grant a tool the agent was never given (T6).
+    static func isToolNameAllowed(_ name: String, in availableToolNames: Set<String>) -> Bool {
+        !name.isEmpty && availableToolNames.contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame })
+    }
+
     private static func convertJsonDictToToolCall(_ dict: [String: Any], availableToolNames: Set<String>, raw: String) -> AppToolCall? {
         let name = (dict["name"] as? String) ?? (dict["tool"] as? String) ?? (dict["function"] as? String)
-        guard let toolName = name, !toolName.isEmpty else { return nil }
+        guard let toolName = name, isToolNameAllowed(toolName, in: availableToolNames) else { return nil }
 
         var args: [String: String] = [:]
         if let rawArgs = (dict["arguments"] as? [String: Any]) ?? (dict["parameters"] as? [String: Any]) ?? (dict["args"] as? [String: Any]) {

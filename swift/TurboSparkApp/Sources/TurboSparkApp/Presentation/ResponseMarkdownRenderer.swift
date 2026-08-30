@@ -229,7 +229,9 @@ public struct ResponseMarkdownRenderer: Sendable {
         if inlineIntent?.contains(.strikethrough) == true {
             values[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
         }
-        if link != nil {
+        if let link {
+            values[.link] = link
+            values[.toolTip] = link.absoluteString
             values[.foregroundColor] = NSColor.linkColor
             values[.underlineStyle] = NSUnderlineStyle.single.rawValue
         }

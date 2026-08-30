@@ -73,21 +73,28 @@ public actor SessionApprovalStore {
 /// Central permissions evaluation engine enforcing Unsloth-style security policies.
 public enum AppToolPermissionEngine {
     /// Evaluates whether a tool call should be allowed, gated with user confirmation, or denied.
+    ///
+    /// Session approval, category-deny, and the high-risk gate are ordered
+    /// deliberately: deny and high-risk are both checked BEFORE a session's
+    /// "always allow" grant is consulted, so a prior approval of one call
+    /// (e.g. `run_command git status`) can never be read as covering a later,
+    /// unrelated call under the same tool name that turns out to be high-risk
+    /// (e.g. `run_command rm -rf ~/Documents`). Do not move the session-approval
+    /// check back above these two without re-adding a per-approval risk ceiling.
     public static func evaluate(
         call: AppToolCall,
         project: AppProject?,
         sessionApproved: Bool = false
     ) -> ToolPermissionDecision {
-        let permissions = project?.permissions ?? .auto
+        // No project selected: fall back to the same guarded default a fresh
+        // project would get, never to the wide-open `.auto` permission set
+        // (fileWrite/terminal/mcp all `.allow`). A plain chat with no project
+        // must still ask before running shell commands or writing files.
+        let permissions = project?.permissions ?? .standard
         let category = call.category
         let risk = call.riskAssessment ?? ToolRiskClassifier.assessRisk(name: call.name, arguments: call.arguments)
 
-        // 1. Session-level pre-approval bypasses prompts (unless strict read-only)
-        if sessionApproved && permissions.mode != .readOnly {
-            return .allow
-        }
-
-        // 2. Strict Read-Only Mode
+        // 1. Strict Read-Only Mode. Absolute: session approval never applies here.
         if permissions.mode == .readOnly {
             if category == .fileRead && !risk.isHighRisk {
                 return .allow
@@ -95,12 +102,13 @@ public enum AppToolPermissionEngine {
             return .deny(reason: "Tool execution is denied in Strict Read-Only mode.")
         }
 
-        // 3. Permissive Mode: Allow everything bounded by the filesystem sandbox
+        // 2. Permissive Mode: Allow everything bounded by the filesystem sandbox
         if permissions.mode == .permissive {
             return .allow
         }
 
-        // 4. Granular Category Permission Check (Explicit Deny wins)
+        // 3. Granular Category Permission Check (Explicit Deny wins, and a
+        // session approval cannot resurrect a category the project denies)
         let categoryPermission: AppToolPermission
         switch category {
         case .fileRead: categoryPermission = permissions.fileRead
@@ -115,7 +123,24 @@ public enum AppToolPermissionEngine {
             return .deny(reason: "The \(category.label) category is set to Deny in project settings.")
         }
 
-        // 5. MCP Server-level Auto-Approval Check
+        // 4. High-risk actions ALWAYS require a fresh confirmation, regardless
+        // of any "always allow this session" grant recorded under this tool
+        // name or command prefix. This is the fix for the bypass above: risk
+        // is assessed on THIS call's actual arguments, not on whatever call
+        // originally earned the session grant.
+        if risk.isHighRisk {
+            let reason = risk.reasons.isEmpty ? "High-risk action requires confirmation." : risk.reasons.joined(separator: "; ")
+            return .ask(assessment: risk, reason: reason)
+        }
+
+        // 5. Session-level pre-approval bypasses prompts for repeats of a
+        // call already vetted this session, now that deny and high-risk have
+        // both had the first word.
+        if sessionApproved {
+            return .allow
+        }
+
+        // 6. MCP Server-level Auto-Approval Check
         if category == .mcp {
             let serverName: String?
             if call.name.hasPrefix("mcp__") {
@@ -134,7 +159,7 @@ public enum AppToolPermissionEngine {
             }
         }
 
-        // 6. Always Ask Mode: Prompts on any mutating or external action
+        // 7. Always Ask Mode: Prompts on any mutating or external action
         if permissions.mode == .ask || categoryPermission == .ask {
             if category == .fileRead && risk.level == .safe {
                 return .allow
@@ -143,13 +168,10 @@ public enum AppToolPermissionEngine {
             return .ask(assessment: risk, reason: reason)
         }
 
-        // 7. Auto Mode ("Approve for me" - Unsloth Studio default):
-        // Automatically runs safe and low-risk operations; pauses for approval on high-risk operations.
+        // 8. Auto Mode ("Approve for me" - Unsloth Studio default): runs
+        // safe and low-risk operations silently. High-risk was already
+        // handled in step 4, above every other check in this function.
         if permissions.mode == .auto {
-            if risk.isHighRisk {
-                let reason = risk.reasons.isEmpty ? "High-risk action requires confirmation." : risk.reasons.joined(separator: "; ")
-                return .ask(assessment: risk, reason: reason)
-            }
             return .allow
         }
 

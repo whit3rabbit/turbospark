@@ -29,7 +29,13 @@ extension AppModel {
     }
 
     public func selectChat(id: UUID) {
-        guard !generating else { return }
+        // A pending tool call already captures its own chat ID at proposal
+        // time (state#9), so approving/denying it lands in the right place
+        // regardless; this guard is the UX half -- switching away mid
+        // approval, with `generating` already false, read as an ordinary
+        // chat switch and made it easy to lose track of which chat is
+        // waiting on a decision.
+        guard !generating, pendingToolCall == nil else { return }
         activeSection = .chat
         guard id != selectedChatID else { return }
         selectedChatID = id
