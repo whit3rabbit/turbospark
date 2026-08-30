@@ -6,7 +6,7 @@ use std::cell::RefCell;
 use foundation::{LogitsView, TokenId};
 
 use crate::derive::{derive_step_value, to_unit_interval};
-use crate::penalty::apply_repetition_penalty;
+use crate::penalty::{apply_presence_and_frequency_penalty, apply_repetition_penalty};
 use crate::shaping::{SelectionError, ShapingConfig};
 use crate::truncation::{rank_indices_u32_into, rank_top_k_u32_into};
 
@@ -34,9 +34,14 @@ struct Scratch {
 /// and the seed.
 ///
 /// At a positive temperature: the repetition penalty attenuates history
-/// candidates first, then probability-mass truncation is evaluated against
-/// the full distribution, then rank-based truncation caps that surviving
-/// set, then temperature reweighting is applied immediately before a
+/// candidates first, then the presence and frequency penalties attenuate
+/// the GENERATED suffix of history (`&history[history.len() - position..]`
+/// -- `position` doubles as the generated-token count, which is what every
+/// caller in `crates/runtime` passes), then probability-mass truncation is
+/// evaluated against the full distribution, then rank-based truncation caps
+/// that surviving set, then min-p truncation (if enabled) drops whatever
+/// remains below its threshold of the ranked prefix's own top score, then
+/// temperature reweighting is applied immediately before a
 /// seeded-or-clock-derived random draw. The result is always drawn from the
 /// surviving set and is always a valid identifier in the declared candidate
 /// domain, including on the defensive fallback branch that would otherwise
@@ -93,6 +98,22 @@ pub fn select(
 
         apply_repetition_penalty(working, history, config.repetition_penalty());
 
+        // `position` IS the generated-token count: every caller in
+        // `crates/runtime` passes `sink.generated as u64` here (the
+        // speculative path commits each accepted proposal through the same
+        // sink before its next `select` call, which is what keeps this
+        // exact across both decode loops -- see `speculative.rs`'s own
+        // comment on that invariant). Clamped defensively rather than
+        // trusted, so a future caller that violates it degrades to "treat
+        // all of history as generated" instead of underflowing.
+        let generated = (position as usize).min(history.len());
+        apply_presence_and_frequency_penalty(
+            working,
+            &history[history.len() - generated..],
+            config.presence_penalty(),
+            config.frequency_penalty(),
+        );
+
         // Numerically stable softmax, kept as unnormalized exps plus their
         // sum. The summation order matches the retired `softmax`'s
         // sequential `iter().sum()`, so `exps[i] / sum` reproduces its
@@ -141,6 +162,21 @@ pub fn select(
         // Rank-based truncation caps whatever survived the mass step.
         if config.top_k() != 0 {
             surviving.truncate(config.top_k() as usize);
+        }
+
+        // Min-p composes AFTER the top-k cut, against the ranked prefix's
+        // own top score -- `ranked[0]`, since `ranked` is sorted descending
+        // and always starts from the full domain, so it is the true global
+        // max whether or not top-k pre-limited the ranking. Pinned by
+        // `tests/min_p.rs`'s composition-order test.
+        if let Some(min_p) = config.min_p() {
+            if let Some(&top) = ranked.first() {
+                let threshold = min_p * exps[top as usize];
+                surviving.retain(|&i| exps[i as usize] >= threshold);
+                if surviving.is_empty() {
+                    surviving.push(top);
+                }
+            }
         }
 
         if surviving.is_empty() {

@@ -1426,13 +1426,31 @@ live network).
   `anyllm_translate`'s OpenAI request type), defaulting to 64 and 1.0
   respectively when absent -- 64 because `ShapingConfig` rejects a `top_p`
   below 1.0 when `top_k` is 0, which would 400 every plain OpenAI request
-  carrying only `top_p`. Still missing: `presence_penalty` and
-  `frequency_penalty` (both accepted on the wire, both ignored;
-  `handler::plan::openai_request_warnings` reports either on
-  `x-anyllm-degradation` rather than silently dropping it) and `min_p`.
-  That is narrower than `turbospark-invocation`'s fuller option set, but
-  wider than plain OpenAI Chat Completions' own request shape, which has no
-  `top_k` field at all.
+  carrying only `top_p`. `presence_penalty` and `frequency_penalty` (both
+  explicit fields on the OpenAI request type) and `min_p` (read out of
+  `extra`, like `top_k`) are ALSO request-settable now:
+  `handler::plan::build_shaping` validates and wires all three onto
+  `ShapingConfig` via `with_presence_penalty`/`with_frequency_penalty`
+  (`[-2, 2]`, matching OpenAI's own bound) and `with_min_p` (`[0, 1)`).
+  The two penalties follow llama.cpp's convention rather than OpenAI's:
+  they see only the GENERATED suffix of `history` (`position` already
+  equals the generated-token count -- see `crates/runtime`'s call sites
+  into `select`), never the prompt, so a long prompt cannot itself trigger
+  a penalty the way it would against upstream OpenAI. `/v1/completions`
+  (`completions.rs::build_config`) accepts `min_p` through the same `extra`
+  path but does not read `presence_penalty`/`frequency_penalty` off its
+  hand-rolled `CompletionRequest` -- narrower than `/v1/chat/completions`
+  by construction, not by omission, since the legacy completions wire shape
+  this port supports carries no such fields to begin with.
+  `turbospark-invocation`'s CLI/process-level surface deliberately does NOT
+  gain matching flags: per-request penalties are a server-only concept here
+  (a CLI process serves one request at a time and already has
+  `--repetition-penalty`), and adding three more flags means the 5-place
+  rule (`crates/invocation/CLAUDE.md` Gotcha 1) three more times over for a
+  knob nothing in this port's CLI workflow needs. That is narrower than
+  `turbospark-invocation`'s fuller option set in the top_k/repetition_penalty
+  sense above, but wider than plain OpenAI Chat Completions' own request
+  shape, which has no `top_k` or `min_p` field at all.
 - **Anthropic `POST /v1/messages`: implemented, text and tool calling, and
   an addition rather than a port.** Swift's server has no such endpoint. It exists here
   because `turbospark-server` took a dependency on `anyllm_translate`

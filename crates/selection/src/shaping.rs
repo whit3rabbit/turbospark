@@ -48,6 +48,14 @@ pub struct ShapingConfig {
     top_p: Option<f64>,
     repetition_penalty: f64,
     seed: Option<u64>,
+    /// `0.0` is the identity value (no attenuation), matching OpenAI's own
+    /// default. Set through [`Self::with_presence_penalty`] rather than
+    /// [`Self::new`] -- see that constructor's doc for why.
+    presence_penalty: f64,
+    frequency_penalty: f64,
+    /// `None` means min-p truncation is disabled. Set through
+    /// [`Self::with_min_p`].
+    min_p: Option<f64>,
 }
 
 impl ShapingConfig {
@@ -105,7 +113,71 @@ impl ShapingConfig {
             top_p,
             repetition_penalty,
             seed,
+            presence_penalty: 0.0,
+            frequency_penalty: 0.0,
+            min_p: None,
         })
+    }
+
+    /// Set the presence penalty: a flat per-token subtraction applied ONCE
+    /// per distinct candidate that appears anywhere in the GENERATED suffix
+    /// of history (never the prompt), regardless of how many times it
+    /// repeats there. `0.0` (the default from [`Self::new`]) is the
+    /// identity value.
+    ///
+    /// Rejected at call time, with no change to `self`, for a non-finite
+    /// value or one outside `[-2, 2]` (OpenAI's own documented range).
+    pub fn with_presence_penalty(mut self, presence_penalty: f64) -> Result<Self, SelectionError> {
+        if !presence_penalty.is_finite() || !(-2.0..=2.0).contains(&presence_penalty) {
+            return Err(SelectionError::new(format!(
+                "presence_penalty must be finite and in [-2, 2], got {presence_penalty}"
+            )));
+        }
+        self.presence_penalty = presence_penalty;
+        Ok(self)
+    }
+
+    /// Set the frequency penalty: a per-token subtraction SCALED by how many
+    /// times a candidate appears in the GENERATED suffix of history (never
+    /// the prompt). `0.0` (the default from [`Self::new`]) is the identity
+    /// value.
+    ///
+    /// Rejected at call time, with no change to `self`, for a non-finite
+    /// value or one outside `[-2, 2]` (OpenAI's own documented range).
+    pub fn with_frequency_penalty(
+        mut self,
+        frequency_penalty: f64,
+    ) -> Result<Self, SelectionError> {
+        if !frequency_penalty.is_finite() || !(-2.0..=2.0).contains(&frequency_penalty) {
+            return Err(SelectionError::new(format!(
+                "frequency_penalty must be finite and in [-2, 2], got {frequency_penalty}"
+            )));
+        }
+        self.frequency_penalty = frequency_penalty;
+        Ok(self)
+    }
+
+    /// Set the min-p threshold: a candidate survives truncation only if its
+    /// unnormalized score is at least `min_p` times the ranked prefix's own
+    /// top score. `0.0` (the default from [`Self::new`]) means DISABLED --
+    /// stored as `None` rather than as a threshold of zero, since every
+    /// score would trivially clear that bar and the two are observably the
+    /// same thing.
+    ///
+    /// Rejected at call time, with no change to `self`, for a non-finite
+    /// value or one outside `[0, 1)`. `1.0` is refused rather than accepted
+    /// as "keep only the single most probable candidate": a caller asking
+    /// for at least some FRACTION of the top probability almost certainly
+    /// did not mean to collapse every request to greedy, and the greedy
+    /// behavior is already reachable through `temperature: 0.0`.
+    pub fn with_min_p(mut self, min_p: f64) -> Result<Self, SelectionError> {
+        if !min_p.is_finite() || !(0.0..1.0).contains(&min_p) {
+            return Err(SelectionError::new(format!(
+                "min_p must be finite and in [0, 1), got {min_p}"
+            )));
+        }
+        self.min_p = if min_p == 0.0 { None } else { Some(min_p) };
+        Ok(self)
     }
 
     /// The configured sampling temperature.
@@ -138,5 +210,20 @@ impl ShapingConfig {
     /// its deterministic value).
     pub fn is_deterministic(&self) -> bool {
         self.temperature == 0.0
+    }
+
+    /// The configured presence penalty; `0.0` is the identity value.
+    pub fn presence_penalty(&self) -> f64 {
+        self.presence_penalty
+    }
+
+    /// The configured frequency penalty; `0.0` is the identity value.
+    pub fn frequency_penalty(&self) -> f64 {
+        self.frequency_penalty
+    }
+
+    /// The configured min-p threshold; `None` means disabled.
+    pub fn min_p(&self) -> Option<f64> {
+        self.min_p
     }
 }

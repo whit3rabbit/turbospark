@@ -317,16 +317,22 @@ fn n_greater_than_one_is_reported_but_one_and_absent_are_not() {
     assert_eq!(openai_request_warnings(&two), Some("n".to_string()));
 }
 
+/// **`presence_penalty` AND `frequency_penalty` USED TO BE REPORTED HERE**
+/// (this test used to assert exactly that, under the name
+/// `presence_and_frequency_penalty_are_both_reported_together`), back when
+/// neither reached `selection::shaping`. Commit B wired both through
+/// `build_shaping`, so they are honoured rather than degraded now, and
+/// `openai_request_warnings` no longer names either -- see
+/// `handler::plan::build_config`'s own test coverage (through `select`, in
+/// `crates/selection/tests/presence_frequency.rs`) for the half that
+/// matters now: whether they actually change what gets generated.
 #[test]
-fn presence_and_frequency_penalty_are_both_reported_together() {
+fn presence_and_frequency_penalty_no_longer_trigger_a_degradation_warning() {
     let request = request(serde_json::json!({
         "model": "m", "messages": [{"role": "user", "content": "hi"}],
         "presence_penalty": 0.1, "frequency_penalty": -0.1
     }));
-    assert_eq!(
-        openai_request_warnings(&request),
-        Some("presence_penalty, frequency_penalty".to_string())
-    );
+    assert_eq!(openai_request_warnings(&request), None);
 }
 
 #[test]

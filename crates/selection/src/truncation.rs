@@ -298,3 +298,42 @@ pub fn truncate_by_rank(surviving: &[usize], top_k: u32) -> Vec<usize> {
     let n = (top_k as usize).min(surviving.len());
     surviving[..n].to_vec()
 }
+
+/// Keep only the entries of `surviving` whose score is at least `min_p`
+/// times `ranked`'s own top score -- `ranked[0]`, since `ranked` is the
+/// FULL descending order this composes against, never just whatever
+/// remained after an earlier truncation step. `scores` may be normalized
+/// probabilities OR any positive monotone image of them (the hot path in
+/// `choose.rs` passes unnormalized `exp(s - max)` values): the comparison
+/// is a RATIO against `scores[top]`, and dividing both sides by the same
+/// missing normalizer cancels out, so the two are interchangeable here.
+///
+/// `None` means min-p truncation is disabled and `surviving` passes through
+/// unfiltered. Never underflows to zero members while `surviving` is
+/// non-empty: the top entry of `ranked` always clears its own threshold, so
+/// if it is a member of `surviving` the result cannot be empty, and if it
+/// is NOT (top-k or top-p already excluded it) an empty result falls back
+/// to `surviving`'s own first entry rather than nothing.
+pub fn truncate_by_min_p(
+    surviving: &[usize],
+    ranked: &[usize],
+    scores: &[f64],
+    min_p: Option<f64>,
+) -> Vec<usize> {
+    let Some(min_p) = min_p else {
+        return surviving.to_vec();
+    };
+    let Some(&top) = ranked.first() else {
+        return surviving.to_vec();
+    };
+    let threshold = min_p * scores[top];
+    let kept: Vec<usize> = surviving
+        .iter()
+        .copied()
+        .filter(|&i| scores[i] >= threshold)
+        .collect();
+    if kept.is_empty() && !surviving.is_empty() {
+        return vec![surviving[0]];
+    }
+    kept
+}

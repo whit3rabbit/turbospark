@@ -666,3 +666,39 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
     to `true` reddened that test and left every different-length case
     passing, which is what proved the length check and the loop are two
     independent things a test has to cover separately, not one.
+
+27. **`presence_penalty`/`frequency_penalty`/`min_p` REACH `ShapingConfig`
+    THROUGH ONE SHARED FUNCTION, AND `/v1/completions` DELIBERATELY CALLS
+    IT WITH TWO OF THE THREE HELD BACK.** Added 2026-08-30.
+    `handler::plan::build_shaping` now takes explicit
+    `presence_penalty: Option<f32>, frequency_penalty: Option<f32>`
+    parameters and reads `min_p` out of the request's `extra` flatten map
+    itself (the same map `top_k` and `repetition_penalty` already use --
+    see the sampling-knob-surface entry in `DEVIATIONS.md`), then applies
+    all three through `ShapingConfig::with_presence_penalty`/
+    `with_frequency_penalty`/`with_min_p`. `messages.rs::build_config`
+    passes `request.presence_penalty` and `request.frequency_penalty`
+    straight through (both are explicit fields on `anyllm_translate`'s
+    OpenAI request type). `completions.rs::build_config` passes `None,
+    None` for those two params WITH A COMMENT, because the legacy
+    `/v1/completions` wire shape this port hand-rolled
+    (`completions::CompletionRequest`) never declared either field to
+    begin with -- there is nothing on the request to read, so passing
+    `None` is not a scope cut, it is the honest value. `min_p` still
+    reaches `/v1/completions` through the same `extra` path `build_shaping`
+    already reads for every caller.
+    **`openai_request_warnings` NO LONGER REPORTS EITHER PENALTY ON
+    `x-anyllm-degradation`.** Before this change both were accepted on the
+    wire and silently ignored, which is what the warning existed to
+    surface; now both are honored, so keeping the warning would have meant
+    telling a caller their request was degraded when it was not. The two
+    `if request.presence_penalty...` / `if request.frequency_penalty...`
+    arms were deleted from `plan.rs::openai_request_warnings` rather than
+    left dead, and `tests/chat_completions.rs`'s
+    `unsupported_openai_fields_are_reported_on_the_degradation_header`
+    was repointed at `logprobs` (still genuinely unsupported) so the test
+    keeps discriminating instead of asserting a warning that no longer
+    fires. See `crates/selection/CLAUDE.md`'s matching Gotcha for the
+    sampler-side semantics (generated-suffix-only penalties, min-p's
+    composition order, the `[-2, 2]`/`[0, 1)` bounds) -- this crate's half
+    of the change is wiring, not policy.

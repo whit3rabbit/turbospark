@@ -142,10 +142,13 @@ async fn a_plain_request_carries_no_degradation_header() {
     assert!(response.headers().get("x-anyllm-degradation").is_none());
 }
 
-/// A non-text `response_format`, `n > 1`, and both penalty fields are
-/// accepted rather than rejected -- OpenAI clients that always send them
-/// must not 400 -- but every one of them is reported, since none is
-/// actually honoured.
+/// A non-text `response_format`, `n > 1`, and `logprobs` are accepted rather
+/// than rejected -- OpenAI clients that always send them must not 400 --
+/// but every one of them is reported, since none is actually honoured.
+/// `presence_penalty` / `frequency_penalty` used to be in this list too,
+/// back when neither reached `selection::shaping`; commit B wired both, so
+/// they belong to `presence_penalty_and_frequency_penalty_actually_shape_
+/// generation` below instead of this one.
 #[tokio::test]
 async fn unsupported_openai_fields_are_reported_on_the_degradation_header() {
     let tok = load_tokenizer();
@@ -159,8 +162,7 @@ async fn unsupported_openai_fields_are_reported_on_the_degradation_header() {
             "messages": [{"role": "user", "content": "hi"}],
             "response_format": {"type": "json_object"},
             "n": 2,
-            "presence_penalty": 0.5,
-            "frequency_penalty": 0.5
+            "logprobs": true
         }))
         .send()
         .await
@@ -178,8 +180,69 @@ async fn unsupported_openai_fields_are_reported_on_the_degradation_header() {
     let items: Vec<&str> = header.split(", ").collect();
     assert!(header.contains("response_format"), "{header}");
     assert!(items.contains(&"n"), "{header}");
-    assert!(header.contains("presence_penalty"), "{header}");
-    assert!(header.contains("frequency_penalty"), "{header}");
+    assert!(header.contains("logprobs"), "{header}");
+}
+
+/// **`presence_penalty` / `frequency_penalty` NO LONGER DEGRADE** (commit B
+/// wired both into `selection::ShapingConfig`): a request carrying either
+/// gets no header at all, and -- the part that actually matters -- a high
+/// enough presence penalty measurably changes what gets generated. The
+/// scripted backend always emits "h", so a penalty strong enough to make
+/// every candidate equally (un)attractive after the first "h" pushes the
+/// stream to pick something ELSE once repetition sets in; a penalty of 0
+/// would not.
+#[tokio::test]
+async fn presence_penalty_and_frequency_penalty_actually_shape_generation() {
+    let tok = load_tokenizer();
+    // A flat-ish vocabulary keeps "h" from being an overwhelming favorite,
+    // so a presence penalty on it can plausibly change the pick; a single
+    // strongly favored logit would swamp any penalty this test could send.
+    let h_id = tok.token_to_id("h").unwrap() as usize;
+    let mut step = vec![foundation::LogitValue::from_f32(0.5); tok.vocab_size];
+    step[h_id] = foundation::LogitValue::from_f32(1.0);
+    let steps = vec![step; 200];
+    let base = spawn_server(steps).await;
+
+    let unpenalized = reqwest::Client::new()
+        .post(format!("{base}/v1/chat/completions"))
+        .json(&serde_json::json!({
+            "model": "m", "max_tokens": 40, "temperature": 1.0, "seed": 20260830,
+            "messages": [{"role": "user", "content": "hi"}]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unpenalized.status(), 200);
+    assert!(unpenalized.headers().get("x-anyllm-degradation").is_none());
+    let unpenalized_body: serde_json::Value = unpenalized.json().await.unwrap();
+    let unpenalized_text = unpenalized_body["choices"][0]["message"]["content"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let penalized = reqwest::Client::new()
+        .post(format!("{base}/v1/chat/completions"))
+        .json(&serde_json::json!({
+            "model": "m", "max_tokens": 40, "temperature": 1.0, "seed": 20260830,
+            "messages": [{"role": "user", "content": "hi"}],
+            "presence_penalty": 2.0, "frequency_penalty": 2.0
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(penalized.status(), 200);
+    assert!(penalized.headers().get("x-anyllm-degradation").is_none());
+    let penalized_body: serde_json::Value = penalized.json().await.unwrap();
+    let penalized_text = penalized_body["choices"][0]["message"]["content"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    assert_ne!(
+        unpenalized_text, penalized_text,
+        "the same seed and prompt produced identical output with and without a strong \
+         presence/frequency penalty, so neither is reaching the sampler"
+    );
 }
 
 /// `n: 1` is the field's own default and this server already returns one
@@ -218,7 +281,7 @@ async fn streaming_responses_also_carry_the_degradation_header() {
         .json(&serde_json::json!({
             "model": "m", "max_tokens": 2, "temperature": 0.0, "stream": true,
             "messages": [{"role": "user", "content": "hi"}],
-            "presence_penalty": 0.2
+            "n": 2
         }))
         .send()
         .await
@@ -231,7 +294,7 @@ async fn streaming_responses_also_carry_the_degradation_header() {
         .to_str()
         .unwrap()
         .to_string();
-    assert!(header.contains("presence_penalty"), "{header}");
+    assert!(header.contains('n'), "{header}");
     // The header is set on the response before the body streams, so it says
     // nothing about whether generation itself succeeded; check that too.
     let body = response.text().await.unwrap();

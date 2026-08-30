@@ -78,7 +78,17 @@ pub(crate) struct CompletionRequest {
 }
 
 fn build_config(request: &CompletionRequest) -> Result<GenerationConfig, String> {
-    let shaping = build_shaping(request.temperature, request.top_p, &request.extra)?;
+    // `min_p` reaches this endpoint through `extra`, same as `top_k` and
+    // `repetition_penalty` above it; `presence_penalty`/`frequency_penalty`
+    // do not (no explicit field on `CompletionRequest` to source them from,
+    // out of scope for this endpoint -- see `DEVIATIONS.md`).
+    let shaping = build_shaping(
+        request.temperature,
+        request.top_p,
+        None,
+        None,
+        &request.extra,
+    )?;
     Ok(GenerationConfig {
         shaping,
         max_new_tokens: request.max_tokens.unwrap_or(16),

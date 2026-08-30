@@ -47,15 +47,26 @@ pub(crate) fn stop_strings(stop: Option<&Stop>) -> Vec<String> {
     }
 }
 
-/// `temperature` / `top_p` / `top_k` / `repetition_penalty` / `seed`
+/// `temperature` / `top_p` / `top_k` / `repetition_penalty` / `seed` / min-p
 /// resolution, shared between `/v1/chat/completions` (whose `extra` flatten
 /// map is `anyllm_translate`'s) and `/v1/completions` (whose `extra` is its
-/// own hand-rolled type's, same shape). `top_k` and `repetition_penalty`
-/// have no field on either wire type, only a place in `extra`; `pub(crate)`
-/// for the same reason as `stop_strings`.
+/// own hand-rolled type's, same shape). `top_k`, `repetition_penalty`, and
+/// `min_p` have no field on either wire type, only a place in `extra`;
+/// `pub(crate)` for the same reason as `stop_strings`.
+///
+/// `presence_penalty` / `frequency_penalty` are EXPLICIT parameters rather
+/// than read out of `extra` here, because `ChatCompletionRequest` has real
+/// fields for them -- `anyllm_translate`'s `#[serde(flatten)]` only ever
+/// catches keys the struct does NOT already recognize, so a chat
+/// completions request's `extra` map never contains either name whatever
+/// the client sent. `/v1/completions`'s hand-rolled `CompletionRequest` has
+/// no such fields (out of scope for this commit; see `DEVIATIONS.md`), so
+/// it passes `None` for both.
 pub(crate) fn build_shaping(
     temperature: Option<f32>,
     top_p: Option<f32>,
+    presence_penalty: Option<f32>,
+    frequency_penalty: Option<f32>,
     extra: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<ShapingConfig, String> {
     // top_k defaults to 64 if unspecified, but can be overridden via `top_k` in extra.
@@ -70,7 +81,7 @@ pub(crate) fn build_shaping(
         .and_then(|v| v.as_f64())
         .unwrap_or(1.0);
 
-    ShapingConfig::new(
+    let mut shaping = ShapingConfig::new(
         temperature.map(f64::from).unwrap_or(1.0),
         top_k,
         top_p.map(f64::from),
@@ -78,11 +89,33 @@ pub(crate) fn build_shaping(
         // `seed` has no field on the OpenAI request type: it lands in the `extra` flatten map.
         extra.get("seed").and_then(|v| v.as_u64()),
     )
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+
+    if let Some(p) = presence_penalty {
+        shaping = shaping
+            .with_presence_penalty(p as f64)
+            .map_err(|e| e.to_string())?;
+    }
+    if let Some(f) = frequency_penalty {
+        shaping = shaping
+            .with_frequency_penalty(f as f64)
+            .map_err(|e| e.to_string())?;
+    }
+    if let Some(m) = extra.get("min_p").and_then(|v| v.as_f64()) {
+        shaping = shaping.with_min_p(m).map_err(|e| e.to_string())?;
+    }
+
+    Ok(shaping)
 }
 
 fn build_config(request: &ChatCompletionRequest) -> Result<GenerationConfig, String> {
-    let shaping = build_shaping(request.temperature, request.top_p, &request.extra)?;
+    let shaping = build_shaping(
+        request.temperature,
+        request.top_p,
+        request.presence_penalty,
+        request.frequency_penalty,
+        &request.extra,
+    )?;
 
     Ok(GenerationConfig {
         shaping,
@@ -245,9 +278,10 @@ pub(crate) fn reasoning_effort(
 /// translates from.
 ///
 /// `response_format` warns only past `"text"` (the default the server
-/// already produces); `n` only past 1 (the default it already returns);
-/// `presence_penalty` and `frequency_penalty` warn unconditionally because
-/// neither reaches `selection::shaping` yet -- remove both once that lands.
+/// already produces); `n` only past 1 (the default it already returns).
+/// `presence_penalty` and `frequency_penalty` used to warn unconditionally
+/// here, since neither reached `selection::shaping`; they do now (commit
+/// B), so both arms are gone rather than left as permanent no-ops.
 pub(crate) fn openai_request_warnings(request: &ChatCompletionRequest) -> Option<String> {
     let mut warnings = anyllm_translate::TranslationWarnings::default();
     if request
@@ -268,12 +302,6 @@ pub(crate) fn openai_request_warnings(request: &ChatCompletionRequest) -> Option
     }
     if request.extra.contains_key("logit_bias") {
         warnings.add("logit_bias");
-    }
-    if request.presence_penalty.is_some() {
-        warnings.add("presence_penalty");
-    }
-    if request.frequency_penalty.is_some() {
-        warnings.add("frequency_penalty");
     }
     warnings.as_header_value()
 }
