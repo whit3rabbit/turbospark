@@ -33,13 +33,36 @@ const MMA_SOURCE: &str = concat!(
     include_str!("shaders/dequant_int4.metal"),
     include_str!("shaders/dequant_int4_mma.metal")
 );
-const THREADS_PER_GROUP: u64 = 256;
-const ROWS_PER_THREADGROUP: usize = 8;
+/// Public because `pipeline_reflection_cannot_see_this_kernels_register_pressure`
+/// compares the compiled pipeline's own `maxTotalThreadsPerThreadgroup`
+/// against it. That comparison is a HARD-FAILURE backstop and not a spill
+/// gate: the metric reads 1024 on every shape of this kernel, including
+/// deliberately impossible ones, so it cannot price register pressure. See
+/// that test for the discrimination check that settled it.
+pub const GEMM_THREADS_PER_GROUP: u64 = 256;
+/// SIMD groups per threadgroup. Rows per threadgroup is this times the row
+/// block, since a SIMD group owns `row_block` contiguous rows.
+const SIMDGROUPS_PER_THREADGROUP: usize = 8;
 
 /// The kernel's accumulator array is a fixed-size register array, so this
 /// is a hard precondition rather than a clamp. Sixteen covers every
 /// published DFlash `block_size`.
 pub const MAX_BATCH_ROWS: usize = 16;
+
+/// Output rows one SIMD group may own (`FC_GEMM_R`), mirroring
+/// `kMaxRowBlock` in the shader.
+///
+/// **This is a THROUGHPUT axis and not a numerics one.** Every value
+/// produces bit-identical output: a row's accumulation still walks the same
+/// blocks in the same order into one FP32 accumulator and `simd_sum` still
+/// reduces the same 32-lane partition of K, so only which SIMD group owns
+/// the row changes. `dequant_int4_gemm_parity.rs` asserts that across the
+/// whole `(row_block, batch)` grid rather than leaving it as an argument.
+///
+/// 1 is the shape every wired call site dispatches and the shape this
+/// kernel had before the constant existed. Wider values are reachable from
+/// the bench and the tests only, pending an AC measurement of `c(R, B)`.
+pub const MAX_GEMM_ROW_BLOCK: usize = 4;
 
 /// `dequant_int4_gemm_simd` declares `FC_GEMM_M` (100), `FC_GEMM_N` (101),
 /// `FC_GEMM_B` (102) and `FC_GEMM_USE_FC` (103). Indices 20-26 belong to
@@ -81,6 +104,33 @@ fn specialized_constants(m: u32, n: u32, b: u32) -> (FunctionConstantValues, [u8
     (values, key)
 }
 
+/// The above plus `FC_GEMM_R` (104), for `dequant_int4_gemm_simd` alone.
+///
+/// **A SEPARATE FUNCTION RATHER THAN A FOURTH PARAMETER ON THE ONE ABOVE**,
+/// because 104 is declared in `dequant_int4_batch.metal` and that file is
+/// not part of `MMA_SOURCE`. Setting a value at an index the library does
+/// not declare is at best ignored, and the matrix kernel's key would change
+/// width for a constant it cannot read.
+///
+/// R joins the key for the reason the other three did. `MetalContext::pipeline`
+/// caches on (source address, name, key), so an axis missing from the key is
+/// served whichever shape compiled first -- and a pipeline baked for a
+/// different R walks a different number of rows per SIMD group while
+/// producing finite, plausible output (crate Gotcha 1).
+fn specialized_constants_row_blocked(
+    m: u32,
+    n: u32,
+    b: u32,
+    r: u32,
+) -> (FunctionConstantValues, [u8; 16]) {
+    let (values, base) = specialized_constants(m, n, b);
+    values.set_constant_value_at_index((&r as *const u32).cast(), MTLDataType::UInt, 104);
+    let mut key = [0u8; 16];
+    key[..12].copy_from_slice(&base);
+    key[12..].copy_from_slice(&r.to_le_bytes());
+    (values, key)
+}
+
 /// `y[b, m] = sum_n W[m, n] * x[b, n]` for `b` in `0..batch`.
 ///
 /// `x` holds `batch * w.cols` halfs and `y` `batch * w.rows`, both
@@ -94,14 +144,47 @@ pub fn encode_dequant_int4_gemm_resident(
     y: (&metal::Buffer, u64),
     batch: usize,
 ) -> Result<(), GpuError> {
+    encode_dequant_int4_gemm_resident_blocked(context, pass, w, x, y, batch, 1)
+}
+
+/// [`encode_dequant_int4_gemm_resident`] with `row_block` output rows per
+/// SIMD group ([`MAX_GEMM_ROW_BLOCK`]).
+///
+/// **`row_block` cannot change the output**, so this is not a second
+/// numerics path and no call site has to choose between two answers; see
+/// [`MAX_GEMM_ROW_BLOCK`] for the argument and
+/// `tests/dequant_int4_gemm_parity.rs` for the assertion. A sibling rather
+/// than a parameter on the function above so the wired call sites
+/// (`encode_gemm_any`, the MTP and DFlash2 verify, the
+/// `MFERENCE_BATCHED_GEMV` prefill arm) keep dispatching the shape they
+/// dispatched before the axis existed, byte for byte.
+///
+/// Nothing selects a width automatically and nothing should until `c(R, B)`
+/// has been measured on AC: the shipped `c(M)` row is flat in M, which is
+/// what a compute-bound kernel looks like, and a width chosen off a
+/// contaminated clock is a footprint cost for no throughput
+/// (`crates/gpu/CLAUDE.md`, this file's bullet).
+pub fn encode_dequant_int4_gemm_resident_blocked(
+    context: &mut MetalContext,
+    pass: &crate::context::PassEncoder,
+    w: &Int4ResidentMatrix<'_>,
+    x: (&metal::Buffer, u64),
+    y: (&metal::Buffer, u64),
+    batch: usize,
+    row_block: usize,
+) -> Result<(), GpuError> {
     assert_eq!(w.cols % 64, 0, "N must be a multiple of 64");
     assert!(w.rows > 0);
     assert!(
         (1..=MAX_BATCH_ROWS).contains(&batch),
         "batch {batch} outside 1..={MAX_BATCH_ROWS}"
     );
-    let (m, n, b) = (w.rows as u32, w.cols as u32, batch as u32);
-    let (constants, key) = specialized_constants(m, n, b);
+    assert!(
+        (1..=MAX_GEMM_ROW_BLOCK).contains(&row_block),
+        "row_block {row_block} outside 1..={MAX_GEMM_ROW_BLOCK}"
+    );
+    let (m, n, b, r) = (w.rows as u32, w.cols as u32, batch as u32, row_block as u32);
+    let (constants, key) = specialized_constants_row_blocked(m, n, b, r);
     let pipeline = context.pipeline(SOURCE, "dequant_int4_gemm_simd", &constants, &key)?;
     pass.encode_threadgroups(
         &pipeline,
@@ -113,10 +196,74 @@ pub fn encode_dequant_int4_gemm_resident(
             (y.0, 4, y.1),
         ],
         &[(u32_bytes(&m), 5), (u32_bytes(&n), 6), (u32_bytes(&b), 7)],
-        w.rows.div_ceil(ROWS_PER_THREADGROUP) as u64,
-        THREADS_PER_GROUP,
+        gemm_threadgroups(w.rows, row_block),
+        GEMM_THREADS_PER_GROUP,
     );
     Ok(())
+}
+
+/// Threadgroups for `rows` output rows at `row_block` rows per SIMD group.
+///
+/// **A NAMED FUNCTION BECAUSE NO PARITY TEST CAN SEE THIS ARITHMETIC GOING
+/// WRONG IN THE DIRECTION IT ACTUALLY GOES WRONG.** Found by mutation,
+/// 2026-08-29: replacing the `* row_block` here with nothing survived every
+/// case in `dequant_int4_gemm_parity.rs`, including the row-block sweep. It
+/// over-dispatches rather than under-dispatching -- the surplus threadgroups
+/// compute a `row0` past `M` and return at the kernel's first branch -- so
+/// the output stays bit-correct and only the COST moves, by a factor of
+/// `row_block`.
+///
+/// That is the worst shape a bug can have here, because the whole reason
+/// `row_block` exists is to be timed: a variant launching R times the
+/// threadgroups it needs would read as "row blocking does not help" and the
+/// axis would be closed on a measurement of the mistake. `gemm_threadgroups`
+/// is asserted as arithmetic in this module's own tests instead, on the
+/// precedent `steering.rs` set for its row partition.
+fn gemm_threadgroups(rows: usize, row_block: usize) -> u64 {
+    rows.div_ceil(SIMDGROUPS_PER_THREADGROUP * row_block) as u64
+}
+
+/// What the compiler made of a `dequant_int4_gemm_simd` shape, read off the
+/// pipeline itself.
+///
+/// The register file is this kernel's binding constraint (its shader header
+/// is a record of two optimizations that lost to it), and until now every
+/// statement about it was an inference from a TIMING. These three numbers
+/// are static: they need a Metal device but no model, no install and no
+/// clean clock, which is what makes "does B=32 spill?" answerable in a
+/// session that cannot benchmark.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GemmPipelineLimits {
+    /// Below [`GEMM_THREADS_PER_GROUP`] this shape cannot be dispatched at
+    /// the width the encode function asks for. Apple lowers it when a
+    /// kernel's register demand will not fit the threadgroup, so it is the
+    /// spill signal.
+    pub max_total_threads_per_threadgroup: u64,
+    pub thread_execution_width: u64,
+    pub static_threadgroup_memory_length: u64,
+}
+
+/// Compile one `(rows, cols, batch, row_block)` shape and report
+/// [`GemmPipelineLimits`].
+///
+/// Goes through the same `specialized_constants_row_blocked` and
+/// `MetalContext::pipeline` the dispatch does, so it cannot describe a
+/// pipeline the encode function would not produce.
+pub fn dequant_int4_gemm_pipeline_limits(
+    context: &mut MetalContext,
+    rows: usize,
+    cols: usize,
+    batch: usize,
+    row_block: usize,
+) -> Result<GemmPipelineLimits, GpuError> {
+    let (constants, key) =
+        specialized_constants_row_blocked(rows as u32, cols as u32, batch as u32, row_block as u32);
+    let pipeline = context.pipeline(SOURCE, "dequant_int4_gemm_simd", &constants, &key)?;
+    Ok(GemmPipelineLimits {
+        max_total_threads_per_threadgroup: pipeline.max_total_threads_per_threadgroup(),
+        thread_execution_width: pipeline.thread_execution_width(),
+        static_threadgroup_memory_length: pipeline.static_threadgroup_memory_length(),
+    })
 }
 
 /// The 8x8 output tile one SIMD group owns in the matrix-hardware kernel.
@@ -185,4 +332,71 @@ pub fn encode_dequant_int4_gemm_mma_resident(
         MMA_THREADS_PER_GROUP,
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every row is covered, and NO threadgroup is launched that has no row
+    /// to do. The second half is the one a parity test cannot see: an
+    /// over-dispatch is bit-correct and `row_block` times too expensive
+    /// (see `gemm_threadgroups`).
+    ///
+    /// Mutation-checked: dropping `* row_block` from `gemm_threadgroups`
+    /// reddens the surplus assertion at every `row_block > 1` and leaves the
+    /// coverage one green, which is exactly the asymmetry that let the
+    /// mutation survive the GPU suite.
+    #[test]
+    fn a_dispatch_covers_every_row_and_launches_no_idle_threadgroup() {
+        for row_block in 1..=MAX_GEMM_ROW_BLOCK {
+            let per_group = SIMDGROUPS_PER_THREADGROUP * row_block;
+            // Exact multiples, one over, one under, plus the real model's
+            // four shapes' row counts.
+            for rows in [
+                1,
+                7,
+                per_group - 1,
+                per_group,
+                per_group + 1,
+                72,
+                1024,
+                5120,
+                12288,
+                17408,
+            ] {
+                let groups = gemm_threadgroups(rows, row_block) as usize;
+                assert!(
+                    groups * per_group >= rows,
+                    "rows {rows} row_block {row_block}: {groups} groups cover only \
+                     {} rows, so {} rows are never written",
+                    groups * per_group,
+                    rows - groups * per_group
+                );
+                assert!(
+                    groups.saturating_sub(1) * per_group < rows,
+                    "rows {rows} row_block {row_block}: {groups} groups, but {} would \
+                     already cover them. The surplus returns at the kernel's first \
+                     branch, so the output is correct and the dispatch costs {}x too \
+                     much -- which would read as `row blocking does not help`",
+                    groups - 1,
+                    groups as f64 / (groups - 1).max(1) as f64
+                );
+            }
+        }
+    }
+
+    /// The two caps must agree with the shader's `constexpr` bounds, which
+    /// are the compile-time sizes of `acc[kMaxRowBlock][kMaxBatchRows]`. A
+    /// host cap ABOVE the shader's writes past a register array; the host
+    /// asserts its own value, so nothing else would catch it.
+    #[test]
+    fn the_host_caps_match_the_shaders_array_bounds() {
+        assert!(SOURCE.contains(&format!(
+            "constant constexpr uint kMaxBatchRows = {MAX_BATCH_ROWS};"
+        )));
+        assert!(SOURCE.contains(&format!(
+            "constant constexpr uint kMaxRowBlock = {MAX_GEMM_ROW_BLOCK};"
+        )));
+    }
 }

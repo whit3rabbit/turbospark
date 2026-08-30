@@ -25,9 +25,16 @@
 
 use half::f16;
 use turbospark_gpu::{
-    autorelease_pool, encode_dequant_int4_gemm_mma_resident, encode_dequant_int4_gemm_resident,
-    encode_dequant_int4_gemv_resident, Int4ResidentMatrix, MetalContext, MAX_BATCH_ROWS,
+    autorelease_pool, dequant_int4_gemm_pipeline_limits, encode_dequant_int4_gemm_mma_resident,
+    encode_dequant_int4_gemm_resident, encode_dequant_int4_gemm_resident_blocked,
+    encode_dequant_int4_gemv_resident, Int4ResidentMatrix, MetalContext, GEMM_THREADS_PER_GROUP,
+    MAX_BATCH_ROWS, MAX_GEMM_ROW_BLOCK,
 };
+
+/// The row block every WIRED call site dispatches, and the shape this
+/// kernel had before `FC_GEMM_R` existed. Cases that are not about the row
+/// axis pass this, so a regression in the shipped shape reddens them.
+const SHIPPED_ROW_BLOCK: &[usize] = &[1];
 
 /// Deterministic pseudo-random bytes; the values only have to be varied,
 /// and a fixed generator keeps the test reproducible without a fixture.
@@ -70,7 +77,13 @@ fn half_bytes(values: &[f16]) -> Vec<u8> {
 /// Builds a weight blob and runs the batched kernel against the GEMV for
 /// every batch in `batches`, asserting bit equality. Shared so the shape
 /// axis below exercises exactly the same comparison.
-fn assert_parity_at(context: &mut MetalContext, rows: usize, cols: usize, batches: &[usize]) {
+fn assert_parity_at(
+    context: &mut MetalContext,
+    rows: usize,
+    cols: usize,
+    batches: &[usize],
+    row_blocks: &[usize],
+) {
     let scales_offset = (rows * cols / 2) as u64;
     let biases_offset = scales_offset + (rows * cols / 64 * 2) as u64;
     let total = biases_offset + (rows * cols / 64 * 2) as u64;
@@ -86,7 +99,6 @@ fn assert_parity_at(context: &mut MetalContext, rows: usize, cols: usize, batche
             .map(|i| f16::from_f32(((i % 17) as f32 - 8.0) / 32.0))
             .collect();
         let x = context.new_buffer_with_data(&half_bytes(&x_values));
-        let y_batched = context.new_output_buffer((batch * rows * 2) as u64);
         let y_single = context.new_output_buffer((rows * 2) as u64);
 
         let matrix = || Int4ResidentMatrix {
@@ -98,45 +110,50 @@ fn assert_parity_at(context: &mut MetalContext, rows: usize, cols: usize, batche
             cols,
         };
 
-        autorelease_pool(|| {
-            let pass = context.begin_pass();
-            encode_dequant_int4_gemm_resident(
-                context,
-                &pass,
-                &matrix(),
-                (&x, 0),
-                (&y_batched, 0),
-                batch,
-            )
-            .expect("batched dispatch");
-            pass.commit_and_wait();
-        });
-        let got = turbospark_gpu::read_buffer_f16(&y_batched, 0, batch * rows);
-
-        for b in 0..batch {
+        for &row_block in row_blocks {
+            let y_batched = context.new_output_buffer((batch * rows * 2) as u64);
             autorelease_pool(|| {
                 let pass = context.begin_pass();
-                encode_dequant_int4_gemv_resident(
+                encode_dequant_int4_gemm_resident_blocked(
                     context,
                     &pass,
                     &matrix(),
-                    (&x, (b * cols * 2) as u64),
-                    (&y_single, 0),
+                    (&x, 0),
+                    (&y_batched, 0),
+                    batch,
+                    row_block,
                 )
-                .expect("single dispatch");
+                .expect("batched dispatch");
                 pass.commit_and_wait();
             });
-            let expected = turbospark_gpu::read_buffer_f16(&y_single, 0, rows);
-            let slice = &got[b * rows..(b + 1) * rows];
-            assert_eq!(
-                slice.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
-                expected.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
-                "{rows}x{cols} batch {batch}, row {b} differs from the GEMV"
-            );
-            assert!(
-                expected.iter().any(|v| v.to_f32() != 0.0),
-                "fixture produced an all-zero output, so this proves nothing"
-            );
+            let got = turbospark_gpu::read_buffer_f16(&y_batched, 0, batch * rows);
+
+            for b in 0..batch {
+                autorelease_pool(|| {
+                    let pass = context.begin_pass();
+                    encode_dequant_int4_gemv_resident(
+                        context,
+                        &pass,
+                        &matrix(),
+                        (&x, (b * cols * 2) as u64),
+                        (&y_single, 0),
+                    )
+                    .expect("single dispatch");
+                    pass.commit_and_wait();
+                });
+                let expected = turbospark_gpu::read_buffer_f16(&y_single, 0, rows);
+                let slice = &got[b * rows..(b + 1) * rows];
+                assert_eq!(
+                    slice.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                    expected.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                    "{rows}x{cols} batch {batch} row_block {row_block}, row {b} \
+                     differs from the GEMV"
+                );
+                assert!(
+                    expected.iter().any(|v| v.to_f32() != 0.0),
+                    "fixture produced an all-zero output, so this proves nothing"
+                );
+            }
         }
     }
 }
@@ -161,7 +178,7 @@ fn assert_parity_at(context: &mut MetalContext, rows: usize, cols: usize, batche
 fn a_second_shape_in_one_process_does_not_reuse_the_first_shapes_pipeline() {
     let mut context = MetalContext::new().expect("Metal device");
     for (rows, cols) in [(128usize, 256usize), (256, 256), (128, 512), (64, 128)] {
-        assert_parity_at(&mut context, rows, cols, &[1, 4]);
+        assert_parity_at(&mut context, rows, cols, &[1, 4], SHIPPED_ROW_BLOCK);
     }
 }
 
@@ -313,7 +330,13 @@ fn f16_ragged(seed: u64, len: usize) -> Vec<f16> {
 #[test]
 fn the_gemm_and_the_gemv_agree_on_data_that_can_see_reassociation() {
     let mut context = MetalContext::new().expect("Metal device");
-    hostile_parity_at(&mut context, 128, 512, &[1, 2, 8, MAX_BATCH_ROWS]);
+    hostile_parity_at(
+        &mut context,
+        128,
+        512,
+        &[1, 2, 8, MAX_BATCH_ROWS],
+        SHIPPED_ROW_BLOCK,
+    );
 }
 
 /// **THE SAME COMPARISON AT THE REAL MODEL'S SHAPES, because the kernel BAKES
@@ -336,11 +359,17 @@ fn the_gemm_and_the_gemv_agree_at_the_real_models_shapes() {
     // (rows, cols): q_packed, k/v, FFN gate/up, FFN down.
     for (rows, cols) in [(12288, 5120), (1024, 5120), (17408, 5120), (5120, 17408)] {
         println!("shape {rows}x{cols}:");
-        hostile_parity_at(&mut context, rows, cols, &[1, 2]);
+        hostile_parity_at(&mut context, rows, cols, &[1, 2], SHIPPED_ROW_BLOCK);
     }
 }
 
-fn hostile_parity_at(context: &mut MetalContext, rows: usize, cols: usize, batches: &[usize]) {
+fn hostile_parity_at(
+    context: &mut MetalContext,
+    rows: usize,
+    cols: usize,
+    batches: &[usize],
+    row_blocks: &[usize],
+) {
     let scales_offset = (rows * cols / 2) as u64;
     let biases_offset = scales_offset + (rows * cols / 64 * 2) as u64;
     let mut blob = fill(0x5EED, scales_offset as usize);
@@ -372,7 +401,6 @@ fn hostile_parity_at(context: &mut MetalContext, rows: usize, cols: usize, batch
         );
 
         let x = context.new_buffer_with_data(&half_bytes(&x_values));
-        let y_batched = context.new_output_buffer((batch * rows * 2) as u64);
         let y_single = context.new_output_buffer((rows * 2) as u64);
         let matrix = || Int4ResidentMatrix {
             buffer: &weights,
@@ -383,53 +411,61 @@ fn hostile_parity_at(context: &mut MetalContext, rows: usize, cols: usize, batch
             cols,
         };
 
-        autorelease_pool(|| {
-            let pass = context.begin_pass();
-            encode_dequant_int4_gemm_resident(
-                context,
-                &pass,
-                &matrix(),
-                (&x, 0),
-                (&y_batched, 0),
-                batch,
-            )
-            .expect("batched dispatch");
-            pass.commit_and_wait();
-        });
-        let got = turbospark_gpu::read_buffer_f16(&y_batched, 0, batch * rows);
-
-        for b in 0..batch {
+        // Kept outside the row-block loop so the MMA positive control below
+        // has a `got` to differ from whichever widths were swept.
+        let mut got = Vec::new();
+        for &row_block in row_blocks {
+            let y_batched = context.new_output_buffer((batch * rows * 2) as u64);
             autorelease_pool(|| {
                 let pass = context.begin_pass();
-                encode_dequant_int4_gemv_resident(
+                encode_dequant_int4_gemm_resident_blocked(
                     context,
                     &pass,
                     &matrix(),
-                    (&x, (b * cols * 2) as u64),
-                    (&y_single, 0),
+                    (&x, 0),
+                    (&y_batched, 0),
+                    batch,
+                    row_block,
                 )
-                .expect("single dispatch");
+                .expect("batched dispatch");
                 pass.commit_and_wait();
             });
-            let expected = turbospark_gpu::read_buffer_f16(&y_single, 0, rows);
-            let slice = &got[b * rows..(b + 1) * rows];
-            // Finite BEFORE compared: a NaN row hashes and compares as
-            // stably as any other bit pattern, so an all-NaN fixture would
-            // report perfect agreement (AGENTS.md Gotcha 59).
-            assert!(
-                expected.iter().all(|v| v.is_finite()) && slice.iter().all(|v| v.is_finite()),
-                "batch {batch} row {b}: non-finite output, so the comparison means nothing"
-            );
-            let differing = slice
-                .iter()
-                .zip(expected.iter())
-                .filter(|(g, e)| g.to_bits() != e.to_bits())
-                .count();
-            assert_eq!(
-                differing, 0,
-                "batch {batch}, row {b}: {differing} of {rows} outputs differ from the GEMV \
-                 on reassociation-sensitive data"
-            );
+            got = turbospark_gpu::read_buffer_f16(&y_batched, 0, batch * rows);
+
+            for b in 0..batch {
+                autorelease_pool(|| {
+                    let pass = context.begin_pass();
+                    encode_dequant_int4_gemv_resident(
+                        context,
+                        &pass,
+                        &matrix(),
+                        (&x, (b * cols * 2) as u64),
+                        (&y_single, 0),
+                    )
+                    .expect("single dispatch");
+                    pass.commit_and_wait();
+                });
+                let expected = turbospark_gpu::read_buffer_f16(&y_single, 0, rows);
+                let slice = &got[b * rows..(b + 1) * rows];
+                // Finite BEFORE compared: a NaN row hashes and compares as
+                // stably as any other bit pattern, so an all-NaN fixture would
+                // report perfect agreement (AGENTS.md Gotcha 59).
+                assert!(
+                    expected.iter().all(|v| v.is_finite()) && slice.iter().all(|v| v.is_finite()),
+                    "batch {batch} row_block {row_block} row {b}: non-finite output, \
+                     so the comparison means nothing"
+                );
+                let differing = slice
+                    .iter()
+                    .zip(expected.iter())
+                    .filter(|(g, e)| g.to_bits() != e.to_bits())
+                    .count();
+                assert_eq!(
+                    differing, 0,
+                    "batch {batch}, row_block {row_block}, row {b}: {differing} of {rows} \
+                     outputs differ from the GEMV on reassociation-sensitive data"
+                );
+            }
         }
 
         // **THE POSITIVE CONTROL, and without it the green above is worth
@@ -481,4 +517,146 @@ fn hostile_parity_at(context: &mut MetalContext, rows: usize, cols: usize, batch
             x_values.len() / 8
         );
     }
+}
+
+/// **`FC_GEMM_R` CHANGES WHICH SIMD GROUP OWNS A ROW AND NOTHING ELSE, so
+/// every width must be bit-identical to the GEMV, not merely close.**
+///
+/// The argument is that each output `(row, bi)` still walks the same blocks
+/// in the same order into one FP32 accumulator and `simd_sum` still reduces
+/// the same 32-lane partition of K. That is exactly the kind of claim
+/// `the_gemm_and_the_gemv_agree_on_data_that_can_see_reassociation` exists
+/// to stop anyone believing from a reading, so this runs on the SAME hostile
+/// fixture with the SAME positive control: ragged BF16 companions,
+/// full-mantissa FP16 activations, an asserted order-sensitivity floor, and
+/// `dequant_int4_gemm_mma` required to differ.
+///
+/// **IT IS ALSO THE KEY GUARD FOR THE FOURTH BAKED CONSTANT**, and that is
+/// why the widths are swept in ONE process at one shape rather than in three
+/// processes. `MetalContext::pipeline` caches on (source address, name,
+/// key), so if `r` were dropped from `specialized_constants_row_blocked`'s
+/// key the R=2 dispatch would be served the R=1 pipeline -- while the HOST
+/// had already divided the threadgroup count by 2, so half the rows would
+/// never be written and would read back as whatever the fresh output buffer
+/// held. Mutation-checked: dropping `r` from the key reddens the R=2 arm
+/// here and nothing else in this file.
+#[test]
+fn row_blocking_does_not_move_a_single_bit() {
+    let mut context = MetalContext::new().expect("Metal device");
+    let widths: Vec<usize> = (1..=MAX_GEMM_ROW_BLOCK).collect();
+    hostile_parity_at(&mut context, 128, 512, &[1, 2, 8, MAX_BATCH_ROWS], &widths);
+    // A row count that is NOT a multiple of `8 * row_block` at every width,
+    // so the per-row `row0 + r >= m_dim` guard is exercised rather than
+    // being a branch no fixture reaches. 8*4 = 32 does not divide 72.
+    hostile_parity_at(&mut context, 72, 256, &[1, 3], &widths);
+    // **THE REMAINDER LOOP NEEDS ITS OWN SHAPE, and no other case here
+    // reaches it at R > 1.** The kernel walks `n_groups / 4` full 4-group
+    // blocks and then a scalar tail, so the tail only runs when `cols` is
+    // not a multiple of 256 -- which 512, 5120, 6144 and 17408 all are. At
+    // `cols = 448` there are 7 groups: one full block and a 3-group tail,
+    // so both loops contribute to every output and their accumulation order
+    // relative to each other is pinned too. The tail nests its loops the
+    // other way round (groups outermost) and guards rows with a separate
+    // `continue`, so it is genuinely different code.
+    //
+    // 448 rather than a tidier 128, which would be ALL tail, because the
+    // fixture's own order-sensitivity floor rejected 128 at batch 3 (10 of
+    // 48 blocks). That guard firing is the fixture working: a shape too
+    // small to round cannot see a reassociation, and a case that cannot see
+    // one proves nothing about accumulation order.
+    hostile_parity_at(&mut context, 72, 448, &[1, 3], &widths);
+}
+
+/// **PIPELINE REFLECTION CANNOT SEE THIS KERNEL'S REGISTER PRESSURE ON THIS
+/// DEVICE. MEASURED NEGATIVE, 2026-08-29, AND THE POINT OF THE CASE IS TO
+/// STOP IT BEING RE-DERIVED.**
+///
+/// The register file is this kernel's binding constraint --
+/// `dequant_int4_batch.metal`'s header records two optimizations that lost
+/// to it and an unroll table whose worst row is labelled "spilling" -- and
+/// every one of those statements was read off a TIMING. Apple lowers a
+/// pipeline's `maxTotalThreadsPerThreadgroup` when a kernel's register
+/// demand will not fit the threadgroup, so the obvious hope was a STATIC
+/// answer to "does this width spill": a Metal device, no model, no install
+/// and no clean clock.
+///
+/// It does not work. `maxTotalThreadsPerThreadgroup` reads **1024 on every
+/// `(R, B)` shape**, at the real 17408x5120, and the discrimination check
+/// that says so is the reason to believe it rather than the table: raising
+/// `kMaxRowBlock` to 64 and probing R=64 at B=16 declares
+/// `acc[64][16]`, a thousand floats per lane that can fit no register file
+/// on any GPU, and it STILL reads 1024. An instrument that reports its
+/// ceiling on a configuration that cannot possibly hold is at its rail, not
+/// measuring (AGENTS.md Gotcha 59's shape: the best possible score on
+/// garbage). Metal exposes no register or occupancy count publicly, so
+/// there is no second instrument to reach for either.
+///
+/// **WHAT SURVIVES IS NARROWER AND STILL WORTH ASSERTING.** Two of the three
+/// values do carry information about this kernel, and one of them guards a
+/// documented dead end:
+///
+/// - `static_threadgroup_memory_length` is 0, and must stay 0. Note 1 in the
+///   shader header is threadgroup staging of `x`, a measured loss that a
+///   future reader will reach for again; re-adding it makes this nonzero, so
+///   this line is the one cheap guard against it landing unmeasured.
+/// - `thread_execution_width` is 32, which the whole `simd_sum` reduction
+///   assumes.
+/// - `maxTotalThreadsPerThreadgroup >= GEMM_THREADS_PER_GROUP` is kept as a
+///   HARD-FAILURE backstop rather than as a spill gate: it cannot see
+///   pressure, but a shape that genuinely could not be encoded at the width
+///   the dispatch asks for would still trip it.
+///
+/// So `c(R, B)` on AC remains the only instrument that can price a row
+/// block, and the table below is printed for the record rather than read.
+#[test]
+fn pipeline_reflection_cannot_see_this_kernels_register_pressure() {
+    let mut context = MetalContext::new().expect("Metal device");
+    // The real `Qwen/Qwen3.8-27B` FFN gate/up shape, where the register
+    // pressure this is about actually occurs.
+    let (rows, cols) = (17408usize, 5120usize);
+    println!("\n{rows}x{cols}   R   B   maxThreads  execWidth  tgMemBytes");
+    let mut distinct_max_threads = std::collections::BTreeSet::new();
+    for row_block in 1..=MAX_GEMM_ROW_BLOCK {
+        for batch in [1usize, 2, 4, 8, MAX_BATCH_ROWS] {
+            let limits =
+                dequant_int4_gemm_pipeline_limits(&mut context, rows, cols, batch, row_block)
+                    .expect("pipeline");
+            println!(
+                "{rows}x{cols}  {row_block:>2}  {batch:>2}  {:>10}  {:>9}  {:>10}",
+                limits.max_total_threads_per_threadgroup,
+                limits.thread_execution_width,
+                limits.static_threadgroup_memory_length,
+            );
+            distinct_max_threads.insert(limits.max_total_threads_per_threadgroup);
+            assert!(
+                limits.max_total_threads_per_threadgroup >= GEMM_THREADS_PER_GROUP,
+                "R={row_block} B={batch} reports {} threads against the \
+                 {GEMM_THREADS_PER_GROUP} the dispatch asks for -- this shape cannot be \
+                 encoded at all",
+                limits.max_total_threads_per_threadgroup
+            );
+            assert_eq!(
+                limits.thread_execution_width, 32,
+                "the simd_sum reduction assumes a 32-lane SIMD group"
+            );
+            assert_eq!(
+                limits.static_threadgroup_memory_length, 0,
+                "R={row_block} B={batch} declares threadgroup memory. This kernel uses \
+                 none, and note 1 in dequant_int4_batch.metal's header is a MEASURED LOSS \
+                 for adding some (staging `x`); if it is being re-added, re-measure \
+                 c_of_m first"
+            );
+        }
+    }
+    // The negative, stated as an assertion so it cannot quietly stop being
+    // true without anyone noticing. If a future OS or device DOES vary this
+    // with register demand, this reddens and the case above becomes the
+    // spill gate it was originally written to be.
+    assert_eq!(
+        distinct_max_threads.len(),
+        1,
+        "maxTotalThreadsPerThreadgroup now VARIES across (R, B): {distinct_max_threads:?}. \
+         It was constant when this was measured, which is why the doc says reflection \
+         cannot price a row block -- re-read that doc, the instrument may have become useful"
+    );
 }
