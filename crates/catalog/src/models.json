@@ -252,6 +252,47 @@
       "notes": "Same architecture as ternary27b and bonsai27b, at a third quantization. Renders in NON-THINKING mode, so the shared 1024-token budget is enough. No merges.txt: this conversion embeds the merges in tokenizer.json. Has no cross-engine KL number (see qwen36)."
     },
     {
+      "alias": "qwen38-27b-vision",
+      "name": "Qwen3.8 27B (MLX INT4, group 64) with vision tower",
+      "family": "qwen35",
+      "source": {
+        "kind": "mlx",
+        "repo": "mlx-community/Qwen3.8-27B-4bit",
+        "revision": "3e6447f082e89cc7f0bc6e5441afd38dfce760ff",
+        "file": null
+      },
+      "sidecars": {
+        "repo": null,
+        "revision": null,
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "chat_template.jinja",
+          "generation_config.json",
+          "vocab.json"
+        ]
+      },
+      "download_bytes": 16054541349,
+      "install_bytes": 16081522176,
+      "status": "verified",
+      "gates": [
+        "vision_memory_oracle"
+      ],
+      "measured": [
+        {
+          "chip": "Apple M4 Max",
+          "context": 4096,
+          "expert_cache_slots": 16,
+          "peak_footprint_mib": 873,
+          "decode_tok_s_min": 12.355,
+          "decode_tok_s_max": 15.997,
+          "measured_on": "2026-08-30",
+          "source": "this port, one reading, AC, four rounds of image transcription at varying page sizes"
+        }
+      ],
+      "notes": "A THIRD entry for this same repo and revision, deliberately kept separate from qwen38-27b: that row backs qwen38_memory_oracle and qwen38_quality_gate's frozen numbers, and adding ~0.9 GiB of vision tower to it would force a re-freeze for a component neither gate exercises. Streamed WITH vision_tower.* included (crates/repack/tests/qwen38_checkpoint_network.rs's vision-carrying test), where the plain row's install excludes it. The decode_tok_s_min reading is the FIRST of four rounds, a cold-GPU forward pass (AGENTS.md Gotcha 20), not the largest page -- the repeated large-page round later in the same run reads faster (15.997) than either smaller page. See docs/VISION.md."
+    },
+    {
       "alias": "gemma4-iq3",
       "name": "Gemma 4 26B-A4B Instruct (GGUF UD-Q3_K_M, IQ3_XXS/IQ4_NL experts)",
       "family": "gemma4",

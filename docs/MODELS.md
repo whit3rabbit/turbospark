@@ -238,7 +238,7 @@ install is known to have a tokenizer that loads and a template that renders.
 
 ## The `measured` block
 
-Eight rows carry one, and it is what `recommend` quotes:
+Eleven rows carry one, and it is what `recommend` quotes:
 
 ```json
 "measured": [{

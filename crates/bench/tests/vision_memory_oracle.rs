@@ -47,14 +47,15 @@
 //! (`oracle_common`'s convention, AGENTS.md Gotcha 58) -- this ceiling is not
 //! comparable to any other family's without them.
 //!
-//! # No catalog-agreement test (yet)
+//! # Catalog agreement
 //!
-//! The vision install has no `models.json` row: it is deliberately kept
-//! separate from `qwen38-27b.gturbo`, which backs that family's frozen
-//! oracle and quality-gate rows (`CLAUDE.local.md`). `assert_agrees_with_catalog`
-//! needs a catalog entry to check against, so that half of the usual oracle
-//! pair is skipped here; add it once this target's ceiling has a real
-//! `measured` block to agree with.
+//! `qwen38-27b-vision` has its own `models.json` row (a THIRD entry beside
+//! `qwen38-27b`, deliberately: adding tower bytes to the row backing that
+//! family's frozen oracle and quality-gate rows would force a re-freeze for a
+//! component neither gate exercises -- see `CLAUDE.local.md`).
+//! `the_baselines_agree_with_the_catalogs_measured_rows` ties `BASELINES`
+//! below to that row's `measured` block, offline, exactly as every other
+//! family's oracle does.
 //!
 //! # Setup
 //!
@@ -91,10 +92,30 @@ use std::path::PathBuf;
 
 use runtime::{GenerationConfig, RateControl, RawDecodeProgress};
 use selection::ShapingConfig;
-use turbospark_bench::memory::AppMemorySampler;
+use turbospark_bench::memory::{chip_brand_string, AppMemorySampler};
 use turbospark_bench::protocol::PROTOCOL_EXPERT_CACHE_SLOTS;
 use turbospark_bench::real_model::open_model_runner_with_context;
 use turbospark_vision_io::{decode_image_file, preprocess, PreprocessParams, VisionSpecialIds};
+
+mod oracle_common;
+
+/// Per-chip rows for `qwen38-27b-vision`, most specific substring first
+/// (`memory_oracle.rs` explains the lookup order). Only one chip has ever
+/// run this target.
+const BASELINES: &[oracle_common::ChipBaseline] = &[oracle_common::ChipBaseline {
+    brand_substr: "Apple M4 Max",
+    // Matches CEILING_MIB below; the two have to move together, and
+    // `the_baselines_agree_with_the_catalogs_measured_rows` is what notices
+    // if they stop.
+    footprint_ceiling_mib: CEILING_MIB,
+    // 0.73 of the slowest reading (12.355 tok/s, the large-page round --
+    // slowest because it is the FIRST forward pass this process makes, a
+    // cold GPU per AGENTS.md Gotcha 20, not because the page is large: the
+    // repeated large-page round reads 15.997, faster than medium or small).
+    // The same margin qwen38-27b, qwen3moe and mistral7b's rows take.
+    tok_s_floor: 9.0,
+    source: "this port, 2026-08-30, Apple M4 Max, AC, 4096 context, one reading of four rounds",
+}];
 
 fn env_dir(key: &str) -> Option<PathBuf> {
     let raw = std::env::var(key).ok()?;
@@ -222,6 +243,7 @@ const STEADY_STATE_SLACK_MIB: u64 = 64;
 struct RoundResult {
     label: &'static str,
     peak_mib: f64,
+    decode_tok_s: f64,
 }
 
 #[test]
@@ -347,10 +369,19 @@ fn peak_footprint_is_flat_across_pages_of_different_sizes() {
 
         let peak_bytes = sampler.sample().expect("footprint sampling worked");
         let peak_mib = peak_bytes as f64 / 1_048_576.0;
+        let decode_tok_s = if result.decode_seconds > 0.0 {
+            result.new_tokens as f64 / result.decode_seconds
+        } else {
+            0.0
+        };
         eprintln!(
             "vision_memory_oracle: round {round} ({}) -> {:?}, {} new tokens, peak {peak_mib:.1} \
-             MiB",
-            page.label, result.reason, result.new_tokens
+             MiB, {decode_tok_s:.3} tok/s ({:.3}s prefill, {:.3}s decode)",
+            page.label,
+            result.reason,
+            result.new_tokens,
+            result.prefill_seconds,
+            result.decode_seconds
         );
         eprintln!("vision_memory_oracle: round {round} transcription: {generated_text}");
 
@@ -386,6 +417,7 @@ fn peak_footprint_is_flat_across_pages_of_different_sizes() {
         rounds.push(RoundResult {
             label: page.label,
             peak_mib,
+            decode_tok_s,
         });
     }
 
@@ -395,6 +427,39 @@ fn peak_footprint_is_flat_across_pages_of_different_sizes() {
             "{}: peak {:.1} MiB exceeds the {CEILING_MIB} MiB ceiling",
             r.label,
             r.peak_mib
+        );
+    }
+
+    let min_tok_s = rounds
+        .iter()
+        .map(|r| r.decode_tok_s)
+        .fold(f64::INFINITY, f64::min);
+    let max_tok_s = rounds
+        .iter()
+        .map(|r| r.decode_tok_s)
+        .fold(f64::NEG_INFINITY, f64::max);
+    eprintln!(
+        "vision_memory_oracle: decode tok/s across {} rounds: {min_tok_s:.3} min, \
+         {max_tok_s:.3} max",
+        rounds.len()
+    );
+
+    let brand = chip_brand_string();
+    let baseline = brand
+        .as_deref()
+        .and_then(|b| BASELINES.iter().find(|row| b.contains(row.brand_substr)));
+    if let Some(row) = baseline {
+        assert!(
+            min_tok_s >= row.tok_s_floor,
+            "decode fell to {min_tok_s:.3} tok/s, below the {} tok/s floor from {} \
+             (chip {brand:?})",
+            row.tok_s_floor,
+            row.source
+        );
+    } else {
+        eprintln!(
+            "vision_memory_oracle: chip {brand:?} not in the baseline table -> tok/s reported \
+             but not asserted"
         );
     }
 
@@ -409,5 +474,20 @@ fn peak_footprint_is_flat_across_pages_of_different_sizes() {
         "peak grew {growth:.1} MiB from the first large-page round ({first_peak:.1} MiB) to \
          the repeated large-page round ({last_peak:.1} MiB), past the {STEADY_STATE_SLACK_MIB} \
          MiB slack: VisionScratch may be accumulating rather than being dropped per page"
+    );
+}
+
+/// The catalog half of this row, checked offline on every `cargo test`.
+///
+/// NOT `#[ignore]`d and needs no install: it asserts that `BASELINES` above
+/// still agrees with the `measured` block `models.json` carries for
+/// `qwen38-27b-vision`. See `oracle_common::assert_agrees_with_catalog`.
+#[test]
+fn the_baselines_agree_with_the_catalogs_measured_rows() {
+    oracle_common::assert_agrees_with_catalog(
+        "qwen38-27b-vision",
+        BASELINES,
+        VISION_ORACLE_MAX_CONTEXT,
+        PROTOCOL_EXPERT_CACHE_SLOTS as u32,
     );
 }

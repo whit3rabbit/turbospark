@@ -187,6 +187,7 @@ the reading, so allocator jitter cannot flake it).
 | Qwen3-30B-A3B, Q4_K_M | 17 GB | 4,096 | 2,741 - 2,753 MiB | 2,900 | 16.0 - 28.1 | yes, 128 experts |
 | gpt-oss-20b, MXFP4 | 11 GB | 8,192 | 5,417 - 5,421 MiB | 5,700 | 22.9 - 30.4 | yes, 32 experts |
 | **Qwen3.8-27B, MLX INT4** | 14 GB | 4,096 | **660.0 - 660.3 MiB** | 750 | 18.6 - 21.1 | **no, dense** |
+| Qwen3.8-27B, MLX INT4, with vision tower | 15 GB | 4,096 | 854.8 - 872.5 MiB | 950 | 12.355 - 15.997 | no, dense + a 2-slot vision tower |
 | Mistral 7B, Q4_K_M | 4.1 GB | 8,192 | 1,201 - 1,203 MiB | 1,300 | 16.3 - 30.4 | no, dense |
 | **Ternary-Bonsai-27B, MLX 2-bit** | 7.6 GB | 4,096 | **657.8 - 661.6 MiB** | 750 | 12.5 - 13.9 | **no, dense** |
 | Bonsai-27B, MLX 1-bit | 3.9 GB | -- | not measured | -- | ~18.3 | no, dense |
@@ -215,6 +216,19 @@ about this engine.
 And the CONTEXT column is load-bearing on the dense rows in particular: KV
 is most of what they measure, so Mistral reads 1,201 MiB at 8,192 and 684
 MiB at 4,096 for the same install and the same model.
+
+**The vision row is a separate install from Qwen3.8-27B's plain row, not an
+update to it**, streamed from the same repository and revision WITH its
+vision tower included (`crates/repack/tests/qwen38_checkpoint_network.rs`).
+Its peak sits ~195-212 MiB above the plain row's because the tower's own
+2-slot residency and scratch add to the same dense-plus-KV accounting; both
+still exclude the mapped weights (Gotcha 40 applies to the 15 GB of those
+unchanged). The measured range spans four rounds of image transcription at
+varying page sizes (`crates/bench/tests/vision_memory_oracle.rs`), and the
+LOW end of the tok/s range is the FIRST round rather than the largest page:
+it is a cold-GPU forward pass (AGENTS.md Gotcha 20), and the repeated
+large-page round later in the same run reads faster (15.997) than either
+smaller page.
 
 ### External reference points for the Qwen3.8-27B row
 
