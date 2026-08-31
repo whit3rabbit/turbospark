@@ -97,9 +97,19 @@ fn to_sse(event: &StreamEvent) -> Event {
 /// `POST /v1/messages`. Anthropic-compatible messages endpoint, translating
 /// requests to OpenAI format and translating responses back.
 pub async fn messages(
-    State(model): State<AppState>,
+    State(state): State<crate::ServerState>,
+    tag: Option<axum::Extension<crate::observe::RequestTag>>,
     Json(request): Json<MessageCreateRequest>,
 ) -> Response {
+    let model = match crate::handler::resolve_backend(
+        &state,
+        tag.map(|t| t.0),
+        Some(request.model.as_str()),
+        request.stream.unwrap_or(false),
+    ) {
+        Ok(m) => m,
+        Err(response) => return response,
+    };
     let degraded = compute_request_warnings(&request).as_header_value();
 
     let openai = match translate_request(&request, &TranslationConfig::default()) {
@@ -174,9 +184,27 @@ pub async fn messages(
 /// split, the same `encode(_, add_bos: false)`, and the same image splice a
 /// real `/v1/messages` call on this request would run.
 pub async fn count_tokens(
-    State(model): State<AppState>,
+    State(state): State<crate::ServerState>,
+    tag: Option<axum::Extension<crate::observe::RequestTag>>,
     Json(mut body): Json<serde_json::Value>,
 ) -> Response {
+    // Resolved off the RAW body, before `max_tokens` is injected: this
+    // endpoint takes `serde_json::Value` precisely because a valid
+    // count_tokens request need not carry one, and the model name is
+    // readable without that repair.
+    let requested = body
+        .get("model")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let model = match crate::handler::resolve_backend(
+        &state,
+        tag.map(|t| t.0),
+        requested.as_deref(),
+        false,
+    ) {
+        Ok(m) => m,
+        Err(response) => return response,
+    };
     if let Some(object) = body.as_object_mut() {
         if !object.contains_key("max_tokens") {
             object.insert("max_tokens".to_string(), serde_json::json!(1));

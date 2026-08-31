@@ -213,6 +213,12 @@ async fn main() -> std::process::ExitCode {
         model,
         turbospark_server::RouterOptions {
             api_key: api_key.clone(),
+            // The standalone binary records nothing. Events exist for a host
+            // that EMBEDS this server and has a console to show them in
+            // (`crates/ffi`); this process's equivalent is its stdout, and
+            // adding a second, structured channel nothing reads would be
+            // overhead per request for no reader.
+            observer: None,
         },
     );
     let addr = format!("{bind}:{port}");
@@ -223,7 +229,17 @@ async fn main() -> std::process::ExitCode {
             return std::process::ExitCode::from(1);
         }
     };
-    eprintln!("turbospark-server listening on http://{addr}");
+    // What was BOUND, never the string handed to `bind`. `--port` takes a bare
+    // `u16`, so `--port 0` is accepted, gets an OS-assigned port, and printed
+    // the requested `addr` back as `http://127.0.0.1:0` -- an address no client
+    // can use, with the usable one sitting unread in `listener`. Falling back
+    // to the request when `local_addr` fails keeps a line on stderr in the case
+    // where there is nothing better to say.
+    let bound = listener
+        .local_addr()
+        .map(|a| a.to_string())
+        .unwrap_or_else(|_| addr.clone());
+    eprintln!("turbospark-server listening on http://{bound}");
     eprintln!(
         "  auth: {}",
         if api_key.is_some() {

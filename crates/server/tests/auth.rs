@@ -36,6 +36,7 @@ async fn spawn_protected(api_key: &str) -> String {
         model,
         RouterOptions {
             api_key: Some(api_key.to_string()),
+            ..Default::default()
         },
     );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

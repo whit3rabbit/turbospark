@@ -573,9 +573,19 @@ fn function_call_events(send: &impl Fn(Event), call: &ParsedToolCall, output_ind
 
 /// `POST /v1/responses`.
 pub async fn responses(
-    State(model): State<AppState>,
+    State(state): State<crate::ServerState>,
+    tag: Option<axum::Extension<crate::observe::RequestTag>>,
     Json(request): Json<ResponsesRequest>,
 ) -> Response {
+    let model = match crate::handler::resolve_backend(
+        &state,
+        tag.map(|t| t.0),
+        Some(request.model.as_str()),
+        request.stream.unwrap_or(false),
+    ) {
+        Ok(m) => m,
+        Err(response) => return response,
+    };
     let chat_request = match responses_to_chat_request(&request) {
         Ok(r) => r,
         Err(e) => return error_response(StatusCode::BAD_REQUEST, e),

@@ -14,6 +14,7 @@ mod plan;
 mod tests;
 
 use std::collections::HashSet;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyllm_translate::openai::ChatCompletionRequest;
@@ -40,6 +41,91 @@ use crate::guardrails::run_guarded;
 use crate::response::{
     completion_chunk, completion_response, reasoning_delta, role_delta, text_delta, tool_call_delta,
 };
+
+/// Turns the router's [`crate::ServerState`] into the one backend that will
+/// serve this request, and records which one it picked.
+///
+/// **EVERY AXUM ENTRY POINT'S FIRST ACT, AND NOTHING FURTHER IN.** Past this
+/// line the crate is single-model again: `plan`, `run_full`,
+/// `stream_blocking`, `needs_decoder` and `run_guarded` all still take an
+/// [`AppState`] and never learn that a registry exists. That is what keeps
+/// routing by model id a change to eight function heads rather than a sweep
+/// through the generation core.
+///
+/// `requested` is the request's own `model` field. `tag` is the id the
+/// observing layer minted, absent when no observer is configured.
+///
+/// The `Err` variant is an `axum::Response`, which `result_large_err` reads
+/// as too big to return by value. Boxing it would allocate on the refusal
+/// path only to deref at the caller's `return`, and every handler in this
+/// crate already returns exactly this type by value -- the lint is aimed at
+/// an error type that is large by accident, and this one is the crate's own
+/// return type by design.
+#[allow(clippy::result_large_err)]
+pub(crate) fn resolve_backend(
+    state: &crate::ServerState,
+    tag: Option<crate::observe::RequestTag>,
+    requested: Option<&str>,
+    stream: bool,
+) -> Result<AppState, Response> {
+    use crate::registry::Resolution;
+    match state.registry.resolve(requested) {
+        Resolution::Model(model) => {
+            // With no observer, or no id to tie events to, the caller gets
+            // the bare model back and nothing is wrapped -- which is every
+            // pre-observer caller, this crate's whole integration suite
+            // included, on the exact path it always had.
+            let (Some(crate::observe::RequestTag(id)), Some(observer)) = (tag, &state.observer)
+            else {
+                return Ok(model);
+            };
+            let served = model.model_id().to_string();
+            observer.record(crate::observe::ServerEvent::RequestRouted {
+                id,
+                requested: requested.map(str::to_string),
+                served,
+                stream,
+            });
+            Ok(Arc::new(crate::observe::ReportingModel::new(
+                model,
+                Arc::clone(observer),
+                id,
+            )))
+        }
+        // 404 with `model_not_found`, matching what `model_detail` already
+        // returns for the same question and what an OpenAI client's error
+        // handling keys on. The available ids are in the message because a
+        // caller who guessed wrong has no other way to find the right one.
+        Resolution::Unknown {
+            requested,
+            available,
+        } => Err((
+            axum::http::StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error": {
+                    "message": format!(
+                        "The model '{requested}' does not exist. This server has {} models \
+                         attached: {}",
+                        available.len(),
+                        available.join(", ")
+                    ),
+                    "type": "invalid_request_error",
+                    "param": "model",
+                    "code": "model_not_found"
+                }
+            })),
+        )
+            .into_response()),
+        // A server can run with nothing attached -- that is the state a host
+        // starts one in before loading anything. 503 rather than 404: the
+        // request is fine and the server is not ready, which is a different
+        // thing for a client's retry logic to see.
+        Resolution::Empty => Err(error_response(
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "no model is loaded; attach one before sending requests".to_string(),
+        )),
+    }
+}
 
 pub(crate) fn error_response(status: axum::http::StatusCode, message: String) -> Response {
     (
@@ -75,40 +161,62 @@ pub(crate) fn gen_error_response(e: GenError) -> Response {
 /// open (`model_id`), so it answers even while a generation holds the
 /// runner's lock -- the point of a liveness probe is to say the process is
 /// alive, not to queue behind whatever request got there first.
-pub async fn health(State(model): State<AppState>) -> Response {
+pub async fn health(State(state): State<crate::ServerState>) -> Response {
+    let rows = state.registry.rows();
     Json(serde_json::json!({
         "status": "ok",
-        "model": model.model_id(),
-        "state": "ready",
+        // `model` stays a bare string for every client that already reads it,
+        // and is the FIRST attached model rather than a list. `models` beside
+        // it is the multi-model answer. A server with nothing attached reports
+        // null and `state: "empty"`, which is a real state a host can start
+        // one in rather than a failure.
+        "model": rows.first().map(|r| r.id.clone()),
+        "models": rows.iter().map(|r| r.id.clone()).collect::<Vec<_>>(),
+        "state": if rows.is_empty() { "empty" } else { "ready" },
         "version": env!("CARGO_PKG_VERSION"),
     }))
     .into_response()
 }
 
-/// `GET /v1/models`. One backend per process, so the list has one entry.
-/// This is what an OpenAI client's model picker (and Claude Code's gateway
-/// model discovery) reads.
-pub async fn models(State(model): State<AppState>) -> Response {
+/// `GET /v1/models`. One entry per attached model. This is what an OpenAI
+/// client's model picker (and Claude Code's gateway model discovery) reads.
+pub async fn models(State(state): State<crate::ServerState>) -> Response {
+    let created = now_unix();
     Json(serde_json::json!({
         "object": "list",
-        "data": [{
-            "id": model.model_id(),
+        "data": state.registry.rows().into_iter().map(|row| serde_json::json!({
+            "id": row.id,
             "object": "model",
-            "created": now_unix(),
+            "created": created,
             "owned_by": "mference",
-        }],
+            // Not OpenAI's, and deliberately additive: a picker that can
+            // show the window a model was OPENED at saves a user guessing,
+            // and the number is per-session rather than per-checkpoint
+            // (AGENTS.md Gotcha 55) so nothing else can state it.
+            "context_window": row.max_context,
+        })).collect::<Vec<_>>(),
     }))
     .into_response()
 }
 
-/// `GET /v1/models/:model`. Returns model details if `:model` matches the active backend model.
-pub async fn model_detail(State(model): State<AppState>, Path(model_id): Path<String>) -> Response {
-    if model_id == model.model_id() {
+/// `GET /v1/models/:model`. Returns model details if `:model` names an
+/// attached model.
+pub async fn model_detail(
+    State(state): State<crate::ServerState>,
+    Path(model_id): Path<String>,
+) -> Response {
+    // Matched against the ROWS rather than through `registry.resolve`, which
+    // would hand back the only model for any name at all under the
+    // single-model fallback (`registry.rs`) -- correct for serving a
+    // generation and wrong for a lookup, where the whole question is whether
+    // this exact id exists.
+    if let Some(row) = state.registry.rows().into_iter().find(|r| r.id == model_id) {
         Json(serde_json::json!({
-            "id": model.model_id(),
+            "id": row.id,
             "object": "model",
             "created": now_unix(),
             "owned_by": "mference",
+            "context_window": row.max_context,
         }))
         .into_response()
     } else {
@@ -130,9 +238,19 @@ pub async fn model_detail(State(model): State<AppState>, Path(model_id): Path<St
 /// `POST /v1/chat/completions`. OpenAI-compatible chat completions endpoint,
 /// supporting both non-streaming responses and SSE token streaming.
 pub async fn chat_completions(
-    State(model): State<AppState>,
+    State(state): State<crate::ServerState>,
+    tag: Option<axum::Extension<crate::observe::RequestTag>>,
     Json(request): Json<ChatCompletionRequest>,
 ) -> Response {
+    let model = match resolve_backend(
+        &state,
+        tag.map(|t| t.0),
+        Some(request.model.as_str()),
+        request.stream.unwrap_or(false),
+    ) {
+        Ok(m) => m,
+        Err(response) => return response,
+    };
     // Planned here as well as inside `run_guarded` so an unparseable request
     // is still refused with a 400 before any generation starts. The guarded
     // path re-plans because a retry turn changes the messages.

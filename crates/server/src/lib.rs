@@ -17,8 +17,11 @@ mod guardrails;
 mod handler;
 mod messages;
 mod model;
+pub mod observe;
+mod ollama;
 #[cfg(target_os = "macos")]
 mod real_model;
+pub mod registry;
 mod response;
 mod responses;
 pub mod vision;
@@ -49,12 +52,14 @@ pub use anyllm_translate::openai::{
     ChatCompletionRequest, ChatCompletionResponse, ChatMessage, ChatUsage, Choice,
 };
 
+use std::sync::Arc;
+
 use axum::routing::{get, post};
 use axum::Router;
 
 /// Options [`build_router_with_options`] takes beyond the shared
-/// [`AppState`]. A struct rather than a bare `Option<String>` parameter so a
-/// future option (a CORS policy, say) has somewhere to land without another
+/// [`ServerState`]. A struct rather than a bare `Option<String>` parameter so
+/// a future option (a CORS policy, say) has somewhere to land without another
 /// signature change; `Default` gives `build_router` its zero-option case for
 /// free.
 #[derive(Default, Clone)]
@@ -63,6 +68,52 @@ pub struct RouterOptions {
     /// (the default) leaves the router exactly as unauthenticated as it was
     /// before this option existed.
     pub api_key: Option<String>,
+    /// Where request and generation events go. `None` (the default) means
+    /// nothing is recorded and no event is even BUILT
+    /// ([`observe::record`]), which is what keeps every pre-observer caller
+    /// -- the whole integration suite among them -- on the exact path it had.
+    pub observer: Option<Arc<dyn observe::ServerObserver>>,
+}
+
+/// What axum's `State` carries: which models are attached, and who is
+/// watching.
+///
+/// **[`handler::AppState`] KEEPS ITS NAME AND ITS MEANING**, which is what
+/// makes routing by model id a small change rather than a sweep. It is still
+/// `Arc<dyn ChatModel>` -- one resolved backend -- and every internal
+/// function that takes one (`plan`, `run_full`, `stream_blocking`,
+/// `needs_decoder`, `run_guarded`, ...) is untouched. Only the axum entry
+/// points take a `ServerState`, and each one's first act is to resolve it
+/// down to an `AppState`.
+#[derive(Clone)]
+pub struct ServerState {
+    pub(crate) registry: Arc<dyn registry::ModelRegistry>,
+    pub(crate) observer: Option<Arc<dyn observe::ServerObserver>>,
+    pub(crate) ids: Arc<observe::RequestIds>,
+}
+
+impl ServerState {
+    pub fn new(registry: Arc<dyn registry::ModelRegistry>) -> Self {
+        Self {
+            registry,
+            observer: None,
+            ids: Arc::new(observe::RequestIds::default()),
+        }
+    }
+}
+
+/// So `build_router(model)` keeps compiling for every caller that predates
+/// the registry, this crate's integration tests included.
+impl From<Arc<dyn ChatModel>> for ServerState {
+    fn from(model: Arc<dyn ChatModel>) -> Self {
+        Self::new(Arc::new(registry::SingleModel::new(model)))
+    }
+}
+
+impl From<Arc<dyn registry::ModelRegistry>> for ServerState {
+    fn from(registry: Arc<dyn registry::ModelRegistry>) -> Self {
+        Self::new(registry)
+    }
 }
 
 /// [`build_router`] with no options: no auth. Every existing caller of this
@@ -71,7 +122,7 @@ pub struct RouterOptions {
 /// [`RouterOptions`] existed.
 ///
 /// See [`build_router_with_options`] for the route list.
-pub fn build_router(state: AppState) -> Router {
+pub fn build_router(state: impl Into<ServerState>) -> Router {
     build_router_with_options(state, RouterOptions::default())
 }
 
@@ -94,7 +145,10 @@ pub fn build_router(state: AppState) -> Router {
 /// auth.rs`, `crates/server/CLAUDE.md` Gotcha 26); the layer is applied to a
 /// sub-router BEFORE it merges with the unauthenticated `/health` route, so
 /// merging cannot leak it onto that one.
-pub fn build_router_with_options(state: AppState, options: RouterOptions) -> Router {
+pub fn build_router_with_options(state: impl Into<ServerState>, options: RouterOptions) -> Router {
+    let mut state = state.into();
+    state.observer = options.observer.clone();
+
     let protected = Router::new()
         .route("/v1/chat/completions", post(handler::chat_completions))
         .route("/v1/completions", post(completions::completions))
@@ -102,7 +156,12 @@ pub fn build_router_with_options(state: AppState, options: RouterOptions) -> Rou
         .route("/v1/messages", post(messages::messages))
         .route("/v1/messages/count_tokens", post(messages::count_tokens))
         .route("/v1/models", get(handler::models))
-        .route("/v1/models/:model", get(handler::model_detail));
+        .route("/v1/models/:model", get(handler::model_detail))
+        .route("/api/tags", get(ollama::tags))
+        .route("/api/version", get(ollama::version))
+        .route("/api/show", post(ollama::show))
+        .route("/api/chat", post(ollama::chat))
+        .route("/api/generate", post(ollama::generate));
     let protected = match options.api_key {
         Some(key) => protected.layer(axum::middleware::from_fn_with_state(
             auth::ApiKey(key.into()),
@@ -111,10 +170,71 @@ pub fn build_router_with_options(state: AppState, options: RouterOptions) -> Rou
         None => protected,
     };
 
-    Router::new()
+    let router = Router::new()
         .route("/health", get(handler::health))
-        .merge(protected)
-        .with_state(state)
+        .merge(protected);
+
+    // **APPLIED TO THE MERGED ROUTER, AFTER THE AUTH LAYER, AND THOSE ARE
+    // TWO SEPARATE PROPERTIES WITH TWO SEPARATE TESTS.** A console that
+    // cannot show a REJECTED request is missing the rows somebody opened it
+    // to find, and neither half alone gets there.
+    //
+    // WHICH ROUTER decides `/health` coverage. Moving this onto `protected`
+    // (which reads as tidier, since that is where the other layer goes)
+    // leaves `/health` unobserved: it was never a member of that router.
+    // Mutation-checked -- that change reddens
+    // `health_is_observed_even_though_it_is_exempt_from_auth` and NOTHING
+    // else, the 401 case included.
+    //
+    // WHEN, relative to `auth`, decides the 401 coverage, and it survives
+    // the move above because a later `.layer()` still wraps an earlier one.
+    // Applying this one BEFORE the auth layer puts it inside: the rejection
+    // returns from the outer layer and never reaches this code. That
+    // mutation reddens `a_request_rejected_by_auth_is_still_recorded`.
+    //
+    // With no observer configured the layer is not added at all, so every
+    // pre-observer caller pays nothing.
+    let router = match options.observer {
+        Some(_) => router.layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            observe_layer,
+        )),
+        None => router,
+    };
+
+    router.with_state(state)
+}
+
+/// Mints a request id, records the HTTP-level facts around a request, and
+/// puts the id where a handler can find it.
+///
+/// It cannot see anything about generation -- see [`observe`]'s header for
+/// why the counters come from the handlers instead.
+async fn observe_layer(
+    axum::extract::State(state): axum::extract::State<ServerState>,
+    mut request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let id = state.ids.next();
+    let method = request.method().to_string();
+    let path = request.uri().path().to_string();
+    request.extensions_mut().insert(observe::RequestTag(id));
+
+    observe::record(&state.observer, || observe::ServerEvent::RequestStarted {
+        id,
+        at_ms: observe::now_ms(),
+        method,
+        path,
+    });
+
+    let started = std::time::Instant::now();
+    let response = next.run(request).await;
+    observe::record(&state.observer, || observe::ServerEvent::RequestFinished {
+        id,
+        status: response.status().as_u16(),
+        duration_ms: started.elapsed().as_millis() as u32,
+    });
+    response
 }
 
 // Token id width consumed from the core primitives, keeping the dependency

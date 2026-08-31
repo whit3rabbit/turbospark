@@ -256,9 +256,19 @@ fn stream_response(
 /// the chat endpoints' `add_bos: false` (a chat template emits its own
 /// `<bos>`; nothing does here, so the tokenizer has to).
 pub async fn completions(
-    State(model): State<AppState>,
+    State(state): State<crate::ServerState>,
+    tag: Option<axum::Extension<crate::observe::RequestTag>>,
     Json(request): Json<CompletionRequest>,
 ) -> Response {
+    let model = match crate::handler::resolve_backend(
+        &state,
+        tag.map(|t| t.0),
+        Some(request.model.as_str()),
+        request.stream.unwrap_or(false),
+    ) {
+        Ok(m) => m,
+        Err(response) => return response,
+    };
     if request.suffix.is_some() {
         return error_response(
             StatusCode::BAD_REQUEST,
