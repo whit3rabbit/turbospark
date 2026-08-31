@@ -57,6 +57,15 @@ extension AppModel {
 
     public func deleteChat(id: UUID) {
         guard !generating, let index = chats.firstIndex(where: { $0.id == id }) else { return }
+        // A pending approval on THIS chat has no chat left to land its
+        // decision in once it's gone -- Approve/Deny would silently no-op
+        // against a stale ID (state#9's own reasoning, applied to deletion
+        // rather than to a chat switch).
+        if pendingToolCallChatID == id {
+            pendingToolCall = nil
+            pendingToolCallChatID = nil
+            pendingToolCallStep = 0
+        }
         chats.remove(at: index)
         if chats.isEmpty {
             selectedChatID = UUID()

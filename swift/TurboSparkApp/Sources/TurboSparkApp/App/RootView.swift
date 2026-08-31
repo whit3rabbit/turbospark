@@ -13,7 +13,7 @@ struct RootView: View {
     @AppStorage("TurboSpark.chatSidebarVisible")
     private var isChatSidebarVisible = true
     @AppStorage("TurboSpark.inspectorVisible")
-    private var isInspectorVisible = true
+    private var isInspectorVisible = false
     @ObservedObject private var appearanceManager = AppearanceManager.shared
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
 
@@ -75,6 +75,14 @@ struct RootView: View {
             model.unloadModel()
             model.persistChats()
             model.persistSettings()
+        }
+        .onChange(of: model.isModelAvailable) { wasAvailable, isAvailable in
+            // Surface Model Settings the moment a load completes, rather than
+            // leaving a newly-loaded model's options a click away behind a
+            // panel that starts hidden.
+            if !wasAvailable, isAvailable {
+                isInspectorVisible = true
+            }
         }
     }
 

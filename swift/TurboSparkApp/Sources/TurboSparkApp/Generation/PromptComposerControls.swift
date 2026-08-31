@@ -16,9 +16,9 @@ struct PromptInteractionModeSegment: View {
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: mode.systemImage)
-                            .font(.system(size: 10, weight: .semibold))
+                            .font(.system(size: 11, weight: .semibold))
                         Text(mode.title)
-                            .font(.system(size: 11, weight: isSelected ? .semibold : .medium))
+                            .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
                             .lineLimit(1)
                             .fixedSize()
                     }
@@ -83,16 +83,16 @@ struct PromptModelSelectorPill: View {
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "sparkles")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(TurboSparkTheme.accentColor)
 
                 Text(model.selected?.alias ?? "Select Model")
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
 
                 Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 8, weight: .bold))
+                    .font(.system(size: 9, weight: .bold))
                     .foregroundStyle(.tertiary)
             }
             .padding(.horizontal, 8)
@@ -116,11 +116,11 @@ struct PromptProjectContextPill: View {
         if let project = model.selectedProject {
             HStack(spacing: 6) {
                 Image(systemName: project.agentType.systemImage)
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(TurboSparkTheme.accentColor)
 
                 Text(project.name)
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: 12, weight: .semibold))
                     .lineLimit(1)
 
                 if let worktree = model.worktree, worktree.isGitRepository {
@@ -190,15 +190,15 @@ struct PromptReasoningPillControl: View {
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: isThinkingActive ? "brain.head.profile" : "brain")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(isThinkingActive ? TurboSparkTheme.accentColor : Color.secondary)
 
                 Text("Thinking: \(model.reasoningLabel(for: model.reasoning))")
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(isThinkingActive ? Color.primary : Color.secondary)
 
                 Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 8, weight: .bold))
+                    .font(.system(size: 9, weight: .bold))
                     .foregroundStyle(.tertiary)
             }
             .padding(.horizontal, 7)
@@ -237,11 +237,11 @@ struct ForgeGuardrailsPillControl: View {
             } label: {
                 HStack(spacing: 4) {
                     Image(systemName: isEnabled ? "shield.checkmark.fill" : "shield.slash")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(isEnabled ? TurboSparkTheme.accentColor : Color.secondary)
 
                     Text("Guardrails: \(isEnabled ? "On" : "Off")")
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(isEnabled ? Color.primary : Color.secondary)
                         .lineLimit(1)
                         .fixedSize()
@@ -269,7 +269,7 @@ struct ForgeGuardrailsPillControl: View {
                 model.openSettings(tab: .engine)
             } label: {
                 Image(systemName: "info.circle")
-                    .font(.system(size: 11))
+                    .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                     .contentShape(Circle())
             }

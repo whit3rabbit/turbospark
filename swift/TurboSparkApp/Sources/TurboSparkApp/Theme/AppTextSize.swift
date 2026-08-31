@@ -23,8 +23,11 @@ public enum AppTextSize: String, CaseIterable, Identifiable, Sendable {
     /// Corresponding SwiftUI DynamicTypeSize applied to the environment.
     public var dynamicTypeSize: DynamicTypeSize {
         switch self {
-        case .standard: return .large
-        case .large: return .xLarge
+        // One notch above the system baseline (.large): the app read small
+        // at the true baseline, and this is the existing text-size knob
+        // rather than a new one.
+        case .standard: return .xLarge
+        case .large: return .xxLarge
         case .extraLarge: return .xxxLarge
         }
     }

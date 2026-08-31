@@ -65,7 +65,7 @@ public struct WelcomeHeroView: View {
             }
 
             Text("How can I help you today?")
-                .font(.callout)
+                .font(.system(size: 15))
                 .foregroundStyle(.secondary)
         }
     }
@@ -111,7 +111,7 @@ public struct WelcomeHeroView: View {
                     model.promptText = prompt
                 }) {
                     Text(LocalizedStringKey(prompt))
-                        .font(.caption)
+                        .font(.system(size: 13))
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)
                         .background(Color(nsColor: .controlBackgroundColor).opacity(0.8))

@@ -15,14 +15,17 @@ struct TopBarView: View {
     @ScaledMetric private var buttonSize: CGFloat = 26
 
     var body: some View {
-        // Left-aligned rather than centered: the phase indicator appears and
-        // disappears with every turn, and a centered loader would slide
+        // The model loader sits beside the settings toggle it feeds (the
+        // Model Settings panel), trailing-anchored together. The phase
+        // indicator stays on the LEADING side rather than between them: it
+        // appears and disappears every turn, and sitting between the loader
+        // and a trailing-pinned toggle would make the loader itself slide
         // sideways each time it did.
         HStack(spacing: 8) {
             sidebarToggle
-            ModelLoaderControl(model: model)
             GenerationPhaseIndicator(model: model)
             Spacer(minLength: 8)
+            ModelLoaderControl(model: model)
             inspectorToggle
         }
         .padding(.leading, AppChromeLayout.trafficLightClearance)

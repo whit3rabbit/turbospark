@@ -19,7 +19,19 @@ public struct ChatMessageMarkdownView: View {
 
 extension Theme {
     /// Custom MarkdownUI theme tailored for TurboSpark chat transcripts.
+    ///
+    /// The base theme has no text style of its own, so it fell back to the
+    /// ambient SwiftUI `.body` font (~13pt on macOS) regardless of the
+    /// `dynamicTypeSize` environment scale set elsewhere in the app -- that
+    /// scale moves the baseline by about a point, too small a shift to read
+    /// as "bigger" against everything else in the window. An explicit size
+    /// here is the guaranteed-visible fix for the surface a user actually
+    /// reads: everything under it (`.code`'s `.em(0.88)`, etc.) is relative,
+    /// so it scales along with the base rather than needing its own bump.
     public static let turboSpark = Theme()
+        .text {
+            FontSize(15)
+        }
         .code {
             FontFamilyVariant(.monospaced)
             FontSize(.em(0.88))

@@ -121,7 +121,6 @@ struct ModelLoaderControl: View {
             }
         } label: {
             HStack(spacing: 7) {
-                statusIndicator
                 VStack(alignment: .leading, spacing: 0) {
                     Text(primaryText)
                         .font(.system(size: 12, weight: .semibold))
@@ -208,32 +207,6 @@ struct ModelLoaderControl: View {
                 }
             }
         }
-    }
-
-    @ViewBuilder
-    private var statusIndicator: some View {
-        if model.opening || model.isInstallingModel {
-            ProgressView().controlSize(.mini).scaleEffect(0.7).frame(width: 8)
-                .help("Loading or installing model")
-        } else {
-            Circle()
-                .fill(indicatorColor)
-                .frame(width: 7, height: 7)
-                .help(statusTooltipText)
-                .accessibilityHidden(true)
-        }
-    }
-
-    private var statusTooltipText: String {
-        if model.session != nil { return "Model loaded in memory" }
-        if !model.installed.isEmpty { return "Model ready to load" }
-        return "No models installed"
-    }
-
-    private var indicatorColor: Color {
-        if model.session != nil { return .green }
-        if !model.installed.isEmpty { return .orange }
-        return .gray
     }
 
     private var primaryText: String {
