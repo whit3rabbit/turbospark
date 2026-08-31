@@ -255,10 +255,10 @@ impl VisionTower {
                 // `layer.experts.len() == shape.depth` is already checked
                 // above, so `stream_layout` always describes exactly one
                 // "layer" of `depth` blocks whenever the tower opens at all.
-                let mapped_layer = streaming::MappedExpertLayer::open(stream_layout)
-                    .map_err(|e| RealForwardError::Unsupported(format!(
-                        "mapped vision residency: {e}"
-                    )))?;
+                let mapped_layer =
+                    streaming::MappedExpertLayer::open(stream_layout).map_err(|e| {
+                        RealForwardError::Unsupported(format!("mapped vision residency: {e}"))
+                    })?;
                 let bytes = mapped_layer.page_aligned_bytes();
                 let buffer =
                     gpu::wrap_page_aligned_no_copy(context.device(), bytes.as_ptr(), bytes.len())

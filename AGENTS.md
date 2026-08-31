@@ -625,19 +625,19 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
     way to remove a dirty one and it keeps nothing.
     **STAGING A CONTESTED FILE CAN COMMIT HALF A FEATURE, AND THE TELL IS A
     BUILD ERROR NAMING A SYMBOL YOU NEVER TOUCHED.** On 2026-08-30
-    `AppModel+Persistence.swift` carried a chat-persist debounce whose property
-    lives in the uncommitted `AppModel.swift`, so committing the first alone
+    `AppModel+Persistence.swift` carried a chat-persist debounce. Its property
+    lives in the uncommitted `AppModel.swift`. Committing the first alone
     produced `cannot find 'chatPersistDebounceTask' in scope`. Reconstruction
-    (above) is the fix. Adding the sibling usually is not, since it drags in
-    whatever else that file is mid-flight on -- `AppModel.swift` would have
+    (above) is the fix. Adding the sibling usually is not, because it drags in
+    whatever else that file is mid-flight on. `AppModel.swift` would have
     brought the entire unfinished server surface with it.
     **AND VERIFY SUCH A COMMIT BY ERROR-COUNT DELTA AGAINST `main`, NOT AGAINST
     ZERO.** A tree carrying a hundred uncommitted changes is green only as a
-    whole, and `main` may not build at all: it read 72 errors that day, none of
-    them anyone's current work. Build a detached worktree at your commit and at
+    whole. `main` may not build at all: it read 72 errors that day, none of them
+    anyone's current work. Build a detached worktree at your commit and at
     `main`, then compare counts. Equal means you added nothing. Reading the
     absolute count as damage you caused wastes a cycle, and chasing it into
-    another session's half-finished refactor wastes several.
+    another session's refactor wastes several.
 
 14. Adding one flag to `crates/invocation` touches FIVE places, and a missing parser arm is a runtime panic rather than a compile error. Moved to
     [crates/invocation/CLAUDE.md](crates/invocation/CLAUDE.md) Gotcha 1.

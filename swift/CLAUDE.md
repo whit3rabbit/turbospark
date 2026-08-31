@@ -824,13 +824,13 @@ so going through `make` recompiles the whole app every single time. Use
 
 34. **A SWIFT BUILD IN A WORKTREE FAILS ON A MISSING HEADER, BECAUSE
     `CTurboSpark` IS GITIGNORED.** Gitignored files are not carried into a
-    worktree (root Gotcha 13), and the staged `libturbospark_ffi.a` plus
+    worktree (root Gotcha 13). The staged `libturbospark_ffi.a` and
     `turbospark.h` are exactly that. Either run `make swift-lib` in the
-    worktree or copy the directory across:
+    worktree, or copy the directory across:
     `cp -R swift/TurboSpark/Sources/CTurboSpark <worktree>/swift/TurboSpark/Sources/`.
 
     **AND `Bundle.module` INSIDE A TEST TARGET IS NOT THE APP'S BUNDLE.**
-    `TurboSparkAppTests` declares no resources of its own, so `Bundle.module`
+    `TurboSparkAppTests` declares no resources of its own. `Bundle.module`
     there resolves to the test bundle and finds nothing. Reach an app resource
-    through an accessor in the APP target instead: `CommandGate.oracleFixtureURL`
-    is the pattern, and it exists for exactly this reason.
+    through an accessor in the APP target instead. `CommandGate.oracleFixtureURL`
+    is the pattern, and it exists for this reason.
