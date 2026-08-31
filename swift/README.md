@@ -171,4 +171,23 @@ for try await event in TurboSparkCatalog.install("gemma4") {
 }
 ```
 
+---
+
+## Permission Gate
+
+`TurboSparkApp` executes model-proposed shell commands, and `.auto` mode runs
+some of them without asking. The barrier is a positive allowlist in
+`TerminalCommandClassifier`, with a bundled 192 KiB linear classifier
+(`CommandGate`) beside it that scores commands for hazard and obfuscation in
+about 30 us.
+
+That classifier only ever writes the reason shown on the approval sheet. Its
+veto is disabled by default, because measured against this repository's own
+contract lists it adds zero true positives and one to three false positives.
+[`docs/PERMISSION_GATE.md`](../docs/PERMISSION_GATE.md) has the numbers, the
+corpora it was trained on, the defect that withdrew the first models, and the
+two porting landmines the oracle fixture exists to catch.
+
+---
+
 Detailed technical documentation for the C ABI and Swift binding contracts is available in [`docs/SWIFT_BINDINGS.md`](../docs/SWIFT_BINDINGS.md).

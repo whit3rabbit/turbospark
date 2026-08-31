@@ -40,6 +40,7 @@ read the page before proposing the thing it refutes.
 | `docs/VISION.md` | the vision PIPELINE: injection, mRoPE dispatch, the four gates, the cross-engine rows | touching anything an image passes through |
 | `docs/VISION_PHASE0.md` | the vision CHECKPOINT: tensors, mRoPE semantics, activation magnitudes, the INT4 decision | reading a tower fact off the checkpoint |
 | `docs/SWIFT_BINDINGS.md` | the C ABI and the Swift package: contract and limits | changing the FFI |
+| `docs/PERMISSION_GATE.md` | the local command classifier, its corpora, and a measured negative | touching `.auto`, or quoting a hazard score |
 | `docs/RELEASE.md` | release checklist, versioning, tags, rot guards | cutting a release |
 
 Two standing rules come out of those pages rather than from any one crate.
@@ -380,6 +381,13 @@ cargo run --release -p turbospark-server --bin turbospark-server -- --model gemm
 # traffic. The startup line says which drafter resolved and why.
 cargo run --release -p turbospark-server --bin turbospark-server -- \
   --model ~/models/qwen38-27b-dflash2.gturbo --speculative-drafter dflash
+
+# The OLLAMA-compatible routes, for tooling that speaks only that. Framing is
+# NDJSON (one JSON object per line, no [DONE]) rather than SSE, and `stream`
+# defaults to TRUE here unlike every OpenAI-shaped route.
+curl -s localhost:8080/api/tags
+curl -sN localhost:8080/api/chat -H 'content-type: application/json' \
+  -d '{"model":"m","messages":[{"role":"user","content":"hi"}]}'
 
 # Point an Anthropic-native client straight at it, no proxy in between.
 ANTHROPIC_BASE_URL=http://127.0.0.1:8080 ANTHROPIC_API_KEY=unused \

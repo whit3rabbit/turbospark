@@ -180,16 +180,37 @@ public enum ToolRiskClassifier {
         if category == .web {
             let urlString = arguments["url"] ?? arguments["uri"] ?? ""
             if !urlString.isEmpty {
-                if let url = URL(string: urlString) {
-                    let host = url.host?.lowercased() ?? ""
-                    if host == "169.254.169.254" || host == "metadata.google.internal" || host == "localhost" || host == "127.0.0.1" || host.hasPrefix("192.168.") || host.hasPrefix("10.") {
-                        return ToolRiskAssessment(
-                            level: .high,
-                            category: category,
-                            reasons: ["Accessing private network or cloud metadata endpoint: '\(urlString)'"]
-                        )
-                    }
+                guard let url = URL(string: urlString), let host = url.host, !host.isEmpty else {
+                    // A URL this app cannot parse is one it cannot classify.
+                    return ToolRiskAssessment(
+                        level: .high,
+                        category: category,
+                        reasons: ["Malformed or unparseable URL: '\(urlString)'"]
+                    )
                 }
+
+                if AppToolSandbox.isPrivateOrMetadataHost(host) {
+                    return ToolRiskAssessment(
+                        level: .high,
+                        category: category,
+                        reasons: ["Accessing private network or cloud metadata endpoint: '\(urlString)'"]
+                    )
+                }
+
+                // The sandbox's own allow/deny lists, which had no caller at
+                // all until now: `SandboxConfig.allowedDomains`,
+                // `deniedDomains` and `networkAllowed` were live fields
+                // configuring a function nothing invoked (root Gotcha 8).
+                do {
+                    try AppToolSandbox.validateDomain(host)
+                } catch {
+                    return ToolRiskAssessment(
+                        level: .high,
+                        category: category,
+                        reasons: [error.localizedDescription]
+                    )
+                }
+
                 return ToolRiskAssessment(level: .low, category: category, reasons: ["Outbound web fetch to '\(urlString)'"])
             }
             return ToolRiskAssessment(level: .safe, category: category, reasons: [])
@@ -220,6 +241,21 @@ public enum ToolRiskClassifier {
     // MARK: - Terminal Command Analysis
 
     /// Analyzes a shell command string for high-risk operations.
+    ///
+    /// **THE DENYLIST BELOW NAMES REASONS; THE ALLOWLIST DECIDES.** Under
+    /// `.auto`, `AppToolPermissionEngine.evaluate` returns `.allow` for
+    /// anything that is not `.high` -- `.safe` and `.low` are the same
+    /// decision there and differ only in how the card is drawn. So the
+    /// question this function really answers is binary: does this string run
+    /// with no human in the loop.
+    ///
+    /// It used to answer it with regexes over the raw text, which is a losing
+    /// shape against `/bin/zsh -c`. `rm -rf ~/Documents` matched;
+    /// `r""m -rf ~/Documents` did not, and zsh runs them identically. Neither
+    /// did `eval $(printf ...)`, `$'\x72m' -rf ~`, or `IFS=X; cmd=rmXX-rf; $cmd ~`.
+    /// The patterns are still here because a match produces a specific,
+    /// useful sentence for the approval sheet, but they are no longer the
+    /// thing standing between the model and the shell.
     public static func assessTerminalCommand(_ command: String) -> ToolRiskAssessment {
         let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
@@ -254,13 +290,64 @@ public enum ToolRiskClassifier {
             return ToolRiskAssessment(level: .high, category: .terminal, reasons: reasons)
         }
 
-        // Safe collapsible or read-only commands
+        // Nothing matched a written-down attack. That is not evidence the
+        // command is benign, so the decision passes to the allowlist: one
+        // plain invocation of a known read or build command runs, and
+        // anything this classifier cannot read asks.
+        guard TerminalCommandClassifier.isSingleSimpleInvocation(trimmed) else {
+            return ToolRiskAssessment(
+                level: .high,
+                category: .terminal,
+                reasons: withAdvisory(
+                    [
+                        "Command uses shell control characters (pipes, redirection, "
+                            + "substitution, quoting or escapes), so what it runs cannot be "
+                            + "determined by inspection"
+                    ], for: trimmed))
+        }
+
+        guard TerminalCommandClassifier.isAutoApprovable(trimmed) else {
+            let head = TerminalCommandClassifier.headCommand(trimmed) ?? trimmed
+            return ToolRiskAssessment(
+                level: .high,
+                category: .terminal,
+                reasons: withAdvisory(
+                    ["'\(head)' is not a recognized read-only or build command"],
+                    for: trimmed))
+        }
+
+        // **THE ONLY PLACE THE MODEL MAY SPEAK ABOUT WHAT RUNS, AND IT CAN ONLY
+        // SAY NO.** Both guards above have already passed, so this is reached
+        // only for a command the allowlist admitted, and a veto can only move
+        // it to `.high`. Off by default (`CommandGate.vetoEnabled`): measured
+        // against the corpus lists in `TerminalRiskGateTests` the model adds
+        // zero true positives and one to three false positives, so enabling it
+        // costs prompts on `python3 -m pytest` and buys nothing until the
+        // corpus is rebuilt around allowlist evasion.
+        if let veto = CommandGate.veto(for: trimmed) {
+            return ToolRiskAssessment(
+                level: .high, category: .terminal, reasons: [veto.reason])
+        }
+
+        // A single simple invocation of an allowlisted command. `.safe` for
+        // the read set (collapsed in the transcript), `.low` for builds,
+        // which mutate a working tree even when they are expected to.
         if TerminalCommandClassifier.isCollapsible(trimmed) {
             return ToolRiskAssessment(level: .safe, category: .terminal, reasons: [])
         }
-
-        // Benign development commands (cargo, npm, pytest, git status/diff/add/commit)
         return ToolRiskAssessment(level: .low, category: .terminal, reasons: ["Standard workspace terminal command"])
+    }
+
+    /// Appends the local classifier's opinion to reasons for a verdict that is
+    /// ALREADY `.high`.
+    ///
+    /// Safe to run unconditionally, and that is the point: it decorates the
+    /// approval sheet and can never change what runs. The generic allowlist
+    /// sentence is accurate and unhelpful, so "local classifier: hazard 0.94"
+    /// beside it gives the user something to decide on.
+    private static func withAdvisory(_ reasons: [String], for command: String) -> [String] {
+        guard let advisory = CommandGate.advisoryReason(for: command) else { return reasons }
+        return reasons + [advisory]
     }
 
     // MARK: - MCP Risk Analysis

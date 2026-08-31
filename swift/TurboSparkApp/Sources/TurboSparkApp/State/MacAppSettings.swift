@@ -99,6 +99,16 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
     public var lmStudioDirectory: String
     /// User-configured custom model storage folder paths.
     public var customModelDirectories: [String]
+    /// Whether the local command classifier may veto an ALLOWLISTED command,
+    /// sending it to the approval sheet.
+    ///
+    /// Off by default and that is the measurement, not caution: held out by
+    /// generator the model scores 0.7010 against 0.9972 in-distribution, and
+    /// `python3 -m pytest tests/ -q` scores 1.000, so no threshold stops it
+    /// prompting on a command `.auto` promises to run silently. The classifier's
+    /// reason strings are shown regardless, since those only decorate a verdict
+    /// that was already `.ask`.
+    public var commandAdvisoryVeto: Bool
     /// Forge Tool-Call Guardrails global mode ("alwaysOn", "alwaysOff", "select").
     public var guardrailsMode: String
     /// Memory load guardrail tier ("off", "relaxed", "balanced", "strict",
@@ -147,6 +157,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         enableLMStudioDetection: Bool = true,
         lmStudioDirectory: String = "",
         customModelDirectories: [String] = [],
+        commandAdvisoryVeto: Bool = false,
         guardrailsMode: String = "select",
         modelReasoningDefaults: [String: String] = [:]
     ) {
@@ -179,6 +190,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.enableLMStudioDetection = enableLMStudioDetection
         self.lmStudioDirectory = lmStudioDirectory
         self.customModelDirectories = customModelDirectories
+        self.commandAdvisoryVeto = commandAdvisoryVeto
         self.guardrailsMode = guardrailsMode
         self.loadGuard = loadGuard
         self.loadGuardCustomBytes = loadGuardCustomBytes
@@ -217,6 +229,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.enableLMStudioDetection = try c.decodeIfPresent(Bool.self, forKey: .enableLMStudioDetection) ?? true
         self.lmStudioDirectory = try c.decodeIfPresent(String.self, forKey: .lmStudioDirectory) ?? ""
         self.customModelDirectories = try c.decodeIfPresent([String].self, forKey: .customModelDirectories) ?? []
+        self.commandAdvisoryVeto = try c.decodeIfPresent(Bool.self, forKey: .commandAdvisoryVeto) ?? false
         self.guardrailsMode = try c.decodeIfPresent(String.self, forKey: .guardrailsMode) ?? "select"
         self.loadGuard = try c.decodeIfPresent(String.self, forKey: .loadGuard) ?? "relaxed"
         self.loadGuardCustomBytes =

