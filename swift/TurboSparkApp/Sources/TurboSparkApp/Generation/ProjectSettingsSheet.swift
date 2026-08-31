@@ -19,6 +19,7 @@ struct ProjectSettingsSheet: View {
     @State private var mcpPermission: AppToolPermission = .ask
     @State private var automationPermission: AppToolPermission = .ask
     @State private var maxAutonomousSteps: Double = 5
+    @State private var skillStateEnabled: Bool = false
     @State private var rulePreference: AppRulePreference = .agentsFirst
     @State private var guardrailsOption: AppProjectGuardrailsOption = .auto
     @State private var rulesAutoDetectedMessage: String?
@@ -157,6 +158,24 @@ struct ProjectSettingsSheet: View {
                     .accessibilityLabel("Autonomous step limit")
                     .accessibilityValue("\(Int(maxAutonomousSteps)) steps")
             }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Toggle("Bounded execution state", isOn: $skillStateEnabled)
+                    .accessibilityHint(
+                        "Carry a compact state between steps instead of the full transcript")
+                Text(
+                    skillStateEnabled
+                        ? "Each step sees the task, a compact state and the newest tool result. "
+                            + "Long runs stay within the context window and cost 3 to 5x fewer tokens."
+                        : "Each step sees the whole transcript. Simple and exact, but long runs "
+                            + "grow until they hit the context window."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
         }
     }
 
@@ -230,6 +249,7 @@ struct ProjectSettingsSheet: View {
             mcpPermission = editing.permissions.mcp
             automationPermission = editing.permissions.automation
             maxAutonomousSteps = Double(editing.maxAutonomousSteps)
+            skillStateEnabled = editing.skillStateEnabled
             guardrailsOption = AppProjectGuardrailsOption.from(optionalBool: editing.forgeGuardrailsEnabled)
         } else {
             name = "New Project"
@@ -305,6 +325,7 @@ struct ProjectSettingsSheet: View {
             updated.customInstructions = customInstructions
             updated.permissions = perms
             updated.maxAutonomousSteps = Int(maxAutonomousSteps)
+            updated.skillStateEnabled = skillStateEnabled
             updated.forgeGuardrailsEnabled = guardrailsPref
             model.updateProject(updated)
         } else {
@@ -316,6 +337,7 @@ struct ProjectSettingsSheet: View {
                 customInstructions: customInstructions,
                 permissions: perms,
                 maxAutonomousSteps: Int(maxAutonomousSteps),
+                skillStateEnabled: skillStateEnabled,
                 forgeGuardrailsEnabled: guardrailsPref
             )
         }

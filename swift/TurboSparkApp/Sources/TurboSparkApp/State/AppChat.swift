@@ -255,6 +255,9 @@ public struct AppChat: Identifiable, Codable, Equatable, Sendable {
     public var todos: [TodoItem]
     /// Optional context summary or metadata.
     public var contextSummary: String?
+    /// Bounded execution state, when the project runs in SKILL.state mode.
+    /// Per chat rather than per project: it describes one agent run.
+    public var skillState: AppSkillState?
     /// Timestamp when the chat was created.
     public var createdAt: Date
     /// Timestamp when the chat was last modified.
@@ -270,6 +273,7 @@ public struct AppChat: Identifiable, Codable, Equatable, Sendable {
         messages: [AppChatMessage] = [],
         todos: [TodoItem] = [],
         contextSummary: String? = nil,
+        skillState: AppSkillState? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -281,6 +285,7 @@ public struct AppChat: Identifiable, Codable, Equatable, Sendable {
         self.messages = messages
         self.todos = todos
         self.contextSummary = contextSummary
+        self.skillState = skillState
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
@@ -299,6 +304,7 @@ public struct AppChat: Identifiable, Codable, Equatable, Sendable {
         messages = try container.decodeIfPresent([AppChatMessage].self, forKey: .messages) ?? []
         todos = try container.decodeIfPresent([TodoItem].self, forKey: .todos) ?? []
         contextSummary = try container.decodeIfPresent(String.self, forKey: .contextSummary)
+        skillState = try container.decodeIfPresent(AppSkillState.self, forKey: .skillState)
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
     }

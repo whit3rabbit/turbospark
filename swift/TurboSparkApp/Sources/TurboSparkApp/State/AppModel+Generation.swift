@@ -133,28 +133,36 @@ extension AppModel {
         error = nil
         decodeStartTime = nil
 
-        // Build system prompt if project / agent is configured
+        // Two prompt shapes. The bounded-state one is O(1) in step count; the
+        // append-only one below grows with every turn and every tool result,
+        // and on a 4,096-context install stops the run outright between step
+        // 30 and 35 (docs/SKILL_STATE.md). Opt-in per project, default off, so
+        // the append-only path is byte-identical when the toggle is not set.
         var rawHistory: [ChatMessage] = []
-        let systemContent = buildSystemPrompt(for: selectedProject)
-        if !systemContent.isEmpty {
-            rawHistory.append(ChatMessage(role: .system, content: systemContent))
-        }
+        if skillStateEnabled {
+            rawHistory = buildSkillStateHistory(chatIndex: chatIndex)
+        } else {
+            let systemContent = buildSystemPrompt(for: selectedProject)
+            if !systemContent.isEmpty {
+                rawHistory.append(ChatMessage(role: .system, content: systemContent))
+            }
 
-        for msg in chats[chatIndex].messages {
-            // **AN IMAGE-ONLY TURN HAS NO TEXT AND IS STILL A TURN.** This
-            // guard predates images and would drop one entirely, leaving the
-            // model to answer a question whose picture was never sent -- the
-            // emptiness-guard failure in its usual shape.
-            guard !msg.content.isEmpty || !msg.imagePaths.isEmpty else { continue }
-            rawHistory.append(
-                ChatMessage(
-                    role: msg.role,
-                    content: msg.content,
-                    images: msg.imagePaths.map(ChatImage.path)))
-            // If message contained tool execution results, inject them as system/environment responses
-            for res in msg.toolResults {
-                let tag = res.isError ? "tool_error" : "tool_response"
-                rawHistory.append(ChatMessage(role: .system, content: "<\(tag)>\n\(res.output)\n</\(tag)>"))
+            for msg in chats[chatIndex].messages {
+                // **AN IMAGE-ONLY TURN HAS NO TEXT AND IS STILL A TURN.** This
+                // guard predates images and would drop one entirely, leaving the
+                // model to answer a question whose picture was never sent -- the
+                // emptiness-guard failure in its usual shape.
+                guard !msg.content.isEmpty || !msg.imagePaths.isEmpty else { continue }
+                rawHistory.append(
+                    ChatMessage(
+                        role: msg.role,
+                        content: msg.content,
+                        images: msg.imagePaths.map(ChatImage.path)))
+                // If message contained tool execution results, inject them as system/environment responses
+                for res in msg.toolResults {
+                    let tag = res.isError ? "tool_error" : "tool_response"
+                    rawHistory.append(ChatMessage(role: .system, content: "<\(tag)>\n\(res.output)\n</\(tag)>"))
+                }
             }
         }
 
@@ -217,7 +225,15 @@ extension AppModel {
                             phases: phaseReport
                         )
 
-                        let generatedContent = self.outputText
+                        // Merge the state patch BEFORE parsing tool calls, so
+                        // the tool parser never sees the patch JSON and cannot
+                        // mistake it for a call. Re-resolve the chat index:
+                        // the selection can move while a turn is in flight.
+                        var generatedContent = self.outputText
+                        if self.skillStateEnabled, let idx = self.selectedChatIndex {
+                            generatedContent = self.applySkillStatePatch(
+                                from: generatedContent, chatIndex: idx)
+                        }
                         let generatedReasoning = self.outputReasoningText
                         let parsedCalls = self.extractToolCalls(from: generatedContent)
 

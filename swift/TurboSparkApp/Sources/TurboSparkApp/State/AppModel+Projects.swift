@@ -19,6 +19,7 @@ extension AppModel {
         customInstructions: String = "",
         permissions: AppProjectPermissions = .newProjectDefault,
         maxAutonomousSteps: Int = 5,
+        skillStateEnabled: Bool = false,
         forgeGuardrailsEnabled: Bool? = nil
     ) -> AppProject {
         var instructions = customInstructions
@@ -36,7 +37,8 @@ extension AppModel {
             customInstructions: instructions,
             permissions: permissions,
             maxAutonomousSteps: maxAutonomousSteps,
-            forgeGuardrailsEnabled: forgeGuardrailsEnabled
+            forgeGuardrailsEnabled: forgeGuardrailsEnabled,
+            skillStateEnabled: skillStateEnabled
         )
 
         projects.insert(project, at: 0)

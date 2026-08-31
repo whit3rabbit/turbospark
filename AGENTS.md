@@ -39,6 +39,7 @@ read the page before proposing the thing it refutes.
 | `docs/TRUBOQUANT.md` | sub-4-bit and ternary quantization layout | adding a width |
 | `docs/VISION.md` | the vision PIPELINE: injection, mRoPE dispatch, the four gates, the cross-engine rows | touching anything an image passes through |
 | `docs/VISION_PHASE0.md` | the vision CHECKPOINT: tensors, mRoPE semantics, activation magnitudes, the INT4 decision | reading a tower fact off the checkpoint |
+| `docs/SKILL_STATE.md` | the SKILL.state bounded-state agent runtime, a measured POSITIVE with its scale caveat | proposing agent context compaction, structured output, or constrained decoding |
 | `docs/SWIFT_BINDINGS.md` | the C ABI and the Swift package: contract and limits | changing the FFI |
 | `docs/PERMISSION_GATE.md` | the local command classifier, its corpora, and a measured negative | touching `.auto`, or quoting a hazard score |
 | `docs/RELEASE.md` | release checklist, versioning, tags, rot guards | cutting a release |
@@ -1940,6 +1941,7 @@ Workspace directory structure and crate layout:
 |   +-- power.sh       # watts & joules-per-token over the protocol (needs sudo)
 |   +-- router_hist.py # expert routing activation histogram analyzer
 |   +-- router_window.py # expert cache temporal windowing analyzer
+|   +-- skill_state_probe.py # SKILL.state valid-patch rate vs append-only (docs/SKILL_STATE.md)
 |   \-- swift-lib.sh   # staticlib + turbospark.h build helper for SwiftPM
 \-- docs
     \-- (25 pages; see the doc index at the top of this file)

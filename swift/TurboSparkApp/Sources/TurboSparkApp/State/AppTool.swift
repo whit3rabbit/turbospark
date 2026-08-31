@@ -253,7 +253,7 @@ public enum AppToolRegistry {
     }
 
     /// Active session provider for running subagent tasks.
-    public static var activeSessionProvider: (@Sendable () async -> TurboSparkSession?)?
+    public static var activeSessionProvider: (@Sendable @MainActor () -> TurboSparkSession?)?
 
     /// Tool names `execute(call:in:)` actually has a real handler for,
     /// independent of which `OpenAITool` DEFINITIONS `AppToolCatalog`

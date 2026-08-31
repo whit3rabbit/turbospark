@@ -834,3 +834,43 @@ so going through `make` recompiles the whole app every single time. Use
     there resolves to the test bundle and finds nothing. Reach an app resource
     through an accessor in the APP target instead. `CommandGate.oracleFixtureURL`
     is the pattern, and it exists for this reason.
+
+35. **THE AGENT LOOP HAS TWO PROMPT SHAPES NOW, AND THE PATCH MUST MERGE
+    BEFORE TOOL CALLS ARE PARSED.** `executeGenerationTurn` branches once, at
+    the context assembly: the append-only walk over every message and every
+    tool result, or `buildSkillStateHistory`, which sends
+    [system + protocol][the task][current state][newest observation] and is
+    O(1) in step count. The branch is `selectedProject?.skillStateEnabled`,
+    default FALSE, and the append-only arm is untouched when it is off. Why it
+    exists at all is measured rather than argued: on a 4,096-context install
+    the append-only arm stops between step 30 and 35 of 50 with an HTTP 400,
+    where the bounded arm finishes at 3 to 5x fewer tokens
+    (`docs/SKILL_STATE.md`).
+
+    **The ordering is load-bearing.** A state patch is JSON in the SAME reply
+    that may carry a tool call, so `applySkillStatePatch` runs first and
+    returns the text with the `<state_patch>` block removed;
+    `extractToolCalls` then never sees it. Parse calls first and the tool
+    parser takes the patch for a call, which fails as a bogus tool invocation
+    rather than as anything that names the state.
+
+    **An invalid patch is DROPPED, not partially applied**, and the reason is
+    the asymmetry: a bad merge silently corrupts every step after it, while a
+    dropped one costs one step's bookkeeping and lands on
+    `skillStateLastError`. Same instinct as Gotcha 13's tolerant decode.
+
+    **`AppSkillStateSchema` is the single source for the prompt AND the
+    validator.** Two spellings would let the app ask for a field it then
+    rejects, which reads to a user as the model being stupid. The schema is
+    GENERIC rather than per domain, which departs from the paper knowingly
+    (it names "no fixed schema known in advance" as its first limitation, and
+    a general coding assistant is arguably that case).
+
+    `AppSkillStateTests` is offline and mutation-checked five ways;
+    `AppSkillStateRealModelTests` drives a real server with the shipped
+    protocol text and the shipped validator, and skips without
+    `TURBOSPARK_SKILL_STATE_SERVER`. Run the second one after touching the
+    schema or the protocol wording: growing the schema is exactly what
+    `docs/SKILL_STATE.md` predicts would bring back the paper's
+    schema-comprehension failures, so it is the change that needs a real model
+    rather than a fixture.
