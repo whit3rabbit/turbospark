@@ -209,27 +209,49 @@ why both paths ship rather than one replacing the other.
 
 ## Status
 
-- Implemented for the **Gemma 4** flow only. The other three MoE flows
-  (`llama`, `gptoss`, `qwen`) **REFUSE the mode by name at `open`**, they do not
-  take the streamed path silently. That matters because
-  `open_expert_streamers` NULLS every `pread` streamer when this mode engages,
-  so an unwired family would otherwise reach its own `.ok_or_else` and report
-  "layer N has no packed-expert streamer" -- blaming the INSTALL for a mode the
-  caller chose. `mapped_residency_refusal` is a pure function of the family so
-  the rule is testable with no env var, no GPU and no install, and widening it
-  is one edit there plus that family's dispatch arm.
-- **`MFERENCE_ROUTED_BATCH=1` and this mode cannot be combined**, and the
-  combination is refused by name at `families/gemma4/moe_batch.rs`. The batched
-  routed pair binds one buffer per CACHE SLOT (`MoePrefillRoute::slot` indexes
-  that array) and this mode has no slot cache: it has one buffer per layer plus
-  a per-expert offset, and the experts to bind are the SUB-BATCH's union, which
-  changes inside the layer loop. Serving both means re-binding per sub-batch
-  rather than per layer, which is a change to that driver rather than a branch
-  in it. Deleting the refusal was measured rather than reasoned about: the run
-  trips `assert!(!blobs.is_empty() ...)` in `gpu::moe_prefill_batch`'s argument
+- **Implemented for FOUR of the five MoE flows since 2026-08-30**: Gemma 4
+  (the original), `qwen` (`QwenGdnMoe`), `llama` (both `Llama` and
+  `Qwen3Moe`, which share one flow), and `gptoss`. Each family's
+  per-token routed encoder(s) carry the same fork Gemma 4's does: skip the
+  plan/`pread` and read straight out of the mapping when
+  `self.mapped.buffers[layer].is_some()`, otherwise the unchanged streamed
+  path. `mapped_residency_refusal` (`real_forward_init.rs`) is the single
+  whitelist gate, still a pure function of the family, and now admits
+  `Gemma4 | QwenGdnMoe | Llama | Qwen3Moe | GptOss`. Verified on real
+  installs: `~/.turbospark/models/qwen3moe.gturbo` (the `llama` flow's
+  `Qwen3Moe` half, 128 experts/48 layers) and
+  `~/.turbospark/models/gptoss-20b.gturbo` both reproduce byte-identical
+  greedy output between the streamed and mapped arms, and
+  `MFERENCE_PHASES=1` shows the same fingerprint Gemma 4's own capture
+  does: `expert io (pread): 0.0 ms (0.0%)` and a 100% cache hit rate.
+  `qwen`'s own family (`QwenGdnMoe`, e.g. Ornith 35B) has no real install on
+  this machine at the time of writing (see `CLAUDE.local.md`'s artifact
+  drift note), so it is verified on the synthetic fixture only
+  (`crates/runtime/tests/mapped_expert_residency_qwen.rs`).
+  **Only `DeepseekV4Flash` remains refused**, and it stays refused for an
+  unrelated reason: compressed attention is not wired at all yet
+  (`crates/runtime/src/real_forward_init.rs::validate_arch_config`), so no
+  install of that family can open regardless of residency mode.
+- **`MFERENCE_ROUTED_BATCH=1` and this mode cannot be combined, on every
+  family that has a batched routed driver.** Gemma 4's own conflict lives at
+  `families/gemma4/moe_batch.rs`; the same guard was added to
+  `families/gptoss/moe_batch.rs` (its MXFP4 batched pair) and
+  `families/qwen/moe_batch.rs` (its batched VERIFY pass, reachable only
+  through a synthetic MoE+MTP fixture since no published MoE conversion of
+  that architecture carries an ingestible speculative head). `llama` needs no
+  such guard: it has no batched-routed-prefill driver at all, so there is no
+  second seam to reconcile. Every guard binds one buffer per CACHE SLOT
+  (`MoePrefillRoute::slot` indexes that array) and this mode has no slot
+  cache: it has one buffer per layer plus a per-expert offset, and the
+  experts to bind are the SUB-BATCH's union, which changes inside the layer
+  loop. Serving both means re-binding per sub-batch rather than per layer,
+  which is a change to that driver rather than a branch in it. Deleting the
+  refusal was measured rather than reasoned about on Gemma 4: the run trips
+  `assert!(!blobs.is_empty() ...)` in `gpu::moe_prefill_batch`'s argument
   encoder, a plain `assert!` that aborts in release, naming neither seam.
   The refusal is at the DRIVER rather than at `open` because
-  `set_routed_batch_prefill` can flip that seam after open.
+  `set_routed_batch_prefill` can flip that seam after open; confirmed firing
+  by name on the real gptoss install (both seams named in the error).
 - The DEFAULT chunked-prefill path is unaffected and needs no second arm:
   with `MFERENCE_ROUTED_BATCH` unset, Gemma 4's chunked driver runs its routed
   half through `encode_gemma4_layer_routed_moe` -- the same function the
@@ -251,12 +273,20 @@ why both paths ship rather than one replacing the other.
   pressure, which nothing here has done.
 - `madvise(MADV_WILLNEED)` on the routed offsets, the mmap analogue of the
   `F_RDADVISE` hinting the pread path uses.
-- The other three MoE families.
+- A `--expert-residency auto|streamed|mapped` CLI flag on `turbospark-check`
+  and `turbospark-server`.
+- Frozen mapped-arm memory-oracle rows for any family (every frozen row in
+  `crates/bench` is still a STREAMED row, per the Status section above).
 - Composing with the BATCHED routed pair (`MFERENCE_ROUTED_BATCH=1`), which is
-  refused rather than served today. It needs the wide argument buffer bound per
-  SUB-BATCH instead of per layer, since the union of experts to bind changes
-  inside the layer loop where the slot array does not. Worth costing against
-  what it buys: the two seams are the repo's two prefill levers and nobody has
-  measured them together, so the win is unknown rather than known-small.
+  refused rather than served on every family that has one today. It needs the
+  wide argument buffer bound per SUB-BATCH instead of per layer, since the
+  union of experts to bind changes inside the layer loop where the slot array
+  does not. Worth costing against what it buys: the two seams are the repo's
+  two prefill levers and nobody has measured them together, so the win is
+  unknown rather than known-small.
 - A measurement of what happens when the OS evicts a mapped expert mid-decode,
   which is the failure mode this design accepts and the streamer does not have.
+- A real `QwenGdnMoe` install on this machine to verify against (Ornith 35B
+  was on disk when this feature was scoped; it no longer is -- see
+  `CLAUDE.local.md`'s artifact inventory, which needs a re-check against
+  what is actually present before the next session trusts it).

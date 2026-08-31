@@ -43,6 +43,7 @@ use crate::moe_prefill_pipeline::RoutedSlot;
 use crate::real_forward_dispatch::{
     encode_moe_phase1_any, encode_moe_phase2_any, router_topk_gemma4,
 };
+use crate::real_forward_init::MappedResidency;
 use crate::real_forward_layout::RoutedLayerLayout;
 use crate::real_forward_types::{DecodeScratch, PhaseCounters, RealForwardError};
 use crate::real_forward_utils::f16_slice_to_le_bytes;
@@ -55,6 +56,7 @@ pub(crate) fn encode_gpt_oss_layer_moe(
     state: &RealGptOssState,
     streamers: &mut [Option<streaming::PreadExpertStreamer>],
     slot_buffers: &[Vec<gpu::MetalBuffer>],
+    mapped: &MappedResidency,
     routed_blobs: Option<&gpu::RoutedBlobsBuffer>,
     routed_blobs_banks: &[gpu::RoutedBlobsBuffer],
     moe_offsets: &[gpu::MoeExpertOffsets],
@@ -86,30 +88,44 @@ pub(crate) fn encode_gpt_oss_layer_moe(
     if let Some(hist) = router_hist.as_mut() {
         hist.record(layer, &selected);
     }
-    let streamer = streamers[layer].as_mut().ok_or_else(|| {
-        RealForwardError::Unsupported(format!(
-            "gpt-oss layer {layer} has no packed-expert streamer"
-        ))
-    })?;
-    // `protect` is empty on the decode path, so this is the same call it has
-    // always made. Inside a chunk it names the slots the previous token's
-    // in-flight command buffer is reading; the cache ASSERTS rather than
-    // degrades when it cannot honour that plus the misses
-    // (`ExpertCache::plan_if_possible`), so the caller has already ensured
-    // the arithmetic works or retired the buffer first.
-    let plan = streamer.plan_experts_cached(&selected, &slot.protect);
-    phases.expert_requests += plan.experts.len() as u64;
-    phases.expert_hits += plan.hits as u64;
-    phases.router_nanos += t_router.elapsed().as_nanos() as u64;
+    // MAPPED RESIDENCY SKIPS BOTH THE PLAN AND THE `pread`, exactly as
+    // `families/gemma4/moe.rs` does: every expert is already addressable in
+    // its layer's mapping, so there is no cache to consult and nothing to
+    // copy. Counted as requests that all hit, so `MFERENCE_PHASES`'s hit
+    // rate stays comparable across residency modes.
+    let mapped_active = mapped.buffers.get(layer).is_some_and(Option::is_some);
+    let slots: Vec<usize> = if mapped_active {
+        phases.expert_requests += selected.len() as u64;
+        phases.expert_hits += selected.len() as u64;
+        phases.router_nanos += t_router.elapsed().as_nanos() as u64;
+        selected.clone()
+    } else {
+        let streamer = streamers[layer].as_mut().ok_or_else(|| {
+            RealForwardError::Unsupported(format!(
+                "gpt-oss layer {layer} has no packed-expert streamer"
+            ))
+        })?;
+        // `protect` is empty on the decode path, so this is the same call it
+        // has always made. Inside a chunk it names the slots the previous
+        // token's in-flight command buffer is reading; the cache ASSERTS
+        // rather than degrades when it cannot honour that plus the misses
+        // (`ExpertCache::plan_if_possible`), so the caller has already
+        // ensured the arithmetic works or retired the buffer first.
+        let plan = streamer.plan_experts_cached(&selected, &slot.protect);
+        phases.expert_requests += plan.experts.len() as u64;
+        phases.expert_hits += plan.hits as u64;
+        phases.router_nanos += t_router.elapsed().as_nanos() as u64;
 
-    let streamer = streamers[layer]
-        .as_mut()
-        .expect("streamer presence checked above");
-    let t_io = Instant::now();
-    let slots = streamer
-        .execute_expert_cache_plan(&plan)
-        .map_err(|e| RealForwardError::Unsupported(format!("expert stream: {e}")))?;
-    phases.expert_io_nanos += t_io.elapsed().as_nanos() as u64;
+        let streamer = streamers[layer]
+            .as_mut()
+            .expect("streamer presence checked above");
+        let t_io = Instant::now();
+        let slots = streamer
+            .execute_expert_cache_plan(&plan)
+            .map_err(|e| RealForwardError::Unsupported(format!("expert stream: {e}")))?;
+        phases.expert_io_nanos += t_io.elapsed().as_nanos() as u64;
+        slots
+    };
 
     let t_bind = Instant::now();
     let ordered: Vec<(usize, f32)> = (0..selected.len())
@@ -125,11 +141,28 @@ pub(crate) fn encode_gpt_oss_layer_moe(
         &f16_slice_to_le_bytes(&routing16),
     );
 
-    let layer_slots = &slot_buffers[layer];
-    let blob_refs: Vec<(&gpu::MetalBuffer, u64)> = ordered
-        .iter()
-        .map(|&(cache_slot, _)| (&layer_slots[cache_slot], 0u64))
-        .collect();
+    // The two arms differ only in WHERE a blob lives, never in the order the
+    // slots are dispatched: that stays the router's own ranking in both,
+    // which is what keeps output byte-identical across residency modes
+    // (AGENTS.md Gotcha 27), matching `families/gemma4/moe.rs`.
+    let blob_refs: Vec<(&gpu::MetalBuffer, u64)> = if mapped_active {
+        let buffer = mapped.buffers[layer]
+            .as_ref()
+            .expect("mapped residency checked above");
+        let mapping = mapped.layers[layer]
+            .as_ref()
+            .expect("mapped residency checked above");
+        ordered
+            .iter()
+            .map(|&(expert, _)| (buffer, mapping.expert_offset(expert)))
+            .collect()
+    } else {
+        let layer_slots = &slot_buffers[layer];
+        ordered
+            .iter()
+            .map(|&(cache_slot, _)| (&layer_slots[cache_slot], 0u64))
+            .collect()
+    };
     let routed = match slot.bank {
         0 => routed_blobs,
         n => routed_blobs_banks.get(n - 1),
@@ -238,6 +271,7 @@ impl crate::real_forward::RealForwardRunner {
                 state,
                 streamers,
                 slot_buffers,
+                mapped,
                 routed_blobs,
                 routed_blobs_banks,
                 moe_offsets,
@@ -252,6 +286,7 @@ impl crate::real_forward::RealForwardRunner {
                     .expect("real gpt-oss state present"),
                 &mut self.streamers,
                 &self.slot_buffers,
+                &self.mapped,
                 &self.routed_blobs,
                 &self.routed_blobs_banks,
                 &self.moe_offsets,
@@ -266,6 +301,7 @@ impl crate::real_forward::RealForwardRunner {
                 state,
                 streamers,
                 slot_buffers,
+                mapped,
                 routed_blobs.as_ref(),
                 routed_blobs_banks,
                 moe_offsets,

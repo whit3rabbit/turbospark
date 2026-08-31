@@ -66,6 +66,21 @@ use weights::{BlockRoles, VisionResident};
 /// count.
 pub const VISION_SLOTS: usize = 2;
 
+/// Reads the tower's OWN residency seam, deliberately never
+/// `MFERENCE_EXPERT_RESIDENCY` (the routed-expert one). Reusing that variable
+/// would move the tower silently for anyone A/Bing routed residency, which is
+/// exactly the silent-ignore failure `real_forward_init::mapped_residency_
+/// refusal`'s own doc comment exists to prevent for the routed case.
+///
+/// Unlike the routed case, there is no per-family refusal function: the tower
+/// is family-agnostic (any install with `arch.vision.is_active()` runs the
+/// same code), so the only gate is whether the tower opens at all.
+fn vision_mapped_residency_requested() -> bool {
+    std::env::var("MFERENCE_VISION_RESIDENCY")
+        .map(|v| v.eq_ignore_ascii_case("mapped"))
+        .unwrap_or(false)
+}
+
 /// One image's contribution to the trunk's residual stream.
 #[derive(Debug, Clone, PartialEq)]
 pub struct VisionEmbedding {
@@ -114,7 +129,18 @@ pub struct VisionTower {
     /// `RealForwardRunner` states for its routed slot buffers, and for the
     /// same reason.
     slot_buffers: Vec<gpu::MetalBuffer>,
-    streamer: streaming::PreadExpertStreamer,
+    /// `None` under mapped residency: the mapped arm opens no streamer at
+    /// all, and the block loop branches on `mapped_buffer.is_some()` rather
+    /// than on a mode flag it could disagree with.
+    streamer: Option<streaming::PreadExpertStreamer>,
+    /// Zero-copy `MTLBuffer` over the WHOLE tower's mapped region (all
+    /// `depth` blocks concatenated), `Some` only under
+    /// `MFERENCE_VISION_RESIDENCY=mapped`. Declared BEFORE `mapped_layer` for
+    /// the same reason `slot_buffers` precedes `streamer`: the buffer aliases
+    /// the mapping with no deallocator, so the mapping must outlive it and
+    /// Rust drops fields in declaration order.
+    mapped_buffer: Option<gpu::MetalBuffer>,
+    mapped_layer: Option<streaming::MappedExpertLayer>,
     /// Per-block sub-tensor offsets, indexed by block.
     blocks: Vec<BlockRoles>,
     resident: VisionResident,
@@ -222,26 +248,51 @@ impl VisionTower {
 
         let stream_layout =
             streaming::StreamLayout::from_packed_layer_in(layer, dir, model_io::PACKED_VISION_DIR);
-        let streamer = streaming::PreadExpertStreamer::open(
-            stream_layout,
-            VISION_SLOTS,
-            streaming::ExpertCachePolicy::DEFAULT,
-        )
-        .map_err(|e| {
-            RealForwardError::Unsupported(format!(
-                "vision block streamer: {e} ({VISION_SLOTS} slots x {:.1} MiB per block)",
-                layer.expert_stride as f64 / (1024.0 * 1024.0),
-            ))
-        })?;
 
-        let mut slot_buffers = Vec::with_capacity(VISION_SLOTS);
-        for slot in 0..VISION_SLOTS {
-            let (ptr, len) = streamer.slot_allocation(slot);
-            slot_buffers.push(
-                gpu::wrap_page_aligned_no_copy(context.device(), ptr, len)
-                    .map_err(RealForwardError::Gpu)?,
-            );
-        }
+        let (streamer, slot_buffers, mapped_buffer, mapped_layer, slot_bytes) =
+            if vision_mapped_residency_requested() {
+                // No per-family refusal: the tower is family-agnostic, and
+                // `layer.experts.len() == shape.depth` is already checked
+                // above, so `stream_layout` always describes exactly one
+                // "layer" of `depth` blocks whenever the tower opens at all.
+                let mapped_layer = streaming::MappedExpertLayer::open(stream_layout)
+                    .map_err(|e| RealForwardError::Unsupported(format!(
+                        "mapped vision residency: {e}"
+                    )))?;
+                let bytes = mapped_layer.page_aligned_bytes();
+                let buffer =
+                    gpu::wrap_page_aligned_no_copy(context.device(), bytes.as_ptr(), bytes.len())
+                        .map_err(RealForwardError::Gpu)?;
+                (None, Vec::new(), Some(buffer), Some(mapped_layer), 0u64)
+            } else {
+                let streamer = streaming::PreadExpertStreamer::open(
+                    stream_layout,
+                    VISION_SLOTS,
+                    streaming::ExpertCachePolicy::DEFAULT,
+                )
+                .map_err(|e| {
+                    RealForwardError::Unsupported(format!(
+                        "vision block streamer: {e} ({VISION_SLOTS} slots x {:.1} MiB per block)",
+                        layer.expert_stride as f64 / (1024.0 * 1024.0),
+                    ))
+                })?;
+
+                let mut slot_buffers = Vec::with_capacity(VISION_SLOTS);
+                for slot in 0..VISION_SLOTS {
+                    let (ptr, len) = streamer.slot_allocation(slot);
+                    slot_buffers.push(
+                        gpu::wrap_page_aligned_no_copy(context.device(), ptr, len)
+                            .map_err(RealForwardError::Gpu)?,
+                    );
+                }
+                (
+                    Some(streamer),
+                    slot_buffers,
+                    None,
+                    None,
+                    VISION_SLOTS as u64 * layer.expert_stride,
+                )
+            };
 
         let resident = VisionResident::resolve(index, &shape)?;
         let pos_table = read_fp16_host(
@@ -253,14 +304,27 @@ impl VisionTower {
         Ok(Self {
             slot_buffers,
             streamer,
+            mapped_buffer,
+            mapped_layer,
             blocks,
             resident,
             pos_table,
             shape,
-            slot_bytes: VISION_SLOTS as u64 * layer.expert_stride,
+            slot_bytes,
             last_scratch_bytes: 0,
             overflow: overflow::VisionOverflowCapture::from_env(),
         })
+    }
+
+    /// Whether this tower opened under `MFERENCE_VISION_RESIDENCY=mapped`.
+    ///
+    /// Test-only proof of engagement: a byte-identity check between the two
+    /// arms cannot on its own distinguish "the mapped arm ran and produced
+    /// the same output" from "the mapped arm silently fell through to
+    /// pread", since both would pass parity trivially in the second case.
+    #[allow(dead_code)]
+    pub(crate) fn is_mapped_residency(&self) -> bool {
+        self.mapped_buffer.is_some()
     }
 
     /// Run one image through the whole tower.
@@ -385,24 +449,61 @@ impl VisionTower {
             }
 
             for n in 0..self.shape.depth {
-                let slot = n % VISION_SLOTS;
-                // Layer 0 because the tower IS one layer; `n` is the blob
-                // index inside it.
-                self.streamer
-                    .load_expert_into_slot(0, n, slot)
-                    .map_err(|e| {
-                        RealForwardError::Unsupported(format!("vision block {n} read: {e}"))
-                    })?;
                 let pass = context.begin_pass();
-                block::encode_block(
-                    context,
-                    &pass,
-                    &self.slot_buffers[slot],
-                    &self.blocks[n],
-                    &s,
-                    &self.shape,
-                )?;
-                pass.commit_and_wait();
+                let mapped_active = self.mapped_buffer.is_some();
+                if let Some(mapped_buffer) = self.mapped_buffer.as_ref() {
+                    let mapping = self
+                        .mapped_layer
+                        .as_ref()
+                        .expect("mapped_buffer implies mapped_layer");
+                    let base = mapping.expert_offset(n);
+                    block::encode_block(
+                        context,
+                        &pass,
+                        mapped_buffer,
+                        base,
+                        &self.blocks[n],
+                        &s,
+                        &self.shape,
+                    )?;
+                } else {
+                    let slot = n % VISION_SLOTS;
+                    // Layer 0 because the tower IS one layer; `n` is the blob
+                    // index inside it.
+                    self.streamer
+                        .as_mut()
+                        .expect("pread arm: streamer opened in VisionTower::open")
+                        .load_expert_into_slot(0, n, slot)
+                        .map_err(|e| {
+                            RealForwardError::Unsupported(format!("vision block {n} read: {e}"))
+                        })?;
+                    block::encode_block(
+                        context,
+                        &pass,
+                        &self.slot_buffers[slot],
+                        0,
+                        &self.blocks[n],
+                        &s,
+                        &self.shape,
+                    )?;
+                }
+                // The mapped arm has no pread step and no per-block
+                // overwritten slot (the mapped buffer is read-only for the
+                // whole run), so waiting per block is pure CPU-side
+                // serialization with no data-hazard purpose: commands on one
+                // Metal queue execute in commit order (crates/gpu/CLAUDE.md
+                // Gotcha 8), so `s.x`'s per-block residual read/write stays
+                // correct with no host wait between blocks. Skip the wait
+                // there UNLESS a per-block host readback is requested
+                // (`capture`/`overflow` below), which needs the GPU to have
+                // actually finished before `read_stage`/`check_block` reads
+                // `s.x` from the host. The pread arm always waits, unchanged.
+                let needs_sync = capture.is_some() || self.overflow.is_some();
+                if mapped_active && !needs_sync {
+                    pass.commit();
+                } else {
+                    pass.commit_and_wait();
+                }
                 if let Some(c) = capture.as_mut() {
                     if n == 0 {
                         c.block_first = read_stage(&s.x, wide);

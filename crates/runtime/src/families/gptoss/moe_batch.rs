@@ -79,6 +79,22 @@ impl RealForwardRunner {
                 layout.phase1, layout.phase2
             )));
         }
+        // MAPPED RESIDENCY AND THE BATCHED ROUTED PAIR CANNOT BOTH RUN, the
+        // same structural conflict `families/gemma4/moe_batch.rs` refuses:
+        // this driver binds `slot_buffers[layer]` ONCE per layer, an array
+        // indexed by CACHE SLOT, and mapped residency has no slot cache at
+        // all -- it has one buffer per layer plus a per-expert offset, and
+        // the experts to bind are the SUB-BATCH's union, which changes
+        // inside the loop below. Refused here rather than at `open` because
+        // `set_routed_batch_prefill` can flip this seam after open.
+        if self.mapped.buffers.get(layer).is_some_and(Option::is_some) {
+            return Err(RealForwardError::Unsupported(format!(
+                "batched routed prefill (MFERENCE_ROUTED_BATCH) and mapped expert \
+                 residency (MFERENCE_EXPERT_RESIDENCY=mapped) cannot be combined: this \
+                 pair binds one buffer per CACHE SLOT and mapped residency has no slot \
+                 cache (layer {layer}). Pick one"
+            )));
+        }
         if self.slot_buffers[layer].len() > gpu::MAX_PREFILL_EXPERT_BINDINGS {
             return Err(RealForwardError::Unsupported(format!(
                 "batched routed prefill needs slot indices below {}; this install has {} slots",

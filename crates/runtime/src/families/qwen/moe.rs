@@ -9,6 +9,7 @@ use crate::families::qwen::{layer_tensor, RealQwenState};
 use crate::real_forward_dispatch::{
     encode_gemv_any, encode_moe_phase1_any, encode_moe_phase2_any, router_topk_gemma4,
 };
+use crate::real_forward_init::MappedResidency;
 use crate::real_forward_layout::RoutedLayerLayout;
 use crate::real_forward_types::{DecodeScratch, PhaseCounters, RealForwardError};
 use crate::real_forward_utils::f16_slice_to_le_bytes;
@@ -23,6 +24,7 @@ pub(crate) fn encode_qwen_layer_moe(
     qwen: &RealQwenState,
     streamers: &mut [Option<streaming::PreadExpertStreamer>],
     slot_buffers: &[Vec<gpu::MetalBuffer>],
+    mapped: &MappedResidency,
     routed_blobs: Option<&gpu::RoutedBlobsBuffer>,
     moe_offsets: &[gpu::MoeExpertOffsets],
     routed_layouts: &[RoutedLayerLayout],
@@ -44,25 +46,40 @@ pub(crate) fn encode_qwen_layer_moe(
     if let Some(hist) = router_hist.as_mut() {
         hist.record(layer, &selected);
     }
-    let streamer = streamers[layer].as_mut().ok_or_else(|| {
-        RealForwardError::Unsupported(format!(
-            "real Qwen 3.6 layer {layer} has no packed-expert streamer"
-        ))
-    })?;
-    let plan = streamer.plan_experts_cached(&selected, &std::collections::HashSet::new());
-    let (requests, hits) = (plan.experts.len() as u64, plan.hits as u64);
-    phases.expert_requests += requests;
-    phases.expert_hits += hits;
-    phases.router_nanos += t_router.elapsed().as_nanos() as u64;
+    // MAPPED RESIDENCY SKIPS BOTH THE PLAN AND THE `pread`, exactly as
+    // `families/gemma4/moe.rs` does: every expert is already addressable in
+    // its layer's mapping, so there is no cache to consult and nothing to
+    // copy. Counted as requests that all hit, so `MFERENCE_PHASES`'s hit
+    // rate stays comparable across residency modes rather than reading
+    // undefined for a run with zero requests.
+    let mapped_active = mapped.buffers.get(layer).is_some_and(Option::is_some);
+    let slots: Vec<usize> = if mapped_active {
+        phases.expert_requests += selected.len() as u64;
+        phases.expert_hits += selected.len() as u64;
+        phases.router_nanos += t_router.elapsed().as_nanos() as u64;
+        selected.clone()
+    } else {
+        let streamer = streamers[layer].as_mut().ok_or_else(|| {
+            RealForwardError::Unsupported(format!(
+                "real Qwen 3.6 layer {layer} has no packed-expert streamer"
+            ))
+        })?;
+        let plan = streamer.plan_experts_cached(&selected, &std::collections::HashSet::new());
+        let (requests, hits) = (plan.experts.len() as u64, plan.hits as u64);
+        phases.expert_requests += requests;
+        phases.expert_hits += hits;
+        phases.router_nanos += t_router.elapsed().as_nanos() as u64;
 
-    let streamer = streamers[layer]
-        .as_mut()
-        .expect("streamer presence checked above");
-    let t_io = Instant::now();
-    let slots = streamer
-        .execute_expert_cache_plan(&plan)
-        .map_err(|e| RealForwardError::Unsupported(format!("expert stream: {e}")))?;
-    phases.expert_io_nanos += t_io.elapsed().as_nanos() as u64;
+        let streamer = streamers[layer]
+            .as_mut()
+            .expect("streamer presence checked above");
+        let t_io = Instant::now();
+        let slots = streamer
+            .execute_expert_cache_plan(&plan)
+            .map_err(|e| RealForwardError::Unsupported(format!("expert stream: {e}")))?;
+        phases.expert_io_nanos += t_io.elapsed().as_nanos() as u64;
+        slots
+    };
 
     let t_bind = Instant::now();
     let order: Vec<usize> = (0..selected.len()).collect();
@@ -76,11 +93,28 @@ pub(crate) fn encode_qwen_layer_moe(
     }
     gpu::write_buffer_bytes(&scratch.routing_w, 0, &f16_slice_to_le_bytes(&routing16));
 
-    let layer_slots = &slot_buffers[layer];
-    let blob_refs: Vec<(&gpu::MetalBuffer, u64)> = ordered
-        .iter()
-        .map(|&(slot, _)| (&layer_slots[slot], 0u64))
-        .collect();
+    // The two arms differ only in WHERE a blob lives, never in the order the
+    // slots are dispatched: that stays the router's own ranking in both,
+    // which is what keeps output byte-identical across residency modes
+    // (AGENTS.md Gotcha 27), matching `families/gemma4/moe.rs`.
+    let blob_refs: Vec<(&gpu::MetalBuffer, u64)> = if mapped_active {
+        let buffer = mapped.buffers[layer]
+            .as_ref()
+            .expect("mapped residency checked above");
+        let mapping = mapped.layers[layer]
+            .as_ref()
+            .expect("mapped residency checked above");
+        ordered
+            .iter()
+            .map(|&(expert, _)| (buffer, mapping.expert_offset(expert)))
+            .collect()
+    } else {
+        let layer_slots = &slot_buffers[layer];
+        ordered
+            .iter()
+            .map(|&(slot, _)| (&layer_slots[slot], 0u64))
+            .collect()
+    };
     let routed = routed_blobs.ok_or_else(|| {
         RealForwardError::Unsupported("install has no routed-blob buffer".to_string())
     })?;

@@ -71,6 +71,18 @@ impl RealForwardRunner {
         self.vision.as_ref().map(|v| v.scratch_bytes(seq))
     }
 
+    /// Whether the vision tower opened under `MFERENCE_VISION_RESIDENCY=
+    /// mapped`. `None` until the tower has been opened (lazy, on the first
+    /// image); `Some(false)` is the ordinary pread streamer.
+    ///
+    /// Test-only engagement proof: a byte-identity check between the two
+    /// residency arms cannot on its own distinguish "the mapped arm ran and
+    /// produced the same output" from "the mapped arm silently fell through
+    /// to pread", since both would pass parity trivially in the second case.
+    pub fn vision_residency_is_mapped(&self) -> Option<bool> {
+        self.vision.as_ref().map(|v| v.is_mapped_residency())
+    }
+
     /// Run one preprocessed image through the vision tower (ROADMAP M-V4).
     ///
     /// Returns the `[merged_tokens, out_hidden_size]` FP16 rows the trunk's

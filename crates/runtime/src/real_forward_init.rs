@@ -109,11 +109,18 @@ pub(crate) fn mapped_residency_requested() -> bool {
 pub(crate) fn mapped_residency_refusal(
     family: model_io::ModelFamily,
 ) -> Result<(), RealForwardError> {
-    if family == model_io::ModelFamily::Gemma4 {
+    if matches!(
+        family,
+        model_io::ModelFamily::Gemma4
+            | model_io::ModelFamily::QwenGdnMoe
+            | model_io::ModelFamily::Llama
+            | model_io::ModelFamily::Qwen3Moe
+            | model_io::ModelFamily::GptOss
+    ) {
         return Ok(());
     }
     Err(RealForwardError::Unsupported(format!(
-        "MFERENCE_EXPERT_RESIDENCY=mapped is wired for the gemma4 family only, not {}; \
+        "MFERENCE_EXPERT_RESIDENCY=mapped is not wired for {}; \
          unset it to use the pread expert streamer. Widening it is ROADMAP item 9, and \
          each family REPLACES this refusal rather than adding a branch to a silent path",
         family.as_str()
@@ -309,9 +316,15 @@ mod tests {
         );
         for &family in EVERY_FAMILY {
             match mapped_residency_refusal(family) {
-                Ok(()) => assert_eq!(
-                    family,
-                    ModelFamily::Gemma4,
+                Ok(()) => assert!(
+                    matches!(
+                        family,
+                        ModelFamily::Gemma4
+                            | ModelFamily::QwenGdnMoe
+                            | ModelFamily::Llama
+                            | ModelFamily::Qwen3Moe
+                            | ModelFamily::GptOss
+                    ),
                     "{} accepts mapped residency but has no mapped arm at its \
                      dispatch site; a family that accepts it and does not serve it \
                      runs the streamed engine under the mapped label",

@@ -43,12 +43,19 @@ use crate::vision::weights::{BlockRoles, Role};
 /// Encode one block's whole forward pass into `pass`, reading its twelve
 /// weights out of `slot`.
 ///
-/// `slot` is a streamer slot buffer wrapping the block blob's page-aligned
-/// host allocation, so a role's blob-relative offset is its buffer offset.
+/// `slot` is either a streamer slot buffer wrapping exactly this one block's
+/// page-aligned host allocation (the pread arm, `base == 0`), or the mapped
+/// residency arm's single buffer over the WHOLE tower's mapped region, in
+/// which case `base` is this block's own offset within it
+/// (`MappedExpertLayer::expert_offset`). Either way a role's buffer offset is
+/// `base + roles.at(role)`: `roles.at()` is always relative to the start of
+/// this one block's own blob, and `base` places that blob within whichever
+/// buffer `slot` is.
 pub(crate) fn encode_block(
     context: &mut gpu::MetalContext,
     pass: &gpu::PassEncoder,
     slot: &gpu::MetalBuffer,
+    base: u64,
     roles: &BlockRoles,
     s: &VisionScratch,
     shape: &VisionShape,
@@ -65,8 +72,8 @@ pub(crate) fn encode_block(
         context,
         pass,
         (&s.x, 0),
-        (slot, roles.at(Role::Ln1W)),
-        (slot, roles.at(Role::Ln1B)),
+        (slot, base + roles.at(Role::Ln1W)),
+        (slot, base + roles.at(Role::Ln1B)),
         (&s.normed, 0),
         seq,
         hidden,
@@ -83,8 +90,8 @@ pub(crate) fn encode_block(
             context,
             pass,
             (&s.normed, 0),
-            (slot, roles.at(Role::QkvW) + i as u64 * row_bytes),
-            Some((slot, roles.at(Role::QkvB) + i as u64 * bias_bytes)),
+            (slot, base + roles.at(Role::QkvW) + i as u64 * row_bytes),
+            Some((slot, base + roles.at(Role::QkvB) + i as u64 * bias_bytes)),
             (out, 0),
             seq,
             hidden,
@@ -126,8 +133,8 @@ pub(crate) fn encode_block(
         context,
         pass,
         (&s.attn, 0),
-        (slot, roles.at(Role::ProjW)),
-        Some((slot, roles.at(Role::ProjB))),
+        (slot, base + roles.at(Role::ProjW)),
+        Some((slot, base + roles.at(Role::ProjB))),
         (&s.proj, 0),
         seq,
         hidden,
@@ -144,8 +151,8 @@ pub(crate) fn encode_block(
         context,
         pass,
         (&s.x, 0),
-        (slot, roles.at(Role::Ln2W)),
-        (slot, roles.at(Role::Ln2B)),
+        (slot, base + roles.at(Role::Ln2W)),
+        (slot, base + roles.at(Role::Ln2B)),
         (&s.normed, 0),
         seq,
         hidden,
@@ -157,8 +164,8 @@ pub(crate) fn encode_block(
         context,
         pass,
         (&s.normed, 0),
-        (slot, roles.at(Role::Fc1W)),
-        Some((slot, roles.at(Role::Fc1B))),
+        (slot, base + roles.at(Role::Fc1W)),
+        Some((slot, base + roles.at(Role::Fc1B))),
         (&s.h1, 0),
         seq,
         hidden,
@@ -182,8 +189,8 @@ pub(crate) fn encode_block(
         context,
         pass,
         (&s.h1, 0),
-        (slot, roles.at(Role::Fc2W)),
-        Some((slot, roles.at(Role::Fc2B))),
+        (slot, base + roles.at(Role::Fc2W)),
+        Some((slot, base + roles.at(Role::Fc2B))),
         (&s.proj, 0),
         seq,
         inter,

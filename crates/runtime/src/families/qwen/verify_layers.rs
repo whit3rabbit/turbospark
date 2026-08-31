@@ -5,6 +5,7 @@ use model_io::{ArchConfig, ResidentIndex};
 use super::batched_layers::{encode_full_attention_block_batched, encode_linear_block_batched};
 use super::moe_batch::encode_qwen_layer_moe_batched;
 use super::{layer_tensor, BatchedScratch, RealQwenState, RMS_EPS};
+use crate::real_forward_init::MappedResidency;
 use crate::real_forward_layout::RoutedLayerLayout;
 use crate::real_forward_types::{DecodeScratch, PhaseCounters, RealForwardError};
 
@@ -74,6 +75,7 @@ pub(crate) fn encode_qwen_moe_layer_batched_step(
     batched: &BatchedScratch,
     streamers: &mut [Option<streaming::PreadExpertStreamer>],
     slot_buffers: &[Vec<gpu::MetalBuffer>],
+    mapped: &MappedResidency,
     moe_offsets: &[gpu::MoeExpertOffsets],
     routed_layouts: &[RoutedLayerLayout],
     router_hist: &mut Option<crate::router_hist::RouterHistogram>,
@@ -120,6 +122,7 @@ pub(crate) fn encode_qwen_moe_layer_batched_step(
         batched,
         streamers,
         slot_buffers,
+        mapped,
         moe_offsets,
         routed_layouts,
         router_hist,

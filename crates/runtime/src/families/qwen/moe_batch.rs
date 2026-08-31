@@ -40,6 +40,7 @@ use crate::families::qwen::batched_scratch::BatchedScratch;
 use crate::families::qwen::{layer_tensor, RealQwenState};
 use crate::moe_prefill_pipeline::{encode_routes, next_routed_sub_batch, plan_and_stream_union};
 use crate::real_forward_dispatch::{encode_gemv_any, router_topk_gemma4};
+use crate::real_forward_init::MappedResidency;
 use crate::real_forward_layout::{RoutedBlobLayout, RoutedLayerLayout};
 use crate::real_forward_types::{DecodeScratch, PhaseCounters, RealForwardError};
 use crate::real_forward_utils::f16_slice_to_le_bytes;
@@ -60,6 +61,7 @@ pub(crate) fn encode_qwen_layer_moe_batched(
     batched: &BatchedScratch,
     streamers: &mut [Option<streaming::PreadExpertStreamer>],
     slot_buffers: &[Vec<gpu::MetalBuffer>],
+    mapped: &MappedResidency,
     moe_offsets: &[gpu::MoeExpertOffsets],
     routed_layouts: &[RoutedLayerLayout],
     router_hist: &mut Option<crate::router_hist::RouterHistogram>,
@@ -90,6 +92,24 @@ pub(crate) fn encode_qwen_layer_moe_batched(
             "batched routed verify is wired for INT4-affine blobs only; layer {layer} \
              phase1 {:?} phase2 {:?}",
             layout.phase1, layout.phase2
+        )));
+    }
+    // MAPPED RESIDENCY AND THE BATCHED VERIFY PASS CANNOT BOTH RUN, the same
+    // structural conflict `families/gemma4/moe_batch.rs` refuses: this driver
+    // binds `slot_buffers[layer]` ONCE per layer, an array indexed by CACHE
+    // SLOT, and mapped residency has no slot cache at all. No published MoE
+    // conversion of this architecture carries an ingestible speculative head
+    // (`crates/runtime/CLAUDE.md` Gotcha 0), so a real install can never
+    // reach this combination -- but a synthetic MoE+MTP fixture can, and an
+    // unrefused combination would bind an empty `slot_buffers[layer]` and
+    // trip a plain `assert!` several frames downstream in `gpu`'s argument
+    // encoder, naming neither seam.
+    if mapped.buffers.get(layer).is_some_and(Option::is_some) {
+        return Err(RealForwardError::Unsupported(format!(
+            "the batched verify pass and mapped expert residency \
+             (MFERENCE_EXPERT_RESIDENCY=mapped) cannot be combined: this pass binds one \
+             buffer per CACHE SLOT and mapped residency has no slot cache (layer {layer}). \
+             Pick one"
         )));
     }
     if slot_buffers[layer].len() > gpu::MAX_PREFILL_EXPERT_BINDINGS {
