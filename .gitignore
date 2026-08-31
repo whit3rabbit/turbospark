@@ -38,3 +38,7 @@ compile_flags.txt
 # Release staging: TurboSpark.app and the DMG, built by scripts/make-app-bundle.sh
 # and scripts/make-dmg.sh (`make dmg`). Fully derived, and large.
 /dist
+# security-audit output (vulnerability inventory — do not commit)
+.security-audit/
+# security-audit output (vulnerability inventory — do not commit)
+.security-audit/

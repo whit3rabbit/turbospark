@@ -33,7 +33,7 @@ crates/compute/
 |   +-- rms_norm.rs     # CPU RMSNorm reference calculation
 |   +-- rope.rs         # CPU rotary positional embedding calculation
 |   +-- sampling.rs     # Host-side sampling helper logic
-|   +-- steering.rs     # Directional steering of a residual row (ablate/add/clamp)
+|   +-- steering.rs     # Directional steering of a residual row (ablate/add/clamp/renorm)
 |   +-- tolerance.rs    # RelError tolerance table & numerical comparison utilities
 |   +-- vision.rs      # qwen3_5 vision tower references (LayerNorm, both GELUs, 2-D rope, bidirectional attention, GEMM)
 |   \-- wht.rs          # Walsh-Hadamard Transform reference implementation

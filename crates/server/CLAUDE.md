@@ -1,9 +1,11 @@
 # turbospark-server
 
-HTTP server (`turbospark-server`) on Axum, speaking three wire formats against
-one local backend: OpenAI `/v1/chat/completions`, legacy `/v1/completions`,
-and `/v1/responses`; Anthropic `/v1/messages` and `/v1/messages/count_tokens`;
-`/v1/models`; and a lock-free `GET /health`. Every generation endpoint
+HTTP server (`turbospark-server`) on Axum, speaking four wire formats against
+one or more local backends: OpenAI `/v1/chat/completions`, legacy
+`/v1/completions`, and `/v1/responses`; Anthropic `/v1/messages` and
+`/v1/messages/count_tokens`; Ollama `/api/{tags,version,show,chat,generate}`;
+`/v1/models`; and a lock-free `GET /health`. Which backend serves a request
+is `registry.rs`'s decision (Gotcha 28). Every generation endpoint
 supports non-streaming and Server-Sent Events (SSE) streaming output;
 `count_tokens` never generates at all. `--api-key` adds opt-in
 `x-api-key`/`Authorization: Bearer` auth on every route except `/health`
@@ -23,6 +25,7 @@ crates/server/
 +-- src/
 |   +-- main.rs                 # Binary entry point for turbospark-server
 |   +-- args.rs                 # Command line parsing and host binding resolution
+|   +-- bind.rs                 # Host and bind address resolution (--bind loopback|tailnet)
 |   +-- main_tests.rs           # Unit tests for CLI args and host binding
 |   +-- lib.rs                  # Library root: router, re-exported wire types
 |   +-- cancel.rs               # Cancel/CancelOnDrop/CancelGuard: client-disconnect cancellation (Gotcha 25)
@@ -37,21 +40,29 @@ crates/server/
 |   +-- responses.rs            # OpenAI /v1/responses: item-shaped request/response, typed SSE event sequence
 |   +-- guardrails.rs           # Tool-call rescue, argument validation, the retry loop
 |   |   \-- tests.rs            # Unit tests for the verdict (pure, no model)
+|   +-- registry.rs             # ModelRegistry: which backend serves a request (Gotcha 28)
+|   +-- observe.rs              # ServerEvent/ServerObserver, and the run_completion decorator (Gotcha 29)
+|   +-- ollama.rs               # Ollama-compatible routes; NDJSON rather than SSE (Gotcha 30)
 |   +-- model.rs                # ChatModel trait and the ScriptedChatModel backend
 |   +-- real_model.rs           # RealChatModel: RealForwardRunner backend (macOS only)
 |   +-- response.rs             # Constructors for the OpenAI response & SSE chunk envelopes
-|   \-- response_tests.rs       # Unit tests for response and chunk serialization
+|   +-- response_tests.rs       # Unit tests for response and chunk serialization
+|   \-- vision.rs               # Image decoding and vision token injection mapping
 \-- tests/
+    +-- auth.rs                 # 401/200 both header spellings, /health exempt, build_router untouched
+    +-- cancellation.rs         # Drop a streaming response mid-generation, assert it stopped short
     +-- chat_completions.rs     # Integration tests for the OpenAI endpoint
     +-- completions.rs          # Integration tests for /v1/completions, incl. the not-templated assertion
-    +-- responses.rs            # Integration tests for /v1/responses, incl. the exact SSE event-order assertion
-    +-- messages.rs             # Integration tests for /v1/messages, count_tokens, /v1/models, wider OpenAI shapes
-    +-- harmony_channels.rs     # gpt-oss reasoning -> thinking/reasoning_content, and its tool calls
-    +-- reasoning_channels.rs   # Streaming & non-streaming reasoning channel translation tests
     +-- guardrails.rs           # Rescue/validate/retry end to end, both endpoints, no model
-    +-- cancellation.rs         # Drop a streaming response mid-generation, assert it stopped short
-    +-- auth.rs                 # 401/200 both header spellings, /health exempt, build_router untouched
+    +-- harmony_channels.rs     # gpt-oss reasoning -> thinking/reasoning_content, and its tool calls
+    +-- images.rs               # Integration tests for vision and image endpoints
+    +-- messages.rs             # Integration tests for /v1/messages, count_tokens, /v1/models, wider OpenAI shapes
+    +-- observe.rs              # the event sequence, incl. a request auth rejected
+    +-- ollama.rs               # /api/* shapes and the NDJSON framing, asserted line by line
     +-- real_backend.rs         # Gated real-model end-to-end test (macOS, #[ignore]d)
+    +-- reasoning_channels.rs   # Streaming & non-streaming reasoning channel translation tests
+    +-- registry.rs             # routing by model id, and the single-model fallback
+    +-- responses.rs            # Integration tests for /v1/responses, incl. the exact SSE event-order assertion
     \-- fixtures/               # Test tokenizer fixtures for integration tests
 ```
 
@@ -63,6 +74,9 @@ crates/server/
 - `completions.rs`: the legacy OpenAI `/v1/completions` handler -- a hand-rolled request type (`anyllm_translate` has none for this endpoint), `tokenizer.encode(_, add_bos: true)` with no chat template, and its own minimal `run_full`/`stream_response` with no decoder (Gotcha 23).
 - `responses.rs`: the OpenAI `/v1/responses` handler -- `responses_to_chat_request` folds `anyllm_translate::openai::responses::ResponsesRequest` (which the vendored crate ships but never maps onto Chat Completions itself) down onto the same `ChatCompletionRequest` `handler::plan` renders, and the streaming path emits a hand-built typed `ResponsesStreamEvent` sequence (Gotcha 24).
 - `guardrails.rs`: tool-call rescue parsing, argument validation against the request's own schema, and the one-retry loop, over `forge-guardrails` (see Gotcha 18). `inspect` is the pure verdict; `run_guarded` is the loop that acts on it.
+- `registry.rs`: `ModelRegistry` and the resolution policy -- exact id, else the single attached model whatever the name, else a 404 naming what is there (Gotcha 28). `SingleModel` is what every pre-registry caller gets; `StaticRegistry` is a fixed set; the FFI implements its own over locked storage so a running server can gain and lose models.
+- `observe.rs`: `ServerEvent`, `ServerObserver`, and `ReportingModel` -- a `ChatModel` decorator that reports each generation from `run_completion`, the one choke point every path already goes through (Gotcha 29).
+- `ollama.rs`: the Ollama-compatible routes, hand-rolled shapes and NDJSON framing (Gotcha 30).
 - `model.rs`: the `ChatModel` trait and `ScriptedChatModel`, bridging Axum handlers to `turbospark-runtime`. The trait owns WHICH decode loop runs (`run_completion`, Gotcha 17), not just which producer.
 - `real_model.rs`: `RealChatModel`, a `RealForwardRunner` behind the same trait (macOS only).
 - `cancel.rs`: `Cancel` (the `Arc<AtomicBool>` threaded through every async call chain), `CancelOnDrop` (wraps an SSE stream, sets it when axum drops the stream), and `CancelGuard` (sets it if a non-streaming handler's own future is dropped before `.defuse()`) -- the client-disconnect cancellation mechanism (Gotcha 25).
@@ -74,6 +88,16 @@ crates/server/
 ```sh
 # Run tests for turbospark-server
 cargo test -p turbospark-server
+
+# The Ollama-compatible routes. NDJSON, so read them line by line rather
+# than expecting SSE framing; `stream` defaults to TRUE here, unlike every
+# OpenAI-shaped route above.
+curl -s localhost:8080/api/tags
+curl -s localhost:8080/api/version
+curl -s localhost:8080/api/chat -H 'content-type: application/json' \
+  -d '{"model":"m","stream":false,"messages":[{"role":"user","content":"hi"}]}'
+curl -sN localhost:8080/api/chat -H 'content-type: application/json' \
+  -d '{"model":"m","messages":[{"role":"user","content":"hi"}]}'
 
 # Smoke the two generation endpoints against a running --model server.
 curl -s localhost:8080/health
@@ -702,3 +726,141 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
     sampler-side semantics (generated-suffix-only penalties, min-p's
     composition order, the `[-2, 2]`/`[0, 1)` bounds) -- this crate's half
     of the change is wiring, not policy.
+
+28. **A REQUEST IS ROUTED TO A MODEL NOW, AND THE FALLBACK THAT KEEPS EVERY
+    PRE-REGISTRY CLIENT WORKING IS THE LOAD-BEARING PART.** Added 2026-08-30
+    (`src/registry.rs`). `ChatModel::model_id`'s doc used to say a request's
+    `model` field was echoed back rather than routed on; that is still true
+    of a server with ONE model and no longer true in general.
+
+    The rule, in order: an exact id match wins; failing that, **if exactly
+    one model is attached it serves the request whatever name was asked
+    for**; only with two or more attached and no match is it a 404 naming
+    what IS available. The middle clause is not a courtesy. `docs/CLI.md`'s
+    own Anthropic walkthrough sends `"model":"claude-sonnet-4-6"` at an
+    install named nothing of the sort, Claude Code's gateway discovery does
+    the same, and every OpenAI SDK sends its own default -- all of which
+    worked precisely because the name was ignored. Routing strictly would
+    have 404'd the documented client on the first day multi-model shipped.
+    `tests/registry.rs`'s `one_model_serves_a_name_it_does_not_know` is that
+    invocation turned into an assertion, and deleting `resolve_among`'s
+    `[only]` arm reddens it and nothing else.
+
+    **`handler::AppState` KEPT ITS NAME AND ITS MEANING, WHICH IS WHY THIS
+    WAS EIGHT FUNCTION HEADS RATHER THAN A SWEEP.** It is still
+    `Arc<dyn ChatModel>` -- ONE resolved backend -- and `plan`, `run_full`,
+    `stream_blocking`, `needs_decoder`, `may_produce_reasoning` and
+    `run_guarded` are untouched. What changed is that axum's `State` now
+    carries a `ServerState` (registry plus observer), and each of the eight
+    entry points calls `handler::resolve_backend` as its first act. Past
+    that line the crate is single-model again.
+    `build_router(state: impl Into<ServerState>)` with a `From<Arc<dyn
+    ChatModel>>` impl is what left every existing call site -- this crate's
+    whole integration suite -- compiling verbatim.
+
+    **`/v1/models/:model` DELIBERATELY DOES NOT TAKE THE FALLBACK.** It
+    matches against `registry.rows()` rather than through `resolve`, because
+    a lookup asks whether this exact id exists where the fallback answers a
+    different question. Routing it through `resolve` reddens
+    `a_model_lookup_does_not_take_the_single_model_fallback` alone.
+
+    **AN EMPTY REGISTRY IS 503, NOT 404.** A server with nothing attached is
+    a real state a host starts one in (`crates/ffi`'s `ts_server_start`
+    takes a null session), and "the request is fine, the server is not
+    ready" is a different thing for a client's retry logic than "that model
+    does not exist".
+
+29. **THIS CRATE REPORTS WHAT IT DOES NOW, AND THE FACTS COME FROM TWO
+    PLACES BECAUSE NEITHER EMITTER CAN SEE THE OTHER'S.** Added 2026-08-30
+    (`src/observe.rs`). `RouterOptions.observer` is `None` by default and
+    then nothing is recorded and no event is even BUILT (`observe::record`
+    takes a closure), so every pre-observer caller keeps the exact path it
+    had -- the standalone binary passes `None` deliberately: its equivalent
+    is stdout, and a second structured channel nothing reads is overhead per
+    request for no reader.
+
+    An axum middleware layer knows the method, path, status and wall
+    duration for EVERY request including the ones no handler ran. The
+    generation paths know the token counts and phase timings. So a request
+    produces `RequestStarted` and `RequestFinished` from the layer,
+    `RequestRouted` from `resolve_backend`, and `Generated` from the
+    generation, tied together by an id the layer mints into the request
+    extensions.
+
+    **THE LAYER'S PLACEMENT AND ITS ORDER ARE TWO SEPARATE PROPERTIES WITH
+    TWO SEPARATE TESTS, and one mutation does not catch both.** WHICH
+    ROUTER it is applied to decides `/health` coverage -- moving it onto
+    `protected` (which reads as tidier, since the auth layer goes there)
+    leaves `/health` unobserved, and reddens
+    `health_is_observed_even_though_it_is_exempt_from_auth` and NOTHING
+    else, the 401 case included, because a later `.layer()` still wraps an
+    earlier one. WHEN it is applied relative to `auth` decides the 401
+    coverage: applied BEFORE the auth layer it sits inside, the rejection
+    returns from the outer layer, and this code never runs. Measured both
+    ways; both mutations are recorded in `lib.rs`'s own comment.
+
+    **`Generated` IS EMITTED BY A DECORATOR ON `ChatModel::run_completion`
+    RATHER THAN BY A REPORTER THREADED THROUGH THE CORE.** That method IS
+    the choke point already (Gotcha 17: it exists because the speculative
+    loop is not object-safe, so the trait method owns which decode loop
+    runs), and every generation in this crate goes through exactly one call
+    to it. `observe::ReportingModel` wraps the resolved backend and
+    **delegates rather than reimplementing** -- calling `with_producer` in
+    that override instead would silently downgrade every speculative or
+    chunked request to the sequential loop the moment an observer was
+    configured, with nothing failing.
+
+    **THERE IS NO TIME-TO-FIRST-TOKEN FIELD, and its absence is the honest
+    answer rather than a gap.** A caller means "request in, first token
+    out", which includes the wait behind the one-runner-per-model lock
+    (Gotcha 1), and the decorator only starts counting once it already holds
+    the runner. What is reported is `prefillSeconds` and `decodeSeconds`
+    off `RawDecodeResult` plus the middleware's `durationMs`, which DOES
+    include the queue; subtracting gives the wait. A field named `ttftMs`
+    filled from `prefillSeconds` would read as the first number and be the
+    second. Token counts come off `RawDecodeResult` and never off a count of
+    deltas -- `swift/CLAUDE.md` Gotcha 7 is the worked example of how far
+    apart those two are.
+
+    A request the guardrails re-asked emits TWO `Generated` events. That is
+    the useful reading rather than a duplicate: the retry is real work the
+    machine did, and a consumer that replaced rather than accumulated would
+    under-report exactly the requests that cost the most.
+
+30. **THE OLLAMA ROUTES ARE THE ONE NON-SSE STREAM IN THIS CRATE.** Added
+    2026-08-30 (`src/ollama.rs`): `/api/tags`, `/api/version`, `/api/show`,
+    `/api/chat`, `/api/generate`. `anyllm_translate` ships no Ollama types
+    (it does ship Gemini, deliberately not taken), so the shapes are
+    hand-rolled the way `completions.rs`'s legacy ones are.
+
+    The reason to carry a fourth wire format at all: the other three are
+    what a developer picks deliberately, and Ollama's is what a lot of
+    tooling speaks by DEFAULT with no way to change it, so for those clients
+    it is this shim or nothing.
+
+    **NDJSON, NOT SSE.** One bare JSON object per line over a plain body: no
+    `event:` lines, no `data:` prefix, no `[DONE]` sentinel, and the LAST
+    object carries `"done": true` plus the counters. So this module builds
+    its own response rather than taking a parameter on the shared SSE one,
+    and Gotcha 22's note that keep-alive is on "every SSE construction in
+    the crate" stays true by not applying here.
+    `tests/ollama.rs`'s `a_streaming_chat_is_ndjson_ending_in_a_done_object`
+    parses every line as a complete object, which an SSE body cannot
+    satisfy; returning the stream through `Sse::new` reddens it alone.
+
+    **`stream` DEFAULTS TO TRUE**, unlike every OpenAI-shaped endpoint here
+    where an absent `stream` means false. That is Ollama's own default, and
+    a client that omits the field is expecting a stream.
+
+    Three honest refusals worth not re-deriving. `num_ctx` in the options
+    bag is DROPPED rather than honoured: the context window is fixed when
+    the model is opened and the KV cache is already allocated at it, so a
+    request cannot change it. `size` in `/api/tags` reports 0 rather than an
+    estimate, because this server downloaded nothing and an install's
+    on-disk bytes are not what it committed (AGENTS.md Gotcha 58).
+    `/api/version` reports THIS crate's version rather than borrowing an
+    Ollama one, because clients gate features on that range and a borrowed
+    number would promise endpoints that do not exist here. And reasoning and
+    tool pieces are dropped on the Ollama path -- its wire shape has nowhere
+    for either, and emitting a scratchpad as the answer is AGENTS.md Gotcha
+    56's failure.

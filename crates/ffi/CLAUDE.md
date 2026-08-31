@@ -26,6 +26,7 @@ crates/ffi/
 |   +-- wire.rs             # the JSON shapes (camelCase)
 |   +-- session.rs          # the opaque handle (Session over shared SessionCore); the cancel flag
 |   +-- open.rs             # opening an install (macOS)
+|   +-- open_tests.rs       # Unit tests for open options and mapping
 |   +-- generate.rs         # one turn: render, decode, stream, report
 |   +-- models.rs           # catalog, probe, install (portable)
 |   +-- server.rs           # the in-process HTTP server: background thread, tokio runtime, lifecycle
@@ -33,6 +34,7 @@ crates/ffi/
 |   +-- server_registry.rs  # the models a RUNNING server serves, and its event ring
 |   +-- telemetry.rs        # phase counters and peak footprint
 |   +-- testing.rs          # session_for_testing (scripted testing harness)
+|   +-- vision.rs           # Image data URL decoding & vision token prep
 |   \-- api/                # C ABI entry points (extern "C")
 |       +-- core.rs         # errors, strings, system telemetry
 |       +-- session.rs      # session lifecycle and introspection

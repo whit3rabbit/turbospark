@@ -18,6 +18,8 @@ crates/repack/
 |   |   +-- mod.rs                  # RangeSource trait and range fetchers
 |   |   +-- chunks.rs               # Chunk arithmetic and concurrent fill_chunks
 |   |   \-- http.rs                 # HttpRangeSource implementation
+|   +-- control_vector.rs       # Control vector GGUF parser & SteeringSet construction
+|   +-- control_vector_tests.rs # Unit tests for control vector parsing and layer normalization
 |   +-- repack.rs                   # Quantization repack algorithms (FP32/BF16 to INT4/INT8)
 |   +-- gturbo_writer/              # Writes .gturbo directory tree and manifest/layout JSON
 |   |   +-- mod.rs                  # Entry points and re-exports
@@ -34,6 +36,7 @@ crates/repack/
 |   +-- synthetic_real.rs           # Real-named synthetic generator (build_synthetic_gemma4_real_install)
 |   +-- synthetic_llama.rs          # Real-named synthetic Mixtral / Qwen3-MoE / DENSE llama generators
 |   +-- synthetic_muse.rs           # Real-named synthetic Muse Glimmer 30B generator
+|   +-- synthetic_tensors.rs        # Synthetic tensor generation utilities
 |   +-- synthetic_qwen/             # Real-named synthetic Qwen generators (MoE and dense)
 |   |   +-- mod.rs                  # Re-exports synthetic Qwen builders
 |   |   +-- dense.rs                # Dense sub-4-bit Qwen generator (build_synthetic_qwen_gdn_dense_install)
@@ -91,6 +94,7 @@ crates/repack/
 \-- tests/
     +-- arch_registry.rs            # Architecture string registry unit tests
     +-- arch_registry_network.rs    # Live architecture registry witness validator (ignored)
+    +-- control_vector_file.rs      # Control vector GGUF file parsing integration tests
     +-- dflash2_checkpoint_network.rs # Real DFlash2 drafter checkpoint streamed repack (ignored)
     +-- gemma4_checkpoint.rs        # Gemma 4 repack pipeline unit tests
     +-- gemma4_checkpoint_network.rs# Real Gemma 4 checkpoint download integration test (ignored)

@@ -2053,6 +2053,7 @@ dependencies = [
  "turbospark-selection",
  "turbospark-server",
  "turbospark-tokenizer",
+ "turbospark-vision-io",
  "turbospark-window-fit",
 ]
 

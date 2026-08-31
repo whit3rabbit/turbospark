@@ -15,34 +15,48 @@ crates/bench/
 |   +-- memory.rs           # Mach memory sampler for physical footprint tracking
 |   +-- protocol.rs         # Frozen community benchmark protocol definitions
 |   +-- real_model.rs       # Real model benchmark runner driving RealForwardRunner
+|   +-- real_model_open.rs  # Model runner open helpers and residency resolution
 |   \-- real_model_params.rs# Protocol parameters resolution per model family
 +-- tests/
+|   +-- accept_length_probe.rs # Speculative accept length probe
+|   +-- batched_forward_probe.rs # Batched forward numerical equivalence probe
+|   +-- dflash2_accept_length_probe.rs # The BLOCK drafter's sweep, plus the losslessness floor
+|   +-- dflash2_bisect_probe.rs # Localizes a broken drafter; one runner, one variable
+|   +-- gguf_nondeterminism_probe.rs # Repeated warm greedy runs must produce ONE output
+|   +-- gptoss_memory_oracle.rs # Memory oracle for gpt-oss-20b, at 8192 context AND a 3072 budget
+|   +-- gptoss_quality_gate.rs  # Quality gate for gpt-oss-20b; pins the template's date
+|   +-- iq3_quality_gate.rs     # Quality gate for IQ3 quantized models
 |   +-- logit_dump.rs       # Full-vocab logit dump for the cross-engine KLD (scripts/kld{,_llamacpp,_mlx_affine}.py)
+|   +-- mapped_expert_probe.rs # What phys_footprint charges for an mmap Metal wrapped and the GPU read
 |   +-- memory_oracle.rs    # Memory oracle asserting peak footprint ceiling & steady state (Gemma 4)
 |   +-- mference_bench.rs   # Benchmark harness integration smoke test
+|   +-- mistral_memory_oracle.rs # Memory oracle for the DENSE llama family, at 8192 context
+|   +-- mtp_accept_length_probe.rs # MTP head as drafter: accepted vs the block table's break-even
+|   +-- mtp_generation_gate.rs  # MTP speculative generation gate
+|   +-- mtp_head_probe.rs    # What the head predicts, when the probe above reads zero
+|   +-- museglimmer_memory_oracle.rs # Memory oracle for Muse Glimmer family
+|   +-- museglimmer_quality_gate.rs  # Quality gate for Muse Glimmer family
 |   +-- oracle_common/      # Shared memory oracle assertion helpers (mod.rs)
+|   +-- ornith35b_memory_oracle.rs # Memory oracle for Ornith 35B MoE family
+|   +-- ornith35b_quality_gate.rs  # Quality gate for Ornith 35B MoE family
+|   +-- ornith9b_memory_oracle.rs  # Memory oracle for Ornith 9B dense family
+|   +-- ornith9b_quality_gate.rs   # Quality gate for Ornith 9B dense family
 |   +-- quality_common/     # Shared quality gate evaluation helpers (mod.rs)
-|   +-- gguf_nondeterminism_probe.rs # Repeated warm greedy runs must produce ONE output
 |   +-- quality_gate.rs     # Quality gate integration test (Gemma 4)
 |   +-- quality_sensitivity.rs # Proof the gate sees quantization damage (Gemma 4)
 |   +-- qwen36_memory_oracle.rs # Memory oracle for Qwen 3.6 family
 |   +-- qwen36_quality_gate.rs  # Quality gate for Qwen 3.6 family
-|   +-- mistral_memory_oracle.rs # Memory oracle for the DENSE llama family, at 8192 context
-|   +-- qwen3moe_memory_oracle.rs # Memory oracle for Qwen3-30B-A3B (`qwen3moe`)
-|   +-- qwen3moe_quality_gate.rs  # Quality gate for Qwen3-30B-A3B
-|   +-- gptoss_memory_oracle.rs # Memory oracle for gpt-oss-20b, at 8192 context AND a 3072 budget
-|   +-- gptoss_quality_gate.rs  # Quality gate for gpt-oss-20b; pins the template's date
 |   +-- qwen38_memory_oracle.rs # Memory oracle for Qwen3.8-27B (`qwen35`), the family's FIRST
 |   +-- qwen38_quality_gate.rs  # Quality gate for Qwen3.8-27B; no assistant prefix, and see its header for why
-|   +-- ternary_quality_gate.rs # Quality gate for Ternary-Bonsai-27B (2-bit), the same family's third checkpoint
-|   +-- ternary_memory_oracle.rs # Its oracle; the peak is Qwen3.8's on HALF the weights (Gotcha 40)
-|   +-- mtp_accept_length_probe.rs # MTP head as drafter: accepted vs the block table's break-even
-|   +-- mtp_head_probe.rs    # What the head predicts, when the probe above reads zero
-|   +-- dflash2_accept_length_probe.rs # The BLOCK drafter's sweep, plus the losslessness floor
-|   +-- dflash2_bisect_probe.rs # Localizes a broken drafter; one runner, one variable
+|   +-- qwen3moe_memory_oracle.rs # Memory oracle for Qwen3-30B-A3B (`qwen3moe`)
+|   +-- qwen3moe_quality_gate.rs  # Quality gate for Qwen3-30B-A3B
+|   +-- rollback_probe.rs   # RollbackPoint state restoration probe
 |   +-- steering_probe.rs   # Live steering: inert at alpha 0, and a real edit above the floor
 |   +-- steering_sweep.rs   # Which alpha is usable: steered output scored under the UNSTEERED model
-|   \-- mapped_expert_probe.rs # What phys_footprint charges for an mmap Metal wrapped and the GPU read
+|   +-- ternary_memory_oracle.rs # Its oracle; the peak is Qwen3.8's on HALF the weights (Gotcha 40)
+|   +-- ternary_quality_gate.rs # Quality gate for Ternary-Bonsai-27B (2-bit), the same family's third checkpoint
+|   +-- vision_logit_dump.rs # Vision model cross-engine logit dump
+|   \-- vision_memory_oracle.rs # Memory oracle for vision models
 \-- prompts/
     +-- quality-v1/         # Quality gate reference prompt fixtures
     |   \-- assistant-reference.txt

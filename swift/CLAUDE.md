@@ -56,6 +56,10 @@ swift/
     |   +-- Installation/            # model hub (+ filter bar), catalog sheet, probe,
     |   |                            # ModelDetailPaneView (+ hardware fit, tech specs)
     |   +-- Diagnostics/             # inspector options, metric formatting, phase counters
+    |   +-- Server/                  # ServerPaneView + header band, loaded models,
+    |   |                            # charts, console, connect card, advanced;
+    |   |                            # ServerMetricsStore and ServerEndpointCatalog
+    |   |                            # are pure and are what the tests reach
     |   +-- Presentation/            # markdown render, docx/xlsx/pdf extract
     |   +-- Components/              # AppearanceSettingsPaneView (+ ThemeConfigCard,
     |   |                            # AppearancePreferencesCard), McpSettingsPaneView,
@@ -78,8 +82,8 @@ swift/
 ```
 
 `AppModel` is split across `AppModel.swift` plus `AppModel+{Chat, Files,
-Generation, Hooks, Installation, Mcp, Models, Persistence, Projects, Tools,
-Transcript}.swift`. Published state and core lifecycle live in the base file;
+Generation, Hooks, Installation, Mcp, Models, Persistence, Projects, Server,
+Tools, Transcript}.swift`. Published state and core lifecycle live in the base file;
 every functional domain is an extension. Add new behaviour as a new extension
 file rather than growing the base one.
 
@@ -257,7 +261,10 @@ so going through `make` recompiles the whole app every single time. Use
     project's `AppToolPermission` to `.ask`, `.allow` or `.deny` per
     category; `.allow` on the terminal category runs the command with no
     prompt, and a project's `maxAutonomousSteps` (default 5) bounds the agent
-    loop. Read `State/AppTool.swift` and `State/AppProject.swift` together
+    loop. **That description was true of the MECHANISM and false of the
+    CONFIGURATION every real project ran under until 2026-08-30: the sheet
+    that creates them seeded `terminal: .allow`. Read Gotchas 28 and 29 with
+    this one.** Read `State/AppTool.swift` and `State/AppProject.swift` together
     before changing anything on that path, and do not widen a default
     permission without saying so.
 
@@ -379,6 +386,18 @@ so going through `make` recompiles the whole app every single time. Use
     is LEFT-ALIGNED rather than centred: the phase indicator appears and
     disappears once per turn, and a centred model loader slides sideways
     every time it does.
+
+    **THE RAIL CARRIES FIVE SECTIONS SINCE 2026-08-30** (Chat, Files,
+    Installed, Discover, Server). Server was APPENDED at the last shortcut
+    rather than inserted, so the four that existed keep the numbers anyone
+    has already learned. A new case needs no view change --
+    `railButton` builds its hover tooltip from `title` and `shortcutKey` for
+    everything in `allCases` -- which is exactly why
+    `testEverySectionHasAUniqueTitleAndShortcut` exists: a missing or
+    duplicated one is a blank or wrong tooltip that only a screenshot would
+    catch. The Server pane is the one section that keeps working while it is
+    off screen, because its poll timer follows the SERVER rather than the
+    view: something else (unloading a model from Chat) can stop one.
 
     The right column is one slot, not two: `previewAttachment != nil` takes
     it from the inspector. That is why `.toggleInspector` closes the preview
@@ -539,6 +558,217 @@ so going through `make` recompiles the whole app every single time. Use
     would double-free if a caller stopped it explicitly and then let it go
     out of scope.
 
+    **NOTHING IN THE UI STATES AN ADDRESS, A PORT OR AN AUTH STATE OF ITS
+    OWN; ALL THREE ARE READ BACK OFF `info()`.** Audited 2026-08-30, and all
+    three arms of that sentence were false before it. The toast and the
+    Address row spelled `127.0.0.1` by hand beside a read-back port -- true,
+    because `crates/ffi`'s `Server::start` binds that literal, and an
+    assertion rather than a reading in exactly Gotcha 22's shape (a hub badge
+    restating what the row already stated). `ServerInfo` carries `host` now,
+    with a `baseURL` helper, and `AppModel.serverInfo` is the ONE accessor
+    the view reads: `info()` takes a lock, crosses the ABI and decodes JSON,
+    and a SwiftUI body runs far more often than a server changes.
+
+    **BOTH ROWS ARE A VALUE (`ServerStatusRows`) RATHER THAN INLINE VIEW
+    CODE, WHICH IS THE ONLY REASON THEY CAN BE TESTED AT ALL.**
+    `ServerStatusRowsTests` needs no model, no session and no bound socket,
+    and every `ServerInfo` in it is DECODED from the JSON
+    `ts_server_info_json` emits, so the cases pin the wire spelling too.
+    **The case that carries the file is `testAddressFollowsAHostThatIsNotLoopback`**,
+    and its value was measured rather than assumed: hardcoding the address
+    back to `"http://127.0.0.1:\(port)"` reddens it and the IPv6 case while
+    leaving `testAddressIsBuiltFromTheReportedHostAndPort` GREEN. A test
+    written at the address this engine happens to bind cannot tell a reading
+    from a literal, which is the whole defect -- so a file of only-loopback
+    cases would have proved nothing. `AppModel.serverAPIKey(from:)` is split
+    out for the same reason and is `nonisolated`, being a pure function of
+    its argument.
+
+    **THE AUTH STATE IS THE HALF THAT WAS INVISIBLE RATHER THAN MERELY
+    UNVERIFIED.** `startServer` trims the key field and maps empty to `nil`,
+    so a key of nothing but spaces starts an UNAUTHENTICATED server -- and
+    the panel rendered identically either way, with `info.authEnabled`
+    decoded and shown nowhere. There is an Auth row now, and the toast names
+    it.
+
+    **AND `ServerOptions`'s DOC WAS WRONG ABOUT THE SECURITY PROPERTY, NOT
+    JUST UNVERIFIED.** It called an unauthenticated default "appropriate for
+    a server bound to loopback and reachable only from inside this process".
+    A loopback TCP socket is reachable by every process on the machine; that
+    is not a property a socket can have. It is the sentence a reader would
+    have used to decide against setting a key, which is what makes it the
+    most expensive of the three. The settings caption says the same thing
+    plainly now.
+
+    **SINCE 2026-08-30 A SERVER SERVES SEVERAL MODELS, AND `stopServer()` IS
+    THE WRONG TOOL FOR UNLOADING ONE.** The rule above -- every site that
+    clears `session` must stop the server first -- was right for one model
+    and is now too big a hammer: stopping the server to swap the chat model
+    would take every OTHER attached model down with it. `open(_:)`,
+    `unloadModel()` and `setModelURL(_:)` call
+    `detachChatSessionFromServer()` instead, which removes whatever entry
+    that session was attached under and leaves the rest serving. A fourth
+    site that clears `session` without coming through there keeps that model
+    resident, served, and invisible in the Chat pane -- the same failure,
+    now per model.
+
+    **TWO REFERENCES HOLD AN ATTACHED MODEL AND BOTH HAVE TO GO.** The
+    server holds one on the Rust side and `AppModel.serverAttachedSessions`
+    holds the Swift one; dropping either alone keeps the weights, the KV
+    cache and the compiled pipelines resident. `detachModelFromServer(id:)`
+    does both. The CHAT session is the deliberate exception and needs no
+    branch: `AppModel.session` is a third reference the Chat pane still
+    holds, so ejecting it from the Server pane stops it being SERVED and
+    leaves it loaded.
+
+    **NO VIEW BODY CALLS INTO THE BINDING.** `AppModel.serverInfo` is a
+    published SNAPSHOT rather than the computed accessor it started as:
+    `info()` takes a lock, crosses the ABI and decodes JSON, and the Server
+    pane re-evaluates far more often than a server changes.
+    `refreshServerInfo()` is the only writer, called on start, attach,
+    detach and once per poll tick for the uptime. `poll` is likewise driven
+    by the timer alone, at 2 Hz -- a rate chosen so the console feels live,
+    not a limit: the engine's ring holds ~2,000 events, which is hundreds of
+    requests, so nothing is lost at any rate a person would pick. When
+    something IS lost the engine says so and
+    `ServerMetricsStore.droppedEvents` sums it, because a console missing
+    rows reads exactly like a server that was idle.
+
+    **THE PANE'S ARITHMETIC IS IN TWO PURE TYPES SO IT CAN BE TESTED.**
+    `ServerMetricsStore` folds the four events that describe a request back
+    into one record and derives the series; `ServerEndpointCatalog` holds
+    the route list and the connect snippets. Neither touches SwiftUI or a
+    socket. That is what caught a real bug: `trim()` ran only on the batch
+    path, so the public single-event `ingest` grew the window without limit
+    -- and the same gap had made
+    `testAnInFlightRequestSurvivesTrimmingAndItsLateEventsStillLandOnIt`
+    VACUOUS, since no trimming ever happened for it to survive.
+
+    Three things the pane refuses to state, each already paid for elsewhere
+    in this file. A model with no session here shows "attached" rather than
+    a zero context and a plausible-looking 16 slots arrived at by ignorance
+    (Gotcha 23). The endpoint list carries no `/v1/embeddings` row, because
+    this engine has no embedding path and a listed route that 404s is a
+    capability claim a reader could build against -- pinned by
+    `testNoEndpointIsAdvertisedThatTheEngineCannotServe`. And there is no
+    time-to-first-token chart: nothing inside a generation can measure one
+    (`crates/server/CLAUDE.md` Gotcha 29), so the pane shows prefill, decode
+    and the queue, which is the subtraction that answers the question
+    anyway.
+
+27. **SWIFT COMPILER WARNINGS: NON-THROWING `URL` PATHS AND `onChange` ARITY.**
+    Two recurring Swift warning patterns to avoid:
+    - `URL(fileURLWithPath:).standardizedFileURL.path` is non-throwing. Wrapping
+      it in `try?` produces a compiler warning ("no calls to throwing functions
+      occur within 'try' expression"). Standardize file paths directly without
+      `try?`.
+    - `.onChange(of:perform:)` with a single-parameter closure `(V) -> Void` is
+      deprecated on macOS 14.0+. Use the modern 0-parameter form
+      `.onChange(of: value) { ... }` or the 2-parameter form
+      `.onChange(of: value) { oldValue, newValue in ... }` (or `{ _, newValue in }`).
+
+28. **A DEFAULT SPELLED AT FOUR SITES DISAGREED AT THE ONE USERS REACH, AND
+    THE PERMISSIVE SPELLING WAS THE SHIPPED ONE.** `AppProject.init`, its
+    decode fallback and `AppModel.createProject` all defaulted to
+    `AppProjectPermissions.standard` (`terminal: .ask`). `ProjectSettingsSheet`'s
+    new-project branch seeded `.auto`, which is `terminal: .allow`,
+    `fileWrite: .allow`, `mcp: .allow`. A project can only be created through
+    that sheet, so every project any user ever made ran model-proposed shell
+    commands with no prompt, while the conservative default three other sites
+    agreed on was decoration. All four now read
+    `AppProjectPermissions.newProjectDefault`; a fifth site spelling its own
+    is what that constant exists to make visible. Gotcha 11 says the barrier
+    is `AppModel.permission(for:)`, and that was true of the mechanism and
+    false of the configuration it ran under.
+
+29. **A DENYLIST OVER A STRING BOUND FOR `/bin/zsh -c` IS THE WRONG SHAPE,
+    NOT AN INCOMPLETE LIST.** `ToolRiskClassifier` matched ~20 regexes against
+    raw command text, and under `.auto` `AppToolPermissionEngine.evaluate`
+    returns `.allow` for anything not `.high` -- so `.safe` and `.low` are one
+    decision there and the classifier's real output is binary: does this run
+    unwatched. `rm -rf ~/Documents` matched. `r""m -rf ~/Documents` did not,
+    and zsh runs them identically. Nor did `eval $(printf ...)`,
+    `$'\x72m' -rf ~`, `CMD=rm; $CMD -rf ~`, or `` `echo rm` -rf ~ ``. **18 of
+    23 corpus strings in `TerminalRiskGateTests` scored `.low` or `.safe`
+    against the old code**, each one an edit away from a pattern that WAS
+    caught.
+
+    The gate is now positive: `TerminalCommandClassifier.isAutoApprovable`
+    runs a command only when it is a single simple invocation (no
+    `| ; & $ \` < > ( ) { }` anywhere, no quote/backslash/`=` in the head
+    word) AND its program is on a read/build allowlist. The denylist stays,
+    because a matched pattern names a specific reason for the approval sheet
+    and the allowlist's generic one is worse to show a user.
+
+    Two traps found by tuning it. Rejecting quotes ANYWHERE fails
+    `git commit -m 'msg'`, `grep -rn 'struct' src/` and `find . -name '*.swift'` --
+    quotes hide a head word and mean nothing in an argument, so the check is
+    per position. And `python3` is on the allowlist because `.auto` promises
+    to run `python3 -m pytest`, which makes the inline-code-flag rejection
+    (`-c`, `-e`, `--eval`, `--command`, scoped to interpreters so `grep -e`
+    still works) the ONLY thing keeping that entry safe.
+
+    `TerminalCommandClassifier.isCollapsible` reads the FIRST WORD only and is
+    presentation, never a gate: it scored `cat README && python3 -c '...'` as
+    `.safe`. It and `isAutoApprovable` are kept apart so a display tweak
+    cannot widen the gate again.
+
+30. **A PROJECTLESS CHAT HAS NO WORKSPACE, AND THERE IS NO DEFENSIBLE
+    DEFAULT.** `AppToolRegistry.execute` rooted a chat with no project at
+    `FileManager.default.homeDirectoryForCurrentUser`, which is narrower than
+    the `currentDirectoryPath` of `/` it replaced in the way that counts
+    least: `resolveSecurePath`'s containment check passes for
+    `~/Library/Application Support`, browser profiles, shell history and every
+    token on disk, and `isSensitivePath` knows about a dozen filenames out of
+    all of that. Path-taking and process-spawning tools are refused by name
+    now (`workspaceRootedToolNames`); `skill`, the task tools and
+    `askuserquestion` need no root and still work, which is the case the
+    fallback was really reaching for.
+
+31. **A CLASS INITIALIZER THAT THROWS PART-WAY DOES NOT RUN `deinit`, SO A C
+    HANDLE ACQUIRED BEFORE THE THROW LEAKS IN FULL.** `TurboSparkSession.init`
+    assigned `handle` and then read `ts_session_info_json` into `info`; a
+    failure there left an instance that was never fully initialized, Swift
+    skipped `deinit`, and `ts_session_close` never ran -- stranding mapped
+    weights, KV cache and compiled Metal pipelines for the life of the
+    process, silently, with the caller seeing exactly the error it expected.
+    The info read now happens before any stored property is assigned and
+    closes the handle by hand on the failure path.
+    `SurfaceTests.testAThrowingInitDoesNotRunDeinitSoCLeanupMustBeManual`
+    pins the language rule rather than the initializer, because making the
+    real one throw at that point needs a fault injection the C ABI does not
+    offer.
+
+    **AND `generate` RETAINED NOTHING FOR THE TURN.** Its worker was
+    `queue.async { [handle] in ... }` -- the capture list named `handle`
+    alone, `onTermination` is `[weak self]` by design, and the returned stream
+    holds no reference back, so no strong reference to the session existed
+    anywhere during a generation while `deinit`'s own comment asserted the
+    stream's task provided one. A caller releasing its session mid-turn ran
+    `ts_session_close` beside `ts_generate`, which `turbospark.h` forbids. The
+    capture is `[self]` now and that is load-bearing; the app never hit it
+    only because `executeGenerationTurn` binds `session` strongly.
+
+32. **AN UNIMPLEMENTED TRANSPORT MUST THROW, NOT RETURN A SUCCESS STRING.**
+    `McpClientEngine.callToolViaSSE` returned the literal
+    `"SSE remote tool execution completed."` for every call without issuing a
+    request, and `discoverToolsViaSSE` built a `URLRequest`, never sent it,
+    and returned `[]` -- which reads as "this server publishes no tools". So
+    an SSE server config reported every tool call as having succeeded: the
+    model was told an external action happened and the transcript showed a
+    green result. Same class as the fabricated "Executed successfully" that
+    `AppToolRegistry.execute`'s default case was fixed for (T5), one layer
+    over. Both arms throw and name the transport now.
+
+    Two smaller things in the same file. MCP stdio children were seeded from
+    `ProcessInfo.processInfo.environment`, handing a third-party server binary
+    every credential the app was launched with; they get `PATH`, `HOME`,
+    `LANG`, `TMPDIR` plus the config's own `env` now. And
+    `resolveExecutablePath` returned `/usr/bin/env` for anything it could not
+    find, moving the lookup to spawn time where nothing could observe or
+    report it -- it searches `PATH` itself and returns nil, so an unresolvable
+    command is an error naming itself.
+
 33. **IMAGES TRAVEL AS ORDERED CONTENT PARTS, AND THE ONE THING THAT KEEPS
     THAT FROM BEING AN ABI BREAK IS THAT AN EMPTY `images` ENCODES AS A BARE
     STRING.** Added 2026-08-30. `ChatMessage` kept `content: String` and
@@ -591,3 +821,16 @@ so going through `make` recompiles the whole app every single time. Use
     carrying images. `countTokens` renders the template, which emits one
     marker per image whatever its size, and the expansion to that page's
     merged-token count happens later in the engine's splice.
+
+34. **A SWIFT BUILD IN A WORKTREE FAILS ON A MISSING HEADER, BECAUSE
+    `CTurboSpark` IS GITIGNORED.** Gitignored files are not carried into a
+    worktree (root Gotcha 13), and the staged `libturbospark_ffi.a` plus
+    `turbospark.h` are exactly that. Either run `make swift-lib` in the
+    worktree or copy the directory across:
+    `cp -R swift/TurboSpark/Sources/CTurboSpark <worktree>/swift/TurboSpark/Sources/`.
+
+    **AND `Bundle.module` INSIDE A TEST TARGET IS NOT THE APP'S BUNDLE.**
+    `TurboSparkAppTests` declares no resources of its own, so `Bundle.module`
+    there resolves to the test bundle and finds nothing. Reach an app resource
+    through an accessor in the APP target instead: `CommandGate.oracleFixtureURL`
+    is the pattern, and it exists for exactly this reason.

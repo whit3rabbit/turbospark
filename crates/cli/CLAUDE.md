@@ -16,12 +16,14 @@ crates/cli/
 |   +-- generate/           # Non-interactive text & chat template generation driver
 |   |   +-- mod.rs          # Generation loop coordination and session management
 |   |   +-- session.rs      # Session lifecycle; maps invocation enums onto runtime's
-|   |   \-- format.rs       # Prompt/footer rendering and channel splitting
+|   |   +-- format.rs       # Prompt/footer rendering and channel splitting
+|   |   \-- vision.rs       # Image preprocessing and injection mapping for CLI
 |   +-- chat.rs             # Interactive REPL session runner using window-fit
 |   \-- bin/
 |       +-- model.rs        # turbospark-model: argv, subcommand parse, exit codes
 |       \-- model_cmd/
 |           +-- mod.rs      # The seven subcommands
+|           +-- progress.rs # Download progress rendering
 |           \-- render.rs   # Printing. No decisions.
 \-- tests/
     +-- mference_check.rs   # CLI flag parse & exit status integration tests

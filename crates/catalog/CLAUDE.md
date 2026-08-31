@@ -22,7 +22,8 @@ crates/catalog/
 |   +-- catalog.rs              # Load embedded + merge a user override, lookup
 |   +-- hf.rs                   # HF API file list, resolve URLs, small-file GET, HF_TOKEN
 |   +-- probe/
-|   |   +-- mod.rs          # Types, the dispatcher, the sidecar check
+|   |   +-- mod.rs          # Dispatcher and sidecar check
+|   |   +-- types.rs        # Probe verdict and result types
 |   |   +-- gguf.rs         # The GGUF gates: architecture, block types, expert stride
 |   |   \-- safetensors.rs  # The MLX gates: model_type, affine width, expert stride
 |   +-- recommend/

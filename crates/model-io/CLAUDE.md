@@ -39,6 +39,7 @@ crates/model-io/
 |   +-- packed_experts_layout.rs# Decodes packed_experts/layout.json for streamed MoE
 |   +-- resident_index.rs       # Reads tensor index entries from model_weights.bin
 |   +-- resident_buffer.rs      # Zero-copy mmap wrapper (ResidentBuffer)
+|   +-- steering_set.rs         # SteeringSet and LayerDirection per-layer steering vectors
 |   +-- sha256.rs               # Streaming SHA-256 checksum verifier
 |   +-- install_receipt.rs      # Parses and validates .gturbo install receipts
 |   \-- error.rs                # ModelIoError enum definition
@@ -82,6 +83,7 @@ crates/model-io/
 - `packed_experts_layout.rs`: Decodes `packed_experts/layout.json` for streamed MoE layouts. **The subdirectory is a PARAMETER since ROADMAP M-V3** (`load_from`, with `load` as a thin wrapper): the vision tower's `packed_vision/layout.json` carries this exact schema -- one `LayerLayout`, `experts` = the tower's blocks, free-form roles with a dtype each -- so it decodes here rather than through a second parser. A second copy would be a second place for the `expert_stride` fallback, the per-layer stride ceiling and the missing-entry check to drift, and Gotcha 2 is already about one of those being got wrong. `expert_stride` exists at TWO levels and they mean different things: `PackedExpertsLayout::expert_stride` is the model-wide maximum (what `manifest.json` declares and what a slot is sized from), while `LayerLayout::expert_stride` is what that layer's file is actually padded to. Address or size a layer with the second, never the first -- see Gotcha 2.
 - `resident_index.rs`: Reads and parses tensor metadata entries from `model_weights.bin`.
 - `resident_buffer.rs`: Zero-copy `mmap` wrapper (`ResidentBuffer`) for mapped model weights.
+- `steering_set.rs`: `LayerDirection`, `SteeringSet`, and `LoadedSteeringDirection` defining portable per-layer steering vectors and their validation against an `ArchConfig`.
 - `sha256.rs`: Streaming SHA-256 checksum calculator for installation integrity.
 - `install_receipt.rs`: Parses and verifies `.gturbo` install receipts.
 

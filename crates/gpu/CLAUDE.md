@@ -108,6 +108,7 @@ crates/gpu/
     +-- prefill_scratch.rs
     +-- resident_metal.rs
     +-- rms_norm_parity.rs
+    +-- rope_mrope_parity.rs
     +-- rope_parity.rs
     +-- rope_yarn_parity.rs
     +-- scaled_norm_and_embed.rs
