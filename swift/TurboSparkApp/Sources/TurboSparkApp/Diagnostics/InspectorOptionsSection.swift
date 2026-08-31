@@ -243,21 +243,35 @@ extension InspectorView {
 
     var generationSection: some View {
         Section("Generation Sampling") {
-            if model.isReasoningSupported {
-                LabeledContent("Thinking") {
-                    Picker("Thinking", selection: Binding(
-                        get: { model.reasoning },
-                        set: { model.setReasoning($0) }
-                    )) {
-                        ForEach(GenerateOptions.Reasoning.allCases) { level in
-                            Text(level.label).tag(level)
-                        }
+            // DISABLED rather than hidden here, unlike the compact chrome
+            // controls: this is the panel a user goes looking in, and a
+            // missing row reads as a missing feature. The levels are the
+            // checkpoint's own and arrive with the session, so there is
+            // nothing to offer until one is open.
+            LabeledContent("Thinking") {
+                Picker("Thinking", selection: Binding(
+                    get: { model.reasoning },
+                    set: { model.setReasoning($0) }
+                )) {
+                    ForEach(model.availableReasoningLevels) { level in
+                        Text(model.reasoningLabel(for: level)).tag(level)
                     }
-                    .pickerStyle(.menu)
-                    .labelsHidden()
-                    .fixedSize()
-                    .accessibilityLabel("Thinking effort")
                 }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .fixedSize()
+                .disabled(!model.reasoningPickerEnabled)
+                .accessibilityLabel("Thinking effort")
+            }
+
+            if model.session == nil {
+                Text("Load a model to see the reasoning levels its chat template accepts.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else if !model.isReasoningSupported {
+                Text("This checkpoint ships no reasoning knob, so a level would change nothing.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             LabeledContent("Max New Tokens") {

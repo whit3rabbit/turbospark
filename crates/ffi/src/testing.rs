@@ -69,7 +69,23 @@ pub fn session_for_testing_named(
             expert_cache_slots: 0,
             vocab_size,
             dialect: format!("{:?}", tokenizer.dialect),
-            reasoning_support: "none".to_string(),
+            // ASKED rather than asserted, and that is a fix rather than
+            // tidying. This read `"none"` unconditionally while
+            // `generate.rs` gates a requested level on
+            // `tokenizer.reasoning_support()` directly -- so a scripted
+            // session over a fixture that DOES ship a template reported a
+            // capability it had, as absent, to the one field a GUI reads.
+            reasoning_support: match tokenizer.reasoning_support() {
+                tokenizer::ReasoningSupport::Level => "level",
+                tokenizer::ReasoningSupport::ToggleOnly => "toggleOnly",
+                tokenizer::ReasoningSupport::None => "none",
+            }
+            .to_string(),
+            reasoning_levels: tokenizer
+                .accepted_reasoning_levels()
+                .into_iter()
+                .map(|level| level.as_str().to_string())
+                .collect(),
             steering: wire::SteeringInfo::default(),
             speculation: wire::SpeculationInfo::default(),
             // No tower behind a scripted producer, and `default()` is the

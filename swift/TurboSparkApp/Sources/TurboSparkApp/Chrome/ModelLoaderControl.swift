@@ -15,7 +15,10 @@ struct ModelLoaderControl: View {
     var body: some View {
         HStack(spacing: 0) {
             chooser
-            if model.isReasoningSupported {
+            // Only once a session exists: the accepted levels are read off
+            // the checkpoint's own template at open, so before that there is
+            // nothing honest to put in the menu.
+            if model.reasoningPickerEnabled {
                 separator
                 reasoningPicker
             }
@@ -38,14 +41,16 @@ struct ModelLoaderControl: View {
     private var reasoningPicker: some View {
         Menu {
             Section("Reasoning Effort") {
-                ForEach(GenerateOptions.Reasoning.allCases) { level in
+                ForEach(model.availableReasoningLevels) { level in
+                    let title = model.reasoningLabel(for: level)
+                        + " - " + model.reasoningDescription(for: level)
                     Button {
                         model.setReasoning(level)
                     } label: {
                         if model.reasoning == level {
-                            Label(level.label + " - " + level.descriptionText, systemImage: "checkmark")
+                            Label(title, systemImage: "checkmark")
                         } else {
-                            Text(level.label + " - " + level.descriptionText)
+                            Text(title)
                         }
                     }
                 }
@@ -56,7 +61,7 @@ struct ModelLoaderControl: View {
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(model.reasoning != .off ? TurboSparkTheme.accentColor : Color.secondary)
 
-                Text(model.reasoning != .off ? model.reasoning.label : "Off")
+                Text(model.reasoningLabel(for: model.reasoning))
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(model.reasoning != .off ? Color.primary : Color.secondary)
 

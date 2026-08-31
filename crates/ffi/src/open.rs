@@ -352,6 +352,15 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
             tokenizer::ReasoningSupport::None => "none",
         }
         .to_string(),
+        // Five renders of a two-line conversation, at open only. The
+        // alternative a GUI is otherwise forced into is a per-family table,
+        // which is a second and staler copy of what the template states by
+        // name (root Gotcha 56).
+        reasoning_levels: tokenizer
+            .accepted_reasoning_levels()
+            .into_iter()
+            .map(|level| level.as_str().to_string())
+            .collect(),
         steering: if runner.steering_line().is_some() {
             crate::wire::SteeringInfo {
                 active: true,

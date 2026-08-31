@@ -148,7 +148,9 @@ struct PromptComposerView: View {
                 PromptProjectContextPill(model: model)
             }
             PromptModelSelectorPill(model: model)
-            if model.isReasoningSupported {
+            // Needs a session: the levels are the checkpoint's own and are
+            // read off its template at open.
+            if model.reasoningPickerEnabled {
                 PromptReasoningPillControl(model: model)
             }
             ForgeGuardrailsPillControl(model: model)

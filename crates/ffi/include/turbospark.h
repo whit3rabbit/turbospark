@@ -200,7 +200,7 @@ void ts_session_cancel(const TsSession *s);
  *
  *   { "modelPath", "family", "maxContext", "trainedContext",
  *     "pastTrainedContext", "expertCacheSlots", "vocabSize", "dialect",
- *     "reasoningSupport",
+ *     "reasoningSupport", "reasoningLevels",
  *     "steering": { "active", "mode", "scale", "summary" },
  *     "speculation": { "block", "drafter", "reason" },
  *     "vision": { "active", "imageTokenId", "reason" },
@@ -212,9 +212,20 @@ void ts_session_cancel(const TsSession *s);
  * has already been allocated at the resolved one. Neither a throughput nor a
  * footprint figure is readable without the slot count beside it.
  *
- * reasoningSupport is "level" | "toggleOnly" | "none". A GUI should disable
- * its reasoning picker on "none" and grey out the LEVELS on "toggleOnly",
- * where asking for one turns thinking on but sets no level.
+ * reasoningSupport is "level" | "toggleOnly" | "none" and says what KIND of
+ * control is meaningful: disable the picker on "none", and on "toggleOnly"
+ * present it as an on/off switch, since asking for a level there turns
+ * thinking on and sets no level.
+ *
+ * reasoningLevels is WHAT TO PUT IN THAT CONTROL, ascending, always starting
+ * "off". Build the menu from it and from nothing else. The set belongs to the
+ * checkpoint and cannot be derived from the family: Qwen 3.8 answers
+ * ["off","low","medium","xhigh"] and RAISES on "high", while gpt-oss and Muse
+ * Glimmer answer ["off","low","medium","high"]. Offering a level absent from
+ * here fails the turn with the template's own error message. Levels that
+ * render the same prompt are already collapsed, so a "toggleOnly" checkpoint
+ * answers exactly two entries and a "none" one answers ["off"]; that second
+ * entry is "low" by POSITION and is not a label to print.
  *
  * steering.active is true when a control vector is loaded on this session.
  * steering.summary holds a human-readable one-line description of the edit.

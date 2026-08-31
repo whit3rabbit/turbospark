@@ -322,13 +322,19 @@ public struct AppSettingsView: View {
                     get: { model.reasoning },
                     set: { model.setReasoning($0) }
                 )) {
-                    ForEach(GenerateOptions.Reasoning.allCases) { level in
-                        Text(level.label).tag(level)
+                    // With a model loaded this is that checkpoint's own set.
+                    // With none it is the union, because this is the default
+                    // a FUTURE model inherits and clamping it to nothing
+                    // would leave a picker with one entry.
+                    ForEach(model.session == nil
+                            ? GenerateOptions.Reasoning.allCases
+                            : model.availableReasoningLevels) { level in
+                        Text(model.reasoningLabel(for: level)).tag(level)
                     }
                 }
                 .pickerStyle(.menu)
 
-                Text("Controls internal chain-of-thought depth for reasoning-capable models. Changing this takes effect immediately on subsequent responses without requiring a model reload.")
+                Text("Controls internal chain-of-thought depth. The accepted levels belong to each checkpoint's own chat template, not to this app: Qwen 3.8 tops out at Extra High and refuses High, while gpt-oss is the other way round. A level a model cannot express is clamped to its nearest one on load, and your choice is remembered per model.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

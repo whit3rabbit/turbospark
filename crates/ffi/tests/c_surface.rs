@@ -146,6 +146,18 @@ fn session_info_is_json_the_swift_side_can_decode() {
     assert_eq!(json["maxContext"], 4096);
     assert!(json["vocabSize"].as_u64().unwrap() > 0);
     assert!(json.get("reasoningSupport").is_some());
+    // The menu a GUI draws. Non-empty and opening at "off" on every install:
+    // an empty array would hide the control, and a set not starting at "off"
+    // would offer no way back to not thinking. Levels rendering the same
+    // prompt are collapsed before they get here, so this is also the guard
+    // that the field carries offerable choices rather than five spellings.
+    let levels = json["reasoningLevels"]
+        .as_array()
+        .expect("reasoningLevels is reported as an array");
+    assert_eq!(levels[0], "off");
+    assert!(levels
+        .iter()
+        .all(|l| ["off", "low", "medium", "high", "xhigh"].contains(&l.as_str().unwrap())));
     // The speculation block is PRESENT AND NULL rather than absent, which
     // is the difference between "this session does not speculate" and "this
     // build predates the field". A scripted engine implements no drafter,

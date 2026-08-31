@@ -232,3 +232,182 @@ fn levels_round_trip_and_off_is_the_default() {
     assert!(!ReasoningEffort::Off.enable_thinking());
     assert!(ReasoningEffort::Low.enable_thinking());
 }
+
+/// `ALL` IS WHAT THE PROBE SWEEPS, SO A SPELLING MISSING FROM IT IS NEVER
+/// OFFERED -- AND NO FIXTURE HERE CAN SEE THAT.
+///
+/// Found by mutation: dropping `High` from `ALL` left all 14 cases in this
+/// file GREEN, because `ReasoningEffortTokenizer` is the only `Level`
+/// fixture and it REJECTS `high`. The spelling only matters on Harmony and
+/// Muse Glimmer, which accept it and are not fixtures here, so the failure
+/// would have been a real checkpoint quietly losing a level it supports.
+///
+/// Tying the sweep to `parse` rather than restating five names is what makes
+/// it hold: a sixth level added to the enum without being added to `ALL`
+/// reddens this instead of shipping unprobed.
+#[test]
+fn the_probe_sweeps_every_spelling_the_parser_accepts() {
+    for spelling in ["off", "low", "medium", "high", "xhigh"] {
+        let level = ReasoningEffort::parse(spelling).unwrap();
+        assert!(
+            ReasoningEffort::ALL.contains(&level),
+            "{spelling} parses but is never probed, so no template can offer it"
+        );
+    }
+    assert_eq!(
+        ReasoningEffort::ALL.len(),
+        5,
+        "a spelling in ALL that parse does not accept would be probed and \
+         then unnameable by a caller"
+    );
+    assert_eq!(
+        ReasoningEffort::ALL[0],
+        ReasoningEffort::Off,
+        "the sweep reports in this order, and a menu must open at off"
+    );
+}
+
+/// THE OFFERABLE SET COMES OFF THE TEMPLATE, AND EXCLUDES WHAT IT REJECTS.
+///
+/// This is the case a GUI's menu is built from. The fixture carries the real
+/// `Qwen3.8-27B` gate, so `high` raises here exactly as it does on the real
+/// checkpoint (see
+/// `a_level_this_checkpoint_rejects_surfaces_as_the_templates_own_error`
+/// above) and must not be offered. `xhigh` is present for the same reason,
+/// and a family table would have to know both facts.
+#[test]
+fn the_offered_levels_are_the_templates_own_set() {
+    let tok = fixture("ReasoningEffortTokenizer");
+    assert_eq!(tok.reasoning_support(), ReasoningSupport::Level);
+    assert_eq!(
+        tok.accepted_reasoning_levels(),
+        vec![
+            ReasoningEffort::Off,
+            ReasoningEffort::Low,
+            ReasoningEffort::Medium,
+            ReasoningEffort::XHigh,
+        ],
+        "high raises on this template and xhigh does not, which is the whole \
+         reason the set is read rather than assumed"
+    );
+}
+
+/// A checkpoint with NO template can express nothing but `off`.
+///
+/// `apply_chat_template_with_reasoning` REFUSES a level here rather than
+/// dropping it, so the probe simply gets four errors.
+#[test]
+fn a_template_less_checkpoint_offers_only_off() {
+    let tok = fixture("DeepseekTokenizer");
+    assert_eq!(tok.reasoning_support(), ReasoningSupport::None);
+    assert_eq!(tok.accepted_reasoning_levels(), vec![ReasoningEffort::Off]);
+}
+
+/// **THE CASE THAT SAYS "DID IT RAISE" IS THE WRONG QUESTION.**
+///
+/// These two ship a template that names no reasoning key at all, so every
+/// level renders happily and every level renders the SAME BYTES. A probe
+/// that only caught errors would report five accepted levels of which four
+/// change nothing -- the silent no-op `ReasoningSupport` exists to prevent,
+/// re-introduced by the thing meant to refine it. The byte dedupe is what
+/// collapses them, and the equality assertion below is the fact it rests on.
+#[test]
+fn a_template_that_reads_no_reasoning_key_offers_only_off() {
+    for name in ["HarmonyTokenizer", "ZephyrTokenizer"] {
+        let tok = fixture(name);
+        assert_eq!(
+            tok.reasoning_support(),
+            ReasoningSupport::None,
+            "{name} names no reasoning key"
+        );
+
+        // The premise: nothing raises, and nothing differs.
+        let off = tok
+            .apply_chat_template_with_reasoning(&user(), ReasoningEffort::Off)
+            .unwrap_or_else(|e| panic!("{name} should render at off: {e}"));
+        for level in [ReasoningEffort::Low, ReasoningEffort::High] {
+            let rendered = tok
+                .apply_chat_template_with_reasoning(&user(), level)
+                .unwrap_or_else(|e| panic!("{name} should render at {level:?}: {e}"));
+            assert_eq!(
+                off, rendered,
+                "{name} has no key to read, so {level:?} must be the same prompt"
+            );
+        }
+
+        assert_eq!(
+            tok.accepted_reasoning_levels(),
+            vec![ReasoningEffort::Off],
+            "{name} renders one distinct prompt, so it offers one level"
+        );
+    }
+}
+
+/// A TOGGLE-ONLY CHECKPOINT OFFERS `off` AND EXACTLY ONE ON-LEVEL.
+///
+/// Its template reads `enable_thinking` and no effort key, so thinking is a
+/// real effect and the LEVEL is dropped: `low` and `xhigh` are two names for
+/// one prompt. Offering four of them is offering one thing four times, which
+/// is what reads as "Extra High" surviving a model switch it does not apply
+/// to.
+///
+/// The reported spelling is `Low` BY POSITION and carries no meaning as a
+/// label. A caller wanting to print something reads `reasoning_support` and
+/// says "On".
+#[test]
+fn a_toggle_only_checkpoint_offers_off_and_exactly_one_on_level() {
+    let tok = fixture("ChatMLTokenizer");
+    assert_eq!(tok.reasoning_support(), ReasoningSupport::ToggleOnly);
+
+    // The premise: the on-levels are indistinguishable, but off is NOT --
+    // without that second half this fixture would prove the collapse and
+    // hide a probe that had simply stopped discriminating at all.
+    let low = tok
+        .apply_chat_template_with_reasoning(&user(), ReasoningEffort::Low)
+        .unwrap();
+    let xhigh = tok
+        .apply_chat_template_with_reasoning(&user(), ReasoningEffort::XHigh)
+        .unwrap();
+    let off = tok
+        .apply_chat_template_with_reasoning(&user(), ReasoningEffort::Off)
+        .unwrap();
+    assert_eq!(
+        low, xhigh,
+        "no effort key, so the level cannot change a byte"
+    );
+    assert_ne!(off, low, "enable_thinking IS read, so off must differ");
+
+    assert_eq!(
+        tok.accepted_reasoning_levels(),
+        vec![ReasoningEffort::Off, ReasoningEffort::Low]
+    );
+}
+
+/// The set is never empty and always starts at `off`, on every fixture here.
+///
+/// A caller builds a menu from this, and an empty one hides a control while
+/// a set not starting at `off` offers no way back to not thinking.
+#[test]
+fn every_fixture_offers_at_least_off_and_offers_it_first() {
+    for name in [
+        "ChatMLTokenizer",
+        "DeepseekTokenizer",
+        "GemmaTokenizer",
+        "HarmonyTokenizer",
+        "Llama3Tokenizer",
+        "MuseGlimmerTokenizer",
+        "ReasoningEffortTokenizer",
+        "ZephyrTokenizer",
+    ] {
+        let levels = fixture(name).accepted_reasoning_levels();
+        assert_eq!(levels[0], ReasoningEffort::Off, "{name} must offer off");
+
+        // Ascending, and no spelling twice.
+        let expected: Vec<_> = ReasoningEffort::ALL
+            .iter()
+            .copied()
+            .filter(|l| levels.contains(l))
+            .collect();
+        assert_eq!(levels, expected, "{name} must report in ALL's order");
+    }
+}

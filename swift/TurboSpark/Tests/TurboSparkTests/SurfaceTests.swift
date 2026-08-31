@@ -265,6 +265,7 @@ final class SurfaceTests: XCTestCase {
             "vocabSize": 151936,
             "dialect": "ChatMl",
             "reasoningSupport": "level",
+            "reasoningLevels": ["off", "low", "medium", "xhigh"],
             "steering": { "active": false },
             "speculation": { "block": null, "drafter": null, "reason": null },
             "vision": { "active": false, "imageTokenId": null, "reason": null },
@@ -287,6 +288,45 @@ final class SurfaceTests: XCTestCase {
         XCTAssertEqual(info.specialTokens.stopTokenIds, [151643, 151645])
         XCTAssertEqual(info.specialTokens.thinkStartId, 151648)
         XCTAssertEqual(info.specialTokens.thinkEndId, 151649)
+        XCTAssertEqual(info.reasoningEfforts, [.off, .low, .medium, .xhigh])
+        XCTAssertFalse(
+            info.reasoningEfforts.contains(.high),
+            "this checkpoint raises on high, and a picker is built from this array"
+        )
+    }
+
+    /// **AN UNKNOWN LEVEL IS DROPPED, NOT THROWN**, and the difference is a
+    /// whole session rather than a menu entry.
+    ///
+    /// `SessionInfo` is decoded inside `TurboSparkSession.init`, so a throw
+    /// here fails the OPEN -- and the failure path is the one that has to
+    /// close the C handle by hand (Gotcha 31). An engine that one day reports
+    /// a sixth spelling should cost a caller that one entry and nothing else.
+    /// Field-NAME drift is a different question and still fails the decode,
+    /// which is what Gotcha 5 asks for.
+    func testAnUnknownReasoningLevelIsDroppedRatherThanFailingTheOpen() throws {
+        let json = """
+        {
+            "modelPath": "/m.gturbo", "family": "qwen38", "maxContext": 4096,
+            "trainedContext": null, "pastTrainedContext": false,
+            "expertCacheSlots": 16, "vocabSize": 151936, "dialect": "ChatMl",
+            "reasoningSupport": "level",
+            "reasoningLevels": ["off", "low", "ludicrous", "xhigh"],
+            "steering": { "active": false },
+            "speculation": { "block": null, "drafter": null, "reason": null },
+            "vision": { "active": false, "imageTokenId": null, "reason": null },
+            "specialTokens": {
+                "bosId": null, "eosId": null, "padId": null, "endOfTurnId": null,
+                "stopTokenIds": [], "thinkStartId": null, "thinkEndId": null
+            }
+        }
+        """
+        let info = try JSONDecoder().decode(SessionInfo.self, from: Data(json.utf8))
+        XCTAssertEqual(info.reasoningEfforts, [.off, .low, .xhigh])
+        XCTAssertEqual(
+            info.reasoningLevels.count, 4,
+            "the raw spellings are kept whole; only the typed view drops one"
+        )
     }
 
     /// **THE COMPATIBILITY GUARD FOR ADDING IMAGES.** A message with none

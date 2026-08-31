@@ -63,6 +63,12 @@ pub enum ReasoningEffort {
 }
 
 impl ReasoningEffort {
+    /// Every spelling, in ascending order of effort, `Off` first.
+    ///
+    /// The order is what [`MfTokenizer::accepted_reasoning_levels`] reports
+    /// in, so a menu built from it reads low to high without sorting.
+    pub const ALL: [Self; 5] = [Self::Off, Self::Low, Self::Medium, Self::High, Self::XHigh];
+
     /// Parse a level from its documented spelling. Returns `None` for any
     /// text outside the fixed set.
     pub fn parse(text: &str) -> Option<Self> {
@@ -163,5 +169,65 @@ impl MfTokenizer {
         } else {
             ReasoningSupport::None
         }
+    }
+
+    /// The levels this checkpoint's own template can actually express, in
+    /// ascending order, always starting with [`ReasoningEffort::Off`].
+    ///
+    /// **THE ACCEPTED SET IS THE CHECKPOINT'S AND IT IS NOT DERIVABLE FROM
+    /// THE FAMILY.** Qwen 3.8 takes `xhigh`/`medium`/`low` and RAISES on
+    /// `high`; Harmony and Muse Glimmer take `high` and have no `xhigh`. A
+    /// per-family table here would be the second, staler copy of that
+    /// knowledge that [`ReasoningEffort`]'s own doc refuses, so this ASKS:
+    /// render a one-message conversation at each of the five spellings and
+    /// report what came back. Five renders of two lines, at open only --
+    /// never per turn.
+    ///
+    /// **THE DEDUPE IS THE HALF THAT MATTERS, because "did it raise" alone
+    /// is the wrong question.** A template that ships but reads no reasoning
+    /// key renders happily at every level and produces IDENTICAL bytes
+    /// (`HarmonyTokenizer` and `ZephyrTokenizer` are that shape), so a
+    /// raise-only probe would report five accepted levels of which four are
+    /// silent no-ops -- exactly the failure [`ReasoningSupport`] exists to
+    /// prevent, re-introduced by the thing meant to refine it. Levels whose
+    /// rendered prompt is byte-identical to an earlier one are therefore
+    /// collapsed, which lands every support shape on the right answer under
+    /// one rule: `None` reports `[Off]` whether it has a template or not,
+    /// `ToggleOnly` reports `Off` plus ONE on-level (its four are the same
+    /// prompt, so offering four is offering one thing four times), and
+    /// `Level` reports what the template really distinguishes.
+    ///
+    /// Two consequences for a caller. The on-level a `ToggleOnly` checkpoint
+    /// reports is `Low` by position and carries no meaning as a LABEL -- read
+    /// [`Self::reasoning_support`] and say "On" rather than printing the
+    /// spelling. And the result is never empty: `Off` renders on every
+    /// install that can generate at all, and a checkpoint so malformed that
+    /// it does not is refused long before this.
+    pub fn accepted_reasoning_levels(&self) -> Vec<ReasoningEffort> {
+        let probe = [crate::chat_template::Message::new(
+            crate::chat_template::Role::User,
+            "hi",
+        )];
+        let mut levels = Vec::with_capacity(ReasoningEffort::ALL.len());
+        let mut seen: Vec<String> = Vec::with_capacity(ReasoningEffort::ALL.len());
+        for level in ReasoningEffort::ALL {
+            let Ok(rendered) = self.apply_chat_template_with_reasoning(&probe, level) else {
+                continue;
+            };
+            if seen.iter().any(|prior| prior == &rendered) {
+                continue;
+            }
+            seen.push(rendered);
+            levels.push(level);
+        }
+        // Fail OPEN, in the direction `reasoning_support` already argues for.
+        // An empty set would read as "this model supports nothing" and hide a
+        // control the checkpoint may well honour; the only way to get here is
+        // a template that cannot render a bare user turn, which is a broken
+        // install rather than a statement about reasoning.
+        if levels.is_empty() {
+            levels.push(ReasoningEffort::Off);
+        }
+        levels
     }
 }

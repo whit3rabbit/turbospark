@@ -223,11 +223,28 @@ extension AppModel {
             selected = model
             modelPathText = model.path
             restoreReasoningPreference(for: model)
-            if session?.info.reasoningSupport == SessionInfo.ReasoningSupport.none {
-                self.reasoning = .off
-            }
+            // A restored preference is scoped to the PREVIOUS model's alias,
+            // and the accepted set is per checkpoint (root Gotcha 56). Clamp
+            // to the nearest rung this template can express rather than
+            // carrying an unsupported level forward.
+            //
+            // **AND SAY SO.** This dropped straight to `.off` before, which
+            // silently turns thinking off for a user who explicitly turned it
+            // on -- the level moved for a real reason and a level that moves
+            // without a word is the silent no-op this whole feature exists to
+            // avoid.
+            let wanted = self.reasoning
+            let expressible = nearestAvailableReasoning(to: wanted)
+            self.reasoning = expressible
             updateTokenEstimate()
-            showToast("Loaded \(model.alias)", style: .success)
+            if expressible != wanted {
+                showToast(
+                    "Loaded \(model.alias). Reasoning \(wanted.label) is not available here, using \(expressible.label).",
+                    style: .info
+                )
+            } else {
+                showToast("Loaded \(model.alias)", style: .success)
+            }
         } catch {
             let msg = "Failed to load model: \(error.localizedDescription)"
             self.error = msg

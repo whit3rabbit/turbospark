@@ -343,3 +343,37 @@ cargo test -p turbospark-tokenizer
     `message_to_json`'s match and nothing else that is compiler-enforced;
     `Message::image_count` and the fallback refusal both key on `Image`
     specifically, so decide by hand whether a new variant belongs in them.
+
+13. **`accepted_reasoning_levels` DEDUPES BY RENDERED BYTES, AND "DID IT
+    RAISE" ALONE WOULD BE THE WRONG QUESTION.** A GUI cannot build a level
+    menu from `reasoning_support` (three coarse states) and must not build one
+    from the family (root Gotcha 56), so this ASKS the template: render a
+    one-message conversation at each of `ReasoningEffort::ALL` and report what
+    came back. Qwen 3.8 answers `[off, low, medium, xhigh]` and raises on
+    `high`, gpt-oss and Muse Glimmer answer `[off, low, medium, high]`.
+
+    **The raise is only half the signal.** A template that SHIPS but names no
+    reasoning key renders happily at every level and produces IDENTICAL bytes
+    -- `HarmonyTokenizer` and `ZephyrTokenizer` are that shape -- so a
+    raise-only probe reports five accepted levels of which four are silent
+    no-ops, which is precisely the failure `ReasoningSupport` exists to
+    prevent, re-introduced by the thing meant to refine it. Collapsing levels
+    whose render is byte-identical to an earlier one is one rule that lands
+    every support shape correctly: `None` reports `[Off]` whether it has a
+    template or not, `ToggleOnly` reports `Off` plus ONE on-level, and `Level`
+    reports what the template really distinguishes.
+
+    Three things for a caller. The result is never empty and always opens at
+    `Off` (it fails OPEN, in the direction `reasoning_support`'s own doc
+    argues for). `ToggleOnly`'s on-level is `Low` BY POSITION and is not a
+    label. And it is an OPEN-time call, five renders of two lines, never a
+    per-turn one.
+
+    **`ReasoningEffort::ALL` is what the sweep iterates, so a spelling missing
+    from it is never offered by any template -- and no fixture here can see
+    that.** Found by mutation: dropping `High` from `ALL` left every case in
+    `tests/reasoning_effort.rs` green, because `ReasoningEffortTokenizer` is
+    the only `Level` fixture and it REJECTS `high`. The spelling only matters
+    on Harmony and Muse Glimmer, which are not fixtures here.
+    `the_probe_sweeps_every_spelling_the_parser_accepts` ties `ALL` to `parse`
+    for that reason rather than restating five names.

@@ -24,7 +24,19 @@ public struct SessionInfo: Decodable, Sendable, Equatable {
     public let expertCacheSlots: Int
     public let vocabSize: Int
     public let dialect: String
+    /// What KIND of reasoning control is meaningful. See `reasoningLevels`
+    /// for what to put in it.
     public let reasoningSupport: ReasoningSupport
+    /// The spellings this checkpoint's own template can express, ascending,
+    /// always opening at `"off"`. Prefer the typed `reasoningEfforts`.
+    ///
+    /// Stored as strings rather than as `[GenerateOptions.Reasoning]` on
+    /// purpose. `SessionInfo` is decoded inside `TurboSparkSession.init`,
+    /// whose failure path has to close the C handle by hand (Gotcha 31), so
+    /// a sixth level added to the engine one day must not take down every
+    /// session open on this side. A field-NAME drift still fails the decode,
+    /// which is the guard Gotcha 5 wants; an unknown VALUE is dropped.
+    public let reasoningLevels: [String]
     /// What directional steering resolved to for this session.
     public let steering: Steering
     /// What speculative decoding resolved to for this session.
@@ -33,6 +45,24 @@ public struct SessionInfo: Decodable, Sendable, Equatable {
     public let vision: Vision
     /// Special token identifiers for tokenizer inspection.
     public let specialTokens: SpecialTokens
+
+    /// The reasoning levels this checkpoint accepts. **BUILD A PICKER FROM
+    /// THIS AND FROM NOTHING ELSE.**
+    ///
+    /// The set belongs to the checkpoint and cannot be derived from the
+    /// family: Qwen 3.8 answers `[.off, .low, .medium, .xhigh]` and RAISES
+    /// on `.high`, where gpt-oss and Muse Glimmer answer
+    /// `[.off, .low, .medium, .high]`. Sending a level absent from here
+    /// fails the turn with the template's own error, so a menu offering all
+    /// five is a menu with a broken entry in it.
+    ///
+    /// Levels rendering the same prompt are already collapsed by the engine,
+    /// so a `.toggleOnly` checkpoint answers exactly two. Its second entry is
+    /// `.low` BY POSITION and is not a label: read `reasoningSupport` and
+    /// present that case as an on/off switch.
+    public var reasoningEfforts: [GenerateOptions.Reasoning] {
+        reasoningLevels.compactMap(GenerateOptions.Reasoning.init(rawValue:))
+    }
 
     /// Whether an image sent to this session would actually be SERVED.
     ///

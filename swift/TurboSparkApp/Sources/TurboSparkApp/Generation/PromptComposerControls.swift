@@ -165,14 +165,16 @@ struct PromptReasoningPillControl: View {
 
         Menu {
             Section("Thinking / Reasoning Effort") {
-                ForEach(GenerateOptions.Reasoning.allCases) { level in
+                ForEach(model.availableReasoningLevels) { level in
+                    let title = model.reasoningLabel(for: level)
+                        + " - " + model.reasoningDescription(for: level)
                     Button {
                         model.setReasoning(level)
                     } label: {
                         if model.reasoning == level {
-                            Label(level.label + " - " + level.descriptionText, systemImage: "checkmark")
+                            Label(title, systemImage: "checkmark")
                         } else {
-                            Text(level.label + " - " + level.descriptionText)
+                            Text(title)
                         }
                     }
                 }
@@ -191,7 +193,7 @@ struct PromptReasoningPillControl: View {
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(isThinkingActive ? TurboSparkTheme.accentColor : Color.secondary)
 
-                Text(isThinkingActive ? "Thinking: \(model.reasoning.label)" : "Thinking: Off")
+                Text("Thinking: \(model.reasoningLabel(for: model.reasoning))")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(isThinkingActive ? Color.primary : Color.secondary)
 

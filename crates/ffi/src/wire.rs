@@ -414,10 +414,22 @@ pub struct SessionInfo {
     pub expert_cache_slots: usize,
     pub vocab_size: usize,
     pub dialect: String,
-    /// `level` | `toggleOnly` | `none`. A GUI should disable its reasoning
-    /// picker on `none` and grey out the LEVELS on `toggleOnly`, where
-    /// thinking turns on but the level is dropped.
+    /// `level` | `toggleOnly` | `none`. Says what KIND of control is
+    /// meaningful; `reasoning_levels` below says what to put in it.
     pub reasoning_support: String,
+    /// The levels this checkpoint's own template can express, ascending,
+    /// always starting `"off"`. **BUILD THE MENU FROM THIS AND NOTHING
+    /// ELSE.** The set is the checkpoint's and not derivable from the
+    /// family: Qwen 3.8 answers `["off","low","medium","xhigh"]` and RAISES
+    /// on `high`, where Harmony and Muse Glimmer answer
+    /// `["off","low","medium","high"]`. Offering a level absent from here
+    /// fails the turn with the template's own error.
+    ///
+    /// Levels rendering the same prompt are already collapsed, so a
+    /// `toggleOnly` checkpoint answers exactly two and a `none` one answers
+    /// `["off"]`. On `toggleOnly` the second entry is `"low"` BY POSITION
+    /// and is not a label -- read `reasoning_support` and say "On".
+    pub reasoning_levels: Vec<String>,
     pub steering: SteeringInfo,
     /// What speculative decoding resolved to. **`block` being non-null is a
     /// statement about this SESSION and not about the next turn**:

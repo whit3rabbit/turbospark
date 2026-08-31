@@ -220,7 +220,8 @@ info.pastTrainedContext // true when the window exceeds it
 info.family             // "gemma4", "qwen36", "llama", ...
 info.vocabSize          // token count in vocabulary
 info.dialect            // chat template dialect ("harmony", "qwen", ...)
-info.reasoningSupport   // .level | .toggleOnly | .none
+info.reasoningSupport   // .level | .toggleOnly | .none -- what KIND of control
+info.reasoningEfforts   // [.off, .low, .medium, .xhigh] -- what to put IN it
 info.steering.active    // true when a control vector is active
 info.steering.mode      // "ablate", "add", "clamp", "renorm" or nil
 info.steering.scale     // active scale multiplier or nil
@@ -320,15 +321,36 @@ convention drops prior-turn analysis and Qwen's template drops prior-turn
 trained to read.
 
 **The accepted levels are the checkpoint's, not this library's.** Qwen 3.8
-rejects `.high` and its top setting is `.xhigh`; Harmony and Muse Glimmer
-accept `.high`. A level a template rejects throws an error naming it, rather
-than being silently dropped. Check `info.reasoningSupport` first:
+rejects `.high` and its top setting is `.xhigh`, while gpt-oss and Muse
+Glimmer accept `.high` and have no `.xhigh`. A level a template rejects throws
+an error naming it, rather than being silently dropped.
+
+**So build the picker from `info.reasoningEfforts`, never from
+`Reasoning.allCases` and never from the family.** The engine probes that set
+at open by rendering a one-message conversation at each spelling, so it is the
+checkpoint's own answer and a new release needs no code change here:
+
+```swift
+Picker("Thinking", selection: $level) {
+    ForEach(session.info.reasoningEfforts) { Text($0.label).tag($0) }
+}
+.disabled(session.info.reasoningSupport == .none)
+```
+
+Levels that render the same prompt are already collapsed, so a `.toggleOnly`
+checkpoint reports exactly two entries. `reasoningSupport` says what KIND of
+control is meaningful:
 
 | value | meaning | what a UI should do |
 |---|---|---|
-| `.level` | the template takes an effort level | enable the picker |
-| `.toggleOnly` | thinking turns on, the level is dropped | grey out the levels, keep the toggle |
-| `.none` | no chat template at all | disable it; asking throws |
+| `.level` | the template takes an effort level | list `reasoningEfforts` |
+| `.toggleOnly` | thinking turns on, the level is dropped | present the one on-level as a switch, labelled "On" rather than by its spelling |
+| `.none` | no reasoning knob at all | disable the control, asking throws |
+
+Two traps. A `.toggleOnly` checkpoint's on-level is `.low` BY POSITION and is
+not a label. And there is no answer at all before a session exists, because
+the set is read off the template at open: gate the control on having one
+rather than guessing from the model's family.
 
 ### Estimating tokens
 

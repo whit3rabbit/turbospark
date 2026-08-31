@@ -240,11 +240,32 @@ so going through `make` recompiles the whole app every single time. Use
    `GenerationResult.content` is the assistant turn; `reasoning` is for
    display. `AppModel` stores it on `AppChatMessage.reasoning` for the
    collapsible view and rebuilds `[ChatMessage]` from `content` alone.
-   Reasoning LEVELS are the checkpoint's set and not this library's: Qwen 3.8
-   refuses `.high` and tops out at `.xhigh` while Harmony and Muse Glimmer
-   accept `.high`, and a refused level throws from the template. Gate the UI
-   on `info.reasoningSupport`, whose `.toggleOnly` case means the levels
-   should be greyed rather than the toggle hidden.
+   **BUILD THE LEVEL PICKER FROM `info.reasoningEfforts`, NOT FROM
+   `Reasoning.allCases` AND NOT FROM THE FAMILY.** The accepted set belongs to
+   the checkpoint's own chat template: Qwen 3.8 refuses `.high` and tops out
+   at `.xhigh` while gpt-oss and Muse Glimmer accept `.high` and have no
+   `.xhigh`, and a refused level throws from the template mid-turn. The engine
+   probes that set at open (five renders of a two-line conversation) and
+   reports it; `reasoningSupport` says only what KIND of control is
+   meaningful. `AppModel` offered `allCases` for every `.level` checkpoint
+   until 2026-08-31, so the menu carried an entry that failed the turn.
+
+   **THE THREE THINGS THAT COST SOMETHING TO REDISCOVER.** Levels rendering
+   the same prompt are collapsed by the engine, so a `.toggleOnly` checkpoint
+   reports exactly two and its on-level is `.low` BY POSITION -- print "On",
+   never the spelling (`ReasoningLevelPolicy.label(for:support:)`). There is
+   no answer at all before a session exists, and the guess that used to fill
+   the gap was a hardcoded family set, i.e. exactly the table root Gotcha 56
+   refuses; the controls gate on `AppModel.reasoningPickerEnabled` and the
+   inspector disables rather than hides, since a missing row reads as a
+   missing feature. And a preference restored from another model is clamped
+   to the nearest expressible rung WITH A TOAST, because dropping it to
+   `.off` silently turns thinking off for someone who turned it on -- the
+   silent no-op the whole feature exists to avoid.
+
+   The decision lives in `ReasoningLevelPolicy`, a pure type, for Gotcha 26's
+   reason: `AppModel.info` is computed from `session`, so assertions written
+   against `AppModel` need a real install and therefore never ran.
 
 10. **`TurboSparkDemo` IS GONE; `swift-demo` IS NOW AN ALIAS FOR
     `swift-app`.** What ships is `TurboSparkApp`: multi-chat with
