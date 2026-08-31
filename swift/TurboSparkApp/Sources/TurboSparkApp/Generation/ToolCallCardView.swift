@@ -33,13 +33,25 @@ struct ToolCallCardView: View {
         return Color(nsColor: .separatorColor).opacity(0.35)
     }
 
+    private var isTodoCall: Bool {
+        call.name.lowercased().contains("todo")
+    }
+
+    private var parsedTodos: [TodoItem]? {
+        try? TodoWriteExecutor.parseTodos(from: call.arguments)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             summaryHeaderButton
 
             if isExpanded || isPendingApproval {
                 VStack(alignment: .leading, spacing: 8) {
-                    argumentsPreview
+                    if isTodoCall, let _ = parsedTodos {
+                        todoChecklistPreview
+                    } else {
+                        argumentsPreview
+                    }
                     if let risk = call.riskAssessment, !risk.reasons.isEmpty, isPendingApproval {
                         riskWarningBox(risk)
                     }
@@ -207,6 +219,62 @@ struct ToolCallCardView: View {
         case .completed: return .green
         case .denied: return .secondary
         case .failed: return .red
+        }
+    }
+
+    private var todoChecklistPreview: some View {
+        Group {
+            if let todos = parsedTodos, !todos.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(todos) { item in
+                        HStack(alignment: .center, spacing: 8) {
+                            if item.isCompleted {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundStyle(Color.green)
+                                    .font(.caption)
+                            } else if item.isInProgress {
+                                TaskProgressFlameIcon(size: 12)
+                            } else if item.isCancelled {
+                                Image(systemName: "minus.circle.fill")
+                                    .foregroundStyle(Color.secondary)
+                                    .font(.caption)
+                            } else {
+                                Image(systemName: "circle")
+                                    .foregroundStyle(Color.secondary.opacity(0.7))
+                                    .font(.caption)
+                            }
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(item.content)
+                                    .font(.callout.weight(item.isInProgress ? .semibold : .regular))
+                                    .foregroundStyle(item.isCompleted ? .secondary : .primary)
+                                    .strikethrough(item.isCompleted || item.isCancelled, color: .secondary)
+
+                                if item.isInProgress && !item.activeForm.isEmpty && item.activeForm != item.content {
+                                    Text(item.activeForm)
+                                        .font(.caption2)
+                                        .foregroundStyle(TurboSparkTheme.accentColor)
+                                }
+                            }
+
+                            Spacer()
+
+                            if item.isInProgress {
+                                Text("In Progress")
+                                    .font(.caption2.weight(.medium))
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(Color.orange.opacity(0.15), in: Capsule())
+                                    .foregroundStyle(Color.orange)
+                            }
+                        }
+                        .padding(.vertical, 2)
+                    }
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
+            }
         }
     }
 

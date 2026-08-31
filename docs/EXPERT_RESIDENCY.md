@@ -265,6 +265,53 @@ why both paths ship rather than one replacing the other.
   by this much (AGENTS.md Gotcha 35). A flag needs the harnesses pinned first.
 - Every frozen row in `crates/bench` is a STREAMED row and stands unchanged. A
   mapped row is a new row, not a re-freeze.
+- **The VISION TOWER has its own mapped arm since 2026-08-30, behind its OWN
+  seam, `MFERENCE_VISION_RESIDENCY=mapped`, never `MFERENCE_EXPERT_RESIDENCY`.**
+  Reusing the routed variable would move the tower silently for anyone A/Bing
+  routed residency, which is the exact silent-ignore failure
+  `mapped_residency_refusal`'s own doc comment exists to prevent, one seam
+  over. There is no per-family refusal function for it either: the tower is
+  family-agnostic (any install with `arch.vision.is_active()` runs the same
+  code), so the only gate is whether the tower opens at all, and
+  `MappedExpertLayer::open`'s `layout.num_layers > 0` precondition is
+  trivially satisfied by the tower's own `packed_vision/` layout, which is
+  always exactly one "layer" of `depth` blocks.
+
+  The shape differs from the routed case in one way that matters: the
+  routed arm maps ONE `MetalBuffer` PER LAYER (`MappedResidency::buffers`
+  is a `Vec`), while the tower has only one pseudo-layer, so
+  `VisionTower` maps a SINGLE buffer over the WHOLE tower and
+  `block::encode_block` gained a `base: u64` parameter
+  (`mapped_layer.expert_offset(n)`) added to every `roles.at(role)` call, since
+  a block's twelve named sub-tensor roles are offsets relative to the START of
+  that one block's own blob -- true for the pread arm because
+  `slot_buffers[slot]` wraps exactly one pread'd block starting at 0, and
+  false for the mapped arm's buffer, which wraps every block concatenated. The
+  pread call site passes `base = 0`, a no-op addition, which is what makes the
+  change verifiable as byte-identical rather than merely argued.
+
+  Landed in two steps, per this page's own rule for isolating causes: first
+  the mapping alone with the per-block `commit_and_wait` unchanged for both
+  arms, then a second step dropping that wait for the MAPPED arm only (the
+  pread arm keeps it; it is what makes the synchronous `pread` into the next
+  slot safe with no fence). The mapped arm has no pread step and no
+  per-block-overwritten slot, so the wait there was pure CPU-side
+  serialization; correctness rests on the same commit-order guarantee this
+  page's own routed rows already rely on. The wait is NOT dropped when a
+  per-block host readback is requested (`run_with_stages`'s cross-engine
+  capture, or `MFERENCE_VISION_OVERFLOW`), since those need the GPU to have
+  actually finished before reading `s.x` from the host -- both still
+  `commit_and_wait` per block, unchanged.
+
+  Verified on the synthetic fixture
+  (`crates/runtime/tests/mapped_vision_residency.rs`): both arms produce
+  byte-identical `VisionEmbedding` rows on the same image, AND
+  `RealForwardRunner::vision_residency_is_mapped()` (`None` before the first
+  image, `Some(bool)` after) proves the mapped arm actually engaged rather
+  than silently falling through to pread -- mutation-checked, and the
+  engagement mutation reddens ONLY that assertion while leaving the
+  byte-identity one green, which is exactly the silent-fallback failure the
+  accessor exists to catch. No real-install run yet; see Not done.
 
 ## Not done
 

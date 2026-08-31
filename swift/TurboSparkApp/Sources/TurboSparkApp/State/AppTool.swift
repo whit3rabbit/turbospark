@@ -1,4 +1,5 @@
 import Foundation
+import TurboSpark
 
 /// Functional category of a tool action for permission checks.
 public enum AppToolCategory: String, Codable, CaseIterable, Identifiable, Sendable {
@@ -251,6 +252,9 @@ public enum AppToolRegistry {
         return AppToolCatalog.category(for: toolName)
     }
 
+    /// Active session provider for running subagent tasks.
+    public static var activeSessionProvider: (@Sendable () async -> TurboSparkSession?)?
+
     /// Tool names `execute(call:in:)` actually has a real handler for,
     /// independent of which `OpenAITool` DEFINITIONS `AppToolCatalog`
     /// advertises to the model. A name outside this set (and not a dynamic
@@ -268,11 +272,13 @@ public enum AppToolRegistry {
         "apply_patch", "applypatch",
         "search_code", "grep", "search",
         "run_command", "bash", "shell", "exec", "terminal",
+        "webfetch", "web_fetch", "fetch_url", "read_url_content",
         "skill",
         "todowrite", "todo_write",
         "taskcreate", "task_create",
         "tasklist", "task_list",
         "askuserquestion", "ask_user_question", "question",
+        "agent", "subagent", "task",
         "call_mcp_tool", "callmcptool", "mcp_tool"
     ]
 
@@ -296,10 +302,12 @@ public enum AppToolRegistry {
     ]
 
     /// Whether `execute(call:in:)` has a real handler for `toolName`.
-    public static func isImplemented(_ toolName: String) -> Bool {
+    public static func isImplemented(_ toolName: String, projectURL: URL? = nil) -> Bool {
         let lower = toolName.lowercased()
         if lower.contains("__") && lower.hasPrefix("mcp__") { return true }
-        return supportedToolNames.contains(lower)
+        if supportedToolNames.contains(lower) { return true }
+        let custom = CustomToolManager.shared.resolveEffectiveTools(for: projectURL)
+        return custom.contains(where: { $0.name.lowercased() == lower })
     }
 
     /// Generates system prompt instructions for tool use.
@@ -403,6 +411,14 @@ public enum AppToolRegistry {
                 let timeoutMs = Int(call.arguments["timeout"] ?? "")
                 output = try await runCommand(command: command, rootURL: rootURL, timeoutMs: timeoutMs)
 
+            case "webfetch", "web_fetch", "fetch_url", "read_url_content":
+                guard let urlString = call.arguments["url"] ?? call.arguments["uri"] else {
+                    throw NSError(domain: "TurboSparkTool", code: 23, userInfo: [NSLocalizedDescriptionKey: "Missing 'url' argument for WebFetch tool call."])
+                }
+                let format = call.arguments["format"] ?? "markdown"
+                let timeoutSeconds = Int(call.arguments["timeout"] ?? "")
+                output = try await WebFetchExecutor.fetch(url: urlString, format: format, timeout: timeoutSeconds)
+
             case "skill":
                 guard let skillName = call.arguments["name"] ?? call.arguments["skill_name"] else {
                     throw NSError(domain: "TurboSparkTool", code: 18, userInfo: [NSLocalizedDescriptionKey: "Missing 'name' argument for skill tool call."])
@@ -435,7 +451,8 @@ public enum AppToolRegistry {
                 }
 
             case "todowrite", "todo_write":
-                output = "Todo list updated."
+                let res = try TodoWriteExecutor.execute(arguments: call.arguments)
+                output = res.output
 
             case "taskcreate", "task_create":
                 let subject = call.arguments["subject"] ?? "Untitled task"
@@ -446,6 +463,26 @@ public enum AppToolRegistry {
 
             case "askuserquestion", "ask_user_question", "question":
                 output = "Question submitted to user."
+
+            case "agent", "subagent", "task":
+                guard let prompt = call.arguments["prompt"] ?? call.arguments["task"] ?? call.arguments["instructions"] else {
+                    throw NSError(domain: "TurboSparkTool", code: 20, userInfo: [NSLocalizedDescriptionKey: "Missing 'prompt' argument for Agent tool call."])
+                }
+                let subagentType = call.arguments["subagent_type"] ?? call.arguments["type"] ?? call.arguments["name"] ?? "general-purpose"
+                let agentDef = AgentManager.shared.findAgent(name: subagentType, projectURL: project?.rootDirectoryURL)
+                    ?? AgentManager.shared.findAgent(name: "general-purpose", projectURL: project?.rootDirectoryURL)
+                    ?? AgentManager.shared.builtInAgents[0]
+                guard agentDef.isEnabled else {
+                    throw NSError(domain: "TurboSparkTool", code: 20, userInfo: [
+                        NSLocalizedDescriptionKey: "Agent '\(agentDef.name)' is currently disabled."
+                    ])
+                }
+                let activeSession = await activeSessionProvider?()
+                let result = await SubagentRunner.run(agent: agentDef, taskPrompt: prompt, session: activeSession, project: project)
+                if result.status == "error" || result.status == "failed" {
+                    throw NSError(domain: "TurboSparkTool", code: 21, userInfo: [NSLocalizedDescriptionKey: result.finalResponse])
+                }
+                output = "Subagent [\(agentDef.displayName)] completed in \(result.totalTurns) turn(s) (\(result.totalToolCalls) tool call(s), \(String(format: "%.2f", result.durationSeconds))s):\n\n\(result.finalResponse)"
 
             case "call_mcp_tool", "callmcptool", "mcp_tool":
                 guard let serverName = call.arguments["server"] ?? call.arguments["server_name"] else {
@@ -468,6 +505,13 @@ public enum AppToolRegistry {
                             NSLocalizedDescriptionKey: "Malformed MCP tool name: '\(call.name)'."
                         ])
                     }
+                } else if let customTool = CustomToolManager.shared.resolveEffectiveTools(for: project?.rootDirectoryURL).first(where: { $0.name.lowercased() == call.name.lowercased() }) {
+                    guard customTool.isEnabled else {
+                        throw NSError(domain: "TurboSparkTool", code: 22, userInfo: [
+                            NSLocalizedDescriptionKey: "Custom tool '\(customTool.name)' is currently disabled."
+                        ])
+                    }
+                    output = try await CustomToolExecutor.execute(tool: customTool, arguments: call.arguments, projectRootURL: rootURL)
                 } else {
                     // Fabricating "Executed successfully" for a tool with no
                     // real handler let the model believe hallucinated results

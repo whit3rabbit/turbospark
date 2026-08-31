@@ -191,6 +191,10 @@ public final class AppModel: ObservableObject {
     /// Project-scoped skills for the currently selected project.
     @Published public var projectSkills: [AppSkill] = []
 
+    // Agents State
+    /// All discovered agents (built-in, user, project).
+    @Published public var discoveredAgents: [AppAgentDefinition] = []
+
     // Multi-chat State
     /// All user chat conversations.
     @Published public var chats: [AppChat] = []
@@ -349,7 +353,18 @@ public final class AppModel: ObservableObject {
         loadChats()
         loadGlobalMcpServers()
         reloadSkills()
+        reloadAgents()
         refreshModels()
+        AppToolRegistry.activeSessionProvider = { [weak self] in
+            await MainActor.run { self?.session }
+        }
+        TodoWriteExecutor.onTodosUpdated = { [weak self] targetChatID, newTodos in
+            Task { @MainActor [weak self] in
+                guard let self = self else { return }
+                let chatID = targetChatID ?? self.selectedChatID
+                self.updateTodos(for: chatID, todos: newTodos)
+            }
+        }
         AppHookStore.shared.refresh(projectDirectory: selectedProject?.rootDirectoryPath)
         Task {
             _ = await self.dispatchLifecycleHook(event: .sessionStart, source: "startup")
@@ -395,6 +410,31 @@ public final class AppModel: ObservableObject {
             return chats[index]
         }
         return activeDraftChat
+    }
+
+    /// Active task checklist for the currently selected chat.
+    public var currentTodos: [TodoItem] {
+        selectedChat.todos
+    }
+
+    /// Present continuous description of the active `in_progress` task, if any.
+    public var activeTaskDescription: String? {
+        if let inProgress = selectedChat.todos.first(where: { $0.isInProgress }) {
+            return inProgress.activeForm.isEmpty ? inProgress.content : inProgress.activeForm
+        }
+        return nil
+    }
+
+    /// Updates the checklist items for a given chat and persists the change.
+    public func updateTodos(for chatID: UUID, todos: [TodoItem]) {
+        if let index = chats.firstIndex(where: { $0.id == chatID }) {
+            chats[index].todos = todos
+            chats[index].updatedAt = Date()
+            persistChats()
+        } else if activeDraftChat.id == chatID {
+            activeDraftChat.todos = todos
+            activeDraftChat.updatedAt = Date()
+        }
     }
 
     /// Draft prompt text for the currently selected chat.

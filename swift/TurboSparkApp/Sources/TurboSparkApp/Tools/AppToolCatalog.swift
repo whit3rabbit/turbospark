@@ -39,7 +39,8 @@ public enum AppToolCatalog {
     /// never sees them as an option in the first place. Add a name to
     /// `AppToolRegistry.supportedToolNames` (and a real `case` in
     /// `execute`) before removing it from this filter.
-    public static let allTools: [OpenAITool] = {
+    /// Full suite of all supported OpenAI tool definitions.
+    public static var allTools: [OpenAITool] {
         var tools: [OpenAITool] = []
         tools.append(contentsOf: fileTools)
         tools.append(contentsOf: terminalTools)
@@ -49,12 +50,14 @@ public enum AppToolCatalog {
         tools.append(contentsOf: mcpTools)
         tools.append(contentsOf: planningInteractiveTools)
         tools.append(contentsOf: automationTools)
+        let custom = CustomToolManager.shared.resolveEffectiveTools(for: nil).map { $0.openAITool }
+        tools.append(contentsOf: custom)
         return tools.filter { AppToolRegistry.isImplemented($0.function.name) }
-    }()
+    }
 
-    /// Filters available tools appropriate for a specific agent profile.
-    public static func tools(for agentType: AppAgentType) -> [OpenAITool] {
-        let list: [OpenAITool]
+    /// Filters available tools appropriate for a specific agent profile, including custom workspace tools.
+    public static func tools(for agentType: AppAgentType, projectURL: URL? = nil) -> [OpenAITool] {
+        var list: [OpenAITool]
         switch agentType {
         case .coder:
             var l: [OpenAITool] = []
@@ -76,7 +79,7 @@ public enum AppToolCatalog {
             list = l
 
         case .autonomous:
-            return allTools
+            list = allTools
 
         case .general, .custom:
             var l: [OpenAITool] = []
@@ -86,14 +89,18 @@ public enum AppToolCatalog {
             l.append(contentsOf: taskAgentTools)
             list = l
         }
-        // See `allTools` above: a definition with no real executor is never
-        // advertised to the model, whatever agent profile is active.
-        return list.filter { AppToolRegistry.isImplemented($0.function.name) }
+
+        let custom = CustomToolManager.shared.resolveEffectiveTools(for: projectURL).map { $0.openAITool }
+        list.append(contentsOf: custom)
+        return list.filter { AppToolRegistry.isImplemented($0.function.name, projectURL: projectURL) }
     }
 
     /// Resolves the permission category for any tool name.
     public static func category(for toolName: String) -> AppToolCategory {
         let name = toolName.lowercased()
+        if let custom = CustomToolManager.shared.resolveEffectiveTools(for: nil).first(where: { $0.name.lowercased() == name }) {
+            return custom.category
+        }
         if name.contains("__") || name.hasPrefix("mcp_") || name.hasPrefix("mcp.") {
             return .mcp
         }
@@ -111,13 +118,6 @@ public enum AppToolCatalog {
         case "read_file", "view_file", "cat", "fileread", "read", "list_directory", "list_dir", "ls", "glob", "search_code", "grep", "search", "grep_search":
             return .fileRead
         default:
-            // An UNRECOGNIZED tool name (e.g. "CronCreate", "ScheduleWakeup" --
-            // neither matches the exact-string `"cron"`/`"schedule"` cases
-            // above) must not fail open into `.fileRead`, which is allowed
-            // outright in Strict Read-Only mode. `.automation` is denied
-            // under Strict Read-Only and asked-for under `.standard`/`.auto`,
-            // so an unknown tool gets the more conservative default rather
-            // than being treated as if it were provably a read.
             return .automation
         }
     }
@@ -148,6 +148,9 @@ public enum AppToolCatalog {
         lines.append("```tool_call")
         lines.append("{\"name\": \"tool_name\", \"arguments\": {\"key\": \"value\"}}")
         lines.append("```")
+        lines.append("")
+        lines.append("## Task & Progress Tracking")
+        lines.append("For multi-step or non-trivial tasks (3+ steps), proactively use `TodoWrite` to organize your plan, track progress, and update status in real-time. Mark a task as `in_progress` BEFORE working on it and `completed` IMMEDIATELY upon finishing.")
         return lines.joined(separator: "\n")
     }
 }

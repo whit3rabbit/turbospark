@@ -251,6 +251,8 @@ public struct AppChat: Identifiable, Codable, Equatable, Sendable {
     public var draftAttachments: [AppPromptAttachment]
     /// Committed conversation message history.
     public var messages: [AppChatMessage]
+    /// Active task checklist for this session.
+    public var todos: [TodoItem]
     /// Optional context summary or metadata.
     public var contextSummary: String?
     /// Timestamp when the chat was created.
@@ -266,6 +268,7 @@ public struct AppChat: Identifiable, Codable, Equatable, Sendable {
         draft: String = "",
         draftAttachments: [AppPromptAttachment] = [],
         messages: [AppChatMessage] = [],
+        todos: [TodoItem] = [],
         contextSummary: String? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
@@ -276,13 +279,14 @@ public struct AppChat: Identifiable, Codable, Equatable, Sendable {
         self.draft = draft
         self.draftAttachments = draftAttachments
         self.messages = messages
+        self.todos = todos
         self.contextSummary = contextSummary
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
 
     /// Tolerant decode, for the reason given on `AppChatMessage.init(from:)`:
-    /// a chat saved before `draftAttachments` existed must not take the whole
+    /// a chat saved before `draftAttachments` or `todos` existed must not take the whole
     /// archive down with it.
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -293,6 +297,7 @@ public struct AppChat: Identifiable, Codable, Equatable, Sendable {
         draftAttachments = try container.decodeIfPresent(
             [AppPromptAttachment].self, forKey: .draftAttachments) ?? []
         messages = try container.decodeIfPresent([AppChatMessage].self, forKey: .messages) ?? []
+        todos = try container.decodeIfPresent([TodoItem].self, forKey: .todos) ?? []
         contextSummary = try container.decodeIfPresent(String.self, forKey: .contextSummary)
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()

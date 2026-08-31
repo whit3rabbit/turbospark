@@ -248,19 +248,56 @@ public struct TaskOutputInput: Codable, Sendable, Equatable {
 
 // MARK: - TodoWrite Tool
 
-/// A single checklist todo item.
-public struct TodoItem: Codable, Sendable, Equatable {
-    /// Task item description.
+/// A single checklist todo item for tracking agent progress across tasks.
+public struct TodoItem: Codable, Sendable, Equatable, Identifiable {
+    /// Unique identifier for the item.
+    public var id: String
+    /// Task item description (imperative form, e.g. "Run unit tests").
     public var content: String
-    /// Status ("pending", "in_progress", "completed").
+    /// Status ("pending", "in_progress", "completed", "cancelled").
     public var status: String
-    /// Active progress description.
+    /// Active progress description (present continuous form, e.g. "Running unit tests").
     public var activeForm: String
 
-    public init(content: String, status: String = "pending", activeForm: String = "") {
+    public init(
+        id: String = UUID().uuidString,
+        content: String,
+        status: String = "pending",
+        activeForm: String = ""
+    ) {
+        self.id = id
         self.content = content
         self.status = status
-        self.activeForm = activeForm
+        self.activeForm = activeForm.isEmpty ? content : activeForm
+    }
+
+    public var isCompleted: Bool {
+        let s = status.lowercased()
+        return s == "completed" || s == "done" || s == "finished"
+    }
+
+    public var isInProgress: Bool {
+        let s = status.lowercased()
+        return s == "in_progress" || s == "in-progress" || s == "running" || s == "active"
+    }
+
+    public var isPending: Bool {
+        let s = status.lowercased()
+        return s == "pending" || s == "todo" || s.isEmpty
+    }
+
+    public var isCancelled: Bool {
+        let s = status.lowercased()
+        return s == "cancelled" || s == "canceled" || s == "deleted"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
+        content = try container.decodeIfPresent(String.self, forKey: .content) ?? ""
+        status = try container.decodeIfPresent(String.self, forKey: .status) ?? "pending"
+        let rawActive = try container.decodeIfPresent(String.self, forKey: .activeForm) ?? ""
+        activeForm = rawActive.isEmpty ? content : rawActive
     }
 }
 
@@ -276,12 +313,15 @@ public struct TodoWriteInput: Codable, Sendable, Equatable {
 
 /// Output payload from updating the todo checklist.
 public struct TodoWriteOutput: Codable, Sendable, Equatable {
+    /// Summary message of updated items.
+    public var message: String
     /// Previous list of todos.
     public var oldTodos: [TodoItem]
     /// New list of todos.
     public var newTodos: [TodoItem]
 
-    public init(oldTodos: [TodoItem] = [], newTodos: [TodoItem] = []) {
+    public init(message: String = "", oldTodos: [TodoItem] = [], newTodos: [TodoItem] = []) {
+        self.message = message
         self.oldTodos = oldTodos
         self.newTodos = newTodos
     }
@@ -362,19 +402,20 @@ public enum TaskItemToolDefinitions {
 
     public static let todoWrite = OpenAITool.function(
         name: "TodoWrite",
-        description: "Update the project todo list with current items and statuses.",
+        description: "Update the task checklist for the session. Use proactively for multi-step tasks (3+ steps), marking items in_progress BEFORE working and completed IMMEDIATELY after finishing. Keep at most ONE task in_progress at a time.",
         parameters: .object(
             properties: [
                 "todos": .array(
                     items: .object(
                         properties: [
-                            "content": .string(description: "Description of the todo item."),
-                            "status": .string(description: "Status: 'pending', 'in_progress', 'completed'."),
-                            "activeForm": .string(description: "Progress action label.")
+                            "id": .string(description: "Optional unique task ID."),
+                            "content": .string(description: "Imperative task description (e.g. 'Run test suite')."),
+                            "status": .string(description: "Status: 'pending', 'in_progress', 'completed', 'cancelled'."),
+                            "activeForm": .string(description: "Present continuous label (e.g. 'Running test suite').")
                         ],
                         required: ["content", "status", "activeForm"]
                     ),
-                    description: "Array of updated todo items."
+                    description: "Full updated list of todo items."
                 )
             ],
             required: ["todos"]

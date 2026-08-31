@@ -172,7 +172,7 @@ crates/runtime/
   consumes them. `power.rs` keeps the two OS probes (`physical_memory`,
   `recommended_max_working_set`) -- those are the one place that asks the
   machine, and the policies take the answer as a parameter.
-- `vision/`: the `qwen3_5` vision tower's streamed forward pass (ROADMAP M-V4, `docs/VISION.md`). Opens a 2-slot `PreadExpertStreamer` over the 27 blocks M-V3 wrote into `packed_vision/` and runs patch-embed, the block loop, and the merger, returning the `[merged_tokens, 5120]` FP16 rows M-V5 will inject. **NO NEW I/O CODE**, which was M-V3's design bet: `packed_vision/` reuses the `PackedExpertsLayout` schema verbatim and `StreamLayout` interprets neither "layer" nor "expert", so a tower is one layer of `depth` fixed-stride blobs and the existing streamer serves it unchanged. Reached through `RealForwardRunner::encode_image`, which OPENS THE TOWER LAZILY -- `arch.vision` is read by nothing else here, so an eager open would charge every text-only session on a vision install 58 MiB of pinned slots for a component it never touches, and `self.vision.is_none()` therefore means "no image yet" rather than "no tower" (that question is `arch.vision.is_active()`). It is also the ONLY reader of `vision.` resident tensors, which is what makes `readable_resident_dtype`'s name-scoped FP16 exception safe (Gotcha 24).
+- `vision/`: the `qwen3_5` vision tower's streamed forward pass (ROADMAP M-V4, `docs/VISION.md`). Opens a 2-slot `PreadExpertStreamer` over the 27 blocks M-V3 wrote into `packed_vision/` and runs patch-embed, the block loop, and the merger, returning the `[merged_tokens, 5120]` FP16 rows M-V5 will inject. **NO NEW I/O CODE**, which was M-V3's design bet: `packed_vision/` reuses the `PackedExpertsLayout` schema verbatim and `StreamLayout` interprets neither "layer" nor "expert", so a tower is one layer of `depth` fixed-stride blobs and the existing streamer serves it unchanged. Reached through `RealForwardRunner::encode_image`, which OPENS THE TOWER LAZILY -- `arch.vision` is read by nothing else here, so an eager open would charge every text-only session on a vision install 58 MiB of pinned slots for a component it never touches, and `self.vision.is_none()` therefore means "no image yet" rather than "no tower" (that question is `arch.vision.is_active()`). It is also the ONLY reader of `vision.` resident tensors, which is what makes `readable_resident_dtype`'s name-scoped FP16 exception safe (Gotcha 24). **Its own mapped-residency arm since 2026-08-30** reads a SEPARATE seam, `MFERENCE_VISION_RESIDENCY=mapped`, never the routed `MFERENCE_EXPERT_RESIDENCY` -- see Gotcha 31 and `docs/EXPERT_RESIDENCY.md`.
 - `error.rs`: `RuntimeError` enum.
 
 ## Development & Test Commands
@@ -1055,3 +1055,56 @@ cargo test -p turbospark-runtime
     closes it, and asserts the reuse HAPPENED as well as that the tokens
     match -- without that clause the equality is the trivial one, two full
     prefills agreeing with each other.
+
+31. **THE VISION TOWER'S MAPPED RESIDENCY NEEDED A `base: u64` PARAMETER THE
+    ROUTED FAMILIES DID NOT, BECAUSE THE TOWER MAPS ONE BUFFER RATHER THAN
+    ONE PER LAYER.** `MFERENCE_VISION_RESIDENCY=mapped` (`vision/mod.rs`,
+    `docs/EXPERT_RESIDENCY.md`) is its own seam, deliberately never
+    `MFERENCE_EXPERT_RESIDENCY` -- reusing that variable would move the tower
+    silently for anyone A/Bing routed residency, exactly the silent-ignore
+    failure `mapped_residency_refusal`'s own doc comment (`real_forward_init.rs`)
+    exists to prevent, one seam over. There is also no per-family refusal
+    function for it: the tower is family-agnostic, so the only gate is
+    whether it opens at all.
+
+    The routed families map `Vec<Option<MetalBuffer>>`, one buffer per
+    layer, because a routed install has many layers each with their own
+    experts. The tower has exactly ONE pseudo-layer (`depth` blocks are one
+    layer of a reused `PackedExpertsLayout`), so `VisionTower` maps a
+    SINGLE buffer over the whole tower instead. That changes the addressing
+    contract: `block::encode_block`'s twelve `roles.at(role)` reads are
+    offsets relative to the START of ONE block's own blob, which is exactly
+    right when `slot` is a pread'd per-block buffer (the existing arm,
+    starting at 0) and wrong when `slot` is the mapped arm's single buffer
+    spanning every block concatenated. `encode_block` therefore gained a
+    `base: u64` parameter (`mapped_layer.expert_offset(n)` for the mapped
+    arm, `0` for the pread arm) added to every role offset; the pread call
+    site's `base = 0` is a no-op, which is what makes the change verifiable
+    as byte-identical rather than merely argued
+    (`tests/mapped_vision_residency.rs`).
+
+    **Landed in two steps, mirroring this crate's own chunked-prefill
+    discipline of separating a structural change from a latency one so a
+    regression has one cause.** Step one wired the mapping with the
+    per-block `commit_and_wait` unchanged for both arms. Step two dropped
+    that wait for the MAPPED arm only: it has no `pread` step and no
+    per-block-overwritten slot (the mapped buffer is read-only for the
+    whole run), so the wait there was pure CPU-side serialization with no
+    data-hazard purpose, and correctness rests on the same commit-order
+    guarantee Gotcha 8 already relies on. The wait stays UNCONDITIONAL
+    whenever a per-block host readback is requested
+    (`run_with_stages`'s cross-engine capture, `MFERENCE_VISION_OVERFLOW`),
+    since those need the GPU to have actually finished before reading
+    `s.x` from the host -- skipping it there would read stale or
+    in-flight bytes with no error.
+
+    **ENGAGEMENT NEEDS ITS OWN PROOF, SEPARATE FROM BYTE-IDENTITY.**
+    `RealForwardRunner::vision_residency_is_mapped()` reports which arm the
+    tower actually took (`None` before the first image, `Some(bool)`
+    after), because a byte-identity test alone cannot tell "the mapped arm
+    ran and matched" from "the mapped arm silently fell through to
+    pread" -- both pass parity trivially in the second case. Measured by
+    mutation: forcing the tower to always take the pread branch reddens
+    ONLY the engagement assertion in `tests/mapped_vision_residency.rs` and
+    leaves the byte-identity one green, which is the silent-fallback
+    failure the accessor exists to catch, demonstrated rather than argued.

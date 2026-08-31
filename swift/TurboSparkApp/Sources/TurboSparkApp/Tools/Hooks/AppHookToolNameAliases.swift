@@ -19,7 +19,7 @@ enum AppHookToolNameAliases {
         "task": ["skill"],
         "todowrite": ["todowrite", "todo_write"],
         "askuserquestion": ["askuserquestion", "ask_user_question", "question"],
-        "webfetch": ["call_mcp_tool", "callmcptool", "mcp_tool"],
+        "webfetch": ["webfetch", "web_fetch", "fetch_url", "read_url_content"],
         "websearch": ["call_mcp_tool", "callmcptool", "mcp_tool"]
     ]
 

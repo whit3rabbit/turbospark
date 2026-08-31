@@ -40,6 +40,11 @@ extension AppModel {
         // A turn carrying only a picture has no text and is still a turn.
         guard !fullUserContent.isEmpty || !promptImages.isEmpty else { return }
 
+        // If user typed an agent slash command (e.g. /explore, /plan, /agent), execute in isolated context
+        if handleAgentSlashCommand(fullUserContent) {
+            return
+        }
+
         // `UserPromptSubmit` has to be awaited BEFORE the message is
         // appended to the chat, or a hook cannot actually stop the turn: by
         // the time this app used to fire it (inside `executeGenerationTurn`,

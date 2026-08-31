@@ -148,6 +148,54 @@ extension AppToolRegistry {
         return "Successfully wrote \(content.count) characters to \(relPath)."
     }
 
+    /// Compacts lengthy tool output preserving both head (initial context) and tail (errors/summary).
+    public static func compactOutput(_ raw: String, maxLines: Int = 120) -> String {
+        let lines = raw.components(separatedBy: "\n")
+        guard lines.count > maxLines else { return raw }
+        let headCount = 25
+        let tailCount = 65
+        let head = lines.prefix(headCount).joined(separator: "\n")
+        let tail = lines.suffix(tailCount).joined(separator: "\n")
+        let omitted = lines.count - (headCount + tailCount)
+        return "\(head)\n\n... [\(omitted) lines truncated] ...\n\n\(tail)"
+    }
+
+    /// Normalizes Unicode curly quotes to standard straight quotes.
+    public static func normalizeQuotes(_ str: String) -> String {
+        return str
+            .replacingOccurrences(of: "\u{2018}", with: "'")
+            .replacingOccurrences(of: "\u{2019}", with: "'")
+            .replacingOccurrences(of: "\u{201C}", with: "\"")
+            .replacingOccurrences(of: "\u{201D}", with: "\"")
+    }
+
+    /// Strips copied line prefixes (e.g. ' 12 | ' or '12: ') from model input.
+    public static func stripLinePrefixes(_ str: String) -> String {
+        let lines = str.components(separatedBy: "\n")
+        var strippedLines: [String] = []
+        var hadPrefixes = false
+
+        for line in lines {
+            if let regex = try? NSRegularExpression(pattern: "^\\s*\\d+\\s*[|:]\\s?(.*)$", options: []) {
+                let ns = line as NSString
+                if let match = regex.firstMatch(in: line, options: [], range: NSRange(location: 0, length: ns.length)), match.numberOfRanges > 1 {
+                    let rest = ns.substring(with: match.range(at: 1))
+                    strippedLines.append(rest)
+                    hadPrefixes = true
+                    continue
+                }
+            }
+            strippedLines.append(line)
+        }
+        return hadPrefixes ? strippedLines.joined(separator: "\n") : str
+    }
+
+    /// Strips trailing whitespace per line.
+    public static func stripTrailingWhitespace(_ str: String) -> String {
+        let lines = str.components(separatedBy: "\n")
+        return lines.map { $0.replacingOccurrences(of: "\\s+$", with: "", options: .regularExpression) }.joined(separator: "\n")
+    }
+
     static func editFile(relPath: String, oldString: String, newString: String, replaceAll: Bool, rootURL: URL) async throws -> String {
         let targetURL = try resolveSecurePath(relPath: relPath, rootURL: rootURL)
         try AppToolSandbox.validateWritePath(targetURL, rootURL: rootURL)
@@ -162,24 +210,89 @@ extension AppToolRegistry {
         }
 
         let content = try AppFileReadLimits.readTextFile(at: targetURL, describing: relPath)
-        guard content.contains(oldString) else {
-            throw NSError(domain: "TurboSparkTool", code: 15, userInfo: [NSLocalizedDescriptionKey: "Target old_string not found in \(relPath)."])
+        let isMarkdown = relPath.lowercased().hasSuffix(".md") || relPath.lowercased().hasSuffix(".mdx")
+
+        // 1. Exact match attempt
+        var targetOld = oldString
+        var matchedSpan: Range<String.Index>? = content.range(of: targetOld)
+
+        // 2. Line prefix stripping attempt (if model accidentally copied '12 | ' from read_file)
+        if matchedSpan == nil {
+            let strippedOld = stripLinePrefixes(targetOld)
+            if strippedOld != targetOld {
+                targetOld = strippedOld
+                matchedSpan = content.range(of: targetOld)
+            }
+        }
+
+        // 3. Quote normalization attempt
+        if matchedSpan == nil {
+            let normOld = normalizeQuotes(targetOld)
+            let normContent = normalizeQuotes(content)
+            if let normRange = normContent.range(of: normOld) {
+                let startOffset = normContent.distance(from: normContent.startIndex, to: normRange.lowerBound)
+                let length = normContent.distance(from: normRange.lowerBound, to: normRange.upperBound)
+                let targetStart = content.index(content.startIndex, offsetBy: startOffset)
+                let targetEnd = content.index(targetStart, offsetBy: length)
+                targetOld = String(content[targetStart..<targetEnd])
+                matchedSpan = targetStart..<targetEnd
+            }
+        }
+
+        // 4. Trailing whitespace tolerance attempt (non-markdown)
+        if matchedSpan == nil && !isMarkdown {
+            let strippedOld = stripTrailingWhitespace(targetOld)
+            let strippedContent = stripTrailingWhitespace(content)
+            if strippedContent.contains(strippedOld) {
+                let oldLines = strippedOld.components(separatedBy: "\n")
+                let contentLines = content.components(separatedBy: "\n")
+                if !oldLines.isEmpty && contentLines.count >= oldLines.count {
+                    for i in 0...(contentLines.count - oldLines.count) {
+                        let window = contentLines[i..<(i + oldLines.count)].map { $0.replacingOccurrences(of: "\\s+$", with: "", options: .regularExpression) }
+                        if window == oldLines {
+                            let actualWindow = contentLines[i..<(i + oldLines.count)].joined(separator: "\n")
+                            if let r = content.range(of: actualWindow) {
+                                targetOld = actualWindow
+                                matchedSpan = r
+                                break
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        guard let firstRange = matchedSpan else {
+            throw NSError(domain: "TurboSparkTool", code: 15, userInfo: [
+                NSLocalizedDescriptionKey: "Target old_string not found in \(relPath). Ensure exact indentation, or re-read the file to inspect the latest contents."
+            ])
+        }
+
+        // Count total matches in file
+        var matchCount = 0
+        var searchRange = content.startIndex..<content.endIndex
+        while let nextRange = content.range(of: targetOld, range: searchRange) {
+            matchCount += 1
+            if nextRange.upperBound >= content.endIndex { break }
+            searchRange = nextRange.upperBound..<content.endIndex
+        }
+
+        if matchCount > 1 && !replaceAll {
+            throw NSError(domain: "TurboSparkTool", code: 15, userInfo: [
+                NSLocalizedDescriptionKey: "Target old_string appears \(matchCount) times in \(relPath). Please provide more surrounding context to uniquely identify the target or set replace_all: true."
+            ])
         }
 
         let updatedContent: String
         if replaceAll {
-            updatedContent = content.replacingOccurrences(of: oldString, with: newString)
+            updatedContent = content.replacingOccurrences(of: targetOld, with: newString)
         } else {
-            if let range = content.range(of: oldString) {
-                updatedContent = content.replacingCharacters(in: range, with: newString)
-            } else {
-                updatedContent = content
-            }
+            updatedContent = content.replacingCharacters(in: firstRange, with: newString)
         }
 
         try updatedContent.write(to: targetURL, atomically: true, encoding: .utf8)
         await FileSnapshotStore.shared.recordSnapshot(url: targetURL, content: updatedContent)
-        return "Successfully replaced occurrences in \(relPath)."
+        return "Successfully replaced \(replaceAll ? "\(matchCount) occurrence(s)" : "occurrence") in \(relPath)."
     }
 
     static func searchCode(pattern: String, relPath: String, rootURL: URL) throws -> String {
@@ -198,10 +311,6 @@ extension AppToolRegistry {
             if path.contains("/node_modules/") || path.contains("/target/") || path.contains("/.build/") {
                 continue
             }
-            // Skipped rather than refused: a search walks a whole tree, and
-            // one oversized file in it is not a reason to fail the search.
-            // Without this the walk loaded every binary, log and checkpoint
-            // it met into memory whole just to find out it was not text.
             if let size = AppFileReadLimits.fileSize(of: fileURL),
                 size > AppFileReadLimits.maximumBytes
             {
@@ -222,17 +331,11 @@ extension AppToolRegistry {
         if matches.isEmpty {
             return "No matches found for '\(pattern)'."
         }
-        return "Found \(matches.count) matches:\n" + matches.joined(separator: "\n")
+        let formatted = "Found \(matches.count) matches:\n" + matches.joined(separator: "\n")
+        return compactOutput(formatted)
     }
 
     static func runCommand(command: String, rootURL: URL, timeoutMs: Int? = nil) async throws -> String {
-        // `timeoutMs` is the model-supplied `BashInput.timeout` (milliseconds);
-        // 0 or absent falls back to a generous default rather than blocking
-        // forever. `ProcessExecutor` drains stdout/stderr concurrently with
-        // the wait, which is what makes the deadline actually fire: the
-        // previous `waitUntilExit()` + `readDataToEndOfFile()` pair hung
-        // indefinitely the moment a command wrote more than one pipe buffer
-        // (~64KB) before exiting, since nothing was reading it meanwhile.
         let timeoutSeconds: TimeInterval
         if let timeoutMs, timeoutMs > 0 {
             timeoutSeconds = TimeInterval(timeoutMs) / 1000.0
@@ -261,3 +364,4 @@ extension AppToolRegistry {
         return combined
     }
 }
+

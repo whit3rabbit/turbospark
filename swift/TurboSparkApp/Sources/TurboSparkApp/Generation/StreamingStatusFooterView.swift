@@ -80,6 +80,9 @@ public struct StreamingStatusFooterView: View {
     }
 
     private var currentStatusText: String {
+        if let activeTask = model.activeTaskDescription {
+            return activeTask
+        }
         if !model.outputReasoningText.isEmpty && model.outputText.isEmpty {
             return "Thinking..."
         }

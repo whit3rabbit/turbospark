@@ -34,7 +34,25 @@ public enum ToolCallDiffFormatter {
     public static func summarize(callName: String, arguments: [String: String]) -> ToolCallSummaryInfo {
         let lowerName = callName.lowercased()
 
-        // 1. File Edits: replace_file_content, edit_file, etc.
+        // 1. Task Management / TodoWrite (checked before write_file/create_file)
+        if lowerName.contains("todo") {
+            if let parsed = try? TodoWriteExecutor.parseTodos(from: arguments) {
+                let completed = parsed.filter { $0.isCompleted }.count
+                let inProgress = parsed.filter { $0.isInProgress }.count
+                let total = parsed.count
+                let statusSummary = inProgress > 0 ? "\(completed)/\(total) done (1 in progress)" : "\(completed)/\(total) done"
+                return ToolCallSummaryInfo(
+                    action: "Tasks",
+                    target: statusSummary
+                )
+            }
+            return ToolCallSummaryInfo(
+                action: "Updated",
+                target: "task checklist"
+            )
+        }
+
+        // 2. File Edits: replace_file_content, edit_file, etc.
         if lowerName.contains("replace") || lowerName.contains("edit") {
             let targetPath = arguments["TargetFile"] ?? arguments["path"] ?? arguments["file"] ?? "file"
             let fileName = (targetPath as NSString).lastPathComponent
@@ -75,7 +93,7 @@ public enum ToolCallDiffFormatter {
             )
         }
 
-        // 2. File Writes: write_to_file, write_file, create_file
+        // 3. File Writes: write_to_file, write_file, create_file
         if lowerName.contains("write") || lowerName.contains("create") {
             let targetPath = arguments["TargetFile"] ?? arguments["path"] ?? arguments["file"] ?? "file"
             let fileName = (targetPath as NSString).lastPathComponent
@@ -92,7 +110,7 @@ public enum ToolCallDiffFormatter {
             )
         }
 
-        // 3. File Reads: view_file, read_file
+        // 4. File Reads: view_file, read_file
         if lowerName.contains("view") || lowerName.contains("read") {
             let targetPath = arguments["AbsolutePath"] ?? arguments["path"] ?? arguments["file"] ?? arguments["TargetFile"] ?? "file"
             let fileName = (targetPath as NSString).lastPathComponent
@@ -109,7 +127,7 @@ public enum ToolCallDiffFormatter {
             )
         }
 
-        // 4. Commands: run_command, bash, terminal
+        // 5. Commands: run_command, bash, terminal
         if lowerName.contains("command") || lowerName.contains("bash") || lowerName.contains("exec") {
             let cmd = arguments["CommandLine"] ?? arguments["command"] ?? arguments["cmd"] ?? ""
             let trimmed = cmd.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -121,7 +139,7 @@ public enum ToolCallDiffFormatter {
             )
         }
 
-        // 5. Grep / Search
+        // 6. Grep / Search
         if lowerName.contains("grep") || lowerName.contains("search") {
             let query = arguments["Query"] ?? arguments["query"] ?? arguments["pattern"] ?? ""
             return ToolCallSummaryInfo(
@@ -130,7 +148,7 @@ public enum ToolCallDiffFormatter {
             )
         }
 
-        // 6. Generic fallback
+        // 7. Generic fallback
         return ToolCallSummaryInfo(
             action: "Invoked",
             target: callName

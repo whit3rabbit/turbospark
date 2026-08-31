@@ -48,6 +48,7 @@ extension AppModel {
         }
         persistProjects()
         reloadSkills()
+        reloadAgents()
         AppHookStore.shared.refresh(projectDirectory: project.rootDirectoryPath)
 
         // Create initial chat for this project
@@ -77,6 +78,7 @@ extension AppModel {
         }
         persistProjects()
         reloadSkills()
+        reloadAgents()
         AppHookStore.shared.refresh(projectDirectory: selectedProject?.rootDirectoryPath)
 
         // If the currently selected chat doesn't belong to the newly selected project, switch selection
@@ -98,6 +100,7 @@ extension AppModel {
         projects[index] = updated
         persistProjects()
         reloadSkills()
+        reloadAgents()
         if selectedProjectID == project.id {
             AppHookStore.shared.refresh(projectDirectory: updated.rootDirectoryPath)
         }
@@ -116,6 +119,7 @@ extension AppModel {
         persistProjects()
         persistChats()
         reloadSkills()
+        reloadAgents()
     }
 
     /// Scans a local codebase directory for AGENTS.md, CLAUDE.md, or rules files according to preference.

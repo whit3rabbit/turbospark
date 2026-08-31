@@ -70,11 +70,24 @@ public struct WebSearchOutput: Codable, Sendable, Equatable {
 public struct WebFetchInput: Codable, Sendable, Equatable {
     /// URL to retrieve.
     public var url: String
-    /// Extraction instruction guiding what content or answer to extract.
-    public var prompt: String
+    /// The format to return the content in: "markdown" (default), "text", or "html".
+    public var format: String?
+    /// Optional timeout in seconds (maximum: 120, default: 30).
+    public var timeout: Int?
+    /// Optional extraction instruction guiding what content or answer to extract.
+    public var prompt: String?
 
-    public init(url: String, prompt: String) {
+    enum CodingKeys: String, CodingKey {
+        case url
+        case format
+        case timeout
+        case prompt
+    }
+
+    public init(url: String, format: String? = "markdown", timeout: Int? = nil, prompt: String? = nil) {
         self.url = url
+        self.format = format
+        self.timeout = timeout
         self.prompt = prompt
     }
 }
@@ -136,13 +149,14 @@ public enum WebToolDefinitions {
 
     public static let webFetch = OpenAITool.function(
         name: "WebFetch",
-        description: "Fetch web page content from a URL and extract relevant information.",
+        description: "Fetch content from an HTTP or HTTPS URL and return it as text, markdown, or HTML. Markdown is the default.",
         parameters: .object(
             properties: [
-                "url": .string(description: "The URL of the webpage to fetch."),
-                "prompt": .string(description: "Instruction for what information to extract from the page.")
+                "url": .string(description: "The HTTP or HTTPS URL to fetch content from."),
+                "format": .string(description: "The format to return the content in: 'markdown', 'text', or 'html'. Defaults to markdown."),
+                "timeout": .integer(description: "Optional timeout in seconds (maximum: 120, default: 30).")
             ],
-            required: ["url", "prompt"]
+            required: ["url"]
         )
     )
 
