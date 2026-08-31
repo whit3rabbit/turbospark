@@ -5,12 +5,12 @@ use std::sync::atomic::Ordering;
 
 use runtime::{GenerationConfig, RawDecodeProgress, RawDecodeResult, StopReason};
 use tokenizer::{
-    ChatDialect, Message, MfTokenizer, ReasoningEffort, ReasoningSupport, Role,
+    ChatDialect, ContentPart, Message, MfTokenizer, ReasoningEffort, ReasoningSupport, Role,
     StructuredAssistantDecoder, StructuredAssistantEvent,
 };
 
 use crate::session::{Engine, Session};
-use crate::wire::{GenerateOptions, GenerateResult, WireMessage};
+use crate::wire::{GenerateOptions, GenerateResult, WireMessage, WirePart};
 
 /// Prefill progress event kind.
 pub const TS_EVENT_PREFILL: i32 = 0;
@@ -98,6 +98,116 @@ fn role_of(name: &str) -> Result<Role, String> {
     }
 }
 
+/// Maps the wire shapes onto the tokenizer's own message type.
+///
+/// A message with parts becomes a MULTIMODAL message and renders through
+/// `content_parts`; a plain string takes the text path every caller that
+/// predates images already took, so nothing about a text-only render moves.
+/// An image part becomes a bare `ContentPart::Image` placeholder: the pixels
+/// travel separately and the two halves meet at the id sequence
+/// (`crate::vision`).
+fn decode_messages(messages: &[WireMessage]) -> Result<Vec<Message>, String> {
+    messages
+        .iter()
+        .map(|m| {
+            let role = role_of(&m.role)?;
+            match m.parts() {
+                None => Ok(Message::new(role, m.text())),
+                Some(parts) => {
+                    let mapped: Vec<ContentPart> = parts
+                        .iter()
+                        .map(|p| match p {
+                            WirePart::Text { text } => ContentPart::Text(text.clone()),
+                            WirePart::Image { .. } => ContentPart::Image,
+                        })
+                        .collect();
+                    Ok(Message::with_parts(role, mapped))
+                }
+            }
+        })
+        .collect()
+}
+
+/// Every image part in the conversation, in order, with its SHAPE checked.
+///
+/// Cheap and pure, so a malformed part costs a message rather than the engine
+/// lock -- the same split `crates/server/src/vision.rs` makes between
+/// `validate_urls` (before the model) and the decode (inside the lock). What
+/// it cannot check here is the bytes, which need a decoder.
+///
+/// Order is load-bearing: the nth image pairs with the nth marker run the
+/// template renders, so this flattens across messages without sorting.
+fn collect_image_parts(messages: &[WireMessage]) -> Result<Vec<&WirePart>, String> {
+    let parts: Vec<&WirePart> = messages.iter().flat_map(|m| m.image_parts()).collect();
+    for part in &parts {
+        part.image_source()?;
+    }
+    Ok(parts)
+}
+
+/// Encode this turn's images and return the SPLICED prompt.
+///
+/// **Everything happens under the caller's one lock**, which is the same
+/// contract `crates/server/src/model.rs` states for `run_completion`: encode
+/// and generate cannot be separate acquisitions, or two turns interleave and
+/// each prefills the other's picture, both fluently and with no error.
+///
+/// With no images this is `rendered` unchanged and touches nothing, so a
+/// text-only turn takes the byte-identical path it always did.
+#[cfg(target_os = "macos")]
+fn attach_images(
+    engine: &mut Engine,
+    session: &Session,
+    rendered: &[i32],
+    parts: &[&WirePart],
+) -> Result<Vec<i32>, String> {
+    if parts.is_empty() {
+        return Ok(rendered.to_vec());
+    }
+    let Engine::Real(runner) = engine else {
+        return Err(SCRIPTED_HAS_NO_TOWER.to_string());
+    };
+    if !runner.has_vision_tower() {
+        return Err(format!(
+            "this install declares no vision tower, so it cannot accept an image: {}",
+            session.info.model_path
+        ));
+    }
+    let params = crate::vision::preprocess_params(runner, &session.model_dir)?;
+    let images = crate::vision::prepare(parts, &params)?;
+    crate::vision::attach(runner.as_mut(), rendered, &images, &params)
+}
+
+/// The portable half: off macOS there is no runner to encode with.
+#[cfg(not(target_os = "macos"))]
+fn attach_images(
+    _engine: &mut Engine,
+    _session: &Session,
+    rendered: &[i32],
+    parts: &[&WirePart],
+) -> Result<Vec<i32>, String> {
+    if parts.is_empty() {
+        return Ok(rendered.to_vec());
+    }
+    Err("the engine is macOS-only, so no vision tower can run here".to_string())
+}
+
+/// Drops this turn's injection map. Called on BOTH exits from generation.
+#[cfg(target_os = "macos")]
+fn clear_vision(engine: &mut Engine) {
+    if let Engine::Real(runner) = engine {
+        runner.clear_prompt_vision();
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn clear_vision(_engine: &mut Engine) {}
+
+/// Named once so both the scripted refusal and its test read the same words.
+pub(crate) const SCRIPTED_HAS_NO_TOWER: &str =
+    "this session decodes through a scripted producer, which has no vision tower; \
+     open a real install to send images";
+
 fn stop_reason_name(reason: StopReason) -> &'static str {
     match reason {
         StopReason::EndOfTurn => "endOfTurn",
@@ -145,10 +255,7 @@ fn render(
             ReasoningSupport::Level => {}
         }
     }
-    let decoded: Vec<Message> = messages
-        .iter()
-        .map(|m| Ok(Message::new(role_of(&m.role)?, m.content.clone())))
-        .collect::<Result<_, String>>()?;
+    let decoded = decode_messages(messages)?;
     let rendered = tokenizer
         .apply_chat_template_with_reasoning(&decoded, reasoning)
         .map_err(|e| format!("chat template: {e}"))?;
@@ -219,6 +326,15 @@ pub(crate) fn count_text_tokens(session: &Session, text: &str, add_special: bool
 }
 
 /// Fits a conversation transcript into a context budget using `turbospark-window-fit`.
+///
+/// **THE MEASUREMENT IS A FLOOR ON A CONVERSATION CARRYING IMAGES.** `render`
+/// emits ONE `<|image_pad|>` per picture whatever its size, and the expansion
+/// to that page's merged-token count happens in `crate::vision::attach`'s
+/// splice, which needs the preprocessed grid and therefore the GPU. So an
+/// image turn is undercounted here by roughly a page's worth of positions,
+/// and a conversation this says fits can still be refused by `clamp_max_new`.
+/// That refusal is loud and carries both numbers, which is why the undercount
+/// is documented rather than paid for on every keystroke.
 pub(crate) fn fit_window(
     session: &Session,
     messages: &[WireMessage],
@@ -266,10 +382,7 @@ pub(crate) fn render_prompt(
 ) -> Result<String, String> {
     let reasoning = ReasoningEffort::parse(reasoning_str)
         .ok_or_else(|| format!("unknown reasoning level {:?}", reasoning_str))?;
-    let decoded: Vec<Message> = messages
-        .iter()
-        .map(|m| Ok(Message::new(role_of(&m.role)?, m.content.clone())))
-        .collect::<Result<_, String>>()?;
+    let decoded = decode_messages(messages)?;
     session
         .tokenizer
         .apply_chat_template_with_reasoning(&decoded, reasoning)
@@ -295,7 +408,24 @@ pub(crate) fn generate(
 ) -> Result<GenerateResult, String> {
     let reasoning = ReasoningEffort::parse(&options.reasoning)
         .ok_or_else(|| format!("unknown reasoning level {:?}", options.reasoning))?;
-    let (prompt_ids, _note) = render(&session.tokenizer, messages, reasoning)?;
+    let (rendered_ids, _note) = render(&session.tokenizer, messages, reasoning)?;
+    // Shape-checked before the lock, decoded inside it (see `attach_images`).
+    let image_parts = collect_image_parts(messages)?;
+
+    // Armed BEFORE the lock is taken, so a Stop pressed between turns cannot
+    // cancel the next one before it has produced a token.
+    let cancel = session.arm();
+    let mut engine = session
+        .engine
+        .lock()
+        .map_err(|_| "the session is poisoned by an earlier panic".to_string())?;
+
+    // **THE PROMPT IS NOT FINAL UNTIL THE SPLICE HAS RUN.** The template
+    // renders ONE `<|image_pad|>` per image whatever its size, and
+    // `splice_and_walk` expands each marker to that image's merged-token
+    // count -- so the budget clamp and every length below have to be taken
+    // AFTER this, or a page's worth of positions is missing from both.
+    let prompt_ids = attach_images(&mut engine, session, &rendered_ids, &image_parts)?;
     let max_new = clamp_max_new(session, options.max_new_tokens, prompt_ids.len())?;
 
     let config = GenerationConfig {
@@ -309,14 +439,6 @@ pub(crate) fn generate(
             .collect(),
         rate: session.rate,
     };
-
-    // Armed BEFORE the lock is taken, so a Stop pressed between turns cannot
-    // cancel the next one before it has produced a token.
-    let cancel = session.arm();
-    let mut engine = session
-        .engine
-        .lock()
-        .map_err(|_| "the session is poisoned by an earlier panic".to_string())?;
 
     let mut content = String::new();
     let mut reasoning_text = String::new();
@@ -366,7 +488,7 @@ pub(crate) fn generate(
         Engine::Scripted(_) => session.info.vocab_size,
     };
     let block = turn_block(session.speculation_block, config.shaping.is_deterministic());
-    let result: RawDecodeResult = match (&mut *engine, block) {
+    let decoded: Result<RawDecodeResult, _> = match (&mut *engine, block) {
         // The CONCRETE runner, which is why this sits inside the match:
         // `SpeculativeProducer` has an associated type and cannot be
         // reached through a `&mut dyn LogitProducer`.
@@ -406,8 +528,19 @@ pub(crate) fn generate(
             &predicate,
             &mut on_progress,
         ),
+    };
+
+    // **THE CALLER CONSUMES THE INJECTION MAP, and it is cleared on the
+    // FAILURE path too.** `reset()` deliberately no longer clears it
+    // (`crates/cli` Gotcha 13: clearing at the generation loop's entry landed
+    // on the map for the very prompt about to be prefilled, so every image
+    // run prefilled placeholder embeddings and read perfectly fluently off a
+    // picture the model had not been shown). So it ends HERE, before the `?`,
+    // or the next turn on this session inherits this turn's spans.
+    if !image_parts.is_empty() {
+        clear_vision(&mut engine);
     }
-    .map_err(|e| e.to_string())?;
+    let result: RawDecodeResult = decoded.map_err(|e| e.to_string())?;
 
     Ok(GenerateResult {
         prompt_tokens: result.prompt_tokens,
@@ -443,5 +576,112 @@ mod tests {
         // No drafter: greedy does not conjure one.
         assert_eq!(turn_block(None, true), None);
         assert_eq!(turn_block(None, false), None);
+    }
+
+    fn parse(json: &str) -> Vec<WireMessage> {
+        serde_json::from_str(json).expect("wire messages parse")
+    }
+
+    /// **THE REGRESSION GUARD FOR WIDENING `content`.** Every caller that
+    /// predates images sends a bare string, and `untagged` is what keeps that
+    /// decoding to the same thing. A parts-only shape would have been an ABI
+    /// break dressed as a field.
+    #[test]
+    fn a_bare_string_content_still_decodes_and_reserializes_as_one() {
+        let messages = parse(r#"[{"role":"user","content":"hi"}]"#);
+        assert_eq!(messages[0].text(), "hi");
+        assert!(messages[0].parts().is_none());
+        assert_eq!(messages[0].image_parts().count(), 0);
+        // Round-trips as a STRING, not as an object: `WindowFitOutcome`
+        // hands `retained` straight back to the caller, so a re-serialized
+        // message that changed shape would break every existing consumer.
+        let back = serde_json::to_string(&messages).expect("serializes");
+        assert!(back.contains(r#""content":"hi""#), "{back}");
+    }
+
+    /// A missing `content` is still the empty string rather than an error,
+    /// which is what `#[serde(default)]` meant before this widening too.
+    #[test]
+    fn an_absent_content_is_the_empty_string() {
+        let messages = parse(r#"[{"role":"user"}]"#);
+        assert_eq!(messages[0].text(), "");
+        assert!(messages[0].parts().is_none());
+    }
+
+    /// Parts keep the order they arrived in, and `text()` sees only the
+    /// prose. Order is what pairs the nth picture with the nth marker run.
+    #[test]
+    fn ordered_parts_decode_in_order_and_text_skips_the_images() {
+        let messages = parse(
+            r#"[{"role":"user","content":[
+                 {"type":"image","path":"/a.png"},
+                 {"type":"text","text":"one"},
+                 {"type":"image","base64":"QQ=="},
+                 {"type":"text","text":"two"}]}]"#,
+        );
+        assert_eq!(messages[0].text(), "onetwo");
+        assert_eq!(messages[0].parts().expect("parts").len(), 4);
+
+        let images: Vec<_> = collect_image_parts(&messages).expect("shapes are valid");
+        assert_eq!(images.len(), 2);
+        // The FIRST image is the path one, because that is the order sent.
+        match images[0].image_source().expect("a source") {
+            crate::wire::ImageSource::Path(p) => assert_eq!(p, "/a.png"),
+            crate::wire::ImageSource::Base64(_) => panic!("images were reordered"),
+        }
+        match images[1].image_source().expect("a source") {
+            crate::wire::ImageSource::Base64(b) => assert_eq!(b, "QQ=="),
+            crate::wire::ImageSource::Path(_) => panic!("images were reordered"),
+        }
+    }
+
+    /// Images are collected ACROSS messages, still in order: a conversation
+    /// can carry a picture in an earlier turn as well as the current one.
+    #[test]
+    fn image_parts_are_collected_across_messages_in_order() {
+        let messages = parse(
+            r#"[{"role":"user","content":[{"type":"image","path":"/first.png"}]},
+                {"role":"assistant","content":"ok"},
+                {"role":"user","content":[{"type":"image","path":"/second.png"}]}]"#,
+        );
+        let images = collect_image_parts(&messages).expect("shapes are valid");
+        let paths: Vec<_> = images
+            .iter()
+            .map(|i| match i.image_source().expect("a source") {
+                crate::wire::ImageSource::Path(p) => p.to_string(),
+                crate::wire::ImageSource::Base64(_) => unreachable!(),
+            })
+            .collect();
+        assert_eq!(paths, ["/first.png", "/second.png"]);
+    }
+
+    /// Both spellings, or neither, is REFUSED rather than resolved by
+    /// precedence -- and refused BEFORE the engine lock, which is what makes
+    /// it cheap. A caller that sent both meant one of them, and picking
+    /// silently runs the wrong picture with no error anywhere.
+    #[test]
+    fn an_image_part_needs_exactly_one_source() {
+        let both =
+            parse(r#"[{"role":"user","content":[{"type":"image","path":"/a","base64":"QQ=="}]}]"#);
+        let err = collect_image_parts(&both).expect_err("both sources is refused");
+        assert!(err.contains("both"), "{err}");
+
+        let neither = parse(r#"[{"role":"user","content":[{"type":"image"}]}]"#);
+        let err = collect_image_parts(&neither).expect_err("no source is refused");
+        assert!(err.contains("neither"), "{err}");
+    }
+
+    /// A conversation with no image parts collects nothing, which is the
+    /// condition every text-only turn takes and the one that keeps its path
+    /// byte-identical.
+    #[test]
+    fn a_text_only_conversation_collects_no_images() {
+        let messages = parse(
+            r#"[{"role":"user","content":"hi"},
+                {"role":"user","content":[{"type":"text","text":"still text"}]}]"#,
+        );
+        assert!(collect_image_parts(&messages)
+            .expect("no shapes to get wrong")
+            .is_empty());
     }
 }

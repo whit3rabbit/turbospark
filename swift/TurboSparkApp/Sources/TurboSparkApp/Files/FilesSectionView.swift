@@ -29,7 +29,7 @@ struct FilesSectionView: View {
         }
         .fileImporter(
             isPresented: $isImporting,
-            allowedContentTypes: DocumentTextExtractor.supportedContentTypes,
+            allowedContentTypes: model.attachmentContentTypes,
             allowsMultipleSelection: true,
             onCompletion: handleSelection)
     }

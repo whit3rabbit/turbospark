@@ -267,6 +267,7 @@ final class SurfaceTests: XCTestCase {
             "reasoningSupport": "level",
             "steering": { "active": false },
             "speculation": { "block": null, "drafter": null, "reason": null },
+            "vision": { "active": false, "imageTokenId": null, "reason": null },
             "specialTokens": {
                 "bosId": 1,
                 "eosId": 2,
@@ -286,6 +287,82 @@ final class SurfaceTests: XCTestCase {
         XCTAssertEqual(info.specialTokens.stopTokenIds, [151643, 151645])
         XCTAssertEqual(info.specialTokens.thinkStartId, 151648)
         XCTAssertEqual(info.specialTokens.thinkEndId, 151649)
+    }
+
+    /// **THE COMPATIBILITY GUARD FOR ADDING IMAGES.** A message with none
+    /// must encode `content` as a bare STRING, which is byte for byte what
+    /// this binding sent before `images` existed. An unconditional parts
+    /// array would have been an ABI break dressed as a field.
+    func testAMessageWithoutImagesEncodesContentAsABareString() throws {
+        let message = ChatMessage.user("hello")
+        let json = String(decoding: try JSONEncoder().encode(message), as: UTF8.self)
+        XCTAssertTrue(json.contains("\"content\":\"hello\""), json)
+        XCTAssertFalse(json.contains("\"type\""), json)
+    }
+
+    /// Images encode as ordered parts and are PREPENDED to the text, which is
+    /// what the reference processor builds (`[image, text]`). Appending would
+    /// move every mRoPE position past the image and change the prompt for the
+    /// same request.
+    func testImagesEncodeAsOrderedPartsBeforeTheText() throws {
+        let message = ChatMessage(
+            role: .user,
+            content: "Transcribe this.",
+            images: [.path("/a.png"), .base64("QQ==")])
+        let data = try JSONEncoder().encode(message)
+        let parts = try XCTUnwrap(
+            (try JSONSerialization.jsonObject(with: data) as? [String: Any])?["content"]
+                as? [[String: String]])
+
+        XCTAssertEqual(parts.count, 3)
+        // The IMAGES come first, in the order given, and the text last.
+        XCTAssertEqual(parts[0]["type"], "image")
+        XCTAssertEqual(parts[0]["path"], "/a.png")
+        XCTAssertEqual(parts[1]["type"], "image")
+        XCTAssertEqual(parts[1]["base64"], "QQ==")
+        XCTAssertEqual(parts[2]["type"], "text")
+        XCTAssertEqual(parts[2]["text"], "Transcribe this.")
+
+        // Exactly one source per image part, which is what the engine
+        // requires -- both or neither is refused there rather than resolved.
+        XCTAssertNil(parts[0]["base64"])
+        XCTAssertNil(parts[1]["path"])
+    }
+
+    /// Both shapes decode, so a message that made a round trip through
+    /// `fitWindow` comes back equal to what went in.
+    func testBothContentShapesRoundTrip() throws {
+        for message in [
+            ChatMessage.user("plain"),
+            ChatMessage(role: .user, content: "with a picture", images: [.path("/p.png")]),
+            // No text beside the image: the parts array is images alone.
+            ChatMessage(role: .user, content: "", images: [.base64("QQ==")]),
+        ] {
+            let data = try JSONEncoder().encode(message)
+            let back = try JSONDecoder().decode(ChatMessage.self, from: data)
+            XCTAssertEqual(back, message)
+        }
+    }
+
+    /// `vision.active` decodes, and a refusing install carries its reason.
+    /// A host gates its attach control on this pair.
+    func testVisionInfoDecodesActiveAndItsRefusalReason() throws {
+        let refusing = """
+        { "active": false, "imageTokenId": null,
+          "reason": "this install declares no image preprocessing config" }
+        """
+        let off = try JSONDecoder().decode(
+            SessionInfo.Vision.self, from: Data(refusing.utf8))
+        XCTAssertFalse(off.active)
+        XCTAssertNil(off.imageTokenId)
+        XCTAssertNotNil(off.reason)
+
+        let serving = #"{ "active": true, "imageTokenId": 151655, "reason": null }"#
+        let on = try JSONDecoder().decode(
+            SessionInfo.Vision.self, from: Data(serving.utf8))
+        XCTAssertTrue(on.active)
+        XCTAssertEqual(on.imageTokenId, 151655)
+        XCTAssertNil(on.reason)
     }
 
     /// Tests that GenerateOptions encodes custom stopTokens without error.
@@ -311,26 +388,229 @@ final class SurfaceTests: XCTestCase {
         XCTAssertEqual(statusDetokenize, TS_ERR_INVALID_ARGUMENT)
     }
 
-    /// The in-process server's three C ABI entry points, called through the
+    /// The in-process server's C ABI entry points, called through the
     /// STATICLIB rather than the rlib (this file, not `c_surface.rs`), which
     /// is the only thing that can catch a signature mismatch between
     /// `turbospark.h` and the Rust side (`crates/ffi/CLAUDE.md` Gotcha 2).
-    /// `ts_server_start` and `ts_server_info_json` need only a null argument
-    /// to validate; real usage against an open session is
-    /// `RealModelTests`'s job, gated on an install being present.
+    /// Real usage against an open session is `RealModelTests`'s job, gated
+    /// on an install being present.
+    ///
+    /// **`ts_server_attach_session` AND `ts_server_poll_events_json` ARE WHY
+    /// THIS TEST MATTERS MORE THAN THE OTHERS HERE.** Both are new ARITIES
+    /// rather than new fields on an existing options bag, and an arity is
+    /// precisely what `c_surface.rs` structurally cannot check: it reaches
+    /// these bodies through the rlib and would pass against a header
+    /// declaring any signature at all.
     func testServerCABISymbolsLinkAndValidateNullArgs() {
         var out: UnsafeMutablePointer<CChar>?
-        var server: OpaquePointer?
-        let statusStart = ts_server_start(nil, nil, &server)
-        XCTAssertEqual(statusStart, TS_ERR_INVALID_ARGUMENT)
-        XCTAssertNil(server)
 
         let statusInfo = ts_server_info_json(nil, &out)
         XCTAssertEqual(statusInfo, TS_ERR_INVALID_ARGUMENT)
 
+        let statusAttach = ts_server_attach_session(nil, nil, &out)
+        XCTAssertEqual(statusAttach, TS_ERR_INVALID_ARGUMENT)
+
+        let statusDetach = ts_server_detach_model(nil, nil)
+        XCTAssertEqual(statusDetach, TS_ERR_INVALID_ARGUMENT)
+
+        let statusPoll = ts_server_poll_events_json(nil, 16, &out)
+        XCTAssertEqual(statusPoll, TS_ERR_INVALID_ARGUMENT)
+
         // NULL is a documented no-op, not an error to check a status code
         // for.
         ts_server_stop(nil)
+    }
+
+    /// **A NULL SESSION STARTS AN EMPTY SERVER RATHER THAN FAILING**, and
+    /// this test used to assert the opposite -- correctly, when
+    /// `ts_server_start` required a session. It is the order a GUI wants:
+    /// the address exists and can be shown before its user has decided what
+    /// to load.
+    ///
+    /// Needs no model, because nothing is attached. That is the point.
+    func testStartingWithNoSessionBindsAnEmptyServer() throws {
+        let server = try TurboSparkServer.start()
+        defer { server.stop() }
+
+        let info = try server.info()
+        XCTAssertGreaterThan(info.port, 0, "port 0 must resolve to a bound one")
+        XCTAssertEqual(info.host, "127.0.0.1")
+        XCTAssertTrue(info.models.isEmpty)
+        XCTAssertEqual(info.modelId, "", "no first model when there is none")
+        XCTAssertNotNil(info.baseURL)
+    }
+
+    /// A poll on a live server with no traffic is empty and lossless, which
+    /// is what a host's timer sees between requests.
+    func testPollingAnIdleServerIsEmptyRatherThanAnError() throws {
+        let server = try TurboSparkServer.start()
+        defer { server.stop() }
+
+        let batch = server.poll()
+        XCTAssertTrue(batch.events.isEmpty)
+        XCTAssertEqual(batch.dropped, 0)
+    }
+
+    /// **A POLL AFTER `stop()` IS EMPTY, NOT AN ERROR.** A poll timer and a
+    /// Stop button race by nature, so a host should not have to catch an
+    /// error for the ordinary case of one tick arriving late. `info()` and
+    /// `detach` DO throw there, because those are things a caller asked for
+    /// deliberately and getting silence back would be worse.
+    func testPollingAfterStopIsEmptyWhileInfoThrows() throws {
+        let server = try TurboSparkServer.start()
+        server.stop()
+
+        XCTAssertTrue(server.poll().events.isEmpty)
+        XCTAssertThrowsError(try server.info())
+        XCTAssertThrowsError(try server.detach(modelId: "anything"))
+    }
+
+    /// The event decoder keeps the events it DOES know when a newer engine
+    /// sends one it does not, rather than failing the whole batch and
+    /// blanking a console over one unrecognized row.
+    func testAnUnknownEventKindDoesNotDiscardTheKnownOnes() throws {
+        let json = """
+            {"events":[
+              {"kind":"requestStarted","id":1,"atMs":5,"method":"GET","path":"/health"},
+              {"kind":"somethingNewer","id":2},
+              {"kind":"requestFinished","id":1,"status":200,"durationMs":3}
+            ],"dropped":7}
+            """
+        let batch = try JSONDecoder().decode(ServerEventBatch.self, from: Data(json.utf8))
+
+        XCTAssertEqual(batch.events.count, 3)
+        XCTAssertEqual(batch.dropped, 7)
+        XCTAssertEqual(batch.events[0], .requestStarted(id: 1, atMs: 5, method: "GET", path: "/health"))
+        XCTAssertEqual(batch.events[1], .unknown(kind: "somethingNewer"))
+        XCTAssertEqual(batch.events[2], .requestFinished(id: 1, status: 200, durationMs: 3))
+        XCTAssertEqual(batch.events[1].requestID, nil, "an unknown event ties to no request")
+    }
+
+    /// `requested` and `served` are separate fields, and the case that
+    /// matters is the one where they differ.
+    func testARoutedEventCarriesBothTheAskedForAndTheServingModel() throws {
+        let json = """
+            {"kind":"requestRouted","id":4,"requested":"claude-sonnet-4-6",
+             "served":"gemma4.gturbo","stream":true}
+            """
+        let event = try JSONDecoder().decode(ServerEvent.self, from: Data(json.utf8))
+        XCTAssertEqual(
+            event,
+            .requestRouted(
+                id: 4, requested: "claude-sonnet-4-6", served: "gemma4.gturbo", stream: true))
+        XCTAssertEqual(event.requestID, 4)
+    }
+
+    /// `ServerInfo` decodes against an engine that predates `models` and
+    /// `uptimeSeconds` rather than throwing and losing every field with
+    /// them, and it reconstructs `models` from the one id such an engine
+    /// does report.
+    func testServerInfoDecodesAgainstAnOlderEngine() throws {
+        let json = """
+            {"port":8080,"host":"127.0.0.1","modelId":"gemma4.gturbo","authEnabled":false}
+            """
+        let info = try JSONDecoder().decode(ServerInfo.self, from: Data(json.utf8))
+        XCTAssertEqual(info.models, ["gemma4.gturbo"])
+        XCTAssertEqual(info.uptimeSeconds, 0)
+        XCTAssertEqual(info.baseURL?.absoluteString, "http://127.0.0.1:8080")
+    }
+
+    /// **The language rule `TurboSparkSession.init`'s manual
+    /// `ts_session_close` rests on, stated as a test because it is the thing
+    /// a future reader will doubt.**
+    ///
+    /// A class initializer that throws BEFORE every stored property is
+    /// assigned leaves an instance that was never fully initialized, and
+    /// Swift does not run `deinit` on one. So a `deinit` holding the only
+    /// release of a C resource releases NOTHING on that path, however
+    /// plainly it reads as cleanup. `TurboSparkSession.init` acquires its
+    /// handle from `ts_session_open` and then reads `ts_session_info_json`,
+    /// which can fail; before the fix that failure stranded an entire open
+    /// session -- mapped weights, KV cache and compiled Metal pipelines --
+    /// for the life of the process.
+    ///
+    /// This cannot be asserted against the real initializer from here: making
+    /// it throw at that exact point needs `ts_session_open` to SUCCEED and the
+    /// info read to fail, which is a fault injection the C ABI does not offer
+    /// and a bad path cannot produce (a bad path fails at `open`, before any
+    /// handle exists). What IS assertable is the rule itself, on a local
+    /// stand-in of the same shape.
+    func testAThrowingInitDoesNotRunDeinitSoCLeanupMustBeManual() {
+        final class ResourceHolder {
+            static var deinitRan = false
+            static var manualReleaseRan = false
+            let resource: Int
+
+            init(failAfterAcquiring: Bool) throws {
+                let acquired = 1
+                if failAfterAcquiring {
+                    // What the fixed initializer does: release by hand,
+                    // because `deinit` below will not be reached.
+                    Self.manualReleaseRan = true
+                    throw TurboSparkError(code: .open, message: "failed after acquiring")
+                }
+                self.resource = acquired
+            }
+
+            deinit { Self.deinitRan = true }
+        }
+
+        ResourceHolder.deinitRan = false
+        ResourceHolder.manualReleaseRan = false
+        XCTAssertThrowsError(try ResourceHolder(failAfterAcquiring: true))
+        XCTAssertFalse(
+            ResourceHolder.deinitRan,
+            "deinit must NOT run for a partially initialized class -- if this ever "
+                + "goes green, TurboSparkSession.init's manual ts_session_close is "
+                + "redundant and should be revisited")
+        XCTAssertTrue(
+            ResourceHolder.manualReleaseRan,
+            "the throwing path is the only place the resource can be released")
+
+        // The succeeding path is the control: deinit DOES run there, which is
+        // what makes the asymmetry above a real hazard rather than a
+        // never-deallocating type.
+        ResourceHolder.deinitRan = false
+        do {
+            _ = try ResourceHolder(failAfterAcquiring: false)
+        } catch {
+            XCTFail("the succeeding path must not throw: \(error)")
+        }
+        XCTAssertTrue(ResourceHolder.deinitRan, "a fully initialized instance does run deinit")
+    }
+
+    /// A failed open must not accumulate process footprint, whatever stage of
+    /// `init` it failed at.
+    ///
+    /// Deliberately a WEAK bound rather than an equality: `phys_footprint` is
+    /// a process-wide peak that other work in this suite also moves, so the
+    /// assertion is that twenty failed opens do not add a session's worth of
+    /// memory (hundreds of MiB at the very least), not that they add zero.
+    /// A regression here is the M1 leak reaching a path a test can see.
+    func testRepeatedFailedOpensDoNotAccumulateFootprint() async {
+        let before = TurboSparkSession.peakFootprintBytes ?? 0
+
+        for _ in 0..<20 {
+            do {
+                _ = try await TurboSparkSession(
+                    modelPath: "/nonexistent/turbospark-test-\(UUID().uuidString).gturbo")
+                XCTFail("opening a nonexistent install must throw")
+            } catch {
+                // Expected. The code varies by platform (TS_ERR_OPEN on
+                // macOS, TS_ERR_UNSUPPORTED elsewhere), so the THROW is the
+                // assertion and the code is not.
+            }
+        }
+
+        let after = TurboSparkSession.peakFootprintBytes ?? 0
+        guard before > 0, after > 0 else {
+            // The counter is unavailable off macOS; there is nothing to
+            // assert rather than something that failed.
+            return
+        }
+        XCTAssertLessThan(
+            after - before, 128 * 1_024 * 1_024,
+            "twenty failed opens grew peak footprint by \((after - before) / 1_024 / 1_024) MiB")
     }
 }
 

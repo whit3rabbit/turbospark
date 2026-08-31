@@ -31,6 +31,24 @@ enum AttachmentImporter {
         let outcomes = await Task.detached(priority: .userInitiated) {
             urls.map { url -> (URL, Int?, Result<ExtractedPromptDocument, Error>) in
                 let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size]) as? Int
+                // **A PICTURE IS NOT EXTRACTED, IT IS CARRIED BY PATH.**
+                // `DocumentTextExtractor` throws `unsupportedFormat` on every
+                // image type, which is correct for its own job and is why
+                // images could not be attached at all before the engine took
+                // them: the pixels go to the vision tower, and the only thing
+                // the prompt needs is where to find them.
+                if AppPromptAttachment.imageFileExtensions.contains(
+                    url.pathExtension.lowercased())
+                {
+                    return (
+                        url, size,
+                        .success(
+                            ExtractedPromptDocument(
+                                fileName: url.lastPathComponent,
+                                formatLabel: "Image",
+                                text: "",
+                                wasTruncated: false)))
+                }
                 do {
                     return (url, size, .success(try DocumentTextExtractor.extract(from: url)))
                 } catch {

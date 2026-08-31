@@ -203,6 +203,7 @@ void ts_session_cancel(const TsSession *s);
  *     "reasoningSupport",
  *     "steering": { "active", "mode", "scale", "summary" },
  *     "speculation": { "block", "drafter", "reason" },
+ *     "vision": { "active", "imageTokenId", "reason" },
  *     "specialTokens": { "bosId", "eosId", "padId", "endOfTurnId",
  *                       "stopTokenIds", "thinkStartId", "thinkEndId" } }
  *
@@ -223,6 +224,14 @@ void ts_session_cancel(const TsSession *s);
  * ("mtp" | "dflash") is non-null exactly when block is. speculation.reason
  * says why it is off when a caller might have expected otherwise, and is
  * null both when they asked for "off" and when it is on.
+ *
+ * vision.active MEANS "AN IMAGE WOULD BE SERVED", NOT "A TOWER EXISTS", and
+ * a host must gate its attach control on it rather than on the family name.
+ * An install can carry a tower and still refuse every image -- the pixel
+ * budget is read from the checkpoint's own preprocessor_config.json and has
+ * no default worth falling back to, so an install streamed without that
+ * sidecar reports active false with the reason in vision.reason. reason is
+ * non-null exactly in that case, which is the only one a caller can act on.
  *
  * A NON-NULL BLOCK IS A STATEMENT ABOUT THE SESSION, NOT THE NEXT TURN.
  * Acceptance is argmax(target) == proposal, exact only at temperature 0, so
@@ -325,6 +334,16 @@ int32_t ts_session_count_text_tokens(const TsSession *s, const char *text,
  *
  * Writes JSON result to `*out`:
  *   { "retained": [...], "measuredTokens": 120, "removedTurnCount": 1, "hasRoomForGeneration": true }
+ *
+ * measuredTokens IS A FLOOR ON A CONVERSATION CARRYING IMAGES, NOT A COUNT.
+ * This renders the template and encodes it, and the template emits ONE
+ * marker per image whatever the picture's size; the expansion to that page's
+ * merged-token count happens later, inside ts_generate's splice, and needs
+ * the preprocessed grid. So an image turn is undercounted by roughly a
+ * page's worth of positions, and a conversation this call says fits can
+ * still be refused by ts_generate with a context-overflow error naming both
+ * numbers. Loud rather than silent, but worth knowing before trusting the
+ * fit. ts_session_count_tokens has the same property for the same reason.
  */
 int32_t ts_session_fit_window_json(const TsSession *s, const char *messages_json,
                                    const char *reasoning, uint32_t max_tokens,
@@ -336,6 +355,28 @@ int32_t ts_session_fit_window_json(const TsSession *s, const char *messages_json
  * `messages_json` is [{"role":"user","content":"..."}], rendered through the
  * checkpoint's own chat template. Roles: system, developer, user, assistant,
  * tool.
+ *
+ * IMAGES. "content" also accepts an ORDERED array of parts, which is how a
+ * caller sends a picture:
+ *
+ *   { "role": "user", "content": [
+ *       { "type": "image", "path": "/abs/page.png" },
+ *       { "type": "text",  "text": "Transcribe this." } ] }
+ *
+ * An image part carries EXACTLY ONE of "path" (a file this process can read)
+ * or "base64" (a bare payload, or a full "data:<media>;base64,<data>" URL).
+ * Both or neither is an error rather than a precedence rule. A bare string
+ * "content" behaves exactly as it always has, byte for byte.
+ *
+ * ORDER IS LOAD-BEARING: the template renders one marker per image and the
+ * nth image is injected at the nth marker, so a caller that reorders the
+ * parts pairs each picture with the wrong span -- fluently, with no error.
+ * PREPEND rather than append to match the reference processor, which builds
+ * [image, text]; appending moves every position past the image.
+ *
+ * Refused BY NAME when sessionInfo.vision.active is false. Check that field
+ * before offering the caller a way to attach one: an install can carry a
+ * tower and still refuse every image (see the field's own note).
  *
  * `options_json` may be NULL or "{}". Recognised keys, with the defaults the
  * CLI uses:
@@ -369,11 +410,20 @@ int32_t ts_generate(const TsSession *s, const char *messages_json,
 /* ---- in-process HTTP server ---- */
 
 /*
- * Starts an in-process HTTP server sharing `s`'s ALREADY-OPEN model, and
- * writes a handle to `*out`. Serves the same OpenAI/Anthropic-compatible
- * routes turbospark-server does: GET /health, POST /v1/chat/completions,
- * POST /v1/completions, POST /v1/responses, POST /v1/messages,
- * POST /v1/messages/count_tokens, GET /v1/models.
+ * Starts an in-process HTTP server sharing ALREADY-OPEN models, and writes a
+ * handle to `*out`. Serves the same routes turbospark-server does:
+ * GET /health, POST /v1/chat/completions, POST /v1/completions,
+ * POST /v1/responses, POST /v1/messages, POST /v1/messages/count_tokens,
+ * GET /v1/models, GET /v1/models/{id}, and the Ollama-compatible
+ * GET /api/tags, GET /api/version, POST /api/show, POST /api/chat,
+ * POST /api/generate.
+ *
+ * `s` MAY BE NULL, meaning start with nothing attached. The server binds and
+ * answers GET /health (reporting "state": "empty"); every generation route
+ * returns 503 until ts_server_attach_session() adds a model. That is the
+ * state a GUI starts a server in before its user has chosen what to load,
+ * and passing a non-NULL `s` is exactly equivalent to starting NULL and
+ * attaching immediately.
  *
  * `options_json` may be NULL or "{}". Recognised keys:
  *   port    number (default 0, meaning let the OS choose; read the port
@@ -382,16 +432,17 @@ int32_t ts_generate(const TsSession *s, const char *messages_json,
  *             a server bound to loopback and reachable only by the process
  *             embedding it)
  *
- * THE SERVER OUTLIVES `s`. It holds its own reference to the underlying
- * engine, so calling ts_session_close(s) after this call frees only the
- * caller's own handle -- the model stays resident and the server keeps
- * serving it until ts_server_stop() releases the last reference. Stop the
- * server explicitly if the model should actually be freed.
+ * THE SERVER OUTLIVES EVERY SESSION ATTACHED TO IT. It holds its own
+ * reference to each underlying engine, so calling ts_session_close(s) after
+ * this call frees only the caller's own handle -- the model stays resident
+ * and the server keeps serving it until ts_server_detach_model() removes
+ * that one, or ts_server_stop() releases them all. Do one of those if a
+ * model should actually be freed.
  *
- * This server carries NEITHER vision NOR the standalone binary's tool-call
- * guardrails: a session opened through ts_session_open has no vision wiring
- * reachable from this library, and an image request is refused by name
- * rather than silently dropped.
+ * This server serves images on both endpoints when the serving session's
+ * install carries a usable tower (see sessionInfo.vision.active), encoding
+ * and generating under one lock exactly as the standalone binary does. A
+ * request it cannot serve is refused by name rather than silently dropped.
  *
  * Blocks until the socket is bound (or binding fails), not until the first
  * request is served.
@@ -400,19 +451,112 @@ int32_t ts_server_start(const TsSession *s, const char *options_json,
                         TsServer **out);
 
 /*
+ * Adds an open session's model to a RUNNING server, and writes the id
+ * clients address it by to `*out` (the install directory's own name, the
+ * same string ts_server_info_json reports in "models"). Free it with
+ * ts_string_free.
+ *
+ * Takes effect immediately: no rebind, and no interruption to a request
+ * already in flight on another model.
+ *
+ * REFUSES A DUPLICATE ID rather than renaming it. The id is what a request's
+ * "model" field names and what ts_server_detach_model keys on, so a silently
+ * suffixed second copy would be addressable under a name the caller never
+ * learned. Two sessions on one install directory is a caller mistake.
+ *
+ * WHICH MODEL SERVES A REQUEST: an exact id match wins. Failing that, if
+ * exactly ONE model is attached it serves the request whatever name was
+ * asked for -- which is what keeps a client sending its own default name
+ * (Claude Code sends "claude-sonnet-4-6") working. With two or more
+ * attached and no match, the request is a 404 naming what IS available.
+ */
+int32_t ts_server_attach_session(const TsServer *server, const TsSession *s,
+                                 char **out);
+
+/*
+ * Removes a model from a running server by id, releasing the server's
+ * reference to its engine.
+ *
+ * TS_OK when one was attached under `model_id`, TS_ERR_INVALID_ARGUMENT when
+ * none was -- reported rather than silently succeeding, because at that
+ * point the caller's own model list and the server's have gone out of step.
+ */
+int32_t ts_server_detach_model(const TsServer *server, const char *model_id);
+
+/*
  * Signals the server to stop, blocks until its background thread has
  * actually exited, and frees the handle. NULL is a no-op.
+ *
+ * This is also what releases every attached model.
  */
 void ts_server_stop(TsServer *server);
 
 /*
- * { "port", "modelId", "authEnabled" } as JSON.
+ * { "port", "host", "modelId", "models", "authEnabled", "uptimeSeconds" }
+ * as JSON.
  *
  * "port" is the port ACTUALLY bound, never the one requested: port 0 in
  * ts_server_start's options asks the OS to choose one, so this is the only
  * place that number is knowable.
+ *
+ * "host" is the IP ACTUALLY bound, from the same call, and is what a caller
+ * should build a URL out of. It reads "127.0.0.1" today because that is what
+ * this library binds; restating that literal instead of reading this field is
+ * correct only for as long as that stays true, and cannot report the day it
+ * does not.
+ *
+ * "models" is every attached id, in attachment order -- the same ids and the
+ * same order GET /v1/models reports. "modelId" is the FIRST of them ("" when
+ * none), kept for a reader written when a server could serve only one; on a
+ * two-model server it is half the truth, so show "models".
+ *
+ * "uptimeSeconds" is from a monotonic clock and is unaffected by the wall
+ * clock moving under a long-running host.
  */
 int32_t ts_server_info_json(const TsServer *server, char **out);
+
+/*
+ * Takes up to `max` buffered request events and writes
+ * { "events": [...], "dropped": N } to `*out`. Free it with ts_string_free.
+ *
+ * DRAINING, NOT PEEKING: an event is returned exactly once. Poll this on a
+ * timer and append what comes back to your own log.
+ *
+ * Each event is an object tagged by "kind":
+ *   requestStarted  { id, atMs, method, path }
+ *   requestRouted   { id, requested, served, stream }
+ *   generated       { id, model, promptTokens, newTokens, prefillSeconds,
+ *                     decodeSeconds, stopReason }
+ *   requestFinished { id, status, durationMs }
+ *   modelAttached   { atMs, model }
+ *   modelDetached   { atMs, model }
+ *
+ * "id" ties the events of one request together. "requested" and "served"
+ * differ whenever the single-model fallback fired, which is the common case
+ * rather than an edge one.
+ *
+ * THERE IS NO TIME-TO-FIRST-TOKEN FIELD, and its absence is the honest
+ * answer: nothing inside a generation can measure one, because a caller
+ * means "request in, first token out" and that includes the wait behind the
+ * one-generation-at-a-time lock. Subtract "prefillSeconds" +
+ * "decodeSeconds" from requestFinished's "durationMs" to get that wait.
+ *
+ * A request the tool-call guardrails re-asked emits TWO "generated" events,
+ * which is the useful reading rather than a duplicate: the retry is real
+ * work the machine did.
+ *
+ * `max` bounds ONE call rather than the buffer -- anything over it stays
+ * queued for the next poll, so a burst arrives late rather than being lost.
+ * `max == 0` means no bound, which is what a host draining before shutdown
+ * wants.
+ *
+ * "dropped" counts events discarded since the PREVIOUS poll, oldest first,
+ * and is nonzero only for a host that stopped draining long enough to
+ * overrun ~2,000 events. Show it: a silently lossy log is indistinguishable
+ * from an idle server.
+ */
+int32_t ts_server_poll_events_json(const TsServer *server, uint32_t max,
+                                   char **out);
 
 /* ---- model management (available on every platform) ---- */
 

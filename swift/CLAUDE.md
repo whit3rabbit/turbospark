@@ -538,3 +538,56 @@ so going through `make` recompiles the whole app every single time. Use
     idempotent path rather than each calling the C function directly, which
     would double-free if a caller stopped it explicitly and then let it go
     out of scope.
+
+33. **IMAGES TRAVEL AS ORDERED CONTENT PARTS, AND THE ONE THING THAT KEEPS
+    THAT FROM BEING AN ABI BREAK IS THAT AN EMPTY `images` ENCODES AS A BARE
+    STRING.** Added 2026-08-30. `ChatMessage` kept `content: String` and
+    gained `images: [ChatImage]` beside it rather than turning `content` into
+    an enum: that field is read in dozens of places with nothing to do with
+    vision, and a message carrying no picture still encodes
+    `"content": "hello"` byte for byte, which is what every caller predating
+    this sends. Only a message with an image switches to the parts array.
+    `testAMessageWithoutImagesEncodesContentAsABareString` is the guard.
+
+    **IMAGES ARE PREPENDED TO THE TEXT, MATCHED TO THE REFERENCE RATHER THAN
+    CHOSEN.** `apply_chat_template(processor, config, question,
+    num_images=1)` builds `[image, text]`. Appending moves every mRoPE
+    position past the image and produces a different prompt for the same
+    request -- fluently, with no error.
+
+    **GATE THE ATTACH CONTROL ON `info.vision.active`, WHICH IS NOT "DOES
+    THIS FAMILY HAVE A TOWER".** An install can carry one and refuse every
+    image: the pixel budget comes from the checkpoint's own
+    `preprocessor_config.json` and has no default worth falling back to
+    (`crates/vision-io` Gotcha 6), so an install streamed without that
+    sidecar reports `active == false` with the reason. `AppModel`'s
+    `visionIsActive` / `attachmentContentTypes` are ONE accessor pair for
+    `activeLoadGuard`'s reason (Gotcha 25): two views assembling their own
+    picker list would drift, and the one that drifted would accept a file the
+    turn then refuses.
+
+    **THREE PLACES A PICTURE IS LOST RATHER THAN ERRORED, ALL FOUND BY
+    WRITING THE TESTS.** Each reads as the model ignoring the image.
+    - `AppChatMessage.imagePaths` had to be on the MESSAGE, not just the
+      draft: the prompt is rebuilt from the transcript on every agent step,
+      so a picture held only in the composer is sent on step one and
+      silently dropped on step two. It decodes with `decodeIfPresent` and a
+      default, for Gotcha 13's reason.
+    - `executeGenerationTurn`'s `guard !msg.content.isEmpty` predates images
+      and drops an image-only turn whole. An image-only turn has no text and
+      is still a turn.
+    - `AttachmentImporter` sent every file through `DocumentTextExtractor`,
+      which throws `unsupportedFormat` on every image type. Correct for its
+      own job, and why images could not be attached at all: the pixels go to
+      the tower and the prompt needs only the path.
+
+    **AND ONE PLACE A ZERO WAS PRESENTED AS A FACT.** An image extracts no
+    text, so the chip's "0 chars" was Gotcha 23's shape and read as a failed
+    import. `AppPromptAttachment.detailText` is a VALUE rather than inline
+    view code so the branch can be tested at all, which is Gotcha 26's
+    `ServerStatusRows` lesson applied a second time.
+
+    The live limit worth knowing: `updateTokenEstimate` is a FLOOR on a turn
+    carrying images. `countTokens` renders the template, which emits one
+    marker per image whatever its size, and the expansion to that page's
+    merged-token count happens later in the engine's splice.

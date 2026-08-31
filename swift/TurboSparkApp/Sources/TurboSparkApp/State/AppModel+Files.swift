@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import UniformTypeIdentifiers
 
 /// One attachment together with the chat it belongs to.
 ///
@@ -21,6 +22,29 @@ public struct AppAttachmentReference: Identifiable, Equatable, Sendable {
 }
 
 extension AppModel {
+    /// Whether the loaded session would actually SERVE an image.
+    ///
+    /// Read off `session.info.vision.active`, which the engine resolved at
+    /// open, rather than inferred from the family name: an install can carry
+    /// a tower and still refuse every image (the pixel budget comes from the
+    /// checkpoint's own sidecar and has no safe default). Nil session means
+    /// no, so nothing offers an attachment before a model is loaded.
+    public var visionIsActive: Bool { session?.info.vision.active ?? false }
+
+    /// Why images are refused, when this install has a tower and cannot use
+    /// it. Nil whenever there is nothing a user could act on.
+    public var visionRefusalReason: String? { session?.info.vision.reason }
+
+    /// The types both attachment pickers accept.
+    ///
+    /// ONE accessor for the same reason `activeLoadGuard` is one: two views
+    /// assembling their own list would drift, and the one that drifted would
+    /// accept a file the turn then refuses.
+    public var attachmentContentTypes: [UTType] {
+        DocumentTextExtractor.supportedContentTypes
+            + (visionIsActive ? AppPromptAttachment.imageContentTypes : [])
+    }
+
     /// Every attachment across every stored chat, newest chat first.
     public var allAttachments: [AppAttachmentReference] {
         var rows: [AppAttachmentReference] = []

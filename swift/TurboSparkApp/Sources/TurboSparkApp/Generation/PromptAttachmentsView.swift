@@ -85,9 +85,7 @@ struct PromptAttachmentChipView: View {
         }
     }
 
-    private var detailText: String {
-        let count = attachment.characterCount.formatted(.number.notation(.compactName))
-        let suffix = attachment.wasTruncatedDuringExtraction ? " • truncated" : ""
-        return "\(attachment.formatLabel) • \(count) chars\(suffix)"
-    }
+    // The subtitle is a VALUE on the attachment, not assembled here, so it
+    // can be tested without a view (`swift/CLAUDE.md` Gotcha 26).
+    private var detailText: String { attachment.detailText }
 }

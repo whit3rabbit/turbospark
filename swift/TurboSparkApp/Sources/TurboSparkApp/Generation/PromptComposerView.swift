@@ -39,7 +39,7 @@ struct PromptComposerView: View {
         }
         .fileImporter(
             isPresented: $isImportingDocuments,
-            allowedContentTypes: DocumentTextExtractor.supportedContentTypes,
+            allowedContentTypes: model.attachmentContentTypes,
             allowsMultipleSelection: true,
             onCompletion: handleDocumentSelection)
         .onReceive(NotificationCenter.default.publisher(for: .focusPrompt)) { _ in
@@ -124,7 +124,39 @@ struct PromptComposerView: View {
             }
     }
 
+    /// The footer is two rows, not one.
+    ///
+    /// Eight controls in a single `HStack` overflow the composer's 680pt and
+    /// an `HStack` resolves that by COMPRESSING them, with no floor: the mode
+    /// segment collapsed to one character per line and "Guardrails: On"
+    /// wrapped mid-pill. The context pills wrap through `FlowLayout` instead,
+    /// and the actions keep a fixed row so Generate stays pinned right.
     private var footer: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            contextPills
+            actionRow
+        }
+    }
+
+    private var contextPills: some View {
+        FlowLayout(spacing: 6, lineSpacing: 6) {
+            PromptInteractionModeSegment(model: model)
+            // Guarded here as well as inside the pill: a view that renders
+            // nothing is still a subview, and FlowLayout would leave its
+            // spacing behind as a phantom gap.
+            if model.selectedProject != nil {
+                PromptProjectContextPill(model: model)
+            }
+            PromptModelSelectorPill(model: model)
+            if model.isReasoningSupported {
+                PromptReasoningPillControl(model: model)
+            }
+            ForgeGuardrailsPillControl(model: model)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var actionRow: some View {
         HStack(spacing: 8) {
             PromptAttachDocumentButton(
                 iconButtonSize: iconButtonSize,
@@ -135,13 +167,6 @@ struct PromptComposerView: View {
                     isImportingDocuments = true
                 }
             )
-            PromptInteractionModeSegment(model: model)
-            PromptProjectContextPill(model: model)
-            PromptModelSelectorPill(model: model)
-            if model.isReasoningSupported {
-                PromptReasoningPillControl(model: model)
-            }
-            ForgeGuardrailsPillControl(model: model)
             PromptTipsButton(
                 iconButtonSize: iconButtonSize,
                 showingTips: $showingPromptTips
@@ -150,10 +175,12 @@ struct PromptComposerView: View {
                 Text("\(model.estimatedPromptTokens) tokens")
                     .font(.caption2.monospacedDigit())
                     .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    .fixedSize()
                     .help("Estimated prompt length: \(model.estimatedPromptTokens) tokens")
                     .accessibilityLabel("Estimated prompt length: \(model.estimatedPromptTokens) tokens")
             }
-            Spacer(minLength: 4)
+            Spacer(minLength: 8)
             clearAction
             GenerateControl(model: model)
         }

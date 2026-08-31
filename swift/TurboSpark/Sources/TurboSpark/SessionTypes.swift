@@ -29,8 +29,29 @@ public struct SessionInfo: Decodable, Sendable, Equatable {
     public let steering: Steering
     /// What speculative decoding resolved to for this session.
     public let speculation: Speculation
+    /// Whether this session would accept an image.
+    public let vision: Vision
     /// Special token identifiers for tokenizer inspection.
     public let specialTokens: SpecialTokens
+
+    /// Whether an image sent to this session would actually be SERVED.
+    ///
+    /// **`active` is not "does this family have a tower".** An install can
+    /// carry one and still refuse every image: the pixel budget is read from
+    /// the checkpoint's own `preprocessor_config.json` and has no default
+    /// worth falling back to, so an install streamed without that sidecar
+    /// reports `active == false` with the reason. Gate an attach control on
+    /// THIS, or the control promises work the engine then declines.
+    public struct Vision: Decodable, Sendable, Equatable {
+        /// True when this session would encode and inject an image.
+        public let active: Bool
+        /// The `<|image_pad|>` id, or nil when inactive.
+        public let imageTokenId: Int32?
+        /// Why images are refused, non-nil exactly when the install has a
+        /// tower and `active` is false. That is the only case a caller can
+        /// act on, so it is the only case that says anything.
+        public let reason: String?
+    }
 
     /// Special token identifiers for tokenizer introspection.
     public struct SpecialTokens: Decodable, Sendable, Equatable {

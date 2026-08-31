@@ -30,6 +30,7 @@ crates/ffi/
 |   +-- models.rs           # catalog, probe, install (portable)
 |   +-- server.rs           # the in-process HTTP server: background thread, tokio runtime, lifecycle
 |   +-- server_model.rs     # ChatModel adapter over SessionCore, for server.rs
+|   +-- server_registry.rs  # the models a RUNNING server serves, and its event ring
 |   +-- telemetry.rs        # phase counters and peak footprint
 |   +-- testing.rs          # session_for_testing (scripted testing harness)
 |   \-- api/                # C ABI entry points (extern "C")
@@ -37,7 +38,7 @@ crates/ffi/
 |       +-- session.rs      # session lifecycle and introspection
 |       +-- generate.rs     # generation, prompt rendering, tokenization, window fit
 |       +-- models.rs       # catalog, recommendations, probe, install
-|       \-- server.rs       # ts_server_start / ts_server_stop / ts_server_info_json
+|       \-- server.rs       # start / attach / detach / stop / info / poll_events
 \-- tests/
     \-- c_surface.rs        # the C entry points, through the `rlib` face
 ```
@@ -281,19 +282,23 @@ make swift-test-real MODEL=~/models/qwen38-27b-mtp.gturbo \
     end-to-end proof: it drops the `Session` and then makes a real HTTP
     request against the server that outlived it.
 
-    **`FfiChatModel` IS A SECOND, SCOPED-DOWN COPY OF
-    `RealChatModel::run_completion`'S DISPATCH, NOT A REUSE OF IT.** It
-    replicates speculation and chunked prefill (both already live on this
-    crate's own `generate.rs` for the SAME session, so skipping either here
-    would make the in-process server slower than a direct `ts_generate` call
-    for no reason a caller could see) but carries neither vision nor
-    `RealChatModel`'s image-under-one-lock handling: a session opened through
-    `ts_session_open` has no vision wiring reachable from this crate at all,
-    so an in-process server built on one would be lying about a capability it
-    cannot serve. An image request is refused BY NAME
-    (`FfiChatModel::run_completion`'s first check), the same shape
-    `ChatModel`'s own default implementation uses for a backend with no
-    tower.
+    **`FfiChatModel` IS A SECOND COPY OF `RealChatModel::run_completion`'S
+    DISPATCH, NOT A REUSE OF IT.** It replicates speculation and chunked
+    prefill (both already live on this crate's own `generate.rs` for the SAME
+    session, so skipping either here would make the in-process server slower
+    than a direct `ts_generate` call for no reason a caller could see), and
+    since 2026-08-30 it replicates `RealChatModel`'s image-under-one-lock
+    handling too.
+
+    **THIS ENTRY USED TO SAY VISION COULD NOT BE SERVED HERE, AND THE
+    SENTENCE WAS TRUE WHEN WRITTEN.** Images were a server-only feature, the
+    FFI surface took none, and an in-process server built on a session that
+    could not encode one would have been claiming a capability nothing behind
+    it could reach -- so the refusal was correct rather than lazy. Nothing
+    about that reasoning had to change for it to become wrong: only the
+    arrival of `ts_generate`'s image content parts, which is AGENTS.md Gotcha
+    62's tell at the level of a capability. The refusals that remain are the
+    honest ones, a SCRIPTED session and off-macOS.
 
     **THE BIND CANNOT HAPPEN ON THE CALLING THREAD, and the first version of
     this got that wrong.** `Server::start` originally called
@@ -319,3 +324,99 @@ make swift-test-real MODEL=~/models/qwen38-27b-mtp.gturbo \
     trait default is (on), matching `ScriptedChatModel`'s own choice to leave
     it alone rather than reason about a feature this session's `generate.rs`
     never exercises either.
+
+    **`ServerInfo` REPORTS THE BOUND HOST AS WELL AS THE BOUND PORT, AND THE
+    SECOND FIELD EXISTS BECAUSE THE FIRST ONE'S DISCIPLINE WAS ONLY HALF
+    APPLIED.** Added 2026-08-30. `Server::start` binds `format!("127.0.0.1:
+    {port}")` and then reads `local_addr()` back -- and for the life of the
+    feature it took the PORT off that read and threw the IP away, leaving
+    every consumer to restate the literal. `AppModel.startServer` toasted
+    `"Server listening on 127.0.0.1:\(info.port)"`, half observed and half
+    asserted, and `AppSettingsView`'s Address row did the same. Each was TRUE
+    and neither was a reading; nothing about either would have had to change
+    for it to become wrong, which is Gotcha 62's tell at the root. The channel
+    carries `SocketAddr` now and `ServerInfo` carries `host`.
+
+    **THE TEST THAT COVERS IT HAD TO BE A SEPARATE ONE, because the three
+    round-trip cases structurally cannot see a wrong host.** `server_base_url`
+    interpolated the same `127.0.0.1` literal beside the read-back port, so
+    every server case here would have passed unchanged under any bind change
+    -- in the one file positioned to catch it. It builds from `info["host"]`
+    now, and `the_reported_host_is_the_address_actually_bound` asserts the
+    value. Mutation-checked by rebinding to `0.0.0.0`: exactly one case
+    reddened and the three HTTP round trips stayed GREEN, because this
+    platform happily answers a request addressed to `0.0.0.0`. A URL that
+    connects is not evidence that the address reported is one a caller should
+    copy.
+
+14. **A SERVER SERVES A SET OF MODELS THAT CHANGES WHILE IT RUNS, AND
+    DETACHING IS WHAT RELEASES ONE.** Added 2026-08-30, extending Gotcha 13
+    (which describes the same design with one model, and whose every word
+    about sharing rather than re-opening still holds -- per entry).
+
+    `ts_server_start` takes a NULLABLE session: null starts a server with
+    nothing attached, which is the state a GUI wants (the socket binds and
+    the address can be shown before the user has chosen what to load), and a
+    non-null session is exactly an immediate `ts_server_attach_session`
+    rather than a second code path. `ts_server_detach_model` removes one by
+    id; `ts_server_stop` still releases the whole set.
+
+    **`server_registry.rs`'s `LiveRegistry` IS THE STORAGE AND NOT THE
+    POLICY.** The routing rule -- exact id, else the single attached model
+    whatever the name, else a 404 -- is
+    `turbospark_server::registry::resolve_among`'s and is deferred to rather
+    than copied. A second copy here would be a second place for the
+    Claude-Code fallback to drift.
+
+    **A DUPLICATE MODEL ID IS REFUSED BY NAME RATHER THAN SUFFIXED.** The id
+    is the install directory's own file name, which is what a request's
+    `model` field carries and what `detach` keys on. A silently-renamed
+    second copy would be addressable under a name the caller never learned,
+    and a detach under the name they DO know would then remove the wrong
+    one. Two sessions on one install directory is a caller mistake and this
+    is the cheapest place to say so;
+    `attaching_a_second_model_under_the_same_id_is_refused` also asserts the
+    refused attach left nothing half-added.
+
+    **THE OBLIGATION THIS CREATES ON A HOST IS THE SAME ONE GOTCHA 13
+    STATED, NOW PER MODEL.** Each entry holds an `Arc<SessionCore>`, so
+    `ts_session_close` on the session it came from frees only the caller's
+    handle. A host that drops its own reference without detaching keeps the
+    weights, the KV cache and the compiled Metal pipelines resident with
+    nothing in its UI still showing the model as loaded. `swift/CLAUDE.md`
+    Gotcha 26 is the app-side half.
+
+    **DETACHING DOWN TO ONE MODEL RE-ENABLES THE FALLBACK, which is worth
+    knowing before it surprises somebody.** After detaching `alpha` from a
+    two-model server, a request naming `alpha` is still ANSWERED -- by the
+    survivor, under the single-model rule. Detaching stops that ENGINE from
+    answering, not that name from being accepted.
+    `detaching_removes_a_model_from_routing` asserts it, and has to read
+    `requestRouted.served` off the event stream to do so: an OpenAI response
+    echoes the request's own `model` field, so a 200 carrying
+    `"model":"alpha"` is equally consistent with either model having served
+    it, which is exactly the pair the test must tell apart.
+
+15. **EVERY SERVER THIS CRATE STARTS RECORDS, AND THE RING REPORTS ITS OWN
+    OVERFLOW.** `Server::start` always passes an `EventRing` observer, where
+    the standalone `turbospark-server` binary passes `None` -- a host
+    embedding this has a console to show the rows in, and its own stdout is
+    not where they would go.
+
+    `ts_server_poll_events_json` DRAINS: an event is returned exactly once,
+    so a host polling on a timer appends what it gets rather than
+    deduplicating. `max` bounds ONE call rather than the buffer, and the
+    remainder stays queued, so a burst arrives late and never silently
+    short. `max == 0` means unbounded, which is what a final drain before
+    shutdown wants.
+
+    **`dropped` IS IN THE PAYLOAD RATHER THAN BEING A SEPARATE QUERY, and
+    that is the point of the field.** A ring that quietly discarded its
+    oldest rows would make a console read "nothing happened in that window",
+    which is the same thing it reads when the server genuinely was idle --
+    and those are the two states somebody watching it is trying to tell
+    apart. It counts per DRAIN rather than per lifetime, so a gap already
+    shown is not reported again on the next poll. Three unit tests in
+    `server_registry.rs` cover the bound, the count and the reset; making
+    `drain` a peek reddens all three plus the three C-surface polling cases,
+    which is the invariant doing the work rather than an over-broad test.

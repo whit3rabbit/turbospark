@@ -41,6 +41,10 @@ mod session;
 mod strings;
 mod telemetry;
 mod testing;
+/// macOS only, for the reason `open` is: everything here ends at a
+/// `RealForwardRunner`. The portable refusal lives in `generate`.
+#[cfg(target_os = "macos")]
+mod vision;
 /// JSON wire structures exchanged across the C ABI.
 pub mod wire;
 

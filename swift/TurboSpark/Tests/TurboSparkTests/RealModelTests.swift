@@ -120,6 +120,128 @@ final class RealModelTests: XCTestCase {
         print("generate: \(r.newTokens) tokens at \(r.tokensPerSecond ?? 0) tok/s, \(r.stopReason)")
     }
 
+    /// A page to send. A THIRD variable, for Gotcha 11's reason: a vision
+    /// install is a shape `TURBOSPARK_TEST_MODEL` alone cannot guarantee, and
+    /// one variable can only ever gate one shape.
+    ///
+    ///     TURBOSPARK_TEST_MODEL=~/models/qwen38-27b-vision.gturbo \
+    ///     TURBOSPARK_TEST_IMAGE=~/models/vision-probe-qwen38/imgs/oracle/medium.png \
+    ///       swift test
+    private func testImagePath() throws -> String {
+        guard let raw = ProcessInfo.processInfo.environment["TURBOSPARK_TEST_IMAGE"],
+            !raw.isEmpty
+        else {
+            throw XCTSkip(
+                "set TURBOSPARK_TEST_IMAGE to a page (and TURBOSPARK_TEST_MODEL to an "
+                    + "install with a vision tower) to run this")
+        }
+        let expanded =
+            raw.hasPrefix("~/")
+            ? FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent(String(raw.dropFirst(2))).path
+            : raw
+        // FAILS rather than skips when the file is missing: a path that was
+        // named and is not there is a broken invocation, not an absent one.
+        XCTAssertTrue(
+            FileManager.default.fileExists(atPath: expanded),
+            "TURBOSPARK_TEST_IMAGE names \(expanded), which does not exist")
+        return expanded
+    }
+
+    /// **THE END-TO-END VISION ARM, AND ITS LOAD-BEARING ASSERTION IS THE
+    /// TOKEN COUNT RATHER THAN THE TEXT.**
+    ///
+    /// A dropped image is the failure mode this whole path has, and it does
+    /// not error: the prompt length agrees, nothing warns, and the model
+    /// answers fluently about a picture it was never shown. That is measured
+    /// history rather than caution -- `crates/cli` Gotcha 13's first
+    /// end-to-end `--image` run transcribed a page it had not seen, with
+    /// every shape and length in agreement.
+    ///
+    /// So this compares the SAME prompt with and without the picture. The
+    /// template renders one `<|image_pad|>` marker either way, and the
+    /// engine's splice expands that marker to the page's merged-token count
+    /// -- hundreds of positions. If the image were silently dropped, the two
+    /// prompts would be within a token or two of each other. Nothing about
+    /// the page's content has to be known for that to discriminate, which is
+    /// what makes it immune to where the transcription happens to stop (the
+    /// trap that cost `vision_memory_oracle` two marker designs).
+    func testAnImageReachesTheModelAndLengthensThePrompt() async throws {
+        let image = try testImagePath()
+        let session = try await TurboSparkSession(modelPath: try modelPath())
+
+        // CHECKED, not assumed: a text-only install passes every other line
+        // of this test while proving nothing, which is the fixture-must-
+        // discriminate rule applied to an env var (Gotcha 11).
+        guard session.info.vision.active else {
+            return XCTFail(
+                "TURBOSPARK_TEST_MODEL points at an install that cannot serve images"
+                    + (session.info.vision.reason.map { " (\($0))" } ?? "")
+                    + "; point it at one with a vision tower, e.g. qwen38-27b-vision.gturbo")
+        }
+        XCTAssertNotNil(
+            session.info.vision.imageTokenId,
+            "an active tower reports the marker id it splices at")
+
+        var options = GenerateOptions()
+        options.maxNewTokens = 60
+        options.seed = 20260721
+        let question = "Transcribe the first line of this page."
+
+        func run(_ message: ChatMessage) async throws -> GenerationResult {
+            var result: GenerationResult?
+            for try await event in session.generate([message], options: options) {
+                if case .finished(let r) = event { result = r }
+            }
+            return try XCTUnwrap(result)
+        }
+
+        let withImage = try await run(
+            ChatMessage(role: .user, content: question, images: [.path(image)]))
+        let textOnly = try await run(ChatMessage(role: .user, content: question))
+
+        // The whole assertion: a page is worth hundreds of positions, so a
+        // dropped image cannot pass this however plausible its answer reads.
+        XCTAssertGreaterThan(
+            withImage.promptTokens, textOnly.promptTokens + 100,
+            "the image prompt is \(withImage.promptTokens) tokens against "
+                + "\(textOnly.promptTokens) text-only; the splice did not expand the marker, "
+                + "so the picture never reached the model")
+        XCTAssertFalse(withImage.content.isEmpty)
+
+        // Printed so a run can be READ. A vision feature needs an arm whose
+        // output a person can check against the page: shapes and lengths all
+        // agreed in the bug this test exists for.
+        print("vision: \(withImage.promptTokens) prompt tokens (text-only \(textOnly.promptTokens))")
+        print("vision transcription: \(withImage.content.prefix(300))")
+    }
+
+    /// An image sent to an install that cannot serve one is refused BY NAME
+    /// rather than dropped, which is the difference between a user seeing a
+    /// message and a user seeing a confident answer about nothing.
+    func testAnImageIsRefusedByNameWhenTheInstallHasNoTower() async throws {
+        let session = try await TurboSparkSession(modelPath: try blockedModelPath())
+        guard !session.info.vision.active else {
+            throw XCTSkip(
+                "TURBOSPARK_TEST_MODEL_NO_SPECULATION happens to carry a vision tower; "
+                    + "this case needs an install without one")
+        }
+        var options = GenerateOptions()
+        options.maxNewTokens = 8
+        do {
+            for try await _ in session.generate(
+                [ChatMessage(role: .user, content: "What is this?", images: [.path("/nope.png")])],
+                options: options)
+            {}
+            XCTFail("an image on a tower-less install should be refused")
+        } catch {
+            let message = "\(error)".lowercased()
+            XCTAssertTrue(
+                message.contains("vision") || message.contains("image"),
+                "the refusal should name what was wrong, got: \(error)")
+        }
+    }
+
     /// **The one that matters for a GUI.**
     ///
     /// Cancels from the MAIN actor while the model decodes on the session's
@@ -274,9 +396,17 @@ final class RealModelTests: XCTestCase {
         let info = try server.info()
         XCTAssertNotEqual(info.port, 0, "port 0 must resolve to the actually bound port")
         XCTAssertFalse(info.authEnabled)
+        XCTAssertEqual(
+            info.host, "127.0.0.1",
+            "the engine binds loopback and info must REPORT it, not leave a caller to assume it")
 
+        // The URL comes from `info`, not from a literal beside it. Spelling
+        // the host by hand here would keep this test green against any bind
+        // the reported host no longer matched, which is exactly the gap on
+        // the app side that this field closes.
+        let base = try XCTUnwrap(info.baseURL)
         var request = URLRequest(
-            url: URL(string: "http://127.0.0.1:\(info.port)/v1/chat/completions")!)
+            url: base.appendingPathComponent("v1/chat/completions"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: [
@@ -295,6 +425,88 @@ final class RealModelTests: XCTestCase {
         let message = try XCTUnwrap(choices.first?["message"] as? [String: Any])
         let content = try XCTUnwrap(message["content"] as? String)
         XCTAssertFalse(content.isEmpty)
+    }
+
+    /// **`info()` AND `stop()` RACING MUST NOT TOUCH A FREED HANDLE.**
+    ///
+    /// `ts_server_stop` frees its C handle, so any window between reading the
+    /// `stopped` flag and dereferencing the pointer is a use-after-free, and
+    /// `TurboSparkServer` exists to have no such window. The bug this covers
+    /// read the flag under the lock, UNLOCKED, and then made the C call --
+    /// which looks careful and is exactly the race.
+    ///
+    /// The assertion is that this terminates without crashing and that every
+    /// call after the stop throws rather than answering. A crash here is the
+    /// failure; there is no softer signal a use-after-free gives.
+    func testServerInfoRacingStopNeverTouchesAFreedHandle() async throws {
+        let session = try await TurboSparkSession(modelPath: try modelPath())
+        let server = try await session.startServer()
+
+        // Prove it answers before the race, or a passing race proves nothing.
+        XCTAssertNotEqual(try server.info().port, 0)
+
+        await withTaskGroup(of: Void.self) { group in
+            for _ in 0..<64 {
+                group.addTask {
+                    // Either outcome is legal: a read that beat the stop, or
+                    // the already-stopped error. Reading a freed pointer is
+                    // not, and would crash rather than land here.
+                    _ = try? server.info()
+                }
+            }
+            group.addTask { server.stop() }
+            group.addTask { server.stop() }
+        }
+
+        XCTAssertThrowsError(try server.info()) { error in
+            let message = String(describing: error)
+            XCTAssertTrue(
+                message.contains("already been stopped"),
+                "a stopped server must refuse by name, got: \(message)")
+        }
+    }
+
+    /// **A SESSION DROPPED MID-TURN MUST NOT CLOSE UNDER THE GENERATION.**
+    ///
+    /// `turbospark.h` forbids `ts_session_close` while `ts_generate` is in
+    /// flight, and what upholds that on the Swift side is `generate`'s worker
+    /// capturing `self` strongly. Before the fix the capture list named
+    /// `handle` alone, so nothing retained the session for the turn: a caller
+    /// releasing its last reference while decoding ran `deinit`, and
+    /// `ts_session_close` raced `ts_generate` on the queue.
+    ///
+    /// The session is created and released INSIDE this function with no local
+    /// binding surviving, which is the only way to reproduce it -- every
+    /// other test here (and `AppModel.executeGenerationTurn`) holds a strong
+    /// reference across the turn and therefore cannot see the defect.
+    func testAReleasedSessionSurvivesTheTurnItLeftRunning() async throws {
+        let path = try modelPath()
+        var messages = [ChatMessage(role: .user, content: "Count slowly from one to twenty.")]
+        var options = GenerateOptions()
+        options.maxNewTokens = 64
+        options.temperature = 0.0
+
+        // The stream outlives every strong reference this scope holds: the
+        // session is not bound after the call, so its refcount rests entirely
+        // on `generate`'s own capture.
+        let stream: AsyncThrowingStream<GenerationEvent, Error> = try await {
+            let session = try await TurboSparkSession(modelPath: path)
+            return session.generate(messages, options: options)
+        }()
+
+        var sawContent = false
+        var finished = false
+        for try await event in stream {
+            switch event {
+            case .content(let chunk): sawContent = sawContent || !chunk.isEmpty
+            case .finished: finished = true
+            default: break
+            }
+        }
+
+        XCTAssertTrue(finished, "the turn must reach .finished with no live caller reference")
+        XCTAssertTrue(sawContent, "the turn must produce text, not just survive")
+        messages.removeAll()
     }
 
     /// **`auto` ON AN INSTALL THAT CANNOT SPECULATE OPENS ANYWAY, and says

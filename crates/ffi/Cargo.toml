@@ -50,6 +50,12 @@ turbospark-server = { path = "../server", version = "0.1.0" }
 # a `Router` built from ITS axum, so this crate's `axum::serve` call has to
 # be literally the same crate version, not just API-compatible.
 axum = { version = "0.7", features = ["json"] }
+# Image decode, preprocessing and the mRoPE splice for `ts_generate`'s image
+# content parts. Portable BY DESIGN rather than by luck (the whole point of
+# splitting vision preprocessing out is that it lives somewhere a non-macOS
+# build can reach), so it goes here beside `catalog` and `model_io` rather
+# than in the macOS block, and the crate that consumes it is gated instead.
+turbospark-vision-io = { path = "../vision-io", version = "0.1.0" }
 tokio = { version = "1", features = ["rt-multi-thread", "net", "macros", "sync"] }
 
 # The session only exists where the engine does. Everything else in this

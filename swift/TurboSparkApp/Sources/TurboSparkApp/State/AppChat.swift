@@ -1,5 +1,6 @@
 import Foundation
 import TurboSpark
+import UniformTypeIdentifiers
 
 /// A document attachment associated with a prompt draft.
 public struct AppPromptAttachment: Identifiable, Codable, Equatable, Sendable {
@@ -53,25 +54,81 @@ public struct AppPromptAttachment: Identifiable, Codable, Equatable, Sendable {
         (fileName as NSString).pathExtension.lowercased()
     }
 
+    /// The raster formats this app treats as pictures.
+    ///
+    /// ONE list, read by `previewKind`, `symbolName` and `isImage` alike. It
+    /// was spelled out twice before a third reader arrived, and a display
+    /// value restated per branch is correct on the day it is written and
+    /// silently wrong at the next addition (`swift/CLAUDE.md` Gotcha 22).
+    public static let imageFileExtensions: Set<String> = [
+        "png", "jpg", "jpeg", "gif", "heic", "tiff", "bmp", "webp",
+    ]
+
+    /// The picker types for [`imageFileExtensions`], derived from the same
+    /// list rather than restated as a second one.
+    ///
+    /// Offered ONLY when the loaded session reports `vision.active`: an
+    /// install can carry a tower and still refuse every image, and a picker
+    /// that accepted one anyway would promise work the engine then declines
+    /// (`swift/CLAUDE.md` Gotcha 23).
+    public static var imageContentTypes: [UTType] {
+        imageFileExtensions.sorted().compactMap { UTType(filenameExtension: $0) }
+    }
+
+    /// Whether this attachment is a picture rather than a document.
+    ///
+    /// A pure function of the FILE NAME, deliberately: a stored flag would be
+    /// a new non-optional key on a `Codable` the archive already holds, which
+    /// is the decode hazard that silently emptied a user's chat list once
+    /// (`swift/CLAUDE.md` Gotcha 13).
+    public var isImage: Bool {
+        Self.imageFileExtensions.contains(fileExtension)
+    }
+
+    /// Whether this picture can actually be sent to the engine.
+    ///
+    /// The engine reads the file by PATH, so an attachment whose source has
+    /// moved or was never recorded cannot be encoded however well it renders
+    /// from a preview. Checked before the turn rather than discovered inside
+    /// it.
+    public var isSendableImage: Bool { isImage && sourceExists }
+
     /// How the preview pane should render this attachment.
     public var previewKind: PreviewKind {
-        switch fileExtension {
-        case "pdf": return sourceExists ? .pdf : .text
-        case "png", "jpg", "jpeg", "gif", "heic", "tiff", "bmp", "webp":
-            return sourceExists ? .image : .text
-        default: return .text
+        if fileExtension == "pdf" { return sourceExists ? .pdf : .text }
+        if isImage { return sourceExists ? .image : .text }
+        return .text
+    }
+
+    /// The subtitle a chip or row shows under the file name.
+    ///
+    /// A VALUE rather than inline view code, which is the only reason it can
+    /// be tested at all -- the same reason `ServerStatusRows` was extracted
+    /// (`swift/CLAUDE.md` Gotcha 26).
+    ///
+    /// **An image extracts no text, so a character count on one is a zero
+    /// from an absent measurement rather than a measurement of zero.**
+    /// "Image - 0 chars" reads as a failed import; what is actually known
+    /// about a picture is its size and whether it is still there.
+    public var detailText: String {
+        if isImage {
+            let size = MetricFormat.fileSize(sourceByteSize).map { " • \($0)" } ?? ""
+            let missing = sourceExists ? "" : " • file missing"
+            return "\(formatLabel)\(size)\(missing)"
         }
+        let count = characterCount.formatted(.number.notation(.compactName))
+        let suffix = wasTruncatedDuringExtraction ? " • truncated" : ""
+        return "\(formatLabel) • \(count) chars\(suffix)"
     }
 
     /// SF Symbol representing the document type in lists and chips.
     public var symbolName: String {
+        if isImage { return "photo" }
         switch fileExtension {
         case "pdf": return "doc.richtext"
         case "docx", "doc": return "doc.text"
         case "xlsx", "xls", "csv": return "tablecells"
         case "pptx", "ppt": return "rectangle.on.rectangle"
-        case "png", "jpg", "jpeg", "gif", "heic", "tiff", "bmp", "webp":
-            return "photo"
         case "json", "yaml", "yml", "toml": return "curlybraces"
         case "swift", "rs", "py", "c", "cpp", "h", "js", "ts", "html", "css":
             return "chevron.left.forwardslash.chevron.right"
@@ -116,6 +173,19 @@ public struct AppChatMessage: Identifiable, Codable, Equatable, Sendable {
     public var toolCalls: [AppToolCall]
     /// Results of executed tool calls for this message turn.
     public var toolResults: [AppToolResult]
+    /// Paths of images sent with this turn, in order.
+    ///
+    /// **Stored on the MESSAGE rather than only on the draft, because the
+    /// prompt is rebuilt from the transcript on every step.** An agent loop
+    /// calls `executeGenerationTurn` repeatedly and each pass reconstructs
+    /// `[ChatMessage]` from these turns, so a picture held only in the
+    /// composer would be sent on the first step and silently dropped on the
+    /// second -- with the model then answering about an image it can no
+    /// longer see.
+    ///
+    /// Paths rather than bytes: the engine reads the file itself, and the
+    /// archive is rewritten whole on every keystroke of the draft.
+    public var imagePaths: [String]
     /// Timestamp when this message turn was created.
     public var createdAt: Date
 
@@ -128,6 +198,7 @@ public struct AppChatMessage: Identifiable, Codable, Equatable, Sendable {
         stopReason: String? = nil,
         toolCalls: [AppToolCall] = [],
         toolResults: [AppToolResult] = [],
+        imagePaths: [String] = [],
         createdAt: Date = Date()
     ) {
         self.id = id
@@ -137,6 +208,7 @@ public struct AppChatMessage: Identifiable, Codable, Equatable, Sendable {
         self.stopReason = stopReason
         self.toolCalls = toolCalls
         self.toolResults = toolResults
+        self.imagePaths = imagePaths
         self.createdAt = createdAt
     }
 
@@ -160,6 +232,7 @@ public struct AppChatMessage: Identifiable, Codable, Equatable, Sendable {
         stopReason = try container.decodeIfPresent(String.self, forKey: .stopReason)
         toolCalls = try container.decodeIfPresent([AppToolCall].self, forKey: .toolCalls) ?? []
         toolResults = try container.decodeIfPresent([AppToolResult].self, forKey: .toolResults) ?? []
+        imagePaths = try container.decodeIfPresent([String].self, forKey: .imagePaths) ?? []
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
     }
 }

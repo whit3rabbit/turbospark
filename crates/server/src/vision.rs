@@ -110,7 +110,10 @@ pub(crate) fn has_images(message: &ChatMessage) -> bool {
 /// over a JPEG payload should get the picture rather than a lecture. What is
 /// enforced is `;base64`, because a percent-encoded data URL is a different
 /// decoding and silently reading it as base64 yields garbage pixels.
-fn decode_data_url(url: &str) -> Result<Vec<u8>, String> {
+/// `pub` because `crates/ffi` decodes the same payloads for its own image
+/// parts and a second copy of a base64 decoder is a second thing to get
+/// wrong. Both front ends therefore accept exactly the same spelling.
+pub fn decode_data_url(url: &str) -> Result<Vec<u8>, String> {
     base64_decode(split_data_url(url)?)
 }
 
@@ -159,7 +162,9 @@ fn elide(url: &str) -> String {
 /// (Gotcha 4). Whitespace is skipped because a JSON body may carry a wrapped
 /// payload, and padding is optional because both endpoints' clients differ on
 /// whether they send it.
-fn base64_decode(input: &str) -> Result<Vec<u8>, String> {
+/// `pub` for the reason [`decode_data_url`] is: `crates/ffi` accepts a bare
+/// payload as well as a full data URL, and this is the primitive under both.
+pub fn base64_decode(input: &str) -> Result<Vec<u8>, String> {
     const INVALID: u8 = 0xFF;
     let value = |c: u8| -> u8 {
         match c {

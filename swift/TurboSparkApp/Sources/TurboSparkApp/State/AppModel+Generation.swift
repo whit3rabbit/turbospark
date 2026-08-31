@@ -7,9 +7,27 @@ extension AppModel {
         let userDraft = promptText.trimmingCharacters(in: .whitespacesAndNewlines)
         let attachments = promptAttachments
 
+        // **A PICTURE IS NOT AN ATTACHMENT WITH EMPTY TEXT.** Images go to
+        // the vision tower by path and are injected at the marker the
+        // template renders; inlining them here would produce an empty
+        // "--- Attachment ---" block and send the model nothing at all.
+        // Only a picture whose source is still on disk can be sent, because
+        // the engine reads the file itself.
+        let (imageDocs, textDocs) = attachments.reduce(
+            into: ([AppPromptAttachment](), [AppPromptAttachment]())
+        ) { split, doc in
+            if doc.isSendableImage {
+                split.0.append(doc)
+            } else {
+                split.1.append(doc)
+            }
+        }
+        let promptImages: [ChatImage] =
+            visionIsActive ? imageDocs.compactMap { $0.sourcePath.map(ChatImage.path) } : []
+
         var fullUserContent = userDraft
-        if !attachments.isEmpty {
-            let docsText = attachments.map { doc in
+        if !textDocs.isEmpty {
+            let docsText = textDocs.map { doc in
                 "--- Attachment: \(doc.fileName) (\(doc.formatLabel)) ---\n\(doc.extractedText)\n--- End of \(doc.fileName) ---"
             }.joined(separator: "\n\n")
             if fullUserContent.isEmpty {
@@ -19,7 +37,8 @@ extension AppModel {
             }
         }
 
-        guard !fullUserContent.isEmpty else { return }
+        // A turn carrying only a picture has no text and is still a turn.
+        guard !fullUserContent.isEmpty || !promptImages.isEmpty else { return }
 
         // `UserPromptSubmit` has to be awaited BEFORE the message is
         // appended to the chat, or a hook cannot actually stop the turn: by
@@ -64,7 +83,12 @@ extension AppModel {
             }
 
             // Append user turn
-            let userMessage = AppChatMessage(role: .user, content: contentForModel)
+            let userMessage = AppChatMessage(
+                role: .user,
+                content: contentForModel,
+                imagePaths: promptImages.compactMap {
+                    if case .path(let p) = $0 { return p } else { return nil }
+                })
             self.chats[chatIndex].messages.append(userMessage)
             if (self.chats[chatIndex].title == "New Chat" || self.chats[chatIndex].title.isEmpty) && !userDraft.isEmpty {
                 self.chats[chatIndex].title = String(userDraft.prefix(40)).replacingOccurrences(of: "\n", with: " ")
@@ -112,8 +136,16 @@ extension AppModel {
         }
 
         for msg in chats[chatIndex].messages {
-            guard !msg.content.isEmpty else { continue }
-            rawHistory.append(ChatMessage(role: msg.role, content: msg.content))
+            // **AN IMAGE-ONLY TURN HAS NO TEXT AND IS STILL A TURN.** This
+            // guard predates images and would drop one entirely, leaving the
+            // model to answer a question whose picture was never sent -- the
+            // emptiness-guard failure in its usual shape.
+            guard !msg.content.isEmpty || !msg.imagePaths.isEmpty else { continue }
+            rawHistory.append(
+                ChatMessage(
+                    role: msg.role,
+                    content: msg.content,
+                    images: msg.imagePaths.map(ChatImage.path)))
             // If message contained tool execution results, inject them as system/environment responses
             for res in msg.toolResults {
                 let tag = res.isError ? "tool_error" : "tool_response"
@@ -316,9 +348,20 @@ extension AppModel {
             estimatedPromptTokens = 0
             return
         }
+        // **THIS ESTIMATE IS A FLOOR ON A TURN CARRYING IMAGES, NOT A
+        // COUNT.** `countTokens` renders the template and encodes it, and the
+        // template emits ONE marker per image whatever its size -- the
+        // expansion to that page's merged-token count happens later, in the
+        // engine's splice, which needs the preprocessed grid. So an image
+        // turn is undercounted by roughly a page's worth of positions. The
+        // images are passed anyway so the estimate tracks what is actually
+        // sent rather than a different conversation.
         var history = selectedChat.messages.compactMap { msg -> ChatMessage? in
-            guard !msg.content.isEmpty else { return nil }
-            return ChatMessage(role: msg.role, content: msg.content)
+            guard !msg.content.isEmpty || !msg.imagePaths.isEmpty else { return nil }
+            return ChatMessage(
+                role: msg.role,
+                content: msg.content,
+                images: msg.imagePaths.map(ChatImage.path))
         }
         if !promptText.isEmpty {
             history.append(ChatMessage(role: .user, content: promptText))

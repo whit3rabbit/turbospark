@@ -199,12 +199,142 @@ impl Default for GenerateOptions {
     }
 }
 
+/// Whether this session can accept an image, said once at open.
+///
+/// **`active` MEANS "AN IMAGE WOULD BE SERVED", NOT "A TOWER EXISTS".** A host
+/// gates its attach control on this, so the two questions have to be the same
+/// one: an install carrying a tower but no `preprocessor_config.json` refuses
+/// every image by name (`crates/vision-io` Gotcha 6 -- the generic default is
+/// wrong for this family by 16x and would silently produce a worse answer), and
+/// a control that offered images anyway would promise work the loader then
+/// declines. That is `swift/CLAUDE.md` Gotcha 23's rule: check the work exists
+/// before adding the control that claims to do it.
+///
+/// `reason` is non-null exactly when a tower is present and `active` is false,
+/// which is the only case a caller can act on.
+#[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct VisionInfo {
+    pub active: bool,
+    /// The `<|image_pad|>` id, or null when inactive. Reported rather than
+    /// restated by a host, for `SessionInfo`'s standing reason.
+    pub image_token_id: Option<i32>,
+    pub reason: Option<String>,
+}
+
+/// One piece of a multimodal message's content, in prompt order.
+///
+/// **AN IMAGE CARRIES ITS PAYLOAD HERE AND ITS POSITION SOMEWHERE ELSE.**
+/// `tokenizer::ContentPart::Image` is a bare placeholder by design (a template
+/// renders one marker run and the tower's rows are injected later, by
+/// position), so this type is where the path or the bytes live and the two
+/// halves meet at the id sequence. Keep them ordered: the nth image pairs with
+/// the nth marker run, and a container that reordered would pair each picture
+/// with the wrong span.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum WirePart {
+    Text {
+        #[serde(default)]
+        text: String,
+    },
+    /// Exactly one of `path` or `base64` -- both or neither is refused by
+    /// [`WirePart::image_source`] rather than silently preferring one.
+    Image {
+        #[serde(default)]
+        path: Option<String>,
+        #[serde(default)]
+        base64: Option<String>,
+    },
+}
+
+/// Where one image's bytes come from.
+pub enum ImageSource<'a> {
+    Path(&'a str),
+    Base64(&'a str),
+}
+
+impl WirePart {
+    /// The source of an image part, or an error naming what was wrong.
+    ///
+    /// Both spellings set is REFUSED rather than resolved by precedence: a
+    /// caller that sent both meant one of them, and picking silently runs the
+    /// wrong picture with no error anywhere.
+    pub fn image_source(&self) -> Result<ImageSource<'_>, String> {
+        let WirePart::Image { path, base64 } = self else {
+            return Err("not an image part".to_string());
+        };
+        match (path.as_deref(), base64.as_deref()) {
+            (Some(p), None) => Ok(ImageSource::Path(p)),
+            (None, Some(b)) => Ok(ImageSource::Base64(b)),
+            (Some(_), Some(_)) => Err(
+                "an image part carries both \"path\" and \"base64\"; send exactly one".to_string(),
+            ),
+            (None, None) => Err(
+                "an image part carries neither \"path\" nor \"base64\"; send exactly one"
+                    .to_string(),
+            ),
+        }
+    }
+}
+
+/// A message's content: a bare string, or ordered parts.
+///
+/// `untagged` so every caller that predates images sends and receives the
+/// exact same JSON -- a plain string decodes to `Text` and re-serializes as a
+/// plain string, which is what keeps `WindowFitOutcome.retained` byte-stable.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum WireContent {
+    Text(String),
+    Parts(Vec<WirePart>),
+}
+
+impl Default for WireContent {
+    fn default() -> Self {
+        WireContent::Text(String::new())
+    }
+}
+
 /// One chat message, in the shape `--messages-file` accepts.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WireMessage {
     pub role: String,
     #[serde(default)]
-    pub content: String,
+    pub content: WireContent,
+}
+
+impl WireMessage {
+    /// The TEXT-ONLY view, for the callers that summarize or count rather
+    /// than render. Mirrors `tokenizer::Message::with_parts`'s own `content`.
+    pub fn text(&self) -> String {
+        match &self.content {
+            WireContent::Text(t) => t.clone(),
+            WireContent::Parts(parts) => parts
+                .iter()
+                .filter_map(|p| match p {
+                    WirePart::Text { text } => Some(text.as_str()),
+                    WirePart::Image { .. } => None,
+                })
+                .collect(),
+        }
+    }
+
+    /// This message's parts, or `None` when it is a plain string.
+    pub fn parts(&self) -> Option<&[WirePart]> {
+        match &self.content {
+            WireContent::Text(_) => None,
+            WireContent::Parts(parts) => Some(parts),
+        }
+    }
+
+    /// This message's image parts, in order.
+    pub fn image_parts(&self) -> impl Iterator<Item = &WirePart> {
+        self.parts()
+            .unwrap_or(&[])
+            .iter()
+            .filter(|p| matches!(p, WirePart::Image { .. }))
+    }
 }
 
 /// The result of fitting a conversation into a context window budget.
@@ -294,6 +424,7 @@ pub struct SessionInfo {
     /// acceptance is exact only at temperature 0, so a sampled turn decodes
     /// sequentially whatever this says.
     pub speculation: SpeculationInfo,
+    pub vision: VisionInfo,
     pub special_tokens: SpecialTokensInfo,
 }
 
@@ -322,8 +453,41 @@ pub struct ServerInfo {
     /// `ServerOptions` asks for an OS-assigned one, so this is the only
     /// place that number is knowable.
     pub port: u16,
+    /// The IP actually bound, read from the same `local_addr` call the port
+    /// is, never the literal `server.rs` interpolated into its bind string.
+    /// A caller that restates that literal is right until the bind changes
+    /// and has no way to notice when it does.
+    pub host: String,
+    /// The FIRST attached model, or `""` when none is.
+    ///
+    /// Kept as a bare string for a reader written before a server could
+    /// serve more than one; `models` is the answer that does not go stale.
+    /// A host showing this alone on a two-model server is showing half the
+    /// truth, which is why the Swift binding surfaces both.
     pub model_id: String,
+    /// Every attached model, in attachment order -- the same order and the
+    /// same ids `GET /v1/models` reports, because both read the registry.
+    pub models: Vec<String>,
     pub auth_enabled: bool,
+    /// Seconds since `ts_server_start` returned. From a monotonic clock, so
+    /// it is unaffected by the wall clock moving under a long-running host.
+    pub uptime_seconds: u64,
+}
+
+/// What `ts_server_poll_events_json` returns.
+///
+/// **`dropped` IS PART OF THE PAYLOAD RATHER THAN A SEPARATE QUERY**, because
+/// a gap only means anything beside the events it interrupts. A host that
+/// had to ask twice could report the drop against the wrong window, and one
+/// that never asked would render a lossy log as a complete one -- which
+/// looks exactly like a server that was idle.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerEvents {
+    pub events: Vec<turbospark_server::observe::ServerEvent>,
+    /// Events discarded since the previous poll, oldest first. Zero on a
+    /// host that keeps up, which is every host polling on a timer.
+    pub dropped: u64,
 }
 
 /// What `ts_session_phases_json` returns: `MFERENCE_PHASES=1`'s breakdown.

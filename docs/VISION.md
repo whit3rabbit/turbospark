@@ -5,10 +5,21 @@ What is built, what it measures, and the traps. Facts about the CHECKPOINT
 live in `docs/VISION_PHASE0.md` and are not repeated here; this page is about
 the IMPLEMENTATION.
 
-Status as of 2026-08-29: milestones M-V0 through M-V8 are done. The tower
-runs, agrees with mlx-vlm, and an image reaches a generated token from the
-CLI and from both server endpoints. M-V9 (the multi-page memory oracle and
-hardening) is what is left.
+Status as of 2026-08-30: milestones M-V0 through M-V9 are done, and the FFI
+and the macOS app reach the tower too. The tower runs, agrees with mlx-vlm,
+and an image reaches a generated token from the CLI, from both server
+endpoints, and from `ts_generate` -- which is what the SwiftUI app and the
+in-process server sit on.
+
+**THE FRONT-END GAP WAS THE LAST ONE AND IT WAS INVISIBLE FROM THIS PAGE.**
+Every milestone through M-V9 was true of the engine and of two front ends,
+and a third read "complete" beside them while being unable to send a picture
+at all: `ts_generate` took `[{role, content: String}]` with no shape an image
+could travel in, `FfiChatModel::run_completion` refused one by name, and the
+app's file picker declared no image type. Nothing was broken and nothing
+said so. The lesson is the one `docs/BENCHMARKS.md` learned about a stale
+blocker sentence: a capability is complete per CALLER, and a page that
+counts milestones does not count callers.
 
 ## The pipeline, end to end
 

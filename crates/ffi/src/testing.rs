@@ -31,6 +31,10 @@ pub fn session_for_testing(
             runtime::ScriptedLogitProducer::new(steps),
         ))),
         cancel: Arc::new(AtomicBool::new(false)),
+        // No install behind a scripted session, so nothing can read a
+        // preprocessor config off it -- which is the same state an install
+        // with no vision tower is in, and the refusal names it either way.
+        model_dir: std::path::PathBuf::new(),
         max_context,
         rate: runtime::RateControl::default(),
         // A scripted producer replays logits and implements no drafter, so
@@ -50,6 +54,10 @@ pub fn session_for_testing(
             reasoning_support: "none".to_string(),
             steering: wire::SteeringInfo::default(),
             speculation: wire::SpeculationInfo::default(),
+            // No tower behind a scripted producer, and `default()` is the
+            // absence of a capability rather than a refusal a caller could
+            // act on -- which is why `reason` stays null here too.
+            vision: wire::VisionInfo::default(),
             special_tokens: wire::SpecialTokensInfo {
                 bos_id: (tokenizer.bos_id >= 0).then_some(tokenizer.bos_id),
                 eos_id: (tokenizer.eos_id >= 0).then_some(tokenizer.eos_id),
