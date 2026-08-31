@@ -37,6 +37,7 @@ mod models;
 mod open;
 mod server;
 mod server_model;
+mod server_registry;
 mod session;
 mod strings;
 mod telemetry;
@@ -54,7 +55,7 @@ pub use models::{TS_INSTALL_BYTES, TS_INSTALL_STAGE};
 pub use server::Server;
 pub use session::Session;
 #[doc(hidden)]
-pub use testing::session_for_testing;
+pub use testing::{session_for_testing, session_for_testing_named};
 
 /// The opaque handle a caller holds. `TsSession *` in C.
 pub type TsSession = Session;

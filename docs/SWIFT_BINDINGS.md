@@ -49,6 +49,11 @@ Anthropic `/v1/messages` with SSE streaming. If your app can talk HTTP to a
 loopback port, that path exists today, needs none of this, and is covered by
 its own tests.
 
+**You can also have both, and that is usually the answer for a GUI.**
+`TurboSparkServer` runs the same router in your own process over models you
+already have open, so other apps on the machine can reach them without a
+second copy of the weights (see [The in-process server](#the-in-process-server)).
+
 Reach for the bindings when you want:
 
 - **One process.** No sidecar binary to ship, sandbox, notarize and supervise.
@@ -452,6 +457,88 @@ for this engine uses, so your number and the memory oracle's agree. What it
 *counts* differs by install shape: a streamed MoE model's mapped weights are
 counted, a dense model's are not. Read it beside `info.maxContext` rather
 than comparing across models.
+
+---
+
+## The in-process server
+
+Serves your already-open models over HTTP, in this process. Not a second copy
+of the engine: each attached model is the same one your `TurboSparkSession`
+is generating through.
+
+```swift
+// Start with nothing attached. The socket binds immediately, so you can show
+// and copy the address before the user has picked a model.
+let server = try TurboSparkServer.start(options: ServerOptions(apiKey: "sk-local"))
+
+let id = try server.attach(session)      // "gemma4.gturbo" -- the install's own name
+print(try server.info().baseURL!)        // http://127.0.0.1:53411
+
+try server.detach(modelId: id)           // stops serving it, releases the engine
+server.stop()                            // stops serving everything
+```
+
+Routes: OpenAI (`/v1/chat/completions`, `/v1/completions`, `/v1/responses`,
+`/v1/models`), Anthropic (`/v1/messages`, `/v1/messages/count_tokens`),
+Ollama (`/api/tags`, `/api/version`, `/api/show`, `/api/chat`,
+`/api/generate`), and `GET /health`. There is no `/v1/embeddings`: this
+engine has no embedding path, and a route that 404s is worse than an absent
+one.
+
+**Which model serves a request.** An exact `model` id wins. Failing that, if
+exactly ONE model is attached it serves the request whatever name was asked
+for -- which is what lets a client sending its own default (Claude Code sends
+`claude-sonnet-4-6`) work with no configuration. With two or more attached
+and no match, the request is a 404 naming what is available.
+
+**Read the address off `info()`, never spell it.** `ServerOptions.port` of 0
+asks the OS for a port, and `ServerInfo` reports both halves of what was
+actually bound; `baseURL` builds the string. Restating `127.0.0.1` is correct
+only for as long as the bind does not change, and cannot report the day it
+does.
+
+**Detaching is what frees a model.** A server holds its own reference to
+every engine attached to it, so releasing your `TurboSparkSession` does NOT
+unload the weights while the server is still serving them. `detach(modelId:)`
+or `stop()` does. Anything in your UI that says a model is unloaded has to
+have called one of them.
+
+**Unauthenticated does not mean private.** The socket is loopback, which
+keeps it off the network and reachable by every process on this machine.
+`apiKey` is the only access control there is, and an empty or
+whitespace-only key means none at all -- `info().authEnabled` is what
+actually happened.
+
+### Watching it
+
+```swift
+let batch = server.poll()          // drains; each event is returned once
+for event in batch.events { ... }
+if batch.dropped > 0 { /* say so */ }
+```
+
+Poll on a timer and append what you get. Events are `requestStarted`,
+`requestRouted`, `generated`, `requestFinished`, `modelAttached`,
+`modelDetached`, tied together by a request id, plus an `unknown(kind:)` case
+so a newer engine's event does not fail the whole batch.
+
+`dropped` counts events the engine's ring discarded since your previous poll.
+**Show it.** A console quietly missing rows reads exactly like a server that
+was idle, and those are the two states somebody watching it is trying to tell
+apart.
+
+There is deliberately no time-to-first-token field. A caller means "request
+in, first token out", which includes the wait behind the one-turn-at-a-time
+lock, and nothing inside a generation can see that. What you get is
+`prefillSeconds` and `decodeSeconds` off the decoder plus `durationMs` from
+the HTTP layer, which does include the queue -- subtract to get the wait. A
+field named `ttftMs` filled from the prefill would read as the first number
+and be the second.
+
+Token counts come off the decoder's own result. Do not substitute a count of
+streamed chunks: special tokens render to the empty string, the detokenizer
+withholds partial UTF-8, and reasoning goes to a different channel, so that
+number is low by an amount that varies with the dialect and the turn.
 
 ---
 

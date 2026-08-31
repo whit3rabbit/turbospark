@@ -22,12 +22,13 @@ use std::sync::{Arc, Mutex};
 use foundation::LogitValue;
 use tokenizer::MfTokenizer;
 use turbospark_ffi::{
-    abi, session_for_testing, ts_generate, ts_last_error, ts_model_delete, ts_probe_json,
-    ts_recommend_json, ts_server_info_json, ts_server_start, ts_server_stop, ts_session_cancel,
-    ts_session_count_text_tokens, ts_session_count_tokens, ts_session_detokenize_json,
-    ts_session_fit_window_json, ts_session_info_json, ts_session_open, ts_session_render_prompt,
-    ts_session_tokenize_json, ts_string_free, ts_system_info_json, Server, Session,
-    TS_EVENT_CONTENT, TS_EVENT_PREFILL,
+    abi, session_for_testing, session_for_testing_named, ts_generate, ts_last_error,
+    ts_model_delete, ts_probe_json, ts_recommend_json, ts_server_attach_session,
+    ts_server_detach_model, ts_server_info_json, ts_server_poll_events_json, ts_server_start,
+    ts_server_stop, ts_session_cancel, ts_session_count_text_tokens, ts_session_count_tokens,
+    ts_session_detokenize_json, ts_session_fit_window_json, ts_session_info_json, ts_session_open,
+    ts_session_render_prompt, ts_session_tokenize_json, ts_string_free, ts_system_info_json,
+    Server, Session, TS_EVENT_CONTENT, TS_EVENT_PREFILL,
 };
 
 fn fixture() -> MfTokenizer {
@@ -611,16 +612,28 @@ unsafe fn start_server(session: *const Session, options: &str) -> *mut Server {
     server
 }
 
-/// Reads back the ACTUALLY bound port (`port: 0` in the options asks the OS
-/// to choose one) and builds a base URL from it.
+/// Reads back the ACTUALLY bound address (`port: 0` in the options asks the
+/// OS to choose the port) and builds a base URL from it.
+///
+/// **BOTH HALVES COME OUT OF `ServerInfo`, INCLUDING THE HOST.** This helper
+/// used to interpolate a `127.0.0.1` literal beside the read-back port, which
+/// made every server case here pass unchanged under any bind change -- the
+/// same restatement the app and the CLI were making, in the one file that
+/// could have caught it.
 fn server_base_url(server: *const Server) -> String {
+    let json = server_info(server);
+    let host = json["host"].as_str().expect("info reports a host");
+    let port = json["port"].as_u64().unwrap();
+    assert_ne!(port, 0, "port 0 must resolve to the actually bound port");
+    format!("http://{host}:{port}")
+}
+
+/// `ts_server_info_json` as parsed JSON, asserting the call itself succeeded.
+fn server_info(server: *const Server) -> serde_json::Value {
     let mut out: *mut c_char = ptr::null_mut();
     let code = unsafe { ts_server_info_json(server, &mut out) };
     assert_eq!(code, abi::TS_OK, "{}", last_error());
-    let json: serde_json::Value = serde_json::from_str(&unsafe { take(out) }).unwrap();
-    let port = json["port"].as_u64().unwrap();
-    assert_ne!(port, 0, "port 0 must resolve to the actually bound port");
-    format!("http://127.0.0.1:{port}")
+    serde_json::from_str(&unsafe { take(out) }).unwrap()
 }
 
 /// A real HTTP round trip through the server this session started, proving
@@ -710,12 +723,347 @@ async fn ts_server_stop_actually_stops_serving() {
 fn server_options_accept_an_api_key_and_report_it_enabled() {
     let session = endless_session(fixture(), "h", 4);
     let server = unsafe { start_server(&session, r#"{"apiKey":"sk-test"}"#) };
-    let mut out: *mut c_char = ptr::null_mut();
-    let code = unsafe { ts_server_info_json(server, &mut out) };
-    assert_eq!(code, abi::TS_OK, "{}", last_error());
-    let json: serde_json::Value = serde_json::from_str(&unsafe { take(out) }).unwrap();
+    let json = server_info(server);
     assert_eq!(json["authEnabled"], true);
     assert_eq!(json["modelId"], "<scripted>");
+    unsafe { ts_server_stop(server) };
+}
+
+/// **THE HOST IS AN OBSERVATION, AND THIS IS WHAT MAKES IT ONE.**
+/// `server.rs` binds a `127.0.0.1` literal and reads the result back out of
+/// `local_addr`; nothing else in this workspace can tell whether the reported
+/// host came from the read or from the literal. `server_base_url`'s round
+/// trips are NOT that check on their own -- a `0.0.0.0` bind still answers a
+/// request addressed to `0.0.0.0` on this platform, so they would stay green
+/// while the field reported something no caller should copy into a URL.
+#[test]
+fn the_reported_host_is_the_address_actually_bound() {
+    let session = endless_session(fixture(), "h", 4);
+    let server = unsafe { start_server(&session, "{}") };
+    let json = server_info(server);
+    assert_eq!(
+        json["host"], "127.0.0.1",
+        "this library binds loopback, and info must REPORT that rather than \
+         leave a caller to assume it"
+    );
+    unsafe { ts_server_stop(server) };
+}
+
+// ------------------------------------------- attaching, detaching, polling
+
+/// An `endless_session` under a chosen install path, which is what the
+/// server derives a model id from.
+fn named_session(path: &str, steps: usize) -> Session {
+    let tokenizer = fixture();
+    let vocab = tokenizer.vocab_size;
+    let id = tokenizer.token_to_id("h").unwrap() as usize;
+    session_for_testing_named(
+        tokenizer,
+        vec![one_hot(vocab, id); steps],
+        vocab,
+        4096,
+        path,
+    )
+}
+
+unsafe fn attach(server: *const Server, session: &Session) -> String {
+    let mut out: *mut c_char = ptr::null_mut();
+    let code = ts_server_attach_session(server, session, &mut out);
+    assert_eq!(code, abi::TS_OK, "{}", last_error());
+    take(out)
+}
+
+fn poll_events(server: *const Server, max: u32) -> serde_json::Value {
+    let mut out: *mut c_char = ptr::null_mut();
+    let code = unsafe { ts_server_poll_events_json(server, max, &mut out) };
+    assert_eq!(code, abi::TS_OK, "{}", last_error());
+    serde_json::from_str(&unsafe { take(out) }).unwrap()
+}
+
+async fn chat(base: &str, model: &str) -> (u16, serde_json::Value) {
+    let response = reqwest::Client::new()
+        .post(format!("{base}/v1/chat/completions"))
+        .json(&serde_json::json!({
+            "model": model, "max_tokens": 2, "temperature": 0.0,
+            "messages": [{"role": "user", "content": "hi"}]
+        }))
+        .send()
+        .await
+        .unwrap();
+    (response.status().as_u16(), response.json().await.unwrap())
+}
+
+/// **A NULL SESSION IS A RUNNING SERVER WITH NOTHING TO SERVE**, which is
+/// the state a GUI starts one in before its user has chosen a model. The
+/// socket is bound and `/health` answers; generation is 503 rather than a
+/// 404 or a hang.
+#[tokio::test]
+async fn a_server_started_with_no_session_binds_and_reports_itself_empty() {
+    let server = unsafe { start_server(ptr::null(), "{}") };
+    let base = server_base_url(server);
+
+    let info = server_info(server);
+    assert_eq!(info["models"].as_array().unwrap().len(), 0);
+    assert_eq!(info["modelId"], "");
+
+    let health: serde_json::Value = reqwest::get(format!("{base}/health"))
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(health["state"], "empty");
+
+    let (status, _) = chat(&base, "anything").await;
+    assert_eq!(status, 503, "no model attached is unavailable, not missing");
+
+    unsafe { ts_server_stop(server) };
+}
+
+/// Attaching takes effect on a RUNNING server: no rebind, and the port the
+/// caller already handed out keeps working.
+#[tokio::test]
+async fn a_model_attached_to_a_running_server_is_served_on_the_same_port() {
+    let server = unsafe { start_server(ptr::null(), "{}") };
+    let base = server_base_url(server);
+    let session = named_session("/models/alpha.gturbo", 32);
+
+    let id = unsafe { attach(server, &session) };
+    assert_eq!(id, "alpha.gturbo", "the id is the install directory's name");
+
+    let (status, body) = chat(&base, "alpha.gturbo").await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(server_info(server)["models"][0], "alpha.gturbo");
+
+    unsafe { ts_server_stop(server) };
+}
+
+/// Two models, addressed by id, on one server and one port.
+#[tokio::test]
+async fn two_attached_models_are_both_addressable_and_an_unknown_name_is_not() {
+    let server = unsafe { start_server(ptr::null(), "{}") };
+    let base = server_base_url(server);
+    let alpha = named_session("/models/alpha.gturbo", 32);
+    let beta = named_session("/models/beta.gturbo", 32);
+    unsafe {
+        attach(server, &alpha);
+        attach(server, &beta);
+    }
+
+    assert_eq!(
+        server_info(server)["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["alpha.gturbo", "beta.gturbo"],
+        "reported in attachment order"
+    );
+
+    for id in ["alpha.gturbo", "beta.gturbo"] {
+        assert_eq!(chat(&base, id).await.0, 200, "{id}");
+    }
+    // With two attached there is a real ambiguity, so the fallback that
+    // serves any name on a one-model server does not apply.
+    assert_eq!(chat(&base, "neither-of-them").await.0, 404);
+
+    unsafe { ts_server_stop(server) };
+}
+
+/// **A DUPLICATE ID IS REFUSED BY NAME.** Both scripted sessions here take
+/// the default `<scripted>` path, so both derive the same id -- which is the
+/// shape of a caller opening one install twice. Renaming the second would
+/// make it addressable under a name the caller never learned, and would then
+/// make a detach under the name they DO know remove the wrong one.
+#[test]
+fn attaching_a_second_model_under_the_same_id_is_refused() {
+    let server = unsafe { start_server(ptr::null(), "{}") };
+    let first = endless_session(fixture(), "h", 4);
+    let second = endless_session(fixture(), "h", 4);
+    unsafe { attach(server, &first) };
+
+    let mut out: *mut c_char = ptr::null_mut();
+    let code = unsafe { ts_server_attach_session(server, &second, &mut out) };
+    assert_eq!(code, abi::TS_ERR_INVALID_ARGUMENT);
+    assert!(out.is_null(), "a refused attach must not write an id");
+    assert!(
+        last_error().contains("already attached"),
+        "the error must say why: {:?}",
+        last_error()
+    );
+    assert_eq!(
+        server_info(server)["models"].as_array().unwrap().len(),
+        1,
+        "the refused attach must not have half-added anything"
+    );
+
+    unsafe { ts_server_stop(server) };
+}
+
+/// Detaching removes the model from routing, and detaching one that is not
+/// there is reported rather than silently succeeding.
+///
+/// **WHICH MODEL ANSWERED IS READ OFF THE EVENT STREAM, because the response
+/// cannot say.** An OpenAI response echoes the request's own `model` field,
+/// so a chat that returns 200 with `"model": "alpha.gturbo"` is equally
+/// consistent with alpha having served it and with beta having served it
+/// under the fallback -- which is exactly the pair this test has to tell
+/// apart. `requestRouted.served` is the only place the answer exists.
+#[tokio::test]
+async fn detaching_removes_a_model_from_routing() {
+    let server = unsafe { start_server(ptr::null(), "{}") };
+    let base = server_base_url(server);
+    let alpha = named_session("/models/alpha.gturbo", 32);
+    let beta = named_session("/models/beta.gturbo", 32);
+    unsafe {
+        attach(server, &alpha);
+        attach(server, &beta);
+    }
+
+    let id = c("alpha.gturbo");
+    assert_eq!(
+        unsafe { ts_server_detach_model(server, id.as_ptr()) },
+        abi::TS_OK
+    );
+    assert_eq!(
+        server_info(server)["models"].as_array().unwrap(),
+        &vec![serde_json::json!("beta.gturbo")]
+    );
+    let _ = poll_events(server, 0);
+
+    // **A REQUEST FOR THE DETACHED ID IS STILL ANSWERED, BY THE SURVIVOR.**
+    // Down to one model, the single-model fallback applies again and serves
+    // any name -- the same rule that keeps a client sending its own default
+    // name working. It is worth knowing rather than assuming a 404: a host
+    // that detaches a model does NOT stop that name from being accepted, it
+    // stops that ENGINE from answering.
+    assert_eq!(chat(&base, "alpha.gturbo").await.0, 200);
+    let routed = poll_events(server, 0);
+    let served = routed["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["kind"] == "requestRouted")
+        .expect("a routed event");
+    assert_eq!(served["requested"], "alpha.gturbo");
+    assert_eq!(
+        served["served"], "beta.gturbo",
+        "the detached engine must not be the one that answered"
+    );
+
+    let again = unsafe { ts_server_detach_model(server, id.as_ptr()) };
+    assert_eq!(
+        again,
+        abi::TS_ERR_INVALID_ARGUMENT,
+        "a detach of something absent means the caller's list and the \
+         server's have gone out of step, which is worth saying"
+    );
+
+    unsafe { ts_server_stop(server) };
+}
+
+/// **THE EVENTS ARE WHAT A HOST'S CONSOLE AND GRAPHS ARE BUILT ON.** Asserted
+/// as a SEQUENCE rather than a set: a console renders them in order, and the
+/// generation counters arriving before the request was routed would be
+/// unreadable.
+#[tokio::test]
+async fn polling_drains_the_events_of_a_served_request_in_order() {
+    let server = unsafe { start_server(ptr::null(), "{}") };
+    let base = server_base_url(server);
+    let session = named_session("/models/alpha.gturbo", 32);
+    unsafe { attach(server, &session) };
+
+    // The attach itself is an event, and draining it here leaves the next
+    // poll showing only the request.
+    let attached = poll_events(server, 0);
+    assert_eq!(attached["events"][0]["kind"], "modelAttached");
+    assert_eq!(attached["events"][0]["model"], "alpha.gturbo");
+    assert_eq!(attached["dropped"], 0);
+
+    assert_eq!(chat(&base, "alpha.gturbo").await.0, 200);
+
+    let drained = poll_events(server, 0);
+    let kinds: Vec<&str> = drained["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["kind"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        kinds,
+        vec![
+            "requestStarted",
+            "requestRouted",
+            "generated",
+            "requestFinished"
+        ]
+    );
+
+    let events = drained["events"].as_array().unwrap();
+    assert_eq!(events[0]["path"], "/v1/chat/completions");
+    assert_eq!(events[1]["served"], "alpha.gturbo");
+    assert_eq!(events[2]["newTokens"], 2, "max_tokens was 2");
+    assert_eq!(events[3]["status"], 200);
+    // One request, so every event carries the same id -- which is what ties
+    // them together in a console.
+    let id = events[0]["id"].as_u64().unwrap();
+    assert!(events[..4]
+        .iter()
+        .all(|e| e["id"] == id || e["id"].is_null()));
+
+    unsafe { ts_server_stop(server) };
+}
+
+/// A drain returns each event exactly once. A host polling on a timer
+/// appends what it gets, so a peek would duplicate every row.
+#[tokio::test]
+async fn a_second_poll_returns_nothing_already_drained() {
+    let server = unsafe { start_server(ptr::null(), "{}") };
+    let session = named_session("/models/alpha.gturbo", 4);
+    unsafe { attach(server, &session) };
+
+    assert_eq!(
+        poll_events(server, 0)["events"].as_array().unwrap().len(),
+        1
+    );
+    assert_eq!(
+        poll_events(server, 0)["events"].as_array().unwrap().len(),
+        0
+    );
+
+    unsafe { ts_server_stop(server) };
+}
+
+/// `max` bounds one CALL, not the buffer: the remainder stays queued rather
+/// than being discarded, so a burst arrives late and never silently short.
+#[tokio::test]
+async fn a_bounded_poll_leaves_the_rest_queued() {
+    let server = unsafe { start_server(ptr::null(), "{}") };
+    let base = server_base_url(server);
+    let session = named_session("/models/alpha.gturbo", 32);
+    unsafe { attach(server, &session) };
+    assert_eq!(chat(&base, "alpha.gturbo").await.0, 200);
+
+    // 1 attach + 4 request events.
+    let first = poll_events(server, 2);
+    assert_eq!(first["events"].as_array().unwrap().len(), 2);
+    let rest = poll_events(server, 0);
+    assert_eq!(rest["events"].as_array().unwrap().len(), 3);
+
+    unsafe { ts_server_stop(server) };
+}
+
+/// The pre-registry spelling still works: a non-null session at start is
+/// exactly an immediate attach, so every caller written against the
+/// one-model shape is unaffected.
+#[test]
+fn starting_with_a_session_is_the_same_as_starting_empty_and_attaching() {
+    let session = endless_session(fixture(), "h", 4);
+    let server = unsafe { start_server(&session, "{}") };
+    let info = server_info(server);
+    assert_eq!(info["modelId"], "<scripted>");
+    assert_eq!(info["models"][0], "<scripted>");
     unsafe { ts_server_stop(server) };
 }
 

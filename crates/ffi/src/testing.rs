@@ -26,6 +26,24 @@ pub fn session_for_testing(
     vocab_size: usize,
     max_context: u32,
 ) -> Session {
+    session_for_testing_named(tokenizer, steps, vocab_size, max_context, "<scripted>")
+}
+
+/// [`session_for_testing`] with a chosen `model_path`.
+///
+/// **THE SERVER'S MODEL ID IS DERIVED FROM `model_path`**
+/// (`api/server.rs::model_id_of`), so a test that attaches two scripted
+/// sessions to one server needs two paths or both entries collide -- and
+/// the collision is itself worth testing, which is why the default stays
+/// `<scripted>` and this is the variant rather than the other way round.
+#[doc(hidden)]
+pub fn session_for_testing_named(
+    tokenizer: tokenizer::MfTokenizer,
+    steps: Vec<Vec<foundation::LogitValue>>,
+    vocab_size: usize,
+    max_context: u32,
+    model_path: &str,
+) -> Session {
     Session::new(SessionCore {
         engine: Mutex::new(session::Engine::Scripted(Box::new(
             runtime::ScriptedLogitProducer::new(steps),
@@ -43,7 +61,7 @@ pub fn session_for_testing(
         // choice, which is why the reported `reason` is null too.
         speculation_block: None,
         info: wire::SessionInfo {
-            model_path: "<scripted>".to_string(),
+            model_path: model_path.to_string(),
             family: "<scripted>".to_string(),
             max_context,
             trained_context: None,
