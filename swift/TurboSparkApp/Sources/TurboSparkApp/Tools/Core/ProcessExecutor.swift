@@ -119,19 +119,32 @@ enum ProcessExecutor {
             try? stdinPipe.fileHandleForWriting.close()
         }
 
+        // **THE TICK MUST NOT COLLAPSE UNDER CANCELLATION, AND CANCELLATION
+        // MUST KILL THE CHILD.**
+        //
+        // `try? await Task.sleep` returns IMMEDIATELY once the surrounding
+        // task is cancelled, and swallowing that with `try?` leaves the loop
+        // condition unchanged -- so a cancelled `run_command` spun this loop
+        // at full CPU for the whole remaining deadline (120 s by default)
+        // while the child kept running to completion behind it. Both halves
+        // were silent: no error, no log, just a busy core and an orphan
+        // process. `Task.isCancelled` is checked explicitly and the sleep is
+        // one that does not throw.
         let deadline = Date().addingTimeInterval(timeoutSeconds)
         var timedOut = false
+        var cancelled = false
         while process.isRunning {
-            if Date() >= deadline {
-                timedOut = true
-                process.terminate()
-                let killDeadline = Date().addingTimeInterval(2.0)
-                while process.isRunning && Date() < killDeadline {
-                    try? await Task.sleep(nanoseconds: 50_000_000)
-                }
+            if Task.isCancelled {
+                cancelled = true
+                terminateAndReap(process)
                 break
             }
-            try? await Task.sleep(nanoseconds: 20_000_000)
+            if Date() >= deadline {
+                timedOut = true
+                terminateAndReap(process)
+                break
+            }
+            await uninterruptibleSleep(nanoseconds: 20_000_000)
         }
 
         stdoutPipe.fileHandleForReading.readabilityHandler = nil
@@ -143,11 +156,48 @@ enum ProcessExecutor {
         if !trailingErr.isEmpty { stderrBuffer.append(trailingErr) }
 
         let exitCode = process.isRunning ? -1 : process.terminationStatus
+        if cancelled { throw CancellationError() }
         return Output(
             stdout: stdoutBuffer.text,
             stderr: stderrBuffer.text,
             exitCode: exitCode,
             timedOut: timedOut
         )
+    }
+
+    /// SIGTERM, then a bounded wait, then SIGKILL.
+    ///
+    /// Synchronous on purpose: it runs from the cancellation path, where an
+    /// `await` would suspend on an already-cancelled task and hand back
+    /// control before the child is dead.
+    private static func terminateAndReap(_ process: Process) {
+        process.terminate()
+        let killDeadline = Date().addingTimeInterval(2.0)
+        while process.isRunning && Date() < killDeadline {
+            usleep(50_000)
+        }
+        if process.isRunning {
+            kill(process.processIdentifier, SIGKILL)
+            let hardDeadline = Date().addingTimeInterval(1.0)
+            while process.isRunning && Date() < hardDeadline {
+                usleep(50_000)
+            }
+        }
+    }
+
+    /// A sleep that actually sleeps on a cancelled task.
+    ///
+    /// `Task.sleep` throws `CancellationError` the moment the task is
+    /// cancelled, so it is not usable as the tick of a loop that has cleanup
+    /// left to do: the loop stops pacing and spins. The cancellation check is
+    /// the loop's own job, above.
+    private static func uninterruptibleSleep(nanoseconds: UInt64) async {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .utility).asyncAfter(
+                deadline: .now() + .nanoseconds(Int(nanoseconds))
+            ) {
+                continuation.resume()
+            }
+        }
     }
 }

@@ -149,6 +149,46 @@ public struct AppToolResult: Identifiable, Codable, Equatable, Sendable {
         self.durationSeconds = durationSeconds
     }
 
+    /// Spelled out because this type now has BOTH a custom `init(from:)` and
+    /// a custom `encode(to:)`, and Swift only synthesizes `CodingKeys` while
+    /// it is synthesizing one of the two. The names must stay byte-identical
+    /// to the property names or every archive written before this change
+    /// decodes its fields as absent.
+    enum CodingKeys: String, CodingKey {
+        case id, callID, output, isError, durationSeconds
+    }
+
+    /// Largest tool output written to the chat archive.
+    ///
+    /// `ProcessExecutor` caps a single command's output at 1 MB, which bounds
+    /// one call and bounds nothing about the file: results accumulate in
+    /// `AppChatMessage.toolResults`, the whole archive is re-encoded on every
+    /// mutation, and `promptText`'s setter makes one of those per keystroke.
+    /// A few `run_command` calls against a verbose build therefore turn
+    /// typing into a multi-megabyte JSON encode per character.
+    public static let maximumPersistedOutputBytes = 64 * 1_024
+
+    /// Truncates at ENCODE time rather than at the call site, so no path into
+    /// the archive can bypass it. The in-memory value stays whole for the
+    /// turn that produced it, which is what the model is shown.
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(callID, forKey: .callID)
+        try container.encode(isError, forKey: .isError)
+        try container.encode(durationSeconds, forKey: .durationSeconds)
+
+        if output.utf8.count > Self.maximumPersistedOutputBytes {
+            let kept = String(decoding: output.utf8.prefix(Self.maximumPersistedOutputBytes), as: UTF8.self)
+            try container.encode(
+                kept + "\n... (tool output truncated in the saved transcript at "
+                    + "\(Self.maximumPersistedOutputBytes / 1_024) KB)",
+                forKey: .output)
+        } else {
+            try container.encode(output, forKey: .output)
+        }
+    }
+
     /// Tolerant decode, for the same reason as `AppToolCall.init(from:)`
     /// above: this struct is stored inside `AppChatMessage.toolResults`, and
     /// a required field failing to decode there would take the whole chat
@@ -236,6 +276,25 @@ public enum AppToolRegistry {
         "call_mcp_tool", "callmcptool", "mcp_tool"
     ]
 
+    /// Tool names whose handler resolves a filesystem path or spawns a
+    /// process, and therefore cannot run without a project root.
+    ///
+    /// The complement of this set inside `supportedToolNames` is the group
+    /// that works in a projectless chat (`skill`, the task tools,
+    /// `askuserquestion`). Every `mcp__server__tool` call is treated as
+    /// rooted too: `executeMcpCall` passes the root as the server's working
+    /// directory, so there is no correct value to pass without one.
+    static let workspaceRootedToolNames: Set<String> = [
+        "list_directory", "list_dir", "ls", "glob",
+        "read_file", "view_file", "cat", "fileread", "read",
+        "write_file", "save_file", "filewrite", "write",
+        "edit_file", "fileedit", "edit",
+        "apply_patch", "applypatch",
+        "search_code", "grep", "search",
+        "run_command", "bash", "shell", "exec", "terminal",
+        "call_mcp_tool", "callmcptool", "mcp_tool"
+    ]
+
     /// Whether `execute(call:in:)` has a real handler for `toolName`.
     public static func isImplemented(_ toolName: String) -> Bool {
         let lower = toolName.lowercased()
@@ -251,13 +310,44 @@ public enum AppToolRegistry {
     /// Executes a tool call asynchronously within the given project context.
     public static func execute(call: AppToolCall, in project: AppProject?) async -> AppToolResult {
         let startTime = Date()
-        // `FileManager.default.currentDirectoryPath` is "/" for a
-        // Finder-launched (non-Terminal) process, which would make the
-        // sandbox containment check in `resolveSecurePath` a no-op: every
-        // path on disk is "inside" a root of "/". Fall back to the user's
-        // home directory instead, which is still broad with no project
-        // configured but is never the whole filesystem.
-        let rootURL = project?.rootDirectoryURL ?? FileManager.default.homeDirectoryForCurrentUser
+
+        // **NO PROJECT MEANS NO ROOT, AND THEREFORE NO FILE OR SHELL TOOL.**
+        //
+        // There is no defensible default here, which is what took two tries
+        // to see. `FileManager.default.currentDirectoryPath` is "/" for a
+        // Finder-launched process, making `resolveSecurePath`'s containment
+        // check a no-op since every path is inside "/". The home directory
+        // replaced it and is narrower in the way that counts least: `~`
+        // holds `~/Library/Application Support`, browser profiles, SSH keys,
+        // shell history and every API token on the machine, and
+        // `isSensitivePath` knows about a dozen filenames out of all of that.
+        // A model that asks to read a path in a projectless chat is asking
+        // about a workspace the user never chose.
+        //
+        // Refusing by name is the honest answer: it costs a user one click
+        // (pick a project) and it is the only version of this that does not
+        // silently grant the model the whole account. Only the tools that
+        // actually resolve a path or spawn a process are refused -- `skill`,
+        // the task tools and `askuserquestion` need no root and still work in
+        // a projectless chat, which is the case the old fallback was really
+        // reaching for.
+        let resolvedRoot = project?.rootDirectoryURL
+        if resolvedRoot == nil, workspaceRootedToolNames.contains(call.name.lowercased())
+            || call.name.lowercased().hasPrefix("mcp__")
+        {
+            let elapsed = Date().timeIntervalSince(startTime)
+            return AppToolResult(
+                callID: call.id,
+                output: "Error: '\(call.name)' needs a project workspace. This chat has no "
+                    + "project directory, so there is no root to resolve paths against and "
+                    + "no command can be run. Attach a project in the sidebar first.",
+                isError: true,
+                durationSeconds: elapsed
+            )
+        }
+        // Unreachable for the rooted tools above; the rootless ones never
+        // read it.
+        let rootURL = resolvedRoot ?? URL(fileURLWithPath: "/dev/null")
 
         do {
             let output: String

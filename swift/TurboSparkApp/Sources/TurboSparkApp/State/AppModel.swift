@@ -22,6 +22,7 @@ public final class AppModel: ObservableObject {
         case files
         case modelManager
         case modelHub
+        case server
 
         public var id: String { rawValue }
         public var title: String {
@@ -30,6 +31,7 @@ public final class AppModel: ObservableObject {
             case .files: return "Files"
             case .modelManager: return "Installed"
             case .modelHub: return "Discover"
+            case .server: return "Server"
             }
         }
         public var systemImage: String {
@@ -38,6 +40,7 @@ public final class AppModel: ObservableObject {
             case .files: return "folder"
             case .modelManager: return "internaldrive"
             case .modelHub: return "shippingbox"
+            case .server: return "server.rack"
             }
         }
         /// Filled variant used when the section is the active one.
@@ -47,6 +50,7 @@ public final class AppModel: ObservableObject {
             case .files: return "folder.fill"
             case .modelManager: return "internaldrive.fill"
             case .modelHub: return "shippingbox.fill"
+            case .server: return "server.rack"
             }
         }
         /// Keyboard shortcut character shown in the rail tooltip.
@@ -56,6 +60,7 @@ public final class AppModel: ObservableObject {
             case .files: return "2"
             case .modelManager: return "3"
             case .modelHub: return "4"
+            case .server: return "5"
             }
         }
     }
@@ -82,13 +87,16 @@ public final class AppModel: ObservableObject {
     @Published public var opening: Bool = false
     /// Custom filesystem path entered for manual model loading.
     @Published public var modelPathText: String = ""
-    /// The in-process HTTP server, when one is running against `session`.
-    /// It shares `session`'s engine rather than opening a second one, and
-    /// OUTLIVES `session` if `session` is cleared without also calling
-    /// `stopServer()` (`TurboSparkServer`'s own doc) -- `unloadModel()` and
-    /// `setModelURL(_:)` both stop it first for exactly that reason, so a
-    /// user clicking "Unload" actually releases the resident model rather
-    /// than leaving it pinned by a server nothing in the UI still shows.
+    /// The in-process HTTP server, when one is running.
+    ///
+    /// It serves ALREADY-OPEN models rather than opening its own, and holds
+    /// each one alive independently of whoever else has a reference. So a
+    /// server can outlive `session`, and every site that clears `session`
+    /// calls `detachChatSessionFromServer()` first -- otherwise the model
+    /// stays resident and served with nothing in the Chat pane still showing
+    /// it as loaded. That is `swift/CLAUDE.md` Gotcha 26 in its multi-model
+    /// form: it used to be `stopServer()`, which is now the wrong tool
+    /// (stopping a whole server to unload one of its models).
     @Published public var server: TurboSparkServer?
     /// Whether `startServer()`/`stopServer()` is in flight.
     @Published public var serverBusy: Bool = false
@@ -97,29 +105,61 @@ public final class AppModel: ObservableObject {
     /// one session sharing a machine is not something to write to disk by
     /// default.
     @Published public var serverAPIKeyInput: String = ""
+    /// The port to ask for, or 0 to let the OS choose.
+    ///
+    /// 0 is the default because nothing needs a fixed one to work: the pane
+    /// shows the bound address and it is one click to copy. A user pins one
+    /// when something ELSE holds the number -- a config file, a shell
+    /// profile, a teammate's notes -- and then a changing port is the bug.
+    @Published public var serverPinnedPort: UInt16 = 0
+    /// What the running server last reported: bound host and port, attached
+    /// models, auth state, uptime.
+    ///
+    /// **PUBLISHED RATHER THAN READ PER BODY.** `TurboSparkServer.info()`
+    /// takes a lock, crosses the C ABI and decodes JSON; a SwiftUI body runs
+    /// far more often than a server changes. `refreshServerInfo()` is the
+    /// only writer, called when something changed it and once per poll tick
+    /// for the uptime.
+    @Published public var serverInfo: ServerInfo?
+    /// Sessions the server is holding, by the model id it serves them under.
+    ///
+    /// A model attached from the Server pane has its session here and
+    /// NOWHERE else in the app, so this is what keeps it alive -- and
+    /// removing an entry is half of what frees it, the server's own detach
+    /// being the other half. The chat model appears here too when it is
+    /// being served, and is the one entry `session` also holds.
+    @Published public var serverAttachedSessions: [String: TurboSparkSession] = [:]
+    /// The rolling window behind the Server pane's charts.
+    @Published public var serverMetrics = ServerMetricsStore()
+    /// The console's own buffer, bounded.
+    @Published public var serverEventLog: [ServerEvent] = []
+    /// Drains the server's event ring while one is running. Not `@Published`:
+    /// nothing draws it, and republishing on every tick would re-render the
+    /// pane for a timer identity nobody reads.
+    var serverPollTimer: Timer?
 
     /// Primary user interface interaction mode.
     public enum AppInteractionMode: String, Codable, CaseIterable, Identifiable, Sendable {
         case chat
-        case cowork
+        case projects
 
         public var id: String { rawValue }
         public var title: String {
             switch self {
             case .chat: return "Chat"
-            case .cowork: return "Cowork"
+            case .projects: return "Projects"
             }
         }
         public var systemImage: String {
             switch self {
             case .chat: return "bubble.left.and.bubble.right"
-            case .cowork: return "chevron.left.forwardslash.chevron.right"
+            case .projects: return "chevron.left.forwardslash.chevron.right"
             }
         }
     }
 
-    /// Current UI interaction mode (Chat vs Cowork / Coding).
-    @Published public var interactionMode: AppInteractionMode = .cowork
+    /// Current UI interaction mode (Chat vs Projects / Coding).
+    @Published public var interactionMode: AppInteractionMode = .projects
 
     // Project and Agent State
     /// All configured codebase projects.
@@ -271,6 +311,8 @@ public final class AppModel: ObservableObject {
     var runTask: Task<Void, Never>?
     var installTask: Task<Void, Never>?
     var tokenEstimateTask: Task<Void, Never>?
+    /// Pending debounced archive write; see `persistChatsDebounced()`.
+    var chatPersistDebounceTask: Task<Void, Never>?
     var decodeStartTime: Date?
 
     /// Bumped once per `executeGenerationTurn` call. A turn's own
@@ -362,7 +404,9 @@ public final class AppModel: ObservableObject {
             if let index = selectedChatIndex {
                 chats[index].draft = newValue
                 chats[index].updatedAt = Date()
-                persistChats()
+                // Debounced: this is one keystroke, and the store rewrites
+                // every chat in the archive on each call.
+                persistChatsDebounced()
             } else {
                 activeDraftChat.draft = newValue
                 activeDraftChat.updatedAt = Date()

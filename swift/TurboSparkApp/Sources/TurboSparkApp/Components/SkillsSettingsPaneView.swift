@@ -327,7 +327,7 @@ public struct SkillsSettingsPaneView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Allowed Tools & Permissions")
                             .font(.headline)
-                        FlowLayout(spacing: 6) {
+                        FlowLayout(spacing: 6, lineSpacing: 6) {
                             ForEach(skill.manifest.allowedTools, id: \.self) { tool in
                                 HStack(spacing: 4) {
                                     Image(systemName: "checkmark.shield")
@@ -350,7 +350,7 @@ public struct SkillsSettingsPaneView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Activation Path Triggers")
                             .font(.headline)
-                        FlowLayout(spacing: 6) {
+                        FlowLayout(spacing: 6, lineSpacing: 6) {
                             ForEach(skill.manifest.paths, id: \.self) { pathPattern in
                                 HStack(spacing: 4) {
                                     Image(systemName: "arrow.triangle.turn.up.right.diamond")
@@ -477,49 +477,5 @@ public struct SkillsSettingsPaneView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(40)
-    }
-}
-
-/// Simple flow layout helper for tags/badges.
-private struct FlowLayout: Layout {
-    var spacing: CGFloat = 6
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let width = proposal.width ?? 0
-        var height: CGFloat = 0
-        var x: CGFloat = 0
-        var y: CGFloat = 0
-        var maxHeightInRow: CGFloat = 0
-
-        for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
-            if x + size.width > width && x > 0 {
-                x = 0
-                y += maxHeightInRow + spacing
-                maxHeightInRow = 0
-            }
-            maxHeightInRow = max(maxHeightInRow, size.height)
-            x += size.width + spacing
-        }
-        height = y + maxHeightInRow
-        return CGSize(width: width, height: height)
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        var x = bounds.minX
-        var y = bounds.minY
-        var maxHeightInRow: CGFloat = 0
-
-        for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
-            if x + size.width > bounds.maxX && x > bounds.minX {
-                x = bounds.minX
-                y += maxHeightInRow + spacing
-                maxHeightInRow = 0
-            }
-            subview.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
-            maxHeightInRow = max(maxHeightInRow, size.height)
-            x += size.width + spacing
-        }
     }
 }

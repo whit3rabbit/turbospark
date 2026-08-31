@@ -36,6 +36,24 @@ public final class TurboSparkSession: @unchecked Sendable {
     private let handle: Handle
     private let queue: DispatchQueue
 
+    /// Lends the raw handle for one synchronous C call.
+    ///
+    /// **`internal`, and the ONLY caller is `TurboSparkServer.attach`.**
+    /// `ts_server_attach_session` needs this session's pointer and takes it
+    /// for the duration of the call only -- it clones the shared engine
+    /// reference out from under it and retains nothing. Every other use of
+    /// this handle stays confined to `queue`, which is what Gotcha 1's
+    /// threading claim rests on; this one is safe outside it because the C
+    /// side takes no engine lock and mutates no session state.
+    ///
+    /// **`self` IS RETAINED FOR THE CALL** by the closure being executed
+    /// here rather than escaping, which matters for the same reason
+    /// `generate`'s capture list does: a caller releasing its session
+    /// mid-call would otherwise run `ts_session_close` beside this.
+    func withRawHandle<T>(_ body: (OpaquePointer) throws -> T) rethrows -> T {
+        try withExtendedLifetime(self) { try body(handle.raw) }
+    }
+
     /// Everything resolved at open. Read the `maxContext` and
     /// `expertCacheSlots` here rather than what you asked for: under
     /// automatic sizing you asked for nothing, and these are what the KV
@@ -75,21 +93,42 @@ public final class TurboSparkSession: @unchecked Sendable {
             }
         }
 
+        // Read the session's description BEFORE any stored property is
+        // assigned, and close the C handle BY HAND when that fails.
+        //
+        // A class whose `init` throws part-way through was never fully
+        // initialized, so Swift does not run its `deinit` -- which means the
+        // `ts_session_close` below cannot be what releases the handle on this
+        // path, however obviously it looks like it is. Leaving it to `deinit`
+        // stranded a whole open session (mapped weights, KV cache, compiled
+        // Metal pipelines) for the life of the process on every failed
+        // `ts_session_info_json` or decode, and the failure is silent: the
+        // caller sees the error it expected and the memory never comes back.
+        let info: SessionInfo
+        do {
+            info = try decode(
+                SessionInfo.self,
+                from: try takeString { ts_session_info_json(handle, $0) }
+            )
+        } catch {
+            ts_session_close(handle)
+            throw error
+        }
+
         self.handle = Handle(raw: handle)
         self.queue = queue
-        // Read on the opening thread, immediately, so a later failure cannot
-        // leave a session with no description of itself.
-        self.info = try decode(
-            SessionInfo.self,
-            from: try takeString { ts_session_info_json(handle, $0) }
-        )
+        self.info = info
     }
 
     deinit {
-        // The C header forbids closing while a generation is in flight. A
-        // `deinit` cannot run while `generate` holds a strong reference to
-        // `self`, which the stream's task does for its whole lifetime, so
-        // this cannot race.
+        // The C header forbids closing while a generation is in flight, and
+        // what keeps that true is `generate`'s worker capturing `self`
+        // STRONGLY: the session cannot reach zero references while a turn is
+        // on `queue`, so `deinit` cannot run beside `ts_generate`. That
+        // capture is load-bearing rather than incidental -- this comment used
+        // to claim the stream's task provided it, which it never did (the
+        // capture list named `handle` alone), leaving the whole contract
+        // resting on every caller happening to hold the session themselves.
         ts_session_close(handle.raw)
     }
 
@@ -127,12 +166,22 @@ public final class TurboSparkSession: @unchecked Sendable {
             }
 
             // A dropped consumer must stop the model rather than leave it
-            // decoding into a stream nobody reads.
+            // decoding into a stream nobody reads. `weak` deliberately: this
+            // handler must ASK the session to stop, never extend its life
+            // past the consumer that owns it.
             continuation.onTermination = { [weak self] reason in
                 if case .cancelled = reason { self?.cancel() }
             }
 
-            queue.async { [handle] in
+            // `self` is captured STRONGLY here and that is the whole reason
+            // `deinit` is safe. The C header forbids `ts_session_close` while
+            // `ts_generate` is in flight, so the session has to outlive the
+            // turn; nothing else in this function does that, since
+            // `onTermination` above is weak and the returned stream holds no
+            // reference back. Dropping `self` from this list compiles, passes
+            // every test, and reintroduces a use-after-free reachable by any
+            // caller that lets its session go while a turn is running.
+            queue.async { [self] in
                 let box = Box(continuation)
                 let userdata = Unmanaged.passRetained(box).toOpaque()
                 // Balanced on every path out, including the throwing one.
@@ -142,7 +191,7 @@ public final class TurboSparkSession: @unchecked Sendable {
                     let json = try takeString { out in
                         messagesJSON.withCString { m in
                             optionsJSON.withCString { o in
-                                ts_generate(handle.raw, m, o, streamCallback, userdata, out)
+                                ts_generate(self.handle.raw, m, o, streamCallback, userdata, out)
                             }
                         }
                     }

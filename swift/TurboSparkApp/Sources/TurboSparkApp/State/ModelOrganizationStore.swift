@@ -53,7 +53,7 @@ public final class ModelOrganizationStore: ObservableObject {
     /// Stable key identifying a model either by alias or standardized path.
     public func key(for alias: String, path: String? = nil) -> String {
         if let path, !path.isEmpty {
-            let std = (try? URL(fileURLWithPath: path).standardizedFileURL.path) ?? path
+            let std = URL(fileURLWithPath: path).standardizedFileURL.path
             return "\(alias)::\(std)"
         }
         return alias

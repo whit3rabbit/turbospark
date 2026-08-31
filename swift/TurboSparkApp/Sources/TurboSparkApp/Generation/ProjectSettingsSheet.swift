@@ -236,7 +236,15 @@ struct ProjectSettingsSheet: View {
             agentType = .coder
             rulePreference = .agentsFirst
             guardrailsOption = .auto
-            let defaultPerms = AppProjectPermissions.auto
+            // `.standard`, matching `AppProject.init`, its decode fallback,
+            // and `AppModel.createProject`. This branch used to seed
+            // `.auto`, which is `terminal: .allow` / `fileWrite: .allow` /
+            // `mcp: .allow` -- so every project made through this sheet ran
+            // model-proposed shell commands with no prompt, while every
+            // non-UI path defaulted to asking. Four call sites, one default:
+            // a fifth that spells its own is the bug this comment exists to
+            // stop. `.auto` is still one click away in the preset picker.
+            let defaultPerms = AppProjectPermissions.newProjectDefault
             permissionMode = defaultPerms.mode
             fileReadPermission = defaultPerms.fileRead
             fileWritePermission = defaultPerms.fileWrite

@@ -197,6 +197,14 @@ public enum TurboSparkCatalog {
     /// Byte events arrive from several download threads at once and may go
     /// backwards in wall-clock order. Take the maximum rather than the last
     /// if you drive a progress bar from them.
+    ///
+    /// **AND IT CANNOT BE CANCELLED.** Dropping the consuming task ends
+    /// DELIVERY and nothing else: `ts_install` blocks its thread for the
+    /// whole walk and the C ABI exposes no install-cancel call, so the
+    /// download keeps running to completion or failure on a thread nobody is
+    /// listening to. Do not build a Stop button on this that claims
+    /// otherwise. Making it real needs a `ts_install_cancel` on the Rust side
+    /// first, which does not exist today.
     public static func install(_ alias: String) -> AsyncThrowingStream<InstallEvent, Error> {
         AsyncThrowingStream { continuation in
             // A dedicated thread, not a global queue slot: this blocks for
@@ -224,6 +232,9 @@ public enum TurboSparkCatalog {
     /// Probes and installs an arbitrary Hugging Face repository, streaming progress.
     ///
     /// `repo` is `owner/name` or `owner/name@revision`. `alias` is the local name.
+    ///
+    /// Cannot resume and CANNOT BE CANCELLED, for the reasons the catalog
+    /// overload above states in full.
     public static func install(
         repo: String,
         alias: String,

@@ -56,19 +56,37 @@ public struct WelcomeHeroView: View {
     private var greetingHeader: some View {
         VStack(spacing: 8) {
             HStack(spacing: 10) {
-                Image(systemName: "sun.max.fill")
-                    .font(.title)
-                    .foregroundStyle(TurboSparkTheme.accentColor)
-                    .accessibilityHidden(true)
+                welcomeCharacter
 
                 Text(timeBasedGreeting)
                     .font(.system(size: 28, weight: .medium, design: .serif))
                     .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             Text("How can I help you today?")
                 .font(.callout)
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    /// The bundled waving spark, with the SF symbol only as a fallback for a
+    /// build whose resource bundle did not come along. The asset is the
+    /// product's character; a sun here reads as a different app.
+    @ViewBuilder
+    private var welcomeCharacter: some View {
+        if let image = WelcomeCharacterAssetCache.shared.welcomeImage {
+            Image(nsImage: image)
+                .resizable()
+                .interpolation(.high)
+                .scaledToFit()
+                .frame(width: size, height: size)
+                .accessibilityHidden(true)
+        } else {
+            Image(systemName: "flame.fill")
+                .font(.title)
+                .foregroundStyle(TurboSparkTheme.accentColor)
+                .accessibilityHidden(true)
         }
     }
 
@@ -87,7 +105,7 @@ public struct WelcomeHeroView: View {
     }
 
     private var samplePromptPills: some View {
-        FlowLayout(spacing: 8) {
+        FlowLayout(spacing: 8, lineSpacing: 8, alignment: .center) {
             ForEach(Self.samplePrompts, id: \.self) { prompt in
                 Button(action: {
                     model.promptText = prompt
@@ -109,49 +127,5 @@ public struct WelcomeHeroView: View {
         }
         .frame(maxWidth: 680)
         .padding(.horizontal, 12)
-    }
-}
-
-/// Flexible multi-line flow layout for sample prompt suggestion chips.
-private struct FlowLayout: Layout {
-    var spacing: CGFloat = 8
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let maxWidth = proposal.width ?? 500
-        var height: CGFloat = 0
-        var currentX: CGFloat = 0
-        var currentY: CGFloat = 0
-        var lineHeight: CGFloat = 0
-
-        for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
-            if currentX + size.width > maxWidth, currentX > 0 {
-                currentX = 0
-                currentY += lineHeight + spacing
-                lineHeight = 0
-            }
-            currentX += size.width + spacing
-            lineHeight = max(lineHeight, size.height)
-        }
-        height = currentY + lineHeight
-        return CGSize(width: maxWidth, height: height)
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        var currentX = bounds.minX
-        var currentY = bounds.minY
-        var lineHeight: CGFloat = 0
-
-        for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
-            if currentX + size.width > bounds.maxX, currentX > bounds.minX {
-                currentX = bounds.minX
-                currentY += lineHeight + spacing
-                lineHeight = 0
-            }
-            subview.place(at: CGPoint(x: currentX, y: currentY), proposal: .unspecified)
-            currentX += size.width + spacing
-            lineHeight = max(lineHeight, size.height)
-        }
     }
 }

@@ -299,13 +299,29 @@ final class ModelManagerTests: XCTestCase {
 
     func testAppNavigationSectionAllCases() {
         let sections = AppModel.AppNavigationSection.allCases
-        XCTAssertEqual(sections.count, 4)
+        XCTAssertEqual(sections.count, 5)
         XCTAssertTrue(sections.contains(.chat))
         XCTAssertTrue(sections.contains(.files))
         XCTAssertTrue(sections.contains(.modelManager))
         XCTAssertTrue(sections.contains(.modelHub))
+        XCTAssertTrue(sections.contains(.server))
 
         XCTAssertEqual(AppModel.AppNavigationSection.modelManager.shortcutKey, "3")
         XCTAssertEqual(AppModel.AppNavigationSection.modelHub.shortcutKey, "4")
+        // Appended rather than inserted, so the four that existed keep the
+        // numbers anyone has already learned.
+        XCTAssertEqual(AppModel.AppNavigationSection.server.shortcutKey, "5")
+    }
+
+    /// The rail draws its hover tooltip from `title` and `shortcutKey` for
+    /// every case in `allCases`, so a new section with either missing is a
+    /// blank or duplicated tooltip that only a screenshot would catch.
+    func testEverySectionHasAUniqueTitleAndShortcut() {
+        let sections = AppModel.AppNavigationSection.allCases
+        let titles = Set(sections.map(\.title))
+        let shortcuts = Set(sections.map(\.shortcutKey))
+        XCTAssertEqual(titles.count, sections.count, "two sections share a rail tooltip title")
+        XCTAssertEqual(shortcuts.count, sections.count, "two sections share a keyboard shortcut")
+        XCTAssertFalse(titles.contains(""), "a section with no title draws an empty tooltip")
     }
 }

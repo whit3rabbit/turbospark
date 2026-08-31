@@ -23,12 +23,12 @@ final class WorktreeTests: XCTestCase {
     @MainActor
     func testAppInteractionModeProperties() {
         let chat = AppModel.AppInteractionMode.chat
-        let cowork = AppModel.AppInteractionMode.cowork
+        let projects = AppModel.AppInteractionMode.projects
 
         XCTAssertEqual(chat.id, "chat")
         XCTAssertEqual(chat.title, "Chat")
-        XCTAssertEqual(cowork.id, "cowork")
-        XCTAssertEqual(cowork.title, "Cowork")
+        XCTAssertEqual(projects.id, "projects")
+        XCTAssertEqual(projects.title, "Projects")
     }
 
     @MainActor

@@ -138,6 +138,20 @@ public struct AppProjectPermissions: Codable, Equatable, Sendable {
         )
     }
 
+    /// **The preset a project gets when nobody chose one.**
+    ///
+    /// Named rather than spelled out at each site because it was spelled out
+    /// at each site and they disagreed: `AppProject.init`, the decode
+    /// fallback and `AppModel.createProject` said `.standard` while the new
+    /// project sheet said `.auto` (`terminal: .allow`, `fileWrite: .allow`,
+    /// `mcp: .allow`). The sheet is the only one of the four a user actually
+    /// goes through, so the permissive spelling was the shipped default and
+    /// the conservative one was decoration.
+    ///
+    /// Every default now reads THIS. A fifth site spelling its own preset is
+    /// the bug this constant exists to make visible.
+    public static var newProjectDefault: AppProjectPermissions { .standard }
+
     /// Safe standard configuration requiring confirmation for state-mutating actions.
     public static var standard: AppProjectPermissions {
         AppProjectPermissions(
@@ -286,7 +300,7 @@ public struct AppProject: Identifiable, Codable, Equatable, Sendable {
         agentType: AppAgentType = .coder,
         rulePreference: AppRulePreference = .agentsFirst,
         customInstructions: String = "",
-        permissions: AppProjectPermissions = .standard,
+        permissions: AppProjectPermissions = .newProjectDefault,
         maxAutonomousSteps: Int = 5,
         mcpServers: [McpServerConfig] = [],
         forgeGuardrailsEnabled: Bool? = nil,
@@ -320,7 +334,7 @@ public struct AppProject: Identifiable, Codable, Equatable, Sendable {
         self.agentType = try container.decodeIfPresent(AppAgentType.self, forKey: .agentType) ?? .coder
         self.rulePreference = try container.decodeIfPresent(AppRulePreference.self, forKey: .rulePreference) ?? .agentsFirst
         self.customInstructions = try container.decodeIfPresent(String.self, forKey: .customInstructions) ?? ""
-        self.permissions = try container.decodeIfPresent(AppProjectPermissions.self, forKey: .permissions) ?? .standard
+        self.permissions = try container.decodeIfPresent(AppProjectPermissions.self, forKey: .permissions) ?? .newProjectDefault
         self.maxAutonomousSteps = try container.decodeIfPresent(Int.self, forKey: .maxAutonomousSteps) ?? 5
         self.mcpServers = try container.decodeIfPresent([McpServerConfig].self, forKey: .mcpServers) ?? []
         self.forgeGuardrailsEnabled = try container.decodeIfPresent(Bool.self, forKey: .forgeGuardrailsEnabled)

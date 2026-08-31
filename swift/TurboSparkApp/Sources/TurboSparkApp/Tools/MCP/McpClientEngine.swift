@@ -105,16 +105,43 @@ public actor McpClientEngine {
         errorCode: Int
     ) throws -> (process: Process, stdinPipe: Pipe, stdoutBuffer: LineBuffer) {
         let process = Process()
-        let resolvedExecutable = resolveExecutablePath(command)
+        // An unresolvable command is refused by name here rather than handed
+        // to `/usr/bin/env` to look up at spawn time. The old fallback made
+        // "this server's command does not exist" indistinguishable from
+        // "this server started and then failed", and put the lookup somewhere
+        // this process could neither observe nor report.
+        guard let resolvedExecutable = resolveExecutablePath(command) else {
+            throw NSError(
+                domain: "McpClientEngine", code: errorCode,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "MCP server '\(serverName)': command '\(command)' was not found on "
+                        + "PATH or in any standard tool directory."
+                ])
+        }
         process.executableURL = URL(fileURLWithPath: resolvedExecutable)
-        // `resolveExecutablePath` falls back to `/usr/bin/env` when `command`
-        // is not found under any known PATH-like directory. `env` needs the
-        // original command name prepended to its argument list to know what
-        // to actually run; without it, `env` executes whatever `args[0]`
-        // happened to be as if IT were the program name.
-        process.arguments = (resolvedExecutable == "/usr/bin/env") ? [command] + args : args
+        process.arguments = args
 
-        var environment = ProcessInfo.processInfo.environment
+        // **A MINIMAL ENVIRONMENT, NOT THE PARENT'S.**
+        //
+        // This used to seed from `ProcessInfo.processInfo.environment`, which
+        // hands a third-party server binary every variable this app was
+        // launched with: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GITHUB_TOKEN`,
+        // `AWS_*`, whatever else is in the launching shell. An MCP server
+        // needs none of that to speak JSON-RPC on a pipe, and a config file
+        // that wants a credential passes it explicitly through `env` below.
+        //
+        // The four kept are what a normal program needs to run at all: a
+        // `PATH` for the subprocesses it shells out to, a `HOME` for its own
+        // config, a locale so its output is not mojibake, and a scratch
+        // directory.
+        let parentEnvironment = ProcessInfo.processInfo.environment
+        var environment: [String: String] = [:]
+        for key in ["PATH", "HOME", "LANG", "TMPDIR"] {
+            if let value = parentEnvironment[key] { environment[key] = value }
+        }
+        // The server's own declared variables win, including over the four
+        // above: a config naming its own PATH means it.
         for (k, v) in env {
             environment[k] = v
         }
@@ -327,19 +354,33 @@ public actor McpClientEngine {
 
     // MARK: - SSE Transport (Remote)
 
+    // MARK: - SSE transport: NOT IMPLEMENTED, AND IT SAYS SO
+    //
+    // Both arms below used to fabricate a result. `discoverToolsViaSSE` built
+    // a `URLRequest`, never sent it, and returned an empty list that reads as
+    // "this server publishes no tools". `callToolViaSSE` returned the literal
+    // string "SSE remote tool execution completed." for every call, so an SSE
+    // server config reported every tool as having succeeded: the model was
+    // told an external action happened, the transcript showed a green result,
+    // and nothing had left the process.
+    //
+    // That is the failure `AppToolRegistry.execute`'s default case was fixed
+    // for (T5) and it was still live here. Throwing is not a smaller feature
+    // than lying, it is the only honest state until the transport is written.
+
     private func discoverToolsViaSSE(
         serverName: String,
         url: URL,
         headers: [String: String],
         timeoutSeconds: TimeInterval
     ) async throws -> [McpDiscoveredTool] {
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        for (k, v) in headers {
-            request.setValue(v, forHTTPHeaderField: k)
-        }
-        // Simulated remote discovery fallback
-        return []
+        throw NSError(
+            domain: "McpClientEngine", code: 6,
+            userInfo: [
+                NSLocalizedDescriptionKey:
+                    "MCP server '\(serverName)' uses the SSE transport, which this client "
+                    + "does not implement. Configure it as a stdio server, or remove it."
+            ])
     }
 
     private func callToolViaSSE(
@@ -350,7 +391,14 @@ public actor McpClientEngine {
         arguments: [String: Any],
         timeoutSeconds: TimeInterval
     ) async throws -> String {
-        return "SSE remote tool execution completed."
+        throw NSError(
+            domain: "McpClientEngine", code: 6,
+            userInfo: [
+                NSLocalizedDescriptionKey:
+                    "Cannot call '\(toolName)': MCP server '\(serverName)' uses the SSE "
+                    + "transport, which this client does not implement. The call was NOT "
+                    + "executed."
+            ])
     }
 
     // MARK: - JSON-RPC Utilities
@@ -396,7 +444,8 @@ public actor McpClientEngine {
         throw NSError(domain: "McpClientEngine", code: 5, userInfo: [NSLocalizedDescriptionKey: "Timed out waiting for MCP response (id: \(expectedId))."])
     }
 
-    private func resolveExecutablePath(_ name: String) -> String {
+    /// The absolute path of `name`, or nil when it resolves nowhere.
+    private func resolveExecutablePath(_ name: String) -> String? {
         if name.hasPrefix("/") || name.hasPrefix("./") || name.hasPrefix("../") {
             return name
         }
@@ -414,6 +463,27 @@ public actor McpClientEngine {
                 return candidate
             }
         }
-        return "/usr/bin/env"
+
+        // Then the real PATH, which is what the `/usr/bin/env` fallback was
+        // reaching for and the reason that fallback must not simply be
+        // deleted: an nvm, asdf or pyenv install puts `node` and `python`
+        // somewhere no hard-coded list can predict.
+        //
+        // Searching it HERE rather than delegating to `env` is the change.
+        // The old code returned `/usr/bin/env` for anything it could not
+        // find, so a missing or misspelled command silently became a PATH
+        // lookup at spawn time whose result nothing in this process could
+        // see or report. Resolving it ourselves means an unresolvable
+        // command is an error naming itself, and a resolvable one is spawned
+        // by absolute path.
+        let searchPath = ProcessInfo.processInfo.environment["PATH"] ?? ""
+        for path in searchPath.components(separatedBy: ":") where !path.isEmpty {
+            let candidate = "\(path)/\(name)"
+            if FileManager.default.isExecutableFile(atPath: candidate) {
+                return candidate
+            }
+        }
+
+        return nil
     }
 }

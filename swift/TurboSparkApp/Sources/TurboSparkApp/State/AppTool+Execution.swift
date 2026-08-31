@@ -1,5 +1,50 @@
 import Foundation
 
+/// Size ceilings for every file this app reads on a model's instruction.
+///
+/// **A path from a model is an unbounded read until something bounds it.**
+/// `String(contentsOf:)` loads the whole file, `components(separatedBy:)`
+/// makes a second copy as an array of lines, and `FileSnapshotStore` used to
+/// read the same bytes a THIRD time to hash them. Point `read_file` at a
+/// multi-gigabyte log, a core dump, or a `.gturbo` weight file (every one of
+/// which is inside a normal project root) and the app takes three copies of
+/// it into memory before deciding it is not text.
+///
+/// The Office and PDF extraction paths already had real limits
+/// (`DocumentTextExtractor.Limits`, `OfficeArchive`'s byte budgets). These
+/// are the same idea for the paths that had none.
+public enum AppFileReadLimits {
+    /// Largest file a tool will read into memory whole. Generous next to any
+    /// real source file and far under what makes the app unresponsive.
+    public static let maximumBytes = 16 * 1_024 * 1_024
+
+    /// The size of the file at `url`, or nil when it cannot be determined.
+    public static func fileSize(of url: URL) -> Int? {
+        (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize
+    }
+
+    /// Reads `url` as UTF-8, refusing anything over `maximumBytes`.
+    ///
+    /// The size is checked BEFORE the read, which is the whole point: a cap
+    /// applied to the string afterwards has already paid the allocation it
+    /// exists to prevent (`DocumentTextExtractor`'s plain-text branch did
+    /// exactly that, truncating to 240k characters after loading the file
+    /// whole).
+    public static func readTextFile(at url: URL, describing relPath: String) throws -> String {
+        if let size = fileSize(of: url), size > maximumBytes {
+            throw NSError(
+                domain: "TurboSparkTool", code: 17,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "\(relPath) is \(size / 1_024 / 1_024) MB, over the "
+                        + "\(maximumBytes / 1_024 / 1_024) MB limit for a single read. "
+                        + "Use start_line and end_line, or a shell command, to read part of it."
+                ])
+        }
+        return try String(contentsOf: url, encoding: .utf8)
+    }
+}
+
 // MARK: - Native Tool Execution Helpers
 
 extension AppToolRegistry {
@@ -64,8 +109,12 @@ extension AppToolRegistry {
             throw NSError(domain: "TurboSparkTool", code: 11, userInfo: [NSLocalizedDescriptionKey: "File not found: \(relPath)"])
         }
 
-        let content = try String(contentsOf: targetURL, encoding: .utf8)
-        await FileSnapshotStore.shared.recordSnapshot(url: targetURL)
+        let content = try AppFileReadLimits.readTextFile(at: targetURL, describing: relPath)
+        // The content is already in hand, so the snapshot hashes THAT rather
+        // than re-reading the file: the old call took a second full copy of
+        // every file the model read, for a hash of bytes this frame was
+        // already holding.
+        await FileSnapshotStore.shared.recordSnapshot(url: targetURL, content: content)
         let allLines = content.components(separatedBy: "\n")
 
         let sLine = max(1, startLine ?? 1)
@@ -95,7 +144,7 @@ extension AppToolRegistry {
         let dirURL = targetURL.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: dirURL, withIntermediateDirectories: true)
         try content.write(to: targetURL, atomically: true, encoding: .utf8)
-        await FileSnapshotStore.shared.recordSnapshot(url: targetURL)
+        await FileSnapshotStore.shared.recordSnapshot(url: targetURL, content: content)
         return "Successfully wrote \(content.count) characters to \(relPath)."
     }
 
@@ -112,7 +161,7 @@ extension AppToolRegistry {
             ])
         }
 
-        let content = try String(contentsOf: targetURL, encoding: .utf8)
+        let content = try AppFileReadLimits.readTextFile(at: targetURL, describing: relPath)
         guard content.contains(oldString) else {
             throw NSError(domain: "TurboSparkTool", code: 15, userInfo: [NSLocalizedDescriptionKey: "Target old_string not found in \(relPath)."])
         }
@@ -129,7 +178,7 @@ extension AppToolRegistry {
         }
 
         try updatedContent.write(to: targetURL, atomically: true, encoding: .utf8)
-        await FileSnapshotStore.shared.recordSnapshot(url: targetURL)
+        await FileSnapshotStore.shared.recordSnapshot(url: targetURL, content: updatedContent)
         return "Successfully replaced occurrences in \(relPath)."
     }
 
@@ -147,6 +196,15 @@ extension AppToolRegistry {
         for case let fileURL as URL in enumerator {
             let path = fileURL.path
             if path.contains("/node_modules/") || path.contains("/target/") || path.contains("/.build/") {
+                continue
+            }
+            // Skipped rather than refused: a search walks a whole tree, and
+            // one oversized file in it is not a reason to fail the search.
+            // Without this the walk loaded every binary, log and checkpoint
+            // it met into memory whole just to find out it was not text.
+            if let size = AppFileReadLimits.fileSize(of: fileURL),
+                size > AppFileReadLimits.maximumBytes
+            {
                 continue
             }
             guard let text = try? String(contentsOf: fileURL, encoding: .utf8) else { continue }

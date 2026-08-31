@@ -157,7 +157,7 @@ public struct ThemeConfigCardView: View {
             .pickerStyle(.menu)
             .frame(width: 140)
             .labelsHidden()
-            .onChange(of: config.accentHex) { newHex in
+            .onChange(of: config.accentHex) { _, newHex in
                 if let matched = accentOptions.first(where: { $0.1 == newHex }) {
                     config.accentName = matched.0
                 } else {

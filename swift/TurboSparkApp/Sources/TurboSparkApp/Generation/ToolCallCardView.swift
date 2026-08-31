@@ -166,7 +166,7 @@ struct ToolCallCardView: View {
     private var statusBadge: some View {
         HStack(spacing: 4) {
             if call.status == .running {
-                ProgressView().controlSize(.small)
+                TaskProgressFlameIcon(size: 12)
             }
             Text(statusLabel)
                 .font(.caption2.weight(.medium))

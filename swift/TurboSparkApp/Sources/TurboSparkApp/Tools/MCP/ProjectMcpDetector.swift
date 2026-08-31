@@ -160,7 +160,17 @@ public enum ProjectMcpDetector {
         return configs
     }
 
-    /// Expands variable placeholders like ${workspaceFolder}, ${projectRoot}, and environment variables.
+    /// Allowlist of safe system environment variable keys that may be expanded.
+    public static let allowedEnvironmentVariableKeys: Set<String> = [
+        "PATH", "HOME", "LANG", "TMPDIR"
+    ]
+
+    /// Expands safe variable placeholders (${workspaceFolder}, ${projectRoot}, ${cwd}, and allowlisted env vars).
+    ///
+    /// Arbitrary `${env:...}` and bare `$KEY` expansion over the parent process environment is
+    /// intentionally NOT performed on repo-controlled configs: doing so would allow an untrusted
+    /// repository to exfiltrate host credentials (e.g. `ANTHROPIC_API_KEY`, `GITHUB_TOKEN`) by
+    /// embedding them in server args or env definitions that get persisted or spawned.
     public static func expandVariables(_ input: String, projectRoot: URL?) -> String {
         var str = input
         if let rootPath = projectRoot?.path {
@@ -168,9 +178,11 @@ public enum ProjectMcpDetector {
             str = str.replacingOccurrences(of: "${projectRoot}", with: rootPath)
             str = str.replacingOccurrences(of: "${cwd}", with: rootPath)
         }
-        for (key, val) in ProcessInfo.processInfo.environment {
-            str = str.replacingOccurrences(of: "${env:\(key)}", with: val)
-            str = str.replacingOccurrences(of: "$\(key)", with: val)
+        let env = ProcessInfo.processInfo.environment
+        for key in allowedEnvironmentVariableKeys {
+            if let val = env[key] {
+                str = str.replacingOccurrences(of: "${env:\(key)}", with: val)
+            }
         }
         return str
     }

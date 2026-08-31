@@ -42,14 +42,35 @@ struct ModelHubView: View {
     // MARK: - Header
 
     private var header: some View {
-        HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 1) {
-                Text("Models")
-                    .font(.system(size: 14, weight: .semibold))
-                    .accessibilityAddTraits(.isHeader)
-                Text(summaryText)
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
+        HStack(spacing: 12) {
+            HStack(spacing: 8) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(TurboSparkTheme.accentColor.opacity(0.15))
+                        .frame(width: 30, height: 30)
+                    Image(systemName: "shippingbox.fill")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(TurboSparkTheme.accentColor)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text("Discover Models")
+                            .font(.system(size: 14, weight: .semibold))
+                            .accessibilityAddTraits(.isHeader)
+
+                        Text("ONLINE CATALOG")
+                            .font(.system(size: 9, weight: .bold))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1.5)
+                            .background(TurboSparkTheme.accentColor.opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
+                            .foregroundStyle(TurboSparkTheme.accentColor)
+                    }
+
+                    Text(summaryText)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Spacer(minLength: 8)
@@ -59,7 +80,7 @@ struct ModelHubView: View {
             Button {
                 showingProbeSheet = true
             } label: {
-                Label("Probe HF", systemImage: "magnifyingglass")
+                Label("Probe HF Repo", systemImage: "sparkle.magnifyingglass")
                     .font(.system(size: 11, weight: .medium))
                     .frame(height: 22)
                     .padding(.horizontal, 9)
@@ -72,7 +93,7 @@ struct ModelHubView: View {
             .accessibilityLabel("Probe a Hugging Face repository")
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(.vertical, 10)
     }
 
     private var summaryText: String {

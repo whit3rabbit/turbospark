@@ -17,7 +17,7 @@ extension AppModel {
         agentType: AppAgentType = .coder,
         rulePreference: AppRulePreference = .agentsFirst,
         customInstructions: String = "",
-        permissions: AppProjectPermissions = .standard,
+        permissions: AppProjectPermissions = .newProjectDefault,
         maxAutonomousSteps: Int = 5,
         forgeGuardrailsEnabled: Bool? = nil
     ) -> AppProject {
@@ -59,6 +59,13 @@ extension AppModel {
     public func selectProject(id: UUID?) {
         guard !generating else { return }
         selectedProjectID = id
+        // Stale-write hashes are per workspace. Carrying them across a
+        // project switch means an `edit_file` in the new project can be
+        // refused (or, worse, allowed) on the strength of a hash recorded
+        // against a same-named file in the old one. `FileSnapshotStore`
+        // documented this clearing since it was written and nothing ever
+        // called it.
+        Task { await FileSnapshotStore.shared.reset() }
         if let id, let proj = projects.first(where: { $0.id == id }), let path = proj.rootDirectoryPath, !path.isEmpty {
             if let existing = worktree {
                 existing.updateRoot(path: path)

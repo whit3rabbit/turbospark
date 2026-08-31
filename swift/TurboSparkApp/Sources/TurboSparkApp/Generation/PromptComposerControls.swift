@@ -1,7 +1,7 @@
 import SwiftUI
 import TurboSpark
 
-/// Segmented control switching between Chat and Cowork modes right in the composer.
+/// Segmented control switching between Chat and Projects modes right in the composer.
 struct PromptInteractionModeSegment: View {
     @ObservedObject var model: AppModel
 
@@ -19,6 +19,8 @@ struct PromptInteractionModeSegment: View {
                             .font(.system(size: 10, weight: .semibold))
                         Text(mode.title)
                             .font(.system(size: 11, weight: isSelected ? .semibold : .medium))
+                            .lineLimit(1)
+                            .fixedSize()
                     }
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
@@ -36,7 +38,8 @@ struct PromptInteractionModeSegment: View {
         .padding(2)
         .background(Color.primary.opacity(0.04), in: Capsule())
         .overlay(Capsule().stroke(TurboSparkTheme.hairlineColor, lineWidth: 0.5))
-        .help("Switch between conversational Chat mode and agentic Cowork / Coding mode")
+        .fixedSize()
+        .help("Switch between conversational Chat mode and agentic Projects / Coding mode")
     }
 }
 
@@ -145,6 +148,7 @@ struct PromptProjectContextPill: View {
             .padding(.vertical, 3)
             .background(TurboSparkTheme.accentColor.opacity(0.1), in: Capsule())
             .overlay(Capsule().stroke(TurboSparkTheme.accentColor.opacity(0.25), lineWidth: 0.5))
+            .fixedSize()
             .help("Active project: \(project.name)")
             .accessibilityElement(children: .combine)
             .accessibilityLabel("Active project: \(project.name)")
@@ -237,6 +241,8 @@ struct ForgeGuardrailsPillControl: View {
                     Text("Guardrails: \(isEnabled ? "On" : "Off")")
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(isEnabled ? Color.primary : Color.secondary)
+                        .lineLimit(1)
+                        .fixedSize()
                 }
                 .padding(.horizontal, 7)
                 .padding(.vertical, 3)
@@ -338,7 +344,7 @@ struct PromptAttachDocumentButton: View {
         Button(action: onAttach) {
             Group {
                 if isExtracting {
-                    ProgressView().controlSize(.small)
+                    TaskProgressFlameIcon(size: 16)
                 } else {
                     Label("Attach documents", systemImage: "paperclip")
                         .labelStyle(.iconOnly)

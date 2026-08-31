@@ -24,6 +24,7 @@ struct RootView: View {
     var body: some View {
         HStack(spacing: 0) {
             NavigationRailView(model: model)
+                .zIndex(10)
 
             Rectangle()
                 .fill(TurboSparkTheme.hairlineColor)
@@ -126,7 +127,7 @@ struct RootView: View {
             verticalHairline
 
             Group {
-                if model.interactionMode == .cowork, let worktree = model.worktree {
+                if model.interactionMode == .projects, let worktree = model.worktree {
                     WorktreeView(model: model, worktree: worktree)
                 } else {
                     InspectorView(model: model)
@@ -156,6 +157,8 @@ struct RootView: View {
             ModelManagerView(model: model)
         case .modelHub:
             ModelHubView(model: model)
+        case .server:
+            ServerPaneView(model: model)
         case .files:
             FilesSectionView(model: model)
         case .chat:

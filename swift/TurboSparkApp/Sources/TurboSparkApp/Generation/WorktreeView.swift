@@ -206,8 +206,7 @@ struct WorktreeView: View {
     private func diffContainer(for file: WorktreeFileChange) -> some View {
         if worktree.isLoadingDiff && worktree.selectedFilePath == file.relativePath {
             HStack(spacing: 6) {
-                ProgressView()
-                    .controlSize(.small)
+                TaskProgressFlameIcon(size: 14)
                 Text("Loading diff...")
                     .font(.caption2)
                     .foregroundStyle(.secondary)

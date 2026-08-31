@@ -45,7 +45,8 @@ struct GenerateControl: View {
         Button {
             model.cancel()
         } label: {
-            HStack(spacing: 10) {
+            HStack(spacing: 8) {
+                TaskProgressFlameIcon(size: 14)
                 if model.isCancellationPending {
                     Text("Stopping")
                         .font(.callout.weight(.medium))
@@ -64,7 +65,7 @@ struct GenerateControl: View {
                     .frame(width: stopIconSize, height: stopIconSize)
                     .accessibilityHidden(true)
             }
-            .padding(.leading, 18)
+            .padding(.leading, 14)
             .padding(.trailing, 4)
             .frame(minWidth: pillMinWidth, minHeight: controlHeight)
             .contentShape(Capsule())

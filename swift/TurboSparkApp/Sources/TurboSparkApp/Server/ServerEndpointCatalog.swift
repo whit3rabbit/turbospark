@@ -1,0 +1,194 @@
+import Foundation
+
+/// The routes this server actually serves, and how to call them.
+///
+/// **ONLY IMPLEMENTED ROUTES APPEAR HERE.** There is no `/v1/embeddings` row:
+/// this engine has no embedding path at all, and a listed endpoint that 404s
+/// is worse than an absent one -- a user reads the list as a capability
+/// statement and would go and build against it. Same rule as
+/// `swift/CLAUDE.md` Gotcha 23's Probe button: check that the work exists
+/// before adding the control that claims it.
+///
+/// Pure and free of SwiftUI so the list and the snippets can be tested
+/// against the router's own route table.
+public enum ServerAPIFamily: String, CaseIterable, Identifiable, Sendable {
+    case openAI
+    case anthropic
+    case ollama
+    case turbospark
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .openAI: return "OpenAI"
+        case .anthropic: return "Anthropic"
+        case .ollama: return "Ollama"
+        case .turbospark: return "Service"
+        }
+    }
+
+    public var blurb: String {
+        switch self {
+        case .openAI:
+            return "The default for most SDKs and editor plugins. Point the base URL here."
+        case .anthropic:
+            return "Native, so Claude Code and other Anthropic clients need no proxy in between."
+        case .ollama:
+            return "For tools that only speak Ollama. Streams NDJSON, not SSE."
+        case .turbospark:
+            return "Liveness and discovery."
+        }
+    }
+}
+
+public struct ServerEndpoint: Identifiable, Equatable, Sendable {
+    public let method: String
+    public let path: String
+    public let family: ServerAPIFamily
+    public let summary: String
+    /// True when the route streams. Worth showing because the FRAMING
+    /// differs by family: SSE everywhere except Ollama, which sends NDJSON.
+    public let streams: Bool
+
+    public var id: String { "\(method) \(path)" }
+}
+
+public enum ServerEndpointCatalog {
+    /// Every route `turbospark_server::build_router_with_options` registers.
+    ///
+    /// **KEPT IN STEP BY A TEST, NOT BY DISCIPLINE.** `ServerEndpointCatalogTests`
+    /// asserts this list against a literal copy of the router's own routes,
+    /// so adding a route without a row here (or leaving a row for a route
+    /// that was removed) fails rather than quietly misinforming a user.
+    public static let all: [ServerEndpoint] = [
+        ServerEndpoint(
+            method: "GET", path: "/health", family: .turbospark,
+            summary: "Liveness, the attached model ids, and the engine version.",
+            streams: false),
+        ServerEndpoint(
+            method: "GET", path: "/v1/models", family: .openAI,
+            summary: "Every attached model. This is what a client's model picker reads.",
+            streams: false),
+        ServerEndpoint(
+            method: "GET", path: "/v1/models/{id}", family: .openAI,
+            summary: "One model by id.", streams: false),
+        ServerEndpoint(
+            method: "POST", path: "/v1/chat/completions", family: .openAI,
+            summary: "Chat completions, with tools and reasoning.", streams: true),
+        ServerEndpoint(
+            method: "POST", path: "/v1/completions", family: .openAI,
+            summary: "Legacy raw prompt, with no chat template applied.", streams: true),
+        ServerEndpoint(
+            method: "POST", path: "/v1/responses", family: .openAI,
+            summary: "The Responses API, item-shaped.", streams: true),
+        ServerEndpoint(
+            method: "POST", path: "/v1/messages", family: .anthropic,
+            summary: "Messages, with tools, thinking and images.", streams: true),
+        ServerEndpoint(
+            method: "POST", path: "/v1/messages/count_tokens", family: .anthropic,
+            summary: "What a real call on this request would prefill. Generates nothing.",
+            streams: false),
+        ServerEndpoint(
+            method: "GET", path: "/api/tags", family: .ollama,
+            summary: "The model list, in Ollama's shape.", streams: false),
+        ServerEndpoint(
+            method: "GET", path: "/api/version", family: .ollama,
+            summary: "This engine's version, not an Ollama one.", streams: false),
+        ServerEndpoint(
+            method: "POST", path: "/api/show", family: .ollama,
+            summary: "Details for one model.", streams: false),
+        ServerEndpoint(
+            method: "POST", path: "/api/chat", family: .ollama,
+            summary: "Chat. Streams by default, unlike every OpenAI route here.",
+            streams: true),
+        ServerEndpoint(
+            method: "POST", path: "/api/generate", family: .ollama,
+            summary: "Raw prompt, through the model's own template.", streams: true),
+    ]
+
+    public static func endpoints(for family: ServerAPIFamily) -> [ServerEndpoint] {
+        all.filter { $0.family == family }
+    }
+}
+
+/// A ready-to-paste way to reach a running server from a particular tool.
+public struct ServerConnectSnippet: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let title: String
+    /// What the snippet is for, in one line.
+    public let note: String
+    public let language: String
+    public let body: String
+}
+
+public enum ServerConnectRecipes {
+    /// Snippets for a server at `baseURL`, serving `modelID`.
+    ///
+    /// **THE LIVE PORT AND KEY ARE SUBSTITUTED IN.** A snippet with a
+    /// placeholder in it is a snippet the reader has to edit, which is the
+    /// step people get wrong -- and the port is OS-assigned here, so it is
+    /// not something they could know without reading it off this pane.
+    ///
+    /// `apiKey` nil means the server is unauthenticated, and the snippets
+    /// say so with a dummy value rather than omitting the header: most
+    /// clients require one to be set even when it is never checked, and
+    /// leaving it out produces a confusing client-side failure.
+    public static func snippets(baseURL: String, modelID: String, apiKey: String?)
+        -> [ServerConnectSnippet]
+    {
+        let key = apiKey ?? "unused"
+        let model = modelID.isEmpty ? "<load a model first>" : modelID
+        return [
+            ServerConnectSnippet(
+                id: "claude-code",
+                title: "Claude Code",
+                note: "Anthropic-native, so nothing sits in between.",
+                language: "bash",
+                body: """
+                    ANTHROPIC_BASE_URL=\(baseURL) \\
+                    ANTHROPIC_API_KEY=\(key) \\
+                    CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=true \\
+                      claude
+                    """),
+            ServerConnectSnippet(
+                id: "openai-python",
+                title: "OpenAI SDK",
+                note: "Any client that takes a base URL: Cursor, Continue, LangChain.",
+                language: "python",
+                body: """
+                    from openai import OpenAI
+
+                    client = OpenAI(base_url="\(baseURL)/v1", api_key="\(key)")
+                    reply = client.chat.completions.create(
+                        model="\(model)",
+                        messages=[{"role": "user", "content": "hello"}],
+                    )
+                    print(reply.choices[0].message.content)
+                    """),
+            ServerConnectSnippet(
+                id: "curl",
+                title: "curl",
+                note: "Streams as it decodes.",
+                language: "bash",
+                body: """
+                    curl -sN \(baseURL)/v1/chat/completions \\
+                      -H 'content-type: application/json' \\
+                      -H 'authorization: Bearer \(key)' \\
+                      -d '{"model":"\(model)","stream":true,
+                           "messages":[{"role":"user","content":"hello"}]}'
+                    """),
+            ServerConnectSnippet(
+                id: "ollama",
+                title: "Ollama clients",
+                note: "Set the host and the tool finds the models by itself.",
+                language: "bash",
+                body: """
+                    OLLAMA_HOST=\(baseURL) ollama list
+                    curl -s \(baseURL)/api/chat \\
+                      -d '{"model":"\(model)",
+                           "messages":[{"role":"user","content":"hello"}]}'
+                    """),
+        ]
+    }
+}

@@ -25,7 +25,7 @@ extension AppModel {
     public func refreshModels() {
         do {
             var combinedInstalled = (try? TurboSparkCatalog.installed()) ?? []
-            var existingPaths = Set(combinedInstalled.map { (try? URL(fileURLWithPath: $0.path).standardizedFileURL.path) ?? $0.path })
+            var existingPaths = Set(combinedInstalled.map { URL(fileURLWithPath: $0.path).standardizedFileURL.path })
             var existingAliases = Set(combinedInstalled.map { $0.alias })
 
             // Scan LM Studio library if enabled
@@ -33,7 +33,7 @@ extension AppModel {
                 let lmPath = lmStudioDirectory.isEmpty ? ModelStorageManager.defaultLMStudioModelsDirectory : lmStudioDirectory
                 let lmModels = ModelStorageManager.scanModels(in: lmPath, sourceTag: "LM Studio")
                 for m in lmModels {
-                    let stdPath = (try? URL(fileURLWithPath: m.path).standardizedFileURL.path) ?? m.path
+                    let stdPath = URL(fileURLWithPath: m.path).standardizedFileURL.path
                     if !existingPaths.contains(stdPath) {
                         existingPaths.insert(stdPath)
                         // Make sure alias is unique
@@ -60,7 +60,7 @@ extension AppModel {
             for dir in customModelDirectories where !dir.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 let customModels = ModelStorageManager.scanModels(in: dir, sourceTag: "Custom")
                 for m in customModels {
-                    let stdPath = (try? URL(fileURLWithPath: m.path).standardizedFileURL.path) ?? m.path
+                    let stdPath = URL(fileURLWithPath: m.path).standardizedFileURL.path
                     if !existingPaths.contains(stdPath) {
                         existingPaths.insert(stdPath)
                         var resolvedAlias = m.alias
@@ -207,11 +207,13 @@ extension AppModel {
         guard !generating else { return }
         opening = true
         error = nil
-        // Stopped rather than merely dropped: `session = nil` alone would
-        // leave a running server pinned to the OLD model's engine (it holds
-        // its own reference -- `TurboSparkServer`'s doc) while the UI now
-        // shows a different one loaded.
-        stopServer()
+        // **DETACHED RATHER THAN MERELY DROPPED, and detached rather than
+        // stopping the whole server.** `session = nil` alone leaves the OLD
+        // model resident and served: the server holds its own reference
+        // (`TurboSparkServer`'s doc). Stopping the server was the right move
+        // when it could serve only one model, and is now too big a hammer --
+        // it would take every OTHER attached model down to swap this one.
+        detachChatSessionFromServer()
         session = nil
         defer { opening = false }
 
@@ -249,7 +251,9 @@ extension AppModel {
 
     public func unloadModel() {
         guard !generating else { return }
-        stopServer()
+        // Or the model stays resident and served, with the Chat pane showing
+        // nothing loaded. See `detachChatSessionFromServer`'s own note.
+        detachChatSessionFromServer()
         session = nil
         showToast("Model unloaded", style: .info)
     }
@@ -258,7 +262,7 @@ extension AppModel {
         guard !generating else { return }
         let path = url.standardizedFileURL.path
         modelPathText = path
-        stopServer()
+        detachChatSessionFromServer()
         session = nil
         opening = true
         Task {
@@ -297,10 +301,10 @@ extension AppModel {
         // destroys files the app never wrote and only discovered by walking
         // a directory it was pointed at -- the opposite of the "without
         // copying any bytes" promise that scan makes.
-        let stdPath = (try? URL(fileURLWithPath: model.path).standardizedFileURL.path) ?? model.path
+        let stdPath = URL(fileURLWithPath: model.path).standardizedFileURL.path
         let catalogInstalled = (try? TurboSparkCatalog.installed()) ?? []
         let isCatalogTracked = catalogInstalled.contains { entry in
-            let entryPath = (try? URL(fileURLWithPath: entry.path).standardizedFileURL.path) ?? entry.path
+            let entryPath = URL(fileURLWithPath: entry.path).standardizedFileURL.path
             return entryPath == stdPath || entry.alias == model.alias
         }
 

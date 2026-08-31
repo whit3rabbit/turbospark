@@ -150,4 +150,66 @@ final class HookSystemTests: XCTestCase {
         // Cleanup
         await store.deleteCustomHook(id: benignHook.id)
     }
+
+    func testHookEnvironmentDoesNotInheritParentSecrets() async {
+        let store = await AppHookStore.shared
+
+        // Set a marker secret in the parent process environment
+        setenv("TURBOSPARK_PARENT_SECRET_MARKER", "top_secret_token_12345", 1)
+        defer { unsetenv("TURBOSPARK_PARENT_SECRET_MARKER") }
+
+        let envInspectionHook = AppHookCommand(
+            name: "Env Inspector",
+            event: .postToolUse,
+            type: .command,
+            command: "echo \"MARKER=$TURBOSPARK_PARENT_SECRET_MARKER\"",
+            sourceType: .custom
+        )
+        await store.addCustomHook(envInspectionHook)
+
+        let results = await AppHookExecutionEngine.shared.dispatch(
+            event: .postToolUse,
+            sessionID: UUID().uuidString,
+            toolName: "read_file",
+            toolArguments: ["rel_path": "README.md"]
+        )
+
+        let hookResult = results.first(where: { $0.hookID == envInspectionHook.id })
+        XCTAssertNotNil(hookResult)
+        XCTAssertFalse(hookResult?.stdout.contains("top_secret_token_12345") ?? true, "Hook child process must not inherit arbitrary parent environment secrets.")
+
+        // Cleanup
+        await store.deleteCustomHook(id: envInspectionHook.id)
+    }
+
+    func testHookEnvironmentExcludesSensitiveOptions() async {
+        let store = await AppHookStore.shared
+        let pluginName = "forge-rs"
+        let sourceID = "plugin_\(pluginName)"
+
+        // Update sensitive api_key option
+        await store.updateOptionValue(sourceID: sourceID, key: "api_key", value: "sensitive_api_token_abc")
+        await store.updateOptionValue(sourceID: sourceID, key: "strict_mode", value: "true")
+
+        let inspectOptionsHook = AppHookCommand(
+            name: "Plugin Options Inspector",
+            event: .postToolUse,
+            type: .command,
+            command: "echo \"API_KEY=$TURBOSPARK_OPTION_API_KEY;STRICT=$TURBOSPARK_OPTION_STRICT_MODE\"",
+            sourceType: .plugin,
+            pluginName: pluginName
+        )
+        await store.trustHook(inspectOptionsHook)
+
+        let results = await AppHookExecutionEngine.shared.dispatch(
+            event: .postToolUse,
+            sessionID: UUID().uuidString,
+            toolName: "read_file",
+            toolArguments: ["rel_path": "README.md"]
+        )
+
+        if let hookResult = results.first(where: { $0.hookID == inspectOptionsHook.id }) {
+            XCTAssertFalse(hookResult.stdout.contains("sensitive_api_token_abc"), "Sensitive option must not be exported into environment variables.")
+        }
+    }
 }

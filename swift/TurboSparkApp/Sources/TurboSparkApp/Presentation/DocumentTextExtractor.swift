@@ -112,7 +112,21 @@ public enum DocumentTextExtractor {
         case "xlsx":
             extracted = ("Excel", try extractXLSX(at: url, limits: limits))
         default:
-            // Text or code files
+            // Text or code files.
+            //
+            // The size gate is BEFORE the read on purpose. Every other branch
+            // in this switch is bounded (`Limits.maximumEntryBytes`,
+            // `maximumSelectedBytes`, `OfficeArchive`'s per-entry budget) and
+            // this one was not: it loaded the file whole and then applied
+            // `maximumExtractedCharacters` to the result, which is a cap that
+            // has already paid for the allocation it exists to prevent. A
+            // 4 GB log dragged onto the composer took 4 GB before being cut
+            // to 240k characters.
+            if let size = AppFileReadLimits.fileSize(of: url),
+                size > AppFileReadLimits.maximumBytes
+            {
+                throw DocumentTextExtractionError.documentTooLarge(fileName)
+            }
             if let text = try? String(contentsOf: url, encoding: .utf8) {
                 extracted = (extensionName.uppercased().isEmpty ? "Text" : extensionName.uppercased(), text)
             } else if let text = try? String(contentsOf: url, encoding: .ascii) {

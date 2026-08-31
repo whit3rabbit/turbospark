@@ -285,13 +285,33 @@ public enum ProjectRuleDetector {
         return false
     }
 
-    private static func readText(at url: URL) -> String? {
+    private static func readText(at url: URL, maxBytes: Int = 65536) -> String? {
         let canonical = url.resolvingSymlinksInPath()
+        let fileManager = FileManager.default
+        var isDir: ObjCBool = false
+        guard fileManager.fileExists(atPath: canonical.path, isDirectory: &isDir), !isDir.boolValue else {
+            return nil
+        }
+
+        // Size check: bound reads to avoid materializing huge files or device nodes
+        if let attrs = try? fileManager.attributesOfItem(atPath: canonical.path),
+           let size = attrs[.size] as? UInt64, size > 1_048_576 {
+            guard let handle = try? FileHandle(forReadingFrom: canonical) else { return nil }
+            defer { try? handle.close() }
+            guard let data = try? handle.read(upToCount: maxBytes) else { return nil }
+            return String(data: data, encoding: .utf8)
+        }
+
+        if let handle = try? FileHandle(forReadingFrom: canonical) {
+            defer { try? handle.close() }
+            if let data = try? handle.read(upToCount: maxBytes),
+               let str = String(data: data, encoding: .utf8) {
+                return str
+            }
+        }
+
         if let data = try? Data(contentsOf: canonical),
            let str = String(data: data, encoding: .utf8) {
-            return str
-        }
-        if let str = try? String(contentsOf: url, encoding: .utf8) {
             return str
         }
         return nil

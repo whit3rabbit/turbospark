@@ -39,7 +39,7 @@ public struct TaskProgressIndicatorView: View {
 
     private func startFloatingAnimation() {
         withAnimation(
-            .easeInOut(duration: 1.1)
+            .easeInOut(duration: 0.9)
             .repeatForever(autoreverses: true)
         ) {
             isFloating = true
@@ -47,7 +47,7 @@ public struct TaskProgressIndicatorView: View {
     }
 }
 
-/// Floating rocket-flame character icon with subtle vertical bobbing animation.
+/// Floating character icon with subtle vertical bobbing animation.
 public struct TaskProgressFlameIcon: View {
     public let size: CGFloat
     @Binding var isFloating: Bool
@@ -84,32 +84,43 @@ public struct TaskProgressFlameIcon: View {
         }
         .offset(y: activeFloating ? -2.5 : 2.5)
         .onAppear {
-            if !isFloating {
-                withAnimation(
-                    .easeInOut(duration: 1.1)
-                    .repeatForever(autoreverses: true)
-                ) {
-                    internalFloating = true
-                }
+            withAnimation(
+                .easeInOut(duration: 0.9)
+                .repeatForever(autoreverses: true)
+            ) {
+                internalFloating = true
             }
         }
         .accessibilityHidden(true)
     }
 }
 
-/// Thread-safe asset cache for loading the bundled TaskProgress PNG.
+/// Convenience aliases for the progress character icon
+public typealias ProgressCharacterIcon = TaskProgressFlameIcon
+public typealias TaskProgressCharacterIcon = TaskProgressFlameIcon
+
+/// Thread-safe asset cache for loading the bundled progress character PNG.
 public final class TaskProgressAssetCache {
     public static let shared = TaskProgressAssetCache()
     private var cachedImage: NSImage?
 
     private init() {
-        if let url = Bundle.module.url(forResource: "TaskProgress", withExtension: "png"),
+        if let url = Bundle.module.url(forResource: "progress_character", withExtension: "png") ??
+                     Bundle.module.url(forResource: "TaskProgress", withExtension: "png"),
            let img = NSImage(contentsOf: url) {
             self.cachedImage = img
         }
     }
 
     public var progressImage: NSImage? {
-        cachedImage
+        if cachedImage == nil {
+            if let url = Bundle.module.url(forResource: "progress_character", withExtension: "png") ??
+                         Bundle.module.url(forResource: "TaskProgress", withExtension: "png"),
+               let img = NSImage(contentsOf: url) {
+                self.cachedImage = img
+            }
+        }
+        return cachedImage
     }
 }
+

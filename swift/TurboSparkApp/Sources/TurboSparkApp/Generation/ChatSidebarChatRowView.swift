@@ -21,10 +21,14 @@ struct ChatSidebarChatRowView: View {
                 model.selectChat(id: chat.id)
             } label: {
                 HStack(spacing: 8) {
-                    Image(systemName: isSelected ? "bubble.left.fill" : "bubble.left")
-                        .font(.caption)
-                        .foregroundStyle(isSelected ? TurboSparkTheme.accentColor : Color.secondary)
-                        .accessibilityHidden(true)
+                    if isSelected && model.isRunning {
+                        TaskProgressFlameIcon(size: 13)
+                    } else {
+                        Image(systemName: isSelected ? "bubble.left.fill" : "bubble.left")
+                            .font(.caption)
+                            .foregroundStyle(isSelected ? TurboSparkTheme.accentColor : Color.secondary)
+                            .accessibilityHidden(true)
+                    }
                     VStack(alignment: .leading, spacing: 2) {
                         Text(chat.title)
                             .font(.callout.weight(isSelected ? .semibold : .regular))

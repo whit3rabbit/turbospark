@@ -77,7 +77,14 @@ extension AppHookExecutionEngine {
             arguments = ["-Command", commandText]
         }
 
-        var env = ProcessInfo.processInfo.environment
+        // Build minimal environment (PATH, HOME, LANG, TMPDIR) plus hook-specific variables.
+        // Never inherit the full parent environment to prevent leaking secrets to hook scripts.
+        let parentEnvironment = ProcessInfo.processInfo.environment
+        var env: [String: String] = [:]
+        for key in ["PATH", "HOME", "LANG", "TMPDIR"] {
+            if let value = parentEnvironment[key] { env[key] = value }
+        }
+
         env["TURBOSPARK_HOOK_EVENT"] = event.rawValue
         env["TURBOSPARK_SESSION_ID"] = sessionID
         if let toolName { env["TURBOSPARK_TOOL_NAME"] = toolName }
@@ -86,7 +93,15 @@ extension AppHookExecutionEngine {
             env["CLAUDE_PROJECT_DIR"] = workingDirectory
         }
 
+        // Exclude options marked sensitive from environment export
+        let sensitiveKeys: Set<String> = await {
+            let groups = await store.sourceGroups
+            guard let group = groups.first(where: { $0.id == sourceID }) else { return [] }
+            return Set(group.optionSpecs.filter(\.isSensitive).map(\.key))
+        }()
+
         for (k, v) in options {
+            guard !sensitiveKeys.contains(k) else { continue }
             let normalized = k.uppercased().replacingOccurrences(of: "-", with: "_")
             env["TURBOSPARK_OPTION_\(normalized)"] = v
             env["CLAUDE_PLUGIN_OPTION_\(normalized)"] = v

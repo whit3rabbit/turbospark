@@ -70,6 +70,13 @@ struct ModelDetailPaneView: View {
                         .font(.title2.weight(.bold))
                         .lineLimit(2)
 
+                    Text("CATALOG")
+                        .font(.system(size: 9, weight: .bold))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(TurboSparkTheme.accentColor.opacity(0.16), in: RoundedRectangle(cornerRadius: 4))
+                        .foregroundStyle(TurboSparkTheme.accentColor)
+
                     statusSeal
                 }
 

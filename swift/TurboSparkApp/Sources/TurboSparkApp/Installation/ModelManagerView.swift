@@ -80,14 +80,34 @@ struct ModelManagerView: View {
 
     private var header: some View {
         HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Model Manager")
-                    .font(.system(size: 14, weight: .semibold))
-                    .accessibilityAddTraits(.isHeader)
+            HStack(spacing: 8) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color.teal.opacity(0.15))
+                        .frame(width: 30, height: 30)
+                    Image(systemName: "internaldrive.fill")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(Color.teal)
+                }
 
-                Text(summaryText)
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text("Installed Models")
+                            .font(.system(size: 14, weight: .semibold))
+                            .accessibilityAddTraits(.isHeader)
+
+                        Text("LOCAL STORAGE")
+                            .font(.system(size: 9, weight: .bold))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1.5)
+                            .background(Color.teal.opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
+                            .foregroundStyle(Color.teal)
+                    }
+
+                    Text(summaryText)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Spacer(minLength: 8)
@@ -96,7 +116,7 @@ struct ModelManagerView: View {
                 model.refreshModels()
                 model.showToast("Refreshed model libraries", style: .info)
             } label: {
-                Label("Refresh", systemImage: "arrow.clockwise")
+                Label("Rescan", systemImage: "arrow.clockwise")
                     .font(.system(size: 11, weight: .medium))
                     .frame(height: 22)
                     .padding(.horizontal, 8)
@@ -120,13 +140,17 @@ struct ModelManagerView: View {
             Button {
                 model.activeSection = .modelHub
             } label: {
-                Label("Discover Models", systemImage: "shippingbox.fill")
-                    .font(.system(size: 11, weight: .medium))
-                    .frame(height: 22)
-                    .padding(.horizontal, 10)
+                HStack(spacing: 4) {
+                    Image(systemName: "shippingbox.fill")
+                        .font(.system(size: 10))
+                    Text("Discover Hub →")
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .frame(height: 22)
+                .padding(.horizontal, 10)
             }
             .buttonStyle(.plain)
-            .background(TurboSparkTheme.accentColor.opacity(0.16), in: Capsule())
+            .background(TurboSparkTheme.accentColor.opacity(0.14), in: Capsule())
             .foregroundStyle(TurboSparkTheme.accentColor)
             .help("Browse the curated catalog and download models")
         }
@@ -428,11 +452,21 @@ struct ModelManagerView: View {
                                     .font(.caption2.weight(.bold))
                                     .foregroundStyle(Color.green)
                             }
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1.5)
+                            .background(Color.green.opacity(0.12), in: Capsule())
                         }
                     }
 
-                    // Feature Badges
+                    // Feature & Source Badges
                     HStack(spacing: 4) {
+                        Text(desc.storageSource.shortLabel)
+                            .font(.system(size: 8, weight: .semibold))
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1.5)
+                            .background(Color(nsColor: .quaternaryLabelColor).opacity(0.35), in: RoundedRectangle(cornerRadius: 3))
+                            .foregroundStyle(.secondary)
+
                         if desc.routingType == .moe {
                             ModelFeatureBadgeView.moe(details: "MoE", style: .compact)
                         } else {
@@ -447,13 +481,16 @@ struct ModelManagerView: View {
                             ModelFeatureBadgeView.mtp(style: .compact)
                         }
 
-                        ModelFeatureBadgeView.format(desc.format, style: .compact)
-
                         Spacer(minLength: 2)
 
-                        Text(MetricFormat.storage(m.installBytes))
-                            .font(.caption2.monospacedDigit())
-                            .foregroundStyle(.tertiary)
+                        HStack(spacing: 2) {
+                            Image(systemName: "internaldrive")
+                                .font(.system(size: 8))
+                                .foregroundStyle(.tertiary)
+                            Text(MetricFormat.storage(m.installBytes))
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        }
                     }
 
                     if !tags.isEmpty {
@@ -463,8 +500,8 @@ struct ModelManagerView: View {
                                     .font(.system(size: 8, weight: .medium))
                                     .padding(.horizontal, 4)
                                     .padding(.vertical, 1)
-                                    .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 3))
-                                    .foregroundStyle(Color.accentColor)
+                                    .background(Color.teal.opacity(0.12), in: RoundedRectangle(cornerRadius: 3))
+                                    .foregroundStyle(Color.teal)
                             }
                         }
                     }
@@ -477,9 +514,16 @@ struct ModelManagerView: View {
         .buttonStyle(.plain)
         .background(
             isSelected
-                ? Color.accentColor.opacity(0.14)
+                ? Color.teal.opacity(0.14)
                 : Color.clear,
             in: RoundedRectangle(cornerRadius: 8)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(
+                    isSelected ? Color.teal.opacity(0.4) : Color.clear,
+                    lineWidth: 1
+                )
         )
     }
 

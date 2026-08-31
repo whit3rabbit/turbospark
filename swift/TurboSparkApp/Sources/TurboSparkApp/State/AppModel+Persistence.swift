@@ -110,8 +110,35 @@ extension AppModel {
 
     /// Persists all conversation threads and active selection to disk.
     public func persistChats() {
+        chatPersistDebounceTask?.cancel()
+        chatPersistDebounceTask = nil
         let archive = AppChatArchive(selectedChatID: selectedChatID, chats: chats)
         AppChatFileStore.save(archive)
+    }
+
+    /// Persists after a short quiet period, collapsing a burst of mutations
+    /// into one write.
+    ///
+    /// For the DRAFT path only. `promptText`'s setter calls into persistence
+    /// on every keystroke, and the store writes the entire archive whole with
+    /// `.atomic` on each call, so typing a sentence re-encoded and rewrote
+    /// every chat in the file sixty times. Anything that must survive a crash
+    /// (an appended message, a completed turn) still calls `persistChats()`
+    /// directly and writes immediately; a half-typed draft does not need
+    /// that guarantee.
+    ///
+    /// Cancelling in `persistChats()` above is what keeps the two orderings
+    /// from racing: a pending debounced write must never land AFTER an
+    /// immediate one and reinstate older state.
+    public func persistChatsDebounced() {
+        chatPersistDebounceTask?.cancel()
+        chatPersistDebounceTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            guard !Task.isCancelled, let self else { return }
+            self.chatPersistDebounceTask = nil
+            let archive = AppChatArchive(selectedChatID: self.selectedChatID, chats: self.chats)
+            AppChatFileStore.save(archive)
+        }
     }
 
     /// Loads persisted project configurations and selected project ID.

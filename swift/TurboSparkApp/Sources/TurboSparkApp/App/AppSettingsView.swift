@@ -364,14 +364,30 @@ public struct AppSettingsView: View {
                     }
                 }
 
-                if let port = model.serverPort {
+                // Both rows are READ BACK from the running server rather than
+                // restated here. The address used to be half asserted (a
+                // `127.0.0.1` literal beside the real port) and the auth state
+                // was not shown at all, so a key of nothing but spaces trims
+                // to empty, starts an unauthenticated server, and looked
+                // identical to a key that took.
+                if let info = model.serverInfo {
+                    let rows = ServerStatusRows(info: info)
+
                     HStack {
                         Text("Address")
                         Spacer()
-                        Text("http://127.0.0.1:\(port)")
+                        Text(rows.address)
                             .font(.caption.monospaced())
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
+                    }
+
+                    HStack {
+                        Text("Auth")
+                        Spacer()
+                        Text(rows.authLabel)
+                            .font(.caption)
+                            .foregroundStyle(rows.authIsWarning ? Color.orange : Color.secondary)
                     }
                 }
 
@@ -382,7 +398,9 @@ public struct AppSettingsView: View {
                     "Serves the currently loaded model over OpenAI- and Anthropic-compatible "
                         + "HTTP endpoints on loopback, sharing the same engine this app's chat "
                         + "uses -- not a second copy of the model. Loading a different model, "
-                        + "or unloading, stops the server."
+                        + "or unloading, stops the server. Loopback keeps it off the network "
+                        + "and NOT off this machine: without an API key, any process running "
+                        + "here can reach it."
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)
