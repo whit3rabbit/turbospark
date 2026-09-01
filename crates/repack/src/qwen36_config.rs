@@ -37,6 +37,18 @@ use model_io::{
 
 use crate::gemma4_checkpoint::Gemma4Error;
 
+/// The seed `qwen4_exp`'s n-gram hash multipliers derive from when a
+/// checkpoint omits its `layer_multipliers` buffer.
+///
+/// NOT a `config.json` key on either published checkpoint. It is
+/// transformers' own default, which the reference implementation names
+/// explicitly (`seed: int = 1234  # transformers default; config.json has no
+/// seed key`). Recorded because an absent optional key means the FORMAT's
+/// default and not a neighbour's value (AGENTS.md Gotcha 39), and because
+/// both published checkpoints DO ship the buffer -- so this is a cross-check
+/// on those bytes rather than the value anything reads.
+const QWEN4_PLE_DEFAULT_SEED: i64 = 1234;
+
 /// Layer-mask code for a gated-DeltaNet linear-attention layer.
 const MASK_LINEAR: u8 = 2;
 /// Layer-mask code for a full-attention layer.
@@ -76,6 +88,155 @@ pub fn parse_qwen_gdn_moe_config(json: &str) -> Result<ArchConfig, Gemma4Error> 
 /// disagree field for field, one of them is wrong.
 pub fn parse_qwen_gdn_dense_config(json: &str) -> Result<ArchConfig, Gemma4Error> {
     parse_qwen_family_config(json, ModelFamily::QwenGdnDense)
+}
+
+/// Parses a `qwen4_exp` `config.json` into an [`ArchConfig`]
+/// (Qwen3.8-Flash-Next, the first of the Qwen 4 line).
+///
+/// **THE SAME PARSER AGAIN, because this config is `qwen3_5_moe`'s plus ten
+/// keys rather than a different vocabulary.** Every key
+/// [`parse_qwen_gdn_moe_config`] reads is present here at the same name and
+/// the same meaning, down to `layer_types` and the flat `rope_parameters`
+/// object. What `qwen4_exp` ADDS is three components no earlier family has:
+///
+/// | `ArchConfig` field | `text_config` keys |
+/// |---|---|
+/// | `hyper_connections` | `hc_count`, `hc_lowrank` |
+/// | `compressed_attention` | the five `indexer_*` keys |
+/// | `ple` | `ngram_size`, `heads_per_ngram`, `ngram_vocab_size_base`, `make_ngram_vocab_size_divisible_by`, `split_ngram_parts`, `ple_embed_dim`, `ple_conv_kernel_size`, `ple_layer_ids` |
+/// | `linear_attention.output_gate_sigmoid` | `output_gate_type` |
+///
+/// **ONE FIELD IS A FAMILY CONSTANT HERE AND A CONFIG KEY THERE, and reading
+/// it the shared way is silently wrong.** `attn_output_gate` is a real
+/// `text_config` key on both `qwen3_5` checkpoints, and `qwen4_exp` declares
+/// it NOWHERE -- while its reference `Attention` sizes `q_proj` at
+/// `n_heads * head_dim * 2` and splits `[query; gate]` unconditionally. So
+/// `b("attn_output_gate")` returns false on a model that has one, which
+/// halves the projection and drops the gate with no error (AGENTS.md Gotcha
+/// 39: a default is a claim about what silence means, and here silence means
+/// yes). It is set from the family instead.
+///
+/// Cross-check the result against [`model_io::qwen4_exp_125b_a6b`]: the two
+/// published checkpoints differ from it in `num_experts` alone.
+pub fn parse_qwen4_exp_config(json: &str) -> Result<ArchConfig, Gemma4Error> {
+    parse_qwen_family_config(json, ModelFamily::Qwen4Exp)
+}
+
+/// Parses `qwen4_exp`'s hyper-connection, indexer and PLE blocks.
+///
+/// Split out because it is the only part of `parse_qwen_family_config` that
+/// does not apply to all three families, and because each of the three blocks
+/// is REQUIRED once the family is known: every field is a shape some kernel
+/// strides by or a threshold a refusal quotes, so a default would be this
+/// port inventing a number the checkpoint declined to state.
+fn parse_qwen4_extensions(
+    tc: &serde_json::Value,
+) -> Result<(HyperConnectionConfig, CompressedAttentionConfig, PleConfig), Gemma4Error> {
+    let i = |k: &str| -> Result<i64, Gemma4Error> {
+        tc.get(k)
+            .and_then(serde_json::Value::as_i64)
+            .ok_or_else(|| Gemma4Error::Config(format!("missing {k}")))
+    };
+
+    let hc_count = i("hc_count")?;
+    if hc_count < 1 {
+        return Err(Gemma4Error::Config(format!(
+            "hc_count {hc_count} would make the residual stream narrower than one stream"
+        )));
+    }
+    let hyper_connections = HyperConnectionConfig {
+        mult: hc_count,
+        lowrank: i("hc_lowrank")?,
+        // DeepSeek mHC's terms. This mixer is a low-rank silu/sigmoid blend
+        // with no Sinkhorn normalisation, so both stay zero.
+        sinkhorn_iters: 0,
+        eps: 0.0,
+    };
+
+    let compress = i("indexer_compress_ratio")?;
+    let budget = i("indexer_budget")?;
+    if compress < 1 {
+        return Err(Gemma4Error::Config(format!(
+            "indexer_compress_ratio {compress} does not pool a positive number of tokens"
+        )));
+    }
+    if budget % compress != 0 {
+        return Err(Gemma4Error::Config(format!(
+            "indexer_budget {budget} is not a whole number of {compress}-token blocks"
+        )));
+    }
+    let compressed_attention = CompressedAttentionConfig {
+        index_n_heads: i("indexer_n_heads")?,
+        index_kv_heads: i("indexer_kv_heads")?,
+        index_head_dim: i("indexer_head_dim")?,
+        // BLOCKS, which is this architecture's selection unit. DeepSeek's
+        // `index_top_k` counts tokens; the reference derives this one as
+        // `token_budget // compress_ratio` and takes a top-k over blocks.
+        index_top_k: budget / compress,
+        index_budget: budget,
+        csa_compress_rate: compress,
+        ..CompressedAttentionConfig::NONE
+    };
+
+    let ngram_size = i("ngram_size")?;
+    let heads_per_ngram = i("heads_per_ngram")?;
+    let layer_ids = tc
+        .get("ple_layer_ids")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| Gemma4Error::Config("missing ple_layer_ids".to_string()))?
+        .iter()
+        .map(|v| {
+            v.as_i64()
+                .ok_or_else(|| Gemma4Error::Config("ple_layer_ids entry is not an integer".into()))
+        })
+        .collect::<Result<Vec<i64>, _>>()?;
+    if layer_ids.is_empty() {
+        return Err(Gemma4Error::Config(
+            "ple_layer_ids is empty, which this port cannot tell from an absent PLE table; \
+             a checkpoint without one should omit the block"
+                .to_string(),
+        ));
+    }
+    // ONE-BASED in the checkpoint, so 0 is not a layer anyone can name and a
+    // zero entry means the file is using a convention this parser does not.
+    if let Some(bad) = layer_ids.iter().find(|id| **id < 1) {
+        return Err(Gemma4Error::Config(format!(
+            "ple_layer_ids contains {bad}; the ids are one-based, so the first layer is 1"
+        )));
+    }
+    let ple = PleConfig {
+        ngram_size,
+        heads_per_ngram,
+        ngram_vocab_size_base: i("ngram_vocab_size_base")?,
+        make_divisible_by: i("make_ngram_vocab_size_divisible_by")?,
+        split_ngram_parts: i("split_ngram_parts")?,
+        ple_embed_dim: i("ple_embed_dim")?,
+        conv_kernel_size: i("ple_conv_kernel_size")?,
+        layer_ids,
+        // NOT a config key. The reference defaults it to 1234 (transformers'
+        // own), and it is what the hash multipliers derive from when a
+        // checkpoint omits its `layer_multipliers` buffer. Both published
+        // checkpoints ship that buffer, so this is a cross-check rather than
+        // a source of truth -- but the FORMAT's default is what an absent key
+        // means, never a neighbour's value (AGENTS.md Gotcha 39).
+        seed: QWEN4_PLE_DEFAULT_SEED,
+    };
+    // The head count divides the embedding width in the reference
+    // (`head_dim = embed_dim // ngram_heads`), so a config where it does not
+    // divide evenly would silently truncate every row by the remainder.
+    let heads = ple.ngram_heads();
+    if heads < 1 {
+        return Err(Gemma4Error::Config(format!(
+            "ngram_size {ngram_size} and heads_per_ngram {heads_per_ngram} give {heads} hash heads"
+        )));
+    }
+    if ple.ple_embed_dim % heads != 0 {
+        return Err(Gemma4Error::Config(format!(
+            "ple_embed_dim {} is not divisible by {heads} hash heads",
+            ple.ple_embed_dim
+        )));
+    }
+    Ok((hyper_connections, compressed_attention, ple))
 }
 
 /// Parses `vision_config` into a [`VisionConfig`], or `NONE` when the
@@ -279,6 +440,30 @@ fn parse_qwen_family_config(json: &str, family: ModelFamily) -> Result<ArchConfi
 
     let kv_heads = i("num_key_value_heads")?;
 
+    // `qwen4_exp`'s three extra components, and the ONE field it resolves
+    // from the family rather than from a key. See `parse_qwen4_exp_config`.
+    let qwen4 = family == ModelFamily::Qwen4Exp;
+    let (hyper_connections, compressed_attention, ple) = if qwen4 {
+        parse_qwen4_extensions(tc)?
+    } else {
+        (
+            HyperConnectionConfig::NONE,
+            CompressedAttentionConfig::NONE,
+            PleConfig::NONE,
+        )
+    };
+    // Both `qwen3_5` checkpoints carry this key; `qwen4_exp` carries none and
+    // gates unconditionally in its reference, so silence means YES here and
+    // NO there. Reading it the shared way halves `q_proj` and drops the gate.
+    let attn_output_gate = if qwen4 { true } else { b("attn_output_gate") };
+    // `output_gate_type` selects the activation the gated DeltaNet output norm
+    // applies to `z`. Absent means silu, which is what every family before
+    // `qwen4_exp` declares and what the kernel did unconditionally.
+    let output_gate_sigmoid = tc
+        .get("output_gate_type")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|s| s == "sigmoid");
+
     // The four fields the two Qwen configs resolve differently. Everything
     // else above and below is shared verbatim.
     let dense = family == ModelFamily::QwenGdnDense;
@@ -331,7 +516,7 @@ fn parse_qwen_family_config(json: &str, family: ModelFamily) -> Result<ArchConfi
             .unwrap_or("silu")
             .to_string(),
         family,
-        attn_output_gate: b("attn_output_gate"),
+        attn_output_gate,
         attention_scale: (head_dim as f64).powf(-0.5),
         embedding_scaled_by_sqrt_hidden: false,
         router_scaled: false,
@@ -344,10 +529,10 @@ fn parse_qwen_family_config(json: &str, family: ModelFamily) -> Result<ArchConfi
             key_head_dim: i("linear_key_head_dim")?,
             value_head_dim: i("linear_value_head_dim")?,
             conv_kernel_size: i("linear_conv_kernel_dim")?,
-            output_gate_sigmoid: false,
+            output_gate_sigmoid,
         },
-        compressed_attention: CompressedAttentionConfig::NONE,
-        hyper_connections: HyperConnectionConfig::NONE,
+        compressed_attention,
+        hyper_connections,
         num_hash_routed_layers: 0,
         router_scoring_func: "softmax".to_string(),
         routed_scaling_factor: 1.0,
@@ -356,8 +541,16 @@ fn parse_qwen_family_config(json: &str, family: ModelFamily) -> Result<ArchConfi
         // NOT parsed from `vision_config`, though all three published
         // checkpoints declare one. See `parse_vision_config`: this field
         // describes what an INSTALL carries, and the config describes what the
-        // architecture has.
+        // architecture has. `qwen4_exp` declares one too and is text-only here
+        // for the same reason.
         vision: VisionConfig::NONE,
-        ple: PleConfig::NONE,
+        // NOT held to `vision`'s rule, and the difference is which side the
+        // bytes are on. A tower is OPTIONAL in the artifact -- one published
+        // checkpoint declares one and ships none -- so the manifest must state
+        // what the install HAS. The n-gram table is not optional: a
+        // `qwen4_exp` checkpoint without it has no layer 1, so declaring it
+        // from the config states a property of the architecture that the walk
+        // then has to satisfy rather than a claim it might contradict.
+        ple,
     })
 }

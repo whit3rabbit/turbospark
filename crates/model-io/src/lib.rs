@@ -26,7 +26,7 @@ mod steering_set;
 pub use arch_baselines::{
     all_known_architectures, deepseek_v4_flash_284b_a13b, gemma4_26b_a4b, gpt_oss_20b,
     known_architecture, mixtral_8x7b, muse_glimmer_30b, muse_glimmer_layer_mask, qwen3_30b_a3b,
-    qwen_gdn_dense_27b, qwen_gdn_moe_35b_a3b,
+    qwen4_exp_125b_a6b, qwen_gdn_dense_27b, qwen_gdn_moe_35b_a3b,
 };
 pub use arch_config::{
     ArchConfig, CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig,

@@ -80,7 +80,8 @@ pub use museglimmer_config::{
     muse_glimmer_mask, parse_muse_glimmer_config, parse_muse_glimmer_scalars, MuseGlimmerScalars,
 };
 pub use qwen36_config::{
-    parse_qwen_gdn_dense_config, parse_qwen_gdn_moe_config, parse_vision_config,
+    parse_qwen4_exp_config, parse_qwen_gdn_dense_config, parse_qwen_gdn_moe_config,
+    parse_vision_config,
 };
 pub use ranged_download::{
     fetch_gguf_header, fetch_safetensors_header, ByteProgressCallback, DownloadError,

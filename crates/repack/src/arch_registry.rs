@@ -136,6 +136,20 @@ const SUPPORTED_HF: &[(&str, ModelFamily)] = &[
     // this table deliberately does not consult.
     ("muse_glimmer", ModelFamily::MuseGlimmer),
     ("muse_glimmer_text", ModelFamily::MuseGlimmer),
+    // The EIGHTH family, and the first of the Qwen 4 line. Read off
+    // `sh0wie/Qwen3.8-Flash-Next-REAP-288-MLX-4bit`, whose root `model_type`
+    // is `qwen4_exp` and whose `text_config.model_type` is `qwen4_exp_text`.
+    // `pipenetwork/Qwen3.8-Flash-Next-MLX-4bit` reports the same pair.
+    //
+    // The prefix-match hazard the two rows above record does NOT apply here:
+    // `qwen4_exp` shares no prefix with either `qwen3_5` string, so this pair
+    // is separated from them by the first character of the version. What it
+    // does share is almost every KEY inside the config, which is why
+    // `parse_qwen_family_config` serves all three and why
+    // `refuse_foreign_config` matters more for this family than the distance
+    // between the strings suggests.
+    ("qwen4_exp", ModelFamily::Qwen4Exp),
+    ("qwen4_exp_text", ModelFamily::Qwen4Exp),
 ];
 
 /// GGUF architectures this port recognizes and cannot run.
@@ -246,12 +260,38 @@ pub fn refuse_foreign_config(
 ) -> Result<(), String> {
     match config_json_family(root) {
         Some(found) if found != expected => Err(format!(
-            "model_type says {}, not {}",
+            // QUOTES THE FILE, then names the two families as families.
+            //
+            // This used to read "model_type says {found.as_str()}", which
+            // printed a string no `config.json` contains: `as_str` is the
+            // FAMILY WIRE STRING, a frozen on-disk format constant that
+            // deliberately does not match anything upstream spells
+            // (`ModelFamily::as_str`'s own doc -- `QwenGdnDense` writes
+            // `qwen35` for a file that says `qwen3_5`, and `Qwen4Exp` writes
+            // `qwen4exp` for one that says `qwen4_exp`). So the message
+            // claimed to quote a key and reported something else, sending a
+            // reader to grep a config for a token that is not in it.
+            "model_type {} resolves to the {} family, not {}",
+            config_json_model_type(root).unwrap_or("<absent>"),
             found.as_str(),
             expected.as_str()
         )),
         _ => Ok(()),
     }
+}
+
+/// The raw `model_type` string a config claims, for error messages that quote
+/// the file rather than this port's own naming.
+///
+/// Same precedence as [`config_json_family`] -- root first, then
+/// `text_config` -- so a message and the resolution it explains cannot name
+/// different keys.
+fn config_json_model_type(root: &serde_json::Value) -> Option<&str> {
+    root.get("model_type").and_then(|v| v.as_str()).or_else(|| {
+        root.get("text_config")
+            .and_then(|tc| tc.get("model_type"))
+            .and_then(|v| v.as_str())
+    })
 }
 
 /// One sentence explaining what this port makes of an architecture string,
