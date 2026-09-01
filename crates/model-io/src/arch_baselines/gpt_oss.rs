@@ -1,6 +1,6 @@
 use crate::arch_config::{
     ArchConfig, CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig,
-    ModelFamily, RopeScalingConfig, VisionConfig,
+    ModelFamily, PleConfig, RopeScalingConfig, VisionConfig,
 };
 
 /// `gpt-oss`'s alternating window, in this port's polarity (0 = sliding,
@@ -93,5 +93,6 @@ pub fn gpt_oss_20b() -> ArchConfig {
             beta_slow: 1.0,
         },
         vision: VisionConfig::NONE,
+        ple: PleConfig::NONE,
     }
 }

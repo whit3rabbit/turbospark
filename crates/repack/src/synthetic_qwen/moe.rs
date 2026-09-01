@@ -2,7 +2,7 @@
 
 use model_io::{
     ArchConfig, CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig,
-    ModelFamily, RopeScalingConfig, VisionConfig,
+    ModelFamily, PleConfig, RopeScalingConfig, VisionConfig,
 };
 
 use crate::gemma4_checkpoint::{write_qwen_gdn_moe_install, Gemma4Quant};
@@ -32,6 +32,7 @@ fn linear_attention() -> LinearAttentionConfig {
         key_head_dim: LA_KEY_DIM as i64,
         value_head_dim: LA_VALUE_DIM as i64,
         conv_kernel_size: LA_CONV_K as i64,
+        output_gate_sigmoid: false,
     }
 }
 
@@ -90,6 +91,7 @@ pub fn tiny_qwen_gdn_moe_arch(vocab_size: i64, num_layers: i64, num_experts: i64
         swiglu_limit: 0.0,
         rope_scaling: RopeScalingConfig::NONE,
         vision: VisionConfig::NONE,
+        ple: PleConfig::NONE,
     }
 }
 

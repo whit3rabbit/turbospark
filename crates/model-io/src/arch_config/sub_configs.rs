@@ -55,6 +55,17 @@ pub struct LinearAttentionConfig {
     pub value_head_dim: i64,
     /// Depthwise convolution kernel size.
     pub conv_kernel_size: i64,
+    /// The activation the gated output norm applies to `z`: sigmoid when true,
+    /// silu when false. The checkpoint's `output_gate_type`.
+    ///
+    /// **NOT COSMETIC, AND FALSE IS THE PRE-`qwen4_exp` BEHAVIOUR.** Every
+    /// family that reached `gdn_gated_norm` before `qwen4_exp` declares silu,
+    /// which is why the kernel hardcoded it (`crates/gpu` Gotcha 12). Reading
+    /// the wrong one is a one-character difference that produces fluent WRONG
+    /// output rather than an error, so it is a field rather than a family
+    /// constant: AGENTS.md Gotcha 61's shape, which is exactly a per-family
+    /// property left standing in shared code.
+    pub output_gate_sigmoid: bool,
 }
 
 impl LinearAttentionConfig {
@@ -65,6 +76,7 @@ impl LinearAttentionConfig {
         key_head_dim: 0,
         value_head_dim: 0,
         conv_kernel_size: 0,
+        output_gate_sigmoid: false,
     };
 
     /// Fused qkv projection rows: 2 * K-dim + V-dim. Also the depthwise conv
@@ -211,11 +223,22 @@ pub struct CompressedAttentionConfig {
     pub rope_head_dim: i64,
     /// Index attention head count.
     pub index_n_heads: i64,
+    /// Index key/value head count. `qwen4_exp`'s `indexer_kv_heads`; 0 for
+    /// DeepSeek-V4-Flash, whose indexer declares no separate KV head count.
+    pub index_kv_heads: i64,
     /// Index head dimension.
     pub index_head_dim: i64,
-    /// Index top-k selection count.
+    /// Index top-k selection count, in the unit the architecture selects in:
+    /// TOKENS for DeepSeek-V4-Flash, BLOCKS for `qwen4_exp` (which derives it
+    /// as `index_budget / csa_compress_rate`).
     pub index_top_k: i64,
-    /// Compression rate for Compressed Sparse Attention (CSA).
+    /// Context length below which the indexer selects nothing and attention is
+    /// exactly causal. `qwen4_exp`'s `indexer_budget`; 0 where no such
+    /// threshold exists. Read it through [`Self::sparse_below`].
+    pub index_budget: i64,
+    /// Compression rate for Compressed Sparse Attention (CSA). Also
+    /// `qwen4_exp`'s `indexer_compress_ratio`, which is the same quantity:
+    /// how many tokens pool into one selectable block.
     pub csa_compress_rate: i64,
     /// Compression rate for Heavily Compressed Attention (HCA).
     pub hca_compress_rate: i64,
@@ -239,8 +262,10 @@ impl CompressedAttentionConfig {
         o_groups: 0,
         rope_head_dim: 0,
         index_n_heads: 0,
+        index_kv_heads: 0,
         index_head_dim: 0,
         index_top_k: 0,
+        index_budget: 0,
         csa_compress_rate: 0,
         hca_compress_rate: 0,
         compress_rope_theta: 0.0,
@@ -249,18 +274,46 @@ impl CompressedAttentionConfig {
         rope_scaling_beta_fast: 0.0,
         rope_scaling_beta_slow: 0.0,
     };
+
+    /// The context length below which a query-sparse indexer selects nothing,
+    /// so attention is exactly the plain causal case. 0 when the architecture
+    /// declares no indexer.
+    ///
+    /// `qwen4_exp`'s indexer returns early at `kv_len <= indexer_budget`, which
+    /// is what lets an engine without the selector serve short contexts
+    /// EXACTLY rather than approximately, and refuse longer ones.
+    pub fn sparse_below(&self) -> i64 {
+        self.index_budget
+    }
 }
 
-/// Manifold-Constrained Hyper-Connection (mHC) residual dimensions. Zeroed
-/// for architectures with a plain single-stream residual.
+/// Wide-residual dimensions. Zeroed for architectures with a plain
+/// single-stream residual, which is every family here except DeepSeek-V4-Flash
+/// and `qwen4_exp`.
+///
+/// **TWO MECHANISMS SHARE THIS STRUCT AND ONLY `mult` MEANS THE SAME THING IN
+/// BOTH.** `mult` is the number of residual streams the hidden state is tiled
+/// into, so the stream is `mult * hidden_size` wide for the whole stack. How
+/// those streams are MIXED differs: DeepSeek's mHC is Sinkhorn-normalised
+/// (`sinkhorn_iters`, `eps`), while `qwen4_exp`'s gated residual is a low-rank
+/// silu/sigmoid mix through `lowrank`. A field one mechanism does not use is
+/// zero there.
+///
+/// Which mixing math runs is decided by [`super::family::ModelFamily`] and
+/// never by sniffing which fields are non-zero, following `crates/runtime`
+/// Gotcha 3. A discriminant field here would be a second, staler copy of a
+/// question the family already answers.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct HyperConnectionConfig {
-    /// Multiplier dimension.
+    /// Number of residual streams. The stream is `mult * hidden_size` wide.
     pub mult: i64,
-    /// Number of Sinkhorn iterations.
+    /// Number of Sinkhorn iterations. DeepSeek mHC only; 0 for `qwen4_exp`.
     pub sinkhorn_iters: i64,
-    /// Epsilon value for Sinkhorn normalization.
+    /// Epsilon value for Sinkhorn normalization. DeepSeek mHC only.
     pub eps: f64,
+    /// Rank of the stream-mixing bottleneck (`hc_lowrank`). `qwen4_exp` only;
+    /// 0 for DeepSeek mHC, whose mix carries no bottleneck.
+    pub lowrank: i64,
 }
 
 impl HyperConnectionConfig {
@@ -269,5 +322,98 @@ impl HyperConnectionConfig {
         mult: 0,
         sinkhorn_iters: 0,
         eps: 0.0,
+        lowrank: 0,
     };
+
+    /// True when the residual is more than one stream wide.
+    pub fn is_active(&self) -> bool {
+        self.mult > 1
+    }
+}
+
+/// The hashed n-gram per-layer-embedding (PLE) table, or [`PleConfig::NONE`].
+///
+/// A grouped struct with a `NONE`, for [`LinearAttentionConfig`]'s reason: the
+/// values are meaningless apart, and one `NONE` per `ArchConfig` literal is
+/// less to get wrong than nine zeros in each.
+///
+/// **EVERY FIELD IS A SHAPE SCALAR, AND THE TABLE'S OWN CONTENTS ARE NOT HERE.**
+/// The per-head prime vocabulary sizes, their offsets and the hash multipliers
+/// are int64 BUFFERS in the checkpoint (`layer_multipliers`,
+/// `ngram_heads_vocab_sizes`, `ngram_heads_offsets`), so a flow reads them from
+/// the resident index rather than recomputing them. `seed` and
+/// `ngram_vocab_size_base` are kept because they are what the reference
+/// recomputes those buffers FROM when a checkpoint omits them, which makes them
+/// a cross-check on the buffers rather than a second source of truth.
+///
+/// Integers only, deliberately: `arch_validation` compares manifest floats with
+/// `!=` against a parser accurate to ~1 ULP, so a non-binary-fraction float here
+/// could not round-trip (AGENTS.md Gotcha 24).
+#[derive(Debug, Clone, PartialEq)]
+pub struct PleConfig {
+    /// Longest n-gram hashed. 3 means bigram and trigram heads.
+    pub ngram_size: i64,
+    /// Hash heads per n-gram order. Total heads is
+    /// `(ngram_size - 1) * heads_per_ngram`.
+    pub heads_per_ngram: i64,
+    /// Each head's vocabulary is the nth prime after this value, so the heads
+    /// are near this size and no two are equal.
+    pub ngram_vocab_size_base: i64,
+    /// The concatenated row count is padded up to a multiple of this.
+    pub make_divisible_by: i64,
+    /// How many shards the padded table is split into.
+    pub split_ngram_parts: i64,
+    /// Width of one embedding row set, split evenly across the hash heads.
+    pub ple_embed_dim: i64,
+    /// Depthwise convolution kernel size over the gated output.
+    pub conv_kernel_size: i64,
+    /// ONE-BASED layer ids carrying a PLE block, exactly as the checkpoint
+    /// spells them. `[2]` means layer INDEX 1. Kept in the checkpoint's own
+    /// convention so a reader comparing against `config.json` sees the same
+    /// number, with the conversion done once at the call site.
+    pub layer_ids: Vec<i64>,
+    /// Seed the hash multipliers derive from when the checkpoint omits them.
+    pub seed: i64,
+}
+
+impl PleConfig {
+    /// No PLE table, which is every architecture here except `qwen4_exp`.
+    pub const NONE: PleConfig = PleConfig {
+        ngram_size: 0,
+        heads_per_ngram: 0,
+        ngram_vocab_size_base: 0,
+        make_divisible_by: 0,
+        split_ngram_parts: 0,
+        ple_embed_dim: 0,
+        conv_kernel_size: 0,
+        layer_ids: Vec::new(),
+        seed: 0,
+    };
+
+    /// True when this install carries an n-gram table.
+    pub fn is_active(&self) -> bool {
+        self.ngram_size > 0 && !self.layer_ids.is_empty()
+    }
+
+    /// Total hash heads: one table per head, each its own prime.
+    pub fn ngram_heads(&self) -> i64 {
+        (self.ngram_size - 1).max(0) * self.heads_per_ngram
+    }
+
+    /// Width of one head's row. The reference divides `ple_embed_dim` by the
+    /// head count, so a config whose heads do not divide it evenly is refused
+    /// at parse rather than silently truncated here.
+    pub fn head_dim(&self) -> i64 {
+        let heads = self.ngram_heads();
+        if heads == 0 {
+            return 0;
+        }
+        self.ple_embed_dim / heads
+    }
+
+    /// ZERO-BASED layer indices, which is what a decode flow loops over.
+    /// `layer_ids` is one-based because the checkpoint spells it that way.
+    pub fn layer_indices(&self) -> Vec<i64> {
+        self.layer_ids.iter().map(|id| id - 1).collect()
+    }
 }

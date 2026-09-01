@@ -32,7 +32,7 @@
 
 use model_io::{
     ArchConfig, CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig,
-    ModelFamily, RopeScalingConfig, VisionConfig,
+    ModelFamily, PleConfig, RopeScalingConfig, VisionConfig,
 };
 
 use crate::gemma4_checkpoint::Gemma4Error;
@@ -344,6 +344,7 @@ fn parse_qwen_family_config(json: &str, family: ModelFamily) -> Result<ArchConfi
             key_head_dim: i("linear_key_head_dim")?,
             value_head_dim: i("linear_value_head_dim")?,
             conv_kernel_size: i("linear_conv_kernel_dim")?,
+            output_gate_sigmoid: false,
         },
         compressed_attention: CompressedAttentionConfig::NONE,
         hyper_connections: HyperConnectionConfig::NONE,
@@ -357,5 +358,6 @@ fn parse_qwen_family_config(json: &str, family: ModelFamily) -> Result<ArchConfi
         // describes what an INSTALL carries, and the config describes what the
         // architecture has.
         vision: VisionConfig::NONE,
+        ple: PleConfig::NONE,
     })
 }

@@ -79,7 +79,13 @@ pub fn routed_marker(family: ModelFamily) -> &'static str {
         // takes Qwen 3.6's rather than Gemma's because it is that family's
         // safetensors sibling, and because a marker that could only ever
         // match the wrong thing is worse than one that cannot match.
-        ModelFamily::QwenGdnMoe | ModelFamily::QwenGdnDense => ".mlp.switch_mlp.",
+        // `qwen4_exp` spells its routed container identically, which is one
+        // of the things that made most of its expert half free here: the
+        // checkpoint's per-expert tensors are
+        // `model.layers.N.mlp.switch_mlp.{gate,up,down}_proj.{weight,scales,biases}`.
+        ModelFamily::QwenGdnMoe | ModelFamily::QwenGdnDense | ModelFamily::Qwen4Exp => {
+            ".mlp.switch_mlp."
+        }
         // A GGUF-derived Llama or Qwen3-MoE never reaches this classifier
         // (the GGUF walk maps routed tensors by NAME, in `gguf_names.rs`),
         // and neither has a safetensors path. DeepSeek V4 has no repack path

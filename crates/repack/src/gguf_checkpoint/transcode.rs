@@ -33,7 +33,17 @@ fn int8_transcode_targets(family: ModelFamily) -> &'static [&'static str] {
         // `muse_glimmer` is MLX-safetensors-only for the same reason, and is
         // additionally DENSE, so it has no router to transcode even if a
         // GGUF of it were ever published.
-        ModelFamily::DeepseekV4Flash | ModelFamily::QwenGdnDense | ModelFamily::MuseGlimmer => &[],
+        // `qwen4_exp` is the one family here that DOES have published GGUFs
+        // (unsloth's and bartowski's) and is still empty, for a different
+        // reason than its neighbours: this port ingests the MLX safetensors
+        // and REFUSES the GGUF at `gguf_config`, so this arm is unreachable.
+        // Listing its router here would be a claim about a file nobody in
+        // this repo has parsed. It gains a list when the GGUF walk gains an
+        // arm, not before.
+        ModelFamily::DeepseekV4Flash
+        | ModelFamily::QwenGdnDense
+        | ModelFamily::MuseGlimmer
+        | ModelFamily::Qwen4Exp => &[],
     }
 }
 

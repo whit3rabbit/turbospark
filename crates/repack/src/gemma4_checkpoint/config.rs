@@ -2,7 +2,7 @@
 
 use model_io::{
     ArchConfig, CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig,
-    ModelFamily, RopeScalingConfig, VisionConfig,
+    ModelFamily, PleConfig, RopeScalingConfig, VisionConfig,
 };
 
 use crate::ranged_download::DownloadError;
@@ -144,6 +144,7 @@ pub fn parse_gemma4_config(json: &str) -> Result<ArchConfig, Gemma4Error> {
         swiglu_limit: 0.0,
         rope_scaling: RopeScalingConfig::NONE,
         vision: VisionConfig::NONE,
+        ple: PleConfig::NONE,
     })
 }
 

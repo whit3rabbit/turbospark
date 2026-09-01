@@ -83,6 +83,7 @@ pub fn peek_manifest_arch(model_dir: &Path) -> Result<ArchConfig, String> {
         key_head_dim: m.linear_key_head_dim.unwrap_or(0),
         value_head_dim: m.linear_value_head_dim.unwrap_or(0),
         conv_kernel_size: m.linear_conv_kernel_size.unwrap_or(0),
+        output_gate_sigmoid: false,
     };
 
     // THE VISION TOWER, AND `unwrap_or(0)` RATHER THAN THE BASELINE, which is

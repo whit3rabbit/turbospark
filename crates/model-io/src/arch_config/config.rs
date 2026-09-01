@@ -1,7 +1,7 @@
 use super::family::ModelFamily;
 use super::sub_configs::{
-    CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig, RopeScalingConfig,
-    VisionConfig,
+    CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig, PleConfig,
+    RopeScalingConfig, VisionConfig,
 };
 
 /// `full_attention_layer_mask` values: 0 = sliding-window attention, 1 =
@@ -95,6 +95,14 @@ pub struct ArchConfig {
     /// `gemma_defaults.vision`, and `build_manifest_json` writes it
     /// unconditionally.
     pub vision: VisionConfig,
+    /// The hashed n-gram PLE table, or [`PleConfig::NONE`] (`qwen4_exp`).
+    ///
+    /// Resolved explicitly to `NONE` when the manifest omits it, never to
+    /// `gemma_defaults.ple`, for the reason [`Self::vision`] states: an omitted
+    /// family-extension field is otherwise validated against GEMMA's value
+    /// whatever family the manifest claims (AGENTS.md Gotcha 24).
+    /// `build_manifest_json` writes it unconditionally.
+    pub ple: PleConfig,
 }
 
 impl ArchConfig {

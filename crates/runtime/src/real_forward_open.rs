@@ -276,6 +276,21 @@ impl RealForwardRunner {
                     "the DeepSeek-V4-Flash family has no decode flow yet".to_string(),
                 ));
             }
+            // Refused BY NAME even though `validate_arch_config` already
+            // stops it a few lines up (its mask-2 layers are not on the
+            // qwen36/qwen35 allowlist), because that check's message names
+            // the layer kind and this one names the FAMILY. When the flow
+            // lands, exactly one of the two has to change and a reader
+            // should not have to guess which.
+            //
+            // Its residual stream is `hc_count * hidden_size` wide and its
+            // residual adds are gated-residual injects, so no line of
+            // `families/qwen/` serves it unchanged. See `ModelFamily::Qwen4Exp`.
+            model_io::ModelFamily::Qwen4Exp => {
+                return Err(RealForwardError::Unsupported(
+                    "the qwen4exp family has no decode flow yet".to_string(),
+                ));
+            }
             // A FIFTH FLOW, not a sixth family on an existing one: all four
             // of `gpt-oss`'s differences (per-projection biases, attention
             // sinks, YaRN rope scaling, a clamped SwiGLU) are INSIDE the

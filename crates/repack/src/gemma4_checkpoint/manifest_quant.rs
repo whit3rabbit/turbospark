@@ -72,7 +72,14 @@ pub fn manifest_quant_for(
     };
     let l0 = "language_model.model.layers.0";
     let (attention, router, shared, routed) = match family {
-        ModelFamily::QwenGdnMoe => (
+        // `qwen4_exp` probes at the same four paths. Its layer 0 is LINEAR
+        // for the same reason Qwen 3.6's is (`(i + 1) % 4 == 0` puts the
+        // first full-attention layer at index 3), it has a gated shared
+        // expert, and its routed container is spelled the same. The one
+        // thing that differs is where the tensors LIVE -- this family's
+        // trunk is under `model.layers.` with no `language_model.` prefix --
+        // and that is `l0`'s business rather than this tuple's.
+        ModelFamily::QwenGdnMoe | ModelFamily::Qwen4Exp => (
             format!("{l0}.linear_attn.in_proj_qkv"),
             format!("{l0}.mlp.gate"),
             format!("{l0}.mlp.shared_expert.gate_proj"),

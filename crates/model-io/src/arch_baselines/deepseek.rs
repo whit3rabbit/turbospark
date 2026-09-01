@@ -1,6 +1,6 @@
 use crate::arch_config::{
     ArchConfig, CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig,
-    ModelFamily, RopeScalingConfig, VisionConfig,
+    ModelFamily, PleConfig, RopeScalingConfig, VisionConfig,
 };
 
 fn deepseek_v4_flash_layer_mask() -> Vec<u8> {
@@ -64,11 +64,14 @@ pub fn deepseek_v4_flash_284b_a13b() -> ArchConfig {
             rope_scaling_original_max: 65_536,
             rope_scaling_beta_fast: 32.0,
             rope_scaling_beta_slow: 1.0,
+            index_kv_heads: 0,
+            index_budget: 0,
         },
         hyper_connections: HyperConnectionConfig {
             mult: 4,
             sinkhorn_iters: 20,
             eps: 1.0e-6,
+            lowrank: 0,
         },
         num_hash_routed_layers: 3,
         router_scoring_func: "sqrtsoftplus".to_string(),
@@ -76,5 +79,6 @@ pub fn deepseek_v4_flash_284b_a13b() -> ArchConfig {
         swiglu_limit: 10.0,
         rope_scaling: RopeScalingConfig::NONE,
         vision: VisionConfig::NONE,
+        ple: PleConfig::NONE,
     }
 }

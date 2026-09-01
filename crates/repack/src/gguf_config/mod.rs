@@ -176,7 +176,14 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
         // mask here would be invented. `muse_glimmer`'s is doubly so -- its
         // `[0,0,0,1]` window comes from a `layer_types` ARRAY that no GGUF
         // metadata key expresses.
-        ModelFamily::DeepseekV4Flash | ModelFamily::MuseGlimmer => {
+        // `qwen4_exp` is refused for a DIFFERENT reason than these two and it
+        // matters: GGUFs of it DO exist, so this is not "no file to read".
+        // This port ingests its MLX safetensors, and nothing here has parsed
+        // what a GGUF converter names its n-gram shards, its hyper-connection
+        // tensors or its indexer -- so a mask derived here would be the one
+        // part of an install that looked right while the rest went missing.
+        // Refuse until the GGUF walk has an arm that reads the whole file.
+        ModelFamily::DeepseekV4Flash | ModelFamily::MuseGlimmer | ModelFamily::Qwen4Exp => {
             return Err(GgufConfigError::UnsupportedArchitecture {
                 architecture: architecture.to_string(),
             })

@@ -126,6 +126,42 @@ pub enum ModelFamily {
     /// only: `vision_tower.`, `vision_adapter.` and `vision_projection.` are
     /// excluded at repack, as `qwen3_5`'s vision tensors already are.
     MuseGlimmer,
+    /// The `qwen4_exp` HF architecture (`Qwen3.8-Flash-Next`), the EIGHTH
+    /// family and the first of the Qwen 4 line. Two published checkpoints
+    /// share it exactly: `pipenetwork/Qwen3.8-Flash-Next-MLX-4bit` at 512
+    /// experts and `sh0wie/Qwen3.8-Flash-Next-REAP-288-MLX-4bit`, which is
+    /// expert-pruned to 288 and differs in `num_experts` and NOTHING ELSE.
+    ///
+    /// 48 layers on a three-linear/one-full pattern, so 36 gated-DeltaNet
+    /// (mask 2) against 12 full-attention (mask 1). 512 routed experts at
+    /// top-10 plus a gated shared expert, `head_dim` 256 over 24 q and 2 kv
+    /// heads, `partial_rotary_factor` 0.25 at theta 1e7, `attn_output_gate`,
+    /// per-head q/k norms, no sandwich norms, no softcap. That much is
+    /// [`ModelFamily::QwenGdnMoe`]'s graph at different shapes.
+    ///
+    /// **IT NEEDS ITS OWN FLOW BECAUSE THE RESIDUAL STREAM IS NOT ONE STREAM.**
+    /// The embedding is tiled `hc_count` times, so the stream is
+    /// `4 * hidden_size` wide for the whole stack, and every residual ADD is
+    /// replaced by a gated-residual read/inject pair
+    /// ([`super::sub_configs::HyperConnectionConfig`]). There is no final
+    /// `model.norm` at all -- the closing mixer carries it. No line of
+    /// `families/qwen/`'s per-token function survives that unchanged, which is
+    /// the `gpt-oss` precedent rather than the `qwen3moe` one.
+    ///
+    /// Three further firsts, each documented where it lives. Its GDN output
+    /// gate is SIGMOID where every earlier family's is silu
+    /// (`output_gate_sigmoid`, `crates/gpu` Gotcha 12). It carries a hashed
+    /// n-gram per-layer embedding at layer index 1
+    /// ([`super::sub_configs::PleConfig`]), which is 30.8% of the checkpoint
+    /// and streams from its own table. And its full-attention layers carry a
+    /// query-sparse INDEXER that selects blocks of compressed keys, which this
+    /// port does not implement -- see
+    /// [`super::sub_configs::CompressedAttentionConfig::sparse_below`] for why
+    /// capping context at `indexer_budget` is exact rather than approximate.
+    ///
+    /// It is a VISION-language model and this port ingests the TEXT tower
+    /// only, as `qwen3_5` and `muse_glimmer` already do.
+    Qwen4Exp,
 }
 
 impl ModelFamily {
@@ -158,6 +194,7 @@ impl ModelFamily {
             // A NEW family, so the string is free to match the variant: no
             // `.gturbo` directory has ever been written with it.
             ModelFamily::MuseGlimmer => "museGlimmer",
+            ModelFamily::Qwen4Exp => "qwen4exp",
         }
     }
 
@@ -172,6 +209,7 @@ impl ModelFamily {
             "gptOss" => Some(ModelFamily::GptOss),
             "qwen35" => Some(ModelFamily::QwenGdnDense),
             "museGlimmer" => Some(ModelFamily::MuseGlimmer),
+            "qwen4exp" => Some(ModelFamily::Qwen4Exp),
             _ => None,
         }
     }

@@ -41,6 +41,7 @@ fn qwen_style_arch() -> model_io::ArchConfig {
             key_head_dim: 8,
             value_head_dim: 8,
             conv_kernel_size: 4,
+            output_gate_sigmoid: false,
         },
         compressed_attention: model_io::CompressedAttentionConfig::NONE,
         hyper_connections: model_io::HyperConnectionConfig::NONE,
@@ -50,6 +51,7 @@ fn qwen_style_arch() -> model_io::ArchConfig {
         swiglu_limit: 0.0,
         rope_scaling: model_io::RopeScalingConfig::NONE,
         vision: model_io::VisionConfig::NONE,
+        ple: model_io::PleConfig::NONE,
     }
 }
 

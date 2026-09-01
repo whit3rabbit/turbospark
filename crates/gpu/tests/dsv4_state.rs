@@ -52,6 +52,8 @@ fn toy_dsv4_arch() -> model_io::ArchConfig {
             rope_scaling_original_max: 100,
             rope_scaling_beta_fast: 1.0,
             rope_scaling_beta_slow: 1.0,
+            index_kv_heads: 0,
+            index_budget: 0,
         },
         hyper_connections: model_io::HyperConnectionConfig::NONE,
         num_hash_routed_layers: 0,
@@ -60,6 +62,7 @@ fn toy_dsv4_arch() -> model_io::ArchConfig {
         swiglu_limit: 0.0,
         rope_scaling: model_io::RopeScalingConfig::NONE,
         vision: model_io::VisionConfig::NONE,
+        ple: model_io::PleConfig::NONE,
     }
 }
 

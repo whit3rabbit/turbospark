@@ -30,7 +30,7 @@ pub use arch_baselines::{
 };
 pub use arch_config::{
     ArchConfig, CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig,
-    ModelFamily, RopeScalingConfig, VisionConfig,
+    ModelFamily, PleConfig, RopeScalingConfig, VisionConfig,
 };
 pub use context_policy::{
     committed_bytes, kv_bytes_for_context, largest_context_within, resolve_max_context, ContextCap,

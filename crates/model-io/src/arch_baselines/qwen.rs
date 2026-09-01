@@ -1,6 +1,6 @@
 use crate::arch_config::{
     ArchConfig, CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig,
-    ModelFamily, RopeScalingConfig, VisionConfig,
+    ModelFamily, PleConfig, RopeScalingConfig, VisionConfig,
 };
 
 fn qwen_gdn_moe_layer_mask() -> Vec<u8> {
@@ -101,6 +101,7 @@ pub fn qwen_gdn_dense_27b() -> ArchConfig {
             key_head_dim: 128,
             value_head_dim: 128,
             conv_kernel_size: 4,
+            output_gate_sigmoid: false,
         },
         compressed_attention: CompressedAttentionConfig::NONE,
         hyper_connections: HyperConnectionConfig::NONE,
@@ -110,6 +111,7 @@ pub fn qwen_gdn_dense_27b() -> ArchConfig {
         swiglu_limit: 0.0,
         rope_scaling: RopeScalingConfig::NONE,
         vision: VisionConfig::NONE,
+        ple: PleConfig::NONE,
     }
 }
 
@@ -154,6 +156,7 @@ pub fn qwen_gdn_moe_35b_a3b() -> ArchConfig {
             key_head_dim: 128,
             value_head_dim: 128,
             conv_kernel_size: 4,
+            output_gate_sigmoid: false,
         },
         compressed_attention: CompressedAttentionConfig::NONE,
         hyper_connections: HyperConnectionConfig::NONE,
@@ -163,6 +166,7 @@ pub fn qwen_gdn_moe_35b_a3b() -> ArchConfig {
         swiglu_limit: 0.0,
         rope_scaling: RopeScalingConfig::NONE,
         vision: VisionConfig::NONE,
+        ple: PleConfig::NONE,
     }
 }
 
@@ -232,5 +236,155 @@ pub fn qwen3_30b_a3b() -> ArchConfig {
         swiglu_limit: 0.0,
         rope_scaling: RopeScalingConfig::NONE,
         vision: VisionConfig::NONE,
+        ple: PleConfig::NONE,
+    }
+}
+
+/// Canonical `qwen4_exp` (Qwen3.8-Flash-Next) baseline: a 48-layer hybrid of
+/// 36 gated-DeltaNet linear layers and 12 full-attention ones (every 4th),
+/// 512 routed experts at top-10 plus a gated shared expert, a FOUR-STREAM
+/// residual, and a hashed n-gram per-layer embedding at layer index 1.
+///
+/// **Named for the ARCHITECTURE rather than a checkpoint, on
+/// [`qwen_gdn_dense_27b`]'s precedent, because it serves two published ones.**
+/// `pipenetwork/Qwen3.8-Flash-Next-MLX-4bit` declares 512 experts and
+/// `sh0wie/Qwen3.8-Flash-Next-REAP-288-MLX-4bit` declares 288; the two
+/// `text_config` blocks are otherwise EQUAL, field for field, which
+/// `crates/repack`'s `every_published_checkpoint_parses_to_one_baseline`
+/// asserts offline. `num_experts` here is the unpruned 512 because that is the
+/// architecture's own shape, and a REAP install carries its own count in the
+/// manifest -- `arch_validation` compares against the config the repack
+/// DERIVED, so this value is the GGUF-derivation fallback and the canonical
+/// reference, never a constraint on an install.
+///
+/// Everything below is read off the checkpoint's own `config.json`
+/// (`model_type: qwen4_exp`, `text_config.model_type: qwen4_exp_text`).
+///
+/// **Three fields carry the whole reason this is not [`qwen_gdn_moe_35b_a3b`]
+/// at different shapes.**
+///
+/// `hyper_connections` is ACTIVE at `mult: 4`, so the residual stream is
+/// 10,240 wide rather than 2,560 for the entire stack, and every residual add
+/// becomes a gated read/inject pair. `lowrank: 320` is the mixing bottleneck;
+/// `sinkhorn_iters` and `eps` stay 0 because those belong to DeepSeek's mHC,
+/// which is a different mixer sharing the struct.
+///
+/// `linear_attention.output_gate_sigmoid` is TRUE, from the checkpoint's
+/// `output_gate_type: "sigmoid"`. Every earlier family reaching that kernel
+/// declares silu, and the difference is one character that yields fluent WRONG
+/// output rather than an error (`crates/gpu` Gotcha 12).
+///
+/// `ple` is active, which no other family here has at all. It is 30.8% of the
+/// checkpoint's bytes and streams from its own table.
+///
+/// **The indexer fields are RECORDED and not implemented.** This port has no
+/// query-sparse selector, so `index_budget: 2048` is what a context refusal
+/// quotes: the reference's indexer returns early at `kv_len <= budget`, so at
+/// or below it attention is exactly plain causal and running there is exact
+/// rather than approximate. `index_top_k` is `index_budget /
+/// csa_compress_rate` and counts BLOCKS, which is this architecture's unit;
+/// DeepSeek's counts tokens.
+///
+/// `ple.seed` is the one value NOT in the file. `config.json` carries no
+/// `seed` key and the reference defaults it to 1234, which is what the hash
+/// multipliers derive from when a checkpoint omits its `layer_multipliers`
+/// buffer. Both published checkpoints DO ship that buffer, so the seed is a
+/// cross-check rather than a source of truth -- but recording it as the
+/// format's own default is what AGENTS.md Gotcha 39 requires of a value
+/// standing in for an absent key.
+///
+/// `vision` is `NONE` because this port ingests the TEXT tower only, as it
+/// already does for `qwen3_5` and `muse_glimmer`, even though the checkpoint
+/// declares a `vision_config` and `language_model_only: false`.
+pub fn qwen4_exp_125b_a6b() -> ArchConfig {
+    ArchConfig {
+        hidden_size: 2560,
+        // The SHARED expert's width, matching Qwen 3.6's use of this field.
+        // This architecture happens to give the shared and routed experts the
+        // same 640, so the two read alike here and mean different things.
+        intermediate_size: 640,
+        moe_intermediate_size: 640,
+        num_heads: 24,
+        num_kv_heads: 2,
+        num_full_kv_heads: 2,
+        head_dim: 256,
+        full_head_dim: 256,
+        vocab_size: 248_320,
+        sliding_window: 0,
+        final_logit_softcap: 0.0,
+        rope_theta: 10_000_000.0,
+        full_rope_theta: 10_000_000.0,
+        partial_rotary_factor: 0.25,
+        num_layers: 48,
+        num_experts: 512,
+        top_k_experts: 10,
+        tie_word_embeddings: false,
+        attention_k_eq_v: false,
+        full_attention_layer_mask: qwen_hybrid_layer_mask(48),
+        hidden_activation: "silu".to_string(),
+        family: ModelFamily::Qwen4Exp,
+        attn_output_gate: true,
+        attention_scale: 0.0625, // 256^-0.5
+        embedding_scaled_by_sqrt_hidden: false,
+        router_scaled: false,
+        ffn_sandwich_norms: false,
+        shared_expert_gated: true,
+        rope_neox_subdim: true,
+        linear_attention: LinearAttentionConfig {
+            num_k_heads: 16,
+            num_v_heads: 48,
+            key_head_dim: 128,
+            value_head_dim: 128,
+            conv_kernel_size: 4,
+            output_gate_sigmoid: true,
+        },
+        compressed_attention: CompressedAttentionConfig {
+            index_n_heads: 4,
+            index_kv_heads: 1,
+            index_head_dim: 128,
+            // Blocks, not tokens: `indexer_budget / indexer_compress_ratio`.
+            index_top_k: 512,
+            index_budget: 2048,
+            csa_compress_rate: 4,
+            // The rest are DeepSeek's MLA terms and this architecture has
+            // none of them. Its full layers are ordinary GQA with a selector
+            // in front, not a compressed-KV attention.
+            q_lora_rank: 0,
+            o_lora_rank: 0,
+            o_groups: 0,
+            rope_head_dim: 0,
+            hca_compress_rate: 0,
+            compress_rope_theta: 0.0,
+            rope_scaling_factor: 0.0,
+            rope_scaling_original_max: 0,
+            rope_scaling_beta_fast: 0.0,
+            rope_scaling_beta_slow: 0.0,
+        },
+        hyper_connections: HyperConnectionConfig {
+            mult: 4,
+            lowrank: 320,
+            // DeepSeek mHC's terms; this mixer is not Sinkhorn-normalised.
+            sinkhorn_iters: 0,
+            eps: 0.0,
+        },
+        num_hash_routed_layers: 0,
+        router_scoring_func: "softmax".to_string(),
+        routed_scaling_factor: 1.0,
+        swiglu_limit: 0.0,
+        rope_scaling: RopeScalingConfig::NONE,
+        vision: VisionConfig::NONE,
+        ple: PleConfig {
+            ngram_size: 3,
+            heads_per_ngram: 8,
+            ngram_vocab_size_base: 20_000_000,
+            make_divisible_by: 128,
+            split_ngram_parts: 128,
+            ple_embed_dim: 2560,
+            conv_kernel_size: 4,
+            // ONE-BASED, exactly as `config.json` spells it. Layer INDEX 1.
+            layer_ids: vec![2],
+            // NOT in the file; the reference's default. See the doc above.
+            seed: 1234,
+        },
     }
 }
