@@ -40,6 +40,7 @@ extension AppModel {
         self.customModelDirectories = settings.customModelDirectories
         self.guardrailsMode = AppGuardrailsMode(rawValue: settings.guardrailsMode) ?? .select
         self.modelReasoningDefaults = settings.modelReasoningDefaults
+        self.interactionMode = AppInteractionMode(rawValue: settings.interactionMode) ?? .chat
         // `ToolRiskClassifier` is a static surface reached from the agent loop
         // with no AppModel in hand, so the flag lives on the gate rather than
         // being threaded through `assessTerminalCommand`. Set it here, once,
@@ -84,7 +85,8 @@ extension AppModel {
             customModelDirectories: customModelDirectories,
             commandAdvisoryVeto: CommandGate.vetoEnabled,
             guardrailsMode: guardrailsMode.rawValue,
-            modelReasoningDefaults: modelReasoningDefaults
+            modelReasoningDefaults: modelReasoningDefaults,
+            interactionMode: interactionMode.rawValue
         )
         MacAppSettingsFileStore.save(settings)
     }

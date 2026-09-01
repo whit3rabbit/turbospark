@@ -159,7 +159,7 @@ public final class AppModel: ObservableObject {
     }
 
     /// Current UI interaction mode (Chat vs Projects / Coding).
-    @Published public var interactionMode: AppInteractionMode = .projects
+    @Published public var interactionMode: AppInteractionMode = .chat
 
     // Project and Agent State
     /// All configured codebase projects.
@@ -581,6 +581,12 @@ public final class AppModel: ObservableObject {
         }
         persistSettings()
         updateTokenEstimate()
+    }
+
+    /// Switches the primary interaction mode and saves it as the default for future launches.
+    public func setInteractionMode(_ mode: AppInteractionMode) {
+        self.interactionMode = mode
+        persistSettings()
     }
 
     /// Whether the active model supports tool calling and structured function invocation.

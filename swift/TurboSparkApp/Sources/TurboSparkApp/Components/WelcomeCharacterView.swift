@@ -91,18 +91,20 @@ public struct WelcomeHeroView: View {
         }
     }
 
+    /// Time-of-day greeting only. Deliberately does NOT read a name off
+    /// `NSFullUserName()`: that pulls the macOS account's name with no
+    /// consent surface and no way to turn it off. A personalized greeting
+    /// belongs behind an explicit user profile the app itself owns, not the
+    /// OS account it happens to be running under.
     private var timeBasedGreeting: String {
         let hour = Calendar.current.component(.hour, from: Date())
-        let name = NSFullUserName().components(separatedBy: " ").first ?? ""
-        let prefix: String
         if hour < 12 {
-            prefix = "Good morning"
+            return "Good morning"
         } else if hour < 17 {
-            prefix = "Good afternoon"
+            return "Good afternoon"
         } else {
-            prefix = "Good evening"
+            return "Good evening"
         }
-        return name.isEmpty ? "\(prefix)" : "\(prefix), \(name)"
     }
 
     private var samplePromptPills: some View {

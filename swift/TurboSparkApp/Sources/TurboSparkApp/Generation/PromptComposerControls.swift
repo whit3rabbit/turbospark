@@ -12,7 +12,7 @@ struct PromptInteractionModeSegment: View {
                 let isSelected = model.interactionMode == mode
                 Button {
                     withAnimation(.easeInOut(duration: 0.15)) {
-                        model.interactionMode = mode
+                        model.setInteractionMode(mode)
                     }
                 } label: {
                     HStack(spacing: 4) {
@@ -83,24 +83,16 @@ struct PromptModelSelectorPill: View {
                 Label("Discover models...", systemImage: "shippingbox")
             }
         } label: {
-            HStack(spacing: 4) {
-                Image(systemName: "sparkles")
-                    .font(theme.ui(points: 11, weight: .semibold))
-                    .foregroundStyle(TurboSparkTheme.accentColor)
-
+            HStack(spacing: 3) {
                 Text(model.selected?.alias ?? "Select Model")
                     .font(theme.ui(points: 12, weight: .medium))
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(.secondary)
                     .lineLimit(1)
 
                 Image(systemName: "chevron.up.chevron.down")
-                    .font(theme.ui(points: 9, weight: .bold))
+                    .font(theme.ui(points: 8, weight: .bold))
                     .foregroundStyle(.tertiary)
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(Color.primary.opacity(0.04), in: Capsule())
-            .overlay(Capsule().stroke(TurboSparkTheme.hairlineColor, lineWidth: 0.5))
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
@@ -192,29 +184,15 @@ struct PromptReasoningPillControl: View {
                 Label("Engine settings...", systemImage: "gearshape")
             }
         } label: {
-            HStack(spacing: 4) {
-                Image(systemName: isThinkingActive ? "brain.head.profile" : "brain")
-                    .font(theme.ui(points: 11, weight: .semibold))
-                    .foregroundStyle(isThinkingActive ? TurboSparkTheme.accentColor : Color.secondary)
-
-                Text("Thinking: \(model.reasoningLabel(for: model.reasoning))")
+            HStack(spacing: 3) {
+                Text(model.reasoningLabel(for: model.reasoning))
                     .font(theme.ui(points: 12, weight: .medium))
                     .foregroundStyle(isThinkingActive ? Color.primary : Color.secondary)
 
                 Image(systemName: "chevron.up.chevron.down")
-                    .font(theme.ui(points: 9, weight: .bold))
+                    .font(theme.ui(points: 8, weight: .bold))
                     .foregroundStyle(.tertiary)
             }
-            .padding(.horizontal, 7)
-            .padding(.vertical, 3)
-            .background(
-                isThinkingActive ? TurboSparkTheme.accentColor.opacity(0.12) : Color.primary.opacity(0.04),
-                in: Capsule()
-            )
-            .overlay(
-                Capsule()
-                    .stroke(isThinkingActive ? TurboSparkTheme.accentColor.opacity(0.3) : TurboSparkTheme.hairlineColor, lineWidth: 0.5)
-            )
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
@@ -240,27 +218,17 @@ struct ForgeGuardrailsPillControl: View {
                     model.setForgeGuardrailsEnabled(!isEnabled)
                 }
             } label: {
-                HStack(spacing: 4) {
+                HStack(spacing: 3) {
                     Image(systemName: isEnabled ? "shield.checkmark.fill" : "shield.slash")
-                        .font(theme.ui(points: 11, weight: .semibold))
+                        .font(theme.ui(points: 10, weight: .semibold))
                         .foregroundStyle(isEnabled ? TurboSparkTheme.accentColor : Color.secondary)
 
-                    Text("Guardrails: \(isEnabled ? "On" : "Off")")
+                    Text("Guardrails \(isEnabled ? "On" : "Off")")
                         .font(theme.ui(points: 12, weight: .medium))
                         .foregroundStyle(isEnabled ? Color.primary : Color.secondary)
                         .lineLimit(1)
                         .fixedSize()
                 }
-                .padding(.horizontal, 7)
-                .padding(.vertical, 3)
-                .background(
-                    isEnabled ? TurboSparkTheme.accentColor.opacity(0.12) : Color.primary.opacity(0.04),
-                    in: Capsule()
-                )
-                .overlay(
-                    Capsule()
-                        .stroke(isEnabled ? TurboSparkTheme.accentColor.opacity(0.3) : TurboSparkTheme.hairlineColor, lineWidth: 0.5)
-                )
             }
             .buttonStyle(.plain)
             .disabled(isGlobalFixed)
@@ -274,8 +242,8 @@ struct ForgeGuardrailsPillControl: View {
                 model.openSettings(tab: .engine)
             } label: {
                 Image(systemName: "info.circle")
-                    .font(theme.ui(points: 12))
-                    .foregroundStyle(.secondary)
+                    .font(theme.ui(points: 10))
+                    .foregroundStyle(.tertiary)
                     .contentShape(Circle())
             }
             .buttonStyle(.plain)

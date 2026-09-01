@@ -123,6 +123,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
     public var minAutoContextTokens: UInt32
     /// Remembered reasoning effort setting per model alias or path.
     public var modelReasoningDefaults: [String: String]
+    /// Last-used primary interaction mode ("chat" or "projects").
+    public var interactionMode: String
 
     public init(
         contextTokens: Int = 0,
@@ -159,7 +161,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         customModelDirectories: [String] = [],
         commandAdvisoryVeto: Bool = false,
         guardrailsMode: String = "select",
-        modelReasoningDefaults: [String: String] = [:]
+        modelReasoningDefaults: [String: String] = [:],
+        interactionMode: String = "chat"
     ) {
         self.contextTokens = contextTokens
         self.expertCacheSlots = expertCacheSlots
@@ -196,6 +199,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.loadGuardCustomBytes = loadGuardCustomBytes
         self.minAutoContextTokens = minAutoContextTokens
         self.modelReasoningDefaults = modelReasoningDefaults
+        self.interactionMode = interactionMode
     }
 
     public init(from decoder: Decoder) throws {
@@ -238,6 +242,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
             try c.decodeIfPresent(UInt32.self, forKey: .minAutoContextTokens) ?? 0
         self.modelReasoningDefaults =
             try c.decodeIfPresent([String: String].self, forKey: .modelReasoningDefaults) ?? [:]
+        self.interactionMode = try c.decodeIfPresent(String.self, forKey: .interactionMode) ?? "chat"
     }
 }
 
