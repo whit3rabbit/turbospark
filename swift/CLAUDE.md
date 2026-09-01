@@ -115,10 +115,13 @@ make swift-test-real MODEL=~/models/gemma4.gturbo
 make swift-test-real MODEL=~/models/qwen38-27b-mtp.gturbo \
                      BLOCKED=~/models/ornith35b.gturbo
 
-# Run the TurboSparkApp test suite (44+ unit tests covering appearance settings,
-# MCP client engine, project MCP detection, rules detection, system
-# permissions, and tool permissions).
+# Run the TurboSparkApp test suite. Seconds for the whole thing, so run it
+# freely; no count is quoted here because the last one sat at "44+" until the
+# suite had grown past 400.
 cd swift/TurboSparkApp && swift test
+
+# One suite, for the edit loop: ~0.3 s against ~9 s for the whole thing.
+cd swift/TurboSparkApp && swift test --filter AppearanceSettingsTests
 
 # The app.
 make swift-app-build        # debug
@@ -336,6 +339,13 @@ so going through `make` recompiles the whole app every single time. Use
     `platforms: [.macOS(.v14)]`, and both Homebrew casks say
     `depends_on macos: ">= :sonoma"`. Change one and change all three;
     Gotcha 14 is the same hazard on the deployment-target axis.
+
+    **AND A `swift run` BINARY CANNOT BE DRIVEN BY UI AUTOMATION.** It has no
+    bundle identifier, so macOS app-allowlist APIs (computer-use
+    `request_access`, and anything else keyed on bundle ID) cannot match it
+    even while it is running and frontmost as `TurboSparkApp`. Visual
+    verification needs `scripts/make-app-bundle.sh` first, which is also the
+    only build where the nested resource bundle is exercised.
 
 13. **ALL APP STATE LIVES IN THREE JSON FILES UNDER
     `~/Library/Application Support/TurboSpark/`** (`settings.json`,
@@ -895,3 +905,98 @@ so going through `make` recompiles the whole app every single time. Use
     `docs/SKILL_STATE.md` predicts would bring back the paper's
     schema-comprehension failures, so it is the change that needs a real model
     rather than a fixture.
+
+36. **A SETTINGS CONTROL THAT CHANGES NOTHING IS GOTCHA 22'S BADGE, AND THE
+    APPEARANCE PANE SHIPPED SIX OF THEM.** Audited 2026-08-31. `AppearanceManager`
+    exposed `uiFont(...)` and `codeFont(...)`; `uiFont` had ZERO call sites in
+    the app and `codeFont` had exactly ONE, inside `ThemeCodePreviewView` --
+    the pane's own preview of itself. So UI/code font family, weight and size
+    moved the preview card and nothing else, against ~864 hardcoded `.font(...)`
+    calls. `activeForegroundColor`, `metadataForeground` and
+    `borderStrokeOpacity` had no callers at all, and `diffMarkers` was read
+    only by that same preview. The tell is cheap and worth running on any
+    settings surface: grep for the accessor, not for the setting.
+
+    **THE RESOLUTION BUG UNDERNEATH IT: `NSApp.effectiveAppearance` IS NOT
+    MOVED BY `.preferredColorScheme`.** All seven `TurboSparkTheme` accessors
+    branched on it. It is APPLICATION-level, while `.preferredColorScheme` sets
+    the window's, so forcing the app to Light on a dark system drew light
+    chrome out of `darkConfig` -- dark accent, dark background, dark contrast.
+    `AppearanceSettingsPaneView` had always derived this correctly from
+    `manager.appearance` plus `\.colorScheme`, so two spellings of one question
+    disagreed and only the settings pane was right. `ThemeCodePreviewView` had
+    the same bug with `isDark` ALREADY IN SCOPE, which made both its Light and
+    Dark cards show whichever mode happened to be active. The fix is
+    `ResolvedAppTheme`, an `Equatable` environment value injected once by
+    `RootView`; being in the environment is also what makes it reactive, since
+    a static computed var re-reads its inputs but cannot tell SwiftUI anything
+    changed.
+
+    **TWO PACKAGING TRAPS, AND BOTH FAIL SILENTLY.** `Package.swift` declares
+    `.process("Resources")`, and that rule FLATTENS subdirectories: bundled
+    fonts land at the resource bundle's root, not under `Fonts/`, exactly as
+    `Resources/Logos/*.svg` do. Measured in both the `.build` bundle and the
+    shipped `.app`, so the two layouts agree. That also rules out an
+    `Info.plist` `ATSApplicationFontsPath`, which only looks directly under
+    `Contents/Resources` and never inside the nested `.bundle` -- and which
+    `swift run` has no plist for anyway (Gotcha 12). Register through
+    `CTFontManagerRegisterFontsForURL` at `.process` scope instead.
+    **And `??` is the wrong operator for the subdirectory fallback**:
+    `Bundle.urls(forResourcesWithExtension:subdirectory:)` returns an EMPTY
+    ARRAY rather than nil for a missing subdirectory, so a nil-coalescing chain
+    never falls through, zero faces register, and nothing logs an error.
+
+    **THE TEST FOR THAT SKIPPED TWICE BEFORE IT COULD FAIL.** Its `XCTSkipIf`
+    was keyed first on `registerBundledFonts()`'s return value and then on
+    `bundledFontURLs` -- both computed by the code under test, so a broken
+    lookup and an empty directory were the same zero and the case went GREEN
+    (skipped) under mutation both times. It keys on the checked-in files via
+    `#filePath` now, and the mutation reddens. Generalise: **a skip condition
+    derived from the thing under test cannot tell "nothing to do" from "it is
+    broken"**, which is Gotcha 22's "a badge that cannot fail" applied to a
+    gate rather than to a view.
+
+37. **THE TEST SUITE OVERWROTE A USER'S CHAT ARCHIVE, AND THE ONLY SYMPTOM WAS
+    A CHAT THAT WOULD NOT STAY DELETED.** Found 2026-08-31 from a bug report
+    of exactly that shape: a chat titled "T10 chat" reappeared on every launch
+    after being deleted in the UI. It is `HookDecisionRoutingTests`'s fixture
+    (`AppChat(title: "T10 chat")`), and it was sitting ALONE in the real
+    `~/Library/Application Support/TurboSpark/chats_archive.json`.
+
+    **SEVEN STORES EACH SPELLED THEIR OWN PATH** -- `AppChatFileStore`,
+    `AppProjectFileStore`, `MacAppSettings`, `GlobalMcpFileStore`,
+    `AppHookStore`, `CustomToolManager` and `AppHookStdinPayload` all computed
+    `applicationSupportDirectory + "TurboSpark"` inline, with no test seam
+    anywhere. So an `AppModel()` built in a test read and WROTE real user data,
+    and since Gotcha 13's archive is written WHOLE with `.atomic`, a one-chat
+    fixture REPLACED the user's entire history. 20 `AppModel()` constructions
+    across 10 test files could each do it.
+
+    Three things make this class expensive and worth recognising. **Nothing
+    fails**: the suite is green, the app starts, and the only tell is a chat
+    the user did not create. **Deleting it in the UI does not help**, because
+    the next `swift test` writes it back, so it reads as a broken Delete rather
+    than as test pollution. And **it is unrecoverable** -- there is no backup,
+    the write is atomic, and by the time anyone notices, the original is
+    several runs gone.
+
+    `AppStorageRoot` is the one root now, and two properties are load-bearing.
+    The redirect is AUTOMATIC (keyed on the XCTest host, not on a flag a test
+    sets), because a new test cannot be trusted to opt into a protection whose
+    failure mode is silent; and it keys on the PROCESS rather than per test,
+    because these stores are `.shared` singletons and static enums whose first
+    touch can precede any test body. `TURBOSPARK_STATE_DIR` overrides it.
+
+    `StorageIsolationTests` guards it, and the case that carries the file is
+    `testSavingAChatDoesNotTouchTheRealArchive` -- it hashes the real archive
+    around a save. Disabling the redirect reddens 3 of its 4 cases AND changes
+    that hash, which is the original data loss reproduced on demand.
+
+38. **AN INCREMENTAL `swift build` THAT DID NOTHING PRINTS THE SAME
+    `Build complete!` AS ONE THAT SUCCEEDED.** A run that compiles emits
+    `[N/M] Compiling ...`; a no-op emits `[0/3] Write swift-version...` and
+    `Build complete! (0.2s)`. So a `swift build 2>&1 | grep error:` does the
+    real compile, and the tidy `swift build` you run afterwards to "confirm"
+    reports success having built nothing -- which is indistinguishable from a
+    green build of your change. Read the output of the run that COMPILED, or
+    `touch` the files first.

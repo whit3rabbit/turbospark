@@ -3,6 +3,7 @@ import SwiftUI
 
 /// Right-hand working tree and git diff inspector matching modern coding agent environments.
 struct WorktreeView: View {
+    @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
     @ObservedObject var worktree: WorktreeModel
     @State private var expandedFilePaths: Set<String> = []
@@ -27,7 +28,7 @@ struct WorktreeView: View {
                 .accessibilityHidden(true)
 
             Text(worktree.currentBranch)
-                .font(.callout.weight(.semibold).monospaced())
+                .font(theme.code(.large, weight: .semibold))
                 .foregroundStyle(.primary)
 
             Image(systemName: "chevron.right")
@@ -245,7 +246,7 @@ struct WorktreeView: View {
         let bgColor: Color = isAddition ? Color.green.opacity(0.08) : (isDeletion ? Color.red.opacity(0.08) : (isHunk ? TurboSparkTheme.accentColor.opacity(0.06) : Color.clear))
 
         return Text(line.isEmpty ? " " : line)
-            .font(.caption.monospaced())
+            .font(theme.code(.small))
             .foregroundStyle(fgColor)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 4)

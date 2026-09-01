@@ -9,6 +9,7 @@ import TurboSpark
 /// underneath -- `AppModel.serverEventLog` -- and are what an expanded row
 /// shows, but the default reading is the thing that happened.
 struct ServerConsoleView: View {
+    @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
 
     @State private var search = ""
@@ -129,17 +130,17 @@ struct ServerConsoleView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 10) {
                 Text(statusText(record))
-                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .font(theme.code(.tiny, weight: .semibold))
                     .foregroundStyle(statusColor(record))
                     .frame(width: 34, alignment: .leading)
 
                 Text(record.method)
-                    .font(.system(size: 10, design: .monospaced))
+                    .font(theme.code(.tiny))
                     .foregroundStyle(.secondary)
                     .frame(width: 38, alignment: .leading)
 
                 Text(record.path)
-                    .font(.system(size: 11, design: .monospaced))
+                    .font(theme.code(.small))
                     .lineLimit(1)
 
                 Spacer(minLength: 8)
@@ -231,7 +232,7 @@ struct ServerConsoleView: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 78, alignment: .leading)
             Text(value)
-                .font(.system(size: 10, design: .monospaced))
+                .font(theme.code(.tiny))
                 .textSelection(.enabled)
             if let help {
                 Image(systemName: "questionmark.circle")

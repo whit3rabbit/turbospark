@@ -3,6 +3,7 @@ import SwiftUI
 
 /// Single chat row representation in the sidebar with hover actions and contextual actions.
 struct ChatSidebarChatRowView: View {
+    @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
     let chat: AppChat
     @Binding var chatBeingRenamed: AppChat?
@@ -25,18 +26,18 @@ struct ChatSidebarChatRowView: View {
                         TaskProgressFlameIcon(size: 13)
                     } else {
                         Image(systemName: isSelected ? "bubble.left.fill" : "bubble.left")
-                            .font(.caption)
+                            .font(theme.ui(points: 11))
                             .foregroundStyle(isSelected ? TurboSparkTheme.accentColor : Color.secondary)
                             .accessibilityHidden(true)
                     }
                     VStack(alignment: .leading, spacing: 2) {
                         Text(chat.title)
-                            .font(.callout.weight(isSelected ? .semibold : .regular))
+                            .font(theme.ui(points: 12, weight: isSelected ? .semibold : .regular))
                             .foregroundStyle(.primary)
                             .lineLimit(1)
                         if !chat.preview.isEmpty {
                             Text(chat.preview)
-                                .font(.caption)
+                                .font(theme.ui(points: 11))
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
                         }

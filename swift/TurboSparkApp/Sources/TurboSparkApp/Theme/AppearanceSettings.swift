@@ -19,7 +19,6 @@ public final class AppearanceManager: ObservableObject {
     private static let keyUiFontSize = "TurboSpark.prefs.uiFontSize"
     private static let keyCodeFontSize = "TurboSpark.prefs.codeFontSize"
     private static let keyDiffMarkers = "TurboSpark.prefs.diffMarkers"
-    private static let keyFontSmoothing = "TurboSpark.prefs.fontSmoothing"
     private static let keyStatusBarViewMode = "TurboSpark.prefs.statusBarViewMode"
 
     /// Resolved app appearance mode (system, light, dark).
@@ -75,14 +74,6 @@ public final class AppearanceManager: ObservableObject {
         didSet { defaults.set(diffMarkers.rawValue, forKey: Self.keyDiffMarkers) }
     }
 
-    /// Whether subpixel font smoothing is enabled on macOS.
-    @Published public var fontSmoothing: Bool {
-        didSet {
-            defaults.set(fontSmoothing, forKey: Self.keyFontSmoothing)
-            applyFontSmoothing()
-        }
-    }
-
     public init() {
         let appStr = defaults.string(forKey: Self.keyAppearance) ?? AppAppearance.system.rawValue
         self.appearance = AppAppearance.resolve(appStr)
@@ -118,10 +109,7 @@ public final class AppearanceManager: ObservableObject {
         let diffStr = defaults.string(forKey: Self.keyDiffMarkers) ?? DiffMarkerPreference.color.rawValue
         self.diffMarkers = DiffMarkerPreference(rawValue: diffStr) ?? .color
 
-        self.fontSmoothing = defaults.object(forKey: Self.keyFontSmoothing) as? Bool ?? true
-
         updateDockIcon()
-        applyFontSmoothing()
     }
 
     /// Applies a preset configuration across light, dark, or both color modes.
@@ -173,46 +161,44 @@ public final class AppearanceManager: ObservableObject {
         return Color(hex: hex) ?? (isDark ? Color.white : Color.primary)
     }
 
-    /// Constructs a code font with current user preferences and optional size/weight override.
-    public func codeFont(size: CGFloat? = nil, weight: Font.Weight? = nil) -> Font {
-        let targetSize = size ?? CGFloat(codeFontSize)
-        let config = activeConfig(isDark: NSApp.effectiveAppearance.name.rawValue.lowercased().contains("dark"))
-        let resolvedWeight = weight ?? Font.Weight.fromName(config.codeFontWeight)
+    /// Builds the code-font descriptor for a mode.
+    ///
+    /// `isDark` is a PARAMETER. This used to read
+    /// `NSApp.effectiveAppearance`, which is application-level and is not
+    /// moved by SwiftUI's `.preferredColorScheme`, so an app forced to Light
+    /// on a dark system resolved its fonts and colors out of `darkConfig`.
+    /// The family-to-face mapping that used to live here as a `switch` is now
+    /// `AppFontDescriptor.font`, which resolves any catalog family rather than
+    /// the five it happened to name -- and by FAMILY rather than by a
+    /// hardcoded Regular PostScript name, so a chosen weight reaches the real
+    /// face instead of being synthesized off Regular.
+    public func codeFontDescriptor(isDark: Bool, size: CGFloat? = nil, weight: Font.Weight? = nil) -> AppFontDescriptor {
+        let config = activeConfig(isDark: isDark)
+        return AppFontDescriptor(
+            family: config.codeFontFamily,
+            weight: weight ?? Font.Weight.fromName(config.codeFontWeight),
+            size: size ?? CGFloat(codeFontSize),
+            isCode: true)
+    }
 
-        switch config.codeFontFamily {
-        case "SF Mono":
-            return .system(size: targetSize, weight: resolvedWeight, design: .monospaced)
-        case "Menlo":
-            return .custom("Menlo", size: targetSize).weight(resolvedWeight)
-        case "Courier", "Courier New":
-            return .custom("Courier", size: targetSize).weight(resolvedWeight)
-        case "JetBrains Mono":
-            return .custom("JetBrainsMono-Regular", size: targetSize).weight(resolvedWeight)
-        case "Fira Code":
-            return .custom("FiraCode-Regular", size: targetSize).weight(resolvedWeight)
-        default:
-            return .system(size: targetSize, weight: resolvedWeight, design: .monospaced)
-        }
+    /// Builds the UI-font descriptor for a mode. See `codeFontDescriptor`.
+    public func uiFontDescriptor(isDark: Bool, size: CGFloat? = nil, weight: Font.Weight? = nil) -> AppFontDescriptor {
+        let config = activeConfig(isDark: isDark)
+        return AppFontDescriptor(
+            family: config.uiFontFamily,
+            weight: weight ?? Font.Weight.fromName(config.uiFontWeight),
+            size: size ?? CGFloat(uiFontSize),
+            isCode: false)
+    }
+
+    /// Constructs a code font with current user preferences and optional size/weight override.
+    public func codeFont(isDark: Bool, size: CGFloat? = nil, weight: Font.Weight? = nil) -> Font {
+        codeFontDescriptor(isDark: isDark, size: size, weight: weight).font
     }
 
     /// Constructs a UI font with current user preferences and optional size/weight override.
-    public func uiFont(size: CGFloat? = nil, weight: Font.Weight? = nil) -> Font {
-        let targetSize = size ?? CGFloat(uiFontSize)
-        let config = activeConfig(isDark: NSApp.effectiveAppearance.name.rawValue.lowercased().contains("dark"))
-        let resolvedWeight = weight ?? Font.Weight.fromName(config.uiFontWeight)
-
-        switch config.uiFontFamily {
-        case "SF Pro", "System default":
-            return .system(size: targetSize, weight: resolvedWeight, design: .default)
-        case "Inter":
-            return .custom("Inter", size: targetSize).weight(resolvedWeight)
-        case "Helvetica Neue", "Helvetica":
-            return .custom("Helvetica Neue", size: targetSize).weight(resolvedWeight)
-        case "Avenir":
-            return .custom("Avenir", size: targetSize).weight(resolvedWeight)
-        default:
-            return .system(size: targetSize, weight: resolvedWeight)
-        }
+    public func uiFont(isDark: Bool, size: CGFloat? = nil, weight: Font.Weight? = nil) -> Font {
+        uiFontDescriptor(isDark: isDark, size: size, weight: weight).font
     }
 
     /// Determines whether animation/motion should be suppressed based on user or system settings.
@@ -222,10 +208,6 @@ public final class AppearanceManager: ObservableObject {
         case .on: return true
         case .off: return false
         }
-    }
-
-    private func applyFontSmoothing() {
-        defaults.set(fontSmoothing ? 2 : 0, forKey: "AppleFontSmoothing")
     }
 
     /// Renders and updates the macOS application dock icon based on current preset choice.

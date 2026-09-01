@@ -4,6 +4,22 @@ import SwiftUI
 /// Interactive message card component rendering agent tool executions, compact diff summaries,
 /// JSON arguments, risk badges, and approval actions in Claude-style aesthetics.
 struct ToolCallCardView: View {
+    @Environment(\.appTheme) private var theme
+    @ObservedObject private var appearance = AppearanceManager.shared
+
+    /// The added/removed counts are the only diff surface in the app: there is
+    /// no line-by-line diff body anywhere, which is why the `diffMarkers`
+    /// preference had no reader outside its own settings preview. Here it
+    /// carries its plain meaning -- tell additions from deletions by COLOR, or
+    /// by the `+` and `-` signs the labels already carry, for a reader who
+    /// cannot rely on red against green.
+    private var diffAdditionColor: Color {
+        appearance.diffMarkers == .color ? Color.green : Color.primary
+    }
+
+    private var diffDeletionColor: Color {
+        appearance.diffMarkers == .color ? Color.red : Color.secondary
+    }
     @ObservedObject var model: AppModel
     let call: AppToolCall
     let result: AppToolResult?
@@ -96,24 +112,24 @@ struct ToolCallCardView: View {
                     .foregroundStyle(.primary)
 
                 Text(summary.target)
-                    .font(.callout.monospaced().weight(.semibold))
+                    .font(theme.code(.large, weight: .semibold))
                     .foregroundStyle(.primary)
 
                 if let additions = summary.additions {
                     Text("+\(additions)")
-                        .font(.caption.monospaced().weight(.bold))
-                        .foregroundStyle(Color.green)
+                        .font(theme.code(.small, weight: .bold))
+                        .foregroundStyle(diffAdditionColor)
                 }
 
                 if let deletions = summary.deletions {
                     Text("-\(deletions)")
-                        .font(.caption.monospaced().weight(.bold))
-                        .foregroundStyle(Color.red)
+                        .font(theme.code(.small, weight: .bold))
+                        .foregroundStyle(diffDeletionColor)
                 }
 
                 if let range = summary.lineRange {
                     Text(range)
-                        .font(.caption2.monospaced())
+                        .font(theme.code(.tiny))
                         .foregroundStyle(.secondary)
                 }
 
@@ -283,10 +299,10 @@ struct ToolCallCardView: View {
             ForEach(call.arguments.sorted(by: { $0.key < $1.key }), id: \.key) { key, value in
                 HStack(alignment: .top, spacing: 6) {
                     Text("\(key):")
-                        .font(.caption.monospaced().weight(.medium))
+                        .font(theme.code(.small, weight: .medium))
                         .foregroundStyle(.secondary)
                     Text(value)
-                        .font(.caption.monospaced())
+                        .font(theme.code(.small))
                         .foregroundStyle(.primary)
                         .lineLimit(4)
                 }
@@ -339,7 +355,7 @@ struct ToolCallCardView: View {
         VStack(alignment: .leading, spacing: 6) {
             ScrollView(.horizontal) {
                 Text(res.output)
-                    .font(.caption.monospaced())
+                    .font(theme.code(.small))
                     .foregroundStyle(res.isError ? .red : .primary)
                     .textSelection(.enabled)
             }

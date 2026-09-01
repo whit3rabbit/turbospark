@@ -3,6 +3,7 @@ import SwiftUI
 
 /// Footer component for the chat sidebar showing chat count and quick appearance picker.
 struct ChatSidebarFooterView: View {
+    @Environment(\.appTheme) private var theme
     let chatCount: Int
     @Binding var appearanceRawValue: String
     @Binding var textSizeRawValue: String
@@ -19,7 +20,7 @@ struct ChatSidebarFooterView: View {
             Spacer()
             appearanceMenu
         }
-        .font(.caption)
+        .font(theme.ui(points: 11))
         .foregroundStyle(.secondary)
         .padding(.horizontal, 16)
         .frame(minHeight: sidebarFooterMinHeight)

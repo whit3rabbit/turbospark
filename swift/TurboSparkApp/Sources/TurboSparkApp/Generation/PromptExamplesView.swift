@@ -2,6 +2,7 @@ import SwiftUI
 
 /// Preset prompt suggestions grid rendered above the composer in an empty conversation state.
 struct PromptExamplesView: View {
+    @Environment(\.appTheme) private var theme
     let select: (AppPromptPreset) -> Void
 
     var body: some View {
@@ -9,9 +10,9 @@ struct PromptExamplesView: View {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Try an example")
-                        .font(.headline)
+                        .font(theme.ui(points: 13, weight: .semibold))
                     Text("Choose a prompt, edit it, or write your own.")
-                        .font(.caption)
+                        .font(theme.ui(points: 11))
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -44,11 +45,11 @@ struct PromptExamplesView: View {
             } label: {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(preset.title)
-                        .font(.caption.weight(.semibold))
+                        .font(theme.ui(points: 11, weight: .semibold))
                         .foregroundStyle(.primary)
                         .lineLimit(2)
                     Text(preset.prompt)
-                        .font(.caption2)
+                        .font(theme.ui(points: 10))
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.leading)
                         .lineLimit(3)
@@ -82,7 +83,7 @@ struct PromptExamplesView: View {
             }
         } label: {
             Label("More", systemImage: "ellipsis")
-                .font(.caption.weight(.medium))
+                .font(theme.ui(points: 11, weight: .medium))
                 .foregroundStyle(.secondary)
         }
         .menuStyle(.borderlessButton)

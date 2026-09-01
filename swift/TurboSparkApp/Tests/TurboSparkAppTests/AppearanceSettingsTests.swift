@@ -92,4 +92,302 @@ final class AppearanceSettingsTests: XCTestCase {
         // Reset
         manager.dockIcon = .emeraldSpark
     }
+
+    // MARK: - Accent picker
+
+    /// A `Picker` whose selection matches no tag renders BLANK.
+    ///
+    /// The curated six accents did not cover the shipped presets, so 4 of the
+    /// 10 preset-and-mode combinations drew an EMPTY Accent control -- Codex
+    /// in both modes, and Codex is the default, so this is what a fresh
+    /// install showed. It reads as a broken control, not as an unlisted color.
+    func testEveryShippedPresetIsSelectableInTheAccentPicker() {
+        for preset in ThemePreset.presets {
+            for (isDark, config) in [(false, preset.light), (true, preset.dark)] {
+                let options = AccentOption.options(
+                    isDark: isDark,
+                    selectedHex: config.accentHex,
+                    selectedName: config.accentName)
+                XCTAssertTrue(
+                    options.contains(where: { $0.hex == config.accentHex }),
+                    "\(preset.name) (\(isDark ? "dark" : "light")) accent \(config.accentHex) "
+                        + "has no matching tag, so the picker renders blank")
+            }
+        }
+    }
+
+    func testACustomAccentIsCarriedRatherThanDropped() {
+        let options = AccentOption.options(
+            isDark: true, selectedHex: "#ABCDEF", selectedName: "Custom")
+        XCTAssertEqual(options.count, AccentOption.curated(isDark: true).count + 1)
+        XCTAssertEqual(options.last?.hex, "#ABCDEF")
+        XCTAssertEqual(options.last?.name, "Custom")
+
+        // A curated value must NOT be duplicated into the list.
+        let emerald = AccentOption.curated(isDark: true)[0].hex
+        XCTAssertEqual(
+            AccentOption.options(isDark: true, selectedHex: emerald, selectedName: "Emerald").count,
+            AccentOption.curated(isDark: true).count)
+    }
+
+    func testAccentNameFollowsTheHexAndFallsBackToCustom() {
+        XCTAssertEqual(AccentOption.name(forHex: "#6ABA71", isDark: true), "Emerald")
+        XCTAssertEqual(AccentOption.name(forHex: "#237D32", isDark: false), "Emerald")
+        // Emerald's dark hex is not a light option, so in light mode it is custom.
+        XCTAssertEqual(AccentOption.name(forHex: "#6ABA71", isDark: false), "Custom")
+        XCTAssertEqual(AccentOption.name(forHex: "#ABCDEF", isDark: true), "Custom")
+    }
+
+    // MARK: - Mode resolution
+
+    /// The bug this whole environment value exists to fix.
+    ///
+    /// `TurboSparkTheme` branched on `NSApp.effectiveAppearance`, which is
+    /// APPLICATION-level and is not moved by SwiftUI's `.preferredColorScheme`.
+    /// Forcing the app to Light on a dark system therefore drew light chrome
+    /// out of `darkConfig`. The forced cases are the ones that carry the file:
+    /// a test that only exercised `.system` would pass against the old code.
+    func testAppearanceModeIgnoresTheSystemSchemeWhenItIsForced() {
+        XCTAssertFalse(AppAppearance.light.isDark(systemColorScheme: .dark))
+        XCTAssertTrue(AppAppearance.dark.isDark(systemColorScheme: .light))
+
+        XCTAssertTrue(AppAppearance.system.isDark(systemColorScheme: .dark))
+        XCTAssertFalse(AppAppearance.system.isDark(systemColorScheme: .light))
+    }
+
+    func testResolvedThemeTakesItsConfigFromTheForcedModeNotTheSystem() {
+        let manager = AppearanceManager.shared
+        let savedAppearance = manager.appearance
+        let savedLight = manager.lightConfig
+        let savedDark = manager.darkConfig
+        defer {
+            manager.appearance = savedAppearance
+            manager.lightConfig = savedLight
+            manager.darkConfig = savedDark
+        }
+
+        manager.lightConfig.foregroundHex = "#111111"
+        manager.lightConfig.contrast = 40
+        manager.darkConfig.foregroundHex = "#EEEEEE"
+        manager.darkConfig.contrast = 80
+
+        // App forced Light while the system renders Dark.
+        manager.appearance = .light
+        let forcedLight = ResolvedAppTheme.resolve(
+            manager: manager, colorScheme: .dark, installedFamilies: [])
+        XCTAssertFalse(forcedLight.isDark)
+        XCTAssertEqual(forcedLight.contrast, 40)
+
+        // And the mirror case, so neither arm can pass by always answering one way.
+        manager.appearance = .dark
+        let forcedDark = ResolvedAppTheme.resolve(
+            manager: manager, colorScheme: .light, installedFamilies: [])
+        XCTAssertTrue(forcedDark.isDark)
+        XCTAssertEqual(forcedDark.contrast, 80)
+
+        // Following the system still works.
+        manager.appearance = .system
+        XCTAssertTrue(ResolvedAppTheme.resolve(
+            manager: manager, colorScheme: .dark, installedFamilies: []).isDark)
+        XCTAssertFalse(ResolvedAppTheme.resolve(
+            manager: manager, colorScheme: .light, installedFamilies: []).isDark)
+    }
+
+    func testResolvedThemeCarriesTheSizesTheUserSet() {
+        let manager = AppearanceManager.shared
+        let savedUI = manager.uiFontSize
+        let savedCode = manager.codeFontSize
+        defer {
+            manager.uiFontSize = savedUI
+            manager.codeFontSize = savedCode
+        }
+
+        manager.uiFontSize = 17
+        manager.codeFontSize = 11
+        let theme = ResolvedAppTheme.resolve(
+            manager: manager, colorScheme: .light, installedFamilies: [])
+
+        XCTAssertEqual(theme.uiFontDescriptor.size, 17)
+        XCTAssertEqual(theme.codeFontDescriptor.size, 11)
+        XCTAssertTrue(theme.codeFontDescriptor.isCode)
+        XCTAssertFalse(theme.uiFontDescriptor.isCode)
+    }
+
+    // MARK: - Font catalog
+
+    func testCatalogOffersOnlyFamiliesThatCanRender() {
+        // Nothing installed: only the families that name the system face survive.
+        let bare = AppFontCatalog.availableCodeFamilies(installed: [])
+        XCTAssertEqual(bare, ["System default", "SF Mono"])
+        XCTAssertFalse(bare.contains("JetBrains Mono"))
+
+        let withJetBrains = AppFontCatalog.availableCodeFamilies(installed: ["JetBrains Mono"])
+        XCTAssertTrue(withJetBrains.contains("JetBrains Mono"))
+        XCTAssertFalse(withJetBrains.contains("Fira Code"))
+
+        // Menu order is preserved rather than being whatever the set iterates in.
+        XCTAssertEqual(
+            AppFontCatalog.availableUIFamilies(installed: ["Avenir", "Inter"]),
+            ["System default", "SF Pro", "Inter", "Avenir"])
+    }
+
+    /// A config naming a family that is not installed falls back BY NAME.
+    /// Handing the missing name to `Font.custom` anyway draws the system face
+    /// while the picker still claims the missing family, which is the silent
+    /// substitution this whole change is about.
+    func testAMissingFamilyFallsBackToTheSystemFace() {
+        XCTAssertEqual(
+            AppFontCatalog.resolveFamily(
+                "Fira Code",
+                offered: AppFontCatalog.offeredCodeFamilies,
+                installed: []),
+            "System default")
+
+        XCTAssertEqual(
+            AppFontCatalog.resolveFamily(
+                "Fira Code",
+                offered: AppFontCatalog.offeredCodeFamilies,
+                installed: ["Fira Code"]),
+            "Fira Code")
+
+        // A family nobody offers is refused even when it IS installed, so the
+        // renderer can never draw something the picker cannot show.
+        XCTAssertEqual(
+            AppFontCatalog.resolveFamily(
+                "Comic Sans MS",
+                offered: AppFontCatalog.offeredCodeFamilies,
+                installed: ["Comic Sans MS"]),
+            "System default")
+    }
+
+    func testResolvedThemeRefusesAFamilyThatIsNotInstalled() {
+        let manager = AppearanceManager.shared
+        let saved = manager.lightConfig
+        defer { manager.lightConfig = saved }
+
+        manager.lightConfig.codeFontFamily = "JetBrains Mono"
+
+        let without = ResolvedAppTheme.resolve(
+            manager: manager, colorScheme: .light, installedFamilies: [])
+        XCTAssertEqual(without.codeFontDescriptor.family, "System default")
+        XCTAssertNil(without.codeFontDescriptor.customFamilyName)
+
+        let with = ResolvedAppTheme.resolve(
+            manager: manager, colorScheme: .light, installedFamilies: ["JetBrains Mono"])
+        XCTAssertEqual(with.codeFontDescriptor.family, "JetBrains Mono")
+        XCTAssertEqual(with.codeFontDescriptor.customFamilyName, "JetBrains Mono")
+    }
+
+    // MARK: - Descriptors
+
+    /// `System default`, `SF Pro` and `SF Mono` are the system face reached
+    /// through `Font.system(design:)`, not files on disk. Sending them to
+    /// `Font.custom` looks up a family that does not exist and falls back
+    /// silently.
+    func testSystemFamiliesResolveToTheSystemFaceAndOthersDoNot() {
+        for family in ["System default", "SF Pro", "SF Mono"] {
+            let descriptor = AppFontDescriptor(
+                family: family, weight: .regular, size: 13, isCode: false)
+            XCTAssertNil(descriptor.customFamilyName, family)
+        }
+
+        for family in ["Inter", "Menlo", "JetBrains Mono", "Fira Code", "Avenir"] {
+            let descriptor = AppFontDescriptor(
+                family: family, weight: .regular, size: 13, isCode: true)
+            XCTAssertEqual(descriptor.customFamilyName, family)
+        }
+    }
+
+    func testFontStepsScaleFromTheConfiguredBaseSize() {
+        let theme = ResolvedAppTheme.fallback
+        XCTAssertEqual(theme.codeFontDescriptor.size, 12)
+
+        // The steps are relative, so every code surface moves together when
+        // the base size does. Rounded, because a font size of 9.96 is not one.
+        XCTAssertEqual(AppFontStep.base.factor, 1.0)
+        XCTAssertLessThan(AppFontStep.tiny.factor, AppFontStep.small.factor)
+        XCTAssertLessThan(AppFontStep.small.factor, AppFontStep.base.factor)
+        XCTAssertLessThan(AppFontStep.base.factor, AppFontStep.large.factor)
+    }
+
+    func testContrastDrivesMetadataAndBorderTreatment() {
+        var low = ResolvedAppTheme.fallback
+        low.contrast = 10
+        var high = ResolvedAppTheme.fallback
+        high.contrast = 95
+
+        XCTAssertEqual(low.metadataForeground, Color.secondary)
+        XCTAssertNotEqual(high.metadataForeground, Color.secondary)
+
+        // The floor keeps a border visible at contrast 0 rather than invisible.
+        XCTAssertEqual(low.borderStrokeOpacity, 0.3)
+        XCTAssertGreaterThan(high.borderStrokeOpacity, low.borderStrokeOpacity)
+    }
+
+    // MARK: - Bundled font registration
+
+    /// Font files in the SOURCE tree, found without going through the bundle.
+    ///
+    /// The skip condition has to be independent of the code under test. Two
+    /// earlier versions were not: keying it on `registerBundledFonts()`'s
+    /// return value, and then on `bundledFontURLs`, both skipped when the
+    /// bundle lookup was broken -- which is the failure, so the test passed
+    /// against it. Mutating the lookup turned the case green (skipped) both
+    /// times instead of red. `#filePath` reaches the checked-in files, which
+    /// no bug in the lookup can move.
+    private var sourceFontFiles: [String] {
+        let testsDir = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        let fonts = testsDir
+            .deletingLastPathComponent()      // Tests/
+            .deletingLastPathComponent()      // TurboSparkApp/
+            .appendingPathComponent("Sources/TurboSparkApp/Resources/Fonts")
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: fonts.path)) ?? []
+        return names.filter { $0.hasSuffix(".ttf") }
+    }
+
+    func testRegisteringBundledFontsIsIdempotentAndReportsWhatItDid() throws {
+        let onDisk = sourceFontFiles
+        try XCTSkipIf(
+            onDisk.isEmpty,
+            "No .ttf files in Sources/TurboSparkApp/Resources/Fonts. The three bundled "
+                + "families are offered by the pickers only once their files are in the tree.")
+
+        // The lookup must find every file that is really there. This is what
+        // reddens when the bundle lookup regresses, rather than skipping.
+        XCTAssertEqual(
+            AppFontRegistrar.bundledFontURLs.count, onDisk.count,
+            "the bundle lookup found \(AppFontRegistrar.bundledFontURLs.count) of \(onDisk.count) "
+                + "font files that are checked in; SwiftPM's .process rule flattens Fonts/ "
+                + "into the bundle root")
+
+        let first = AppFontRegistrar.registerBundledFonts()
+        let second = AppFontRegistrar.registerBundledFonts()
+        XCTAssertEqual(first, second, "registration must be idempotent per process")
+        XCTAssertEqual(
+            first, onDisk.count,
+            "every bundled face must register; a shortfall is a file Core Text refused")
+
+        // Every bundled family must be reachable once registered, or the
+        // pickers would filter it out of its own menu.
+        let installed = AppFontCatalog.installedFamilies()
+        for family in AppFontCatalog.bundledFamilies {
+            XCTAssertTrue(installed.contains(family), "\(family) registered but not reported")
+        }
+    }
+
+    /// The bundled families must survive the filter that narrows the pickers.
+    /// Bundling a font and then hiding it from its own menu is the failure
+    /// this pairing exists to make impossible.
+    func testBundledFamiliesSurviveTheInstalledFilter() throws {
+        try XCTSkipIf(sourceFontFiles.isEmpty, "No bundled font files in the source tree.")
+        AppFontRegistrar.registerBundledFonts()
+
+        let installed = AppFontCatalog.installedFamilies()
+        let ui = AppFontCatalog.availableUIFamilies(installed: installed)
+        let code = AppFontCatalog.availableCodeFamilies(installed: installed)
+
+        XCTAssertTrue(ui.contains("Inter"))
+        XCTAssertTrue(code.contains("JetBrains Mono"))
+        XCTAssertTrue(code.contains("Fira Code"))
+    }
 }

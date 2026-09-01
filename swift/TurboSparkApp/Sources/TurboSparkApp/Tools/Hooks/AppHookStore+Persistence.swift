@@ -2,10 +2,7 @@ import Foundation
 
 extension AppHookStore {
     var storageDirectory: URL {
-        let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let directory = appSupport.appendingPathComponent("TurboSpark/Hooks", isDirectory: true)
-        try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-        return directory
+        AppStorageRoot.subdirectory("Hooks")
     }
 
     var trustedHashesFileURL: URL {

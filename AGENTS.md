@@ -105,6 +105,11 @@ BEHIND THE INDEX -- your committed text is not on disk, so the next session to
 afterwards and confirm `git diff` shows only foreign hunks. And list paths
 LITERALLY in any per-file gate: zsh does not word-split an unquoted variable,
 so a loop over `$FILES` checks ONE nonexistent path and reports clean.
+AND QUOTE ANY GLOB YOU PASS TO A TOOL: zsh expands `--include=*.swift` itself
+and aborts the command with `no matches found` when nothing matches in the
+CWD, so `grep -rn x --include=*.swift .` reports 0 hits. A 0 from a usage
+survey reads as "nothing calls this", which is a finding rather than a typo.
+Write `--include="*.swift"`.
 
 1. greedy generation stays coherent (catches broken math),
 2. SAMPLED generation stays coherent (catches distribution bugs that greedy

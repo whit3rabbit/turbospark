@@ -43,4 +43,19 @@ public enum AppAppearance: String, CaseIterable, Identifiable, Sendable {
     public static func resolve(_ storedValue: String) -> Self {
         Self(rawValue: storedValue) ?? .system
     }
+
+    /// Whether dark styling applies, given the scheme SwiftUI is rendering in.
+    ///
+    /// Take the argument from `@Environment(\.colorScheme)` and never from
+    /// `NSApp.effectiveAppearance`. That property is APPLICATION-level and is
+    /// not moved by `.preferredColorScheme`, so an app forced to Light on a
+    /// dark system still reports dark and picks `darkConfig` -- light chrome
+    /// drawn with the dark theme's accent, background and contrast.
+    public func isDark(systemColorScheme: ColorScheme) -> Bool {
+        switch self {
+        case .system: systemColorScheme == .dark
+        case .light: false
+        case .dark: true
+        }
+    }
 }

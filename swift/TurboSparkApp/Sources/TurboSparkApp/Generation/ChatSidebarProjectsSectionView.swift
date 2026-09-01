@@ -3,6 +3,7 @@ import SwiftUI
 
 /// Projects section in the chat sidebar showing all-chats selector and active projects.
 struct ChatSidebarProjectsSectionView: View {
+    @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
     @Binding var showingProjectSettingsSheet: Bool
     @Binding var projectBeingEdited: AppProject?
@@ -15,7 +16,7 @@ struct ChatSidebarProjectsSectionView: View {
         VStack(alignment: .leading, spacing: 3) {
             HStack {
                 Text("Projects")
-                    .font(.caption.weight(.semibold))
+                    .font(theme.ui(points: 11, weight: .semibold))
                     .foregroundStyle(.secondary)
                     .accessibilityAddTraits(.isHeader)
                 Spacer()
@@ -25,7 +26,7 @@ struct ChatSidebarProjectsSectionView: View {
                 } label: {
                     Label("Add Project", systemImage: "plus")
                         .labelStyle(.iconOnly)
-                        .font(.caption)
+                        .font(theme.ui(points: 11))
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.borderless)
@@ -54,15 +55,15 @@ struct ChatSidebarProjectsSectionView: View {
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: isSelected ? "folder.fill" : "folder")
-                    .font(.caption)
+                    .font(theme.ui(points: 11))
                     .foregroundStyle(isSelected ? TurboSparkTheme.accentColor : Color.secondary)
                     .accessibilityHidden(true)
                 Text("All Chats")
-                    .font(.callout.weight(isSelected ? .semibold : .regular))
+                    .font(theme.ui(points: 12, weight: isSelected ? .semibold : .regular))
                     .foregroundStyle(.primary)
                 Spacer()
                 Text("\(model.chats.count)")
-                    .font(.caption2)
+                    .font(theme.ui(points: 10))
                     .foregroundStyle(.secondary)
                     .accessibilityLabel("\(model.chats.count) chats")
             }
@@ -92,16 +93,16 @@ struct ChatSidebarProjectsSectionView: View {
             } label: {
                 HStack(spacing: 8) {
                     Image(systemName: isSelected ? "folder.fill.badge.gearshape" : "folder.badge.gearshape")
-                        .font(.caption)
+                        .font(theme.ui(points: 11))
                         .foregroundStyle(isSelected ? TurboSparkTheme.accentColor : Color.secondary)
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(project.name)
-                            .font(.callout.weight(isSelected ? .semibold : .regular))
+                            .font(theme.ui(points: 12, weight: isSelected ? .semibold : .regular))
                             .foregroundStyle(.primary)
                             .lineLimit(1)
                         Text(project.agentType.label)
-                            .font(.caption2)
+                            .font(theme.ui(points: 10))
                             .foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 0)
@@ -121,7 +122,7 @@ struct ChatSidebarProjectsSectionView: View {
                     model.createChat(projectID: project.id)
                 } label: {
                     Image(systemName: "plus")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(theme.ui(points: 11, weight: .semibold))
                         .foregroundStyle(.secondary)
                         .frame(width: projectActionSize, height: projectActionSize)
                         .contentShape(Circle())

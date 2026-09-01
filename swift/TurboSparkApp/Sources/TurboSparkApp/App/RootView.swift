@@ -50,7 +50,7 @@ struct RootView: View {
             minHeight: AppChromeLayout.minimumHeight)
         .clipped()
         .background(Color(nsColor: .windowBackgroundColor))
-        .tint(TurboSparkTheme.accentColor)
+        .appThemed()
         .animation(effectiveReduceMotion ? nil : .smooth(duration: 0.2), value: isChatSidebarVisible)
         .animation(effectiveReduceMotion ? nil : .smooth(duration: 0.2), value: isInspectorVisible)
         .animation(effectiveReduceMotion ? nil : .smooth(duration: 0.2), value: model.previewAttachmentID)

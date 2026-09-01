@@ -5,6 +5,7 @@ import SwiftUI
 /// Renders markdown-formatted chat message content using MarkdownUI.
 public struct ChatMessageMarkdownView: View {
     public let text: String
+    @Environment(\.appTheme) private var theme
 
     public init(_ text: String) {
         self.text = text
@@ -12,7 +13,8 @@ public struct ChatMessageMarkdownView: View {
 
     public var body: some View {
         Markdown(text)
-            .markdownTheme(.turboSpark)
+            .markdownTheme(.turboSpark(ui: theme.uiFontDescriptor, code: theme.codeFontDescriptor))
+            .foregroundStyle(theme.foreground)
             .textSelection(.enabled)
     }
 }
@@ -20,20 +22,27 @@ public struct ChatMessageMarkdownView: View {
 extension Theme {
     /// Custom MarkdownUI theme tailored for TurboSpark chat transcripts.
     ///
-    /// The base theme has no text style of its own, so it fell back to the
+    /// A FUNCTION rather than the `static let` this was, because a constant
+    /// cannot read live settings: the transcript is the surface the font and
+    /// foreground preferences most obviously describe, and it was the one
+    /// place guaranteed not to follow them.
+    ///
+    /// The base theme carries no text style of its own, so it fell back to the
     /// ambient SwiftUI `.body` font (~13pt on macOS) regardless of the
-    /// `dynamicTypeSize` environment scale set elsewhere in the app -- that
-    /// scale moves the baseline by about a point, too small a shift to read
-    /// as "bigger" against everything else in the window. An explicit size
-    /// here is the guaranteed-visible fix for the surface a user actually
-    /// reads: everything under it (`.code`'s `.em(0.88)`, etc.) is relative,
-    /// so it scales along with the base rather than needing its own bump.
-    public static let turboSpark = Theme()
+    /// `dynamicTypeSize` scale set elsewhere in the app -- that scale moves the
+    /// baseline by about a point, too small a shift to read as "bigger". The
+    /// size now comes from the user's UI font setting. Everything under it
+    /// (`.code`'s `.em(0.88)`, etc.) stays relative, so it scales along with
+    /// the base rather than needing its own bump.
+    public static func turboSpark(ui: AppFontDescriptor, code: AppFontDescriptor) -> Theme {
+        Theme()
         .text {
-            FontSize(15)
+            FontFamily(ui.markdownFamily)
+            FontSize(ui.size)
+            FontWeight(ui.weight)
         }
         .code {
-            FontFamilyVariant(.monospaced)
+            FontFamily(code.markdownFamily)
             FontSize(.em(0.88))
             BackgroundColor(Color.primary.opacity(0.06))
         }
@@ -49,8 +58,9 @@ extension Theme {
                 configuration.label
                     .relativeLineSpacing(.em(0.225))
                     .markdownTextStyle {
-                        FontFamilyVariant(.monospaced)
+                        FontFamily(code.markdownFamily)
                         FontSize(.em(0.88))
+                        FontWeight(code.weight)
                     }
             }
         }
@@ -89,6 +99,22 @@ extension Theme {
                 .padding(.horizontal, 10)
                 .relativeLineSpacing(.em(0.2))
         }
+    }
+}
+
+extension AppFontDescriptor {
+    /// This descriptor as MarkdownUI's own family type.
+    ///
+    /// MarkdownUI cannot take a built `Font`, which is why `AppFontDescriptor`
+    /// keeps the parts. `FontFamilyVariant(.monospaced)` is deliberately NOT
+    /// used for code any more: it asks for a fixed-width face of whatever
+    /// family is current, which silently ignores the user's code-font choice.
+    var markdownFamily: FontProperties.Family {
+        if let name = customFamilyName {
+            return .custom(name)
+        }
+        return .system(isCode ? .monospaced : .default)
+    }
 }
 
 /// Container view for fenced code blocks featuring a language tag and copy-to-clipboard action.

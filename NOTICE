@@ -62,3 +62,29 @@ well-formed prompt and disagree on a malformed one, and this port follows
 mlx-vlm because mlx-vlm is the reference for the trunk being fed. The
 divergence is pinned by
 `a_placeholder_with_no_vision_start_is_treated_as_text`.
+
+## Bundled fonts
+
+Three font families ship inside the macOS app's resource bundle, under
+`swift/TurboSparkApp/Sources/TurboSparkApp/Resources/Fonts/`. All three are
+licensed under the SIL Open Font License, Version 1.1, whose terms permit
+bundling them in a larger work; each family's full license text sits beside
+the faces it covers, which is what the OFL requires.
+
+Unlike every other entry on this page, no code was adapted from these
+projects. They are unmodified binary assets, carried so that the Appearance
+pane's font pickers cannot offer a family that then fails to render: macOS
+does not ship any of the three, and `Font.custom` falls back to the system
+face silently rather than erroring. `swift/CLAUDE.md` Gotcha 22 is the same
+rule on the model hub's filters: build the options from what is present.
+
+Four faces of each (Regular, Medium, SemiBold, Bold), 3.8 MB in total.
+
+| family | upstream | version | license file here |
+|---|---|---|---|
+| Inter | <https://github.com/rsms/inter> | v4.1 | `OFL-Inter.txt` |
+| JetBrains Mono | <https://github.com/JetBrains/JetBrainsMono> | v2.304 | `OFL-JetBrainsMono.txt` |
+| Fira Code | <https://github.com/tonsky/FiraCode> | v6.2 | `OFL-FiraCode.txt` |
+
+Fira Code's release archive carries no license file, so `OFL-FiraCode.txt`
+was taken from `LICENSE` at the head of that repository instead.

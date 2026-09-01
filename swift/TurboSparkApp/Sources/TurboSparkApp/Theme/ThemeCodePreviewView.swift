@@ -23,7 +23,11 @@ public struct ThemeCodePreviewView: View {
     }
 
     private var codeFont: Font {
-        manager.codeFont(size: CGFloat(manager.codeFontSize))
+        // `isDark` is this card's own mode, not the app's. The Light and Dark
+        // cards are drawn side by side, so resolving the font from the ambient
+        // appearance made both previews show whichever config happened to be
+        // active -- the one place the difference is meant to be visible.
+        manager.codeFont(isDark: isDark, size: CGFloat(manager.codeFontSize))
     }
 
     private var bgFillColor: Color {

@@ -244,10 +244,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
 /// JSON persistence storage provider for `MacAppSettings` under `~/Library/Application Support/TurboSpark/settings.json`.
 public enum MacAppSettingsFileStore {
     private static var settingsDirectory: URL {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let directory = appSupport.appendingPathComponent("TurboSpark", isDirectory: true)
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        return directory
+        AppStorageRoot.directory
     }
 
     private static var settingsFileURL: URL {

@@ -3,6 +3,7 @@ import SwiftUI
 /// Container view that clamps long text/markdown to a maximum height with a smooth bottom fade
 /// and a "Show more" / "Show less" toggle, matching Claude-style message containment.
 public struct CollapsibleMessageContentView: View {
+    @Environment(\.appTheme) private var theme
     public let text: String
     public var isUser: Bool = false
     public var maxHeight: CGFloat = 220
@@ -85,7 +86,7 @@ public struct CollapsibleMessageContentView: View {
     private var contentBody: some View {
         if isUser {
             Text(text)
-                .font(.body)
+                .font(theme.uiFont)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         } else {

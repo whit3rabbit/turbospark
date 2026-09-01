@@ -3,6 +3,7 @@ import TurboSpark
 
 /// Segmented control switching between Chat and Projects modes right in the composer.
 struct PromptInteractionModeSegment: View {
+    @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
 
     var body: some View {
@@ -16,9 +17,9 @@ struct PromptInteractionModeSegment: View {
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: mode.systemImage)
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(theme.ui(points: 11, weight: .semibold))
                         Text(mode.title)
-                            .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
+                            .font(theme.ui(points: 12, weight: isSelected ? .semibold : .medium))
                             .lineLimit(1)
                             .fixedSize()
                     }
@@ -45,6 +46,7 @@ struct PromptInteractionModeSegment: View {
 
 /// Compact model selector dropdown pill inside the composer footer.
 struct PromptModelSelectorPill: View {
+    @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
 
     var body: some View {
@@ -83,16 +85,16 @@ struct PromptModelSelectorPill: View {
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "sparkles")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(theme.ui(points: 11, weight: .semibold))
                     .foregroundStyle(TurboSparkTheme.accentColor)
 
                 Text(model.selected?.alias ?? "Select Model")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(theme.ui(points: 12, weight: .medium))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
 
                 Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 9, weight: .bold))
+                    .font(theme.ui(points: 9, weight: .bold))
                     .foregroundStyle(.tertiary)
             }
             .padding(.horizontal, 8)
@@ -110,34 +112,35 @@ struct PromptModelSelectorPill: View {
 
 /// Project context pill in the prompt composer showing project name, branch, and live git diff stats.
 struct PromptProjectContextPill: View {
+    @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
 
     var body: some View {
         if let project = model.selectedProject {
             HStack(spacing: 6) {
                 Image(systemName: project.agentType.systemImage)
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(theme.ui(points: 11, weight: .semibold))
                     .foregroundStyle(TurboSparkTheme.accentColor)
 
                 Text(project.name)
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(theme.ui(points: 12, weight: .semibold))
                     .lineLimit(1)
 
                 if let worktree = model.worktree, worktree.isGitRepository {
                     Text(worktree.currentBranch)
-                        .font(.system(size: 10, weight: .medium).monospaced())
+                        .font(theme.code(points: 10, weight: .medium))
                         .foregroundStyle(.secondary)
 
                     if worktree.totalAdditions > 0 || worktree.totalDeletions > 0 {
                         HStack(spacing: 2) {
                             if worktree.totalAdditions > 0 {
                                 Text("+\(worktree.totalAdditions)")
-                                    .font(.system(size: 10, weight: .bold).monospacedDigit())
+                                    .font(theme.ui(points: 10, weight: .bold).monospacedDigit())
                                     .foregroundStyle(.green)
                             }
                             if worktree.totalDeletions > 0 {
                                 Text("-\(worktree.totalDeletions)")
-                                    .font(.system(size: 10, weight: .bold).monospacedDigit())
+                                    .font(theme.ui(points: 10, weight: .bold).monospacedDigit())
                                     .foregroundStyle(.red)
                             }
                         }
@@ -158,6 +161,7 @@ struct PromptProjectContextPill: View {
 
 /// Reasoning effort pill button in the prompt composer footer with quick popup menu selection.
 struct PromptReasoningPillControl: View {
+    @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
 
     var body: some View {
@@ -190,15 +194,15 @@ struct PromptReasoningPillControl: View {
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: isThinkingActive ? "brain.head.profile" : "brain")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(theme.ui(points: 11, weight: .semibold))
                     .foregroundStyle(isThinkingActive ? TurboSparkTheme.accentColor : Color.secondary)
 
                 Text("Thinking: \(model.reasoningLabel(for: model.reasoning))")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(theme.ui(points: 12, weight: .medium))
                     .foregroundStyle(isThinkingActive ? Color.primary : Color.secondary)
 
                 Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 9, weight: .bold))
+                    .font(theme.ui(points: 9, weight: .bold))
                     .foregroundStyle(.tertiary)
             }
             .padding(.horizontal, 7)
@@ -223,6 +227,7 @@ struct PromptReasoningPillControl: View {
 
 /// Forge Guardrails status pill button with toggling and settings popover link.
 struct ForgeGuardrailsPillControl: View {
+    @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
 
     var body: some View {
@@ -237,11 +242,11 @@ struct ForgeGuardrailsPillControl: View {
             } label: {
                 HStack(spacing: 4) {
                     Image(systemName: isEnabled ? "shield.checkmark.fill" : "shield.slash")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(theme.ui(points: 11, weight: .semibold))
                         .foregroundStyle(isEnabled ? TurboSparkTheme.accentColor : Color.secondary)
 
                     Text("Guardrails: \(isEnabled ? "On" : "Off")")
-                        .font(.system(size: 12, weight: .medium))
+                        .font(theme.ui(points: 12, weight: .medium))
                         .foregroundStyle(isEnabled ? Color.primary : Color.secondary)
                         .lineLimit(1)
                         .fixedSize()
@@ -269,7 +274,7 @@ struct ForgeGuardrailsPillControl: View {
                 model.openSettings(tab: .engine)
             } label: {
                 Image(systemName: "info.circle")
-                    .font(.system(size: 12))
+                    .font(theme.ui(points: 12))
                     .foregroundStyle(.secondary)
                     .contentShape(Circle())
             }
@@ -310,10 +315,11 @@ struct PromptTipsButton: View {
 
 /// Content inside the prompt tips popover.
 struct PromptTipsGuideView: View {
+    @Environment(\.appTheme) private var theme
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Prompting tips")
-                .font(.headline)
+                .font(theme.ui(points: 13, weight: .semibold))
 
             tipSection("Clear task & constraints",
                        "State what you want created, explained, or transformed. Specify length, style, or output structure.")
@@ -322,7 +328,7 @@ struct PromptTipsGuideView: View {
             tipSection("Attach relevant documents",
                        "Attach PDFs, spreadsheets, or code files for local reasoning and question answering.")
         }
-        .font(.callout)
+        .font(theme.ui(points: 12))
         .frame(width: 360, alignment: .leading)
         .padding(18)
     }

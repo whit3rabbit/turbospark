@@ -9,6 +9,7 @@ struct PromptComposerView: View {
     @State private var isExtractingDocuments = false
     @State private var documentImportError: String?
     @State private var measuredTextHeight: CGFloat = 0
+    @Environment(\.appTheme) private var theme
 
     @ScaledMetric private var iconButtonSize: CGFloat = 28
     @ScaledMetric private var editorMinHeight: CGFloat = 34
@@ -64,7 +65,7 @@ struct PromptComposerView: View {
             .frame(height: min(max(measuredTextHeight, editorMinHeight), editorMaxHeight))
             .background(alignment: .topLeading) {
                 Text(model.promptText.isEmpty ? " " : model.promptText)
-                    .font(.body)
+                    .font(theme.uiFont)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 8)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -86,13 +87,13 @@ struct PromptComposerView: View {
                 TextEditor(text: $model.promptText)
                     .accessibilityLabel("Prompt")
                     .accessibilityHint("Type your message here. Press Return to send, Shift-Return for a new line.")
-                    .font(.body)
+                    .font(theme.uiFont)
                     .scrollContentBackground(.hidden)
                     .focused($promptFocused)
                     .overlay(alignment: .topLeading) {
                         if model.promptText.isEmpty {
                             Text("Ask a question, request code, or explore ideas...")
-                                .font(.body)
+                                .font(theme.uiFont)
                                 .foregroundStyle(.tertiary)
                                 .padding(.leading, 5)
                                 .padding(.vertical, 8)

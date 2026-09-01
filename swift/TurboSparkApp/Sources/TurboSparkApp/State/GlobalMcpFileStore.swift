@@ -16,10 +16,7 @@ public struct GlobalMcpArchive: Codable, Sendable {
 /// Filesystem storage utilities for saving and loading global application MCP servers.
 public enum GlobalMcpFileStore {
     private static var storageDirectory: URL {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let directory = appSupport.appendingPathComponent("TurboSpark", isDirectory: true)
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        return directory
+        AppStorageRoot.directory
     }
 
     private static var archiveFileURL: URL {

@@ -3,6 +3,10 @@ import SwiftUI
 
 private final class ForegroundAppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Before the first view builds: the font pickers narrow their options
+        // to what `NSFontManager` reports, so a bundled family that is not yet
+        // registered would be filtered out of its own menu.
+        AppFontRegistrar.registerBundledFonts()
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
     }
@@ -188,7 +192,12 @@ struct TurboSparkApp: App {
         }
 
         Settings {
+            // A SEPARATE SCENE, so nothing `RootView` injects reaches it. The
+            // theme has to be injected again here or every view in this window
+            // reads `ResolvedAppTheme.fallback` -- the light defaults -- while
+            // the window itself renders dark.
             AppSettingsView(model: model)
+                .appThemed()
                 .preferredColorScheme(appearanceManager.appearance.preferredColorScheme)
                 .dynamicTypeSize(AppTextSize.resolve(textSizeRawValue).dynamicTypeSize)
                 .environment(\.locale, currentLanguage.locale)

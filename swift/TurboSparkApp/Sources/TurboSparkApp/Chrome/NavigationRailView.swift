@@ -6,6 +6,7 @@ import SwiftUI
 /// living here, the chat sidebar holds only conversations and can be hidden
 /// without stranding navigation.
 struct NavigationRailView: View {
+    @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
 
     @ScaledMetric private var itemSize: CGFloat = 34
@@ -35,7 +36,7 @@ struct NavigationRailView: View {
             model.activeSection = section
         } label: {
             Image(systemName: isSelected ? section.selectedSystemImage : section.systemImage)
-                .font(.system(size: 15, weight: .medium))
+                .font(theme.ui(points: 15, weight: .medium))
                 .foregroundStyle(isSelected ? TurboSparkTheme.accentColor : Color.secondary)
                 .frame(width: itemSize, height: itemSize)
                 .background(
@@ -70,7 +71,7 @@ struct NavigationRailView: View {
     private var settingsButton: some View {
         SettingsLink {
             Image(systemName: "gearshape")
-                .font(.system(size: 15, weight: .medium))
+                .font(theme.ui(points: 15, weight: .medium))
                 .foregroundStyle(.secondary)
                 .frame(width: itemSize, height: itemSize)
                 .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -97,18 +98,19 @@ struct NavigationRailView: View {
 
 /// Floating hover tooltip badge for navigation rail icons.
 private struct RailTooltip: View {
+    @Environment(\.appTheme) private var theme
     let title: String
     let shortcut: String
 
     var body: some View {
         HStack(spacing: 6) {
             Text(title)
-                .font(.system(size: 11, weight: .medium))
+                .font(theme.ui(points: 11, weight: .medium))
                 .foregroundStyle(Color.primary)
                 .lineLimit(1)
 
             Text(shortcut)
-                .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                .font(theme.code(points: 9, weight: .semibold))
                 .foregroundStyle(Color.secondary)
                 .padding(.horizontal, 4)
                 .padding(.vertical, 1.5)

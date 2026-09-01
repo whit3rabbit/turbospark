@@ -3,6 +3,7 @@ import SwiftUI
 /// Slim bottom strip carrying live benchmarks: memory, CPU, context fill, throughput, and thermal telemetry.
 /// Supports both compact numeric text and real-time sparkline graph visualization modes.
 struct StatusBarView: View {
+    @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
     @ObservedObject private var appearanceManager = AppearanceManager.shared
 
@@ -40,7 +41,7 @@ struct StatusBarView: View {
             barDivider
             viewModeToggleButton
         }
-        .font(.system(size: 10.5))
+        .font(theme.ui(points: 10.5))
         .foregroundStyle(.secondary)
         .padding(.horizontal, 12)
         .frame(height: AppChromeLayout.statusBarHeight)
@@ -76,7 +77,7 @@ struct StatusBarView: View {
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: isGraphMode ? "chart.xyaxis.line" : "number")
-                    .font(.system(size: 10, weight: .medium))
+                    .font(theme.ui(points: 10, weight: .medium))
                     .foregroundStyle(isGraphMode ? TurboSparkTheme.accentColor : Color.secondary)
             }
             .padding(.horizontal, 4)
@@ -96,7 +97,7 @@ struct StatusBarView: View {
     private var memoryReadout: some View {
         HStack(spacing: 6) {
             Image(systemName: "memorychip")
-                .font(.system(size: 10))
+                .font(theme.ui(points: 10))
                 .accessibilityHidden(true)
             if isGraphMode {
                 MiniSparklineView(
@@ -153,7 +154,7 @@ struct StatusBarView: View {
     private var cpuReadout: some View {
         HStack(spacing: 5) {
             Image(systemName: "cpu")
-                .font(.system(size: 10))
+                .font(theme.ui(points: 10))
                 .accessibilityHidden(true)
             if isGraphMode {
                 MiniSparklineView(
@@ -221,7 +222,7 @@ struct StatusBarView: View {
     private func contextReadout(_ fraction: Double) -> some View {
         HStack(spacing: 6) {
             Image(systemName: "text.alignleft")
-                .font(.system(size: 10))
+                .font(theme.ui(points: 10))
                 .accessibilityHidden(true)
             MeterBar(fraction: fraction, tint: fraction > 0.9 ? .orange : TurboSparkTheme.accentColor)
                 .frame(width: 38)
@@ -239,7 +240,7 @@ struct StatusBarView: View {
     private var throughputReadout: some View {
         HStack(spacing: 5) {
             Image(systemName: "gauge.with.dots.needle.bottom.50percent")
-                .font(.system(size: 10))
+                .font(theme.ui(points: 10))
                 .accessibilityHidden(true)
             if isGraphMode {
                 MiniSparklineView(
@@ -299,7 +300,7 @@ struct StatusBarView: View {
 
         return HStack(spacing: 5) {
             Image(systemName: isAbnormal ? "thermometer.high" : "thermometer.medium")
-                .font(.system(size: 10))
+                .font(theme.ui(points: 10))
                 .foregroundStyle(tintColor)
                 .accessibilityHidden(true)
             Text(level.capitalized)
@@ -326,7 +327,7 @@ struct StatusBarView: View {
     private func memoryPressureReadout(_ level: String) -> some View {
         HStack(spacing: 5) {
             Image(systemName: "exclamationmark.triangle")
-                .font(.system(size: 10))
+                .font(theme.ui(points: 10))
                 .accessibilityHidden(true)
             Text("Memory \(level.capitalized)")
         }

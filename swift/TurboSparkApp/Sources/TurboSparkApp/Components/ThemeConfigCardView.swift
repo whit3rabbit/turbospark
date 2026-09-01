@@ -10,6 +10,16 @@ public struct ThemeConfigCardView: View {
 
     @State private var copiedToast = false
 
+    /// Families narrowed to what will actually render on this machine.
+    ///
+    /// These were two array literals, which is how Inter, JetBrains Mono and
+    /// Fira Code came to be on the menu while no font file for any of them
+    /// existed in the tree: `Font.custom` falls back to the system face
+    /// without erroring, so picking one did nothing and read as the setting
+    /// being ignored. `swift/CLAUDE.md` Gotcha 22 is the same rule on the
+    /// model hub -- build the options from what is present.
+    private var installedFamilies: Set<String> { AppFontCatalog.installedFamilies() }
+
     public init(
         title: String,
         isDark: Bool,
@@ -102,7 +112,7 @@ public struct ThemeConfigCardView: View {
                     label: "UI font",
                     family: $config.uiFontFamily,
                     weight: $config.uiFontWeight,
-                    familyOptions: ["System default", "SF Pro", "Inter", "Helvetica Neue", "Avenir"]
+                    familyOptions: AppFontCatalog.availableUIFamilies(installed: installedFamilies)
                 )
                 Divider().padding(.leading, 16)
 
@@ -110,7 +120,7 @@ public struct ThemeConfigCardView: View {
                     label: "Code font",
                     family: $config.codeFontFamily,
                     weight: $config.codeFontWeight,
-                    familyOptions: ["System default", "SF Mono", "Menlo", "JetBrains Mono", "Fira Code", "Courier"]
+                    familyOptions: AppFontCatalog.availableCodeFamilies(installed: installedFamilies)
                 )
                 Divider().padding(.leading, 16)
 
@@ -134,35 +144,29 @@ public struct ThemeConfigCardView: View {
                 .font(.subheadline)
             Spacer()
 
-            let accentOptions = [
-                ("Emerald", isDark ? "#6ABA71" : "#237D32"),
-                ("Blue", isDark ? "#38BDF8" : "#2563EB"),
-                ("Purple", isDark ? "#C084FC" : "#7C3AED"),
-                ("Orange", isDark ? "#FB923C" : "#EA580C"),
-                ("Black", "#000000"),
-                ("White", "#FFFFFF")
-            ]
+            // Always carries the selected value, so the menu cannot render
+            // blank against a preset or a custom color. See `AccentOption`.
+            let accentOptions = AccentOption.options(
+                isDark: isDark,
+                selectedHex: config.accentHex,
+                selectedName: config.accentName)
 
             Picker("", selection: $config.accentHex) {
-                ForEach(accentOptions, id: \.1) { name, hex in
+                ForEach(accentOptions) { option in
                     HStack {
                         Circle()
-                            .fill(Color(hex: hex) ?? .primary)
+                            .fill(Color(hex: option.hex) ?? .primary)
                             .frame(width: 8, height: 8)
-                        Text(name)
+                        Text(option.name)
                     }
-                    .tag(hex)
+                    .tag(option.hex)
                 }
             }
             .pickerStyle(.menu)
             .frame(width: 140)
             .labelsHidden()
             .onChange(of: config.accentHex) { _, newHex in
-                if let matched = accentOptions.first(where: { $0.1 == newHex }) {
-                    config.accentName = matched.0
-                } else {
-                    config.accentName = "Custom"
-                }
+                config.accentName = AccentOption.name(forHex: newHex, isDark: isDark)
             }
         }
         .padding(.horizontal, 16)

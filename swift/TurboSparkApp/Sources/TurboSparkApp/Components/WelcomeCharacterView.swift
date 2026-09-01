@@ -21,6 +21,7 @@ public final class WelcomeCharacterAssetCache {
 /// Animated welcome hero view displayed on app launch and empty chat transcripts.
 /// Displays the Claude-inspired centered greeting with embedded floating prompt composer.
 public struct WelcomeHeroView: View {
+    @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
     public let size: CGFloat
 
@@ -59,13 +60,13 @@ public struct WelcomeHeroView: View {
                 welcomeCharacter
 
                 Text(timeBasedGreeting)
-                    .font(.system(size: 28, weight: .medium, design: .serif))
+                    .font(theme.ui(points: 28, weight: .medium, systemDesign: .serif))
                     .foregroundStyle(.primary)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
             Text("How can I help you today?")
-                .font(.system(size: 15))
+                .font(theme.ui(points: 15))
                 .foregroundStyle(.secondary)
         }
     }
@@ -84,7 +85,7 @@ public struct WelcomeHeroView: View {
                 .accessibilityHidden(true)
         } else {
             Image(systemName: "flame.fill")
-                .font(.title)
+                .font(theme.ui(points: 22))
                 .foregroundStyle(TurboSparkTheme.accentColor)
                 .accessibilityHidden(true)
         }
@@ -111,7 +112,7 @@ public struct WelcomeHeroView: View {
                     model.promptText = prompt
                 }) {
                     Text(LocalizedStringKey(prompt))
-                        .font(.system(size: 13))
+                        .font(theme.ui(points: 13))
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)
                         .background(Color(nsColor: .controlBackgroundColor).opacity(0.8))

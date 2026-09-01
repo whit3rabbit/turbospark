@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 
 struct ChatSidebarView: View {
+    @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
     @AppStorage(AppAppearance.storageKey)
     private var appearanceRawValue = AppAppearance.system.rawValue
@@ -94,13 +95,13 @@ struct ChatSidebarView: View {
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: "square.and.pencil")
-                    .font(.system(size: 12))
+                    .font(theme.ui(points: 12))
                     .accessibilityHidden(true)
                 Text("New chat")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(theme.ui(points: 12, weight: .medium))
                 Spacer()
                 Text("\u{2318}N")
-                    .font(.system(size: 10))
+                    .font(theme.ui(points: 10))
                     .foregroundStyle(.tertiary)
                     .accessibilityHidden(true)
             }
@@ -125,7 +126,7 @@ struct ChatSidebarView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 3) {
                 Text(model.selectedProject != nil ? "\(model.selectedProject!.name) Chats" : "Chats")
-                    .font(.caption.weight(.semibold))
+                    .font(theme.ui(points: 11, weight: .semibold))
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 10)
                     .padding(.top, 10)
@@ -135,16 +136,16 @@ struct ChatSidebarView: View {
                 if historyChats.isEmpty {
                     VStack(spacing: 6) {
                         Image(systemName: "bubble.left.and.bubble.right")
-                            .font(.system(size: 20))
+                            .font(theme.ui(points: 20))
                             .foregroundStyle(.tertiary)
                             .padding(.top, 18)
                             .padding(.bottom, 2)
                             .accessibilityHidden(true)
                         Text("No chats yet")
-                            .font(.caption.weight(.medium))
+                            .font(theme.ui(points: 11, weight: .medium))
                             .foregroundStyle(.secondary)
                         Text("Start a conversation to see history here")
-                            .font(.caption2)
+                            .font(theme.ui(points: 10))
                             .foregroundStyle(.tertiary)
                             .multilineTextAlignment(.center)
                     }

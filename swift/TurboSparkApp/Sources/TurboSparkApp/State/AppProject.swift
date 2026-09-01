@@ -383,10 +383,7 @@ public struct AppProjectArchive: Codable, Sendable {
 /// Filesystem storage utilities for saving and loading project archives.
 public enum AppProjectFileStore {
     private static var storageDirectory: URL {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let directory = appSupport.appendingPathComponent("TurboSpark", isDirectory: true)
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        return directory
+        AppStorageRoot.directory
     }
 
     private static var archiveFileURL: URL {

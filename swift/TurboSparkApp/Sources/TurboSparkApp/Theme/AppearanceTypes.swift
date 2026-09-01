@@ -276,6 +276,59 @@ public struct ThemePreset: Identifiable, Sendable {
     ]
 }
 
+/// One entry in the Accent picker: a display name and the hex it selects.
+public struct AccentOption: Identifiable, Equatable, Sendable {
+    public let name: String
+    public let hex: String
+    public var id: String { hex }
+
+    public init(name: String, hex: String) {
+        self.name = name
+        self.hex = hex
+    }
+
+    /// The six curated accents for a mode.
+    public static func curated(isDark: Bool) -> [AccentOption] {
+        [
+            AccentOption(name: "Emerald", hex: isDark ? "#6ABA71" : "#237D32"),
+            AccentOption(name: "Blue", hex: isDark ? "#38BDF8" : "#2563EB"),
+            AccentOption(name: "Purple", hex: isDark ? "#C084FC" : "#7C3AED"),
+            AccentOption(name: "Orange", hex: isDark ? "#FB923C" : "#EA580C"),
+            AccentOption(name: "Black", hex: "#000000"),
+            AccentOption(name: "White", hex: "#FFFFFF")
+        ]
+    }
+
+    /// The curated accents, plus the selected one when it is not among them.
+    ///
+    /// **A `Picker` whose selection matches no tag renders BLANK**, and the
+    /// curated six did not cover the shipped presets: Codex is `#111827` /
+    /// `#F3F4F6` and Charcoal Mono is `#18181B` / `#E4E4E7`, none of which is
+    /// an option, so 4 of the 10 preset-and-mode combinations drew an empty
+    /// Accent control -- including Codex, which is the DEFAULT. It reads as a
+    /// broken control rather than as an unlisted color.
+    ///
+    /// Widening the curated list would fix those four and break again at the
+    /// next preset or at any custom color from the wheel, so the selected
+    /// value is always carried instead.
+    public static func options(isDark: Bool, selectedHex: String, selectedName: String) -> [AccentOption] {
+        let curated = curated(isDark: isDark)
+        let normalized = selectedHex.uppercased()
+        guard !curated.contains(where: { $0.hex.uppercased() == normalized }) else {
+            return curated
+        }
+        let label = selectedName.isEmpty || selectedName == "Custom" ? "Custom" : selectedName
+        return curated + [AccentOption(name: label, hex: selectedHex)]
+    }
+
+    /// The name to record for a hex, or `Custom` when it is not a curated one.
+    public static func name(forHex hex: String, isDark: Bool) -> String {
+        let normalized = hex.uppercased()
+        return curated(isDark: isDark)
+            .first(where: { $0.hex.uppercased() == normalized })?.name ?? "Custom"
+    }
+}
+
 // MARK: - Color Hex Helpers
 
 public extension Color {

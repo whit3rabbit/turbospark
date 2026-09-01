@@ -9,8 +9,7 @@ enum AppHookStdinPayload {
     /// Gotcha 13: chats live in one shared archive), so `transcript_path`
     /// points at that archive rather than a session-specific log.
     static var transcriptPath: String {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        return appSupport.appendingPathComponent("TurboSpark/chats_archive.json").path
+        return AppStorageRoot.file("chats_archive.json").path
     }
 
     static func build(

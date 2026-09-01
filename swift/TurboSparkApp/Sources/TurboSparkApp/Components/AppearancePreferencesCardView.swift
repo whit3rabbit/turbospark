@@ -153,18 +153,6 @@ public struct AppearancePreferencesCardView: View {
                 .labelsHidden()
             }
 
-            Divider().padding(.leading, 16)
-
-            // 7. Font smoothing
-            preferenceRow(
-                title: "Font smoothing",
-                description: "Use native macOS font anti-aliasing"
-            ) {
-                Toggle("", isOn: $manager.fontSmoothing)
-                    .toggleStyle(.switch)
-                    .labelsHidden()
-                    .appPointerCursor()
-            }
         }
         .background(Color(nsColor: .controlBackgroundColor).opacity(0.7))
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))

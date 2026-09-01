@@ -6,6 +6,7 @@ import SwiftUI
 /// strip: a number that updates once per token pulls the eye, and next to the
 /// model name it competes with the control the user actually reaches for.
 struct TopBarView: View {
+    @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
     let isChatSidebarVisible: Bool
     let isInspectorVisible: Bool
@@ -45,7 +46,7 @@ struct TopBarView: View {
             isVisible: isChatSidebarVisible)
         return Button(action: toggleChatSidebar) {
             Image(systemName: presentation.systemImage)
-                .font(.system(size: 13, weight: .medium))
+                .font(theme.ui(points: 13, weight: .medium))
                 .frame(width: buttonSize, height: buttonSize)
                 .contentShape(Rectangle())
         }
@@ -69,7 +70,7 @@ struct TopBarView: View {
             isVisible: isInspectorVisible)
         return Button(action: toggleInspector) {
             Image(systemName: presentation.systemImage)
-                .font(.system(size: 13, weight: .medium))
+                .font(theme.ui(points: 13, weight: .medium))
                 .frame(width: buttonSize, height: buttonSize)
                 .contentShape(Rectangle())
         }
@@ -92,6 +93,7 @@ struct TopBarView: View {
 
 /// Compact prefill/decode indicator shown to the right of the model loader.
 struct GenerationPhaseIndicator: View {
+    @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -109,7 +111,7 @@ struct GenerationPhaseIndicator: View {
                             .frame(width: 6, height: 6)
                     }
                     Text(statusText)
-                        .font(.system(size: 11, weight: .medium))
+                        .font(theme.ui(points: 11, weight: .medium))
                         .monospacedDigit()
                         .foregroundStyle(.secondary)
                         .lineLimit(1)

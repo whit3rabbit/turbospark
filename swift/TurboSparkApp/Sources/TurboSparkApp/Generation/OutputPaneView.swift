@@ -134,6 +134,7 @@ private struct ChatTranscriptView: View {
 
 /// View displaying a committed conversation message turn with Claude-style layout and hover actions.
 private struct MessageRowView: View {
+    @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
     let message: AppChatMessage
     @State private var isHovered = false
@@ -182,7 +183,7 @@ private struct MessageRowView: View {
                             .accessibilityHidden(true)
                         Text(model.selected?.alias ?? "TurboSpark")
                             .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(theme.metadataForeground)
                     }
                     .padding(.bottom, -2)
 
@@ -231,6 +232,7 @@ private struct MessageRowView: View {
 
 /// View rendering live streaming output and prefill animations.
 private struct ActiveStreamingRowView: View {
+    @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
     let output: String
     let reasoning: String
@@ -245,7 +247,7 @@ private struct ActiveStreamingRowView: View {
                     .accessibilityHidden(true)
                 Text(model.selected?.alias ?? "TurboSpark")
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(theme.metadataForeground)
             }
             .padding(.bottom, -2)
 
@@ -254,7 +256,7 @@ private struct ActiveStreamingRowView: View {
                     TaskProgressFlameIcon(size: 16)
                     Text("Thinking...")
                         .font(.callout)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(theme.metadataForeground)
                 }
                 .padding(.vertical, 8)
                 // Combine the spinner and "Thinking..." into one announcement.
@@ -281,6 +283,7 @@ private struct ActiveStreamingRowView: View {
 
 /// Collapsible disclosure view for model reasoning and chain of thought.
 private struct ReasoningDisclosureView: View {
+    @Environment(\.appTheme) private var theme
     let reasoning: String
     var defaultExpanded: Bool = false
 
@@ -294,8 +297,8 @@ private struct ReasoningDisclosureView: View {
             )
         ) {
             Text(reasoning)
-                .font(.callout.monospaced())
-                .foregroundStyle(.secondary)
+                .font(theme.code(.large))
+                .foregroundStyle(theme.metadataForeground)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -310,7 +313,7 @@ private struct ReasoningDisclosureView: View {
                     .accessibilityHidden(true)
                 Text("Thought process")
                     .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(theme.metadataForeground)
             }
         }
         .padding(.vertical, 2)

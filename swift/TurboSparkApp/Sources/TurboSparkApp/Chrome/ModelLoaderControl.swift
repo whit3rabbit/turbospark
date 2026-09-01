@@ -8,6 +8,7 @@ import TurboSpark
 /// two have different costs and an accidental eject discards a warm session
 /// (weights, KV cache and expert slots) that takes seconds to rebuild.
 struct ModelLoaderControl: View {
+    @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
 
     @ScaledMetric private var barHeight: CGFloat = 28
@@ -58,15 +59,15 @@ struct ModelLoaderControl: View {
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: model.reasoning != .off ? "brain.head.profile" : "brain")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(theme.ui(points: 10, weight: .semibold))
                     .foregroundStyle(model.reasoning != .off ? TurboSparkTheme.accentColor : Color.secondary)
 
                 Text(model.reasoningLabel(for: model.reasoning))
-                    .font(.system(size: 11, weight: .medium))
+                    .font(theme.ui(points: 11, weight: .medium))
                     .foregroundStyle(model.reasoning != .off ? Color.primary : Color.secondary)
 
                 Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 7, weight: .bold))
+                    .font(theme.ui(points: 7, weight: .bold))
                     .foregroundStyle(.tertiary)
             }
             .padding(.horizontal, 8)
@@ -123,18 +124,18 @@ struct ModelLoaderControl: View {
             HStack(spacing: 7) {
                 VStack(alignment: .leading, spacing: 0) {
                     Text(primaryText)
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(theme.ui(points: 12, weight: .semibold))
                         .lineLimit(1)
                         .foregroundStyle(.primary)
                     if let secondaryText {
                         Text(secondaryText)
-                            .font(.system(size: 9))
+                            .font(theme.ui(points: 9))
                             .lineLimit(1)
                             .foregroundStyle(.secondary)
                     }
                 }
                 Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 8, weight: .bold))
+                    .font(theme.ui(points: 8, weight: .bold))
                     .foregroundStyle(.tertiary)
             }
             .padding(.leading, 10)
@@ -157,7 +158,7 @@ struct ModelLoaderControl: View {
             model.loadModel()
         } label: {
             Label("Load", systemImage: "play.fill")
-                .font(.system(size: 11, weight: .semibold))
+                .font(theme.ui(points: 11, weight: .semibold))
                 .labelStyle(.titleAndIcon)
                 .imageScale(.small)
                 .foregroundStyle(TurboSparkTheme.accentColor)
@@ -175,7 +176,7 @@ struct ModelLoaderControl: View {
             model.unloadModel()
         } label: {
             Image(systemName: "eject.fill")
-                .font(.system(size: 10, weight: .semibold))
+                .font(theme.ui(points: 10, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 10)
                 .frame(maxHeight: .infinity)
