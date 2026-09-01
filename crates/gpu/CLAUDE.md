@@ -466,3 +466,14 @@ cargo test -p turbospark-gpu
     draft compared per element against an absolute `2e-3` and failed a
     CORRECT kernel at `cpu 16.882074, gpu 16.875`, a gap under one FP16 ULP
     at that magnitude. It uses `rel_error` against `FP16_REDUCTION` now.
+
+12. **`gdn_gated_norm` HARDCODES SILU, AND THAT IS A PER-FAMILY PROPERTY
+    STANDING IN A SHARED KERNEL.** Its header says `out = rmsnorm(y) * silu(z)`
+    and the body calls `gdn_silu`, which is correct for `qwen3_5` and for
+    every family that reaches it today. It is a CHECKPOINT field:
+    `output_gate_type`, which `qwen4_exp` (Qwen3.8-Flash-Next) declares as
+    `sigmoid`. AGENTS.md Gotcha 61's shape, latent for exactly as long as one
+    family exercises the kernel. Getting it wrong is one character and yields
+    fluent wrong output; nothing here can currently tell the two gates apart,
+    so a family that needs sigmoid owes a function constant AND a parity case
+    that reddens under the wrong one.

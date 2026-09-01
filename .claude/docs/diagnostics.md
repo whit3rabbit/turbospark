@@ -12,6 +12,18 @@ place costs seconds where a repack costs half an hour (`AGENTS.md` Gotcha 33).
 All commands run from the REPOSITORY ROOT, not from this directory.
 
 ```sh
+# What is in a Hugging Face repo, before downloading any of it. Gotcha 47 says
+# to parse the config first and these are the mechanism: KB each, no clone and
+# no `hf` login. `?blobs=true` sums to the install size, which is the first
+# refusal on a large checkpoint -- the 2026-09-01 qwen4_exp survey rejected a
+# 104 GB variant against 60 GiB free without transferring a byte, and found an
+# expert-pruned 68 GiB sibling in the same pass. `turbospark-model probe` is
+# the richer answer and is GGUF-only; these work on a safetensors repo, which
+# is where a new ARCHITECTURE usually lands first.
+curl -s "https://huggingface.co/api/models?search=<name>&limit=30"
+curl -s "https://huggingface.co/api/models/<owner>/<repo>?blobs=true"
+curl -s "https://huggingface.co/<owner>/<repo>/raw/main/config.json"
+
 # GGUF intake (ROADMAP Phase G). Reads only the HEADER of the real
 # published GGUFs -- a few MB off a 20-27 GB file, ~4 s each -- and checks it
 # three ways: the parser agrees with what llama.cpp's converter writes, every
