@@ -1000,3 +1000,21 @@ so going through `make` recompiles the whole app every single time. Use
     reports success having built nothing -- which is indistinguishable from a
     green build of your change. Read the output of the run that COMPILED, or
     `touch` the files first.
+
+39. **A PERSISTED `@Published` PROPERTY'S DECLARED DEFAULT IS UNREACHABLE
+    THROUGH THE PUBLIC INITIALIZER, AND A NAIVE TEST FOR IT PASSES OR FAILS
+    ON LEFTOVER STATE INSTEAD.** `AppModel.init()` calls `loadSettings()` as
+    its first statement, so a line like `@Published var interactionMode =
+    .chat` is overwritten before any caller can observe it -- the value a
+    fresh `AppModel()` actually reports comes from `MacAppSettings`'s own
+    default. `AppModel().interactionMode == .chat` therefore does not test
+    the property declaration; it tests whichever `settings.json` happens to
+    sit in the shared, per-PROCESS `AppStorageRoot.directory` (Gotcha 37),
+    which carries state across every test file that ran earlier in the same
+    `swift test` invocation. Mutating the property's own default left such a
+    test green; mutating `MacAppSettings`'s default (the level that is
+    actually reachable) reddened it correctly. Test the `MacAppSettings`
+    default directly, and for an `AppModel`-level round trip, delete the
+    relevant file under `AppStorageRoot` first (`try?
+    FileManager.default.removeItem(at: AppStorageRoot.file("settings.json"))`)
+    so the assertion does not depend on execution order.
