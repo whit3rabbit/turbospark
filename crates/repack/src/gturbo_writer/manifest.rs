@@ -102,6 +102,7 @@ pub(crate) fn build_manifest_json(
             "linearKeyHeadDim": arch.linear_attention.key_head_dim,
             "linearValueHeadDim": arch.linear_attention.value_head_dim,
             "linearConvKernelSize": arch.linear_attention.conv_kernel_size,
+            "linearOutputGateSigmoid": arch.linear_attention.output_gate_sigmoid,
             // ROADMAP M5. `swigluLimit` was VALIDATED AND NEVER WRITTEN, and
             // that was invisible for exactly as long as every writable
             // family's value was the `unwrap_or(0.0)` fallback. `gpt-oss` is
@@ -135,11 +136,61 @@ pub(crate) fn build_manifest_json(
             "visionEndTokenId": arch.vision.vision_end_token_id,
             "visionImageTokenId": arch.vision.image_token_id,
             "visionVideoTokenId": arch.vision.video_token_id,
-            // STILL VALIDATED AND NOT WRITTEN: `hcEps` and `hcMult`. They are
-            // DeepSeek-V4-Flash's, that family is refused at open because its
-            // kernels are unported, and no walk can produce such an install --
-            // so the hole is unreachable rather than fixed. It becomes real
-            // the day a DSV4 install can be written.
+            // **THE HOLE THE COMMENT HERE USED TO DESCRIBE IS NOW CLOSED, and
+            // it was closed by a family arriving rather than by anyone finding
+            // it.** Every `ca*` and `hc*` field was VALIDATED and written by
+            // nothing, which was unreachable only because the one family using
+            // them (DeepSeek-V4-Flash) is refused at open and no walk can
+            // produce such an install. This comment said so and said it would
+            // become real "the day a DSV4 install can be written".
+            //
+            // `qwen4_exp` is that day by a different door: it declares
+            // `hyper_connections` AND `compressed_attention`, and it HAS a
+            // repack path. Left unwritten, `arch_validation` would resolve its
+            // `hcMult` to 0 and compare against 4, so every install this walk
+            // produced would fail to open -- loud, which is the good
+            // direction, and still an install nobody could use.
+            //
+            // Unconditional for the block comment's reason, not a new one: an
+            // omitted field is resolved against a BASELINE, so an install that
+            // has four residual streams and says nothing validates them
+            // against Gemma's zero. Every earlier family writes the `NONE`
+            // zeros it already validates against, so none of them moves.
+            "caIndexNHeads": arch.compressed_attention.index_n_heads,
+            "caIndexKvHeads": arch.compressed_attention.index_kv_heads,
+            "caIndexHeadDim": arch.compressed_attention.index_head_dim,
+            "caIndexTopK": arch.compressed_attention.index_top_k,
+            "caIndexBudget": arch.compressed_attention.index_budget,
+            // SERDE RENAMES: `caCSACompressRate`, not the camelCase this file
+            // otherwise derives. A mismatch here deserializes to None and then
+            // validates against 0, which is silent.
+            "caCSACompressRate": arch.compressed_attention.csa_compress_rate,
+            "caQLoraRank": arch.compressed_attention.q_lora_rank,
+            "caOLoraRank": arch.compressed_attention.o_lora_rank,
+            "caOGroups": arch.compressed_attention.o_groups,
+            "caRopeHeadDim": arch.compressed_attention.rope_head_dim,
+            "caHCACompressRate": arch.compressed_attention.hca_compress_rate,
+            "caCompressRopeTheta": arch.compressed_attention.compress_rope_theta,
+            "caRopeScalingFactor": arch.compressed_attention.rope_scaling_factor,
+            "caRopeScalingOriginalMax": arch.compressed_attention.rope_scaling_original_max,
+            "caRopeScalingBetaFast": arch.compressed_attention.rope_scaling_beta_fast,
+            "caRopeScalingBetaSlow": arch.compressed_attention.rope_scaling_beta_slow,
+            "hcMult": arch.hyper_connections.mult,
+            "hcLowrank": arch.hyper_connections.lowrank,
+            "hcSinkhornIters": arch.hyper_connections.sinkhorn_iters,
+            "hcEps": arch.hyper_connections.eps,
+            // The n-gram PLE table (`qwen4_exp`), unconditional for the same
+            // reason. `PleConfig::NONE`'s zeros and an EMPTY id list are what
+            // every other family writes.
+            "pleNgramSize": arch.ple.ngram_size,
+            "pleHeadsPerNgram": arch.ple.heads_per_ngram,
+            "pleNgramVocabSizeBase": arch.ple.ngram_vocab_size_base,
+            "pleMakeDivisibleBy": arch.ple.make_divisible_by,
+            "pleSplitNgramParts": arch.ple.split_ngram_parts,
+            "pleEmbedDim": arch.ple.ple_embed_dim,
+            "pleConvKernelSize": arch.ple.conv_kernel_size,
+            "pleLayerIds": arch.ple.layer_ids,
+            "pleSeed": arch.ple.seed,
         },
         "quant": null,
         "files": files,

@@ -10,7 +10,12 @@
 // default 128. Raising the limit is serde_json's own documented answer; the
 // alternative is splitting the literal, which would hide the "written
 // UNCONDITIONALLY" rule that block comment exists to enforce.
-#![recursion_limit = "256"]
+//
+// `qwen4_exp` took it past 256: it added the nine `ple*` fields and closed the
+// hole where every `ca*` and `hc*` field was validated and written by nothing,
+// which is thirty more keys in the same literal. Same trade as before, and the
+// second time this has been paid, so expect a third.
+#![recursion_limit = "512"]
 
 mod arch_registry;
 pub mod control_vector;
