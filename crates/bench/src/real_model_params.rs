@@ -26,6 +26,13 @@ const DENSE_LLAMA_MAX_CONTEXT: u32 = 8192;
 /// The `gpt-oss` window (`gptoss_memory_oracle.rs`'s). Follows from the
 /// budget below: `long-synthesis` is 2,839 tokens under o200k and
 /// `2839 + 3072` does not fit 4,096.
+/// `qwen4_exp`'s `indexer_budget`, read off its `config.json` and NOT chosen.
+/// It is the largest context at which this port's dense attention reproduces
+/// the checkpoint's sparse one exactly, because the reference's indexer
+/// selects nothing at or below it. See the family's arm below for why a
+/// protocol row taken here is not comparable to any other family's.
+const QWEN4_EXP_MAX_CONTEXT: u32 = 2048;
+
 const GPTOSS_MAX_CONTEXT: u32 = 8192;
 /// The `gpt-oss` budget (`gptoss_memory_oracle.rs`'s). Harmony puts the
 /// model's reasoning in an `analysis` channel BEFORE its answer, so the three
@@ -96,6 +103,29 @@ pub const fn protocol_parameters(family: ModelFamily) -> ProtocolParameters {
         ModelFamily::Llama => ProtocolParameters {
             family,
             max_context: DENSE_LLAMA_MAX_CONTEXT,
+            max_new: PROTOCOL_MAX_NEW,
+        },
+        // **THIS ROW IS A CONSTRAINT, NOT A MEASUREMENT, AND IT CANNOT RUN
+        // THE WHOLE PROTOCOL.** Every other row here answers "what window
+        // does this checkpoint's tokenizer need"; this one answers "what
+        // window may this family be opened at at all". `qwen4_exp`'s full
+        // layers carry a query-sparse indexer this port has not implemented,
+        // and the reference's selector returns early at
+        // `kv_len <= indexer_budget` -- so at or below 2,048 attention is
+        // exactly plain causal and running there is EXACT, while above it
+        // this engine would compute dense attention where the checkpoint was
+        // trained sparse. `RealForwardRunner::open` refuses above the budget
+        // rather than being quietly wrong.
+        //
+        // The consequence is that `long-synthesis` (~2.8k tokens under this
+        // family's 248,320-entry ChatML vocab, Qwen 3.6's exactly) DOES NOT
+        // FIT. A protocol run here covers the two short cases and stops, so
+        // its rows are NOT comparable to any other family's until the indexer
+        // lands and this row can move to `PROTOCOL_MAX_CONTEXT`. Do not paste
+        // a number measured under this row beside one measured under that.
+        ModelFamily::Qwen4Exp => ProtocolParameters {
+            family,
+            max_context: QWEN4_EXP_MAX_CONTEXT,
             max_new: PROTOCOL_MAX_NEW,
         },
         // THE SECOND FAMILY THAT MOVES BOTH, and it moves them for gpt-oss's

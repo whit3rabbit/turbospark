@@ -17,6 +17,7 @@ mod expert_cache_policy;
 mod install_receipt;
 mod load_guard;
 mod manifest;
+mod ngram_table;
 mod packed_experts_layout;
 mod resident_buffer;
 mod resident_index;
@@ -26,11 +27,11 @@ mod steering_set;
 pub use arch_baselines::{
     all_known_architectures, deepseek_v4_flash_284b_a13b, gemma4_26b_a4b, gpt_oss_20b,
     known_architecture, mixtral_8x7b, muse_glimmer_30b, muse_glimmer_layer_mask, qwen3_30b_a3b,
-    qwen_gdn_dense_27b, qwen_gdn_moe_35b_a3b,
+    qwen4_exp_125b_a6b, qwen_gdn_dense_27b, qwen_gdn_moe_35b_a3b,
 };
 pub use arch_config::{
     ArchConfig, CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig,
-    ModelFamily, RopeScalingConfig, VisionConfig,
+    ModelFamily, PleConfig, RopeScalingConfig, VisionConfig,
 };
 pub use context_policy::{
     committed_bytes, gdn_state_bytes, kv_bytes_for_context, largest_context_within,
@@ -51,6 +52,10 @@ pub use manifest::{
     known_flags, load as load_manifest, peek_family, validate as validate_manifest, Manifest,
     ManifestArch, ManifestFileEntry, ManifestQuant, ManifestQuantSlot, DEFAULT_MAX_BYTES,
     EXECUTABLE_GGUF_TYPES, REQUIRED_FILES,
+};
+pub use ngram_table::{
+    load_ngram_table_layout, NgramTableLayout, NGRAM_HEADER_MAX_BYTES, NGRAM_TABLE_BLOB,
+    NGRAM_TABLE_DIR, NGRAM_TABLE_HEADER,
 };
 pub use packed_experts_layout::{
     load as load_packed_experts_layout, load_from as load_packed_layout_from, ExpertEntry,

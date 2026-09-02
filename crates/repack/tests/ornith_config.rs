@@ -271,25 +271,40 @@ fn the_dense_checkpoint_shares_the_shipped_flows_behaviour() {
 /// this is the Ornith pair exercising the same guard `qwen35_config.rs` pins
 /// for the Qwen pair.
 ///
-/// The message names the two FAMILIES rather than the raw `model_type`
+/// The message names the two FAMILIES rather than only the raw `model_type`
 /// strings, which is the more useful pair: it says what the file is and what
 /// the parser wanted, in the vocabulary the rest of the port uses.
+///
+/// **IT ALSO QUOTES THE FILE NOW, AND THAT IS A FIX RATHER THAN A REWORDING.**
+/// It used to read `model_type says qwen36, not qwen35`, which labelled a
+/// FAMILY WIRE STRING as a `model_type`. Those strings are frozen on-disk
+/// format constants that deliberately do not match anything upstream spells
+/// (`ModelFamily::as_str`'s own doc): no `config.json` in existence contains
+/// `qwen36` or `qwen35`, so a reader who grepped the file for the token in the
+/// error found nothing and had no way to tell which of the two near-identical
+/// `qwen3_5*` strings their file actually carried -- which is the ONE fact
+/// this refusal exists to convey. The family pair is kept for the reason above
+/// and the real key is quoted beside it.
+///
+/// Found while adding `qwen4_exp`, whose pair is worse (`qwen4exp` against a
+/// file saying `qwen4_exp`), so the mislabel gets more misleading with each
+/// family rather than staying put.
 #[test]
 fn the_two_ornith_checkpoints_do_not_parse_as_each_other() {
     let err = parse_qwen_gdn_dense_config(&moe_config_json())
         .expect_err("the MoE config must not parse as dense");
     assert_eq!(
         format!("{err}"),
-        "config.json invalid: model_type says qwen36, not qwen35",
-        "the refusal must name what it found and what it wanted"
+        "config.json invalid: model_type qwen3_5_moe resolves to the qwen36 family, not qwen35",
+        "the refusal must quote the file and name what it found and what it wanted"
     );
 
     let err = parse_qwen_gdn_moe_config(&dense_config_json())
         .expect_err("the dense config must not parse as MoE");
     assert_eq!(
         format!("{err}"),
-        "config.json invalid: model_type says qwen35, not qwen36",
-        "the refusal must name what it found and what it wanted"
+        "config.json invalid: model_type qwen3_5 resolves to the qwen35 family, not qwen36",
+        "the refusal must quote the file and name what it found and what it wanted"
     );
 }
 

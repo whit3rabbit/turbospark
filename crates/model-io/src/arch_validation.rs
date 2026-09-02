@@ -139,6 +139,13 @@ pub(crate) fn validate_arch(a: &ManifestArch, e: &ArchConfig) -> Result<(), Mode
         a.linear_conv_kernel_size.unwrap_or(0),
         e.linear_attention.conv_kernel_size
     );
+    // Absent means SILU, which is every pre-`qwen4_exp` family's value and
+    // what the kernel did unconditionally, so no install on disk moves.
+    check!(
+        "linearOutputGateSigmoid",
+        a.linear_output_gate_sigmoid.unwrap_or(false),
+        e.linear_attention.output_gate_sigmoid
+    );
     check!(
         "caQLoraRank",
         a.ca_q_lora_rank.unwrap_or(0),
@@ -209,6 +216,16 @@ pub(crate) fn validate_arch(a: &ManifestArch, e: &ArchConfig) -> Result<(), Mode
         a.ca_rope_scaling_beta_slow.unwrap_or(0.0),
         e.compressed_attention.rope_scaling_beta_slow
     );
+    check!(
+        "caIndexKvHeads",
+        a.ca_index_kv_heads.unwrap_or(0),
+        e.compressed_attention.index_kv_heads
+    );
+    check!(
+        "caIndexBudget",
+        a.ca_index_budget.unwrap_or(0),
+        e.compressed_attention.index_budget
+    );
     check!("hcMult", a.hc_mult.unwrap_or(0), e.hyper_connections.mult);
     check!(
         "hcSinkhornIters",
@@ -216,6 +233,61 @@ pub(crate) fn validate_arch(a: &ManifestArch, e: &ArchConfig) -> Result<(), Mode
         e.hyper_connections.sinkhorn_iters
     );
     check!("hcEps", a.hc_eps.unwrap_or(0.0), e.hyper_connections.eps);
+    check!(
+        "hcLowrank",
+        a.hc_lowrank.unwrap_or(0),
+        e.hyper_connections.lowrank
+    );
+    // The n-gram PLE table (`qwen4_exp`). Every field falls back to
+    // `PleConfig::NONE`'s zero and NOT to `gemma_defaults.ple`, for the reason
+    // the vision block below states: an absent field means the install
+    // declares no table, and another family's answer about ITS table is not
+    // evidence (AGENTS.md Gotcha 24).
+    check!(
+        "pleNgramSize",
+        a.ple_ngram_size.unwrap_or(0),
+        e.ple.ngram_size
+    );
+    check!(
+        "pleHeadsPerNgram",
+        a.ple_heads_per_ngram.unwrap_or(0),
+        e.ple.heads_per_ngram
+    );
+    check!(
+        "pleNgramVocabSizeBase",
+        a.ple_ngram_vocab_size_base.unwrap_or(0),
+        e.ple.ngram_vocab_size_base
+    );
+    check!(
+        "pleMakeDivisibleBy",
+        a.ple_make_divisible_by.unwrap_or(0),
+        e.ple.make_divisible_by
+    );
+    check!(
+        "pleSplitNgramParts",
+        a.ple_split_ngram_parts.unwrap_or(0),
+        e.ple.split_ngram_parts
+    );
+    check!(
+        "pleEmbedDim",
+        a.ple_embed_dim.unwrap_or(0),
+        e.ple.ple_embed_dim
+    );
+    check!(
+        "pleConvKernelSize",
+        a.ple_conv_kernel_size.unwrap_or(0),
+        e.ple.conv_kernel_size
+    );
+    check!("pleSeed", a.ple_seed.unwrap_or(0), e.ple.seed);
+    // The id LIST, compared whole. An absent key is an empty list, which is
+    // what `PleConfig::NONE` carries -- so a length check alone would pass an
+    // install that declares the right NUMBER of PLE layers at the wrong
+    // indices, which puts the block on a layer the checkpoint never trained.
+    check!(
+        "pleLayerIds",
+        a.ple_layer_ids.clone().unwrap_or_default(),
+        e.ple.layer_ids
+    );
     check!(
         "numHashRoutedLayers",
         a.num_hash_routed_layers.unwrap_or(0),

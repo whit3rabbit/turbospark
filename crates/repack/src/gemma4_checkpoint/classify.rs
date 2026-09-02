@@ -27,6 +27,42 @@ pub enum Gemma4Bucket {
     /// by FAMILY, not by prefix: the same `vision_tower.` string is a Gemma or
     /// `muse_glimmer` tower this port still has no kernels for.
     VisionTower,
+    /// One plane of one shard of `qwen4_exp`'s hashed n-gram PLE table.
+    ///
+    /// **THE REASON THIS BUCKET EXISTS IS THAT THE FALLBACK IS 32 GB IN THE
+    /// WRONG FILE.** These names sit under `language_model.`, so without an
+    /// arm they take [`Self::LmResident`] and the whole table lands in
+    /// `model_weights.bin` -- which is `crates/repack` Gotcha 15's
+    /// unrecognized-marker failure ("loads and generates fine, just with the
+    /// whole expert table pinned") at a size that cannot be pinned at all:
+    /// 30.8% of the checkpoint, against a 3.8 GB resident core.
+    ///
+    /// 128 shards x three planes = 384 tensors, of 2,500,012 rows each.
+    NgramShard {
+        /// `weight`, `scales` or `biases`.
+        role: &'static str,
+        /// Which of `split_ngram_parts` shards.
+        shard: usize,
+    },
+    /// One of the three int64 BUFFERS describing the n-gram table's hashing:
+    /// `layer_multipliers`, `ngram_heads_offsets`, `ngram_heads_vocab_sizes`.
+    ///
+    /// **SEPARATE FROM [`Self::LmResident`] BECAUSE THE RESIDENT WALK NARROWS
+    /// TO BF16** (Gotcha 9), and these are int64. A 20-million-entry prime
+    /// vocabulary size rounded through BF16 is not a near miss, it is a
+    /// different modulus, so every hash lands on the wrong row -- with no
+    /// error, because the bytes are the right width for the tensor they were
+    /// written as.
+    ///
+    /// They are the table's own statement of its hashing, and the reference
+    /// recomputes them from `seed` only as a fallback. Carrying them means
+    /// this port never has to derive a convention it could get wrong, which
+    /// is the control-vector lesson (Gotcha 11) applied before it costs
+    /// anything.
+    NgramMeta {
+        /// The buffer's leaf name.
+        field: &'static str,
+    },
     /// Tensor not matching known language model or multimodal patterns.
     Unknown,
 }
@@ -79,7 +115,13 @@ pub fn routed_marker(family: ModelFamily) -> &'static str {
         // takes Qwen 3.6's rather than Gemma's because it is that family's
         // safetensors sibling, and because a marker that could only ever
         // match the wrong thing is worse than one that cannot match.
-        ModelFamily::QwenGdnMoe | ModelFamily::QwenGdnDense => ".mlp.switch_mlp.",
+        // `qwen4_exp` spells its routed container identically, which is one
+        // of the things that made most of its expert half free here: the
+        // checkpoint's per-expert tensors are
+        // `model.layers.N.mlp.switch_mlp.{gate,up,down}_proj.{weight,scales,biases}`.
+        ModelFamily::QwenGdnMoe | ModelFamily::QwenGdnDense | ModelFamily::Qwen4Exp => {
+            ".mlp.switch_mlp."
+        }
         // A GGUF-derived Llama or Qwen3-MoE never reaches this classifier
         // (the GGUF walk maps routed tensors by NAME, in `gguf_names.rs`),
         // and neither has a safetensors path. DeepSeek V4 has no repack path
@@ -98,9 +140,76 @@ pub fn routed_marker(family: ModelFamily) -> &'static str {
     }
 }
 
+/// The container `qwen4_exp`'s sharded n-gram embedding lives under.
+///
+/// Every name below it is one of two things and NOTHING else, which is what
+/// makes an exhaustive match here safe: 128 x 3 shard planes, and three int64
+/// buffers. Read off the published index of
+/// `pipenetwork/Qwen3.8-Flash-Next-MLX-4bit`, all 3,215 names.
+pub const NGRAM_CONTAINER: &str = ".ple.ple_embedding.";
+
+/// The shard sub-container inside [`NGRAM_CONTAINER`].
+const NGRAM_SHARD_MARKER: &str = "ngram_embedding.shard_";
+
+/// `qwen4_exp`'s n-gram table, split into its two shapes.
+///
+/// `None` for any other `ple.` tensor -- `key_proj`, `value_proj`, the three
+/// norms and `conv1d` are ordinary per-layer weights and belong in the
+/// resident index like every other small tensor.
+///
+/// **AN UNRECOGNIZED NAME UNDER THIS CONTAINER RETURNS `None` AND SO BECOMES
+/// RESIDENT, WHICH IS THE WRONG DIRECTION**, so the two arms below are written
+/// to cover the container exhaustively rather than to match what was expected.
+/// `every_real_ngram_name_is_classified` walks the published index's own name
+/// patterns and asserts nothing under it falls through.
+fn classify_qwen4_ngram(name: &str) -> Option<Gemma4Bucket> {
+    let tail = name.split_once(NGRAM_CONTAINER)?.1;
+
+    if let Some(rest) = tail.strip_prefix(NGRAM_SHARD_MARKER) {
+        // `<index>.<role>`, e.g. `37.scales`.
+        let (index, role) = rest.split_once('.')?;
+        let shard = index.parse().ok()?;
+        let role = match role {
+            "weight" => "weight",
+            "scales" => "scales",
+            "biases" => "biases",
+            // A fourth plane would be a layout this walk has never seen.
+            // `None` here files it resident, so it is refused by name instead.
+            _ => return None,
+        };
+        return Some(Gemma4Bucket::NgramShard { role, shard });
+    }
+
+    // The three int64 buffers, matched EXACTLY rather than by prefix: they
+    // describe the hashing, and a near-miss name silently becoming resident
+    // would leave the table addressed by recomputed values while the
+    // checkpoint's own sat unread (`Gemma4Bucket::NgramMeta`).
+    let field = match tail {
+        "layer_multipliers" => "layer_multipliers",
+        "ngram_heads_offsets" => "ngram_heads_offsets",
+        "ngram_heads_vocab_sizes" => "ngram_heads_vocab_sizes",
+        _ => return None,
+    };
+    Some(Gemma4Bucket::NgramMeta { field })
+}
+
 /// Classifies source tensor name under specified model family contract.
 pub fn classify_for_family(name: &str, num_layers: usize, family: ModelFamily) -> Gemma4Bucket {
     if name.starts_with("language_model.") {
+        // THE N-GRAM TABLE, before the routed check and long before the
+        // `LmResident` fallback, and family-gated so no other checkpoint can
+        // reach it on a string collision.
+        //
+        // It is checked FIRST among the `language_model.` arms because it is
+        // the only one whose fallback is unrecoverable: a routed expert
+        // misfiled as resident makes a fat install, and this makes one that
+        // cannot open. Order is cheap insurance rather than a requirement --
+        // `ngram_embedding.` shares no substring with the routed marker.
+        if family == ModelFamily::Qwen4Exp {
+            if let Some(bucket) = classify_qwen4_ngram(name) {
+                return bucket;
+            }
+        }
         if name.contains(routed_marker(family)) {
             let role = if name.contains(".gate_proj.") {
                 Some("gate")

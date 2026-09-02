@@ -995,6 +995,18 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
     about "small model, small working set": Qwen3-30B-A3B and Mixtral 8x7B are
     within a factor of two on parameters and a factor of 29 apart on the
     number that decides whether either one runs here.
+    **RUN THE MULTIPLICATION THE OTHER WAY TOO, BECAUSE THE SLOT ALLOWLIST AND
+    NOT FREE RAM IS WHAT CAPS RESIDENCY.** `ALLOWED_CACHE_SLOTS` tops out at
+    32, so the largest cache any install can ask for is
+    `32 x sum(expert_stride)` however much memory the machine has. On a
+    fine-grained model that is a small FRACTION of the expert table:
+    `qwen4_exp` is 48 layers at 2.7648 MB, so one slot costs 126.6 MiB, 32
+    slots is 3.95 GiB, and that holds 11% of a 288-expert table or 6.25% of a
+    512-expert one. A model can pass this gotcha's fit test and still be
+    residency-starved by the allowlist, which is a const change plus whatever
+    validates against it rather than a property of the checkpoint. Read
+    Gotcha 64 with it: `top_k` sets a FLOOR of `2 * top_k` for the pipelined
+    prefill path, so a top-10 model has only 24 and 32 legal today.
 
 37. **A per-DIALECT constant standing in for a per-MODEL property is correct
     until the second model arrives, and it fails at the first decoded

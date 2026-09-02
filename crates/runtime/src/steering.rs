@@ -308,6 +308,15 @@ pub(crate) fn family_dispatches_steering(family: model_io::ModelFamily) -> bool 
         // kernels are unported, so it is refused at open before any decode
         // flow -- there is no layer loop for a hook to sit in.
         F::DeepseekV4Flash => false,
+        // Same answer, and the boundary this will need is not the same shape
+        // as any `true` arm above. Every family here joins its sublayer
+        // output to a ONE-stream residual, so a steering edit is one row at
+        // one offset. `qwen4_exp`'s stream is `hc_count` streams wide and a
+        // sublayer's output reaches it through a gated INJECT, so "the layer's
+        // contribution to the residual" is a different expression and picking
+        // the wrong side of it would steer a per-stream mix rather than the
+        // stream. Decide it with the flow, not ahead of it.
+        F::Qwen4Exp => false,
     }
 }
 

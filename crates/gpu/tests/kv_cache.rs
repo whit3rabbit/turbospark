@@ -45,6 +45,7 @@ fn toy_arch(mask: Vec<u8>) -> model_io::ArchConfig {
         swiglu_limit: 0.0,
         rope_scaling: model_io::RopeScalingConfig::NONE,
         vision: model_io::VisionConfig::NONE,
+        ple: model_io::PleConfig::NONE,
     }
 }
 
@@ -119,6 +120,7 @@ fn linear_layer_has_no_kv_slots() {
         key_head_dim: 8,
         value_head_dim: 8,
         conv_kernel_size: 4,
+        output_gate_sigmoid: false,
     };
     let cache = KvCacheManager::new(context.device(), &arch, 32, false, None, 8, None).unwrap();
     assert_eq!(cache.layer_kind(0), LayerKind::Linear);

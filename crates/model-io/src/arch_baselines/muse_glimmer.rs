@@ -1,6 +1,6 @@
 use crate::arch_config::{
     ArchConfig, CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig,
-    ModelFamily, RopeScalingConfig, VisionConfig,
+    ModelFamily, PleConfig, RopeScalingConfig, VisionConfig,
 };
 
 /// Canonical `Muse-Glimmer-30B` baseline: 52 DENSE layers, GQA at 32 query
@@ -103,6 +103,7 @@ pub fn muse_glimmer_30b() -> ArchConfig {
         swiglu_limit: 0.0,
         rope_scaling: RopeScalingConfig::NONE,
         vision: VisionConfig::NONE,
+        ple: PleConfig::NONE,
     }
 }
 

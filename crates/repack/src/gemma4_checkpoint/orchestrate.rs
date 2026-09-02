@@ -197,6 +197,23 @@ pub fn classify_all<'a>(
             Gemma4Bucket::MtpHead => mtp_bases.push(name),
             Gemma4Bucket::DflashDrafter => dflash_bases.push(name),
             Gemma4Bucket::VisionTower => vision_bases.push(name),
+            // **REFUSED BY NAME, NOT DROPPED AND NOT FILED RESIDENT.** The
+            // n-gram store's writer does not exist yet, and the two wrong
+            // answers are both silent: dropping these writes an install whose
+            // layer 1 has no table, and letting them fall to `LmResident`
+            // puts 32 GB into `model_weights.bin`. Refusing means the walk
+            // stops at classification, seconds in, rather than after an hour
+            // of streaming (`crates/repack` Gotcha 8's fixture-first rule
+            // applied to a component that has a classifier and no
+            // destination).
+            Gemma4Bucket::NgramShard { .. } | Gemma4Bucket::NgramMeta { .. } => {
+                return Err(Gemma4Error::UnsupportedTensor {
+                    tensor: name.clone(),
+                    detail: "qwen4_exp's hashed n-gram PLE table has no store writer yet; it \
+                             is 30.8% of the checkpoint and cannot go in the resident index"
+                        .to_string(),
+                })
+            }
             Gemma4Bucket::Unknown => return Err(Gemma4Error::UnknownTensor(name.clone())),
         }
     }

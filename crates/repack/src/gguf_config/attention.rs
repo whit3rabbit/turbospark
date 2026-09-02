@@ -67,5 +67,6 @@ pub fn linear_attention(m: &Meta<'_>) -> Result<LinearAttentionConfig, GgufConfi
         // implied rather than published.
         value_head_dim: inner / num_v_heads,
         conv_kernel_size: m.i64("ssm.conv_kernel")?,
+        output_gate_sigmoid: false,
     })
 }

@@ -83,6 +83,56 @@ pub fn peek_manifest_arch(model_dir: &Path) -> Result<ArchConfig, String> {
         key_head_dim: m.linear_key_head_dim.unwrap_or(0),
         value_head_dim: m.linear_value_head_dim.unwrap_or(0),
         conv_kernel_size: m.linear_conv_kernel_size.unwrap_or(0),
+        output_gate_sigmoid: m.linear_output_gate_sigmoid.unwrap_or(false),
+    };
+
+    // THE THREE `qwen4_exp` BLOCKS, and `unwrap_or` on the ZERO rather than on
+    // the baseline for the vision block's reason below: `arch_validation`
+    // compares each against `PleConfig::NONE`'s and `NONE`'s zeros, because an
+    // absent field means the install declares no such component and another
+    // family's answer about ITS component is not evidence.
+    //
+    // Wired in the SAME change as the writer and the validator, which is the
+    // whole lesson of the vision block's own story: a manifest field has three
+    // consumers and only two of them fail loudly when one is missed. Reading
+    // these back matters more than the tower's did, because
+    // `hyper_connections.mult` decides how WIDE the residual stream is -- a
+    // peeker resolving it to zero hands a caller an `ArchConfig` that says one
+    // stream for a model that has four.
+    arch.compressed_attention = model_io::CompressedAttentionConfig {
+        index_n_heads: m.ca_index_n_heads.unwrap_or(0),
+        index_kv_heads: m.ca_index_kv_heads.unwrap_or(0),
+        index_head_dim: m.ca_index_head_dim.unwrap_or(0),
+        index_top_k: m.ca_index_top_k.unwrap_or(0),
+        index_budget: m.ca_index_budget.unwrap_or(0),
+        csa_compress_rate: m.ca_csa_compress_rate.unwrap_or(0),
+        q_lora_rank: m.ca_q_lora_rank.unwrap_or(0),
+        o_lora_rank: m.ca_o_lora_rank.unwrap_or(0),
+        o_groups: m.ca_o_groups.unwrap_or(0),
+        rope_head_dim: m.ca_rope_head_dim.unwrap_or(0),
+        hca_compress_rate: m.ca_hca_compress_rate.unwrap_or(0),
+        compress_rope_theta: m.ca_compress_rope_theta.unwrap_or(0.0),
+        rope_scaling_factor: m.ca_rope_scaling_factor.unwrap_or(0.0),
+        rope_scaling_original_max: m.ca_rope_scaling_original_max.unwrap_or(0),
+        rope_scaling_beta_fast: m.ca_rope_scaling_beta_fast.unwrap_or(0.0),
+        rope_scaling_beta_slow: m.ca_rope_scaling_beta_slow.unwrap_or(0.0),
+    };
+    arch.hyper_connections = model_io::HyperConnectionConfig {
+        mult: m.hc_mult.unwrap_or(0),
+        lowrank: m.hc_lowrank.unwrap_or(0),
+        sinkhorn_iters: m.hc_sinkhorn_iters.unwrap_or(0),
+        eps: m.hc_eps.unwrap_or(0.0),
+    };
+    arch.ple = model_io::PleConfig {
+        ngram_size: m.ple_ngram_size.unwrap_or(0),
+        heads_per_ngram: m.ple_heads_per_ngram.unwrap_or(0),
+        ngram_vocab_size_base: m.ple_ngram_vocab_size_base.unwrap_or(0),
+        make_divisible_by: m.ple_make_divisible_by.unwrap_or(0),
+        split_ngram_parts: m.ple_split_ngram_parts.unwrap_or(0),
+        ple_embed_dim: m.ple_embed_dim.unwrap_or(0),
+        conv_kernel_size: m.ple_conv_kernel_size.unwrap_or(0),
+        layer_ids: m.ple_layer_ids.clone().unwrap_or_default(),
+        seed: m.ple_seed.unwrap_or(0),
     };
 
     // THE VISION TOWER, AND `unwrap_or(0)` RATHER THAN THE BASELINE, which is

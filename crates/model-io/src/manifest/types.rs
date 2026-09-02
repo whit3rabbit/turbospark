@@ -99,6 +99,15 @@ pub struct ManifestArch {
     /// Linear attention depthwise conv kernel size.
     #[serde(default)]
     pub linear_conv_kernel_size: Option<i64>,
+    /// The gated DeltaNet output norm's activation: sigmoid when true, silu
+    /// when false or absent. `qwen4_exp`'s `output_gate_type`.
+    ///
+    /// Absent means SILU, which is what every family before `qwen4_exp`
+    /// declares and what `gdn_gated_norm` did unconditionally -- so every
+    /// install already on disk keeps the behaviour it was written with
+    /// (`crates/gpu` Gotcha 12).
+    #[serde(default)]
+    pub linear_output_gate_sigmoid: Option<bool>,
 
     /// Compressed attention Q LoRA rank.
     #[serde(default)]
@@ -142,15 +151,46 @@ pub struct ManifestArch {
     /// Compressed attention RoPE scaling beta slow.
     #[serde(default)]
     pub ca_rope_scaling_beta_slow: Option<f64>,
-    /// Hyper-connection multiplier.
+    /// Indexer key/value head count (`qwen4_exp`'s `indexer_kv_heads`).
+    #[serde(default)]
+    pub ca_index_kv_heads: Option<i64>,
+    /// Context length below which the indexer selects nothing
+    /// (`qwen4_exp`'s `indexer_budget`).
+    #[serde(default)]
+    pub ca_index_budget: Option<i64>,
+    /// Hyper-connection multiplier: the number of residual streams.
     #[serde(default)]
     pub hc_mult: Option<i64>,
-    /// Hyper-connection Sinkhorn iterations.
+    /// Hyper-connection Sinkhorn iterations. DeepSeek mHC only.
     #[serde(default)]
     pub hc_sinkhorn_iters: Option<i64>,
-    /// Hyper-connection epsilon.
+    /// Hyper-connection epsilon. DeepSeek mHC only.
     #[serde(default)]
     pub hc_eps: Option<f64>,
+    /// Rank of the stream-mixing bottleneck. `qwen4_exp` only.
+    #[serde(default)]
+    pub hc_lowrank: Option<i64>,
+    /// The hashed n-gram PLE table (`qwen4_exp`). Absent means no table,
+    /// which is `PleConfig::NONE` and what every other family declares.
+    #[serde(default)]
+    pub ple_ngram_size: Option<i64>,
+    #[serde(default)]
+    pub ple_heads_per_ngram: Option<i64>,
+    #[serde(default)]
+    pub ple_ngram_vocab_size_base: Option<i64>,
+    #[serde(default)]
+    pub ple_make_divisible_by: Option<i64>,
+    #[serde(default)]
+    pub ple_split_ngram_parts: Option<i64>,
+    #[serde(default)]
+    pub ple_embed_dim: Option<i64>,
+    #[serde(default)]
+    pub ple_conv_kernel_size: Option<i64>,
+    /// ONE-BASED layer ids, as the checkpoint spells them.
+    #[serde(default)]
+    pub ple_layer_ids: Option<Vec<i64>>,
+    #[serde(default)]
+    pub ple_seed: Option<i64>,
     /// Hash-routed leading MoE layer count.
     #[serde(default)]
     pub num_hash_routed_layers: Option<i64>,

@@ -16,6 +16,7 @@ mod expert_blobs;
 mod manifest_quant;
 mod mtp;
 mod narrow;
+mod ngram;
 mod orchestrate;
 mod shards;
 mod vision;
@@ -33,6 +34,7 @@ pub use manifest_quant::{gemma4_manifest_quant, manifest_quant, manifest_quant_f
 pub use narrow::{
     convert_raw_to_fp16, narrow_raw_to_bf16, pass_through_packed, ConvertedFp16, NarrowedRaw,
 };
+pub use ngram::{NgramTableSpec, NgramTableWriter};
 pub use orchestrate::{
     orchestrate_gemma4_checkpoint, orchestrate_gemma4_checkpoint_sharded, Gemma4RepackOutput,
 };

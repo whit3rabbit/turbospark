@@ -72,7 +72,18 @@ pub fn manifest_quant_for(
     };
     let l0 = "language_model.model.layers.0";
     let (attention, router, shared, routed) = match family {
-        ModelFamily::QwenGdnMoe => (
+        // `qwen4_exp` probes at the same four paths, `l0` included. Its layer
+        // 0 is LINEAR for the same reason Qwen 3.6's is (`(i + 1) % 4 == 0`
+        // puts the first full-attention layer at index 3), it has a gated
+        // shared expert, and its routed container is spelled the same.
+        //
+        // VERIFIED AGAINST THE PUBLISHED TENSOR INDEX, not assumed: all 3,215
+        // names carry the `language_model.model.` prefix `l0` already builds.
+        // The reference implementation reads them WITHOUT it, because its own
+        // `sanitize()` strips the prefix on load -- so the reference is
+        // evidence about that reader and not about the artifact, and taking
+        // its spelling would have missed every tensor in the file.
+        ModelFamily::QwenGdnMoe | ModelFamily::Qwen4Exp => (
             format!("{l0}.linear_attn.in_proj_qkv"),
             format!("{l0}.mlp.gate"),
             format!("{l0}.mlp.shared_expert.gate_proj"),

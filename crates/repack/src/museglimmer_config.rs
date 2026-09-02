@@ -39,7 +39,7 @@
 
 use model_io::{
     muse_glimmer_layer_mask, ArchConfig, CompressedAttentionConfig, HyperConnectionConfig,
-    LinearAttentionConfig, ModelFamily, RopeScalingConfig, VisionConfig,
+    LinearAttentionConfig, ModelFamily, PleConfig, RopeScalingConfig, VisionConfig,
 };
 
 use crate::gemma4_checkpoint::Gemma4Error;
@@ -195,6 +195,7 @@ pub fn parse_muse_glimmer_config(json: &str) -> Result<ArchConfig, Gemma4Error> 
         swiglu_limit: 0.0,
         rope_scaling: RopeScalingConfig::NONE,
         vision: VisionConfig::NONE,
+        ple: PleConfig::NONE,
     })
 }
 

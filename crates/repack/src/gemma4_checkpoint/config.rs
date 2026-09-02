@@ -2,7 +2,7 @@
 
 use model_io::{
     ArchConfig, CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig,
-    ModelFamily, RopeScalingConfig, VisionConfig,
+    ModelFamily, PleConfig, RopeScalingConfig, VisionConfig,
 };
 
 use crate::ranged_download::DownloadError;
@@ -12,8 +12,27 @@ pub enum Gemma4Error {
     Config(String),
     MissingTensor(String),
     MissingCompanion(String),
-    UnsupportedDtype { tensor: String, dtype: String },
-    ShapeMismatch { tensor: String, detail: String },
+    UnsupportedDtype {
+        tensor: String,
+        dtype: String,
+    },
+    ShapeMismatch {
+        tensor: String,
+        detail: String,
+    },
+    /// A tensor this walk RECOGNIZES and has no destination for yet.
+    ///
+    /// Distinct from [`Self::UnknownTensor`] on purpose, and the difference is
+    /// who has to act: an unknown name means the classifier needs an arm,
+    /// while this means the classifier has one and the WRITER does not. Both
+    /// stop the walk, and conflating them would send a reader to the wrong
+    /// file.
+    UnsupportedTensor {
+        /// The tensor's name in the source checkpoint.
+        tensor: String,
+        /// What is missing, in one clause.
+        detail: String,
+    },
     UnknownTensor(String),
     Download(DownloadError),
 }
@@ -31,6 +50,12 @@ impl std::fmt::Display for Gemma4Error {
             }
             Gemma4Error::ShapeMismatch { tensor, detail } => {
                 write!(f, "tensor {tensor}: {detail}")
+            }
+            Gemma4Error::UnsupportedTensor { tensor, detail } => {
+                write!(
+                    f,
+                    "tensor {tensor} is recognized but cannot be written: {detail}"
+                )
             }
             Gemma4Error::UnknownTensor(name) => write!(f, "unclassifiable tensor: {name}"),
             Gemma4Error::Download(e) => write!(f, "{e}"),
@@ -144,6 +169,7 @@ pub fn parse_gemma4_config(json: &str) -> Result<ArchConfig, Gemma4Error> {
         swiglu_limit: 0.0,
         rope_scaling: RopeScalingConfig::NONE,
         vision: VisionConfig::NONE,
+        ple: PleConfig::NONE,
     })
 }
 

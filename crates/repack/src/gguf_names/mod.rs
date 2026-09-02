@@ -163,10 +163,17 @@ pub fn map_gguf_name(name: &str, family: ModelFamily) -> Result<GgufMapping, Ggu
             ModelFamily::Qwen3Moe => qwen::map_qwen3moe_layer(suffix, layer),
             ModelFamily::GptOss => gpt_oss::map_gpt_oss_layer(suffix, layer),
             ModelFamily::QwenGdnDense => qwen::map_qwen_gdn_dense_layer(suffix, layer),
-            // Neither is published as a GGUF; an unmapped name is the right
-            // answer rather than a neighbour's table, which would map names
-            // these families do not have.
-            ModelFamily::DeepseekV4Flash | ModelFamily::MuseGlimmer => None,
+            // Neither of the first two is published as a GGUF; an unmapped
+            // name is the right answer rather than a neighbour's table,
+            // which would map names these families do not have.
+            //
+            // `qwen4_exp` IS published as a GGUF and is unmapped anyway. Its
+            // trunk names would largely fall out of Qwen 3.6's table, and
+            // that is exactly the trap: borrowing it would map the shared
+            // two thirds and silently drop the n-gram shards, the
+            // hyper-connections and the indexer, which is a partial install
+            // that opens. Unmapped until the whole file has a table.
+            ModelFamily::DeepseekV4Flash | ModelFamily::MuseGlimmer | ModelFamily::Qwen4Exp => None,
         }
         .ok_or_else(unmapped);
     }
@@ -200,10 +207,19 @@ pub fn gguf_architecture(family: ModelFamily) -> Option<&'static str> {
         // string, which is what keeps `family_for_architecture` injective.
         // Read off `ornith-ai/Ornith-1.5-9B-GGUF`.
         ModelFamily::QwenGdnDense => Some("qwen35"),
-        // Neither is published as a GGUF. `None` is the honest answer:
-        // inventing a string here would make `family_for_architecture` claim
-        // to recognize a file that does not exist.
-        ModelFamily::DeepseekV4Flash | ModelFamily::MuseGlimmer => None,
+        // Neither of the first two is published as a GGUF. `None` is the
+        // honest answer: inventing a string here would make
+        // `family_for_architecture` claim to recognize a file that does not
+        // exist.
+        //
+        // `qwen4_exp` is the opposite case and lands on the same answer.
+        // Real GGUFs exist (unsloth's, bartowski's), so a string COULD be
+        // read off one -- but this function feeds `family_for_architecture`,
+        // whose whole contract is the architectures that RUN, and this port
+        // refuses the GGUF at `gguf_config`. `Some` here would let a caller
+        // mistake recognition for support, which is the distinction this
+        // table exists to keep.
+        ModelFamily::DeepseekV4Flash | ModelFamily::MuseGlimmer | ModelFamily::Qwen4Exp => None,
     }
 }
 

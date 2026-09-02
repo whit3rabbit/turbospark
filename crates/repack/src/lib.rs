@@ -10,7 +10,12 @@
 // default 128. Raising the limit is serde_json's own documented answer; the
 // alternative is splitting the literal, which would hide the "written
 // UNCONDITIONALLY" rule that block comment exists to enforce.
-#![recursion_limit = "256"]
+//
+// `qwen4_exp` took it past 256: it added the nine `ple*` fields and closed the
+// hole where every `ca*` and `hc*` field was validated and written by nothing,
+// which is thirty more keys in the same literal. Same trade as before, and the
+// second time this has been paid, so expect a third.
+#![recursion_limit = "512"]
 
 mod arch_registry;
 pub mod control_vector;
@@ -51,9 +56,10 @@ pub use gemma4_checkpoint::{
     write_muse_glimmer_install_streamed, write_qwen_gdn_dense_install,
     write_qwen_gdn_dense_install_streamed, write_qwen_gdn_moe_install,
     write_qwen_gdn_moe_install_streamed, ConvertedFp16, Gemma4Bucket, Gemma4Error, Gemma4Quant,
-    Gemma4RepackOutput, Gemma4Shards, NarrowedRaw, VisionRead, AFFINE_1BIT_GROUP_SIZE,
-    AFFINE_2BIT_GROUP_SIZE, AFFINE_GROUP_SIZE, DFLASH_PREFIX, GTURBO_PAGE_BYTES,
-    VISION_BLOCK_ROLES, VISION_INSTALL_PREFIX, VISION_PREFIX, VISION_RESIDENT_TENSORS,
+    Gemma4RepackOutput, Gemma4Shards, NarrowedRaw, NgramTableSpec, NgramTableWriter, VisionRead,
+    AFFINE_1BIT_GROUP_SIZE, AFFINE_2BIT_GROUP_SIZE, AFFINE_GROUP_SIZE, DFLASH_PREFIX,
+    GTURBO_PAGE_BYTES, VISION_BLOCK_ROLES, VISION_INSTALL_PREFIX, VISION_PREFIX,
+    VISION_RESIDENT_TENSORS,
 };
 pub use gguf_checkpoint::{
     dtype_tag_for_ggml_type, gguf_manifest_quant, orchestrate_gguf_checkpoint,
@@ -80,7 +86,8 @@ pub use museglimmer_config::{
     muse_glimmer_mask, parse_muse_glimmer_config, parse_muse_glimmer_scalars, MuseGlimmerScalars,
 };
 pub use qwen36_config::{
-    parse_qwen_gdn_dense_config, parse_qwen_gdn_moe_config, parse_vision_config,
+    parse_qwen4_exp_config, parse_qwen_gdn_dense_config, parse_qwen_gdn_moe_config,
+    parse_vision_config,
 };
 pub use ranged_download::{
     fetch_gguf_header, fetch_safetensors_header, ByteProgressCallback, DownloadError,
