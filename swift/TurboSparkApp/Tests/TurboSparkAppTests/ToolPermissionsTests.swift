@@ -443,5 +443,62 @@ final class ToolPermissionsTests: XCTestCase {
             XCTFail("Destructive MCP call should still prompt for approval, got \(dangerousDecision)")
         }
     }
+
+    // MARK: - Web Category Permissions (WebSearch & WebFetch)
+
+    func testPermissionEngineWebCategoryPermissions() {
+        // 1. Explicit Deny in Project Settings
+        var denyPerms = AppProjectPermissions.standard
+        denyPerms.web = .deny
+        let denyProject = AppProject(name: "DenyWebProject", permissions: denyPerms)
+
+        let searchCall = AppToolCall(name: "WebSearch", arguments: ["query": "Swift releases"], category: .web)
+        let searchDenyDecision = AppToolPermissionEngine.evaluate(call: searchCall, project: denyProject)
+        if case .deny(let reason) = searchDenyDecision {
+            XCTAssertTrue(reason.contains("Web & Network Requests") && reason.contains("Deny"))
+        } else {
+            XCTFail("Expected .deny for WebSearch when web=.deny, got \(searchDenyDecision)")
+        }
+
+        let fetchCall = AppToolCall(name: "WebFetch", arguments: ["url": "https://swift.org"], category: .web)
+        let fetchDenyDecision = AppToolPermissionEngine.evaluate(call: fetchCall, project: denyProject)
+        if case .deny(let reason) = fetchDenyDecision {
+            XCTAssertTrue(reason.contains("Web & Network Requests") && reason.contains("Deny"))
+        } else {
+            XCTFail("Expected .deny for WebFetch when web=.deny, got \(fetchDenyDecision)")
+        }
+
+        // 2. Ask in Project Settings
+        var askPerms = AppProjectPermissions.standard
+        askPerms.web = .ask
+        let askProject = AppProject(name: "AskWebProject", permissions: askPerms)
+
+        let searchAskDecision = AppToolPermissionEngine.evaluate(call: searchCall, project: askProject)
+        if case .ask = searchAskDecision {
+            // Expected
+        } else {
+            XCTFail("Expected .ask for WebSearch when web=.ask, got \(searchAskDecision)")
+        }
+
+        // 3. Allow in Project Settings
+        var allowPerms = AppProjectPermissions.standard
+        allowPerms.web = .allow
+        let allowProject = AppProject(name: "AllowWebProject", permissions: allowPerms)
+
+        let searchAllowDecision = AppToolPermissionEngine.evaluate(call: searchCall, project: allowProject)
+        XCTAssertEqual(searchAllowDecision, .allow)
+
+        let fetchAllowDecision = AppToolPermissionEngine.evaluate(call: fetchCall, project: allowProject)
+        XCTAssertEqual(fetchAllowDecision, .allow)
+
+        // 4. High-risk web call (private/metadata host) must still ask even if web=.allow
+        let privateFetchCall = AppToolCall(name: "WebFetch", arguments: ["url": "http://169.254.169.254/latest/meta-data"], category: .web)
+        let privateDecision = AppToolPermissionEngine.evaluate(call: privateFetchCall, project: allowProject)
+        if case .ask(let assessment, _) = privateDecision {
+            XCTAssertTrue(assessment.isHighRisk, "Fetching private/metadata host must be classified as high risk.")
+        } else {
+            XCTFail("Private host fetch must force .ask even when web=.allow, got \(privateDecision)")
+        }
+    }
 }
 
