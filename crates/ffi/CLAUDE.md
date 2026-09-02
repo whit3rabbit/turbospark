@@ -422,3 +422,53 @@ make swift-test-real MODEL=~/models/qwen38-27b-mtp.gturbo \
     `server_registry.rs` cover the bound, the count and the reset; making
     `drain` a peek reddens all three plus the three C-surface polling cases,
     which is the invariant doing the work rather than an over-broad test.
+
+16. **`open.rs`'S `open()` OPTS INTO PREFIX KV REUSE, THE ONE PLACE IT
+    DIVERGES FROM `open_session`, AND `generate.rs` OPTS INTO CHUNKED
+    PREFILL TOO -- NEITHER TAKES A FLAG.** Added 2026-09-01. Gotcha 5 already
+    said `open.rs` mirrors `crates/cli/src/generate.rs::open_session` step
+    for step; that function backs the CLI's single-shot `--prompt` path, not
+    `--chat`, so it never calls `runner.set_prefix_reuse(true)`.
+    `TurboSparkApp` is multi-turn by construction -- one long-lived session
+    per loaded model, `generate` called once per chat message for the
+    session's whole lifetime -- exactly the shape `--chat`'s own header names
+    as its reason for opting in ("the ONE caller that opts in by default,
+    because it is the one that is multi-turn by construction and is named by
+    no frozen row"), so this file now does too. Safe unconditionally: a
+    family this cannot help (recurrent state, a sliding-window ring past its
+    slack) silently returns 0 reused tokens rather than erroring
+    (`crates/runtime/CLAUDE.md` Gotcha 30), so the floor is "no worse than
+    before", never a new failure mode.
+
+    `generate.rs` separately routes `(Engine::Real(runner), None)` through
+    `run_raw_completion_chunked_cancellable` at `foundation::DEFAULT_CHUNK_SIZE`
+    whenever `runner.supports_chunked_prefill()` -- the SAME predicate
+    `crates/server/CLAUDE.md` Gotcha 19 documents for `RealChatModel`, added
+    here because this crate had simply never been wired to it (unlike prefix
+    reuse, there was no historical reason: chunked-vs-sequential is a
+    STANDING byte-identity guarantee this crate did not need to re-prove, only
+    to reach). **Gated on `image_parts.is_empty()` as well**, matching
+    `crates/server/CLAUDE.md` Gotcha 21's own discipline: the vision-capable
+    family's chunked driver refuses an open image prompt BY NAME
+    (`crates/runtime/CLAUDE.md` Gotcha 14), so composing the two on a call
+    this crate's own `attach_images` already handles separately would turn an
+    image turn that used to succeed into one that fails, on a family whose
+    general chunked-prefill support has nothing to do with whether THIS call
+    happens to carry a picture.
+
+    `GenerateResult.reusedPrefixTokens` reports the count (0 when nothing was
+    reused), for the reason `crates/cli/src/chat.rs`'s `[prefix-reuse]`
+    footer line exists: an integration that silently no-ops reads exactly
+    like one that works, and that file's own header records the feature
+    reading 0/33 through two rounds of an implementation that looked correct
+    everywhere else. **That exact failure mode is what caught the first
+    version of this wiring, in Swift rather than in Rust.** A
+    `testASecondTurnReusesThePreviousTurnsKV` case
+    (`swift/TurboSpark/Tests/TurboSparkTests/RealModelTests.swift`) sends two
+    turns on one real session and asserts the second turn's
+    `reusedPrefixTokens` is a MAJORITY of the first turn's `promptTokens`, not
+    merely nonzero -- measured 14 of 18 (78%) on the real Gemma 4 install,
+    consistent with `--chat`'s own recorded 13/33 and 29/49 rather than full
+    recovery, which the header there also explains. Only `swift test` can run
+    it (Gotcha 6: `tests/c_surface.rs` is deliberately model-free), which is
+    why the assertion belongs there and not in this crate's own suite.

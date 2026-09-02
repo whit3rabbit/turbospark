@@ -504,6 +504,38 @@ pub(crate) fn generate(
             &predicate,
             &mut on_progress,
         ),
+        // Chunked prefill wins over the sequential loop whenever this
+        // install's family can serve it -- the SAME predicate
+        // `crates/cli`'s default `--prefill-chunk` wiring and
+        // `crates/server`'s `RealChatModel::run_completion` both check
+        // (`crates/server/CLAUDE.md` Gotcha 19), so a caller who never
+        // touched a chunk-size knob still gets it. **Gated on
+        // `image_parts.is_empty()` too, matching the server's own
+        // discipline (Gotcha 21): a vision-carrying prompt takes the qwen
+        // dense flow's driver, which refuses an open image prompt BY NAME
+        // (`crates/runtime/CLAUDE.md` Gotcha 14) rather than silently
+        // mishandling it, so composing the two here would turn an image
+        // turn that used to succeed into one that fails on a family whose
+        // general chunked-prefill support has nothing to do with whether
+        // THIS call happens to carry a picture.** Decode's per-token
+        // progress callback is unaffected either way, since only the
+        // PREFILL portion routes differently.
+        #[cfg(target_os = "macos")]
+        (Engine::Real(runner), None)
+            if image_parts.is_empty() && runner.supports_chunked_prefill() =>
+        {
+            runtime::run_raw_completion_chunked_cancellable(
+                runner.as_mut(),
+                &session.tokenizer,
+                &prompt_ids,
+                &config,
+                session.max_context,
+                vocab_size,
+                foundation::DEFAULT_CHUNK_SIZE as usize,
+                &predicate,
+                &mut on_progress,
+            )
+        }
         #[cfg(target_os = "macos")]
         (Engine::Real(runner), None) => runtime::run_raw_completion_cancellable(
             runner.as_mut(),
@@ -545,6 +577,7 @@ pub(crate) fn generate(
     Ok(GenerateResult {
         prompt_tokens: result.prompt_tokens,
         new_tokens: result.new_tokens,
+        reused_prefix_tokens: result.reused_prefix_tokens,
         prefill_seconds: result.prefill_seconds,
         decode_seconds: result.decode_seconds,
         stop_reason: stop_reason_name(result.reason).to_string(),

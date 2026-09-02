@@ -23,6 +23,14 @@ public struct GenerationResult: Decodable, Sendable, Equatable {
     public let promptTokens: Int
     /// Number of new tokens generated.
     public let newTokens: Int
+    /// How many of `promptTokens` continued from the previous turn's KV
+    /// instead of being re-prefilled. Zero on a session's first turn, on one
+    /// where the render diverged anywhere, or on a family this cannot help
+    /// (recurrent state, a sliding-window ring past its slack) -- never an
+    /// error, just a full prefill that turn. Decoded with a default so a
+    /// binding built against an older engine still decodes the rest of the
+    /// struct.
+    public let reusedPrefixTokens: Int
     /// Time spent in the prompt prefill phase in seconds.
     public let prefillSeconds: Double
     /// Time spent in the token decode phase in seconds.
@@ -57,6 +65,7 @@ public struct GenerationResult: Decodable, Sendable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case promptTokens
         case newTokens
+        case reusedPrefixTokens
         case prefillSeconds
         case decodeSeconds
         case stopReason
@@ -70,6 +79,7 @@ public struct GenerationResult: Decodable, Sendable, Equatable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         promptTokens = try c.decode(Int.self, forKey: .promptTokens)
         newTokens = try c.decode(Int.self, forKey: .newTokens)
+        reusedPrefixTokens = try c.decodeIfPresent(Int.self, forKey: .reusedPrefixTokens) ?? 0
         prefillSeconds = try c.decode(Double.self, forKey: .prefillSeconds)
         decodeSeconds = try c.decode(Double.self, forKey: .decodeSeconds)
         stopReason = try c.decode(StopReason.self, forKey: .stopReason)

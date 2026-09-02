@@ -370,6 +370,19 @@ pub struct SpecialTokensInfo {
 pub struct GenerateResult {
     pub prompt_tokens: usize,
     pub new_tokens: usize,
+    /// How many of `promptTokens` continued from the previous turn's KV
+    /// instead of being re-prefilled (`runtime::kv_prefix`, opted into
+    /// unconditionally at `open`; see `open.rs`'s module doc). Zero on a
+    /// session's first turn, on one where the render diverged anywhere
+    /// (`/clear`-equivalent, an edited history, a re-tokenization that
+    /// landed differently), or on a family with recurrent state or a
+    /// sliding-window ring past its slack -- never an error, just a full
+    /// prefill. Reported for the reason `crates/cli/src/chat.rs`'s
+    /// `[prefix-reuse]` footer line exists: an integration that silently
+    /// does nothing reads exactly like one that is working, and this field
+    /// is what would have shown "0/33" instead of a working number looking
+    /// plausible.
+    pub reused_prefix_tokens: usize,
     pub prefill_seconds: f64,
     pub decode_seconds: f64,
     /// `endOfTurn` | `toolCalls` | `eos` | `stopString` | `maxTokens` |

@@ -267,6 +267,30 @@ The defaults are the CLI's, so sending nothing gives what
 refused when the conversation is long, so a full context generates into
 whatever room is left instead of failing.
 
+**Two prefill optimizations are on unconditionally, and neither takes a
+flag.** Every `generate` call still renders the WHOLE conversation and sends
+it whole, exactly as documented above; what changed (2026-09-01) is how much
+of that render actually has to be re-computed.
+
+A session continues from the previous turn's KV wherever the new render
+shares a prefix with the old one (`runtime::kv_prefix`, the same mechanism
+`crates/cli`'s `--chat` REPL opts into). Enabled at `open` because a GUI
+session is multi-turn by construction, the same reason `--chat` is. Falls
+back to a full prefill -- never an error -- on a session's first turn, on a
+render that diverged anywhere (an edited history, a different reasoning
+level), or on a family this cannot help (recurrent state, a sliding-window
+ring past its slack). `GenerationResult.reusedPrefixTokens` reports how much
+of `promptTokens` was skipped; read it if a status panel wants to show it,
+but there is nothing to configure.
+
+Prefill also runs CHUNKED rather than sequentially whenever the open
+install's family supports it (Gemma 4 and the dense half of `llama`, the
+same predicate `crates/server`'s automatic dispatch checks) -- a caller
+cannot tell from the API surface which prefill shape ran; both produce
+byte-identical tokens. Skipped when the turn carries an image, since the
+vision-capable family's chunked driver refuses an open image prompt by name
+rather than composing the two on an unreachable path.
+
 ### Cancelling
 
 ```swift
@@ -960,9 +984,17 @@ Stated so the omissions are decisions on the record rather than gaps.
   sessions in one process is untested and each pins gigabytes.
 - **iOS.** The Metal kernels and the expert streamer's `pread` path have
   never been run there.
-- **Prompt caching across turns.** Each `generate` renders the whole
-  conversation and prefills it. A long chat re-reads its history every turn.
 - **Intel Macs.** See above.
+
+Prompt caching across turns is no longer on this list -- see "Generating"
+above. It read "Each `generate` renders the whole conversation and prefills
+it. A long chat re-reads its history every turn" until 2026-09-01, which was
+true of the FFI even though `runtime::kv_prefix` had already shipped and
+`crates/cli`'s `--chat` REPL had already opted into it: this crate's `open`
+mirrored the CLI's single-shot `open_session` rather than its multi-turn
+`chat.rs`, so `TurboSparkApp` -- a multi-chat app built on exactly one
+long-lived session per loaded model -- re-prefilled its whole transcript
+every message with the 11.6x prefill win sitting unreachable one file away.
 
 ---
 

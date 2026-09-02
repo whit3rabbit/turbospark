@@ -27,10 +27,10 @@ public enum ReasoningLevelPolicy {
         efforts: [GenerateOptions.Reasoning]
     ) -> [GenerateOptions.Reasoning] {
         switch support {
-        // `.none` is no session and `.some(.none)` is a loaded checkpoint
+        // `nil` is no session and `.some(.none)` is a loaded checkpoint
         // whose template names no reasoning key. Same answer for different
         // reasons: nothing has been read, or there is nothing to read.
-        case .none, .some(.none):
+        case nil, .some(.none):
             return [.off]
         case .some(.toggleOnly):
             // Its template reads `enable_thinking` and no effort key, so every

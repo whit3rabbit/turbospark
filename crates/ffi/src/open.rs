@@ -2,7 +2,12 @@
 //!
 //! This mirrors `crates/cli/src/generate.rs::open_session` step for step, and
 //! it was written by reading that function rather than by reinventing the
-//! sequence. Two traps it documents are live here too:
+//! sequence. **One deliberate divergence**: this file also opts into
+//! `set_prefix_reuse(true)`, which `open_session` does not -- that call is
+//! `crates/cli/src/chat.rs`'s alone, because a GUI session is multi-turn by
+//! construction in exactly the same way `--chat` is, and `open_session`
+//! backs the CLI's single-shot `--prompt` path instead. Two traps it
+//! documents are live here too:
 //!
 //! - The resolved context window is carried on the [`Session`] and never
 //!   re-read from the caller's request. Under `auto` the request carries no
@@ -287,7 +292,7 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
     // front ends disagree, which is why that module left `crates/cli` when
     // the server needed it.
     let choice = runtime::resolve_drafter(requested_drafter, dir);
-    let runner = runtime::RealForwardRunner::open_with_slot_policy_speculation_and_steering(
+    let mut runner = runtime::RealForwardRunner::open_with_slot_policy_speculation_and_steering(
         dir,
         arch,
         plan.resolved as usize,
@@ -299,6 +304,24 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
         steering_policy.clone(),
     )
     .map_err(|e| e.to_string())?;
+    // **THE ONE PLACE THIS FILE DELIBERATELY DOES NOT MIRROR
+    // `open_session`.** A GUI session is multi-turn by construction --
+    // `swift/TurboSparkApp` opens one session per loaded model and calls
+    // `generate` on it once per chat message for the session's whole
+    // lifetime, exactly the shape `crates/cli/src/chat.rs`'s `--chat` REPL
+    // is built on, and that file opts in for the identical reason ("the ONE
+    // caller that opts in by default, because it is the one that is
+    // multi-turn by construction and is named by no frozen row"). `generate`
+    // already re-renders the WHOLE conversation every call
+    // (`docs/SWIFT_BINDINGS.md`'s "Generating" section), which is exactly
+    // what `runtime::kv_prefix`'s longest-common-prefix match needs to find
+    // anything to reuse. Safe to enable unconditionally: a family with
+    // recurrent state or a sliding-window ring past its slack silently
+    // returns 0 reused tokens and falls back to a full prefill rather than
+    // erroring (`crates/runtime/CLAUDE.md` Gotcha 30), so this cannot turn a
+    // working session into a failing one, only a slower-than-necessary one
+    // into a faster one.
+    runner.set_prefix_reuse(true);
 
     // **RESOLVED AS THOUGH EVERY TURN WERE DETERMINISTIC, which is the one
     // place this binding follows the SERVER rather than the CLI.** On the

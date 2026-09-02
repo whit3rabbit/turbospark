@@ -120,6 +120,69 @@ final class RealModelTests: XCTestCase {
         print("generate: \(r.newTokens) tokens at \(r.tokensPerSecond ?? 0) tok/s, \(r.stopReason)")
     }
 
+    /// A second turn on the same session continues from the first turn's KV
+    /// instead of re-prefilling the whole transcript from scratch.
+    ///
+    /// This is what `open.rs`'s `runner.set_prefix_reuse(true)` is FOR --
+    /// `crates/cli/src/chat.rs`'s `--chat` REPL is the only other caller
+    /// that opts in, and that file's own header records the failure mode
+    /// this test exists to catch: the feature read 0/33 through two rounds
+    /// of an implementation that looked correct everywhere else. Asserting
+    /// only that `reusedPrefixTokens >= 0` (its type's own floor) would
+    /// never fail on that bug.
+    ///
+    /// **The threshold is a MAJORITY of turn 1's prompt, not all of it.**
+    /// Measured here: 14 of 18 reused (78%) on a two-token question; the
+    /// real `--chat` REPL's own recorded numbers are 13/33 and 29/49 (39%
+    /// and 59%) -- so a shortfall below the full prompt is the normal case
+    /// on this engine rather than a partial-failure signal, and asserting
+    /// full recovery would make this test flaky on the real thing it is
+    /// meant to verify. What would still fail it: reuse silently degrading
+    /// to a handful of coincidentally shared BOS/system tokens.
+    func testASecondTurnReusesThePreviousTurnsKV() async throws {
+        let session = try await TurboSparkSession(modelPath: try modelPath())
+        var options = GenerateOptions()
+        options.maxNewTokens = 40
+        options.seed = 20260721
+
+        let turn1Messages = [ChatMessage(role: .user, content: "Name one primary color.")]
+        var turn1Result: GenerationResult?
+        for try await event in session.generate(turn1Messages, options: options) {
+            if case .finished(let r) = event { turn1Result = r }
+        }
+        let r1 = try XCTUnwrap(turn1Result)
+        XCTAssertEqual(
+            r1.reusedPrefixTokens, 0,
+            "a session's first turn has nothing to reuse yet")
+
+        // The transcript a real chat client sends: turn 1's exchange
+        // followed by a new question. Re-rendering this is what gives the
+        // longest-common-prefix match something to find.
+        let turn2Messages =
+            turn1Messages + [
+                ChatMessage(role: .assistant, content: r1.content),
+                ChatMessage(role: .user, content: "Now name a different one."),
+            ]
+        var turn2Result: GenerationResult?
+        for try await event in session.generate(turn2Messages, options: options) {
+            if case .finished(let r) = event { turn2Result = r }
+        }
+        let r2 = try XCTUnwrap(turn2Result)
+
+        // Not just "> 0": a session whose reuse silently degrades to a
+        // handful of coincidentally shared BOS/system tokens would still
+        // clear that bar. A majority of turn 1's own prompt is the bound;
+        // see the doc comment above for why not all of it.
+        XCTAssertGreaterThanOrEqual(
+            r2.reusedPrefixTokens, (r1.promptTokens + 1) / 2,
+            "expected turn 2 to continue from a majority of turn 1's prompt, "
+                + "got \(r2.reusedPrefixTokens) reused of \(r2.promptTokens) "
+                + "(turn 1 prompt was \(r1.promptTokens))")
+        print(
+            "prefix-reuse: turn2 reused \(r2.reusedPrefixTokens)/\(r2.promptTokens) prompt tokens "
+                + "(turn1 prompt was \(r1.promptTokens))")
+    }
+
     /// A page to send. A THIRD variable, for Gotcha 11's reason: a vision
     /// install is a shape `TURBOSPARK_TEST_MODEL` alone cannot guarantee, and
     /// one variable can only ever gate one shape.
