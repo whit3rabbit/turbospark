@@ -6,6 +6,8 @@ import Foundation
 public struct WebSearchInput: Codable, Sendable, Equatable {
     /// Search query string.
     public var query: String
+    /// Optional limit on the number of results to return.
+    public var numResults: Int?
     /// Optional whitelist of domains to restrict results to.
     public var allowedDomains: [String]?
     /// Optional blacklist of domains to filter out from results.
@@ -13,12 +15,19 @@ public struct WebSearchInput: Codable, Sendable, Equatable {
 
     enum CodingKeys: String, CodingKey {
         case query
+        case numResults = "num_results"
         case allowedDomains = "allowed_domains"
         case blockedDomains = "blocked_domains"
     }
 
-    public init(query: String, allowedDomains: [String]? = nil, blockedDomains: [String]? = nil) {
+    public init(
+        query: String,
+        numResults: Int? = nil,
+        allowedDomains: [String]? = nil,
+        blockedDomains: [String]? = nil
+    ) {
         self.query = query
+        self.numResults = numResults
         self.allowedDomains = allowedDomains
         self.blockedDomains = blockedDomains
     }
@@ -61,6 +70,22 @@ public struct WebSearchOutput: Codable, Sendable, Equatable {
         self.results = results
         self.durationSeconds = durationSeconds
         self.searchCount = searchCount
+    }
+
+    /// Formats the search results as clean Markdown for LLM synthesis.
+    public func formatMarkdown() -> String {
+        if results.isEmpty {
+            return "No web search results found for query: \"\(query)\"."
+        }
+        var lines: [String] = ["### Web Search Results for: \"\(query)\""]
+        for (index, item) in results.enumerated() {
+            lines.append("")
+            lines.append("\(index + 1). [\(item.title)](\(item.url))")
+            if let snippet = item.snippet, !snippet.isEmpty {
+                lines.append("   \(snippet)")
+            }
+        }
+        return lines.joined(separator: "\n")
     }
 }
 
@@ -134,6 +159,7 @@ public enum WebToolDefinitions {
         parameters: .object(
             properties: [
                 "query": .string(description: "The search query string."),
+                "num_results": .integer(description: "Optional number of search results to return (default: 5, maximum: 20)."),
                 "allowed_domains": .array(
                     items: .string(),
                     description: "Optional list of domains to restrict search results to."

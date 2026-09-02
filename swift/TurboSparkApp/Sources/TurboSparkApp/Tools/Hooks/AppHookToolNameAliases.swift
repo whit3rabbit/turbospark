@@ -20,7 +20,7 @@ enum AppHookToolNameAliases {
         "todowrite": ["todowrite", "todo_write"],
         "askuserquestion": ["askuserquestion", "ask_user_question", "question"],
         "webfetch": ["webfetch", "web_fetch", "fetch_url", "read_url_content"],
-        "websearch": ["call_mcp_tool", "callmcptool", "mcp_tool"]
+        "websearch": ["websearch", "web_search", "search_web"]
     ]
 
     /// Every alias (in either direction, lowercased) that should be treated

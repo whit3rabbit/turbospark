@@ -8,7 +8,7 @@ import XCTest
 /// unimplemented tools in its system-prompt definitions.
 final class FabricatedToolSuccessTests: XCTestCase {
     func testUnimplementedToolReturnsAnErrorRatherThanFabricatedSuccess() async {
-        let call = AppToolCall(name: "WebSearch", arguments: ["query": "swift"], category: .web)
+        let call = AppToolCall(name: "repl", arguments: ["command": "swift"], category: .terminal)
         let result = await AppToolRegistry.execute(call: call, in: nil)
         XCTAssertTrue(result.isError, "An unimplemented tool must report isError, not a fabricated success.")
         XCTAssertFalse(result.output.lowercased().contains("successfully"))
@@ -38,7 +38,7 @@ final class FabricatedToolSuccessTests: XCTestCase {
 
     func testUnimplementedToolNamesAreExcludedFromAllTools() {
         let advertisedNames = Set(AppToolCatalog.allTools.map { $0.function.name.lowercased() })
-        for unimplemented in ["websearch", "repl", "notebookedit", "croncreate", "schedulewakeup", "taskstop", "listmcpresources"] {
+        for unimplemented in ["repl", "notebookedit", "croncreate", "schedulewakeup", "taskstop", "listmcpresources"] {
             XCTAssertFalse(
                 advertisedNames.contains(unimplemented),
                 "'\(unimplemented)' has no executor and must not be advertised to the model."
@@ -48,7 +48,7 @@ final class FabricatedToolSuccessTests: XCTestCase {
 
     func testImplementedToolNamesAreStillAdvertised() {
         let advertisedNames = Set(AppToolCatalog.allTools.map { $0.function.name.lowercased() })
-        for implemented in ["bash", "fileread", "filewrite", "fileedit", "grep", "glob", "apply_patch", "skill", "agent", "taskcreate", "tasklist", "askuserquestion", "webfetch"] {
+        for implemented in ["bash", "fileread", "filewrite", "fileedit", "grep", "glob", "apply_patch", "skill", "agent", "taskcreate", "tasklist", "askuserquestion", "webfetch", "websearch"] {
             XCTAssertTrue(
                 advertisedNames.contains(implemented),
                 "'\(implemented)' has a real executor and should remain advertised."
@@ -60,7 +60,7 @@ final class FabricatedToolSuccessTests: XCTestCase {
         for agentType in AppAgentType.allCases {
             let names = Set(AppToolCatalog.tools(for: agentType).map { $0.function.name.lowercased() })
             XCTAssertTrue(names.contains("webfetch"), "\(agentType) tool list must include implemented WebFetch by default.")
-            XCTAssertFalse(names.contains("websearch"), "\(agentType) tool list must not include unimplemented WebSearch.")
+            XCTAssertTrue(names.contains("websearch"), "\(agentType) tool list must include implemented WebSearch by default.")
             XCTAssertFalse(names.contains("repl"), "\(agentType) tool list must not include unimplemented REPL.")
         }
     }

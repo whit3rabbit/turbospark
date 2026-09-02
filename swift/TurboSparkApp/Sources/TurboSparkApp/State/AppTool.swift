@@ -272,6 +272,7 @@ public enum AppToolRegistry {
         "apply_patch", "applypatch",
         "search_code", "grep", "search",
         "run_command", "bash", "shell", "exec", "terminal",
+        "websearch", "web_search", "search_web",
         "webfetch", "web_fetch", "fetch_url", "read_url_content",
         "skill",
         "todowrite", "todo_write",
@@ -410,6 +411,29 @@ public enum AppToolRegistry {
                 }
                 let timeoutMs = Int(call.arguments["timeout"] ?? "")
                 output = try await runCommand(command: command, rootURL: rootURL, timeoutMs: timeoutMs)
+
+            case "websearch", "web_search", "search_web":
+                guard let query = call.arguments["query"] ?? call.arguments["q"] ?? call.arguments["search_query"] else {
+                    throw NSError(domain: "TurboSparkTool", code: 24, userInfo: [NSLocalizedDescriptionKey: "Missing 'query' argument for WebSearch tool call."])
+                }
+                let numResults = Int(call.arguments["num_results"] ?? call.arguments["numResults"] ?? call.arguments["limit"] ?? call.arguments["count"] ?? "")
+                var allowedDomains: [String]?
+                if let allowed = call.arguments["allowed_domains"] ?? call.arguments["allowedDomains"] {
+                    allowedDomains = allowed.components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+                }
+                var blockedDomains: [String]?
+                if let blocked = call.arguments["blocked_domains"] ?? call.arguments["blockedDomains"] {
+                    blockedDomains = blocked.components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+                }
+                let provider = call.arguments["provider"]
+                let searchOutput = try await WebSearchExecutor.search(
+                    query: query,
+                    numResults: numResults,
+                    allowedDomains: allowedDomains,
+                    blockedDomains: blockedDomains,
+                    provider: provider
+                )
+                output = searchOutput.formatMarkdown()
 
             case "webfetch", "web_fetch", "fetch_url", "read_url_content":
                 guard let urlString = call.arguments["url"] ?? call.arguments["uri"] else {
