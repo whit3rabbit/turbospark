@@ -437,6 +437,7 @@ mod mxfp4 {
                         (&seq_y, 0),
                         D as u32,
                         F as u32,
+                        TOP_K as u32,
                         false,
                         act.has_bias,
                     )

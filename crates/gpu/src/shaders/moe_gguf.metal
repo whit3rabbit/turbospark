@@ -602,9 +602,24 @@ kernel void moe_phase1_gate_up_act_mxfp4(
     if (lane == 0) acts[slot * FF + f] = half(moe_activate_mxfp4(gate, up, alpha, limit));
 }
 
-// Phase 2, MXFP4. Reduces ALL EIGHT slots unconditionally, exactly like every
-// sibling, so an unused slot needs a zero routing weight, a valid blob
-// pointer, and a finite acts row (AGENTS.md Gotcha 8).
+// Phase 2, MXFP4. Unlike every sibling `moe_phase2_down_reduce_k8*` kernel
+// (which still reduce all EIGHT slots unconditionally, AGENTS.md Gotcha 8),
+// this one is specialized down to `KK`, resolved from `FC_MOE_TOP_K`
+// (ROADMAP's Phase-2 top_k specialization, crates/gpu/CLAUDE.md Gotcha 3):
+// `gpt-oss` routes top-4 of 32 experts, so slots 4..7 of this kernel's fixed
+// 8 always carried a zero routing weight and a wasted dequant-and-dot-product
+// over F elements. Masking the COMPUTE by `sg_idx < KK` and never RETURNING
+// early is what keeps this safe: every one of the 256 threads (8 simdgroups)
+// still reaches `threadgroup_barrier` below, uniformly, whether or not `KK`
+// is baked at compile time -- an early `return` for `sg_idx >= KK` would let
+// some simdgroups skip the barrier while others still wait on it, which is
+// undefined behaviour on Metal. Masked-out slots contribute exactly `0.0f`
+// to `partial[sg_idx]` the same way an unmasked slot with a zero
+// `routing_w` always did (`0 * value == 0` for any finite `value`), so this
+// is provably bit-identical to the unspecialized `KK == 8` path and to the
+// pre-existing unconditional one -- unused slots still need a zero routing
+// weight, but no longer need a valid blob pointer or a finite acts row,
+// since they are never read.
 [[kernel, max_total_threads_per_threadgroup(256)]]
 kernel void moe_phase2_down_reduce_k8_mxfp4(
     device const RoutedBlobs& routed          [[buffer(0)]],
@@ -616,6 +631,7 @@ kernel void moe_phase2_down_reduce_k8_mxfp4(
     constant uint&            D               [[buffer(6)]],
     constant uint&            F               [[buffer(7)]],
     constant uint&            has_bias        [[buffer(8)]],
+    constant uint&            top_k           [[buffer(9)]],
     uint                      d               [[threadgroup_position_in_grid]],
     uint                      sg_idx          [[simdgroup_index_in_threadgroup]],
     uint                      lane            [[thread_index_in_simdgroup]]
@@ -623,24 +639,34 @@ kernel void moe_phase2_down_reduce_k8_mxfp4(
     threadgroup float partial[8];
     const uint DD = moe_fc_d(D);
     const uint FF = moe_fc_f(F);
+    // NOT `moe_fc_top_k`: that helper is gated on `FC_MOE_USE_FC`, which
+    // `moe_fc_d`/`moe_fc_f` above share -- turning it on to bake `KK` would
+    // also flip `DD`/`FF` to their baked-but-never-set value of zero. The
+    // host always sets `FC_MOE_TOP_K` for this kernel (see
+    // `phase2_function_constants`), so this resolves independently of that
+    // shared gate.
+    const uint KK = is_function_constant_defined(FC_MOE_TOP_K) ? FC_MOE_TOP_K : top_k;
     if (d >= DD) return;
 
-    device const uint8_t* base = routed.blob[sg_idx];
-    const ExpertOffsets re = routed_offsets;
-    device const half* act_slot = acts + sg_idx * FF;
+    float value = 0.0f;
+    if (sg_idx < KK) {
+        device const uint8_t* base = routed.blob[sg_idx];
+        const ExpertOffsets re = routed_offsets;
+        device const half* act_slot = acts + sg_idx * FF;
 
-    float value = dequant_mxfp4_row_simd(
-        base + re.down_W_off + d * mxfp4_row_bytes(FF), act_slot, FF, lane);
-    // PER SLOT AND INSIDE THE ROUTING WEIGHT, because it is that expert's
-    // own bias on that expert's own output -- llama.cpp adds it to the
-    // expert result before the weighted sum. Adding it once outside the
-    // reduce would apply one expert's bias to every token and scale it
-    // wrongly.
-    if (has_bias != 0u && lane == 0) {
-        device const float* db = (device const float*)(base + re.down_b_off);
-        value += db[d];
+        value = dequant_mxfp4_row_simd(
+            base + re.down_W_off + d * mxfp4_row_bytes(FF), act_slot, FF, lane);
+        // PER SLOT AND INSIDE THE ROUTING WEIGHT, because it is that expert's
+        // own bias on that expert's own output -- llama.cpp adds it to the
+        // expert result before the weighted sum. Adding it once outside the
+        // reduce would apply one expert's bias to every token and scale it
+        // wrongly.
+        if (has_bias != 0u && lane == 0) {
+            device const float* db = (device const float*)(base + re.down_b_off);
+            value += db[d];
+        }
     }
-    if (lane == 0) partial[sg_idx] = float(routing_w[sg_idx]) * value;
+    if (lane == 0) partial[sg_idx] = (sg_idx < KK) ? float(routing_w[sg_idx]) * value : 0.0f;
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
     if (sg_idx == 0 && lane == 0) {

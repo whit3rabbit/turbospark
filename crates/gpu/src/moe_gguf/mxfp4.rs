@@ -1,5 +1,7 @@
 //! Host-side dispatch for MXFP4 expert blobs (ROADMAP M5).
 
+use metal::{FunctionConstantValues, MTLDataType};
+
 use super::{ROWS_PER_THREADGROUP, SOURCE, THREADS_PER_GROUP};
 use crate::bytes::{f32_bytes, u32_bytes};
 use crate::context::{GpuError, MetalContext, PassEncoder};
@@ -120,10 +122,48 @@ pub fn encode_moe_phase1_mxfp4(
     Ok(())
 }
 
-/// Phase 2 over MXFP4 expert blobs, reducing all eight slots unconditionally
-/// (see the vendored sibling's contract).
+/// Phase 2's own function constants: `moe_function_constants` plus
+/// `FC_MOE_TOP_K` (index 2) baked to the real value, so
+/// `moe_phase2_down_reduce_k8_mxfp4` skips the dequant-and-dot-product for
+/// slots past `top_k` (ROADMAP's Phase-2 top_k specialization) instead of
+/// reducing all `MAX_STREAMED_EXPERTS` unconditionally. Phase 1 does not need
+/// this: its dispatch already sizes the grid to `top_k * f_dim` rows, so it
+/// never launches work for a slot past `top_k` in the first place.
 ///
-/// `f_dim` must be a whole number of 32-element blocks.
+/// `FC_MOE_USE_FC` (index 3) is deliberately left FALSE (`moe_function_constants`'s
+/// own default). It is the shared gate `moe_fc_d`/`moe_fc_f`/`moe_fc_top_k` all
+/// read, so turning it on to bake `top_k` also flips `D` and `F` to their
+/// baked-but-never-set value of ZERO -- `d >= DD` then holds for every `d` and
+/// the kernel returns before writing a single output (caught by
+/// `all_eight_mxfp4_slots_participate` and its siblings reading back `0`
+/// where the CPU reference read a real value). The kernel therefore resolves
+/// `top_k` with its OWN inline check rather than through `moe_fc_top_k`,
+/// independent of `FC_MOE_USE_FC`, while `D`/`F` keep resolving through the
+/// shared helpers -- which, with `USE_FC` false, means "read the runtime
+/// buffer argument", exactly as before this specialization existed.
+///
+/// A separate function from the shared `moe_function_constants`/`constants_key`
+/// on purpose -- those are reused by phase 1 and by every other GGUF pair's
+/// phase 1/2 in this module, and widening THEIR key would force every one of
+/// them to carry a `top_k` byte that only this one kernel reads.
+fn phase2_function_constants(use_silu: bool, top_k: u32) -> FunctionConstantValues {
+    let values = moe_function_constants(use_silu);
+    values.set_constant_value_at_index((&top_k as *const u32).cast(), MTLDataType::UInt, 2);
+    values
+}
+
+fn phase2_constants_key(use_silu: bool, top_k: u32) -> [u8; 2] {
+    // `top_k` never exceeds `MAX_STREAMED_EXPERTS == 8`, so one byte holds it.
+    [use_silu as u8, top_k as u8]
+}
+
+/// Phase 2 over MXFP4 expert blobs, reducing only the first `top_k` of the
+/// eight fixed slots (see the kernel's own comment for why masking the
+/// compute rather than returning early is what keeps this safe, and for the
+/// bit-identity argument against the unspecialized `top_k == 8` path).
+///
+/// `f_dim` must be a whole number of 32-element blocks. `top_k` must not
+/// exceed [`crate::moe_decode::MAX_STREAMED_EXPERTS`].
 #[allow(clippy::too_many_arguments)]
 pub fn encode_moe_phase2_mxfp4(
     context: &mut MetalContext,
@@ -136,15 +176,17 @@ pub fn encode_moe_phase2_mxfp4(
     y: (&metal::Buffer, u64),
     d_dim: u32,
     f_dim: u32,
+    top_k: u32,
     use_silu: bool,
     has_bias: bool,
 ) -> Result<(), GpuError> {
     assert_eq!(f_dim as usize % MXFP4_BLOCK_ELEMS, 0);
+    assert!(top_k as usize <= crate::moe_decode::MAX_STREAMED_EXPERTS);
     let pipeline = context.pipeline(
         SOURCE,
         "moe_phase2_down_reduce_k8_mxfp4",
-        &moe_function_constants(use_silu),
-        &constants_key(use_silu),
+        &phase2_function_constants(use_silu, top_k),
+        &phase2_constants_key(use_silu, top_k),
     )?;
     let has_bias = u32::from(has_bias);
     pass.encode_threadgroups(
@@ -161,6 +203,7 @@ pub fn encode_moe_phase2_mxfp4(
             (u32_bytes(&d_dim), 6),
             (u32_bytes(&f_dim), 7),
             (u32_bytes(&has_bias), 8),
+            (u32_bytes(&top_k), 9),
         ],
         d_dim as u64,
         THREADS_PER_GROUP,

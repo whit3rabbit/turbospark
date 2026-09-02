@@ -214,6 +214,7 @@ pub(crate) fn encode_gpt_oss_layer_moe(
         (&state.h2, 0),
         hidden as u32,
         moe_inter,
+        top_k as u32,
         true,
     )
     .map_err(gpu_err)?;

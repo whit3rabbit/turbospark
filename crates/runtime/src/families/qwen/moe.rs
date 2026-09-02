@@ -221,6 +221,7 @@ pub(crate) fn encode_qwen_layer_moe(
         (&qwen.h2, 0),
         hidden as u32,
         moe_inter,
+        top_k as u32,
         use_silu,
     )
     .map_err(gpu_err)?;

@@ -446,6 +446,7 @@ fn run_case(block: Block, use_silu: bool, top_k: usize) {
             (&y_buf, 0),
             d_dim as u32,
             f_dim as u32,
+            top_k as u32,
             use_silu,
             false,
         )
@@ -778,6 +779,7 @@ fn the_oai_activation_matches_its_reference() {
         (&y_buf, 0),
         d_dim as u32,
         f_dim as u32,
+        top_k as u32,
         true,
         true,
     )
