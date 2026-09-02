@@ -56,9 +56,10 @@ pub use gemma4_checkpoint::{
     write_muse_glimmer_install_streamed, write_qwen_gdn_dense_install,
     write_qwen_gdn_dense_install_streamed, write_qwen_gdn_moe_install,
     write_qwen_gdn_moe_install_streamed, ConvertedFp16, Gemma4Bucket, Gemma4Error, Gemma4Quant,
-    Gemma4RepackOutput, Gemma4Shards, NarrowedRaw, VisionRead, AFFINE_1BIT_GROUP_SIZE,
-    AFFINE_2BIT_GROUP_SIZE, AFFINE_GROUP_SIZE, DFLASH_PREFIX, GTURBO_PAGE_BYTES,
-    VISION_BLOCK_ROLES, VISION_INSTALL_PREFIX, VISION_PREFIX, VISION_RESIDENT_TENSORS,
+    Gemma4RepackOutput, Gemma4Shards, NarrowedRaw, NgramTableSpec, NgramTableWriter, VisionRead,
+    AFFINE_1BIT_GROUP_SIZE, AFFINE_2BIT_GROUP_SIZE, AFFINE_GROUP_SIZE, DFLASH_PREFIX,
+    GTURBO_PAGE_BYTES, VISION_BLOCK_ROLES, VISION_INSTALL_PREFIX, VISION_PREFIX,
+    VISION_RESIDENT_TENSORS,
 };
 pub use gguf_checkpoint::{
     dtype_tag_for_ggml_type, gguf_manifest_quant, orchestrate_gguf_checkpoint,
