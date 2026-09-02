@@ -112,6 +112,21 @@ pub enum ServerEvent {
         prefill_seconds: f64,
         decode_seconds: f64,
         stop_reason: String,
+        /// How many leading prompt tokens this turn continued from the
+        /// previous request's KV instead of prefilling. Zero unless
+        /// `--prefix-reuse on` and a match was found; see
+        /// `crates/runtime/CLAUDE.md` Gotcha 30. This is the server's
+        /// equivalent of the CLI's `[prefix-reuse] N/M` stderr line: a
+        /// server has no interactive terminal to print one to, and a
+        /// caller needs SOME way to see whether the optimization is
+        /// actually firing rather than silently never matching.
+        reused_prefix_tokens: u32,
+        /// Whether serving this turn evicted a DIFFERENT conversation's
+        /// still-usable KV/recurrent state from the session pool
+        /// (`--session-slots`) to make room. Always `false` at the default
+        /// `--session-slots 1`. The signal an operator sizing the flag
+        /// needs: not "is pooling on" but "is it being churned under".
+        session_slot_evicted: bool,
     },
     /// From the middleware, after the handler returned. On a STREAMING
     /// response this fires when the handler returns the stream, not when
@@ -269,6 +284,8 @@ impl crate::ChatModel for ReportingModel {
                 prefill_seconds: decode.prefill_seconds,
                 decode_seconds: decode.decode_seconds,
                 stop_reason: format!("{:?}", decode.reason),
+                reused_prefix_tokens: decode.reused_prefix_tokens as u32,
+                session_slot_evicted: decode.session_slot_evicted,
             });
         }
         // A failure is NOT recorded here. The handler turns it into a status

@@ -273,6 +273,46 @@ pub fn kv_bytes_for_context(arch: &ArchConfig, context: u32) -> u64 {
     bytes
 }
 
+/// Bytes `GdnStateManager::new` will allocate for one session's recurrent
+/// state, on installs that carry gated-DeltaNet linear-attention layers.
+///
+/// Mirrors that constructor exactly, for `kv_bytes_for_context`'s own
+/// reason: this crate cannot depend on `crates/gpu`, so a second copy of the
+/// arithmetic is a second place to get it wrong. Unlike KV, this state is
+/// FIXED-size regardless of context length (`crates/gpu/CLAUDE.md`'s
+/// `gdn_state.rs` entry): a delta-rule state `S` (FP32) plus a causal-conv
+/// tail (FP16) per linear layer, and zero for every family without one.
+pub fn gdn_state_bytes(arch: &ArchConfig) -> u64 {
+    let la = &arch.linear_attention;
+    let state_bytes =
+        la.num_v_heads as u64 * la.value_head_dim as u64 * la.key_head_dim as u64 * FP32_SIZE;
+    let conv_tail_bytes = (la.conv_kernel_size.max(1) - 1) as u64 * la.qkv_dim() as u64 * FP16_SIZE;
+    let linear_layers = arch
+        .full_attention_layer_mask
+        .iter()
+        .filter(|&&mask| mask == 2)
+        .count() as u64;
+    linear_layers.saturating_mul(state_bytes.saturating_add(conv_tail_bytes))
+}
+
+/// Bytes per FP32 element, mirroring `GdnStateManager::new`'s state buffer.
+const FP32_SIZE: u64 = 4;
+
+/// Extra bytes `--session-slots N` commits beyond the ONE live session
+/// [`resolve_max_context`] already sizes.
+///
+/// The pool holds `session_slots - 1` PARKED slots (the Nth is always the
+/// runner's own live `kv`/`gdn` fields, sized by the existing
+/// `resolve_max_context` call), each an independent `KvCacheManager` plus,
+/// on a GDN family, an independent `GdnStateManager`. `session_slots <= 1`
+/// therefore commits nothing extra, which is what keeps the default
+/// (`--session-slots 1`) a true no-op on this budget.
+pub fn session_pool_bytes(arch: &ArchConfig, context: u32, session_slots: u32) -> u64 {
+    let extra_slots = u64::from(session_slots.saturating_sub(1));
+    extra_slots
+        .saturating_mul(kv_bytes_for_context(arch, context).saturating_add(gdn_state_bytes(arch)))
+}
+
 /// The largest context whose KV fits `budget`, rounded down to a multiple of
 /// [`CONTEXT_GRANULARITY`].
 ///

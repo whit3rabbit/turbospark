@@ -168,6 +168,7 @@ pub fn run_raw_completion_speculative_cancellable<P: SpeculativeProducer>(
                 prefill_start,
                 // Neither of these loops offers prefix reuse yet.
                 0,
+                producer.session_slot_evicted(),
             ));
         }
     }
@@ -388,6 +389,7 @@ pub fn run_raw_completion_speculative_cancellable<P: SpeculativeProducer>(
 
     Ok(RawDecodeResult {
         reused_prefix_tokens: 0,
+        session_slot_evicted: producer.session_slot_evicted(),
         prompt_tokens: prompt_ids.len(),
         new_tokens: sink.generated,
         prefill_seconds,

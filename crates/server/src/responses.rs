@@ -966,6 +966,7 @@ mod tests {
                 kv_position: 0,
                 kv_backed_token_ids: Vec::new(),
                 reused_prefix_tokens: 0,
+                session_slot_evicted: false,
                 peak_memory_pressure: Default::default(),
             },
         };

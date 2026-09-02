@@ -120,6 +120,7 @@ pub fn run_raw_completion_chunked_cancellable(
                 prompt_ids.len(),
                 prefill_start,
                 reused,
+                producer.session_slot_evicted(),
             ));
         }
     }
@@ -138,5 +139,6 @@ pub fn run_raw_completion_chunked_cancellable(
         on_progress,
     )?;
     result.reused_prefix_tokens = reused;
+    result.session_slot_evicted = producer.session_slot_evicted();
     Ok(result)
 }

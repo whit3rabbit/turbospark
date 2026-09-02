@@ -10,6 +10,7 @@ use crate::real_forward_layout::{
 use crate::real_forward_types::{DecodeScratch, PhaseCounters, RealForwardError, ROUTED_BANKS};
 
 impl RealForwardRunner {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn open_inner(
         dir: &Path,
         expecting: ArchConfig,
@@ -18,6 +19,7 @@ impl RealForwardRunner {
         fp16_ring_capacity_override: Option<usize>,
         speculation: crate::families::qwen::DraftPolicies,
         steering: crate::steering::SteeringPolicy,
+        session_slots: usize,
     ) -> Result<Self, RealForwardError> {
         if expert_cache_slots == ExpertCacheSlots::Fixed(0) {
             return Err(RealForwardError::Unsupported(
@@ -131,6 +133,13 @@ impl RealForwardRunner {
         let mut runner = Self {
             kv_prefix: crate::kv_prefix::KvPrefix::default(),
             prefix_reuse_enabled: false,
+            // Built for real AFTER the family-state block below, once it is
+            // known whether this install carries GDN recurrent state: a
+            // parked slot needs its own `GdnStateManager` only on that
+            // family, and building it here would mean re-deriving that
+            // question a second time.
+            session_pool: crate::session_pool::SessionPool::empty(),
+            session_slot_evicted: false,
             context,
             weights,
             index,
@@ -300,6 +309,40 @@ impl RealForwardRunner {
                 )?);
             }
         }
+        // Pre-allocated once, here rather than lazily on first use: a slot
+        // that failed to allocate mid-conversation would be a Metal
+        // allocation error with nothing pointing back at `--session-slots`,
+        // exactly the failure `docs/LOAD_GUARD.md`'s refusal-before-open
+        // discipline exists to avoid (the caller is expected to have
+        // already refused an over-committed slot count via
+        // `model_io::context_policy::session_pool_bytes`). `session_slots <= 1`
+        // allocates nothing at all, which is the whole byte-identity
+        // guarantee for the default case.
+        let parked_slots = session_slots.saturating_sub(1);
+        let mut pool_slots = Vec::with_capacity(parked_slots);
+        for _ in 0..parked_slots {
+            let kv = gpu::KvCacheManager::new(
+                runner.context.device(),
+                &runner.arch,
+                max_context,
+                true,
+                None,
+                MAX_PREFILL_CHUNK_TOKENS,
+                fp16_ring_capacity_override,
+            )
+            .map_err(RealForwardError::Gpu)?;
+            let gdn = runner
+                .real_qwen
+                .is_some()
+                .then(|| gpu::GdnStateManager::new(runner.context.device(), &runner.arch));
+            pool_slots.push(crate::session_pool::SessionSlot {
+                kv,
+                gdn,
+                kv_prefix: crate::kv_prefix::KvPrefix::default(),
+                last_used: 0,
+            });
+        }
+        runner.session_pool = crate::session_pool::SessionPool::new(pool_slots);
         // LAST, after the family state, because it validates against the
         // resolved `ArchConfig` and because a steering failure should be the
         // last thing an otherwise-good open reports rather than masking one.

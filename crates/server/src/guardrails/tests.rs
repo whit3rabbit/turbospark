@@ -39,6 +39,7 @@ fn generated(text: &str, calls: Vec<ParsedToolCall>) -> Generated {
         calls,
         decode: RawDecodeResult {
             reused_prefix_tokens: 0,
+            session_slot_evicted: false,
             reason: StopReason::EndOfTurn,
             prompt_tokens: 1,
             new_tokens: 1,

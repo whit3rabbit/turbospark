@@ -64,6 +64,8 @@ fn open_real_model(args: &ModelArgs) -> Result<Arc<dyn turbospark_server::ChatMo
         args.steering.clone(),
         args.load_policy,
         args.reasoning,
+        args.prefix_reuse,
+        args.session_slots,
     )?;
     // Both sized figures are the RESOLVED ones, never `args`: under `auto`
     // the request carries no number, and each has to be readable beside any
@@ -123,6 +125,27 @@ fn open_real_model(args: &ModelArgs) -> Result<Arc<dyn turbospark_server::ChatMo
             "off"
         }
     );
+    eprintln!(
+        "  prefix reuse: {}",
+        if args.prefix_reuse {
+            "on (a request continues from the previous request's KV where prompts agree; \
+             helps only when consecutive requests are the same conversation)"
+        } else {
+            "off"
+        }
+    );
+    // Reported whenever the resolved pool holds more than the one live
+    // session, i.e. whenever `--session-slots` moved it -- matching how the
+    // guardrails/prefix-reuse lines above always print (a fixed toggle) but
+    // this one, like the reasoning line below, only says something when
+    // there is something to say.
+    let session_pool_size = model.session_pool_size();
+    if session_pool_size > 1 {
+        eprintln!(
+            "  session slots: {session_pool_size} (this runner may hold reusable KV/recurrent \
+             state for {session_pool_size} distinct conversations at once)"
+        );
+    }
     if args.reasoning != tokenizer::ReasoningEffort::Off {
         eprintln!("  default reasoning: {}", args.reasoning.as_str());
     }

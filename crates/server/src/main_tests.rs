@@ -464,3 +464,79 @@ fn reasoning_flag_defaults_to_off_and_parses_documented_levels() {
     assert!(parse(&["--model", "/tmp/m", "--reasoning", "max"]).is_err());
     assert!(parse(&["--model", "/tmp/m", "--reasoning", "true"]).is_err());
 }
+
+#[test]
+fn prefix_reuse_flag_defaults_to_on_and_parses_on_off() {
+    let d = parse(&["--model", "/tmp/m"]).unwrap().unwrap();
+    assert!(d.prefix_reuse);
+
+    let on = parse(&["--model", "/tmp/m", "--prefix-reuse", "on"])
+        .unwrap()
+        .unwrap();
+    assert!(on.prefix_reuse);
+
+    let off = parse(&["--model", "/tmp/m", "--prefix-reuse", "off"])
+        .unwrap()
+        .unwrap();
+    assert!(!off.prefix_reuse);
+
+    assert!(parse(&["--model", "/tmp/m", "--prefix-reuse", "maybe"]).is_err());
+}
+
+#[test]
+fn session_slots_defaults_to_one_and_parses_a_count() {
+    let d = parse(&["--model", "/tmp/m"]).unwrap().unwrap();
+    assert_eq!(d.session_slots, 1);
+
+    let three = parse(&["--model", "/tmp/m", "--session-slots", "3"])
+        .unwrap()
+        .unwrap();
+    assert_eq!(three.session_slots, 3);
+
+    assert!(
+        parse(&["--model", "/tmp/m", "--session-slots", "0"]).is_err(),
+        "a zero-slot pool is not a smaller version of the feature, it is nonsense"
+    );
+    assert!(parse(&["--model", "/tmp/m", "--session-slots", "auto"]).is_err());
+    assert!(parse(&["--model", "/tmp/m", "--session-slots", "-1"]).is_err());
+}
+
+/// The orphan-flag refusal, mirroring the `--steering-*`-without-`--steering`
+/// pattern this file already asserts elsewhere: a parked session is never
+/// reused without prefix reuse enabled, so naming a pool while explicitly
+/// disabling reuse is a command line that says one thing while the server
+/// does another.
+#[test]
+fn session_slots_above_one_needs_prefix_reuse_on() {
+    assert!(parse(&[
+        "--model",
+        "/tmp/m",
+        "--prefix-reuse",
+        "off",
+        "--session-slots",
+        "2",
+    ])
+    .is_err());
+    // Flag order must not matter.
+    assert!(parse(&[
+        "--model",
+        "/tmp/m",
+        "--session-slots",
+        "2",
+        "--prefix-reuse",
+        "off",
+    ])
+    .is_err());
+    // A pool of exactly 1 (the default) needs no --prefix-reuse at all: it
+    // commits nothing extra, so there is nothing for the flag to be an
+    // orphan of.
+    assert!(parse(&[
+        "--model",
+        "/tmp/m",
+        "--prefix-reuse",
+        "off",
+        "--session-slots",
+        "1",
+    ])
+    .is_ok());
+}

@@ -45,6 +45,8 @@ mod resid_capture;
 #[cfg(target_os = "macos")]
 mod router_hist;
 #[cfg(target_os = "macos")]
+mod session_pool;
+#[cfg(target_os = "macos")]
 mod speculation_policy;
 mod speculative;
 #[cfg(target_os = "macos")]
@@ -69,10 +71,11 @@ pub use config::GenerationConfig;
 // this is where a reader of the decode engine expects to find them named.
 #[cfg(target_os = "macos")]
 pub use model_io::{
-    committed_bytes, kv_bytes_for_context, largest_context_within, resolve_max_context, ContextCap,
-    ContextFloorUnmet, ContextPlan, ContextRefused, ContextTooLarge, ExpertCacheSlots, GuardBudget,
-    LoadGuard, LoadPolicy, MaxContext, CONTEXT_BUDGET_FRACTION, CONTEXT_GRANULARITY,
-    CONTEXT_RESERVE_BYTES, HEADROOM_FRACTION, HEADROOM_RESERVE_BYTES, MAX_SUPPORTED_CONTEXT,
+    committed_bytes, gdn_state_bytes, kv_bytes_for_context, largest_context_within,
+    resolve_max_context, session_pool_bytes, ContextCap, ContextFloorUnmet, ContextPlan,
+    ContextRefused, ContextTooLarge, ExpertCacheSlots, GuardBudget, LoadGuard, LoadPolicy,
+    MaxContext, CONTEXT_BUDGET_FRACTION, CONTEXT_GRANULARITY, CONTEXT_RESERVE_BYTES,
+    HEADROOM_FRACTION, HEADROOM_RESERVE_BYTES, MAX_SUPPORTED_CONTEXT,
 };
 
 pub use error::RuntimeError;

@@ -46,6 +46,19 @@ pub trait LogitProducer {
         0
     }
 
+    /// Did serving the generation just started (the `reset()` that preceded
+    /// it) discard a DIFFERENT session's still-nonempty state to make room?
+    ///
+    /// `false` for every producer without a session pool, which is every one
+    /// but `RealForwardRunner` under `--session-slots > 1`
+    /// (`crate::session_pool`). This answers a narrower question than "is a
+    /// pool configured": a caller sizing `--session-slots` needs to know
+    /// whether it is actually being CHURNED under, not merely whether the
+    /// feature is on.
+    fn session_slot_evicted(&self) -> bool {
+        false
+    }
+
     /// Run one token at `position`, writing FP16 logits into `logits`
     /// (length == vocab size).
     fn produce(
