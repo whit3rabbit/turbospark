@@ -39,6 +39,7 @@ read the page before proposing the thing it refutes.
 | `docs/TRUBOQUANT.md` | sub-4-bit and ternary quantization layout | adding a width |
 | `docs/VISION.md` | the vision PIPELINE: injection, mRoPE dispatch, the four gates, the cross-engine rows | touching anything an image passes through |
 | `docs/VISION_PHASE0.md` | the vision CHECKPOINT: tensors, mRoPE semantics, activation magnitudes, the INT4 decision | reading a tower fact off the checkpoint |
+| `docs/QWEN4_PHASE0.md` | `qwen4_exp` (Qwen3.8-Flash-Next) Phase 0 fact-finding: config, tensor layout, two independent references cross-checked | reading a `qwen4_exp` fact, or continuing that bring-up |
 | `docs/SKILL_STATE.md` | the SKILL.state bounded-state agent runtime, a measured POSITIVE with its scale caveat | proposing agent context compaction, structured output, or constrained decoding |
 | `docs/SWIFT_BINDINGS.md` | the C ABI and the Swift package: contract and limits | changing the FFI |
 | `docs/PERMISSION_GATE.md` | the local command classifier, its corpora, and a measured negative | touching `.auto`, or quoting a hazard score |

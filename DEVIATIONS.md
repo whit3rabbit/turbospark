@@ -1021,8 +1021,15 @@ live network).
   Both prefill loops consult it. Measured on the real 26B install: prefill
   1.777s -> 0.153s on a transcript-shaped prompt, with the generated tokens
   byte-identical to the re-prefilled reference. Opt-in per session
-  (`RealForwardRunner::set_prefix_reuse`); `--chat` is the only caller that
-  takes it today, and the server is the open item.
+  (`RealForwardRunner::set_prefix_reuse`). `--chat` was the first caller;
+  `crates/ffi`'s `open()` opts in unconditionally as of 2026-09-01 (every
+  `TurboSparkApp` session is multi-turn by construction), and
+  `turbospark-server` gained a real `--prefix-reuse on|off` flag (default
+  on) the same day, paired with a swap-based `--session-slots` pool
+  (`crate::session_pool::SessionPool`) that fixes the cross-conversation
+  KV-stomping hazard a single-runner server has and a per-session FFI
+  binding does not. See `crates/server/CLAUDE.md` Gotchas 31-32 and
+  `crates/runtime/CLAUDE.md` Gotcha 32.
   `crates/runtime/CLAUDE.md` Gotcha 30 has the design and the three
   measured false starts.
 - **Throughput benchmark harness: implemented, in three modes.** The

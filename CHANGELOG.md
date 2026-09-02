@@ -38,9 +38,14 @@ when this file gets updated relative to the version bump and the tag.
   previous turn's KV cache wherever the two prompts agree on their leading
   token ids, instead of resetting and re-prefilling the whole transcript.
   Both prefill loops consult it. Off unless a caller opts in per session
-  (`RealForwardRunner::set_prefix_reuse`); `turbospark-check --chat` is the
-  only caller that does today, and reports `[prefix-reuse] N/M` per turn on
-  stderr (silenced by `--quiet` or `MFERENCE_PREFIX_REUSE=quiet`).
+  (`RealForwardRunner::set_prefix_reuse`); `turbospark-check --chat` was the
+  first caller and reports `[prefix-reuse] N/M` per turn on stderr (silenced
+  by `--quiet` or `MFERENCE_PREFIX_REUSE=quiet`). `crates/ffi`'s `open()` now
+  opts in unconditionally too, since a `swift/TurboSparkApp` session is
+  multi-turn by construction, and `turbospark-server` gained a real
+  `--prefix-reuse on|off` flag (default on) paired with a swap-based
+  `--session-slots N` pool that fixes the cross-conversation KV-stomping
+  hazard a single-runner server has.
   `--prompt` and `--messages-file` are unaffected and their output is
   byte-identical. Measured on a real Gemma 4 install: prefill 1.777s to
   0.153s on a transcript-shaped prompt, with the generated tokens identical
@@ -144,6 +149,17 @@ when this file gets updated relative to the version bump and the tag.
   at M=2 and 11% at M=64, and **with the dequant entirely free the kernel
   still reads 0.46 to 0.50 past M=16 against MLX's 0.145** -- so the loader
   is not the lever, and neither is `kMmaTile`.
+- MXFP4 phase-2 down-reduce (`gpt-oss`) is specialized by `top_k`:
+  `moe_phase2_down_reduce_k8_mxfp4` now masks compute for unused routed
+  slots instead of always reducing all 8, saving half the down-GEMV on
+  `gpt-oss`'s top-4-of-32 routing. Bit-identical to the unspecialized
+  kernel; measured ~1.13x end-to-end decode throughput on a real
+  `gpt-oss-20b` install.
+- `qwen4_exp` (Qwen3.8-Flash-Next) intake: the family and config surface,
+  an n-gram table on-disk format and streaming writer
+  (`model_io::ngram_table`, `crates/repack`), and classification of that
+  table out of the resident expert index. No decode flow yet; see
+  `docs/QWEN4_PHASE0.md` and `ROADMAP.md` section 2.
 
 ### Changed
 - The release workflow requires a `CHANGELOG.md` entry for the tag, publishes
