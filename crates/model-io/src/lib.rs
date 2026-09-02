@@ -17,6 +17,7 @@ mod expert_cache_policy;
 mod install_receipt;
 mod load_guard;
 mod manifest;
+mod ngram_table;
 mod packed_experts_layout;
 mod resident_buffer;
 mod resident_index;
@@ -50,6 +51,10 @@ pub use manifest::{
     known_flags, load as load_manifest, peek_family, validate as validate_manifest, Manifest,
     ManifestArch, ManifestFileEntry, ManifestQuant, ManifestQuantSlot, DEFAULT_MAX_BYTES,
     EXECUTABLE_GGUF_TYPES, REQUIRED_FILES,
+};
+pub use ngram_table::{
+    load_ngram_table_layout, NgramTableLayout, NGRAM_HEADER_MAX_BYTES, NGRAM_TABLE_BLOB,
+    NGRAM_TABLE_DIR, NGRAM_TABLE_HEADER,
 };
 pub use packed_experts_layout::{
     load as load_packed_experts_layout, load_from as load_packed_layout_from, ExpertEntry,
