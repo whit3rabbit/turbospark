@@ -88,6 +88,7 @@ impl RealChatModel {
         load_policy: runtime::LoadPolicy,
         default_reasoning: tokenizer::ReasoningEffort,
         prefix_reuse: bool,
+        session_slots: u32,
     ) -> Result<Self, String> {
         let arch = repack::peek_manifest_arch(model_dir)?;
         let context = runtime::resolve_max_context(
@@ -116,6 +117,42 @@ impl RealChatModel {
                 context.trained.unwrap_or(0)
             );
         }
+        // A `--session-slots` this machine cannot afford is refused HERE,
+        // before `open_inner` allocates a single parked slot, for exactly
+        // the reason `resolve_max_context` above already refuses an
+        // oversized `--max-context`: the alternative is an unattributed
+        // Metal allocation failure with no number in it pointing back at
+        // the flag. Skipped under the same two conditions that check does
+        // (`LoadGuard::Off`, or a machine `physical_memory()` cannot read),
+        // since neither of those refuses `--max-context` either.
+        if session_slots > 1 {
+            let physical = runtime::physical_memory();
+            let budget = load_policy.guard.budget();
+            if physical > 0 && budget.refuses {
+                let available = load_policy
+                    .guard
+                    .available(physical, runtime::committed_bytes(model_dir));
+                let pool_extra =
+                    runtime::session_pool_bytes(&arch, context.resolved, session_slots);
+                let needs = context.kv_bytes.saturating_add(pool_extra);
+                if needs > available {
+                    let gib = |b: u64| b as f64 / (1024.0 * 1024.0 * 1024.0);
+                    return Err(format!(
+                        "--session-slots {session_slots} needs {:.1} GiB total ({:.1} GiB for \
+                         the live session plus {:.1} GiB for {} parked slot{}); {:.1} GiB \
+                         available ({:.1} GiB physical - weights, expert cache and reserve). \
+                         Fewer slots or a smaller --max-context would fit.",
+                        gib(needs),
+                        gib(context.kv_bytes),
+                        gib(pool_extra),
+                        session_slots - 1,
+                        if session_slots == 2 { "" } else { "s" },
+                        gib(available),
+                        gib(physical),
+                    ));
+                }
+            }
+        }
         let tokenizer = MfTokenizer::load_from_dir(model_dir).map_err(|e| {
             format!(
                 "failed to load a tokenizer from {}: {e}",
@@ -136,18 +173,20 @@ impl RealChatModel {
         // -- two copies would name different causes the first time they
         // disagreed.
         let choice = runtime::resolve_drafter(drafter, model_dir);
-        let mut runner = RealForwardRunner::open_with_slot_policy_speculation_and_steering(
-            model_dir,
-            arch,
-            context.resolved as usize,
-            match expert_cache_slots {
-                Some(n) => runtime::ExpertCacheSlots::Fixed(n as usize),
-                None => runtime::ExpertCacheSlots::Auto,
-            },
-            runtime::draft_policies(&choice, speculation),
-            steering,
-        )
-        .map_err(|e| e.to_string())?;
+        let mut runner =
+            RealForwardRunner::open_with_slot_policy_speculation_steering_and_sessions(
+                model_dir,
+                arch,
+                context.resolved as usize,
+                match expert_cache_slots {
+                    Some(n) => runtime::ExpertCacheSlots::Fixed(n as usize),
+                    None => runtime::ExpertCacheSlots::Auto,
+                },
+                runtime::draft_policies(&choice, speculation),
+                steering,
+                session_slots as usize,
+            )
+            .map_err(|e| e.to_string())?;
         // A request continues from the previous request's KV wherever the
         // prompts agree, instead of re-prefilling the whole transcript
         // (`crates/runtime/CLAUDE.md` Gotcha 30). Set once at open, like every
@@ -305,6 +344,16 @@ impl RealChatModel {
     /// with, for the startup line to report.
     pub fn expert_cache_slots(&self) -> usize {
         self.expert_cache_slots
+    }
+
+    /// How many distinct sessions this runner's pool holds reusable KV/
+    /// recurrent state for at once, for the startup line. `1` unless
+    /// `--session-slots` asked for more.
+    pub fn session_pool_size(&self) -> usize {
+        self.runner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .session_pool_size()
     }
 
     /// The resolved context window and the arithmetic behind it, for the

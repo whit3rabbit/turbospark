@@ -5,6 +5,28 @@ use crate::producer::{ChunkedPrefillRunner, LogitProducer, SpeculativeProducer};
 
 impl LogitProducer for RealForwardRunner {
     fn reset(&mut self) {
+        // PARK the live session rather than clobbering it, whenever there is
+        // a pool to park it IN and something worth parking. This is the path
+        // that actually fixes multi-conversation stomping
+        // (`crates/server/CLAUDE.md`'s `--session-slots` Gotcha): every
+        // caller that finds no match on the live session -- including the
+        // speculative loop, which never calls `try_reuse_prefix` at all --
+        // reaches `reset()`, and it used to destroy whatever conversation
+        // was live with no chance to continue it later. Guarded on
+        // `session_pool.capacity() > 0`, which is false at the default
+        // `--session-slots 1`, so this is a true no-op there.
+        self.session_slot_evicted = false;
+        if self.session_pool.capacity() > 0 && self.kv.position() > 0 {
+            let promoted = self.session_pool.take_lru();
+            // The slot about to be overwritten (`kv.reset()` below) is an
+            // EVICTION, reportable via `session_slot_evicted`, only if it
+            // held a real conversation. A freshly-allocated slot that has
+            // never served a request (`position() == 0`, every parked slot
+            // at open) costs nothing to overwrite.
+            self.session_slot_evicted = promoted.kv.position() > 0;
+            let outgoing = self.swap_live_session(promoted);
+            self.session_pool.park(outgoing);
+        }
         // Cleared HERE, beside the cache it describes, so the two can never
         // disagree about what the state holds.
         self.kv_prefix.clear();
@@ -93,6 +115,11 @@ impl LogitProducer for RealForwardRunner {
         if !self.prefix_reuse_enabled {
             return 0;
         }
+        // Swap in whichever PARKED session best continues this prompt,
+        // before scoring the live one. A no-op at `session_pool.capacity()
+        // == 0` (the default), which is the whole byte-identity guarantee
+        // for that case. See `Self::select_session`.
+        let swapped = self.select_session(prompt_ids);
         let keep = self.kv_prefix.common_prefix(prompt_ids);
         if keep == 0 {
             return 0;
@@ -107,6 +134,44 @@ impl LogitProducer for RealForwardRunner {
                 return 0;
             }
             if back > self.kv.max_safe_rewind() {
+                return 0;
+            }
+            // A session pool changes what a small `keep` MEANS, but only for
+            // the session that `select_session` did NOT already vet.
+            //
+            // When it found nothing better than what was already live
+            // (`swapped == false`), a shallow `keep` is exactly as
+            // suspicious as it always was pre-pooling, and now more
+            // dangerous: without a pool, a shallow match against an
+            // unrelated prompt is harmless (the discarded tail was never
+            // going to be read again). WITH a pool, that same shallow match
+            // is DESTRUCTIVE -- it silently overwrites the live session's
+            // real content in place instead of PARKING it, because parking
+            // only happens inside `reset()`, which this rewind path exists
+            // specifically to avoid calling. Measured on a real install:
+            // two conversations sharing nothing but a chat template's
+            // opening tokens (`<bos><start_of_turn>user\n`, 6 tokens on
+            // Gemma 4) still score a nonzero `keep` against each other, and
+            // a session live on that shared prefix gets its real content
+            // clobbered by the unrelated turn before the pool ever gets a
+            // chance to preserve it.
+            //
+            // When `select_session` DID swap, the pool has already done the
+            // vetting: this candidate beat every other live-or-parked
+            // option FOR THIS PROMPT, so a small `keep` here is not a
+            // coincidence to distrust, it is this codebase's own
+            // established norm for what real reuse looks like (the CLI's
+            // real chat REPL measures 13/33 and 29/49 -- 39% and 59% --
+            // as WORKING reuse, both of which a `back > keep` bar would
+            // refuse). Refusing the swap's own verdict here would not save
+            // this session; it would force ANOTHER reset() that re-parks
+            // the very session `select_session` just picked, evicts
+            // whatever else was parked to make room for a THIRD, and ends
+            // up reusing nothing at all -- measured: exactly this cascade,
+            // needlessly evicting an unrelated third conversation's session
+            // to serve a request that already had its own real match in
+            // hand.
+            if self.session_pool.capacity() > 0 && !swapped && back > keep {
                 return 0;
             }
             self.kv.rewind_by(back);
@@ -125,6 +190,10 @@ impl LogitProducer for RealForwardRunner {
         let result = self.produce(token, position, scratch);
         self.skip_head = false;
         result
+    }
+
+    fn session_slot_evicted(&self) -> bool {
+        self.session_slot_evicted
     }
 }
 
@@ -269,6 +338,77 @@ impl ChunkedPrefillRunner for RealForwardRunner {
 }
 
 impl RealForwardRunner {
+    /// Swap in whichever PARKED session best continues `prompt_ids`, if any
+    /// beats the LIVE session's own match. See `crate::session_pool`.
+    ///
+    /// Only ever SWAPS toward a genuine match (`SessionPool::best_match`
+    /// already filters out an all-zero pool); it never manufactures a fresh
+    /// session for an unmatched prompt; that is `reset()`'s job below, which
+    /// is reached next when this leaves `keep == 0`.
+    ///
+    /// Returns whether it swapped. The caller (`try_reuse_prefix`) needs
+    /// this: a swap means the pool has already vetted this candidate as the
+    /// best available match FOR THIS PROMPT, which licenses trusting even a
+    /// partial (well under 50%) reuse of it -- exactly this codebase's own
+    /// established norm for what real reuse looks like (the CLI's real chat
+    /// REPL measures 13/33 and 29/49, i.e. 39% and 59%, as working reuse).
+    /// No swap means the live session was never compared favorably against
+    /// anything else, so a shallow match against it gets no such benefit of
+    /// the doubt.
+    fn select_session(&mut self, prompt_ids: &[TokenId]) -> bool {
+        if self.session_pool.capacity() == 0 {
+            return false;
+        }
+        let live_score = self.kv_prefix.common_prefix(prompt_ids);
+        let Some((idx, parked_score)) = self.session_pool.best_match(prompt_ids) else {
+            return false;
+        };
+        // A tie favors the LIVE session: swapping to an equally-good parked
+        // one would pay the swap for no benefit, and would needlessly evict
+        // whatever slot lands in the outgoing live session's place.
+        if parked_score <= live_score {
+            return false;
+        }
+        let incoming = self.session_pool.take(idx);
+        let outgoing = self.swap_live_session(incoming);
+        self.session_pool.park(outgoing);
+        true
+    }
+
+    /// Moves `incoming`'s `kv`/`gdn`/`kv_prefix` onto the live fields via
+    /// `std::mem::replace` (an O(1) struct move, never a memcpy) and returns
+    /// what was there, for the caller to park.
+    ///
+    /// A live `GdnStateManager` swap rather than the `GdnSnapshot`/
+    /// `snapshot()`/`restore()` pair `RollbackPoint` uses for speculative
+    /// rollback: that pair is a real host memcpy (tens to ~150 MiB
+    /// depending on family, `crates/gpu/src/gdn_state.rs`'s own doc), which
+    /// would reintroduce for GDN state exactly the per-switch cost a
+    /// swap-based pool exists to avoid paying for KV. A second LIVE
+    /// `GdnStateManager` costs one extra allocation at open and zero cost
+    /// per switch.
+    fn swap_live_session(
+        &mut self,
+        mut incoming: crate::session_pool::SessionSlot,
+    ) -> crate::session_pool::SessionSlot {
+        let kv = std::mem::replace(&mut self.kv, incoming.kv);
+        let gdn = self.real_qwen.as_mut().and_then(|qwen| {
+            incoming
+                .gdn
+                .take()
+                .map(|fresh| std::mem::replace(&mut qwen.gdn, fresh))
+        });
+        let kv_prefix = std::mem::replace(&mut self.kv_prefix, incoming.kv_prefix);
+        crate::session_pool::SessionSlot {
+            kv,
+            gdn,
+            kv_prefix,
+            // Restamped by `SessionPool::park`, which every caller of this
+            // method calls immediately with the returned slot.
+            last_used: 0,
+        }
+    }
+
     /// The family dispatch, split out so [`ChunkedPrefillRunner::prefill_chunk`]
     /// above is just "run it, then record what was fed".
     fn prefill_chunk_inner(

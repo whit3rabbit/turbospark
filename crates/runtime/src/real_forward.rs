@@ -90,6 +90,18 @@ pub struct RealForwardRunner {
     /// and both quality gates run one generation per process, where reuse
     /// could never fire anyway.
     pub(crate) prefix_reuse_enabled: bool,
+    /// Parked sessions this runner may swap the live `kv`/`real_qwen.gdn`/
+    /// `kv_prefix` fields against, so more than one conversation can reuse
+    /// its own KV state against one runner instead of each turn discarding
+    /// the others' (`crate::session_pool`, `--session-slots`). Empty unless
+    /// the caller asked for more than one slot at open, which is what keeps
+    /// every existing caller's behavior byte-identical.
+    pub(crate) session_pool: crate::session_pool::SessionPool,
+    /// Whether the `reset()` that preceded the CURRENT generation had to
+    /// evict a still-nonempty parked session to make room. Read back through
+    /// `LogitProducer::session_slot_evicted` at the end of a generation loop
+    /// and reported on `RawDecodeResult`.
+    pub(crate) session_slot_evicted: bool,
     pub(crate) context: gpu::MetalContext,
     /// The whole resident region as one zero-copy `MTLBuffer` over the
     /// mmap (see `gpu::ResidentGpuWeights`); every GPU projection binds

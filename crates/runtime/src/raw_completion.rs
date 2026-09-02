@@ -101,6 +101,13 @@ pub struct RawDecodeResult {
     /// differs from a working one only in wall-clock -- which thermal drift
     /// alone can cover (AGENTS.md Gotcha 28).
     pub reused_prefix_tokens: usize,
+    /// Whether serving this turn evicted a DIFFERENT session's still-usable
+    /// KV/recurrent state from the pool to make room (`--session-slots`,
+    /// `crate::session_pool`). Always `false` unless the producer opted in
+    /// AND is actually being churned under, which is the operational
+    /// question an operator sizing the flag needs answered -- "is the
+    /// feature on" is not it. See `LogitProducer::session_slot_evicted`.
+    pub session_slot_evicted: bool,
     /// The WORST memory pressure observed while this turn decoded.
     ///
     /// **Always `Normal` when the profile does no stepping**, which is the
@@ -147,6 +154,7 @@ pub(crate) fn cancelled_during_prefill(
     prompt_tokens: usize,
     prefill_start: Instant,
     reused: usize,
+    session_slot_evicted: bool,
 ) -> RawDecodeResult {
     RawDecodeResult {
         prompt_tokens,
@@ -159,6 +167,7 @@ pub(crate) fn cancelled_during_prefill(
         kv_position: position,
         kv_backed_token_ids: history,
         reused_prefix_tokens: reused,
+        session_slot_evicted,
         // Decoding never started, so nothing was ever polled.
         peak_memory_pressure: MemoryPressure::Normal,
     }
@@ -275,6 +284,7 @@ pub fn run_raw_completion_cancellable(
                 prompt_ids.len(),
                 prefill_start,
                 reused,
+                producer.session_slot_evicted(),
             ));
         }
     }
@@ -293,6 +303,7 @@ pub fn run_raw_completion_cancellable(
         on_progress,
     )?;
     result.reused_prefix_tokens = reused;
+    result.session_slot_evicted = producer.session_slot_evicted();
     Ok(result)
 }
 
@@ -395,6 +406,9 @@ pub(crate) fn decode<P: LogitProducer + ?Sized>(
         // `decode` is shared by all three prefill loops and knows nothing
         // about reuse; the one loop that reuses patches this on the way out.
         reused_prefix_tokens: 0,
+        // Same reasoning: patched by the caller that actually reset (or
+        // didn't) the producer.
+        session_slot_evicted: false,
         prompt_tokens,
         new_tokens: sink.generated,
         prefill_seconds,

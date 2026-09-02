@@ -915,3 +915,76 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
     inert rather than merely conservative -- `set_prompt_vision` taints
     `kv_prefix` on every call (`crates/runtime/CLAUDE.md` Gotcha 30's own
     taint list), so that path could not reuse a prefix whatever the flag said.
+
+32. **`--session-slots` (ROADMAP section 4's Option 3) IS THE FLAG THAT
+    ACTUALLY FIXES GOTCHA 31's STATED LIMITATION, AND IT NEEDED A SECOND
+    CORRECTNESS FIX FOUND ONLY BY THE REAL-INSTALL GATE.** Gotcha 31 shipped
+    `--prefix-reuse on|off` and documented its own gap plainly: "this
+    server has exactly one runner serving every client's every
+    conversation, with no per-conversation identity anywhere in the
+    request path, so two interleaved unrelated conversations each discard
+    the other's reusable prefix." `--session-slots N` (default 1, no pool)
+    is the fix: `RealChatModel::open` threads it into
+    `RealForwardRunner::open_with_slot_policy_speculation_steering_and_sessions`,
+    a NEW sibling of `open_with_slot_policy_speculation_and_steering` rather
+    than a widened form of it -- that six-argument function has roughly a
+    dozen existing callers across `crates/runtime`'s own tests, `crates/cli`
+    and `crates/ffi`, none of which has any reason to acquire a session
+    pool, and `session_slots <= 1` costs nothing extra
+    (`model_io::session_pool_bytes`), so widening it would be a no-op diff
+    at every one of those call sites for no benefit. `turbospark-server` is
+    the only front end whose one runner serves more than one conversation
+    at a time, which is why it is the only caller of the new form. The
+    session-pool MECHANISM itself (`SessionSlot`/`SessionPool`, the swap in
+    `RealForwardRunner::select_session`, the park-and-promote in `reset()`)
+    lives entirely in `crates/runtime`; see `crates/runtime/CLAUDE.md`
+    Gotcha 32 for its design and for the two real bugs a real-install test
+    found in it (a destructive shallow-match rewind, then an
+    overly-strict discriminator that undid the pool's own correct swap
+    decision) -- neither bug was visible to the synthetic
+    `crates/runtime/tests/session_pool.rs` file written alongside the
+    feature, which is why `crates/server/tests/real_backend.rs`'s
+    `real_backend_reuses_kv_across_two_interleaved_conversations` exists as
+    its own real-install gate rather than being considered redundant with
+    it.
+
+    **Real committed memory, not a floor**, which is why this is `--expert-
+    cache-slots`'s explicit-opt-in shape rather than `--prefix-reuse`'s
+    safe-default-on one: a parked slot is allocated at `open()`, before any
+    request ever needs it, unlike prefix reuse's only cost (a raised idle-
+    memory floor between requests). `RealChatModel::open` refuses an
+    over-committed value BEFORE `open_inner` allocates a single parked
+    slot, using `model_io::session_pool_bytes` and following the exact
+    "refuse with the whole subtraction shown" pattern `--max-context`
+    already established (`crates/model-io/src/context_policy.rs`'s
+    `ContextTooLarge`) -- the alternative is an unattributed Metal
+    allocation error with no number in it pointing back at the flag. No
+    `auto`, unlike `--expert-cache-slots`: there is no measured throughput/
+    footprint trade a formula could resolve from machine size alone, only
+    a policy choice about expected concurrent-conversation count that only
+    the operator running this deployment knows.
+
+    **The orphan-flag refusal follows the `--steering-*`-without-
+    `--steering` precedent exactly** (`args.rs`'s six steering flags):
+    `--session-slots N > 1` while `--prefix-reuse off` is a parse-time
+    error, because a parked session is never reused without prefix reuse
+    enabled and a command line naming a pool while explicitly disabling the
+    one thing that could ever populate it says one thing while the server
+    does another. Unlike the steering flags' orphan check, this one needs
+    no separate "was it explicit" bookkeeping: `1` is the only value
+    reachable without naming the flag at all, so `session_slots > 1` alone
+    already means the caller asked for a pool on purpose.
+
+    **Observability follows `reused_prefix_tokens`'s exact precedent, one
+    field over**: `RawDecodeResult::session_slot_evicted` (set inside
+    `crate::session_pool`'s `reset()` path, `crates/runtime/CLAUDE.md`
+    Gotcha 32) reaches `ServerEvent::Generated.sessionSlotEvicted` through
+    the same `ReportingModel` choke point `reused_prefix_tokens` already
+    uses. It answers a narrower and more actionable question than "is
+    pooling on": whether it is being CHURNED under, which is what an
+    operator actually needs to decide whether to raise `--session-slots`.
+    The startup line only prints when the resolved pool holds more than
+    the one live session (`RealForwardRunner::session_pool_size() > 1`),
+    matching the guardrails/prefix-reuse lines' always-print shape for a
+    fixed toggle but the reasoning-line's say-nothing-when-off shape for a
+    flag whose default genuinely has nothing to report.

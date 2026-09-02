@@ -121,6 +121,12 @@ pub enum ServerEvent {
         /// caller needs SOME way to see whether the optimization is
         /// actually firing rather than silently never matching.
         reused_prefix_tokens: u32,
+        /// Whether serving this turn evicted a DIFFERENT conversation's
+        /// still-usable KV/recurrent state from the session pool
+        /// (`--session-slots`) to make room. Always `false` at the default
+        /// `--session-slots 1`. The signal an operator sizing the flag
+        /// needs: not "is pooling on" but "is it being churned under".
+        session_slot_evicted: bool,
     },
     /// From the middleware, after the handler returned. On a STREAMING
     /// response this fires when the handler returns the stream, not when
@@ -279,6 +285,7 @@ impl crate::ChatModel for ReportingModel {
                 decode_seconds: decode.decode_seconds,
                 stop_reason: format!("{:?}", decode.reason),
                 reused_prefix_tokens: decode.reused_prefix_tokens as u32,
+                session_slot_evicted: decode.session_slot_evicted,
             });
         }
         // A failure is NOT recorded here. The handler turns it into a status

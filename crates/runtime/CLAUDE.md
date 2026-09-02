@@ -1108,3 +1108,116 @@ cargo test -p turbospark-runtime
     ONLY the engagement assertion in `tests/mapped_vision_residency.rs` and
     leaves the byte-identity one green, which is the silent-fallback
     failure the accessor exists to catch, demonstrated rather than argued.
+
+32. **A SESSION POOL (`--session-slots`, ROADMAP section 4's Option 3) IS A
+    SWAP, NEVER A COPY, AND A "SHALLOW MATCH" MEANS SOMETHING DIFFERENT ONCE
+    ONE EXISTS.** `crate::session_pool::SessionPool` holds `session_slots -
+    1` PARKED `SessionSlot`s (`kv: gpu::KvCacheManager`, `gdn:
+    Option<gpu::GdnStateManager>`, `kv_prefix`, a monotonic `last_used`
+    tick mirroring `streaming::ExpertCache`'s `slot_last_use`/`use_clock`
+    pair) alongside the runner's existing single `kv`/`real_qwen.gdn`/
+    `kv_prefix` fields, which stay the "live" slot. `RealForwardRunner::
+    select_session` (called first thing inside `try_reuse_prefix`) scores
+    every parked slot's `kv_prefix.common_prefix` against the incoming
+    prompt and, if one beats the live session's own score, moves it onto
+    the live fields via `std::mem::replace` -- an O(1) struct swap, never a
+    memcpy, which is the entire reason KV cache sharing works here where a
+    per-switch host copy was already rejected for that resource (see the
+    ROADMAP research this Gotcha's own commit message cites). `reset()`
+    (every `LogitProducer` caller's fallback when no match is found,
+    including the speculative loop, which never calls `try_reuse_prefix`
+    at all) is the OTHER half: instead of clearing the live session in
+    place, it PARKS it and promotes the pool's LRU slot to become live
+    before clearing THAT one. `session_slots <= 1` makes the pool empty and
+    every new code path here a true no-op, which is the whole byte-identity
+    guarantee for the shipped default.
+
+    **TWO REAL BUGS SHIPPED IN THE FIRST DRAFT AND BOTH WERE FOUND ONLY BY
+    A REAL-INSTALL TEST, NOT BY THE SYNTHETIC ONE WRITTEN ALONGSIDE IT.**
+    `crates/runtime/tests/session_pool.rs` proves the swap/park mechanics
+    with fully controlled token arrays and passed on the FIRST try; the
+    real bug was in what "a shallow match" means against REAL tokenized
+    text, which a hand-picked fixture cannot manufacture by accident.
+
+    **Bug 1: a partial rewind is DESTRUCTIVE once there is somewhere else
+    for the discarded content to go, and the original `try_reuse_prefix`
+    had no way to tell "genuine continuation with minor tail divergence"
+    (Gotcha 30's sanctioned case) from "coincidental overlap with an
+    UNRELATED live session".** Measured on a real Gemma 4 install serving
+    two interleaved conversations: two prompts sharing NOTHING but a chat
+    template's opening tokens (`<bos><start_of_turn>user\n`, 6 tokens)
+    still score a nonzero `common_prefix` against each other. Without a
+    pool this is harmless -- the discarded tail was never going to be read
+    again regardless of what overwrote it. WITH a pool, the same shallow
+    match is destructive: it rewinds the live session by a few tokens and
+    lets the new prompt's prefill overwrite the rest IN PLACE, which
+    silently destroys a real, valuable conversation that had never been
+    given a chance to be parked (parking only happens inside `reset()`,
+    and this rewind path exists specifically to avoid calling it). The fix
+    is a discriminator on the rewind, `back > keep` (discarding more than
+    is kept is never what a genuine continuation looks like), refusing so
+    the caller's `reset()` runs and parks the live session instead.
+
+    **Bug 2, found by the SAME real-install test after fixing bug 1: the
+    `back > keep` bar is too strict for a session `select_session` has
+    ALREADY vetted, and applying it there undoes the swap's own verdict
+    for no reason.** After bug 1's fix, the real install's second
+    conversation's second turn STILL failed to find its own parked
+    session -- `select_session` correctly swapped it in (proven by the
+    debug trace: `best parked idx=0 score=15`), but the resulting `keep`
+    (15 of a 42-token real session) still tripped `back > keep`, refusing
+    a match the pool had already identified as the best available one.
+    Refusing it does not preserve anything -- it forces ANOTHER `reset()`
+    that re-parks the very session just swapped in, evicts whatever ELSE
+    was parked to make room, and ends up reusing nothing at all; measured
+    on the real install, this cascade needlessly evicted an unrelated
+    THIRD conversation's session to serve a request that already had its
+    own real match in hand. **15 of 42 (36%) is not a low bar by this
+    codebase's own established norm**: the CLI's real `--chat` REPL
+    measures 13/33 and 29/49 (39% and 59%) as WORKING reuse
+    (`crate::kv_prefix`'s own module doc), both of which a flat `back >
+    keep` bar would refuse. The fix: `select_session` returns whether it
+    swapped, and `try_reuse_prefix` only applies the `back > keep` scrutiny
+    when it did NOT -- once the pool has already vetted a candidate as the
+    best match FOR THIS PROMPT, a small `keep` is not a coincidence to
+    distrust, it is this codebase's own definition of reuse working.
+
+    **The general shape, worth carrying past this feature**: a threshold
+    meant to catch "this match is too coincidental to trust" has to be
+    scoped to the case that was NEVER vetted by anything else. Applying it
+    a second time to a decision another mechanism already made second-
+    guesses that mechanism for free and can undo real, correct work -- and
+    the failure mode is not a crash, it is quietly reusing NOTHING where
+    something real was available, which reads as "the feature just doesn't
+    help much" rather than as a bug with a specific, findable cause.
+
+    **A live `GdnStateManager` swap, not the `GdnSnapshot`/`snapshot()`/
+    `restore()` pair `RollbackPoint` uses for speculative rollback.** That
+    pair is a real host memcpy (tens to ~150 MiB depending on family,
+    `crates/gpu/src/gdn_state.rs`'s own doc), which would reintroduce for
+    GDN state exactly the per-switch cost a swap-based pool exists to avoid
+    paying for KV. A second LIVE `GdnStateManager` costs one extra
+    allocation at open and zero cost per switch, swapped by
+    `RealForwardRunner::swap_live_session` in the SAME `mem::replace` call
+    that moves `kv`, gated on `self.real_qwen.as_mut()` so a non-GDN
+    family's `SessionSlot::gdn` stays `None` throughout. **This family is
+    also where the two refusals `try_reuse_prefix` already carries
+    (`crates/runtime/CLAUDE.md` Gotcha 30's `real_qwen.is_some()` check)
+    interact with pooling in a way worth knowing**: that check refuses ANY
+    rewind unconditionally on a GDN family, so `try_reuse_prefix` can only
+    ever succeed there via the `back == 0` exact-continuation path -- the
+    `back > keep` discriminator (and its `!swapped` exemption) never even
+    gets reached on this family, because the pre-existing guard answers
+    first. `tests/session_pool.rs`'s
+    `a_shallow_match_does_not_destroy_a_gdn_familys_recurrent_state` proves
+    the swap itself (via `select_session`, unconditionally called before
+    any rewind decision) still correctly moves the GDN state alongside the
+    KV, independent of which downstream check ultimately allows reuse.
+
+    **Eviction is reported (`LogitProducer::session_slot_evicted`,
+    `RawDecodeResult::session_slot_evicted`) only when the LRU slot
+    `reset()` promotes actually held real content** (`promoted.kv.position()
+    > 0`) -- a freshly-allocated slot that has never served a request costs
+    nothing to overwrite, and reporting an eviction for it would train an
+    operator sizing `--session-slots` to distrust a signal that fires on
+    every cold pool.

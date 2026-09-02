@@ -33,9 +33,10 @@ pub use arch_config::{
     ModelFamily, RopeScalingConfig, VisionConfig,
 };
 pub use context_policy::{
-    committed_bytes, kv_bytes_for_context, largest_context_within, resolve_max_context, ContextCap,
-    ContextFloorUnmet, ContextPlan, ContextRefused, ContextTooLarge, MaxContext,
-    CONTEXT_BUDGET_FRACTION, CONTEXT_GRANULARITY, CONTEXT_RESERVE_BYTES, MAX_SUPPORTED_CONTEXT,
+    committed_bytes, gdn_state_bytes, kv_bytes_for_context, largest_context_within,
+    resolve_max_context, session_pool_bytes, ContextCap, ContextFloorUnmet, ContextPlan,
+    ContextRefused, ContextTooLarge, MaxContext, CONTEXT_BUDGET_FRACTION, CONTEXT_GRANULARITY,
+    CONTEXT_RESERVE_BYTES, MAX_SUPPORTED_CONTEXT,
 };
 pub use error::ModelError;
 pub use expert_cache_policy::{ExpertCacheSlots, HEADROOM_FRACTION, HEADROOM_RESERVE_BYTES};

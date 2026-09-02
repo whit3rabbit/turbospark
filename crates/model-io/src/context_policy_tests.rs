@@ -599,3 +599,69 @@ fn a_zero_floor_never_refuses() {
         .is_ok());
     }
 }
+
+/// A family with no recurrent state (every family but the two qwen halves)
+/// costs nothing here, matching `GdnStateManager::new`'s own empty loop.
+#[test]
+fn a_non_gdn_family_has_no_recurrent_state_cost() {
+    assert_eq!(gdn_state_bytes(&gemma4()), 0);
+    assert_eq!(gdn_state_bytes(&dense_7b()), 0);
+}
+
+/// The `qwen_gdn_moe_35b_a3b` baseline's own numbers, cross-checked against
+/// `crates/gpu/src/gdn_state.rs`'s doc comment ("2 MiB per linear layer and
+/// 60 MiB over its 30" on Qwen 3.6): 30 of 40 layers are linear, so this
+/// asserts the per-layer state lands at that same ~2 MiB rather than
+/// re-deriving a number nothing else in the repo has measured.
+#[test]
+fn the_gdn_state_estimate_matches_the_documented_qwen36_figure() {
+    let arch = known_architecture(ModelFamily::QwenGdnMoe);
+    let linear_layers = arch
+        .full_attention_layer_mask
+        .iter()
+        .filter(|&&mask| mask == 2)
+        .count();
+    assert_eq!(
+        linear_layers, 30,
+        "30 of 40 layers are linear on this family"
+    );
+    let total = gdn_state_bytes(&arch);
+    let per_layer = total / linear_layers as u64;
+    // ~2 MiB per layer, matching the doc comment's own figure to within the
+    // conv tail's much smaller contribution.
+    assert!(
+        (2 * 1024 * 1024..2 * 1024 * 1024 + 64 * 1024).contains(&per_layer),
+        "expected ~2 MiB per linear layer, got {per_layer} bytes"
+    );
+}
+
+/// `session_slots <= 1` commits nothing extra: the pool holds
+/// `session_slots - 1` PARKED slots, and the live one is already sized by
+/// `kv_bytes_for_context`/`resolve_max_context`. This is the arithmetic
+/// behind the "the default is a true no-op" claim `crates/server/CLAUDE.md`
+/// makes for `--session-slots 1`.
+#[test]
+fn a_session_pool_of_one_or_zero_costs_nothing() {
+    let arch = known_architecture(ModelFamily::QwenGdnDense);
+    assert_eq!(session_pool_bytes(&arch, 4096, 0), 0);
+    assert_eq!(session_pool_bytes(&arch, 4096, 1), 0);
+}
+
+/// Two extra slots cost exactly twice one extra slot's KV plus GDN bytes,
+/// on both a GDN family and a non-GDN one.
+#[test]
+fn session_pool_bytes_scales_linearly_with_extra_slots() {
+    for arch in [
+        gemma4(),
+        dense_7b(),
+        known_architecture(ModelFamily::QwenGdnDense),
+    ] {
+        let one_extra = session_pool_bytes(&arch, 4096, 2);
+        let two_extra = session_pool_bytes(&arch, 4096, 3);
+        assert_eq!(two_extra, one_extra * 2);
+        assert_eq!(
+            one_extra,
+            kv_bytes_for_context(&arch, 4096) + gdn_state_bytes(&arch)
+        );
+    }
+}

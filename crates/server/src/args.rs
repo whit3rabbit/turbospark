@@ -1,5 +1,5 @@
 /// Command line usage and flag description text for `turbospark-server`.
-pub const USAGE: &str = "usage: turbospark-server --model <install-dir|alias> [--port N] [--max-context N|auto] [--load-guard TIER|BYTES] [--min-auto-context N] [--expert-cache-slots auto|N] [--bind loopback|tailnet] [--power-profile performance|balanced|efficiency] [--max-tokens-per-sec R] [--speculative off|auto|N] [--speculative-drafter auto|mtp|dflash] [--guardrails on|off] [--prefix-reuse on|off] [--reasoning off|low|medium|high|xhigh] [--api-key KEY] [--steering PATH] [--steering-mode ablate|add|clamp|renorm] [--steering-scale F] [--steering-layers S:E] [--steering-target F] [--steering-gate F]\n       turbospark-server <tokenizer-dir> [port]\n       turbospark-server --help | --version\n\noptions:\n  --model              a .gturbo directory or a turbospark-model alias (`turbospark-model list`)\n  --port               listen port (default 8080)\n  --max-context        context window in tokens, or auto (default auto: the\n                       checkpoint's trained context, capped by what memory\n                       holds, and 4096 when the install declares none)\n  --load-guard         how much of the machine a session may commit: off,
+pub const USAGE: &str = "usage: turbospark-server --model <install-dir|alias> [--port N] [--max-context N|auto] [--load-guard TIER|BYTES] [--min-auto-context N] [--expert-cache-slots auto|N] [--bind loopback|tailnet] [--power-profile performance|balanced|efficiency] [--max-tokens-per-sec R] [--speculative off|auto|N] [--speculative-drafter auto|mtp|dflash] [--guardrails on|off] [--prefix-reuse on|off] [--session-slots N] [--reasoning off|low|medium|high|xhigh] [--api-key KEY] [--steering PATH] [--steering-mode ablate|add|clamp|renorm] [--steering-scale F] [--steering-layers S:E] [--steering-target F] [--steering-gate F]\n       turbospark-server <tokenizer-dir> [port]\n       turbospark-server --help | --version\n\noptions:\n  --model              a .gturbo directory or a turbospark-model alias (`turbospark-model list`)\n  --port               listen port (default 8080)\n  --max-context        context window in tokens, or auto (default auto: the\n                       checkpoint's trained context, capped by what memory\n                       holds, and 4096 when the install declares none)\n  --load-guard         how much of the machine a session may commit: off,
                        relaxed (default), balanced, strict, or a byte ceiling on
                        what the engine ALLOCATES. relaxed is what shipped before
                        this flag and what every published memory figure was
@@ -7,7 +7,7 @@ pub const USAGE: &str = "usage: turbospark-server --model <install-dir|alias> [-
   --min-auto-context   refuse to open when --max-context auto resolves below this
                        many tokens (default 0, no floor). Says nothing about an
                        explicit --max-context
-  --expert-cache-slots routed-cache slots per layer: auto or 8/16/24/32 (default auto)\n  --bind               loopback or tailnet (default loopback; tailnet is NOT auth)\n  --power-profile      performance, balanced or efficiency\n  --max-tokens-per-sec decode rate cap, greater than 0\n  --speculative        off, auto, or a block size 1-15 (default auto). Speculation\n                       applies to temperature-0 requests only; others decode\n                       sequentially\n  --speculative-drafter auto, mtp or dflash (default auto; auto reports a DFlash2\n                       drafter but does not enable it -- see docs/DFLASH2.md)\n  --guardrails         on or off (default on). Rescues a tool call the decoder\n                       could not parse, checks arguments against the request's\n                       own schema, and re-asks once. A request carrying TOOLS is\n                       buffered rather than streamed while this is on, because a\n                       verdict needs the whole turn; requests without tools are\n                       unaffected\n  --prefix-reuse       on or off (default on). A request continues from the\n                       previous request's KV cache wherever the prompts agree,\n                       instead of re-prefilling the whole transcript. Helps\n                       only when consecutive requests are the same\n                       conversation -- unrelated interleaved requests each\n                       discard the other's reusable prefix -- and raises the\n                       idle-memory floor between requests, not the peak, since\n                       pages that would normally be released stay resident.\n                       See crates/runtime/CLAUDE.md Gotcha 30\n  --reasoning          default reasoning effort for requests that do not specify\n                       reasoning_effort: off, low, medium, high or xhigh\n                       (default off)\n  --api-key            require this key on every request except GET /health,
+  --expert-cache-slots routed-cache slots per layer: auto or 8/16/24/32 (default auto)\n  --bind               loopback or tailnet (default loopback; tailnet is NOT auth)\n  --power-profile      performance, balanced or efficiency\n  --max-tokens-per-sec decode rate cap, greater than 0\n  --speculative        off, auto, or a block size 1-15 (default auto). Speculation\n                       applies to temperature-0 requests only; others decode\n                       sequentially\n  --speculative-drafter auto, mtp or dflash (default auto; auto reports a DFlash2\n                       drafter but does not enable it -- see docs/DFLASH2.md)\n  --guardrails         on or off (default on). Rescues a tool call the decoder\n                       could not parse, checks arguments against the request's\n                       own schema, and re-asks once. A request carrying TOOLS is\n                       buffered rather than streamed while this is on, because a\n                       verdict needs the whole turn; requests without tools are\n                       unaffected\n  --prefix-reuse       on or off (default on). A request continues from the\n                       previous request's KV cache wherever the prompts agree,\n                       instead of re-prefilling the whole transcript. Helps\n                       only when consecutive requests are the same\n                       conversation -- unrelated interleaved requests each\n                       discard the other's reusable prefix -- and raises the\n                       idle-memory floor between requests, not the peak, since\n                       pages that would normally be released stay resident.\n                       See crates/runtime/CLAUDE.md Gotcha 30\n  --session-slots      how many DISTINCT conversations this runner may keep\n                       reusable KV/recurrent state for at once (default 1, i.e.\n                       no pool). Real committed memory per extra slot, unlike\n                       --prefix-reuse's floor-only cost; needs --prefix-reuse on\n                       (the default), since a parked session is never reused\n                       without it. See crates/server/CLAUDE.md's --session-slots\n                       Gotcha\n  --reasoning          default reasoning effort for requests that do not specify\n                       reasoning_effort: off, low, medium, high or xhigh\n                       (default off)\n  --api-key            require this key on every request except GET /health,
                        as `Authorization: Bearer <key>` or `x-api-key: <key>`.
                        Falls back to $TURBOSPARK_API_KEY when absent (keeps
                        the key out of `ps`); with neither, the server has no
@@ -73,6 +73,17 @@ pub struct ModelArgs {
     /// `crates/runtime/CLAUDE.md` Gotcha 30) and its only cost is a raised
     /// idle-memory floor, not a peak or a correctness risk.
     pub prefix_reuse: bool,
+    /// How many distinct conversations one runner may keep reusable KV/
+    /// recurrent state for at once (`crate::session_pool` /
+    /// `--session-slots`). Default 1 (no pool): unlike `prefix_reuse`, a
+    /// parked slot is real COMMITTED memory from the moment it is
+    /// allocated at open, not merely a floor that rises with use, so it
+    /// belongs with `expert_cache_slots`'s explicit-opt-in shape rather
+    /// than `prefix_reuse`'s safe-default-on one. No `auto`: there is no
+    /// principled heuristic for expected concurrent-conversation count the
+    /// way `--expert-cache-slots auto` has a measured throughput/footprint
+    /// trade to resolve from machine size alone.
+    pub session_slots: u32,
     /// Default reasoning effort for requests that do not specify reasoning_effort.
     pub reasoning: tokenizer::ReasoningEffort,
     /// The `--api-key` flag's OWN value, or `None` if absent. Deliberately
@@ -113,6 +124,7 @@ pub fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
         drafter: runtime::SpeculativeDrafter::Auto,
         guardrails: turbospark_server::GuardrailConfig::default(),
         prefix_reuse: true,
+        session_slots: 1,
         steering: runtime::SteeringPolicy::off(),
         reasoning: tokenizer::ReasoningEffort::Off,
         api_key: None,
@@ -329,6 +341,13 @@ pub fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
                     other => return Err(format!("--prefix-reuse must be on or off, not {other}")),
                 }
             }
+            "--session-slots" => {
+                let n = number()?;
+                if n == 0 {
+                    return Err("--session-slots must be at least 1, not 0".to_string());
+                }
+                parsed.session_slots = n;
+            }
             "--reasoning" => {
                 parsed.reasoning = tokenizer::ReasoningEffort::parse(value).ok_or_else(|| {
                     format!("--reasoning must be off, low, medium, high or xhigh, not {value}")
@@ -349,6 +368,17 @@ pub fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
     }
     if parsed.model.is_empty() {
         return Err(format!("--model needs a value\n{USAGE}"));
+    }
+    // A pool with nothing to reuse a parked session FOR is not a smaller
+    // version of the feature, it is a memory commitment that does nothing:
+    // `1` is the only value reachable without naming this flag, so `> 1`
+    // here always means the caller asked for a pool explicitly.
+    if parsed.session_slots > 1 && !parsed.prefix_reuse {
+        return Err(
+            "--session-slots needs --prefix-reuse on (the default); without prefix reuse \
+             there is nothing for a parked session to be reused for"
+                .to_string(),
+        );
     }
     // Read the allowed set rather than re-hardcoding it (AGENTS.md Gotcha 2);
     // the runtime setter would panic on a value outside it. `auto` is

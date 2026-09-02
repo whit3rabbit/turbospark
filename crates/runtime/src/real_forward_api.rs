@@ -264,6 +264,16 @@ impl RealForwardRunner {
         self.expert_cache_slots
     }
 
+    /// How many distinct sessions this runner may hold reusable KV/
+    /// recurrent state for at once: the one LIVE session plus however many
+    /// this opened with in its parked pool (`--session-slots`,
+    /// `crate::session_pool`). `1` when no pool was requested, matching
+    /// the flag's own default and worth printing next to any throughput or
+    /// footprint number the same way [`Self::expert_cache_slots`] is.
+    pub fn session_pool_size(&self) -> usize {
+        self.session_pool.capacity() + 1
+    }
+
     /// Cumulative phase timings across every `produce` call so far. See
     /// [`PhaseCounters`] for what each bucket covers.
     ///
@@ -358,6 +368,11 @@ impl RealForwardRunner {
             // acquired one by detection would freeze a digest for an edited
             // model and report it as the model's.
             crate::steering::SteeringPolicy::off(),
+            // Pinned at 1 (no pool): every caller here measures something,
+            // and a parked slot is real committed memory a frozen footprint
+            // row must not acquire by detection, same reasoning as the two
+            // pins above.
+            1,
         )
     }
 
@@ -383,6 +398,7 @@ impl RealForwardRunner {
             None,
             speculation,
             crate::steering::SteeringPolicy::off(),
+            1,
         )
     }
 
@@ -411,6 +427,7 @@ impl RealForwardRunner {
             None,
             crate::families::qwen::DraftPolicies::from_env(),
             crate::steering::SteeringPolicy::off(),
+            1,
         )
     }
 
@@ -435,6 +452,7 @@ impl RealForwardRunner {
             None,
             speculation,
             crate::steering::SteeringPolicy::off(),
+            1,
         )
     }
 
@@ -463,6 +481,42 @@ impl RealForwardRunner {
         speculation: crate::families::qwen::DraftPolicies,
         steering: crate::steering::SteeringPolicy,
     ) -> Result<Self, RealForwardError> {
+        Self::open_with_slot_policy_speculation_steering_and_sessions(
+            dir,
+            expecting,
+            max_context,
+            slots,
+            speculation,
+            steering,
+            1,
+        )
+    }
+
+    /// [`RealForwardRunner::open_with_slot_policy_speculation_and_steering`]
+    /// carrying a `--session-slots` count as well, so more than one
+    /// conversation can reuse its own KV/recurrent state against one runner
+    /// instead of each turn discarding the others' (`crate::session_pool`).
+    ///
+    /// A SIBLING rather than a widened form of the six-argument function
+    /// above, on the same reasoning [`Self::open_with_slot_policy`]'s own
+    /// doc gives for staying separate from `open_with_options`: that
+    /// function has around a dozen existing callers across this crate's own
+    /// tests, `crates/cli` and `crates/ffi`, none of which has any reason to
+    /// acquire a session pool, and `session_slots <= 1` costs nothing extra
+    /// (`model_io::context_policy::session_pool_bytes`), so widening it
+    /// would be a no-op diff at every one of those call sites for no
+    /// benefit. `turbospark-server` is the only caller of this one, because
+    /// it is the only front end whose one runner serves more than one
+    /// conversation at a time.
+    pub fn open_with_slot_policy_speculation_steering_and_sessions(
+        dir: &Path,
+        expecting: ArchConfig,
+        max_context: usize,
+        slots: ExpertCacheSlots,
+        speculation: crate::families::qwen::DraftPolicies,
+        steering: crate::steering::SteeringPolicy,
+        session_slots: usize,
+    ) -> Result<Self, RealForwardError> {
         Self::open_inner(
             dir,
             expecting,
@@ -471,6 +525,7 @@ impl RealForwardRunner {
             None,
             speculation,
             steering,
+            session_slots,
         )
     }
 
@@ -513,6 +568,7 @@ impl RealForwardRunner {
             fp16_ring_capacity_override,
             crate::families::qwen::DraftPolicies::off(),
             crate::steering::SteeringPolicy::off(),
+            1,
         )
     }
 }
