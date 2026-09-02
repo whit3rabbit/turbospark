@@ -13,9 +13,10 @@
 #![cfg(target_os = "macos")]
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
-use turbospark_server::{build_router, RealChatModel};
+use turbospark_server::observe::{ServerEvent, ServerObserver};
+use turbospark_server::{build_router, build_router_with_options, RealChatModel, RouterOptions};
 
 fn install_dir() -> Option<PathBuf> {
     std::env::var_os("TURBOSPARK_GEMMA4_INSTALL_DIR").map(PathBuf::from)
@@ -60,6 +61,9 @@ async fn real_backend_serves_streaming_and_non_streaming_requests() {
         runtime::SteeringPolicy::off(),
         runtime::LoadPolicy::default(),
         tokenizer::ReasoningEffort::Off,
+        // PINNED OFF: this test asserts nothing about prefix reuse and stays
+        // on the engine's baseline path, same reasoning as steering above.
+        false,
     )
     .expect("real install should open");
     let model: Arc<dyn turbospark_server::ChatModel> = Arc::new(model);
@@ -124,6 +128,149 @@ async fn real_backend_serves_streaming_and_non_streaming_requests() {
     assert!(deltas > 0, "expected at least one non-empty content delta");
 }
 
+#[derive(Default)]
+struct Recorder(Mutex<Vec<ServerEvent>>);
+
+impl ServerObserver for Recorder {
+    fn record(&self, event: ServerEvent) {
+        self.0.lock().unwrap().push(event);
+    }
+}
+
+impl Recorder {
+    /// Every `Generated` event's `reusedPrefixTokens`, in the order they were
+    /// recorded. A request the guardrails re-asked would produce two events
+    /// for one HTTP call (`crates/server/CLAUDE.md` Gotcha 29), so this reads
+    /// per-event rather than assuming one event per request.
+    fn generated_reused_counts(&self) -> Vec<u64> {
+        self.0
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|e| serde_json::to_value(e).unwrap())
+            .filter(|v| v["kind"] == "generated")
+            .map(|v| v["reusedPrefixTokens"].as_u64().unwrap())
+            .collect()
+    }
+}
+
+/// Proves prefix KV reuse actually fires over the server's own HTTP surface,
+/// not just inside the runtime crate. `crates/runtime/tests/prefix_reuse_real.rs`
+/// proves the mechanism itself; this proves the wiring in `real_model.rs` and
+/// `main.rs` reaches it, on the code path the server actually takes
+/// (`run_raw_completion_chunked_cancellable`, since Gemma 4 supports chunked
+/// prefill and `RealChatModel::run_completion`'s non-speculative branch
+/// always prefers it -- `crates/server/CLAUDE.md` Gotcha 19).
+///
+/// Two sequential requests, same server, same process, same runner, forming
+/// a continuing transcript exactly the way a chat client resends one:
+/// request 2 carries request 1's own reply back as an `assistant` turn. A
+/// test that only checked the response bodies would pass trivially whether
+/// or not reuse ever engaged, which is exactly the shape
+/// `reuse_actually_fires_on_the_second_turn` in the runtime crate's own test
+/// guards against -- so this asserts the SECOND `Generated` event's
+/// `reusedPrefixTokens` is nonzero, not just that both requests succeeded.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs a real Gemma 4 .gturbo install (TURBOSPARK_GEMMA4_INSTALL_DIR)"]
+async fn real_backend_reuses_kv_across_two_chat_turns() {
+    let Some(dir) = install_dir() else {
+        eprintln!(
+            "real_backend: TURBOSPARK_GEMMA4_INSTALL_DIR is not set; skipping. \
+             Point it at a repacked Gemma 4 .gturbo install to run this test."
+        );
+        return;
+    };
+
+    let model = RealChatModel::open(
+        &dir,
+        Some(1024),
+        Some(16),
+        Default::default(),
+        runtime::Speculation::Off,
+        runtime::SpeculativeDrafter::Auto,
+        turbospark_server::GuardrailConfig::OFF,
+        runtime::SteeringPolicy::off(),
+        runtime::LoadPolicy::default(),
+        tokenizer::ReasoningEffort::Off,
+        // THE ONE FLAG THIS TEST IS ABOUT: on, unlike every other test in
+        // this file.
+        true,
+    )
+    .expect("real install should open");
+    let model: Arc<dyn turbospark_server::ChatModel> = Arc::new(model);
+    let recorder = Arc::new(Recorder::default());
+    let router = build_router_with_options(
+        model,
+        RouterOptions {
+            api_key: None,
+            observer: Some(recorder.clone() as Arc<dyn ServerObserver>),
+        },
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+    let base = format!("http://{addr}");
+    let client = reqwest::Client::new();
+
+    let response = client
+        .post(format!("{base}/v1/chat/completions"))
+        .json(&serde_json::json!({
+            "model": "gemma4",
+            "messages": [{"role": "user", "content": "Name one benefit of wetlands."}],
+            "max_tokens": 24,
+            "temperature": 0.2,
+            "top_p": 0.95
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body: serde_json::Value = response.json().await.unwrap();
+    let reply = body["choices"][0]["message"]["content"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(!reply.is_empty(), "expected generated text on turn 1");
+
+    // Turn 2 carries turn 1's own reply back as an assistant message, exactly
+    // as a chat client resends the whole transcript every turn -- this is
+    // what makes the re-rendered prompt's leading tokens agree with what
+    // turn 1 left in the KV.
+    let response = client
+        .post(format!("{base}/v1/chat/completions"))
+        .json(&serde_json::json!({
+            "model": "gemma4",
+            "messages": [
+                {"role": "user", "content": "Name one benefit of wetlands."},
+                {"role": "assistant", "content": reply},
+                {"role": "user", "content": "Name another one."}
+            ],
+            "max_tokens": 24,
+            "temperature": 0.2,
+            "top_p": 0.95
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body: serde_json::Value = response.json().await.unwrap();
+    let reply2 = body["choices"][0]["message"]["content"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(!reply2.is_empty(), "expected generated text on turn 2");
+
+    let counts = recorder.generated_reused_counts();
+    assert_eq!(counts.len(), 2, "expected one Generated event per request");
+    assert_eq!(counts[0], 0, "turn 1 has nothing to continue from");
+    assert!(
+        counts[1] > 0,
+        "turn 2's prompt shares a prefix with turn 1's KV; reuse should have fired, \
+         but reusedPrefixTokens read 0"
+    );
+}
+
 /// **THE SERVING HALF OF M-V8, AND THE ARM THE ROADMAP DEMANDED.**
 ///
 /// `tests/images.rs` covers every refusal with a scripted backend and no
@@ -172,6 +319,11 @@ async fn real_backend_reads_an_image_sent_over_both_endpoints() {
         runtime::SteeringPolicy::off(),
         runtime::LoadPolicy::default(),
         tokenizer::ReasoningEffort::Off,
+        // PINNED OFF: the vision path taints `kv_prefix` on every call anyway
+        // (`set_prompt_vision` taints, `crates/runtime/CLAUDE.md` Gotcha 30),
+        // so reuse is inert here regardless. Pinning `false` documents that
+        // rather than leaving it implicit.
+        false,
     )
     .expect("the vision install should open");
     let model: Arc<dyn turbospark_server::ChatModel> = Arc::new(model);

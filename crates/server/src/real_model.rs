@@ -87,6 +87,7 @@ impl RealChatModel {
         steering: runtime::SteeringPolicy,
         load_policy: runtime::LoadPolicy,
         default_reasoning: tokenizer::ReasoningEffort,
+        prefix_reuse: bool,
     ) -> Result<Self, String> {
         let arch = repack::peek_manifest_arch(model_dir)?;
         let context = runtime::resolve_max_context(
@@ -135,7 +136,7 @@ impl RealChatModel {
         // -- two copies would name different causes the first time they
         // disagreed.
         let choice = runtime::resolve_drafter(drafter, model_dir);
-        let runner = RealForwardRunner::open_with_slot_policy_speculation_and_steering(
+        let mut runner = RealForwardRunner::open_with_slot_policy_speculation_and_steering(
             model_dir,
             arch,
             context.resolved as usize,
@@ -147,6 +148,13 @@ impl RealChatModel {
             steering,
         )
         .map_err(|e| e.to_string())?;
+        // A request continues from the previous request's KV wherever the
+        // prompts agree, instead of re-prefilling the whole transcript
+        // (`crates/runtime/CLAUDE.md` Gotcha 30). Set once at open, like every
+        // other process-level policy here: there is one runner per process,
+        // and this call is the ONLY place that runner is ever mutably touched
+        // outside a request.
+        runner.set_prefix_reuse(prefix_reuse);
         // Echoed on the startup line beside the speculation one. Steering
         // changes the TOKENS, so a server serving an edited model has to say
         // so where an operator reading the log will see it.

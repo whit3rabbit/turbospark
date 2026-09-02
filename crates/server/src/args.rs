@@ -1,5 +1,5 @@
 /// Command line usage and flag description text for `turbospark-server`.
-pub const USAGE: &str = "usage: turbospark-server --model <install-dir|alias> [--port N] [--max-context N|auto] [--load-guard TIER|BYTES] [--min-auto-context N] [--expert-cache-slots auto|N] [--bind loopback|tailnet] [--power-profile performance|balanced|efficiency] [--max-tokens-per-sec R] [--speculative off|auto|N] [--speculative-drafter auto|mtp|dflash] [--guardrails on|off] [--reasoning off|low|medium|high|xhigh] [--api-key KEY] [--steering PATH] [--steering-mode ablate|add|clamp|renorm] [--steering-scale F] [--steering-layers S:E] [--steering-target F] [--steering-gate F]\n       turbospark-server <tokenizer-dir> [port]\n       turbospark-server --help | --version\n\noptions:\n  --model              a .gturbo directory or a turbospark-model alias (`turbospark-model list`)\n  --port               listen port (default 8080)\n  --max-context        context window in tokens, or auto (default auto: the\n                       checkpoint's trained context, capped by what memory\n                       holds, and 4096 when the install declares none)\n  --load-guard         how much of the machine a session may commit: off,
+pub const USAGE: &str = "usage: turbospark-server --model <install-dir|alias> [--port N] [--max-context N|auto] [--load-guard TIER|BYTES] [--min-auto-context N] [--expert-cache-slots auto|N] [--bind loopback|tailnet] [--power-profile performance|balanced|efficiency] [--max-tokens-per-sec R] [--speculative off|auto|N] [--speculative-drafter auto|mtp|dflash] [--guardrails on|off] [--prefix-reuse on|off] [--reasoning off|low|medium|high|xhigh] [--api-key KEY] [--steering PATH] [--steering-mode ablate|add|clamp|renorm] [--steering-scale F] [--steering-layers S:E] [--steering-target F] [--steering-gate F]\n       turbospark-server <tokenizer-dir> [port]\n       turbospark-server --help | --version\n\noptions:\n  --model              a .gturbo directory or a turbospark-model alias (`turbospark-model list`)\n  --port               listen port (default 8080)\n  --max-context        context window in tokens, or auto (default auto: the\n                       checkpoint's trained context, capped by what memory\n                       holds, and 4096 when the install declares none)\n  --load-guard         how much of the machine a session may commit: off,
                        relaxed (default), balanced, strict, or a byte ceiling on
                        what the engine ALLOCATES. relaxed is what shipped before
                        this flag and what every published memory figure was
@@ -7,7 +7,7 @@ pub const USAGE: &str = "usage: turbospark-server --model <install-dir|alias> [-
   --min-auto-context   refuse to open when --max-context auto resolves below this
                        many tokens (default 0, no floor). Says nothing about an
                        explicit --max-context
-  --expert-cache-slots routed-cache slots per layer: auto or 8/16/24/32 (default auto)\n  --bind               loopback or tailnet (default loopback; tailnet is NOT auth)\n  --power-profile      performance, balanced or efficiency\n  --max-tokens-per-sec decode rate cap, greater than 0\n  --speculative        off, auto, or a block size 1-15 (default auto). Speculation\n                       applies to temperature-0 requests only; others decode\n                       sequentially\n  --speculative-drafter auto, mtp or dflash (default auto; auto reports a DFlash2\n                       drafter but does not enable it -- see docs/DFLASH2.md)\n  --guardrails         on or off (default on). Rescues a tool call the decoder\n                       could not parse, checks arguments against the request's\n                       own schema, and re-asks once. A request carrying TOOLS is\n                       buffered rather than streamed while this is on, because a\n                       verdict needs the whole turn; requests without tools are\n                       unaffected\n  --reasoning          default reasoning effort for requests that do not specify\n                       reasoning_effort: off, low, medium, high or xhigh\n                       (default off)\n  --api-key            require this key on every request except GET /health,
+  --expert-cache-slots routed-cache slots per layer: auto or 8/16/24/32 (default auto)\n  --bind               loopback or tailnet (default loopback; tailnet is NOT auth)\n  --power-profile      performance, balanced or efficiency\n  --max-tokens-per-sec decode rate cap, greater than 0\n  --speculative        off, auto, or a block size 1-15 (default auto). Speculation\n                       applies to temperature-0 requests only; others decode\n                       sequentially\n  --speculative-drafter auto, mtp or dflash (default auto; auto reports a DFlash2\n                       drafter but does not enable it -- see docs/DFLASH2.md)\n  --guardrails         on or off (default on). Rescues a tool call the decoder\n                       could not parse, checks arguments against the request's\n                       own schema, and re-asks once. A request carrying TOOLS is\n                       buffered rather than streamed while this is on, because a\n                       verdict needs the whole turn; requests without tools are\n                       unaffected\n  --prefix-reuse       on or off (default on). A request continues from the\n                       previous request's KV cache wherever the prompts agree,\n                       instead of re-prefilling the whole transcript. Helps\n                       only when consecutive requests are the same\n                       conversation -- unrelated interleaved requests each\n                       discard the other's reusable prefix -- and raises the\n                       idle-memory floor between requests, not the peak, since\n                       pages that would normally be released stay resident.\n                       See crates/runtime/CLAUDE.md Gotcha 30\n  --reasoning          default reasoning effort for requests that do not specify\n                       reasoning_effort: off, low, medium, high or xhigh\n                       (default off)\n  --api-key            require this key on every request except GET /health,
                        as `Authorization: Bearer <key>` or `x-api-key: <key>`.
                        Falls back to $TURBOSPARK_API_KEY when absent (keeps
                        the key out of `ps`); with neither, the server has no
@@ -61,6 +61,18 @@ pub struct ModelArgs {
     /// started with it steers every request it serves.
     pub steering: runtime::SteeringPolicy,
     pub guardrails: turbospark_server::GuardrailConfig,
+    /// Continue a request from the previous request's KV cache wherever the
+    /// prompts agree, instead of re-prefilling the whole transcript.
+    /// Process-level for the reason `guardrails` is: there is one runner per
+    /// process, so there is nothing per-request to vary, and a per-request
+    /// field would let a caller opt its own traffic in or out of a policy
+    /// this deployment chose. Default true: this is the one server-side flag
+    /// in this file that defaults to enabling an optimization rather than a
+    /// safety net, because the mechanism is provably lossless (a mismatched
+    /// prompt always falls back to a full re-prefill; see
+    /// `crates/runtime/CLAUDE.md` Gotcha 30) and its only cost is a raised
+    /// idle-memory floor, not a peak or a correctness risk.
+    pub prefix_reuse: bool,
     /// Default reasoning effort for requests that do not specify reasoning_effort.
     pub reasoning: tokenizer::ReasoningEffort,
     /// The `--api-key` flag's OWN value, or `None` if absent. Deliberately
@@ -100,6 +112,7 @@ pub fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
         speculation: runtime::Speculation::Auto,
         drafter: runtime::SpeculativeDrafter::Auto,
         guardrails: turbospark_server::GuardrailConfig::default(),
+        prefix_reuse: true,
         steering: runtime::SteeringPolicy::off(),
         reasoning: tokenizer::ReasoningEffort::Off,
         api_key: None,
@@ -307,6 +320,13 @@ pub fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
                     "on" => turbospark_server::GuardrailConfig::default(),
                     "off" => turbospark_server::GuardrailConfig::OFF,
                     other => return Err(format!("--guardrails must be on or off, not {other}")),
+                }
+            }
+            "--prefix-reuse" => {
+                parsed.prefix_reuse = match value.as_str() {
+                    "on" => true,
+                    "off" => false,
+                    other => return Err(format!("--prefix-reuse must be on or off, not {other}")),
                 }
             }
             "--reasoning" => {

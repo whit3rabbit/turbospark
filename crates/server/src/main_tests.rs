@@ -464,3 +464,21 @@ fn reasoning_flag_defaults_to_off_and_parses_documented_levels() {
     assert!(parse(&["--model", "/tmp/m", "--reasoning", "max"]).is_err());
     assert!(parse(&["--model", "/tmp/m", "--reasoning", "true"]).is_err());
 }
+
+#[test]
+fn prefix_reuse_flag_defaults_to_on_and_parses_on_off() {
+    let d = parse(&["--model", "/tmp/m"]).unwrap().unwrap();
+    assert!(d.prefix_reuse);
+
+    let on = parse(&["--model", "/tmp/m", "--prefix-reuse", "on"])
+        .unwrap()
+        .unwrap();
+    assert!(on.prefix_reuse);
+
+    let off = parse(&["--model", "/tmp/m", "--prefix-reuse", "off"])
+        .unwrap()
+        .unwrap();
+    assert!(!off.prefix_reuse);
+
+    assert!(parse(&["--model", "/tmp/m", "--prefix-reuse", "maybe"]).is_err());
+}

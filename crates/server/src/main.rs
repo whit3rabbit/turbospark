@@ -64,6 +64,7 @@ fn open_real_model(args: &ModelArgs) -> Result<Arc<dyn turbospark_server::ChatMo
         args.steering.clone(),
         args.load_policy,
         args.reasoning,
+        args.prefix_reuse,
     )?;
     // Both sized figures are the RESOLVED ones, never `args`: under `auto`
     // the request carries no number, and each has to be readable beside any
@@ -119,6 +120,15 @@ fn open_real_model(args: &ModelArgs) -> Result<Arc<dyn turbospark_server::ChatMo
         "  guardrails: {}",
         if args.guardrails.active() {
             "on (tool calls rescued and argument-checked; a request with tools is buffered, not streamed)"
+        } else {
+            "off"
+        }
+    );
+    eprintln!(
+        "  prefix reuse: {}",
+        if args.prefix_reuse {
+            "on (a request continues from the previous request's KV where prompts agree; \
+             helps only when consecutive requests are the same conversation)"
         } else {
             "off"
         }

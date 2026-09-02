@@ -864,3 +864,54 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
     tool pieces are dropped on the Ollama path -- its wire shape has nowhere
     for either, and emitting a scratchpad as the answer is AGENTS.md Gotcha
     56's failure.
+
+31. **`--prefix-reuse` IS PROCESS-LEVEL LIKE THE RATE CAP, SPECULATION AND
+    GUARDRAILS, AND IT IS THE ONE FLAG HERE THAT DEFAULTS TO ON RATHER THAN
+    TO A SAFE NO-OP.** Added 2026-09-01 (ROADMAP.md section 4). `RealChatModel::open`
+    calls `RealForwardRunner::set_prefix_reuse` once, right after the runner
+    opens -- the mechanism itself (`crates/runtime/CLAUDE.md` Gotcha 30) is
+    unmodified and was already wired into `run_raw_completion_chunked`, which
+    is the loop this server actually takes for any chunked-prefill-capable
+    family (Gotcha 19).
+
+    **THE DEFAULT IS SAFE TO FLIP BECAUSE THE MECHANISM IS PROVABLY LOSSLESS,
+    NOT BECAUSE THE TRADE-OFF DISAPPEARS.** A prompt that does not extend the
+    previous request's KV always falls back to a full reset before prefill
+    (`raw_completion.rs`'s `if reused == 0 { producer.reset(); }`, mirrored in
+    the chunked driver) -- there is no path where a mismatched request reads
+    stale KV from an unrelated conversation. What is real is a traffic-mix
+    cost: **THIS SERVER HAS EXACTLY ONE RUNNER SERVING EVERY CLIENT'S EVERY
+    CONVERSATION** (Gotcha 1), with no per-conversation identity anywhere in
+    the request path, so two interleaved unrelated conversations each discard
+    the other's reusable prefix and the optimization simply does not fire --
+    at no correctness cost, but also at no benefit, while still paying the one
+    real price: `KvCacheManager::reset`'s `advise_dontneed` calls are skipped
+    between turns when reuse is on, so pages that would normally be released
+    stay resident, raising the IDLE FLOOR (never the peak) for the life of the
+    process.
+
+    **THERE IS NO SERVER-SIDE STDERR LINE THE WAY THE CLI'S `--chat` HAS ONE,
+    SO `ServerEvent::Generated` CARRIES `reusedPrefixTokens` INSTEAD.** The
+    CLI's `[prefix-reuse] N/M` line exists because this class of feature has
+    already shipped silently inert once (`crates/runtime/CLAUDE.md` Gotcha
+    30: "measured in the real chat REPL at 0/33 ... through two rounds of
+    apparently-working implementation"). A server has no equivalent terminal
+    an operator is watching, so the observable has to travel with whatever
+    DOES watch traffic -- an attached `ServerObserver`. `ReportingModel`
+    reads `RawDecodeResult::reused_prefix_tokens` off the same value it
+    already reads `prompt_tokens`/`new_tokens` from, so this cost nothing
+    beyond one field; a request the guardrails re-asked still produces TWO
+    `Generated` events for one HTTP call (Gotcha 29), and each carries its
+    OWN count. `tests/real_backend.rs`'s
+    `real_backend_reuses_kv_across_two_chat_turns` is the guard: it asserts
+    turn 2's event reads a NONZERO count, not merely that both requests
+    returned 200, which is the same class of trivially-passing test Gotcha
+    30 in the runtime crate warns against.
+
+    **`tests/real_backend.rs`'s two PRE-EXISTING open calls pin this `false`**,
+    for AGENTS.md Gotcha 35's reason: a gate that let a process-level policy
+    sense its own default would assert against a different configuration than
+    the one it was written for. The vision test's `false` is additionally
+    inert rather than merely conservative -- `set_prompt_vision` taints
+    `kv_prefix` on every call (`crates/runtime/CLAUDE.md` Gotcha 30's own
+    taint list), so that path could not reuse a prefix whatever the flag said.
