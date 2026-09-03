@@ -179,10 +179,29 @@ extension AppModel {
     }
 
     /// Loads persisted project configurations and selected project ID.
+    ///
+    /// **THE RESTORED ID IS VALIDATED AND THE WORKTREE REBUILT.** It used to
+    /// be assigned verbatim, which cost two things on every relaunch: an id
+    /// no longer in `projects` filtered the chat list down to nothing with no
+    /// way to see why, and even a VALID id left `worktree` nil -- so the git
+    /// pane came up empty until the user re-picked the project they were
+    /// already in.
     func loadProjects() {
         let archive = AppProjectFileStore.load()
         self.projects = archive.projects
-        self.selectedProjectID = archive.selectedProjectID
+        guard let restored = archive.selectedProjectID,
+            let project = archive.projects.first(where: { $0.id == restored })
+        else {
+            self.selectedProjectID = nil
+            self.worktree = nil
+            return
+        }
+        self.selectedProjectID = restored
+        if let path = project.rootDirectoryPath, !path.isEmpty {
+            self.worktree = WorktreeModel(rootDirectoryPath: path)
+        } else {
+            self.worktree = nil
+        }
     }
 
     /// Persists all project workspaces and active project selection.

@@ -88,6 +88,13 @@ public final class WorktreeModel: ObservableObject {
     @Published public var isGitRepository: Bool = false
 
     private var refreshTask: Task<Void, Never>?
+    /// Held so `loadDiff` can cancel its predecessor: an unstored `Task`'s
+    /// `Task.isCancelled` is never true, which is what let two diffs race.
+    private var diffTask: Task<Void, Never>?
+    /// Bumped per `refresh()`. A cancelled predecessor's `defer` still runs,
+    /// so ownership of `isRefreshing` is decided by this rather than by which
+    /// task happens to finish last.
+    private var refreshGeneration = 0
 
     public init(rootDirectoryPath: String) {
         self.rootDirectoryPath = rootDirectoryPath
@@ -103,21 +110,42 @@ public final class WorktreeModel: ObservableObject {
     /// Asynchronously refreshes git branch, porcelain status, and line change stats.
     public func refresh() {
         refreshTask?.cancel()
+        refreshGeneration += 1
+        let generation = refreshGeneration
         refreshTask = Task { [weak self] in
             guard let self = self else { return }
             guard !self.rootDirectoryPath.isEmpty else {
+                // Every field, not just `files`: leaving the previous
+                // repository's branch name and line totals on screen beside an
+                // empty file list reads as a repository with no changes.
                 self.files = []
                 self.isGitRepository = false
+                self.currentBranch = ""
+                self.totalAdditions = 0
+                self.totalDeletions = 0
+                self.selectedFilePath = nil
+                self.selectedFileDiff = nil
+                if self.refreshGeneration == generation {
+                    self.isRefreshing = false
+                }
                 return
             }
 
             self.isRefreshing = true
-            defer { self.isRefreshing = false }
+            // A generation counter rather than `defer`: a cancelled
+            // predecessor's `defer` still runs, and it ran AFTER the
+            // successor had set `isRefreshing = true` -- so a quick second
+            // refresh cleared the spinner while its own query was in flight.
+            defer {
+                if self.refreshGeneration == generation {
+                    self.isRefreshing = false
+                }
+            }
 
             let path = self.rootDirectoryPath
             let (isGit, branch, changes, adds, dels) = await Self.queryGitStatus(rootPath: path)
 
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, self.refreshGeneration == generation else { return }
 
             self.isGitRepository = isGit
             self.currentBranch = branch.isEmpty ? "main" : branch
@@ -136,15 +164,35 @@ public final class WorktreeModel: ObservableObject {
     }
 
     /// Loads the git diff for a specific file path.
+    /// Loads the git diff for a specific file path.
+    ///
+    /// **THE TASK IS STORED, AND THAT IS WHAT MAKES THE CANCEL CHECK REAL.**
+    /// It used to be a bare `Task { ... }` referenced by nothing, so the
+    /// `guard !Task.isCancelled` inside it could never be true: clicking file
+    /// A then file B raced two `git diff` processes, and whichever finished
+    /// last won -- showing A's diff under B's name. The path is re-checked
+    /// after the await as well, since cancellation is cooperative and the
+    /// process may already have finished.
     public func loadDiff(for relativePath: String) {
+        diffTask?.cancel()
         selectedFilePath = relativePath
+        selectedFileDiff = nil
         isLoadingDiff = true
         let path = rootDirectoryPath
 
-        Task { [weak self] in
+        diffTask = Task { [weak self] in
             guard let self = self else { return }
             let diff = await Self.queryGitDiff(rootPath: path, file: relativePath)
+            // Cancelled means a SUCCESSOR owns the spinner, so leave it up.
             guard !Task.isCancelled else { return }
+            // Not cancelled but the selection moved anyway -- a `refresh()`
+            // that no longer lists this file clears `selectedFilePath` out
+            // from under us. Nothing else is loading, so the spinner is ours
+            // to take down; leaving it up strands it forever.
+            guard self.selectedFilePath == relativePath else {
+                self.isLoadingDiff = false
+                return
+            }
             self.selectedFileDiff = diff
             self.isLoadingDiff = false
         }

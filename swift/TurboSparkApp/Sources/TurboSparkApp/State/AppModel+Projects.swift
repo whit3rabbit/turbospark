@@ -109,19 +109,37 @@ extension AppModel {
     }
 
     /// Deletes a project and optionally clears project references from its chats.
+    ///
+    /// **DELETING MUST UNDO EVERYTHING SELECTING DID.** `createProject`,
+    /// `selectProject` and `updateProject` all rebind `AppHookStore` to the
+    /// project directory, and `selectProject` additionally clears `worktree`
+    /// and resets `FileSnapshotStore`. This did none of it, and
+    /// `AppHookStore` only rebuilds on refresh -- so after deleting a project
+    /// the git pane kept rendering the deleted repository and its
+    /// `PreToolUse` hooks kept running for every later tool call, in a
+    /// workspace the user had just removed.
     public func deleteProject(id: UUID) {
         guard !generating else { return }
+        let wasSelected = selectedProjectID == id
         projects.removeAll { $0.id == id }
-        if selectedProjectID == id {
+        if wasSelected {
             selectedProjectID = nil
         }
         for index in chats.indices where chats[index].projectID == id {
             chats[index].projectID = nil
         }
+        if wasSelected {
+            worktree = nil
+            // Stale-write hashes are per workspace; see `selectProject`.
+            Task { await FileSnapshotStore.shared.reset() }
+        }
         persistProjects()
         persistChats()
         reloadSkills()
         reloadAgents()
+        if wasSelected {
+            AppHookStore.shared.refresh(projectDirectory: selectedProject?.rootDirectoryPath)
+        }
     }
 
     /// Scans a local codebase directory for AGENTS.md, CLAUDE.md, or rules files according to preference.
