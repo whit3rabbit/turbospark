@@ -71,10 +71,12 @@ struct RootView: View {
                 isInspectorVisible.toggle()
             }
         }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
-            model.unloadModel()
-            model.persistChats()
-            model.persistSettings()
+        .onAppear {
+            // The delegate cannot reach the `@StateObject`, and it is the one
+            // quit hook that survives the window closing first.
+            AppShutdownCoordinator.shared.onTerminate = { [weak model] in
+                model?.shutdown()
+            }
         }
         .onChange(of: model.isModelAvailable) { wasAvailable, isAvailable in
             // Surface Model Settings the moment a load completes, rather than

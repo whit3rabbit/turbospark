@@ -22,8 +22,20 @@ extension AppModel {
                 split.1.append(doc)
             }
         }
-        let promptImages: [ChatImage] =
-            visionIsActive ? imageDocs.compactMap { $0.sourcePath.map(ChatImage.path) } : []
+        // **A PICTURE THAT CANNOT BE SENT IS REFUSED, NOT DROPPED.** This used
+        // to resolve to an empty list when `visionIsActive` was false, which
+        // put the image in neither list and then cleared the draft below: an
+        // image-only turn returned at the emptiness guard and Send read as
+        // dead. The install already states WHY it refuses
+        // (`info.vision.reason`), and that is the sentence a user needs.
+        if !imageDocs.isEmpty && !visionIsActive {
+            let reason = visionRefusalReason ?? "the loaded model has no active vision tower"
+            showToast(
+                "Cannot send \(imageDocs.count == 1 ? "this image" : "these images"): \(reason)",
+                style: .warning)
+            return
+        }
+        let promptImages: [ChatImage] = imageDocs.compactMap { $0.sourcePath.map(ChatImage.path) }
 
         var fullUserContent = userDraft
         if !textDocs.isEmpty {
@@ -40,10 +52,16 @@ extension AppModel {
         // A turn carrying only a picture has no text and is still a turn.
         guard !fullUserContent.isEmpty || !promptImages.isEmpty else { return }
 
-        // If user typed an agent slash command (e.g. /explore, /plan, /agent), execute in isolated context
-        if handleAgentSlashCommand(fullUserContent) {
-            return
-        }
+        // Captured BEFORE the hook await below. The draft this turn was built
+        // from belongs to THIS chat; a switch while a slow `UserPromptSubmit`
+        // hook runs must not land the message in whatever chat the user moved
+        // to. Same capture `executeGenerationTurn` makes for the turn itself.
+        let submissionChatID = selectedChatID
+
+        // Set synchronously, before the `Task`: `generating` is not raised
+        // until `executeGenerationTurn`, so nothing else refuses a second
+        // Return pressed while the hook is still running.
+        submitting = true
 
         // `UserPromptSubmit` has to be awaited BEFORE the message is
         // appended to the chat, or a hook cannot actually stop the turn: by
@@ -53,6 +71,7 @@ extension AppModel {
         // never appends the message and leaves the draft intact, which
         // needs no "remove/annotate" step because there is nothing to undo.
         Task {
+            defer { self.submitting = false }
             self.stopHookReentryCount = 0
             let verdict = await self.evaluateUserPromptSubmit(prompt: fullUserContent)
             if verdict.isBlocked {
@@ -60,11 +79,21 @@ extension AppModel {
                 return
             }
 
+            // An agent slash command (`/explore`, `/plan`, `/agent`) is a
+            // prompt like any other and is dispatched HERE rather than ahead
+            // of the `Task`: run before the await, it reaches
+            // `runAgentTaskDirectly` -- which appends a user turn and starts
+            // generating -- with no `UserPromptSubmit` hook ever consulted,
+            // so a hook that blocks every prompt did not block these.
+            if self.handleAgentSlashCommand(fullUserContent) {
+                return
+            }
+
             let chatIndex: Int
-            if let existing = self.selectedChatIndex {
+            if let existing = self.chats.firstIndex(where: { $0.id == submissionChatID }) {
                 chatIndex = existing
             } else {
-                let newChat = AppChat(id: self.selectedChatID, projectID: self.selectedProjectID)
+                let newChat = AppChat(id: submissionChatID, projectID: self.selectedProjectID)
                 self.chats.insert(newChat, at: 0)
                 chatIndex = 0
                 self.selectedChatID = newChat.id
@@ -100,22 +129,25 @@ extension AppModel {
             }
             self.persistChats()
 
-            self.executeGenerationTurn(step: 0)
+            self.executeGenerationTurn(step: 0, chatID: submissionChatID)
         }
     }
 
-    /// Executes a generation step for the active conversation.
-    func executeGenerationTurn(step: Int) {
-        guard let session, let chatIndex = selectedChatIndex else { return }
+    /// Executes a generation step for the conversation identified by `chatID`.
+    ///
+    /// **THE CHAT IS AN ARGUMENT, NEVER `selectedChatIndex`** (state#17). A turn's
+    /// continuation is started from the agent loop long after the user became
+    /// free to click another chat (`generating` goes false as soon as a call
+    /// is proposed, state#9), so resolving the chat here would build the next
+    /// step's prompt from a DIFFERENT conversation's history and put the reply
+    /// there. Every caller has the originating chat id in hand.
+    func executeGenerationTurn(step: Int, chatID: UUID) {
+        guard let session, let chatIndex = chats.firstIndex(where: { $0.id == chatID }) else { return }
 
         // Captured once, up front: every append this turn produces (prose,
         // tool call, denial, pending-approval) targets THIS chat, never
         // whatever `selectedChatID` resolves to at the moment of appending.
-        // `generating` goes false as soon as a tool call is proposed
-        // (state#9), so the UI treats a chat switch as legal in between;
-        // without this capture, an approval or a prose reply lands in
-        // whatever chat the user has since switched to.
-        let turnChatID = chats[chatIndex].id
+        let turnChatID = chatID
 
         generationEpoch += 1
         let myEpoch = generationEpoch
@@ -228,10 +260,14 @@ extension AppModel {
 
                         // Merge the state patch BEFORE parsing tool calls, so
                         // the tool parser never sees the patch JSON and cannot
-                        // mistake it for a call. Re-resolve the chat index:
-                        // the selection can move while a turn is in flight.
+                        // mistake it for a call. Re-resolve the chat index
+                        // from THIS TURN's chat, not from the selection: the
+                        // selection can move while a turn is in flight, and
+                        // merging into the chat the user switched to writes
+                        // one conversation's bookkeeping into another's.
                         var generatedContent = self.outputText
-                        if self.skillStateEnabled, let idx = self.selectedChatIndex {
+                        if self.skillStateEnabled,
+                            let idx = self.chats.firstIndex(where: { $0.id == turnChatID }) {
                             generatedContent = self.applySkillStatePatch(
                                 from: generatedContent, chatIndex: idx)
                         }
@@ -250,13 +286,13 @@ extension AppModel {
                             switch verdict {
                             case .accept:
                                 if let firstCall = parsedCalls.first {
-                                    self.handleExtractedToolCall(firstCall, fullContent: generatedContent, reasoning: generatedReasoning, result: result, currentStep: step, chatID: turnChatID)
+                                    await self.handleExtractedToolCall(firstCall, fullContent: generatedContent, reasoning: generatedReasoning, result: result, currentStep: step, chatID: turnChatID)
                                 } else {
                                     await self.finishProseTurn(content: generatedContent, reasoning: generatedReasoning, result: result, chatID: turnChatID, step: step)
                                 }
                             case .rescued(let rescuedCalls, let sanitizedText):
                                 if let firstCall = rescuedCalls.first {
-                                    self.handleExtractedToolCall(firstCall, fullContent: sanitizedText, reasoning: generatedReasoning, result: result, currentStep: step, chatID: turnChatID)
+                                    await self.handleExtractedToolCall(firstCall, fullContent: sanitizedText, reasoning: generatedReasoning, result: result, currentStep: step, chatID: turnChatID)
                                 } else {
                                     await self.finishProseTurn(content: sanitizedText, reasoning: generatedReasoning, result: result, chatID: turnChatID, step: step)
                                 }
@@ -279,11 +315,11 @@ extension AppModel {
                                     }
                                     self.outputText = ""
                                     self.outputReasoningText = ""
-                                    self.continueAgentLoop(step: step + 1)
+                                    self.continueAgentLoop(step: step + 1, chatID: turnChatID)
                                     return
                                 } else {
                                     if let firstCall = parsedCalls.first {
-                                        self.handleExtractedToolCall(firstCall, fullContent: generatedContent, reasoning: generatedReasoning, result: result, currentStep: step, chatID: turnChatID)
+                                        await self.handleExtractedToolCall(firstCall, fullContent: generatedContent, reasoning: generatedReasoning, result: result, currentStep: step, chatID: turnChatID)
                                     } else {
                                         await self.finishProseTurn(content: generatedContent, reasoning: generatedReasoning, result: result, chatID: turnChatID, step: step)
                                     }
@@ -291,7 +327,7 @@ extension AppModel {
                             }
                         } else {
                             if let firstCall = parsedCalls.first {
-                                self.handleExtractedToolCall(firstCall, fullContent: generatedContent, reasoning: generatedReasoning, result: result, currentStep: step, chatID: turnChatID)
+                                await self.handleExtractedToolCall(firstCall, fullContent: generatedContent, reasoning: generatedReasoning, result: result, currentStep: step, chatID: turnChatID)
                             } else {
                                 await self.finishProseTurn(content: generatedContent, reasoning: generatedReasoning, result: result, chatID: turnChatID, step: step)
                             }
@@ -302,10 +338,10 @@ extension AppModel {
                     }
                 }
             } catch is CancellationError {
-                self.finishCancelled(chatID: turnChatID)
+                self.finishCancelled(chatID: turnChatID, reason: "cancelled")
             } catch {
                 self.error = error.localizedDescription
-                self.finishCancelled(chatID: turnChatID)
+                self.finishCancelled(chatID: turnChatID, reason: "error")
             }
             guard self.generationEpoch == myEpoch else { return }
             self.generating = false
@@ -330,7 +366,14 @@ extension AppModel {
         _ = await self.dispatchStopAndContinueIfBlocked(chatID: chatID, resumeStep: step + 1)
     }
 
-    func finishCancelled(chatID: UUID? = nil) {
+    /// Records whatever the turn had produced before it stopped.
+    ///
+    /// `reason` distinguishes the two callers: a turn that threw was recorded
+    /// as `"cancelled"` alongside a real user cancellation, so a transcript
+    /// could not tell a user pressing Stop from the engine failing mid-turn --
+    /// and the `error` banner beside it is transient while the stop reason is
+    /// persisted.
+    func finishCancelled(chatID: UUID? = nil, reason: String = "cancelled") {
         let targetID = chatID ?? selectedChatID
         if !outputText.isEmpty || !outputReasoningText.isEmpty {
             if let idx = chats.firstIndex(where: { $0.id == targetID }) {
@@ -338,7 +381,7 @@ extension AppModel {
                     role: .assistant,
                     content: outputText,
                     reasoning: outputReasoningText,
-                    stopReason: "cancelled"
+                    stopReason: reason
                 ))
                 chats[idx].updatedAt = Date()
                 persistChats()
@@ -357,12 +400,37 @@ extension AppModel {
         }
     }
 
+    /// Stops the turn: the token stream, the agent loop, and any tool the
+    /// loop is currently running.
+    ///
+    /// **`runTask` ALONE DOES NOT REACH THE LOOP.** An approved pending call
+    /// runs in `toolExecutionTask`, spawned from the approval card after the
+    /// proposing turn's stream already ended, so cancelling `runTask` there
+    /// cancels a task that has nothing left to do. `isCancellationPending` is
+    /// the flag `continueAgentLoop` reads: cancellation is cooperative, so a
+    /// tool already in flight finishes, and what Stop guarantees is that no
+    /// FURTHER model turn or tool call is started.
     public func cancel() {
         guard canCancel else { return }
         isCancellationPending = true
-        pendingToolCall = nil
+        clearPendingToolCall()
         session?.cancel()
         runTask?.cancel()
+        toolExecutionTask?.cancel()
+        toolExecutionTask = nil
+    }
+
+    /// Clears every field that describes the call awaiting approval.
+    ///
+    /// One helper rather than four sites: `cancel()` used to null the call and
+    /// leave `pendingToolCallChatID` / `pendingToolCallStep` / the captured
+    /// project behind, and approve never reset the step -- stale values that
+    /// the NEXT pending call reads if anything fails to overwrite them.
+    func clearPendingToolCall() {
+        pendingToolCall = nil
+        pendingToolCallChatID = nil
+        pendingToolCallStep = 0
+        pendingToolCallProject = nil
     }
 
     public func updateTokenEstimate() {
@@ -389,8 +457,18 @@ extension AppModel {
             history.append(ChatMessage(role: .user, content: promptText))
         }
 
+        // **DEBOUNCED, AND SKIPPED WHILE GENERATING.** `promptText`'s setter
+        // calls this on every keystroke, and `countTokens` dispatches onto
+        // the session's SERIAL queue -- which a running generation holds for
+        // the whole turn. `tokenEstimateTask?.cancel()` cannot recall work
+        // already queued behind it, so typing during a turn enqueued one full
+        // template render per character to run after the turn finished.
+        // Cancelling here is what keeps the queue empty in the first place.
         tokenEstimateTask?.cancel()
+        guard !generating else { return }
         tokenEstimateTask = Task {
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard !Task.isCancelled else { return }
             if let count = try? await session.countTokens(history, reasoning: self.reasoning) {
                 if !Task.isCancelled {
                     self.estimatedPromptTokens = count

@@ -100,6 +100,12 @@ public final class AppModel: ObservableObject {
     @Published public var server: TurboSparkServer?
     /// Whether `startServer()`/`stopServer()` is in flight.
     @Published public var serverBusy: Bool = false
+    /// A stop pressed while a start was still binding (state#28).
+    ///
+    /// `server` is published only after the awaited bind, so `stopServer()`
+    /// found nil and returned -- leaving a server listening that the UI
+    /// showed as stopped. The start path checks this before publishing.
+    var serverStopRequested = false
     /// Bearer / `x-api-key` value to require on the server, or empty for no
     /// auth. Read at `startServer()` time, not persisted: a key typed for
     /// one session sharing a machine is not something to write to disk by
@@ -182,8 +188,14 @@ public final class AppModel: ObservableObject {
     /// resuming after approval continues from HERE, not from step 1, or
     /// `maxAutonomousSteps` resets every time a call needs confirmation.
     @Published public var pendingToolCallStep: Int = 0
-    /// Live tool calls executed during the active generation turn.
-    @Published public var liveToolCalls: [AppToolCall] = []
+    /// The project the pending tool call was EVALUATED against, captured at
+    /// proposal time (state#19). `AppToolPermissionEngine` computed its `.allow` from
+    /// this project's permissions and this project's root, so running the
+    /// call against whatever `selectedProject` resolves to at approval time
+    /// executes it under a policy nothing ever checked -- and `selectProject`
+    /// guards only on `!generating`, which is false while a call waits
+    /// (state#9). Not `@Published`: nothing draws it.
+    var pendingToolCallProject: AppProject?
     /// Why the last SKILL.state patch was rejected, or nil if the last one
     /// merged. Surfaced rather than swallowed: a dropped patch means the run
     /// lost a step's bookkeeping, which is invisible in the transcript.
@@ -222,6 +234,15 @@ public final class AppModel: ObservableObject {
     // Live Generation State
     /// Whether token generation is currently running.
     @Published public var generating: Bool = false
+    /// Whether `run()` has accepted a submission and not yet reached
+    /// `executeGenerationTurn`.
+    ///
+    /// `run()` awaits `UserPromptSubmit` hooks before it appends anything, so
+    /// `generating` stays false across that await and `canRun` stays true --
+    /// a second Return with any such hook installed appends the prompt twice
+    /// and overwrites `runTask`. This flag is set SYNCHRONOUSLY, before the
+    /// `Task`, which is the only place a second `run()` can be refused.
+    @Published public var submitting: Bool = false
     /// Current phase of the generation runner.
     @Published public var phase: GenerationPhase = .idle
     /// Number of prompt tokens processed so far during prefill.
@@ -315,9 +336,29 @@ public final class AppModel: ObservableObject {
     @Published public var installTotalBytes: UInt64? = nil
     /// Human-readable estimated time remaining for download.
     @Published public var installETAText: String? = nil
+    /// The alias currently installing, if any.
+    @Published public var installingAlias: String? = nil
+    /// Aliases whose install was abandoned by `cancelInstall()`.
+    ///
+    /// The engine exposes no install-cancel call, so dropping the consumer
+    /// ends DELIVERY while `ts_install` keeps streaming the checkpoint to
+    /// that directory. There is no way to learn when it finishes, so a
+    /// second install of the same alias is refused for the rest of the
+    /// process rather than raced against the first.
+    @Published public var abandonedInstallAliases: Set<String> = []
 
     var runTask: Task<Void, Never>?
+    /// Work spawned OUTSIDE `runTask`: an approved or denied pending call,
+    /// which runs a tool and then re-enters the loop. `runTask` cannot reach
+    /// it (that turn's stream ended when the call was proposed), so `cancel()`
+    /// cancels this too or Stop cannot stop a shell command started from the
+    /// approval card.
+    var toolExecutionTask: Task<Void, Never>?
     var installTask: Task<Void, Never>?
+    /// The off-main-actor scan of the LM Studio and custom model directories.
+    /// Cancelled and restarted per `refreshModels()`, which several views call
+    /// in quick succession.
+    var modelScanTask: Task<Void, Never>?
     var tokenEstimateTask: Task<Void, Never>?
     /// Pending debounced archive write; see `persistChatsDebounced()`.
     var chatPersistDebounceTask: Task<Void, Never>?
@@ -483,7 +524,7 @@ public final class AppModel: ObservableObject {
 
     /// Whether conditions allow starting a new generation run.
     public var canRun: Bool {
-        !generating && !opening && session != nil && (!promptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !promptAttachments.isEmpty)
+        !generating && !submitting && !opening && session != nil && (!promptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !promptAttachments.isEmpty)
     }
 
     /// Whether active generation can be cancelled.

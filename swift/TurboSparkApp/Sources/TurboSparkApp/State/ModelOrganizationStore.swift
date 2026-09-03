@@ -180,25 +180,41 @@ public final class ModelOrganizationStore: ObservableObject {
 
     // MARK: - Persistence
 
+    /// The one store that `AppStorageRoot` did not cover.
+    ///
+    /// **IT WROTE `UserDefaults`, WHICH THE TEST REDIRECT CANNOT REACH.**
+    /// `swift/CLAUDE.md` Gotcha 37 is about seven stores that each spelled
+    /// their own Application Support path and so wrote real user data from
+    /// the test suite; the fix routed all seven through `AppStorageRoot`, and
+    /// this one was missed because it is not a path at all. A test that
+    /// deletes a model calls `removeMetadata`, which mutated the developer's
+    /// real nicknames and favorites. It also moves domains between `swift
+    /// run` and the shipped bundle (Gotcha 12), so the two builds disagreed
+    /// about the same user's metadata.
+    private static var fileURL: URL { AppStorageRoot.file("model_organization.json") }
+
     private func save() {
-        if let data = try? JSONEncoder().encode(metadataByModelKey) {
-            UserDefaults.standard.set(data, forKey: Self.storageKey)
-        }
+        AppJSONStore.save(
+            metadataByModelKey, to: Self.fileURL, label: "Model organization metadata")
     }
 
     private func load() {
-        guard let data = UserDefaults.standard.data(forKey: Self.storageKey) else { return }
-        do {
-            self.metadataByModelKey = try JSONDecoder().decode([String: ModelCustomMetadata].self, from: data)
-        } catch {
-            // Reported rather than swallowed (`swift/CLAUDE.md` Gotcha 13):
-            // a silent `try?` here reads as "my notes and favorites vanished"
-            // with nothing to say why, and this store's own `save()` would
-            // happily overwrite the UserDefaults entry with that emptiness
-            // on the next mutation.
-            FileHandle.standardError.write(
-                "TurboSpark: model organization metadata failed to decode, starting empty: \(error)\n"
-                    .data(using: .utf8)!)
+        if let decoded = AppJSONStore.load(
+            [String: ModelCustomMetadata].self, from: Self.fileURL,
+            label: "model organization metadata")
+        {
+            self.metadataByModelKey = decoded
+            return
         }
+        // One-time migration off `UserDefaults`, so an existing user's
+        // nicknames and favorites survive the move. Left in place rather than
+        // deleted: reading it costs nothing and removing it would silently
+        // discard whatever had not been migrated yet.
+        guard let legacy = UserDefaults.standard.data(forKey: Self.storageKey),
+            let decoded = try? JSONDecoder().decode(
+                [String: ModelCustomMetadata].self, from: legacy)
+        else { return }
+        self.metadataByModelKey = decoded
+        save()
     }
 }

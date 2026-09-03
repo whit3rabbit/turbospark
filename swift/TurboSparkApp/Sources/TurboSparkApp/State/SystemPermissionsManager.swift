@@ -123,16 +123,58 @@ public final class SystemPermissionsManager: ObservableObject {
 
     public init() {
         loadCustomFolders()
-        refreshAllStatuses()
+        // **PROBED OFF THE MAIN ACTOR.** Each probe is a full
+        // `contentsOfDirectory` on `~/Documents`, `~/Downloads` and
+        // `~/Desktop`; on a large home directory that is a visible hitch at
+        // launch, and this initializer runs before the first view builds.
+        refreshAllStatusesInBackground()
     }
 
-    /// Probes accessibility for all standard system folders.
+    /// Probes accessibility for all standard system folders, synchronously.
+    ///
+    /// Kept for the explicit Refresh button, where the user has asked and is
+    /// waiting for an answer.
     public func refreshAllStatuses() {
         var newStatuses: [SystemFolderType: FolderAccessStatus] = [:]
         for folder in SystemFolderType.allCases {
             newStatuses[folder] = checkFolderStatus(folder)
         }
         folderStatuses = newStatuses
+    }
+
+    /// The same probe, off the main actor, publishing when it lands.
+    ///
+    /// Also the hook for re-probing on `didBecomeActive`: a grant made in
+    /// System Settings was invisible until the manual Refresh, so the pane
+    /// kept saying "restricted" for a folder the user had just allowed.
+    public func refreshAllStatusesInBackground() {
+        Task { [weak self] in
+            let folders = SystemFolderType.allCases
+            let probed = await Task.detached(priority: .utility) {
+                var results: [SystemFolderType: FolderAccessStatus] = [:]
+                for folder in folders {
+                    results[folder] = Self.probe(folder)
+                }
+                return results
+            }.value
+            self?.folderStatuses = probed
+        }
+    }
+
+    /// `checkFolderStatus`'s body, `nonisolated` so it can run off the main
+    /// actor. It touches only the filesystem.
+    nonisolated static func probe(_ folder: SystemFolderType) -> FolderAccessStatus {
+        guard let url = folder.defaultURL else { return .notFound }
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir),
+            isDir.boolValue
+        else { return .notFound }
+        do {
+            _ = try FileManager.default.contentsOfDirectory(atPath: url.path)
+            return .granted
+        } catch {
+            return .restricted
+        }
     }
 
     /// Evaluates if a specific system folder is accessible for reading.
@@ -179,8 +221,14 @@ public final class SystemPermissionsManager: ObservableObject {
 
         panel.begin { [weak self] response in
             if response == .OK, let selectedURL = panel.url {
-                _ = selectedURL.startAccessingSecurityScopedResource()
-                self?.refreshAllStatuses()
+                // **NOT `startAccessingSecurityScopedResource`.** That call
+                // is only meaningful for a URL resolved from a security-scoped
+                // BOOKMARK, and it was never balanced by a matching stop --
+                // so in this unsandboxed app it did nothing at all while
+                // reading as though access were being held open. What
+                // actually grants access here is the user having picked the
+                // folder in the panel, which is what moves TCC.
+                self?.refreshAllStatusesInBackground()
             }
         }
     }
@@ -197,7 +245,8 @@ public final class SystemPermissionsManager: ObservableObject {
 
         panel.begin { [weak self] response in
             guard let self = self, response == .OK, let selectedURL = panel.url else { return }
-            _ = selectedURL.startAccessingSecurityScopedResource()
+            // See `requestFolderAccess`: no scoped-resource call, because this
+            // app is unsandboxed and the one here was never balanced.
             self.grantCustomFolder(path: selectedURL.path)
         }
     }

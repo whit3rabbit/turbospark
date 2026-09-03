@@ -104,7 +104,7 @@ public enum ProjectRuleDetector {
 
             // Check if both files point to the exact same canonical target (e.g. symlink)
             if agentsCanonical == claudeCanonical {
-                let content = readText(at: agentsURL) ?? readText(at: claudeURL) ?? ""
+                let content = readText(at: agentsURL, containedIn: rootURL) ?? readText(at: claudeURL, containedIn: rootURL) ?? ""
                 let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !trimmed.isEmpty else { return nil }
 
@@ -128,8 +128,8 @@ public enum ProjectRuleDetector {
             }
 
             // Both exist as distinct files
-            let agentsContent = (readText(at: agentsURL) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            let claudeContent = (readText(at: claudeURL) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let agentsContent = (readText(at: agentsURL, containedIn: rootURL) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let claudeContent = (readText(at: claudeURL, containedIn: rootURL) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
 
             // If contents happen to be identical despite different paths, treat as non-conflicting
             if agentsContent == claudeContent && !agentsContent.isEmpty {
@@ -210,7 +210,7 @@ public enum ProjectRuleDetector {
         }
 
         // Case 2: Only AGENTS.md exists
-        if agentsExists, let content = readText(at: agentsURL) {
+        if agentsExists, let content = readText(at: agentsURL, containedIn: rootURL) {
             let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty {
                 let desc = agentsIsSymlink ? "Loaded AGENTS.md (symlink resolved)" : "Loaded AGENTS.md"
@@ -226,7 +226,7 @@ public enum ProjectRuleDetector {
         }
 
         // Case 3: Only CLAUDE.md exists
-        if claudeExists, let content = readText(at: claudeURL) {
+        if claudeExists, let content = readText(at: claudeURL, containedIn: rootURL) {
             let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty {
                 let desc = claudeIsSymlink ? "Loaded CLAUDE.md (symlink resolved)" : "Loaded CLAUDE.md"
@@ -246,7 +246,7 @@ public enum ProjectRuleDetector {
         for candidate in fallbackCandidates {
             let fileURL = rootURL.appendingPathComponent(candidate)
             if fileExistsOrSymlink(at: fileURL, fileManager: fileManager),
-               let content = readText(at: fileURL) {
+               let content = readText(at: fileURL, containedIn: rootURL) {
                 let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !trimmed.isEmpty {
                     let symlink = isSymlink(at: fileURL, fileManager: fileManager)
@@ -285,8 +285,49 @@ public enum ProjectRuleDetector {
         return false
     }
 
-    private static func readText(at url: URL, maxBytes: Int = 65536) -> String? {
-        let canonical = url.resolvingSymlinksInPath()
+    /// Decodes a byte range that may end mid-character.
+    ///
+    /// **A BOUNDED READ CUTS UTF-8 WHEREVER THE BYTE COUNT LANDS.** Both read
+    /// branches took exactly `maxBytes` and decoded with no fallback, so a
+    /// `CLAUDE.md` over 1 MB whose 65,536th byte fell inside a multi-byte
+    /// character decoded to nil and the project loaded NO rules at all -- the
+    /// worst outcome for a file whose whole job is to state them. Trimming
+    /// back to the last valid boundary costs at most three bytes.
+    private static func decodeTruncatedUTF8(_ data: Data) -> String? {
+        if let str = String(data: data, encoding: .utf8) {
+            return str
+        }
+        // A UTF-8 sequence is at most 4 bytes, so at most 3 can be dangling.
+        for drop in 1...3 where data.count > drop {
+            if let str = String(data: data.dropLast(drop), encoding: .utf8) {
+                return str
+            }
+        }
+        return nil
+    }
+
+    /// Reads a rules file, refusing one that resolves outside the project.
+    ///
+    /// **A SYMLINK IS FOLLOWED WHEREVER IT POINTS, AND THIS TEXT GOES INTO THE
+    /// SYSTEM PROMPT** (state#23). `resolvingSymlinksInPath` was applied and the result
+    /// read unconditionally, so a cloned repository shipping
+    /// `AGENTS.md -> ~/.aws/credentials` put that file's first 64 KB into
+    /// every turn's prompt -- exfiltration through a file the user never
+    /// opened. `resolveSecurePath` has had this containment check since
+    /// 2026-08-28 (swift/CLAUDE.md Gotcha 11); this reader predates it and
+    /// never got one.
+    ///
+    /// A symlink INSIDE the project still resolves: this repository's own
+    /// `CLAUDE.md` is a symlink to `AGENTS.md`, and refusing that would break
+    /// the common case. The ROOT is resolved too, or a project under a
+    /// symlinked path (`/tmp` is one on macOS) fails its own containment test.
+    private static func readText(at url: URL, containedIn root: URL, maxBytes: Int = 65536) -> String? {
+        let canonical = url.resolvingSymlinksInPath().standardizedFileURL
+        let canonicalRoot = root.resolvingSymlinksInPath().standardizedFileURL
+        let rootPath = canonicalRoot.path.hasSuffix("/") ? canonicalRoot.path : canonicalRoot.path + "/"
+        guard canonical.path == canonicalRoot.path || canonical.path.hasPrefix(rootPath) else {
+            return nil
+        }
         let fileManager = FileManager.default
         var isDir: ObjCBool = false
         guard fileManager.fileExists(atPath: canonical.path, isDirectory: &isDir), !isDir.boolValue else {
@@ -299,13 +340,13 @@ public enum ProjectRuleDetector {
             guard let handle = try? FileHandle(forReadingFrom: canonical) else { return nil }
             defer { try? handle.close() }
             guard let data = try? handle.read(upToCount: maxBytes) else { return nil }
-            return String(data: data, encoding: .utf8)
+            return decodeTruncatedUTF8(data)
         }
 
         if let handle = try? FileHandle(forReadingFrom: canonical) {
             defer { try? handle.close() }
             if let data = try? handle.read(upToCount: maxBytes),
-               let str = String(data: data, encoding: .utf8) {
+               let str = decodeTruncatedUTF8(data) {
                 return str
             }
         }

@@ -67,7 +67,14 @@ public enum AgentParser {
             fallbackName = sourceURL.deletingLastPathComponent().lastPathComponent
         }
 
-        let name = parsedDict["name"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? fallbackName
+        // **BLANK IS ABSENT.** The fallback covered a MISSING key only, so
+        // `name: ""` produced an agent keyed on the empty string -- which
+        // takes `seenNames` and the effective map's `""` slot, so two such
+        // files silently collapse into one and neither is reachable by name.
+        // `AppSkill.name` already treats blank as absent; this is the same
+        // rule one file over.
+        let declaredName = parsedDict["name"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = (declaredName?.isEmpty == false) ? declaredName! : fallbackName
         let displayName = parsedDict["display_name"] ?? parsedDict["displayName"] ?? parsedDict["title"] ?? name.capitalized
         let description = parsedDict["description"] ?? parsedDict["when_to_use"] ?? parsedDict["whenToUse"] ?? "Autonomous agent: \(name)"
         let model = parsedDict["model"]
@@ -175,43 +182,94 @@ public enum AgentParser {
         return (frontmatterLines.joined(separator: "\n"), bodyLines.joined(separator: "\n"))
     }
 
+    /// Parses the frontmatter's `key: value` pairs, lists and block scalars.
+    ///
+    /// **BLOCK SCALARS WERE STORED AS THE LITERAL `"|"`.** A value was treated
+    /// as a nested one only when it was EMPTY, so `description: |` stored the
+    /// pipe as the description and then read every indented continuation line
+    /// as its own `key: value` -- including any prose line containing a colon,
+    /// and including a `name:` written inside the block, which then replaced
+    /// the agent's real name. `SkillParser` next door already handled `|` and
+    /// `>`; this is that branch ported over.
+    ///
+    /// Index-based rather than `for line in lines` because consuming a block
+    /// means skipping ahead, which the old loop had no way to express -- which
+    /// is why it reparsed the body instead.
     private static func parseYAMLKeyValue(_ yaml: String) -> [String: String] {
         var result: [String: String] = [:]
         let lines = yaml.components(separatedBy: "\n")
-        var currentKey: String?
-        var currentArrayValues: [String] = []
 
-        for line in lines {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.isEmpty || trimmed.hasPrefix("#") { continue }
+        func isIndented(_ line: String) -> Bool {
+            line.hasPrefix(" ") || line.hasPrefix("\t")
+        }
 
-            if trimmed.hasPrefix("- ") && currentKey != nil {
-                let val = String(trimmed.dropFirst(2)).trimmingCharacters(in: .whitespacesAndNewlines)
-                currentArrayValues.append(stripQuotes(val))
+        var i = 0
+        while i < lines.count {
+            let raw = lines[i]
+            let trimmed = raw.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty || trimmed.hasPrefix("#") {
+                i += 1
+                continue
+            }
+            guard let colonIndex = trimmed.firstIndex(of: ":") else {
+                i += 1
                 continue
             }
 
-            if let key = currentKey, !currentArrayValues.isEmpty {
-                result[key] = currentArrayValues.joined(separator: ",")
-                currentArrayValues = []
-                currentKey = nil
+            let key = String(trimmed[..<colonIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
+            let val = String(trimmed[trimmed.index(after: colonIndex)...])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            i += 1
+
+            if !val.isEmpty && val != "|" && val != ">" && val != "|-" && val != ">-" {
+                result[key] = stripQuotes(val)
+                continue
             }
 
-            if let colonIndex = line.firstIndex(of: ":") {
-                let key = String(line[..<colonIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
-                let val = String(line[line.index(after: colonIndex)...]).trimmingCharacters(in: .whitespacesAndNewlines)
-                if val.isEmpty {
-                    currentKey = key
-                    currentArrayValues = []
-                } else {
-                    result[key] = stripQuotes(val)
-                    currentKey = nil
+            // A block scalar (`|`, `>`) or a bare `key:`. Both are followed by
+            // indented lines; whether those are a LIST or prose is decided by
+            // the first one, and either way they are consumed here rather
+            // than falling back into the key loop.
+            let isExplicitBlock = val == "|" || val == ">" || val == "|-" || val == ">-"
+            var listValues: [String] = []
+            var blockLines: [String] = []
+            while i < lines.count {
+                let sub = lines[i]
+                let subTrimmed = sub.trimmingCharacters(in: .whitespaces)
+                if subTrimmed.isEmpty {
+                    // A blank line inside a block is part of it; after a list
+                    // it ends the entry.
+                    if isExplicitBlock || !blockLines.isEmpty {
+                        blockLines.append("")
+                        i += 1
+                        continue
+                    }
+                    break
                 }
+                if !isExplicitBlock && subTrimmed.hasPrefix("- ") {
+                    listValues.append(
+                        stripQuotes(
+                            String(subTrimmed.dropFirst(2))
+                                .trimmingCharacters(in: .whitespacesAndNewlines)))
+                    i += 1
+                    continue
+                }
+                guard isIndented(sub) else { break }
+                blockLines.append(subTrimmed)
+                i += 1
             }
-        }
 
-        if let key = currentKey, !currentArrayValues.isEmpty {
-            result[key] = currentArrayValues.joined(separator: ",")
+            if !listValues.isEmpty {
+                result[key] = listValues.joined(separator: ",")
+            } else if !blockLines.isEmpty {
+                // Folded (`>`) joins with spaces, literal (`|`) with newlines.
+                let separator = (val == ">" || val == ">-") ? " " : "\n"
+                result[key] = blockLines.joined(separator: separator)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            } else if isExplicitBlock {
+                // An empty block is an empty string, never the marker itself.
+                result[key] = ""
+            }
         }
 
         return result

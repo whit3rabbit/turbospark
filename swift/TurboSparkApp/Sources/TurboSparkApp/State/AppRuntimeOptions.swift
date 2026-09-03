@@ -251,8 +251,22 @@ public enum AppSteeringModeOption: String, CaseIterable, Identifiable, Sendable 
 
 /// Configurable runtime parameters for opening model sessions.
 public struct AppRuntimeOptions: Equatable, Sendable {
-    /// Allowed expert slot counts for MoE caching.
-    public static let allowedSlotCounts = [0, 4, 8, 16, 32, 64, 128]
+    /// Allowed expert slot counts for MoE caching, 0 being automatic.
+    ///
+    /// **THIS SET IS THE ENGINE'S, NOT THIS APP'S** (state#21), and it must stay equal to
+    /// `foundation::runtime_config::ALLOWED_CACHE_SLOTS` (`[8, 16, 24, 32]`)
+    /// with 0 prepended for `Auto`. It read `[0, 4, 8, 16, 32, 64, 128]`, so
+    /// the picker offered four values the engine refuses -- and a refused
+    /// value there is a PANIC, in this process, taking the whole app with it,
+    /// because the engine is linked in rather than reached over a socket.
+    /// It also omitted the legal 24.
+    ///
+    /// 8 is legal and is still a trap on a top-8 model: root Gotcha 64
+    /// records that chunked prefill needs `slots >= 2 * top_k` and panics at
+    /// `slots == top_k` on the first multi-token prompt. That is a per-model
+    /// fact this static set cannot express, which is why `ts_session_open`
+    /// now validates too rather than trusting any GUI to.
+    public static let allowedSlotCounts = [0, 8, 16, 24, 32]
 
     /// Number of expert cache slots (0 for automatic).
     public var expertCacheSlots: Int = 0

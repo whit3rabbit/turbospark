@@ -361,29 +361,22 @@ public enum AppChatFileStore {
     }
 
     /// Loads the saved chat archive from disk or returns an empty default.
+    ///
+    /// An unreadable archive is QUARANTINED rather than merely reported: the
+    /// empty fallback is still what the app comes up with, but the next
+    /// `save()` overwrites this file whole and atomically, so reporting alone
+    /// left the user's conversations gone by the time anyone read the log.
     public static func load() -> AppChatArchive {
-        guard let data = try? Data(contentsOf: archiveFileURL) else {
-            return AppChatArchive.empty()
-        }
-        do {
-            return try JSONDecoder().decode(AppChatArchive.self, from: data)
-        } catch {
-            // Reported rather than swallowed. The empty archive is still the
-            // fallback (there is nothing better to return), but a silent one
-            // presents as "my chats are gone" with no way to tell a corrupt
-            // file from a schema drift. This line is how the missing
-            // `toolCalls` key above was found at all.
-            FileHandle.standardError.write(
-                "TurboSpark: chat archive failed to decode, starting empty: \(error)\n"
-                    .data(using: .utf8)!)
-            return AppChatArchive.empty()
-        }
+        AppJSONStore.load(AppChatArchive.self, from: archiveFileURL, label: "chat archive")
+            ?? AppChatArchive.empty()
     }
 
     /// Persists the chat archive to disk atomically.
+    ///
+    /// A failure is RECORDED (`AppJSONStore.lastWriteError`) rather than
+    /// swallowed: this used to be two `try?`s, so a full disk or an
+    /// uncreatable directory lost the whole session on quit with no sign.
     public static func save(_ archive: AppChatArchive) {
-        if let data = try? JSONEncoder().encode(archive) {
-            try? data.write(to: archiveFileURL, options: .atomic)
-        }
+        AppJSONStore.save(archive, to: archiveFileURL, label: "Chat archive")
     }
 }

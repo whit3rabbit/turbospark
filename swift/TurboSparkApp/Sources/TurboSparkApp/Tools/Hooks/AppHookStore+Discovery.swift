@@ -24,6 +24,7 @@ extension AppHookStore {
         loaded.append(contentsOf: discoverPluginHooks(diagnostics: &diagnostics))
 
         self.hooks = loaded
+        self.didRefreshAtLeastOnce = true
         self.discoveryDiagnostics = diagnostics
         recomputeSourceGroups(projectDirectory: projectDirectory)
     }

@@ -2,14 +2,35 @@ import Foundation
 import TurboSpark
 
 extension AppModel {
-    /// Loads persisted generation parameters, execution options, and model paths from disk.
+    /// Clamps a persisted integer that later becomes a `UInt32`.
+    ///
+    /// **A NEGATIVE OR OVERSIZED VALUE IN `settings.json` IS A TRAP, NOT AN
+    /// ERROR.** `UInt32(maxContextTokens)`, `UInt32(expertCacheSlots)` and
+    /// `UInt32(topK)` are all assigned verbatim from disk and all of them
+    /// crash the app on a value outside the range -- at `open()` for the
+    /// first two and at the first generate for the third. `maxNewTokens` was
+    /// the only one already guarded (`max(1, ...)` at its use site). The file
+    /// is user-editable and survives across versions that changed what a
+    /// field means, so "nothing writes a bad one today" is not the question.
+    private static func clampedSetting(_ value: Int, upperBound: Int) -> Int {
+        min(max(0, value), upperBound)
+    }
+
+    /// Loads persisted generation parameters, execution options, and model
+    /// paths from disk.
     func loadSettings() {
         let settings = MacAppSettingsFileStore.load()
-        self.maxContextTokens = settings.contextTokens
-        self.runtimeOptions.expertCacheSlots = settings.expertCacheSlots
+        self.maxContextTokens = Self.clampedSetting(
+            settings.contextTokens, upperBound: Int(UInt32.max))
+        // Not merely clamped: an out-of-set slot count is refused by
+        // `ts_session_open` and, before that guard existed, panicked the
+        // process. Anything unrecognized falls back to automatic sizing.
+        self.runtimeOptions.expertCacheSlots =
+            AppRuntimeOptions.allowedSlotCounts.contains(settings.expertCacheSlots)
+            ? settings.expertCacheSlots : 0
         self.temperature = settings.temperature
         self.topKEnabled = settings.topKEnabled
-        self.topK = settings.topK
+        self.topK = Self.clampedSetting(settings.topK, upperBound: Int(UInt32.max))
         self.topPEnabled = settings.topPEnabled
         self.topP = settings.topP
         self.runtimeOptions.prefillEnabled = settings.prefillEnabled
@@ -159,10 +180,29 @@ extension AppModel {
     }
 
     /// Loads persisted project configurations and selected project ID.
+    ///
+    /// **THE RESTORED ID IS VALIDATED AND THE WORKTREE REBUILT.** It used to
+    /// be assigned verbatim, which cost two things on every relaunch: an id
+    /// no longer in `projects` filtered the chat list down to nothing with no
+    /// way to see why, and even a VALID id left `worktree` nil -- so the git
+    /// pane came up empty until the user re-picked the project they were
+    /// already in.
     func loadProjects() {
         let archive = AppProjectFileStore.load()
         self.projects = archive.projects
-        self.selectedProjectID = archive.selectedProjectID
+        guard let restored = archive.selectedProjectID,
+            let project = archive.projects.first(where: { $0.id == restored })
+        else {
+            self.selectedProjectID = nil
+            self.worktree = nil
+            return
+        }
+        self.selectedProjectID = restored
+        if let path = project.rootDirectoryPath, !path.isEmpty {
+            self.worktree = WorktreeModel(rootDirectoryPath: path)
+        } else {
+            self.worktree = nil
+        }
     }
 
     /// Persists all project workspaces and active project selection.
@@ -181,5 +221,49 @@ extension AppModel {
     public func persistGlobalMcpServers() {
         let archive = GlobalMcpArchive(servers: globalMcpServers)
         GlobalMcpFileStore.save(archive)
+    }
+}
+
+/// Ordered shutdown, and the hand-off that lets the app delegate reach it.
+///
+/// **THE QUIT FLUSH USED TO LIVE IN A VIEW MODIFIER** (state#25). `RootView` observed
+/// `willTerminateNotification` and called `unloadModel` / `persistChats` /
+/// `persistSettings`. Three things were wrong with that.
+///
+/// `applicationShouldTerminateAfterLastWindowClosed` is true, so the view tree
+/// can already be gone when the notification arrives -- and with it the
+/// 400 ms draft debounce, which is the most recent thing the user typed.
+///
+/// `unloadModel()` bails on `guard !generating`, so quitting mid-turn skipped
+/// the whole flush including both persists.
+///
+/// And `stopServer()` was never called at all, so `ts_server_stop` never ran
+/// and `serverPollTimer` was never invalidated.
+@MainActor
+public final class AppShutdownCoordinator {
+    public static let shared = AppShutdownCoordinator()
+    /// Set once by `RootView`; the delegate cannot see the `@StateObject`.
+    public var onTerminate: (() -> Void)?
+    private init() {}
+}
+
+extension AppModel {
+    /// Everything that must happen before the process exits, in order.
+    public func shutdown() {
+        // First, so the engine stops answering requests for a model that is
+        // about to be released (`swift/CLAUDE.md` Gotcha 26).
+        stopServer()
+        stopServerPolling()
+
+        // Deliberately NOT `unloadModel()`: that refuses while `generating`,
+        // which is exactly the case where the flush below matters most.
+        cancel()
+        detachChatSessionFromServer()
+        session = nil
+
+        // Both force the pending debounces through rather than waiting on
+        // them, so the last keystroke and the last setting reach disk.
+        persistChats()
+        persistSettings()
     }
 }

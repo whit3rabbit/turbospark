@@ -105,6 +105,20 @@ public enum SubagentRunner {
         var finalContent = ""
 
         while currentTurn < maxTurns {
+            // `session.cancel()` ends the CURRENT stream cleanly rather than
+            // throwing, so without this the loop simply started its next turn
+            // and Stop looked like it had done nothing.
+            if Task.isCancelled {
+                return SubagentRunResult(
+                    agentName: agent.name,
+                    status: "cancelled",
+                    finalResponse: finalContent.isEmpty
+                        ? "Subagent run was cancelled." : finalContent,
+                    totalTurns: currentTurn,
+                    totalToolCalls: totalToolCalls,
+                    durationSeconds: Date().timeIntervalSince(startTime)
+                )
+            }
             currentTurn += 1
 
             var options = GenerateOptions()
@@ -147,28 +161,94 @@ public enum SubagentRunner {
             // Execute parsed tool calls
             for call in parsedCalls {
                 totalToolCalls += 1
-                if !agent.isToolAllowed(call.name) {
-                    let deniedMsg = "<tool_error>\nTool '\(call.name)' is disallowed for agent profile '\(agent.name)'.\n</tool_error>"
-                    history.append(ChatMessage(role: .system, content: deniedMsg))
-                    continue
-                }
-
-                let toolResult = await AppToolRegistry.execute(call: call, in: project)
-                let tag = toolResult.isError ? "tool_error" : "tool_response"
-                let resultMsg = "<\(tag)>\n\(toolResult.output)\n</\(tag)>"
-                history.append(ChatMessage(role: .system, content: resultMsg))
+                history.append(await observation(for: call, agent: agent, project: project))
             }
         }
 
         let totalDuration = Date().timeIntervalSince(startTime)
+        // **A RUN THAT RAN OUT OF TURNS DID NOT COMPLETE.** `finalContent` here
+        // is the last turn's raw text, which on this exit is a tool call the
+        // loop never got to execute -- reported as `completed` it reaches the
+        // parent as an answer, with unexecuted XML as its content.
+        let exhausted = currentTurn >= maxTurns && !extractToolCalls(from: finalContent).isEmpty
         return SubagentRunResult(
             agentName: agent.name,
-            status: "completed",
-            finalResponse: finalContent,
+            status: exhausted ? "max_turns" : "completed",
+            finalResponse: exhausted
+                ? "Subagent stopped after its \(maxTurns)-turn limit with work still in progress; "
+                    + "the text below is its last turn and is not a finished answer.\n\n\(finalContent)"
+                : finalContent,
             totalTurns: currentTurn,
             totalToolCalls: totalToolCalls,
             durationSeconds: totalDuration
         )
+    }
+
+    /// Runs one proposed call and returns the observation to feed back.
+    ///
+    /// Split out of the loop so the GATE'S CALL SITE is testable and not just
+    /// the gate: `run` needs a live model session, so a test over
+    /// `permissionRefusal` alone stays green with the check deleted from the
+    /// loop entirely, which is the exact defect this is guarding.
+    static func observation(
+        for call: AppToolCall, agent: AppAgentDefinition, project: AppProject?
+    ) async -> ChatMessage {
+        if !agent.isToolAllowed(call.name) {
+            return ChatMessage(
+                role: .system,
+                content:
+                    "<tool_error>\nTool '\(call.name)' is disallowed for agent profile '\(agent.name)'.\n</tool_error>"
+            )
+        }
+        if let refusal = permissionRefusal(for: call, project: project) {
+            return ChatMessage(role: .system, content: "<tool_error>\n\(refusal)\n</tool_error>")
+        }
+        let toolResult = await AppToolRegistry.execute(call: call, in: project)
+        let tag = toolResult.isError ? "tool_error" : "tool_response"
+        return ChatMessage(role: .system, content: "<\(tag)>\n\(toolResult.output)\n</\(tag)>")
+    }
+
+    /// The reason a subagent may not run `call`, or nil when it may.
+    ///
+    /// **A SUBAGENT IS NOT EXEMPT FROM THE PERMISSION GATE** (state#18). This loop went
+    /// straight to `AppToolRegistry.execute` after checking only
+    /// `agent.isToolAllowed`, which is a tool NAME list -- and the built-in
+    /// `general-purpose` agent declares no `disallowedTools` at all. So under
+    /// a project whose terminal permission is `.ask` or `.deny`, a subagent
+    /// reached from the `agent` tool or from `/explore` ran `/bin/zsh -c`
+    /// unprompted, up to `maxTurns` times, on the strength of ONE approval of
+    /// the agent call itself (swift/CLAUDE.md Gotchas 11 and 29).
+    ///
+    /// An isolated run has no UI to prompt with, so `.ask` DENIES rather than
+    /// surfacing a card: the alternative is a hidden prompt nobody answers, or
+    /// worse, treating "would have asked" as "may proceed". The terminal
+    /// allowlist runs on top of that, so an auto-mode project still only
+    /// auto-runs what `isAutoApprovable` accepts.
+    static func permissionRefusal(for call: AppToolCall, project: AppProject?) -> String? {
+        switch AppToolPermissionEngine.evaluate(call: call, project: project, sessionApproved: false) {
+        case .deny(let reason):
+            return "Tool '\(call.name)' is denied by project permissions: \(reason)"
+        case .ask(_, let reason):
+            return "Tool '\(call.name)' needs interactive approval (\(reason)), and a subagent "
+                + "runs with no approval UI. Ask the user to run this call in the main "
+                + "conversation, or widen the project's permissions."
+        case .allow:
+            break
+        }
+
+        // The positive gate from swift/CLAUDE.md Gotcha 29, and it is NOT
+        // redundant with the engine even though `ToolRiskClassifier` already
+        // scores a non-allowlisted command `.high`: `permissive` mode returns
+        // `.allow` from `evaluate` BEFORE the high-risk gate is consulted, so
+        // that mode alone would let a subagent run `rm -rf ~` unattended.
+        if call.category == .terminal,
+            let command = call.arguments["command"] ?? call.arguments["cmd"],
+            !TerminalCommandClassifier.isAutoApprovable(command)
+        {
+            return "Command '\(command)' is not on the auto-approvable allowlist and a subagent "
+                + "cannot ask. Run it in the main conversation instead."
+        }
+        return nil
     }
 
     // MARK: - Tool Call Parsing Helper

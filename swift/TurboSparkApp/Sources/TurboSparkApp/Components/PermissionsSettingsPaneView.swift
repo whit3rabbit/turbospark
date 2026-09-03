@@ -50,6 +50,15 @@ public struct PermissionsSettingsPaneView: View {
             .controlSize(.regular)
             .help("Re-check accessibility for all folders")
         }
+        // A grant made in System Settings was invisible until the manual
+        // Refresh, so the pane kept reporting "restricted" for a folder the
+        // user had just allowed -- and returning to the app is exactly when
+        // they have.
+        .onReceive(
+            NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
+        ) { _ in
+            permissionsManager.refreshAllStatusesInBackground()
+        }
     }
 
     // MARK: - Standard Protected Folders Section

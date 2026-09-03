@@ -28,21 +28,39 @@ public final class SkillManager: @unchecked Sendable {
         set { UserDefaults.standard.set(Array(newValue), forKey: Self.disabledSkillsDefaultsKey) }
     }
 
-    /// Whether the given skill name is persisted as user-disabled.
-    public func isSkillDisabled(name: String) -> Bool {
-        disabledSkillNames.contains(name.lowercased())
+    /// The persisted key for one skill.
+    ///
+    /// **SCOPE PLUS NAME, NOT NAME ALONE.** A project skill may deliberately
+    /// share a user skill's name -- that is what project precedence IS -- and
+    /// keying on the name alone disabled both together, so turning off a
+    /// project's `deploy` also turned off the user's own. The old
+    /// name-only keys are still honoured on read so nobody's existing
+    /// preference is silently forgotten.
+    private static func disabledKey(scope: SkillScope, name: String) -> String {
+        "\(scope.isProjectScope ? "project" : "user"):\(name.lowercased())"
     }
 
-    /// Persists the enabled/disabled state for a skill name.
-    public func setSkillEnabled(_ enabled: Bool, name: String) {
+    /// Whether the given skill is persisted as user-disabled.
+    public func isSkillDisabled(scope: SkillScope, name: String) -> Bool {
+        let names = disabledSkillNames
+        return names.contains(Self.disabledKey(scope: scope, name: name))
+            || names.contains(name.lowercased())
+    }
+
+    /// Persists the enabled/disabled state for one skill.
+    public func setSkillEnabled(_ enabled: Bool, scope: SkillScope, name: String) {
         var names = disabledSkillNames
-        let key = name.lowercased()
+        let key = Self.disabledKey(scope: scope, name: name)
         if enabled {
             names.remove(key)
+            // Also clears a pre-scope key, or re-enabling would appear to do
+            // nothing for anyone upgrading.
+            names.remove(name.lowercased())
         } else {
             names.insert(key)
         }
         disabledSkillNames = names
+        invalidateResolutionCache()
     }
 
     // MARK: - Standard Directories
@@ -162,7 +180,7 @@ public final class SkillManager: @unchecked Sendable {
     /// Overrides a freshly-parsed skill's `isEnabled` (always `true` out of
     /// `SkillParser`) with the persisted per-user preference, if any.
     private func applyingPersistedEnabledState(to skill: AppSkill) -> AppSkill {
-        guard isSkillDisabled(name: skill.name) else { return skill }
+        guard isSkillDisabled(scope: skill.scope, name: skill.name) else { return skill }
         var updated = skill
         updated.isEnabled = false
         return updated
@@ -211,7 +229,30 @@ public final class SkillManager: @unchecked Sendable {
     // MARK: - Combined Precedence Resolution
 
     /// Merges project and user skills with project precedence over user skills for matching names.
+    /// Drops the memoized resolution. Call after anything that changes what
+    /// is on disk or which skills are enabled.
+    public func invalidateResolutionCache() {
+        resolutionCache = nil
+    }
+
+    private var resolutionCache: (key: String, skills: [AppSkill])?
+
+    /// Resolves the skills in effect, memoized per project root.
+    ///
+    /// Every `skill` tool call and every system-prompt build walked the user
+    /// and project skill directories from scratch, synchronously on the main
+    /// actor. Same reasoning as `AgentManager`'s cache next door.
     public func resolveEffectiveSkills(projectURL: URL?) -> [AppSkill] {
+        let key = projectURL?.standardizedFileURL.path ?? ""
+        if let cached = resolutionCache, cached.key == key {
+            return cached.skills
+        }
+        let skills = computeEffectiveSkills(projectURL: projectURL)
+        resolutionCache = (key, skills)
+        return skills
+    }
+
+    private func computeEffectiveSkills(projectURL: URL?) -> [AppSkill] {
         let userSkills = discoverUserSkills()
         guard let projectURL else { return userSkills }
 
@@ -244,11 +285,24 @@ public final class SkillManager: @unchecked Sendable {
         scope: SkillScope,
         projectRootURL: URL? = nil
     ) throws -> AppSkill {
+        // `..` survived the slash replacement, so `createSkill(name: "..")`
+        // resolved to the skills directory's PARENT and wrote a SKILL.md
+        // there. User-typed rather than model-controlled, so this is a
+        // footgun rather than an escalation -- and cheaper to refuse than to
+        // reason about.
         let sanitizedName = name
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "/", with: "-")
             .replacingOccurrences(of: "\\", with: "-")
             .lowercased()
+        guard !sanitizedName.isEmpty, sanitizedName != ".", sanitizedName != ".." else {
+            throw NSError(
+                domain: "TurboSparkSkill", code: 3,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "'\(name)' is not a usable skill name: it resolves outside the skills directory."
+                ])
+        }
 
         let targetDir: URL
         switch scope {
@@ -310,10 +364,15 @@ public final class SkillManager: @unchecked Sendable {
 
     /// Imports a skill directory or file into TurboSpark user or project scope.
     @discardableResult
+    /// - Parameter overwrite: whether to replace an existing skill of the
+    ///   same name. Defaults to false so a collision is REPORTED; the import
+    ///   used to delete the existing directory outright, which is
+    ///   unrecoverable user content.
     public func importSkill(
         from sourceURL: URL,
         targetScope: SkillScope,
-        projectRootURL: URL? = nil
+        projectRootURL: URL? = nil,
+        overwrite: Bool = false
     ) throws -> AppSkill {
         var isDir: ObjCBool = false
         guard fileManager.fileExists(atPath: sourceURL.path, isDirectory: &isDir) else {
@@ -338,7 +397,14 @@ public final class SkillManager: @unchecked Sendable {
         if isDir.boolValue {
             let folderName = sourceURL.lastPathComponent
             let destFolderURL = destinationBaseDir.appendingPathComponent(folderName, isDirectory: true)
+            // **AN IMPORT USED TO DELETE WHATEVER WAS ALREADY THERE.** A skill
+            // directory is the user's own edited content; replacing it
+            // silently on a name collision is unrecoverable. The caller
+            // decides, by passing `overwrite`.
             if fileManager.fileExists(atPath: destFolderURL.path) {
+                guard overwrite else {
+                    throw SkillImportError.destinationExists(name: folderName)
+                }
                 try fileManager.removeItem(at: destFolderURL)
             }
             try fileManager.copyItem(at: sourceURL, to: destFolderURL)
@@ -352,6 +418,9 @@ public final class SkillManager: @unchecked Sendable {
             let fileName = sourceURL.lastPathComponent
             let destFileURL = destinationBaseDir.appendingPathComponent(fileName)
             if fileManager.fileExists(atPath: destFileURL.path) {
+                guard overwrite else {
+                    throw SkillImportError.destinationExists(name: fileName)
+                }
                 try fileManager.removeItem(at: destFileURL)
             }
             try fileManager.copyItem(at: sourceURL, to: destFileURL)

@@ -16,6 +16,19 @@ live network).
   (e.g. `RuntimeConfig`'s numeric setters), this port kept the fatal-panic
   contract; see `AGENTS.md` Gotcha 2. This is the one place the two
   strategies coexist, and it predates this session's work.
+- **Model installation cannot be cancelled, and the GUI's Cancel button
+  says so rather than pretending.** `ts_install` blocks its own thread for
+  the whole walk and the C ABI exposes no `ts_install_cancel`, so dropping
+  the consuming task ends DELIVERY only: the download keeps running to
+  completion or failure on a thread nobody is listening to
+  (`TurboSpark/Catalog.swift` states this in the API doc). Until that call
+  exists, `swift/TurboSparkApp`'s Cancel stops WATCHING, tells the user the
+  download continues in the background, and refuses to re-install that same
+  alias for the rest of the process -- two writers on one install directory
+  being the case worth refusing rather than racing. A different model is
+  still installable, since the store writes are per directory. Adding a real
+  cancel means threading a cancellation flag through `catalog::install`'s
+  streaming walk, which nothing has needed enough to pay for.
 - **This port has a quality harness; the Swift original has none.** Not a
   deviation from a behavior, an addition on an axis Swift publishes
   nothing for: no perplexity, no KL divergence, no golden output. So no

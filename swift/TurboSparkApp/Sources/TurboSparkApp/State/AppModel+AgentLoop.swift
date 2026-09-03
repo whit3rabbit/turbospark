@@ -29,7 +29,7 @@ extension AppModel {
             chats[idx].updatedAt = Date()
             persistChats()
         }
-        continueAgentLoop(step: resumeStep)
+        continueAgentLoop(step: resumeStep, chatID: chatID)
         return true
     }
 
@@ -39,7 +39,7 @@ extension AppModel {
     func continueOrStop(afterStep currentStep: Int, chatID: UUID) async {
         let maxSteps = selectedProject?.maxAutonomousSteps ?? 5
         if currentStep + 1 < maxSteps {
-            continueAgentLoop(step: currentStep + 1)
+            continueAgentLoop(step: currentStep + 1, chatID: chatID)
         } else {
             _ = await dispatchStopAndContinueIfBlocked(chatID: chatID, resumeStep: currentStep + 1)
         }
@@ -49,68 +49,119 @@ extension AppModel {
     // AgentLoopRoutingTests / HookDecisionRoutingTests via `@testable
     // import`, since it is otherwise reachable only from inside a live
     // generation `Task` that needs a real model session.
-    func handleExtractedToolCall(_ call: AppToolCall, fullContent: String, reasoning: String, result: GenerationResult, currentStep: Int, chatID: UUID) {
+    ///
+    /// **`async`, AND THE CALLER MUST AWAIT IT** (state#16). This used to spawn a
+    /// detached `Task` and return immediately, so the turn's stream loop fell
+    /// straight through to its tail and set `generating = false` while the
+    /// tool was still running: `canRun` went true mid-loop (Send started a
+    /// second turn that overwrote `runTask`), `canCancel` went false (Stop
+    /// was disabled for exactly the duration of a shell command), and
+    /// `createChat` / `deleteChat` / `selectProject` / model unload were all
+    /// open for the same window. Awaiting it keeps the turn's lifecycle
+    /// honest, and puts the tool inside `runTask` so `cancel()` reaches it.
+    func handleExtractedToolCall(_ call: AppToolCall, fullContent: String, reasoning: String, result: GenerationResult, currentStep: Int, chatID: UUID) async {
         let sessionID = chatID.uuidString
 
-        Task { @MainActor in
-            // Evaluate PreToolUse lifecycle hooks first
-            let hookDecision = await self.evaluatePreToolUseHooks(toolName: call.name, toolArguments: call.arguments)
+        // Evaluate PreToolUse lifecycle hooks first
+        let hookDecision = await self.evaluatePreToolUseHooks(toolName: call.name, toolArguments: call.arguments)
 
-            // `updatedInput` replaces the corresponding argument keys before
-            // anything downstream (permission evaluation, execution, the
-            // approval card) sees the call.
-            var call = call
-            if let updated = hookDecision.updatedInput {
-                for (key, value) in updated { call.arguments[key] = value }
+        // `updatedInput` replaces the corresponding argument keys before
+        // anything downstream (permission evaluation, execution, the
+        // approval card) sees the call.
+        var call = call
+        if let updated = hookDecision.updatedInput {
+            for (key, value) in updated { call.arguments[key] = value }
+        }
+        let cmd = call.arguments["command"] ?? call.arguments["cmd"]
+
+        if hookDecision.behavior == .deny {
+            let reason = hookDecision.reason ?? "Blocked by PreToolUse hook"
+            let deniedResult = AppToolResult(
+                callID: call.id,
+                output: "Tool execution blocked by hook: \(reason)",
+                isError: true,
+                durationSeconds: 0.0
+            )
+            var deniedCall = call
+            deniedCall.status = .denied
+            if let idx = self.chats.firstIndex(where: { $0.id == chatID }) {
+                self.chats[idx].messages.append(AppChatMessage(
+                    role: .assistant,
+                    content: fullContent,
+                    reasoning: reasoning,
+                    stopReason: "tool_use",
+                    toolCalls: [deniedCall],
+                    toolResults: [deniedResult]
+                ))
+                self.chats[idx].updatedAt = Date()
+                self.persistChats()
             }
-            let cmd = call.arguments["command"] ?? call.arguments["cmd"]
+            await self.continueOrStop(afterStep: currentStep, chatID: chatID)
+            return
+        }
 
-            if hookDecision.behavior == .deny {
-                let reason = hookDecision.reason ?? "Blocked by PreToolUse hook"
-                let deniedResult = AppToolResult(
-                    callID: call.id,
-                    output: "Tool execution blocked by hook: \(reason)",
-                    isError: true,
-                    durationSeconds: 0.0
-                )
-                var deniedCall = call
-                deniedCall.status = .denied
-                if let idx = self.chats.firstIndex(where: { $0.id == chatID }) {
-                    self.chats[idx].messages.append(AppChatMessage(
-                        role: .assistant,
-                        content: fullContent,
-                        reasoning: reasoning,
-                        stopReason: "tool_use",
-                        toolCalls: [deniedCall],
-                        toolResults: [deniedResult]
-                    ))
-                    self.chats[idx].updatedAt = Date()
-                    self.persistChats()
-                }
-                await self.continueOrStop(afterStep: currentStep, chatID: chatID)
-                return
+        // A hook that asked for confirmation was previously ignored
+        // outright -- only `.deny` was checked above, so `.ask` fell
+        // through to the ordinary permission evaluation below, which
+        // could return `.allow` and run the call with no prompt at all
+        // (T10). Route it into the same pending-approval UI the normal
+        // engine's own `.ask` uses, folding the hook's reason into the
+        // call's risk assessment rather than replacing it.
+        if hookDecision.behavior == .ask {
+            var pending = call
+            pending.status = .pendingApproval
+            let baseAssessment = call.riskAssessment ?? ToolRiskClassifier.assessRisk(name: call.name, arguments: call.arguments)
+            let hookReason = hookDecision.reason ?? "A PreToolUse hook requested confirmation before this call runs."
+            pending.riskAssessment = ToolRiskAssessment(
+                level: baseAssessment.level,
+                category: baseAssessment.category,
+                reasons: baseAssessment.reasons + [hookReason]
+            )
+            self.pendingToolCall = pending
+            self.pendingToolCallChatID = chatID
+            self.pendingToolCallStep = currentStep
+            self.pendingToolCallProject = self.selectedProject
+            if let idx = self.chats.firstIndex(where: { $0.id == chatID }) {
+                self.chats[idx].messages.append(AppChatMessage(
+                    role: .assistant,
+                    content: fullContent,
+                    reasoning: reasoning,
+                    stopReason: "tool_use",
+                    toolCalls: [pending]
+                ))
+                self.chats[idx].updatedAt = Date()
+                self.persistChats()
             }
+            return
+        }
 
-            // A hook that asked for confirmation was previously ignored
-            // outright -- only `.deny` was checked above, so `.ask` fell
-            // through to the ordinary permission evaluation below, which
-            // could return `.allow` and run the call with no prompt at all
-            // (T10). Route it into the same pending-approval UI the normal
-            // engine's own `.ask` uses, folding the hook's reason into the
-            // call's risk assessment rather than replacing it.
-            if hookDecision.behavior == .ask {
+        let sessionApproved = await SessionApprovalStore.shared.isApproved(sessionID: sessionID, toolName: call.name, command: cmd)
+        // Captured once. Every branch below -- run, deny, or park for
+        // approval -- refers to THIS project, so the policy that produced the
+        // decision is the policy the call executes under.
+        let decisionProject = self.selectedProject
+        let decision = AppToolPermissionEngine.evaluate(call: call, project: decisionProject, sessionApproved: sessionApproved)
+
+        switch decision {
+        case .ask(let assessment, _):
+            // `PermissionRequest` fires exactly where this app would
+            // otherwise show the approval card, so a hook can resolve
+            // `allow`/`deny` without ever surfacing the UI.
+            let permVerdict = await self.evaluatePermissionRequest(toolName: call.name, toolArguments: call.arguments)
+
+            if permVerdict.permissionDecision == .allow {
+                await self.runApprovedCall(call, fullContent: fullContent, reasoning: reasoning, chatID: chatID, currentStep: currentStep, project: decisionProject)
+            } else if permVerdict.permissionDecision == .deny {
+                let reason = permVerdict.permissionReason ?? "Denied by PermissionRequest hook"
+                await self.recordDeniedCall(call, reason: reason, fullContent: fullContent, reasoning: reasoning, chatID: chatID, currentStep: currentStep)
+            } else {
                 var pending = call
                 pending.status = .pendingApproval
-                let baseAssessment = call.riskAssessment ?? ToolRiskClassifier.assessRisk(name: call.name, arguments: call.arguments)
-                let hookReason = hookDecision.reason ?? "A PreToolUse hook requested confirmation before this call runs."
-                pending.riskAssessment = ToolRiskAssessment(
-                    level: baseAssessment.level,
-                    category: baseAssessment.category,
-                    reasons: baseAssessment.reasons + [hookReason]
-                )
+                pending.riskAssessment = assessment
                 self.pendingToolCall = pending
                 self.pendingToolCallChatID = chatID
                 self.pendingToolCallStep = currentStep
+                self.pendingToolCallProject = self.selectedProject
                 if let idx = self.chats.firstIndex(where: { $0.id == chatID }) {
                     self.chats[idx].messages.append(AppChatMessage(
                         role: .assistant,
@@ -122,50 +173,13 @@ extension AppModel {
                     self.chats[idx].updatedAt = Date()
                     self.persistChats()
                 }
-                return
             }
 
-            let sessionApproved = await SessionApprovalStore.shared.isApproved(sessionID: sessionID, toolName: call.name, command: cmd)
-            let decision = AppToolPermissionEngine.evaluate(call: call, project: self.selectedProject, sessionApproved: sessionApproved)
+        case .allow:
+            await self.runApprovedCall(call, fullContent: fullContent, reasoning: reasoning, chatID: chatID, currentStep: currentStep, project: decisionProject)
 
-            switch decision {
-            case .ask(let assessment, _):
-                // `PermissionRequest` fires exactly where this app would
-                // otherwise show the approval card, so a hook can resolve
-                // `allow`/`deny` without ever surfacing the UI.
-                let permVerdict = await self.evaluatePermissionRequest(toolName: call.name, toolArguments: call.arguments)
-
-                if permVerdict.permissionDecision == .allow {
-                    await self.runApprovedCall(call, fullContent: fullContent, reasoning: reasoning, chatID: chatID, currentStep: currentStep)
-                } else if permVerdict.permissionDecision == .deny {
-                    let reason = permVerdict.permissionReason ?? "Denied by PermissionRequest hook"
-                    await self.recordDeniedCall(call, reason: reason, fullContent: fullContent, reasoning: reasoning, chatID: chatID, currentStep: currentStep)
-                } else {
-                    var pending = call
-                    pending.status = .pendingApproval
-                    pending.riskAssessment = assessment
-                    self.pendingToolCall = pending
-                    self.pendingToolCallChatID = chatID
-                    self.pendingToolCallStep = currentStep
-                    if let idx = self.chats.firstIndex(where: { $0.id == chatID }) {
-                        self.chats[idx].messages.append(AppChatMessage(
-                            role: .assistant,
-                            content: fullContent,
-                            reasoning: reasoning,
-                            stopReason: "tool_use",
-                            toolCalls: [pending]
-                        ))
-                        self.chats[idx].updatedAt = Date()
-                        self.persistChats()
-                    }
-                }
-
-            case .allow:
-                await self.runApprovedCall(call, fullContent: fullContent, reasoning: reasoning, chatID: chatID, currentStep: currentStep)
-
-            case .deny(let reason):
-                await self.recordDeniedCall(call, reason: reason, fullContent: fullContent, reasoning: reasoning, chatID: chatID, currentStep: currentStep)
-            }
+        case .deny(let reason):
+            await self.recordDeniedCall(call, reason: reason, fullContent: fullContent, reasoning: reasoning, chatID: chatID, currentStep: currentStep)
         }
     }
 
@@ -173,10 +187,10 @@ extension AppModel {
     /// result, appends the turn, and continues the loop. Shared by the
     /// ordinary `.allow` path and a `PermissionRequest` hook resolving
     /// `allow` in place of the approval card.
-    private func runApprovedCall(_ call: AppToolCall, fullContent: String, reasoning: String, chatID: UUID, currentStep: Int) async {
+    private func runApprovedCall(_ call: AppToolCall, fullContent: String, reasoning: String, chatID: UUID, currentStep: Int, project: AppProject?) async {
         var runningCall = call
         runningCall.status = .running
-        var toolResult = await AppToolRegistry.execute(call: runningCall, in: self.selectedProject)
+        var toolResult = await AppToolRegistry.execute(call: runningCall, in: project, chatID: chatID)
         runningCall.status = toolResult.isError ? .failed : .completed
 
         let postVerdict = await self.dispatchPostToolUseVerdict(
@@ -250,8 +264,17 @@ extension AppModel {
     /// call (state#10). The `generationEpoch` guard on that tail is what
     /// keeps it from clobbering the state a reentrant call here is about
     /// to set up.
-    public func continueAgentLoop(step: Int) {
+    /// - Parameter chatID: the conversation this loop belongs to. NOT
+    ///   `selectedChatID`: a tool can run for seconds with `generating` false
+    ///   (state#9), so the user may have selected another chat by now, and
+    ///   resolving it here builds the next step from that chat's history and
+    ///   replies into it.
+    public func continueAgentLoop(step: Int, chatID: UUID) {
         guard session != nil else { return }
-        executeGenerationTurn(step: step)
+        // Cancellation is cooperative: a tool already in flight runs to
+        // completion, and what Stop guarantees is that no further turn starts.
+        // Without this the loop resumed straight through a cancel.
+        guard !isCancellationPending else { return }
+        executeGenerationTurn(step: step, chatID: chatID)
     }
 }

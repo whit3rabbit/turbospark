@@ -14,6 +14,15 @@ private final class ForegroundAppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
     }
+
+    /// The authoritative quit hook. `RootView`'s own
+    /// `willTerminateNotification` observer fired only while the view tree
+    /// existed, which -- with the policy above -- is not guaranteed at quit.
+    func applicationWillTerminate(_ notification: Notification) {
+        MainActor.assumeIsolated {
+            AppShutdownCoordinator.shared.onTerminate?()
+        }
+    }
 }
 
 @main

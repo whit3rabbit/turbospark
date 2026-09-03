@@ -1018,3 +1018,69 @@ so going through `make` recompiles the whole app every single time. Use
     relevant file under `AppStorageRoot` first (`try?
     FileManager.default.removeItem(at: AppStorageRoot.file("settings.json"))`)
     so the assertion does not depend on execution order.
+
+40. **`AppStorageRoot` COVERS THE APP'S STORES AND NOT THE ENGINE'S, SO A TEST
+    THAT REACHES `TurboSparkCatalog` READS REAL USER DATA.** Gotcha 37's "one
+    root now" is true of the seven stores that spelled their own Application
+    Support path; `~/.turbospark/installed.json` is the CATALOG's, reached
+    through the FFI, and nothing redirects it. So any assertion driven through
+    `refreshModels`, `deleteModel` or `installed()` answers differently on a
+    machine with a given alias installed -- which is not a flaky test, it is a
+    test measuring the developer's disk.
+
+    Found 2026-09-03 by a SURVIVING mutation: `deleteModel`'s alias-collision
+    guard could not be reddened, because whether a colliding row existed was a
+    property of `~/.turbospark` rather than of the fixture. The fix is the
+    usual one -- extract the decision as a pure static
+    (`AppModel.isCatalogTracked(model:in:)`) and feed it a fixture. Prefer that
+    to seeding the real store, which is Gotcha 37's own failure mode wearing a
+    different hat.
+
+41. **TWO THINGS THAT LOOK LIKE FAILURES AND ARE NOT, WHEN MUTATION-CHECKING
+    SWIFT.** A Swift TRAP (`Int(1e300)`, an out-of-range slice) aborts the
+    xctest process with `exited with unexpected signal code 5` and prints
+    `Fatal error:` -- there is no `Test Case ... failed (` line at all, so a
+    harness keying on that string reports the mutation as SURVIVING, or as a
+    build error, when it actually reproduced the bug exactly. Read the raw
+    output for a trap before believing either verdict.
+
+    And `swift build` run from a SUBDIRECTORY of the package fails with
+    `linker command failed` and no error line above it:
+    `-L../TurboSpark/Sources/CTurboSpark` is resolved against the CWD
+    (Gotcha 2), not against the package root. Build and test from
+    `swift/TurboSparkApp` itself.
+
+## The `state#N` ledger
+
+`AppModel` and its extensions carry `(state#N)` markers on the comments that
+explain a fixed state-layer defect. The numbers are inline references with no
+central file, so before this index a reader who found `state#9` could only
+learn what it meant by grepping for other mentions of it. What each covers:
+
+| N | What it was |
+|---|---|
+| 1-5, 8, 13 | Predate this index and are no longer cited by any surviving comment. Recoverable only from git history. |
+| 6 | Approving a pending call resumed at step 1, resetting `maxAutonomousSteps` on every approval. |
+| 7 | `selectedChat`'s getter repaired `selectedChatID` on READ, publishing from inside a SwiftUI view update. |
+| 9 | `generating` drops when a call is proposed, so a chat switch is legal in between; every append routes by captured `chatID`. |
+| 10 | A finished turn's tail clobbered the state a reentrant continuation had just set up; `generationEpoch` guards it. |
+| 11 | `setModelURL`'s `defer { opening = false }` fired before the awaited open began, so the loading indicator never rendered. |
+| 12 | A skill's disabled flag lived only on the in-memory copy, and the `skill` tool ran disabled skills anyway. |
+| 14 | `selected` was keyed on `alias`, which is not unique once a scanned row exists; keyed on `path` now. |
+| 15 | A cancelled install's delayed tail reset the NEW install's state; `installEpoch` guards it. |
+| 16 | `handleExtractedToolCall` spawned a detached `Task`, so `generating` went false while a tool ran (Send live, Stop dead). |
+| 17 | `executeGenerationTurn` / `continueAgentLoop` resolved `selectedChatIndex` instead of taking the turn's chat. |
+| 18 | `SubagentRunner` executed model-proposed tools with no permission gate at all. |
+| 19 | An approved call ran under whichever project was selected at approval time, not the one its `.allow` was computed against. |
+| 20 | Approve/deny appended a SECOND assistant turn and left the proposal stuck at `.pendingApproval`. |
+| 21 | The expert-slot picker offered values the engine panics on, and omitted the legal 24. |
+| 22 | A project agent taking a built-in's name inherited no restrictions, so a clone could widen `/explore`. |
+| 23 | A rules symlink resolved outside the project and its contents reached the system prompt. |
+| 24 | The JSON stores swallowed write failures and let the next write overwrite an unreadable file. |
+| 25 | The quit flush lived in a view modifier, skipped the server, and bailed while generating. |
+| 26 | `deleteProject` left the worktree, the hook store and the snapshot store bound to the deleted project. |
+| 27 | `cancelInstall` claimed a cancellation the engine cannot perform and reopened the install guard. |
+| 28 | A stop pressed during a bind was dropped, leaving a server listening that the UI showed as stopped. |
+
+Add the next number here when you add the marker, or the index rots the way
+the numbering did.

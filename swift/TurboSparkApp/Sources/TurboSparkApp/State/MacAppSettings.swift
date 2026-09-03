@@ -257,29 +257,16 @@ public enum MacAppSettingsFileStore {
     }
 
     /// Loads application settings from disk or returns defaults if uninitialized.
+    /// `MacAppSettings` decodes every field with `decodeIfPresent`, so a
+    /// failure here means genuinely corrupt JSON rather than an added field
+    /// -- and every preference would be silently reset by the next write.
     public static func load() -> MacAppSettings {
-        guard let data = try? Data(contentsOf: settingsFileURL) else {
-            return MacAppSettings()
-        }
-        do {
-            return try JSONDecoder().decode(MacAppSettings.self, from: data)
-        } catch {
-            // Reported rather than swallowed (`swift/CLAUDE.md` Gotcha 13):
-            // `MacAppSettings` already decodes every field with
-            // `decodeIfPresent`, so this branch means genuinely corrupt
-            // JSON, not an added field -- worth telling the user rather
-            // than silently resetting every preference.
-            FileHandle.standardError.write(
-                "TurboSpark: settings failed to decode, using defaults: \(error)\n"
-                    .data(using: .utf8)!)
-            return MacAppSettings()
-        }
+        AppJSONStore.load(MacAppSettings.self, from: settingsFileURL, label: "settings")
+            ?? MacAppSettings()
     }
 
     /// Writes application settings to disk atomically as JSON.
     public static func save(_ settings: MacAppSettings) {
-        if let data = try? JSONEncoder().encode(settings) {
-            try? data.write(to: settingsFileURL, options: .atomic)
-        }
+        AppJSONStore.save(settings, to: settingsFileURL, label: "Settings")
     }
 }

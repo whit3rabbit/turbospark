@@ -317,7 +317,15 @@ public enum AppToolRegistry {
     }
 
     /// Executes a tool call asynchronously within the given project context.
-    public static func execute(call: AppToolCall, in project: AppProject?) async -> AppToolResult {
+    ///
+    /// - Parameter chatID: the conversation the call belongs to, for tools
+    ///   whose effect is per chat rather than per filesystem. `TodoWrite` is
+    ///   the one today: without it, its `onTodosUpdated` callback falls back
+    ///   to `selectedChatID` on the MAIN ACTOR, asynchronously, so a checklist
+    ///   written by chat A's agent overwrites chat B's if the user switched
+    ///   while the tool ran. Optional so the projectless and test call sites
+    ///   need not invent one.
+    public static func execute(call: AppToolCall, in project: AppProject?, chatID: UUID? = nil) async -> AppToolResult {
         let startTime = Date()
 
         // **NO PROJECT MEANS NO ROOT, AND THEREFORE NO FILE OR SHELL TOOL.**
@@ -370,8 +378,15 @@ public enum AppToolRegistry {
                     throw NSError(domain: "TurboSparkTool", code: 1, userInfo: [NSLocalizedDescriptionKey: "Missing 'path' or 'file_path' argument."])
                 }
                 let startLine = Int(call.arguments["start_line"] ?? call.arguments["offset"] ?? "")
-                let endLine = Int(call.arguments["end_line"] ?? call.arguments["limit"] ?? "")
-                output = try await readFile(relPath: relPath, rootURL: rootURL, startLine: startLine, endLine: endLine)
+                // Read from their OWN keys: `end_line` is an absolute bound
+                // (what the schema advertises) and `limit` is a count (what
+                // the Claude/OpenAI convention means). Collapsing them made
+                // `end_line: 520` return 520 lines.
+                let endLine = Int(call.arguments["end_line"] ?? "")
+                let limit = Int(call.arguments["limit"] ?? "")
+                output = try await readFile(
+                    relPath: relPath, rootURL: rootURL, startLine: startLine, endLine: endLine,
+                    limit: limit)
 
             case "write_file", "save_file", "filewrite", "write":
                 guard let relPath = call.arguments["path"] ?? call.arguments["file_path"] else {
@@ -475,7 +490,7 @@ public enum AppToolRegistry {
                 }
 
             case "todowrite", "todo_write":
-                let res = try TodoWriteExecutor.execute(arguments: call.arguments)
+                let res = try TodoWriteExecutor.execute(arguments: call.arguments, chatID: chatID)
                 output = res.output
 
             case "taskcreate", "task_create":

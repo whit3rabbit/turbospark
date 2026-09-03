@@ -58,7 +58,14 @@ public enum AppJSONValue: Codable, Equatable, Sendable {
         switch self {
         case .null: return NSNull()
         case .bool(let v): return v
-        case .number(let v): return v == v.rounded() ? Int(v) : v
+        case .number(let v):
+            // `Int(v)` TRAPS above `Int.max`, and this is reached for a
+            // persisted `skillState` as well as for validated model output --
+            // a number from disk has been through no validator at all.
+            guard v.isFinite, v >= -9_007_199_254_740_992, v <= 9_007_199_254_740_992 else {
+                return v
+            }
+            return v == v.rounded() ? Int(v) : v
         case .string(let v): return v
         case .array(let v): return v.map(\.foundationValue)
         case .object(let v): return v.mapValues(\.foundationValue)
@@ -261,7 +268,12 @@ public enum AppSkillStatePatch {
                 if depth == 0 { start = index }
                 depth += 1
             case "}":
-                depth -= 1
+                // Clamped at zero: a stray closing brace before any opening
+                // one drove `depth` negative, and every later `{` then
+                // incremented from there without ever reaching the `depth ==
+                // 0` that starts an object -- so ONE unbalanced `}` disabled
+                // the scanner for the whole rest of the string.
+                depth = max(0, depth - 1)
                 if depth == 0, let from = start {
                     let slice = String(text[from...index])
                     if let data = slice.data(using: .utf8),
