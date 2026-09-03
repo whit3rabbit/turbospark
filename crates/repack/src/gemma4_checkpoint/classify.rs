@@ -148,8 +148,21 @@ pub fn routed_marker(family: ModelFamily) -> &'static str {
 /// `pipenetwork/Qwen3.8-Flash-Next-MLX-4bit`, all 3,215 names.
 pub const NGRAM_CONTAINER: &str = ".ple.ple_embedding.";
 
-/// The shard sub-container inside [`NGRAM_CONTAINER`].
+/// The shard sub-container inside [`NGRAM_CONTAINER`], singular with an
+/// underscore before the index (`shard_37.weight`).
 const NGRAM_SHARD_MARKER: &str = "ngram_embedding.shard_";
+/// The SAME sub-container, spelled plural with a dot before the index
+/// (`shards.37.weight`) -- `sh0wie/Qwen3.8-Flash-Next-REAP-288-MLX-4bit`'s
+/// own convention, confirmed against a real streamed install: a name under
+/// this spelling that missed both markers fell through to `LmResident` and
+/// reached `pass_through_packed` with the trunk's group size (64) instead of
+/// the table's own (32, `ngram.rs`'s `NGRAM_GROUP_SIZE`), refusing with a
+/// shape-mismatch error that named a group-size arithmetic problem rather
+/// than the real classification miss. Checked FIRST below, because it is the
+/// one an actual install needs; both are kept because the singular form's
+/// own doc cites a different publisher as its source and nothing here
+/// confirms that publisher stopped using it.
+const NGRAM_SHARDS_MARKER: &str = "ngram_embedding.shards.";
 
 /// `qwen4_exp`'s n-gram table, split into its two shapes.
 ///
@@ -165,7 +178,10 @@ const NGRAM_SHARD_MARKER: &str = "ngram_embedding.shard_";
 fn classify_qwen4_ngram(name: &str) -> Option<Gemma4Bucket> {
     let tail = name.split_once(NGRAM_CONTAINER)?.1;
 
-    if let Some(rest) = tail.strip_prefix(NGRAM_SHARD_MARKER) {
+    let rest = tail
+        .strip_prefix(NGRAM_SHARDS_MARKER)
+        .or_else(|| tail.strip_prefix(NGRAM_SHARD_MARKER));
+    if let Some(rest) = rest {
         // `<index>.<role>`, e.g. `37.scales`.
         let (index, role) = rest.split_once('.')?;
         let shard = index.parse().ok()?;
