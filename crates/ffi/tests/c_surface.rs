@@ -1104,3 +1104,61 @@ fn generation_with_custom_stop_tokens() {
     // It stopped on the first token because it is in stop_tokens
     assert!(result["newTokens"].as_u64().unwrap() <= 1);
 }
+
+/// A slot count outside `ALLOWED_CACHE_SLOTS` must be REFUSED at the boundary
+/// rather than reaching `ExpertCacheSlots::Fixed`.
+///
+/// This engine is linked into its host -- `swift/TurboSparkApp` has no server
+/// and no IPC -- so a value the engine will not honour is not an error a GUI
+/// can display: `crates/streaming`'s expert cache panics and the abort takes
+/// the whole app with it (root `CLAUDE.md` Gotcha 64 is the concrete case, at
+/// `slots == top_k` on the first multi-token prompt). Every other front end
+/// validated already; this binding did not, and it is the one whose caller is
+/// a picker rather than a typed flag.
+///
+/// The model path here does not exist ON PURPOSE. Options are mapped before
+/// anything is read from disk, which is what makes this reachable with no
+/// install on the machine -- and asserting the error names the OPTION rather
+/// than the path is what proves the check runs where that comment says.
+#[test]
+fn an_out_of_set_expert_cache_slot_count_is_refused_before_the_model_is_read() {
+    for bad in ["4", "64", "128", "0", "7"] {
+        let model = CString::new("/nonexistent/model.gturbo").unwrap();
+        let options = CString::new(format!("{{\"expertCacheSlots\":{bad}}}")).unwrap();
+        let mut session: *mut Session = ptr::null_mut();
+        let code = unsafe { ts_session_open(model.as_ptr(), options.as_ptr(), &mut session) };
+
+        assert_ne!(code, abi::TS_OK, "slots={bad} must not open");
+        assert!(session.is_null(), "a failed open must not write a handle");
+        let err = last_error();
+        assert!(
+            err.contains("expertCacheSlots"),
+            "the refusal must name the option, not the path: got {err:?} for slots={bad}"
+        );
+    }
+
+    // And the legal set still gets past the option check -- otherwise the
+    // guard above would pass by refusing everything, which is the shape of a
+    // gate that cannot fail.
+    for good in ["8", "16", "24", "32"] {
+        let model = CString::new("/nonexistent/model.gturbo").unwrap();
+        let options = CString::new(format!("{{\"expertCacheSlots\":{good}}}")).unwrap();
+        let mut session: *mut Session = ptr::null_mut();
+        unsafe { ts_session_open(model.as_ptr(), options.as_ptr(), &mut session) };
+        let err = last_error();
+        assert!(
+            !err.contains("expertCacheSlots"),
+            "slots={good} is in ALLOWED_CACHE_SLOTS and must reach the model read: got {err:?}"
+        );
+    }
+
+    // `auto` is not a number and must stay accepted.
+    let model = CString::new("/nonexistent/model.gturbo").unwrap();
+    let options = CString::new("{\"expertCacheSlots\":\"auto\"}").unwrap();
+    let mut session: *mut Session = ptr::null_mut();
+    unsafe { ts_session_open(model.as_ptr(), options.as_ptr(), &mut session) };
+    assert!(
+        !last_error().contains("expertCacheSlots"),
+        "automatic sizing must not be caught by the allowed-set check"
+    );
+}

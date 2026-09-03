@@ -3,13 +3,33 @@ import TurboSpark
 
 extension AppModel {
     /// Loads persisted generation parameters, execution options, and model paths from disk.
+    /// Clamps a persisted integer that later becomes a `UInt32`.
+    ///
+    /// **A NEGATIVE OR OVERSIZED VALUE IN `settings.json` IS A TRAP, NOT AN
+    /// ERROR.** `UInt32(maxContextTokens)`, `UInt32(expertCacheSlots)` and
+    /// `UInt32(topK)` are all assigned verbatim from disk and all of them
+    /// crash the app on a value outside the range -- at `open()` for the
+    /// first two and at the first generate for the third. `maxNewTokens` was
+    /// the only one already guarded (`max(1, ...)` at its use site). The file
+    /// is user-editable and survives across versions that changed what a
+    /// field means, so "nothing writes a bad one today" is not the question.
+    private static func clampedSetting(_ value: Int, upperBound: Int) -> Int {
+        min(max(0, value), upperBound)
+    }
+
     func loadSettings() {
         let settings = MacAppSettingsFileStore.load()
-        self.maxContextTokens = settings.contextTokens
-        self.runtimeOptions.expertCacheSlots = settings.expertCacheSlots
+        self.maxContextTokens = Self.clampedSetting(
+            settings.contextTokens, upperBound: Int(UInt32.max))
+        // Not merely clamped: an out-of-set slot count is refused by
+        // `ts_session_open` and, before that guard existed, panicked the
+        // process. Anything unrecognized falls back to automatic sizing.
+        self.runtimeOptions.expertCacheSlots =
+            AppRuntimeOptions.allowedSlotCounts.contains(settings.expertCacheSlots)
+            ? settings.expertCacheSlots : 0
         self.temperature = settings.temperature
         self.topKEnabled = settings.topKEnabled
-        self.topK = settings.topK
+        self.topK = Self.clampedSetting(settings.topK, upperBound: Int(UInt32.max))
         self.topPEnabled = settings.topPEnabled
         self.topP = settings.topP
         self.runtimeOptions.prefillEnabled = settings.prefillEnabled

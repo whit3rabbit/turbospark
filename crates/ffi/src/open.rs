@@ -174,6 +174,26 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
     // machine.
     let max_context = sized(&options.max_context, "maxContext")?;
     let expert_cache_slots = sized(&options.expert_cache_slots, "expertCacheSlots")?;
+    // **A SLOT COUNT OUTSIDE THE ALLOWED SET IS A PANIC LATER, IN PROCESS.**
+    // `sized` only proves this is a non-negative integer; `ExpertCacheSlots::
+    // Fixed` was then built from it unvalidated, and this engine is linked
+    // into its host (`swift/TurboSparkApp` has no server and no IPC), so the
+    // failure is not an error a GUI can show -- it aborts the whole app.
+    // Every other front end validates: `crates/invocation`'s parser,
+    // `crates/bench`'s and `crates/server`'s argument loops, and
+    // `catalog::entry`. This binding was the one that did not, and it is the
+    // one whose caller is a picker rather than a typed flag. Root Gotcha 64
+    // is the concrete case -- at `slots == top_k` a stale reservation leaves
+    // no room for the next token's misses and `expert_cache.rs` panics on the
+    // first multi-token prompt.
+    if let Some(n) = expert_cache_slots {
+        if !foundation::runtime_config::ALLOWED_CACHE_SLOTS.contains(&n) {
+            return Err(format!(
+                "expertCacheSlots must be \"auto\" or one of {:?}, got {n}",
+                foundation::runtime_config::ALLOWED_CACHE_SLOTS
+            ));
+        }
+    }
     // Mapped here with the rest, BEFORE anything is read from disk, so a
     // misspelled tier outranks a bad path in the error -- the rule this file
     // already follows, and what lets the SwiftPM target reach these spellings
