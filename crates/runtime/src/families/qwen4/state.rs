@@ -26,7 +26,7 @@ use crate::real_forward_utils::entry;
 
 /// `(taps - 1) * dilation` for PLE's depthwise conv: `kernel_size=4`,
 /// `dilation=ngram_size=3` (`docs/QWEN4_PHASE0.md` item 4).
-const PLE_CONV_HISTORY: usize = 9;
+pub(crate) const PLE_CONV_HISTORY: usize = 9;
 
 /// Per-open `qwen4_exp` decode state.
 pub(crate) struct RealQwen4State {
@@ -125,9 +125,10 @@ pub(crate) struct RealQwen4State {
     /// `(taps - 1) * dilation`, an unrelated product that only coincides in
     /// one factor) is exactly the kind of clever-looking arithmetic that
     /// reads correct and is not; a plain stored field has no such trap.
-    ngram_context_len: usize,
-    /// `arch.ple.eos_token_id`, kept for [`RealQwen4State::reset`].
-    eos_token_id: i64,
+    pub(crate) ngram_context_len: usize,
+    /// `arch.ple.eos_token_id`, kept for [`RealQwen4State::reset`] and for
+    /// feeding [`model_io::NgramContext::step`] each decode step.
+    pub(crate) eos_token_id: i64,
 }
 
 impl RealQwen4State {
@@ -138,8 +139,36 @@ impl RealQwen4State {
         index: &ResidentIndex,
         arch: &ArchConfig,
         install_dir: &Path,
+        max_context: usize,
     ) -> Result<Self, RealForwardError> {
         let unsupported = |detail: String| Err(RealForwardError::Unsupported(detail));
+
+        // **NO INDEXER CODE EXISTS IN THIS PORT** (`mod.rs`'s "##
+        // QSA-as-dense-attention"): below `indexer_budget`,
+        // `docs/QWEN4_PHASE0.md` section 5 proves from source that QSA's
+        // block selection is a no-op and every full-attention layer is
+        // exactly dense causal attention. Refusing above that budget is
+        // what licenses reading no `self_attn.indexer.*` tensor anywhere
+        // in this flow -- not an approximation of QSA, the exact function
+        // it computes under the budget. Three tokens of margin exist in
+        // the reference's own proof (`visible <= 2051`); this refuses at
+        // the round number the checkpoint itself declares instead of
+        // trying to claim those three.
+        let budget = arch.compressed_attention.index_budget;
+        if budget <= 0 {
+            return unsupported(
+                "qwen4_exp declares no positive indexer_budget; this flow needs one to refuse \
+                 context above it"
+                    .to_string(),
+            );
+        }
+        if max_context > budget as usize {
+            return unsupported(format!(
+                "qwen4_exp needs the QSA indexer above {budget} tokens of context, which this \
+                 port does not implement; --max-context must not exceed {budget} \
+                 (docs/QWEN4_PHASE0.md section 5)"
+            ));
+        }
 
         if arch.num_experts <= 0 || arch.top_k_experts <= 0 {
             return unsupported(format!(
