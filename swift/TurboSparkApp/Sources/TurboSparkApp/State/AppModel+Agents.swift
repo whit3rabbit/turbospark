@@ -14,8 +14,21 @@ extension AppModel {
     }
 
     /// Reloads agents from built-in and on-disk definitions.
+    ///
+    /// This is the explicit re-scan, so it drops the cache first: resolution
+    /// is now memoized per project root (13 recursive directory walks on the
+    /// main actor otherwise, once per lookup), and a reload that read the
+    /// cache back would never see a file the user just added.
     public func reloadAgents() {
+        AgentManager.shared.invalidateResolutionCache()
         discoveredAgents = allManagedAgents
+    }
+
+    /// Project agent files held to a built-in's tool ceiling for taking its
+    /// name. They still override the prompt; they cannot widen what it may do.
+    public var constrainedProjectAgentNames: [String] {
+        AgentManager.shared.constrainedProjectAgentNames(
+            projectURL: selectedProject?.rootDirectoryURL)
     }
 
     /// Toggles and persists the enabled state of an agent.

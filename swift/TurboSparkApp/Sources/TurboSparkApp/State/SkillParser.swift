@@ -1,6 +1,20 @@
 import Foundation
 
 /// Parsing errors for skill files.
+/// Raised when importing a skill would destroy something already on disk.
+public enum SkillImportError: Error, LocalizedError, Sendable {
+    /// A skill of this name is already installed in the target scope.
+    case destinationExists(name: String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .destinationExists(let name):
+            return "A skill named '\(name)' is already installed here. "
+                + "Importing would replace it; rename or remove the existing one first."
+        }
+    }
+}
+
 public enum SkillParseError: Error, LocalizedError, Sendable {
     case fileNotFound(String)
     case invalidEncoding(String)

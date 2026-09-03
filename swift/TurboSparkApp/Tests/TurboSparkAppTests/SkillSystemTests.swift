@@ -324,7 +324,10 @@ final class SkillSystemTests: XCTestCase {
         // `SkillManager`'s shared (UserDefaults-backed) store cannot leak
         // into any other test's fixture.
         let skillName = "disable-test-\(UUID().uuidString.prefix(8))"
-        defer { SkillManager.shared.setSkillEnabled(true, name: skillName) }
+        defer {
+            SkillManager.shared.setSkillEnabled(
+                true, scope: .projectLocal(projectPath: tempDirURL.path), name: skillName)
+        }
 
         let skillDir = tempDirURL.appendingPathComponent(".turbospark/skills/\(skillName)", isDirectory: true)
         try FileManager.default.createDirectory(at: skillDir, withIntermediateDirectories: true)
@@ -340,7 +343,10 @@ final class SkillSystemTests: XCTestCase {
         let beforeDisable = SkillManager.shared.discoverProjectSkills(projectRootURL: tempDirURL)
         XCTAssertEqual(beforeDisable.first(where: { $0.name == skillName })?.isEnabled, true)
 
-        SkillManager.shared.setSkillEnabled(false, name: skillName)
+        // The scope is part of the key now: a project skill and a same-named
+        // user skill are separate preferences (a shared key disabled both).
+        let discoveredScope = beforeDisable.first(where: { $0.name == skillName })!.scope
+        SkillManager.shared.setSkillEnabled(false, scope: discoveredScope, name: skillName)
 
         // The OLD bug: toggling only mutated an in-memory AppSkill copy, so
         // a fresh discovery (what reloadSkills() does on any project switch)
@@ -357,7 +363,7 @@ final class SkillSystemTests: XCTestCase {
         XCTAssertTrue(result.output.contains("disabled"))
 
         // Re-enabling restores normal execution.
-        SkillManager.shared.setSkillEnabled(true, name: skillName)
+        SkillManager.shared.setSkillEnabled(true, scope: discoveredScope, name: skillName)
         let resultAfterReenable = await AppToolRegistry.execute(call: call, in: project)
         XCTAssertFalse(resultAfterReenable.isError)
         XCTAssertTrue(resultAfterReenable.output.contains("Do the thing."))

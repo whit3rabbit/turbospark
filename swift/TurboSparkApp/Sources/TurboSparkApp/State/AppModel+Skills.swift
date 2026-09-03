@@ -22,6 +22,10 @@ extension AppModel {
 
     /// Reloads both user-scoped and project-scoped skills from disk.
     public func reloadSkills() {
+        // The explicit re-scan, so it drops the memoized resolution first --
+        // otherwise a skill the user just created or imported would not
+        // appear until the project changed.
+        SkillManager.shared.invalidateResolutionCache()
         userSkills = SkillManager.shared.discoverUserSkills()
         if let projectURL = selectedProject?.rootDirectoryURL {
             projectSkills = SkillManager.shared.discoverProjectSkills(projectRootURL: projectURL)
@@ -92,8 +96,13 @@ extension AppModel {
     /// `reloadSkills()` -- switching projects, importing a skill, anything
     /// that re-scans disk -- which always came back `isEnabled: true`
     /// (state#12).
+    ///
+    /// Keyed on SCOPE plus name: a project skill may deliberately share a
+    /// user skill's name -- that is what project precedence is -- and the
+    /// name-only key disabled both at once.
     public func toggleSkillEnabled(_ skill: AppSkill) {
-        SkillManager.shared.setSkillEnabled(!skill.isEnabled, name: skill.name)
+        SkillManager.shared.setSkillEnabled(
+            !skill.isEnabled, scope: skill.scope, name: skill.name)
         reloadSkills()
     }
 
