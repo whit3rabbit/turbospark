@@ -464,3 +464,25 @@ pub fn write_qwen_gdn_moe_install_streamed(
     }
     write_gemma4_install_streamed(dir, arch, model_id, shards, quant, progress)
 }
+
+/// `qwen4_exp` for a real multi-GB checkpoint: the same family guard in
+/// front of [`write_gemma4_install_streamed`], which already carries the
+/// n-gram table's own streamed read-then-write arm internally
+/// (`ngram.rs`'s `write_ngram_table`, called from both writers) -- so this
+/// wrapper needs nothing beyond the guard every other family's has.
+pub fn write_qwen4_exp_install_streamed(
+    dir: &Path,
+    arch: &ArchConfig,
+    model_id: &str,
+    shards: &Gemma4Shards<'_>,
+    quant: &Gemma4Quant,
+    progress: impl FnMut(&str),
+) -> Result<(), Box<dyn std::error::Error>> {
+    if arch.family != ModelFamily::Qwen4Exp {
+        return Err(Box::new(Gemma4Error::Config(format!(
+            "write_qwen4_exp_install_streamed needs arch.family = qwen4exp, got {}",
+            arch.family.as_str()
+        ))));
+    }
+    write_gemma4_install_streamed(dir, arch, model_id, shards, quant, progress)
+}

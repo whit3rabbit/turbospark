@@ -84,6 +84,9 @@ pub(crate) fn stream_mlx(
         ModelFamily::MuseGlimmer => {
             repack::parse_muse_glimmer_config(&config_text).map_err(|e| e.to_string())
         }
+        ModelFamily::Qwen4Exp => {
+            repack::parse_qwen4_exp_config(&config_text).map_err(|e| e.to_string())
+        }
         other => Err(format!("{} has no safetensors intake here", other.as_str())),
     }?;
     let quant = repack::parse_gemma4_quantization(&config_text)
@@ -141,6 +144,9 @@ pub(crate) fn stream_mlx(
         ModelFamily::MuseGlimmer => repack::write_muse_glimmer_install_streamed(
             dir, &arch, &model_id, &shards, &quant, report,
         ),
+        ModelFamily::Qwen4Exp => {
+            repack::write_qwen4_exp_install_streamed(dir, &arch, &model_id, &shards, &quant, report)
+        }
         other => Err(Box::<dyn std::error::Error>::from(format!(
             "{} has no safetensors writer here",
             other.as_str()
