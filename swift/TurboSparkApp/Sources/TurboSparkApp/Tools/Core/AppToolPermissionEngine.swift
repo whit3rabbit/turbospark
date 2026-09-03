@@ -81,10 +81,19 @@ public enum AppToolPermissionEngine {
     /// unrelated call under the same tool name that turns out to be high-risk
     /// (e.g. `run_command rm -rf ~/Documents`). Do not move the session-approval
     /// check back above these two without re-adding a per-approval risk ceiling.
+    ///
+    /// **AND `permissive` IS UNDER THEM TOO, WHICH IT WAS NOT** (state#46).
+    /// That paragraph described every mode except the one that skipped all
+    /// three gates in a single line at the top. `readOnly` is the only
+    /// absolute arm here, and it is absolute in the SAFE direction.
+    /// - Parameter globalServers: the app-level MCP configurations, passed in
+    ///   rather than re-read from disk (state#61). Every caller has them in
+    ///   memory already, and this function runs on the main actor.
     public static func evaluate(
         call: AppToolCall,
         project: AppProject?,
-        sessionApproved: Bool = false
+        sessionApproved: Bool = false,
+        globalServers: [McpServerConfig] = GlobalMcpFileStore.load().servers
     ) -> ToolPermissionDecision {
         // No project selected: fall back to the same guarded default a fresh
         // project would get, never to the wide-open `.auto` permission set
@@ -102,12 +111,7 @@ public enum AppToolPermissionEngine {
             return .deny(reason: "Tool execution is denied in Strict Read-Only mode.")
         }
 
-        // 2. Permissive Mode: Allow everything bounded by the filesystem sandbox
-        if permissions.mode == .permissive {
-            return .allow
-        }
-
-        // 3. Granular Category Permission Check (Explicit Deny wins, and a
+        // 2. Granular Category Permission Check (Explicit Deny wins, and a
         // session approval cannot resurrect a category the project denies)
         let categoryPermission: AppToolPermission
         switch category {
@@ -123,7 +127,7 @@ public enum AppToolPermissionEngine {
             return .deny(reason: "The \(category.label) category is set to Deny in project settings.")
         }
 
-        // 4. High-risk actions ALWAYS require a fresh confirmation, regardless
+        // 3. High-risk actions ALWAYS require a fresh confirmation, regardless
         // of any "always allow this session" grant recorded under this tool
         // name or command prefix. This is the fix for the bypass above: risk
         // is assessed on THIS call's actual arguments, not on whatever call
@@ -131,6 +135,26 @@ public enum AppToolPermissionEngine {
         if risk.isHighRisk {
             let reason = risk.reasons.isEmpty ? "High-risk action requires confirmation." : risk.reasons.joined(separator: "; ")
             return .ask(assessment: risk, reason: reason)
+        }
+
+        // 4. Permissive Mode: no prompt for anything that got this far
+        // (state#46).
+        //
+        // **IT USED TO SIT AT STEP 2 AND SHORT-CIRCUIT ALL THREE GATES
+        // ABOVE**, which made the ordering paragraph on this function false
+        // for one whole mode: deny and high-risk were documented as having
+        // the first word, and a permissive project ran `rm -rf ~` unprompted.
+        // `SubagentRunner` had noticed and compensated with its own positive
+        // terminal gate; the MAIN loop had not, so the mode a user picks to
+        // avoid being asked was also the mode that stopped asking about the
+        // one class of call the whole engine exists for.
+        //
+        // Permissive now means "never ask, except for what you explicitly
+        // denied and except for high risk", which is what the ordering
+        // comment already claimed and what the `.readOnly` arm above models:
+        // that one IS absolute, and in the safe direction.
+        if permissions.mode == .permissive {
+            return .allow
         }
 
         // 5. Session-level pre-approval bypasses prompts for repeats of a
@@ -151,7 +175,16 @@ public enum AppToolPermissionEngine {
             }
 
             if let sName = serverName {
-                let allServers = (project?.mcpServers ?? []) + GlobalMcpFileStore.load().servers
+                // **GLOBAL FIRST, MATCHING THE EXECUTOR** (state#61). The two
+                // resolved a name collision in OPPOSITE orders, so the
+                // `autoApprove` flag consulted here could belong to a
+                // different server from the one `executeMcpCall` then dialled
+                // -- a project `.mcp.json` inheriting a global server's
+                // "approved" bit for a command nobody approved. Read off
+                // `globalMcpServers` where it is already in memory; this runs
+                // on the main actor and `GlobalMcpFileStore.load()` is a disk
+                // read per evaluation.
+                let allServers = globalServers + (project?.mcpServers ?? [])
                 if let server = allServers.first(where: { $0.name.lowercased() == sName.lowercased() }),
                    server.autoApprove && !risk.isHighRisk {
                     return .allow

@@ -1,12 +1,6 @@
 import Foundation
 import TurboSpark
 
-/// The agent loop's tool-call handling: evaluating `PreToolUse` /
-/// `PermissionRequest` hooks and the permission engine for one extracted
-/// tool call, running or denying it, and deciding whether to continue the
-/// loop or hand off to `Stop`. Split out of `AppModel+Generation.swift`
-/// (swift/CLAUDE.md Gotcha 15) to keep that file to the turn's streaming
-/// lifecycle alone.
 /// The message a call the model issued alongside another one is answered
 /// with. Stating the rule beats dropping the call silently: an unanswered
 /// call reads to the model as a tool that produced nothing, and it reissues
@@ -15,6 +9,12 @@ let TOOL_DEFERRED_MESSAGE =
     "Not executed: this turn issued more than one tool call and only the first is run. "
     + "Issue one tool call per turn; you may call this one again on the next turn."
 
+/// The agent loop's tool-call handling: evaluating `PreToolUse` /
+/// `PermissionRequest` hooks and the permission engine for one extracted
+/// tool call, running or denying it, and deciding whether to continue the
+/// loop or hand off to `Stop`. Split out of `AppModel+Generation.swift`
+/// (swift/CLAUDE.md Gotcha 15) to keep that file to the turn's streaming
+/// lifecycle alone.
 extension AppModel {
     /// Dispatches `Stop` and, if a hook blocks, re-enters the agent loop
     /// with the hook's reason folded in as the next user turn -- Claude
@@ -193,7 +193,9 @@ extension AppModel {
         // policy the call executes under even if the selection moves while
         // the card is up.
         let decisionProject = project
-        let decision = AppToolPermissionEngine.evaluate(call: call, project: decisionProject, sessionApproved: sessionApproved)
+        let decision = AppToolPermissionEngine.evaluate(
+            call: call, project: decisionProject, sessionApproved: sessionApproved,
+            globalServers: self.globalMcpServers)
 
         switch decision {
         case .ask(let assessment, _):

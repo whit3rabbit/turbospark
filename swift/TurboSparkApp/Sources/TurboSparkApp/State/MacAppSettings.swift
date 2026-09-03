@@ -202,47 +202,52 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.interactionMode = interactionMode
     }
 
+    /// Tolerant of a wrong TYPE as well as an absent key (state#59).
+    ///
+    /// The doc on `MacAppSettingsFileStore.load` used to say a failure here
+    /// "means genuinely corrupt JSON rather than an added field". That was
+    /// true of an added field and false of an edited value: `decodeIfPresent`
+    /// throws `typeMismatch` on `"seed": -1` or `"topK": "64"`, so a single
+    /// hand-edited character quarantined the file and reset every preference
+    /// the user had.
     public init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.contextTokens = try c.decodeIfPresent(Int.self, forKey: .contextTokens) ?? 0
-        self.expertCacheSlots = try c.decodeIfPresent(Int.self, forKey: .expertCacheSlots) ?? 0
-        self.temperature = try c.decodeIfPresent(Double.self, forKey: .temperature) ?? 0.2
-        self.topKEnabled = try c.decodeIfPresent(Bool.self, forKey: .topKEnabled) ?? true
-        self.topK = try c.decodeIfPresent(Int.self, forKey: .topK) ?? 64
-        self.topPEnabled = try c.decodeIfPresent(Bool.self, forKey: .topPEnabled) ?? true
-        self.topP = try c.decodeIfPresent(Double.self, forKey: .topP) ?? 0.95
-        self.prefillEnabled = try c.decodeIfPresent(Bool.self, forKey: .prefillEnabled) ?? true
-        self.reasoning = try c.decodeIfPresent(String.self, forKey: .reasoning) ?? "off"
-        self.maxNewTokens = try c.decodeIfPresent(Int.self, forKey: .maxNewTokens) ?? 2048
-        self.repetitionPenaltyEnabled = try c.decodeIfPresent(Bool.self, forKey: .repetitionPenaltyEnabled) ?? false
-        self.repetitionPenalty = try c.decodeIfPresent(Double.self, forKey: .repetitionPenalty) ?? 1.0
-        self.seedEnabled = try c.decodeIfPresent(Bool.self, forKey: .seedEnabled) ?? false
-        self.seed = try c.decodeIfPresent(UInt64.self, forKey: .seed) ?? 0
-        self.stopSequences = try c.decodeIfPresent(String.self, forKey: .stopSequences) ?? ""
-        self.powerProfile = try c.decodeIfPresent(String.self, forKey: .powerProfile) ?? "auto"
-        self.speculation = try c.decodeIfPresent(String.self, forKey: .speculation) ?? "auto"
-        self.speculativeDrafter = try c.decodeIfPresent(String.self, forKey: .speculativeDrafter) ?? "auto"
-        self.maxTokensPerSec = try c.decodeIfPresent(Double.self, forKey: .maxTokensPerSec) ?? 0
-        self.steeringPath = try c.decodeIfPresent(String.self, forKey: .steeringPath) ?? ""
-        self.steeringMode = try c.decodeIfPresent(String.self, forKey: .steeringMode) ?? "ablate"
-        self.steeringScale = try c.decodeIfPresent(Double.self, forKey: .steeringScale) ?? 1.0
-        self.steeringLayers = try c.decodeIfPresent(String.self, forKey: .steeringLayers) ?? ""
-        self.steeringTarget = try c.decodeIfPresent(Double.self, forKey: .steeringTarget) ?? 0.0
-        self.steeringGate = try c.decodeIfPresent(Double.self, forKey: .steeringGate) ?? 0.0
-        self.modelsDirectory = try c.decodeIfPresent(String.self, forKey: .modelsDirectory) ?? ""
-        self.enableLMStudioDetection = try c.decodeIfPresent(Bool.self, forKey: .enableLMStudioDetection) ?? true
-        self.lmStudioDirectory = try c.decodeIfPresent(String.self, forKey: .lmStudioDirectory) ?? ""
-        self.customModelDirectories = try c.decodeIfPresent([String].self, forKey: .customModelDirectories) ?? []
-        self.commandAdvisoryVeto = try c.decodeIfPresent(Bool.self, forKey: .commandAdvisoryVeto) ?? false
-        self.guardrailsMode = try c.decodeIfPresent(String.self, forKey: .guardrailsMode) ?? "select"
-        self.loadGuard = try c.decodeIfPresent(String.self, forKey: .loadGuard) ?? "relaxed"
-        self.loadGuardCustomBytes =
-            try c.decodeIfPresent(UInt64.self, forKey: .loadGuardCustomBytes) ?? 0
-        self.minAutoContextTokens =
-            try c.decodeIfPresent(UInt32.self, forKey: .minAutoContextTokens) ?? 0
-        self.modelReasoningDefaults =
-            try c.decodeIfPresent([String: String].self, forKey: .modelReasoningDefaults) ?? [:]
-        self.interactionMode = try c.decodeIfPresent(String.self, forKey: .interactionMode) ?? "chat"
+        let c = try decoder.container(keyedBy: CodingKeys.self) 
+        self.contextTokens = c.decodeLenient(Int.self, forKey: .contextTokens, fallback: 0)
+        self.expertCacheSlots = c.decodeLenient(Int.self, forKey: .expertCacheSlots, fallback: 0)
+        self.temperature = c.decodeLenient(Double.self, forKey: .temperature, fallback: 0.2)
+        self.topKEnabled = c.decodeLenient(Bool.self, forKey: .topKEnabled, fallback: true)
+        self.topK = c.decodeLenient(Int.self, forKey: .topK, fallback: 64)
+        self.topPEnabled = c.decodeLenient(Bool.self, forKey: .topPEnabled, fallback: true)
+        self.topP = c.decodeLenient(Double.self, forKey: .topP, fallback: 0.95)
+        self.prefillEnabled = c.decodeLenient(Bool.self, forKey: .prefillEnabled, fallback: true)
+        self.reasoning = c.decodeLenient(String.self, forKey: .reasoning, fallback: "off")
+        self.maxNewTokens = c.decodeLenient(Int.self, forKey: .maxNewTokens, fallback: 2048)
+        self.repetitionPenaltyEnabled = c.decodeLenient(Bool.self, forKey: .repetitionPenaltyEnabled, fallback: false)
+        self.repetitionPenalty = c.decodeLenient(Double.self, forKey: .repetitionPenalty, fallback: 1.0)
+        self.seedEnabled = c.decodeLenient(Bool.self, forKey: .seedEnabled, fallback: false)
+        self.seed = c.decodeLenient(UInt64.self, forKey: .seed, fallback: 0)
+        self.stopSequences = c.decodeLenient(String.self, forKey: .stopSequences, fallback: "")
+        self.powerProfile = c.decodeLenient(String.self, forKey: .powerProfile, fallback: "auto")
+        self.speculation = c.decodeLenient(String.self, forKey: .speculation, fallback: "auto")
+        self.speculativeDrafter = c.decodeLenient(String.self, forKey: .speculativeDrafter, fallback: "auto")
+        self.maxTokensPerSec = c.decodeLenient(Double.self, forKey: .maxTokensPerSec, fallback: 0)
+        self.steeringPath = c.decodeLenient(String.self, forKey: .steeringPath, fallback: "")
+        self.steeringMode = c.decodeLenient(String.self, forKey: .steeringMode, fallback: "ablate")
+        self.steeringScale = c.decodeLenient(Double.self, forKey: .steeringScale, fallback: 1.0)
+        self.steeringLayers = c.decodeLenient(String.self, forKey: .steeringLayers, fallback: "")
+        self.steeringTarget = c.decodeLenient(Double.self, forKey: .steeringTarget, fallback: 0.0)
+        self.steeringGate = c.decodeLenient(Double.self, forKey: .steeringGate, fallback: 0.0)
+        self.modelsDirectory = c.decodeLenient(String.self, forKey: .modelsDirectory, fallback: "")
+        self.enableLMStudioDetection = c.decodeLenient(Bool.self, forKey: .enableLMStudioDetection, fallback: true)
+        self.lmStudioDirectory = c.decodeLenient(String.self, forKey: .lmStudioDirectory, fallback: "")
+        self.customModelDirectories = c.decodeLenient([String].self, forKey: .customModelDirectories, fallback: [])
+        self.commandAdvisoryVeto = c.decodeLenient(Bool.self, forKey: .commandAdvisoryVeto, fallback: false)
+        self.guardrailsMode = c.decodeLenient(String.self, forKey: .guardrailsMode, fallback: "select")
+        self.loadGuard = c.decodeLenient(String.self, forKey: .loadGuard, fallback: "relaxed")
+        self.loadGuardCustomBytes = c.decodeLenient(UInt64.self, forKey: .loadGuardCustomBytes, fallback: 0)
+        self.minAutoContextTokens = c.decodeLenient(UInt32.self, forKey: .minAutoContextTokens, fallback: 0)
+        self.modelReasoningDefaults = c.decodeLenient([String: String].self, forKey: .modelReasoningDefaults, fallback: [:])
+        self.interactionMode = c.decodeLenient(String.self, forKey: .interactionMode, fallback: "chat")
     }
 }
 
@@ -257,9 +262,12 @@ public enum MacAppSettingsFileStore {
     }
 
     /// Loads application settings from disk or returns defaults if uninitialized.
-    /// `MacAppSettings` decodes every field with `decodeIfPresent`, so a
-    /// failure here means genuinely corrupt JSON rather than an added field
-    /// -- and every preference would be silently reset by the next write.
+    ///
+    /// `MacAppSettings` decodes every field leniently (state#59), so a
+    /// failure here means the JSON itself will not parse -- not an added
+    /// field and not one edited to the wrong type. The file is quarantined
+    /// rather than overwritten, since every preference would otherwise be
+    /// silently reset by the next write.
     public static func load() -> MacAppSettings {
         AppJSONStore.load(MacAppSettings.self, from: settingsFileURL, label: "settings")
             ?? MacAppSettings()

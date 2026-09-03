@@ -228,8 +228,39 @@ public final class AppModel: ObservableObject {
             }
         }
     }
-    /// Transient active chat draft when chats list is empty.
-    private var activeDraftChat = AppChat()
+    /// Transient active chat draft when the chats list is empty.
+    ///
+    /// **NEITHER PUBLISHED NOR PERSISTED** until state#63. Every write to it
+    /// went to a plain stored property, so no view re-rendered on it and the
+    /// quit flush -- which walks `chats` -- never saw it: draft text and a
+    /// whole checklist written before any chat existed were gone on relaunch.
+    /// `materializeDraftChatIfNeeded()` promotes it into `chats` as soon as
+    /// it carries anything worth losing, after which every existing path
+    /// (publication, the debounce, the flush) applies to it unchanged.
+    var activeDraftChat = AppChat()
+
+    /// Promotes the transient draft into `chats` once it has content.
+    ///
+    /// Called from the two writers (`promptText`, `updateTodos`) rather than
+    /// from a timer, so the promotion happens at the moment there is
+    /// something to lose. An empty draft is left alone: a chat row that
+    /// appears when the window opens, before the user has typed anything, is
+    /// noise -- and `createChat` reuses an empty selected chat anyway, so
+    /// nothing accumulates.
+    @discardableResult
+    func materializeDraftChatIfNeeded() -> Bool {
+        guard selectedChatIndex == nil else { return false }
+        let draft = activeDraftChat
+        let hasContent =
+            !draft.draft.isEmpty || !draft.draftAttachments.isEmpty || !draft.todos.isEmpty
+            || !draft.messages.isEmpty
+        guard hasContent else { return false }
+        chats.insert(draft, at: 0)
+        // `selectedChatID` already equals `draft.id` (the `didSet` above keeps
+        // them in step), so this needs no re-selection.
+        persistChats()
+        return true
+    }
 
     // Live Generation State
     /// Whether token generation is currently running.
@@ -493,6 +524,7 @@ public final class AppModel: ObservableObject {
         } else if activeDraftChat.id == chatID {
             activeDraftChat.todos = todos
             activeDraftChat.updatedAt = Date()
+            materializeDraftChatIfNeeded()
         }
     }
 
@@ -509,6 +541,7 @@ public final class AppModel: ObservableObject {
             } else {
                 activeDraftChat.draft = newValue
                 activeDraftChat.updatedAt = Date()
+                materializeDraftChatIfNeeded()
             }
             updateTokenEstimate()
         }

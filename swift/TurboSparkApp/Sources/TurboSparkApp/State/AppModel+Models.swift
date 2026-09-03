@@ -61,9 +61,16 @@ extension AppModel {
             let customDirs = customModelDirectories.filter {
                 !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             }
+            // **CANCEL FIRST, THEN DECIDE WHETHER TO SCAN** (state#51). The
+            // cancel used to sit BELOW this guard, so turning LM Studio
+            // detection off (or clearing the last custom folder) returned
+            // here with the previous scan still running -- and it landed its
+            // rows through `mergeScannedModels` afterwards, re-adding
+            // exactly the models the setting had just excluded.
+            modelScanTask?.cancel()
+            modelScanTask = nil
             guard lmPath != nil || !customDirs.isEmpty else { return }
 
-            modelScanTask?.cancel()
             modelScanTask = Task {
                 let scanned = await Task.detached(priority: .utility) {
                     ModelStorageManager.scanExternal(lmStudioPath: lmPath, customPaths: customDirs)
@@ -177,7 +184,7 @@ extension AppModel {
         // when one is a scanned LM Studio/Custom entry, so alias equality
         // here could read "already selected" for a DIFFERENT model on disk
         // and silently refuse to switch to it.
-        guard !generating, selected?.path != model.path else { return }
+        guard !generating, !opening, selected?.path != model.path else { return }
         selected = model
         modelPathText = model.path
         Task {
@@ -272,7 +279,12 @@ extension AppModel {
     }
 
     public func open(_ model: InstalledModel) async {
-        guard !generating else { return }
+        // **`!opening` AS WELL AS `!generating`** (state#50). Two overlapping
+        // opens each ran `defer { opening = false }`, so the first to finish
+        // cleared the flag for both, and `selected` and `session` could end
+        // up naming different models -- the pane says one thing and the turn
+        // runs another, with no error anywhere.
+        guard !generating, !opening else { return }
         opening = true
         error = nil
         // **DETACHED RATHER THAN MERELY DROPPED, and detached rather than
@@ -344,9 +356,19 @@ extension AppModel {
     }
 
     public func setModelURL(_ url: URL) {
-        guard !generating else { return }
+        guard !generating, !opening else { return }
         let path = url.standardizedFileURL.path
         modelPathText = path
+        // **`selected` FOLLOWS THE PATH, OR `reconcileSelection` UNDOES THIS**
+        // (state#50). This left `selected` pointing at the PREVIOUS install,
+        // and the `refreshModels()` below then ran `reconcileSelection`,
+        // which sets `modelPathText = selected.path` -- so the field reverted
+        // to the old model's path the moment the new one finished loading.
+        // A row that matches the path is selected; anything else is a
+        // manually-opened path with no row, and nil is the honest answer.
+        selected = installed.first {
+            URL(fileURLWithPath: $0.path).standardizedFileURL.path == path
+        }
         detachChatSessionFromServer()
         session = nil
         opening = true
@@ -362,6 +384,10 @@ extension AppModel {
                 let options = self.buildOpenOptions()
                 self.session = try await TurboSparkSession(modelPath: path, options: options)
                 self.refreshModels()
+                // `refreshModels` runs `reconcileSelection`, which rewrites
+                // `modelPathText` from `selected`. With no matching row that
+                // would blank the field the user just filled in.
+                self.modelPathText = path
                 self.showToast("Opened model at \(url.lastPathComponent)", style: .success)
             } catch {
                 let msg = "Failed to open custom model path: \(error.localizedDescription)"

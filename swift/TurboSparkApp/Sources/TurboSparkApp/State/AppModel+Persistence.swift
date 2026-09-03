@@ -288,6 +288,12 @@ extension AppModel {
         detachChatSessionFromServer()
         session = nil
 
+        // A draft written before any chat existed lives outside `chats`, and
+        // `persistChats` walks `chats` (state#63). The two writers promote it
+        // as it gains content; this is the backstop for a path that set it
+        // some other way.
+        materializeDraftChatIfNeeded()
+
         // Both force the pending debounces through rather than waiting on
         // them, so the last keystroke and the last setting reach disk.
         persistChats()

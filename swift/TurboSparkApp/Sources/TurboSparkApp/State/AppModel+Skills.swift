@@ -1,6 +1,13 @@
 import Foundation
 
 extension AppModel {
+    /// User skills the selected project is currently shadowing by name
+    /// (state#57). The skill-side twin of `constrainedProjectAgentNames`.
+    public var shadowedUserSkillNames: [String] {
+        SkillManager.shared.shadowedUserSkillNames(
+            projectURL: selectedProject?.rootDirectoryURL)
+    }
+
     /// Combined list of active skills, with project-level skills taking precedence over user-level skills with matching names.
     public var effectiveSkills: [AppSkill] {
         var merged: [String: AppSkill] = [:]

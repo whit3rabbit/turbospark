@@ -5,7 +5,6 @@ public final class SkillManager: @unchecked Sendable {
     public static let shared = SkillManager()
 
     private let fileManager = FileManager.default
-    private static let disabledSkillsDefaultsKey = "TurboSpark.disabledSkillNames"
 
     public init() {}
 
@@ -24,8 +23,11 @@ public final class SkillManager: @unchecked Sendable {
     // through) -- sees the same state.
 
     private var disabledSkillNames: Set<String> {
-        get { Set(UserDefaults.standard.stringArray(forKey: Self.disabledSkillsDefaultsKey) ?? []) }
-        set { UserDefaults.standard.set(Array(newValue), forKey: Self.disabledSkillsDefaultsKey) }
+        // Under `AppStorageRoot`, not `UserDefaults.standard` (state#57):
+        // the suite was mutating real preferences and the bundle-identity
+        // change re-enabled everything on install. See `DisabledItemStore`.
+        get { DisabledItemStore.names(for: .skills) }
+        set { DisabledItemStore.setNames(newValue, for: .skills) }
     }
 
     /// The persisted key for one skill.
@@ -261,6 +263,26 @@ public final class SkillManager: @unchecked Sendable {
         let skills = computeEffectiveSkills(projectURL: projectURL)
         resolutionCache = (key, skills)
         return skills
+    }
+
+    /// The names of USER skills a project skill is currently overriding
+    /// (state#57).
+    ///
+    /// **PRECEDENCE WITH NO DISCLOSURE IS INDISTINGUISHABLE FROM A BROKEN
+    /// SKILL.** A project skill deliberately shadows a same-named user one;
+    /// that is what precedence IS. But nothing anywhere said so, so a user
+    /// whose own `deploy` stopped behaving reads it as their skill being
+    /// broken rather than replaced -- and a cloned repository can shadow any
+    /// skill by name, silently. Agents already publish
+    /// `constrainedProjectAgentNames` for the same reason; this is that list
+    /// on the skill side.
+    public func shadowedUserSkillNames(projectURL: URL?) -> [String] {
+        guard let projectURL else { return [] }
+        let userNames = Set(discoverUserSkills().map { $0.name.lowercased() })
+        return discoverProjectSkills(projectRootURL: projectURL)
+            .map { $0.name }
+            .filter { userNames.contains($0.lowercased()) }
+            .sorted()
     }
 
     private func computeEffectiveSkills(projectURL: URL?) -> [AppSkill] {

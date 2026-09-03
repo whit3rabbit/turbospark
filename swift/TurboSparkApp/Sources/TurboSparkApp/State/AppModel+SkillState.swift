@@ -61,11 +61,18 @@ extension AppModel {
             : "\(systemContent)\n\n\(skillStateProtocol())"
         history.append(ChatMessage(role: .system, content: systemContent))
 
-        // The task, which is the FIRST user turn rather than the last: later
-        // user turns in an agent run are guardrail nudges, and the original
-        // request is what the whole run is for.
-        if let task = chats[chatIndex].messages.first(where: { $0.role == .user && !$0.content.isEmpty }) {
-            history.append(ChatMessage(role: .user, content: task.content))
+        // The task (see `taskMessage`), **AND ITS IMAGES** (state#58). The bounded prompt rebuilds the task
+        // from scratch on every step, so an `imagePaths` dropped here is a
+        // picture sent on step one of the append-only path and on NO step of
+        // this one -- the model answers about an image it was never shown,
+        // which is `AppChatMessage.imagePaths`'s own documented hazard
+        // arriving in the other prompt shape.
+        if let task = Self.taskMessage(in: chats[chatIndex]) {
+            history.append(
+                ChatMessage(
+                    role: .user,
+                    content: task.content,
+                    images: task.imagePaths.map(ChatImage.path)))
         }
 
         let state = chats[chatIndex].skillState ?? AppSkillState()
@@ -91,13 +98,31 @@ extension AppModel {
                 let call = message.toolCalls.last.map { "\($0.name)\n" } ?? ""
                 return "<\(tag)>\n\(call)\(result.output)\n</\(tag)>"
             }
-            // A nudge is a user turn that is not the original task.
+            // A nudge is a user turn that is not the original task -- and
+            // "the task" means the same thing here as it does above
+            // (state#58). These were two different predicates: the task was
+            // the first user turn with NON-EMPTY content, the nudge test
+            // compared against the first user turn of any kind. On a run
+            // whose first user turn carries only an image, they name
+            // different messages, so the real task was fed back as the
+            // latest observation on every step.
             if message.role == .user,
-                message.id != chats[chatIndex].messages.first(where: { $0.role == .user })?.id {
+                message.id != Self.taskMessage(in: chats[chatIndex])?.id {
                 return message.content
             }
         }
         return nil
+    }
+
+    /// The ORIGINAL request, which is what the whole run is for.
+    ///
+    /// The FIRST user turn rather than the last: later user turns in an agent
+    /// run are guardrail nudges. One definition, because two spellings of it
+    /// disagree on a turn that carries only a picture (state#58).
+    static func taskMessage(in chat: AppChat) -> AppChatMessage? {
+        chat.messages.first {
+            $0.role == .user && (!$0.content.isEmpty || !$0.imagePaths.isEmpty)
+        }
     }
 
     /// Parses, validates and merges a patch out of a finished turn.
@@ -115,6 +140,12 @@ extension AppModel {
             : text
 
         guard let patch = AppSkillStatePatch.extract(from: text) else {
+            // **A TURN WITH NO PATCH CLEARS THE ERROR** (state#58). This
+            // returned before the `skillStateLastError = nil` below, so a
+            // badge raised by one rejected patch stayed lit for the rest of
+            // the run -- through every later turn that emitted nothing wrong,
+            // reporting a failure that had already been recovered from.
+            skillStateLastError = nil
             return stripped
         }
         let errors = AppSkillStatePatch.validate(patch)
@@ -122,10 +153,23 @@ extension AppModel {
             skillStateLastError = errors.joined(separator: "; ")
             return stripped
         }
+        // **THE TOTAL IS CHECKED ON THE RESULT, NOT ON THE PATCH** (state#58).
+        // Every individual patch can be within bounds while the merged state
+        // grows without limit, which is the only growth curve that matters:
+        // this is what the prompt carries on every step. Rejected like any
+        // other invalid patch -- one step's bookkeeping lost, with a reason
+        // the model can act on.
+        var candidate = chats[chatIndex].skillState ?? AppSkillState()
+        candidate.apply(patch: patch)
+        let renderedBytes = candidate.rendered.utf8.count
+        guard renderedBytes <= AppSkillStatePatch.maxRenderedBytes else {
+            skillStateLastError =
+                "applying this patch would take the state to \(renderedBytes) bytes; the limit is "
+                + "\(AppSkillStatePatch.maxRenderedBytes). Summarize what you are carrying."
+            return stripped
+        }
         skillStateLastError = nil
-        var state = chats[chatIndex].skillState ?? AppSkillState()
-        state.apply(patch: patch)
-        chats[chatIndex].skillState = state
+        chats[chatIndex].skillState = candidate
         return stripped
     }
 

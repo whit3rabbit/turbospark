@@ -33,7 +33,10 @@ extension AppModel {
 
     /// Toggles and persists the enabled state of an agent.
     public func toggleAgentEnabled(_ agent: AppAgentDefinition) {
-        AgentManager.shared.setAgentEnabled(!agent.isEnabled, name: agent.name)
+        // Scoped, so toggling a project agent does not also toggle the
+        // built-in of that name (state#57).
+        AgentManager.shared.setAgentEnabled(
+            !agent.isEnabled, name: agent.name, scope: agent.scope)
         reloadAgents()
     }
 
@@ -162,7 +165,8 @@ extension AppModel {
                 agent: agent,
                 taskPrompt: prompt,
                 session: self.session,
-                project: project
+                project: project,
+                chatID: turnChatID
             )
 
             let assistantContent = """

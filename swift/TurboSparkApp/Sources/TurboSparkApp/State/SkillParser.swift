@@ -131,7 +131,7 @@ public enum SkillParser {
             return (nil, text)
         }
 
-        let lines = text.components(separatedBy: .newlines)
+        let lines = normalizedLines(text)
         guard lines.first?.trimmingCharacters(in: .whitespaces) == "---" else {
             return (nil, text)
         }
@@ -157,6 +157,38 @@ public enum SkillParser {
         return (frontmatter, body)
     }
 
+    /// Splits into lines on LF, having first folded CRLF and bare CR into it
+    /// (state#56).
+    ///
+    /// **`components(separatedBy: .newlines)` SPLITS ON EACH CHARACTER OF A
+    /// CHARACTER SET**, measured: `"a\r\nb"` comes back as
+    /// `["a", "", "b"]`, an empty line between every real one. On a CRLF
+    /// file the block-scalar loop below met one of those immediately and
+    /// treated it as the end of the block, so a multi-line description
+    /// terminated after its first line and the rest was reparsed as
+    /// `key: value` pairs -- which is how a `name:` written inside a
+    /// description renamed the skill.
+    ///
+    /// **THIS IS NOT WHAT FIXES THAT, AND THE MUTATION CHECK IS WHAT SAID
+    /// SO.** Teaching the block loop that a blank line is PART of a block
+    /// covers the CRLF case on its own, so reverting this normalization
+    /// leaves every case green. It is kept because it makes a line index
+    /// mean a line -- every loop here counts them -- and because a bare-CR
+    /// file is not otherwise handled. Do not read it as the CRLF fix.
+    static func normalizedLines(_ text: String) -> [String] {
+        text.replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .components(separatedBy: "\n")
+    }
+
+    /// The four block-scalar markers YAML accepts, not the two this used to
+    /// know (state#56). `|-` and `>-` are strip-chomping variants and are
+    /// what most authors actually write; unrecognized, the marker itself was
+    /// stored as the value and its body was reparsed as keys.
+    static func isBlockScalarMarker(_ value: String) -> Bool {
+        ["|", ">", "|-", ">-", "|+", ">+"].contains(value)
+    }
+
     /// Parses YAML frontmatter key-value pairs into a `SkillManifest`.
     public static func parseFrontmatterYAML(_ yamlText: String) -> SkillManifest {
         var name: String?
@@ -172,7 +204,7 @@ public enum SkillParser {
         var paths: [String] = []
         var shell: SkillShellType = .bash
 
-        let lines = yamlText.components(separatedBy: .newlines)
+        let lines = normalizedLines(yamlText)
         var i = 0
 
         while i < lines.count {
@@ -195,7 +227,7 @@ public enum SkillParser {
             case "name":
                 name = unquote(valueRest)
             case "description":
-                if valueRest.isEmpty || valueRest == "|" || valueRest == ">" {
+                if valueRest.isEmpty || isBlockScalarMarker(valueRest) {
                     // Multiline string
                     var descLines: [String] = []
                     i += 1
@@ -204,12 +236,18 @@ public enum SkillParser {
                         if subLine.hasPrefix("  ") || subLine.hasPrefix("\t") {
                             descLines.append(subLine.trimmingCharacters(in: .whitespaces))
                             i += 1
+                        } else if subLine.trimmingCharacters(in: .whitespaces).isEmpty {
+                            // A blank line is PART of a block scalar, not its
+                            // end. Ending here is what let the paragraph after
+                            // it be reparsed as keys.
+                            i += 1
                         } else {
                             i -= 1
                             break
                         }
                     }
                     description = descLines.joined(separator: " ")
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
                 } else {
                     description = unquote(valueRest)
                 }

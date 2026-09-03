@@ -5,26 +5,44 @@ public final class AgentManager: @unchecked Sendable {
     public static let shared = AgentManager()
 
     private let fileManager = FileManager.default
-    private static let disabledAgentsDefaultsKey = "TurboSpark.disabledAgentNames"
 
     public init() {}
 
     // MARK: - Enabled / Disabled Persistence
 
     private var disabledAgentNames: Set<String> {
-        get { Set(UserDefaults.standard.stringArray(forKey: Self.disabledAgentsDefaultsKey) ?? []) }
-        set { UserDefaults.standard.set(Array(newValue), forKey: Self.disabledAgentsDefaultsKey) }
+        // Under `AppStorageRoot`, not `UserDefaults.standard` (state#57).
+        get { DisabledItemStore.names(for: .agents) }
+        set { DisabledItemStore.setNames(newValue, for: .agents) }
     }
 
-    public func isAgentDisabled(name: String) -> Bool {
-        disabledAgentNames.contains(name.lowercased())
+    /// The persisted key for one agent.
+    ///
+    /// **SCOPE PLUS NAME, NOT NAME ALONE** (state#57), which is the rule
+    /// `SkillManager` already followed and this half never did. A project
+    /// agent taking a built-in's name is the supported way to override one
+    /// (state#22 constrains what it may DO, not whether it may exist), so
+    /// keying on the name alone disabled the built-in and the override
+    /// together -- and back. Old name-only keys are still honoured on read,
+    /// so nobody's existing preference is silently forgotten.
+    private static func disabledKey(scope: AppAgentScope, name: String) -> String {
+        "\(scope == .project ? "project" : "user"):\(name.lowercased())"
     }
 
-    public func setAgentEnabled(_ enabled: Bool, name: String) {
+    public func isAgentDisabled(name: String, scope: AppAgentScope = .userGlobal) -> Bool {
+        let names = disabledAgentNames
+        return names.contains(Self.disabledKey(scope: scope, name: name))
+            || names.contains(name.lowercased())
+    }
+
+    public func setAgentEnabled(_ enabled: Bool, name: String, scope: AppAgentScope = .userGlobal) {
         var names = disabledAgentNames
-        let key = name.lowercased()
+        let key = Self.disabledKey(scope: scope, name: name)
         if enabled {
             names.remove(key)
+            // The legacy name-only key too, or an agent disabled before this
+            // landed can never be re-enabled.
+            names.remove(name.lowercased())
         } else {
             names.insert(key)
         }
@@ -373,7 +391,7 @@ public final class AgentManager: @unchecked Sendable {
 
             if var agent = try? AgentParser.parseFile(
                 at: fileURL, scope: scope, sourceAgent: defaultAgent, containedIn: root) {
-                agent.isEnabled = !isAgentDisabled(name: agent.name)
+                agent.isEnabled = !isAgentDisabled(name: agent.name, scope: scope)
                 results.append(agent)
             }
         }

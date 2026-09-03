@@ -54,18 +54,26 @@ final class SubagentPermissionTests: XCTestCase {
     // MARK: - the positive allowlist runs on top of the engine
 
     func testPermissiveModeDoesNotLetASubagentRunAnythingItLikes() {
-        // The case that proves the allowlist check is load-bearing rather than
-        // redundant with the engine. `ToolRiskClassifier` scores any
-        // non-allowlisted command `.high`, which `evaluate` turns into `.ask`
-        // -- but `permissive` mode returns `.allow` BEFORE that gate is
-        // reached, so under it the engine alone refuses nothing at all.
+        // **THIS CASE'S PRECONDITION WAS THE BUG** (state#46). It asserted
+        // that `evaluate` returns `.allow` for `rm -rf ~/Documents` under
+        // `permissive`, and called that "the mode where the engine has
+        // nothing to say" -- a true statement about the code and a
+        // description of a hole, pinned as though it were a design. The
+        // engine's own high-risk gate now runs above the mode, so the
+        // MAIN loop (which has no second allowlist) reaches the approval
+        // card too.
         let permissive = project(terminal: .allow, mode: .permissive)
-        XCTAssertEqual(
-            AppToolPermissionEngine.evaluate(
-                call: terminalCall("rm -rf ~/Documents"), project: permissive),
-            .allow,
-            "Precondition: this is the mode where the engine has nothing to say.")
+        guard
+            case .ask = AppToolPermissionEngine.evaluate(
+                call: terminalCall("rm -rf ~/Documents"), project: permissive)
+        else {
+            return XCTFail("The high-risk gate must run above `permissive`, not below it.")
+        }
 
+        // The allowlist is still not redundant: `evaluate` returns `.allow`
+        // under this mode for everything the DENYLIST does not score high,
+        // and a subagent cannot be asked -- so the positive gate is what
+        // actually bounds an unattended shell.
         XCTAssertNotNil(
             SubagentRunner.permissionRefusal(
                 for: terminalCall("rm -rf ~/Documents"), project: permissive),

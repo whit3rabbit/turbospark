@@ -1098,6 +1098,24 @@ learn what it meant by grepping for other mentions of it. What each covers:
 | 43 | `deleteModel` had no `!generating` guard (`unloadModel()` returns silently there, so the directory was removed under a live mmap), never checked `serverAttachedSessions`, and matched on `alias ||` past state#14. |
 | 44 | `installRepo` recorded no `installingAlias` and never checked `abandonedInstallAliases`, so state#27's two-writer protection covered catalog installs only. |
 | 45 | `decodeIfPresent` tolerates an ABSENT key and nothing else. Three inner decoders threw on an unknown enum raw value or one bad array element and took the whole archive with them, past the hand-written tolerance of the outer ones. Element-level tolerance only: a wrong-TYPED array key still throws, or an intact file gets read as empty and overwritten. |
+| 46 | `.permissive` returned `.allow` at step 2 of `evaluate`, above category deny, above the high-risk gate and above the terminal allowlist -- so the mode a user picks to stop being asked was the one that stopped asking about `rm -rf ~`. `SubagentRunner` had compensated; the main loop had not. |
+| 47 | `SubagentRunner` executed tools with no `chatID` (the hazard `AppTool.swift` documents), advertised `AppToolCatalog.allTools` instead of the project's slice, and had no depth counter, so an `agent` call could nest without bound. |
+| 48 | `disable-model-invocation` was parsed, displayed and enforced nowhere; `allowed-tools` on a skill has no reader at all and its "N tools" chip claimed a boundary that does not exist. |
+| 49 | `clearOutput` left the skill state, the pending call, the checklist and the session's "always allow" grants behind (`resetSkillState` and `SessionApprovalStore.clear` both had zero callers); `deleteChat` open-coded three of `clearPendingToolCall`'s four fields; `createChat` lacked `selectChat`'s pending guard. |
+| 50 | `open` and `selectModel` guarded only `!generating`, so two overlapping opens each cleared `opening` and `selected`/`session` could name different models; `setModelURL` never set `selected`, and `reconcileSelection` then reverted the path field. |
+| 51 | `refreshModels`'s early return sat ABOVE `modelScanTask?.cancel()`, so disabling LM Studio detection let the in-flight scan land its rows afterwards. |
+| 52 | The install `.finished` arm was not epoch-guarded (the comment claimed the check came first; it existed only in `catch`), and the tail never cleared `installStageText`. |
+| 53 | A failed server start left `serverStopRequested` latched, so the next Start stopped itself; `detachModelFromServer` dropped the Swift session reference only inside the `do`, so a throwing detach kept the model resident with no UI row. |
+| 54 | `WorktreeModel` ran `git` with `readDataToEndOfFile()` after `waitUntilExit()`, which deadlocks past one pipe buffer, with no timeout and no handle. Porcelain renames and quoted paths were taken literally. |
+| 55 | `createProject` had no `!generating` guard and no `FileSnapshotStore.reset()`; `updateProject` never rebound `worktree` when the root changed; `WorktreeModel.updateRoot` compared raw strings. |
+| 56 | `SkillParser` did not recognize `|-` / `>-`, and treated a blank line as the end of a block scalar -- so prose inside a description was reparsed as keys and a `name:` line renamed the skill. |
+| 57 | The skill and agent disabled lists lived in `UserDefaults.standard`, so the suite wrote real preferences and the bundle-identity change re-enabled everything on install; agent state was keyed on NAME alone, so disabling a project agent disabled the built-in of that name. A project skill shadowing a user one had no disclosure surface. |
+| 58 | The bounded state dropped the task's images, kept a stale `skillStateLastError` for the rest of the run, defined "the task" two different ways, and bounded nothing at all. |
+| 59 | `decodeIfPresent` in `MacAppSettings` throws on a wrong TYPE, so one hand-edited `"seed": -1` quarantined the file and reset every preference. |
+| 60 | Sensitive hook option values were substituted into the `-c` string (world-readable in `ps`) while being excluded only from the environment; `${CLAUDE_PROJECT_DIR}` was spliced unquoted; a projectless hook ran at `/`. |
+| 61 | An MCP stdio child that traps SIGTERM was never killed; a project `.mcp.json` server could take a global server's name and be dialled in its place, and the permission gate resolved that collision in the OPPOSITE order to the executor. |
+| 62 | "Authorized Workspace Folders" is a TCC grant and the pane called it a file-tool grant; the home row could not fail; overlapping probes published stale readings. |
+| 63 | The transient draft chat was neither published nor persisted, so draft text and a checklist written before any chat existed were gone on relaunch. |
 
 Add the next number here when you add the marker, or the index rots the way
 the numbering did.

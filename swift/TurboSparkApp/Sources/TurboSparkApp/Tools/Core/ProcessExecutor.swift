@@ -170,7 +170,12 @@ enum ProcessExecutor {
     /// Synchronous on purpose: it runs from the cancellation path, where an
     /// `await` would suspend on an already-cancelled task and hand back
     /// control before the child is dead.
-    private static func terminateAndReap(_ process: Process) {
+    ///
+    /// `internal` rather than `private` since state#61: `McpClientEngine`
+    /// spawns stdio children of its own and had only a bare `terminate()`,
+    /// so a server that traps or ignores SIGTERM survived every call and
+    /// accumulated one orphan per invocation for the life of the app.
+    static func terminateAndReap(_ process: Process) {
         process.terminate()
         let killDeadline = Date().addingTimeInterval(2.0)
         while process.isRunning && Date() < killDeadline {

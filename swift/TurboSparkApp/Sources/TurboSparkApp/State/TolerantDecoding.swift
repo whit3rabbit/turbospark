@@ -33,6 +33,19 @@ extension KeyedDecodingContainer {
         return T(rawValue: raw) ?? fallback
     }
 
+    /// Decodes a value, falling back on a TYPE mismatch as well as on an
+    /// absent key (state#59).
+    ///
+    /// `decodeIfPresent` tolerates absence only, so one hand-edited
+    /// `"seed": -1` in `settings.json` throws `typeMismatch`, which
+    /// `AppJSONStore` quarantines -- and every preference the user ever set
+    /// is gone over a single wrong character. Corruption at the JSON level
+    /// still quarantines, which is the right split: a file that will not
+    /// parse is a file, a field that will not convert is a field.
+    func decodeLenient<T: Decodable>(_ type: T.Type, forKey key: Key, fallback: T) -> T {
+        ((try? decodeIfPresent(type, forKey: key)) ?? nil) ?? fallback
+    }
+
     /// Decodes an array element by element, dropping the ones that fail.
     ///
     /// Returns `[]` for an absent key. A dropped element is a real loss and

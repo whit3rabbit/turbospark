@@ -17,7 +17,15 @@ extension AppHookExecutionEngine {
         stopHookActive: Bool?,
         startTime: Date
     ) async -> AppHookExecutionResult {
-        let cwd = (workingDirectory?.isEmpty == false) ? workingDirectory! : FileManager.default.currentDirectoryPath
+        // **A PROJECTLESS HOOK HAS NO WORKING DIRECTORY, AND THERE IS NO
+        // DEFENSIBLE DEFAULT** (state#60). This fell back to
+        // `currentDirectoryPath`, which is `/` for a Finder-launched process
+        // -- so a `PreToolUse` hook written to inspect "the repository" ran
+        // at the filesystem root and reported on it, which is
+        // `swift/CLAUDE.md` Gotcha 30's finding arriving on the hook path.
+        // A hook that names `${CLAUDE_PROJECT_DIR}` is refused below; one
+        // that does not still runs, with no cwd claimed.
+        let cwd = (workingDirectory?.isEmpty == false) ? workingDirectory! : ""
         let payloadDict = AppHookStdinPayload.build(
             event: event,
             sessionID: sessionID,
@@ -53,11 +61,42 @@ extension AppHookExecutionEngine {
         let sourceID = hook.pluginName != nil ? "plugin_\(hook.pluginName!)" : (hook.sourceType == .projectConfig ? "project_config" : "user_config")
         let options = allOptions[sourceID] ?? [:]
 
-        for (k, v) in options {
+        // The sensitive set is needed HERE, not only at the environment
+        // build below (state#60). A value marked sensitive was excluded from
+        // the env and then substituted straight into the `-c` string, which
+        // is the process's ARGV -- visible to every `ps` on the machine for
+        // the life of the hook. It reaches the hook by environment alone now.
+        let sensitiveKeys: Set<String> = await {
+            let groups = await store.sourceGroups
+            guard let group = groups.first(where: { $0.id == sourceID }) else { return [] }
+            return Set(group.optionSpecs.filter(\.isSensitive).map(\.key))
+        }()
+
+        for (k, v) in options where !sensitiveKeys.contains(k) {
             commandText = commandText.replacingOccurrences(of: "${user_config.\(k)}", with: v)
         }
-        if let workingDirectory, !workingDirectory.isEmpty {
-            commandText = commandText.replacingOccurrences(of: "${CLAUDE_PROJECT_DIR}", with: workingDirectory)
+        if commandText.contains("${CLAUDE_PROJECT_DIR}") {
+            guard !cwd.isEmpty else {
+                return AppHookExecutionResult(
+                    hookID: hook.id,
+                    hookName: hook.name,
+                    event: event,
+                    exitCode: 1,
+                    stdout: "",
+                    stderr: "Hook names ${CLAUDE_PROJECT_DIR} but no project is selected.",
+                    durationSeconds: Date().timeIntervalSince(startTime),
+                    // No verdict, so a permission event asks rather than
+                    // allows (state#40).
+                    outcome: .unavailable(
+                        reason: "\(hook.name) needs a project directory and none is selected.")
+                )
+            }
+            // **QUOTED** (state#60). A path with a space split into two
+            // arguments -- `cd ${CLAUDE_PROJECT_DIR} && git status` in
+            // `/Users/me/My Projects/app` ran `cd /Users/me/My` -- and a path
+            // carrying a `;` or a backtick executed whatever followed it.
+            commandText = commandText.replacingOccurrences(
+                of: "${CLAUDE_PROJECT_DIR}", with: Self.shellQuoted(cwd))
         }
 
         let executableURL: URL
@@ -93,15 +132,12 @@ extension AppHookExecutionEngine {
             env["CLAUDE_PROJECT_DIR"] = workingDirectory
         }
 
-        // Exclude options marked sensitive from environment export
-        let sensitiveKeys: Set<String> = await {
-            let groups = await store.sourceGroups
-            guard let group = groups.first(where: { $0.id == sourceID }) else { return [] }
-            return Set(group.optionSpecs.filter(\.isSensitive).map(\.key))
-        }()
-
+        // Every option reaches the hook by ENVIRONMENT, sensitive ones
+        // included: the env is per process and unreadable by other users,
+        // where ARGV is world-readable (state#60). Excluding them here was
+        // half a protection, since the substitution above put them in the
+        // command string anyway.
         for (k, v) in options {
-            guard !sensitiveKeys.contains(k) else { continue }
             let normalized = k.uppercased().replacingOccurrences(of: "-", with: "_")
             env["TURBOSPARK_OPTION_\(normalized)"] = v
             env["CLAUDE_PLUGIN_OPTION_\(normalized)"] = v
@@ -183,6 +219,14 @@ extension AppHookExecutionEngine {
         }
     }
 
+    /// Wraps a string so `/bin/sh -c` reads it as one literal argument.
+    ///
+    /// Single quotes, with an embedded `'` spelled `'\\''` -- the only form
+    /// safe for every byte, since nothing inside single quotes is special.
+    static func shellQuoted(_ value: String) -> String {
+        "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
     func executeHttpHook(
         hook: AppHookCommand,
         event: AppHookEvent,
@@ -214,7 +258,7 @@ extension AppHookExecutionEngine {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        let cwd = (workingDirectory?.isEmpty == false) ? workingDirectory! : FileManager.default.currentDirectoryPath
+        let cwd = (workingDirectory?.isEmpty == false) ? workingDirectory! : ""
         let payloadDict = AppHookStdinPayload.build(
             event: event,
             sessionID: sessionID,
