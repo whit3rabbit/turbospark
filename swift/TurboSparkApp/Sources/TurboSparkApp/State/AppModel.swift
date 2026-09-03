@@ -354,6 +354,14 @@ public final class AppModel: ObservableObject {
     /// cancels this too or Stop cannot stop a shell command started from the
     /// approval card.
     var toolExecutionTask: Task<Void, Never>?
+    /// `run()`'s pre-append work: the awaited `UserPromptSubmit` hook and the
+    /// agent slash-command dispatch (state#33).
+    ///
+    /// Stored so `cancel()` can reach it. The hook is awaited with a 120 s
+    /// budget, and while it runs `submitting` is true -- so Send is refused
+    /// by `canRun` and Stop was refused by `canCancel`, leaving a wedged hook
+    /// with no exit at all and nothing for `cancel()` to cancel.
+    var submissionTask: Task<Void, Never>?
     var installTask: Task<Void, Never>?
     /// The off-main-actor scan of the LM Studio and custom model directories.
     /// Cancelled and restarted per `refreshModels()`, which several views call
@@ -527,20 +535,43 @@ public final class AppModel: ObservableObject {
         !generating && !submitting && !opening && session != nil && (!promptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !promptAttachments.isEmpty)
     }
 
-    /// Whether active generation can be cancelled.
-    public var canCancel: Bool { generating && !isCancellationPending }
+    /// Whether the turn can be stopped.
+    ///
+    /// **THREE STATES COUNT, NOT ONE** (state#33). `generating` is the
+    /// obvious one. `submitting` is the window `run()` spends awaiting a
+    /// `UserPromptSubmit` hook before anything is appended: Send is already
+    /// refused there, so leaving Stop refused too gave a wedged hook no exit.
+    /// And a pending tool call lowers `generating` on purpose (state#9), so
+    /// without `pendingToolCall` here the only ways out of an approval card
+    /// were Approve, Deny, or deleting the chat -- and `cancel()`'s own
+    /// `clearPendingToolCall()` was unreachable (state#34).
+    public var canCancel: Bool {
+        (generating || submitting || pendingToolCall != nil) && !isCancellationPending
+    }
 
     /// Whether an active model download can be cancelled.
     public var canCancelInstall: Bool { isInstallingModel }
 
     /// Whether the selected model can be loaded.
-    public var canLoadModel: Bool { !generating && !opening && session == nil && selected != nil }
+    ///
+    /// `!submitting` for the same reason `!generating` is here: unloading or
+    /// swapping the model while `run()` is awaiting its hook appends the user
+    /// message, clears the draft, and then returns silently at
+    /// `executeGenerationTurn`'s `session` guard -- a prompt consumed with no
+    /// reply and no error (state#33).
+    public var canLoadModel: Bool {
+        !generating && !submitting && !opening && session == nil && selected != nil
+    }
 
     /// Whether the active model session can be reloaded.
-    public var canReloadModel: Bool { !generating && !opening && session != nil }
+    public var canReloadModel: Bool {
+        !generating && !submitting && !opening && session != nil
+    }
 
     /// Whether the active model session can be unloaded.
-    public var canUnloadModel: Bool { !generating && !opening && session != nil }
+    public var canUnloadModel: Bool {
+        !generating && !submitting && !opening && session != nil
+    }
 
     // `reasoningAvailable` was here and is gone: it had no callers, and once
     // `isReasoningSupported` stopped guessing from the family the two bodies
@@ -649,15 +680,23 @@ public final class AppModel: ObservableObject {
         return false
     }
 
-    /// Effective resolution of whether Forge Guardrails is active for the current context.
-    public var effectiveForgeGuardrailsEnabled: Bool {
+    /// Forge Guardrails resolved for a NAMED project rather than for the
+    /// selection (state#30).
+    ///
+    /// A turn's project is a property of its chat, and the selection can move
+    /// while the turn is in flight -- a call can sit at an approval card for
+    /// minutes with `generating` false, which is exactly when the user is
+    /// free to switch. Every read on the generation path takes the argument
+    /// form; `effectiveForgeGuardrailsEnabled` below is the UI's read of the
+    /// same rule.
+    public func forgeGuardrailsEnabled(for project: AppProject?) -> Bool {
         switch guardrailsMode {
         case .alwaysOn:
             return true
         case .alwaysOff:
             return false
         case .select:
-            if let projectOverride = selectedProject?.forgeGuardrailsEnabled {
+            if let projectOverride = project?.forgeGuardrailsEnabled {
                 return projectOverride
             }
             if let composerOverride = composerGuardrailsOverride {
@@ -665,6 +704,17 @@ public final class AppModel: ObservableObject {
             }
             return isToolCallingSupported
         }
+    }
+
+    /// Effective resolution of whether Forge Guardrails is active for the current context.
+    public var effectiveForgeGuardrailsEnabled: Bool {
+        forgeGuardrailsEnabled(for: selectedProject)
+    }
+
+    /// The agent profile of a NAMED project. See `forgeGuardrailsEnabled(for:)`
+    /// for why the generation path takes the argument form (state#30).
+    public func agentType(for project: AppProject?) -> AppAgentType {
+        project?.agentType ?? .coder
     }
 
     /// Toggles or sets the Forge Guardrails active state for the current project or draft.

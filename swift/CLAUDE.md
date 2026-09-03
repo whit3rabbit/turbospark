@@ -1081,6 +1081,16 @@ learn what it meant by grepping for other mentions of it. What each covers:
 | 26 | `deleteProject` left the worktree, the hook store and the snapshot store bound to the deleted project. |
 | 27 | `cancelInstall` claimed a cancellation the engine cannot perform and reopened the install guard. |
 | 28 | A stop pressed during a bind was dropped, leaving a server listening that the UI showed as stopped. |
+| 29 | Approving lowered `generating` on top of the continuation turn it had just started (state#16 reopened on the approval path); denying never raised it at all. |
+| 30 | The turn AFTER an approved call took its project from the selection, not from the chat -- system prompt, workspace root, agent type, step cap, guardrails and the next call's permission evaluation all followed a switch state#19 had pinned for the call itself. |
+| 31 | A guardrail-RESCUED call has its prose sanitized to "", and the history assembler's emptiness guard skipped the whole message before its `toolResults` loop ran, so the model never saw its own result and reissued the call to the step cap. |
+| 32 | Tool results went back to the engine as mid-history `system` messages, which three of five fallback renderers refuse and `fit_window` prices at `u64::MAX` -- so the run lost its own history rather than reporting anything. Sent as `.tool` now. |
+| 33 | `run()`'s submission task was stored nowhere, so a wedged `UserPromptSubmit` hook left `submitting` true with Send and Stop both dead and nothing for `cancel()` to reach. |
+| 34 | Stop was refused while a call awaited approval (`generating` is false there by design), so `cancel()`'s own `clearPendingToolCall()` was unreachable -- and when it did run it left the persisted proposal at `.pendingApproval` across relaunches. |
+| 35 | `UInt32(maxNewTokens)` TRAPPED the process on a hand-edited `settings.json`; clamped on load and at the use site. |
+| 36 | `fitWindow` was called at the full `maxContext` and its outcome discarded: a truncated history was sent silently and a no-room verdict still called `generate`. |
+| 37 | `extractToolCalls` returns every parsed call, the loop runs one, and the rest were dropped with nothing written anywhere. Recorded as refused with the rule now. |
+| 38 | A `Stop` hook that blocked after a cancel appended an orphan user turn `continueAgentLoop` then refused to act on. |
 
 Add the next number here when you add the marker, or the index rots the way
 the numbering did.

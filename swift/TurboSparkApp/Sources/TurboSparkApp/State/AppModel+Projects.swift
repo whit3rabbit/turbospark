@@ -9,6 +9,37 @@ extension AppModel {
         return chats.filter { $0.projectID == projectID }
     }
 
+    /// The project a chat belongs to, or nil.
+    ///
+    /// Resolved from `AppChat.projectID` rather than from `selectedProjectID`
+    /// so it cannot move under a turn.
+    public func project(forChat chatID: UUID) -> AppProject? {
+        guard let index = chats.firstIndex(where: { $0.id == chatID }),
+            let projectID = chats[index].projectID
+        else { return nil }
+        return projects.first { $0.id == projectID }
+    }
+
+    /// The project a GENERATION TURN runs under (state#30).
+    ///
+    /// **NOT `selectedProject`.** state#19 pinned the project an approved
+    /// call executes against; the turn that FOLLOWS it took its system
+    /// prompt, workspace root, agent type, step cap, skill-state toggle and
+    /// the next call's permission evaluation from whatever was selected at
+    /// that moment. `selectProject` guards only on `!generating`, which is
+    /// false for the whole time a call sits at an approval card, so the
+    /// switch is not merely possible -- it is legal precisely when a turn is
+    /// mid-flight.
+    ///
+    /// The `interactionMode` gate is preserved from the call site this
+    /// replaced: conversational Chat mode sends no project, hence no system
+    /// prompt and no tool definitions, and `extractToolCalls` refuses to
+    /// parse a call that was never offered.
+    public func turnProject(chatID: UUID) -> AppProject? {
+        guard interactionMode == .projects else { return nil }
+        return project(forChat: chatID)
+    }
+
     /// Creates and persists a new codebase project.
     @discardableResult
     public func createProject(

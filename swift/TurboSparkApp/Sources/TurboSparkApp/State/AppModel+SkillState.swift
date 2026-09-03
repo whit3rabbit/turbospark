@@ -7,7 +7,12 @@ import TurboSpark
 ///
 /// Measured justification and its caveats: `docs/SKILL_STATE.md`.
 extension AppModel {
-    /// Whether this turn should build a bounded-state prompt.
+    /// Whether the SELECTED project runs in bounded-state mode.
+    ///
+    /// The UI's read. A generation turn asks its own project instead
+    /// (`turnProject(chatID:)`, state#30): the selection can move while a
+    /// call sits at an approval card, and switching prompt SHAPE mid-run
+    /// discards the carried state the run depends on.
     var skillStateEnabled: Bool {
         selectedProject?.skillStateEnabled ?? false
     }
@@ -47,10 +52,10 @@ extension AppModel {
     /// Compare `AppModel+Generation.swift`'s append-only assembly, which walks
     /// every message and every tool result. This one is O(1) in step count,
     /// which is the whole point.
-    func buildSkillStateHistory(chatIndex: Int) -> [ChatMessage] {
+    func buildSkillStateHistory(chatIndex: Int, project: AppProject?) -> [ChatMessage] {
         var history: [ChatMessage] = []
 
-        var systemContent = buildSystemPrompt(for: selectedProject)
+        var systemContent = buildSystemPrompt(for: project)
         systemContent = systemContent.isEmpty
             ? skillStateProtocol()
             : "\(systemContent)\n\n\(skillStateProtocol())"
@@ -103,8 +108,8 @@ extension AppModel {
     /// corrupts everything after it, where a dropped one loses a single step's
     /// bookkeeping and shows up in the badge.
     @discardableResult
-    func applySkillStatePatch(from text: String, chatIndex: Int) -> String {
-        guard skillStateEnabled else { return text }
+    func applySkillStatePatch(from text: String, chatIndex: Int, project: AppProject?) -> String {
+        guard project?.skillStateEnabled ?? false else { return text }
         let stripped = AppSkillStatePatch.taggedBody(in: text) != nil
             ? removeStatePatchBlock(from: text)
             : text

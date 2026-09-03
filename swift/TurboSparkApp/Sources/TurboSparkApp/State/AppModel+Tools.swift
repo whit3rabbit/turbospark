@@ -189,10 +189,22 @@ extension AppModel {
         // Stop is enabled for exactly the window a shell command runs in.
         generating = true
         isCancellationPending = false
+        // **THE DEFER BELOW MUST NOT LOWER A FLAG A LATER TURN RAISED**
+        // (state#29). `continueOrStop` runs SYNCHRONOUSLY inside this task and
+        // reaches `executeGenerationTurn`, which bumps the epoch, sets
+        // `generating = true` and installs a new `runTask`. The unguarded
+        // `defer` then set `generating = false` on top of it, so the whole
+        // continuation turn streamed with Send live and Stop dead -- state#16
+        // reopened on the approval path. Same guard as
+        // `executeGenerationTurn`'s own tail and `runAgentTaskDirectly`'s.
+        generationEpoch += 1
+        let myEpoch = generationEpoch
 
         toolExecutionTask = Task {
             defer {
-                self.generating = false
+                if self.generationEpoch == myEpoch {
+                    self.generating = false
+                }
                 self.toolExecutionTask = nil
             }
             if alwaysAllowSession {
@@ -229,7 +241,7 @@ extension AppModel {
             // the one place `maxAutonomousSteps` is tested, and approving the
             // call proposed at the last permitted step used to run one turn
             // past the cap because this path skipped it (state#6's other half).
-            await self.continueOrStop(afterStep: originStep, chatID: chatID)
+            await self.continueOrStop(afterStep: originStep, chatID: chatID, project: project)
         }
     }
 
@@ -239,6 +251,7 @@ extension AppModel {
         call.status = .denied
         let chatID = pendingToolCallChatID ?? selectedChatID
         let originStep = pendingToolCallStep
+        let project = pendingToolCallProject ?? selectedProject
         clearPendingToolCall()
 
         let result = AppToolResult(
@@ -248,10 +261,26 @@ extension AppModel {
             durationSeconds: 0.0
         )
         self.appendToolExecutionTurn(call: call, result: result, chatID: chatID)
+
+        // **DENY IS A TURN TOO** (state#29). This raised nothing, so across
+        // the awaited `dispatchNotification` (up to 120 s) and the whole
+        // continuation that follows it, `canRun` stayed true -- a Send there
+        // started a second `generate()` on the serial session beside the deny
+        // path's own. Mirrors the approve path above, epoch guard included.
+        generating = true
+        isCancellationPending = false
+        generationEpoch += 1
+        let myEpoch = generationEpoch
+
         toolExecutionTask = Task {
-            defer { self.toolExecutionTask = nil }
+            defer {
+                if self.generationEpoch == myEpoch {
+                    self.generating = false
+                }
+                self.toolExecutionTask = nil
+            }
             _ = await self.dispatchNotification(message: "Tool call '\(call.name)' was denied by the user.")
-            await self.continueOrStop(afterStep: originStep, chatID: chatID)
+            await self.continueOrStop(afterStep: originStep, chatID: chatID, project: project)
         }
     }
 
@@ -270,8 +299,17 @@ extension AppModel {
         if let msgIndex = chats[chatIndex].messages.lastIndex(where: { msg in
             msg.toolCalls.contains(where: { $0.id == call.id })
         }) {
-            chats[chatIndex].messages[msgIndex].toolCalls = [call]
-            chats[chatIndex].messages[msgIndex].toolResults = [result]
+            // **REPLACE THIS CALL'S ENTRY, NOT THE WHOLE LIST** (state#37). A
+            // turn that issued several calls parks the first for approval and
+            // records the rest as refused on the same message; assigning
+            // `[call]` here erased those, so the model was never told what
+            // happened to them and reissued them on the next step.
+            let others = chats[chatIndex].messages[msgIndex].toolCalls.filter { $0.id != call.id }
+            let otherResults = chats[chatIndex].messages[msgIndex].toolResults.filter {
+                $0.callID != call.id
+            }
+            chats[chatIndex].messages[msgIndex].toolCalls = [call] + others
+            chats[chatIndex].messages[msgIndex].toolResults = [result] + otherResults
         } else {
             let turn = AppChatMessage(
                 role: .assistant,

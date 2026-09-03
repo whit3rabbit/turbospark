@@ -70,12 +70,31 @@ extension AppModel {
         // transcript and prefill was already starting. A block now simply
         // never appends the message and leaves the draft intact, which
         // needs no "remove/annotate" step because there is nothing to undo.
-        Task {
-            defer { self.submitting = false }
+        // **STORED, SO STOP CAN REACH IT** (state#33). A `UserPromptSubmit`
+        // hook is awaited with a 120 s budget and `submitting` is true for
+        // all of it; with the task held nowhere, `cancel()` had nothing to
+        // cancel and both Send and Stop were dead for the duration.
+        submissionTask = Task {
+            defer {
+                self.submitting = false
+                self.submissionTask = nil
+                // A cancel that reached only the submission has no `runTask`
+                // tail to clear this, and a latched flag greys Stop out and
+                // makes `continueAgentLoop` refuse every later turn.
+                if !self.generating { self.isCancellationPending = false }
+            }
             self.stopHookReentryCount = 0
             let verdict = await self.evaluateUserPromptSubmit(prompt: fullUserContent)
+            guard !Task.isCancelled else { return }
             if verdict.isBlocked {
                 self.error = verdict.blockReason ?? "Prompt blocked by a UserPromptSubmit hook."
+                return
+            }
+            // The model can be unloaded while the hook runs only if something
+            // widened `canUnloadModel`; this is the backstop, and it refuses
+            // BEFORE the draft is cleared rather than after.
+            guard self.session != nil else {
+                self.error = "The model was unloaded before this prompt could be sent."
                 return
             }
 
@@ -148,6 +167,12 @@ extension AppModel {
         // tool call, denial, pending-approval) targets THIS chat, never
         // whatever `selectedChatID` resolves to at the moment of appending.
         let turnChatID = chatID
+        // And every POLICY this turn reads comes from the chat's own project
+        // rather than from the selection (state#30): system prompt, workspace
+        // root, agent type, step cap, guardrails mode, skill-state toggle,
+        // and the permission evaluation of whatever call the turn proposes.
+        let turnProject = self.turnProject(chatID: chatID)
+        let usesSkillState = turnProject?.skillStateEnabled ?? false
 
         generationEpoch += 1
         let myEpoch = generationEpoch
@@ -170,39 +195,22 @@ extension AppModel {
         // and on a 4,096-context install stops the run outright between step
         // 30 and 35 (docs/SKILL_STATE.md). Opt-in per project, default off, so
         // the append-only path is byte-identical when the toggle is not set.
-        var rawHistory: [ChatMessage] = []
-        if skillStateEnabled {
-            rawHistory = buildSkillStateHistory(chatIndex: chatIndex)
-        } else {
-            let activeProject = interactionMode == .projects ? selectedProject : nil
-            let systemContent = buildSystemPrompt(for: activeProject)
-            if !systemContent.isEmpty {
-                rawHistory.append(ChatMessage(role: .system, content: systemContent))
-            }
-
-            for msg in chats[chatIndex].messages {
-                // **AN IMAGE-ONLY TURN HAS NO TEXT AND IS STILL A TURN.** This
-                // guard predates images and would drop one entirely, leaving the
-                // model to answer a question whose picture was never sent -- the
-                // emptiness-guard failure in its usual shape.
-                guard !msg.content.isEmpty || !msg.imagePaths.isEmpty else { continue }
-                rawHistory.append(
-                    ChatMessage(
-                        role: msg.role,
-                        content: msg.content,
-                        images: msg.imagePaths.map(ChatImage.path)))
-                // If message contained tool execution results, inject them as system/environment responses
-                for res in msg.toolResults {
-                    let tag = res.isError ? "tool_error" : "tool_response"
-                    rawHistory.append(ChatMessage(role: .system, content: "<\(tag)>\n\(res.output)\n</\(tag)>"))
-                }
-            }
-        }
+        let rawHistory: [ChatMessage] =
+            usesSkillState
+            ? buildSkillStateHistory(chatIndex: chatIndex, project: turnProject)
+            : buildAppendOnlyHistory(chatIndex: chatIndex, project: turnProject)
 
         var options = GenerateOptions()
         options.reasoning = reasoning
         options.temperature = temperature
-        options.maxNewTokens = UInt32(max(1, maxNewTokens))
+        // `UInt32(clamping:)`, never `UInt32(_:)`: the plain conversion TRAPS
+        // (kills the process, no error, no log) on any value above
+        // `UInt32.max`, and this one is loaded straight out of a JSON file a
+        // user or a future release can write (state#35). `clampedSetting` on
+        // load is the other half; this is the one that cannot trap whatever
+        // reaches it.
+        let requestedNewTokens = UInt32(clamping: max(1, maxNewTokens))
+        options.maxNewTokens = requestedNewTokens
         if topKEnabled {
             options.topK = UInt32(topK)
         }
@@ -225,7 +233,44 @@ extension AppModel {
 
         runTask = Task {
             do {
-                let fitted = try await session.fitWindow(rawHistory, reasoning: self.reasoning)
+                // **THE PROMPT BUDGET IS THE WINDOW MINUS WHAT GENERATION
+                // NEEDS** (state#36). This called `fitWindow` at its default
+                // bound, which is the whole `maxContext` -- so a history that
+                // "fits" leaves no room at all for the reply, and the three
+                // things the outcome reports were all discarded: the turn was
+                // sent truncated with no word to the user, and a no-room
+                // verdict still called `generate`, which then clamps to one
+                // token or throws a context overflow naming neither cause.
+                let promptBudget = session.info.maxContext > requestedNewTokens
+                    ? session.info.maxContext - requestedNewTokens
+                    : session.info.maxContext
+                let fitted = try await session.fitWindow(
+                    rawHistory, maxTokens: promptBudget, reasoning: self.reasoning)
+                guard fitted.hasRoomForGeneration else {
+                    self.error =
+                        "This conversation no longer fits: \(fitted.measuredTokens) prompt tokens "
+                        + "against a \(session.info.maxContext)-token window with "
+                        + "\(requestedNewTokens) reserved for the reply. Clear the conversation, "
+                        + "shorten the attachments, or lower Max New Tokens."
+                    self.finishCancelled(chatID: turnChatID, reason: "context_overflow")
+                    // Same epoch guard the tail below carries (state#10):
+                    // this early exit must not clobber a newer turn either.
+                    if self.generationEpoch == myEpoch {
+                        self.generating = false
+                        self.phase = .idle
+                        self.isCancellationPending = false
+                        self.runTask = nil
+                        self.updateTokenEstimate()
+                    }
+                    return
+                }
+                if fitted.removedTurnCount > 0 {
+                    self.showToast(
+                        "Dropped \(fitted.removedTurnCount) older "
+                            + "\(fitted.removedTurnCount == 1 ? "turn" : "turns") to fit the "
+                            + "context window.",
+                        style: .warning)
+                }
                 for try await event in session.generate(fitted.retained, options: options) {
                     try Task.checkCancellation()
                     switch event {
@@ -266,16 +311,43 @@ extension AppModel {
                         // merging into the chat the user switched to writes
                         // one conversation's bookkeeping into another's.
                         var generatedContent = self.outputText
-                        if self.skillStateEnabled,
+                        if usesSkillState,
                             let idx = self.chats.firstIndex(where: { $0.id == turnChatID }) {
                             generatedContent = self.applySkillStatePatch(
-                                from: generatedContent, chatIndex: idx)
+                                from: generatedContent, chatIndex: idx, project: turnProject)
                         }
                         let generatedReasoning = self.outputReasoningText
                         let parsedCalls = self.extractToolCalls(from: generatedContent)
 
-                        if self.effectiveForgeGuardrailsEnabled {
-                            let availableSpecs = AppToolCatalog.tools(for: self.activeAgentType)
+                        // One helper for the four dispatch sites below, so the
+                        // "first call runs, the rest are recorded as refused"
+                        // rule (state#37) cannot be spelled differently in one
+                        // of them.
+                        func dispatch(_ calls: [AppToolCall], content: String) async {
+                            if let firstCall = calls.first {
+                                await self.handleExtractedToolCall(
+                                    firstCall,
+                                    deferred: Array(calls.dropFirst()),
+                                    fullContent: content,
+                                    reasoning: generatedReasoning,
+                                    result: result,
+                                    currentStep: step,
+                                    chatID: turnChatID,
+                                    project: turnProject)
+                            } else {
+                                await self.finishProseTurn(
+                                    content: content,
+                                    reasoning: generatedReasoning,
+                                    result: result,
+                                    chatID: turnChatID,
+                                    step: step,
+                                    project: turnProject)
+                            }
+                        }
+
+                        if self.forgeGuardrailsEnabled(for: turnProject) {
+                            let availableSpecs = AppToolCatalog.tools(
+                                for: self.agentType(for: turnProject))
                             let verdict = ForgeGuardrailsEngine.inspect(
                                 text: generatedContent,
                                 parsedCalls: parsedCalls,
@@ -285,19 +357,11 @@ extension AppModel {
 
                             switch verdict {
                             case .accept:
-                                if let firstCall = parsedCalls.first {
-                                    await self.handleExtractedToolCall(firstCall, fullContent: generatedContent, reasoning: generatedReasoning, result: result, currentStep: step, chatID: turnChatID)
-                                } else {
-                                    await self.finishProseTurn(content: generatedContent, reasoning: generatedReasoning, result: result, chatID: turnChatID, step: step)
-                                }
+                                await dispatch(parsedCalls, content: generatedContent)
                             case .rescued(let rescuedCalls, let sanitizedText):
-                                if let firstCall = rescuedCalls.first {
-                                    await self.handleExtractedToolCall(firstCall, fullContent: sanitizedText, reasoning: generatedReasoning, result: result, currentStep: step, chatID: turnChatID)
-                                } else {
-                                    await self.finishProseTurn(content: sanitizedText, reasoning: generatedReasoning, result: result, chatID: turnChatID, step: step)
-                                }
+                                await dispatch(rescuedCalls, content: sanitizedText)
                             case .retry(let nudge):
-                                let maxSteps = self.selectedProject?.maxAutonomousSteps ?? 5
+                                let maxSteps = turnProject?.maxAutonomousSteps ?? 5
                                 if step + 1 < maxSteps && !nudge.isEmpty {
                                     if let idx = self.chats.firstIndex(where: { $0.id == turnChatID }) {
                                         self.chats[idx].messages.append(AppChatMessage(
@@ -318,19 +382,11 @@ extension AppModel {
                                     self.continueAgentLoop(step: step + 1, chatID: turnChatID)
                                     return
                                 } else {
-                                    if let firstCall = parsedCalls.first {
-                                        await self.handleExtractedToolCall(firstCall, fullContent: generatedContent, reasoning: generatedReasoning, result: result, currentStep: step, chatID: turnChatID)
-                                    } else {
-                                        await self.finishProseTurn(content: generatedContent, reasoning: generatedReasoning, result: result, chatID: turnChatID, step: step)
-                                    }
+                                    await dispatch(parsedCalls, content: generatedContent)
                                 }
                             }
                         } else {
-                            if let firstCall = parsedCalls.first {
-                                await self.handleExtractedToolCall(firstCall, fullContent: generatedContent, reasoning: generatedReasoning, result: result, currentStep: step, chatID: turnChatID)
-                            } else {
-                                await self.finishProseTurn(content: generatedContent, reasoning: generatedReasoning, result: result, chatID: turnChatID, step: step)
-                            }
+                            await dispatch(parsedCalls, content: generatedContent)
                         }
 
                         self.outputText = ""
@@ -352,7 +408,66 @@ extension AppModel {
         }
     }
 
-    private func finishProseTurn(content: String, reasoning: String, result: GenerationResult, chatID: UUID, step: Int) async {
+    /// The append-only prompt: the system message, then every turn and every
+    /// tool result in order.
+    ///
+    /// **A VALUE-RETURNING FUNCTION RATHER THAN INLINE ASSEMBLY**, for
+    /// `swift/CLAUDE.md` Gotcha 26's reason: `executeGenerationTurn` returns
+    /// at its `session` guard, so nothing about the prompt it builds could be
+    /// asserted without a Metal device and a 13 GB install -- and both of the
+    /// defects this function carries (state#31, state#32) are silent, so
+    /// there was nothing to notice either.
+    func buildAppendOnlyHistory(chatIndex: Int, project: AppProject?) -> [ChatMessage] {
+        var history: [ChatMessage] = []
+        let systemContent = buildSystemPrompt(for: project)
+        if !systemContent.isEmpty {
+            history.append(ChatMessage(role: .system, content: systemContent))
+        }
+
+        for msg in chats[chatIndex].messages {
+            // **AN IMAGE-ONLY TURN HAS NO TEXT AND IS STILL A TURN.** This
+            // guard predates images and would drop one entirely, leaving the
+            // model to answer a question whose picture was never sent -- the
+            // emptiness-guard failure in its usual shape.
+            //
+            // **AND A TOOL TURN IS ONE TOO** (state#31). A call the guardrail
+            // engine RESCUED out of raw text has its prose sanitized away, so
+            // a reply that was nothing but the call arrives here with empty
+            // content and a non-empty `toolResults` -- and this guard skipped
+            // the whole message before the result loop below ever ran. The
+            // model then saw no record of having called anything, re-issued
+            // the same call, and burned the step cap doing it.
+            let carriesToolTurn = !msg.toolResults.isEmpty || !msg.toolCalls.isEmpty
+            guard !msg.content.isEmpty || !msg.imagePaths.isEmpty || carriesToolTurn else {
+                continue
+            }
+            if !msg.content.isEmpty || !msg.imagePaths.isEmpty {
+                history.append(
+                    ChatMessage(
+                        role: msg.role,
+                        content: msg.content,
+                        images: msg.imagePaths.map(ChatImage.path)))
+            }
+            // **A TOOL RESULT GOES BACK AS `.tool`, NOT AS `.system`**
+            // (state#32). `ChatMessage.Role.tool` exists and the FFI maps it.
+            // A mid-history `.system` message is REFUSED outright by the
+            // Gemma, ChatML and DeepSeek fallback renderers ("system message
+            // must be first") and by several real Jinja templates that
+            // require alternating roles -- and `fit_window` prices a failing
+            // render at `u64::MAX`, so it drops turns until the history stops
+            // failing rather than reporting anything. The run silently loses
+            // its own history, or errors at step 2 with a message naming
+            // neither cause.
+            for res in msg.toolResults {
+                let tag = res.isError ? "tool_error" : "tool_response"
+                history.append(
+                    ChatMessage(role: .tool, content: "<\(tag)>\n\(res.output)\n</\(tag)>"))
+            }
+        }
+        return history
+    }
+
+    private func finishProseTurn(content: String, reasoning: String, result: GenerationResult, chatID: UUID, step: Int, project: AppProject?) async {
         if let idx = self.chats.firstIndex(where: { $0.id == chatID }) {
             self.chats[idx].messages.append(AppChatMessage(
                 role: .assistant,
@@ -363,7 +478,8 @@ extension AppModel {
             self.chats[idx].updatedAt = Date()
             self.persistChats()
         }
-        _ = await self.dispatchStopAndContinueIfBlocked(chatID: chatID, resumeStep: step + 1)
+        _ = await self.dispatchStopAndContinueIfBlocked(
+            chatID: chatID, resumeStep: step + 1, project: project)
     }
 
     /// Records whatever the turn had produced before it stopped.
@@ -413,11 +529,36 @@ extension AppModel {
     public func cancel() {
         guard canCancel else { return }
         isCancellationPending = true
+        // **A PENDING CALL IS DENIED, NOT DROPPED** (state#34). Clearing the
+        // four fields alone left the persisted proposal at
+        // `.pendingApproval` forever: the card rendered as still awaiting a
+        // decision across relaunches, with nothing left able to answer it.
+        if let pending = pendingToolCall {
+            let chatID = pendingToolCallChatID ?? selectedChatID
+            var stopped = pending
+            stopped.status = .denied
+            let result = AppToolResult(
+                callID: pending.id,
+                output: TOOL_REJECTED_MESSAGE,
+                isError: true,
+                durationSeconds: 0.0
+            )
+            appendToolExecutionTurn(call: stopped, result: result, chatID: chatID)
+        }
         clearPendingToolCall()
         session?.cancel()
         runTask?.cancel()
         toolExecutionTask?.cancel()
         toolExecutionTask = nil
+        // The submission window has no `runTask` to reach (state#33).
+        submissionTask?.cancel()
+        submissionTask = nil
+        // Nothing downstream will run a tail to clear the flag when the only
+        // thing stopped was an approval card, and a latched one refuses every
+        // later `continueAgentLoop`.
+        if !generating && !submitting {
+            isCancellationPending = false
+        }
     }
 
     /// Clears every field that describes the call awaiting approval.

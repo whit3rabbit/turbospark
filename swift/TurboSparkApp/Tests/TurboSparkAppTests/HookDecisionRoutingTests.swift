@@ -97,7 +97,7 @@ final class HookDecisionRoutingTests: XCTestCase {
         // Awaited rather than polled: `handleExtractedToolCall` is `async`
         // now, so the turn's own lifecycle stays honest across the call
         // (`generating` no longer drops while a tool runs).
-        await appModel.handleExtractedToolCall(call, fullContent: "running a command", reasoning: "", result: result, currentStep: 0, chatID: chat.id)
+        await appModel.handleExtractedToolCall(call, fullContent: "running a command", reasoning: "", result: result, currentStep: 0, chatID: chat.id, project: nil)
 
         XCTAssertNotNil(appModel.pendingToolCall, "A hook's `ask` decision must surface a pending approval, not silently allow the call.")
         XCTAssertEqual(appModel.pendingToolCallChatID, chat.id)

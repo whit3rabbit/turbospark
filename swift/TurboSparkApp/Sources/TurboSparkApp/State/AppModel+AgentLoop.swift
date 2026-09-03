@@ -7,6 +7,14 @@ import TurboSpark
 /// loop or hand off to `Stop`. Split out of `AppModel+Generation.swift`
 /// (swift/CLAUDE.md Gotcha 15) to keep that file to the turn's streaming
 /// lifecycle alone.
+/// The message a call the model issued alongside another one is answered
+/// with. Stating the rule beats dropping the call silently: an unanswered
+/// call reads to the model as a tool that produced nothing, and it reissues
+/// it until the step cap runs out (state#37).
+let TOOL_DEFERRED_MESSAGE =
+    "Not executed: this turn issued more than one tool call and only the first is run. "
+    + "Issue one tool call per turn; you may call this one again on the next turn."
+
 extension AppModel {
     /// Dispatches `Stop` and, if a hook blocks, re-enters the agent loop
     /// with the hook's reason folded in as the next user turn -- Claude
@@ -14,11 +22,19 @@ extension AppModel {
     /// Capped at 8 consecutive re-entries so a hook that always blocks
     /// cannot loop forever. Returns `true` when it re-entered (the caller
     /// should treat the turn as still in progress, not finished).
+    ///
+    /// **A CANCELLED TURN APPENDS NOTHING** (state#38). This ran from
+    /// `finishProseTurn` after `cancel()` had already stopped the stream, so
+    /// a blocking `Stop` hook left an orphan user turn in the transcript that
+    /// `continueAgentLoop` then refused to act on -- a message from nobody,
+    /// permanently.
     @discardableResult
-    func dispatchStopAndContinueIfBlocked(chatID: UUID, resumeStep: Int) async -> Bool {
+    func dispatchStopAndContinueIfBlocked(
+        chatID: UUID, resumeStep: Int, project: AppProject?
+    ) async -> Bool {
         let wasActive = stopHookReentryCount > 0
         let verdict = await evaluateStop(stopHookActive: wasActive)
-        guard verdict.isBlocked, stopHookReentryCount < 8 else {
+        guard verdict.isBlocked, stopHookReentryCount < 8, !isCancellationPending else {
             stopHookReentryCount = 0
             return false
         }
@@ -36,13 +52,43 @@ extension AppModel {
     /// Continues the agent loop if steps remain, otherwise asks `Stop`
     /// hooks whether to keep going anyway (bounded by the 8-cap above,
     /// independent of `maxAutonomousSteps`).
-    func continueOrStop(afterStep currentStep: Int, chatID: UUID) async {
-        let maxSteps = selectedProject?.maxAutonomousSteps ?? 5
+    ///
+    /// `project` is the TURN's project, never `selectedProject` (state#30):
+    /// the step cap belongs to the workspace the loop is running in, and the
+    /// selection is free to move while a call waits for approval.
+    func continueOrStop(afterStep currentStep: Int, chatID: UUID, project: AppProject?) async {
+        let maxSteps = project?.maxAutonomousSteps ?? 5
         if currentStep + 1 < maxSteps {
             continueAgentLoop(step: currentStep + 1, chatID: chatID)
         } else {
-            _ = await dispatchStopAndContinueIfBlocked(chatID: chatID, resumeStep: currentStep + 1)
+            _ = await dispatchStopAndContinueIfBlocked(
+                chatID: chatID, resumeStep: currentStep + 1, project: project)
         }
+    }
+
+    /// The call/result pair recorded for every call after the first one in a
+    /// turn (state#37).
+    ///
+    /// `extractToolCalls` returns every block the reply contained and the
+    /// loop runs exactly one of them; before this, the others were parsed,
+    /// counted, and then dropped on the floor with nothing written anywhere.
+    func deferredCallRecords(
+        _ calls: [AppToolCall]
+    ) -> (calls: [AppToolCall], results: [AppToolResult]) {
+        var recorded: [AppToolCall] = []
+        var results: [AppToolResult] = []
+        for call in calls {
+            var denied = call
+            denied.status = .denied
+            recorded.append(denied)
+            results.append(
+                AppToolResult(
+                    callID: call.id,
+                    output: TOOL_DEFERRED_MESSAGE,
+                    isError: true,
+                    durationSeconds: 0.0))
+        }
+        return (recorded, results)
     }
 
     // `internal` rather than `private`: exercised directly by
@@ -59,8 +105,12 @@ extension AppModel {
     /// `createChat` / `deleteChat` / `selectProject` / model unload were all
     /// open for the same window. Awaiting it keeps the turn's lifecycle
     /// honest, and puts the tool inside `runTask` so `cancel()` reaches it.
-    func handleExtractedToolCall(_ call: AppToolCall, fullContent: String, reasoning: String, result: GenerationResult, currentStep: Int, chatID: UUID) async {
+    func handleExtractedToolCall(_ call: AppToolCall, deferred: [AppToolCall] = [], fullContent: String, reasoning: String, result: GenerationResult, currentStep: Int, chatID: UUID, project: AppProject?) async {
         let sessionID = chatID.uuidString
+        // Recorded on whichever message this call's own outcome lands on, so
+        // the model is told the rule rather than left to infer it from
+        // silence (state#37).
+        let extra = self.deferredCallRecords(deferred)
 
         // Evaluate PreToolUse lifecycle hooks first
         let hookDecision = await self.evaluatePreToolUseHooks(toolName: call.name, toolArguments: call.arguments)
@@ -90,13 +140,13 @@ extension AppModel {
                     content: fullContent,
                     reasoning: reasoning,
                     stopReason: "tool_use",
-                    toolCalls: [deniedCall],
-                    toolResults: [deniedResult]
+                    toolCalls: [deniedCall] + extra.calls,
+                    toolResults: [deniedResult] + extra.results
                 ))
                 self.chats[idx].updatedAt = Date()
                 self.persistChats()
             }
-            await self.continueOrStop(afterStep: currentStep, chatID: chatID)
+            await self.continueOrStop(afterStep: currentStep, chatID: chatID, project: project)
             return
         }
 
@@ -120,14 +170,15 @@ extension AppModel {
             self.pendingToolCall = pending
             self.pendingToolCallChatID = chatID
             self.pendingToolCallStep = currentStep
-            self.pendingToolCallProject = self.selectedProject
+            self.pendingToolCallProject = project
             if let idx = self.chats.firstIndex(where: { $0.id == chatID }) {
                 self.chats[idx].messages.append(AppChatMessage(
                     role: .assistant,
                     content: fullContent,
                     reasoning: reasoning,
                     stopReason: "tool_use",
-                    toolCalls: [pending]
+                    toolCalls: [pending] + extra.calls,
+                    toolResults: extra.results
                 ))
                 self.chats[idx].updatedAt = Date()
                 self.persistChats()
@@ -136,10 +187,12 @@ extension AppModel {
         }
 
         let sessionApproved = await SessionApprovalStore.shared.isApproved(sessionID: sessionID, toolName: call.name, command: cmd)
-        // Captured once. Every branch below -- run, deny, or park for
-        // approval -- refers to THIS project, so the policy that produced the
-        // decision is the policy the call executes under.
-        let decisionProject = self.selectedProject
+        // The TURN's project, threaded in from `executeGenerationTurn`
+        // (state#30). Every branch below -- run, deny, or park for approval --
+        // refers to it, so the policy that produced the decision is the
+        // policy the call executes under even if the selection moves while
+        // the card is up.
+        let decisionProject = project
         let decision = AppToolPermissionEngine.evaluate(call: call, project: decisionProject, sessionApproved: sessionApproved)
 
         switch decision {
@@ -150,10 +203,10 @@ extension AppModel {
             let permVerdict = await self.evaluatePermissionRequest(toolName: call.name, toolArguments: call.arguments)
 
             if permVerdict.permissionDecision == .allow {
-                await self.runApprovedCall(call, fullContent: fullContent, reasoning: reasoning, chatID: chatID, currentStep: currentStep, project: decisionProject)
+                await self.runApprovedCall(call, extra: extra, fullContent: fullContent, reasoning: reasoning, chatID: chatID, currentStep: currentStep, project: decisionProject)
             } else if permVerdict.permissionDecision == .deny {
                 let reason = permVerdict.permissionReason ?? "Denied by PermissionRequest hook"
-                await self.recordDeniedCall(call, reason: reason, fullContent: fullContent, reasoning: reasoning, chatID: chatID, currentStep: currentStep)
+                await self.recordDeniedCall(call, extra: extra, reason: reason, fullContent: fullContent, reasoning: reasoning, chatID: chatID, currentStep: currentStep, project: decisionProject)
             } else {
                 var pending = call
                 pending.status = .pendingApproval
@@ -161,14 +214,15 @@ extension AppModel {
                 self.pendingToolCall = pending
                 self.pendingToolCallChatID = chatID
                 self.pendingToolCallStep = currentStep
-                self.pendingToolCallProject = self.selectedProject
+                self.pendingToolCallProject = decisionProject
                 if let idx = self.chats.firstIndex(where: { $0.id == chatID }) {
                     self.chats[idx].messages.append(AppChatMessage(
                         role: .assistant,
                         content: fullContent,
                         reasoning: reasoning,
                         stopReason: "tool_use",
-                        toolCalls: [pending]
+                        toolCalls: [pending] + extra.calls,
+                        toolResults: extra.results
                     ))
                     self.chats[idx].updatedAt = Date()
                     self.persistChats()
@@ -176,10 +230,10 @@ extension AppModel {
             }
 
         case .allow:
-            await self.runApprovedCall(call, fullContent: fullContent, reasoning: reasoning, chatID: chatID, currentStep: currentStep, project: decisionProject)
+            await self.runApprovedCall(call, extra: extra, fullContent: fullContent, reasoning: reasoning, chatID: chatID, currentStep: currentStep, project: decisionProject)
 
         case .deny(let reason):
-            await self.recordDeniedCall(call, reason: reason, fullContent: fullContent, reasoning: reasoning, chatID: chatID, currentStep: currentStep)
+            await self.recordDeniedCall(call, extra: extra, reason: reason, fullContent: fullContent, reasoning: reasoning, chatID: chatID, currentStep: currentStep, project: decisionProject)
         }
     }
 
@@ -187,7 +241,7 @@ extension AppModel {
     /// result, appends the turn, and continues the loop. Shared by the
     /// ordinary `.allow` path and a `PermissionRequest` hook resolving
     /// `allow` in place of the approval card.
-    private func runApprovedCall(_ call: AppToolCall, fullContent: String, reasoning: String, chatID: UUID, currentStep: Int, project: AppProject?) async {
+    private func runApprovedCall(_ call: AppToolCall, extra: (calls: [AppToolCall], results: [AppToolResult]) = ([], []), fullContent: String, reasoning: String, chatID: UUID, currentStep: Int, project: AppProject?) async {
         var runningCall = call
         runningCall.status = .running
         var toolResult = await AppToolRegistry.execute(call: runningCall, in: project, chatID: chatID)
@@ -218,19 +272,19 @@ extension AppModel {
                 content: fullContent,
                 reasoning: reasoning,
                 stopReason: "tool_use",
-                toolCalls: [runningCall],
-                toolResults: [toolResult]
+                toolCalls: [runningCall] + extra.calls,
+                toolResults: [toolResult] + extra.results
             ))
             self.chats[idx].updatedAt = Date()
             self.persistChats()
         }
 
-        await self.continueOrStop(afterStep: currentStep, chatID: chatID)
+        await self.continueOrStop(afterStep: currentStep, chatID: chatID, project: project)
     }
 
     /// Records a denied call (permission engine or `PermissionRequest` hook)
     /// and continues the loop.
-    private func recordDeniedCall(_ call: AppToolCall, reason: String, fullContent: String, reasoning: String, chatID: UUID, currentStep: Int) async {
+    private func recordDeniedCall(_ call: AppToolCall, extra: (calls: [AppToolCall], results: [AppToolResult]) = ([], []), reason: String, fullContent: String, reasoning: String, chatID: UUID, currentStep: Int, project: AppProject?) async {
         let deniedResult = AppToolResult(
             callID: call.id,
             output: "Tool execution denied: \(reason)",
@@ -245,13 +299,13 @@ extension AppModel {
                 content: fullContent,
                 reasoning: reasoning,
                 stopReason: "tool_use",
-                toolCalls: [deniedCall],
-                toolResults: [deniedResult]
+                toolCalls: [deniedCall] + extra.calls,
+                toolResults: [deniedResult] + extra.results
             ))
             self.chats[idx].updatedAt = Date()
             self.persistChats()
         }
-        await self.continueOrStop(afterStep: currentStep, chatID: chatID)
+        await self.continueOrStop(afterStep: currentStep, chatID: chatID, project: project)
     }
 
     /// Continues multi-turn autonomous loop after tool execution.
