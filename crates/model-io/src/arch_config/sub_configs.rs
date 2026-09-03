@@ -374,6 +374,18 @@ pub struct PleConfig {
     pub layer_ids: Vec<i64>,
     /// Seed the hash multipliers derive from when the checkpoint omits them.
     pub seed: i64,
+    /// PLE's n-gram context resets at EOS boundaries and pads the start of
+    /// a sequence with EOS (`docs/QWEN4_PHASE0.md` item 4). This is
+    /// `text_config.eos_token_id`, a SCALAR distinct from
+    /// `generation_config.json`'s two-entry stop list -- a decode flow
+    /// needs this at `open()`, before any tokenizer is in scope (`crates/runtime`
+    /// does not depend on `crates/tokenizer`), so it is read once from the
+    /// checkpoint's own config at parse time rather than threaded in from a
+    /// caller. The reference's own `validate_architecture` refuses PLE with
+    /// no EOS set, which is why this has no meaningful default: `0` here
+    /// means "not read from the checkpoint" and a PLE-active config must
+    /// override it.
+    pub eos_token_id: i64,
 }
 
 impl PleConfig {
@@ -388,6 +400,7 @@ impl PleConfig {
         conv_kernel_size: 0,
         layer_ids: Vec::new(),
         seed: 0,
+        eos_token_id: 0,
     };
 
     /// True when this install carries an n-gram table.
