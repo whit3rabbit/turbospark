@@ -25,29 +25,16 @@ public enum GlobalMcpFileStore {
 
     /// Loads the saved global MCP servers archive from disk or returns an empty default.
     public static func load() -> GlobalMcpArchive {
-        guard let data = try? Data(contentsOf: archiveFileURL) else {
-            return GlobalMcpArchive.empty()
-        }
-        do {
-            return try JSONDecoder().decode(GlobalMcpArchive.self, from: data)
-        } catch {
-            // Reported rather than swallowed (`swift/CLAUDE.md` Gotcha 13):
-            // otherwise a schema drift silently wipes every global MCP
-            // server, and the next `save()` overwrites the file with that
-            // emptiness.
-            FileHandle.standardError.write(
-                "TurboSpark: global MCP server archive failed to decode, starting empty: \(error)\n"
-                    .data(using: .utf8)!)
-            return GlobalMcpArchive.empty()
-        }
+        AppJSONStore.load(
+            GlobalMcpArchive.self, from: archiveFileURL, label: "global MCP server archive")
+            ?? GlobalMcpArchive.empty()
     }
 
     /// Persists the global MCP servers archive to disk atomically.
     public static func save(_ archive: GlobalMcpArchive) {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        if let data = try? encoder.encode(archive) {
-            try? data.write(to: archiveFileURL, options: .atomic)
-        }
+        AppJSONStore.save(
+            archive, to: archiveFileURL, label: "Global MCP servers", encoder: encoder)
     }
 }

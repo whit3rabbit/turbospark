@@ -457,8 +457,18 @@ extension AppModel {
             history.append(ChatMessage(role: .user, content: promptText))
         }
 
+        // **DEBOUNCED, AND SKIPPED WHILE GENERATING.** `promptText`'s setter
+        // calls this on every keystroke, and `countTokens` dispatches onto
+        // the session's SERIAL queue -- which a running generation holds for
+        // the whole turn. `tokenEstimateTask?.cancel()` cannot recall work
+        // already queued behind it, so typing during a turn enqueued one full
+        // template render per character to run after the turn finished.
+        // Cancelling here is what keeps the queue empty in the first place.
         tokenEstimateTask?.cancel()
+        guard !generating else { return }
         tokenEstimateTask = Task {
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard !Task.isCancelled else { return }
             if let count = try? await session.countTokens(history, reasoning: self.reasoning) {
                 if !Task.isCancelled {
                     self.estimatedPromptTokens = count

@@ -22,6 +22,14 @@ public final class AppHookStore: ObservableObject {
     /// and membership would revert to "no project" on the very next edit.
     public internal(set) var lastProjectDirectory: String?
 
+    /// Whether `refresh(projectDirectory:)` has populated `hooks` yet.
+    ///
+    /// `init()` loads trusted hashes and option values but NOT `hooks`, so
+    /// every custom hook on disk is absent from memory until a refresh --
+    /// and `saveCustomHooks` writes `hooks.filter { .custom }`, i.e. `[]`.
+    /// Any mutation before the first refresh therefore truncated the file.
+    public internal(set) var didRefreshAtLeastOnce = false
+
     let fileManager = FileManager.default
 
     public init() {

@@ -47,25 +47,28 @@ extension AppHookStore {
     func saveOptionValues() {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        if let data = try? encoder.encode(optionValues) {
-            try? data.write(to: optionsValuesFileURL, options: .atomic)
-        }
+        AppJSONStore.save(
+            optionValues, to: optionsValuesFileURL, label: "Hook option values", encoder: encoder)
     }
 
+    /// **A DECODE FAILURE HERE USED TO BE PERMANENT.** The old body was one
+    /// `try?` chain returning `[]`, with no report at all -- and `hooks` is
+    /// empty until `refresh()` runs, so a mutation before that point wrote an
+    /// empty list over the file. `AppJSONStore` quarantines instead.
     func loadCustomHooks() -> [AppHookCommand] {
-        guard let data = try? Data(contentsOf: customHooksFileURL),
-              let list = try? JSONDecoder().decode([AppHookCommand].self, from: data) else {
-            return []
-        }
-        return list
+        AppJSONStore.load([AppHookCommand].self, from: customHooksFileURL, label: "custom hooks")
+            ?? []
     }
 
     func saveCustomHooks() {
+        // **NOT REACHED BEFORE `refresh()`.** `hooks` starts empty and this
+        // filters it, so saving before discovery has run would truncate the
+        // file to `[]` -- the write is skipped rather than made empty.
+        guard didRefreshAtLeastOnce else { return }
         let customOnly = hooks.filter { $0.sourceType == .custom }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        if let data = try? encoder.encode(customOnly) {
-            try? data.write(to: customHooksFileURL, options: .atomic)
-        }
+        AppJSONStore.save(
+            customOnly, to: customHooksFileURL, label: "Custom hooks", encoder: encoder)
     }
 }

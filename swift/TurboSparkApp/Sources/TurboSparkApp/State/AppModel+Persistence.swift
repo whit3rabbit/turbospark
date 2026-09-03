@@ -203,3 +203,47 @@ extension AppModel {
         GlobalMcpFileStore.save(archive)
     }
 }
+
+/// Ordered shutdown, and the hand-off that lets the app delegate reach it.
+///
+/// **THE QUIT FLUSH USED TO LIVE IN A VIEW MODIFIER.** `RootView` observed
+/// `willTerminateNotification` and called `unloadModel` / `persistChats` /
+/// `persistSettings`. Three things were wrong with that.
+///
+/// `applicationShouldTerminateAfterLastWindowClosed` is true, so the view tree
+/// can already be gone when the notification arrives -- and with it the
+/// 400 ms draft debounce, which is the most recent thing the user typed.
+///
+/// `unloadModel()` bails on `guard !generating`, so quitting mid-turn skipped
+/// the whole flush including both persists.
+///
+/// And `stopServer()` was never called at all, so `ts_server_stop` never ran
+/// and `serverPollTimer` was never invalidated.
+@MainActor
+public final class AppShutdownCoordinator {
+    public static let shared = AppShutdownCoordinator()
+    /// Set once by `RootView`; the delegate cannot see the `@StateObject`.
+    public var onTerminate: (() -> Void)?
+    private init() {}
+}
+
+extension AppModel {
+    /// Everything that must happen before the process exits, in order.
+    public func shutdown() {
+        // First, so the engine stops answering requests for a model that is
+        // about to be released (`swift/CLAUDE.md` Gotcha 26).
+        stopServer()
+        stopServerPolling()
+
+        // Deliberately NOT `unloadModel()`: that refuses while `generating`,
+        // which is exactly the case where the flush below matters most.
+        cancel()
+        detachChatSessionFromServer()
+        session = nil
+
+        // Both force the pending debounces through rather than waiting on
+        // them, so the last keystroke and the last setting reach disk.
+        persistChats()
+        persistSettings()
+    }
+}

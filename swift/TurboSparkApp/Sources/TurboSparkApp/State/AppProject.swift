@@ -392,27 +392,12 @@ public enum AppProjectFileStore {
 
     /// Loads the saved project archive from disk or returns an empty default.
     public static func load() -> AppProjectArchive {
-        guard let data = try? Data(contentsOf: archiveFileURL) else {
-            return AppProjectArchive.empty()
-        }
-        do {
-            return try JSONDecoder().decode(AppProjectArchive.self, from: data)
-        } catch {
-            // Reported rather than swallowed (`swift/CLAUDE.md` Gotcha 13):
-            // a silent fallback here presents as "my projects are gone" with
-            // no way to tell a corrupt file from a schema drift, and the
-            // next `save()` would overwrite the file with this emptiness.
-            FileHandle.standardError.write(
-                "TurboSpark: project archive failed to decode, starting empty: \(error)\n"
-                    .data(using: .utf8)!)
-            return AppProjectArchive.empty()
-        }
+        AppJSONStore.load(AppProjectArchive.self, from: archiveFileURL, label: "project archive")
+            ?? AppProjectArchive.empty()
     }
 
     /// Persists the project archive to disk atomically.
     public static func save(_ archive: AppProjectArchive) {
-        if let data = try? JSONEncoder().encode(archive) {
-            try? data.write(to: archiveFileURL, options: .atomic)
-        }
+        AppJSONStore.save(archive, to: archiveFileURL, label: "Project archive")
     }
 }
