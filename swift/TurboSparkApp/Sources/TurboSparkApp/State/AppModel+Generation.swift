@@ -442,10 +442,19 @@ extension AppModel {
                 continue
             }
             if !msg.content.isEmpty || !msg.imagePaths.isEmpty {
+                // **AN UNFINISHED TURN IS MARKED AS ONE** (state#65).
+                // `finishCancelled` persists whatever the turn produced
+                // before it stopped, with `stopReason` recording WHY -- and
+                // nothing read it, so a reply truncated by an engine error or
+                // by the user pressing Stop was replayed on the next step as
+                // a completed assistant turn. The model then built on half a
+                // sentence as though it had meant to stop there.
+                let content = Self.truncationNote(for: msg).map { "\(msg.content)\n\n\($0)" }
+                    ?? msg.content
                 history.append(
                     ChatMessage(
                         role: msg.role,
-                        content: msg.content,
+                        content: content,
                         images: msg.imagePaths.map(ChatImage.path)))
             }
             // **A TOOL RESULT GOES BACK AS `.tool`, NOT AS `.system`**
@@ -465,6 +474,26 @@ extension AppModel {
             }
         }
         return history
+    }
+
+    /// The note appended to a turn that did not finish, or nil for one that
+    /// did (state#65).
+    ///
+    /// The reasons are the two `finishCancelled` writes plus the guardrail
+    /// retry, which is the same shape: text the model did not choose to end.
+    /// A pure static so it can be asserted without a session.
+    static func truncationNote(for message: AppChatMessage) -> String? {
+        guard message.role == .assistant, let reason = message.stopReason else { return nil }
+        switch reason {
+        case "cancelled":
+            return "[This reply was stopped by the user before it finished.]"
+        case "error":
+            return "[This reply was cut off by an engine error before it finished.]"
+        case "context_overflow":
+            return "[This reply was cut off: the conversation no longer fits the context window.]"
+        default:
+            return nil
+        }
     }
 
     private func finishProseTurn(content: String, reasoning: String, result: GenerationResult, chatID: UUID, step: Int, project: AppProject?) async {

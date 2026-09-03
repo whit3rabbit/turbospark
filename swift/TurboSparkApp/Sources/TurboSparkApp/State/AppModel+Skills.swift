@@ -139,8 +139,16 @@ extension AppModel {
     }
 
     /// Executes a skill by substituting arguments and returning the formatted instructions payload.
+    ///
+    /// **THE SAME TWO GATES THE `skill` TOOL APPLIES** (state#64). This had
+    /// neither, so it ran a skill the user had switched off (state#12's other
+    /// half, on the path nothing currently calls) and would run one declaring
+    /// `disable-model-invocation` if a model ever reached it. It has no
+    /// caller today, which is exactly why the gates have to be here rather
+    /// than at a call site: the first one added would otherwise inherit the
+    /// hole.
     public func executeSkill(named name: String, arguments: [String: String] = [:]) -> String? {
-        guard let skill = findSkill(named: name) else {
+        guard let skill = findSkill(named: name), skill.isEnabled else {
             return nil
         }
         let sessionID = selectedChatID.uuidString

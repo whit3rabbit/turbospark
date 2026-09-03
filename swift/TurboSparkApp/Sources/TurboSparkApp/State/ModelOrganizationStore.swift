@@ -171,10 +171,22 @@ public final class ModelOrganizationStore: ObservableObject {
         save()
     }
 
+    /// Drops one model's metadata.
+    ///
+    /// **THE BARE-ALIAS ROW IS SHARED AND IS NOT THIS MODEL'S TO DELETE**
+    /// (state#64). `key(for:path:)` prefers the path, and `metadata(for:)`
+    /// falls back to the bare alias -- which is how a row written before
+    /// paths were keys still resolves. Removing it here deleted the metadata
+    /// of every OTHER model that resolves through the same fallback: two LM
+    /// Studio installs sharing an alias, or the legacy row for a model that
+    /// was never re-tagged. It is dropped only when this call is itself the
+    /// bare-alias one, i.e. when no path was given.
     public func removeMetadata(for alias: String, path: String? = nil) {
         let k = key(for: alias, path: path)
         metadataByModelKey.removeValue(forKey: k)
-        metadataByModelKey.removeValue(forKey: alias)
+        if path == nil || path?.isEmpty == true {
+            metadataByModelKey.removeValue(forKey: alias)
+        }
         save()
     }
 

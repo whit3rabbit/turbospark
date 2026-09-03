@@ -1116,6 +1116,9 @@ learn what it meant by grepping for other mentions of it. What each covers:
 | 61 | An MCP stdio child that traps SIGTERM was never killed; a project `.mcp.json` server could take a global server's name and be dialled in its place, and the permission gate resolved that collision in the OPPOSITE order to the executor. |
 | 62 | "Authorized Workspace Folders" is a TCC grant and the pane called it a file-tool grant; the home row could not fail; overlapping probes published stale readings. |
 | 63 | The transient draft chat was neither published nor persisted, so draft text and a checklist written before any chat existed were gone on relaunch. |
+| 64 | A command the user STOPPED reached the model as `Error: cancelled`, indistinguishable from a failure and so an invitation to retry; `removeMetadata` deleted the shared bare-alias row every other model of that alias resolves through; `executeSkill(named:)` had neither of the gates the `skill` tool applies; `runAgentTaskDirectly` resolved `selectedChatIndex` twice instead of capturing the chat once. |
+| 65 | `finishCancelled` records WHY a turn stopped and nothing read `stopReason`, so a reply cut off by Stop, an engine error or a context overflow was replayed on the next step as a completed assistant turn. |
+| 66 | `ProcessExecutor`'s trailing drain ran `availableData` on the same `FileHandle` as a possibly-still-dispatched `readabilityHandler` block. Two readers on one descriptor: the lock-guarded buffer keeps memory safe and says nothing about ORDER, so a hook's JSON verdict could arrive in two halves and parse as neither. One dedicated reader thread per pipe now, awaited. |
 
 Add the next number here when you add the marker, or the index rots the way
 the numbering did.

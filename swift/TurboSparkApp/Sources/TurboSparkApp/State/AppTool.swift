@@ -590,6 +590,20 @@ public enum AppToolRegistry {
 
             let elapsed = Date().timeIntervalSince(startTime)
             return AppToolResult(callID: call.id, output: output, isError: false, durationSeconds: elapsed)
+        } catch is CancellationError {
+            // **A STOP IS NOT A TOOL FAILURE** (state#64). `CancellationError`
+            // localizes to "cancelled", so a command the USER stopped reached
+            // the model as `Error: cancelled` -- indistinguishable from a
+            // command that failed, which is an invitation to try again, and
+            // the loop obligingly does. Said plainly, so a model that gets one
+            // anyway stops rather than retries.
+            let elapsed = Date().timeIntervalSince(startTime)
+            return AppToolResult(
+                callID: call.id,
+                output: "Stopped by the user before it finished. Do not retry; wait for "
+                    + "further instructions.",
+                isError: true,
+                durationSeconds: elapsed)
         } catch {
             let elapsed = Date().timeIntervalSince(startTime)
             return AppToolResult(callID: call.id, output: "Error: \(error.localizedDescription)", isError: true, durationSeconds: elapsed)
