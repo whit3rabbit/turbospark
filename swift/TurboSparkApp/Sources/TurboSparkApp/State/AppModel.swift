@@ -100,6 +100,12 @@ public final class AppModel: ObservableObject {
     @Published public var server: TurboSparkServer?
     /// Whether `startServer()`/`stopServer()` is in flight.
     @Published public var serverBusy: Bool = false
+    /// A stop pressed while a start was still binding.
+    ///
+    /// `server` is published only after the awaited bind, so `stopServer()`
+    /// found nil and returned -- leaving a server listening that the UI
+    /// showed as stopped. The start path checks this before publishing.
+    var serverStopRequested = false
     /// Bearer / `x-api-key` value to require on the server, or empty for no
     /// auth. Read at `startServer()` time, not persisted: a key typed for
     /// one session sharing a machine is not something to write to disk by

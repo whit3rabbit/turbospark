@@ -103,7 +103,9 @@ extension AppToolRegistry {
         return results.joined(separator: "\n")
     }
 
-    static func readFile(relPath: String, rootURL: URL, startLine: Int?, endLine: Int?) async throws -> String {
+    static func readFile(
+        relPath: String, rootURL: URL, startLine: Int?, endLine: Int?, limit: Int? = nil
+    ) async throws -> String {
         let targetURL = try resolveSecurePath(relPath: relPath, rootURL: rootURL)
         guard FileManager.default.fileExists(atPath: targetURL.path) else {
             throw NSError(domain: "TurboSparkTool", code: 11, userInfo: [NSLocalizedDescriptionKey: "File not found: \(relPath)"])
@@ -121,14 +123,23 @@ extension AppToolRegistry {
         if sLine > allLines.count {
             return "File has \(allLines.count) lines. Requested start line \(sLine) is out of bounds."
         }
-        // `endLine` is aliased from `limit`, which callers pass as a COUNT
-        // (Claude/OpenAI convention) rather than an absolute line number, so
-        // it is resolved relative to `sLine` rather than to line 1. Clamping
-        // here (rather than trusting a model-supplied `end_line`/`limit`)
-        // is what keeps `(sLine - 1)..<eLine` a valid, non-empty range: an
-        // unclamped `eLine < sLine - 1` previously trapped the process.
-        let requestedCount = endLine ?? 120
-        let eLine = min(allLines.count, max(sLine, sLine + requestedCount - 1))
+        // **`end_line` AND `limit` ARE DIFFERENT QUESTIONS AND ARE NO LONGER
+        // ALIASED.** The schema advertises "start_line and end_line bounds"
+        // while the two keys were collapsed into one value treated as a
+        // COUNT, so `read_file(start_line: 500, end_line: 520)` -- exactly
+        // what the schema's own example invites -- returned 520 lines instead
+        // of 21. `end_line` is absolute (the schema's word), `limit` is a
+        // count (the Claude/OpenAI convention), and each is read from its own
+        // key. Clamping rather than trusting a model-supplied value is what
+        // keeps `(sLine - 1)..<eLine` valid and non-empty: an unclamped
+        // `eLine < sLine - 1` previously trapped the process.
+        let eLine: Int
+        if let endLine {
+            eLine = min(allLines.count, max(sLine, endLine))
+        } else {
+            let requestedCount = limit ?? 120
+            eLine = min(allLines.count, max(sLine, sLine + requestedCount - 1))
+        }
 
         let slice = allLines[(sLine - 1)..<eLine]
         var outputLines: [String] = ["File: \(relPath) (lines \(sLine)-\(eLine) of \(allLines.count))"]
@@ -295,6 +306,19 @@ extension AppToolRegistry {
         return "Successfully replaced \(replaceAll ? "\(matchCount) occurrence(s)" : "occurrence") in \(relPath)."
     }
 
+    /// The bound on one `search_code` call.
+    ///
+    /// **A PATTERN WITH NO HITS USED TO READ THE WHOLE TREE.** The 40-match
+    /// break is the only stop the search had, and it never fires when nothing
+    /// matches -- so every file under the size cap was read whole, with three
+    /// directory names skipped. On a large repository that is a multi-second
+    /// main-actor-adjacent stall per call, and the model can make one per
+    /// step.
+    private enum SearchBudget {
+        static let maxFilesVisited = 5_000
+        static let maxBytesRead = 64 * 1024 * 1024
+    }
+
     static func searchCode(pattern: String, relPath: String, rootURL: URL) throws -> String {
         let targetURL = try resolveSecurePath(relPath: relPath, rootURL: rootURL)
         let fm = FileManager.default
@@ -305,22 +329,37 @@ extension AppToolRegistry {
         var matches: [String] = []
         let lowerPattern = pattern.lowercased()
         let rootPrefix = rootURL.standardizedFileURL.resolvingSymlinksInPath().path + "/"
+        var filesVisited = 0
+        var bytesRead = 0
+        var exhaustedBudget = false
 
         for case let fileURL as URL in enumerator {
             let path = fileURL.path
-            if path.contains("/node_modules/") || path.contains("/target/") || path.contains("/.build/") {
-                continue
-            }
-            if let size = AppFileReadLimits.fileSize(of: fileURL),
-                size > AppFileReadLimits.maximumBytes
+            if path.contains("/node_modules/") || path.contains("/target/") || path.contains("/.build/")
+                || path.contains("/.git/")
             {
                 continue
             }
+            let size = AppFileReadLimits.fileSize(of: fileURL)
+            if let size, size > AppFileReadLimits.maximumBytes {
+                continue
+            }
+            filesVisited += 1
+            if filesVisited > SearchBudget.maxFilesVisited || bytesRead > SearchBudget.maxBytesRead {
+                exhaustedBudget = true
+                break
+            }
             guard let text = try? String(contentsOf: fileURL, encoding: .utf8) else { continue }
+            bytesRead += text.utf8.count
             let lines = text.components(separatedBy: "\n")
             for (lineIdx, line) in lines.enumerated() {
                 if line.lowercased().contains(lowerPattern) {
-                    let rel = fileURL.path.replacingOccurrences(of: rootPrefix, with: "")
+                    // `dropFirst`, not `replacingOccurrences`: the latter
+                    // strips EVERY occurrence of the root prefix, so a path
+                    // that repeats it (a nested checkout, a symlinked
+                    // vendor directory) came out mangled.
+                    let rel =
+                        path.hasPrefix(rootPrefix) ? String(path.dropFirst(rootPrefix.count)) : path
                     matches.append("\(rel):\(lineIdx + 1): \(line.trimmingCharacters(in: .whitespaces))")
                     if matches.count >= 40 { break }
                 }
@@ -329,7 +368,10 @@ extension AppToolRegistry {
         }
 
         if matches.isEmpty {
-            return "No matches found for '\(pattern)'."
+            return exhaustedBudget
+                ? "No matches found for '\(pattern)' in the first \(filesVisited - 1) files "
+                    + "searched. Narrow the path and try again."
+                : "No matches found for '\(pattern)'."
         }
         let formatted = "Found \(matches.count) matches:\n" + matches.joined(separator: "\n")
         return compactOutput(formatted)

@@ -79,8 +79,28 @@ extension AppModel {
     }
 
     /// Looks an attachment up by identifier across every chat.
+    ///
+    /// **NOT THROUGH `allAttachments`.** That sorts every chat by date and
+    /// walks all of their draft attachments to build an array, and this is
+    /// reached from `previewAttachment`, which a SwiftUI body reads -- so it
+    /// ran once per streamed token during a generation. Scanning for the one
+    /// id directly is the same answer without the sort or the array.
     public func attachmentReference(id: UUID) -> AppAttachmentReference? {
-        allAttachments.first { $0.id == id }
+        for chat in chats {
+            if let attachment = chat.draftAttachments.first(where: { $0.id == id }) {
+                return AppAttachmentReference(
+                    attachment: attachment, chatID: chat.id, chatTitle: chat.title)
+            }
+        }
+        // The active draft chat is not in `chats` until it has a message.
+        if !chats.contains(where: { $0.id == selectedChatID }) {
+            let chat = selectedChat
+            if let attachment = chat.draftAttachments.first(where: { $0.id == id }) {
+                return AppAttachmentReference(
+                    attachment: attachment, chatID: chat.id, chatTitle: chat.title)
+            }
+        }
+        return nil
     }
 
     /// The attachment the preview pane is currently showing, if any.

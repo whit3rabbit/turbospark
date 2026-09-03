@@ -378,8 +378,15 @@ public enum AppToolRegistry {
                     throw NSError(domain: "TurboSparkTool", code: 1, userInfo: [NSLocalizedDescriptionKey: "Missing 'path' or 'file_path' argument."])
                 }
                 let startLine = Int(call.arguments["start_line"] ?? call.arguments["offset"] ?? "")
-                let endLine = Int(call.arguments["end_line"] ?? call.arguments["limit"] ?? "")
-                output = try await readFile(relPath: relPath, rootURL: rootURL, startLine: startLine, endLine: endLine)
+                // Read from their OWN keys: `end_line` is an absolute bound
+                // (what the schema advertises) and `limit` is a count (what
+                // the Claude/OpenAI convention means). Collapsing them made
+                // `end_line: 520` return 520 lines.
+                let endLine = Int(call.arguments["end_line"] ?? "")
+                let limit = Int(call.arguments["limit"] ?? "")
+                output = try await readFile(
+                    relPath: relPath, rootURL: rootURL, startLine: startLine, endLine: endLine,
+                    limit: limit)
 
             case "write_file", "save_file", "filewrite", "write":
                 guard let relPath = call.arguments["path"] ?? call.arguments["file_path"] else {

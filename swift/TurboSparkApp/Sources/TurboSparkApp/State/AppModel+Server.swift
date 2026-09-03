@@ -114,6 +114,15 @@ extension AppModel {
                     started.stop()
                     throw error
                 }
+                // Honour a stop pressed while the bind was in flight, rather
+                // than publishing a server the user has already switched off.
+                if self.serverStopRequested {
+                    self.serverStopRequested = false
+                    started.stop()
+                    self.serverAttachedSessions = [:]
+                    showToast("Server stopped", style: .info)
+                    return
+                }
                 self.server = started
                 self.serverInfo = info
                 self.serverMetrics = ServerMetricsStore()
@@ -139,7 +148,17 @@ extension AppModel {
     /// This is what releases every attached model, so a host that stops the
     /// server is not leaking anything it attached.
     public func stopServer() {
-        guard let server else { return }
+        // **A STOP DURING A START USED TO VANISH.** `server` is published only
+        // after the awaited bind, so this `guard` found nil and returned --
+        // toggling on then off quickly left a server listening that the UI
+        // showed as stopped. The request is recorded instead, and the start
+        // path honours it as soon as it has a handle to stop.
+        guard let server else {
+            if serverBusy {
+                serverStopRequested = true
+            }
+            return
+        }
         stopServerPolling()
         // A final unbounded drain, so whatever the last tick missed still
         // reaches the console before the handle goes.
@@ -274,7 +293,7 @@ extension AppModel {
             let attached = serverAttachedSessions[id]
             return ServerModelRow(
                 id: id,
-                displayName: installed.first { $0.path.hasSuffix(id) }?.alias ?? id,
+                displayName: installed.first { Self.servedModelID(for: $0) == id }?.alias ?? id,
                 // Read off the SESSION rather than restated: under automatic
                 // sizing nothing was asked for, and these are what the KV
                 // cache was actually allocated at (`swift/CLAUDE.md`
@@ -290,7 +309,20 @@ extension AppModel {
     /// pane's Load Model list offers.
     public var serverAttachableModels: [InstalledModel] {
         let attached = Set(serverInfo?.models ?? [])
-        return installed.filter { !attached.contains(($0.path as NSString).lastPathComponent) }
+        return installed.filter { !attached.contains(Self.servedModelID(for: $0)) }
+    }
+
+    /// The id a server serves this install under: its directory's own file
+    /// name, which is what `crates/ffi` keys the registry on.
+    ///
+    /// **ONE DERIVATION, NOT TWO.** `serverAttachableModels` compared exact
+    /// `lastPathComponent` while `serverModelRows` used `path.hasSuffix(id)`,
+    /// and a suffix match is not a name match: an install at
+    /// `.../mygemma4.gturbo` ends with `gemma4.gturbo`, so the row for an
+    /// attached `gemma4.gturbo` was labelled with the WRONG install's alias
+    /// while that install still appeared in the attachable list.
+    static func servedModelID(for model: InstalledModel) -> String {
+        (model.path as NSString).lastPathComponent
     }
 
     // MARK: - Polling
