@@ -100,7 +100,7 @@ public final class AppModel: ObservableObject {
     @Published public var server: TurboSparkServer?
     /// Whether `startServer()`/`stopServer()` is in flight.
     @Published public var serverBusy: Bool = false
-    /// A stop pressed while a start was still binding.
+    /// A stop pressed while a start was still binding (state#28).
     ///
     /// `server` is published only after the awaited bind, so `stopServer()`
     /// found nil and returned -- leaving a server listening that the UI
@@ -189,7 +189,7 @@ public final class AppModel: ObservableObject {
     /// `maxAutonomousSteps` resets every time a call needs confirmation.
     @Published public var pendingToolCallStep: Int = 0
     /// The project the pending tool call was EVALUATED against, captured at
-    /// proposal time. `AppToolPermissionEngine` computed its `.allow` from
+    /// proposal time (state#19). `AppToolPermissionEngine` computed its `.allow` from
     /// this project's permissions and this project's root, so running the
     /// call against whatever `selectedProject` resolves to at approval time
     /// executes it under a policy nothing ever checked -- and `selectProject`

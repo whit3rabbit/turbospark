@@ -135,7 +135,7 @@ extension AppModel {
 
     /// Executes a generation step for the conversation identified by `chatID`.
     ///
-    /// **THE CHAT IS AN ARGUMENT, NEVER `selectedChatIndex`.** A turn's
+    /// **THE CHAT IS AN ARGUMENT, NEVER `selectedChatIndex`** (state#17). A turn's
     /// continuation is started from the agent loop long after the user became
     /// free to click another chat (`generating` goes false as soon as a call
     /// is proposed, state#9), so resolving the chat here would build the next

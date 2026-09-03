@@ -50,7 +50,7 @@ extension AppModel {
     // import`, since it is otherwise reachable only from inside a live
     // generation `Task` that needs a real model session.
     ///
-    /// **`async`, AND THE CALLER MUST AWAIT IT.** This used to spawn a
+    /// **`async`, AND THE CALLER MUST AWAIT IT** (state#16). This used to spawn a
     /// detached `Task` and return immediately, so the turn's stream loop fell
     /// straight through to its tail and set `generating = false` while the
     /// tool was still running: `canRun` went true mid-loop (Send started a

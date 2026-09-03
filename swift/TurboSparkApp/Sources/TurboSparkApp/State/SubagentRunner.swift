@@ -210,7 +210,7 @@ public enum SubagentRunner {
 
     /// The reason a subagent may not run `call`, or nil when it may.
     ///
-    /// **A SUBAGENT IS NOT EXEMPT FROM THE PERMISSION GATE.** This loop went
+    /// **A SUBAGENT IS NOT EXEMPT FROM THE PERMISSION GATE** (state#18). This loop went
     /// straight to `AppToolRegistry.execute` after checking only
     /// `agent.isToolAllowed`, which is a tool NAME list -- and the built-in
     /// `general-purpose` agent declares no `disallowedTools` at all. So under

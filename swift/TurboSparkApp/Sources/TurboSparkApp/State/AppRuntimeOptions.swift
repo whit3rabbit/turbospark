@@ -253,7 +253,7 @@ public enum AppSteeringModeOption: String, CaseIterable, Identifiable, Sendable 
 public struct AppRuntimeOptions: Equatable, Sendable {
     /// Allowed expert slot counts for MoE caching, 0 being automatic.
     ///
-    /// **THIS SET IS THE ENGINE'S, NOT THIS APP'S**, and it must stay equal to
+    /// **THIS SET IS THE ENGINE'S, NOT THIS APP'S** (state#21), and it must stay equal to
     /// `foundation::runtime_config::ALLOWED_CACHE_SLOTS` (`[8, 16, 24, 32]`)
     /// with 0 prepended for `Auto`. It read `[0, 4, 8, 16, 32, 64, 128]`, so
     /// the picker offered four values the engine refuses -- and a refused

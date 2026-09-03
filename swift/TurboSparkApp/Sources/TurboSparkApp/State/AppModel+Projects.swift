@@ -110,7 +110,7 @@ extension AppModel {
 
     /// Deletes a project and optionally clears project references from its chats.
     ///
-    /// **DELETING MUST UNDO EVERYTHING SELECTING DID.** `createProject`,
+    /// **DELETING MUST UNDO EVERYTHING SELECTING DID** (state#26). `createProject`,
     /// `selectProject` and `updateProject` all rebind `AppHookStore` to the
     /// project directory, and `selectProject` additionally clears `worktree`
     /// and resets `FileSnapshotStore`. This did none of it, and

@@ -212,7 +212,7 @@ public final class AgentManager: @unchecked Sendable {
     /// ever be MORE restricted than the built-in, never less.
     ///
     /// **A PROJECT DIRECTORY IS UNTRUSTED INPUT, AND `/explore` IS A NAME THE
-    /// USER TYPES.** Project agents are read from `.claude/agents` and five
+    /// USER TYPES** (state#22). Project agents are read from `.claude/agents` and five
     /// sibling directories in whatever repository is open, with no trust gate
     /// -- hooks from the SAME directories require a SHA-256 review decision
     /// and agents have no equivalent. A cloned repository shipping

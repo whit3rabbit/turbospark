@@ -257,7 +257,7 @@ extension AppModel {
 
     /// Records a tool call's outcome on the conversation.
     ///
-    /// **UPDATES THE PROPOSAL IN PLACE WHEN THERE IS ONE.** An `.ask` path
+    /// **UPDATES THE PROPOSAL IN PLACE WHEN THERE IS ONE** (state#20). An `.ask` path
     /// already appended a message carrying the call at `.pendingApproval`;
     /// appending a second one here left the first stuck at that status
     /// forever and put TWO consecutive assistant turns for one call into the

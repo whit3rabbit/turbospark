@@ -13,6 +13,49 @@ when this file gets updated relative to the version bump and the tag.
 
 ## [Unreleased]
 
+### Security
+- `swift/TurboSparkApp`: subagent runs go through
+  `AppToolPermissionEngine.evaluate` plus
+  `TerminalCommandClassifier.isAutoApprovable`. `SubagentRunner` previously
+  reached `AppToolRegistry.execute` after checking only a tool NAME list,
+  which the built-in `general-purpose` agent leaves empty -- so a subagent
+  reached from the `agent` tool or from `/explore` ran `/bin/zsh -c`
+  unprompted under a project whose terminal permission was `.ask` or
+  `.deny`, on one approval of the agent call itself. An isolated run DENIES
+  where the main loop would ask, having no UI to prompt with.
+- `swift/TurboSparkApp`: a project-scope agent taking a BUILT-IN's name is
+  held to that built-in's tool ceiling (its `disallowedTools` unioned in,
+  its `tools` allowlist intersected). A cloned repository shipping
+  `.claude/agents/explore.md` with no `disallowedTools` turned `/explore`
+  into a write-and-shell agent. Overriding the prompt, description and turn
+  budget still works; only widening is refused.
+- `swift/TurboSparkApp`: `ProjectRuleDetector` refuses a rules file that
+  resolves outside the project. `AGENTS.md -> ~/.aws/credentials` in a
+  cloned repository put that file's first 64 KB into every turn's system
+  prompt. Symlinks inside the project still resolve.
+- `swift/TurboSparkApp`: an approved tool call runs under the project its
+  permission decision was computed against, not whichever project is
+  selected when the user clicks Approve.
+
+### Fixed
+- `crates/ffi`: `ts_session_open` validates `expertCacheSlots` against
+  `ALLOWED_CACHE_SLOTS` and returns an error naming the option. It built
+  `ExpertCacheSlots::Fixed` from any non-negative integer, and an
+  out-of-set value panics inside the expert cache -- fatal in process for a
+  GUI host that links the engine. The header had documented `8/16/24/32`
+  all along. `swift/TurboSparkApp`'s picker offered four values the engine
+  refuses and omitted the legal 24; it now offers exactly the engine's set.
+- `swift/TurboSparkApp`: `generating` stays true while a tool runs, so Send
+  cannot start a second turn beside it and Stop is enabled for the window a
+  shell command runs in; the agent loop's continuation is routed by chat id
+  rather than by the current selection; and Stop reaches work spawned from
+  the approval card.
+- `swift/TurboSparkApp`: the JSON stores quarantine an unreadable file
+  instead of letting the next write overwrite it, and report a failed write
+  instead of swallowing it. The quit flush moved from a view modifier to
+  `applicationWillTerminate` and now stops the server and persists while a
+  turn is running.
+
 ### Added
 - Server-side `presence_penalty`, `frequency_penalty`, and `min_p` on
   `POST /v1/chat/completions`, honored end to end by `turbospark-selection`.

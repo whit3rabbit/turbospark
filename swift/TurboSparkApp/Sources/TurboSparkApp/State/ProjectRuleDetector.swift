@@ -309,7 +309,7 @@ public enum ProjectRuleDetector {
     /// Reads a rules file, refusing one that resolves outside the project.
     ///
     /// **A SYMLINK IS FOLLOWED WHEREVER IT POINTS, AND THIS TEXT GOES INTO THE
-    /// SYSTEM PROMPT.** `resolvingSymlinksInPath` was applied and the result
+    /// SYSTEM PROMPT** (state#23). `resolvingSymlinksInPath` was applied and the result
     /// read unconditionally, so a cloned repository shipping
     /// `AGENTS.md -> ~/.aws/credentials` put that file's first 64 KB into
     /// every turn's prompt -- exfiltration through a file the user never

@@ -2,7 +2,6 @@ import Foundation
 import TurboSpark
 
 extension AppModel {
-    /// Loads persisted generation parameters, execution options, and model paths from disk.
     /// Clamps a persisted integer that later becomes a `UInt32`.
     ///
     /// **A NEGATIVE OR OVERSIZED VALUE IN `settings.json` IS A TRAP, NOT AN
@@ -17,6 +16,8 @@ extension AppModel {
         min(max(0, value), upperBound)
     }
 
+    /// Loads persisted generation parameters, execution options, and model
+    /// paths from disk.
     func loadSettings() {
         let settings = MacAppSettingsFileStore.load()
         self.maxContextTokens = Self.clampedSetting(
@@ -225,7 +226,7 @@ extension AppModel {
 
 /// Ordered shutdown, and the hand-off that lets the app delegate reach it.
 ///
-/// **THE QUIT FLUSH USED TO LIVE IN A VIEW MODIFIER.** `RootView` observed
+/// **THE QUIT FLUSH USED TO LIVE IN A VIEW MODIFIER** (state#25). `RootView` observed
 /// `willTerminateNotification` and called `unloadModel` / `persistChats` /
 /// `persistSettings`. Three things were wrong with that.
 ///

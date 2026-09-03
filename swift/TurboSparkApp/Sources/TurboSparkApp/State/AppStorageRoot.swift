@@ -84,7 +84,7 @@ public enum AppStorageRoot {
 /// Every store spelled its own `try? data.write(...)` and its own decode
 /// fallback, and the two halves failed differently and badly:
 ///
-/// **A SWALLOWED WRITE LOSES THE SESSION WITH NO SIGN.** `save()` was
+/// **A SWALLOWED WRITE LOSES THE SESSION WITH NO SIGN** (state#24). `save()` was
 /// `try? encoder.encode(...)` then `try? data.write(...)`, so a full disk, a
 /// permissions problem or a directory that `AppStorageRoot` failed to create
 /// (it uses `try?` too) discarded the whole archive silently on quit.

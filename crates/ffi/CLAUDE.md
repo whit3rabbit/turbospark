@@ -472,3 +472,36 @@ make swift-test-real MODEL=~/models/qwen38-27b-mtp.gturbo \
     recovery, which the header there also explains. Only `swift test` can run
     it (Gotcha 6: `tests/c_surface.rs` is deliberately model-free), which is
     why the assertion belongs there and not in this crate's own suite.
+
+17. **THE HEADER STATED THE ALLOWED SLOT SET AND `open()` ENFORCED NOTHING,
+    AND THIS IS THE ONE FRONT END WHERE THAT IS FATAL.** `turbospark.h` has
+    said `expertCacheSlots number | "auto" | null (default auto; 8/16/24/32)`
+    for as long as the option has existed, and `docs/SWIFT_BINDINGS.md` says
+    the same -- so the CONTRACT was documented and correct. What was missing
+    was the check: `sized` proved only "a non-negative integer", and
+    `ExpertCacheSlots::Fixed` was built from whatever came through.
+
+    Every other front end validates against
+    `foundation::runtime_config::ALLOWED_CACHE_SLOTS` --
+    `crates/invocation`'s parser, `crates/bench`'s and `crates/server`'s
+    argument loops, `catalog::entry`. This binding was the one that did not,
+    and it is the one whose caller is a PICKER rather than a typed flag: a GUI
+    offers a menu, a user chooses from it, and this engine is linked into that
+    GUI's process, so a value the engine refuses is not an error anyone can
+    show -- `crates/streaming`'s expert cache panics and the abort takes the
+    whole app with it (root Gotcha 64 is the reachable case, at
+    `slots == top_k` on the first multi-token prompt). `swift/TurboSparkApp`
+    duly offered `[0, 4, 8, 16, 32, 64, 128]`, four of them fatal.
+
+    The check sits with the other option mapping, BEFORE anything is read from
+    disk, for Gotcha 5's reason: the error then names the option rather than
+    the path, which is also what lets
+    `an_out_of_set_expert_cache_slot_count_is_refused_before_the_model_is_read`
+    exercise it with no install on the machine. That test asserts the LEGAL
+    values still get past the option check as well, or the guard would pass by
+    refusing everything -- a gate that cannot fail (`swift/CLAUDE.md`
+    Gotcha 22).
+
+    **A DOCUMENTED CONTRACT IS NOT AN ENFORCED ONE.** Reach for the header
+    when asking what a caller may send, and for the code when asking what
+    happens if they send something else.

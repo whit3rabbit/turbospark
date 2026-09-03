@@ -151,7 +151,7 @@ extension AppModel {
     /// Stops WATCHING an install. It does not stop the install.
     ///
     /// **THE ENGINE HAS NO INSTALL-CANCEL CALL, AND THE BINDING SAYS SO IN
-    /// SO MANY WORDS**: dropping the consumer ends DELIVERY, while
+    /// SO MANY WORDS** (state#27): dropping the consumer ends DELIVERY, while
     /// `ts_install` blocks its own thread and keeps streaming the checkpoint
     /// to completion or failure with nobody listening
     /// (`TurboSpark/Catalog.swift`: "do not build a Stop button on this").
