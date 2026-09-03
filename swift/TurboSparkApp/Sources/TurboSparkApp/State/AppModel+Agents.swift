@@ -80,9 +80,21 @@ extension AppModel {
     }
 
     /// Executes an isolated subagent task directly from user REPL command.
+    ///
+    /// **RUNS UNDER THE SAME LIFECYCLE AS AN ORDINARY TURN.** It used to set
+    /// `generating` by hand with no `!generating` guard, no epoch bump, and
+    /// its `Task` stored nowhere -- so it could start beside a running turn,
+    /// `cancel()` cancelled a nil `runTask` while leaving
+    /// `isCancellationPending` set (greying Stop out permanently), and the
+    /// chat was resolved at COMPLETION rather than captured, landing the
+    /// result in whatever the user had switched to.
     public func runAgentTaskDirectly(agent: AppAgentDefinition, prompt: String) {
         guard session != nil else {
             showToast("No active model session. Please load a model first.", style: .error)
+            return
+        }
+        guard !generating else {
+            showToast("A turn is already running. Wait for it to finish first.", style: .warning)
             return
         }
 
@@ -109,21 +121,36 @@ extension AppModel {
         chats[chatIndex].messages.append(userTurn)
         persistChats()
 
+        // Captured before the run, like every other turn: a subagent run is
+        // seconds to minutes of work and the user is free to click away.
+        let turnChatID = chats[chatIndex].id
+        let project = selectedProject
+
+        generationEpoch += 1
+        let myEpoch = generationEpoch
         generating = true
+        isCancellationPending = false
         phase = .prefill
         outputText = "Running isolated subagent [\(agent.displayName)]...\n"
 
-        Task { @MainActor in
+        runTask = Task { @MainActor in
+            defer {
+                // Guarded for the same reason an ordinary turn's tail is: a
+                // newer turn may already have claimed this state.
+                if self.generationEpoch == myEpoch {
+                    self.generating = false
+                    self.phase = .idle
+                    self.isCancellationPending = false
+                    self.outputText = ""
+                    self.runTask = nil
+                }
+            }
             let result = await SubagentRunner.run(
                 agent: agent,
                 taskPrompt: prompt,
                 session: self.session,
-                project: self.selectedProject
+                project: project
             )
-
-            self.generating = false
-            self.phase = .idle
-            self.outputText = ""
 
             let assistantContent = """
             ### Subagent: \(agent.displayName)
@@ -138,7 +165,7 @@ extension AppModel {
                 stopReason: result.status
             )
 
-            if let idx = self.chats.firstIndex(where: { $0.id == self.selectedChatID }) {
+            if let idx = self.chats.firstIndex(where: { $0.id == turnChatID }) {
                 self.chats[idx].messages.append(assistantTurn)
                 self.chats[idx].updatedAt = Date()
                 self.persistChats()

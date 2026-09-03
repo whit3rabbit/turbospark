@@ -165,22 +165,36 @@ extension AppModel {
     public func approvePendingToolCall(id: UUID, alwaysAllowSession: Bool = false) {
         guard var call = pendingToolCall, call.id == id else { return }
         call.status = .running
-        pendingToolCall = nil
-        // Captured before clearing: the chat the call was PROPOSED in and
-        // the step it was proposed AT, never whatever `selectedChatID`/loop
-        // position happen to be at approval time -- the user may have
-        // switched chats while this call sat waiting (state#9), and
-        // resuming at step 1 unconditionally defeats `maxAutonomousSteps`
-        // by resetting the counter on every approval (state#6).
+        // Captured before clearing: the chat the call was PROPOSED in, the
+        // step it was proposed AT, and the PROJECT it was evaluated against --
+        // never whatever `selectedChatID` / loop position / `selectedProject`
+        // happen to be at approval time. The user may have switched chats or
+        // projects while this call sat waiting (state#9, and `selectProject`
+        // guards only on `!generating`), resuming at step 1 unconditionally
+        // defeats `maxAutonomousSteps` (state#6), and running under a project
+        // whose permissions nothing checked is how an `.allow` computed for
+        // project A executes in project B's root.
         let chatID = pendingToolCallChatID ?? selectedChatID
         let originStep = pendingToolCallStep
-        pendingToolCallChatID = nil
+        let project = pendingToolCallProject ?? selectedProject
+        clearPendingToolCall()
 
         let sessionID = chatID.uuidString
         let toolName = call.name
         let cmd = call.arguments["command"] ?? call.arguments["cmd"]
 
-        Task {
+        // `generating` was lowered when the call was proposed, which is what
+        // frees the UI while a human decides. It goes back up for the
+        // EXECUTION, so Send cannot start a second turn beside the tool and
+        // Stop is enabled for exactly the window a shell command runs in.
+        generating = true
+        isCancellationPending = false
+
+        toolExecutionTask = Task {
+            defer {
+                self.generating = false
+                self.toolExecutionTask = nil
+            }
             if alwaysAllowSession {
                 await SessionApprovalStore.shared.allowTool(sessionID: sessionID, toolName: toolName)
                 if let cmd {
@@ -188,7 +202,7 @@ extension AppModel {
                 }
             }
 
-            var result = await AppToolRegistry.execute(call: call, in: self.selectedProject)
+            var result = await AppToolRegistry.execute(call: call, in: project, chatID: chatID)
             call.status = result.isError ? .failed : .completed
 
             let postVerdict = await self.dispatchPostToolUseVerdict(
@@ -211,7 +225,11 @@ extension AppModel {
             }
 
             self.appendToolExecutionTurn(call: call, result: result, chatID: chatID)
-            self.continueAgentLoop(step: originStep + 1)
+            // `continueOrStop` rather than `continueAgentLoop` directly: it is
+            // the one place `maxAutonomousSteps` is tested, and approving the
+            // call proposed at the last permitted step used to run one turn
+            // past the cap because this path skipped it (state#6's other half).
+            await self.continueOrStop(afterStep: originStep, chatID: chatID)
         }
     }
 
@@ -219,10 +237,9 @@ extension AppModel {
     public func denyPendingToolCall(id: UUID) {
         guard var call = pendingToolCall, call.id == id else { return }
         call.status = .denied
-        pendingToolCall = nil
         let chatID = pendingToolCallChatID ?? selectedChatID
         let originStep = pendingToolCallStep
-        pendingToolCallChatID = nil
+        clearPendingToolCall()
 
         let result = AppToolResult(
             callID: call.id,
@@ -231,25 +248,41 @@ extension AppModel {
             durationSeconds: 0.0
         )
         self.appendToolExecutionTurn(call: call, result: result, chatID: chatID)
-        Task {
+        toolExecutionTask = Task {
+            defer { self.toolExecutionTask = nil }
             _ = await self.dispatchNotification(message: "Tool call '\(call.name)' was denied by the user.")
+            await self.continueOrStop(afterStep: originStep, chatID: chatID)
         }
-        self.continueAgentLoop(step: originStep + 1)
     }
 
-    /// Appends the tool execution and result turn to the conversation history.
+    /// Records a tool call's outcome on the conversation.
+    ///
+    /// **UPDATES THE PROPOSAL IN PLACE WHEN THERE IS ONE.** An `.ask` path
+    /// already appended a message carrying the call at `.pendingApproval`;
+    /// appending a second one here left the first stuck at that status
+    /// forever and put TWO consecutive assistant turns for one call into the
+    /// history the next prompt is built from. The call's `id` is what ties
+    /// the two together.
     public func appendToolExecutionTurn(call: AppToolCall, result: AppToolResult, chatID: UUID? = nil) {
         let targetID = chatID ?? selectedChatID
         guard let chatIndex = chats.firstIndex(where: { $0.id == targetID }) else { return }
-        let turn = AppChatMessage(
-            role: .assistant,
-            content: "Invoking tool `\(call.name)` (\(call.argumentsSummary))",
-            reasoning: "",
-            stopReason: "tool_use",
-            toolCalls: [call],
-            toolResults: [result]
-        )
-        chats[chatIndex].messages.append(turn)
+
+        if let msgIndex = chats[chatIndex].messages.lastIndex(where: { msg in
+            msg.toolCalls.contains(where: { $0.id == call.id })
+        }) {
+            chats[chatIndex].messages[msgIndex].toolCalls = [call]
+            chats[chatIndex].messages[msgIndex].toolResults = [result]
+        } else {
+            let turn = AppChatMessage(
+                role: .assistant,
+                content: "Invoking tool `\(call.name)` (\(call.argumentsSummary))",
+                reasoning: "",
+                stopReason: "tool_use",
+                toolCalls: [call],
+                toolResults: [result]
+            )
+            chats[chatIndex].messages.append(turn)
+        }
         chats[chatIndex].updatedAt = Date()
         persistChats()
         worktree?.refresh()

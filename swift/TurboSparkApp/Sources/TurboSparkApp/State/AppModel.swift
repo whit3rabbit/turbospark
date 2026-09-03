@@ -182,8 +182,14 @@ public final class AppModel: ObservableObject {
     /// resuming after approval continues from HERE, not from step 1, or
     /// `maxAutonomousSteps` resets every time a call needs confirmation.
     @Published public var pendingToolCallStep: Int = 0
-    /// Live tool calls executed during the active generation turn.
-    @Published public var liveToolCalls: [AppToolCall] = []
+    /// The project the pending tool call was EVALUATED against, captured at
+    /// proposal time. `AppToolPermissionEngine` computed its `.allow` from
+    /// this project's permissions and this project's root, so running the
+    /// call against whatever `selectedProject` resolves to at approval time
+    /// executes it under a policy nothing ever checked -- and `selectProject`
+    /// guards only on `!generating`, which is false while a call waits
+    /// (state#9). Not `@Published`: nothing draws it.
+    var pendingToolCallProject: AppProject?
     /// Why the last SKILL.state patch was rejected, or nil if the last one
     /// merged. Surfaced rather than swallowed: a dropped patch means the run
     /// lost a step's bookkeeping, which is invisible in the transcript.
@@ -222,6 +228,15 @@ public final class AppModel: ObservableObject {
     // Live Generation State
     /// Whether token generation is currently running.
     @Published public var generating: Bool = false
+    /// Whether `run()` has accepted a submission and not yet reached
+    /// `executeGenerationTurn`.
+    ///
+    /// `run()` awaits `UserPromptSubmit` hooks before it appends anything, so
+    /// `generating` stays false across that await and `canRun` stays true --
+    /// a second Return with any such hook installed appends the prompt twice
+    /// and overwrites `runTask`. This flag is set SYNCHRONOUSLY, before the
+    /// `Task`, which is the only place a second `run()` can be refused.
+    @Published public var submitting: Bool = false
     /// Current phase of the generation runner.
     @Published public var phase: GenerationPhase = .idle
     /// Number of prompt tokens processed so far during prefill.
@@ -317,6 +332,12 @@ public final class AppModel: ObservableObject {
     @Published public var installETAText: String? = nil
 
     var runTask: Task<Void, Never>?
+    /// Work spawned OUTSIDE `runTask`: an approved or denied pending call,
+    /// which runs a tool and then re-enters the loop. `runTask` cannot reach
+    /// it (that turn's stream ended when the call was proposed), so `cancel()`
+    /// cancels this too or Stop cannot stop a shell command started from the
+    /// approval card.
+    var toolExecutionTask: Task<Void, Never>?
     var installTask: Task<Void, Never>?
     var tokenEstimateTask: Task<Void, Never>?
     /// Pending debounced archive write; see `persistChatsDebounced()`.
@@ -483,7 +504,7 @@ public final class AppModel: ObservableObject {
 
     /// Whether conditions allow starting a new generation run.
     public var canRun: Bool {
-        !generating && !opening && session != nil && (!promptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !promptAttachments.isEmpty)
+        !generating && !submitting && !opening && session != nil && (!promptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !promptAttachments.isEmpty)
     }
 
     /// Whether active generation can be cancelled.
