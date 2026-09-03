@@ -5,6 +5,16 @@ extension AppModel {
     /// Initiates a background download and build of a model catalog alias.
     public func installModel(alias: String) {
         guard !isInstallingModel, !generating else { return }
+        guard !abandonedInstallAliases.contains(alias) else {
+            // A previous install of this alias was abandoned and its walk
+            // cannot be stopped, so it may still be writing that directory.
+            showToast(
+                "'\(alias)' has a download still running in the background from an earlier "
+                    + "attempt. Restart the app before installing it again.",
+                style: .warning, duration: 6.0)
+            return
+        }
+        installingAlias = alias
         installEpoch += 1
         let myEpoch = installEpoch
         isInstallingModel = true
@@ -39,14 +49,21 @@ extension AppModel {
                     }
                 }
             } catch is CancellationError {
-                self.installStageText = "Installation cancelled"
-                self.showToast("Installation cancelled", style: .warning)
+                // **THE EPOCH CHECK COMES FIRST.** It used to sit below these
+                // arms, so a cancelled install A whose delayed tail ran after
+                // install B had started overwrote B's live progress text with
+                // "Installation cancelled" and raised a toast about a
+                // download nobody was watching.
+                guard self.installEpoch == myEpoch else { return }
+                self.installStageText = "Stopped watching install"
             } catch {
+                guard self.installEpoch == myEpoch else { return }
                 self.error = error.localizedDescription
                 self.installStageText = nil
                 self.showToast("Installation failed: \(error.localizedDescription)", style: .error, duration: 5.0)
             }
             guard self.installEpoch == myEpoch else { return }
+            self.installingAlias = nil
             self.isInstallingModel = false
             self.installProgressFraction = nil
             self.installDownloadedBytes = nil
@@ -107,14 +124,21 @@ extension AppModel {
                     }
                 }
             } catch is CancellationError {
-                self.installStageText = "Installation cancelled"
-                self.showToast("Installation cancelled", style: .warning)
+                // **THE EPOCH CHECK COMES FIRST.** It used to sit below these
+                // arms, so a cancelled install A whose delayed tail ran after
+                // install B had started overwrote B's live progress text with
+                // "Installation cancelled" and raised a toast about a
+                // download nobody was watching.
+                guard self.installEpoch == myEpoch else { return }
+                self.installStageText = "Stopped watching install"
             } catch {
+                guard self.installEpoch == myEpoch else { return }
                 self.error = error.localizedDescription
                 self.installStageText = nil
                 self.showToast("Installation failed: \(error.localizedDescription)", style: .error, duration: 5.0)
             }
             guard self.installEpoch == myEpoch else { return }
+            self.installingAlias = nil
             self.isInstallingModel = false
             self.installProgressFraction = nil
             self.installDownloadedBytes = nil
@@ -124,21 +148,58 @@ extension AppModel {
         }
     }
 
-    /// Cancels any currently active model installation task.
+    /// Stops WATCHING an install. It does not stop the install.
+    ///
+    /// **THE ENGINE HAS NO INSTALL-CANCEL CALL, AND THE BINDING SAYS SO IN
+    /// SO MANY WORDS**: dropping the consumer ends DELIVERY, while
+    /// `ts_install` blocks its own thread and keeps streaming the checkpoint
+    /// to completion or failure with nobody listening
+    /// (`TurboSpark/Catalog.swift`: "do not build a Stop button on this").
+    /// This used to clear `isInstallingModel` synchronously, which reopened
+    /// `installModel`'s own guard -- so a second install could start and
+    /// write the same store the abandoned walk was still writing.
+    ///
+    /// Two things follow, and both are the honest version rather than the
+    /// convenient one. The alias stays in `abandonedInstallAliases`, so
+    /// re-installing THAT model is refused until the app restarts (two
+    /// writers on one install directory is the case that corrupts
+    /// something); a DIFFERENT model may still be installed, since the store
+    /// writes are per directory and `installed.json` is rewritten whole by
+    /// each on completion. And the message says what actually happens
+    /// instead of claiming a stop. Making Cancel real needs
+    /// `ts_install_cancel` on the Rust side, which does not exist.
     public func cancelInstall() {
         installTask?.cancel()
         installTask = nil
+        if let alias = installingAlias {
+            abandonedInstallAliases.insert(alias)
+        }
+        installingAlias = nil
         isInstallingModel = false
         installStageText = nil
         installProgressFraction = nil
         installDownloadedBytes = nil
         installTotalBytes = nil
         installETAText = nil
+        showToast(
+            "Stopped watching the download. It cannot be cancelled and keeps running in the "
+                + "background; this model cannot be re-installed until the app restarts.",
+            style: .warning, duration: 6.0)
         // Cancellation is cooperative: the cancelled Task keeps running
         // until its next suspension point notices, so its own tail can
         // still fire after this call returns. Bumping the epoch here too
         // (on top of each new install bumping it at its own start) means
         // that stale tail is a no-op even if nothing new has started yet.
         installEpoch += 1
+    }
+
+    /// Whether `alias` may be installed right now.
+    ///
+    /// False while any install is running, and false forever after this
+    /// alias's install was abandoned -- there is no way to learn that the
+    /// orphaned walk finished, so a second writer on the same directory is
+    /// refused rather than raced.
+    public func canInstall(alias: String) -> Bool {
+        !isInstallingModel && !generating && !abandonedInstallAliases.contains(alias)
     }
 }

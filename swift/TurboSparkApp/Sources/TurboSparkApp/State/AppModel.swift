@@ -330,6 +330,16 @@ public final class AppModel: ObservableObject {
     @Published public var installTotalBytes: UInt64? = nil
     /// Human-readable estimated time remaining for download.
     @Published public var installETAText: String? = nil
+    /// The alias currently installing, if any.
+    @Published public var installingAlias: String? = nil
+    /// Aliases whose install was abandoned by `cancelInstall()`.
+    ///
+    /// The engine exposes no install-cancel call, so dropping the consumer
+    /// ends DELIVERY while `ts_install` keeps streaming the checkpoint to
+    /// that directory. There is no way to learn when it finishes, so a
+    /// second install of the same alias is refused for the rest of the
+    /// process rather than raced against the first.
+    @Published public var abandonedInstallAliases: Set<String> = []
 
     var runTask: Task<Void, Never>?
     /// Work spawned OUTSIDE `runTask`: an approved or denied pending call,
@@ -339,6 +349,10 @@ public final class AppModel: ObservableObject {
     /// approval card.
     var toolExecutionTask: Task<Void, Never>?
     var installTask: Task<Void, Never>?
+    /// The off-main-actor scan of the LM Studio and custom model directories.
+    /// Cancelled and restarted per `refreshModels()`, which several views call
+    /// in quick succession.
+    var modelScanTask: Task<Void, Never>?
     var tokenEstimateTask: Task<Void, Never>?
     /// Pending debounced archive write; see `persistChatsDebounced()`.
     var chatPersistDebounceTask: Task<Void, Never>?

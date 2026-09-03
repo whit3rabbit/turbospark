@@ -185,3 +185,25 @@ public enum ModelStorageManager {
         NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: url.path)
     }
 }
+
+extension ModelStorageManager {
+    /// Scans the external model directories, off the main actor.
+    ///
+    /// `nonisolated` and taking plain values so `AppModel.refreshModels` can
+    /// hand it to a detached task: every walk here is recursive, and
+    /// `directorySize(at:)` is a second full walk per bundle found, so on a
+    /// large library this is hundreds of milliseconds to seconds of
+    /// filesystem work that used to run on the main actor at launch.
+    public static func scanExternal(
+        lmStudioPath: String?, customPaths: [String]
+    ) -> [(model: InstalledModel, sourceTag: String)] {
+        var results: [(model: InstalledModel, sourceTag: String)] = []
+        if let lmStudioPath {
+            results += scanModels(in: lmStudioPath, sourceTag: "LM Studio").map { ($0, "LM Studio") }
+        }
+        for dir in customPaths {
+            results += scanModels(in: dir, sourceTag: "Custom").map { ($0, "Custom") }
+        }
+        return results
+    }
+}

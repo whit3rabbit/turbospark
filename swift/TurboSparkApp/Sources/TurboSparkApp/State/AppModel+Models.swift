@@ -22,85 +22,135 @@ extension AppModel {
         return candidate
     }
 
+    /// Re-reads the installed-model list and re-scans the external
+    /// directories.
+    ///
+    /// **THE DIRECTORY WALKS RUN OFF THE MAIN ACTOR.** This is called from
+    /// `AppModel.init()`, and the LM Studio scan (on by default) plus every
+    /// custom folder is a recursive `FileManager.enumerator`, with
+    /// `directorySize(at:)` a SECOND full walk per bundle found. On a large
+    /// library, or one on an external drive, that beachballed every launch.
+    /// The catalog rows still land synchronously -- they are one small JSON
+    /// read, and every caller expects `installed` to be usable when this
+    /// returns -- and the scanned rows merge in when they arrive.
     public func refreshModels() {
         do {
-            var combinedInstalled = (try? TurboSparkCatalog.installed()) ?? []
-            var existingPaths = Set(combinedInstalled.map { URL(fileURLWithPath: $0.path).standardizedFileURL.path })
-            var existingAliases = Set(combinedInstalled.map { $0.alias })
-
-            // Scan LM Studio library if enabled
-            if enableLMStudioDetection {
-                let lmPath = lmStudioDirectory.isEmpty ? ModelStorageManager.defaultLMStudioModelsDirectory : lmStudioDirectory
-                let lmModels = ModelStorageManager.scanModels(in: lmPath, sourceTag: "LM Studio")
-                for m in lmModels {
-                    let stdPath = URL(fileURLWithPath: m.path).standardizedFileURL.path
-                    if !existingPaths.contains(stdPath) {
-                        existingPaths.insert(stdPath)
-                        // Make sure alias is unique
-                        var resolvedAlias = m.alias
-                        if existingAliases.contains(resolvedAlias) {
-                            resolvedAlias = uniqueAlias(base: m.alias, suffix: "LM Studio", existing: existingAliases)
-                        }
-                        existingAliases.insert(resolvedAlias)
-                        let adjustedModel = InstalledModel(
-                            alias: resolvedAlias,
-                            repo: m.repo,
-                            revision: m.revision,
-                            path: m.path,
-                            family: m.family,
-                            installBytes: m.installBytes,
-                            installedOn: m.installedOn
-                        )
-                        combinedInstalled.append(adjustedModel)
-                    }
-                }
+            // **`try?` HID THE ONE ERROR THAT CHANGES BEHAVIOUR.** A corrupt
+            // or unreadable `installed.json` presented as "no models
+            // installed", and `deleteModel` then told the user a file had
+            // been left on disk for a model this app did install.
+            var catalogRows: [InstalledModel] = []
+            do {
+                catalogRows = try TurboSparkCatalog.installed()
+            } catch {
+                self.error =
+                    "Could not read the installed-model list: \(error.localizedDescription). "
+                    + "Installed models may be missing from this list."
             }
 
-            // Scan any configured custom directories
-            for dir in customModelDirectories where !dir.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                let customModels = ModelStorageManager.scanModels(in: dir, sourceTag: "Custom")
-                for m in customModels {
-                    let stdPath = URL(fileURLWithPath: m.path).standardizedFileURL.path
-                    if !existingPaths.contains(stdPath) {
-                        existingPaths.insert(stdPath)
-                        var resolvedAlias = m.alias
-                        if existingAliases.contains(resolvedAlias) {
-                            resolvedAlias = uniqueAlias(base: m.alias, suffix: "Custom", existing: existingAliases)
-                        }
-                        existingAliases.insert(resolvedAlias)
-                        let adjustedModel = InstalledModel(
-                            alias: resolvedAlias,
-                            repo: m.repo,
-                            revision: m.revision,
-                            path: m.path,
-                            family: m.family,
-                            installBytes: m.installBytes,
-                            installedOn: m.installedOn
-                        )
-                        combinedInstalled.append(adjustedModel)
-                    }
-                }
-            }
-
-            installed = combinedInstalled
+            installed = catalogRows
             catalog = try TurboSparkCatalog.available()
             telemetry = TurboSparkSession.systemTelemetry
-            // Keyed on `path`, not `alias` (state#14/U5/U6): `InstalledModel.id`
-            // is the alias, and a scanned LM Studio/Custom row's alias is not
-            // guaranteed unique across sources the way the catalog's own is,
-            // so alias-based lookups can silently rebind to the WRONG row
-            // once two rows happen to share one. Path is the one field that
-            // actually identifies a single file on disk.
-            if let currentPath = selected?.path, !installed.contains(where: { $0.path == currentPath }) {
-                selected = installed.first
-            } else if selected == nil {
-                selected = installed.first
+            reconcileSelection()
+
+            let lmPath =
+                enableLMStudioDetection
+                ? (lmStudioDirectory.isEmpty
+                    ? ModelStorageManager.defaultLMStudioModelsDirectory : lmStudioDirectory)
+                : nil
+            let customDirs = customModelDirectories.filter {
+                !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             }
-            if let selected {
-                modelPathText = selected.path
+            guard lmPath != nil || !customDirs.isEmpty else { return }
+
+            modelScanTask?.cancel()
+            modelScanTask = Task {
+                let scanned = await Task.detached(priority: .utility) {
+                    ModelStorageManager.scanExternal(lmStudioPath: lmPath, customPaths: customDirs)
+                }.value
+                guard !Task.isCancelled else { return }
+                self.mergeScannedModels(scanned, into: catalogRows)
             }
         } catch {
             self.error = "\(error)"
+        }
+    }
+
+    /// Folds scanned rows into the catalog rows, de-duplicating by PATH and
+    /// uniquifying aliases (state#14: a scanned row's alias is not unique
+    /// across sources the way the catalog's own is).
+    private func mergeScannedModels(
+        _ scanned: [(model: InstalledModel, sourceTag: String)], into catalogRows: [InstalledModel]
+    ) {
+        var combined = catalogRows
+        var existingPaths = Set(
+            catalogRows.map { URL(fileURLWithPath: $0.path).standardizedFileURL.path })
+        var existingAliases = Set(catalogRows.map { $0.alias })
+
+        for entry in scanned {
+            let stdPath = URL(fileURLWithPath: entry.model.path).standardizedFileURL.path
+            guard !existingPaths.contains(stdPath) else { continue }
+            existingPaths.insert(stdPath)
+            var resolvedAlias = entry.model.alias
+            if existingAliases.contains(resolvedAlias) {
+                resolvedAlias = uniqueAlias(
+                    base: entry.model.alias, suffix: entry.sourceTag, existing: existingAliases)
+            }
+            existingAliases.insert(resolvedAlias)
+            combined.append(
+                InstalledModel(
+                    alias: resolvedAlias,
+                    repo: entry.model.repo,
+                    revision: entry.model.revision,
+                    path: entry.model.path,
+                    family: entry.model.family,
+                    installBytes: entry.model.installBytes,
+                    installedOn: entry.model.installedOn
+                ))
+        }
+        installed = combined
+        reconcileSelection()
+    }
+
+    /// Keeps `selected` pointing at a row that still exists.
+    ///
+    /// Keyed on `path`, not `alias` (state#14/U5/U6): `InstalledModel.id` is
+    /// the alias, and a scanned LM Studio/Custom row's alias is not
+    /// guaranteed unique across sources the way the catalog's own is, so
+    /// alias-based lookups can silently rebind to the WRONG row once two rows
+    /// happen to share one. Path is the one field that actually identifies a
+    /// single file on disk.
+    private func reconcileSelection() {
+        if let currentPath = selected?.path, !installed.contains(where: { $0.path == currentPath }) {
+            selected = installed.first
+        } else if selected == nil {
+            selected = installed.first
+        }
+        if let selected {
+            modelPathText = selected.path
+        }
+    }
+
+    /// Whether this app installed `model` itself, and may therefore delete
+    /// its bytes.
+    ///
+    /// **MATCHED ON PATH ALONE.** This used to be `entryPath == stdPath ||
+    /// entry.alias == model.alias`, so a SCANNED row (LM Studio, a custom
+    /// folder) whose alias happened to collide with a catalog install passed
+    /// -- and `TurboSparkCatalog.delete(model.alias)` then removed the
+    /// CATALOG's copy, at a different path, while the row the user clicked
+    /// stayed on disk. `refreshModels` de-duplicates by path and uniquifies
+    /// aliases only for the rows it merges IN, so a collision between a
+    /// scanned row and a catalog row is reachable. Path is the one field that
+    /// identifies a single thing on disk.
+    ///
+    /// A pure static so it can be tested against a fixture: the inline
+    /// version could only be exercised against whatever `installed.json`
+    /// happened to be on the machine.
+    static func isCatalogTracked(model: InstalledModel, in catalogRows: [InstalledModel]) -> Bool {
+        let stdPath = URL(fileURLWithPath: model.path).standardizedFileURL.path
+        return catalogRows.contains { entry in
+            URL(fileURLWithPath: entry.path).standardizedFileURL.path == stdPath
         }
     }
 
@@ -319,11 +369,19 @@ extension AppModel {
         // a directory it was pointed at -- the opposite of the "without
         // copying any bytes" promise that scan makes.
         let stdPath = URL(fileURLWithPath: model.path).standardizedFileURL.path
-        let catalogInstalled = (try? TurboSparkCatalog.installed()) ?? []
-        let isCatalogTracked = catalogInstalled.contains { entry in
-            let entryPath = URL(fileURLWithPath: entry.path).standardizedFileURL.path
-            return entryPath == stdPath || entry.alias == model.alias
+        let catalogInstalled: [InstalledModel]
+        do {
+            catalogInstalled = try TurboSparkCatalog.installed()
+        } catch {
+            // Refusing beats guessing: an unreadable list cannot distinguish
+            // "this app installed it" from "it was only scanned", and the two
+            // answers differ by whether bytes get removed.
+            self.error =
+                "Could not read the installed-model list, so '\(model.alias)' was not deleted: "
+                + error.localizedDescription
+            return
         }
+        let isCatalogTracked = Self.isCatalogTracked(model: model, in: catalogInstalled)
 
         guard isCatalogTracked else {
             ModelOrganizationStore.shared.removeMetadata(for: model.alias, path: model.path)
