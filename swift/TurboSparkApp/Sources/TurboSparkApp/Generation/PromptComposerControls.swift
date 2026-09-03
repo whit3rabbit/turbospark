@@ -1,7 +1,7 @@
 import SwiftUI
 import TurboSpark
 
-/// Segmented control switching between Chat and Projects modes right in the composer.
+/// Segmented control switching between Chat and Projects modes in the top window bar.
 struct PromptInteractionModeSegment: View {
     @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
@@ -15,16 +15,16 @@ struct PromptInteractionModeSegment: View {
                         model.setInteractionMode(mode)
                     }
                 } label: {
-                    HStack(spacing: 4) {
+                    HStack(spacing: 5) {
                         Image(systemName: mode.systemImage)
-                            .font(theme.ui(points: 11, weight: .semibold))
+                            .font(theme.ui(points: 10, weight: .semibold))
                         Text(mode.title)
                             .font(theme.ui(points: 12, weight: isSelected ? .semibold : .medium))
                             .lineLimit(1)
                             .fixedSize()
                     }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
                     .foregroundStyle(isSelected ? Color.primary : Color.secondary)
                     .background(
                         isSelected ? Color.primary.opacity(0.12) : Color.clear,
@@ -37,7 +37,7 @@ struct PromptInteractionModeSegment: View {
             }
         }
         .padding(2)
-        .background(Color.primary.opacity(0.04), in: Capsule())
+        .background(Color.primary.opacity(0.05), in: Capsule())
         .overlay(Capsule().stroke(TurboSparkTheme.hairlineColor, lineWidth: 0.5))
         .fixedSize()
         .help("Switch between conversational Chat mode and agentic Projects / Coding mode")
@@ -322,7 +322,7 @@ struct PromptAttachDocumentButton: View {
                 if isExtracting {
                     TaskProgressFlameIcon(size: 16)
                 } else {
-                    Label("Attach documents", systemImage: "paperclip")
+                    Label("Attach documents", systemImage: "plus")
                         .labelStyle(.iconOnly)
                 }
             }

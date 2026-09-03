@@ -80,7 +80,24 @@ public struct AppearancePreferencesCardView: View {
 
             Divider().padding(.leading, 16)
 
-            // 4. UI font size
+            // 4. Text size
+            preferenceRow(
+                title: "Text size",
+                description: "Scale interface, messages, and transcript text"
+            ) {
+                Picker("", selection: $manager.textSize) {
+                    ForEach(AppTextSize.allCases) { opt in
+                        Text(opt.label).tag(opt)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 220)
+                .labelsHidden()
+            }
+
+            Divider().padding(.leading, 16)
+
+            // 5. UI font size
             preferenceRow(
                 title: "UI font size",
                 description: "Adjust the base size used for the TurboSpark UI"

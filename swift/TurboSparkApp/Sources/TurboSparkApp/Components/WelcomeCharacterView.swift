@@ -47,11 +47,15 @@ public struct WelcomeHeroView: View {
             }
             .frame(maxWidth: 680)
 
-            samplePromptPills
+            if model.promptText.isEmpty {
+                samplePromptPills
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
         }
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 24)
         .padding(.vertical, 28)
+        .animation(.smooth(duration: 0.22), value: model.promptText.isEmpty)
     }
 
     private var greetingHeader: some View {

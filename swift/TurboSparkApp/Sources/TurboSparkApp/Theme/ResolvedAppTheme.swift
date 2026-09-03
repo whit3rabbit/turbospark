@@ -23,6 +23,7 @@ public struct ResolvedAppTheme: Equatable, Sendable {
     public var contrast: Double
     public var uiFontDescriptor: AppFontDescriptor
     public var codeFontDescriptor: AppFontDescriptor
+    public var textSize: AppTextSize
 
     public init(
         isDark: Bool,
@@ -31,7 +32,8 @@ public struct ResolvedAppTheme: Equatable, Sendable {
         foreground: Color,
         contrast: Double,
         uiFontDescriptor: AppFontDescriptor,
-        codeFontDescriptor: AppFontDescriptor
+        codeFontDescriptor: AppFontDescriptor,
+        textSize: AppTextSize = .standard
     ) {
         self.isDark = isDark
         self.accent = accent
@@ -40,6 +42,7 @@ public struct ResolvedAppTheme: Equatable, Sendable {
         self.contrast = contrast
         self.uiFontDescriptor = uiFontDescriptor
         self.codeFontDescriptor = codeFontDescriptor
+        self.textSize = textSize
     }
 
     public var uiFont: Font { uiFontDescriptor.font }
@@ -116,6 +119,9 @@ public extension ResolvedAppTheme {
             offered: AppFontCatalog.offeredCodeFamilies,
             installed: installedFamilies)
 
+        let uiSize = manager.textSize.scaled(CGFloat(manager.uiFontSize))
+        let codeSize = manager.textSize.scaled(CGFloat(manager.codeFontSize))
+
         return ResolvedAppTheme(
             isDark: isDark,
             accent: manager.activeAccentColor(isDark: isDark),
@@ -125,13 +131,14 @@ public extension ResolvedAppTheme {
             uiFontDescriptor: AppFontDescriptor(
                 family: uiFamily,
                 weight: .fromName(config.uiFontWeight),
-                size: CGFloat(manager.uiFontSize),
+                size: uiSize,
                 isCode: false),
             codeFontDescriptor: AppFontDescriptor(
                 family: codeFamily,
                 weight: .fromName(config.codeFontWeight),
-                size: CGFloat(manager.codeFontSize),
-                isCode: true))
+                size: codeSize,
+                isCode: true),
+            textSize: manager.textSize)
     }
 
     /// Convenience for the running app, which always wants the live font list.

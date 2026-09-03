@@ -213,6 +213,75 @@ final class AppearanceSettingsTests: XCTestCase {
         XCTAssertFalse(theme.uiFontDescriptor.isCode)
     }
 
+    func testAppTextSizeScaleAndStepProgression() {
+        let manager = AppearanceManager.shared
+        let savedSize = manager.textSize
+        defer { manager.textSize = savedSize }
+
+        manager.textSize = .standard
+        XCTAssertEqual(AppTextSize.standard.scale, 1.0)
+        XCTAssertEqual(AppTextSize.large.scale, 1.15)
+        XCTAssertEqual(AppTextSize.extraLarge.scale, 1.30)
+
+        manager.makeTextBigger()
+        XCTAssertEqual(manager.textSize, .large)
+
+        manager.makeTextBigger()
+        XCTAssertEqual(manager.textSize, .extraLarge)
+
+        manager.makeTextBigger()
+        XCTAssertEqual(manager.textSize, .extraLarge)
+
+        manager.makeTextSmaller()
+        XCTAssertEqual(manager.textSize, .large)
+
+        manager.makeTextSmaller()
+        XCTAssertEqual(manager.textSize, .standard)
+
+        manager.makeTextSmaller()
+        XCTAssertEqual(manager.textSize, .standard)
+
+        manager.textSize = .extraLarge
+        manager.resetTextSize()
+        XCTAssertEqual(manager.textSize, .standard)
+    }
+
+    func testResolvedThemeScalesWithAppTextSize() {
+        let manager = AppearanceManager.shared
+        let savedUI = manager.uiFontSize
+        let savedCode = manager.codeFontSize
+        let savedTextSize = manager.textSize
+        defer {
+            manager.uiFontSize = savedUI
+            manager.codeFontSize = savedCode
+            manager.textSize = savedTextSize
+        }
+
+        manager.uiFontSize = 14
+        manager.codeFontSize = 12
+
+        manager.textSize = .standard
+        let standardTheme = ResolvedAppTheme.resolve(
+            manager: manager, colorScheme: .light, installedFamilies: [])
+        XCTAssertEqual(standardTheme.uiFontDescriptor.size, 14)
+        XCTAssertEqual(standardTheme.codeFontDescriptor.size, 12)
+        XCTAssertEqual(standardTheme.textSize, .standard)
+
+        manager.textSize = .large
+        let largeTheme = ResolvedAppTheme.resolve(
+            manager: manager, colorScheme: .light, installedFamilies: [])
+        XCTAssertEqual(largeTheme.uiFontDescriptor.size, 16)
+        XCTAssertEqual(largeTheme.codeFontDescriptor.size, 14)
+        XCTAssertEqual(largeTheme.textSize, .large)
+
+        manager.textSize = .extraLarge
+        let extraLargeTheme = ResolvedAppTheme.resolve(
+            manager: manager, colorScheme: .light, installedFamilies: [])
+        XCTAssertEqual(extraLargeTheme.uiFontDescriptor.size, 18)
+        XCTAssertEqual(extraLargeTheme.codeFontDescriptor.size, 16)
+        XCTAssertEqual(extraLargeTheme.textSize, .extraLarge)
+    }
+
     // MARK: - Font catalog
 
     func testCatalogOffersOnlyFamiliesThatCanRender() {
@@ -389,5 +458,25 @@ final class AppearanceSettingsTests: XCTestCase {
         XCTAssertTrue(ui.contains("Inter"))
         XCTAssertTrue(code.contains("JetBrains Mono"))
         XCTAssertTrue(code.contains("Fira Code"))
+    }
+
+    func testColorContrastForeground() {
+        // Light accents (like Codex dark mode's #F3F4F6 or pure white) must resolve a dark foreground
+        let whiteColor = Color(hex: "#FFFFFF")!
+        XCTAssertTrue(whiteColor.isLight)
+        XCTAssertNotEqual(whiteColor.contrastForeground, Color.white)
+
+        let codexWhite = Color(hex: "#F3F4F6")!
+        XCTAssertTrue(codexWhite.isLight)
+        XCTAssertNotEqual(codexWhite.contrastForeground, Color.white)
+
+        // Dark accents (like Emerald #237D32, Blue #2563EB, Black #000000) must resolve white
+        let emeraldColor = Color(hex: "#237D32")!
+        XCTAssertFalse(emeraldColor.isLight)
+        XCTAssertEqual(emeraldColor.contrastForeground, Color.white)
+
+        let blackColor = Color(hex: "#000000")!
+        XCTAssertFalse(blackColor.isLight)
+        XCTAssertEqual(blackColor.contrastForeground, Color.white)
     }
 }

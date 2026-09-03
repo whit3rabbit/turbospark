@@ -34,10 +34,10 @@ struct PromptComposerView: View {
         }
         .padding(10)
         .background {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .fill(TurboSparkTheme.surfaceColor)
                 .overlay {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
                         .stroke(TurboSparkTheme.hairlineColor, lineWidth: 0.5)
                 }
         }

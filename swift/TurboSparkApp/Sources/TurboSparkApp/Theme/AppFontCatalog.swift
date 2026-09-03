@@ -37,7 +37,7 @@ public enum AppFontStep: Sendable {
 /// one. Its `FontFamily` / `FontSize` styles want the family name and the
 /// point size as separate values, so the transcript needs the parts even
 /// though every other surface only needs `font`.
-public struct AppFontDescriptor: Equatable, Sendable {
+public struct AppFontDescriptor: Equatable, Hashable, Sendable {
     /// Family name as the picker and `ThemeModeConfig` spell it, which is a
     /// catalog name ("JetBrains Mono") rather than a PostScript face name.
     public var family: String

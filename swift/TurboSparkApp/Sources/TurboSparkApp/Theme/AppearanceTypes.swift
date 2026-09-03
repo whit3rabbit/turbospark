@@ -359,28 +359,48 @@ public extension Color {
         self.init(.sRGB, red: r, green: g, blue: b, opacity: a)
     }
 
+    /// This color's components in sRGB space, or nil if it cannot be
+    /// represented there. Shared by `toHex` and `isLight` so the two can
+    /// only ever disagree on the math applied to the components, never on
+    /// how the color is read.
+    private var sRGBComponents: (r: CGFloat, g: CGFloat, b: CGFloat, a: CGFloat)? {
+        guard let components = NSColor(self).usingColorSpace(.sRGB) else {
+            return nil
+        }
+        return (components.redComponent, components.greenComponent, components.blueComponent, components.alphaComponent)
+    }
+
     /// Formats this color as a standard hexadecimal string.
     func toHex(includeAlpha: Bool = false) -> String {
-        guard let components = NSColor(self).usingColorSpace(.sRGB) else {
+        guard let c = sRGBComponents else {
             return "#000000"
         }
-        let r = Float(components.redComponent)
-        let g = Float(components.greenComponent)
-        let b = Float(components.blueComponent)
-        let a = Float(components.alphaComponent)
-
         if includeAlpha {
             return String(format: "#%02lX%02lX%02lX%02lX",
-                          lroundf(r * 255),
-                          lroundf(g * 255),
-                          lroundf(b * 255),
-                          lroundf(a * 255))
+                          lroundf(Float(c.r) * 255),
+                          lroundf(Float(c.g) * 255),
+                          lroundf(Float(c.b) * 255),
+                          lroundf(Float(c.a) * 255))
         } else {
             return String(format: "#%02lX%02lX%02lX",
-                          lroundf(r * 255),
-                          lroundf(g * 255),
-                          lroundf(b * 255))
+                          lroundf(Float(c.r) * 255),
+                          lroundf(Float(c.g) * 255),
+                          lroundf(Float(c.b) * 255))
         }
+    }
+
+    /// Whether this color has high perceived luminance in sRGB space.
+    var isLight: Bool {
+        guard let c = sRGBComponents else {
+            return false
+        }
+        let luminance = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
+        return luminance > 0.55
+    }
+
+    /// High-contrast foreground color suitable for rendering text and icons on top of this color.
+    var contrastForeground: Color {
+        isLight ? Color(red: 0.08, green: 0.08, blue: 0.09) : Color.white
     }
 }
 

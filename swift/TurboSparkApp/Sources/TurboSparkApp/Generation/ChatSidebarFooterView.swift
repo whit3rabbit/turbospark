@@ -4,9 +4,8 @@ import SwiftUI
 /// Footer component for the chat sidebar showing chat count and quick appearance picker.
 struct ChatSidebarFooterView: View {
     @Environment(\.appTheme) private var theme
+    @ObservedObject private var appearanceManager = AppearanceManager.shared
     let chatCount: Int
-    @Binding var appearanceRawValue: String
-    @Binding var textSizeRawValue: String
     @Binding var languageRawValue: String
 
     @ScaledMetric private var actionButtonSize: CGFloat = 26
@@ -28,21 +27,21 @@ struct ChatSidebarFooterView: View {
     }
 
     private var appearanceMenu: some View {
-        let appearance = AppAppearance.resolve(appearanceRawValue)
+        let appearance = appearanceManager.appearance
         return Menu {
-            Picker("Appearance", selection: $appearanceRawValue) {
+            Picker("Appearance", selection: $appearanceManager.appearance) {
                 ForEach(AppAppearance.allCases) { option in
                     Label(option.label, systemImage: option.systemImage)
-                        .tag(option.rawValue)
+                        .tag(option)
                 }
             }
 
             Divider()
 
-            Picker("Text Size", selection: $textSizeRawValue) {
+            Picker("Text Size", selection: $appearanceManager.textSize) {
                 ForEach(AppTextSize.allCases) { size in
                     Text(size.label)
-                        .tag(size.rawValue)
+                        .tag(size)
                 }
             }
 

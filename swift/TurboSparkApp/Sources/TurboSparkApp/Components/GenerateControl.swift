@@ -7,7 +7,7 @@ import SwiftUI
 struct GenerateControl: View {
     @ObservedObject var model: AppModel
     @ScaledMetric private var controlHeight: CGFloat = 34
-    @ScaledMetric private var generateMinWidth: CGFloat = 124
+    @ScaledMetric private var circularButtonSize: CGFloat = 30
     @ScaledMetric private var pillMinWidth: CGFloat = 140
     @ScaledMetric private var stopIconSize: CGFloat = 28
 
@@ -20,29 +20,33 @@ struct GenerateControl: View {
     }
 
     private var generateButton: some View {
-        Button {
+        let fgColor = model.canRun ? TurboSparkTheme.accentColor.contrastForeground : Color.secondary.opacity(0.6)
+        return Button {
             model.run()
         } label: {
-            Label("Generate", systemImage: "arrow.up")
-                .font(.callout.weight(.semibold))
-                .padding(.horizontal, 24)
-                .frame(minWidth: generateMinWidth, minHeight: controlHeight)
-                .contentShape(Capsule())
+            Image(systemName: "arrow.up")
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(fgColor)
+                .frame(width: circularButtonSize, height: circularButtonSize)
+                .background(
+                    Circle()
+                        .fill(model.canRun ? TurboSparkTheme.accentColor : Color.primary.opacity(0.08))
+                )
+                .overlay {
+                    Circle().stroke(model.canRun ? TurboSparkTheme.accentColor.contrastForeground.opacity(0.16) : Color.primary.opacity(0.06), lineWidth: 0.5)
+                }
+                .contentShape(Circle())
         }
         .buttonStyle(.plain)
-        .foregroundStyle(.white)
-        .background(TurboSparkTheme.accentColor, in: .capsule)
-        .overlay {
-            Capsule().stroke(.white.opacity(0.16), lineWidth: 0.5)
-        }
         .keyboardShortcut(.return, modifiers: .command)
         .disabled(!model.canRun)
-        .opacity(model.canRun ? 1 : 0.62)
         .help(model.canRun ? "Generate (Cmd+Return)" : "Generate (disabled)")
+        .accessibilityLabel("Generate")
     }
 
     private var runningPill: some View {
-        Button {
+        let contrastFg = TurboSparkTheme.accentColor.contrastForeground
+        return Button {
             model.cancel()
         } label: {
             HStack(spacing: 8) {
@@ -59,23 +63,27 @@ struct GenerateControl: View {
                         .font(.callout.weight(.semibold))
                         .monospacedDigit()
                 }
-                Label("Stop generation", systemImage: "stop.fill")
-                    .labelStyle(.iconOnly)
-                    .font(.callout)
-                    .frame(width: stopIconSize, height: stopIconSize)
-                    .accessibilityHidden(true)
+                ZStack {
+                    Circle()
+                        .fill(contrastFg.opacity(0.16))
+                        .frame(width: 22, height: 22)
+                    Image(systemName: "stop.fill")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(contrastFg)
+                }
+                .accessibilityHidden(true)
             }
             .padding(.leading, 14)
-            .padding(.trailing, 4)
+            .padding(.trailing, 6)
             .frame(minWidth: pillMinWidth, minHeight: controlHeight)
             .contentShape(Capsule())
         }
 
         .buttonStyle(.plain)
-        .foregroundStyle(.white)
+        .foregroundStyle(contrastFg)
         .background(TurboSparkTheme.accentColor, in: .capsule)
         .overlay {
-            Capsule().stroke(.white.opacity(0.16), lineWidth: 0.5)
+            Capsule().stroke(contrastFg.opacity(0.16), lineWidth: 0.5)
         }
         .keyboardShortcut(".", modifiers: .command)
         .disabled(!model.canCancel)

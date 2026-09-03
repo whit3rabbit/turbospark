@@ -142,7 +142,8 @@ extension AppModel {
         if skillStateEnabled {
             rawHistory = buildSkillStateHistory(chatIndex: chatIndex)
         } else {
-            let systemContent = buildSystemPrompt(for: selectedProject)
+            let activeProject = interactionMode == .projects ? selectedProject : nil
+            let systemContent = buildSystemPrompt(for: activeProject)
             if !systemContent.isEmpty {
                 rawHistory.append(ChatMessage(role: .system, content: systemContent))
             }

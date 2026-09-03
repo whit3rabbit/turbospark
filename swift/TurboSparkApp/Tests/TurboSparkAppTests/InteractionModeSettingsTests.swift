@@ -63,4 +63,17 @@ final class InteractionModeSettingsTests: XCTestCase {
         let third = AppModel()
         XCTAssertEqual(third.interactionMode, .chat)
     }
+
+    @MainActor
+    func testProjectlessChatBuildsEmptySystemPrompt() {
+        let model = AppModel()
+        // In Chat mode with no project, system prompt must be empty to avoid 7k token injection
+        XCTAssertEqual(model.buildSystemPrompt(for: nil), "")
+
+        // When a project is provided, it must still produce the project environment and instructions
+        let project = AppProject(name: "Demo", rootDirectoryPath: "/tmp/demo", customInstructions: "Custom")
+        let prompt = model.buildSystemPrompt(for: project)
+        XCTAssertFalse(prompt.isEmpty)
+        XCTAssertTrue(prompt.contains("Demo") || prompt.contains("/tmp/demo") || prompt.contains("Custom"))
+    }
 }

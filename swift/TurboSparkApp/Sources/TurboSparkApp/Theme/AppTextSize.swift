@@ -20,6 +20,23 @@ public enum AppTextSize: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
+    /// Linear font scale factor applied to base point sizes.
+    public var scale: CGFloat {
+        switch self {
+        case .standard: return 1.0
+        case .large: return 1.15
+        case .extraLarge: return 1.30
+        }
+    }
+
+    /// Applies `scale` to a base point size and rounds to a whole point,
+    /// the one formula every font-size call site should share so a future
+    /// change to the rounding or scaling rule needs one edit rather than
+    /// hunting down each inlined copy.
+    public func scaled(_ basePointSize: CGFloat) -> CGFloat {
+        (basePointSize * scale).rounded()
+    }
+
     /// Corresponding SwiftUI DynamicTypeSize applied to the environment.
     public var dynamicTypeSize: DynamicTypeSize {
         switch self {

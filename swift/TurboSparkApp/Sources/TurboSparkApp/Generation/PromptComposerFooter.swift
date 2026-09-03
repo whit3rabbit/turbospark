@@ -32,7 +32,6 @@ struct PromptComposerFooter: View {
 
     private var leading: some View {
         FlowLayout(spacing: 6, lineSpacing: 6) {
-            PromptInteractionModeSegment(model: model)
             PromptAttachDocumentButton(
                 iconButtonSize: iconButtonSize,
                 isRunning: model.isRunning,

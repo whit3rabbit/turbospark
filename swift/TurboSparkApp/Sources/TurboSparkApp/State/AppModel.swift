@@ -321,6 +321,8 @@ public final class AppModel: ObservableObject {
     var tokenEstimateTask: Task<Void, Never>?
     /// Pending debounced archive write; see `persistChatsDebounced()`.
     var chatPersistDebounceTask: Task<Void, Never>?
+    /// Pending debounced settings write; see `persistSettingsDebounced()`.
+    var settingsPersistDebounceTask: Task<Void, Never>?
     var decodeStartTime: Date?
 
     /// Bumped once per `executeGenerationTurn` call. A turn's own

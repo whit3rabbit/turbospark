@@ -5,8 +5,6 @@ public struct AppSettingsView: View {
     @ObservedObject var model: AppModel
     @ObservedObject private var appearanceManager = AppearanceManager.shared
 
-    @AppStorage(AppTextSize.storageKey)
-    private var textSizeRawValue = AppTextSize.standard.rawValue
     @AppStorage(AppLanguage.storageKey)
     private var languageRawValue = AppLanguage.system.rawValue
 
@@ -116,7 +114,7 @@ public struct AppSettingsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     sidebarCategory(title: "Personal", tabs: [.general, .appearance, .shortcuts, .permissions])
-                    sidebarCategory(title: "Engine & Coding", tabs: [.models, .engine, .mcp, .hooks])
+                    sidebarCategory(title: "Engine & Coding", tabs: [.models, .engine, .mcp, .skills, .agents, .hooks])
                 }
                 .padding(.horizontal, 8)
                 .padding(.bottom, 12)
@@ -236,9 +234,9 @@ public struct AppSettingsView: View {
             }
 
             Section("Text Size & Readability") {
-                Picker("Text Readability", selection: $textSizeRawValue) {
+                Picker("Text Readability", selection: $appearanceManager.textSize) {
                     ForEach(AppTextSize.allCases) { size in
-                        Text(size.label).tag(size.rawValue)
+                        Text(size.label).tag(size)
                     }
                 }
                 .pickerStyle(.segmented)
@@ -253,9 +251,16 @@ public struct AppSettingsView: View {
             Section("Navigation & View") {
                 shortcutRow(label: "Chat", shortcut: "⌘ 1")
                 shortcutRow(label: "Files", shortcut: "⌘ 2")
-                shortcutRow(label: "Models", shortcut: "⌘ 3")
+                shortcutRow(label: "Installed Models", shortcut: "⌘ 3")
+                shortcutRow(label: "Discover Models", shortcut: "⌘ 4")
                 shortcutRow(label: "Toggle Chat Sidebar", shortcut: "⌃ ⌘ S")
                 shortcutRow(label: "Toggle Inspector", shortcut: "⇧ ⌘ I")
+            }
+
+            Section("Text Size & Zoom") {
+                shortcutRow(label: "Make Text Bigger", shortcut: "⌘ +")
+                shortcutRow(label: "Make Text Smaller", shortcut: "⌘ -")
+                shortcutRow(label: "Default Text Size", shortcut: "⌘ 0")
             }
 
             Section("Chat & Generation") {
@@ -297,6 +302,9 @@ public struct AppSettingsView: View {
                     Spacer()
                     Slider(value: $model.temperature, in: 0.0...1.5, step: 0.05)
                         .frame(width: 160)
+                        .onChange(of: model.temperature) { _, _ in
+                            model.persistSettingsDebounced()
+                        }
                     Text(String(format: "%.2f", model.temperature))
                         .monospacedDigit()
                         .frame(width: 40, alignment: .trailing)
@@ -307,9 +315,15 @@ public struct AppSettingsView: View {
                     Spacer()
                     Toggle("", isOn: $model.topPEnabled)
                         .labelsHidden()
+                        .onChange(of: model.topPEnabled) { _, _ in
+                            model.persistSettingsDebounced()
+                        }
                     Slider(value: $model.topP, in: 0.1...1.0, step: 0.05)
                         .frame(width: 160)
                         .disabled(!model.topPEnabled)
+                        .onChange(of: model.topP) { _, _ in
+                            model.persistSettingsDebounced()
+                        }
                     Text(String(format: "%.2f", model.topP))
                         .monospacedDigit()
                         .frame(width: 40, alignment: .trailing)
@@ -359,6 +373,22 @@ public struct AppSettingsView: View {
                 Picker("Speculation Mode", selection: $model.runtimeOptions.speculation) {
                     ForEach(AppSpeculationOption.allCases) { opt in
                         Text(opt.menuLabel).tag(opt)
+                    }
+                }
+                .pickerStyle(.menu)
+                .onChange(of: model.runtimeOptions.speculation) { _, _ in
+                    model.persistSettingsDebounced()
+                }
+
+                if model.runtimeOptions.speculation != .off {
+                    Picker("Speculative Drafter", selection: $model.runtimeOptions.speculativeDrafter) {
+                        ForEach(AppSpeculativeDrafterOption.allCases) { drafter in
+                            Text(drafter.menuLabel).tag(drafter)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .onChange(of: model.runtimeOptions.speculativeDrafter) { _, _ in
+                        model.persistSettingsDebounced()
                     }
                 }
             }

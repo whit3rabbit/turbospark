@@ -27,7 +27,7 @@ public struct ThemeCodePreviewView: View {
         // cards are drawn side by side, so resolving the font from the ambient
         // appearance made both previews show whichever config happened to be
         // active -- the one place the difference is meant to be visible.
-        manager.codeFont(isDark: isDark, size: CGFloat(manager.codeFontSize))
+        manager.codeFont(isDark: isDark)
     }
 
     private var bgFillColor: Color {

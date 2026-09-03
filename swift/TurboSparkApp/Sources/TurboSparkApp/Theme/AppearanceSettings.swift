@@ -11,6 +11,7 @@ public final class AppearanceManager: ObservableObject {
 
     // Keys
     private static let keyAppearance = "TurboSpark.appearance"
+    private static let keyTextSize = AppTextSize.storageKey
     private static let keyLightConfig = "TurboSpark.theme.lightConfig"
     private static let keyDarkConfig = "TurboSpark.theme.darkConfig"
     private static let keyUsePointerCursors = "TurboSpark.prefs.usePointerCursors"
@@ -24,6 +25,11 @@ public final class AppearanceManager: ObservableObject {
     /// Resolved app appearance mode (system, light, dark).
     @Published public var appearance: AppAppearance {
         didSet { defaults.set(appearance.rawValue, forKey: Self.keyAppearance) }
+    }
+
+    /// User interface text scaling level (Default, Large, Extra Large).
+    @Published public var textSize: AppTextSize {
+        didSet { defaults.set(textSize.rawValue, forKey: Self.keyTextSize) }
     }
 
     /// Theme styling configuration used when light mode is active.
@@ -77,6 +83,9 @@ public final class AppearanceManager: ObservableObject {
     public init() {
         let appStr = defaults.string(forKey: Self.keyAppearance) ?? AppAppearance.system.rawValue
         self.appearance = AppAppearance.resolve(appStr)
+
+        let textStr = defaults.string(forKey: Self.keyTextSize) ?? AppTextSize.standard.rawValue
+        self.textSize = AppTextSize.resolve(textStr)
 
         if let data = defaults.data(forKey: Self.keyLightConfig),
            let config = try? JSONDecoder().decode(ThemeModeConfig.self, from: data) {
@@ -161,6 +170,29 @@ public final class AppearanceManager: ObservableObject {
         return Color(hex: hex) ?? (isDark ? Color.white : Color.primary)
     }
 
+    /// Steps the interface text size larger, up to Extra Large.
+    public func makeTextBigger() {
+        switch textSize {
+        case .standard: textSize = .large
+        case .large: textSize = .extraLarge
+        case .extraLarge: break
+        }
+    }
+
+    /// Steps the interface text size smaller, down to Default.
+    public func makeTextSmaller() {
+        switch textSize {
+        case .extraLarge: textSize = .large
+        case .large: textSize = .standard
+        case .standard: break
+        }
+    }
+
+    /// Resets the interface text size to Default.
+    public func resetTextSize() {
+        textSize = .standard
+    }
+
     /// Builds the code-font descriptor for a mode.
     ///
     /// `isDark` is a PARAMETER. This used to read
@@ -174,20 +206,22 @@ public final class AppearanceManager: ObservableObject {
     /// face instead of being synthesized off Regular.
     public func codeFontDescriptor(isDark: Bool, size: CGFloat? = nil, weight: Font.Weight? = nil) -> AppFontDescriptor {
         let config = activeConfig(isDark: isDark)
+        let resolvedSize = size ?? textSize.scaled(CGFloat(codeFontSize))
         return AppFontDescriptor(
             family: config.codeFontFamily,
             weight: weight ?? Font.Weight.fromName(config.codeFontWeight),
-            size: size ?? CGFloat(codeFontSize),
+            size: resolvedSize,
             isCode: true)
     }
 
     /// Builds the UI-font descriptor for a mode. See `codeFontDescriptor`.
     public func uiFontDescriptor(isDark: Bool, size: CGFloat? = nil, weight: Font.Weight? = nil) -> AppFontDescriptor {
         let config = activeConfig(isDark: isDark)
+        let resolvedSize = size ?? textSize.scaled(CGFloat(uiFontSize))
         return AppFontDescriptor(
             family: config.uiFontFamily,
             weight: weight ?? Font.Weight.fromName(config.uiFontWeight),
-            size: size ?? CGFloat(uiFontSize),
+            size: resolvedSize,
             isCode: false)
     }
 

@@ -254,15 +254,15 @@ private struct ActiveStreamingRowView: View {
             if isRunning && output.isEmpty && reasoning.isEmpty {
                 HStack(spacing: 8) {
                     TaskProgressFlameIcon(size: 16)
-                    Text("Thinking...")
+                    Text(waitingStatusText)
                         .font(.callout)
                         .foregroundStyle(theme.metadataForeground)
                 }
                 .padding(.vertical, 8)
-                // Combine the spinner and "Thinking..." into one announcement.
+                // Combine the spinner and status into one announcement.
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel("Thinking")
-                .accessibilityHint("The model is reasoning before producing a response")
+                .accessibilityLabel(model.reasoning != .off ? "Thinking" : "Generating response")
+                .accessibilityHint(model.reasoning != .off ? "The model is reasoning before producing a response" : "The model is preparing a response")
             } else {
                 if !reasoning.isEmpty {
                     ReasoningDisclosureView(reasoning: reasoning, defaultExpanded: true)
@@ -278,6 +278,18 @@ private struct ActiveStreamingRowView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Copy shown while nothing has streamed yet: which of the three waiting
+    /// states (prefilling, reasoning, or plain decode) the turn is in.
+    private var waitingStatusText: String {
+        if model.phase == .prefill {
+            "Reading prompt..."
+        } else if model.reasoning != .off {
+            "Thinking..."
+        } else {
+            "Generating response..."
+        }
     }
 }
 

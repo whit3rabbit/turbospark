@@ -23,11 +23,28 @@ struct TopBarView: View {
         // and a trailing-pinned toggle would make the loader itself slide
         // sideways each time it did.
         HStack(spacing: 8) {
-            sidebarToggle
-            GenerationPhaseIndicator(model: model)
-            Spacer(minLength: 8)
-            ModelLoaderControl(model: model)
-            inspectorToggle
+            HStack(spacing: 8) {
+                sidebarToggle
+                GenerationPhaseIndicator(model: model)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            HStack(spacing: 8) {
+                ModelLoaderControl(model: model)
+                inspectorToggle
+            }
+            .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+        // Overlaid rather than a third HStack member: the mode segment only
+        // appears for the Chat section, and a THIRD flow element would
+        // change how much width the flexible leading/trailing groups above
+        // get on every section switch, sliding the sidebar toggle and the
+        // model loader sideways -- the exact hazard the top bar's
+        // left/right split exists to avoid.
+        .overlay {
+            if model.activeSection == .chat {
+                PromptInteractionModeSegment(model: model)
+            }
         }
         .padding(.leading, AppChromeLayout.trafficLightClearance)
         .padding(.trailing, 10)

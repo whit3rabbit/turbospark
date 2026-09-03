@@ -4,10 +4,6 @@ import SwiftUI
 struct ChatSidebarView: View {
     @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
-    @AppStorage(AppAppearance.storageKey)
-    private var appearanceRawValue = AppAppearance.system.rawValue
-    @AppStorage(AppTextSize.storageKey)
-    private var textSizeRawValue = AppTextSize.standard.rawValue
     @AppStorage(AppLanguage.storageKey)
     private var languageRawValue = AppLanguage.system.rawValue
 
@@ -37,8 +33,6 @@ struct ChatSidebarView: View {
             Divider()
             ChatSidebarFooterView(
                 chatCount: historyChats.count,
-                appearanceRawValue: $appearanceRawValue,
-                textSizeRawValue: $textSizeRawValue,
                 languageRawValue: $languageRawValue
             )
         }

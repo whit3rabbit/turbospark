@@ -48,8 +48,23 @@ extension AppModel {
         CommandGate.vetoEnabled = settings.commandAdvisoryVeto
     }
 
+    /// Persists after a short quiet period, collapsing a burst of mutations
+    /// (a slider drag firing on every intermediate value) into one write.
+    /// See `persistChatsDebounced()`, the same pattern for the chat archive.
+    public func persistSettingsDebounced() {
+        settingsPersistDebounceTask?.cancel()
+        settingsPersistDebounceTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            guard !Task.isCancelled, let self else { return }
+            self.settingsPersistDebounceTask = nil
+            self.persistSettings()
+        }
+    }
+
     /// Persists current runtime options, steering parameters, and directory paths to disk.
     public func persistSettings() {
+        settingsPersistDebounceTask?.cancel()
+        settingsPersistDebounceTask = nil
         let settings = MacAppSettings(
             contextTokens: maxContextTokens,
             expertCacheSlots: runtimeOptions.expertCacheSlots,

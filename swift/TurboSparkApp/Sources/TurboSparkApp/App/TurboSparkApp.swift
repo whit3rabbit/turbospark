@@ -21,8 +21,6 @@ struct TurboSparkApp: App {
     @NSApplicationDelegateAdaptor private var appDelegate: ForegroundAppDelegate
     @StateObject private var model = AppModel()
     @ObservedObject private var appearanceManager = AppearanceManager.shared
-    @AppStorage(AppTextSize.storageKey)
-    private var textSizeRawValue = AppTextSize.standard.rawValue
     @AppStorage(AppLanguage.storageKey)
     private var languageRawValue = AppLanguage.system.rawValue
 
@@ -31,7 +29,7 @@ struct TurboSparkApp: App {
         Window("TurboSpark", id: "main") {
             RootView(model: model)
                 .preferredColorScheme(appearanceManager.appearance.preferredColorScheme)
-                .dynamicTypeSize(AppTextSize.resolve(textSizeRawValue).dynamicTypeSize)
+                .dynamicTypeSize(appearanceManager.textSize.dynamicTypeSize)
                 .environment(\.locale, currentLanguage.locale)
                 .environment(\.layoutDirection, currentLanguage.layoutDirection)
         }
@@ -84,25 +82,17 @@ struct TurboSparkApp: App {
                 Divider()
 
                 Button("Make Text Bigger") {
-                    if textSizeRawValue == AppTextSize.standard.rawValue {
-                        textSizeRawValue = AppTextSize.large.rawValue
-                    } else if textSizeRawValue == AppTextSize.large.rawValue {
-                        textSizeRawValue = AppTextSize.extraLarge.rawValue
-                    }
+                    appearanceManager.makeTextBigger()
                 }
                 .keyboardShortcut("+", modifiers: .command)
 
                 Button("Make Text Smaller") {
-                    if textSizeRawValue == AppTextSize.extraLarge.rawValue {
-                        textSizeRawValue = AppTextSize.large.rawValue
-                    } else if textSizeRawValue == AppTextSize.large.rawValue {
-                        textSizeRawValue = AppTextSize.standard.rawValue
-                    }
+                    appearanceManager.makeTextSmaller()
                 }
                 .keyboardShortcut("-", modifiers: .command)
 
                 Button("Default Text Size") {
-                    textSizeRawValue = AppTextSize.standard.rawValue
+                    appearanceManager.resetTextSize()
                 }
                 .keyboardShortcut("0", modifiers: .command)
             }
@@ -173,10 +163,10 @@ struct TurboSparkApp: App {
 
                 Divider()
 
-                Picker("Text Size", selection: $textSizeRawValue) {
+                Picker("Text Size", selection: $appearanceManager.textSize) {
                     ForEach(AppTextSize.allCases) { size in
                         Text(size.label)
-                            .tag(size.rawValue)
+                            .tag(size)
                     }
                 }
 
@@ -199,7 +189,7 @@ struct TurboSparkApp: App {
             AppSettingsView(model: model)
                 .appThemed()
                 .preferredColorScheme(appearanceManager.appearance.preferredColorScheme)
-                .dynamicTypeSize(AppTextSize.resolve(textSizeRawValue).dynamicTypeSize)
+                .dynamicTypeSize(appearanceManager.textSize.dynamicTypeSize)
                 .environment(\.locale, currentLanguage.locale)
                 .environment(\.layoutDirection, currentLanguage.layoutDirection)
         }

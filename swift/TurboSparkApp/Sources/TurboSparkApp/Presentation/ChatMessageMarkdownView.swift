@@ -14,6 +14,7 @@ public struct ChatMessageMarkdownView: View {
     public var body: some View {
         Markdown(text)
             .markdownTheme(.turboSpark(ui: theme.uiFontDescriptor, code: theme.codeFontDescriptor))
+            .id(theme.uiFontDescriptor)
             .foregroundStyle(theme.foreground)
             .textSelection(.enabled)
     }

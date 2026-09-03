@@ -19,11 +19,19 @@ struct PromptComposerEditor: View {
 
     @ScaledMetric private var editorMinHeight: CGFloat = 34
     @ScaledMetric private var editorMaxHeight: CGFloat = 200
+    @ScaledMetric private var expandedMaxHeight: CGFloat = 420
     @State private var measuredTextHeight: CGFloat = 0
+    @State private var isExpanded: Bool = false
+
+    private var currentMaxHeight: CGFloat {
+        isExpanded ? expandedMaxHeight : editorMaxHeight
+    }
 
     var body: some View {
         Color.clear
-            .frame(height: min(max(measuredTextHeight, editorMinHeight), editorMaxHeight))
+            .frame(height: min(max(measuredTextHeight, editorMinHeight), currentMaxHeight))
+            .animation(.smooth(duration: 0.15), value: measuredTextHeight)
+            .animation(.smooth(duration: 0.2), value: isExpanded)
             .background(alignment: .topLeading) {
                 Text(model.promptText.isEmpty ? " " : model.promptText)
                     .font(theme.uiFont)
@@ -43,6 +51,15 @@ struct PromptComposerEditor: View {
             }
             .onPreferenceChange(PromptTextHeightKey.self) { height in
                 measuredTextHeight = height
+            }
+            .onChange(of: model.promptText) { _, newValue in
+                // A sent (or cleared) prompt starts the next message fresh --
+                // an expand toggled for one long message must not carry its
+                // taller ceiling and "collapse" affordance into an unrelated
+                // new one.
+                if newValue.isEmpty {
+                    isExpanded = false
+                }
             }
             .overlay(alignment: .topLeading) {
                 TextEditor(text: $model.promptText)
@@ -83,6 +100,27 @@ struct PromptComposerEditor: View {
                         }
                         return .ignored
                     }
+            }
+            .overlay(alignment: .topTrailing) {
+                if measuredTextHeight > editorMinHeight + 6 || isExpanded {
+                    Button {
+                        withAnimation(.smooth(duration: 0.2)) {
+                            isExpanded.toggle()
+                        }
+                    } label: {
+                        Image(systemName: isExpanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(.tertiary)
+                            .padding(4)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, 2)
+                    .padding(.trailing, 2)
+                    .help(isExpanded ? "Collapse editor" : "Expand editor")
+                    .accessibilityLabel(isExpanded ? "Collapse editor" : "Expand editor")
+                    .transition(.opacity)
+                }
             }
     }
 }
