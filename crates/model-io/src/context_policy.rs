@@ -491,6 +491,24 @@ pub fn resolve_max_context(
 /// decided whether the window fits, so the only safe assumption is that
 /// `Auto` climbs as far as it can.
 ///
+/// **`qwen4_exp`'s n-gram table is deliberately NOT added here, and the
+/// reasoning is `crates/bench/CLAUDE.md` Gotcha 1's own finding applied to a
+/// second buffer.** That gotcha measured that a clean file-backed `mmap`
+/// costs `phys_footprint` nothing until wrapped in a Metal buffer via
+/// `newBufferWithBytesNoCopy` -- the resident weight mapping counts because
+/// `ResidentGpuWeights::wrap` does exactly that, not because mapping alone
+/// pins pages. The n-gram table (`RealQwen4State::ngram_table`,
+/// `families/qwen4/state.rs`) is a SEPARATE `model_io::ResidentBuffer` that
+/// `families/qwen4/ple.rs` reads only through `.data()` -- sixteen host-side
+/// slices per token, dequantized on the CPU -- and is never wrapped as a GPU
+/// buffer anywhere in the flow. So by the same mechanism Gotcha 1 measured,
+/// its ~32 GiB `mmap` should cost nothing until a row is actually touched,
+/// and even then only the touched pages. REASONED rather than measured: this
+/// port has no real `qwen4_exp` install yet (Phase 5), so nobody has watched
+/// `phys_footprint` under a real decode loop touching real rows. Re-verify
+/// once one exists, the same way Gotcha 1's own table was built -- against a
+/// real install, not against this comment.
+///
 /// **The one function in this module that touches the filesystem.** It reads
 /// the INSTALL rather than the machine, and its result is a parameter to
 /// [`resolve_max_context`], so every case in this module's tests is still a

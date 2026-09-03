@@ -156,7 +156,7 @@ pub const OPTIONS: &[OptionDecl] = &[
         takes_value: true,
         is_required: false,
         is_mode_selecting: false,
-        usage_hint: "routed-cache slot count, allowed 8/16/24/32, or auto (default auto, which never resolves below 16)",
+        usage_hint: "routed-cache slot count, allowed 8/16/24/32/48/64/96/128, or auto (default auto, which never resolves below 16)",
     },
     OptionDecl {
         flag: "--speculative",

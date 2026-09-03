@@ -140,6 +140,7 @@ impl RealQwen4State {
         arch: &ArchConfig,
         install_dir: &Path,
         max_context: usize,
+        expert_cache_slots: usize,
     ) -> Result<Self, RealForwardError> {
         let unsupported = |detail: String| Err(RealForwardError::Unsupported(detail));
 
@@ -182,6 +183,27 @@ impl RealQwen4State {
                 "top_k {} exceeds the {}-slot MoE kernels",
                 arch.top_k_experts,
                 gpu::MAX_STREAMED_EXPERTS
+            ));
+        }
+        // ONE TOKEN'S TOP-K MUST FIT THE CACHE OUTRIGHT, independent of
+        // AGENTS.md Gotcha 64's `2 * top_k` pipelining margin: that margin
+        // protects a PREVIOUS token's still-in-flight slots from an
+        // overlapping plan, which only exists on a CHUNKED prefill driver.
+        // This flow has none (`mod.rs`'s own doc: chunked prefill is
+        // refused by name), so `moe::encode_moe_layer` always plans with an
+        // empty `protect` set and the only hard requirement is that
+        // `top_k_experts` distinct experts fit `expert_cache_slots` slots at
+        // all -- below that, `ExpertCache::plan` cannot select this layer's
+        // routing regardless of pipelining and aborts the process rather
+        // than degrading. A future chunked-prefill driver for this family
+        // would need to raise this to `2 * top_k`, matching every other
+        // family's driver.
+        if expert_cache_slots < arch.top_k_experts as usize {
+            return unsupported(format!(
+                "qwen4_exp routes {} experts per token, which does not fit a \
+                 {expert_cache_slots}-slot cache; raise --expert-cache-slots to at least {} \
+                 (AGENTS.md Gotcha 64)",
+                arch.top_k_experts, arch.top_k_experts
             ));
         }
         if !arch.shared_expert_gated || !arch.attn_output_gate || !arch.rope_neox_subdim {

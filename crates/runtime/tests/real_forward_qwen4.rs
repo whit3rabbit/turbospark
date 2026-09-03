@@ -195,6 +195,39 @@ fn context_at_the_indexer_budget_is_accepted() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// A cache too small to hold one token's top-k routing is refused at open,
+/// with the arithmetic named (Phase 4, AGENTS.md Gotcha 64). This is
+/// independent of that gotcha's `2 * top_k` pipelining margin: this flow has
+/// no chunked-prefill driver, so the only hard requirement is that
+/// `top_k_experts` distinct experts fit the cache at all.
+#[test]
+fn a_cache_below_top_k_is_refused() {
+    let (dir, arch) = qwen4_install();
+    assert!(
+        (turbospark_repack::TOP_K as i64) > 1,
+        "this test needs a fixture whose top_k allows a below-top_k slot count"
+    );
+    let below = turbospark_repack::TOP_K - 1;
+    let err = RealForwardRunner::open_with_options(&dir, arch, TEST_MAX_CONTEXT, below)
+        .err()
+        .expect("a cache below top_k must be refused");
+    let msg = err.to_string();
+    assert!(
+        msg.contains(&turbospark_repack::TOP_K.to_string()) && msg.contains(&below.to_string()),
+        "refusal message should name both top_k and the requested slot count, got: {msg}"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A cache exactly at `top_k` is accepted -- the refusal is `<`, not `<=`.
+#[test]
+fn a_cache_at_top_k_is_accepted() {
+    let (dir, arch) = qwen4_install();
+    RealForwardRunner::open_with_options(&dir, arch, TEST_MAX_CONTEXT, turbospark_repack::TOP_K)
+        .expect("a cache exactly at top_k must open");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// `attn_hyper_connection`'s `hc_norm` reaches the math: without it, the
 /// GDN/attention branch's input (`mixed`) is invariant to this tensor.
 #[test]

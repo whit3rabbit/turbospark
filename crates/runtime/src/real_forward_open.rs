@@ -304,6 +304,7 @@ impl RealForwardRunner {
                     &runner.arch,
                     dir,
                     max_context,
+                    runner.expert_cache_slots,
                 )?);
             }
             // A FIFTH FLOW, not a sixth family on an existing one: all four

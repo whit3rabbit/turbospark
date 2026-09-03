@@ -21,7 +21,33 @@ fn each_allowed_cache_slot_is_accepted() {
 #[test]
 fn disallowed_cache_slot_aborts_construction() {
     // Values just outside the allowed set plus clearly invalid values.
-    let invalid = [0u32, 1, 7, 9, 15, 17, 23, 25, 31, 33, 64, 100, u32::MAX];
+    // `qwen4_exp`'s Phase 4 widened ALLOWED_CACHE_SLOTS to
+    // [8, 16, 24, 32, 48, 64, 96, 128], so 64 moved from this list into the
+    // allowed one; 40/80/100/127 sit just outside the new rungs instead.
+    let invalid = [
+        0u32,
+        1,
+        7,
+        9,
+        15,
+        17,
+        23,
+        25,
+        31,
+        33,
+        40,
+        47,
+        49,
+        63,
+        65,
+        80,
+        95,
+        97,
+        100,
+        127,
+        129,
+        u32::MAX,
+    ];
     for &value in invalid.iter() {
         let result = catch_unwind(AssertUnwindSafe(|| {
             RuntimeConfig::builder().cache_slots(value).build()
