@@ -115,13 +115,19 @@ public struct McpServerConfig: Identifiable, Codable, Sendable, Equatable {
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
-        self.name = try container.decode(String.self, forKey: .name)
+        // `name` is tolerant and `transport` is NOT, deliberately (state#45).
+        // A server with no readable transport cannot be contacted, dialled or
+        // repaired, so the honest outcome is that this ROW fails to decode --
+        // which `decodeLossyArray` at every call site turns into one dropped
+        // server rather than a lost archive.
+        self.name = try container.decodeIfPresent(String.self, forKey: .name) ?? "Unnamed Server"
         self.transport = try container.decode(McpTransportSpec.self, forKey: .transport)
         self.isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
         self.autoApprove = try container.decodeIfPresent(Bool.self, forKey: .autoApprove) ?? false
         self.sourcePath = try container.decodeIfPresent(String.self, forKey: .sourcePath)
         self.serverDescription = try container.decodeIfPresent(String.self, forKey: .serverDescription)
-        self.discoveredTools = try container.decodeIfPresent([McpDiscoveredTool].self, forKey: .discoveredTools) ?? []
+        self.discoveredTools = try container.decodeLossyArray(
+            McpDiscoveredTool.self, forKey: .discoveredTools)
         self.createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         self.updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
     }

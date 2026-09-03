@@ -8,10 +8,16 @@ extension AppModel {
     /// ERROR.** `UInt32(maxContextTokens)`, `UInt32(expertCacheSlots)` and
     /// `UInt32(topK)` are all assigned verbatim from disk and all of them
     /// crash the app on a value outside the range -- at `open()` for the
-    /// first two and at the first generate for the third. `maxNewTokens` was
-    /// the only one already guarded (`max(1, ...)` at its use site). The file
-    /// is user-editable and survives across versions that changed what a
-    /// field means, so "nothing writes a bad one today" is not the question.
+    /// first two and at the first generate for the third. The file is
+    /// user-editable and survives across versions that changed what a field
+    /// means, so "nothing writes a bad one today" is not the question.
+    ///
+    /// **`maxNewTokens` IS THE FOURTH, AND THIS DOC USED TO CLAIM IT WAS THE
+    /// ONE ALREADY GUARDED** (state#35). Its use site read
+    /// `UInt32(max(1, maxNewTokens))`, and `max(1,)` guards the LOWER bound
+    /// only: `UInt32(_:)` still traps on anything above `UInt32.max`, which
+    /// is exactly the shape the other three were fixed for. A comment
+    /// asserting a guard is not a guard.
     private static func clampedSetting(_ value: Int, upperBound: Int) -> Int {
         min(max(0, value), upperBound)
     }
@@ -35,7 +41,8 @@ extension AppModel {
         self.topP = settings.topP
         self.runtimeOptions.prefillEnabled = settings.prefillEnabled
         self.reasoning = GenerateOptions.Reasoning(rawValue: settings.reasoning) ?? .off
-        self.maxNewTokens = settings.maxNewTokens
+        self.maxNewTokens = Self.clampedSetting(
+            settings.maxNewTokens, upperBound: Int(UInt32.max))
         self.repetitionPenaltyEnabled = settings.repetitionPenaltyEnabled
         self.repetitionPenalty = settings.repetitionPenalty
         self.seedEnabled = settings.seedEnabled
@@ -152,6 +159,26 @@ extension AppModel {
         chatPersistDebounceTask = nil
         let archive = AppChatArchive(selectedChatID: selectedChatID, chats: chats)
         AppChatFileStore.save(archive)
+        surfaceStorageIssues()
+    }
+
+    /// Shows a storage failure the JSON store recorded, once, and clears it.
+    ///
+    /// **`lastWriteError` HAD NO PRODUCTION READER** (state#42). It exists so
+    /// a failed write stops being invisible, and nothing ever read it -- so a
+    /// full disk lost the session exactly as silently as before the field was
+    /// added, with the mechanism in place and unwired. `lastReadError` is its
+    /// twin on the load side. Reported as an error toast rather than thrown:
+    /// both are recorded on `didSet`-shaped paths that cannot propagate.
+    func surfaceStorageIssues() {
+        if let readError = AppJSONStore.lastReadError {
+            AppJSONStore.clearLastReadError()
+            showToast(readError, style: .error, duration: 10)
+        }
+        if let writeError = AppJSONStore.lastWriteError {
+            AppJSONStore.clearLastWriteError()
+            showToast(writeError, style: .error, duration: 10)
+        }
     }
 
     /// Persists after a short quiet period, collapsing a burst of mutations

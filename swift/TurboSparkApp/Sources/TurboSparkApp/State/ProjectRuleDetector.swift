@@ -322,10 +322,11 @@ public enum ProjectRuleDetector {
     /// the common case. The ROOT is resolved too, or a project under a
     /// symlinked path (`/tmp` is one on macOS) fails its own containment test.
     private static func readText(at url: URL, containedIn root: URL, maxBytes: Int = 65536) -> String? {
-        let canonical = url.resolvingSymlinksInPath().standardizedFileURL
-        let canonicalRoot = root.resolvingSymlinksInPath().standardizedFileURL
-        let rootPath = canonicalRoot.path.hasSuffix("/") ? canonicalRoot.path : canonicalRoot.path + "/"
-        guard canonical.path == canonicalRoot.path || canonical.path.hasPrefix(rootPath) else {
+        // `PathContainment` rather than the four lines this used to spell
+        // inline (state#39): `SkillParser` and `AgentParser` read the same
+        // class of file out of the same untrusted clone and had no check,
+        // which is easier to notice when the rule has a name.
+        guard let canonical = PathContainment.resolvedIfContained(url, in: root) else {
             return nil
         }
         let fileManager = FileManager.default

@@ -421,6 +421,10 @@ public final class AppModel: ObservableObject {
             }
         }
         AppHookStore.shared.refresh(projectDirectory: selectedProject?.rootDirectoryPath)
+        // A quarantined settings, chat or project file is the one thing the
+        // user must be told about at launch: the app comes up looking EMPTY,
+        // which reads as lost data rather than as a file set aside (state#42).
+        surfaceStorageIssues()
         Task {
             _ = await self.dispatchLifecycleHook(event: .sessionStart, source: "startup")
         }

@@ -20,6 +20,8 @@ public enum SkillParseError: Error, LocalizedError, Sendable {
     case invalidEncoding(String)
     case invalidFrontmatter(String)
     case unreadableContent
+    /// The file resolves outside the project it was discovered in (state#39).
+    case escapesProjectRoot(String)
 
     public var errorDescription: String? {
         switch self {
@@ -27,6 +29,8 @@ public enum SkillParseError: Error, LocalizedError, Sendable {
             return "Skill file not found at: \(path)"
         case .invalidEncoding(let path):
             return "Could not read text with UTF-8 encoding from: \(path)"
+        case .escapesProjectRoot(let path):
+            return "Skill file resolves outside the project root: \(path)"
         case .invalidFrontmatter(let msg):
             return "Invalid skill frontmatter: \(msg)"
         case .unreadableContent:
@@ -38,13 +42,26 @@ public enum SkillParseError: Error, LocalizedError, Sendable {
 /// Lightweight, resilient parser for YAML frontmatter in Markdown skill files.
 public enum SkillParser {
     /// Parses a raw Markdown skill file from disk.
+    /// - Parameter containedIn: the project root a PROJECT-scoped skill must
+    ///   resolve inside, or nil for a user-scoped one (state#39).
+    ///
+    ///   **A SKILL BODY REACHES THE MODEL AND IS RATED ALWAYS-SAFE.** The
+    ///   `skill` tool returns `skill.content` verbatim and
+    ///   `ToolRiskClassifier` never gates it, so a cloned repository shipping
+    ///   `.claude/skills/x/SKILL.md -> ~/.aws/credentials` hands that file to
+    ///   the model on request. `ProjectRuleDetector` grew this check for
+    ///   exactly that shape in state#23 and this reader never got one.
     public static func parseFile(
         at fileURL: URL,
         scope: SkillScope = .userGlobal,
-        agentOrigin: SkillSourceAgent = .turboSpark
+        agentOrigin: SkillSourceAgent = .turboSpark,
+        containedIn root: URL? = nil
     ) throws -> AppSkill {
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             throw SkillParseError.fileNotFound(fileURL.path)
+        }
+        guard PathContainment.resolvedIfContained(fileURL, in: root) != nil else {
+            throw SkillParseError.escapesProjectRoot(fileURL.path)
         }
 
         guard let rawString = try? String(contentsOf: fileURL, encoding: .utf8) else {
@@ -55,7 +72,16 @@ public enum SkillParser {
         var refFiles: [String] = []
         if fileURL.lastPathComponent.uppercased() == "SKILL.MD" {
             if let dirContents = try? FileManager.default.contentsOfDirectory(atPath: skillDir.path) {
-                refFiles = dirContents.filter { $0 != "SKILL.md" && $0 != "SKILL.MD" && !$0.hasPrefix(".") }
+                refFiles = dirContents.filter { name in
+                    guard name != "SKILL.md", name != "SKILL.MD", !name.hasPrefix(".") else {
+                        return false
+                    }
+                    // The listing is what the model is told it may read, so a
+                    // reference entry that is itself a symlink out of the
+                    // project is an invitation the gate above just refused.
+                    return PathContainment.resolvedIfContained(
+                        skillDir.appendingPathComponent(name), in: root) != nil
+                }
             }
         }
 

@@ -147,6 +147,24 @@ extension AppModel {
     /// A pure static so it can be tested against a fixture: the inline
     /// version could only be exercised against whatever `installed.json`
     /// happened to be on the machine.
+    /// Whether the running server is holding this model (state#43).
+    ///
+    /// A pure static for the reason `isCatalogTracked` is one: the live form
+    /// reads `serverAttachedSessions`, whose values are real
+    /// `TurboSparkSession`s, so nothing about it could be asserted without a
+    /// Metal device and an install (`swift/CLAUDE.md` Gotcha 26).
+    ///
+    /// The server keys an attachment by the id it serves it under, which is
+    /// the alias for a model attached from the Server pane and the path for
+    /// one attached by path, so both are checked -- unlike state#14's
+    /// identity question, where `path` alone is correct because it names a
+    /// thing on disk. Here the question is "is this string in the server's
+    /// table", and a false positive costs a refused delete while a false
+    /// negative deletes a served model's bytes.
+    static func isAttachedToServer(model: InstalledModel, servedIDs: Set<String>) -> Bool {
+        servedIDs.contains(model.alias) || servedIDs.contains(model.path)
+    }
+
     static func isCatalogTracked(model: InstalledModel, in catalogRows: [InstalledModel]) -> Bool {
         let stdPath = URL(fileURLWithPath: model.path).standardizedFileURL.path
         return catalogRows.contains { entry in
@@ -354,7 +372,31 @@ extension AppModel {
     }
 
     public func deleteModel(_ model: InstalledModel) {
-        if selected?.alias == model.alias || selected?.path == model.path {
+        // **THE BYTES BEING DELETED MAY BE MAPPED RIGHT NOW** (state#43).
+        // This had no `!generating` guard, and `unloadModel()` returns
+        // SILENTLY while a turn is running -- so `selected` was nilled anyway
+        // and the `.gturbo` directory removed out from under a live mmap and
+        // a decode loop reading it.
+        guard !generating, !submitting else {
+            showToast(
+                "Cannot delete '\(model.alias)' while a turn is running. Stop it first.",
+                style: .warning)
+            return
+        }
+        // And a SERVED model has a second holder the Chat pane cannot see
+        // (`swift/CLAUDE.md` Gotcha 26): the server keeps it resident and
+        // keeps answering for it, so removing its files leaves a server
+        // serving a model whose bytes are gone.
+        if Self.isAttachedToServer(model: model, servedIDs: Set(serverAttachedSessions.keys)) {
+            showToast(
+                "'\(model.alias)' is attached to the running server. Detach it there first.",
+                style: .warning)
+            return
+        }
+        // **MATCHED ON PATH ALONE** (state#14): `alias` is not unique once a
+        // scanned row exists, so an `alias ||` arm unloads the session of a
+        // DIFFERENT model that happens to share the name.
+        if selected?.path == model.path {
             unloadModel()
             selected = nil
         }
@@ -368,7 +410,6 @@ extension AppModel {
         // destroys files the app never wrote and only discovered by walking
         // a directory it was pointed at -- the opposite of the "without
         // copying any bytes" promise that scan makes.
-        let stdPath = URL(fileURLWithPath: model.path).standardizedFileURL.path
         let catalogInstalled: [InstalledModel]
         do {
             catalogInstalled = try TurboSparkCatalog.installed()

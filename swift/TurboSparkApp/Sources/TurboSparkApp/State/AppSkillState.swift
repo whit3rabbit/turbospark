@@ -143,6 +143,15 @@ public struct AppSkillState: Codable, Equatable, Sendable {
         self.fields = fields
     }
 
+    /// Tolerant decode (state#45): this hangs off `AppChat.skillState`, so a
+    /// synthesized decoder here can quarantine every conversation over one
+    /// added field. A state that will not decode is bookkeeping for one agent
+    /// run, and losing it costs a step; losing the archive costs everything.
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        fields = try container.decodeIfPresent([String: AppJSONValue].self, forKey: .fields) ?? [:]
+    }
+
     public var isEmpty: Bool { fields.isEmpty }
 
     /// Canonical rendering: sorted keys and stable formatting, so an unchanged

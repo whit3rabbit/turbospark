@@ -195,7 +195,8 @@ public final class AgentManager: @unchecked Sendable {
 
         for (sourceAgent, relPath) in knownProjectAgentSubdirectories {
             let dirURL = projectURL.appendingPathComponent(relPath, isDirectory: true)
-            let found = scanDirectory(dirURL, scope: .project, defaultAgent: sourceAgent)
+            let found = scanDirectory(
+                dirURL, scope: .project, defaultAgent: sourceAgent, containedIn: projectURL)
             for agent in found {
                 let key = agent.name.lowercased()
                 if !seenNames.contains(key) {
@@ -352,7 +353,12 @@ public final class AgentManager: @unchecked Sendable {
 
     // MARK: - Scanning Directory
 
-    private func scanDirectory(_ dirURL: URL, scope: AppAgentScope, defaultAgent: AgentSourceAgent) -> [AppAgentDefinition] {
+    /// - Parameter containedIn: the project root a PROJECT-scoped scan must
+    ///   keep its files inside (state#39). Nil for a user scope.
+    private func scanDirectory(
+        _ dirURL: URL, scope: AppAgentScope, defaultAgent: AgentSourceAgent,
+        containedIn root: URL? = nil
+    ) -> [AppAgentDefinition] {
         guard fileManager.fileExists(atPath: dirURL.path) else { return [] }
         guard let enumerator = fileManager.enumerator(
             at: dirURL,
@@ -365,7 +371,8 @@ public final class AgentManager: @unchecked Sendable {
             let ext = fileURL.pathExtension.lowercased()
             guard ext == "md" || ext == "json" else { continue }
 
-            if var agent = try? AgentParser.parseFile(at: fileURL, scope: scope, sourceAgent: defaultAgent) {
+            if var agent = try? AgentParser.parseFile(
+                at: fileURL, scope: scope, sourceAgent: defaultAgent, containedIn: root) {
                 agent.isEnabled = !isAgentDisabled(name: agent.name)
                 results.append(agent)
             }

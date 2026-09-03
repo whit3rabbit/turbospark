@@ -140,7 +140,12 @@ extension AppHookExecutionEngine {
                     exitCode: 124, // Timeout exit code
                     stdout: result.stdout,
                     stderr: "Hook execution timed out after \(timeout) seconds.",
-                    durationSeconds: Date().timeIntervalSince(startTime)
+                    durationSeconds: Date().timeIntervalSince(startTime),
+                    // Not nil (state#40): a timeout is a hook that never
+                    // answered, and the aggregator reads a missing answer
+                    // as permission.
+                    outcome: .unavailable(
+                        reason: "\(hook.name) timed out after \(timeout) seconds.")
                 )
             }
 
@@ -170,7 +175,10 @@ extension AppHookExecutionEngine {
                 exitCode: 1,
                 stdout: "",
                 stderr: error.localizedDescription,
-                durationSeconds: Date().timeIntervalSince(startTime)
+                durationSeconds: Date().timeIntervalSince(startTime),
+                // A shell that could not be spawned (state#40).
+                outcome: .unavailable(
+                    reason: "\(hook.name) could not run: \(error.localizedDescription)")
             )
         }
     }
@@ -197,7 +205,8 @@ extension AppHookExecutionEngine {
                 exitCode: 1,
                 stdout: "",
                 stderr: "Invalid webhook URL: \(hook.command)",
-                durationSeconds: 0.0
+                durationSeconds: 0.0,
+                outcome: .unavailable(reason: "\(hook.name) has an invalid webhook URL.")
             )
         }
 
@@ -257,7 +266,9 @@ extension AppHookExecutionEngine {
                 exitCode: 1,
                 stdout: "",
                 stderr: error.localizedDescription,
-                durationSeconds: Date().timeIntervalSince(startTime)
+                durationSeconds: Date().timeIntervalSince(startTime),
+                outcome: .unavailable(
+                    reason: "\(hook.name) could not be reached: \(error.localizedDescription)")
             )
         }
     }

@@ -1091,6 +1091,13 @@ learn what it meant by grepping for other mentions of it. What each covers:
 | 36 | `fitWindow` was called at the full `maxContext` and its outcome discarded: a truncated history was sent silently and a no-room verdict still called `generate`. |
 | 37 | `extractToolCalls` returns every parsed call, the loop runs one, and the rest were dropped with nothing written anywhere. Recorded as refused with the rule now. |
 | 38 | A `Stop` hook that blocked after a cancel appended an orphan user turn `continueAgentLoop` then refused to act on. |
+| 39 | state#23's symlink containment was added to `ProjectRuleDetector` alone. `SkillParser` and `AgentParser` read the same class of file out of the same untrusted clone with no check: a skill body is returned by the `skill` tool and rated always-safe, an agent file becomes a subagent SYSTEM PROMPT. One `PathContainment` helper now, so a fourth reader can see the rule exists. |
+| 40 | Hooks failed OPEN on timeout, spawn failure and transport failure: all three built `outcome == nil`, the aggregator skipped nil, the engine defaulted to `.allow`. A deny hook whose interpreter is missing permitted every call it was written to block. `.unavailable` resolves `.ask` on a permission event and feedback elsewhere. |
+| 41 | The hook trust hash omitted the SOURCE, so trusting an entry in `~/.claude/settings.json` trusted the byte-identical entry in a cloned repository's. |
+| 42 | `AppJSONStore.load` used `try? Data(contentsOf:)`, so a permissions or I/O failure read as "first run" and the next atomic write overwrote an intact file. And `lastWriteError` had no production reader at all -- the mechanism for making a failed write visible was itself invisible. |
+| 43 | `deleteModel` had no `!generating` guard (`unloadModel()` returns silently there, so the directory was removed under a live mmap), never checked `serverAttachedSessions`, and matched on `alias ||` past state#14. |
+| 44 | `installRepo` recorded no `installingAlias` and never checked `abandonedInstallAliases`, so state#27's two-writer protection covered catalog installs only. |
+| 45 | `decodeIfPresent` tolerates an ABSENT key and nothing else. Three inner decoders threw on an unknown enum raw value or one bad array element and took the whole archive with them, past the hand-written tolerance of the outer ones. Element-level tolerance only: a wrong-TYPED array key still throws, or an intact file gets read as empty and overwritten. |
 
 Add the next number here when you add the marker, or the index rots the way
 the numbering did.

@@ -110,27 +110,65 @@ public enum AppJSONStore {
         lastWriteError = nil
     }
 
+    /// The last read failure, for a caller that wants to surface it.
+    ///
+    /// Same reason `lastWriteError` exists: `load()` is called from `init()`
+    /// and cannot propagate, and the point is that the failure stops being
+    /// invisible.
+    public private(set) nonisolated(unsafe) static var lastReadError: String?
+
+    /// Clears the recorded read failure once it has been shown.
+    public static func clearLastReadError() {
+        lastReadError = nil
+    }
+
     /// Decodes `url`, quarantining it if it is present but unreadable.
     ///
     /// Returns nil when the file is absent (a first run, which is not an
     /// error) or when it was quarantined; the caller supplies its own empty
     /// default, as before.
+    ///
+    /// **ABSENT AND UNREADABLE ARE DIFFERENT THINGS, AND `try?` MADE THEM ONE**
+    /// (state#42). A permissions failure, an I/O error or a file the OS
+    /// refuses to map came back as nil, the caller substituted its empty
+    /// default, and the next mutation overwrote an INTACT file whole and
+    /// atomically -- the exact data loss the decode arm below was written to
+    /// prevent, reached by the one path that skipped it. A file that EXISTS
+    /// and cannot be read is quarantined and reported like a corrupt one.
     public static func load<T: Decodable>(
         _ type: T.Type, from url: URL, label: String,
         decoder: JSONDecoder = JSONDecoder()
     ) -> T? {
-        guard let data = try? Data(contentsOf: url) else { return nil }
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+        } catch {
+            guard FileManager.default.fileExists(atPath: url.path) else {
+                // A genuine first run. Not an error, and nothing to preserve.
+                return nil
+            }
+            report(label: label, url: url, error: error, verb: "could not be read")
+            return nil
+        }
         do {
             return try decoder.decode(type, from: data)
         } catch {
-            let quarantined = quarantine(url)
-            FileHandle.standardError.write(
-                ("TurboSpark: \(label) failed to decode, starting empty: \(error)\n"
-                    + (quarantined.map { "TurboSpark: the unreadable file was kept at \($0.path)\n" }
-                        ?? "TurboSpark: the unreadable file could NOT be preserved\n"))
-                    .data(using: .utf8)!)
+            report(label: label, url: url, error: error, verb: "failed to decode")
             return nil
         }
+    }
+
+    /// Quarantines an unreadable file and records why, on stderr and on
+    /// `lastReadError`.
+    private static func report(label: String, url: URL, error: Error, verb: String) {
+        let quarantined = quarantine(url)
+        let kept =
+            quarantined.map { "the unreadable file was kept at \($0.path)" }
+            ?? "the unreadable file could NOT be preserved"
+        lastReadError = "\(label) \(verb), starting empty: \(error.localizedDescription). \(kept)"
+        FileHandle.standardError.write(
+            ("TurboSpark: \(label) \(verb), starting empty: \(error)\n"
+                + "TurboSpark: \(kept)\n").data(using: .utf8)!)
     }
 
     /// Writes `value` atomically, recording rather than swallowing a failure.

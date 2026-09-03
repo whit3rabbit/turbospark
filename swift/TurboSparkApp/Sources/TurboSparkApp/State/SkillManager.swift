@@ -164,7 +164,9 @@ public final class SkillManager: @unchecked Sendable {
             let subURL = projectRootURL.appendingPathComponent(relPath, isDirectory: true)
             guard fileManager.fileExists(atPath: subURL.path) else { continue }
 
-            let scanned = scanDirectory(subURL, scope: .projectLocal(projectPath: projectPath), defaultAgent: agent)
+            let scanned = scanDirectory(
+                subURL, scope: .projectLocal(projectPath: projectPath), defaultAgent: agent,
+                containedIn: projectRootURL)
             for skill in scanned {
                 let key = skill.name.lowercased()
                 if !seenNames.contains(key) {
@@ -187,7 +189,13 @@ public final class SkillManager: @unchecked Sendable {
     }
 
     /// Scans a specific skills directory for both folder-based (SKILL.md) and single-file (.md) skills.
-    public func scanDirectory(_ dirURL: URL, scope: SkillScope, defaultAgent: SkillSourceAgent) -> [AppSkill] {
+    /// - Parameter containedIn: the project root a PROJECT-scoped scan must
+    ///   keep its files inside (state#39). Nil for a user scope, where the
+    ///   files are the user's own.
+    public func scanDirectory(
+        _ dirURL: URL, scope: SkillScope, defaultAgent: SkillSourceAgent,
+        containedIn root: URL? = nil
+    ) -> [AppSkill] {
         guard let entries = try? fileManager.contentsOfDirectory(atPath: dirURL.path) else { return [] }
 
         var results: [AppSkill] = []
@@ -212,12 +220,15 @@ public final class SkillManager: @unchecked Sendable {
                     targetURL = nil
                 }
 
-                if let targetURL, let skill = try? SkillParser.parseFile(at: targetURL, scope: scope, agentOrigin: defaultAgent) {
+                if let targetURL,
+                    let skill = try? SkillParser.parseFile(
+                        at: targetURL, scope: scope, agentOrigin: defaultAgent, containedIn: root) {
                     results.append(applyingPersistedEnabledState(to: skill))
                 }
             } else if itemURL.pathExtension.lowercased() == "md" {
                 // Single-file skill format: <name>.md
-                if let skill = try? SkillParser.parseFile(at: itemURL, scope: scope, agentOrigin: defaultAgent) {
+                if let skill = try? SkillParser.parseFile(
+                    at: itemURL, scope: scope, agentOrigin: defaultAgent, containedIn: root) {
                     results.append(applyingPersistedEnabledState(to: skill))
                 }
             }

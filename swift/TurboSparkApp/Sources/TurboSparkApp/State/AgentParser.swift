@@ -5,6 +5,8 @@ public enum AgentParseError: Error, LocalizedError, Sendable {
     case fileNotFound(String)
     case invalidEncoding(String)
     case invalidFormat(String)
+    /// The file resolves outside the project it was discovered in (state#39).
+    case escapesProjectRoot(String)
 
     public var errorDescription: String? {
         switch self {
@@ -12,6 +14,8 @@ public enum AgentParseError: Error, LocalizedError, Sendable {
             return "Agent file not found at: \(path)"
         case .invalidEncoding(let path):
             return "Could not read agent file with UTF-8 encoding from: \(path)"
+        case .escapesProjectRoot(let path):
+            return "Agent file resolves outside the project root: \(path)"
         case .invalidFormat(let msg):
             return "Invalid agent format: \(msg)"
         }
@@ -21,13 +25,26 @@ public enum AgentParseError: Error, LocalizedError, Sendable {
 /// Lightweight parser for Markdown (with YAML frontmatter) and JSON agent definition files.
 public enum AgentParser {
     /// Parses an agent definition file (.md or .json).
+    /// - Parameter containedIn: the project root a PROJECT-scoped agent must
+    ///   resolve inside, or nil for a user-scoped one (state#39).
+    ///
+    ///   **AN AGENT FILE BECOMES A SUBAGENT'S SYSTEM PROMPT.** There is no
+    ///   approval card on that path at all -- `/explore` runs it -- so a
+    ///   cloned repository shipping `.claude/agents/explore.md` symlinked at
+    ///   a private file reaches the model with nothing in between. Same shape
+    ///   as the rules symlink state#23 closed, on a file the reviewer of that
+    ///   fix never looked at.
     public static func parseFile(
         at fileURL: URL,
         scope: AppAgentScope = .userGlobal,
-        sourceAgent: AgentSourceAgent = .turboSpark
+        sourceAgent: AgentSourceAgent = .turboSpark,
+        containedIn root: URL? = nil
     ) throws -> AppAgentDefinition {
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             throw AgentParseError.fileNotFound(fileURL.path)
+        }
+        guard PathContainment.resolvedIfContained(fileURL, in: root) != nil else {
+            throw AgentParseError.escapesProjectRoot(fileURL.path)
         }
 
         guard let rawString = try? String(contentsOf: fileURL, encoding: .utf8) else {
