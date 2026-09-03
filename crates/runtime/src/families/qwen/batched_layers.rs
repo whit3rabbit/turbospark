@@ -243,6 +243,8 @@ pub(crate) fn encode_linear_block_batched(
         conv_w,
         (&batched.gdn_conv_out, 0),
         batch as u32,
+        // Undilated, matching `attn.rs`'s decode-path call.
+        1,
     )
     .map_err(gpu_err)?;
     // The prefill conv reads the tail and does NOT advance it; the decode
@@ -255,6 +257,7 @@ pub(crate) fn encode_linear_block_batched(
         (qwen.gdn.conv_tail_buffer(layer), 0),
         (&batched.gdn_qkv_raw, 0),
         batch as u32,
+        1,
     )
     .map_err(gpu_err)?;
     gpu::encode_gdn_qk_norm(

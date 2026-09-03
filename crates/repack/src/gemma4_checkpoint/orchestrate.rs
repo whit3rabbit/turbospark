@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use model_io::ArchConfig;
 
-use super::classify::{classify_for_family, lm_order_key, Gemma4Bucket};
+use super::classify::{classify_for_family, lm_order_key, Gemma4Bucket, NGRAM_CONTAINER};
 use super::config::{Gemma4Error, Gemma4Quant};
 use super::expert_blobs::{expert_stride_from_headers, plan_one_expert_layer};
 use super::narrow::narrow_raw_to_bf16;
@@ -36,6 +36,19 @@ pub struct Gemma4RepackOutput {
     /// writer to append them a second time, and a duplicated name in the
     /// resident index is not something the reader would notice.
     pub vision: Option<VisionRead>,
+    /// `qwen4_exp`'s n-gram table, CLASSIFIED but not read -- unlike every
+    /// other field here, which holds bytes this walk already fetched.
+    ///
+    /// The table is 32 GB and this struct is held in memory for the whole
+    /// walk (every other field here is), so it cannot carry the table's bytes
+    /// the way the MTP head's and the vision tower's do. What it carries
+    /// instead is which tensors to read, and the actual ingest -- a shard
+    /// read interleaved with a shard write, never holding more than one --
+    /// happens in `write_gemma4_install`/`write_gemma4_install_streamed`,
+    /// which have the install directory this struct does not. See
+    /// `super::ngram`'s module header for why the writer cannot buffer the
+    /// whole table.
+    pub ngram: Option<super::ngram::NgramPlan>,
 }
 
 /// Walks a Gemma 4 checkpoint's tensors: classifies every name, orders and
@@ -103,6 +116,14 @@ pub fn orchestrate_gemma4_checkpoint_sharded(
             layers.push(blobs);
         }
     }
+    let ngram = if plan.ngram_shards.is_empty() {
+        None
+    } else {
+        Some(super::ngram::NgramPlan::from_classified(
+            &plan.ngram_shards,
+            &plan.ngram_meta,
+        ))
+    };
     Ok(Gemma4RepackOutput {
         resident: resident.entries,
         layers,
@@ -110,6 +131,7 @@ pub fn orchestrate_gemma4_checkpoint_sharded(
         excluded_multimodal: plan.excluded,
         lossy_narrowing: resident.lossy_narrowing,
         vision,
+        ngram,
     })
 }
 
@@ -159,6 +181,16 @@ pub struct ClassifiedNames<'a> {
     /// `pos_embed` and `merger.*` land in the index. So the split is not a
     /// tidiness preference here, it is two different destinations.
     pub vision_bases: Vec<&'a str>,
+    /// One plane of one shard of `qwen4_exp`'s hashed n-gram PLE table,
+    /// keyed shard then role (`weight`/`scales`/`biases`) -- the same shape
+    /// `routed` uses for layer then role, and for the same reason: a
+    /// duplicate name for one (shard, role) pair is a checkpoint this walk
+    /// has never seen and is refused rather than silently overwritten.
+    pub ngram_shards: BTreeMap<usize, BTreeMap<&'static str, &'a str>>,
+    /// The n-gram table's three hashing buffers
+    /// (`layer_multipliers`/`ngram_heads_offsets`/`ngram_heads_vocab_sizes`),
+    /// keyed by field name.
+    pub ngram_meta: BTreeMap<&'static str, &'a str>,
 }
 
 /// Classifies all tensor names in the shards into their respective roles.
@@ -173,9 +205,21 @@ pub fn classify_all<'a>(
     let mut dflash_bases: Vec<&str> = Vec::new();
     let mut vision_bases: Vec<&str> = Vec::new();
     let mut routed: BTreeMap<usize, BTreeMap<&'static str, &str>> = BTreeMap::new();
+    let mut ngram_shards: BTreeMap<usize, BTreeMap<&'static str, &str>> = BTreeMap::new();
+    let mut ngram_meta: BTreeMap<&'static str, &str> = BTreeMap::new();
 
     for name in shards.names() {
-        if name.ends_with(".scales") || name.ends_with(".biases") {
+        // A trunk tensor's `.scales`/`.biases` COMPANIONS are read alongside
+        // its `.weight` by `pass_through_packed`, never classified standalone
+        // -- except the n-gram table's own shard planes, which are role-named
+        // `weight`/`scales`/`biases` (`Gemma4Bucket::NgramShard`'s doc) and are
+        // exactly what this skip would otherwise eat before `classify_for_family`
+        // ever saw them. Caught by `both_writers_carry_the_ngram_table`: every
+        // shard's scale and bias plane came back `MissingTensor` without this
+        // exception, because the skip ran before the ngram check did.
+        if (name.ends_with(".scales") || name.ends_with(".biases"))
+            && !name.contains(NGRAM_CONTAINER)
+        {
             continue;
         }
         match classify_for_family(name, num_layers, arch.family) {
@@ -197,22 +241,32 @@ pub fn classify_all<'a>(
             Gemma4Bucket::MtpHead => mtp_bases.push(name),
             Gemma4Bucket::DflashDrafter => dflash_bases.push(name),
             Gemma4Bucket::VisionTower => vision_bases.push(name),
-            // **REFUSED BY NAME, NOT DROPPED AND NOT FILED RESIDENT.** The
-            // n-gram store's writer does not exist yet, and the two wrong
-            // answers are both silent: dropping these writes an install whose
-            // layer 1 has no table, and letting them fall to `LmResident`
-            // puts 32 GB into `model_weights.bin`. Refusing means the walk
-            // stops at classification, seconds in, rather than after an hour
-            // of streaming (`crates/repack` Gotcha 8's fixture-first rule
-            // applied to a component that has a classifier and no
-            // destination).
-            Gemma4Bucket::NgramShard { .. } | Gemma4Bucket::NgramMeta { .. } => {
-                return Err(Gemma4Error::UnsupportedTensor {
-                    tensor: name.clone(),
-                    detail: "qwen4_exp's hashed n-gram PLE table has no store writer yet; it \
-                             is 30.8% of the checkpoint and cannot go in the resident index"
-                        .to_string(),
-                })
+            // The n-gram table's shards and hashing buffers, kept out of
+            // `resident_bases` for the reason every other family-specific
+            // bucket above is: a duplicate name for one (shard, role) pair,
+            // or one field, is a checkpoint this walk has never seen and is
+            // refused rather than silently overwritten -- the same
+            // `two ... tensors for` shape `routed` uses two arms up.
+            Gemma4Bucket::NgramShard { role, shard } => {
+                if ngram_shards
+                    .entry(shard)
+                    .or_default()
+                    .insert(role, name.as_str())
+                    .is_some()
+                {
+                    return Err(Gemma4Error::ShapeMismatch {
+                        tensor: name.to_string(),
+                        detail: format!("two ngram tensors for shard {shard} role {role}"),
+                    });
+                }
+            }
+            Gemma4Bucket::NgramMeta { field } => {
+                if ngram_meta.insert(field, name.as_str()).is_some() {
+                    return Err(Gemma4Error::ShapeMismatch {
+                        tensor: name.to_string(),
+                        detail: format!("two ngram meta tensors for field {field}"),
+                    });
+                }
             }
             Gemma4Bucket::Unknown => return Err(Gemma4Error::UnknownTensor(name.clone())),
         }
@@ -243,6 +297,8 @@ pub fn classify_all<'a>(
         mtp_bases,
         dflash_bases,
         vision_bases,
+        ngram_shards,
+        ngram_meta,
     })
 }
 

@@ -17,8 +17,13 @@ pub mod attention;
 pub mod gating;
 /// Gated-DeltaNet (GDN) linear-attention compute kernels.
 pub mod gdn;
+/// `qwen4_exp`'s hyper-connection mix (PORT-LOCAL; not `HyperConnectionConfig`'s
+/// Sinkhorn-normalised mHC).
+pub mod hyper_connection;
 /// Mixture-of-Experts (MoE) routing and FFN compute kernels.
 pub mod moe;
+/// `qwen4_exp`'s PLE (per-layer n-gram embedding) gate (PORT-LOCAL).
+pub mod ple;
 /// Quantization and dequantization primitives for affine INT4 and INT8 formats.
 pub mod quant;
 /// Quantization and dequantization primitives for the affine 1-bit format.
@@ -52,8 +57,10 @@ pub mod wht;
 
 pub use attention::{causal_attention, causal_attention_with_sinks};
 pub use gating::{sigmoid_gate_mul, sigmoid_scalar_mul, split_q_gate};
-pub use gdn::{sigmoid, silu, softplus, GdnDims, GdnReference, GDN_RMS_EPS};
+pub use gdn::{gated_norm_sigmoid, sigmoid, silu, softplus, GdnDims, GdnReference, GDN_RMS_EPS};
+pub use hyper_connection::{hc_inject_add, hc_mix};
 pub use moe::{apply_streamed_routed, gelu_tanh, run_ffn};
+pub use ple::{dilated_conv_step, ple_gate};
 pub use quant::{
     bf16_to_f32, dequant_int4_gemv, dequant_int8_gemv, dequantize_int4_affine,
     dequantize_int8_affine, embed_lookup_int4, embed_lookup_int8, f32_to_bf16,
@@ -90,7 +97,7 @@ pub use quant_gguf_mxfp4::{
     dequant_mxfp4_gemv, dequantize_mxfp4, mxfp4_scale, MXFP4_BLOCK_BYTES, MXFP4_BLOCK_ELEMS,
     MXFP4_VALUES,
 };
-pub use rms_norm::{rms_norm, rms_norm_centered};
+pub use rms_norm::{rms_norm, rms_norm_centered, rms_norm_grouped_centered};
 pub use rope::{
     mrope_component_selector, rope_mrope_interleaved, rope_neox, rope_neox_subdim, rope_paired,
     yarn_frequencies, YarnSpec,

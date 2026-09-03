@@ -34,7 +34,7 @@ pub use manifest_quant::{gemma4_manifest_quant, manifest_quant, manifest_quant_f
 pub use narrow::{
     convert_raw_to_fp16, narrow_raw_to_bf16, pass_through_packed, ConvertedFp16, NarrowedRaw,
 };
-pub use ngram::{NgramTableSpec, NgramTableWriter};
+pub use ngram::{write_ngram_table, NgramPlan, NgramTableSpec, NgramTableWriter};
 pub use orchestrate::{
     orchestrate_gemma4_checkpoint, orchestrate_gemma4_checkpoint_sharded, Gemma4RepackOutput,
 };
@@ -143,6 +143,20 @@ pub fn write_gemma4_install_streamed(
             ));
         }
     }
+
+    // THE N-GRAM TABLE (`qwen4_exp`), read and written HERE rather than
+    // carried through `Gemma4RepackOutput` the way the head's and the
+    // tower's bytes are: at 32 GB it cannot be held in memory at all, so the
+    // read and the write are one streamed loop rather than two separate
+    // steps. See `ngram::write_ngram_table`'s doc for why this arm and
+    // `write_gemma4_install`'s are the two places this table is ingested,
+    // where every other component's non-streamed arm lives in
+    // `orchestrate_gemma4_checkpoint_sharded` instead.
+    if !plan.ngram_shards.is_empty() {
+        let ngram_plan = NgramPlan::from_classified(&plan.ngram_shards, &plan.ngram_meta);
+        write_ngram_table(shards, arch, &ngram_plan, dir, &mut progress)?;
+    }
+
     let resident_bytes =
         crate::resident_writer::build_resident_weights_bin_mixed(&resident.entries);
     // Reported rather than merely counted, on the streamed path especially:
@@ -264,6 +278,17 @@ pub fn write_gemma4_install(
     // comment for why both writers carry this rather than one.
     if let Some(tower) = &out.vision {
         crate::gturbo_writer::write_packed_vision(dir, &tower.blocks, tower.block_stride)?;
+    }
+    // THE N-GRAM TABLE, and this arm exists HERE as well as in
+    // `write_gemma4_install_streamed` for that function's reason: the table
+    // is 32 GB and cannot be carried in `out.ngram` as bytes, only as names,
+    // so the streamed read-and-write happens at each writer entry point
+    // rather than once in `orchestrate_gemma4_checkpoint_sharded`.
+    // `Gemma4Shards::single` costs nothing beyond this call -- it is a name
+    // index over `header`/`source`, not a read.
+    if let Some(plan) = &out.ngram {
+        let shards = Gemma4Shards::single(header, source);
+        write_ngram_table(&shards, arch, plan, dir, |_| {})?;
     }
     let arch = vision::vision_arch_for_manifest(arch, out.vision.is_some());
     let arch = arch.as_ref();

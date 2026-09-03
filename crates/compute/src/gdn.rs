@@ -216,3 +216,37 @@ impl GdnReference {
         gated
     }
 }
+
+/// `out = rmsnorm(y; weight) * sigmoid(z)`, per value head -- the
+/// `output_gate_type: sigmoid` variant of [`GdnReference::step`]'s last
+/// stage, `qwen4_exp`'s (Qwen3.8-Flash-Next) gate. The contract for
+/// `gdn_gated_norm`'s sigmoid-baked pipeline
+/// (`FC_GDN_GATE_SIGMOID`).
+///
+/// **A STANDALONE FUNCTION, DELIBERATELY NOT A PARAMETER ON
+/// `GdnReference::step`.** That struct and its one call site are what
+/// `qwen3_5`/`qwen3_6`'s already-verified GDN chain runs through end to end;
+/// threading a gate choice into it risks exactly the class of bug
+/// `crates/runtime` Gotcha 11 records (a shared-flow refactor that moved no
+/// math on purpose and shipped a broken model for a day). This function
+/// duplicates the norm math rather than sharing it with `step`'s last stage,
+/// on purpose, so touching one can never silently move the other.
+pub fn gated_norm_sigmoid(y: &[f32], z: &[f32], weight: &[f32], num_v_heads: usize) -> Vec<f32> {
+    let dv = weight.len();
+    assert_eq!(
+        y.len(),
+        num_v_heads * dv,
+        "y must be num_v_heads * value_head_dim"
+    );
+    assert_eq!(z.len(), y.len(), "z must match y's length");
+    let mut gated = vec![0.0f32; y.len()];
+    for head in 0..num_v_heads {
+        let base = head * dv;
+        let sumsq: f32 = y[base..base + dv].iter().map(|x| x * x).sum();
+        let inv_rms = 1.0 / (sumsq / dv as f32 + GDN_RMS_EPS).sqrt();
+        for i in 0..dv {
+            gated[base + i] = y[base + i] * inv_rms * weight[i] * sigmoid(z[base + i]);
+        }
+    }
+    gated
+}

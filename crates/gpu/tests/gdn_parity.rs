@@ -209,6 +209,7 @@ fn gpu_decode_step(
         (&qkv, 0),
         (&bufs.conv_w, 0),
         (&bufs.conv_out, 0),
+        1,
     )
     .expect("conv");
     encode_gdn_qk_norm(context, &pass, shape(), (&bufs.conv_out, 0), 1).expect("qk norm");
@@ -320,10 +321,19 @@ fn prefill_chunk_matches_sequential_decode() {
         (&decode_bufs.conv_w, 0),
         (&conv_out, 0),
         n,
+        1,
     )
     .expect("conv prefill");
-    encode_gdn_conv_tail_update(&mut context, &pass, shape(), (&tail, 0), (&qkv_rows, 0), n)
-        .expect("tail update");
+    encode_gdn_conv_tail_update(
+        &mut context,
+        &pass,
+        shape(),
+        (&tail, 0),
+        (&qkv_rows, 0),
+        n,
+        1,
+    )
+    .expect("tail update");
     encode_gdn_qk_norm(&mut context, &pass, shape(), (&conv_out, 0), n).expect("qk norm");
     encode_gdn_delta_prefill(
         &mut context,
@@ -400,6 +410,7 @@ fn short_chunk_tail_carry_matches_one_long_chunk() {
                 (&tail, 0),
                 (&buffer, 0),
                 (chunk.len() / c) as u32,
+                1,
             )
             .expect("tail update");
             pass.commit_and_wait();
@@ -596,10 +607,19 @@ fn one_prefill_row_matches_one_decode_step_from_a_state_that_carries_history() {
         (&decode_bufs.conv_w, 0),
         (&conv_out, 0),
         1,
+        1,
     )
     .expect("conv prefill");
-    encode_gdn_conv_tail_update(&mut context, &pass, shape(), (&tail, 0), (&qkv_rows, 0), 1)
-        .expect("tail update");
+    encode_gdn_conv_tail_update(
+        &mut context,
+        &pass,
+        shape(),
+        (&tail, 0),
+        (&qkv_rows, 0),
+        1,
+        1,
+    )
+    .expect("tail update");
     encode_gdn_qk_norm(&mut context, &pass, shape(), (&conv_out, 0), 1).expect("qk norm");
     encode_gdn_delta_prefill(
         &mut context,
@@ -726,10 +746,19 @@ fn repeated_one_row_prefill_calls_match_decode_steps_row_by_row() {
             (&decode_bufs.conv_w, 0),
             (&conv_out, 0),
             1,
+            1,
         )
         .expect("conv prefill");
-        encode_gdn_conv_tail_update(&mut context, &pass, shape(), (&tail, 0), (&qkv_row, 0), 1)
-            .expect("tail update");
+        encode_gdn_conv_tail_update(
+            &mut context,
+            &pass,
+            shape(),
+            (&tail, 0),
+            (&qkv_row, 0),
+            1,
+            1,
+        )
+        .expect("tail update");
         encode_gdn_qk_norm(&mut context, &pass, shape(), (&conv_out, 0), 1).expect("qk norm");
         encode_gdn_delta_prefill(
             &mut context,

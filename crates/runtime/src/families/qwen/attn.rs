@@ -90,6 +90,9 @@ pub(crate) fn encode_linear_block(
         (&qwen.gdn_qkv_raw, 0),
         conv_w,
         (&qwen.gdn_conv_out, 0),
+        // This family's causal conv is undilated; `qwen4_exp`'s PLE conv
+        // (dilation 3) is a separate call site, not this one.
+        1,
     )
     .map_err(gpu_err)?;
     gpu::encode_gdn_qk_norm(context, pass, shape, (&qwen.gdn_conv_out, 0), 1).map_err(gpu_err)?;

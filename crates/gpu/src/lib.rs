@@ -75,6 +75,8 @@ mod gdn_shape;
 #[cfg(target_os = "macos")]
 mod gdn_state;
 #[cfg(target_os = "macos")]
+mod hyper_connection;
+#[cfg(target_os = "macos")]
 mod kv_cache;
 #[cfg(target_os = "macos")]
 mod kv_cache_mem;
@@ -88,6 +90,8 @@ mod moe_gguf;
 mod moe_prefill_batch;
 #[cfg(target_os = "macos")]
 mod moe_prefill_batch_gguf;
+#[cfg(target_os = "macos")]
+mod ple;
 #[cfg(target_os = "macos")]
 mod power_state;
 #[cfg(target_os = "macos")]
@@ -185,11 +189,13 @@ pub use dsv4_state::{Dsv4StateManager, LayerCounters};
 #[cfg(target_os = "macos")]
 pub use gdn::{
     encode_gdn_conv_decode, encode_gdn_conv_prefill, encode_gdn_conv_tail_update,
-    encode_gdn_delta_decode, encode_gdn_delta_prefill, encode_gdn_gated_norm, encode_gdn_in_proj,
-    encode_gdn_qk_norm, GdnShape,
+    encode_gdn_delta_decode, encode_gdn_delta_prefill, encode_gdn_gated_norm,
+    encode_gdn_gated_norm_sigmoid, encode_gdn_in_proj, encode_gdn_qk_norm, GdnShape,
 };
 #[cfg(target_os = "macos")]
 pub use gdn_state::{GdnSnapshot, GdnStateManager};
+#[cfg(target_os = "macos")]
+pub use hyper_connection::{encode_hc_inject_add, encode_hc_mix};
 #[cfg(target_os = "macos")]
 pub use kv_cache::{KvCacheManager, KvView, LayerKind};
 #[cfg(target_os = "macos")]
@@ -217,6 +223,8 @@ pub use moe_prefill_batch_gguf::{
     encode_moe_prefill_phase2_fused_mxfp4, new_routed_blobs_wide as new_routed_blobs_wide_mxfp4,
 };
 #[cfg(target_os = "macos")]
+pub use ple::encode_ple_gate;
+#[cfg(target_os = "macos")]
 pub use power_state::{
     low_power_mode_enabled, memory_pressure_raw, physical_memory, thermal_state_raw,
 };
@@ -226,10 +234,10 @@ pub use prefill_scratch::{PrefillChunkScratchBuffers, PrefillChunkScratchLayout}
 pub use resident_metal::{wrap_page_aligned_no_copy, ResidentGpuWeights};
 #[cfg(target_os = "macos")]
 pub use rms_norm::{
-    encode_rms_norm_bf16w, encode_rms_norm_bf16w_centered, encode_rms_norm_bf16w_perhead,
-    encode_rms_norm_bf16w_perhead_centered, encode_rms_norm_no_scale,
-    encode_rms_norm_no_scale_perhead, rms_norm_bf16w_perhead, rms_norm_no_scale,
-    rms_norm_no_scale_perhead,
+    encode_rms_norm_bf16w, encode_rms_norm_bf16w_centered, encode_rms_norm_bf16w_grouped_centered,
+    encode_rms_norm_bf16w_perhead, encode_rms_norm_bf16w_perhead_centered,
+    encode_rms_norm_no_scale, encode_rms_norm_no_scale_perhead, rms_norm_bf16w_grouped_centered,
+    rms_norm_bf16w_perhead, rms_norm_no_scale, rms_norm_no_scale_perhead,
 };
 #[cfg(target_os = "macos")]
 pub use rope::{

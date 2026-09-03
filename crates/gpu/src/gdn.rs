@@ -56,11 +56,17 @@ const CONV_THREADS: u64 = 256;
 pub use crate::gdn_shape::GdnShape;
 
 /// Every function constant either shader in [`SOURCE`] declares: INT4's
-/// 20-26 and GDN's 90-94. Metal requires all constants a function reads to
+/// 20-26 and GDN's 90-95. Metal requires all constants a function reads to
 /// be set before a pipeline can be built, and setting the ones it does not
 /// read is harmless -- the same defensive shape the other kernel modules
 /// use. `USE_FC = false` keeps a kernel on its runtime-argument path;
-/// `gdn_in_proj_gemv_simd` alone overrides 90-94 via [`in_proj_pipeline`].
+/// `gdn_in_proj_gemv_simd` alone overrides 90-94 via [`in_proj_pipeline`],
+/// and `gdn_gated_norm` alone overrides 95 via [`gated_norm_sigmoid_pipeline`].
+/// Every OTHER pipeline built through the plain [`pipeline`] helper --
+/// including `gdn_gated_norm`'s own default build -- gets `95 = false`
+/// here, which is what keeps this declaration from moving the two families
+/// that already dispatch that kernel: `FC_GDN_GATE_SIGMOID` reads `false`
+/// for them exactly as it always has.
 fn gdn_function_constants() -> FunctionConstantValues {
     let values = FunctionConstantValues::new();
     let zero: u32 = 0;
@@ -68,7 +74,7 @@ fn gdn_function_constants() -> FunctionConstantValues {
     for index in [20, 21, 23, 24, 25, 90, 91, 92, 93] {
         values.set_constant_value_at_index((&zero as *const u32).cast(), MTLDataType::UInt, index);
     }
-    for index in [22, 26, 94] {
+    for index in [22, 26, 94, 95] {
         values.set_constant_value_at_index(
             (&use_fc as *const bool).cast(),
             MTLDataType::Bool,
@@ -112,6 +118,21 @@ fn in_proj_pipeline(
     key[8..12].copy_from_slice(&ab_rows.to_le_bytes());
     key[12..].copy_from_slice(&n.to_le_bytes());
     context.pipeline(SOURCE, "gdn_in_proj_gemv_simd", &values, &key)
+}
+
+/// `gdn_gated_norm` with `FC_GDN_GATE_SIGMOID` BAKED true (constant 95):
+/// `qwen4_exp`'s `output_gate_type: sigmoid` variant of the gate `gdn_silu`
+/// otherwise applies. The KEY carries the one byte that decides it, for
+/// [`in_proj_pipeline`]'s reason -- a shared key would silently reuse
+/// whichever gate compiled first, making the two conventions one function
+/// (crate Gotcha 1, AGENTS.md Gotcha 50).
+fn gated_norm_sigmoid_pipeline(
+    context: &mut MetalContext,
+) -> Result<metal::ComputePipelineState, GpuError> {
+    let values = gdn_function_constants();
+    let sigmoid = true;
+    values.set_constant_value_at_index((&sigmoid as *const bool).cast(), MTLDataType::Bool, 95);
+    context.pipeline(SOURCE, "gdn_gated_norm", &values, &[sigmoid as u8])
 }
 
 /// Fused `in_proj_qkv` / `_z` / `_a` / `_b` INT4 GEMV: one dispatch over
@@ -185,6 +206,11 @@ pub fn encode_gdn_in_proj(
 
 /// Decode: `out = silu(causal_conv([tail | qkv]))`, shifting `tail` in
 /// place afterwards. `tail` holds the RAW rows, not the activated ones.
+///
+/// `dilation` generalizes this for `qwen4_exp`'s PLE conv
+/// (`kernel_size=4`, `dilation=3`); every existing family passes `1`, which
+/// reproduces the pre-dilation kernel exactly (see the shader's own doc).
+/// `tail` must hold `(taps - 1) * dilation` rows, not `taps - 1`.
 #[allow(clippy::too_many_arguments)]
 pub fn encode_gdn_conv_decode(
     context: &mut MetalContext,
@@ -194,6 +220,7 @@ pub fn encode_gdn_conv_decode(
     qkv: (&metal::Buffer, u64),
     conv_weight: (&metal::Buffer, u64),
     out: (&metal::Buffer, u64),
+    dilation: u32,
 ) -> Result<(), GpuError> {
     shape.validate()?;
     let p = pipeline(context, "gdn_conv_mix_decode")?;
@@ -206,7 +233,11 @@ pub fn encode_gdn_conv_decode(
             (conv_weight.0, 2, conv_weight.1),
             (out.0, 3, out.1),
         ],
-        &[(u32_bytes(&channels), 4), (u32_bytes(&taps), 5)],
+        &[
+            (u32_bytes(&channels), 4),
+            (u32_bytes(&taps), 5),
+            (u32_bytes(&dilation), 6),
+        ],
         (channels as u64, 1, 1),
         (CONV_THREADS, 1, 1),
     );
@@ -215,6 +246,7 @@ pub fn encode_gdn_conv_decode(
 
 /// Prefill: the same conv over `rows` chunk rows at once. `tail` is
 /// READ-ONLY here -- [`encode_gdn_conv_tail_update`] refreshes it after.
+/// See [`encode_gdn_conv_decode`] for `dilation`.
 #[allow(clippy::too_many_arguments)]
 pub fn encode_gdn_conv_prefill(
     context: &mut MetalContext,
@@ -225,6 +257,7 @@ pub fn encode_gdn_conv_prefill(
     conv_weight: (&metal::Buffer, u64),
     out: (&metal::Buffer, u64),
     rows: u32,
+    dilation: u32,
 ) -> Result<(), GpuError> {
     shape.validate()?;
     let p = pipeline(context, "gdn_conv_mix_prefill")?;
@@ -241,6 +274,7 @@ pub fn encode_gdn_conv_prefill(
             (u32_bytes(&channels), 4),
             (u32_bytes(&taps), 5),
             (u32_bytes(&rows), 6),
+            (u32_bytes(&dilation), 7),
         ],
         (channels as u64, rows.max(1) as u64, 1),
         (CONV_THREADS, 1, 1),
@@ -248,7 +282,8 @@ pub fn encode_gdn_conv_prefill(
     Ok(())
 }
 
-/// After a prefill chunk: `tail := last (K - 1) raw rows of [tail | chunk]`.
+/// After a prefill chunk: `tail := last (K - 1) * dilation raw rows of
+/// [tail | chunk]`. See [`encode_gdn_conv_decode`] for `dilation`.
 pub fn encode_gdn_conv_tail_update(
     context: &mut MetalContext,
     pass: &PassEncoder,
@@ -256,6 +291,7 @@ pub fn encode_gdn_conv_tail_update(
     tail: (&metal::Buffer, u64),
     qkv_rows: (&metal::Buffer, u64),
     rows: u32,
+    dilation: u32,
 ) -> Result<(), GpuError> {
     shape.validate()?;
     let p = pipeline(context, "gdn_conv_tail_update")?;
@@ -267,8 +303,9 @@ pub fn encode_gdn_conv_tail_update(
             (u32_bytes(&channels), 2),
             (u32_bytes(&taps), 3),
             (u32_bytes(&rows), 4),
+            (u32_bytes(&dilation), 5),
         ],
-        (channels as u64, (taps - 1) as u64, 1),
+        (channels as u64, (taps - 1) as u64 * dilation as u64, 1),
         (CONV_THREADS, 1, 1),
     );
     Ok(())
@@ -400,6 +437,42 @@ pub fn encode_gdn_gated_norm(
 ) -> Result<(), GpuError> {
     shape.validate()?;
     let p = pipeline(context, "gdn_gated_norm")?;
+    let (v_heads, value_dim) = (shape.num_v_heads, shape.value_head_dim);
+    pass.encode_threadgroups_3d(
+        &p,
+        &[
+            (y.0, 0, y.1),
+            (z.0, 1, z.1),
+            (weight.0, 2, weight.1),
+            (out.0, 3, out.1),
+        ],
+        &[(u32_bytes(&v_heads), 4), (u32_bytes(&value_dim), 5)],
+        (v_heads as u64, rows.max(1) as u64, 1),
+        (NORM_THREADS, 1, 1),
+    );
+    Ok(())
+}
+
+/// `out = rmsnorm(y; weight) * sigmoid(z)`, per value head, over `rows`
+/// rows -- `qwen4_exp`'s `output_gate_type: sigmoid` variant of
+/// [`encode_gdn_gated_norm`]. **Do not reach for this by family**: the
+/// gate is a CHECKPOINT property, and `qwen3_5`/`qwen3_6` take the plain
+/// (silu) function unchanged, through their existing call sites, which this
+/// function does not touch. The contract is
+/// `turbospark_compute::gated_norm_sigmoid`.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_gdn_gated_norm_sigmoid(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    shape: GdnShape,
+    y: (&metal::Buffer, u64),
+    z: (&metal::Buffer, u64),
+    weight: (&metal::Buffer, u64),
+    out: (&metal::Buffer, u64),
+    rows: u32,
+) -> Result<(), GpuError> {
+    shape.validate()?;
+    let p = gated_norm_sigmoid_pipeline(context)?;
     let (v_heads, value_dim) = (shape.num_v_heads, shape.value_head_dim);
     pass.encode_threadgroups_3d(
         &p,
