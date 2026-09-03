@@ -49,3 +49,41 @@ pub fn rms_norm_centered(x: &[f32], weight: &[f32], eps: f32) -> Vec<f32> {
         .map(|(xv, wv)| xv * inv_rms * (1.0 + wv))
         .collect()
 }
+
+/// `y[g*H+i] = x[g*H+i] * (1 + weight[g*H+i]) / sqrt(mean(x[g*H..(g+1)*H]^2) + eps)`
+/// -- the GROUPED CENTERED form: `groups` independent statistics, one over
+/// each `x.len() / groups`-wide slice, with a single WEIGHT vector spanning
+/// the WHOLE input applied at each element's own (not per-group-local) index.
+///
+/// The contract for `rmsnorm_bf16w_grouped_centered`; PORT-LOCAL
+/// (`qwen4_exp`'s `hc_norm` and PLE's `norm_key`/`norm_query`/`norm_conv`,
+/// `docs/QWEN4_PHASE0.md` item 9's norm taxonomy, row 1).
+///
+/// **Not a wider [`rms_norm_centered`].** That function takes ONE statistic
+/// over the whole vector, and `qwen4_exp`'s OWN `pre_fc_norm_hidden` (row 3
+/// of the same taxonomy) is exactly that at the identical 10240-element
+/// width. Both take a full-width weight, so no shape check distinguishes
+/// them -- calling the wrong one here is silent and yields a differently
+/// wrong number rather than an error.
+pub fn rms_norm_grouped_centered(x: &[f32], weight: &[f32], groups: usize, eps: f32) -> Vec<f32> {
+    assert_eq!(x.len(), weight.len(), "x and weight must match length");
+    assert!(groups > 0, "groups must be nonzero");
+    assert_eq!(
+        x.len() % groups,
+        0,
+        "x.len() must be a whole number of groups"
+    );
+    let group_dim = x.len() / groups;
+    let mut out = Vec::with_capacity(x.len());
+    for g in 0..groups {
+        let lo = g * group_dim;
+        let hi = lo + group_dim;
+        let group = &x[lo..hi];
+        let sum_sq: f32 = group.iter().map(|v| v * v).sum();
+        let inv_rms = 1.0 / (sum_sq / group_dim as f32 + eps).sqrt();
+        for i in lo..hi {
+            out.push(x[i] * inv_rms * (1.0 + weight[i]));
+        }
+    }
+    out
+}

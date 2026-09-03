@@ -33,6 +33,18 @@ constant uint FC_GDN_IN_AB     [[function_constant(92)]];
 constant uint FC_GDN_IN_N      [[function_constant(93)]];
 constant bool FC_GDN_IN_USE_FC [[function_constant(94)]];
 
+// `gdn_gated_norm`'s output gate is a CHECKPOINT property
+// (`output_gate_type`), not a family one: `qwen3_5`/`qwen3_6` use silu,
+// `qwen4_exp` (Qwen3.8-Flash-Next) declares sigmoid. A separate BAKED
+// pipeline rather than a runtime branch, for the reason every other
+// convention axis in this port takes one (AGENTS.md Gotcha 50): a byte that
+// missed the pipeline cache's `constants_key` would silently reuse whichever
+// gate compiled first. Defaults to FALSE (silu) whenever unset, which is
+// every pipeline built through the plain, unspecialized helper -- so this
+// declaration alone moves nothing for the two families that already dispatch
+// this kernel.
+constant bool FC_GDN_GATE_SIGMOID [[function_constant(95)]];
+
 static inline bool gdn_in_use_fc() {
     return is_function_constant_defined(FC_GDN_IN_USE_FC) && FC_GDN_IN_USE_FC;
 }
@@ -147,26 +159,42 @@ kernel void gdn_in_proj_gemv_simd(
 
 // ----------------------------------------------------------------------------
 // Causal depthwise conv, decode. One thread per channel. The tail buffer holds
-// the previous K-1 pre-activation rows and is shifted in place (each thread
-// owns its channel column exclusively).
+// the previous `history = (K-1)*dilation` pre-activation rows (one per PAST
+// TIMESTEP, not one per tap) and is shifted in place (each thread owns its
+// channel column exclusively).
+//
+// `dilation` generalizes this kernel for `qwen4_exp`'s PLE conv
+// (`kernel_size=4`, `dilation=3`, `docs/QWEN4_PHASE0.md` section 4) rather
+// than adding a sibling kernel: at `dilation=1` every formula below reduces
+// algebraically to exactly what this kernel computed before the parameter
+// existed (`j*dilation == j`, `history == K-1`), so the GDN causal conv
+// every existing family already dispatches through this kernel is UNMOVED,
+// by construction rather than by retest alone -- every production call site
+// passes `dilation=1` explicitly.
 // ----------------------------------------------------------------------------
 kernel void gdn_conv_mix_decode(
-    device half*        tail     [[buffer(0)]],   // [K-1, C] shifted in place
+    device half*        tail     [[buffer(0)]],   // [(K-1)*dilation, C] shifted in place
     device const half*  qkv      [[buffer(1)]],   // [C] current raw row
     device const bfloat* conv_w  [[buffer(2)]],   // [C, K]
     device half*        out      [[buffer(3)]],   // [C] silu(conv)
     constant uint&      channels [[buffer(4)]],
     constant uint&      taps     [[buffer(5)]],
+    constant uint&      dilation [[buffer(6)]],
     uint tid [[thread_position_in_grid]]
 ) {
     const uint C = channels;
     const uint K = taps;
+    const uint D = dilation;
     if (tid >= C) return;
 
-    const uint history = K - 1u;
+    const uint history = (K - 1u) * D;
+    // Tap j (0..K-2) reads the tail row `j*D` steps from the OLDEST end --
+    // the taps are `D` apart in the underlying per-timestep history, where
+    // the tap-weight loop itself still runs over the K-1 TAPS, never over
+    // `history` directly (that count only sizes the shift/buffer below).
     float acc = float(qkv[tid]) * float(conv_w[tid * K + (K - 1u)]);
-    for (uint j = 0; j < history; ++j) {
-        acc = fma(float(tail[j * C + tid]), float(conv_w[tid * K + j]), acc);
+    for (uint j = 0; j < K - 1u; ++j) {
+        acc = fma(float(tail[(j * D) * C + tid]), float(conv_w[tid * K + j]), acc);
     }
     out[tid] = half(gdn_silu(acc));
 
@@ -180,30 +208,35 @@ kernel void gdn_conv_mix_decode(
 
 // ----------------------------------------------------------------------------
 // Causal depthwise conv, prefill. Threads (channel, row); the incoming tail is
-// read-only here — gdn_conv_tail_update refreshes it after the chunk.
+// read-only here — gdn_conv_tail_update refreshes it after the chunk. See
+// `gdn_conv_mix_decode`'s header for what `dilation` generalizes and why
+// `dilation=1` reproduces this kernel's pre-existing behaviour exactly.
 // ----------------------------------------------------------------------------
 kernel void gdn_conv_mix_prefill(
-    device const half*  tail     [[buffer(0)]],   // [K-1, C] state entering chunk
+    device const half*  tail     [[buffer(0)]],   // [(K-1)*dilation, C] state entering chunk
     device const half*  qkv      [[buffer(1)]],   // [T, C] raw rows
     device const bfloat* conv_w  [[buffer(2)]],   // [C, K]
     device half*        out      [[buffer(3)]],   // [T, C]
     constant uint&      channels [[buffer(4)]],
     constant uint&      taps     [[buffer(5)]],
     constant uint&      rows     [[buffer(6)]],
+    constant uint&      dilation [[buffer(7)]],
     uint2 gid [[thread_position_in_grid]]
 ) {
     const uint C = channels;
     const uint K = taps;
     const uint T = rows;
+    const uint D = dilation;
     const uint ch = gid.x;
     const uint t = gid.y;
     if (ch >= C || t >= T) return;
 
-    const uint history = K - 1u;
+    const uint history = (K - 1u) * D;
     float acc = 0.0f;
     for (uint j = 0; j < K; ++j) {
-        // Input row index in the virtual sequence [tail rows | chunk rows].
-        const int src = int(t) + int(j) - int(history);
+        // Input row index in the virtual sequence [tail rows | chunk rows],
+        // taps `D` apart (`D=1` collapses to the original stride-1 walk).
+        const int src = int(t) + int(j) * int(D) - int(history);
         float value;
         if (src >= 0) {
             value = float(qkv[uint(src) * C + ch]);
@@ -215,17 +248,22 @@ kernel void gdn_conv_mix_prefill(
     out[t * C + ch] = half(gdn_silu(acc));
 }
 
-// After a prefill chunk: tail := last K-1 raw rows of [old tail | chunk].
+// After a prefill chunk: tail := last `(K-1)*dilation` raw rows of
+// [old tail | chunk]. Unlike the two kernels above, this one's own
+// addressing is UNCHANGED by dilation beyond the value of `history` --  it
+// walks per-ROW (one physical tail row per past timestep), never per-tap,
+// so `dilation` only widens which `history` it is asked to maintain.
 kernel void gdn_conv_tail_update(
-    device half*        tail     [[buffer(0)]],   // [K-1, C]
+    device half*        tail     [[buffer(0)]],   // [(K-1)*dilation, C]
     device const half*  qkv      [[buffer(1)]],   // [T, C] raw rows
     constant uint&      channels [[buffer(2)]],
     constant uint&      taps     [[buffer(3)]],
     constant uint&      rows     [[buffer(4)]],
+    constant uint&      dilation [[buffer(5)]],
     uint2 gid [[thread_position_in_grid]]
 ) {
     const uint C = channels;
-    const uint history = taps - 1u;
+    const uint history = (taps - 1u) * dilation;
     const uint T = rows;
     const uint ch = gid.x;
     const uint j = gid.y;
@@ -460,10 +498,13 @@ kernel void gdn_delta_step_prefill(
 }
 
 // ----------------------------------------------------------------------------
-// Gated output norm: out = rmsnorm(y; weight, eps) * silu(z), per value head.
+// Gated output norm: out = rmsnorm(y; weight, eps) * gate(z), per value head.
 // One threadgroup per (head, row), 128 threads. Norm statistics span one
-// head's Dv elements; silu/product in FP32 (matches the reference's
-// _precise_swiglu).
+// head's Dv elements; the gate and the product run in FP32 (matches the
+// reference's _precise_swiglu). `gate` is silu unless `FC_GDN_GATE_SIGMOID`
+// is baked true (`qwen4_exp`'s `output_gate_type: sigmoid`); see that
+// constant's own comment for why this is a specialized pipeline rather than
+// a runtime branch on a uniform.
 // ----------------------------------------------------------------------------
 kernel void gdn_gated_norm(
     device const half*   y        [[buffer(0)]],   // [T, Hv * Dv]
@@ -504,9 +545,11 @@ kernel void gdn_gated_norm(
     const float mean = partial[0] / float(Dv);
     const float invRms = rsqrt(mean + kGdnRmsEps);
 
+    const bool useSigmoid = is_function_constant_defined(FC_GDN_GATE_SIGMOID) && FC_GDN_GATE_SIGMOID;
     for (uint i = tid; i < Dv; i += 128u) {
         const float normed = float(y[base + i]) * invRms * float(weight[i]);
-        const float gate = gdn_silu(float(z[base + i]));
+        const float zv = float(z[base + i]);
+        const float gate = useSigmoid ? (1.0f / (1.0f + exp(-zv))) : gdn_silu(zv);
         out[base + i] = half(normed * gate);
     }
 }

@@ -218,6 +218,59 @@ void rmsnorm_bf16w_perhead_centered(
     }
 }
 
+// PORT-LOCAL: the GROUPED CENTERED form (`qwen4_exp`'s `hc_norm` and PLE's
+// `norm_key`/`norm_query`/`norm_conv`, `docs/QWEN4_PHASE0.md` item 9's norm
+// taxonomy, row 1). Structurally close to `rmsnorm_bf16w_perhead_centered`
+// above -- an independent reduction per `GD`-wide group, one threadgroup per
+// group -- but the weight is NOT shared across groups the way a per-head
+// weight is shared across heads: it is a single `groups * GD`-wide vector,
+// read at each element's own GLOBAL index.
+//
+//   for group g:
+//     inv_g = rsqrt(mean(x[g*GD .. (g+1)*GD]^2) + eps)
+//     y[g*GD+i] = x[g*GD+i] * inv_g * (1 + weight[g*GD+i])
+//
+// NOT a wider `rmsnorm_bf16w_centered`: that kernel takes ONE statistic over
+// its whole input, and `qwen4_exp`'s `pre_fc_norm_hidden` (taxonomy row 3) is
+// exactly that at the SAME 10240-element width this kernel runs at. Both
+// bind a full-width BF16 weight, so no buffer-size mismatch would catch a
+// call site that passed the wrong `groups` -- at `groups=1` this kernel IS
+// `rmsnorm_bf16w_centered` mathematically (one threadgroup, one statistic
+// over the whole vector), which is exactly why a caller cannot be trusted to
+// get `groups` right by construction: `hc_norm` (`groups=4`) and
+// `pre_fc_norm_hidden` (a DIFFERENT tensor, plain) are two call sites on two
+// tensors, not two settings of one dial, and the host wrapper for the plain
+// tensor dispatches `rmsnorm_bf16w_centered` by name rather than this kernel
+// at `groups=1`.
+[[kernel, max_total_threads_per_threadgroup(256)]]
+void rmsnorm_bf16w_grouped_centered(
+    device const half*   x          [[buffer(0)]],   // [groups * GD] FP16
+    device const bfloat* weight     [[buffer(1)]],   // [groups * GD] BF16, centered at 0
+    device       half*   out        [[buffer(2)]],   // [groups * GD] FP16
+    constant     uint&   groupDim   [[buffer(3)]],
+    constant     float&  eps        [[buffer(4)]],
+    uint  group            [[threadgroup_position_in_grid]],
+    uint  lid              [[thread_position_in_threadgroup]],
+    uint  lsize            [[threads_per_threadgroup]],
+    uint  simd_lane_id     [[thread_index_in_simdgroup]],
+    uint  simd_group_id    [[simdgroup_index_in_threadgroup]],
+    uint  simdgroups       [[simdgroups_per_threadgroup]]
+) {
+    threadgroup float partial[kRmsMaxSimdGroups];
+    const uint GD = rms_fc_d(groupDim);
+    const uint base = group * GD;
+    device const half*   xg = x      + base;
+    device const bfloat* wg = weight + base;
+    device       half*   og = out    + base;
+    const float inv = rms_block_inv(xg, GD, eps, lid, lsize,
+                                    simd_lane_id, simd_group_id, simdgroups, partial);
+    for (uint i = lid; i < GD; i += lsize) {
+        float xv = float(xg[i]);
+        float wv = float(wg[i]);
+        og[i] = half(xv * inv * (1.0f + wv));
+    }
+}
+
 [[kernel, max_total_threads_per_threadgroup(256)]]
 void rmsnorm_no_scale_perhead(
     device const half*  x          [[buffer(0)]],   // [numHeads * headDim] FP16

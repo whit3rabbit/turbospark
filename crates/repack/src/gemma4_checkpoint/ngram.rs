@@ -18,11 +18,25 @@
 //! wrong id -- which no length check, checksum or structural validation can
 //! see, and which reads as a model that produces fluent nonsense.
 
+use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 
+use model_io::ArchConfig;
+
 use super::config::Gemma4Error;
+use super::shards::Gemma4Shards;
+
+/// The n-gram table's own affine group size: 32, against `AFFINE_GROUP_SIZE`
+/// (64) everywhere else in this checkpoint. 160 values (one head's row) is
+/// not divisible by 64; it is by 32.
+pub const NGRAM_GROUP_SIZE: u64 = 32;
+
+/// Bits per value. [`NgramTableSpec::validate`] already refuses anything
+/// else; named here so [`write_ngram_table`] states the constraint rather
+/// than repeating the literal.
+pub const NGRAM_BITS: u64 = 4;
 
 /// What the table's shape is, before any bytes are written.
 ///
@@ -257,4 +271,168 @@ impl NgramTableWriter {
             ))),
         }
     }
+}
+
+/// The n-gram table's classified names, OWNED so they outlive the borrowed
+/// `Gemma4Shards<'a>` a `Gemma4RepackOutput` is built from and built once by
+/// [`orchestrate::classify_all`](super::orchestrate::classify_all)'s caller.
+///
+/// Carries names, not bytes: see [`Gemma4RepackOutput::ngram`]'s doc for why.
+/// [`write_ngram_table`] is what turns this into an install, and it is called
+/// from both writer entry points in `mod.rs` rather than from here, because
+/// only they have the install directory this struct does not.
+#[derive(Debug, Clone, Default)]
+pub struct NgramPlan {
+    /// Shard index -> role (`weight`/`scales`/`biases`) -> source tensor name.
+    pub shards: BTreeMap<usize, BTreeMap<&'static str, String>>,
+    /// Field name -> source tensor name, for the three hashing buffers.
+    pub meta: BTreeMap<&'static str, String>,
+}
+
+impl NgramPlan {
+    /// Owns a copy of [`super::orchestrate::ClassifiedNames`]'s borrowed
+    /// `ngram_shards`/`ngram_meta` maps.
+    pub fn from_classified(
+        shards: &BTreeMap<usize, BTreeMap<&'static str, &str>>,
+        meta: &BTreeMap<&'static str, &str>,
+    ) -> Self {
+        Self {
+            shards: shards
+                .iter()
+                .map(|(&shard, roles)| {
+                    let roles = roles
+                        .iter()
+                        .map(|(&role, &name)| (role, name.to_string()))
+                        .collect();
+                    (shard, roles)
+                })
+                .collect(),
+            meta: meta
+                .iter()
+                .map(|(&field, &name)| (field, name.to_string()))
+                .collect(),
+        }
+    }
+}
+
+/// Streams `qwen4_exp`'s hashed n-gram PLE table from the checkpoint into
+/// `<dir>/ngram_table/`, one shard at a time. A no-op when `plan` classified
+/// no n-gram tensors, which is every family but `qwen4_exp`.
+///
+/// **CALLED FROM BOTH WRITER ENTRY POINTS IN `mod.rs`, FOR A DIFFERENT REASON
+/// THAN THE MTP HEAD AND THE VISION TOWER ARE.** Those two are read into
+/// memory once inside `orchestrate_gemma4_checkpoint_sharded` and carried in
+/// `Gemma4RepackOutput`, so the non-streamed writer gets them for free. This
+/// table is 32 GB and this module's whole point is that nothing holds it --
+/// so the read and the write are the SAME loop, and that loop needs `dir`,
+/// which `orchestrate_gemma4_checkpoint_sharded`'s pure, in-memory contract
+/// does not carry. `write_gemma4_install` and `write_gemma4_install_streamed`
+/// both call this directly instead, immediately after they have a directory
+/// to write into.
+pub fn write_ngram_table(
+    shards: &Gemma4Shards<'_>,
+    arch: &ArchConfig,
+    plan: &NgramPlan,
+    dir: &Path,
+    mut progress: impl FnMut(&str),
+) -> Result<(), Gemma4Error> {
+    if plan.shards.is_empty() {
+        return Ok(());
+    }
+    let layer_indices = arch.ple.layer_indices();
+    let [layer_index] = layer_indices[..] else {
+        return Err(Gemma4Error::Config(format!(
+            "arch.ple declares {} PLE layers but this walk found an n-gram table on disk; \
+             placing it needs exactly one",
+            layer_indices.len()
+        )));
+    };
+
+    // `rows_per_shard` read off the ARTIFACT (the first shard's own tensor
+    // shape) rather than derived from config arithmetic -- Gotcha 62's rule,
+    // read the artifact rather than the note about it. Every shard shares the
+    // same row count: the concatenated table is padded to a multiple of
+    // `split_ngram_parts` before the split, precisely so it divides evenly.
+    let (&first_shard, first_roles) = plan.shards.iter().next().expect("checked non-empty above");
+    let first_weight = ngram_tensor_name(first_roles, first_shard, "weight")?;
+    let rows_per_shard =
+        *shards
+            .info(first_weight)?
+            .shape
+            .first()
+            .ok_or_else(|| Gemma4Error::ShapeMismatch {
+                tensor: first_weight.to_string(),
+                detail: "ngram shard weight tensor has no rows dimension".to_string(),
+            })?;
+
+    let spec = NgramTableSpec {
+        rows_per_shard,
+        shards: plan.shards.len() as u64,
+        head_dim: arch.ple.head_dim() as u64,
+        group_size: NGRAM_GROUP_SIZE,
+        bits: NGRAM_BITS,
+        layer_index: layer_index as u64,
+    };
+
+    let mut writer = NgramTableWriter::create(dir, spec)?;
+    for (&shard, roles) in &plan.shards {
+        let weight = shards.read(ngram_tensor_name(roles, shard, "weight")?)?;
+        let scales = shards.read(ngram_tensor_name(roles, shard, "scales")?)?;
+        let biases = shards.read(ngram_tensor_name(roles, shard, "biases")?)?;
+        writer.write_shard(shard as u64, &weight, &scales, &biases)?;
+        progress(&format!("n-gram shard {shard} of {} written", spec.shards));
+    }
+
+    let multipliers = read_i64_buffer(shards, plan, "layer_multipliers")?;
+    let head_vocab_sizes = read_i64_buffer(shards, plan, "ngram_heads_vocab_sizes")?;
+    let head_offsets = read_i64_buffer(shards, plan, "ngram_heads_offsets")?;
+    let rows = spec.rows();
+    writer.finish(multipliers, head_vocab_sizes, head_offsets)?;
+    progress(&format!("n-gram table written ({rows} rows)"));
+    Ok(())
+}
+
+fn ngram_tensor_name<'a>(
+    roles: &'a BTreeMap<&'static str, String>,
+    shard: usize,
+    role: &str,
+) -> Result<&'a str, Gemma4Error> {
+    roles
+        .get(role)
+        .map(String::as_str)
+        .ok_or_else(|| Gemma4Error::MissingTensor(format!("ngram_table shard {shard} {role}")))
+}
+
+/// Decodes one of the table's three int64 hashing buffers to `Vec<i64>`.
+///
+/// These are read VERBATIM, never derived: `NgramTableWriter::finish`'s doc
+/// says why (a checkpoint that ever ships them wrong and a port that only
+/// derives them are the same silent failure from opposite directions).
+fn read_i64_buffer(
+    shards: &Gemma4Shards<'_>,
+    plan: &NgramPlan,
+    field: &'static str,
+) -> Result<Vec<i64>, Gemma4Error> {
+    let name = plan
+        .meta
+        .get(field)
+        .ok_or_else(|| Gemma4Error::MissingTensor(format!("ngram_table {field}")))?;
+    let info = shards.info(name)?;
+    if info.dtype != "I64" {
+        return Err(Gemma4Error::UnsupportedDtype {
+            tensor: name.clone(),
+            dtype: format!("{} in n-gram buffer {field} (expected I64)", info.dtype),
+        });
+    }
+    let bytes = shards.read(name)?;
+    if bytes.len() % 8 != 0 {
+        return Err(Gemma4Error::ShapeMismatch {
+            tensor: name.clone(),
+            detail: format!("{} bytes is not a whole number of i64 values", bytes.len()),
+        });
+    }
+    Ok(bytes
+        .chunks_exact(8)
+        .map(|c| i64::from_le_bytes(c.try_into().expect("chunks_exact(8)")))
+        .collect())
 }

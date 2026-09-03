@@ -53,11 +53,11 @@ pub use gemma4_checkpoint::{
     orchestrate_gemma4_checkpoint_sharded, parse_gemma4_config, parse_gemma4_quantization,
     pass_through_packed, read_vision_entries, vision_arch_for_manifest, vision_should_ingest,
     write_gemma4_install, write_gemma4_install_streamed, write_muse_glimmer_install,
-    write_muse_glimmer_install_streamed, write_qwen_gdn_dense_install,
+    write_muse_glimmer_install_streamed, write_ngram_table, write_qwen_gdn_dense_install,
     write_qwen_gdn_dense_install_streamed, write_qwen_gdn_moe_install,
     write_qwen_gdn_moe_install_streamed, ConvertedFp16, Gemma4Bucket, Gemma4Error, Gemma4Quant,
-    Gemma4RepackOutput, Gemma4Shards, NarrowedRaw, NgramTableSpec, NgramTableWriter, VisionRead,
-    AFFINE_1BIT_GROUP_SIZE, AFFINE_2BIT_GROUP_SIZE, AFFINE_GROUP_SIZE, DFLASH_PREFIX,
+    Gemma4RepackOutput, Gemma4Shards, NarrowedRaw, NgramPlan, NgramTableSpec, NgramTableWriter,
+    VisionRead, AFFINE_1BIT_GROUP_SIZE, AFFINE_2BIT_GROUP_SIZE, AFFINE_GROUP_SIZE, DFLASH_PREFIX,
     GTURBO_PAGE_BYTES, VISION_BLOCK_ROLES, VISION_INSTALL_PREFIX, VISION_PREFIX,
     VISION_RESIDENT_TENSORS,
 };
@@ -122,6 +122,7 @@ pub use synthetic_model::{
 };
 pub use synthetic_muse::{build_synthetic_muse_glimmer_install, tiny_muse_glimmer_arch};
 pub use synthetic_qwen::{
+    build_synthetic_qwen4_exp_install, build_synthetic_qwen4_exp_install_streamed,
     build_synthetic_qwen_gdn_dense_install, build_synthetic_qwen_gdn_dense_install_at_bits,
     build_synthetic_qwen_gdn_dense_install_with_both_drafters,
     build_synthetic_qwen_gdn_dense_install_with_dflash,
@@ -131,7 +132,7 @@ pub use synthetic_qwen::{
     build_synthetic_qwen_gdn_dense_install_with_vision,
     build_synthetic_qwen_gdn_dense_install_with_vision_streamed,
     build_synthetic_qwen_gdn_moe_install, build_synthetic_qwen_gdn_moe_install_with_mtp,
-    tiny_qwen_gdn_dense_arch, tiny_qwen_gdn_moe_arch, tiny_vision_config,
+    tiny_qwen4_exp_arch, tiny_qwen_gdn_dense_arch, tiny_qwen_gdn_moe_arch, tiny_vision_config,
 };
 pub use synthetic_real::{
     build_synthetic_gemma4_real_install, build_synthetic_gemma4_real_install_at_shared_bits,

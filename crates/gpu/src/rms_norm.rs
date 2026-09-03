@@ -195,6 +195,84 @@ pub fn encode_rms_norm_bf16w_perhead_centered(
     Ok(())
 }
 
+/// Encoder-level grouped CENTERED RMSNorm (`rmsnorm_bf16w_grouped_centered`):
+/// `x` holds `groups * group_dim` halfs; each `group_dim`-wide slice is
+/// normalized independently, and the result is multiplied by a SINGLE
+/// `groups * group_dim`-wide weight read at each element's own global index
+/// (not shared across groups the way [`encode_rms_norm_bf16w_perhead_centered`]'s
+/// per-head weight is). `qwen4_exp`'s `hc_norm` and PLE's
+/// `norm_key`/`norm_query`/`norm_conv` (`docs/QWEN4_PHASE0.md` item 9, norm
+/// taxonomy row 1). One threadgroup per group.
+///
+/// **Do not reach for this at `groups = 1` in place of
+/// [`encode_rms_norm_bf16w_centered`].** The two are mathematically identical
+/// there, which is exactly why a caller must not be trusted to set `groups`
+/// per tensor: `hc_norm` and `pre_fc_norm_hidden` are two DIFFERENT tensors on
+/// two different call sites, and the plain one dispatches the other function
+/// by name.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_rms_norm_bf16w_grouped_centered(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    x: (&metal::Buffer, u64),
+    weight: (&metal::Buffer, u64),
+    out: (&metal::Buffer, u64),
+    groups: u32,
+    group_dim: u32,
+    eps: f32,
+) -> Result<(), GpuError> {
+    let pipeline = context.pipeline(
+        SOURCE,
+        "rmsnorm_bf16w_grouped_centered",
+        &unused_function_constants(),
+        b"",
+    )?;
+    pass.encode_threadgroups(
+        &pipeline,
+        &[(x.0, 0, x.1), (weight.0, 1, weight.1), (out.0, 2, out.1)],
+        &[(u32_bytes(&group_dim), 3), (f32_bytes(&eps), 4)],
+        groups as u64,
+        THREADS_PER_GROUP.min(group_dim.max(1) as u64),
+    );
+    Ok(())
+}
+
+/// One-shot [`encode_rms_norm_bf16w_grouped_centered`] over host slices, for
+/// the parity tests: `x` and `weight_bits` (BF16 bit patterns) are both
+/// `[groups * group_dim]`, `group_dim = x.len() / groups`.
+pub fn rms_norm_bf16w_grouped_centered(
+    context: &mut MetalContext,
+    x: &[f16],
+    weight_bits: &[u16],
+    groups: u32,
+    eps: f32,
+) -> Result<Vec<f16>, GpuError> {
+    assert_eq!(x.len(), weight_bits.len());
+    assert_eq!(
+        x.len() % groups as usize,
+        0,
+        "x.len() must be a whole number of groups"
+    );
+    let group_dim = (x.len() / groups as usize) as u32;
+    let x_buffer = context.new_buffer_with_data(&half_slice_to_le_bytes(x));
+    let w_buffer = context.new_buffer_with_data(&crate::bytes::u16_slice_to_le_bytes(weight_bits));
+    let out_buffer = context.new_output_buffer((x.len() * 2) as u64);
+
+    let pass = context.begin_pass();
+    encode_rms_norm_bf16w_grouped_centered(
+        context,
+        &pass,
+        (&x_buffer, 0),
+        (&w_buffer, 0),
+        (&out_buffer, 0),
+        groups,
+        group_dim,
+        eps,
+    )?;
+    pass.commit_and_wait();
+    Ok(read_half_buffer(&out_buffer, x.len()))
+}
+
 /// Encoder-level per-head no-scale RMSNorm (`rmsnorm_no_scale_perhead`):
 /// Gemma 4's v_norm. One threadgroup per head.
 pub fn encode_rms_norm_no_scale_perhead(
