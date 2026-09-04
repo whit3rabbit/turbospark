@@ -291,12 +291,16 @@ extension AppModel {
         return options
     }
 
+    /// **PATH FIRST, ALIAS AS THE LEGACY FALLBACK** (state#96). `setReasoning`
+    /// writes the path now, and reading the alias first would let an entry
+    /// written before that change shadow the fresh one for as long as the
+    /// alias entry exists -- which is forever, since nothing rewrites it.
     public func restoreReasoningPreference(for model: InstalledModel) {
-        if let saved = modelReasoningDefaults[model.alias],
-           let level = GenerateOptions.Reasoning(rawValue: saved) {
+        if let saved = modelReasoningDefaults[model.path],
+            let level = GenerateOptions.Reasoning(rawValue: saved) {
             self.reasoning = level
-        } else if let saved = modelReasoningDefaults[model.path],
-                  let level = GenerateOptions.Reasoning(rawValue: saved) {
+        } else if let saved = modelReasoningDefaults[model.alias],
+            let level = GenerateOptions.Reasoning(rawValue: saved) {
             self.reasoning = level
         }
     }
@@ -535,6 +539,12 @@ extension AppModel {
         }
 
         ModelOrganizationStore.shared.removeMetadata(for: model.alias, path: model.path)
+        // The remembered reasoning level goes with it (state#96). Nothing
+        // pruned this, so `settings.json` accumulated an entry per model ever
+        // deleted -- and once the key is the PATH, a later install at the
+        // same path silently inherits a level its own user never chose.
+        modelReasoningDefaults.removeValue(forKey: model.path)
+        persistSettings()
         refreshModels()
 
         if deleted {

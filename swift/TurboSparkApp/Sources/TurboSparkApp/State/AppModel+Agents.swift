@@ -31,6 +31,13 @@ extension AppModel {
             projectURL: selectedProject?.rootDirectoryURL)
     }
 
+    /// User agents a PROJECT agent is currently overriding (state#105). The
+    /// agent-side twin of `shadowedUserSkillNames`.
+    public var shadowedUserAgentNames: [String] {
+        AgentManager.shared.shadowedUserAgentNames(
+            projectURL: selectedProject?.rootDirectoryURL)
+    }
+
     /// Toggles and persists the enabled state of an agent.
     public func toggleAgentEnabled(_ agent: AppAgentDefinition) {
         // Scoped, so toggling a project agent does not also toggle the

@@ -54,6 +54,46 @@ public struct AgentsSettingsPaneView: View {
         return filteredAgents.first
     }
 
+    /// What the project's agent files are overriding (state#105).
+    ///
+    /// **PRECEDENCE WITH NO DISCLOSURE IS INDISTINGUISHABLE FROM A BROKEN
+    /// AGENT.** A project agent taking a name deliberately shadows the user's
+    /// own or a built-in; that is what precedence IS. But a user whose
+    /// `explore` stopped writing files, or whose own `deploy` agent stopped
+    /// behaving, reads it as their agent being broken rather than replaced --
+    /// and a cloned repository can do either by name. `constrainedProjectAgentNames`
+    /// existed for exactly this and had no view reading it, which is
+    /// `swift/CLAUDE.md` Gotcha 36's tell: grep for the ACCESSOR, not for
+    /// the feature.
+    @ViewBuilder private var overrideDisclosureBanner: some View {
+        let constrained = model.constrainedProjectAgentNames
+        let shadowed = model.shadowedUserAgentNames
+        if !constrained.isEmpty || !shadowed.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                if !shadowed.isEmpty {
+                    Label(
+                        "This project overrides your own \(shadowed.joined(separator: ", ")).",
+                        systemImage: "arrow.triangle.branch"
+                    )
+                    .font(.caption)
+                }
+                if !constrained.isEmpty {
+                    Label(
+                        "\(constrained.joined(separator: ", ")) took a built-in's name and is "
+                            + "held to its tool limits.",
+                        systemImage: "lock.shield"
+                    )
+                    .font(.caption)
+                }
+            }
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 8)
+            .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
+        }
+    }
+
     public var body: some View {
         VStack(spacing: 0) {
             // Header bar
@@ -65,6 +105,8 @@ public struct AgentsSettingsPaneView: View {
             Rectangle()
                 .fill(TurboSparkTheme.hairlineColor)
                 .frame(height: 1)
+
+            overrideDisclosureBanner
 
             if model.allManagedAgents.isEmpty {
                 emptyStateView

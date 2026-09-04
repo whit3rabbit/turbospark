@@ -312,9 +312,28 @@ extension AppModel {
     public func detachChatSessionFromServer() {
         guard let server, let session else { return }
         let ids = serverAttachedSessions.filter { $0.value === session }.map(\.key)
+        var failures: [String] = []
         for id in ids {
-            try? server.detach(modelId: id)
+            do {
+                try server.detach(modelId: id)
+            } catch {
+                // **`try?` HERE MEANT THE ENGINE STILL HELD IT** (state#104).
+                // The Swift reference is dropped either way, which is the
+                // recoverable direction (state#53's own reasoning), but a
+                // failed detach leaves the model resident and SERVED with
+                // nothing in either pane still showing it -- exactly the
+                // invisible-resident state this function exists to prevent,
+                // reported nowhere.
+                failures.append("\(id): \(error.localizedDescription)")
+            }
             serverAttachedSessions[id] = nil
+        }
+        if !failures.isEmpty {
+            let msg =
+                "The server could not release \(failures.count == 1 ? "a model" : "some models"); "
+                + "it may still be serving \(failures.joined(separator: ", "))."
+            self.error = msg
+            showToast(msg, style: .warning)
         }
         if !ids.isEmpty {
             refreshServerInfo()

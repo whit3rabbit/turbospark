@@ -299,11 +299,25 @@ extension AppModel {
                             self.liveElapsedDecodeSeconds = Date().timeIntervalSince(start)
                         }
                     case .reasoning(let chunk):
+                        // **REASONING STARTS THE CLOCK AND MUST THEREFORE BE
+                        // COUNTED** (state#100). This set `decodeStartTime`
+                        // and incremented nothing, so on a thinking turn the
+                        // HUD divided a growing elapsed time by a token count
+                        // that stayed at zero until the answer began -- the
+                        // rate read 0 tok/s through the whole reasoning
+                        // phase and then jumped. Same caveat as every other
+                        // number here: this counts non-empty EVENTS rather
+                        // than tokens (`swift/CLAUDE.md` Gotcha 7), and the
+                        // authoritative figure is `GenerationResult`.
                         if self.phase != .decode {
                             self.phase = .decode
                             self.decodeStartTime = Date()
                         }
                         self.outputReasoningText += chunk
+                        self.liveTokenCount += 1
+                        if let start = self.decodeStartTime {
+                            self.liveElapsedDecodeSeconds = Date().timeIntervalSince(start)
+                        }
                     case .finished(let result):
                         self.phase = .idle
                         let phaseReport = try? await session.phases()
@@ -400,8 +414,16 @@ extension AppModel {
                             await dispatch(parsedCalls, content: generatedContent)
                         }
 
-                        self.outputText = ""
-                        self.outputReasoningText = ""
+                        // **UNDER THE EPOCH GUARD** (state#98). `dispatch`
+                        // above can re-enter `executeGenerationTurn` through
+                        // the agent loop, which sets up the NEXT turn's
+                        // output state; clearing here unconditionally is the
+                        // same clobber state#10 added the guard at this
+                        // function's tail to prevent, one block earlier.
+                        if self.generationEpoch == myEpoch {
+                            self.outputText = ""
+                            self.outputReasoningText = ""
+                        }
                     }
                 }
             } catch is CancellationError {

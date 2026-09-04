@@ -2,6 +2,34 @@ import Foundation
 import TurboSpark
 
 extension AppModel {
+    /// The remaining-time string for a running install, or nil when there is
+    /// nothing honest to say yet (state#102).
+    ///
+    /// **`installETAText` HAD NO WRITER**, only a declaration, a reset to nil
+    /// on every install path, and a view reading it -- so the row it feeds
+    /// never appeared and the field read as a feature that was there.
+    /// `swift/CLAUDE.md` Gotcha 36's tell applied to a published property
+    /// rather than to a setting: grep for the WRITER, not for the field.
+    ///
+    /// Nil below a floor of elapsed time and downloaded bytes, because a rate
+    /// measured over the first instant of a multi-gigabyte stream produces a
+    /// number that is wrong by an order of magnitude and then visibly
+    /// corrects itself, which is worse than no estimate. A pure static so it
+    /// can be asserted without a download.
+    static func installETA(done: UInt64, total: UInt64, elapsed: TimeInterval) -> String? {
+        guard total > 0, done > 0, done < total, elapsed >= 2.0 else { return nil }
+        let rate = Double(done) / elapsed
+        guard rate > 0 else { return nil }
+        let remaining = Double(total - done) / rate
+        guard remaining.isFinite, remaining >= 1 else { return nil }
+        let seconds = Int(remaining.rounded())
+        if seconds < 60 { return "about \(seconds)s remaining" }
+        if seconds < 3600 { return "about \(seconds / 60)m remaining" }
+        let hours = seconds / 3600
+        let minutes = (seconds % 3600) / 60
+        return "about \(hours)h \(minutes)m remaining"
+    }
+
     /// Initiates a background download and build of a model catalog alias.
     public func installModel(alias: String) {
         guard !isInstallingModel, !generating else { return }
@@ -26,6 +54,7 @@ extension AppModel {
         error = nil
         showToast("Starting download for '\(alias)'...", style: .info)
 
+        let startedAt = Date()
         installTask = Task {
             do {
                 var maxBytes: UInt64 = 0
@@ -40,6 +69,9 @@ extension AppModel {
                         if total > 0 {
                             self.installProgressFraction = min(Double(maxBytes) / Double(total), 1.0)
                         }
+                        self.installETAText = Self.installETA(
+                            done: maxBytes, total: total,
+                            elapsed: Date().timeIntervalSince(startedAt))
                     case .finished(let model):
                         // **THE EPOCH CHECK BELONGS ON THE SUCCESS ARM TOO**
                         // (state#52). The comment on the `catch` below says
@@ -141,6 +173,7 @@ extension AppModel {
         error = nil
         showToast("Pulling '\(trimmedRepo)'...", style: .info)
 
+        let startedAt = Date()
         installTask = Task {
             do {
                 var maxBytes: UInt64 = 0
@@ -160,6 +193,9 @@ extension AppModel {
                         if total > 0 {
                             self.installProgressFraction = min(Double(maxBytes) / Double(total), 1.0)
                         }
+                        self.installETAText = Self.installETA(
+                            done: maxBytes, total: total,
+                            elapsed: Date().timeIntervalSince(startedAt))
                     case .finished(let model):
                         // **THE EPOCH CHECK BELONGS ON THE SUCCESS ARM TOO**
                         // (state#52). The comment on the `catch` below says

@@ -310,6 +310,16 @@ public final class AgentManager: @unchecked Sendable {
         /// name. Kept so it can be SHOWN -- a repository author whose
         /// `explore.md` cannot write files should be able to see why.
         var constrainedProjectNames: [String]
+        /// USER agents a project agent is currently shadowing (state#105).
+        ///
+        /// **PRECEDENCE WITH NO DISCLOSURE IS INDISTINGUISHABLE FROM A BROKEN
+        /// AGENT**, which is exactly the reasoning `SkillManager.shadowedUserSkillNames`
+        /// was written down for; the agent side has the constrained list for
+        /// the BUILT-IN case and had nothing for the user one. A cloned
+        /// repository can take the name of an agent the user wrote, and the
+        /// built-in ceiling does not apply to it -- there is no built-in to
+        /// draw the ceiling from.
+        var shadowedUserNames: [String]
     }
 
     /// Drops the cached resolution. Call after anything that changes what is
@@ -323,6 +333,11 @@ public final class AgentManager: @unchecked Sendable {
     /// Project agent names held to a built-in's tool ceiling.
     public func constrainedProjectAgentNames(projectURL: URL?) -> [String] {
         resolution(projectURL: projectURL).constrainedProjectNames
+    }
+
+    /// User agent names a project agent is currently overriding (state#105).
+    public func shadowedUserAgentNames(projectURL: URL?) -> [String] {
+        resolution(projectURL: projectURL).shadowedUserNames
     }
 
     public func resolveEffectiveAgents(projectURL: URL?) -> [AppAgentDefinition] {
@@ -368,10 +383,15 @@ public final class AgentManager: @unchecked Sendable {
             builtInsByName[agent.name.lowercased()] = agent
         }
         var constrained: [String] = []
+        var shadowed: [String] = []
+        let userNames = Set(userAgents.map { $0.name.lowercased() })
         if let projectURL {
             let projAgents = discoverProjectAgents(projectURL: projectURL)
             for agent in projAgents {
                 let key = agent.name.lowercased()
+                if userNames.contains(key), builtInsByName[key] == nil {
+                    shadowed.append(agent.name)
+                }
                 if let builtIn = builtInsByName[key] {
                     map[key] = Self.constrained(agent, byBuiltIn: builtIn)
                     constrained.append(agent.name)
@@ -382,7 +402,8 @@ public final class AgentManager: @unchecked Sendable {
         }
         return AgentResolution(
             agents: map.values.sorted { $0.name < $1.name },
-            constrainedProjectNames: constrained)
+            constrainedProjectNames: constrained,
+            shadowedUserNames: shadowed.sorted())
     }
 
     public func findAgent(name: String, projectURL: URL? = nil) -> AppAgentDefinition? {

@@ -15,15 +15,27 @@ public struct AppPromptPreset: Identifiable, Decodable, Sendable, Equatable {
         self.prompt = prompt
     }
 
-    /// Loads all prompt presets from the resource bundle or falls back to default built-ins.
-    public static var all: [AppPromptPreset] {
+    /// The presets, read from the bundle ONCE (state#110).
+    ///
+    /// **`var` MEANT A FILE READ AND A JSON DECODE PER ACCESS**, and the
+    /// accessors below read it twice more; `primary` and `secondary` are
+    /// called from SwiftUI bodies, which run per keystroke of the composer
+    /// draft. `let` is evaluated lazily and once.
+    ///
+    /// **AND AN EMPTY ARRAY IS NOT A LIST OF PRESETS.** A `[]` in the bundled
+    /// JSON decodes SUCCESSFULLY, so it took the first arm and the empty
+    /// state rendered no quick actions at all -- indistinguishable from a
+    /// missing resource, which is the case the fallback exists for.
+    public static let all: [AppPromptPreset] = {
         if let url = Bundle.module.url(forResource: "app-prompts", withExtension: "json"),
-           let data = try? Data(contentsOf: url),
-           let presets = try? JSONDecoder().decode([AppPromptPreset].self, from: data) {
+            let data = try? Data(contentsOf: url),
+            let presets = try? JSONDecoder().decode([AppPromptPreset].self, from: data),
+            !presets.isEmpty
+        {
             return presets
         }
         return defaultPresets
-    }
+    }()
 
     /// Primary quick-action presets shown directly above the empty composer.
     public static var primary: [AppPromptPreset] {

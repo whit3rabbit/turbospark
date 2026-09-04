@@ -170,6 +170,13 @@ extension AppModel {
     /// added, with the mechanism in place and unwired. `lastReadError` is its
     /// twin on the load side. Reported as an error toast rather than thrown:
     /// both are recorded on `didSet`-shaped paths that cannot propagate.
+    /// **THE LATCH IS WHAT COVERS THE STORES THAT CANNOT CALL THIS**
+    /// (state#103). `ModelOrganizationStore.save` and
+    /// `DisabledItemStore.setNames` are not on `AppModel` and have no toast
+    /// to raise, but `AppJSONStore` HOLDS the error until it is read -- so a
+    /// failure there is reported at the next chat, project or MCP write
+    /// rather than lost. Delayed, not dropped; the alternative is a second
+    /// reporting path for two stores that write kilobytes.
     func surfaceStorageIssues() {
         if let readError = AppJSONStore.lastReadError {
             AppJSONStore.clearLastReadError()
@@ -203,6 +210,12 @@ extension AppModel {
             self.chatPersistDebounceTask = nil
             let archive = AppChatArchive(selectedChatID: self.selectedChatID, chats: self.chats)
             AppChatFileStore.save(archive)
+            // **THE DEBOUNCED WRITE REPORTS TOO** (state#103). state#42 gave
+            // `lastWriteError` a reader and put it on `persistChats()`; this
+            // is the path a DRAFT takes, and a disk that has gone read-only
+            // fails here first and silently. Four other writers were in the
+            // same position.
+            self.surfaceStorageIssues()
         }
     }
 
@@ -236,6 +249,7 @@ extension AppModel {
     public func persistProjects() {
         let archive = AppProjectArchive(selectedProjectID: selectedProjectID, projects: projects)
         AppProjectFileStore.save(archive)
+        surfaceStorageIssues()
     }
 
     /// Loads global Model Context Protocol server configurations.
@@ -248,6 +262,7 @@ extension AppModel {
     public func persistGlobalMcpServers() {
         let archive = GlobalMcpArchive(servers: globalMcpServers)
         GlobalMcpFileStore.save(archive)
+        surfaceStorageIssues()
     }
 }
 

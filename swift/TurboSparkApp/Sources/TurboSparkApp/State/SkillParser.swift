@@ -233,7 +233,15 @@ public enum SkillParser {
                     i += 1
                     while i < lines.count {
                         let subLine = lines[i]
-                        if subLine.hasPrefix("  ") || subLine.hasPrefix("\t") {
+                        // **ONE SPACE IS AN INDENT** (state#109). YAML asks
+                        // only that a block scalar's body be indented more
+                        // than its key, and a key at column 0 makes ONE space
+                        // enough -- real files use it. Requiring two ended
+                        // the description at the first such line and reparsed
+                        // the rest of the paragraph as keys, which is
+                        // state#56's failure with a different trigger: a
+                        // `name:` in that prose renames the skill.
+                        if subLine.hasPrefix(" ") || subLine.hasPrefix("\t") {
                             descLines.append(subLine.trimmingCharacters(in: .whitespaces))
                             i += 1
                         } else if subLine.trimmingCharacters(in: .whitespaces).isEmpty {
@@ -254,7 +262,12 @@ public enum SkillParser {
             case "allowed-tools", "allowed_tools":
                 if valueRest.hasPrefix("[") && valueRest.hasSuffix("]") {
                     allowedTools = parseInlineArray(valueRest)
-                } else if valueRest.isEmpty {
+                } else if valueRest.isEmpty || isBlockScalarMarker(valueRest) {
+                    // The marker arm is `description:`'s (state#109): a `|`
+                    // or `>-` here fell to the `else` below and became a
+                    // one-element list whose single entry is the literal
+                    // string "|", which matches no tool and silently
+                    // narrows the skill to nothing.
                     // Multiline list items starting with -
                     i += 1
                     while i < lines.count {
@@ -323,7 +336,8 @@ public enum SkillParser {
             case "paths":
                 if valueRest.hasPrefix("[") && valueRest.hasSuffix("]") {
                     paths = parseInlineArray(valueRest)
-                } else if valueRest.isEmpty {
+                } else if valueRest.isEmpty || isBlockScalarMarker(valueRest) {
+                    // As `allowed-tools` above (state#109).
                     i += 1
                     while i < lines.count {
                         let subLine = lines[i].trimmingCharacters(in: .whitespaces)
@@ -385,9 +399,31 @@ public enum SkillParser {
         let inside = String(trimmed.dropFirst().dropLast()).trimmingCharacters(in: .whitespaces)
         if inside.isEmpty { return [] }
 
-        return inside
-            .split(separator: ",")
-            .map { unquote(String($0).trimmingCharacters(in: .whitespacesAndNewlines)) }
+        // **A COMMA INSIDE QUOTES DOES NOT END AN ELEMENT** (state#109).
+        // Splitting on every comma cut `["Bash(git commit -m 'a, b')"]` in
+        // half and produced two entries, neither of which is a tool -- so an
+        // allowlist written the way the format documents silently allowed
+        // nothing. Quote state is tracked instead.
+        var elements: [String] = []
+        var current = ""
+        var quote: Character? = nil
+        for character in inside {
+            if let open = quote {
+                current.append(character)
+                if character == open { quote = nil }
+            } else if character == "\"" || character == "'" {
+                current.append(character)
+                quote = character
+            } else if character == "," {
+                elements.append(current)
+                current = ""
+            } else {
+                current.append(character)
+            }
+        }
+        elements.append(current)
+        return elements
+            .map { unquote($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
             .filter { !$0.isEmpty }
     }
 

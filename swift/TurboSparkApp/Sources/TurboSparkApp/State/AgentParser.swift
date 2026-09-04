@@ -135,7 +135,14 @@ public enum AgentParser {
             fallbackName = sourceURL.deletingLastPathComponent().lastPathComponent
         }
 
-        let name = (json["name"] as? String) ?? fallbackName
+        // **BLANK IS ABSENT HERE TOO** (state#106). The markdown parser
+        // learned this rule and the JSON one did not: `"name": ""` produced
+        // an agent keyed on the empty string, which takes the effective
+        // map's `""` slot, so two such files collapse into one and neither
+        // is reachable by name.
+        let declaredName = (json["name"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = (declaredName?.isEmpty == false) ? declaredName! : fallbackName
         let displayName = (json["displayName"] as? String) ?? (json["display_name"] as? String) ?? (json["title"] as? String) ?? name.capitalized
         let description = (json["description"] as? String) ?? (json["whenToUse"] as? String) ?? (json["when_to_use"] as? String) ?? "Autonomous agent: \(name)"
         let systemPrompt = (json["prompt"] as? String) ?? (json["systemPrompt"] as? String) ?? (json["system_prompt"] as? String) ?? ""

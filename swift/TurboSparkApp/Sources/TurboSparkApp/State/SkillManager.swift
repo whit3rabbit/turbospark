@@ -456,6 +456,24 @@ public final class SkillManager: @unchecked Sendable {
             // directory is the user's own edited content; replacing it
             // silently on a name collision is unrecoverable. The caller
             // decides, by passing `overwrite`.
+            // **PARSED BEFORE IT IS COPIED** (state#107). The copy ran
+            // first and the parse second, so an unparseable skill -- or one
+            // whose SKILL.md is a symlink out of the source directory -- was
+            // already installed by the time the throw happened, and the
+            // caller had no reason to think anything had been written. The
+            // source's own directory is the containment root, which is the
+            // check `parseFile` takes and this call site was not passing at
+            // all (state#39's rule, unapplied at the one entry point that
+            // takes an ARBITRARY directory the user just picked).
+            let sourceSkillMd = sourceURL.appendingPathComponent("SKILL.md")
+            let sourceFallbackMd = sourceURL.appendingPathComponent("skill.md")
+            let sourceReadURL =
+                fileManager.fileExists(atPath: sourceSkillMd.path)
+                ? sourceSkillMd : sourceFallbackMd
+            _ = try SkillParser.parseFile(
+                at: sourceReadURL, scope: targetScope, agentOrigin: .custom,
+                containedIn: sourceURL)
+
             if fileManager.fileExists(atPath: destFolderURL.path) {
                 guard overwrite else {
                     throw SkillImportError.destinationExists(name: folderName)
@@ -468,10 +486,16 @@ public final class SkillManager: @unchecked Sendable {
             let fallbackMdURL = destFolderURL.appendingPathComponent("skill.md")
             let readURL = fileManager.fileExists(atPath: skillMdURL.path) ? skillMdURL : fallbackMdURL
 
-            return try SkillParser.parseFile(at: readURL, scope: targetScope, agentOrigin: .custom)
+            return try SkillParser.parseFile(
+                at: readURL, scope: targetScope, agentOrigin: .custom,
+                containedIn: destFolderURL)
         } else {
             let fileName = sourceURL.lastPathComponent
             let destFileURL = destinationBaseDir.appendingPathComponent(fileName)
+            // Source first, for the reason above (state#107).
+            _ = try SkillParser.parseFile(
+                at: sourceURL, scope: targetScope, agentOrigin: .custom,
+                containedIn: sourceURL.deletingLastPathComponent())
             if fileManager.fileExists(atPath: destFileURL.path) {
                 guard overwrite else {
                     throw SkillImportError.destinationExists(name: fileName)
@@ -479,7 +503,9 @@ public final class SkillManager: @unchecked Sendable {
                 try fileManager.removeItem(at: destFileURL)
             }
             try fileManager.copyItem(at: sourceURL, to: destFileURL)
-            return try SkillParser.parseFile(at: destFileURL, scope: targetScope, agentOrigin: .custom)
+            return try SkillParser.parseFile(
+                at: destFileURL, scope: targetScope, agentOrigin: .custom,
+                containedIn: destinationBaseDir)
         }
     }
 

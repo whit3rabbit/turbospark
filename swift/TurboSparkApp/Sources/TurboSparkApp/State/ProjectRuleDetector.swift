@@ -352,10 +352,13 @@ public enum ProjectRuleDetector {
             }
         }
 
-        if let data = try? Data(contentsOf: canonical),
-           let str = String(data: data, encoding: .utf8) {
-            return str
-        }
+        // **THE THIRD BRANCH UNDID THE FIRST TWO** (state#108). Both reads
+        // above are bounded by `maxBytes`; this one read the WHOLE file with
+        // no bound at all, and it was reached whenever the bounded read
+        // returned nil -- which includes every file whose first `maxBytes`
+        // are not valid UTF-8, i.e. exactly the binaries and device nodes the
+        // bound exists for. A rules file that cannot be read as bounded UTF-8
+        // is not a rules file.
         return nil
     }
 }

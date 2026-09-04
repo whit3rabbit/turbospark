@@ -43,13 +43,20 @@ final class ReasoningSettingsTests: XCTestCase {
         appModel.setReasoning(.off)
         XCTAssertEqual(appModel.reasoning, .off)
 
+        // **KEYED ON THE PATH, NOT THE ALIAS** (state#96). This case used to
+        // assert the alias key, which is what the code did and is not unique
+        // once a scanned LM Studio or custom-folder row exists -- so two
+        // installs sharing a name shared one remembered level. The alias is
+        // still READ by `restoreReasoningPreference` as a legacy fallback,
+        // which is what keeps an existing preference working.
         appModel.setReasoning(.high)
         XCTAssertEqual(appModel.reasoning, .high)
-        XCTAssertEqual(appModel.modelReasoningDefaults["qwen-test"], "high")
+        XCTAssertEqual(appModel.modelReasoningDefaults["/path/to/qwen-test.gturbo"], "high")
+        XCTAssertNil(appModel.modelReasoningDefaults["qwen-test"])
 
         appModel.setReasoning(.xhigh)
         XCTAssertEqual(appModel.reasoning, .xhigh)
-        XCTAssertEqual(appModel.modelReasoningDefaults["qwen-test"], "xhigh")
+        XCTAssertEqual(appModel.modelReasoningDefaults["/path/to/qwen-test.gturbo"], "xhigh")
     }
 
     @MainActor

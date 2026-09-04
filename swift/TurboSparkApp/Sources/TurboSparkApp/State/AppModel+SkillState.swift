@@ -107,6 +107,11 @@ extension AppModel {
     /// O_t: only the newest observation reaches the model, because everything
     /// worth keeping from older ones is supposed to be in the state by now.
     private func latestObservation(chatIndex: Int) -> String? {
+        // Hoisted out of the loop (state#111). `taskMessage` scans from the
+        // FRONT and this walks from the BACK, so the pair was quadratic in
+        // the message count -- on the one prompt shape whose entire purpose
+        // is to be O(1) in step count, and reached once per turn.
+        let taskID = Self.taskMessage(in: chats[chatIndex])?.id
         for message in chats[chatIndex].messages.reversed() {
             if let result = message.toolResults.last {
                 let tag = result.isError ? "tool_error" : "tool_response"
@@ -121,8 +126,7 @@ extension AppModel {
             // whose first user turn carries only an image, they name
             // different messages, so the real task was fed back as the
             // latest observation on every step.
-            if message.role == .user,
-                message.id != Self.taskMessage(in: chats[chatIndex])?.id {
+            if message.role == .user, message.id != taskID {
                 return message.content
             }
         }

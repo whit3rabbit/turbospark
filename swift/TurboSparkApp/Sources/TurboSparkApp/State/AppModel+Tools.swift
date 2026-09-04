@@ -2,18 +2,13 @@ import Foundation
 import TurboSpark
 
 extension AppModel {
-    /// Resolves effective permission level for a tool category.
-    public func permission(for category: AppToolCategory) -> AppToolPermission {
-        let permissions = selectedProject?.permissions ?? .standard
-        switch category {
-        case .fileRead: return permissions.fileRead
-        case .fileWrite: return permissions.fileWrite
-        case .terminal: return permissions.terminal
-        case .web: return permissions.web
-        case .mcp: return permissions.mcp
-        case .automation: return permissions.automation
-        }
-    }
+    // `permission(for:)` was here and is gone (state#101). It had no callers
+    // at all -- `AppToolPermissionEngine.evaluate` is what every real gate
+    // goes through -- and it read `selectedProject`, so the one thing it
+    // could still do was tempt a future caller into resolving a permission
+    // from the SELECTION rather than from the turn's project (state#30).
+    // `swift/CLAUDE.md` Gotcha 11 still names it as "the barrier", which was
+    // true of an earlier design; the barrier is the engine.
 
     /// Constructs comprehensive system prompt including agent instructions, project rules, and tool definitions.
     /// Returns an empty string when no project is provided (e.g. conversational Chat mode).
@@ -224,6 +219,17 @@ extension AppModel {
             defer {
                 if self.generationEpoch == myEpoch {
                     self.generating = false
+                    // **AND THE CANCEL FLAG WITH IT** (state#99). Stop during
+                    // an approved tool sets `isCancellationPending`, the tool
+                    // runs to completion (cancellation is cooperative), and
+                    // `continueAgentLoop` correctly refuses the next turn --
+                    // but nothing then cleared the flag, because the tail
+                    // that does is `executeGenerationTurn`'s and no further
+                    // turn ever started. It stayed latched: `canCancel` false
+                    // and every later `continueAgentLoop` refused, for the
+                    // life of the process. Same pairing that tail uses, and
+                    // the same epoch guard.
+                    self.isCancellationPending = false
                 }
                 self.toolExecutionTask = nil
             }
@@ -301,6 +307,17 @@ extension AppModel {
             defer {
                 if self.generationEpoch == myEpoch {
                     self.generating = false
+                    // **AND THE CANCEL FLAG WITH IT** (state#99). Stop during
+                    // an approved tool sets `isCancellationPending`, the tool
+                    // runs to completion (cancellation is cooperative), and
+                    // `continueAgentLoop` correctly refuses the next turn --
+                    // but nothing then cleared the flag, because the tail
+                    // that does is `executeGenerationTurn`'s and no further
+                    // turn ever started. It stayed latched: `canCancel` false
+                    // and every later `continueAgentLoop` refused, for the
+                    // life of the process. Same pairing that tail uses, and
+                    // the same epoch guard.
+                    self.isCancellationPending = false
                 }
                 self.toolExecutionTask = nil
             }

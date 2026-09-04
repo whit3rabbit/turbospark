@@ -742,10 +742,20 @@ public final class AppModel: ObservableObject {
     }
 
     /// Updates the current reasoning effort level and saves it as the preferred default for the active model.
+    /// **KEYED ON `path`, NOT ON `alias`** (state#96, which is state#14's
+    /// rule arriving in a third place). `??` takes the alias whenever there
+    /// is one, so the path arm was dead code -- and an alias is not unique
+    /// once a scanned LM Studio or custom-folder row exists, so two installs
+    /// sharing a name shared one remembered reasoning level.
+    /// `restoreReasoningPreference` still READS the alias as a legacy
+    /// fallback, so nobody's existing preference is forgotten, and
+    /// `deleteModel` prunes the entry.
     public func setReasoning(_ level: GenerateOptions.Reasoning) {
         self.reasoning = level
-        if let key = selected?.alias ?? (selected?.path.isEmpty == false ? selected?.path : nil) {
-            modelReasoningDefaults[key] = level.rawValue
+        if let path = selected?.path, !path.isEmpty {
+            modelReasoningDefaults[path] = level.rawValue
+        } else if let alias = selected?.alias {
+            modelReasoningDefaults[alias] = level.rawValue
         }
         persistSettings()
         updateTokenEstimate()
@@ -758,13 +768,25 @@ public final class AppModel: ObservableObject {
     }
 
     /// Whether the active model supports tool calling and structured function invocation.
+    ///
+    /// **NO `installed.first` FALLBACK** (state#97). With nothing selected
+    /// this answered for whatever row happened to sort first, which is a
+    /// statement about a DIFFERENT model -- and it feeds
+    /// `forgeGuardrailsEnabled`, so the guardrails default was decided by an
+    /// unrelated install. With no model there is no answer, and the honest
+    /// default is the permissive one the empty case already returned. The
+    /// family list also lagged `crates/model-io/src/arch_config/family.rs`
+    /// by three entries.
     public var isToolCallingSupported: Bool {
-        guard let selectedModel = selected ?? installed.first else {
+        guard let selectedModel = selected else {
             return true
         }
         let family = selectedModel.family.lowercased()
         let dialect = info?.dialect.lowercased() ?? ""
-        let toolFamilies: Set<String> = ["gemma4", "qwen36", "qwen3moe", "qwen35", "gptoss", "llama"]
+        let toolFamilies: Set<String> = [
+            "gemma4", "qwen36", "qwen3moe", "qwen35", "gptoss", "llama",
+            "museglimmer", "qwen4exp", "deepseekv4flash",
+        ]
         if toolFamilies.contains(family) {
             return true
         }
