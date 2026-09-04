@@ -148,7 +148,10 @@ pub fn pull(
     positionals: &[String],
     options: &Options,
 ) -> Result<(), Error> {
-    let plan = resolve_plan(catalog, positionals, options)?;
+    let mut plan = resolve_plan(catalog, positionals, options)?;
+    if let Some(alias) = &options.reuse_trunk_from {
+        plan.reuse_trunk_from = Some(resolve_reuse_trunk_from(store, &plan, alias)?);
+    }
     let dir = match &options.out {
         Some(out) => std::path::PathBuf::from(out),
         None => store.install_path(&plan.alias),
@@ -255,6 +258,38 @@ fn resolve_plan(
         )),
         (None, n) => Err(Error::Usage(format!("pull takes one alias, got {n}"))),
     }
+}
+
+/// Validates `--reuse-trunk-from <alias>` before letting the walk trust the
+/// named install's bytes: it must actually exist, and it must have come from
+/// the EXACT repository and revision `plan` is about to pull, or the reused
+/// resident entries are bytes from a different checkpoint entirely.
+fn resolve_reuse_trunk_from(
+    store: &Store,
+    plan: &InstallPlan,
+    alias: &str,
+) -> Result<std::path::PathBuf, Error> {
+    if plan.mtp.is_none() {
+        return Err(Error::Usage(format!(
+            "--reuse-trunk-from only applies to a row naming an mtp source; {} names none",
+            plan.alias
+        )));
+    }
+    let installed = store.installed();
+    let record = installed.get(alias).ok_or_else(|| {
+        Error::Failed(format!(
+            "--reuse-trunk-from {alias:?}: no install by that name. \
+             `turbospark-model pull {alias}` first, or check `turbospark-model list`."
+        ))
+    })?;
+    if record.repo != plan.weights.repo || record.revision != plan.weights.revision {
+        return Err(Error::Failed(format!(
+            "--reuse-trunk-from {alias:?} came from {}@{}, but {} needs {}; \
+             refusing to graft a head onto a different checkpoint's trunk",
+            record.repo, record.revision, plan.alias, plan.weights
+        )));
+    }
+    Ok(record.path.clone())
 }
 
 /// An unknown alias, with the nearest matches. Cheap, and it turns the most

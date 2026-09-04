@@ -92,6 +92,57 @@ pub(crate) fn stream_mlx(
     let quant = repack::parse_gemma4_quantization(&config_text)
         .map_err(|e| format!("parsing the quantization block: {e}"))?;
 
+    // Reuse an EXISTING install's trunk bytes rather than re-streaming them:
+    // only the head crosses the network here. `--reuse-trunk-from` (the CLI
+    // layer) has already checked the named install's recorded repo and
+    // revision match `plan.weights` exactly before setting this.
+    if let Some(existing_dir) = &plan.reuse_trunk_from {
+        let mtp = plan.mtp.as_ref().ok_or_else(|| {
+            "reuse_trunk_from is set but this row names no mtp source to graft".to_string()
+        })?;
+        if family != ModelFamily::QwenGdnDense {
+            return Err(format!(
+                "{}: reusing an existing trunk is only wired for the qwen35 dense family, \
+                 got {}",
+                plan.weights,
+                family.as_str()
+            ));
+        }
+        progress(&format!(
+            "reusing the trunk already installed at {}",
+            existing_dir.display()
+        ));
+        let head_pairs = fetch_mtp_shards(mtp, client, byte_progress)?;
+        let mtp_base_names: Vec<String> = head_pairs
+            .iter()
+            .flat_map(|(h, _)| h.tensors.keys().cloned())
+            .collect();
+        let mtp_bases: Vec<&str> = mtp_base_names.iter().map(String::as_str).collect();
+        let head_shards_input: Vec<(&SafetensorsHeader, &dyn RangeSource)> = head_pairs
+            .iter()
+            .map(|(h, s)| (h, s as &dyn RangeSource))
+            .collect();
+        let head_shards = Gemma4Shards::new(head_shards_input);
+        let model_id = plan.weights.repo.clone();
+        repack::graft_qwen_gdn_dense_mtp_head(
+            existing_dir,
+            dir,
+            &arch,
+            &model_id,
+            &head_shards,
+            &mtp_bases,
+            &quant,
+            |stage: &str| progress(&format!("[repack] {stage}")),
+        )
+        .map_err(|e| format!("grafting onto {}: {e}", existing_dir.display()))?;
+        record_trained_context(
+            dir,
+            repack::trained_context_meta::from_config_json(&config_text),
+            progress,
+        );
+        return Ok(arch);
+    }
+
     // The shard list. A single-file checkpoint may still ship an index, so
     // the index is consulted first and `model.safetensors` is the fallback
     // rather than the other way round.

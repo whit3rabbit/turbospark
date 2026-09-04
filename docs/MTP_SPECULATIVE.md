@@ -513,6 +513,39 @@ a 17-position verify does not fit. Block 15 is the largest legal one.
 
    The remaining lever at block 2 is still `c(M)` alone.
 
+5. **Make the install itself reachable without a hand-run network test, and
+   without paying for the trunk twice.** Steps 1-4 above landed a working
+   drafter and measured it, but getting a headed install onto disk at all
+   still meant running `crates/repack/tests/qwen38_checkpoint_network.rs`'s
+   ignored test by hand.
+
+   **Catalog-driven pull: done.** `crates/catalog/src/models.json` carries a
+   `qwen38-27b-mtp` row with an `mtp` field naming the official
+   `Qwen/Qwen3.8-27B` repo separately from `source.repo`
+   (`docs/MTP.md`'s "Installing a headed checkpoint" has the mechanism and
+   the real-bytes verification). `turbospark-model pull qwen38-27b-mtp` now
+   produces the install with no hand-written test in the loop, still
+   streaming the full ~15 GB trunk.
+
+   **Reusing an existing trunk: done.** `--reuse-trunk-from <alias>` reads an
+   ALREADY-INSTALLED `qwen38-27b`'s resident entries back off its own
+   `model_weights.bin`, byte for byte (`repack::read_resident_entries`,
+   `repack::graft_qwen_gdn_dense_mtp_head`), and only the ~239 MB head
+   crosses the network. `build_resident_weights_bin_mixed` does not care
+   where a spec's bytes came from, which is what licenses this at all: an
+   entry read back off disk and one freshly quantized from a shard are
+   indistinguishable to the writer. Refused unless the named install's
+   recorded repository and revision match the row's exactly, so a
+   differently-pinned or unrelated install cannot silently graft the wrong
+   bytes onto the wrong trunk. Measured against the real checkpoint:
+   `pull qwen38-27b-mtp --reuse-trunk-from qwen38-27b` finished in 4m21s
+   against the plain pull's ~30 minutes, and its `model_weights.bin` came out
+   byte-for-byte identical (`cmp`, not just equal size) to the fully
+   re-streamed one. Scoped to the `qwen35` dense family: the MoE half's
+   routed experts live outside `model_weights.bin` entirely, in
+   `packed_experts/`, which this path never touches -- grafting onto an MoE
+   install would silently produce a directory missing its routed experts.
+
 ## What this changes elsewhere
 
 `docs/BATCHED_PREFILL.md` composed its "fully batched" column at

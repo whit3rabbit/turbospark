@@ -54,6 +54,14 @@ pub struct InstallPlan {
     /// [`crate::entry::MtpSource`]. `None` for a probed repository: a probe
     /// has no catalog-curated pairing to offer.
     pub mtp: Option<RepoRef>,
+    /// An EXISTING install to reuse the trunk's resident bytes from, rather
+    /// than re-streaming them over the network, when `mtp` is set. `None` by
+    /// default from both constructors below; the caller (`turbospark-model
+    /// pull --reuse-trunk-from <alias>`) sets it after validating the named
+    /// install's recorded `(repo, revision)` matches `weights` exactly --
+    /// this struct does not validate that itself, since it has no `Store` to
+    /// check against.
+    pub reuse_trunk_from: Option<PathBuf>,
 }
 
 impl InstallPlan {
@@ -72,6 +80,7 @@ impl InstallPlan {
                 .mtp
                 .as_ref()
                 .map(|m| RepoRef::new(&m.repo, &m.revision)),
+            reuse_trunk_from: None,
         }
     }
 
@@ -91,6 +100,7 @@ impl InstallPlan {
             // walk copies quantized bytes through rather than re-quantizing.
             install_bytes: report.download_bytes.unwrap_or(0),
             status: "unlisted".to_string(),
+            reuse_trunk_from: None,
             // A probe has no catalog row to read a curated pairing off, and
             // inventing one from a bare `--repo` argument would guess at a
             // second repository nobody named.

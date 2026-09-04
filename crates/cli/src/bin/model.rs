@@ -42,6 +42,12 @@ OPTIONS:
     --sidecar-repo <REPO>[@REV] take tokenizer files from another repo. A GGUF
                                 carries llama.cpp's tokenizer, not an HF
                                 tokenizer.json, so a GGUF pull needs this
+    --reuse-trunk-from <ALIAS>  for a row naming an mtp source: read an
+                                already-installed alias's resident trunk back
+                                off disk instead of re-streaming it, so only
+                                the head crosses the network. Refused unless
+                                that install's recorded repo and revision
+                                match this row's exactly
     --filter <TEXT>             substring match for `list`
     --context <N>               window to fit against for `recommend` (4096)
     --budget <BYTES>            override the memory probe for `recommend`
@@ -117,6 +123,10 @@ pub struct Options {
     pub alias: Option<String>,
     pub file: Option<String>,
     pub sidecar_repo: Option<String>,
+    /// An already-installed alias to reuse the trunk's resident bytes from,
+    /// instead of re-streaming them, when the row being pulled names an
+    /// `mtp` source. Only meaningful with `pull`.
+    pub reuse_trunk_from: Option<String>,
     pub filter: Option<String>,
     pub force: bool,
     pub yes: bool,
@@ -269,6 +279,10 @@ fn parse(args: &[String]) -> Result<(Vec<String>, Options), Error> {
             "--sidecar-repo" => {
                 options.sidecar_repo = Some(value_for(&mut index, "--sidecar-repo")?);
                 seen.push("sidecar-repo");
+            }
+            "--reuse-trunk-from" => {
+                options.reuse_trunk_from = Some(value_for(&mut index, "--reuse-trunk-from")?);
+                seen.push("reuse-trunk-from");
             }
             "--filter" => {
                 options.filter = Some(value_for(&mut index, "--filter")?);
