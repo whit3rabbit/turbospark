@@ -1070,6 +1070,53 @@ so going through `make` recompiles the whole app every single time. Use
     (Gotcha 2), not against the package root. Build and test from
     `swift/TurboSparkApp` itself.
 
+42. **A RED PRE-EXISTING TEST AFTER A STATE FIX IS AS LIKELY TO BE THE DEFECT
+    REPRODUCING AS A REGRESSION.** Twice in one pass (2026-09-04).
+    `testSystemPermissionsManagerStatusProbe` asserted the home folder reads
+    `.granted`, which was only ever true because that row could not report
+    anything else (state#94); `testAppModelSetReasoningUpdatesModelDefaults`
+    asserted the remembered level is keyed on the ALIAS, which is what the
+    code did and what state#96 fixed. Both look exactly like a refactor that
+    broke something.
+
+    The tell is one question about the ASSERTION, not about the diff: does it
+    state a requirement, or restate the implementation? "Home should be
+    readable" is the second wearing the clothes of the first -- Gotcha 22's
+    badge that cannot fail, pinned. Update the assertion WITH the reason
+    (both now carry the state number and the sentence); do not revert the fix
+    and do not delete the case.
+
+43. **WHICH DIRECTORIES A TEST MAY WRITE TO IS A THREE-WAY ANSWER, AND ONLY
+    TWO OF THEM ARE WRITTEN DOWN.** Gotcha 37 redirects the app's stores
+    under XCTest; Gotcha 40 records that the engine's `~/.turbospark` is not
+    covered. The third is that the MANAGERS split down the middle.
+    `CustomToolManager.globalToolsDirectory` is
+    `AppStorageRoot.subdirectory("tools")` and is safe, so a global
+    custom-tool fixture is writable and a PROJECT-scoped one is a temp
+    directory like any other. But `CustomToolManager.userHomeToolsDirectory`,
+    `SkillManager.defaultUserSkillsDirectory` and
+    `AgentManager.defaultUserAgentsDirectory` are literal `~/.turbospark/...`
+    -- so a USER-scope skill or agent fixture writes the developer's own
+    home, which is Gotcha 37's data loss through a fourth API.
+
+    Consequence worth stating rather than rediscovering: anything whose
+    subject is a USER-scope skill or agent (state#105's shadowing disclosure
+    is the live example) has no test for that reason, and not for lack of one
+    being worth writing.
+
+44. **THREE MECHANICS OF THE APP SUITE, EACH ONE BUILD CYCLE'S WORTH.**
+    `swift test --filter SuiteName/testCaseName` runs ONE case in ~0.3 s,
+    against ~15 s for the whole suite -- which is what makes the root file's
+    mutate/run/restore loop cheap enough to do per assertion.
+
+    `swift test` runs TWO harnesses and prints two summaries: swift-testing's
+    `Test run with 0 tests in 0 suites passed` is not the result, and a
+    `| tail` lands on it. Read `Executed N tests, with M failures`.
+
+    And `AgentManager.shared.builtInAgents[0]` is `explore`, which disallows
+    every write -- three new cases failed on that before resolving by name
+    (`findAgent(name: "general-purpose")`) instead of by index.
+
 ## The `state#N` ledger
 
 `AppModel` and its extensions carry `(state#N)` markers on the comments that
