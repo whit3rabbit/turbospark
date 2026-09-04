@@ -652,6 +652,27 @@ fn pipeline_reflection_cannot_see_this_kernels_register_pressure() {
     // true without anyone noticing. If a future OS or device DOES vary this
     // with register demand, this reddens and the case above becomes the
     // spill gate it was originally written to be.
+    //
+    // **Scoped to REAL Apple Silicon.** A virtualized Metal device (CI's
+    // "Apple Paravirtual device") is a different GPU implementation, not a
+    // future OS or a different real chip, and it genuinely does vary this
+    // reflection with (R, B) -- measured, not assumed: 6 distinct values on
+    // the exact sweep this test runs. That is not the "instrument became
+    // useful" case the comment above anticipates (there is no real register
+    // spill to find on a paravirtualized device the way there would be on
+    // silicon), it is a device this canary was never calibrated against.
+    // The per-shape checks above -- dispatchability, SIMD width, threadgroup
+    // memory -- still run unconditionally on every device, real or not.
+    let device_name = context.device().name();
+    if device_name.contains("Paravirtual") {
+        println!(
+            "device {device_name:?} is virtualized, not the real Apple Silicon this canary is \
+             calibrated against ({} distinct maxTotalThreadsPerThreadgroup values seen); \
+             skipping the constant-across-shapes assertion",
+            distinct_max_threads.len()
+        );
+        return;
+    }
     assert_eq!(
         distinct_max_threads.len(),
         1,
