@@ -27,6 +27,12 @@ pub fn entry(entry: &CatalogEntry, is_user_row: bool, store: &Store) {
     if let Some(file) = &entry.source.file {
         println!("  file        {file}");
     }
+    if let Some(mtp) = &entry.mtp {
+        println!(
+            "  mtp head    {} @ {} (source's own conversion has none)",
+            mtp.repo, mtp.revision
+        );
+    }
     println!(
         "  sidecars    {} @ {}: {}",
         entry.sidecar_repo(),

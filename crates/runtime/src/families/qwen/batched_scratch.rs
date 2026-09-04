@@ -6,7 +6,7 @@ use model_io::ArchConfig;
 /// hold one row of.
 ///
 /// **Allocated only when a draft depth was asked for**, beside [`super::mtp::MtpState`]
-/// and for its reason: `MFERENCE_MTP_DRAFT` unset must allocate nothing, so
+/// and for its reason: `TURBOSPARK_MTP_DRAFT` unset must allocate nothing, so
 /// that `qwen38_memory_oracle`'s frozen row keeps describing the engine that
 /// shipped before this module existed. At the block sizes that pay this is
 /// ~10 MiB, almost all of it `logits` (`batch * vocab` halfs, and this

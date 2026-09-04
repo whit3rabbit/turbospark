@@ -18,7 +18,7 @@ pub enum RuntimeError {
     /// sequential loop: a caller that asked for speculation and quietly got
     /// none would measure the non-speculative engine and report it as the
     /// speculative one (AGENTS.md Gotcha 35, and `crates/runtime`'s own
-    /// argument for `MFERENCE_MTP_DRAFT` erroring on a headless install).
+    /// argument for `TURBOSPARK_MTP_DRAFT` erroring on a headless install).
     SpeculationUnavailable(String),
 }
 

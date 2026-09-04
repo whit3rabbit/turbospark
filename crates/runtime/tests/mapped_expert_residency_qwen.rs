@@ -1,5 +1,5 @@
 #![cfg(target_os = "macos")]
-//! Mapped expert residency (`MFERENCE_EXPERT_RESIDENCY=mapped`,
+//! Mapped expert residency (`TURBOSPARK_EXPERT_RESIDENCY=mapped`,
 //! `docs/EXPERT_RESIDENCY.md`) on the `qwen` (`QwenGdnMoe`) flow, through
 //! the real `open` path.
 //!
@@ -30,7 +30,7 @@ fn mapped_residency_opens_on_qwen_and_then_refuses_the_batched_verify_by_name() 
 
     // Set BEFORE the open, because the mode is resolved there: it decides
     // whether the slot cache is allocated at all.
-    std::env::set_var("MFERENCE_EXPERT_RESIDENCY", "mapped");
+    std::env::set_var("TURBOSPARK_EXPERT_RESIDENCY", "mapped");
 
     // The MTP-head variant is what makes the batched verify pass
     // reachable at all: `produce_batched` allocates its M-row scratch
@@ -79,16 +79,16 @@ fn mapped_residency_opens_on_qwen_and_then_refuses_the_batched_verify_by_name() 
     // buffer per CACHE SLOT, and mapped residency has no slot cache.
     runner.reset();
     let tokens = [5i32, 9, 2];
-    let mut batched = vec![f16::from_f32(0.0); tokens.len() * vocab];
+    let mut logits = vec![f16::from_f32(0.0); tokens.len() * vocab];
     let err = runner
-        .produce_batched(&tokens, 0, &mut batched)
-        .expect_err("the batched verify pass must be refused under mapped residency");
+        .produce_batched(&tokens, 0, &mut logits)
+        .expect_err("batched verify under mapped residency must be refused by name");
     let text = err.to_string();
     assert!(
-        text.contains("MFERENCE_EXPERT_RESIDENCY"),
-        "the refusal must name the residency seam; got {text}"
+        text.contains("TURBOSPARK_EXPERT_RESIDENCY"),
+        "the refusal must name the seam the caller set; got {text}"
     );
 
-    std::env::remove_var("MFERENCE_EXPERT_RESIDENCY");
+    std::env::remove_var("TURBOSPARK_EXPERT_RESIDENCY");
     let _ = std::fs::remove_dir_all(&dir);
 }

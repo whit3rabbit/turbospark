@@ -189,12 +189,12 @@ pub fn run_raw_completion_speculative_cancellable<P: SpeculativeProducer>(
     )?;
 
     // THE ACCEPTANCE COUNTER, off by default and env-gated like every other
-    // diagnostic here (`MFERENCE_PHASES`, `MFERENCE_ROUTER_HIST`). It exists
+    // diagnostic here (`TURBOSPARK_PHASES`, `TURBOSPARK_ROUTER_HIST`). It exists
     // because nothing else can see this loop's acceptance: both probes
     // hand-roll their own round, so a drafter that measures 7.09 of 8 in
     // `dflash2_accept_length_probe` and 0 here reads as a THROUGHPUT
     // mystery rather than as the acceptance gap it is.
-    let stats = std::env::var("MFERENCE_SPEC_STATS").as_deref() == Ok("1");
+    let stats = std::env::var("TURBOSPARK_SPEC_STATS").as_deref() == Ok("1");
     let mut stat_rounds = 0usize;
     let mut stat_accepted = 0usize;
     let mut stat_offered = vec![0usize; block];

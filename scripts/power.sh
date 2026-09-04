@@ -39,7 +39,7 @@ OUT="${OUT:-/tmp/mference-power}"
 LABEL="${LABEL:-unlabelled}"
 # ARMS names the comparison axis, comma separated. THREE kinds of token are
 # understood, because the arm name is a single column in rows.tsv:
-#   default, utility                        -> MFERENCE_READ_QOS (Phase P1)
+#   default, utility                        -> TURBOSPARK_READ_QOS (Phase P1)
 #   performance, balanced, efficiency       -> --power-profile   (Phase P2)
 #   a bare number, e.g. 30 or 12.5          -> --max-tokens-per-sec
 # "default" means "vary nothing", spelled as a token rather than as the
@@ -364,7 +364,7 @@ run_arm() {
   esac
   # bash 3.2 aborts under `set -u` on "${arr[@]}" when arr is EMPTY, hence
   # the +expansion guard rather than a bare splat.
-  MFERENCE_READ_QOS="$qos_env" "$RUST_BENCH" --model "$MODEL" --case "$case_id" \
+  TURBOSPARK_READ_QOS="$qos_env" "$RUST_BENCH" --model "$MODEL" --case "$case_id" \
     ${arm_args[@]+"${arm_args[@]}"} \
     > "$stem.stdout" 2> "$stem.stderr"
 

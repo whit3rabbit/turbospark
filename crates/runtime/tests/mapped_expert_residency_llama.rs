@@ -1,5 +1,5 @@
 #![cfg(target_os = "macos")]
-//! Mapped expert residency (`MFERENCE_EXPERT_RESIDENCY=mapped`,
+//! Mapped expert residency (`TURBOSPARK_EXPERT_RESIDENCY=mapped`,
 //! `docs/EXPERT_RESIDENCY.md`) on the `llama` (Mixtral / `Qwen3Moe`) flow,
 //! through the real `open` path.
 //!
@@ -36,7 +36,7 @@ fn mapped_residency_opens_on_llama_and_serves_both_call_sites() {
             .expect("llama install builds");
 
     // Set BEFORE the open, because the mode is resolved there.
-    std::env::set_var("MFERENCE_EXPERT_RESIDENCY", "mapped");
+    std::env::set_var("TURBOSPARK_EXPERT_RESIDENCY", "mapped");
 
     let mut runner = RealForwardRunner::open_with_options(&dir, arch, 4096, 16)
         .expect("a llama install opens under mapped expert residency");
@@ -75,6 +75,6 @@ fn mapped_residency_opens_on_llama_and_serves_both_call_sites() {
         "a non-finite logit came out of the mapped path on the chunked-prefill driver"
     );
 
-    std::env::remove_var("MFERENCE_EXPERT_RESIDENCY");
+    std::env::remove_var("TURBOSPARK_EXPERT_RESIDENCY");
     let _ = std::fs::remove_dir_all(&dir);
 }

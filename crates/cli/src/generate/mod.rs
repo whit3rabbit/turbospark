@@ -435,12 +435,12 @@ pub(crate) fn stream_turn(
 /// Whether, and at what chunk size, this turn's prefill should route
 /// through the chunked driver.
 ///
-/// `MFERENCE_PREFILL_CHUNK` still wins when set: it is the existing A/B
-/// seam (`docs/BATCHED_PREFILL.md` step 1), spelled like `MFERENCE_SHARED_CB`
-/// and `MFERENCE_ROUTED_PIPELINE` beside it, and both its arms must produce
-/// identical tokens -- an explicit ask that the family can't serve stays a
-/// hard error via `prefill_chunk`'s own refusal, unchanged from before this
-/// flag was wired.
+/// `TURBOSPARK_PREFILL_CHUNK` (or legacy `TURBOSPARK_PREFILL_CHUNK`) still wins
+/// when set: it is the existing A/B seam (`docs/BATCHED_PREFILL.md` step 1),
+/// spelled like `TURBOSPARK_SHARED_CB` and `TURBOSPARK_ROUTED_PIPELINE` beside
+/// it, and both its arms must produce identical tokens -- an explicit ask that
+/// the family can't serve stays a hard error via `prefill_chunk`'s own
+/// refusal, unchanged from before this flag was wired.
 ///
 /// `--prefill-chunk` is different on purpose: it carries a default
 /// (`Fixed(128)`) on every invocation, whether or not the caller typed it,
@@ -450,7 +450,7 @@ pub(crate) fn stream_turn(
 /// is what keeps a caller who never named the flag from seeing a family it
 /// never asked about.
 fn resolve_chunk_tokens(session: &Session, request: &InvocationRequest) -> Option<usize> {
-    if let Some(env_chunk) = std::env::var("MFERENCE_PREFILL_CHUNK")
+    if let Some(env_chunk) = std::env::var("TURBOSPARK_PREFILL_CHUNK")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
         .filter(|&n| n > 0)

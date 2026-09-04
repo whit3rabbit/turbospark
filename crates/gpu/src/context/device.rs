@@ -195,7 +195,7 @@ impl MetalContext {
     /// the decode step (`cb1`, `routed`, ...). The label goes onto the
     /// `MTLCommandBuffer` (so a GPU capture or Instruments trace shows it
     /// instead of an anonymous buffer) and groups the rows of
-    /// `MFERENCE_DISPATCH_PROFILE=1`'s per-dispatch report.
+    /// `TURBOSPARK_DISPATCH_PROFILE=1`'s per-dispatch report.
     pub fn begin_pass_labeled(&self, label: &'static str) -> PassEncoder {
         let command_buffer = self.queue.new_command_buffer().to_owned();
         command_buffer.set_label(label);

@@ -27,7 +27,7 @@ impl std::fmt::Display for RealForwardError {
 impl std::error::Error for RealForwardError {}
 
 /// The per-dispatch ranking inside each command buffer, or `None` unless
-/// `MFERENCE_DISPATCH_PROFILE=1`. One level below [`PhaseCounters`]'s
+/// `TURBOSPARK_DISPATCH_PROFILE=1`. One level below [`PhaseCounters`]'s
 /// per-buffer GPU busy numbers; `calls` is the forward-pass count those
 /// counters cover, so every row reads per token. Re-exported here so
 /// callers that already hold a runner do not need their own `gpu`
@@ -38,7 +38,7 @@ pub fn dispatch_profile_report(calls: u64) -> Option<String> {
 }
 
 /// Cumulative per-phase decode accounting, the port's answer to the Swift
-/// original's `MFERENCE_PHASES=1` breakdown. Every field is summed over
+/// original's `TURBOSPARK_PHASES=1` breakdown. Every field is summed over
 /// every `produce` call this runner has served, prefill included, so a
 /// caller reporting decode cost should generate enough tokens for decode
 /// to dominate the prompt.
@@ -79,7 +79,7 @@ pub struct PhaseCounters {
     /// queued before it; these attribute the GPU's own time). `cb1` is the
     /// per-layer attention+router buffer (in the non-pipelined arm it also
     /// carries the previous layer's routed tail), `routed_cb` is the
-    /// pipelined routed buffer (zero when `MFERENCE_ROUTED_PIPELINE=0`),
+    /// pipelined routed buffer (zero when `TURBOSPARK_ROUTED_PIPELINE=0`),
     /// `final_cb` is the end-of-token norm+head buffer. The shared-expert
     /// and hit-phase-1 buffers are dropped unwaited and stay unattributed.
     pub cb1_gpu_nanos: u64,
@@ -97,7 +97,7 @@ pub struct PhaseCounters {
     /// `bytes_requested` is always collected and is one expert stride per
     /// cache MISS (a hit reads nothing). `bytes_physical` is what actually
     /// came off the device and is zero-and-meaningless unless
-    /// `MFERENCE_EXPERT_DISK_IO=1` -- check `io_samples` before dividing,
+    /// `TURBOSPARK_EXPERT_DISK_IO=1` -- check `io_samples` before dividing,
     /// because an unmeasured run and a perfectly cache-resident one are
     /// indistinguishable in `bytes_physical` alone.
     ///

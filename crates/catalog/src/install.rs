@@ -49,6 +49,11 @@ pub struct InstallPlan {
     pub install_bytes: u64,
     /// The catalog status, or `unlisted`.
     pub status: String,
+    /// A separate repository to pull a multi-token-prediction head from, when
+    /// the weights repo's own conversion carries none. See
+    /// [`crate::entry::MtpSource`]. `None` for a probed repository: a probe
+    /// has no catalog-curated pairing to offer.
+    pub mtp: Option<RepoRef>,
 }
 
 impl InstallPlan {
@@ -63,6 +68,10 @@ impl InstallPlan {
             sidecar_files: entry.sidecars.files.clone(),
             install_bytes: entry.install_bytes,
             status: entry.status.as_str().to_string(),
+            mtp: entry
+                .mtp
+                .as_ref()
+                .map(|m| RepoRef::new(&m.repo, &m.revision)),
         }
     }
 
@@ -82,6 +91,10 @@ impl InstallPlan {
             // walk copies quantized bytes through rather than re-quantizing.
             install_bytes: report.download_bytes.unwrap_or(0),
             status: "unlisted".to_string(),
+            // A probe has no catalog row to read a curated pairing off, and
+            // inventing one from a bare `--repo` argument would guess at a
+            // second repository nobody named.
+            mtp: None,
         }
     }
 }

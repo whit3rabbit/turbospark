@@ -123,7 +123,7 @@ pub struct RealForwardRunner {
     /// before the allocations they alias.
     pub(crate) slot_buffers: Vec<Vec<gpu::MetalBuffer>>,
     pub(crate) streamers: Vec<Option<streaming::PreadExpertStreamer>>,
-    /// MAPPED expert residency (`MFERENCE_EXPERT_RESIDENCY=mapped`): the
+    /// MAPPED expert residency (`TURBOSPARK_EXPERT_RESIDENCY=mapped`): the
     /// routed experts read in place out of one `mmap` per layer instead of
     /// being `pread`-copied into the slots above. Empty unless the seam is
     /// on, and when it is on `streamers` and `slot_buffers` are empty
@@ -162,7 +162,7 @@ pub struct RealForwardRunner {
     pub(crate) real_qwen: Option<crate::families::qwen::RealQwenState>,
     /// The multi-token-prediction head's draft state, for the dense
     /// `qwen3_5` family (`docs/MTP_SPECULATIVE.md`, step 2). `None` unless
-    /// `MFERENCE_MTP_DRAFT` asked for a depth AND the install carries a
+    /// `TURBOSPARK_MTP_DRAFT` asked for a depth AND the install carries a
     /// head, which is read off the resident index rather than a manifest
     /// field so nothing can disagree with the bytes.
     pub(crate) real_mtp: Option<crate::families::qwen::MtpState>,
@@ -186,23 +186,23 @@ pub struct RealForwardRunner {
     pub(crate) phases: PhaseCounters,
     /// Whether the shared-expert branch rides its own command buffer so it
     /// overlaps the host's expert `pread` (see `real_forward_gemma4.rs`).
-    /// `MFERENCE_SHARED_CB=0` reverts to encoding it after the pread, the
-    /// A/B seam the Swift original keeps as `MFERENCE_ROUTER_EVENT=0`:
+    /// `TURBOSPARK_SHARED_CB=0` reverts to encoding it after the pread, the
+    /// A/B seam the Swift original keeps as `TURBOSPARK_ROUTER_EVENT=0`:
     /// same kernels, same order, identical output, different overlap.
     pub(crate) shared_cb_overlap: bool,
     /// Whether a layer's routed-expert command buffer is committed at the
     /// END of that layer and retired one layer later (after the next
     /// layer's router wait), Swift's one-layer-pipelined routed CB.
-    /// `MFERENCE_ROUTED_PIPELINE=0` reverts to folding the routed work
+    /// `TURBOSPARK_ROUTED_PIPELINE=0` reverts to folding the routed work
     /// uncommitted into the next layer's first command buffer: same
     /// kernels, same order, identical output, different overlap.
     pub(crate) routed_pipeline: bool,
     /// Whether the chunked-prefill driver runs each layer's routed half
     /// as ONE batched dispatch pair over a route list
     /// (`docs/BATCHED_PREFILL.md` steps 2 and 3) instead of per token.
-    /// `MFERENCE_ROUTED_BATCH=1` turns it on; UNSET keeps the per-token
+    /// `TURBOSPARK_ROUTED_BATCH=1` turns it on; UNSET keeps the per-token
     /// path, so the seam A/Bs the two halves of the chunk driver the way
-    /// `MFERENCE_SHARED_CB` A/Bs decode overlap. Output is byte-identical
+    /// `TURBOSPARK_SHARED_CB` A/Bs decode overlap. Output is byte-identical
     /// either way (the batched kernels are bit-exact against M decode
     /// passes), so this is a throughput axis only. INT4-affine blobs
     /// only: a GGUF install is refused by layout when the seam is on,
@@ -212,7 +212,7 @@ pub struct RealForwardRunner {
     /// four attention projections and the shared expert's three -- as
     /// M-row GEMMs instead of one dispatch per token
     /// (`docs/BATCHED_PREFILL.md`, the 29.7% row of the prefill dispatch
-    /// ranking). `MFERENCE_BATCHED_GEMV=1` turns it on; UNSET keeps the
+    /// ranking). `TURBOSPARK_BATCHED_GEMV=1` turns it on; UNSET keeps the
     /// per-token path, exactly as the routed seam above does for the other
     /// half of the layer.
     ///
@@ -237,15 +237,15 @@ pub struct RealForwardRunner {
     /// Which layout each layer's routed expert blobs use, PER PHASE.
     pub(crate) routed_layouts: Vec<RoutedLayerLayout>,
     /// Per-layer expert-selection histogram, `None` unless
-    /// `MFERENCE_ROUTER_HIST=/path.json`. Written on drop; see
+    /// `TURBOSPARK_ROUTER_HIST=/path.json`. Written on drop; see
     /// `router_hist.rs`.
     pub(crate) router_hist: Option<crate::router_hist::RouterHistogram>,
     /// Dense-FFN activation census, `None` unless
-    /// `MFERENCE_FFN_HIST=/path.json` on a family whose flow feeds the
+    /// `TURBOSPARK_FFN_HIST=/path.json` on a family whose flow feeds the
     /// capture (museGlimmer today). Written on drop; see `ffn_hist.rs`.
     pub(crate) ffn_hist: Option<crate::ffn_hist::FfnActHist>,
     /// Per-layer residual stream at the last prompt token, `None` unless
-    /// `MFERENCE_RESID_CAPTURE=/path.json` on a family whose flow feeds the
+    /// `TURBOSPARK_RESID_CAPTURE=/path.json` on a family whose flow feeds the
     /// capture (the qwen flow today). Written on drop; see
     /// `resid_capture.rs`. This is what a steering direction is extracted
     /// FROM (ROADMAP item 9's prerequisite).

@@ -1,5 +1,5 @@
 #![cfg(target_os = "macos")]
-//! Mapped expert residency (`MFERENCE_EXPERT_RESIDENCY=mapped`,
+//! Mapped expert residency (`TURBOSPARK_EXPERT_RESIDENCY=mapped`,
 //! `docs/EXPERT_RESIDENCY.md`) through the real `open` path, and the one
 //! refusal that path cannot make.
 //!
@@ -64,7 +64,7 @@ fn mapped_residency_opens_and_then_refuses_the_batched_routed_pair_by_name() {
     // Set BEFORE the open, because the mode is resolved there: it decides
     // whether the slot cache is allocated at all, so it cannot be a knob
     // flipped afterwards the way `set_routed_batch_prefill` is.
-    std::env::set_var("MFERENCE_EXPERT_RESIDENCY", "mapped");
+    std::env::set_var("TURBOSPARK_EXPERT_RESIDENCY", "mapped");
 
     let mut runner = RealForwardRunner::open_with_options(&dir, arch, 4096, 16)
         .expect("a gemma4 install opens under mapped expert residency");
@@ -80,11 +80,11 @@ fn mapped_residency_opens_and_then_refuses_the_batched_routed_pair_by_name() {
     // and got a message naming one of them cannot tell which to unset, and
     // this is the only place either is mentioned.
     assert!(
-        text.contains("MFERENCE_ROUTED_BATCH"),
+        text.contains("TURBOSPARK_ROUTED_BATCH"),
         "the refusal must name the batched seam; got {text}"
     );
     assert!(
-        text.contains("MFERENCE_EXPERT_RESIDENCY"),
+        text.contains("TURBOSPARK_EXPERT_RESIDENCY"),
         "the refusal must name the residency seam; got {text}"
     );
 
@@ -108,6 +108,6 @@ fn mapped_residency_opens_and_then_refuses_the_batched_routed_pair_by_name() {
          into the layer mapping is reading the wrong bytes"
     );
 
-    std::env::remove_var("MFERENCE_EXPERT_RESIDENCY");
+    std::env::remove_var("TURBOSPARK_EXPERT_RESIDENCY");
     let _ = std::fs::remove_dir_all(&dir);
 }

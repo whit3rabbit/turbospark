@@ -10,7 +10,7 @@ const RMS_EPS: f32 = 1e-6;
 impl RealForwardRunner {
     /// The same layer half for ALL `m` tokens of a prefill micro-batch,
     /// with the four resident projections as M-row GEMMs
-    /// (`MFERENCE_BATCHED_GEMV`, `docs/BATCHED_PREFILL.md`'s 29.7% row).
+    /// (`TURBOSPARK_BATCHED_GEMV`, `docs/BATCHED_PREFILL.md`'s 29.7% row).
     ///
     /// **WHAT BATCHES AND WHAT DOES NOT, and the split is the composite's
     /// rather than a first cut.** `q_proj` / `k_proj` / `v_proj` / `o_proj`

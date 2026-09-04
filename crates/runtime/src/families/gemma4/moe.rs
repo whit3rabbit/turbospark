@@ -97,7 +97,7 @@ impl RealForwardRunner {
         let slots: Vec<usize> = if mapped_active {
             // Counted as requests that all hit, because on this path every
             // expert IS resident by construction. Reporting zero requests
-            // would make `MFERENCE_PHASES`'s hit rate undefined rather than
+            // would make `TURBOSPARK_PHASES`'s hit rate undefined rather than
             // perfect, and the two modes have to stay comparable.
             self.phases.expert_requests += selected.len() as u64;
             self.phases.expert_hits += selected.len() as u64;

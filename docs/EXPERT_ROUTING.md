@@ -37,10 +37,10 @@ so it was measured before anything was built.
 
 ## Instrument
 
-`MFERENCE_ROUTER_HIST=/path.json` on `RealForwardRunner`
+`TURBOSPARK_ROUTER_HIST=/path.json` on `RealForwardRunner`
 (`crates/runtime/src/router_hist.rs`): counts, per layer, how often each
 expert appears in the router's top-k, over every forward pass (prefill and
-decode alike, the `MFERENCE_PHASES` divisor convention). Host-side count
+decode alike, the `TURBOSPARK_PHASES` divisor convention). Host-side count
 taken after `router_topk_gemma4` returns; it touches no decode math, adds
 nothing when the env var is unset, and dumps one JSON on runner drop.
 Sanity invariant on any capture: per-layer counts sum to
@@ -126,7 +126,7 @@ the trace and the cache policy alone.
 
 ### Instrument
 
-`scripts/pilot_ceiling.py` replays an `MFERENCE_ROUTER_TRACE` capture through
+`scripts/pilot_ceiling.py` replays an `TURBOSPARK_ROUTER_TRACE` capture through
 a port of `ExpertCache`'s LFU policy and reports hit rate, miss composition,
 and what a previous-token predictor would have covered. Stdlib only.
 
@@ -170,7 +170,7 @@ taken at the pinned 16 (Gotcha 58's rule: a frozen number belongs to its
 configuration). At the ~42 tok/s that 32 slots buys (`DEVIATIONS.md`'s +15%)
 the step is ~24 ms, so expert io is about a fifth of decode. At 16 slots the
 miss count is 2.2x higher. A perfect prefetcher hides at most that, and
-`MFERENCE_ROUTED_PIPELINE` has already taken 1.1 ms of it, so the remaining
+`TURBOSPARK_ROUTED_PIPELINE` has already taken 1.1 ms of it, so the remaining
 prize is real but smaller than the raw bucket suggests.
 
 **The previous-token predictor is dead STRUCTURALLY, not statistically.**
@@ -193,7 +193,7 @@ router would have to name.
 
 ## PILOT measured: the predictor works, and it still loses
 
-`MFERENCE_PILOT_PROBE=1` runs layer L+1's router on layer L's
+`TURBOSPARK_PILOT_PROBE=1` runs layer L+1's router on layer L's
 post-attention residual and records the guess beside the actual selection.
 It costs ONE extra GEMV per MoE layer rather than a norm plus a GEMV,
 because Gemma's router pre-norm is `encode_rms_norm_no_scale` -- weightless,
@@ -250,7 +250,7 @@ rather than on the id-copy predictor's terms that `DEVIATIONS.md:793`
 closed. The honest bound at the best operating point (`PILOT_K=1`): 12.5% of
 a 5.26 ms io bucket is 0.66 ms of a ~24 ms step, so 2.7% BEFORE subtracting
 the extra 3% of bytes and the per-layer GEMV dispatch. That is inside the
-noise of the +2.5% `MFERENCE_ROUTED_PIPELINE` has already banked, and
+noise of the +2.5% `TURBOSPARK_ROUTED_PIPELINE` has already banked, and
 distinguishing it from zero would need an interleaved A/B that the ceiling
 does not justify building.
 
@@ -268,7 +268,7 @@ same gap AGENTS.md Gotcha 28 records for thermal pressure and Gotcha 43 for
 background load. The two seams are
 
 ```sh
-MFERENCE_PHASES=1 MFERENCE_EXPERT_DISK_IO=1 MFERENCE_EXPERT_NOCACHE=1 \
+TURBOSPARK_PHASES=1 TURBOSPARK_EXPERT_DISK_IO=1 TURBOSPARK_EXPERT_NOCACHE=1 \
   ./target/release/turbospark-check --model ~/models/gemma4.gturbo \
   --messages-file /tmp/p.json --max-new 200 --expert-cache-slots 16
 ```
@@ -310,7 +310,7 @@ during layer L's attention holds the guess about L+1, and it was being filed
 against layer L. AGENTS.md Gotcha 57's rule caught it (near-random means
 UNRELATED, so suspect the instrument before believing the finding).
 
-`MFERENCE_PILOT_PROBE=self` is the guard that now exists because of it: it
+`TURBOSPARK_PILOT_PROBE=self` is the guard that now exists because of it: it
 aims the probe at the layer it is already running in, so the prediction
 reproduces the production router and recall MUST read 100%. It does, and the
 same run pins the analysis script's cost accounting at exactly 1.00 read per

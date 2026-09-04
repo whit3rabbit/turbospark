@@ -106,7 +106,7 @@ impl RealForwardRunner {
     }
 
     /// The same branch for ALL `m` tokens of a prefill micro-batch, in one
-    /// command buffer instead of `m` (`MFERENCE_BATCHED_GEMV`,
+    /// command buffer instead of `m` (`TURBOSPARK_BATCHED_GEMV`,
     /// `docs/BATCHED_PREFILL.md`).
     ///
     /// Two things are batched and one deliberately is not. The three

@@ -289,7 +289,7 @@ pub(crate) fn family_dispatches_steering(family: model_io::ModelFamily) -> bool 
         // loop (`prefill.rs`, which calls the same tail function and so
         // needs no hook of its own), and the batched-routed prefill's
         // per-row tail (`moe_batch.rs`, reachable only under
-        // `MFERENCE_ROUTED_BATCH`). All three land on the boundary AFTER
+        // `TURBOSPARK_ROUTED_BATCH`). All three land on the boundary AFTER
         // `layer_scalar`'s `encode_scalar_mul`, which is the true end of a
         // Gemma layer's contribution to the residual stream -- the residual
         // add alone is not the boundary, because the whole accumulated

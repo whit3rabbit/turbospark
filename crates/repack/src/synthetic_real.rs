@@ -61,7 +61,7 @@ pub fn build_synthetic_gemma4_real_install(
 /// forward pass. Flipping the default would silently retire that.
 ///
 /// The 4-bit form exists because `encode_gemm_any` is INT4-affine only, so
-/// the chunk driver's batched shared expert (`MFERENCE_BATCHED_GEMV`) is
+/// the chunk driver's batched shared expert (`TURBOSPARK_BATCHED_GEMV`) is
 /// unreachable on the 8-bit fixture -- it is refused BY NAME rather than
 /// looped, correctly, which means the default fixture cannot gate the very
 /// dispatches that seam moves on the real install. A fixture that cannot

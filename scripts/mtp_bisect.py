@@ -11,7 +11,7 @@ convention" but "which STAGE", and this answers it numerically.
 
 WHAT IT COMPARES, AND WHY THOSE FOUR
 
-The port dumps what survives its single command buffer (`MFERENCE_MTP_DUMP`):
+The port dumps what survives its single command buffer (`TURBOSPARK_MTP_DUMP`):
 
     concat      the exact input to `fc`, both halves, already normed
     moe_x       post_attention_layernorm(fc_out + attn_out)
@@ -40,7 +40,7 @@ agreement here is evidence and not a tautology.
 
     hf download mlx-community/Qwen3.8-27B-MTP-4bit --local-dir ~/models/qwen38-mtp-ref
 
-    MFERENCE_MTP_DUMP=/tmp/mtp-dump TURBOSPARK_MTP_INSTALL_DIR=~/models/qwen38-27b-mtp.gturbo \\
+    TURBOSPARK_MTP_DUMP=/tmp/mtp-dump TURBOSPARK_MTP_INSTALL_DIR=~/models/qwen38-27b-mtp.gturbo \\
       cargo test -p turbospark-bench --test mtp_head_probe --release -- --ignored --nocapture what_the_mtp
 
     uv run --python 3.12 --with numpy \\

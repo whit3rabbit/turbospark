@@ -106,7 +106,7 @@ impl DflashState {
             DflashDraftPolicy::Fixed(block) => {
                 if !install_has_dflash(index) {
                     return Err(RealForwardError::Unsupported(format!(
-                        "MFERENCE_DFLASH_DRAFT={block} asks for the DFlash2 drafter, but this \
+                        "TURBOSPARK_DFLASH_DRAFT={block} asks for the DFlash2 drafter, but this \
                          install carries none (dflash.fc.weight is not in the resident index); \
                          stream it beside the trunk (docs/DFLASH2.md)"
                     )));
@@ -119,7 +119,7 @@ impl DflashState {
                 if block == 0 {
                     return Err(RealForwardError::Unsupported(
                         "the DFlash2 drafter was asked for at a block of 0; use Off (or \
-                         MFERENCE_DFLASH_DRAFT=0) to turn drafting off"
+                         TURBOSPARK_DFLASH_DRAFT=0) to turn drafting off"
                             .to_string(),
                     ));
                 }

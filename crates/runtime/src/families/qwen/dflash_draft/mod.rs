@@ -55,7 +55,8 @@ impl RealForwardRunner {
     pub fn dflash_prime_from_capture(&mut self, position: usize) -> Result<(), RealForwardError> {
         let Some(d) = self.real_dflash.as_ref() else {
             return Err(RealForwardError::Unsupported(
-                "no DFlash2 state; set MFERENCE_DFLASH_DRAFT before opening the model".to_string(),
+                "no DFlash2 state; set TURBOSPARK_DFLASH_DRAFT before opening the model"
+                    .to_string(),
             ));
         };
         if d.kv.position() != position {
@@ -132,7 +133,8 @@ impl RealForwardRunner {
         let vocab = self.arch.vocab_size as usize;
         let Some(d) = self.real_dflash.as_ref() else {
             return Err(RealForwardError::Unsupported(
-                "no DFlash2 state; set MFERENCE_DFLASH_DRAFT before opening the model".to_string(),
+                "no DFlash2 state; set TURBOSPARK_DFLASH_DRAFT before opening the model"
+                    .to_string(),
             ));
         };
         let block = d.block;

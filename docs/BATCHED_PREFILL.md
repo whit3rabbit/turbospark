@@ -155,7 +155,7 @@ clamp.
 
 Measured for this document, 2026-08-16, real Gemma 4 install, the frozen
 `long-synthesis` prompt (3,015 tokens), `--max-new 8` so 99.7% of the
-divisor is prefill, `MFERENCE_PHASES=1`. Two arms, because the expert
+divisor is prefill, `TURBOSPARK_PHASES=1`. Two arms, because the expert
 bucket is a strong function of the slot count and `auto` resolves to 32 on
 this machine:
 
@@ -187,7 +187,7 @@ and 38 against `16 x 8 = 128` looks like a 3.3x cut.
 and `scripts/router_window.py`'s own docstring says so in as many words
 ("the sequential arm's true cost is misses, not touches"). Measured, same
 runs as the table above (misses per layer per token, and prefill's own
-union from `MFERENCE_ROUTER_TRACE=1` analysed at `skip=0` so prefill is
+union from `TURBOSPARK_ROUTER_TRACE=1` analysed at `skip=0` so prefill is
 included; the script's default excludes it):
 
 | | M=2 | M=4 | M=8 | M=16 |
@@ -246,7 +246,7 @@ which are properties of the kernels and transfer. Do not read its verdict.
 
 ### Prefill's own GPU split, measured
 
-`MFERENCE_PHASES=1 MFERENCE_DISPATCH_PROFILE=1`, real Gemma 4 install, the
+`TURBOSPARK_PHASES=1 TURBOSPARK_DISPATCH_PROFILE=1`, real Gemma 4 install, the
 frozen `long-synthesis` prompt (3,014 tokens), `--max-new 8`, 32 slots.
 3,022 forward passes, so 99.7% of the divisor is prefill. Absolute times
 are inflated by the profiling mode (one encoder per dispatch, every buffer
@@ -365,7 +365,7 @@ is no longer soft -- the driver measured it, and it over-delivered.
 
 Landed and measured 2026-08-16, same day as the correction above. Real
 Gemma 4 install, `long-synthesis` (3,015 prompt tokens), `--max-new 8`, 32
-slots, `MFERENCE_PREFILL_CHUNK=128`, three interleaved pairs after a
+slots, `TURBOSPARK_PREFILL_CHUNK=128`, three interleaved pairs after a
 discarded warmup on a machine that was not quiet (Gotcha 43):
 
 | pair | sequential | chunked | |
@@ -536,12 +536,12 @@ So this is one phase followed by an optional one, rather than a fork:
    driver on an install it can't serve and quietly got the old path would
    measure the old engine and report it as the new one.
 
-   Reachable through `MFERENCE_PREFILL_CHUNK=<tokens>` on
-   `turbospark-check`, an A/B seam beside `MFERENCE_SHARED_CB` and
-   `MFERENCE_ROUTED_PIPELINE`; that env var's contract is unchanged (still
+   Reachable through `TURBOSPARK_PREFILL_CHUNK=<tokens>` on
+   `turbospark-check`, an A/B seam beside `TURBOSPARK_SHARED_CB` and
+   `TURBOSPARK_ROUTED_PIPELINE`; that env var's contract is unchanged (still
    hard-fails on an unsupported family). **`--prefill-chunk` IS wired now
    (2026-08-26, `crates/cli/CLAUDE.md` Gotcha 7, `crates/runtime/CLAUDE.md`'s
-   `MFERENCE_PREFILL_CHUNK` bullet), and the server dispatches automatically
+   `TURBOSPARK_PREFILL_CHUNK` bullet), and the server dispatches automatically
    too, with no per-request flag** (`crates/server/CLAUDE.md` Gotcha 19).
    Neither routes through the chunked driver on an install it can't serve
    -- both check `RealForwardRunner::supports_chunked_prefill()`, the same
@@ -618,7 +618,7 @@ So this is one phase followed by an optional one, rather than a fork:
 5. **Widen to the GGUF pairs** per block type, if and when a GGUF MoE
    install is the one being optimized.
 6. ~~**Batch the RESIDENT GEMVs**~~ -- landed behind
-   `MFERENCE_BATCHED_GEMV=1`, and numbered SIXTH rather than inserted
+   `TURBOSPARK_BATCHED_GEMV=1`, and numbered SIXTH rather than inserted
    before step 4 because these numbers are cited from `ROADMAP.md`,
    `crates/runtime/CLAUDE.md` and a comment in `moe_batch.rs`, and
    renumbering would rot all three. It is independent of steps 4 and 5 and
@@ -631,7 +631,7 @@ So this is one phase followed by an optional one, rather than a fork:
    changed is which encoder the chunk driver calls.
 
    **The four attention projections always; the shared expert's three only
-   when `MFERENCE_ROUTED_BATCH` is also on.** The per-token routed pass
+   when `TURBOSPARK_ROUTED_BATCH` is also on.** The per-token routed pass
    reads a single-row `h1` at offset 0 and that read is on the DECODE
    path's signature (`families/gemma4/moe.rs`), so pointing it at an M-row
    buffer would be a decode change rather than a prefill one; the batched
@@ -737,7 +737,7 @@ So this is one phase followed by an optional one, rather than a fork:
    still wraps at `max_context`, and a batched k/v projection straddling
    that boundary scatters into row 0. And the M-row scratch is allocated
    ONLY when the seam is on, which is stricter than Gemma 4's
-   `ensure_batched` (that one also serves `MFERENCE_ROUTED_BATCH`, so its
+   `ensure_batched` (that one also serves `TURBOSPARK_ROUTED_BATCH`, so its
    driver allocates unconditionally) -- `BatchedScratch` is ~10 MiB on the
    real install, most of it a `batch * vocab` logits plane this driver never
    reads, and `qwen38_memory_oracle`'s frozen row has to keep describing the
@@ -812,7 +812,7 @@ MXFP4). Steps 2/3's batched routed KERNEL was the INT4-affine-only piece
 when these two flows landed, and it stayed unwired for both AT THE TIME. The
 MXFP4 gpt-oss arm has since been built ("Step 5's MXFP4 arm, built and
 measured" below); a GGUF Qwen3MoE install still refuses
-`MFERENCE_ROUTED_BATCH=1`'s widening, by name, and that Q4_K/Q6_K arm is the
+`TURBOSPARK_ROUTED_BATCH=1`'s widening, by name, and that Q4_K/Q6_K arm is the
 correctly-scoped remainder of "Step 5 (GGUF Routed Pair Widening)" below.
 
 `RoutedSlot`, the bank/protect pipelining pattern, and `retire_routed` moved
@@ -826,7 +826,7 @@ Neither new driver needed a ring-wrap fix, for two different reasons. The
 MoE half of `llama` has no sliding-window layers at all (`RealLlamaState::build`
 refuses one), so there is no ring to straddle. `gpt-oss` DOES have a real
 alternating window, but this driver's attention stays per-token and
-unbatched (no `MFERENCE_BATCHED_GEMV`-style widening for either family), so
+unbatched (no `TURBOSPARK_BATCHED_GEMV`-style widening for either family), so
 there is no batched K/V projection to straddle it either -- the ring is
 addressed by `position` exactly as the sequential path already does.
 `gpt-oss`'s one real behavioral difference from `llama`'s MoE half, the
@@ -895,7 +895,7 @@ separate steps.
 Verified byte-identical against sequential on the synthetic fixture
 (`tests/real_forward_qwen35_chunked.rs`: chunk-span sweep `[1, 2, 3, 4, 7,
 11]`, crossing this fixture's GDN-then-full-attention layer mask at every
-span; plus the `MFERENCE_BATCHED_GEMV`, vision, open-drafter and MoE-still-
+span; plus the `TURBOSPARK_BATCHED_GEMV`, vision, open-drafter and MoE-still-
 refused cases every sibling driver carries) and on the real
 `~/models/qwen38-27b.gturbo` install: greedy and sampled stdout
 byte-identical against the sequential path, `qwen38_quality_gate` unmoved
@@ -908,7 +908,7 @@ rather than a code change.
 
 Measured 2026-08-27 on the two real installs left by the step-1 landing
 above, to decide whether Step 5 pays and which arm to build first.
-`MFERENCE_PHASES=1`, the frozen `long-synthesis` prompt, `--max-new 8` so
+`TURBOSPARK_PHASES=1`, the frozen `long-synthesis` prompt, `--max-new 8` so
 99.7% of the divisor is prefill, chunking already on at the default 128, slot
 count `auto`. **The answer inverts the order the work was scoped in: build
 the MXFP4 arm first, and the GGUF one may not be worth building at all.**
@@ -989,7 +989,7 @@ pair).
 Landed 2026-08-27, the same day the section above scoped it.
 `moe_prefill_batch_gguf.metal`'s `moe_prefill_phase1_routes_mxfp4` and
 `moe_prefill_phase2_fused_mxfp4`, driven from
-`families/gptoss/moe_batch.rs` under the same `MFERENCE_ROUTED_BATCH=1`
+`families/gptoss/moe_batch.rs` under the same `TURBOSPARK_ROUTED_BATCH=1`
 seam. Real `~/.turbospark/models/gptoss-20b.gturbo`, the frozen
 `long-synthesis` prompt (2,839 tokens), `--max-new 8`, 24 slots (auto),
 three interleaved pairs after a discarded warmup:
@@ -1006,7 +1006,7 @@ three interleaved pairs after a discarded warmup:
 the ordering measurement above is why: this family's routed pair is 61.4% of
 its prefill GPU device time where Gemma's is 38.2%.
 
-Where it came from, `MFERENCE_PHASES=1` on the batched arm against the
+Where it came from, `TURBOSPARK_PHASES=1` on the batched arm against the
 per-token one, ms per prompt token:
 
 | bucket | per-token | batched |
@@ -1079,7 +1079,7 @@ plan a `protect` set naming the previous token's in-flight slots
 (`RoutedSlot::protect`), which reserves slots and forces evictions the
 routing alone would not, while the batched path retires before it plans and
 passes an EMPTY set over the whole sub-batch's union at once. The seam that
-tests it is `MFERENCE_ROUTED_PIPELINE=0` on the per-token arm, wired into
+tests it is `TURBOSPARK_ROUTED_PIPELINE=0` on the per-token arm, wired into
 this family's chunked driver for exactly this experiment (banks = 1 and an
 empty protect set TOGETHER -- sound only as a pair, because
 retire-before-plan is what leaves no in-flight slot for the empty set to
@@ -1120,13 +1120,13 @@ binary cannot: both of its arms carry whatever the change did.
 
 The memory oracle is unaffected STRUCTURALLY rather than by measurement, and
 the reason is the lazy allocation: `ensure_batched` is called only under
-`routed_batch_prefill`, which is off unless `MFERENCE_ROUTED_BATCH` is set,
+`routed_batch_prefill`, which is off unless `TURBOSPARK_ROUTED_BATCH` is set,
 and no oracle sets it. `BatchedRoutedScratch` is ~1.1 MiB against that
 family's 5,700 MiB ceiling even when it is allocated.
 
 **The Q4_K/Q6_K arm is still unbuilt and the case for it is unchanged --
 but wiring a SECOND family to this seam exposed that the unwired one was
-SILENTLY IGNORING it.** `MFERENCE_ROUTED_BATCH=1` on the real `qwen3moe`
+SILENTLY IGNORING it.** `TURBOSPARK_ROUTED_BATCH=1` on the real `qwen3moe`
 install ran to completion with no message and no batching, because
 `families/llama/moe_prefill.rs` simply had no branch reading the flag: a
 caller who set it would have measured the per-token engine and reported it
@@ -1139,7 +1139,7 @@ document ("refused by layout, as it did before") checked against the binary
 rather than a test failing -- the sentence was written from the affine
 driver's guard and was never true of the family that has no driver at all.
 And the DENSE drivers ignoring the same flag is correct and deliberately not
-asserted: `MFERENCE_ROUTED_BATCH` asks for the routed half as one dispatch
+asserted: `TURBOSPARK_ROUTED_BATCH` asks for the routed half as one dispatch
 pair, and a dense family has no routed half for it to refer to. The rule is
 "refuse where the request is meaningful and unserved", not "refuse
 everywhere unwired".
@@ -1226,8 +1226,8 @@ end-to-end prefill**.
 ### End to end on the real install
 
 Predicted 1.24x, measured **1.26x**. Real `~/models/qwen38-27b.gturbo`, the
-frozen `long-synthesis` prompt (2,940 tokens), `MFERENCE_PREFILL_CHUNK=128
-MFERENCE_BATCHED_GEMV=1` on BOTH arms, AC, three interleaved pairs after a
+frozen `long-synthesis` prompt (2,940 tokens), `TURBOSPARK_PREFILL_CHUNK=128
+TURBOSPARK_BATCHED_GEMV=1` on BOTH arms, AC, three interleaved pairs after a
 discarded warmup per arm:
 
 | pair | R=1 | per-width table | |
@@ -1249,7 +1249,7 @@ the CLI defaults on a short prompt (`c908ca69...`, `4857cbb5...`), and the
 2,940-token prompt THROUGH the batched arm, where the kernel is actually
 reached (`fe37059f...`). The short-prompt arms matter less than they look --
 plain decode is M=1 GEMV and never enters this kernel at all, so a smoke
-test without `MFERENCE_BATCHED_GEMV=1` cannot see a change to it. That is
+test without `TURBOSPARK_BATCHED_GEMV=1` cannot see a change to it. That is
 this repo's recurring "the fixture cannot reach the mutation" trap, and it is
 why the third arm exists.
 
@@ -1384,7 +1384,7 @@ calculation and a clock landing within 0.2 points of each other is the
 strongest form this kind of claim takes here.
 
 **THE INSTRUMENT NOTE IS THE PART WORTH CARRYING.** The obvious way to get
-this number is `MFERENCE_DISPATCH_PROFILE=1`, which is the only surface that
+this number is `TURBOSPARK_DISPATCH_PROFILE=1`, which is the only surface that
 names kernels (`PhaseCounters` has no GDN bucket). It "waits on every command
 buffer at commit" -- its own module doc -- which serializes exactly the
 pipelining that makes prefill fast. Three attempts on the real `qwen38-27b`

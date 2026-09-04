@@ -122,8 +122,8 @@ struct Pool {
 }
 
 /// A/B seam for ROADMAP Phase P1, in the shape of the decode path's other
-/// seams (`MFERENCE_SHARED_CB`,
-/// `MFERENCE_ROUTED_PIPELINE`): `MFERENCE_READ_QOS=utility` runs the
+/// seams (`TURBOSPARK_SHARED_CB`,
+/// `TURBOSPARK_ROUTED_PIPELINE`): `TURBOSPARK_READ_QOS=utility` runs the
 /// workers at `QOS_CLASS_UTILITY`, which is the class Swift's I/O pool
 /// uses and which asks the scheduler for E-cores.
 ///
@@ -135,7 +135,7 @@ struct Pool {
 /// end to end instead of assumed. Read ONCE here: setting the variable
 /// after the pool exists does nothing.
 fn read_qos_requested() -> bool {
-    std::env::var("MFERENCE_READ_QOS").as_deref() == Ok("utility")
+    std::env::var("TURBOSPARK_READ_QOS").as_deref() == Ok("utility")
 }
 
 /// Puts the calling worker on `QOS_CLASS_UTILITY`. Rust's std threads

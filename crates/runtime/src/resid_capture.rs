@@ -1,4 +1,4 @@
-//! Env-gated residual-stream capture (`MFERENCE_RESID_CAPTURE=/path.json`).
+//! Env-gated residual-stream capture (`TURBOSPARK_RESID_CAPTURE=/path.json`).
 //!
 //! Lifts the residual stream at the OUTPUT of every layer, at the last prompt
 //! token, so a direction can be extracted from it offline
@@ -72,7 +72,7 @@ pub(crate) struct ResidCapture {
 }
 
 impl ResidCapture {
-    /// `Some` only when `MFERENCE_RESID_CAPTURE` names an output path AND the
+    /// `Some` only when `TURBOSPARK_RESID_CAPTURE` names an output path AND the
     /// family's flow actually feeds the capture.
     ///
     /// The family guard is `ffn_hist.rs`'s and exists for its reason: a
@@ -82,7 +82,7 @@ impl ResidCapture {
     /// then makes inert, so the whole pipeline would run and steer nothing
     /// with no error anywhere.
     pub(crate) fn from_env(context: &gpu::MetalContext, arch: &ArchConfig) -> Option<Self> {
-        let path = std::env::var_os("MFERENCE_RESID_CAPTURE")?;
+        let path = std::env::var_os("TURBOSPARK_RESID_CAPTURE")?;
         // THE SAME PREDICATE THE STEERING REFUSAL USES, not a second list
         // that happens to agree. The capture and the edit land on one
         // boundary by construction, so a family wired for one and not the
@@ -93,7 +93,7 @@ impl ResidCapture {
         // for exactly as long as no checkpoint of the other half existed.
         if !crate::steering::family_dispatches_steering(arch.family) {
             eprintln!(
-                "[resid-capture] MFERENCE_RESID_CAPTURE is not wired for family {:?}: its \
+                "[resid-capture] TURBOSPARK_RESID_CAPTURE is not wired for family {:?}: its \
                  flow does not feed the capture, ignoring",
                 arch.family
             );
@@ -226,7 +226,7 @@ impl Drop for ResidCapture {
 /// which.
 ///
 /// Zero dispatches when the capture is not open, which is what keeps
-/// `MFERENCE_RESID_CAPTURE` unset identical in bytes and in footprint to the
+/// `TURBOSPARK_RESID_CAPTURE` unset identical in bytes and in footprint to the
 /// engine that shipped before this module existed.
 ///
 /// It reuses `encode_dflash_copy_rows` rather than adding a kernel: that one

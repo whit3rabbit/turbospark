@@ -1,4 +1,4 @@
-//! Env-gated dense-FFN activation census (`MFERENCE_FFN_HIST=/path.json`).
+//! Env-gated dense-FFN activation census (`TURBOSPARK_FFN_HIST=/path.json`).
 //!
 //! Answers whether Muse Glimmer's FFN has exploitable ACTIVATION SPARSITY:
 //! if most of `silu(gate) * up` is near zero per token, only the hot rows of
@@ -233,15 +233,15 @@ pub(crate) struct FfnActHist {
 }
 
 impl FfnActHist {
-    /// `Some` only when `MFERENCE_FFN_HIST` names an output path AND the
+    /// `Some` only when `TURBOSPARK_FFN_HIST` names an output path AND the
     /// family is the one whose flow feeds the capture. Constructing it for
     /// a family that never redirects would write a file of zeros that reads
     /// as "perfectly sparse", the worst kind of wrong.
     pub(crate) fn from_env(context: &gpu::MetalContext, arch: &ArchConfig) -> Option<Self> {
-        let path = std::env::var_os("MFERENCE_FFN_HIST")?;
+        let path = std::env::var_os("TURBOSPARK_FFN_HIST")?;
         if arch.family != ModelFamily::MuseGlimmer {
             eprintln!(
-                "[ffn-hist] MFERENCE_FFN_HIST is wired for the museGlimmer flow only; \
+                "[ffn-hist] TURBOSPARK_FFN_HIST is wired for the museGlimmer flow only; \
                  family {:?} does not feed the capture, ignoring",
                 arch.family
             );

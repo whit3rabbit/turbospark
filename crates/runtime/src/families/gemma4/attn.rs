@@ -322,7 +322,7 @@ impl RealForwardRunner {
         Ok(())
     }
 
-    /// One-layer-ahead router probe (`MFERENCE_PILOT_PROBE`), the measurement
+    /// One-layer-ahead router probe (`TURBOSPARK_PILOT_PROBE`), the measurement
     /// behind `docs/EXPERT_ROUTING.md`'s prefetch-ceiling section.
     ///
     /// Runs layer L+1's router on layer L's post-attention residual, which is

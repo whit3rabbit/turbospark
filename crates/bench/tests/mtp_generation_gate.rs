@@ -32,7 +32,7 @@ use tokenizer::{Message, Role};
 use turbospark_bench::real_model::open_model_runner_speculative;
 
 /// Draft depth this file asks for. Named here rather than set through
-/// `MFERENCE_MTP_DRAFT` because the policy is now a PARAMETER: an unset
+/// `TURBOSPARK_MTP_DRAFT` because the policy is now a PARAMETER: an unset
 /// env var means `Auto`, which resolves to a depth too small for the
 /// blocks below and would fail deep in the verify rather than at open.
 const MTP_DEPTH: usize = 5;

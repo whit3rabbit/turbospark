@@ -119,7 +119,7 @@ printf '[{"role":"user","content":"Explain how coastal wetlands reduce flood dam
 
 7. **`--prefill-chunk` IS WIRED AS OF 2026-08-26, and NOT by consuming
    `request.prefill_chunk` unconditionally.** `stream_turn` calls a
-   `resolve_chunk_tokens` helper: `MFERENCE_PREFILL_CHUNK` still wins first
+   `resolve_chunk_tokens` helper: `TURBOSPARK_PREFILL_CHUNK` still wins first
    (unchanged env-seam contract, see below), and otherwise the flag's value
    (`Fixed(n).resolved()` or `Auto -> DEFAULT_CHUNK_SIZE`, via
    `invocation::PrefillChunk::resolved`) is used ONLY when
@@ -139,14 +139,14 @@ printf '[{"role":"user","content":"Explain how coastal wetlands reduce flood dam
    suite): greedy and sampled stdout are md5-IDENTICAL between a
    pre-wiring binary (sequential by default) and the current one (chunked
    by default) on both `~/models/gemma4.gturbo` and
-   `~/.turbospark/models/mistral7b.gturbo`. `MFERENCE_PREFILL_CHUNK=64` on
+   `~/.turbospark/models/mistral7b.gturbo`. `TURBOSPARK_PREFILL_CHUNK=64` on
    an unsupported family (checked against `gptoss-20b.gturbo`) still hits
    the named hard refusal; the same install with no env var and the default
    flag generates normally with no error at all.
 
    Two consequences carried over from when this was a bare seam. **The env
    var is STILL an A/B seam whose two arms must produce identical tokens**,
-   like `MFERENCE_SHARED_CB` next door: verified on the real install at
+   like `TURBOSPARK_SHARED_CB` next door: verified on the real install at
    chunk spans 32, 128 and 512 against the frozen greedy and sampled
    digests. And **the resolved-request block already printed
    `prefill_chunk` before this landed**, so nothing about wiring the flag
@@ -351,5 +351,5 @@ printf '[{"role":"user","content":"Explain how coastal wetlands reduce flood dam
     rather than something the mechanism can promise, and a reuse that never
     fires differs from a working one only in wall-clock -- which thermal
     drift alone can cover (AGENTS.md Gotcha 28). It read 0/33 through TWO
-    rounds of apparently-working implementation. `MFERENCE_PREFIX_REUSE=quiet`
+    rounds of apparently-working implementation. `TURBOSPARK_PREFIX_REUSE=quiet`
     silences it; `--quiet` already does.

@@ -5,7 +5,7 @@
         --positive /tmp/steer/pos --negative /tmp/steer/neg \
         --out /tmp/steer/d.gguf
 
-Reads the capture pairs `MFERENCE_RESID_CAPTURE` writes (a small JSON header
+Reads the capture pairs `TURBOSPARK_RESID_CAPTURE` writes (a small JSON header
 beside a raw `.f32` sidecar, see `crates/runtime/src/resid_capture.rs`),
 computes one direction per layer, and writes a control vector in llama.cpp's
 GGUF layout.

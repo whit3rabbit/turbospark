@@ -14,7 +14,7 @@ use minijinja::ErrorKind;
 /// llama.cpp all send and the model was trained against a real date. Pinning
 /// it unconditionally would make every user's prompt differ from the reference
 /// implementations' to buy a convenience only the gates need.
-pub const CHAT_DATE_ENV: &str = "MFERENCE_CHAT_DATE";
+pub const CHAT_DATE_ENV: &str = "TURBOSPARK_CHAT_DATE";
 
 /// `strftime_now(format)`, the transformers chat-template global.
 ///

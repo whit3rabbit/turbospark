@@ -243,7 +243,7 @@ fn a_chunk_starting_off_the_kv_cursor_is_refused() {
 //
 // Same bar as above -- byte-identity against the SEQUENTIAL path -- with
 // the route-list dispatch pair replacing the per-token routed loop. The
-// setter is the `MFERENCE_ROUTED_BATCH` seam; setting the env var instead
+// setter is the `TURBOSPARK_ROUTED_BATCH` seam; setting the env var instead
 // would race the other test threads in this process.
 
 #[test]
@@ -348,7 +348,7 @@ fn decoding_continues_correctly_after_a_batched_routed_prefill() {
     );
 }
 
-// --- The batched resident GEMVs (`MFERENCE_BATCHED_GEMV`) ---
+// --- The batched resident GEMVs (`TURBOSPARK_BATCHED_GEMV`) ---
 //
 // `docs/BATCHED_PREFILL.md`'s 29.7% row: the four attention projections
 // always, and the shared expert's three when the routed half is batched

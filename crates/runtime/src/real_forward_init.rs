@@ -66,7 +66,7 @@ pub(crate) type ExpertStreamersResult = (
 /// The routed experts read in place out of an `mmap` rather than `pread`-copied
 /// into pinned slots (`streaming::MappedExpertLayer`).
 ///
-/// Empty unless `MFERENCE_EXPERT_RESIDENCY=mapped`. When it is on, NO streamer
+/// Empty unless `TURBOSPARK_EXPERT_RESIDENCY=mapped`. When it is on, NO streamer
 /// is opened and no slot is allocated -- which is the entire point, since the
 /// slot cache is 70-90% of the measured peak of every MoE install. Both halves
 /// stay `Vec`s indexed by layer so the decode path branches on
@@ -86,10 +86,10 @@ pub(crate) struct MappedResidency {
 /// harnesses that measure this must not sense it).
 ///
 /// Deliberately an env seam rather than a CLI flag for now, matching how
-/// `MFERENCE_ROUTED_BATCH` and `MFERENCE_BATCHED_GEMV` landed: both arms must
+/// `TURBOSPARK_ROUTED_BATCH` and `TURBOSPARK_BATCHED_GEMV` landed: both arms must
 /// produce identical tokens, so it is an A/B seam first and a feature second.
 pub(crate) fn mapped_residency_requested() -> bool {
-    std::env::var("MFERENCE_EXPERT_RESIDENCY")
+    std::env::var("TURBOSPARK_EXPERT_RESIDENCY")
         .map(|v| v.eq_ignore_ascii_case("mapped"))
         .unwrap_or(false)
 }
@@ -101,7 +101,7 @@ pub(crate) fn mapped_residency_requested() -> bool {
 /// streamer when this mode engages -- so an unwired family would reach its own
 /// `.ok_or_else` and report "layer N has no packed-expert streamer", blaming
 /// the INSTALL for a mode the caller chose. It is also one code change away
-/// from the silent-ignore failure `MFERENCE_ROUTED_BATCH` actually shipped
+/// from the silent-ignore failure `TURBOSPARK_ROUTED_BATCH` actually shipped
 /// with on the MoE `llama` family, where a caller measured the per-token
 /// engine and would have reported it under the batched label (Gotcha 22).
 /// Refuse where the request is MEANINGFUL and unserved.
@@ -124,7 +124,7 @@ pub(crate) fn mapped_residency_refusal(
         return Ok(());
     }
     Err(RealForwardError::Unsupported(format!(
-        "MFERENCE_EXPERT_RESIDENCY=mapped is not wired for {}; \
+        "TURBOSPARK_EXPERT_RESIDENCY=mapped is not wired for {}; \
          unset it to use the pread expert streamer. Widening it is ROADMAP item 9, and \
          each family REPLACES this refusal rather than adding a branch to a silent path",
         family.as_str()
@@ -342,7 +342,7 @@ mod tests {
                     // -- which is the whole difference between this and the
                     // downstream "layer N has no packed-expert streamer".
                     assert!(
-                        text.contains("MFERENCE_EXPERT_RESIDENCY"),
+                        text.contains("TURBOSPARK_EXPERT_RESIDENCY"),
                         "the refusal must name the seam; got {text}"
                     );
                     assert!(

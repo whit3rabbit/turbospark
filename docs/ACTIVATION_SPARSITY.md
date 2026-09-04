@@ -16,7 +16,7 @@ uses", read both pages first.
 
 ## The instrument
 
-`MFERENCE_FFN_HIST=/path.json` on `turbospark-check` (museGlimmer family
+`TURBOSPARK_FFN_HIST=/path.json` on `turbospark-check` (museGlimmer family
 only; the flag names the only flow that feeds it) captures the post-SiLU
 FFN activation vector `silu(gate) * up` per layer per decode token, and
 `scripts/ffn_sparsity.py` analyzes the capture. Design points, in

@@ -15,7 +15,7 @@ STREAMED (default)
   packed_experts/layer_NN.bin --pread--> AlignedSlot --wrap--> MTLBuffer --> kernel
      (page cache)              memcpy      (pinned)    no copy    reads in place
 
-MAPPED (MFERENCE_EXPERT_RESIDENCY=mapped)
+MAPPED (TURBOSPARK_EXPERT_RESIDENCY=mapped)
   packed_experts/layer_NN.bin --mmap--> MTLBuffer --> kernel
      (page cache)              no copy    no copy     reads in place
 ```
@@ -137,10 +137,10 @@ Byte-identity is necessary and NOT sufficient, and on this feature the
 insufficiency is the whole hazard: a seam that silently did nothing would also
 be byte-identical, and would then be measured as the streamed engine and
 reported under the mapped label. That is not hypothetical --
-`MFERENCE_ROUTED_BATCH` shipped with exactly that failure on the MoE `llama`
+`TURBOSPARK_ROUTED_BATCH` shipped with exactly that failure on the MoE `llama`
 family (`crates/runtime` Gotcha 22).
 
-`MFERENCE_PHASES=1` on the same install and prompt, 60 new tokens, settles it:
+`TURBOSPARK_PHASES=1` on the same install and prompt, 60 new tokens, settles it:
 
 | | streamed | mapped |
 |---|---:|---:|
@@ -222,7 +222,7 @@ why both paths ship rather than one replacing the other.
   `Qwen3Moe` half, 128 experts/48 layers) and
   `~/.turbospark/models/gptoss-20b.gturbo` both reproduce byte-identical
   greedy output between the streamed and mapped arms, and
-  `MFERENCE_PHASES=1` shows the same fingerprint Gemma 4's own capture
+  `TURBOSPARK_PHASES=1` shows the same fingerprint Gemma 4's own capture
   does: `expert io (pread): 0.0 ms (0.0%)` and a 100% cache hit rate.
   `qwen`'s own family (`QwenGdnMoe`, e.g. Ornith 35B) has no real install on
   this machine at the time of writing (see `CLAUDE.local.md`'s artifact
@@ -232,7 +232,7 @@ why both paths ship rather than one replacing the other.
   unrelated reason: compressed attention is not wired at all yet
   (`crates/runtime/src/real_forward_init.rs::validate_arch_config`), so no
   install of that family can open regardless of residency mode.
-- **`MFERENCE_ROUTED_BATCH=1` and this mode cannot be combined, on every
+- **`TURBOSPARK_ROUTED_BATCH=1` and this mode cannot be combined, on every
   family that has a batched routed driver.** Gemma 4's own conflict lives at
   `families/gemma4/moe_batch.rs`; the same guard was added to
   `families/gptoss/moe_batch.rs` (its MXFP4 batched pair) and
@@ -253,11 +253,11 @@ why both paths ship rather than one replacing the other.
   `set_routed_batch_prefill` can flip that seam after open; confirmed firing
   by name on the real gptoss install (both seams named in the error).
 - The DEFAULT chunked-prefill path is unaffected and needs no second arm:
-  with `MFERENCE_ROUTED_BATCH` unset, Gemma 4's chunked driver runs its routed
+  with `TURBOSPARK_ROUTED_BATCH` unset, Gemma 4's chunked driver runs its routed
   half through `encode_gemma4_layer_routed_moe` -- the same function the
   sequential decode path uses, and the one carrying the mapped branch.
-- Behind `MFERENCE_EXPERT_RESIDENCY=mapped`, off by default, an A/B seam in
-  the shape `MFERENCE_ROUTED_BATCH` and `MFERENCE_BATCHED_GEMV` already have:
+- Behind `TURBOSPARK_EXPERT_RESIDENCY=mapped`, off by default, an A/B seam in
+  the shape `TURBOSPARK_ROUTED_BATCH` and `TURBOSPARK_BATCHED_GEMV` already have:
   both arms must produce identical tokens, so it is a seam first and a feature
   second.
 - No CLI flag yet, and deliberately: `turbospark-bench`, the memory oracles
@@ -266,7 +266,7 @@ why both paths ship rather than one replacing the other.
 - Every frozen row in `crates/bench` is a STREAMED row and stands unchanged. A
   mapped row is a new row, not a re-freeze.
 - **The VISION TOWER has its own mapped arm since 2026-08-30, behind its OWN
-  seam, `MFERENCE_VISION_RESIDENCY=mapped`, never `MFERENCE_EXPERT_RESIDENCY`.**
+  seam, `TURBOSPARK_VISION_RESIDENCY=mapped`, never `TURBOSPARK_EXPERT_RESIDENCY`.**
   Reusing the routed variable would move the tower silently for anyone A/Bing
   routed residency, which is the exact silent-ignore failure
   `mapped_residency_refusal`'s own doc comment exists to prevent, one seam
@@ -299,7 +299,7 @@ why both paths ship rather than one replacing the other.
   serialization; correctness rests on the same commit-order guarantee this
   page's own routed rows already rely on. The wait is NOT dropped when a
   per-block host readback is requested (`run_with_stages`'s cross-engine
-  capture, or `MFERENCE_VISION_OVERFLOW`), since those need the GPU to have
+  capture, or `TURBOSPARK_VISION_OVERFLOW`), since those need the GPU to have
   actually finished before reading `s.x` from the host -- both still
   `commit_and_wait` per block, unchanged.
 
@@ -324,7 +324,7 @@ why both paths ship rather than one replacing the other.
   and `turbospark-server`.
 - Frozen mapped-arm memory-oracle rows for any family (every frozen row in
   `crates/bench` is still a STREAMED row, per the Status section above).
-- Composing with the BATCHED routed pair (`MFERENCE_ROUTED_BATCH=1`), which is
+- Composing with the BATCHED routed pair (`TURBOSPARK_ROUTED_BATCH=1`), which is
   refused rather than served on every family that has one today. It needs the
   wide argument buffer bound per SUB-BATCH instead of per layer, since the
   union of experts to bind changes inside the layer loop where the slot array

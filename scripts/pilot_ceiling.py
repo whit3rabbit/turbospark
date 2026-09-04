@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """What is the CEILING on a one-layer-ahead expert prefetcher?
 
-Reads an `MFERENCE_ROUTER_HIST` capture taken with `MFERENCE_ROUTER_TRACE=1`
+Reads a `TURBOSPARK_ROUTER_HIST` capture taken with `TURBOSPARK_ROUTER_TRACE=1`
 and answers, offline, the questions that decide whether a router-lookahead
 prefetcher (colibri's PILOT) is worth building here -- WITHOUT building a
 predictor first.
@@ -126,7 +126,7 @@ def analyse(capture, slot_counts, skip):
     if not trace:
         sys.exit(
             "capture has no `trace` block: re-run the capture with "
-            "MFERENCE_ROUTER_TRACE=1 set alongside MFERENCE_ROUTER_HIST"
+            "TURBOSPARK_ROUTER_TRACE=1 set alongside TURBOSPARK_ROUTER_HIST"
         )
 
     routed = [(layer, passes(row, top_k)) for layer, row in enumerate(trace) if row]
@@ -293,7 +293,7 @@ def pilot_k_sweep(routed, predicted, num_experts, slots, npass, skip, top_k):
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("capture", help="JSON written by MFERENCE_ROUTER_HIST")
+    ap.add_argument("capture", help="JSON written by TURBOSPARK_ROUTER_HIST")
     ap.add_argument("--slots", default="16,32",
                     help="comma-separated slot counts to simulate (default 16,32)")
     ap.add_argument("--skip", type=int, default=0,

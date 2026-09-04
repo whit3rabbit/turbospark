@@ -206,15 +206,50 @@ fn every_caveat_row_explains_itself() {
 /// allowed; what is refused is a revision that is neither.
 #[test]
 fn a_revision_is_either_a_commit_sha_or_the_literal_main() {
+    let is_pinned = |rev: &str| {
+        rev == "main" || (rev.len() == 40 && rev.chars().all(|c| c.is_ascii_hexdigit()))
+    };
     for entry in Catalog::embedded().unwrap().entries() {
-        let rev = &entry.source.revision;
-        let looks_like_sha = rev.len() == 40 && rev.chars().all(|c| c.is_ascii_hexdigit());
         assert!(
-            rev == "main" || looks_like_sha,
-            "row {}'s revision {rev:?} is neither `main` nor a 40-character sha",
-            entry.alias
+            is_pinned(&entry.source.revision),
+            "row {}'s revision {:?} is neither `main` nor a 40-character sha",
+            entry.alias,
+            entry.source.revision
         );
+        if let Some(mtp) = &entry.mtp {
+            assert!(
+                is_pinned(&mtp.revision),
+                "row {}'s mtp.revision {:?} is neither `main` nor a 40-character sha",
+                entry.alias,
+                mtp.revision
+            );
+        }
     }
+}
+
+/// **`mtp.repo` must be a DIFFERENT repository from `source.repo`.** The
+/// whole reason a row carries one is that `source`'s own conversion drops
+/// the head; naming the same repo twice would ask the walk to find `mtp.*`
+/// tensors in bytes already established to lack them.
+#[test]
+fn an_mtp_source_names_a_different_repository_from_the_trunk() {
+    let catalog = Catalog::embedded().unwrap();
+    let row = catalog.get("qwen38-27b-mtp").expect("qwen38-27b-mtp row");
+    let mtp = row
+        .mtp
+        .as_ref()
+        .expect("qwen38-27b-mtp names an mtp source");
+    assert_ne!(mtp.repo, row.source.repo);
+    assert_eq!(mtp.repo, "Qwen/Qwen3.8-27B");
+    // The trunk itself is unchanged from qwen38-27b: same repo, same pin,
+    // same tokenizer sidecars. Only the mtp field is new.
+    let headless = catalog.get("qwen38-27b").expect("qwen38-27b row");
+    assert_eq!(row.source, headless.source);
+    assert_eq!(row.sidecars, headless.sidecars);
+    assert!(
+        headless.mtp.is_none(),
+        "the headless row must name no mtp source"
+    );
 }
 
 /// A user override merges by alias and is held to the same validation.

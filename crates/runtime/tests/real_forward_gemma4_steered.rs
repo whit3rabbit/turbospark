@@ -346,7 +346,7 @@ fn an_unsteered_chunked_prefill_still_agrees_with_sequential_decode() {
     );
 }
 
-/// The BATCHED-routed tail (`moe_batch.rs`, `MFERENCE_ROUTED_BATCH`'s
+/// The BATCHED-routed tail (`moe_batch.rs`, `TURBOSPARK_ROUTED_BATCH`'s
 /// programmatic form) is a SEPARATE call site from the per-token one above
 /// and neither can see the other's absence -- exactly the reason
 /// `real_forward_llama_steered.rs` keeps the dense and MoE halves as

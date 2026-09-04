@@ -600,8 +600,8 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
     (mask 3/4) layers at `open()`.
 
     The per-family flows, their state types, the env seams
-    (`MFERENCE_SHARED_CB`, `MFERENCE_ROUTED_PIPELINE`,
-    `MFERENCE_DISPATCH_PROFILE`), the expert-cache slot policy and the
+    (`TURBOSPARK_SHARED_CB`, `TURBOSPARK_ROUTED_PIPELINE`,
+    `TURBOSPARK_DISPATCH_PROFILE`), the expert-cache slot policy and the
     synthetic install builders are documented where they live:
     [crates/runtime/CLAUDE.md](crates/runtime/CLAUDE.md) Gotchas 3, 7 and
     13, and [crates/repack/CLAUDE.md](crates/repack/CLAUDE.md) Gotchas 1 and
@@ -711,7 +711,7 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
     [crates/bench/CLAUDE.md](crates/bench/CLAUDE.md) Gotcha 1.
 
 20. **The FIRST timed run after a build is a cold GPU, and it is not a
-    baseline.** `MFERENCE_PHASES=1`'s `gpu busy` buckets come from
+    baseline.** `TURBOSPARK_PHASES=1`'s `gpu busy` buckets come from
     `GPUStartTime`/`GPUEndTime`, so they look like pure device time and
     invite being trusted as-is. They are not clock-invariant: the first
     run on an idle GPU executes at low DVFS clocks. Measured on the real
@@ -726,7 +726,7 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
     with no warmup discipline recorded against it may be a thermal
     artifact, so re-measure before building on it.
 
-21. **Every `MFERENCE_PHASES=1` number is divided by ALL forward passes,
+21. **Every `TURBOSPARK_PHASES=1` number is divided by ALL forward passes,
     prefill included.** `print_phases` uses `p.calls`, and prefill runs
     one `produce` call per prompt token, so a run with a 2252-token
     prompt and `--max-new 150` puts 94% of its divisor at short context.
@@ -745,8 +745,8 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
     [crates/bench/CLAUDE.md](crates/bench/CLAUDE.md) Gotcha 3.
 
 23. **Every profiling surface in this repo measures the inside of
-    `produce`. The decode loop is bigger than that.** `MFERENCE_PHASES=1`,
-    its GPU-busy attribution, and `MFERENCE_DISPATCH_PROFILE=1` all live in
+    `produce`. The decode loop is bigger than that.** `TURBOSPARK_PHASES=1`,
+    its GPU-busy attribution, and `TURBOSPARK_DISPATCH_PROFILE=1` all live in
     `RealForwardRunner`, so the sampler, the streaming detokenizer, and the
     stop matcher -- everything `run_raw_completion` does AFTER `produce`
     returns -- appear in none of them. This is not hypothetical: it hid a
@@ -1854,7 +1854,7 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
 
 66. **AN INSTRUMENT THAT SERIALIZES WHAT IT MEASURES CANNOT PRICE A HOT
     PATH, AND THE COST DOES NOT FALL WITH THE INPUT.**
-    `MFERENCE_DISPATCH_PROFILE=1` is the only surface in this repo that
+    `TURBOSPARK_DISPATCH_PROFILE=1` is the only surface in this repo that
     attributes GPU time BY KERNEL NAME, so it is the obvious answer to
     "what share does kernel X hold". It "waits on every command buffer at
     commit" (`crates/gpu/src/dispatch_profile.rs`), which destroys exactly

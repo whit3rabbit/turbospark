@@ -70,20 +70,20 @@ pub(crate) fn process_disk_bytes_read() -> Option<u64> {
 }
 
 /// Whether to sample [`process_disk_bytes_read`] around each read batch
-/// (`MFERENCE_EXPERT_DISK_IO=1`).
+/// (`TURBOSPARK_EXPERT_DISK_IO=1`).
 ///
 /// OFF by default, and read ONCE: this is a syscall pair per batch on the
 /// decode critical path, and there are 30 layers per token on the real 26B
-/// install. Same shape as `read_pool`'s `MFERENCE_READ_QOS` seam, including
+/// install. Same shape as `read_pool`'s `TURBOSPARK_READ_QOS` seam, including
 /// the read-once part -- setting the variable after the streamer is open
 /// does nothing.
 pub(crate) fn measure_physical_io() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var("MFERENCE_EXPERT_DISK_IO").as_deref() == Ok("1"))
+    *ENABLED.get_or_init(|| std::env::var("TURBOSPARK_EXPERT_DISK_IO").as_deref() == Ok("1"))
 }
 
 /// Whether to open the expert blob with the unified buffer cache bypassed
-/// (`MFERENCE_EXPERT_NOCACHE=1`).
+/// (`TURBOSPARK_EXPERT_NOCACHE=1`).
 ///
 /// This is an EXPERIMENTAL CONDITION, not an optimization: it makes the
 /// disk-bound arm that `docs/EXPERT_ROUTING.md` names as the one that would
@@ -103,7 +103,7 @@ pub(crate) fn measure_physical_io() -> bool {
 ///
 /// The consequence for an operator is the whole usage protocol. An expert
 /// blob that a previous run already faulted in stays resident, so
-/// `MFERENCE_EXPERT_NOCACHE=1` on its own does NOT guarantee a disk-bound
+/// `TURBOSPARK_EXPERT_NOCACHE=1` on its own does NOT guarantee a disk-bound
 /// arm on a warm machine -- it guarantees only that THIS process stops
 /// adding to the cache. Pair it with `sudo purge` (or a fresh boot) when the
 /// install has been read recently, and confirm with a non-zero
@@ -111,7 +111,7 @@ pub(crate) fn measure_physical_io() -> bool {
 /// the flag. That confirmation is why the two seams landed together.
 pub(crate) fn nocache_requested() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var("MFERENCE_EXPERT_NOCACHE").as_deref() == Ok("1"))
+    *ENABLED.get_or_init(|| std::env::var("TURBOSPARK_EXPERT_NOCACHE").as_deref() == Ok("1"))
 }
 
 /// Turns off the unified buffer cache for `fd`. Returns whether the kernel

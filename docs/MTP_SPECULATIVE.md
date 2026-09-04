@@ -114,7 +114,7 @@ decode-steps. That is the entire appeal of MTP over a separate drafter.
 
 ## The dense compute split
 
-`MFERENCE_PHASES=1 MFERENCE_DISPATCH_PROFILE=1` on `~/models/ternary27b.gturbo`,
+`TURBOSPARK_PHASES=1 TURBOSPARK_DISPATCH_PROFILE=1` on `~/models/ternary27b.gturbo`,
 the same architecture and the same decode flow as `qwen38`, and on disk.
 Warmup discarded. 1,138.3 dispatches per token, and every count reconciles
 against the layer graph (496 GEMVs = 16 full x 4 + 48 linear x 5 + 64 x 3
@@ -373,7 +373,7 @@ a 17-position verify does not fit. Block 15 is the largest legal one.
    `MtpState` owning its own one-layer KV rather than widening
    `KvCacheManager`, whose sizing is driven by `ArchConfig` and whose every
    family's oracle peak is frozen. Off by default behind
-   `MFERENCE_MTP_DRAFT=<depth>`.
+   `TURBOSPARK_MTP_DRAFT=<depth>`.
 
    **Done.** `~/models/qwen38-27b-mtp.gturbo` is the install (14 GB;
    resident region 15,371,847,680 bytes, 228 MiB more than the headless

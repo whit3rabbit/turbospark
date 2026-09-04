@@ -76,7 +76,7 @@ a fixed prompt, with byte-identical output.
 Three things made this expensive to find, all of them general:
 
 - **It is not in the engine.** Every phase bucket
-  (`MFERENCE_PHASES=1`), every GPU-busy attribution, and every dispatch
+  (`TURBOSPARK_PHASES=1`), every GPU-busy attribution, and every dispatch
   ranking this port has ever printed measures the inside of
   `LogitProducer::produce`. The sampler runs in the decode loop AFTER
   `produce` returns, so it appeared in NONE of them. The tell was
@@ -249,7 +249,7 @@ MTPLX-tuned figure.
 
 **PP now has a real number (2026-08-29) and it does NOT close the gap:
 21.31 tok/s** (2,940-token `long-synthesis` prompt, 137.98s, chunked
-prefill on -- `MFERENCE_PREFILL_CHUNK=128`, `~/models/qwen38-27b.gturbo`,
+prefill on -- `TURBOSPARK_PREFILL_CHUNK=128`, `~/models/qwen38-27b.gturbo`,
 this machine quiet at the time, load average 2.2-2.6). Chunked prefill now
 serves the dense qwen linear-attention flow (`families/qwen/prefill.rs`,
 `docs/BATCHED_PREFILL.md`'s "sixth flow" entry), so this is a fair number
@@ -260,12 +260,12 @@ remove per-token scheduling overhead, no new kernel), so PP throughput
 lands close to this install's OWN TG throughput rather than near a
 GEMM-batched engine's -- removing scheduling overhead does not change that
 each token still runs its own GEMV. Closing this gap needs the GEMV-to-GEMM
-widening this repo calls "steps 2-6" (`MFERENCE_BATCHED_GEMV` and friends,
+widening this repo calls "steps 2-6" (`TURBOSPARK_BATCHED_GEMV` and friends,
 built for Gemma 4's affine blobs already) ported to this family.
 
 **THAT WIDENING LANDED THE SAME DAY AND ROUGHLY DOUBLES PP: 40.79 tok/s**
 (same 2,940-token `long-synthesis` prompt, same install, 72.08s under
-`MFERENCE_PREFILL_CHUNK=128 MFERENCE_BATCHED_GEMV=1`). Measured as
+`TURBOSPARK_PREFILL_CHUNK=128 TURBOSPARK_BATCHED_GEMV=1`). Measured as
 INTERLEAVED PAIRS rather than consecutive batches, warmup discarded, which
 is what makes it readable at all here: the machine was NOT quiet (load
 average 2.3-4.2, an unrelated concurrent session building), and the tell is
@@ -429,7 +429,7 @@ with it -- 16 rows at 8.2x the cost per byte is a **1.94x** net win against
 the **1.86-2.13x** measured above, which is the check that says this model of
 the gap is the right one.
 
-`MFERENCE_PHASES=1 MFERENCE_DISPATCH_PROFILE=1` agrees and is what redirected
+`TURBOSPARK_PHASES=1 TURBOSPARK_DISPATCH_PROFILE=1` agrees and is what redirected
 this: over a 582-token prefill, `dequant_int4_gemm_simd` is **85.4%** of
 sampled GPU time. The 1.27 million one-row launches that survive the seam
 (norms, residual adds, `silu_mul`, per-head norms, RoPE, `split_q_gate`,
@@ -1805,9 +1805,9 @@ tokens cost less, in decode-steps, than the tokens it gets accepted?
 
 | term | measured | instrument |
 | --- | --- | --- |
-| expert union at M=8 | 3.78-4.70 x `top_k` | `MFERENCE_ROUTER_TRACE` + `scripts/router_window.py` |
+| expert union at M=8 | 3.78-4.70 x `top_k` | `TURBOSPARK_ROUTER_TRACE` + `scripts/router_window.py` |
 | `c(8)`, batched vs sequential per token | 0.44 (expert shape) to 0.79 | `gemv_bandwidth_bench.rs` |
-| share of compute that cannot amortize | 19% | `MFERENCE_DISPATCH_PROFILE=1` |
+| share of compute that cannot amortize | 19% | `TURBOSPARK_DISPATCH_PROFILE=1` |
 | accept length, n-gram drafter | 2.76 at block 8 | `accept_length_probe.rs` |
 | accept length, DFlash | 4.26 at block 8 (published) | arXiv 2602.06036, 2607.07409 |
 
@@ -1884,7 +1884,7 @@ drafter at block 2 measures 0.88x throughput and +17.4% J/token
 continuations and costs on ordinary prose.
 
 **Measured through the REAL generation loop, which is what a user runs**
-(`MFERENCE_SPEC_STATS=1`, 200 greedy tokens, ~22.1 tok/s non-speculative
+(`TURBOSPARK_SPEC_STATS=1`, 200 greedy tokens, ~22.1 tok/s non-speculative
 arm, same install). The probe above hand-rolls its own round; this is
 `run_raw_completion_speculative`:
 
@@ -1952,7 +1952,7 @@ Four results worth carrying, each detailed in `docs/POWER_BASELINE.md`:
 - **Nothing is spinning.** GPU power over a decode window swings from
   64 mW to 15,893 mW (standard deviation 21-39% of mean, on both power
   sources), which is the per-token phase structure rather than a
-  busy-wait. `MFERENCE_READ_QOS=utility` on the read pool measured as a
+  busy-wait. `TURBOSPARK_READ_QOS=utility` on the read pool measured as a
   NULL result on AC (+1.0% / +0.9% / -0.8% energy, sign flipping) and is
   NOT wired. The battery session read it as a clear loss; that reading was
   thermal drift.

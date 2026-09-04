@@ -1,5 +1,5 @@
 //! Env-gated FP16 overflow capture for the vision tower's residual stream
-//! (`MFERENCE_VISION_OVERFLOW=/path.json`, ROADMAP M-V9).
+//! (`TURBOSPARK_VISION_OVERFLOW=/path.json`, ROADMAP M-V9).
 //!
 //! `docs/VISION_PHASE0.md` item 3 measured the extreme page's peak
 //! activation at 13.8% of FP16's 65,504 ceiling (block 26, a 7.3x margin),
@@ -54,7 +54,7 @@ struct BlockPeak {
 }
 
 /// The env-gated capture. `from_env` returns `None` (and callers dispatch
-/// no readback at all) whenever `MFERENCE_VISION_OVERFLOW` is unset.
+/// no readback at all) whenever `TURBOSPARK_VISION_OVERFLOW` is unset.
 pub(crate) struct VisionOverflowCapture {
     path: std::path::PathBuf,
     image: usize,
@@ -62,9 +62,9 @@ pub(crate) struct VisionOverflowCapture {
 }
 
 impl VisionOverflowCapture {
-    /// `Some` only when `MFERENCE_VISION_OVERFLOW` names an output path.
+    /// `Some` only when `TURBOSPARK_VISION_OVERFLOW` names an output path.
     pub(crate) fn from_env() -> Option<Self> {
-        let path = std::env::var_os("MFERENCE_VISION_OVERFLOW")?;
+        let path = std::env::var_os("TURBOSPARK_VISION_OVERFLOW")?;
         Some(Self {
             path: path.into(),
             image: 0,

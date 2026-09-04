@@ -71,7 +71,7 @@ impl RealForwardRunner {
         self.vision.as_ref().map(|v| v.scratch_bytes(seq))
     }
 
-    /// Whether the vision tower opened under `MFERENCE_VISION_RESIDENCY=
+    /// Whether the vision tower opened under `TURBOSPARK_VISION_RESIDENCY=
     /// mapped`. `None` until the tower has been opened (lazy, on the first
     /// image); `Some(false)` is the ordinary pread streamer.
     ///
@@ -294,7 +294,7 @@ impl RealForwardRunner {
         phases
     }
 
-    /// Flips the shared-expert command buffer (`MFERENCE_SHARED_CB`) after
+    /// Flips the shared-expert command buffer (`TURBOSPARK_SHARED_CB`) after
     /// open, so a test can A/B both states in one process. Setting the
     /// environment variable instead would race the other test threads.
     /// Both states must produce identical output; that is the whole
@@ -305,14 +305,14 @@ impl RealForwardRunner {
     }
 
     /// Sibling of [`Self::set_shared_cb_overlap`] for
-    /// `MFERENCE_ROUTED_PIPELINE`.
+    /// `TURBOSPARK_ROUTED_PIPELINE`.
     #[doc(hidden)]
     pub fn set_routed_pipeline(&mut self, on: bool) {
         self.routed_pipeline = on;
     }
 
     /// Sibling of [`Self::set_shared_cb_overlap`] for
-    /// `MFERENCE_ROUTED_BATCH` (the chunked-prefill driver's batched
+    /// `TURBOSPARK_ROUTED_BATCH` (the chunked-prefill driver's batched
     /// routed half).
     #[doc(hidden)]
     pub fn set_routed_batch_prefill(&mut self, on: bool) {
@@ -320,7 +320,7 @@ impl RealForwardRunner {
     }
 
     /// Sibling of [`Self::set_shared_cb_overlap`] for
-    /// `MFERENCE_BATCHED_GEMV` (the chunked-prefill driver's batched
+    /// `TURBOSPARK_BATCHED_GEMV` (the chunked-prefill driver's batched
     /// resident GEMVs).
     #[doc(hidden)]
     pub fn set_batched_gemv_prefill(&mut self, on: bool) {

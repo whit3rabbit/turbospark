@@ -105,12 +105,13 @@ impl<'a> ChannelSplit<'a> {
     }
 }
 
-/// The Swift original's `MFERENCE_PHASES=1` breakdown: where the wall
-/// clock of a forward pass actually goes. Counters are cumulative over
+/// The forward-pass phase timing breakdown (`TURBOSPARK_PHASES=1`): where
+/// the wall clock of a forward pass actually goes. Counters are cumulative over
 /// every `produce` call the runner served, prefill included, so read this
 /// with a short prompt and a long generation if you want a decode number.
 pub(crate) fn print_phases(session: &Session) {
-    if std::env::var("MFERENCE_PHASES").as_deref() != Ok("1") {
+    let phases_enabled = std::env::var("TURBOSPARK_PHASES").as_deref() == Ok("1");
+    if !phases_enabled {
         return;
     }
     let p = session.runner.phase_counters();
@@ -189,7 +190,7 @@ pub(crate) fn print_phases(session: &Session) {
                 p.expert_io_bytes_physical as f64 / p.expert_io_bytes_requested as f64
             )
         } else {
-            "n/a (set MFERENCE_EXPERT_DISK_IO=1)".to_string()
+            "n/a (set TURBOSPARK_EXPERT_DISK_IO=1)".to_string()
         };
         eprintln!(
             "  expert bytes: requested {:.1} MiB/token, physical {}",
@@ -198,7 +199,7 @@ pub(crate) fn print_phases(session: &Session) {
         );
     }
     // One level below the buffer buckets above: which dispatch inside a
-    // buffer owns its time. Off unless MFERENCE_DISPATCH_PROFILE=1, which
+    // buffer owns its time. Off unless TURBOSPARK_DISPATCH_PROFILE=1, which
     // perturbs the run it measures -- read the module doc before quoting
     // a number from it.
     if let Some(report) = runtime::dispatch_profile_report(p.calls) {

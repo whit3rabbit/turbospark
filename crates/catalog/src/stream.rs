@@ -2,9 +2,9 @@ use std::path::Path;
 use std::sync::Arc;
 
 use model_io::{ArchConfig, ModelFamily};
-use repack::{ByteProgressCallback, Gemma4Shards, HttpRangeSource, RangeSource};
+use repack::{ByteProgressCallback, Gemma4Shards, HttpRangeSource, RangeSource, SafetensorsHeader};
 
-use crate::hf::Client;
+use crate::hf::{Client, RepoRef};
 use crate::install::InstallPlan;
 
 pub(crate) fn stream_gguf(
@@ -104,7 +104,7 @@ pub(crate) fn stream_mlx(
         quant.group_size
     ));
 
-    let sources: Vec<HttpRangeSource> = shard_names
+    let mut sources: Vec<HttpRangeSource> = shard_names
         .iter()
         .map(|name| {
             let url = plan.weights.file_url(name);
@@ -114,10 +114,36 @@ pub(crate) fn stream_mlx(
             }
         })
         .collect();
-    let headers = sources
+    let mut headers = sources
         .iter()
         .map(|s| repack::fetch_safetensors_header(s).map_err(|e| format!("shard header: {e}")))
         .collect::<Result<Vec<_>, _>>()?;
+
+    // A separate repository carrying a multi-token-prediction head this
+    // artifact's own conversion drops (`docs/MTP_SPECULATIVE.md` step 1).
+    // Its shard(s) join the same multi-shard registry the trunk uses, so the
+    // rest of the walk -- classification, quantization, the writer -- sees
+    // one merged tensor namespace and needs no changes.
+    if let Some(mtp) = &plan.mtp {
+        if headers
+            .iter()
+            .any(|h| h.tensors.keys().any(|k| k.starts_with(repack::MTP_PREFIX)))
+        {
+            return Err(format!(
+                "{}: the trunk already carries an MTP head; remove the catalog \
+                 row's mtp source",
+                plan.weights
+            ));
+        }
+        progress(&format!(
+            "fetching the multi-token-prediction head from {mtp}"
+        ));
+        for (header, source) in fetch_mtp_shards(mtp, client, byte_progress)? {
+            headers.push(header);
+            sources.push(source);
+        }
+    }
+
     let shards = Gemma4Shards::new(
         headers
             .iter()
@@ -159,6 +185,63 @@ pub(crate) fn stream_mlx(
         progress,
     );
     Ok(arch)
+}
+
+/// The multi-token-prediction head's shard(s), read from a repository
+/// SEPARATE from the trunk and filtered down to its `mtp.`-prefixed tensors
+/// alone.
+///
+/// The filter matters: `Qwen/Qwen3.8-27B`'s last shard also carries a bare
+/// BF16 `lm_head.weight` this port already has, quantized, under the trunk's
+/// own `language_model.lm_head.weight` name. Left in, `Gemma4Shards`' merged
+/// registry would offer it under a name `classify_for_family` does not
+/// recognize and the walk would refuse the whole install by name, most of an
+/// hour into the trunk's own stream.
+fn fetch_mtp_shards(
+    mtp: &RepoRef,
+    client: &Client,
+    byte_progress: Option<&ByteProgressCallback>,
+) -> Result<Vec<(SafetensorsHeader, HttpRangeSource)>, String> {
+    let index_url = mtp.file_url("model.safetensors.index.json");
+    let index_bytes = client
+        .get(&index_url)
+        .map_err(|e| format!("fetching {mtp}'s shard index: {e}"))?;
+    let index: serde_json::Value = serde_json::from_slice(&index_bytes)
+        .map_err(|e| format!("parsing {mtp}'s shard index: {e}"))?;
+    let map = index
+        .get("weight_map")
+        .and_then(|m| m.as_object())
+        .ok_or_else(|| format!("{mtp}'s shard index has no weight_map"))?;
+
+    let mut mtp_shard_names: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for (name, shard) in map {
+        if name.starts_with(repack::MTP_PREFIX) {
+            if let Some(shard) = shard.as_str() {
+                mtp_shard_names.insert(shard.to_string());
+            }
+        }
+    }
+    if mtp_shard_names.is_empty() {
+        return Err(format!(
+            "{mtp} declares no mtp.* tensor; the catalog row's mtp source is wrong"
+        ));
+    }
+
+    let mut out = Vec::with_capacity(mtp_shard_names.len());
+    for shard_name in mtp_shard_names {
+        let url = mtp.file_url(&shard_name);
+        let source = match byte_progress {
+            Some(cb) => HttpRangeSource::with_progress(url, Arc::clone(cb)),
+            None => HttpRangeSource::new(url),
+        };
+        let mut header = repack::fetch_safetensors_header(&source)
+            .map_err(|e| format!("{mtp}/{shard_name} header: {e}"))?;
+        header
+            .tensors
+            .retain(|name, _| name.starts_with(repack::MTP_PREFIX));
+        out.push((header, source));
+    }
+    Ok(out)
 }
 
 /// Shard filenames, from the index where there is one.

@@ -156,7 +156,7 @@ fn take_turn(
     // record diverges there and the turn re-prefills. Without this line a
     // reader cannot tell a working reuse from one that never fires -- the two
     // differ only in wall-clock, which thermal drift alone can cover
-    // (`MFERENCE_PREFIX_REUSE=quiet` silences it).
+    // (`TURBOSPARK_PREFIX_REUSE=quiet` silences it).
     // NOT committed to `history` yet. A render or generation failure here
     // must leave the history as it was: committing first strands the new user
     // message in it, so the natural retry sends two consecutive `user` turns,
@@ -168,7 +168,8 @@ fn take_turn(
     let max_new = clamp_max_new(session, request, prompt_ids.len())?;
     let (reply, result) =
         stream_turn(session, request, &prompt_ids, max_new).map_err(|e| format!("error: {e}"))?;
-    if !request.quiet && std::env::var("MFERENCE_PREFIX_REUSE").as_deref() != Ok("quiet") {
+    let prefix_reuse_quiet = std::env::var("TURBOSPARK_PREFIX_REUSE").as_deref() == Ok("quiet");
+    if !request.quiet && !prefix_reuse_quiet {
         eprintln!(
             "[prefix-reuse] {}/{} prompt tokens continued from the previous turn",
             result.reused_prefix_tokens,

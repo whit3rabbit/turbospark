@@ -1,5 +1,5 @@
 #![cfg(target_os = "macos")]
-//! `MFERENCE_DISPATCH_PROFILE=1`: per-dispatch GPU timing inside one
+//! `TURBOSPARK_DISPATCH_PROFILE=1`: per-dispatch GPU timing inside one
 //! command buffer.
 //!
 //! Two things have to hold, and the second is the one that could silently
@@ -7,7 +7,7 @@
 //! dispatch (this hardware samples counters only at encoder boundaries),
 //! so a chained pass whose second dispatch reads the first one's output
 //! must still produce identical results. The whole file is one test
-//! because `MFERENCE_DISPATCH_PROFILE` is read once into a `OnceLock`;
+//! because `TURBOSPARK_DISPATCH_PROFILE` is read once into a `OnceLock`;
 //! setting it per test would race inside a shared test binary.
 
 use half::f16;
@@ -60,7 +60,7 @@ fn profiles_each_dispatch_without_changing_results() {
     // profiling is enabled below) hard-panics on that rather than
     // returning an empty set -- a `thread caused non-unwinding panic.
     // aborting`, not a catchable `Result` or `panic!`, so this has to be
-    // checked BEFORE enabling `MFERENCE_DISPATCH_PROFILE` at all rather
+    // checked BEFORE enabling `TURBOSPARK_DISPATCH_PROFILE` at all rather
     // than caught after. `new()` alone never touches the counter API, so
     // creating a context to read the device name first is safe on every
     // device.
@@ -79,7 +79,7 @@ fn profiles_each_dispatch_without_changing_results() {
     // Set before anything touches the GPU: `enabled()` caches the env var
     // in a `OnceLock` on the first pipeline creation, so profiling cannot
     // be turned on mid-process.
-    std::env::set_var("MFERENCE_DISPATCH_PROFILE", "1");
+    std::env::set_var("TURBOSPARK_DISPATCH_PROFILE", "1");
     let mut context = MetalContext::new().expect("Metal device");
     let profiled = chained_pass(&mut context, "probe");
     let expected: Vec<f16> = (0..profiled.len())
@@ -114,5 +114,5 @@ fn profiles_each_dispatch_without_changing_results() {
         !report.contains("0.000 ms/token"),
         "expected non-zero per-dispatch times:\n{report}"
     );
-    std::env::remove_var("MFERENCE_DISPATCH_PROFILE");
+    std::env::remove_var("TURBOSPARK_DISPATCH_PROFILE");
 }

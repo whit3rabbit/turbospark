@@ -1,7 +1,7 @@
 #!/bin/bash
 # Bucket-level decode phase diff between this port and the Swift original.
 #
-# Both engines print a decode phase split under MFERENCE_PHASES=1, but they
+# Both engines print a decode phase split (TURBOSPARK_PHASES=1 for Rust, phase profiling for Swift), but they
 # do NOT divide by the same thing:
 #
 #   Swift  resets its counters at the prefill/decode boundary
@@ -30,7 +30,7 @@ SWIFT_CLI="${SWIFT_CLI:-../Mference/.build/release/MferenceCLI}"
 RUST_CLI="${RUST_CLI:-./target/release/turbospark-check}"
 PROMPT="${PROMPT:-/tmp/phase-prompt.json}"
 MAX_NEW="${MAX_NEW:-1024}"
-OUT="${OUT:-/tmp/mference-phasediff}"
+OUT="${OUT:-/tmp/turbospark-phasediff}"
 
 for path in "$SWIFT_CLI" "$RUST_CLI"; do
   [ -x "$path" ] || { echo "missing or not executable: $path" >&2; exit 2; }
@@ -50,7 +50,7 @@ mkdir -p "$OUT"
 } | tee "$OUT/system.txt"
 echo
 
-if pgrep -fl 'Mference(CLI|Server|Mac|DecodeService)|mference-(check|server|bench)|mlx' \
+if pgrep -fl 'Mference(CLI|Server|Mac|DecodeService)|turbospark-(check|server|bench)|mlx' \
      | grep -v phasediff.sh | grep -q .; then
   echo "another model process is running; results would be contaminated" >&2
   exit 2
@@ -61,13 +61,13 @@ run_arm() {
   local stem="$OUT/${engine}.${tag}"
   case "$engine" in
     swift)
-      MFERENCE_PHASES=1 "$SWIFT_CLI" --model "$MODEL" --messages-file "$PROMPT" \
+      TURBOSPARK_PHASES=1 "$SWIFT_CLI" --model "$MODEL" --messages-file "$PROMPT" \
         --max-new "$MAX_NEW" --max-context 4096 --expert-cache-slots "$SLOTS" \
         --temperature 0.2 --top-k 64 --top-p 0.95 --seed 20260721 \
         > "$stem.stdout" 2> "$stem.stderr"
       ;;
     rust)
-      MFERENCE_PHASES=1 "$RUST_CLI" --model "$MODEL" --messages-file "$PROMPT" \
+      TURBOSPARK_PHASES=1 "$RUST_CLI" --model "$MODEL" --messages-file "$PROMPT" \
         --max-new "$MAX_NEW" --max-context 4096 --expert-cache-slots "$SLOTS" \
         --temperature 0.2 --top-k 64 --top-p 0.95 --seed 20260721 \
         > "$stem.stdout" 2> "$stem.stderr"

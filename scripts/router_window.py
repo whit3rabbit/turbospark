@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Expert-union cost of a batched verify, from MFERENCE_ROUTER_TRACE captures.
+"""Expert-union cost of a batched verify, from TURBOSPARK_ROUTER_TRACE captures.
 
 Usage:
     router_window.py capture.json [skip] [M1,M2,...]
 
 `capture.json` is a run of turbospark-check under
-`MFERENCE_ROUTER_HIST=capture.json MFERENCE_ROUTER_TRACE=1`, which records
+`TURBOSPARK_ROUTER_HIST=capture.json TURBOSPARK_ROUTER_TRACE=1`, which records
 each layer's top-k expert ids in pass order. `skip` drops that many leading
 passes, which is how prefill is excluded: the trace covers every forward
 pass, prefill included, so pass the PROMPT TOKEN COUNT here (default 0).
@@ -54,7 +54,7 @@ def main():
     sizes = [int(s) for s in sys.argv[3].split(",")] if len(sys.argv) > 3 else [2, 4, 8, 16]
 
     if "trace" not in cap:
-        sys.exit("capture has no trace: re-run with MFERENCE_ROUTER_TRACE=1")
+        sys.exit("capture has no trace: re-run with TURBOSPARK_ROUTER_TRACE=1")
     top_k = cap["top_k"]
     moe = [row for row in cap["trace"] if row]
     if not moe:

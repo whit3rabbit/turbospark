@@ -29,7 +29,7 @@
 //!
 //! # The env var, and why every test here sets the same depth
 //!
-//! `MFERENCE_MTP_DRAFT` is read once at `open`, and integration tests in one
+//! `TURBOSPARK_MTP_DRAFT` is read once at `open`, and integration tests in one
 //! file share a process and its environment. So every test here asks for the
 //! same depth rather than toggling it, and the OFF path is covered by the
 //! open-time refusal below rather than by unsetting the var mid-run.
@@ -141,7 +141,7 @@ fn temp_dir(tag: &str) -> std::path::PathBuf {
 
 /// Kept as a no-op so the call sites still read as "this test wants drafts".
 ///
-/// The depth used to arrive through `MFERENCE_MTP_DRAFT` and now arrives as a
+/// The depth used to arrive through `TURBOSPARK_MTP_DRAFT` and now arrives as a
 /// PARAMETER (`open` below). The env var still works and still means what it
 /// did, but an UNSET one is now `Auto` rather than off, and `Auto` resolves to
 /// a depth smaller than these tests need -- so passing it explicitly is both
@@ -510,7 +510,7 @@ fn an_install_without_a_head_refuses_a_draft_depth() {
         "the refusal must name the missing tensor, got: {msg}"
     );
     assert!(
-        msg.contains("MFERENCE_MTP_DRAFT"),
+        msg.contains("TURBOSPARK_MTP_DRAFT"),
         "the refusal must name the knob that asked for it, got: {msg}"
     );
 }

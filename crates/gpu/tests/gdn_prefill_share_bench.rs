@@ -1,7 +1,7 @@
 //! What share of a `qwen3_5` prefill micro-batch does the gated-DeltaNet
 //! recurrence actually hold?
 //!
-//! **WHY THIS EXISTS RATHER THAN A PROFILER RUN.** `MFERENCE_DISPATCH_PROFILE=1`
+//! **WHY THIS EXISTS RATHER THAN A PROFILER RUN.** `TURBOSPARK_DISPATCH_PROFILE=1`
 //! is the only surface in this repo that attributes GPU time BY KERNEL NAME
 //! (`PhaseCounters` has no GDN bucket at all), and it "waits on every command
 //! buffer at commit" -- its own module doc -- which serializes exactly the

@@ -103,6 +103,26 @@ pub struct Source {
     pub file: Option<String>,
 }
 
+/// A separate repository supplying a multi-token-prediction head that
+/// [`Source`]'s own conversion drops (`docs/MTP_SPECULATIVE.md` step 1;
+/// `crates/repack/src/gemma4_checkpoint/mtp.rs`). The walk merges its
+/// shard(s) into the same multi-shard registry the trunk uses, so the result
+/// is one install with one resident index -- there is no second artifact and
+/// no manifest flag, the same way the trunk's own quantization is a property
+/// of the bytes rather than of a field.
+///
+/// `None` on every row whose conversion already carries a head, or whose
+/// checkpoint has never published one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MtpSource {
+    /// `owner/name` on Hugging Face. A DIFFERENT repository from
+    /// [`Source::repo`] by construction: [`Source::repo`]'s own conversion is
+    /// what dropped the head, so pointing this at it would find nothing.
+    pub repo: String,
+    /// A commit sha; see [`Source::revision`]'s note on floating pins.
+    pub revision: String,
+}
+
 /// Where the tokenizer sidecars live, and which ones exist there.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Sidecars {
@@ -207,6 +227,11 @@ pub struct CatalogEntry {
     pub measured: Vec<Measured>,
     #[serde(default)]
     pub notes: Option<String>,
+    /// A separate repository to pull this checkpoint's multi-token-prediction
+    /// head from, when `source`'s own conversion carries none. See
+    /// [`MtpSource`].
+    #[serde(default)]
+    pub mtp: Option<MtpSource>,
 }
 
 impl CatalogEntry {
@@ -286,6 +311,21 @@ impl CatalogEntry {
                 "{}: sidecars.files must include tokenizer.json",
                 self.alias
             ));
+        }
+        if let Some(mtp) = &self.mtp {
+            if mtp.repo.split('/').count() != 2 {
+                return Err(format!(
+                    "{}: mtp.repo {:?} is not owner/name",
+                    self.alias, mtp.repo
+                ));
+            }
+            if mtp.repo == self.source.repo {
+                return Err(format!(
+                    "{}: mtp.repo is the same repository as source.repo; a checkpoint \
+                     whose own conversion carries a head needs no separate mtp source",
+                    self.alias
+                ));
+            }
         }
         for m in &self.measured {
             m.validate(&self.alias)?;

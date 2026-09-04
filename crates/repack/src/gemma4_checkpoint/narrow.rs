@@ -1,6 +1,6 @@
 //! Unquantized BF16 narrowing and packed quantized resident tensor preparation.
 
-use super::config::{is_supported_affine_shape, Gemma4Error, Gemma4Quant};
+use super::config::{is_supported_affine_shape, Gemma4Error, Gemma4Quant, AFFINE_GROUP_SIZE};
 use super::shards::{le_u16, Gemma4Shards};
 use crate::resident_writer::{ResidentEntrySpec, ResidentTensorSpec, DTYPE_BF16, DTYPE_FP16};
 
@@ -61,10 +61,6 @@ pub fn narrow_raw_to_bf16(
     dtype: &str,
     bytes: Vec<u8>,
 ) -> Result<NarrowedRaw, Gemma4Error> {
-    let mismatch = |detail: String| Gemma4Error::ShapeMismatch {
-        tensor: tensor.to_string(),
-        detail,
-    };
     match dtype {
         "BF16" => Ok(NarrowedRaw {
             bytes,
@@ -72,21 +68,10 @@ pub fn narrow_raw_to_bf16(
             lossy: 0,
         }),
         "F16" | "F32" => {
-            let width = if dtype == "F16" { 2 } else { 4 };
-            if bytes.len() % width != 0 {
-                return Err(mismatch(format!(
-                    "{} bytes is not a whole number of {dtype} values",
-                    bytes.len()
-                )));
-            }
-            let mut out = Vec::with_capacity(bytes.len() / width * 2);
+            let values = decode_raw_to_f32(tensor, dtype, &bytes)?;
+            let mut out = Vec::with_capacity(values.len() * 2);
             let mut lossy = 0usize;
-            for chunk in bytes.chunks_exact(width) {
-                let value = if width == 2 {
-                    compute::f16_to_f32(u16::from_le_bytes([chunk[0], chunk[1]]))
-                } else {
-                    f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]])
-                };
+            for value in values {
                 let narrowed = compute::f32_to_bf16(value);
                 if compute::bf16_to_f32(narrowed) != value {
                     lossy += 1;
@@ -104,6 +89,99 @@ pub fn narrow_raw_to_bf16(
             dtype: other.to_string(),
         }),
     }
+}
+
+/// Decodes raw BF16/F16/F32 bytes into f32 values, in file order.
+///
+/// The shared parse step behind [`narrow_raw_to_bf16`]'s F16/F32 arm (which
+/// re-narrows the result back to BF16) and [`quantize_router_int8`] (which
+/// quantizes it to INT8-affine instead). Unlike `narrow_raw_to_bf16`, this
+/// also decodes a `BF16` source rather than passing it through: the router
+/// quantizer needs f32 regardless of the source width.
+fn decode_raw_to_f32(tensor: &str, dtype: &str, bytes: &[u8]) -> Result<Vec<f32>, Gemma4Error> {
+    let width = match dtype {
+        "BF16" | "F16" => 2,
+        "F32" => 4,
+        other => {
+            return Err(Gemma4Error::UnsupportedDtype {
+                tensor: tensor.to_string(),
+                dtype: other.to_string(),
+            })
+        }
+    };
+    if bytes.len() % width != 0 {
+        return Err(Gemma4Error::ShapeMismatch {
+            tensor: tensor.to_string(),
+            detail: format!(
+                "{} bytes is not a whole number of {dtype} values",
+                bytes.len()
+            ),
+        });
+    }
+    Ok(bytes
+        .chunks_exact(width)
+        .map(|chunk| match dtype {
+            "BF16" => compute::bf16_to_f32(u16::from_le_bytes([chunk[0], chunk[1]])),
+            "F16" => compute::f16_to_f32(u16::from_le_bytes([chunk[0], chunk[1]])),
+            _ => f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]),
+        })
+        .collect())
+}
+
+/// Force-quantizes `qwen4_exp`'s MoE router to INT8-affine at repack time,
+/// for a checkpoint that ships it raw rather than pre-packed as `U32` --
+/// mirroring the GGUF walk's `transcode_f32` router target
+/// (`gguf_checkpoint/transcode.rs`, `crates/repack` CLAUDE.md Gotcha 6). The
+/// runtime's router GEMV (`gpu::encode_router_gemv_gemma4`) is INT8-affine by
+/// construction with no BF16 sibling, and every other MoE family's router
+/// already reaches it this way (via `pass_through_packed`, because their
+/// upstream conversion pre-packs it); this is the one safetensors checkpoint
+/// here whose upstream conversion left the router unpacked.
+pub fn quantize_router_int8(
+    shards: &Gemma4Shards<'_>,
+    name: &str,
+    dtype: &str,
+) -> Result<ResidentEntrySpec, Gemma4Error> {
+    let w = shards.info(name)?;
+    if w.shape.len() != 2 {
+        return Err(Gemma4Error::ShapeMismatch {
+            tensor: name.to_string(),
+            detail: format!("expected rank-2 router weight, got {:?}", w.shape),
+        });
+    }
+    let rows = w.shape[0] as usize;
+    let cols = w.shape[1] as usize;
+    let group = AFFINE_GROUP_SIZE as usize;
+    if cols % group != 0 {
+        return Err(Gemma4Error::ShapeMismatch {
+            tensor: name.to_string(),
+            detail: format!("row length {cols} is not a multiple of the {group}-element group"),
+        });
+    }
+    let values = decode_raw_to_f32(name, dtype, &shards.read(name)?)?;
+    if values.len() != rows * cols {
+        return Err(Gemma4Error::ShapeMismatch {
+            tensor: name.to_string(),
+            detail: format!("{} values do not fill {rows}x{cols}", values.len()),
+        });
+    }
+    let mut packed = Vec::with_capacity(rows * cols);
+    let mut scales = Vec::with_capacity(rows * cols / group);
+    let mut biases = Vec::with_capacity(rows * cols / group);
+    for r in 0..rows {
+        let row = compute::quantize_int8_affine(&values[r * cols..(r + 1) * cols]);
+        packed.extend_from_slice(&row.packed);
+        scales.extend_from_slice(&row.scales);
+        biases.extend_from_slice(&row.biases);
+    }
+    Ok(ResidentEntrySpec::Int8(ResidentTensorSpec {
+        name: name.to_string(),
+        packed,
+        scales,
+        biases,
+        rows: rows as u32,
+        cols: cols as u32,
+    }))
 }
 
 /// One unquantized tensor converted to FP16, for the vision tower alone

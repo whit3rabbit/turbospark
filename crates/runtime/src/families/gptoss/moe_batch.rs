@@ -89,8 +89,8 @@ impl RealForwardRunner {
         // `set_routed_batch_prefill` can flip this seam after open.
         if self.mapped.buffers.get(layer).is_some_and(Option::is_some) {
             return Err(RealForwardError::Unsupported(format!(
-                "batched routed prefill (MFERENCE_ROUTED_BATCH) and mapped expert \
-                 residency (MFERENCE_EXPERT_RESIDENCY=mapped) cannot be combined: this \
+                "batched routed prefill (TURBOSPARK_ROUTED_BATCH) and mapped expert \
+                 residency (TURBOSPARK_EXPERT_RESIDENCY=mapped) cannot be combined: this \
                  pair binds one buffer per CACHE SLOT and mapped residency has no slot \
                  cache (layer {layer}). Pick one"
             )));

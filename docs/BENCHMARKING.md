@@ -417,14 +417,14 @@ Carried over from the Swift protocol, worth repeating:
   hard here.
 
   Since 2026-08-29 this is measurable rather than inferred. Add
-  `MFERENCE_EXPERT_DISK_IO=1` to a `MFERENCE_PHASES=1` run and the
+  `TURBOSPARK_EXPERT_DISK_IO=1` to a `TURBOSPARK_PHASES=1` run and the
   `expert bytes` row reports requested MiB/token, physical MiB/token and
   their ratio; near-zero physical is the warm regime and anything
   approaching the requested figure is the disk-bound one. It costs a syscall
   pair per read batch, so it is off by default and does not belong in a run
   being quoted for tok/s.
 
-  `MFERENCE_EXPERT_NOCACHE=1` establishes the disk-bound arm deliberately,
+  `TURBOSPARK_EXPERT_NOCACHE=1` establishes the disk-bound arm deliberately,
   in the shape of `scripts/power.sh COOLING=max`. Two caveats that make it a
   SEPARATE published row rather than a replacement: it is an operating point
   no user occupies, and `F_NOCACHE` prevents retention without evicting, so

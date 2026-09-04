@@ -43,12 +43,12 @@ pub(crate) struct MtpState {
     /// the only tensor in the model whose input is `2 * hidden` wide, so
     /// nothing else can be read through this buffer by accident.
     pub(crate) concat: gpu::MetalBuffer,
-    /// How many tokens a round proposes, from `MFERENCE_MTP_DRAFT`.
+    /// How many tokens a round proposes, from `TURBOSPARK_MTP_DRAFT`.
     pub(crate) depth: usize,
     /// The M-row buffers the batched verify pass runs on (step 4).
     ///
     /// It lives HERE rather than beside `DecodeScratch` for the same reason
-    /// the rest of this state does: `MFERENCE_MTP_DRAFT` unset must allocate
+    /// the rest of this state does: `TURBOSPARK_MTP_DRAFT` unset must allocate
     /// nothing at all, which is what lets `qwen38_memory_oracle`'s frozen row
     /// keep describing the pre-MTP engine. Sized for `depth + 1` rows,
     /// because a round verifies the confirmed token plus `depth` proposals.
@@ -91,7 +91,7 @@ impl MtpState {
                     // Still an ERROR under an explicit request, and only under
                     // one: the caller named something this install cannot do.
                     return Err(RealForwardError::Unsupported(format!(
-                        "MFERENCE_MTP_DRAFT={depth} asks for speculative drafting, but this \
+                        "TURBOSPARK_MTP_DRAFT={depth} asks for speculative drafting, but this \
                          install carries no multi-token-prediction head ({FC} is not in the \
                          resident index). The mlx-community conversion drops `mtp.*`; stream an \
                          install that adds the official checkpoint's last shard (docs/MTP.md)."
@@ -270,12 +270,12 @@ impl MtpState {
     }
 }
 
-/// Reads `MFERENCE_MTP_DUMP`: a directory to write one draft step's
+/// Reads `TURBOSPARK_MTP_DUMP`: a directory to write one draft step's
 /// surviving intermediates into, for `scripts/mtp_bisect.py`. Off by
 /// default, and it OVERWRITES on every step, so a caller that wants a
 /// specific position takes exactly one step with it set.
 pub(crate) fn dump_dir() -> Option<std::path::PathBuf> {
-    std::env::var_os("MFERENCE_MTP_DUMP").map(std::path::PathBuf::from)
+    std::env::var_os("TURBOSPARK_MTP_DUMP").map(std::path::PathBuf::from)
 }
 
 /// What a caller asked for, which is NOT the same question as whether the
@@ -301,9 +301,10 @@ impl MtpDraftPolicy {
     /// (`docs/MTP.md`), and a caller wanting more asks for it explicitly.
     pub const AUTO_DEPTH: usize = 2;
 
-    /// Reads `MFERENCE_MTP_DRAFT`.
+    /// Reads `TURBOSPARK_MTP_DRAFT`.
     pub fn from_env() -> Self {
-        Self::from_env_value(std::env::var("MFERENCE_MTP_DRAFT").ok().as_deref())
+        let val = std::env::var("TURBOSPARK_MTP_DRAFT").ok();
+        Self::from_env_value(val.as_deref())
     }
 
     /// The mapping [`Self::from_env`] applies, as a pure function of the

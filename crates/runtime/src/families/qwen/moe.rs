@@ -49,7 +49,7 @@ pub(crate) fn encode_qwen_layer_moe(
     // MAPPED RESIDENCY SKIPS BOTH THE PLAN AND THE `pread`, exactly as
     // `families/gemma4/moe.rs` does: every expert is already addressable in
     // its layer's mapping, so there is no cache to consult and nothing to
-    // copy. Counted as requests that all hit, so `MFERENCE_PHASES`'s hit
+    // copy. Counted as requests that all hit, so `TURBOSPARK_PHASES`'s hit
     // rate stays comparable across residency modes rather than reading
     // undefined for a run with zero requests.
     let mapped_active = mapped.buffers.get(layer).is_some_and(Option::is_some);

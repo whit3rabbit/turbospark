@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use model_io::ArchConfig;
+use model_io::{ArchConfig, ModelFamily};
 
 use super::classify::{classify_for_family, lm_order_key, Gemma4Bucket, NGRAM_CONTAINER};
 use super::config::{Gemma4Error, Gemma4Quant};
@@ -72,7 +72,7 @@ pub fn orchestrate_gemma4_checkpoint_sharded(
     quant: &Gemma4Quant,
 ) -> Result<Gemma4RepackOutput, Gemma4Error> {
     let plan = classify_all(shards, arch)?;
-    let mut resident = read_resident_entries(shards, &plan.resident_bases, quant)?;
+    let mut resident = read_resident_entries(shards, &plan.resident_bases, quant, arch.family)?;
     // The head is APPENDED, after `lm_head` and after the trunk's own
     // ordering has been settled. Absent from the checkpoint means absent from
     // the install, with no flag and no manifest field to disagree with the
@@ -316,6 +316,7 @@ pub fn read_resident_entries(
     shards: &Gemma4Shards<'_>,
     resident_bases: &[&str],
     quant: &Gemma4Quant,
+    family: ModelFamily,
 ) -> Result<ResidentRead, Gemma4Error> {
     let mut entries = Vec::with_capacity(resident_bases.len());
     let mut lossy_narrowing = Vec::new();
@@ -323,6 +324,14 @@ pub fn read_resident_entries(
         let t = shards.info(name)?;
         if t.dtype == "U32" && name.ends_with(".weight") {
             entries.push(super::narrow::pass_through_packed(shards, name, quant)?);
+        } else if family == ModelFamily::Qwen4Exp && name.ends_with(".mlp.gate.weight") {
+            // The real checkpoint ships this family's router raw (not
+            // U32-prepacked, unlike every other safetensors MoE family this
+            // walk has seen), so it is force-quantized here to match the
+            // INT8-affine layout `crates/runtime`'s router GEMV requires --
+            // mirroring the GGUF walk's `transcode_f32` router target
+            // (`crates/repack` CLAUDE.md Gotcha 6).
+            entries.push(super::narrow::quantize_router_int8(shards, name, &t.dtype)?);
         } else {
             // NARROWED, not tagged. The deleted `raw_dtype_tag` recorded F16
             // or F32 and nothing downstream reads either tag: every consumer

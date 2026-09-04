@@ -1,14 +1,14 @@
-//! Env-gated router-selection histogram (`MFERENCE_ROUTER_HIST=/path.json`).
+//! Env-gated router-selection histogram (`TURBOSPARK_ROUTER_HIST=/path.json`).
 //!
 //! Counts, per layer, how often each expert appears in the router's top-k
 //! across every forward pass (prefill and decode alike, matching the
-//! `MFERENCE_PHASES` divisor convention), and writes one JSON file when the
+//! `TURBOSPARK_PHASES` divisor convention), and writes one JSON file when the
 //! runner drops. Diagnostic only, never on by default: it exists to answer
 //! whether routing is domain-concentrated enough for a pruned or pre-warmed
 //! expert set to be worth building. Per-layer counts must sum to
 //! `top_k * moe_forward_passes`, which is the sanity check on any capture.
 //!
-//! `MFERENCE_ROUTER_TRACE=1` additionally records the top-k ids IN PASS
+//! `TURBOSPARK_ROUTER_TRACE=1` additionally records the top-k ids IN PASS
 //! ORDER, which the counts throw away. That ordering is what ROADMAP's
 //! speculative-decoding question needs: a batched verify of M consecutive
 //! tokens must read the UNION of their routes, so the expert-byte cost of a
@@ -24,7 +24,7 @@ pub(crate) struct RouterHistogram {
     counts: Vec<Vec<u64>>,
     /// `trace[layer]` is the flat concatenation of that layer's top-k ids,
     /// one group of `top_k` per forward pass, in pass order. `Some` only
-    /// under `MFERENCE_ROUTER_TRACE`.
+    /// under `TURBOSPARK_ROUTER_TRACE`.
     ///
     /// ponytail: unbounded, ~1.3 KB per pass at Qwen's 40 layers x top-8,
     /// so a 4,000-pass session costs ~5 MB. Cap it if a capture ever runs
@@ -33,7 +33,7 @@ pub(crate) struct RouterHistogram {
     /// `pred[layer]` is the ONE-LAYER-AHEAD prediction of that layer's
     /// top-k: what layer `layer`'s own router says when it is run early, on
     /// the previous layer's post-attention residual instead of its own
-    /// input. `Some` only under `MFERENCE_PILOT_PROBE`.
+    /// input. `Some` only under `TURBOSPARK_PILOT_PROBE`.
     ///
     /// Aligned with `trace` by construction: layer L records a prediction
     /// FOR L+1 during pass p, and layer L+1 records its actual selection
@@ -41,7 +41,7 @@ pub(crate) struct RouterHistogram {
     /// `trace[L+1]` describe the same forward pass. Row 0 stays empty (no
     /// layer precedes it), which the analysis skips rather than misreads.
     pred: Option<Vec<Vec<u32>>>,
-    /// `MFERENCE_PILOT_PROBE=self`: aim the probe at the layer it is already
+    /// `TURBOSPARK_PILOT_PROBE=self`: aim the probe at the layer it is already
     /// running in, instead of one ahead.
     ///
     /// The prediction then reproduces the production router exactly, so
@@ -58,15 +58,16 @@ pub(crate) struct RouterHistogram {
 }
 
 impl RouterHistogram {
-    /// `Some` only when `MFERENCE_ROUTER_HIST` names an output path and the
+    /// `Some` only when `TURBOSPARK_ROUTER_HIST` names an output path and the
     /// install actually routes (dense installs have nothing to count).
     pub(crate) fn from_env(num_layers: usize, num_experts: usize) -> Option<Self> {
-        let path = std::env::var_os("MFERENCE_ROUTER_HIST")?;
+        let path = std::env::var_os("TURBOSPARK_ROUTER_HIST")?;
         if num_experts == 0 {
             return None;
         }
-        let trace = std::env::var_os("MFERENCE_ROUTER_TRACE").map(|_| vec![Vec::new(); num_layers]);
-        let probe = std::env::var_os("MFERENCE_PILOT_PROBE");
+        let trace =
+            std::env::var_os("TURBOSPARK_ROUTER_TRACE").map(|_| vec![Vec::new(); num_layers]);
+        let probe = std::env::var_os("TURBOSPARK_PILOT_PROBE");
         let pilot_self_test = probe.as_deref().is_some_and(|v| v == "self");
         let pred = probe.map(|_| vec![Vec::new(); num_layers]);
         Some(Self {

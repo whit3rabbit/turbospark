@@ -515,7 +515,7 @@ pub struct ServerEvents {
     pub dropped: u64,
 }
 
-/// What `ts_session_phases_json` returns: `MFERENCE_PHASES=1`'s breakdown.
+/// What `ts_session_phases_json` returns: `TURBOSPARK_PHASES=1`'s breakdown.
 ///
 /// **Cumulative over every forward pass the runner has served, PREFILL
 /// INCLUDED**, so a per-token number here is an average over the session's

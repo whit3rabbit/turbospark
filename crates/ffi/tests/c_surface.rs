@@ -1122,7 +1122,7 @@ fn generation_with_custom_stop_tokens() {
 /// than the path is what proves the check runs where that comment says.
 #[test]
 fn an_out_of_set_expert_cache_slot_count_is_refused_before_the_model_is_read() {
-    for bad in ["4", "64", "128", "0", "7"] {
+    for bad in ["4", "60", "200", "0", "7"] {
         let model = CString::new("/nonexistent/model.gturbo").unwrap();
         let options = CString::new(format!("{{\"expertCacheSlots\":{bad}}}")).unwrap();
         let mut session: *mut Session = ptr::null_mut();
@@ -1140,7 +1140,7 @@ fn an_out_of_set_expert_cache_slot_count_is_refused_before_the_model_is_read() {
     // And the legal set still gets past the option check -- otherwise the
     // guard above would pass by refusing everything, which is the shape of a
     // gate that cannot fail.
-    for good in ["8", "16", "24", "32"] {
+    for good in ["8", "16", "24", "32", "48", "64", "96", "128"] {
         let model = CString::new("/nonexistent/model.gturbo").unwrap();
         let options = CString::new(format!("{{\"expertCacheSlots\":{good}}}")).unwrap();
         let mut session: *mut Session = ptr::null_mut();

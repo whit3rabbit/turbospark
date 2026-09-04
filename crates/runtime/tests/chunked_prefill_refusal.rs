@@ -6,7 +6,7 @@
 //! `muse_glimmer` and `gpt-oss` were widened one by one. `--prefill-chunk`'s
 //! own default routing falls back to sequential silently
 //! (`supports_chunked_prefill`), but `prefill_chunk` itself, reached
-//! directly or via `MFERENCE_PREFILL_CHUNK`, must still name the flow it
+//! directly or via `TURBOSPARK_PREFILL_CHUNK`, must still name the flow it
 //! does not serve (`crates/runtime/CLAUDE.md` Gotcha 14 / 7's A/B-seam
 //! contract).
 

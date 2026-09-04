@@ -107,7 +107,7 @@ pub(crate) fn encode_qwen_layer_moe_batched(
     if mapped.buffers.get(layer).is_some_and(Option::is_some) {
         return Err(RealForwardError::Unsupported(format!(
             "the batched verify pass and mapped expert residency \
-             (MFERENCE_EXPERT_RESIDENCY=mapped) cannot be combined: this pass binds one \
+             (TURBOSPARK_EXPERT_RESIDENCY=mapped) cannot be combined: this pass binds one \
              buffer per CACHE SLOT and mapped residency has no slot cache (layer {layer}). \
              Pick one"
         )));

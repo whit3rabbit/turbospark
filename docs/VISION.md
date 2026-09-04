@@ -579,7 +579,7 @@ paragraph of this section before assuming it has reached `main`.
   transcription request at greedy/T=0, so a content check has to anchor
   on what it reliably reaches rather than on what it was asked to finish.
 - **FP16 overflow capture.** `crates/runtime/src/vision/overflow.rs`
-  (new), `MFERENCE_VISION_OVERFLOW=/path.json`-gated on the
+  (new), `TURBOSPARK_VISION_OVERFLOW=/path.json`-gated on the
   `resid_capture.rs` / `ffn_hist.rs` pattern: zero cost and zero readback
   when unset (confirmed by the synthetic suite's frozen-digest test
   staying byte-identical), reads back `scratch.x` after every block,

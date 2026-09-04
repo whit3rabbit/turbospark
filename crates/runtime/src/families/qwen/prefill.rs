@@ -14,7 +14,7 @@
 //! (`produce.rs`) does, once per token, inside one command buffer per
 //! micro-batch instead of one per token. **No new kernel, no new buffer.**
 //!
-//! **`MFERENCE_BATCHED_GEMV` IS THE SECOND ARM, AND IT IS THAT FILE'S
+//! **`TURBOSPARK_BATCHED_GEMV` IS THE SECOND ARM, AND IT IS THAT FILE'S
 //! MACHINERY REUSED RATHER THAN A SECOND COPY OF IT** (step 6, wired
 //! 2026-08-29). `batched_layers.rs`'s three encoders already take the
 //! parameters this driver has, already read and write `scratch.x` at the
@@ -127,16 +127,14 @@ impl RealForwardRunner {
         if self.real_mtp.is_some() || self.real_dflash.is_some() {
             return Err(RealForwardError::Unsupported(
                 "the qwen chunked prefill driver does not encode the drafter's aux capture; \
-                 open without MFERENCE_MTP_DRAFT / MFERENCE_DFLASH_DRAFT to use it, or prefill \
+                 open without TURBOSPARK_MTP_DRAFT / TURBOSPARK_DFLASH_DRAFT to use it, or prefill \
                  sequentially"
                     .to_string(),
             ));
         }
         if self.batched_gemv_prefill {
-            // INT4-AFFINE ONLY, and refused UP FRONT rather than at the first
-            // dispatch. `encode_gemm_any` is the per-tensor backstop and
-            // refuses by name on its own, but it would do so mid-encode, so a
-            // caller who set the seam on the 1-bit or 2-bit checkpoint of
+            // Refused by name rather than looped when INT4-affine weights are
+            // absent, so an install with INT8 weights on the dense HALF of
             // THIS SAME ARCHITECTURE (which have no batched kernel at all)
             // learns it before any KV row is written. One probe cannot see a
             // mixed-width install; that is what the backstop is for.
@@ -144,7 +142,7 @@ impl RealForwardRunner {
             let dtype = crate::real_forward_utils::entry(&self.index, &probe)?.dtype;
             if dtype != 4 {
                 return Err(RealForwardError::Unsupported(format!(
-                    "MFERENCE_BATCHED_GEMV needs INT4-affine (dtype 4) weights and {probe} is \
+                    "TURBOSPARK_BATCHED_GEMV needs INT4-affine (dtype 4) weights and {probe} is \
                      dtype {dtype}: the M-row GEMM has no kernel at this width, and looping the \
                      per-token GEMVs anyway would measure the unbatched engine under the \
                      batched arm's label"
@@ -250,7 +248,7 @@ impl RealForwardRunner {
                 let capacity = self.kv.capacity(layer);
                 if start_position % capacity + m > capacity {
                     return Err(RealForwardError::Unsupported(format!(
-                        "MFERENCE_BATCHED_GEMV: a micro-batch of {m} rows at position \
+                        "TURBOSPARK_BATCHED_GEMV: a micro-batch of {m} rows at position \
                          {start_position} wraps layer {layer}'s KV capacity {capacity}; the \
                          batched projection writes M adjacent slots and cannot straddle the \
                          boundary"

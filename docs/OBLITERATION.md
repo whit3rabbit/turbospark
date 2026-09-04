@@ -1219,7 +1219,7 @@ the same day once the install was re-streamed.
 
 No foreign vector exists for this checkpoint (it is a niche MLX finetune), so
 the direction is self-extracted: 4 matched ocean/mountain prompt pairs (the
-page's own established corpus shape), captured via `MFERENCE_RESID_CAPTURE`
+page's own established corpus shape), captured via `TURBOSPARK_RESID_CAPTURE`
 on this install and reduced with `scripts/extract_direction.py`'s
 diff-of-means. Every capture is finite with no zero layer, per-layer norms
 rising 89 to 600 through the 52 layers -- the same sanity shape every other
@@ -1364,7 +1364,7 @@ week.
 No foreign vector exists for this checkpoint either, so the direction is
 self-extracted: 4 matched ocean/mountain prompt pairs (the same corpus
 shape used for `qwen38-27b` and `museGlimmer`), captured via
-`MFERENCE_RESID_CAPTURE` on this install and reduced with
+`TURBOSPARK_RESID_CAPTURE` on this install and reduced with
 `scripts/extract_direction.py`'s diff-of-means. Every capture is finite
 with no zero layer, per-layer norms rising steeply through the 24 layers
 (171 at layer 0 to a peak of 24,100 mid-stack, easing to 20,459 at the
@@ -1680,7 +1680,7 @@ ordinary question for this family.
   being "batched", and they are not the same code: one is speculative
   VERIFY's M-row forward on the qwen flow, the other is Gemma's OWN
   micro-batched prefill driver, unrelated to speculation. Its per-token
-  routed loop and its batched-routed tail (`MFERENCE_ROUTED_BATCH`) are two
+  routed loop and its batched-routed tail (`TURBOSPARK_ROUTED_BATCH`) are two
   further call sites beyond Gemma's sequential decode, both proven to steer
   the RIGHT token's row rather than always row 0 by mutation-checked
   byte-identity against a steered sequential run
@@ -1765,7 +1765,7 @@ Ranked by value per cost.
 ```sh
 # 1. Capture, one run per prompt. `--max-new 1` is enough; the hook keys on
 #    the prefill/decode transition, so a larger budget captures the same row.
-MFERENCE_RESID_CAPTURE=/tmp/steer/pos/p1.json \
+TURBOSPARK_RESID_CAPTURE=/tmp/steer/pos/p1.json \
   ./target/release/turbospark-check --model ~/models/qwen38-27b.gturbo \
   --messages-file /tmp/prompt.json --max-new 1 --temperature 0.0001 --top-k 1
 ```
@@ -1915,7 +1915,7 @@ TURBOSPARK_STEERING_BANDS=all,1:25,8:23 \
 # it rather than only applied. Writes a 32 x 4096 snapshot at the last prompt
 # token; per-layer norms should rise through the stack (0.19 to 30.47 here)
 # and a file of zeros means the family is not really feeding it.
-MFERENCE_RESID_CAPTURE=/tmp/steer-llama/cap.json \
+TURBOSPARK_RESID_CAPTURE=/tmp/steer-llama/cap.json \
   ./target/release/turbospark-check --model mistral7b \
   --messages-file /tmp/p.json --max-new 1 --temperature 0.0001 --top-k 1
 ```
@@ -1933,20 +1933,20 @@ property read off a real generation.
 
 ```sh
 # 128 experts, INT4 shared MLP, so both the per-token routed loop and
-# MFERENCE_ROUTED_BATCH's batched-routed tail are reachable on this install.
+# TURBOSPARK_ROUTED_BATCH's batched-routed tail are reachable on this install.
 ./target/release/turbospark-check --model gemma4 \
   --messages-file /tmp/p.json --max-new 200 --seed 1 --temperature 0.0001 --top-k 1 \
   --steering /tmp/steer/d.gguf --steering-mode ablate --steering-scale 1.0
 
 # The same prompt through the batched-routed prefill seam, which only a
 # multi-token prompt (not a one-token capture probe) reaches:
-MFERENCE_PREFILL_CHUNK=128 MFERENCE_ROUTED_BATCH=1 \
+TURBOSPARK_PREFILL_CHUNK=128 TURBOSPARK_ROUTED_BATCH=1 \
   ./target/release/turbospark-check --model gemma4 \
   --messages-file /tmp/p.json --max-new 200 --seed 1 --temperature 0.0001 --top-k 1 \
   --steering /tmp/steer/d.gguf --steering-mode ablate --steering-scale 1.0
 
 # Both must produce IDENTICAL output to each other and to the sequential
-# per-token routed path (MFERENCE_ROUTED_BATCH unset) at the same alpha --
+# per-token routed path (TURBOSPARK_ROUTED_BATCH unset) at the same alpha --
 # grouping tokens into a command buffer, batched or not, must not change
 # which model answered.
 ```

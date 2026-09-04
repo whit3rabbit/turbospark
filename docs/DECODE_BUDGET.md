@@ -14,7 +14,7 @@ the lever.
 
 `--expert-cache-slots` is the one knob that moves the expert `pread` without
 touching anything else, which makes it the instrument rather than the
-subject. `gpu busy` is `cb1 + routed + final` from `MFERENCE_PHASES=1`'s
+subject. `gpu busy` is `cb1 + routed + final` from `TURBOSPARK_PHASES=1`'s
 `GPUStartTime`/`GPUEndTime` attribution; `+shared` adds the shared-expert
 command buffer at 1.73 ms/token.
 
@@ -39,7 +39,7 @@ smaller bind and marginally lower GPU busy that a higher hit rate also
 buys). **So the exposed `pread` sits on the critical path essentially
 whole.** Every millisecond taken out of it is a millisecond off the token.
 The shared-expert command buffer already covers ~1.73 ms/token of it by
-design (`MFERENCE_SHARED_CB`); the remainder is not covered by anything.
+design (`TURBOSPARK_SHARED_CB`); the remainder is not covered by anything.
 
 **3. The command-buffer scheduling gap is ~1.1 ms/token, not ~5.** At 32
 slots the `gpu wait (layer cb1)` bucket reads 11.74 ms/token while the three
@@ -103,7 +103,7 @@ is `routed cb retire`, and it reads **0.26 and 0.28 ms/token** over two
 runs at 32 slots (1.4% and 1.3% of the token), against 0.23 in the
 2026-08-06 prefill attribution. Layer N-1's routed work has essentially
 completed by the time cb1's wait returns, which is what
-`MFERENCE_ROUTED_PIPELINE` already claims and this confirms. The ceiling is
+`TURBOSPARK_ROUTED_PIPELINE` already claims and this confirms. The ceiling is
 1.4% and the achievable part is less.
 
 Worth recording alongside it, because it bounds any future attempt: the
@@ -202,7 +202,7 @@ thrashes on a too-small machine is unmeasurable from this 36 GB one.)
 
 The shared-expert buffer's 1.73 ms/token is the one number here NOT read
 off an unprofiled run: it is dropped unwaited by design, so only
-`MFERENCE_DISPATCH_PROFILE=1` resolves it, and that mode inflates (it read
+`TURBOSPARK_DISPATCH_PROFILE=1` resolves it, and that mode inflates (it read
 1.990, deflated here by the 5.916/5.14 ratio its own `cb1` shows against
 the unprofiled `cb1`). **The conclusion is insensitive to that
 correction**: taking 1.990 verbatim makes the scheduling gap 0.83 ms/token
@@ -212,7 +212,7 @@ Every number is this machine's. The ratios transfer; the absolutes do not
 (CLAUDE.local.md's standing rule). Reproduce with:
 
 ```sh
-MFERENCE_PHASES=1 ./target/release/turbospark-check --model ~/models/gemma4.gturbo \
+TURBOSPARK_PHASES=1 ./target/release/turbospark-check --model ~/models/gemma4.gturbo \
   --messages-file /tmp/phase.json --max-new 600 --seed 1 \
   --temperature 0.0001 --top-k 1 --expert-cache-slots 32
 ```

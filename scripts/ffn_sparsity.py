@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Activation-sparsity analysis for MFERENCE_FFN_HIST captures.
+"""Activation-sparsity analysis for TURBOSPARK_FFN_HIST captures.
 
 Usage:
     ffn_sparsity.py capture1.json[,capture2.json,...]

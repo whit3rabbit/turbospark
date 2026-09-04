@@ -158,7 +158,7 @@ fn the_chunk_boundary_does_not_move_the_logits() {
     }
 }
 
-/// `MFERENCE_BATCHED_GEMV` is WIRED on this family since 2026-08-29, so what
+/// `TURBOSPARK_BATCHED_GEMV` is WIRED on this family since 2026-08-29, so what
 /// stays refused is the WIDTH rather than the family: `encode_gemm_any` has
 /// an INT4-affine kernel and nothing else, and the 1-bit and 2-bit
 /// checkpoints of this same architecture reach no M-row GEMM at all.
@@ -178,7 +178,7 @@ fn the_batched_gemv_seam_is_refused_at_a_width_with_no_kernel() {
         .expect_err("the batched resident-GEMV seam must be refused at a width with no kernel");
     let text = err.to_string();
     assert!(
-        text.contains("MFERENCE_BATCHED_GEMV"),
+        text.contains("TURBOSPARK_BATCHED_GEMV"),
         "the refusal must name the seam the caller set; got {text}"
     );
     assert!(

@@ -398,7 +398,7 @@ live network).
 
   **An earlier session (2026-08-05) wired this, measured "no change", and
   reverted it.** That conclusion was wrong, and the reason is worth
-  keeping: `MFERENCE_PHASES=1` divides every counter by ALL forward
+  keeping: `TURBOSPARK_PHASES=1` divides every counter by ALL forward
   passes, prefill included. Its "~2300 context" row was a 2252-token
   prompt with `--max-new 150`, so 96% of the divisor was prefill calls
   running at short context, which flattened exactly the signal the A/B
@@ -516,7 +516,7 @@ live network).
   16-kernel chunk pipeline; this port's step 1 batches COMMAND BUFFERS
   only (`prefill_chunk_real_gemma4`: one attention+router command buffer
   per layer per micro-batch of up to 16 tokens, routed half per token,
-  measured 1.22x, env seam `MFERENCE_PREFILL_CHUNK`), and steps 2-3 add
+  measured 1.22x, env seam `TURBOSPARK_PREFILL_CHUNK`), and steps 2-3 add
   the port-local batched routed pair: `moe.metal` + `moe_prefill_batch.metal`'s
   `moe_prefill_phase1_routes_int4` (route-list iteration, Swift's
   `DSV4PrefillRoute` idea) and `moe_prefill_phase2_fused_int4` (the decode
@@ -529,7 +529,7 @@ live network).
   sub-batch commits its own command buffer — a later sub-batch's `pread`
   evicts slots an earlier one's dispatches still name, and host-side
   `pread`s are not ordered by the queue. Reachable via
-  `MFERENCE_ROUTED_BATCH=1` (unset keeps step 1's per-token routed half);
+  `TURBOSPARK_ROUTED_BATCH=1` (unset keeps step 1's per-token routed half);
   INT4-affine blobs only, GGUF layouts refused by name. The
   `prefill_scratch.rs` buffers above remain undispatched by all of this —
   the batched half added its own M-row scratch to `RealGemmaState`
@@ -582,7 +582,7 @@ live network).
   That is up from 20.0-23.1 measured on the same install hours earlier,
   and the difference is entirely `selection`'s full `rank_indices` sort
   over V=248320 (AGENTS.md Gotcha 23). The tell was arithmetic:
-  `MFERENCE_PHASES=1` accounted for only ~29 ms of a ~45 ms token. After
+  `TURBOSPARK_PHASES=1` accounted for only ~29 ms of a ~45 ms token. After
   the fix the same report accounts for 23.7 ms of a 23.3 ms token, i.e.
   all of it. Buckets, warm, 32 slots, before and after:
 
@@ -652,15 +652,15 @@ live network).
   buffer of ones built once at open. Same kernel, same semantics, no
   Qwen-specific router kernel.
 - **The Qwen path has NEITHER of the two command-buffer overlap seams the
-  Gemma path carries.** `MFERENCE_SHARED_CB` and
-  `MFERENCE_ROUTED_PIPELINE` are throughput-only (the latter measured at
+  Gemma path carries.** `TURBOSPARK_SHARED_CB` and
+  `TURBOSPARK_ROUTED_PIPELINE` are throughput-only (the latter measured at
   ~+2.5% on Gemma), and each one is a correctness-sensitive reordering
   that needs its own identical-output A/B to land. A third,
-  `MFERENCE_HIT_CB`, was removed on 2026-08-08: its reordering was not
+  the hit-CB seam, was removed on 2026-08-08: its reordering was not
   output-neutral after all, which is AGENTS.md Gotcha 27. The Qwen flow is the plain shape: one
   command buffer per layer up to the router, host readback plus expert
   `pread`, one buffer for the MoE tail. `PhaseCounters` still fills in, so
-  `MFERENCE_PHASES=1` works; `pipeline_wait_nanos` stays zero by
+  `TURBOSPARK_PHASES=1` works; `pipeline_wait_nanos` stays zero by
   construction.
 - **GDN chunked prefill is parity-tested but unwired.** `gdn.metal`'s
   `gdn_conv_mix_prefill`, `gdn_conv_tail_update`, and
@@ -756,8 +756,8 @@ live network).
     only `dense_x`, so it is committed on its own, queued behind the
     router's buffer, before the host waits — commit order on one queue
     is execution order, so it runs on the GPU through the router
-    readback and the blocking `pread`. `MFERENCE_SHARED_CB=0` disables
-    it (the A/B seam Swift keeps as `MFERENCE_ROUTER_EVENT=0`; same
+    readback and the blocking `pread`. `TURBOSPARK_SHARED_CB=0` disables
+    it (the upstream A/B seam; same
     kernels, same order, identical output). Measured on the real 26B
     checkpoint (M4 Max, 32 slots, 5 interleaved pairs, overlap winning
     every pair): +4.0% decode throughput, 33.4 -> 34.8 tok/s. A separate
@@ -796,7 +796,7 @@ live network).
     previous layer's routed work in either codebase (the pread needs the
     router output, which needs the attention that reads the routed tail's
     residual), so the win is the host encode window, not the I/O.
-    `MFERENCE_ROUTED_PIPELINE=0` is the A/B seam. Measured on the real 26B
+    `TURBOSPARK_ROUTED_PIPELINE=0` is the A/B seam. Measured on the real 26B
     checkpoint (M4 Max, 32 slots, 5 interleaved pairs, pipeline winning
     every pair): +0.63 tok/s mean (+2.5%), GPU wait 17.20 -> 16.07
     ms/token against 0.24 ms/token of retire cost, generated text
@@ -808,7 +808,7 @@ live network).
     Jaccard 0.039 with 7% copied-prediction hits, rejected before
     implementation; the previous-token predictor can never issue a read
     because per-layer private caches keep last token's experts resident;
-    `MFERENCE_SPEC_PREFETCH=prefetch` measured as a no-op; RDADVISE "no
+    speculative prefetch measured as a no-op; RDADVISE "no
     stable production policy", off by default -- see upstream's
     `docs/experiments/summaries/03-expert-cache-prediction-and-layout.md`
     and `04-rdadvise.md` at
@@ -830,7 +830,7 @@ live network).
     disk-bound instead of a page-cache memcpy. Method, the full sweep, and the
     off-by-one that nearly published it as a false negative:
     `docs/EXPERT_ROUTING.md`. The probe stays wired
-    (`MFERENCE_PILOT_PROBE=1`, and `=self` to validate the instrument).
+    (`TURBOSPARK_PILOT_PROBE=1`, and `=self` to validate the instrument).
     The OFFLINE sibling of that idea, a domain-restricted expert set
     (profile which experts a coding corpus routes to, then prune or
     pre-warm that set), was measured to its own dead end on 2026-08-08:
@@ -840,7 +840,7 @@ live network).
     the pruned install and the pinned warm set lose to the LFU cache.
     Method, numbers and the standing decision: `docs/EXPERT_ROUTING.md`
     (ROADMAP dead end 11). The instrument stays wired as a diagnostic
-    (`MFERENCE_ROUTER_HIST` on `RealForwardRunner`, analyzed by
+    (`TURBOSPARK_ROUTER_HIST` on `RealForwardRunner`, analyzed by
     `scripts/router_hist.py`).
 
     What IS possible, and landed on 2026-08-06, is making the exposed
@@ -860,7 +860,7 @@ live network).
     and +6.5% decode (paired deltas +1.52/+2.55/+1.21 tok/s). Output
     stays md5-identical: the same bytes arrive, by a different route.
 
-    `MFERENCE_PHASES=1` prints where the time goes and is what that
+    `TURBOSPARK_PHASES=1` prints where the time goes and is what that
     should be judged against. A representative post-pipeline split
     (~200-token context, 32 slots, 83.9% hit rate, ~26 tok/s): GPU wait
     ~59%, expert `pread` ~33% (still largely exposed), CPU dispatch
@@ -1668,7 +1668,7 @@ live network).
 
 `docs/MTP_SPECULATIVE.md` steps 1-3 are done. A `qwen3_5` install can carry
 the checkpoint's own multi-token-prediction head, `mtp_draft_step` runs it
-behind `MFERENCE_MTP_DRAFT`, and the measured accept length clears break-even
+behind `TURBOSPARK_MTP_DRAFT`, and the measured accept length clears break-even
 at every block below 15: **1.66x at block 2, 1.47x at block 4, 1.17x at block
 8**. Lossless against a non-speculative reference stream on every block.
 

@@ -139,7 +139,7 @@ only one of them is centered.
 
 ## How this port wires it
 
-`crates/runtime/src/families/qwen/mtp.rs`, behind `MFERENCE_MTP_DRAFT=<depth>`.
+`crates/runtime/src/families/qwen/mtp.rs`, behind `TURBOSPARK_MTP_DRAFT=<depth>`.
 Unset, the flow allocates nothing and encodes nothing.
 
 **Its KV is its own one-layer cache**, built from a cloned `ArchConfig` at
@@ -345,7 +345,7 @@ TURBOSPARK_MTP_INSTALL_DIR=~/models/qwen38-27b-mtp.gturbo \
   cargo test -p turbospark-bench --test mtp_head_probe --release -- --ignored --nocapture
 
 hf download mlx-community/Qwen3.8-27B-MTP-4bit --local-dir ~/models/qwen38-mtp-ref
-MFERENCE_MTP_DUMP=/tmp/mtp-dump TURBOSPARK_MTP_INSTALL_DIR=~/models/qwen38-27b-mtp.gturbo \
+TURBOSPARK_MTP_DUMP=/tmp/mtp-dump TURBOSPARK_MTP_INSTALL_DIR=~/models/qwen38-27b-mtp.gturbo \
   cargo test -p turbospark-bench --test mtp_head_probe --release -- --ignored --nocapture dumps_one_draft
 uv run --python 3.12 --with numpy scripts/mtp_bisect.py /tmp/mtp-dump ~/models/qwen38-mtp-ref
 ```

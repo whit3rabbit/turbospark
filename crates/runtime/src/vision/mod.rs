@@ -67,7 +67,7 @@ use weights::{BlockRoles, VisionResident};
 pub const VISION_SLOTS: usize = 2;
 
 /// Reads the tower's OWN residency seam, deliberately never
-/// `MFERENCE_EXPERT_RESIDENCY` (the routed-expert one). Reusing that variable
+/// `TURBOSPARK_EXPERT_RESIDENCY` (the routed-expert one). Reusing that variable
 /// would move the tower silently for anyone A/Bing routed residency, which is
 /// exactly the silent-ignore failure `real_forward_init::mapped_residency_
 /// refusal`'s own doc comment exists to prevent for the routed case.
@@ -76,7 +76,7 @@ pub const VISION_SLOTS: usize = 2;
 /// is family-agnostic (any install with `arch.vision.is_active()` runs the
 /// same code), so the only gate is whether the tower opens at all.
 fn vision_mapped_residency_requested() -> bool {
-    std::env::var("MFERENCE_VISION_RESIDENCY")
+    std::env::var("TURBOSPARK_VISION_RESIDENCY")
         .map(|v| v.eq_ignore_ascii_case("mapped"))
         .unwrap_or(false)
 }
@@ -135,7 +135,7 @@ pub struct VisionTower {
     streamer: Option<streaming::PreadExpertStreamer>,
     /// Zero-copy `MTLBuffer` over the WHOLE tower's mapped region (all
     /// `depth` blocks concatenated), `Some` only under
-    /// `MFERENCE_VISION_RESIDENCY=mapped`. Declared BEFORE `mapped_layer` for
+    /// `TURBOSPARK_VISION_RESIDENCY=mapped`. Declared BEFORE `mapped_layer` for
     /// the same reason `slot_buffers` precedes `streamer`: the buffer aliases
     /// the mapping with no deallocator, so the mapping must outlive it and
     /// Rust drops fields in declaration order.
@@ -160,7 +160,7 @@ pub struct VisionTower {
     /// compared the formula against itself would assert nothing, and the
     /// formula is what a caller sizing a page budget would use.
     pub(crate) last_scratch_bytes: u64,
-    /// `Some` only when `MFERENCE_VISION_OVERFLOW` named an output path at
+    /// `Some` only when `TURBOSPARK_VISION_OVERFLOW` named an output path at
     /// open. `None` means every call site below dispatches no readback at
     /// all, which is what keeps the ordinary path byte-identical to the
     /// engine that shipped before this existed (`overflow.rs`'s module
@@ -316,7 +316,7 @@ impl VisionTower {
         })
     }
 
-    /// Whether this tower opened under `MFERENCE_VISION_RESIDENCY=mapped`.
+    /// Whether this tower opened under `TURBOSPARK_VISION_RESIDENCY=mapped`.
     ///
     /// Test-only proof of engagement: a byte-identity check between the two
     /// arms cannot on its own distinguish "the mapped arm ran and produced

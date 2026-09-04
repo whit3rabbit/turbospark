@@ -21,7 +21,7 @@ pub(crate) struct RealGemmaState {
     /// them; that readback is what the chunk driver exists to amortize.
     pub(crate) router_logits_f32: gpu::MetalBuffer,
     /// Destination for the one-layer-ahead router probe
-    /// (`MFERENCE_PILOT_PROBE`): layer L+1's router run early, on layer L's
+    /// (`TURBOSPARK_PILOT_PROBE`): layer L+1's router run early, on layer L's
     /// post-attention residual. Allocated unconditionally (one token of
     /// f32s) but only ever WRITTEN when the probe is on, so the default
     /// decode path dispatches exactly the kernels it always did.
@@ -102,7 +102,7 @@ pub(crate) struct BatchedPrefillScratch {
     /// per cache slot, bound once per layer).
     pub(crate) wide_blobs: gpu::RoutedBlobsWideBuffer,
     /// The M-row siblings of the `DecodeScratch` buffers the batched
-    /// RESIDENT GEMVs write (`MFERENCE_BATCHED_GEMV`). They live here
+    /// RESIDENT GEMVs write (`TURBOSPARK_BATCHED_GEMV`). They live here
     /// rather than in a second lazily-allocated struct because the two
     /// seams share one allocation point and neither is reachable outside
     /// the chunk driver.

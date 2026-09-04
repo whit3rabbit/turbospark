@@ -26,7 +26,7 @@
 //! on full layers and the attention output gate all need no new logic here:
 //! they are already correct per-token in `attn.rs`/`mlp.rs`/`mod.rs`, and
 //! attention stays per-token and unbatched in this driver
-//! (`MFERENCE_BATCHED_GEMV` is REFUSED by name, never silently ignored), so
+//! (`TURBOSPARK_BATCHED_GEMV` is REFUSED by name, never silently ignored), so
 //! the sliding-window ring is addressed by `position` exactly as the
 //! sequential decode path already does it.
 
@@ -65,7 +65,7 @@ impl RealForwardRunner {
         // the batched arm's label (crate Gotcha 22's rule).
         if self.batched_gemv_prefill {
             return Err(RealForwardError::Unsupported(
-                "MFERENCE_BATCHED_GEMV is not wired for this family: the M-row \
+                "TURBOSPARK_BATCHED_GEMV is not wired for this family: the M-row \
                  resident GEMM exists in the gemma4 chunked driver alone \
                  (INT4-affine), and this driver keeps every resident GEMV per \
                  token"

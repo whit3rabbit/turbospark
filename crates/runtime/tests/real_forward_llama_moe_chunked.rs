@@ -201,7 +201,7 @@ fn decoding_continues_correctly_after_a_chunked_prefill() {
     }
 }
 
-/// `MFERENCE_ROUTED_BATCH` must be REFUSED BY NAME on this family, never
+/// `TURBOSPARK_ROUTED_BATCH` must be REFUSED BY NAME on this family, never
 /// ignored. The batched routed pair exists for INT4-affine and MXFP4 blobs;
 /// this family's are GGUF K-quants and step 5's Q4_K/Q6_K arm was scoped by
 /// measurement and deliberately not built (`docs/BATCHED_PREFILL.md`).
@@ -225,12 +225,12 @@ fn the_batched_routed_seam_is_refused_by_name_on_this_family() {
         .expect_err("the batched routed seam must be refused on this family");
     let text = err.to_string();
     assert!(
-        text.contains("MFERENCE_ROUTED_BATCH"),
+        text.contains("TURBOSPARK_ROUTED_BATCH"),
         "the refusal must name the seam the caller set; got {text}"
     );
 }
 
-/// The resident-GEMV seam (`MFERENCE_BATCHED_GEMV`) must be refused by name
+/// The resident-GEMV seam (`TURBOSPARK_BATCHED_GEMV`) must be refused by name
 /// too, and unlike the routed seam above it is meaningful on EVERY chunked
 /// driver: this family has resident GEMVs whatever its routed layout, and
 /// the M-row GEMM is wired in Gemma 4's driver alone.
@@ -245,7 +245,7 @@ fn the_batched_gemv_seam_is_refused_by_name_on_this_family() {
         .expect_err("the batched resident-GEMV seam must be refused on this family");
     let text = err.to_string();
     assert!(
-        text.contains("MFERENCE_BATCHED_GEMV"),
+        text.contains("TURBOSPARK_BATCHED_GEMV"),
         "the refusal must name the seam the caller set; got {text}"
     );
 }

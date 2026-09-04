@@ -1,5 +1,5 @@
 #![cfg(target_os = "macos")]
-//! Mapped expert residency (`MFERENCE_EXPERT_RESIDENCY=mapped`,
+//! Mapped expert residency (`TURBOSPARK_EXPERT_RESIDENCY=mapped`,
 //! `docs/EXPERT_RESIDENCY.md`) on the `gptoss` flow, through the real `open`
 //! path.
 //!
@@ -50,7 +50,7 @@ fn mapped_residency_opens_on_gptoss_and_then_refuses_the_batched_routed_pair_by_
     let vocab = arch.vocab_size as usize;
 
     // Set BEFORE the open, because the mode is resolved there.
-    std::env::set_var("MFERENCE_EXPERT_RESIDENCY", "mapped");
+    std::env::set_var("TURBOSPARK_EXPERT_RESIDENCY", "mapped");
 
     let mut runner = RealForwardRunner::open_with_options(&dir, arch, 4096, 16)
         .expect("a gpt-oss install opens under mapped expert residency");
@@ -84,11 +84,11 @@ fn mapped_residency_opens_on_gptoss_and_then_refuses_the_batched_routed_pair_by_
         .expect_err("the batched routed pair must be refused under mapped residency");
     let text = err.to_string();
     assert!(
-        text.contains("MFERENCE_ROUTED_BATCH"),
+        text.contains("TURBOSPARK_ROUTED_BATCH"),
         "the refusal must name the batched seam; got {text}"
     );
     assert!(
-        text.contains("MFERENCE_EXPERT_RESIDENCY"),
+        text.contains("TURBOSPARK_EXPERT_RESIDENCY"),
         "the refusal must name the residency seam; got {text}"
     );
 
@@ -108,6 +108,6 @@ fn mapped_residency_opens_on_gptoss_and_then_refuses_the_batched_routed_pair_by_
         "a non-finite logit came out of the mapped path on the chunked-prefill driver"
     );
 
-    std::env::remove_var("MFERENCE_EXPERT_RESIDENCY");
+    std::env::remove_var("TURBOSPARK_EXPERT_RESIDENCY");
     let _ = std::fs::remove_dir_all(&dir);
 }

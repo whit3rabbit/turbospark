@@ -334,15 +334,56 @@ fn attention_layer_tensors(p: &str, seed: u64) -> Vec<Tensor> {
     ts
 }
 
-fn moe_tensors(p: &str, seed: u64, overrides: &mut HashMap<String, u32>) -> Vec<Tensor> {
+/// A raw (unquantized) BF16 router matrix, matching what the real
+/// `qwen4_exp` checkpoint ships instead of the pre-packed INT8 [`int8_triple`]
+/// produces. Router-shaped only: `int8_triple`'s `.weight`/`.scales`/`.biases`
+/// triple is what `pass_through_packed` reads, and a raw tensor has no
+/// companions to build.
+fn bf16_matrix(name: &str, rows: usize, cols: usize, seed: u64) -> Tensor {
+    let mut bits = Vec::with_capacity(rows * cols);
+    for r in 0..rows {
+        let row = deterministic_row(seed.wrapping_add(r as u64 * 97 + 1), cols);
+        bits.extend(row.iter().map(|&v| compute::f32_to_bf16(v)));
+    }
+    Tensor {
+        name: name.to_string(),
+        dtype: "BF16",
+        shape: vec![rows as u64, cols as u64],
+        bytes: u16_le(&bits),
+    }
+}
+
+/// `router_raw` ships the router as [`bf16_matrix`] instead of pre-packed
+/// [`int8_triple`], matching the real REAP-288 checkpoint
+/// (`crates/repack/CLAUDE.md` Gotcha 6's router-transcode pattern applied on
+/// the safetensors side, `orchestrate.rs`'s `quantize_router_int8`) rather
+/// than every OTHER safetensors MoE checkpoint this walk has seen, which
+/// ships it already `U32`-packed. No `bits_overrides` entry is inserted for
+/// it either, matching the real checkpoint's `config.json`, which declares
+/// none.
+fn moe_tensors(
+    p: &str,
+    seed: u64,
+    overrides: &mut HashMap<String, u32>,
+    router_raw: bool,
+) -> Vec<Tensor> {
     let mut ts = Vec::new();
-    ts.extend(int8_triple(
-        &format!("{p}.mlp.gate.weight"),
-        NUM_EXPERTS,
-        HIDDEN,
-        seed + 50,
-    ));
-    overrides.insert(format!("{p}.mlp.gate"), 8);
+    if router_raw {
+        ts.push(bf16_matrix(
+            &format!("{p}.mlp.gate.weight"),
+            NUM_EXPERTS,
+            HIDDEN,
+            seed + 50,
+        ));
+    } else {
+        ts.extend(int8_triple(
+            &format!("{p}.mlp.gate.weight"),
+            NUM_EXPERTS,
+            HIDDEN,
+            seed + 50,
+        ));
+        overrides.insert(format!("{p}.mlp.gate"), 8);
+    }
     ts.extend(int8_triple(
         &format!("{p}.mlp.shared_expert_gate.weight"),
         1,
@@ -534,7 +575,7 @@ fn ple_layer_tensors(p: &str, vocab_size: i64) -> Vec<Tensor> {
     ts
 }
 
-fn build_tensors(vocab_size: i64) -> (Vec<Tensor>, HashMap<String, u32>) {
+fn build_tensors(vocab_size: i64, router_raw: bool) -> (Vec<Tensor>, HashMap<String, u32>) {
     let vocab = vocab_size as usize;
     let mut overrides = HashMap::new();
     let mut ts = Vec::new();
@@ -568,7 +609,7 @@ fn build_tensors(vocab_size: i64) -> (Vec<Tensor>, HashMap<String, u32>) {
         } else {
             ts.extend(gdn_layer_tensors(&p, seed));
         }
-        ts.extend(moe_tensors(&p, seed, &mut overrides));
+        ts.extend(moe_tensors(&p, seed, &mut overrides, router_raw));
         if l == PLE_LAYER {
             ts.extend(ple_layer_tensors(&p, vocab_size));
         }
@@ -584,8 +625,33 @@ pub fn build_synthetic_qwen4_exp_decode_install(
     vocab_size: i64,
     model_id: &str,
 ) -> Result<ArchConfig, Box<dyn std::error::Error>> {
+    build_synthetic_qwen4_exp_decode_install_inner(dir, vocab_size, model_id, false)
+}
+
+/// [`build_synthetic_qwen4_exp_decode_install`], with the router shipped raw
+/// (unquantized BF16) rather than pre-packed INT8, matching the real
+/// REAP-288 checkpoint that exposed the router dtype bug
+/// (`crates/runtime/src/families/qwen4/moe.rs`'s dtype-5 refusal). This is
+/// the fixture that actually exercises `orchestrate.rs`'s
+/// `quantize_router_int8`: the default fixture above ships the router
+/// already `U32`-packed and takes the pre-existing `pass_through_packed`
+/// branch, so it would pass identically whether or not that fix exists.
+pub fn build_synthetic_qwen4_exp_decode_install_raw_router(
+    dir: &std::path::Path,
+    vocab_size: i64,
+    model_id: &str,
+) -> Result<ArchConfig, Box<dyn std::error::Error>> {
+    build_synthetic_qwen4_exp_decode_install_inner(dir, vocab_size, model_id, true)
+}
+
+fn build_synthetic_qwen4_exp_decode_install_inner(
+    dir: &std::path::Path,
+    vocab_size: i64,
+    model_id: &str,
+    router_raw: bool,
+) -> Result<ArchConfig, Box<dyn std::error::Error>> {
     let arch = tiny_qwen4_exp_decode_arch(vocab_size);
-    let (ts, bits_overrides) = build_tensors(vocab_size);
+    let (ts, bits_overrides) = build_tensors(vocab_size, router_raw);
     let blob = assemble_safetensors(&ts);
     let source = MemoryRangeSource::new(&blob);
     let header = parse_header(&blob, crate::safetensors_header::DEFAULT_MAX_HEADER_BYTES)?;

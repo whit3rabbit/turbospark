@@ -29,7 +29,7 @@ LABEL=ac MODEL=~/models/gemma4.gturbo CASES=short-explanation \
 ```
 
 `ARMS` is the comparison axis (`QOS` is its former name and still works).
-It takes `default`/`utility`, which set `MFERENCE_READ_QOS`, or
+It takes `default`/`utility`, which set `TURBOSPARK_READ_QOS`, or
 `performance`/`balanced`/`efficiency`, which pass `--power-profile` to the
 bench (ROADMAP Phase P2). The two kinds cannot be mixed in one run: the
 arm name is a single column of `rows.tsv` and a single grouping key in the
@@ -718,7 +718,7 @@ across three pairs, a 71% spread.
 ## Read-pool QoS: measured, and not wired
 
 Rust std threads carry no QoS class at all, while Swift's I/O pool runs at
-`.utility` on E-cores. `MFERENCE_READ_QOS=utility`
+`.utility` on E-cores. `TURBOSPARK_READ_QOS=utility`
 (`crates/streaming/src/read_pool.rs`) puts the 8 `read_pool` workers on
 `QOS_CLASS_UTILITY`. It is off by default.
 

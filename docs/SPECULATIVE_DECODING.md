@@ -110,9 +110,9 @@ All are `#[ignore]`d and need a real install; commands are in AGENTS.md.
 
 | surface | answers |
 | --- | --- |
-| `MFERENCE_ROUTER_TRACE=1` + `scripts/router_window.py` | `union(M)` |
+| `TURBOSPARK_ROUTER_TRACE=1` + `scripts/router_window.py` | `union(M)` |
 | `crates/gpu/tests/gemv_bandwidth_bench.rs` | bandwidth headroom, then `c(M)` |
-| `MFERENCE_DISPATCH_PROFILE=1` | the compute shares |
+| `TURBOSPARK_DISPATCH_PROFILE=1` | the compute shares |
 | `crates/bench/tests/accept_length_probe.rs` | accept length, and losslessness |
 | `crates/bench/tests/rollback_probe.rs` | that a rejected block can be undone exactly |
 
@@ -120,7 +120,7 @@ All are `#[ignore]`d and need a real install; commands are in AGENTS.md.
 
 ### Expert union: not the problem it looked like
 
-`MFERENCE_ROUTER_HIST` counts per-layer expert selections but discards
+`TURBOSPARK_ROUTER_HIST` counts per-layer expert selections but discards
 which pass each came from, and a batched verify reads the union over a
 WINDOW of passes, so the trace mode adds the top-k ids in pass order.
 Two prompts per family, ~300 generated tokens, prefill excluded.
@@ -197,7 +197,7 @@ activation tile, and threadgroup memory's barriers cost more than they save.
 
 ### The compute split, and the floor it sets
 
-`MFERENCE_DISPATCH_PROFILE=1` on the real Qwen install, 810 dispatches per
+`TURBOSPARK_DISPATCH_PROFILE=1` on the real Qwen install, 810 dispatches per
 token. Absolute times are inflated by the profiling mode; only shares
 transfer.
 

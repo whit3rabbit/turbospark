@@ -25,7 +25,7 @@ LABEL=battery OUT=/tmp/power-gemma MODEL=~/models/gemma4.gturbo scripts/power.sh
 # Same harness driving an interleaved A/B. Arms alternate WITHIN each
 # pair, not as two consecutive batches, because consecutive batches carry
 # thermal drift. `ARMS` names the axis and understands THREE kinds of
-# token: `default`/`utility` set MFERENCE_READ_QOS (Phase P1, measured and
+# token: `default`/`utility` set TURBOSPARK_READ_QOS (Phase P1, measured and
 # rejected -- it loses on both joules and tok/s, kept as a documented dead
 # end), `performance`/`balanced`/`efficiency` pass --power-profile
 # (Phase P2), and a BARE NUMBER passes --max-tokens-per-sec. The QoS axis

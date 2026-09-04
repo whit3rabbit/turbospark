@@ -12,7 +12,7 @@ use crate::dispatch_profile::PassProfile;
 /// [`PassEncoder::commit`]).
 pub struct PassEncoder {
     command_buffer: metal::CommandBuffer,
-    /// Rebound per dispatch under `MFERENCE_DISPATCH_PROFILE=1` (this
+    /// Rebound per dispatch under `TURBOSPARK_DISPATCH_PROFILE=1` (this
     /// device can only sample counters at encoder boundaries), hence the
     /// cell; exactly one encoder for the whole pass otherwise.
     encoder: RefCell<metal::ComputeCommandEncoder>,

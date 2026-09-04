@@ -31,7 +31,7 @@ use tokenizer::{Message, Role};
 use turbospark_bench::real_model::open_model_runner_speculative;
 
 /// Draft depth this file asks for. Named here rather than set through
-/// `MFERENCE_MTP_DRAFT` because the policy is now a PARAMETER: an unset
+/// `TURBOSPARK_MTP_DRAFT` because the policy is now a PARAMETER: an unset
 /// env var means `Auto`, which resolves to a depth too small for the
 /// blocks below and would fail deep in the verify rather than at open.
 const MTP_DEPTH: usize = 4;
@@ -440,7 +440,7 @@ fn the_installed_heads_bytes_are_its_own() {
     println!("\n  15 head tensors, all distinct, none zero, none copied from trunk layer {full}");
 }
 
-/// Takes ONE draft step at position 0 and lets `MFERENCE_MTP_DUMP` capture it.
+/// Takes ONE draft step at position 0 and lets `TURBOSPARK_MTP_DUMP` capture it.
 ///
 /// Position 0 against an empty head cache is deliberate and is what makes the
 /// dump comparable offline: attention over a single key is a softmax over one
@@ -451,8 +451,8 @@ fn the_installed_heads_bytes_are_its_own() {
 #[test]
 #[ignore = "needs a real MTP install via TURBOSPARK_MTP_INSTALL_DIR"]
 fn dumps_one_draft_step_for_the_bisect() {
-    let Some(dir) = std::env::var_os("MFERENCE_MTP_DUMP") else {
-        println!("\nMFERENCE_MTP_DUMP unset; nothing to capture. See scripts/mtp_bisect.py\n");
+    let Some(dir) = std::env::var_os("TURBOSPARK_MTP_DUMP") else {
+        println!("\nTURBOSPARK_MTP_DUMP unset; nothing to capture. See scripts/mtp_bisect.py\n");
         return;
     };
     let install = std::path::PathBuf::from(

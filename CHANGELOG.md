@@ -83,7 +83,7 @@ when this file gets updated relative to the version bump and the tag.
   Both prefill loops consult it. Off unless a caller opts in per session
   (`RealForwardRunner::set_prefix_reuse`); `turbospark-check --chat` was the
   first caller and reports `[prefix-reuse] N/M` per turn on stderr (silenced
-  by `--quiet` or `MFERENCE_PREFIX_REUSE=quiet`). `crates/ffi`'s `open()` now
+  by `--quiet` or `TURBOSPARK_PREFIX_REUSE=quiet`). `crates/ffi`'s `open()` now
   opts in unconditionally too, since a `swift/TurboSparkApp` session is
   multi-turn by construction, and `turbospark-server` gained a real
   `--prefix-reuse on|off` flag (default on) paired with a swap-based
@@ -94,8 +94,8 @@ when this file gets updated relative to the version bump and the tag.
   0.153s on a transcript-shaped prompt, with the generated tokens identical
   to the re-prefilled reference. `RawDecodeResult` gains
   `reused_prefix_tokens`.
-- `MFERENCE_PILOT_PROBE`: diagnostic that records a one-layer-ahead router
-  prediction beside the actual expert selection in an `MFERENCE_ROUTER_HIST`
+- `TURBOSPARK_PILOT_PROBE`: diagnostic that records a one-layer-ahead router
+  prediction beside the actual expert selection in an `TURBOSPARK_ROUTER_HIST`
   capture (Gemma 4 only), analysed by `scripts/pilot_ceiling.py`. Used to
   measure router-lookahead expert prefetch to a negative result, recorded in
   `docs/EXPERT_ROUTING.md`; `=self` validates the instrument itself.
@@ -131,7 +131,7 @@ when this file gets updated relative to the version bump and the tag.
   speculative verify (`produce_batched`), and Gemma 4 chunked prefill
   (`x_off`). `DeepSeek-V4-Flash` stays refused at open by name -- its
   compressed-attention kernels are unported, so there is no decode flow at
-  all to hook. Includes activation capture (`MFERENCE_RESID_CAPTURE`) and
+  all to hook. Includes activation capture (`TURBOSPARK_RESID_CAPTURE`) and
   extraction (`scripts/extract_direction.py`).
 - `gpt-oss` and `museGlimmer` steering measured on real installs
   (2026-08-25): a self-extracted 4-pair direction and a byte-identical null
@@ -175,7 +175,7 @@ when this file gets updated relative to the version bump and the tag.
 - `crates/gpu/tests/gdn_prefill_share_bench.rs`: prices `gdn_delta_step_prefill`
   against the INT4 matrices one prefill micro-batch walks, weighted by the real
   layer counts. **4.66%**, an upper bound, which closes the gated-DeltaNet
-  threadgroup-staging idea. It exists because `MFERENCE_DISPATCH_PROFILE=1`
+  threadgroup-staging idea. It exists because `TURBOSPARK_DISPATCH_PROFILE=1`
   waits on every command buffer at commit and did not finish a 150-token
   prefill in 12 minutes; this answers the same question in 0.45 s.
 - `FC_MMA_STAGE_X` (function constant 110) on `dequant_int4_gemm_mma`, with

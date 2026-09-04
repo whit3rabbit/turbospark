@@ -151,10 +151,26 @@ pub fn manifest_quant_for(
             slot(attention_bits)
         }
     };
+    // `qwen4_exp`'s router is force-quantized to INT8 at write time
+    // regardless of what the checkpoint's own config declares
+    // (`orchestrate.rs`'s `quantize_router_int8`, called because this
+    // family's real checkpoint ships the router raw rather than
+    // U32-prepacked). Its manifest slot states that unconditionally instead
+    // of trusting `quant.bits_for`, which for this checkpoint reports the
+    // model's default width and not the router's -- mirroring the GGUF
+    // walk's router slot, which is also a stated fact about the bytes rather
+    // than a probe (`crates/repack` CLAUDE.md Gotcha 6).
+    let router_slot = if !has_experts {
+        slot(attention_bits)
+    } else if family == ModelFamily::Qwen4Exp {
+        slot(8)
+    } else {
+        slot(quant.bits_for(&router))
+    };
     serde_json::json!({
         "embedding": slot(quant.bits_for("language_model.model.embed_tokens")),
         "attention": slot(attention_bits),
-        "router": moe_slot(&router),
+        "router": router_slot,
         "sharedExpert": moe_slot(&shared),
         "routedExpert": moe_slot(&routed),
     })

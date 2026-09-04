@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Concentration and overlap analysis for MFERENCE_ROUTER_HIST captures.
+"""Concentration and overlap analysis for TURBOSPARK_ROUTER_HIST captures.
 
 Usage:
     router_hist.py A1.json[,A2.json,...] [B1.json[,B2.json,...]]

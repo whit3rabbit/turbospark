@@ -69,11 +69,11 @@ pub(crate) struct RealQwenState {
     /// One half: the shared expert's scalar gate logit.
     pub(crate) shared_gate_logit: gpu::MetalBuffer,
     /// The M-row scratch the chunked-prefill driver's batched-GEMV arm
-    /// writes (`MFERENCE_BATCHED_GEMV`, `docs/BATCHED_PREFILL.md` step 6).
+    /// writes (`TURBOSPARK_BATCHED_GEMV`, `docs/BATCHED_PREFILL.md` step 6).
     ///
     /// **Allocated on FIRST USE, and only when the seam is ON**, which is a
     /// stronger condition than the Gemma 4 sibling this otherwise copies:
-    /// `RealGemmaState::batched` serves `MFERENCE_ROUTED_BATCH` as well, so
+    /// `RealGemmaState::batched` serves `TURBOSPARK_ROUTED_BATCH` as well, so
     /// its driver allocates at the entry point unconditionally. Here the one
     /// consumer is the seam, and `qwen38_memory_oracle`'s frozen row has to
     /// keep describing the engine that shipped before this arm existed --

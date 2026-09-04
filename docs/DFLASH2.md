@@ -447,7 +447,7 @@ difference between the two functions.
 
 The table above is `dflash2_accept_length_probe`, which hand-rolls its own
 round. `run_raw_completion_speculative` is what a user actually runs, and it
-was measured separately (`MFERENCE_SPEC_STATS=1`, 200 greedy tokens, against
+was measured separately (`TURBOSPARK_SPEC_STATS=1`, 200 greedy tokens, against
 a ~22.1 tok/s non-speculative arm on the same install). **The loop agrees
 with the probe on the probe's own prompt, so the loop is not the variable --
 the WORKLOAD is.**

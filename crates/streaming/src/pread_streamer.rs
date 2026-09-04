@@ -44,7 +44,7 @@ pub struct PreadExpertStreamer {
     /// Whether this streamer's descriptor is actually bypassing the unified
     /// buffer cache. Distinct from `disk_io::nocache_requested()`: the
     /// `fcntl` can be refused, and a run that silently measured the warm
-    /// path under `MFERENCE_EXPERT_NOCACHE=1` would be the worst outcome
+    /// path under `TURBOSPARK_EXPERT_NOCACHE=1` would be the worst outcome
     /// available (a published disk-bound row that is not one).
     nocache: bool,
 }
@@ -82,7 +82,7 @@ impl PreadExpertStreamer {
         // The experimental disk-bound condition, established once per open
         // rather than per read: `F_NOCACHE` is a property of the
         // DESCRIPTOR, so it cannot be toggled between batches, and reading
-        // the env once matches the `MFERENCE_READ_QOS` seam next door.
+        // the env once matches the `TURBOSPARK_READ_QOS` seam next door.
         let nocache = disk_io::nocache_requested() && disk_io::set_nocache(file.as_raw_fd());
         Ok(Self {
             layout,

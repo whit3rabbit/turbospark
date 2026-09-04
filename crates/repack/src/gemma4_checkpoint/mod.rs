@@ -22,8 +22,8 @@ mod shards;
 mod vision;
 
 pub use classify::{
-    classify_for_family, classify_gemma4, Gemma4Bucket, DFLASH_PREFIX, VISION_INSTALL_PREFIX,
-    VISION_PREFIX,
+    classify_for_family, classify_gemma4, Gemma4Bucket, DFLASH_PREFIX, MTP_PREFIX,
+    VISION_INSTALL_PREFIX, VISION_PREFIX,
 };
 pub use config::{
     is_supported_affine_shape, parse_gemma4_config, parse_gemma4_quantization, Gemma4Error,
@@ -72,7 +72,8 @@ pub fn write_gemma4_install_streamed(
         plan.routed.len(),
     ));
 
-    let mut resident = orchestrate::read_resident_entries(shards, &plan.resident_bases, quant)?;
+    let mut resident =
+        orchestrate::read_resident_entries(shards, &plan.resident_bases, quant, arch.family)?;
     // THE MTP HEAD, and this arm has to exist HERE as well as in
     // `orchestrate_gemma4_checkpoint_sharded` -- which is the whole reason it
     // is worth a comment. Every REAL install goes through this streamed

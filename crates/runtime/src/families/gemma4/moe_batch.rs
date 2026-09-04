@@ -84,8 +84,8 @@ impl RealForwardRunner {
         // comes from a crate the caller never asked for.
         if self.mapped.buffers.get(layer).is_some_and(Option::is_some) {
             return Err(RealForwardError::Unsupported(format!(
-                "batched routed prefill (MFERENCE_ROUTED_BATCH) and mapped expert \
-                 residency (MFERENCE_EXPERT_RESIDENCY=mapped) cannot be combined: this \
+                "batched routed prefill (TURBOSPARK_ROUTED_BATCH) and mapped expert \
+                 residency (TURBOSPARK_EXPERT_RESIDENCY=mapped) cannot be combined: this \
                  pair binds one buffer per CACHE SLOT and mapped residency has no slot \
                  cache (layer {layer}). Pick one"
             )));
@@ -114,11 +114,11 @@ impl RealForwardRunner {
 
         // Shared-expert branches for every token up front, so the GPU
         // drains them while the host plans and preads the routed union.
-        // (`MFERENCE_SHARED_CB=0` reverts the DECODE path to inline
+        // (`TURBOSPARK_SHARED_CB=0` reverts the DECODE path to inline
         // encoding; the batched path always overlaps, because the union
         // `pread` below is one large host stall to hide.)
         //
-        // Under `MFERENCE_BATCHED_GEMV` all M tokens share ONE command
+        // Under `TURBOSPARK_BATCHED_GEMV` all M tokens share ONE command
         // buffer and three M-row GEMMs; otherwise each rides its own
         // committed buffer with three GEMVs, which is what shipped.
         if self.batched_gemv_prefill {

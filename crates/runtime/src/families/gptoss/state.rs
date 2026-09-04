@@ -76,7 +76,7 @@ pub(crate) struct RealGptOssState {
     pub(crate) h2: gpu::MetalBuffer,
     /// The batched routed half's scratch (`docs/BATCHED_PREFILL.md` step 5),
     /// allocated on first use by [`Self::ensure_batched`] and `None` on every
-    /// run that never chunks its prefill with `MFERENCE_ROUTED_BATCH` set.
+    /// run that never chunks its prefill with `TURBOSPARK_ROUTED_BATCH` set.
     pub(crate) batched: Option<BatchedRoutedScratch>,
 }
 
@@ -89,7 +89,7 @@ pub(crate) struct RealGptOssState {
 /// `batch_h1`, because there is no shared expert to hold M rows of output
 /// for -- phase 2's seed is `batch_zero` and the routed sum reaches the
 /// stream through one raw residual add. And there are no batched-GEMV
-/// fields (`batch_normed`, `batch_q`, ...), because `MFERENCE_BATCHED_GEMV`
+/// fields (`batch_normed`, `batch_q`, ...), because `TURBOSPARK_BATCHED_GEMV`
 /// is not wired for this family: that seam is INT4-affine only, and this
 /// family's resident tensors are Q8_0.
 ///

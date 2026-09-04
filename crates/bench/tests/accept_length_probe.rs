@@ -5,7 +5,7 @@
 //! Everything else in that model is now measured: `c(M)` from
 //! `gemv_bandwidth_bench.rs`, the expert-union multiplier from
 //! `router_window.py`, and the per-family compute split from
-//! `MFERENCE_DISPATCH_PROFILE=1`. They say a batched verify of 8 tokens
+//! `TURBOSPARK_DISPATCH_PROFILE=1`. They say a batched verify of 8 tokens
 //! costs roughly 4.4 decode steps, so speculation pays only if more than
 //! ~4.4 of every 8 proposals survive. Accept length was the one term still
 //! being guessed at.

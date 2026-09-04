@@ -146,14 +146,14 @@ TURBOSPARK_DFLASH2_INSTALL_DIR=~/models/qwen38-27b-dflash2.gturbo \
 # (its Phase D0 gate: does a batched verify pay on this engine, and at what
 # block size?). Neither needs a drafter or a new kernel.
 #
-# 1. Expert union. `MFERENCE_ROUTER_TRACE=1` adds the top-k ids IN PASS
+# 1. Expert union. `TURBOSPARK_ROUTER_TRACE=1` adds the top-k ids IN PASS
 #    ORDER to the histogram file, which the counts throw away; a batched
 #    verify of M tokens reads their UNION, so its expert cost is the
 #    distinct-expert count over a window of M consecutive passes. Pass the
 #    run's PROMPT TOKEN COUNT as the second argument -- the trace covers
 #    prefill too, and prefill routes differently. Read `breakeven_accept`:
 #    a block pays, on this axis, only if it accepts more than that.
-MFERENCE_ROUTER_HIST=/tmp/rq.json MFERENCE_ROUTER_TRACE=1 \
+TURBOSPARK_ROUTER_HIST=/tmp/rq.json TURBOSPARK_ROUTER_TRACE=1 \
   ./target/release/turbospark-check --model ~/models/qwen36.gturbo \
   --messages-file /tmp/p.json --max-new 300 --temperature 0.0001 --top-k 1
 python3 scripts/router_window.py /tmp/rq.json 22 2,4,8,16
@@ -168,13 +168,13 @@ cargo test -p turbospark-gpu --test gemv_bandwidth_bench --release -- --ignored 
 # MAPPED EXPERT RESIDENCY (`docs/EXPERT_RESIDENCY.md`): the routed experts
 # read IN PLACE out of one `mmap` per layer instead of `pread`-copied into a
 # pinned slot. Gemma 4 only so far, OFF by default, an A/B seam in the shape
-# `MFERENCE_ROUTED_BATCH` has -- both arms MUST produce identical tokens.
+# `TURBOSPARK_ROUTED_BATCH` has -- both arms MUST produce identical tokens.
 # Every other family REFUSES it by name rather than ignoring it, so a caller
 # cannot measure the streamed engine and report it under the mapped label.
 # NOTE the first mapped run on a cold page cache pays its faults up front
 # (prefill 74.8s against 2.5s); warm it is slower on prefill and faster on
 # decode, so it is a one-time cost for a faster steady state.
-MFERENCE_EXPERT_RESIDENCY=mapped ./target/release/turbospark-check \
+TURBOSPARK_EXPERT_RESIDENCY=mapped ./target/release/turbospark-check \
   --model ~/models/gemma4.gturbo --messages-file /tmp/p.json --max-new 400
 
 # The measurement that licensed it, and the one that refuted `crates/bench`

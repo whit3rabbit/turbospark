@@ -1,5 +1,5 @@
 #![cfg(target_os = "macos")]
-//! Mapped vision residency (`MFERENCE_VISION_RESIDENCY=mapped`,
+//! Mapped vision residency (`TURBOSPARK_VISION_RESIDENCY=mapped`,
 //! `docs/EXPERT_RESIDENCY.md`) through the real `open` path, on a synthetic
 //! install.
 //!
@@ -91,7 +91,7 @@ fn mapped_and_pread_vision_residency_agree_and_the_mapped_arm_engages() {
     let img = image(&p);
 
     // The default arm: unset, and the ordinary pread streamer.
-    std::env::remove_var("MFERENCE_VISION_RESIDENCY");
+    std::env::remove_var("TURBOSPARK_VISION_RESIDENCY");
     let mut pread_runner =
         RealForwardRunner::open(&dir, arch.clone()).expect("the install opens (pread arm)");
     assert_eq!(
@@ -111,7 +111,7 @@ fn mapped_and_pread_vision_residency_agree_and_the_mapped_arm_engages() {
     // The mapped arm, set BEFORE open: the mode is resolved at
     // `VisionTower::open`, which is lazy (first image), so it must be set
     // before that call rather than before `RealForwardRunner::open`.
-    std::env::set_var("MFERENCE_VISION_RESIDENCY", "mapped");
+    std::env::set_var("TURBOSPARK_VISION_RESIDENCY", "mapped");
     let mut mapped_runner =
         RealForwardRunner::open(&dir, arch).expect("the install opens (mapped arm)");
     let mapped_embedding = mapped_runner
@@ -122,9 +122,9 @@ fn mapped_and_pread_vision_residency_agree_and_the_mapped_arm_engages() {
         Some(true),
         "the mapped arm must report itself as mapped; if this reads Some(false) \
          the tower silently fell through to the pread streamer instead of \
-         engaging MFERENCE_VISION_RESIDENCY=mapped"
+         engaging TURBOSPARK_VISION_RESIDENCY=mapped"
     );
-    std::env::remove_var("MFERENCE_VISION_RESIDENCY");
+    std::env::remove_var("TURBOSPARK_VISION_RESIDENCY");
 
     // Sanity, matching mapped_expert_residency.rs's own checks: neither arm
     // produced silence or garbage.

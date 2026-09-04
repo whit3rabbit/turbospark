@@ -42,7 +42,7 @@
 //! 16 MiB at a 4,096 context.
 //!
 //! It is allocated ONLY when a draft depth is asked for. With
-//! `MFERENCE_MTP_DRAFT` unset the flow allocates nothing and encodes nothing,
+//! `TURBOSPARK_MTP_DRAFT` unset the flow allocates nothing and encodes nothing,
 //! so the unset path is identical to the one that shipped before this module
 //! existed in bytes AND in footprint -- which is what lets the frozen oracle
 //! row stand rather than needing a new one.
@@ -155,7 +155,7 @@ impl RealForwardRunner {
 
         if self.real_mtp.is_none() {
             return Err(RealForwardError::Unsupported(
-                "no MTP head state; set MFERENCE_MTP_DRAFT=<depth> before opening the model"
+                "no MTP head state; set TURBOSPARK_MTP_DRAFT=<depth> before opening the model"
                     .to_string(),
             ));
         }

@@ -10,7 +10,7 @@
 //!    PROXY for the routed pair until this read 0.77/0.68/0.66.
 //!  - `mxfp4`: the step 5 pair at the real `gpt-oss` shape (D=2880,
 //!    F=2880, top_k=4). Exists because the 0.67 that page first quoted for
-//!    c(16) was INFERRED from `MFERENCE_PHASES` device-time rows -- a
+//!    c(16) was INFERRED from `TURBOSPARK_PHASES` device-time rows -- a
 //!    different instrument -- rather than measured on interleaved arms.
 //!
 //! Same conventions as `gemv_bandwidth_bench.rs`: ratios, never absolute

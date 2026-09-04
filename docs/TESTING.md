@@ -160,7 +160,7 @@ chunk sweep) are in `docs/BENCHMARKS.md`; `crates/gpu`'s
 `gdn_prefill_share_bench`. That last one exists because the obvious
 instrument does not work: it prices `gdn_delta_step_prefill` against the
 INT4 matrices a prefill micro-batch walks in **0.45 seconds**, where
-`MFERENCE_DISPATCH_PROFILE=1` -- the only surface that names kernels -- waits
+`TURBOSPARK_DISPATCH_PROFILE=1` -- the only surface that names kernels -- waits
 on every command buffer at commit and did not finish a 150-token prefill in
 12 minutes.
 
@@ -415,10 +415,10 @@ attention) so it cannot rot silently; only the timings are advisory.
 | `TURBOSPARK_GEMMA4_IQ_INSTALL_DIR` | `gguf_iq_install_network`, `iq3_quality_gate` | Where the 3-bit (IQ3_XXS/IQ4_NL) Gemma 4 install lives (ROADMAP Phase S). A THIRD variable rather than a reuse of the Gemma one, for the reason `iq3_quality_gate` documents: the quality rows are keyed on the chip and freeze the MLX INT4 goldens, so pointing an existing variable at a different artifact asserts the wrong digests. The install test refuses to write to either of the two variables above, and both readers skip or fall back to a temp dir when unset. |
 | `TURBOSPARK_LOGIT_DUMP_DIR` | `logit_dump` | Where to write `logits.f16` and `meta.json` (~275 MiB on either family). Required: the target skips when unset, since a few hundred MB is not something to write to a default path. |
 | `TURBOSPARK_LOGIT_DUMP_COLD=1` | `logit_dump` | Skips the warmup walk, so the dump comes off a COLD expert cache. That is the condition `quality_gate` takes its perplexity under. It EXISTS to measure the warm/cold difference rather than assume it, and the answer is now zero: AGENTS.md Gotcha 27's fix made the routed dispatch order a function of the route alone, so cold and warm dumps are byte-identical and a warm dump reproduces the frozen cold row exactly (`qwen3moe` warm reads perplexity 14.757589 against a frozen 14.7576). The ~0.5% gap this row used to describe was measured BEFORE that fix; keep the flag, because "the difference is zero" is a claim that has to stay checkable. |
-| `MFERENCE_PHASES=1` | `turbospark-check` | Prints the per-phase decode breakdown (GPU wait, router readback, expert pread, routed bind, cache hit rate). |
-| `MFERENCE_DISPATCH_PROFILE=1` | `turbospark-check`, `gpu::PassEncoder` | Ranks the individual dispatches inside each command buffer. Encodes one compute encoder per dispatch (Apple GPUs sample counters only at encoder boundaries) and waits on every buffer, so it perturbs the run it measures: a ranking aid, not a throughput number. Covered by `crates/gpu/tests/dispatch_profile.rs`. |
-| `MFERENCE_SHARED_CB=0` | `RealForwardRunner` | Reverts the shared-expert branch to encoding after the expert pread instead of on its own overlapping command buffer. The A/B seam for any throughput claim. |
-| `MFERENCE_ROUTED_PIPELINE=0` | `RealForwardRunner` | Reverts a layer's routed-expert command buffer to rolling uncommitted into the next layer's first buffer instead of committing at the end of the layer (the one-layer pipeline). |
+| `TURBOSPARK_PHASES=1` | `turbospark-check` | Prints the per-phase decode breakdown (GPU wait, router readback, expert pread, routed bind, cache hit rate). |
+| `TURBOSPARK_DISPATCH_PROFILE=1` | `turbospark-check`, `gpu::PassEncoder` | Ranks the individual dispatches inside each command buffer. Encodes one compute encoder per dispatch (Apple GPUs sample counters only at encoder boundaries) and waits on every buffer, so it perturbs the run it measures: a ranking aid, not a throughput number. Covered by `crates/gpu/tests/dispatch_profile.rs`. |
+| `TURBOSPARK_SHARED_CB=0` | `RealForwardRunner` | Reverts the shared-expert branch to encoding after the expert pread instead of on its own overlapping command buffer. The A/B seam for any throughput claim. |
+| `TURBOSPARK_ROUTED_PIPELINE=0` | `RealForwardRunner` | Reverts a layer's routed-expert command buffer to rolling uncommitted into the next layer's first buffer instead of committing at the end of the layer (the one-layer pipeline). |
 
 ## Test-writing notes
 
@@ -454,8 +454,8 @@ attention) so it cannot rot silently; only the timings are advisory.
   ordering guarantee between cases. A file covering an env-gated feature has
   every test ask for the same setting and reaches the off path another way:
   `real_forward_qwen35_mtp.rs` covers "drafting off" through the open-time
-  refusal rather than by unsetting `MFERENCE_MTP_DRAFT` mid-run. Never toggle
-  an `MFERENCE_*` var between tests in one file.
+  refusal rather than by unsetting `TURBOSPARK_MTP_DRAFT` mid-run. Never toggle
+  a `TURBOSPARK_*` var between tests in one file.
 - **A probe that can return a degenerate value has to assert against it, not
   print it.** `crates/bench/tests/mtp_accept_length_probe.rs` measures the
   MTP head's accept length, and on its first run READ ZERO -- because the head

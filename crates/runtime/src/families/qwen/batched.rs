@@ -111,16 +111,15 @@ impl RealForwardRunner {
         // A DFlash2 install carries no MTP head but needs the SAME verify
         // pass, so its state owns a BatchedScratch of its own and either
         // drafter's scratch serves.
-        let batched =
-            match (&self.real_mtp, &self.real_dflash) {
-                (Some(m), _) => &m.batched,
-                (None, Some(d)) => &d.batched,
-                (None, None) => return Err(RealForwardError::Unsupported(
-                    "no batched scratch; set MFERENCE_MTP_DRAFT or MFERENCE_DFLASH_DRAFT before \
+        let batched = match (&self.real_mtp, &self.real_dflash) {
+            (Some(m), _) => &m.batched,
+            (None, Some(d)) => &d.batched,
+            (None, None) => return Err(RealForwardError::Unsupported(
+                "no batched scratch; set TURBOSPARK_MTP_DRAFT or TURBOSPARK_DFLASH_DRAFT before \
                      opening the model"
-                        .to_string(),
-                )),
-            };
+                    .to_string(),
+            )),
+        };
         if batch > batched.batch {
             return Err(RealForwardError::Unsupported(format!(
                 "batched forward of {batch} rows against scratch sized for {}",

@@ -17,7 +17,7 @@
 //! **No ring-wrap hazard**, for the same reason as `families/llama/`'s
 //! driver, despite this family HAVING a real sliding-window ring (unlike
 //! `llama`): attention here stays per-token and unbatched
-//! (`MFERENCE_BATCHED_GEMV` is REFUSED by name below, never silently
+//! (`TURBOSPARK_BATCHED_GEMV` is REFUSED by name below, never silently
 //! ignored), so there is no batched K/V
 //! projection to straddle the ring's wrap. `attn::encode_attention_block`
 //! is called unchanged, addressing the ring by `position` exactly as the
@@ -59,7 +59,7 @@ impl RealForwardRunner {
             ));
         }
         // REFUSED BY NAME rather than ignored, and unlike
-        // `MFERENCE_ROUTED_BATCH` this seam is meaningful on EVERY chunked
+        // `TURBOSPARK_ROUTED_BATCH` this seam is meaningful on EVERY chunked
         // driver: it names the driver's RESIDENT GEMVs, and this family has
         // them (Q8_0 attention projections and head), where a dense family
         // merely has no routed half for the other flag to refer to. The
@@ -67,10 +67,10 @@ impl RealForwardRunner {
         // step 6), so running the per-token loop anyway would hand back a
         // number from the unbatched engine under the batched arm's label --
         // the `encode_gemm_any` doctrine, found on this exact silent-ignore
-        // class for `MFERENCE_ROUTED_BATCH` on qwen3moe (crate Gotcha 22).
+        // class for `TURBOSPARK_ROUTED_BATCH` on qwen3moe (crate Gotcha 22).
         if self.batched_gemv_prefill {
             return Err(RealForwardError::Unsupported(
-                "MFERENCE_BATCHED_GEMV is not wired for this family: the M-row \
+                "TURBOSPARK_BATCHED_GEMV is not wired for this family: the M-row \
                  resident GEMM exists in the gemma4 chunked driver alone \
                  (INT4-affine), and this driver keeps every resident GEMV per \
                  token"
@@ -135,7 +135,7 @@ impl RealForwardRunner {
             )));
         }
 
-        // `MFERENCE_ROUTED_PIPELINE=0` (the seam Gemma 4's sequential decode
+        // `TURBOSPARK_ROUTED_PIPELINE=0` (the seam Gemma 4's sequential decode
         // has always read) means the same thing here: retire each token's
         // routed pass before the next plan (banks = 1) AND pass no protect
         // set. The two must move together -- with the previous pass retired

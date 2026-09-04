@@ -8,7 +8,7 @@
 //! command buffer per layer (`cb1`), then the routed half runs per token,
 //! pipelined via [`crate::moe_prefill_pipeline::RoutedSlot`] exactly as
 //! Gemma 4's does. Steps 2/3 (the batched routed KERNEL,
-//! `MFERENCE_ROUTED_BATCH`) are INT4-affine-only and are not wired here;
+//! `TURBOSPARK_ROUTED_BATCH`) are INT4-affine-only and are not wired here;
 //! this driver reuses the same per-token `encode_moe_phase1_any` /
 //! `encode_moe_phase2_any` dispatch the sequential decode path already
 //! uses, which is layout-agnostic (Affine, GGUF, ...), so no new kernel is
@@ -17,7 +17,7 @@
 //! **No ring-wrap hazard**, unlike Gemma 4's batched-GEMV seam: this
 //! architecture has no sliding-window layers at all (`RealLlamaState::build`
 //! refuses any non-full-attention layer), and attention here stays
-//! per-token and unbatched regardless (`MFERENCE_BATCHED_GEMV` is REFUSED
+//! per-token and unbatched regardless (`TURBOSPARK_BATCHED_GEMV` is REFUSED
 //! by name below, never silently ignored), so there is no batched K/V
 //! projection to straddle a ring in the first place.
 //!
@@ -52,7 +52,7 @@ impl RealForwardRunner {
             ));
         }
         // REFUSED BY NAME rather than ignored, and the asymmetry with the
-        // DENSE drivers is the point. `MFERENCE_ROUTED_BATCH` asks for the
+        // DENSE drivers is the point. `TURBOSPARK_ROUTED_BATCH` asks for the
         // routed half as one route-list dispatch pair; this family HAS a
         // routed half and no batched kernel for its Q4_K/Q6_K blobs, so
         // running the per-token loop anyway would hand back a number from
@@ -65,7 +65,7 @@ impl RealForwardRunner {
         // built (`docs/BATCHED_PREFILL.md`, "Step 5's two arms").
         if self.routed_batch_prefill {
             return Err(RealForwardError::Unsupported(
-                "MFERENCE_ROUTED_BATCH is not wired for this family: the batched \
+                "TURBOSPARK_ROUTED_BATCH is not wired for this family: the batched \
                  routed pair exists for INT4-affine (gemma4) and MXFP4 (gpt-oss) \
                  blobs, and this install's routed experts are GGUF K-quants"
                     .to_string(),
@@ -77,7 +77,7 @@ impl RealForwardRunner {
         // wired in Gemma 4's driver alone (step 6).
         if self.batched_gemv_prefill {
             return Err(RealForwardError::Unsupported(
-                "MFERENCE_BATCHED_GEMV is not wired for this family: the M-row \
+                "TURBOSPARK_BATCHED_GEMV is not wired for this family: the M-row \
                  resident GEMM exists in the gemma4 chunked driver alone \
                  (INT4-affine), and this driver keeps every resident GEMV per \
                  token"

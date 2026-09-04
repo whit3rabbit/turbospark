@@ -1,6 +1,6 @@
-//! Per-dispatch GPU timing, opt-in via `MFERENCE_DISPATCH_PROFILE=1`.
+//! Per-dispatch GPU timing, opt-in via `TURBOSPARK_DISPATCH_PROFILE=1`.
 //!
-//! `MFERENCE_PHASES=1` attributes GPU busy time per COMMAND BUFFER
+//! `TURBOSPARK_PHASES=1` attributes GPU busy time per COMMAND BUFFER
 //! (`GPUStartTime`/`GPUEndTime`). That granularity is what once pointed
 //! this port's attention work at the wrong kernel: cb1 is ~25 dispatches
 //! and a per-buffer number says nothing about which of them owns the time
@@ -17,7 +17,7 @@
 //! profiling mode does, and it is why the mode is opt-in:
 //!
 //! - encoder boundaries add real per-dispatch overhead, so the absolute
-//!   numbers are INFLATED against `MFERENCE_PHASES`'s buffer totals. The
+//!   numbers are INFLATED against `TURBOSPARK_PHASES`'s buffer totals. The
 //!   report is for RANKING dispatches against each other, never for
 //!   claiming a kernel costs N ms in production.
 //! - profiling waits on every command buffer at commit so its samples can
@@ -77,10 +77,10 @@ thread_local! {
 /// partly profiled says so instead of quietly under-counting.
 static UNPROFILED_PASSES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-/// Returns true if GPU dispatch profiling is enabled via `MFERENCE_DISPATCH_PROFILE=1`.
+/// Returns true if GPU dispatch profiling is enabled via `TURBOSPARK_DISPATCH_PROFILE=1`.
 pub fn enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var("MFERENCE_DISPATCH_PROFILE").as_deref() == Ok("1"))
+    *ENABLED.get_or_init(|| std::env::var("TURBOSPARK_DISPATCH_PROFILE").as_deref() == Ok("1"))
 }
 
 /// `pipeline pointer -> kernel function name`, so a dispatch can be named

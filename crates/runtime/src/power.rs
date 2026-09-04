@@ -7,7 +7,7 @@
 //! there and cross as an integer and a `bool`.
 //!
 //! DELIBERATELY NOT WIRED: read-pool QoS. ROADMAP Phase P2's text pairs
-//! profiles with QoS, but `MFERENCE_READ_QOS=utility` was measured a null
+//! profiles with QoS, but `TURBOSPARK_READ_QOS=utility` was measured a null
 //! result on AC and a loss on battery (`docs/POWER_BASELINE.md`), so a
 //! profile that set it would ship a measured regression. Profiles map to
 //! rate caps and thermal stepping only.

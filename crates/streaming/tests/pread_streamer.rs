@@ -92,7 +92,7 @@ fn advise_experts_reports_one_coalesced_call_for_adjacent_experts() {
     let streamer = PreadExpertStreamer::open(layout(&path), 4, ExpertCachePolicy::Lfu).unwrap();
     let result = streamer.advise_experts(&[0, 1]);
     assert_eq!(result.requested, 2);
-    // Coalescing is a WARM-path contract. Under `MFERENCE_EXPERT_NOCACHE=1`
+    // Coalescing is a WARM-path contract. Under `TURBOSPARK_EXPERT_NOCACHE=1`
     // the streamer issues no advice at all (readahead and cache-bypass are
     // contradictory instructions about one descriptor), and reports every
     // range as skipped instead -- which is the assertion worth making in
@@ -429,14 +429,14 @@ fn a_partially_resident_plan_pays_for_the_miss_alone() {
     assert_eq!(after_second.batches - after_first.batches, 1);
 }
 
-/// The physical-I/O probe is off unless `MFERENCE_EXPERT_DISK_IO=1`, which
+/// The physical-I/O probe is off unless `TURBOSPARK_EXPERT_DISK_IO=1`, which
 /// is read once per process and therefore cannot be toggled from inside a
 /// test. Both arms are asserted rather than only the default one, so
 /// re-running this suite under the seam actually EXERCISES the sampling
 /// path instead of silently skipping past it:
 ///
 /// ```sh
-/// MFERENCE_EXPERT_DISK_IO=1 cargo test -p turbospark-streaming
+/// TURBOSPARK_EXPERT_DISK_IO=1 cargo test -p turbospark-streaming
 /// ```
 #[test]
 fn physical_io_is_sampled_only_under_the_seam() {
@@ -446,7 +446,8 @@ fn physical_io_is_sampled_only_under_the_seam() {
 
     let stats = streamer.io_stats();
     assert!(stats.bytes_requested > 0);
-    if std::env::var("MFERENCE_EXPERT_DISK_IO").as_deref() == Ok("1") {
+    let disk_io_enabled = std::env::var("TURBOSPARK_EXPERT_DISK_IO").as_deref() == Ok("1");
+    if disk_io_enabled {
         // A sample was TAKEN. Its value is not asserted: these blobs are
         // 64 bytes and were just written, so the honest expectation is
         // zero physical bytes, and a machine reading anything at all here
@@ -468,7 +469,8 @@ fn physical_io_is_sampled_only_under_the_seam() {
 fn nocache_is_inactive_unless_requested() {
     let path = write_layer_file();
     let streamer = PreadExpertStreamer::open(layout(&path), 2, ExpertCachePolicy::Lfu).unwrap();
-    if std::env::var("MFERENCE_EXPERT_NOCACHE").as_deref() != Ok("1") {
+    let nocache_enabled = std::env::var("TURBOSPARK_EXPERT_NOCACHE").as_deref() == Ok("1");
+    if !nocache_enabled {
         assert!(!streamer.nocache_active());
     }
 }

@@ -47,6 +47,24 @@ fn qwen4_install() -> (std::path::PathBuf, model_io::ArchConfig) {
     (dir, arch)
 }
 
+/// [`qwen4_install`], with the router shipped raw (unquantized BF16) rather
+/// than pre-packed INT8 -- the shape the real REAP-288 checkpoint's router
+/// actually takes, and the exact reproduction of the router-dtype bug this
+/// covers (`crates/repack`'s `orchestrate.rs::read_resident_entries`, and
+/// `families/qwen4/moe.rs:58`'s dtype-5 refusal on the runtime side). The
+/// default fixture above ships the router pre-packed and cannot reach either
+/// bug: this is the one that does.
+fn qwen4_install_raw_router() -> (std::path::PathBuf, model_io::ArchConfig) {
+    let dir = tempdir();
+    let arch = turbospark_repack::build_synthetic_qwen4_exp_decode_install_raw_router(
+        &dir,
+        VOCAB,
+        "qwen4-p3-raw",
+    )
+    .expect("write install");
+    (dir, arch)
+}
+
 /// A context window comfortably under the fixture's QSA indexer budget
 /// (2048) and comfortably over the handful of positions any test here
 /// decodes -- `RealForwardRunner::open`'s own `Auto` default resolves above
@@ -159,6 +177,36 @@ fn distance(a: &[f32], b: &[f32]) -> f32 {
 fn a_qwen4_exp_install_opens_and_decodes() {
     let (dir, arch) = qwen4_install();
     assert_eq!(arch.family, model_io::ModelFamily::Qwen4Exp);
+    let logits = decode(&dir, &arch, 8);
+    let first = logits[0];
+    assert!(
+        logits.iter().any(|v| *v != first),
+        "every logit is {first}: the head produced nothing"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// The router-dtype bug's real reproduction: before the fix,
+/// `moe.rs:58`'s dtype check refused this exact install with "expected INT8
+/// (dtype 5) ..., got dtype 1" (raw BF16), because
+/// `read_resident_entries` only knew how to pass through an ALREADY-packed
+/// `U32` router or narrow anything else straight to BF16. `qwen4_install()`
+/// above cannot see this: its router is pre-packed by construction
+/// (`int8_triple`) and so never exercises either the writer's new
+/// `quantize_router_int8` branch or the runtime's dtype-5 requirement.
+#[test]
+fn a_qwen4_exp_install_with_a_raw_bf16_router_opens_and_decodes() {
+    let (dir, arch) = qwen4_install_raw_router();
+    assert_eq!(arch.family, model_io::ModelFamily::Qwen4Exp);
+
+    let manifest: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("manifest.json")).unwrap()).unwrap();
+    assert_eq!(
+        manifest["quant"]["router"]["weightBits"], 8,
+        "the manifest must state the router's forced INT8 width, not the \
+         checkpoint's undeclared default"
+    );
+
     let logits = decode(&dir, &arch, 8);
     let first = logits[0];
     assert!(

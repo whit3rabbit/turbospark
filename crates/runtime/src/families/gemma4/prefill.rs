@@ -59,7 +59,7 @@ impl RealForwardRunner {
     /// ALL `tokens` into ONE command buffer, so the per-layer blocking wait
     /// is paid once per micro-batch instead of once per token, and then its
     /// routed half -- per token by default, or as one route-list dispatch
-    /// pair per union-bounded sub-batch when `MFERENCE_ROUTED_BATCH=1`
+    /// pair per union-bounded sub-batch when `TURBOSPARK_ROUTED_BATCH=1`
     /// (`docs/BATCHED_PREFILL.md` steps 2 and 3, `moe_batch.rs`).
     ///
     /// The default keeps the routed half per token because the two things
@@ -78,7 +78,7 @@ impl RealForwardRunner {
         let result =
             self.prefill_micro_batch_gemma4_inner(tokens, start_position, want_head, logits);
         // One forward pass per TOKEN, not per micro-batch: every
-        // `MFERENCE_PHASES` bucket divides by this, and the whole point of
+        // `TURBOSPARK_PHASES` bucket divides by this, and the whole point of
         // the comparison is cost per prompt token.
         self.phases.calls += tokens.len() as u64;
         self.phases.total_nanos += started.elapsed().as_nanos() as u64;
@@ -147,7 +147,7 @@ impl RealForwardRunner {
         for layer in 0..arch.num_layers as usize {
             if self.batched_gemv_prefill {
                 // The four attention projections as M-row GEMMs; everything
-                // else in the half stays per token (`MFERENCE_BATCHED_GEMV`).
+                // else in the half stays per token (`TURBOSPARK_BATCHED_GEMV`).
                 self.encode_gemma4_layer_attn_and_router_batched(
                     &pass,
                     layer,

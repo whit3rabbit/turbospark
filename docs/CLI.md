@@ -70,7 +70,7 @@ than one, is a parse error.
 | `--image-batch` | flag | off | run the prompt once per `--image` instead of once with all of them |
 | `--rdadvise` | `off\|normal\|aggressive` | `off` | read-ahead hint mode for streamed expert reads (macOS) |
 | `--expert-cache-slots` | `8\|16\|24\|32`, or `auto` | `auto` | routed-expert slot cache size; `auto` never resolves below `16` |
-| `--prefill-chunk` | `32\|64\|128\|256\|512\|1024\|2048\|4096`, or `auto` | `128` | prompt-processing chunk size; drives chunked prefill for supported families (Gemma 4, dense Llama/Mistral) and falls back to sequential prefill for others; `MFERENCE_PREFILL_CHUNK` environment variable overrides when set |
+| `--prefill-chunk` | `32\|64\|128\|256\|512\|1024\|2048\|4096`, or `auto` | `128` | prompt-processing chunk size; drives chunked prefill for supported families (Gemma 4, dense Llama/Mistral) and falls back to sequential prefill for others; `TURBOSPARK_PREFILL_CHUNK` environment variable overrides when set |
 | `--power-profile` | `performance\|balanced\|efficiency` | `performance` (or `efficiency` under Low Power Mode) | decode rate governance |
 | `--max-tokens-per-sec` | float `> 0` | uncapped (or the efficiency profile's reading speed) | hard decode rate cap |
 
@@ -388,7 +388,7 @@ representing it absent (or its opposite). For each prompt, capture the
 residual stream with the engine itself:
 
 ```sh
-MFERENCE_RESID_CAPTURE=/tmp/steer/pos/p1.json \
+TURBOSPARK_RESID_CAPTURE=/tmp/steer/pos/p1.json \
   turbospark-check --model ~/models/qwen38-27b.gturbo \
   --messages-file /tmp/prompt-pos-1.json --max-new 1 --temperature 0.0001 --top-k 1
 ```
@@ -482,29 +482,34 @@ open -- see [`docs/OBLITERATION.md`](OBLITERATION.md).
 
 ## Environment variables
 
+For the comprehensive reference of all environment variables across CLI, server, Swift app,
+and test harnesses, see [`docs/ENV.md`](ENV.md).
+
+All runtime environment variables use the `TURBOSPARK_*` prefix.
+
 | Variable | Affected binaries | Purpose | Default |
 | --- | --- | --- | --- |
 | `TURBOSPARK_HOME` | `turbospark-check`, `turbospark-model`, `turbospark-server` | Base directory for the local model store and catalog | `~/.turbospark` |
 | `HF_TOKEN` / `HUGGING_FACE_HUB_TOKEN` | `turbospark-model` | Authentication token for gated Hugging Face repositories | none |
-| `MFERENCE_PHASES` | `turbospark-check` | Set to `1` to print forward-pass phase timing breakdowns on stderr | unset |
-| `MFERENCE_DISPATCH_PROFILE` | `turbospark-check`, `turbospark-server`, `turbospark-bench` | Set to `1` to collect and print per-dispatch GPU kernel timing and ranking profile (see [`docs/DECODE_BUDGET.md`](DECODE_BUDGET.md)) | unset |
-| `MFERENCE_PREFIX_REUSE` | `turbospark-check --chat` | Set to `quiet` to silence the per-turn `[prefix-reuse] N/M` line on stderr. It reports how many prompt tokens continued from the previous turn's KV instead of being re-prefilled; the match rate is a property of the checkpoint's template and tokenizer, and a reuse that never fires differs from a working one only in wall-clock. `--quiet` silences it too | unset |
-| `MFERENCE_PILOT_PROBE` | `turbospark-check` | `1` records the one-layer-ahead router prediction beside the actual selection in the `MFERENCE_ROUTER_HIST` capture (Gemma only; analysed by `scripts/pilot_ceiling.py`). `self` aims the probe at its own layer instead, where recall MUST read 100% -- the guard that says the instrument works before any finding is believed | unset |
-| `MFERENCE_CHAT_DATE` | all (chat template rendering) | Override current date/time (`YYYY-MM-DD` or `YYYY-MM-DDTHH:MM:SS`) in chat templates (e.g. gpt-oss Harmony preamble) | current system UTC time |
-| `MFERENCE_PREFILL_CHUNK` | `turbospark-check` | Override prompt-processing chunk size (e.g. `128`, `256`, `512`, `1024`) | unset |
-| `MFERENCE_RESID_CAPTURE` | `turbospark-check` | File path to dump residual stream activations (JSON) at prefill-to-decode transition | unset |
-| `MFERENCE_SPEC_STATS` | `turbospark-check`, `turbospark-server`, `turbospark-bench` | Set to `1` to log speculative decoding acceptance rate per block position and rollback counts to stderr | unset |
-| `MFERENCE_READ_QOS` | all (streaming reads) | Set to `utility` to drop background routed-expert streaming read QoS on macOS from user-initiated to utility | unset |
-| `MFERENCE_SHARED_CB` | all (forward pass) | Set to `0` to disable command buffer overlap | `1` (enabled) |
-| `MFERENCE_ROUTED_PIPELINE` | all (MoE dispatch) | Set to `0` to disable routed expert pipeline execution | `1` (enabled) |
-| `MFERENCE_ROUTED_BATCH` | all (MoE prefill) | Set to `1` to enable experimental routed batch prefill | `0` (off) |
-| `MFERENCE_BATCHED_GEMV` | all (MoE prefill) | Set to `1` to enable experimental batched GEMV prefill | `0` (off) |
-| `MFERENCE_ROUTER_HIST` | all (MoE runtime) | File path to dump expert routing frequency histogram (JSON) at exit | unset |
-| `MFERENCE_ROUTER_TRACE` | all (MoE runtime) | Set to collect per-layer routed expert activation trace | unset |
-| `MFERENCE_FFN_HIST` | all (dense runtime) | File path to dump dense FFN neuron activation frequency histogram (JSON) at exit | unset |
-| `MFERENCE_MTP_DUMP` | all (MTP drafter) | Directory path to dump MTP intermediate hidden states | unset |
-| `MFERENCE_MTP_DRAFT` | `turbospark-check`, `turbospark-server`, `turbospark-bench` | Draft block depth (positive integer) or policy (`0` to disable, unset for `auto`) | unset (`auto`) |
-| `MFERENCE_DFLASH_DRAFT` | `turbospark-check`, `turbospark-server`, `turbospark-bench` | DFlash2 draft block depth (positive integer) or policy (`0` to disable, unset for `auto`) | unset (`auto`) |
+| `TURBOSPARK_PHASES` | `turbospark-check` | Set to `1` to print forward-pass phase timing breakdowns on stderr | unset |
+| `TURBOSPARK_DISPATCH_PROFILE` | `turbospark-check`, `turbospark-server`, `turbospark-bench` | Set to `1` to collect and print per-dispatch GPU kernel timing and ranking profile (see [`docs/DECODE_BUDGET.md`](DECODE_BUDGET.md)) | unset |
+| `TURBOSPARK_PREFIX_REUSE` | `turbospark-check --chat` | Set to `quiet` to silence the per-turn `[prefix-reuse] N/M` line on stderr. It reports how many prompt tokens continued from the previous turn's KV instead of being re-prefilled; the match rate is a property of the checkpoint's template and tokenizer, and a reuse that never fires differs from a working one only in wall-clock. `--quiet` silences it too | unset |
+| `TURBOSPARK_PILOT_PROBE` | `turbospark-check` | `1` records the one-layer-ahead router prediction beside the actual selection in the `TURBOSPARK_ROUTER_HIST` capture (Gemma only; analysed by `scripts/pilot_ceiling.py`). `self` aims the probe at its own layer instead, where recall MUST read 100% -- the guard that says the instrument works before any finding is believed | unset |
+| `TURBOSPARK_CHAT_DATE` | all (chat template rendering) | Override current date/time (`YYYY-MM-DD` or `YYYY-MM-DDTHH:MM:SS`) in chat templates (e.g. gpt-oss Harmony preamble) | current system UTC time |
+| `TURBOSPARK_PREFILL_CHUNK` | `turbospark-check` | Override prompt-processing chunk size (e.g. `128`, `256`, `512`, `1024`) | unset |
+| `TURBOSPARK_RESID_CAPTURE` | `turbospark-check` | File path to dump residual stream activations (JSON) at prefill-to-decode transition | unset |
+| `TURBOSPARK_SPEC_STATS` | `turbospark-check`, `turbospark-server`, `turbospark-bench` | Set to `1` to log speculative decoding acceptance rate per block position and rollback counts to stderr | unset |
+| `TURBOSPARK_READ_QOS` | all (streaming reads) | Set to `utility` to drop background routed-expert streaming read QoS on macOS from user-initiated to utility | unset |
+| `TURBOSPARK_SHARED_CB` | all (forward pass) | Set to `0` to disable command buffer overlap | `1` (enabled) |
+| `TURBOSPARK_ROUTED_PIPELINE` | all (MoE dispatch) | Set to `0` to disable routed expert pipeline execution | `1` (enabled) |
+| `TURBOSPARK_ROUTED_BATCH` | all (MoE prefill) | Set to `1` to enable experimental routed batch prefill | `0` (off) |
+| `TURBOSPARK_BATCHED_GEMV` | all (MoE prefill) | Set to `1` to enable experimental batched GEMV prefill | `0` (off) |
+| `TURBOSPARK_ROUTER_HIST` | all (MoE runtime) | File path to dump expert routing frequency histogram (JSON) at exit | unset |
+| `TURBOSPARK_ROUTER_TRACE` | all (MoE runtime) | Set to collect per-layer routed expert activation trace | unset |
+| `TURBOSPARK_FFN_HIST` | all (dense runtime) | File path to dump dense FFN neuron activation frequency histogram (JSON) at exit | unset |
+| `TURBOSPARK_MTP_DUMP` | all (MTP drafter) | Directory path to dump MTP intermediate hidden states | unset |
+| `TURBOSPARK_MTP_DRAFT` | `turbospark-check`, `turbospark-server`, `turbospark-bench` | Draft block depth (positive integer) or policy (`0` to disable, unset for `auto`) | unset (`auto`) |
+| `TURBOSPARK_DFLASH_DRAFT` | `turbospark-check`, `turbospark-server`, `turbospark-bench` | DFlash2 draft block depth (positive integer) or policy (`0` to disable, unset for `auto`) | unset (`auto`) |
 
 ### Test oracle and benchmark environment variables
 

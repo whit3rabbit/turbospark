@@ -162,10 +162,10 @@ impl RealForwardRunner {
             real_muse: None,
             real_qwen4: None,
             phases: PhaseCounters::default(),
-            shared_cb_overlap: std::env::var("MFERENCE_SHARED_CB").as_deref() != Ok("0"),
-            routed_pipeline: std::env::var("MFERENCE_ROUTED_PIPELINE").as_deref() != Ok("0"),
-            routed_batch_prefill: std::env::var("MFERENCE_ROUTED_BATCH").as_deref() == Ok("1"),
-            batched_gemv_prefill: std::env::var("MFERENCE_BATCHED_GEMV").as_deref() == Ok("1"),
+            shared_cb_overlap: std::env::var("TURBOSPARK_SHARED_CB").as_deref() != Ok("0"),
+            routed_pipeline: std::env::var("TURBOSPARK_ROUTED_PIPELINE").as_deref() != Ok("0"),
+            routed_batch_prefill: std::env::var("TURBOSPARK_ROUTED_BATCH").as_deref() == Ok("1"),
+            batched_gemv_prefill: std::env::var("TURBOSPARK_BATCHED_GEMV").as_deref() == Ok("1"),
             routed_layouts,
             router_hist,
             ffn_hist,
@@ -235,8 +235,8 @@ impl RealForwardRunner {
                         return Err(RealForwardError::Unsupported(
                             "both the multi-token-prediction head and the DFlash2 drafter \
                                  were asked for by name; a speculative round drafts with ONE \
-                                 model, so name exactly one (MFERENCE_MTP_DRAFT or \
-                                 MFERENCE_DFLASH_DRAFT; --speculative-drafter on the CLI)"
+                                 model, so name exactly one (TURBOSPARK_MTP_DRAFT or \
+                                 TURBOSPARK_DFLASH_DRAFT; --speculative-drafter on the CLI)"
                                 .to_string(),
                         ))
                     }
