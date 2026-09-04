@@ -1,4 +1,6 @@
+import TurboSpark
 import XCTest
+
 @testable import TurboSparkApp
 
 /// Regression test for state#11: `setModelURL`'s `defer { opening = false }`
@@ -31,5 +33,38 @@ final class ModelLoadingStateTests: XCTestCase {
         }
         XCTAssertFalse(appModel.opening, "opening must become false once the (failed) load completes.")
         XCTAssertNotNil(appModel.error, "A bogus path should fail to open and surface an error.")
+    }
+
+    /// state#73: `deleteModel` guarded `!generating` and `!submitting` and not
+    /// `!opening`, so Delete + confirm during a 30-second load removed the
+    /// directory under a mapping still being established -- and the open's
+    /// tail then published a session for a model that no longer exists.
+    func testDeletingAModelIsRefusedWhileAnotherIsLoading() async throws {
+        let appModel = AppModel()
+        let bogusPath = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(UUID().uuidString).gturbo")
+
+        appModel.setModelURL(bogusPath)
+        XCTAssertTrue(appModel.opening, "Precondition: the load has not finished.")
+        XCTAssertFalse(appModel.canDeleteModel, "The UI predicate must refuse it too.")
+
+        appModel.deleteModel(
+            InstalledModel(
+                alias: "not-a-real-alias-\(UUID().uuidString)", repo: "x/y",
+                path: "/nonexistent/model.gturbo", family: "gemma4"))
+
+        // The toast is what separates "refused" from "ran and found nothing
+        // to delete": both leave the disk untouched, and only one says so.
+        XCTAssertEqual(
+            appModel.activeToast?.style, .warning,
+            "Delete during a load must be refused, not attempted.")
+        XCTAssertTrue(
+            appModel.activeToast?.message.contains("while a model is loading") ?? false,
+            "And it must say why. Got: \(appModel.activeToast?.message ?? "none")")
+
+        let deadline = Date().addingTimeInterval(10)
+        while appModel.opening && Date() < deadline {
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
     }
 }

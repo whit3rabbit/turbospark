@@ -96,9 +96,17 @@ public enum AppToolCatalog {
     }
 
     /// Resolves the permission category for any tool name.
-    public static func category(for toolName: String) -> AppToolCategory {
+    ///
+    /// **THE PROJECT ROOT IS PART OF THE QUESTION** (state#71). This resolved
+    /// custom tools with `projectURL: nil`, which is the USER scope alone --
+    /// so a project's own `.turbospark/tools/deploy.json` declaring
+    /// `terminal` was not found here and fell through to the `default` arm's
+    /// `.automation`, gating a shell tool on `permissions.automation` instead
+    /// of `permissions.terminal`. Callers on the generation path pass the
+    /// turn's project.
+    public static func category(for toolName: String, projectURL: URL? = nil) -> AppToolCategory {
         let name = toolName.lowercased()
-        if let custom = CustomToolManager.shared.resolveEffectiveTools(for: nil).first(where: { $0.name.lowercased() == name }) {
+        if let custom = CustomToolManager.shared.resolveEffectiveTools(for: projectURL).first(where: { $0.name.lowercased() == name }) {
             return custom.category
         }
         if name.contains("__") || name.hasPrefix("mcp_") || name.hasPrefix("mcp.") {

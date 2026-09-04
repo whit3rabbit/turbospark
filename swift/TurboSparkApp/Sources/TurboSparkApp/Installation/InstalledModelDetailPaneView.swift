@@ -267,6 +267,9 @@ struct InstalledModelDetailPaneView: View {
             .buttonStyle(.plain)
             .background(Color.red.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
             .foregroundStyle(Color.red)
+            // state#73: this pane offered Delete during a load, where the
+            // model file is mapped by an open still in flight.
+            .disabled(!model.canDeleteModel)
             .help("Delete model files from disk")
         }
     }

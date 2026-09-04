@@ -33,7 +33,8 @@ extension AppModel {
         chatID: UUID, resumeStep: Int, project: AppProject?
     ) async -> Bool {
         let wasActive = stopHookReentryCount > 0
-        let verdict = await evaluateStop(stopHookActive: wasActive)
+        let verdict = await evaluateStop(
+            stopHookActive: wasActive, chatID: chatID, project: project)
         guard verdict.isBlocked, stopHookReentryCount < 8, !isCancellationPending else {
             stopHookReentryCount = 0
             return false
@@ -113,7 +114,8 @@ extension AppModel {
         let extra = self.deferredCallRecords(deferred)
 
         // Evaluate PreToolUse lifecycle hooks first
-        let hookDecision = await self.evaluatePreToolUseHooks(toolName: call.name, toolArguments: call.arguments)
+        let hookDecision = await self.evaluatePreToolUseHooks(
+            toolName: call.name, toolArguments: call.arguments, chatID: chatID, project: project)
 
         // `updatedInput` replaces the corresponding argument keys before
         // anything downstream (permission evaluation, execution, the
@@ -202,7 +204,9 @@ extension AppModel {
             // `PermissionRequest` fires exactly where this app would
             // otherwise show the approval card, so a hook can resolve
             // `allow`/`deny` without ever surfacing the UI.
-            let permVerdict = await self.evaluatePermissionRequest(toolName: call.name, toolArguments: call.arguments)
+            let permVerdict = await self.evaluatePermissionRequest(
+                toolName: call.name, toolArguments: call.arguments, chatID: chatID,
+                project: decisionProject)
 
             if permVerdict.permissionDecision == .allow {
                 await self.runApprovedCall(call, extra: extra, fullContent: fullContent, reasoning: reasoning, chatID: chatID, currentStep: currentStep, project: decisionProject)
@@ -254,7 +258,9 @@ extension AppModel {
             toolArguments: runningCall.arguments,
             toolOutput: toolResult.output,
             toolDurationSeconds: toolResult.durationSeconds,
-            isError: toolResult.isError
+            isError: toolResult.isError,
+            chatID: chatID,
+            project: project
         )
         // Exit-2 stderr (or `decision: "block"`) from a PostToolUse hook is
         // feedback, never a block -- the tool already ran. `additionalContext`

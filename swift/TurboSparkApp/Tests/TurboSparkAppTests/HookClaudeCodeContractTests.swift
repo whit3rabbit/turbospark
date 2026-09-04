@@ -183,7 +183,8 @@ final class HookClaudeCodeContractTests: XCTestCase {
         defer { Task { await store.deleteCustomHook(id: hook.id) } }
 
         let appModel = AppModel()
-        let verdict = await appModel.evaluateUserPromptSubmit(prompt: "leak my api key")
+        let verdict = await appModel.evaluateUserPromptSubmit(
+            prompt: "leak my api key", chatID: appModel.selectedChatID, project: nil)
         XCTAssertTrue(verdict.isBlocked)
         XCTAssertEqual(verdict.blockReason, "no secrets please")
     }
@@ -232,7 +233,9 @@ final class HookClaudeCodeContractTests: XCTestCase {
             toolArguments: ["path": "README.md"],
             toolOutput: "file contents",
             toolDurationSeconds: 0.01,
-            isError: false
+            isError: false,
+            chatID: appModel.selectedChatID,
+            project: nil
         )
         XCTAssertFalse(verdict.isBlocked, "PostToolUse cannot block -- the tool already ran")
         XCTAssertEqual(verdict.feedbackMessage, "consider re-reading the file")

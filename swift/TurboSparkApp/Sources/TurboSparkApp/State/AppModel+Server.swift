@@ -194,9 +194,28 @@ extension AppModel {
             do {
                 let session = try await TurboSparkSession(
                     modelPath: model.path, options: buildOpenOptions())
+                // **THE SERVER CAN BE STOPPED WHILE THIS OPEN IS IN FLIGHT**
+                // (state#72). `stopServer()` has no `serverBusy` guard on
+                // purpose (state#28 needs it reachable during a bind), and it
+                // clears `server` and `serverAttachedSessions` -- while this
+                // task holds `server` as a local captured BEFORE the await
+                // and then writes into the map it just emptied. Every remover
+                // starts with `guard let server`, so that resurrected entry
+                // is unreachable: the weights, the KV cache and the compiled
+                // pipelines stay resident for the life of the process, and
+                // `deleteModel` refuses that model forever. Returning here
+                // drops the only reference and releases the mapping.
+                guard let live = self.server,
+                    Self.attachMayComplete(captured: server, current: live)
+                else {
+                    showToast(
+                        "Server stopped while \(model.alias) was loading; it was not attached.",
+                        style: .warning)
+                    return
+                }
                 let id: String
                 do {
-                    id = try server.attach(session)
+                    id = try live.attach(session)
                 } catch {
                     // The session opened and the attach did not, so nothing
                     // holds the engine but this local -- letting it go is
@@ -213,6 +232,20 @@ extension AppModel {
                 showToast(msg, style: .error)
             }
         }
+    }
+
+    /// Whether an attach begun against `captured` may still write its session
+    /// into `serverAttachedSessions` (state#72).
+    ///
+    /// **IDENTITY, NOT "IS THERE A SERVER".** Stop-then-Start during a long
+    /// open leaves a DIFFERENT server running, and attaching to that one
+    /// would serve a model the user never asked it to. A pure static because
+    /// the call site it guards sits after `TurboSparkSession(modelPath:)`,
+    /// which no test can reach without a real multi-gigabyte install; this is
+    /// the decision that guard makes, and it is what can be asserted.
+    static func attachMayComplete(captured: TurboSparkServer, current: TurboSparkServer?) -> Bool {
+        guard let current else { return false }
+        return current === captured
     }
 
     /// Attaches the Chat pane's own session, so one resident model answers

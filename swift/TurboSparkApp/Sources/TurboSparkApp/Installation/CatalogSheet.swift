@@ -131,7 +131,7 @@ struct CatalogSheet: View {
                             model.deleteModel(item)
                         }
                         .controlSize(.small)
-                        .disabled(model.isInstallingModel || model.isRunning)
+                        .disabled(model.isInstallingModel || !model.canDeleteModel)
                         .help("Delete model from disk")
                         .accessibilityLabel("Delete \(item.alias)")
                         .accessibilityHint("Removes this installed model from disk")

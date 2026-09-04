@@ -409,6 +409,20 @@ extension AppModel {
                 style: .warning)
             return
         }
+        // **AND AN OPEN IN FLIGHT IS THE SAME HAZARD ONE STEP EARLIER**
+        // (state#73). `ts_session_open` runs on the binding's private queue
+        // for tens of seconds on a real install, and `unloadModel()` refuses
+        // while `opening` -- so Delete during a load removed the directory
+        // under a mapping that was still being established, and the open's
+        // tail then published a session for a model that no longer exists.
+        // `opening` is not per model, so this refuses during ANY load; that
+        // is the honest bound, since the load in flight has no row here.
+        guard !opening else {
+            showToast(
+                "Cannot delete '\(model.alias)' while a model is loading. Wait for it to finish.",
+                style: .warning)
+            return
+        }
         // And a SERVED model has a second holder the Chat pane cannot see
         // (`swift/CLAUDE.md` Gotcha 26): the server keeps it resident and
         // keeps answering for it, so removing its files leaves a server

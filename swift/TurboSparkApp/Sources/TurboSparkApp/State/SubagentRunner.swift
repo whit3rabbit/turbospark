@@ -138,6 +138,8 @@ public enum SubagentRunner {
         var totalToolCalls = 0
         var currentTurn = 0
         var finalContent = ""
+        /// How many turns `fitWindow` dropped across the whole run (state#75).
+        var droppedTurns = 0
 
         while currentTurn < maxTurns {
             // `session.cancel()` ends the CURRENT stream cleanly rather than
@@ -163,7 +165,37 @@ public enum SubagentRunner {
             var generatedText = ""
 
             do {
-                let fitted = try await session.fitWindow(history, reasoning: .off)
+                // **THE PROMPT BUDGET IS THE WINDOW MINUS WHAT GENERATION
+                // NEEDS** (state#75, which is state#36 on this path). This
+                // called `fitWindow` at its default bound -- the whole
+                // `maxContext` -- so a history that "fits" leaves no room for
+                // the reply, and the outcome was discarded entirely: a
+                // truncated history was sent with nothing said about it, and
+                // a no-room verdict still called `generate`, which clamps to
+                // one token or throws a context overflow naming neither
+                // cause. A subagent's history grows by a whole tool result
+                // per turn, so it reaches the bound faster than a chat does.
+                let promptBudget = session.info.maxContext > options.maxNewTokens
+                    ? session.info.maxContext - options.maxNewTokens
+                    : session.info.maxContext
+                let fitted = try await session.fitWindow(
+                    history, maxTokens: promptBudget, reasoning: .off)
+                guard fitted.hasRoomForGeneration else {
+                    return SubagentRunResult(
+                        agentName: agent.name,
+                        status: "context_overflow",
+                        finalResponse:
+                            "Subagent stopped: its context no longer fits. "
+                            + "\(fitted.measuredTokens) prompt tokens against a "
+                            + "\(session.info.maxContext)-token window with "
+                            + "\(options.maxNewTokens) reserved for the reply. The text below is "
+                            + "its last turn and is not a finished answer.\n\n\(finalContent)",
+                        totalTurns: currentTurn,
+                        totalToolCalls: totalToolCalls,
+                        durationSeconds: Date().timeIntervalSince(startTime)
+                    )
+                }
+                droppedTurns += fitted.removedTurnCount
                 for try await event in session.generate(fitted.retained, options: options) {
                     try Task.checkCancellation()
                     if case .content(let chunk) = event {
@@ -183,7 +215,8 @@ public enum SubagentRunner {
             }
 
             finalContent = generatedText
-            let parsedCalls = extractToolCalls(from: generatedText)
+            let parsedCalls = extractToolCalls(
+                from: generatedText, projectURL: project?.rootDirectoryURL)
 
             if parsedCalls.isEmpty {
                 // Completed prose answer with no more tool calls
@@ -207,14 +240,24 @@ public enum SubagentRunner {
         // is the last turn's raw text, which on this exit is a tool call the
         // loop never got to execute -- reported as `completed` it reaches the
         // parent as an answer, with unexecuted XML as its content.
-        let exhausted = currentTurn >= maxTurns && !extractToolCalls(from: finalContent).isEmpty
+        let exhausted = currentTurn >= maxTurns && !extractToolCalls(from: finalContent, projectURL: project?.rootDirectoryURL).isEmpty
+        // A run whose own history was truncated says so (state#75). Dropping
+        // turns is a legitimate outcome and a silent one is indistinguishable
+        // from a subagent that simply forgot what it had already done.
+        let truncationNote =
+            droppedTurns > 0
+            ? "[This run dropped \(droppedTurns) earlier "
+                + "\(droppedTurns == 1 ? "turn" : "turns") to fit the context window.]\n\n"
+            : ""
         return SubagentRunResult(
             agentName: agent.name,
             status: exhausted ? "max_turns" : "completed",
-            finalResponse: exhausted
-                ? "Subagent stopped after its \(maxTurns)-turn limit with work still in progress; "
-                    + "the text below is its last turn and is not a finished answer.\n\n\(finalContent)"
-                : finalContent,
+            finalResponse: truncationNote
+                + (exhausted
+                    ? "Subagent stopped after its \(maxTurns)-turn limit with work still in "
+                        + "progress; the text below is its last turn and is not a finished "
+                        + "answer.\n\n\(finalContent)"
+                    : finalContent),
             totalTurns: currentTurn,
             totalToolCalls: totalToolCalls,
             durationSeconds: totalDuration
@@ -227,19 +270,27 @@ public enum SubagentRunner {
     /// the gate: `run` needs a live model session, so a test over
     /// `permissionRefusal` alone stays green with the check deleted from the
     /// loop entirely, which is the exact defect this is guarding.
+    ///
+    /// **A SUBAGENT'S TOOL CALLS RUN THE LIFECYCLE HOOKS TOO** (state#68).
+    /// This gated on `isToolAllowed`, `permissionRefusal` and the depth
+    /// counter and then executed, while the main loop additionally runs
+    /// `PreToolUse` and `PostToolUse` (`AppModel+AgentLoop.swift`). A deny
+    /// hook -- which state#40 made fail CLOSED precisely so it can be relied
+    /// on -- was therefore bypassed on the one path that runs unattended for
+    /// `maxTurns` turns. `PermissionRequest` is deliberately NOT dispatched:
+    /// it fires where the approval card would go up, and a subagent refuses
+    /// `.ask` rather than surfacing one (state#18).
+    ///
+    /// The hook store is not rebound here: it follows the project, and a
+    /// subagent runs under the project of the turn that reached it, which
+    /// `AppModel`'s own dispatch already pointed it at (state#67).
     static func observation(
         for call: AppToolCall, agent: AppAgentDefinition, project: AppProject?,
         chatID: UUID? = nil, depth: Int = 0
     ) async -> ChatMessage {
         if !agent.isToolAllowed(call.name) {
-            return ChatMessage(
-                role: .system,
-                content:
-                    "<tool_error>\nTool '\(call.name)' is disallowed for agent profile '\(agent.name)'.\n</tool_error>"
-            )
-        }
-        if let refusal = permissionRefusal(for: call, project: project) {
-            return ChatMessage(role: .system, content: "<tool_error>\n\(refusal)\n</tool_error>")
+            return errorObservation(
+                "Tool '\(call.name)' is disallowed for agent profile '\(agent.name)'.")
         }
         // **THE NESTING BOUND IS ENFORCED WHERE THE CALL IS SEEN, NOT WHERE
         // THE RUN STARTS** (state#47). `run`'s own guard catches a run that
@@ -248,17 +299,89 @@ public enum SubagentRunner {
         // failed subagent as a tool that broke.
         if call.name.lowercased() == "agent" || call.name.lowercased() == "task" {
             guard depth < maxSubagentDepth else {
-                return ChatMessage(
-                    role: .system,
-                    content: "<tool_error>\nRefused: subagents may nest at most "
-                        + "\(maxSubagentDepth) deep and this one is already at \(depth). "
-                        + "Do the work yourself or report back.\n</tool_error>")
+                return errorObservation(
+                    "Refused: subagents may nest at most \(maxSubagentDepth) deep and this one "
+                        + "is already at \(depth). Do the work yourself or report back.")
             }
         }
+
+        let sessionID = chatID?.uuidString ?? "subagent"
+        let projectDirectory = project?.rootDirectoryPath
+        let hookDecision = await AppHookExecutionEngine.shared.evaluatePreToolUse(
+            sessionID: sessionID,
+            toolName: call.name,
+            toolArguments: call.arguments,
+            workingDirectory: projectDirectory)
+
+        // `updatedInput` is applied BEFORE the permission gate, not after:
+        // the rewritten command is what would run, so it is what has to be
+        // evaluated. The main loop makes the same ordering choice.
+        var call = call
+        if let updated = hookDecision.updatedInput {
+            for (key, value) in updated { call.arguments[key] = value }
+        }
+        if hookDecision.behavior == .deny {
+            let reason = hookDecision.reason ?? "Blocked by PreToolUse hook"
+            return errorObservation("Tool execution blocked by hook: \(reason)")
+        }
+        if hookDecision.behavior == .ask {
+            let reason = hookDecision.reason ?? "a PreToolUse hook requested confirmation"
+            return errorObservation(
+                "Tool '\(call.name)' needs interactive approval (\(reason)), and a subagent runs "
+                    + "with no approval UI. Ask the user to run this call in the main "
+                    + "conversation.")
+        }
+        if let refusal = permissionRefusal(for: call, project: project) {
+            return errorObservation(refusal)
+        }
+
         let toolResult = await AppToolRegistry.execute(
             call: call, in: project, chatID: chatID, subagentDepth: depth)
+
+        var results = await AppHookExecutionEngine.shared.dispatch(
+            event: .postToolUse,
+            sessionID: sessionID,
+            toolName: call.name,
+            toolArguments: call.arguments,
+            toolOutput: toolResult.output,
+            toolDurationSeconds: toolResult.durationSeconds,
+            isError: toolResult.isError,
+            workingDirectory: projectDirectory)
+        if toolResult.isError {
+            results += await AppHookExecutionEngine.shared.dispatch(
+                event: .postToolUseFailure,
+                sessionID: sessionID,
+                toolName: call.name,
+                toolArguments: call.arguments,
+                toolOutput: toolResult.output,
+                toolDurationSeconds: toolResult.durationSeconds,
+                isError: true,
+                workingDirectory: projectDirectory)
+        }
+        let postVerdict = AppHookDecisionAggregator.aggregate(results, event: .postToolUse)
+        var output = toolResult.output
+        // Feedback, never a block: the tool already ran. Same folding the
+        // main loop's `runApprovedCall` does.
+        if let note = postVerdict.blockReason ?? postVerdict.feedbackMessage, !note.isEmpty {
+            output += "\n\n<hook_feedback>\n\(note)\n</hook_feedback>"
+        }
+        if let ctx = postVerdict.additionalContext, !ctx.isEmpty {
+            output += "\n\n<hook_context>\n\(ctx)\n</hook_context>"
+        }
+
         let tag = toolResult.isError ? "tool_error" : "tool_response"
-        return ChatMessage(role: .system, content: "<\(tag)>\n\(toolResult.output)\n</\(tag)>")
+        return ChatMessage(role: .tool, content: "<\(tag)>\n\(output)\n</\(tag)>")
+    }
+
+    /// A refusal fed back to the subagent.
+    ///
+    /// **`.tool`, NOT `.system`** (state#74, which is state#32 on this path).
+    /// The Gemma, ChatML and DeepSeek fallback renderers refuse a mid-history
+    /// system message outright and `fit_window` prices a failing render at
+    /// `u64::MAX`, so it drops turns until the render stops failing -- the run
+    /// silently loses its own history rather than reporting anything.
+    static func errorObservation(_ message: String) -> ChatMessage {
+        ChatMessage(role: .tool, content: "<tool_error>\n\(message)\n</tool_error>")
     }
 
     /// The reason a subagent may not run `call`, or nil when it may.
@@ -314,7 +437,12 @@ public enum SubagentRunner {
 
     // MARK: - Tool Call Parsing Helper
 
-    public static func extractToolCalls(from text: String) -> [AppToolCall] {
+    /// - Parameter projectURL: the workspace root, so a PROJECT-scoped
+    ///   custom tool is classified under its own declared category rather
+    ///   than under the `default` arm (state#71).
+    public static func extractToolCalls(
+        from text: String, projectURL: URL? = nil
+    ) -> [AppToolCall] {
         var calls: [AppToolCall] = []
 
         // XML Format: <tool_call> ... </tool_call>
@@ -341,7 +469,7 @@ public enum SubagentRunner {
                 }
 
                 if !toolName.isEmpty {
-                    let category = AppToolRegistry.category(for: toolName)
+                    let category = AppToolRegistry.category(for: toolName, projectURL: projectURL)
                     let risk = ToolRiskClassifier.assessRisk(name: toolName, arguments: arguments)
                     calls.append(AppToolCall(
                         name: toolName,
@@ -375,7 +503,7 @@ public enum SubagentRunner {
                                 args[k] = "\(v)"
                             }
                         }
-                        let category = AppToolRegistry.category(for: toolName)
+                        let category = AppToolRegistry.category(for: toolName, projectURL: projectURL)
                         let risk = ToolRiskClassifier.assessRisk(name: toolName, arguments: args)
                         calls.append(AppToolCall(
                             name: toolName,

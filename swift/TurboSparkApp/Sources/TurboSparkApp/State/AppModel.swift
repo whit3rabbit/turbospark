@@ -457,7 +457,9 @@ public final class AppModel: ObservableObject {
         // which reads as lost data rather than as a file set aside (state#42).
         surfaceStorageIssues()
         Task {
-            _ = await self.dispatchLifecycleHook(event: .sessionStart, source: "startup")
+            _ = await self.dispatchLifecycleHook(
+                event: .sessionStart, chatID: self.selectedChatID, project: self.selectedProject,
+                source: "startup")
         }
     }
 
@@ -603,6 +605,16 @@ public final class AppModel: ObservableObject {
     /// Whether the active model session can be reloaded.
     public var canReloadModel: Bool {
         !generating && !submitting && !opening && session != nil
+    }
+
+    /// Whether a model's files may be removed from disk right now (state#73).
+    ///
+    /// The same three flags the load/unload predicates carry, and `opening`
+    /// is the one that was missing at every call site: an open runs on the
+    /// binding's private queue for tens of seconds on a real install, and
+    /// `deleteModel` would happily remove the directory under it.
+    public var canDeleteModel: Bool {
+        !generating && !submitting && !opening
     }
 
     /// Whether the active model session can be unloaded.

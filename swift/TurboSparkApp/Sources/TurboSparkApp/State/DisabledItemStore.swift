@@ -43,9 +43,20 @@ enum DisabledItemStore {
 
     private static var fileURL: URL { AppStorageRoot.file("disabled_items.json") }
 
+    /// Guards `cache` (state#69).
+    ///
+    /// `SkillManager` and `AgentManager` are both `@unchecked Sendable` and
+    /// both read their disabled list from `AppToolRegistry.execute`, a
+    /// `nonisolated async` function on the cooperative pool, while the
+    /// settings panes write it on the main actor. `nonisolated(unsafe)` on
+    /// the cache said the race was accepted; it was not examined.
+    /// Non-recursive, so `loadLocked` is the only entry point that may be
+    /// called with it already held.
+    private static let lock = NSLock()
     private static nonisolated(unsafe) var cache: Archive?
 
-    private static func load() -> Archive {
+    /// Requires `lock` to be held.
+    private static func loadLocked() -> Archive {
         if let cache { return cache }
         var archive =
             AppJSONStore.load(Archive.self, from: fileURL, label: "disabled items") ?? Archive()
@@ -78,7 +89,9 @@ enum DisabledItemStore {
     }
 
     static func names(for kind: Kind) -> Set<String> {
-        let archive = load()
+        lock.lock()
+        defer { lock.unlock() }
+        let archive = loadLocked()
         switch kind {
         case .skills: return Set(archive.skills)
         case .agents: return Set(archive.agents)
@@ -86,7 +99,9 @@ enum DisabledItemStore {
     }
 
     static func setNames(_ names: Set<String>, for kind: Kind) {
-        var archive = load()
+        lock.lock()
+        defer { lock.unlock() }
+        var archive = loadLocked()
         switch kind {
         case .skills: archive.skills = names.sorted()
         case .agents: archive.agents = names.sorted()
@@ -97,6 +112,8 @@ enum DisabledItemStore {
 
     /// Drops the in-memory copy. For tests that write the file directly.
     static func invalidateCache() {
+        lock.lock()
         cache = nil
+        lock.unlock()
     }
 }

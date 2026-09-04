@@ -26,8 +26,11 @@ extension AppModel {
         outputPromptText = ""
         persistChats()
         updateTokenEstimate()
+        let createdID = chat.id
+        let createdProject = projects.first { $0.id == assignedProjectID }
         Task {
-            _ = await self.dispatchLifecycleHook(event: .sessionStart, source: "clear")
+            _ = await self.dispatchLifecycleHook(
+                event: .sessionStart, chatID: createdID, project: createdProject, source: "clear")
         }
         return chat.id
     }
@@ -61,6 +64,10 @@ extension AppModel {
 
     public func deleteChat(id: UUID) {
         guard !generating, let index = chats.firstIndex(where: { $0.id == id }) else { return }
+        // Captured before the removal below: `SessionEnd` describes the chat
+        // that is going away, and after `chats.remove` there is no row left
+        // to resolve its project from (state#67).
+        let deletedProject = project(forChat: id)
         // A pending approval on THIS chat has no chat left to land its
         // decision in once it's gone -- Approve/Deny would silently no-op
         // against a stale ID (state#9's own reasoning, applied to deletion
@@ -86,7 +93,8 @@ extension AppModel {
             // and the ids are UUIDs, so nothing would ever collect them
             // (state#49).
             await SessionApprovalStore.shared.clear(sessionID: id.uuidString)
-            _ = await self.dispatchSessionEnd(reason: "clear")
+            _ = await self.dispatchSessionEnd(
+                reason: "clear", chatID: id, project: deletedProject)
         }
     }
 
@@ -102,6 +110,7 @@ extension AppModel {
     public func clearOutput() {
         guard !generating else { return }
         let clearedChatID = selectedChatID
+        let clearedProject = project(forChat: clearedChatID)
         if let index = selectedChatIndex {
             chats[index].messages.removeAll()
             chats[index].contextSummary = nil
@@ -122,7 +131,8 @@ extension AppModel {
         updateTokenEstimate()
         Task {
             await SessionApprovalStore.shared.clear(sessionID: clearedChatID.uuidString)
-            _ = await self.dispatchSessionEnd(reason: "clear")
+            _ = await self.dispatchSessionEnd(
+                reason: "clear", chatID: clearedChatID, project: clearedProject)
         }
     }
 

@@ -8,6 +8,136 @@ final class CustomToolsTests: XCTestCase {
         return dir
     }
 
+    // MARK: - state#70: a custom tool is workspace-rooted like any other
+
+    func testACustomToolIsRefusedInAChatWithNoProject() async throws {
+        // `workspaceRootedToolNames` is a static list of the SHIPPED tool
+        // names, so the one class of tool whose command a user writes was the
+        // one class the rootless refusal could not name -- it fell through to
+        // the `default` arm and spawned `/bin/zsh -c` with the `/dev/null`
+        // placeholder as its working directory.
+        //
+        // `globalToolsDirectory` is under `AppStorageRoot`, which XCTest
+        // redirects (`swift/CLAUDE.md` Gotcha 37), so this writes no real
+        // user data.
+        let dir = CustomToolManager.shared.globalToolsDirectory
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let toolFile = dir.appendingPathComponent("rootless_probe.json")
+        let json = """
+        {
+            "name": "rootless_probe",
+            "toolDescription": "probe",
+            "category": "terminal",
+            "execution": { "type": "command", "command": "echo ran-anyway" }
+        }
+        """
+        try json.write(to: toolFile, atomically: true, encoding: .utf8)
+        CustomToolManager.shared.reloadGlobalTools()
+        defer {
+            try? FileManager.default.removeItem(at: toolFile)
+            CustomToolManager.shared.reloadGlobalTools()
+        }
+
+        let result = await AppToolRegistry.execute(
+            call: AppToolCall(name: "rootless_probe", arguments: [:]), in: nil)
+
+        XCTAssertTrue(result.isError, "A projectless chat has no root to run a command in.")
+        XCTAssertFalse(
+            result.output.contains("ran-anyway"),
+            "The command must not have executed. Got: \(result.output)")
+        XCTAssertTrue(
+            result.output.contains("needs a project workspace"),
+            "And the refusal must say why. Got: \(result.output)")
+    }
+
+    func testAnArgumentValueCannotAddASecondCommand() async throws {
+        let tempDir = try makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let witness = tempDir.appendingPathComponent("pwned.txt")
+
+        let tool = CustomToolDefinition(
+            name: "echo_arg",
+            toolDescription: "echoes",
+            execution: CustomToolExecution(type: .command, command: "echo {{msg}}")
+        )
+        let output = try await CustomToolExecutor.execute(
+            tool: tool,
+            arguments: ["msg": "hi; touch '\(witness.path)'"],
+            projectRootURL: tempDir
+        )
+
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: witness.path),
+            "An argument value is model-controlled text: it must reach zsh as one quoted word, "
+                + "never as a second command.")
+        XCTAssertTrue(
+            output.contains("hi; touch"),
+            "And it must still be passed through literally. Got: \(output)")
+    }
+
+    func testAnArgumentValueIsAlsoAvailableInTheEnvironment() async throws {
+        let tempDir = try makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let tool = CustomToolDefinition(
+            name: "read_env",
+            toolDescription: "reads",
+            execution: CustomToolExecution(type: .command, command: "printf '%s' \"$TOOL_ARG_MSG\"")
+        )
+        let output = try await CustomToolExecutor.execute(
+            tool: tool, arguments: ["msg": "from-the-environment"], projectRootURL: tempDir)
+        XCTAssertTrue(
+            output.contains("from-the-environment"),
+            "A tool author who wants the raw bytes with no quoting question gets them here. "
+                + "Got: \(output)")
+    }
+
+    func testSubstitutionIsOnePassSoAValueCannotBeSubstitutedInto() {
+        // Repeated `replacingOccurrences` re-scans text a previous argument's
+        // value produced, so a value containing another marker was itself
+        // expanded -- the same class of bug as the quoting, one level out.
+        let rendered = CustomToolExecutor.substituteArguments(
+            into: "run {{a}} {{b}}", arguments: ["a": "{{b}}", "b": "SECRET"])
+        XCTAssertEqual(rendered, "run '{{b}}' 'SECRET'")
+    }
+
+    func testAMarkerNamingNoArgumentIsLeftAlone() {
+        XCTAssertEqual(
+            CustomToolExecutor.substituteArguments(into: "cd $HOME", arguments: [:]),
+            "cd $HOME",
+            "A template referring to a real environment variable must still work.")
+    }
+
+    // MARK: - state#71: a PROJECT custom tool declares its own category
+
+    func testAProjectCustomToolIsClassifiedUnderTheCategoryItDeclares() throws {
+        let tempDir = try makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let toolsDir = tempDir.appendingPathComponent(".turbospark/tools", isDirectory: true)
+        try FileManager.default.createDirectory(at: toolsDir, withIntermediateDirectories: true)
+        let json = """
+        {
+            "name": "deploy_thing",
+            "toolDescription": "deploys",
+            "category": "terminal",
+            "execution": { "type": "command", "command": "echo deploy" }
+        }
+        """
+        try json.write(
+            to: toolsDir.appendingPathComponent("deploy_thing.json"), atomically: true,
+            encoding: .utf8)
+
+        XCTAssertEqual(
+            AppToolCatalog.category(for: "deploy_thing", projectURL: tempDir), .terminal,
+            "A shell tool gated on `permissions.automation` instead of `permissions.terminal` is "
+                + "gated on the wrong switch.")
+        // And the reason it was wrong: with no root there is no project scope
+        // to resolve it in, so it falls to the default arm.
+        XCTAssertEqual(
+            AppToolCatalog.category(for: "deploy_thing", projectURL: nil), .automation,
+            "Pinned so the fallback stays visible: this is what the whole app used to answer.")
+    }
+
     func testCustomToolDefinitionToOpenAITool() {
         let execution = CustomToolExecution(
             type: .command,

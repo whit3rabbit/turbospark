@@ -63,8 +63,12 @@ extension AppModel {
     /// sends no project and therefore no tool definitions there -- text that
     /// merely looks like a tool call was never actually offered any tool to
     /// invoke, and must not be executed as though it had been.
-    public func extractToolCalls(from text: String) -> [AppToolCall] {
+    /// - Parameter project: the TURN's project, whose root is what makes a
+    ///   project-scoped custom tool resolvable when its category is
+    ///   classified (state#71).
+    public func extractToolCalls(from text: String, project: AppProject?) -> [AppToolCall] {
         guard interactionMode == .projects else { return [] }
+        let projectURL = project?.rootDirectoryURL
         var calls: [AppToolCall] = []
 
         // 1. XML Format: <tool_call> ... <name>X</name> ... <arguments>Y</arguments> ... </tool_call>
@@ -91,7 +95,7 @@ extension AppModel {
                 }
 
                 if !toolName.isEmpty {
-                    let category = AppToolRegistry.category(for: toolName)
+                    let category = AppToolRegistry.category(for: toolName, projectURL: projectURL)
                     let risk = ToolRiskClassifier.assessRisk(name: toolName, arguments: arguments)
                     calls.append(AppToolCall(
                         name: toolName,
@@ -125,7 +129,7 @@ extension AppModel {
                                 args[k] = "\(v)"
                             }
                         }
-                        let category = AppToolRegistry.category(for: toolName)
+                        let category = AppToolRegistry.category(for: toolName, projectURL: projectURL)
                         let risk = ToolRiskClassifier.assessRisk(name: toolName, arguments: args)
                         calls.append(AppToolCall(
                             name: toolName,
@@ -222,7 +226,9 @@ extension AppModel {
                 toolArguments: call.arguments,
                 toolOutput: result.output,
                 toolDurationSeconds: result.durationSeconds,
-                isError: result.isError
+                isError: result.isError,
+                chatID: chatID,
+                project: project
             )
             // Exit-2 stderr (or `decision: "block"`) from a PostToolUse hook
             // is feedback, never a block -- the tool already ran. Folded
@@ -279,7 +285,9 @@ extension AppModel {
                 }
                 self.toolExecutionTask = nil
             }
-            _ = await self.dispatchNotification(message: "Tool call '\(call.name)' was denied by the user.")
+            _ = await self.dispatchNotification(
+                message: "Tool call '\(call.name)' was denied by the user.",
+                chatID: chatID, project: project)
             await self.continueOrStop(afterStep: originStep, chatID: chatID, project: project)
         }
     }

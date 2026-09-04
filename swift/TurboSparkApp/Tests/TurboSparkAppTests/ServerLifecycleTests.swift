@@ -36,6 +36,37 @@ final class ServerLifecycleTests: XCTestCase {
         }
     }
 
+    // MARK: - state#72: a stop during an ATTACH must not orphan the session
+
+    func testAnAttachDoesNotCompleteAgainstAServerThatIsGoneOrReplaced() throws {
+        // `attachModelToServer` captures `server` as a local, awaits a model
+        // open that runs for tens of seconds on a real install, and then
+        // writes into `serverAttachedSessions`. `stopServer()` in between
+        // clears both -- and every remover starts with `guard let server`, so
+        // the resurrected entry is unreachable and the weights stay resident
+        // for the life of the process.
+        //
+        // The call site itself needs a real install to reach (the guard sits
+        // after `TurboSparkSession(modelPath:)`), so what is asserted here is
+        // the decision it makes.
+        let first = try TurboSparkServer.start(options: ServerOptions(port: 0))
+        defer { first.stop() }
+
+        XCTAssertFalse(
+            AppModel.attachMayComplete(captured: first, current: nil),
+            "The server was stopped while the model was loading: nothing may be attached to it.")
+        XCTAssertTrue(
+            AppModel.attachMayComplete(captured: first, current: first),
+            "The ordinary case must still attach, or the guard is a blanket refusal.")
+
+        let second = try TurboSparkServer.start(options: ServerOptions(port: 0))
+        defer { second.stop() }
+        XCTAssertFalse(
+            AppModel.attachMayComplete(captured: first, current: second),
+            "Stop-then-Start leaves a DIFFERENT server running, and a model opened for the first "
+                + "one must not be served by it.")
+    }
+
     func testAStopDuringAStartDoesNotLeaveAServerListening() async throws {
         let appModel = AppModel()
         let port = try borrowFreePort()

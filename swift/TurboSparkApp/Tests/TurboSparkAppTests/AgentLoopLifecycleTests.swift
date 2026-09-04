@@ -94,6 +94,66 @@ final class AgentLoopLifecycleTests: XCTestCase {
             "It must not run in whatever project the user selected while it waited.")
     }
 
+    // MARK: - state#67: a hook runs in the TURN's project, not the selection
+
+    func testAPostToolUseHookRunsInTheProjectTheCallWasProposedUnder() async throws {
+        let appModel = AppModel()
+        let chat = AppChat(title: "one")
+        appModel.chats = [chat]
+        appModel.selectedChatID = chat.id
+
+        let (projectA, cleanA) = try makeProject(
+            name: "A", marker: "only-in-a.txt",
+            permissions: AppProjectPermissions(mode: .auto, fileRead: .allow))
+        let (projectB, cleanB) = try makeProject(
+            name: "B", marker: "only-in-b.txt",
+            permissions: AppProjectPermissions(mode: .auto, fileRead: .allow))
+        defer {
+            cleanA()
+            cleanB()
+        }
+        appModel.projects = [projectA, projectB]
+        appModel.selectProject(id: projectA.id)
+
+        // The hook records the workspace it was told about. `TURBOSPARK_PROJECT_DIR`
+        // is set from the dispatch's `workingDirectory` and by nothing else,
+        // so the file it writes IS the answer to "whose project ran this".
+        let witness = FileManager.default.temporaryDirectory
+            .appendingPathComponent("hook_cwd_\(UUID().uuidString).txt")
+        defer { try? FileManager.default.removeItem(at: witness) }
+        let store = AppHookStore.shared
+        let hook = AppHookCommand(
+            name: "Record Project",
+            event: .postToolUse,
+            type: .command,
+            command: "printf '%s' \"$TURBOSPARK_PROJECT_DIR\" > '\(witness.path)'",
+            sourceType: .custom
+        )
+        store.addCustomHook(hook)
+        defer { store.deleteCustomHook(id: hook.id) }
+
+        let call = AppToolCall(name: "list_directory", arguments: ["path": "."], category: .fileRead)
+        appModel.pendingToolCall = call
+        appModel.pendingToolCallChatID = chat.id
+        appModel.pendingToolCallStep = 0
+        appModel.pendingToolCallProject = projectA
+
+        // **THROUGH `selectProject`, NOT BY ASSIGNING THE ID.** The sibling
+        // case above sets `selectedProjectID` directly, which is exactly what
+        // this one cannot do: `selectProject` is what REBINDS `AppHookStore`
+        // to the new root, and the rebind is half of the defect.
+        appModel.selectProject(id: projectB.id)
+
+        appModel.approvePendingToolCall(id: call.id)
+        try await waitUntil { FileManager.default.fileExists(atPath: witness.path) }
+
+        let recorded = (try? String(contentsOf: witness, encoding: .utf8)) ?? ""
+        XCTAssertEqual(
+            recorded, projectA.rootDirectoryPath,
+            "A PostToolUse hook describes the call that just ran, so it belongs to the project "
+                + "that call ran in -- not to whatever the user selected while it waited.")
+    }
+
     // MARK: - A2: `generating` covers tool execution, not just token streaming
 
     func testGeneratingStaysTrueWhileAnApprovedToolRuns() async throws {

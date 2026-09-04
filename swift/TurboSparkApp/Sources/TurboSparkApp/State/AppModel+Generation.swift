@@ -57,6 +57,13 @@ extension AppModel {
         // hook runs must not land the message in whatever chat the user moved
         // to. Same capture `executeGenerationTurn` makes for the turn itself.
         let submissionChatID = selectedChatID
+        // The project this submission's hooks run under. A chat that does not
+        // exist yet has no `projectID`, so the selection is what it will be
+        // created with -- the same value `run()`'s lazy create below passes
+        // (state#67).
+        let submissionProject =
+            turnProject(chatID: submissionChatID)
+            ?? (interactionMode == .projects ? selectedProject : nil)
 
         // Set synchronously, before the `Task`: `generating` is not raised
         // until `executeGenerationTurn`, so nothing else refuses a second
@@ -84,7 +91,8 @@ extension AppModel {
                 if !self.generating { self.isCancellationPending = false }
             }
             self.stopHookReentryCount = 0
-            let verdict = await self.evaluateUserPromptSubmit(prompt: fullUserContent)
+            let verdict = await self.evaluateUserPromptSubmit(
+                prompt: fullUserContent, chatID: submissionChatID, project: submissionProject)
             guard !Task.isCancelled else { return }
             if verdict.isBlocked {
                 self.error = verdict.blockReason ?? "Prompt blocked by a UserPromptSubmit hook."
@@ -121,7 +129,9 @@ extension AppModel {
                 // (the very first prompt in a fresh window), which had no
                 // dispatch at all.
                 Task {
-                    _ = await self.dispatchLifecycleHook(event: .sessionStart, source: "startup")
+                    _ = await self.dispatchLifecycleHook(
+                        event: .sessionStart, chatID: submissionChatID,
+                        project: submissionProject, source: "startup")
                 }
             }
 
@@ -317,7 +327,8 @@ extension AppModel {
                                 from: generatedContent, chatIndex: idx, project: turnProject)
                         }
                         let generatedReasoning = self.outputReasoningText
-                        let parsedCalls = self.extractToolCalls(from: generatedContent)
+                        let parsedCalls = self.extractToolCalls(
+                            from: generatedContent, project: turnProject)
 
                         // One helper for the four dispatch sites below, so the
                         // "first call runs, the rest are recorded as refused"
@@ -520,6 +531,7 @@ extension AppModel {
     /// persisted.
     func finishCancelled(chatID: UUID? = nil, reason: String = "cancelled") {
         let targetID = chatID ?? selectedChatID
+        let targetProject = turnProject(chatID: targetID)
         if !outputText.isEmpty || !outputReasoningText.isEmpty {
             if let idx = chats.firstIndex(where: { $0.id == targetID }) {
                 chats[idx].messages.append(AppChatMessage(
@@ -541,7 +553,8 @@ extension AppModel {
         // straight back into the same failure. Fire-and-forget rather than
         // awaited, so a slow hook cannot delay the cancel/error UI update.
         Task {
-            _ = await self.evaluateStop(stopHookActive: false)
+            _ = await self.evaluateStop(
+                stopHookActive: false, chatID: targetID, project: targetProject)
         }
     }
 

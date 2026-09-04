@@ -245,9 +245,26 @@ public final class SkillManager: @unchecked Sendable {
     /// Drops the memoized resolution. Call after anything that changes what
     /// is on disk or which skills are enabled.
     public func invalidateResolutionCache() {
+        cacheLock.lock()
         resolutionCache = nil
+        cacheLock.unlock()
     }
 
+    /// **GUARDED, BECAUSE THIS TYPE IS `@unchecked Sendable` AND THE CACHE IS
+    /// READ OFF THE MAIN ACTOR** (state#69). The writers are main-actor
+    /// (`reloadSkills`, `invalidateResolutionCache`, the settings pane
+    /// bodies) and the reader is not: `AppToolRegistry.execute` is a
+    /// `nonisolated async` function running on the cooperative pool, and the
+    /// `skill` tool resolves through here. A tuple of an optional and an
+    /// array is several words wide, so an unsynchronized read racing a write
+    /// is a torn read rather than a stale one. `@MainActor` on the type would
+    /// force every tool call to hop, which is why this is a lock.
+    ///
+    /// The compute deliberately runs OUTSIDE the lock: two concurrent misses
+    /// duplicate a directory walk, where holding it across `computeEffectiveSkills`
+    /// would serialize a filesystem scan behind a lock this type also takes
+    /// from its own discovery path.
+    private let cacheLock = NSLock()
     private var resolutionCache: (key: String, skills: [AppSkill])?
 
     /// Resolves the skills in effect, memoized per project root.
@@ -257,11 +274,16 @@ public final class SkillManager: @unchecked Sendable {
     /// actor. Same reasoning as `AgentManager`'s cache next door.
     public func resolveEffectiveSkills(projectURL: URL?) -> [AppSkill] {
         let key = projectURL?.standardizedFileURL.path ?? ""
-        if let cached = resolutionCache, cached.key == key {
+        cacheLock.lock()
+        let cached = resolutionCache
+        cacheLock.unlock()
+        if let cached, cached.key == key {
             return cached.skills
         }
         let skills = computeEffectiveSkills(projectURL: projectURL)
+        cacheLock.lock()
         resolutionCache = (key, skills)
+        cacheLock.unlock()
         return skills
     }
 

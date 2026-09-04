@@ -247,9 +247,10 @@ public enum AppToolRegistry {
         )
     ]
 
-    /// Resolves category for a tool name.
-    public static func category(for toolName: String) -> AppToolCategory {
-        return AppToolCatalog.category(for: toolName)
+    /// Resolves category for a tool name. `projectURL` is what makes a
+    /// PROJECT-scoped custom tool resolvable (state#71).
+    public static func category(for toolName: String, projectURL: URL? = nil) -> AppToolCategory {
+        return AppToolCatalog.category(for: toolName, projectURL: projectURL)
     }
 
     /// Active session provider for running subagent tasks.
@@ -354,10 +355,22 @@ public enum AppToolRegistry {
         // the task tools and `askuserquestion` need no root and still work in
         // a projectless chat, which is the case the old fallback was really
         // reaching for.
+        //
+        // **`workspaceRootedToolNames` IS STATIC AND A CUSTOM TOOL IS NOT IN
+        // IT** (state#70). A user-defined tool resolves at the `default` arm
+        // below and spawns `/bin/zsh -c` with `currentDirectoryURL` set to
+        // the `/dev/null` placeholder -- so the one class of tool whose
+        // command a user WRITES was the one class this refusal could not
+        // name. The list stays static (it is the shipped vocabulary); the
+        // custom names are resolved beside it.
         let resolvedRoot = project?.rootDirectoryURL
-        if resolvedRoot == nil, workspaceRootedToolNames.contains(call.name.lowercased())
-            || call.name.lowercased().hasPrefix("mcp__")
-        {
+        let lowerName = call.name.lowercased()
+        let needsWorkspaceRoot =
+            workspaceRootedToolNames.contains(lowerName)
+            || lowerName.hasPrefix("mcp__")
+            || CustomToolManager.shared.resolveEffectiveTools(for: nil)
+                .contains { $0.name.lowercased() == lowerName }
+        if resolvedRoot == nil, needsWorkspaceRoot {
             let elapsed = Date().timeIntervalSince(startTime)
             return AppToolResult(
                 callID: call.id,

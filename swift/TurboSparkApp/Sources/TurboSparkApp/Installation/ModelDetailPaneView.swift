@@ -262,7 +262,7 @@ struct ModelDetailPaneView: View {
                         .accessibilityLabel("Delete \(entry.alias)")
                 }
                 .controlSize(.regular)
-                .disabled(model.opening || model.isRunning)
+                .disabled(!model.canDeleteModel)
                 .help("Delete model from disk")
                 .accessibilityHint("Removes the model files from disk after confirmation")
             } else {

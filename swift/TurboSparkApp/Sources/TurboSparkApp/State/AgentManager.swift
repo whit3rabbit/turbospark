@@ -287,6 +287,13 @@ public final class AgentManager: @unchecked Sendable {
     /// project subdirectories and parsing every `.md` and `.json` under them,
     /// synchronously on the main actor. Cached per root, invalidated
     /// explicitly.
+    ///
+    /// **GUARDED, BECAUSE THIS TYPE IS `@unchecked Sendable` AND THE CACHE IS
+    /// READ OFF THE MAIN ACTOR** (state#69). See `SkillManager`'s twin: the
+    /// writers are main-actor and `AppToolRegistry.execute` -- a
+    /// `nonisolated async` function on the cooperative pool -- is not, so the
+    /// `agent` tool's two `findAgent` calls race every settings-pane write.
+    private let cacheLock = NSLock()
     private var resolutionCache: (key: String, result: AgentResolution)?
 
     /// One resolution: the agents to offer, and the project files refused.
@@ -301,7 +308,9 @@ public final class AgentManager: @unchecked Sendable {
     /// Drops the cached resolution. Call after anything that changes what is
     /// on disk or which agents are enabled.
     public func invalidateResolutionCache() {
+        cacheLock.lock()
         resolutionCache = nil
+        cacheLock.unlock()
     }
 
     /// Project agent names held to a built-in's tool ceiling.
@@ -315,11 +324,17 @@ public final class AgentManager: @unchecked Sendable {
 
     private func resolution(projectURL: URL?) -> AgentResolution {
         let key = projectURL?.standardizedFileURL.path ?? ""
-        if let cached = resolutionCache, cached.key == key {
+        cacheLock.lock()
+        let cached = resolutionCache
+        cacheLock.unlock()
+        if let cached, cached.key == key {
             return cached.result
         }
+        // Computed outside the lock; see `SkillManager`'s twin for why.
         let result = computeResolution(projectURL: projectURL)
+        cacheLock.lock()
         resolutionCache = (key, result)
+        cacheLock.unlock()
         return result
     }
 
