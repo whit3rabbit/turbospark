@@ -54,6 +54,28 @@ fn chained_pass(context: &mut MetalContext, label: &'static str) -> Vec<f16> {
 
 #[test]
 fn profiles_each_dispatch_without_changing_results() {
+    // A virtualized Metal device (CI's "Apple Paravirtual device") exposes
+    // no GPU performance-counter hardware at all, and the `metal` crate's
+    // `Device::counter_sets` (called from `new_sample_buffer` the moment
+    // profiling is enabled below) hard-panics on that rather than
+    // returning an empty set -- a `thread caused non-unwinding panic.
+    // aborting`, not a catchable `Result` or `panic!`, so this has to be
+    // checked BEFORE enabling `MFERENCE_DISPATCH_PROFILE` at all rather
+    // than caught after. `new()` alone never touches the counter API, so
+    // creating a context to read the device name first is safe on every
+    // device.
+    let context = MetalContext::new().expect("Metal device");
+    let device_name = context.device().name();
+    if device_name.contains("Paravirtual") {
+        println!(
+            "device {device_name:?} is virtualized and exposes no GPU counter hardware; \
+             skipping the dispatch-profile test rather than triggering the metal crate's \
+             abort on Device::counter_sets"
+        );
+        return;
+    }
+    drop(context);
+
     // Set before anything touches the GPU: `enabled()` caches the env var
     // in a `OnceLock` on the first pipeline creation, so profiling cannot
     // be turned on mid-process.
