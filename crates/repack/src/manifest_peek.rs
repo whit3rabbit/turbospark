@@ -133,6 +133,7 @@ pub fn peek_manifest_arch(model_dir: &Path) -> Result<ArchConfig, String> {
         conv_kernel_size: m.ple_conv_kernel_size.unwrap_or(0),
         layer_ids: m.ple_layer_ids.clone().unwrap_or_default(),
         seed: m.ple_seed.unwrap_or(0),
+        eos_token_id: m.ple_eos_token_id.unwrap_or(0),
     };
 
     // THE VISION TOWER, AND `unwrap_or(0)` RATHER THAN THE BASELINE, which is

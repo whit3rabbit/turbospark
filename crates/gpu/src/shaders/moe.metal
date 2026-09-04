@@ -2,7 +2,12 @@
 using namespace metal;
 
 constant constexpr uint kMoEGroupSize = 64;
-constant constexpr uint kMaxStreamedExperts = 8;
+// Widened from 8 (docs/QWEN4_PHASE0.md's qwen4_exp bring-up: REAP-288 declares
+// top_k_experts=10, the first checkpoint in this port's history to exceed the
+// prior ceiling). 16 rather than exactly 10 to leave headroom the way
+// ALLOWED_CACHE_SLOTS' progression does, matching this port's own convention
+// (AGENTS.md Gotcha 36) rather than hardcoding to one checkpoint's number.
+constant constexpr uint kMaxStreamedExperts = 16;
 constant constexpr float kGeluSqrt2OverPi = 0.7978845608028654f;
 constant constexpr float kGeluCubicCoeff = 0.044715f;
 
@@ -1078,11 +1083,21 @@ kernel void moe_phase2_down_reduce_k8(
     device half* y [[buffer(5)]],
     constant uint& D [[buffer(6)]],
     constant uint& F [[buffer(7)]],
+    constant uint& top_k [[buffer(8)]],
     uint d [[threadgroup_position_in_grid]],
     uint sg_idx [[simdgroup_index_in_threadgroup]],
     uint lane [[thread_index_in_simdgroup]]
 ) {
-    threadgroup float partial[8];
+    // `partial` is sized at the compile-time CEILING (kMaxStreamedExperts,
+    // 16 as of qwen4_exp's bring-up); the reduce below is bounded by the
+    // RUNTIME `top_k` instead, which the host always sets equal to the
+    // dispatched simdgroup count (one simdgroup per slot -- see
+    // `encode_moe_phase2`'s doc). So a top_k=8 caller (Gemma 4, the
+    // pre-existing families) dispatches and reduces over exactly 8 slots,
+    // unchanged from before this widening, while qwen4_exp's top_k=10
+    // dispatches and reduces over exactly 10 -- neither wastes compute on
+    // padding slots the way the fixed-8-unconditional design once implied.
+    threadgroup float partial[kMaxStreamedExperts];
     const uint DD = moe_fc_d(D);
     const uint FF = moe_fc_f(F);
     if (d >= DD) return;
@@ -1101,8 +1116,9 @@ kernel void moe_phase2_down_reduce_k8(
 
     if (sg_idx == 0 && lane == 0) {
         float acc = float(residual[d]);
-        acc += partial[0]; acc += partial[1]; acc += partial[2]; acc += partial[3];
-        acc += partial[4]; acc += partial[5]; acc += partial[6]; acc += partial[7];
+        for (uint slot = 0; slot < top_k; ++slot) {
+            acc += partial[slot];
+        }
         y[d] = half(acc);
     }
 }

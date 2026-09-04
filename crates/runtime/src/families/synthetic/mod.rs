@@ -81,6 +81,9 @@ impl RealForwardRunner {
         position: usize,
         logits: &mut [LogitValue],
     ) -> Result<(), RealForwardError> {
+        if self.real_qwen4.is_some() {
+            return self.produce_real_qwen4(token, position, logits);
+        }
         if self.real_qwen.is_some() {
             return self.produce_real_qwen(token, position, logits);
         }

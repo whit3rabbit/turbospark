@@ -220,6 +220,14 @@ fn parse_qwen4_extensions(
         // a source of truth -- but the FORMAT's default is what an absent key
         // means, never a neighbour's value (AGENTS.md Gotcha 39).
         seed: QWEN4_PLE_DEFAULT_SEED,
+        // The n-gram context resets at EOS boundaries
+        // (`docs/QWEN4_PHASE0.md` item 4); `text_config.eos_token_id` is a
+        // SCALAR, distinct from `generation_config.json`'s two-entry stop
+        // list, which is why this reads `tc` and not that other file. A
+        // missing key is a hard parse error (`i` returns `Err`), matching
+        // the reference's own `validate_architecture`, which refuses PLE
+        // with no EOS set rather than guessing one.
+        eos_token_id: i("eos_token_id")?,
     };
     // The head count divides the embedding width in the reference
     // (`head_dim = embed_dim // ngram_heads`), so a config where it does not

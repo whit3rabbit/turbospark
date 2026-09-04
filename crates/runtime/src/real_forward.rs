@@ -176,6 +176,13 @@ pub struct RealForwardRunner {
     /// per-layer router bias, attention sinks and per-projection biases.
     pub(crate) real_gpt_oss: Option<crate::families::gptoss::RealGptOssState>,
     pub(crate) real_muse: Option<crate::families::museglimmer::RealMuseState>,
+    /// Present for a `qwen4_exp` install (Phase 3 of its bring-up,
+    /// `docs/QWEN4_PHASE0.md`). Its own state rather than a variant of
+    /// `real_qwen`: the residual stream is `hc_count` times wider, every
+    /// layer runs two hyper-connections in place of a plain residual add,
+    /// and one layer carries the PLE n-gram table -- none of which
+    /// `RealQwenState`'s buffers are shaped for.
+    pub(crate) real_qwen4: Option<crate::families::qwen4::RealQwen4State>,
     pub(crate) phases: PhaseCounters,
     /// Whether the shared-expert branch rides its own command buffer so it
     /// overlaps the host's expert `pread` (see `real_forward_gemma4.rs`).

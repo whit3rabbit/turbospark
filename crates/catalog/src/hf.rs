@@ -183,12 +183,45 @@ impl Client {
         request.send().map_err(|e| format!("GET {url}: {e}"))
     }
 
+    /// [`Self::send`] under the same retry ladder
+    /// `repack::HttpRangeSource::read_chunk_retrying` carries for weight
+    /// ranges (`crates/repack/CLAUDE.md` Gotcha 14) -- a SEPARATE
+    /// implementation rather than a shared one, because this module's own
+    /// doc says why the two clients stay apart (a second client sharing the
+    /// ranged downloader's chunking/retry/`http1_only()` machinery would be
+    /// the wrong tool for a KB-scale GET). Found live: a real `qwen4_exp`
+    /// pull's sidecar fetch (`vocab.json`) hit a 429 and aborted the whole
+    /// 68 GiB walk on its first occurrence, the exact failure mode Gotcha 14
+    /// already named and fixed -- for the OTHER client. This one had never
+    /// received the same fix, because nothing had hit it here before.
+    ///
+    /// Every status this returns is handed to the caller UNCHANGED once it
+    /// is not throttled (or attempts run out), so `get`/`get_optional`/
+    /// `content_length`'s own 401/403/404 interpretation is untouched.
+    fn send_retrying(&self, url: &str) -> Result<reqwest::blocking::Response, String> {
+        const ATTEMPTS: usize = 8;
+        for attempt in 0..ATTEMPTS {
+            let response = self.send(url)?;
+            let status = response.status().as_u16();
+            if !throttled_status(status) || attempt + 1 == ATTEMPTS {
+                return Ok(response);
+            }
+            let retry_after = response
+                .headers()
+                .get(reqwest::header::RETRY_AFTER)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.trim().parse::<u64>().ok());
+            std::thread::sleep(throttle_backoff(attempt, retry_after));
+        }
+        unreachable!("ATTEMPTS is nonzero, so the loop always returns by its last iteration")
+    }
+
     /// One small file. Fails with a message that names the likely cause for
     /// the two statuses that are not bugs: 401/403 (gated, needs `HF_TOKEN`)
     /// and 404 (the file is not in this repo at this revision, which is the
     /// sidecar-list trap).
     pub fn get(&self, url: &str) -> Result<Vec<u8>, String> {
-        let response = self.send(url)?;
+        let response = self.send_retrying(url)?;
         let status = response.status().as_u16();
         match status {
             200 => response
@@ -214,7 +247,7 @@ impl Client {
     /// `get` returning `None` on 404 rather than an error, for the files a
     /// caller is probing for rather than requiring.
     pub fn get_optional(&self, url: &str) -> Result<Option<Vec<u8>>, String> {
-        let response = self.send(url)?;
+        let response = self.send_retrying(url)?;
         match response.status().as_u16() {
             200 => response
                 .bytes()
@@ -317,6 +350,31 @@ impl Client {
     }
 }
 
+/// Whether a non-2xx status is the server asking to be retried later, rather
+/// than a verdict about the request. Mirrors
+/// `repack::ranged_download::http::throttled_status` exactly (429 plus the
+/// 5xx gateway pair); duplicated rather than shared because that function is
+/// private to a crate this one does not depend on for exactly the reason
+/// [`Client`]'s own doc gives.
+fn throttled_status(status: u16) -> bool {
+    matches!(status, 429 | 500 | 502 | 503 | 504)
+}
+
+/// How long to wait before re-issuing a throttled small-file GET. Mirrors
+/// `repack::ranged_download::http::throttle_backoff`: the server's own
+/// `Retry-After` wins when it sent one, otherwise an exponential backoff
+/// from one second (not the sub-second range a plain retry ladder would use,
+/// which re-hammers a rate limiter faster than its window moves), capped at
+/// 30s so eight attempts stay bounded at about two minutes.
+fn throttle_backoff(attempt: usize, retry_after: Option<u64>) -> std::time::Duration {
+    const CAP: u64 = 30;
+    let seconds = match retry_after {
+        Some(after) => after.min(CAP),
+        None => (1u64 << attempt.min(5)).min(CAP),
+    };
+    std::time::Duration::from_secs(seconds)
+}
+
 /// Read `cardData.base_model`, which the API spells as either a string or a
 /// list of them and which a caller that assumed one shape gets `None` for
 /// half the time. A list means the artifact was merged or converted from
@@ -334,7 +392,39 @@ fn base_model(value: serde_json::Value) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::base_model;
+    use super::{base_model, throttle_backoff, throttled_status};
+
+    /// 429 and the 5xx pair retry; nothing else does -- the exact set
+    /// `repack`'s own `throttled_status` uses, which is what lets this
+    /// module's retry ladder reproduce that fix rather than a narrower or
+    /// wider version of it.
+    #[test]
+    fn throttled_status_matches_the_ranged_downloaders_set() {
+        assert!(throttled_status(429));
+        for s in [500, 502, 503, 504] {
+            assert!(
+                throttled_status(s),
+                "{s} is a gateway failure, not a verdict"
+            );
+        }
+        for s in [400, 401, 403, 404, 416, 451] {
+            assert!(!throttled_status(s), "{s} will not start working");
+        }
+    }
+
+    /// The server's own `Retry-After` wins over the guessed backoff, and
+    /// both are capped so a server naming an hour cannot park a caller for
+    /// one.
+    #[test]
+    fn throttle_backoff_prefers_retry_after_and_caps_both_arms() {
+        assert_eq!(throttle_backoff(0, Some(7)).as_secs(), 7);
+        assert_eq!(throttle_backoff(5, Some(3)).as_secs(), 3);
+        assert_eq!(throttle_backoff(0, Some(3600)).as_secs(), 30);
+        let secs: Vec<u64> = (0..8)
+            .map(|a| throttle_backoff(a, None).as_secs())
+            .collect();
+        assert_eq!(secs, vec![1, 2, 4, 8, 16, 30, 30, 30]);
+    }
 
     /// Both shapes the API actually returns. Measured live 2026-08-18:
     /// `unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF` answers a one-element

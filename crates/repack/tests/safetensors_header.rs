@@ -74,6 +74,44 @@ fn parse_header_rejects_malformed_json() {
     assert!(matches!(err, SafetensorsHeaderError::InvalidJson(_)));
 }
 
+/// `"__metadata__": null`, the exact shape a real converter writes
+/// (`sh0wie/Qwen3.8-Flash-Next-REAP-288-MLX-4bit`'s shard headers), which an
+/// untagged `Tensor | Metadata(BTreeMap<..>)` enum cannot deserialize from
+/// `null` at all -- it failed the WHOLE header with a message naming neither
+/// the key nor the reason. `null` means the same as an absent key: no
+/// metadata, never an error.
+#[test]
+fn parse_header_accepts_a_null_metadata_value() {
+    let json = r#"{
+        "__metadata__": null,
+        "weight.0": {"dtype": "F32", "shape": [2, 64], "data_offsets": [0, 512]}
+    }"#;
+    let file = build_file(json, 512);
+    let header = parse_header(&file, 1 << 20).unwrap();
+    assert_eq!(header.tensors.len(), 1);
+    assert_eq!(header.metadata, None);
+}
+
+/// A `__metadata__` value that is neither `null` nor an object is still
+/// refused, by name -- the fix widens what a REAL converter's `null` means,
+/// not what any other shape is allowed to mean.
+#[test]
+fn parse_header_rejects_a_non_null_non_object_metadata_value() {
+    let json = r#"{
+        "__metadata__": "not an object",
+        "weight.0": {"dtype": "F32", "shape": [2, 64], "data_offsets": [0, 512]}
+    }"#;
+    let file = build_file(json, 512);
+    let err = parse_header(&file, 1 << 20).unwrap_err();
+    let SafetensorsHeaderError::InvalidJson(detail) = err else {
+        panic!("expected InvalidJson, got {err:?}");
+    };
+    assert!(
+        detail.contains("__metadata__"),
+        "message should name __metadata__, got: {detail}"
+    );
+}
+
 #[test]
 fn required_prefix_len_matches_header_len_plus_eight() {
     let file = build_file(sample_header_json(), 1024);

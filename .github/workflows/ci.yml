@@ -30,16 +30,43 @@ jobs:
             ${{ runner.os }}-cargo-
 
       - name: Format check
+        if: matrix.os == 'macos-latest'
         run: cargo fmt --check
 
       - name: Clippy
+        if: matrix.os == 'macos-latest'
         run: cargo clippy --workspace --tests
 
       - name: Build
+        if: matrix.os == 'macos-latest'
         run: cargo build --workspace
 
       - name: Test
+        if: matrix.os == 'macos-latest'
         run: cargo test --workspace
+
+      # Everything else in this workspace either needs Metal directly
+      # (crates/gpu) or depends on a crate that does (runtime, repack,
+      # catalog, server, cli, bench), and has never been meant to build on
+      # Linux -- AGENTS.md's own verification policy excludes them from its
+      # local cross-target check for the same reason. `turbospark-gpu` is
+      # IN this list on purpose despite being Metal-only: its crate root
+      # gates every module behind `#[cfg(target_os = "macos")]`, so a clean
+      # compile here means it correctly reduces to an empty shell rather
+      # than leaking an unconditional macOS-only symbol -- which is exactly
+      # what happened once before, silently, until this check existed
+      # (AGENTS.md Gotcha 8: crates/gpu and crates/streaming each lost a
+      # module's cfg gate and nothing caught it until someone ran this by
+      # hand). This is the same command AGENTS.md documents for verifying
+      # portability from a Mac via `--target x86_64-unknown-linux-gnu`; on
+      # a native Linux runner the target flag is unnecessary.
+      - name: Portable-subset check (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          cargo check \
+            -p turbospark-core -p turbospark-compute -p turbospark-model-io \
+            -p turbospark-streaming -p turbospark-selection -p turbospark-invocation \
+            -p turbospark-window-fit -p turbospark-gpu -p turbospark-vision-io
 
   # The release's packaging path, exercised OUTSIDE a release. Everything from
   # here to the DMG (Info.plist, the resource-bundle copy, the ad-hoc

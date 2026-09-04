@@ -191,6 +191,7 @@ pub(crate) fn build_manifest_json(
             "pleConvKernelSize": arch.ple.conv_kernel_size,
             "pleLayerIds": arch.ple.layer_ids,
             "pleSeed": arch.ple.seed,
+            "pleEosTokenId": arch.ple.eos_token_id,
         },
         "quant": null,
         "files": files,

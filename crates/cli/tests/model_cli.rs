@@ -20,6 +20,14 @@ fn bin() -> Command {
         "TURBOSPARK_HOME",
         std::env::temp_dir().join(format!("turbospark-model-cli-{}", std::process::id())),
     );
+    // Same reasoning, for the machine's CHIP: `recommend_fits_against_the_
+    // named_context` asserts against gemma4's measured row, which was taken
+    // on "Apple M4 Max" (models.json). The real Metal device name is
+    // whatever chip runs this suite -- a real Mac's own marketing name, or a
+    // CI runner's virtualized one ("Apple Paravirtual device", which matches
+    // no measured row at all) -- so without this override the test's result
+    // depends on which machine happens to run it rather than on the code.
+    command.env("TURBOSPARK_TEST_CHIP", "Apple M4 Max");
     command
 }
 

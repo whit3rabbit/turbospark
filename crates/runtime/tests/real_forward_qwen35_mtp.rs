@@ -92,7 +92,41 @@ const DEPTH: &str = "2";
 /// input. Note every reachability case in this file stayed green across that
 /// change, which is Gotcha 51's point restated: this constant was the only
 /// thing that could see it.
-const FROZEN_DRAFT_DIGEST: &str = "fd43a56b";
+///
+/// **DEVICE-BRANCHED, since 2026-09-04**; see `real_forward_muse.rs`'s
+/// identical fix for the full account (CI's virtualized macOS runner does
+/// not reproduce GPU floating-point arithmetic bit-for-bit against real
+/// Apple Silicon, and a pure tolerance replacement was proven too weak
+/// against `real_forward_qwen35_dflash.rs`'s documented
+/// `DFLASH_RESIDUAL_EPS` bug). The final comparison below runs the
+/// ORIGINAL exact `digest(&draft) == FROZEN_DRAFT_DIGEST` on real Apple
+/// Silicon and falls back to a tolerant comparison against
+/// `FROZEN_DRAFT_LOGITS` only on a virtualized device. The reproducibility
+/// check two lines below (`digest(&draft) == digest(&again)`, same runner,
+/// two walks in one process) stays EXACT unconditionally on purpose: both
+/// sides run on the SAME machine in the SAME process, so there is no
+/// cross-hardware axis for it to absorb, and weakening it would hide
+/// genuine nondeterminism. `FROZEN_DRAFT_LOGITS` is recovered from the same
+/// real-hardware run the exact hash (`fd43a56b`) was taken over.
+#[rustfmt::skip]
+const FROZEN_DRAFT_LOGITS: [f32; VOCAB as usize] = [
+    3.5878906, -4.3046875, -2.5898438, 27.8125, -0.8105469, 2.6113281, 23.90625, -11.078125,
+    -11.65625, -14.3515625, 1.6289063, -3.2480469, -1.3173828, 11.9140625, -5.0039063, 4.7070313,
+    -8.796875, -10.734375, -14.9140625, 4.34375, 20.0, 15.109375, 9.2109375, -7.390625,
+    7.6015625, 9.421875, 8.546875, -9.9765625, 7.2460938, 1.9804688, -0.06390381, 0.31689453,
+    -1.6572266, -26.890625, 4.875, 1.6074219, -11.9765625, -16.390625, 1.7871094, -12.6640625,
+    6.1210938, 18.390625, 14.1484375, -23.234375, -4.7070313, 1.3574219, 10.7734375, 5.890625,
+    -0.5463867, -21.703125, 7.8671875, 3.5390625, 10.3203125, -11.6484375, -4.8164063, 2.2246094,
+    18.171875, 10.703125, -5.890625, -8.5390625, -1.4609375, -6.046875, 14.09375, -7.296875,
+    4.2617188, -10.515625, 5.828125, -6.8125, -0.61816406, 6.4414063, -5.4414063, 0.052215576,
+    2.1425781, 15.59375, 6.1367188, -17.828125, 12.7734375, -1.4873047, -14.2109375, 5.4921875,
+    0.24963379, -12.859375, 12.09375, 12.078125, -6.671875, -3.1074219, 13.9921875, 6.8828125,
+    9.25, 6.671875, -9.734375, -3.7050781, -7.453125, -19.171875, -4.5039063, 7.3164063,
+    -26.984375, 8.59375, -15.03125, 8.0234375, 2.890625, 12.125, 4.7070313, 4.0585938,
+    -10.203125, -11.5546875, -20.890625, 11.9140625, 10.5390625, 3.7558594, -2.9316406, -11.7734375,
+    -10.890625, 10.765625, 3.8085938, 10.328125, 16.015625, -5.34375, 0.5629883, 21.4375,
+    11.625, -8.9296875, 1.5722656, 7.8046875, 2.2792969, 8.8671875, 7.625, 4.5,
+];
 
 fn temp_dir(tag: &str) -> std::path::PathBuf {
     let n = COUNTER.fetch_add(1, Ordering::SeqCst);
@@ -321,12 +355,37 @@ fn the_draft_logits_have_a_frozen_digest() {
     );
 
     println!("draft digest = {}", digest(&draft));
+    let context = gpu::MetalContext::new().expect("Metal device");
+    let device_name = context.device().name().to_string();
+    drop(context);
+    if device_name.contains("Paravirtual") {
+        println!(
+            "device {device_name:?} is virtualized, not the real Apple Silicon this digest was \
+             taken on; comparing against the frozen reference with a tolerance instead"
+        );
+        assert_eq!(draft.len(), FROZEN_DRAFT_LOGITS.len());
+        for (i, (got, &want)) in draft.iter().zip(FROZEN_DRAFT_LOGITS.iter()).enumerate() {
+            let got = got.to_f32();
+            let diff = (got - want).abs();
+            let tol = 0.02_f32.max(want.abs() * 0.02);
+            assert!(
+                diff <= tol,
+                "logit {i}: the draft logits moved: got {got}, want {want} (diff {diff}, \
+                 tolerance {tol}); see this test's doc comment before re-freezing"
+            );
+        }
+        return;
+    }
     assert_eq!(
         digest(&draft),
         FROZEN_DRAFT_DIGEST,
-        "the draft logits moved; see this test's doc comment before re-freezing"
+        "the draft step's arithmetic moved"
     );
 }
+
+/// The real-hardware branch's comparison target, taken over the same
+/// real-hardware run `FROZEN_DRAFT_LOGITS` above was recovered from.
+const FROZEN_DRAFT_DIGEST: &str = "fd43a56b";
 
 // -- Reachability, which the digest cannot localize -------------------------
 

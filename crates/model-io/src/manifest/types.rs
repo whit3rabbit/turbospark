@@ -191,6 +191,8 @@ pub struct ManifestArch {
     pub ple_layer_ids: Option<Vec<i64>>,
     #[serde(default)]
     pub ple_seed: Option<i64>,
+    #[serde(default)]
+    pub ple_eos_token_id: Option<i64>,
     /// Hash-routed leading MoE layer count.
     #[serde(default)]
     pub num_hash_routed_layers: Option<i64>,

@@ -279,6 +279,11 @@ pub(crate) fn validate_arch(a: &ManifestArch, e: &ArchConfig) -> Result<(), Mode
         e.ple.conv_kernel_size
     );
     check!("pleSeed", a.ple_seed.unwrap_or(0), e.ple.seed);
+    check!(
+        "pleEosTokenId",
+        a.ple_eos_token_id.unwrap_or(0),
+        e.ple.eos_token_id
+    );
     // The id LIST, compared whole. An absent key is an empty list, which is
     // what `PleConfig::NONE` carries -- so a length check alone would pass an
     // install that declares the right NUMBER of PLE layers at the wrong

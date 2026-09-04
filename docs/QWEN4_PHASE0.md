@@ -250,13 +250,31 @@ APPLICATION is **signed i64 and cannot overflow**, by construction:
 (verified: true). So the port uses i64 here, not u64, and the plan's worry
 about "sign traps" is real for the derivation and absent for the application.
 
+**CORRECTED 2026-09-02, against the actual reference (this section's
+original `ctx = [prev_2, prev_1, cur]` labeling was WRONG and was never run
+against source).** `modular_qwen4_exp.py` (`fc5c5bde8`, lines 682-699)
+builds `shifted_tokens[shift]` for `shift in 0..ngram_size`, where
+`shifted_tokens[0]` is the CURRENT token (shift 0, i.e. unshifted) and
+`shifted_tokens[s]` for `s >= 1` is the token `s` positions back. The
+multiplier index pairs with the SHIFT, not with a fixed "oldest-to-newest"
+position:
+
 ```
-ctx      = [prev_2, prev_1, cur]            # shift_right_ignore_eos, per item below
+ctx      = [cur, prev_1, prev_2]            # ctx[s] = shifted_tokens[s], mult[s] pairs with shift s
 mixed_2  = ctx[0]*mult[0] ^ ctx[1]*mult[1]              # bigram  -> heads 0..7
 mixed_3  = ctx[0]*mult[0] ^ ctx[1]*mult[1] ^ ctx[2]*mult[2]   # trigram -> heads 8..15
 row[h]   = (mixed_{2 or 3} % head_vocab_sizes[h]) + head_offsets[h]
 ple_embed = concat over h of table[row[h]]              # 16 * 160 = 2560
 ```
+
+The original draft had `ctx = [prev_2, prev_1, cur]`, which pairs `mult[0]`
+with `prev_2` and OMITS `cur` from the bigram entirely (`prev_2*mult[0] ^
+prev_1*mult[1]`, a two-tokens-back bigram, not a bigram at all) -- a
+plausible-looking formula that decodes fluently and hashes every n-gram to
+the wrong row. Caught only by fetching and reading the actual source rather
+than trusting this document's own summary; see AGENTS.md's "check the finding
+against your own tree" and Gotcha 62 for why a note about an artifact is not
+the artifact, even when the note is this one.
 
 One hash value per n-gram order, taken modulo eight DIFFERENT primes to give
 eight decorrelated slots. Cheap, and easy to mis-read as eight hashes.
@@ -266,6 +284,37 @@ pads the start of a sequence with EOS. The EOS used is
 `text_config.eos_token_id = 248044` (scalar), NOT the two-entry
 `generation_config.json` list. `validate_architecture` refuses PLE with no
 EOS set, which is what says this is load-bearing rather than incidental.
+
+**A DECODE-TIME SHIFT REGISTER, DERIVED FROM THE MASKING RULE RATHER THAN
+GUESSED.** The reference computes `shifted_tokens[s]` over a whole sequence
+with `torch.cummax` over EOS positions; a one-token-at-a-time decode loop
+needs the equivalent update rule for its 2-slot state (recurrent state 2,
+"PLE n-gram TOKEN IDS", `ngram_size - 1 = 2` long). Working through
+`_shift_right_ignore_eos`'s validity condition (`source_position >
+previous_eos`) at a single new position `t` collapses to this, carrying
+`(prev_1, prev_2)` as the values to use for THIS step and updating them for
+the next:
+
+```
+# state entering step t: (prev_1, prev_2), both eos_token_id at sequence start
+use (cur = x, prev_1, prev_2) to compute ctx for this step's hash
+# then update for step t + 1:
+new_prev_2 = eos_token_id if x == eos_token_id else prev_1
+new_prev_1 = x                                              # always, unconditionally
+```
+
+Two things make this rule exact rather than approximate, both provable from
+the masking condition rather than assumed. `new_prev_1 = x` unconditionally
+because `shifted_tokens[1]` at the next position is masked to `eos_token_id`
+*exactly* when `x` itself is `eos_token_id` -- so reading the raw fed token
+already agrees with the masked value in every case, eos or not. And
+`new_prev_2` collapses to "`eos_token_id` if `x` was eos, else carry `prev_1`
+forward" because on a non-eos step it is definitionally what
+`shifted_tokens[1]` was at THIS step (the same masked value this step already
+computed as its own `prev_1` input), and on an eos step the masking rule
+forces it to `eos_token_id` regardless of what the two-back token actually
+was -- the one case where "just read the raw FIFO" would silently disagree
+with the reference for exactly one token after every EOS.
 
 ### The module
 

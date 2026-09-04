@@ -48,6 +48,35 @@ fn every_pattern() -> Vec<(&'static str, &'static str)> {
             "language_model.model.layers.1.ple.ple_embedding.ngram_embedding.shard_127.weight",
             "shard:weight:127",
         ),
+        // --- the SAME container, spelled PLURAL with a dot before the
+        // index rather than singular with an underscore --
+        // `sh0wie/Qwen3.8-Flash-Next-REAP-288-MLX-4bit`'s own convention,
+        // confirmed against a real streamed install rather than a
+        // published index: a name under this spelling missed BOTH markers
+        // before `NGRAM_SHARDS_MARKER` existed, fell through to
+        // `LmResident`, and reached `pass_through_packed` with the trunk's
+        // group size (64) instead of the table's own (32) -- a shape-
+        // mismatch refusal that named a group-size arithmetic problem
+        // rather than the real classification miss. The two publishers'
+        // converters disagree on this one string; both are tested because
+        // nothing here confirms `pipenetwork`'s form (above) stopped being
+        // real when this one was found.
+        (
+            "language_model.model.layers.1.ple.ple_embedding.ngram_embedding.shards.0.weight",
+            "shard:weight:0",
+        ),
+        (
+            "language_model.model.layers.1.ple.ple_embedding.ngram_embedding.shards.0.scales",
+            "shard:scales:0",
+        ),
+        (
+            "language_model.model.layers.1.ple.ple_embedding.ngram_embedding.shards.0.biases",
+            "shard:biases:0",
+        ),
+        (
+            "language_model.model.layers.1.ple.ple_embedding.ngram_embedding.shards.127.weight",
+            "shard:weight:127",
+        ),
         // --- the three int64 buffers, which BF16 narrowing would destroy ---
         (
             "language_model.model.layers.1.ple.ple_embedding.layer_multipliers",

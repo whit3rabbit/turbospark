@@ -385,6 +385,8 @@ pub fn qwen4_exp_125b_a6b() -> ArchConfig {
             layer_ids: vec![2],
             // NOT in the file; the reference's default. See the doc above.
             seed: 1234,
+            // `text_config.eos_token_id`, `docs/QWEN4_PHASE0.md` item 4.
+            eos_token_id: 248_044,
         },
     }
 }

@@ -281,6 +281,7 @@ impl Fixture {
                 (&y_buf, 0),
                 d as u32,
                 f as u32,
+                top_k as u32,
                 false,
             )
             .expect("decode phase2");

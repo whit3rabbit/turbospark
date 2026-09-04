@@ -359,12 +359,24 @@ const DEFAULT_RECOMMEND_CONTEXT: u32 = 4096;
 /// harness -- from the model-management binary, to reach one `sysctl` call.
 /// If they ever disagree, the symptom is a measured row not matching, which
 /// prints as `unknown` rather than as a wrong number.
+///
+/// **`TURBOSPARK_TEST_CHIP` overrides the probed name, for the same reason
+/// `tests/model_cli.rs` gives itself a private `TURBOSPARK_HOME`: a
+/// developer's real hardware must not be what makes this pass or fail.**
+/// The Metal device on a virtualized CI runner reports its own name (e.g.
+/// "Apple Paravirtual device"), which matches no chip any measured row in
+/// `models.json` was ever taken on -- so `measured_for` correctly answers
+/// `None` for every row there, and a test asserting a measured row's text
+/// is asserting something only a specific developer's real chip can produce.
+/// Unset in every non-test invocation, so nothing about resolving `recommend`
+/// for a real user reads this variable at all.
 #[cfg(target_os = "macos")]
 fn machine(options: &Options) -> catalog::Machine {
-    let (working_set, chip) = match runtime::recommended_max_working_set() {
+    let (working_set, probed_chip) = match runtime::recommended_max_working_set() {
         Some((bytes, name)) => (Some(bytes), name),
         None => (None, String::new()),
     };
+    let chip = std::env::var("TURBOSPARK_TEST_CHIP").unwrap_or(probed_chip);
     catalog::Machine {
         physical_bytes: options.budget.unwrap_or_else(runtime::physical_memory),
         working_set_bytes: working_set,
@@ -379,6 +391,6 @@ fn machine(options: &Options) -> catalog::Machine {
         physical_bytes: options.budget.unwrap_or(0),
         working_set_bytes: None,
         load_guard: options.load_guard,
-        chip: String::new(),
+        chip: std::env::var("TURBOSPARK_TEST_CHIP").unwrap_or_default(),
     }
 }

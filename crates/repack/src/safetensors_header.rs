@@ -126,44 +126,55 @@ pub fn parse_header(
     let text = std::str::from_utf8(json_bytes).map_err(|_| SafetensorsHeaderError::InvalidUtf8)?;
 
     #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum Entry {
-        Tensor {
-            dtype: String,
-            shape: Vec<u64>,
-            data_offsets: (u64, u64),
-        },
-        Metadata(BTreeMap<String, String>),
+    struct TensorEntry {
+        dtype: String,
+        shape: Vec<u64>,
+        data_offsets: (u64, u64),
     }
 
-    let raw: BTreeMap<String, Entry> = serde_json::from_str(text)
+    // Every entry's value goes through `serde_json::Value` first rather than
+    // an untagged `Entry` enum with a `Tensor` and a `Metadata` variant:
+    // real converters write `"__metadata__": null` (confirmed against a real
+    // published checkpoint, not assumed), and neither variant of an
+    // object-shaped enum can deserialize from JSON `null` -- the untagged
+    // form failed the whole file with "data did not match any variant",
+    // which named neither the key nor why. `__metadata__` is handled by
+    // NAME rather than by shape, because `null` and `{...}` are its only
+    // two legitimate values and a tensor entry is never named that.
+    let raw: BTreeMap<String, serde_json::Value> = serde_json::from_str(text)
         .map_err(|e| SafetensorsHeaderError::InvalidJson(e.to_string()))?;
 
     let mut tensors = BTreeMap::new();
     let mut metadata = None;
-    for (key, entry) in raw {
-        match entry {
-            Entry::Tensor {
-                dtype,
-                shape,
-                data_offsets,
-            } => {
-                tensors.insert(
-                    key,
-                    TensorInfo {
-                        dtype,
-                        shape,
-                        data_offsets,
-                    },
-                );
+    for (key, value) in raw {
+        if key == "__metadata__" {
+            match value {
+                serde_json::Value::Null => {}
+                serde_json::Value::Object(_) => {
+                    let m: BTreeMap<String, String> =
+                        serde_json::from_value(value).map_err(|e| {
+                            SafetensorsHeaderError::InvalidJson(format!("__metadata__: {e}"))
+                        })?;
+                    metadata = Some(m);
+                }
+                other => {
+                    return Err(SafetensorsHeaderError::InvalidJson(format!(
+                        "__metadata__ is neither null nor an object: {other}"
+                    )))
+                }
             }
-            Entry::Metadata(m) if key == "__metadata__" => metadata = Some(m),
-            Entry::Metadata(_) => {
-                return Err(SafetensorsHeaderError::InvalidJson(format!(
-                    "entry \"{key}\" is neither a tensor descriptor nor __metadata__"
-                )))
-            }
+            continue;
         }
+        let entry: TensorEntry = serde_json::from_value(value)
+            .map_err(|e| SafetensorsHeaderError::InvalidJson(format!("{key}: {e}")))?;
+        tensors.insert(
+            key,
+            TensorInfo {
+                dtype: entry.dtype,
+                shape: entry.shape,
+                data_offsets: entry.data_offsets,
+            },
+        );
     }
 
     Ok(SafetensorsHeader {

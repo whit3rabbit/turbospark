@@ -160,6 +160,7 @@ impl RealForwardRunner {
             real_llama: None,
             real_gpt_oss: None,
             real_muse: None,
+            real_qwen4: None,
             phases: PhaseCounters::default(),
             shared_cb_overlap: std::env::var("MFERENCE_SHARED_CB").as_deref() != Ok("0"),
             routed_pipeline: std::env::var("MFERENCE_ROUTED_PIPELINE").as_deref() != Ok("0"),
@@ -296,9 +297,15 @@ impl RealForwardRunner {
             // residual adds are gated-residual injects, so no line of
             // `families/qwen/` serves it unchanged. See `ModelFamily::Qwen4Exp`.
             model_io::ModelFamily::Qwen4Exp => {
-                return Err(RealForwardError::Unsupported(
-                    "the qwen4exp family has no decode flow yet".to_string(),
-                ));
+                runner.real_qwen4 = Some(crate::families::qwen4::RealQwen4State::build(
+                    &mut runner.context,
+                    &runner.weights,
+                    &runner.index,
+                    &runner.arch,
+                    dir,
+                    max_context,
+                    runner.expert_cache_slots,
+                )?);
             }
             // A FIFTH FLOW, not a sixth family on an existing one: all four
             // of `gpt-oss`'s differences (per-projection biases, attention

@@ -19,6 +19,17 @@
 use half::f16;
 use turbospark_gpu::{MetalContext, MoeExpertOffsets, RoutedBlobsBuffer, MAX_STREAMED_EXPERTS};
 
+/// The GGUF decode pairs' own fixed reduce width (`moe_gguf.metal`'s
+/// `partial[8]`, one array per block type, none of them touched by
+/// `qwen4_exp`'s widening of the vendored INT4-affine pair's
+/// [`MAX_STREAMED_EXPERTS`] ceiling to 16). Was `MAX_STREAMED_EXPERTS` until
+/// that widening, when the two constants stopped agreeing: every
+/// `all_eight_*_slots_participate` case below built `MAX_STREAMED_EXPERTS`
+/// (16) experts and summed all 16 into its CPU reference while the GPU
+/// kernel it drives still only reduces its own hardcoded first 8, which
+/// read as a broken kernel rather than as a stale test constant.
+const GGUF_FIXED_SLOTS: usize = 8;
+
 /// One block layout. Q6_K arrived here late and only on the PHASE 2 side:
 /// when the type first landed, the only real file using it put it in
 /// `output.weight`, and this comment said no checkpoint puts it in an expert.
@@ -507,7 +518,7 @@ fn the_silu_activation_constant_reaches_the_gguf_kernels() {
 /// two-slot case cannot: there, six slots are covered by the zero-fill.
 #[test]
 fn all_eight_slots_participate() {
-    run_case(Q8_0, false, MAX_STREAMED_EXPERTS);
+    run_case(Q8_0, false, GGUF_FIXED_SLOTS);
 }
 
 #[test]
@@ -524,7 +535,7 @@ fn the_silu_activation_constant_reaches_the_q4_k_kernels() {
 
 #[test]
 fn all_eight_q4_k_slots_participate() {
-    run_case(Q4K, false, MAX_STREAMED_EXPERTS);
+    run_case(Q4K, false, GGUF_FIXED_SLOTS);
 }
 
 /// The Phase S candidate's normal layer, and the first MIXED expert any test
@@ -536,7 +547,7 @@ fn the_iq3_xxs_over_iq4_nl_expert_matches_the_cpu_reference() {
 
 #[test]
 fn all_eight_iq3_xxs_slots_participate() {
-    run_case(IQ3_MIX, false, MAX_STREAMED_EXPERTS);
+    run_case(IQ3_MIX, false, GGUF_FIXED_SLOTS);
 }
 
 /// The candidate's layer 29: IQ4_XS gate/up over a Q8_0 down. Also the case
@@ -571,7 +582,7 @@ fn the_silu_activation_constant_reaches_the_q6_k_kernel() {
 
 #[test]
 fn all_eight_q6_k_slots_participate() {
-    run_case(Q4K_OVER_Q6K, false, MAX_STREAMED_EXPERTS);
+    run_case(Q4K_OVER_Q6K, false, GGUF_FIXED_SLOTS);
 }
 
 /// ROADMAP M5's pair, on the shared body every other block type runs through.
@@ -611,7 +622,7 @@ fn the_silu_activation_constant_reaches_the_mxfp4_kernels() {
 
 #[test]
 fn all_eight_mxfp4_slots_participate() {
-    run_case(MXFP4, false, MAX_STREAMED_EXPERTS);
+    run_case(MXFP4, false, GGUF_FIXED_SLOTS);
 }
 
 /// The two constants the MSL copy of the format restates, held against the

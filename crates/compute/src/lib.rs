@@ -60,7 +60,7 @@ pub use gating::{sigmoid_gate_mul, sigmoid_scalar_mul, split_q_gate};
 pub use gdn::{gated_norm_sigmoid, sigmoid, silu, softplus, GdnDims, GdnReference, GDN_RMS_EPS};
 pub use hyper_connection::{hc_inject_add, hc_mix};
 pub use moe::{apply_streamed_routed, gelu_tanh, run_ffn};
-pub use ple::{dilated_conv_step, ple_gate};
+pub use ple::{dequant_ngram_row, dilated_conv_step, ple_gate};
 pub use quant::{
     bf16_to_f32, dequant_int4_gemv, dequant_int8_gemv, dequantize_int4_affine,
     dequantize_int8_affine, embed_lookup_int4, embed_lookup_int8, f32_to_bf16,

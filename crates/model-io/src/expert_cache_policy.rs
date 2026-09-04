@@ -121,19 +121,21 @@ mod tests {
     #[test]
     fn a_machine_with_headroom_climbs_to_the_top_of_the_allowed_set() {
         // This machine: 36 GB, a 13 GB install. (36 - 13 - 4) * 0.25 =
-        // 4.75 GB against 3.0 GiB of slot cache at 32.
+        // 4.75 GiB against 4.5 GiB of slot cache at 48 (widened past 32 by
+        // ALLOWED_CACHE_SLOTS's qwen4_exp entries; 64 slots would cost
+        // 6.0 GiB and does not fit).
         assert_eq!(
             auto_slots(36 * GIB, GEMMA4_RESIDENT, GEMMA4_BYTES_PER_SLOT),
-            32
+            48
         );
     }
 
     /// **The case that makes this file DISCRIMINATE `HEADROOM_FRACTION` and
     /// `HEADROOM_RESERVE_BYTES` at all**, and it had to be worked out rather
     /// than guessed at. Every other case here sits far from a boundary: at
-    /// 36 GiB the budget clears 32 slots by 1.75 GiB and at 16 GiB it clears
-    /// nothing, so doubling the fraction or zeroing the reserve moves neither
-    /// answer and both constants could be silently wrong. A 27 GiB machine
+    /// 36 GiB the budget clears 48 slots (the case above) and at 16 GiB it
+    /// clears nothing, so doubling the fraction or zeroing the reserve moves
+    /// neither answer and both constants could be silently wrong. A 27 GiB machine
     /// lands BETWEEN the two rungs -- budget 2.5 GiB against 2.25 for 24 slots
     /// and 3.0 for 32 -- so it is the one input where either constant changes
     /// the result. Same discipline AGENTS.md Gotcha 48 states for sub-4-bit
@@ -241,7 +243,7 @@ mod tests {
     /// choose. That is what lets a harness pin 8 for a constrained-cache arm.
     #[test]
     fn fixed_is_returned_untouched_and_ignores_the_machine() {
-        for n in [8usize, 16, 24, 32] {
+        for n in [8usize, 16, 24, 32, 48, 64, 96, 128] {
             assert_eq!(
                 ExpertCacheSlots::Fixed(n).resolve(GIB, 400 * GIB, GEMMA4_BYTES_PER_SLOT),
                 n
@@ -254,5 +256,33 @@ mod tests {
     #[test]
     fn the_default_is_auto() {
         assert_eq!(ExpertCacheSlots::default(), ExpertCacheSlots::Auto);
+    }
+
+    /// `qwen4_exp`'s own arithmetic (`docs/QWEN4_PHASE0.md` Phase 4): 48
+    /// layers at 2.7648 MB is 126.6 MiB per slot, so a machine with real
+    /// headroom can now reach the residency the old 32-slot ceiling could
+    /// not -- the whole reason `ALLOWED_CACHE_SLOTS` was widened rather than
+    /// left at `[8, 16, 24, 32]`.
+    #[test]
+    fn qwen4_exps_fine_grained_experts_can_now_reach_high_residency() {
+        const QWEN4_BYTES_PER_SLOT: u64 = 48 * 2_764_800;
+        const QWEN4_RESIDENT: u64 = 47 * GIB; // ~68.4 GiB install, INT4.
+                                              // A machine with plenty of headroom over the install: 128 GiB
+                                              // physical against 47 GiB resident. (128 - 47 - 4) * 0.25 = 19.25
+                                              // GiB budget; 96 slots costs 11.9 GiB and 128 costs 15.9 GiB, both
+                                              // under budget, so `Auto` reaches the allowed ceiling.
+        assert_eq!(
+            auto_slots(128 * GIB, QWEN4_RESIDENT, QWEN4_BYTES_PER_SLOT),
+            128
+        );
+        // Below the old ceiling's own reach: a 40 GiB machine has (40 - 47
+        // - 4) saturating to 0 free bytes once the install itself is
+        // subtracted, so `Auto` cannot even afford the floor and falls back
+        // to `DEFAULT_CACHE_SLOTS` -- widening the allowed set cannot make a
+        // machine that cannot hold the install any more able to.
+        assert_eq!(
+            auto_slots(40 * GIB, QWEN4_RESIDENT, QWEN4_BYTES_PER_SLOT),
+            DEFAULT_CACHE_SLOTS as usize
+        );
     }
 }

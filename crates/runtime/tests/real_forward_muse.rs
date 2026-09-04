@@ -402,7 +402,7 @@ fn tiny_arch() -> model_io::ArchConfig {
 /// `gate_proj` unreachable and so breaks a reachability invariant. Five
 /// survived, each a fluent wrong model.
 ///
-/// With this digest in place, these all redden:
+/// With this check in place, these all redden:
 ///
 ///   - dropping the `qk_scale_factor` multiply on Q,
 ///   - rotating the FULL layers instead of leaving them NoPE,
@@ -413,18 +413,91 @@ fn tiny_arch() -> model_io::ArchConfig {
 /// One still survives and is recorded in the module header: collapsing the
 /// two epsilons, which FP16 cannot resolve.
 ///
-/// A digest over a deterministic fixture catches five failure modes for the
-/// price of one number, because it is the only assertion here that compares
-/// against something computed BEFORE the mutation.
+/// A frozen reference over a deterministic fixture catches five failure
+/// modes for the price of one comparison, because it is the only assertion
+/// here that compares against something computed BEFORE the mutation.
 ///
 /// It is a CHANGE DETECTOR, not a correctness claim: the weights are
 /// untrained, so this says the flow's arithmetic is what it was, never that
 /// it is right. Whether it is right is the real-model quality gate's
 /// question. If the fixture's constants change, re-freeze deliberately and
-/// say why -- a digest that is updated reflexively protects nothing.
+/// say why -- a reference updated reflexively protects nothing.
+///
+/// **DEVICE-BRANCHED, since 2026-09-04, and the reason is a real
+/// measurement rather than a guess.** This used to hash the FP16 bit
+/// pattern of every logit and compare against one frozen `u64` -- exact
+/// down to the last mantissa bit, on the reasoning that a deterministic
+/// synthetic fixture on deterministic GPU arithmetic reproduces exactly.
+/// That holds on real Apple Silicon (this exact fixture reproduces the old
+/// hash bit-for-bit on this machine, run after run) and does NOT hold on
+/// CI's `macos-latest` runner, which is a VIRTUALIZED "Apple Paravirtual
+/// device" -- a genuinely different Metal implementation, not just a
+/// different real chip. Two OTHER things about that specific device were
+/// independently confirmed the same session this was found:
+/// `dequant_int4_gemm_parity.rs`'s `maxTotalThreadsPerThreadgroup` reflection
+/// (a proxy for register allocation, which drives how a compiler schedules
+/// and reassociates a reduction loop) varies with shape there where it is
+/// constant on real hardware, and it exposes no GPU performance-counter
+/// hardware at all. Metal's fast-math is free to reassociate any floating
+/// sum (AGENTS.md Gotcha 27 and its citations across this codebase), and
+/// this flow's EIGHT layers each carry a sandwich of norm reductions
+/// (`crates/runtime/CLAUDE.md`'s own museGlimmer bullet: four CENTERED
+/// per-layer norms plus a plain final one, per-head norms, TWO epsilons) --
+/// more reduction-heavy than any other family's flow, which is plausibly
+/// why this is the family where it first became visible rather than
+/// evidence that only this family's arithmetic differs; every other
+/// family's synthetic-fixture test uses the weaker REACHABILITY pattern
+/// (perturb a tensor, require movement) instead of an exact frozen
+/// comparison, and per this file's own header, that pattern is blind to
+/// small drift by construction.
+///
+/// **A PURE TOLERANCE REPLACEMENT WAS TRIED FIRST AND WAS PROVEN TOO WEAK.**
+/// A uniform `LOGIT_TOL` in place of the hash, with no device branch, passed
+/// every mutation this file already lists as reddening the old hash -- but a
+/// mutation-check against `real_forward_qwen35_dflash.rs`'s documented
+/// `DFLASH_RESIDUAL_EPS` bug (a subtle epsilon-scaling error that the OLD
+/// exact digest there was specifically calibrated to catch, and that no
+/// reachability test can) moved 181 of 257 sampled logits by only
+/// 0.002-0.012, all under a 0.02 floor. So a coarse tolerance is provably
+/// not a safe universal substitute for the exact comparison: it protects
+/// against the LARGE mutations this file's own list names and silently
+/// loses the SMALL, deliberately-subtle ones the exact hash exists for.
+///
+/// The fix is therefore BOTH, chosen by which device is actually running:
+/// on real Apple Silicon, the ORIGINAL exact `fnv1a` comparison runs
+/// unchanged, with its full original sensitivity (this is the only branch a
+/// developer's machine or a self-hosted real-hardware runner ever takes).
+/// On a virtualized device the exact comparison is not meaningful (the
+/// hardware itself moves individual FP16 roundings), so a tolerant
+/// comparison against the SAME frozen reference values runs instead, wide
+/// enough to absorb cross-hardware FP reassociation and narrow enough to
+/// still catch the large mutations this file's own list names.
+/// `LOGIT_TOL` matches this codebase's own existing cross-backend numerical
+/// tolerance (`PERPLEXITY_REL_TOLERANCE` is 2%, `crates/repack/CLAUDE.md`
+/// Gotcha 38) rather than an invented number.
 #[test]
 fn the_synthetic_flows_arithmetic_is_frozen() {
     let (_dir, _arch, logits) = baseline();
+    let context = gpu::MetalContext::new().expect("Metal device");
+    let device_name = context.device().name().to_string();
+    drop(context);
+    if device_name.contains("Paravirtual") {
+        println!(
+            "device {device_name:?} is virtualized, not the real Apple Silicon this hash was \
+             taken on; comparing against the frozen reference with a tolerance instead"
+        );
+        assert_eq!(logits.len(), FROZEN_LOGITS.len());
+        for (i, (&got, &want)) in logits.iter().zip(FROZEN_LOGITS.iter()).enumerate() {
+            let diff = (got - want).abs();
+            let tol = LOGIT_TOL.abs_floor.max(want.abs() * LOGIT_TOL.rel_fraction);
+            assert!(
+                diff <= tol,
+                "logit {i}: the muse_glimmer flow's arithmetic moved: got {got}, want {want} \
+                 (diff {diff}, tolerance {tol})"
+            );
+        }
+        return;
+    }
     assert_eq!(
         fnv1a(&logits),
         FROZEN_LOGIT_HASH,
@@ -449,5 +522,43 @@ fn fnv1a(logits: &[f32]) -> u64 {
     h
 }
 
-/// Frozen 2026-08-15 against the fixture at VOCAB 64 / LAYERS 8 / STEPS 12.
+/// Frozen 2026-08-15 against the fixture at VOCAB 64 / LAYERS 8 / STEPS 12,
+/// measured on real Apple Silicon (Apple M4 Max). The real-hardware branch
+/// of `the_synthetic_flows_arithmetic_is_frozen` compares against this
+/// exactly; see that test's doc for why a virtualized device takes a
+/// different, tolerant path instead.
 const FROZEN_LOGIT_HASH: u64 = 10_299_009_919_897_358_122;
+
+struct LogitTolerance {
+    abs_floor: f32,
+    rel_fraction: f32,
+}
+
+/// See `the_synthetic_flows_arithmetic_is_frozen`'s doc for why this is a
+/// tolerance rather than exact equality, and why 2% matches this
+/// codebase's existing `PERPLEXITY_REL_TOLERANCE` precedent rather than
+/// being invented for this file.
+const LOGIT_TOL: LogitTolerance = LogitTolerance {
+    abs_floor: 0.02,
+    rel_fraction: 0.02,
+};
+
+/// Frozen 2026-08-15 against the fixture at VOCAB 64 / LAYERS 8 / STEPS 12,
+/// measured on real Apple Silicon (Apple M4 Max). These are the exact
+/// values the original `fnv1a` hash (`10_299_009_919_897_358_122`) was
+/// taken over; recovered rather than recomputed, so this reference did not
+/// change when the comparison strategy did.
+#[rustfmt::skip]
+const FROZEN_LOGITS: [f32; VOCAB as usize] = [
+    1.5996094, 1.2109375, -1.1884766, 0.2746582, -1.9296875, -0.98535156,
+    -0.5419922, 1.8330078, -1.0683594, 1.1074219, 1.3535156, -1.1933594,
+    0.77734375, 1.1113281, 0.08850098, 0.81689453, 1.4755859, -0.10430908,
+    -1.6953125, 1.0205078, 0.6791992, -0.54785156, -0.8339844, -1.2392578,
+    0.41918945, 0.07281494, 0.16479492, 0.52978516, 1.4228516, -1.0576172,
+    -0.07092285, -1.4511719, -0.03677368, -0.6875, 1.2021484, -0.49609375,
+    -0.5024414, -1.2089844, 0.31347656, -0.5576172, 1.3671875, 0.5205078,
+    1.0576172, -2.4101563, 0.7006836, 2.2695313, -1.5683594, 0.48535156,
+    -1.0214844, -0.04888916, -2.0429688, -0.5888672, 0.5673828, 0.7089844,
+    -2.359375, -0.1763916, 0.2529297, 1.2529297, 2.4257813, -1.0898438,
+    2.0332031, 0.4140625, -1.0800781, 1.2109375,
+];
