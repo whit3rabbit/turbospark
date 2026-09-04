@@ -540,7 +540,55 @@ fn a_malformed_map_is_refused_by_name() {
 /// and the fixture's image are both untrained noise, so it says the injected
 /// pipeline moved and never that it is right. Re-freezing needs a stated
 /// reason.
+///
+/// **DEVICE-BRANCHED, since 2026-09-04**; see `real_forward_muse.rs`'s
+/// identical fix for the full account of why a bit-exact hash of
+/// GPU-computed FP16 values does not reproduce on CI's virtualized
+/// `macos-latest` runner, and why the fix is to run the ORIGINAL exact
+/// digest comparison on real Apple Silicon (unchanged from before this
+/// fix) and fall back to a tolerant comparison against `FROZEN_LOGITS`
+/// below only on a virtualized device. `FROZEN_LOGITS` is recovered from
+/// the same real-hardware run this digest reproduces on.
 const FROZEN_INJECTED_DIGEST: &str = "5f0967ae";
+
+/// The full frozen logit array `FROZEN_INJECTED_DIGEST` was taken over.
+/// Only consulted on a virtualized device; the real-hardware branch
+/// compares the digest directly.
+#[rustfmt::skip]
+const FROZEN_LOGITS: [f32; VOCAB as usize] = [
+    -2.5136719, 0.4638672, -6.1796875, 6.0, -4.4570313, -2.3222656, 4.8359375, 6.7109375,
+    4.3007813, 13.1953125, -2.3144531, 7.0507813, 7.5546875, 5.1289063, 1.8242188, -1.2402344,
+    -1.8417969, 14.5078125, -0.016479492, -8.7421875, 2.6679688, 2.9550781, 3.1542969, -0.6894531,
+    -0.4597168, 7.296875, 2.9707031, -1.0185547, -14.421875, -5.453125, -5.4609375, -1.3642578,
+    -13.0, -0.56933594, 2.4902344, -0.008026123, 1.3251953, 1.1142578, 2.3789063, -1.8193359,
+    3.0449219, -6.8515625, -0.6923828, 6.1210938, -3.5742188, 5.7070313, 5.4648438, 5.0898438,
+    0.5151367, 4.0546875, 6.4492188, -3.296875, -0.60058594, 1.8515625, -3.8417969, 12.7265625,
+    -6.4609375, -1.9892578, -7.515625, -6.2890625, -2.9667969, 1.7060547, -5.3398438, 3.6699219,
+    9.3046875, -1.4677734, 2.765625, 0.8125, 9.0703125, 2.875, -4.7460938, -1.0068359,
+    0.92529297, 1.9970703, -3.1308594, 7.4257813, -5.7148438, -1.7373047, -0.5283203, -5.1757813,
+    -1.8027344, -4.7578125, 11.28125, 10.5234375, -2.0292969, -5.7421875, 1.4716797, -1.3769531,
+    5.421875, 1.5957031, 6.609375, -0.69873047, -8.359375, 10.3203125, 4.46875, -2.1914063,
+    1.9345703, 10.9375, -6.1132813, 8.171875, -2.6582031, -1.578125, -9.203125, 6.828125,
+    9.6328125, 2.0097656, -3.6777344, -6.2304688, 4.1953125, 2.6855469, -0.39526367, 1.3818359,
+    -0.86279297, 9.921875, 2.5507813, -4.3359375, -4.265625, 7.3476563, 4.7929688, -1.046875,
+    -7.421875, -2.7949219, -5.9609375, 1.4052734, 13.7734375, 4.6992188, -1.0136719, 6.1367188,
+    7.6171875, 4.9726563, -2.3066406, -3.8984375, 2.9648438, 0.40283203, -1.9042969, 0.4765625,
+    -4.7539063, -0.5751953, -7.7304688, 0.28271484, -0.10656738, -4.9570313, -9.375, -5.375,
+    -8.0859375, -0.48535156, 1.9238281, -2.2324219, 6.1132813, -13.71875, 1.1035156, 4.5390625,
+    -0.7739258, -11.8046875, -4.1914063, 1.7011719, -1.8398438, -7.5742188, -10.8515625, 9.96875,
+    6.4609375, 4.28125, -0.45703125, -9.4296875, -2.5761719, 5.4492188, 6.2773438, 5.8164063,
+    -4.765625, -5.3164063, -0.61328125, -5.8242188, -3.5605469, -1.7988281, -2.46875, 1.3144531,
+    -3.5625, 7.9882813, 2.6445313, -7.9296875, -10.28125, 8.65625, 7.0546875, 2.359375,
+    5.7265625, 7.8125, -1.0429688, -3.7363281, 9.015625, -6.421875, -0.8833008, 1.7177734,
+    9.9375, -2.8847656, 5.5546875, 5.71875, -4.1757813, -8.921875, 9.9453125, -3.3261719,
+    2.6289063, -4.3242188, 4.1640625, -0.089782715, -6.8671875, -7.0625, 6.90625, -1.4931641,
+    -0.58447266, 10.2421875, 1.0625, 1.5839844, -6.15625, -2.8417969, -0.7861328, 2.8203125,
+    5.203125, -3.5820313, -9.734375, -0.6142578, -7.4609375, -2.4238281, -10.171875, -2.9707031,
+    -3.0234375, -2.1894531, -7.5859375, 4.6171875, -3.2382813, 0.96240234, 1.2529297, 2.671875,
+    2.6074219, 12.2578125, 3.0429688, -7.5117188, -6.2382813, 1.8916016, 4.9257813, 1.4101563,
+    11.1953125, 5.6796875, 7.3007813, -0.4921875, 3.6113281, -2.3300781, 5.6054688, 1.7978516,
+    1.0527344, 8.421875, 5.1367188, 10.25, 3.2695313, 2.2617188, -1.3115234, -3.7851563,
+];
 
 #[test]
 fn an_injected_run_has_a_frozen_digest() {
@@ -548,9 +596,35 @@ fn an_injected_run_has_a_frozen_digest() {
     let ids = prompt_ids();
     let mut runner = open(&dir);
     inject(&mut runner, &ids);
-    let got = digest(&walk(&mut runner, &ids));
+    let bits = walk(&mut runner, &ids);
+    let got = digest(&bits);
     println!("injected digest = {got}");
     let _ = std::fs::remove_dir_all(&dir);
+    let context = gpu::MetalContext::new().expect("Metal device");
+    let device_name = context.device().name().to_string();
+    drop(context);
+    if device_name.contains("Paravirtual") {
+        println!(
+            "device {device_name:?} is virtualized, not the real Apple Silicon this digest \
+             was taken on; comparing against the frozen reference with a tolerance instead"
+        );
+        let floats: Vec<f32> = bits
+            .iter()
+            .map(|&b| half::f16::from_bits(b).to_f32())
+            .collect();
+        assert_eq!(floats.len(), FROZEN_LOGITS.len());
+        for (i, (&got, &want)) in floats.iter().zip(FROZEN_LOGITS.iter()).enumerate() {
+            let diff = (got - want).abs();
+            let tol = 0.02_f32.max(want.abs() * 0.02);
+            assert!(
+                diff <= tol,
+                "logit {i}: the injected pipeline moved: got {got}, want {want} \
+                 (diff {diff}, tolerance {tol}); see FROZEN_INJECTED_DIGEST's doc before \
+                 re-freezing"
+            );
+        }
+        return;
+    }
     assert_eq!(
         got, FROZEN_INJECTED_DIGEST,
         "the injected pipeline moved; see this constant's doc comment before re-freezing"

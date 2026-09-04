@@ -434,7 +434,54 @@ fn patch_region(
 /// Re-freezing it needs a stated reason. It is a change DETECTOR and not a
 /// correctness claim: the fixture's weights are untrained, so it can say the
 /// arithmetic moved and never that it is right.
-const FROZEN_DENSE_TRUNK_DIGEST: &str = "9ce8b693";
+///
+/// **DEVICE-BRANCHED, since 2026-09-04** -- same reason and same fix shape
+/// as `real_forward_muse.rs`'s `the_synthetic_flows_arithmetic_is_frozen`
+/// (read that one for the full account, including why a pure tolerance
+/// replacement was tried first and proven too weak against
+/// `real_forward_qwen35_dflash.rs`'s documented `DFLASH_RESIDUAL_EPS` bug).
+/// A bit-exact hash over GPU-computed FP16 values reproduces on real Apple
+/// Silicon (this fixture still hashes to `9ce8b693` on real hardware,
+/// unmoved by this change) and does not reproduce on CI's virtualized
+/// `macos-latest` runner, whose Metal implementation was independently
+/// confirmed (same session) to differ from real hardware in ways that
+/// plausibly reassociate a reduction differently
+/// (`dequant_int4_gemm_parity.rs`'s register-pressure reflection varies
+/// with shape there where it is constant on real hardware; Metal's
+/// fast-math is free to reassociate any floating sum, AGENTS.md Gotcha 27).
+/// So real hardware runs the ORIGINAL exact digest comparison, unchanged
+/// from before this fix, and only a virtualized device falls back to the
+/// tolerant comparison against these same frozen values (2%, matching this
+/// codebase's existing `PERPLEXITY_REL_TOLERANCE` precedent) -- far tighter
+/// than a real regression: the `Centered`-vs-`Plain` q/k norm mutation this
+/// digest exists to catch is architecturally the same class of bug as
+/// `real_forward_muse.rs`'s documented mutations, which moved logits by
+/// orders of magnitude more than the tolerance floor there.
+#[rustfmt::skip]
+const FROZEN_HEAD_LOGITS: [f32; VOCAB as usize] = [
+        0.20507813, -4.75, 10.65625, 6.3554688, -5.2890625, 2.5019531,
+        -3.8261719, 13.4609375, 4.5117188, 3.5371094, -1.4404297, -2.7304688,
+        -4.4414063, 1.4912109, -3.75, 4.8632813, -17.28125, -1.3681641,
+        4.7851563, 2.2128906, -3.3671875, -0.3178711, 4.1171875, -0.34350586,
+        -1.9580078, -0.8828125, -10.1484375, 0.49121094, 0.34277344, 6.9140625,
+        -2.4492188, -12.875, -2.2246094, -3.0273438, -3.7949219, 3.5644531,
+        6.296875, -1.1425781, 1.6142578, 5.1601563, 6.9257813, 8.2578125,
+        5.921875, -0.42700195, -0.5644531, 2.7695313, -3.7402344, -0.6508789,
+        -6.5078125, 0.75097656, 1.2646484, 0.29907227, -2.921875, 3.6992188,
+        3.2636719, -10.0546875, -0.91845703, -3.2519531, -0.47973633,
+        -5.9765625, -2.6816406, -5.0742188, -3.3886719, 4.4101563, -11.453125,
+        -1.8408203, 9.328125, 6.7460938, 4.0898438, -6.8203125, -2.0703125,
+        -1.6132813, -0.60791016, -0.5317383, 6.0742188, 2.7050781, -1.2714844,
+        8.3203125, -4.2851563, -1.3886719, 6.8671875, 8.375, 6.7382813,
+        -0.18029785, -0.2668457, -3.4960938, -4.6835938, -4.015625, 1.5732422,
+        8.890625, 2.5917969, -2.2363281, -11.921875, 0.1529541, -5.5898438,
+        3.6777344, -7.4804688, 4.4375, -3.0859375, 10.484375, 3.5292969,
+        5.59375, 3.9160156, 8.28125, -0.3173828, -0.5708008, -1.1494141,
+        -5.2148438, -4.921875, 6.5, 4.6445313, 7.6914063, 2.2011719, 1.0507813,
+        7.078125, -3.1113281, 0.80078125, 0.05606079, 0.85498047, 2.3769531,
+        -1.2246094, -5.2265625, -4.6289063, 7.3203125, 7.1757813, 3.0,
+        0.7597656, 2.1992188,
+];
 
 #[test]
 fn the_dense_trunk_logits_have_a_frozen_digest() {
@@ -456,19 +503,46 @@ fn the_dense_trunk_logits_have_a_frozen_digest() {
             )
             .expect("produces");
     }
-    let bytes: Vec<u8> = head
+    let _ = std::fs::remove_dir_all(&dir);
+    let context = gpu::MetalContext::new().expect("Metal device");
+    let device_name = context.device().name().to_string();
+    drop(context);
+    if device_name.contains("Paravirtual") {
+        println!(
+            "device {device_name:?} is virtualized, not the real Apple Silicon this digest was \
+             taken on; comparing against the frozen reference with a tolerance instead"
+        );
+        for (i, (&got, &want)) in head.iter().zip(FROZEN_HEAD_LOGITS.iter()).enumerate() {
+            let got = got.to_f32();
+            let diff = (got - want).abs();
+            let tol = 0.02_f32.max(want.abs() * 0.02);
+            assert!(
+                diff <= tol,
+                "logit {i}: the dense trunk logits moved: got {got}, want {want} \
+                 (diff {diff}, tolerance {tol}); see FROZEN_HEAD_LOGITS's doc before re-freezing"
+            );
+        }
+        return;
+    }
+    assert_eq!(
+        digest(&head),
+        FROZEN_DENSE_TRUNK_DIGEST,
+        "the dense trunk's arithmetic moved"
+    );
+}
+
+fn digest(logits: &[f16]) -> String {
+    let bytes: Vec<u8> = logits
         .iter()
         .flat_map(|v| v.to_bits().to_le_bytes())
         .collect();
-    let got = model_io::hash_data(&bytes)[..8].to_string();
-    println!("dense trunk digest = {got}");
-    let _ = std::fs::remove_dir_all(&dir);
-    assert_eq!(
-        got, FROZEN_DENSE_TRUNK_DIGEST,
-        "the dense trunk logits moved; see this constant's doc comment before \
-         re-freezing"
-    );
+    model_io::hash_data(&bytes)[..8].to_string()
 }
+
+/// See `the_dense_trunk_logits_have_a_frozen_digest`'s doc for why this is
+/// the real-hardware branch's comparison target. Frozen 2026-08-15 on real
+/// Apple Silicon and still reproducing after the device-branch fix.
+const FROZEN_DENSE_TRUNK_DIGEST: &str = "9ce8b693";
 
 fn first_logits(dir: &std::path::Path) -> Vec<u16> {
     let arch = turbospark_repack::peek_manifest_arch(dir).expect("peeks");
