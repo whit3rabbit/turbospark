@@ -5,7 +5,6 @@ public final class SkillManager: @unchecked Sendable {
     public static let shared = SkillManager()
 
     private let fileManager = FileManager.default
-    private static let disabledSkillsDefaultsKey = "TurboSpark.disabledSkillNames"
 
     public init() {}
 
@@ -24,8 +23,11 @@ public final class SkillManager: @unchecked Sendable {
     // through) -- sees the same state.
 
     private var disabledSkillNames: Set<String> {
-        get { Set(UserDefaults.standard.stringArray(forKey: Self.disabledSkillsDefaultsKey) ?? []) }
-        set { UserDefaults.standard.set(Array(newValue), forKey: Self.disabledSkillsDefaultsKey) }
+        // Under `AppStorageRoot`, not `UserDefaults.standard` (state#57):
+        // the suite was mutating real preferences and the bundle-identity
+        // change re-enabled everything on install. See `DisabledItemStore`.
+        get { DisabledItemStore.names(for: .skills) }
+        set { DisabledItemStore.setNames(newValue, for: .skills) }
     }
 
     /// The persisted key for one skill.
@@ -164,7 +166,9 @@ public final class SkillManager: @unchecked Sendable {
             let subURL = projectRootURL.appendingPathComponent(relPath, isDirectory: true)
             guard fileManager.fileExists(atPath: subURL.path) else { continue }
 
-            let scanned = scanDirectory(subURL, scope: .projectLocal(projectPath: projectPath), defaultAgent: agent)
+            let scanned = scanDirectory(
+                subURL, scope: .projectLocal(projectPath: projectPath), defaultAgent: agent,
+                containedIn: projectRootURL)
             for skill in scanned {
                 let key = skill.name.lowercased()
                 if !seenNames.contains(key) {
@@ -187,7 +191,13 @@ public final class SkillManager: @unchecked Sendable {
     }
 
     /// Scans a specific skills directory for both folder-based (SKILL.md) and single-file (.md) skills.
-    public func scanDirectory(_ dirURL: URL, scope: SkillScope, defaultAgent: SkillSourceAgent) -> [AppSkill] {
+    /// - Parameter containedIn: the project root a PROJECT-scoped scan must
+    ///   keep its files inside (state#39). Nil for a user scope, where the
+    ///   files are the user's own.
+    public func scanDirectory(
+        _ dirURL: URL, scope: SkillScope, defaultAgent: SkillSourceAgent,
+        containedIn root: URL? = nil
+    ) -> [AppSkill] {
         guard let entries = try? fileManager.contentsOfDirectory(atPath: dirURL.path) else { return [] }
 
         var results: [AppSkill] = []
@@ -212,12 +222,15 @@ public final class SkillManager: @unchecked Sendable {
                     targetURL = nil
                 }
 
-                if let targetURL, let skill = try? SkillParser.parseFile(at: targetURL, scope: scope, agentOrigin: defaultAgent) {
+                if let targetURL,
+                    let skill = try? SkillParser.parseFile(
+                        at: targetURL, scope: scope, agentOrigin: defaultAgent, containedIn: root) {
                     results.append(applyingPersistedEnabledState(to: skill))
                 }
             } else if itemURL.pathExtension.lowercased() == "md" {
                 // Single-file skill format: <name>.md
-                if let skill = try? SkillParser.parseFile(at: itemURL, scope: scope, agentOrigin: defaultAgent) {
+                if let skill = try? SkillParser.parseFile(
+                    at: itemURL, scope: scope, agentOrigin: defaultAgent, containedIn: root) {
                     results.append(applyingPersistedEnabledState(to: skill))
                 }
             }
@@ -250,6 +263,26 @@ public final class SkillManager: @unchecked Sendable {
         let skills = computeEffectiveSkills(projectURL: projectURL)
         resolutionCache = (key, skills)
         return skills
+    }
+
+    /// The names of USER skills a project skill is currently overriding
+    /// (state#57).
+    ///
+    /// **PRECEDENCE WITH NO DISCLOSURE IS INDISTINGUISHABLE FROM A BROKEN
+    /// SKILL.** A project skill deliberately shadows a same-named user one;
+    /// that is what precedence IS. But nothing anywhere said so, so a user
+    /// whose own `deploy` stopped behaving reads it as their skill being
+    /// broken rather than replaced -- and a cloned repository can shadow any
+    /// skill by name, silently. Agents already publish
+    /// `constrainedProjectAgentNames` for the same reason; this is that list
+    /// on the skill side.
+    public func shadowedUserSkillNames(projectURL: URL?) -> [String] {
+        guard let projectURL else { return [] }
+        let userNames = Set(discoverUserSkills().map { $0.name.lowercased() })
+        return discoverProjectSkills(projectRootURL: projectURL)
+            .map { $0.name }
+            .filter { userNames.contains($0.lowercased()) }
+            .sorted()
     }
 
     private func computeEffectiveSkills(projectURL: URL?) -> [AppSkill] {

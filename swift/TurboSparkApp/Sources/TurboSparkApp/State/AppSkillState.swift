@@ -143,6 +143,15 @@ public struct AppSkillState: Codable, Equatable, Sendable {
         self.fields = fields
     }
 
+    /// Tolerant decode (state#45): this hangs off `AppChat.skillState`, so a
+    /// synthesized decoder here can quarantine every conversation over one
+    /// added field. A state that will not decode is bookkeeping for one agent
+    /// run, and losing it costs a step; losing the archive costs everything.
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        fields = try container.decodeIfPresent([String: AppJSONValue].self, forKey: .fields) ?? [:]
+    }
+
     public var isEmpty: Bool { fields.isEmpty }
 
     /// Canonical rendering: sorted keys and stable formatting, so an unchanged
@@ -186,6 +195,21 @@ public struct AppSkillState: Codable, Equatable, Sendable {
 
 /// Parsing and validation of a model-proposed patch.
 public enum AppSkillStatePatch {
+    /// The bounds a "bounded execution state" actually has (state#58).
+    ///
+    /// **THE VALIDATOR CHECKED TYPES AND NOTHING ELSE**, so the whole point
+    /// of this feature -- a prompt that is O(1) in step count
+    /// (`docs/SKILL_STATE.md`) -- rested on the model choosing to be brief.
+    /// A run that keeps appending to `facts` grows the state without limit
+    /// and reproduces exactly the context exhaustion the append-only path was
+    /// measured to hit, with the toggle on and no sign of why.
+    ///
+    /// Generous rather than tight: these are the size at which a state has
+    /// stopped being a summary, not a budget anyone should feel.
+    public static let maxStringLength = 4_000
+    public static let maxCollectionCount = 64
+    public static let maxRenderedBytes = 32_000
+
     /// Schema violations in a proposed patch. Empty means valid.
     public static func validate(_ patch: [String: AppJSONValue]) -> [String] {
         var errors: [String] = []
@@ -197,8 +221,13 @@ public enum AppSkillStatePatch {
             if case .null = value { continue }  // deletion is legal for any field
             switch kind {
             case .text:
-                if case .string = value {} else {
+                guard case .string(let text) = value else {
                     errors.append("'\(key)' must be a string")
+                    continue
+                }
+                if text.count > maxStringLength {
+                    errors.append(
+                        "'\(key)' is \(text.count) characters; the limit is \(maxStringLength)")
                 }
             case .textList:
                 guard case .array(let items) = value else {
@@ -208,15 +237,38 @@ public enum AppSkillStatePatch {
                 if items.contains(where: { if case .string = $0 { return false } else { return true } }) {
                     errors.append("'\(key)' must contain only strings")
                 }
+                if items.count > maxCollectionCount {
+                    errors.append(
+                        "'\(key)' has \(items.count) entries; the limit is \(maxCollectionCount). "
+                        + "Summarize or drop the ones you no longer need.")
+                }
+                for case .string(let text) in items where text.count > maxStringLength {
+                    errors.append(
+                        "an entry of '\(key)' is \(text.count) characters; the limit is "
+                        + "\(maxStringLength)")
+                    break
+                }
             case .textMap:
                 guard case .object(let entries) = value else {
                     errors.append("'\(key)' must be an object of strings")
                     continue
                 }
                 for (k, v) in entries {
-                    if case .string = v { continue }
+                    if case .string(let text) = v {
+                        if text.count > maxStringLength {
+                            errors.append(
+                                "'\(key).\(k)' is \(text.count) characters; the limit is "
+                                + "\(maxStringLength)")
+                        }
+                        continue
+                    }
                     if case .null = v { continue }  // deletes one entry
                     errors.append("'\(key).\(k)' must be a string")
+                }
+                if entries.count > maxCollectionCount {
+                    errors.append(
+                        "'\(key)' has \(entries.count) entries; the limit is "
+                        + "\(maxCollectionCount)")
                 }
             }
         }

@@ -116,6 +116,18 @@ public enum MacPrivacyPane: String, Sendable {
 public final class SystemPermissionsManager: ObservableObject {
     public static let shared = SystemPermissionsManager()
 
+    /// **THESE ARE macOS TCC GRANTS, NOT TOOL-SANDBOX GRANTS** (state#62).
+    /// The pane advertised them as "granted project and workspace directories
+    /// for file tools", and nothing in `AppToolSandbox` reads this list --
+    /// `SandboxConfig()`'s `allowedWritePaths` is empty at all three call
+    /// sites. Nor COULD it help without a second change: every file tool goes
+    /// through `resolveSecurePath` first, which refuses anything outside the
+    /// project root before the sandbox is consulted at all.
+    ///
+    /// What picking a folder here really does is move TCC for it, which is
+    /// worth having and is what the copy says now. Widening the file tools'
+    /// boundary to these paths is an access-control decision, not a wiring
+    /// omission, and is deliberately not taken here.
     public static let customFoldersStorageKey = "TurboSpark_GrantedCustomFolders"
 
     @Published public private(set) var folderStatuses: [SystemFolderType: FolderAccessStatus] = [:]
@@ -148,6 +160,17 @@ public final class SystemPermissionsManager: ObservableObject {
     /// System Settings was invisible until the manual Refresh, so the pane
     /// kept saying "restricted" for a folder the user had just allowed.
     public func refreshAllStatusesInBackground() {
+        // **EPOCHED** (state#62). This is called from `init`, from the
+        // Refresh button and from `didBecomeActive`, so two probes overlap
+        // routinely -- a user granting access in System Settings and coming
+        // back triggers one while the launch probe may still be walking a
+        // large home directory. Whichever finished LAST won, which is not
+        // whichever STARTED last: the older, pre-grant reading could land on
+        // top of the fresh one and the pane kept saying "restricted" for a
+        // folder the user had just allowed, which is the exact symptom the
+        // `didBecomeActive` hook was added to fix.
+        probeGeneration += 1
+        let generation = probeGeneration
         Task { [weak self] in
             let folders = SystemFolderType.allCases
             let probed = await Task.detached(priority: .utility) {
@@ -157,13 +180,36 @@ public final class SystemPermissionsManager: ObservableObject {
                 }
                 return results
             }.value
-            self?.folderStatuses = probed
+            guard let self, self.probeGeneration == generation else { return }
+            self.folderStatuses = probed
         }
     }
+
+    /// Bumped per probe; a landing probe publishes only if it is still the
+    /// newest.
+    private var probeGeneration = 0
 
     /// `checkFolderStatus`'s body, `nonisolated` so it can run off the main
     /// actor. It touches only the filesystem.
     nonisolated static func probe(_ folder: SystemFolderType) -> FolderAccessStatus {
+        // **THE HOME ROW CANNOT FAIL WHEN PROBED AT HOME** (state#62).
+        // Listing `~` is not TCC-gated on macOS, so this row read `.granted`
+        // on every machine whatever the user had allowed -- a status that can
+        // only take one value, which is `swift/CLAUDE.md` Gotcha 22's badge
+        // that cannot fail. What "full disk access" really controls for a
+        // home directory is its PROTECTED children, so the probe asks about
+        // one that is gated and that every account has.
+        if folder == .home {
+            let library = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Application Support/com.apple.TCC")
+            do {
+                _ = try FileManager.default.contentsOfDirectory(atPath: library.path)
+                return .granted
+            } catch {
+                return FileManager.default.fileExists(atPath: library.path)
+                    ? .restricted : .notFound
+            }
+        }
         guard let url = folder.defaultURL else { return .notFound }
         var isDir: ObjCBool = false
         guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir),
@@ -220,7 +266,10 @@ public final class SystemPermissionsManager: ObservableObject {
         }
 
         panel.begin { [weak self] response in
-            if response == .OK, let selectedURL = panel.url {
+            // The URL is deliberately not kept (state#62): see below. Bound
+            // and then unused, it was also the app's one live compiler
+            // warning.
+            if response == .OK, panel.url != nil {
                 // **NOT `startAccessingSecurityScopedResource`.** That call
                 // is only meaningful for a URL resolved from a security-scoped
                 // BOOKMARK, and it was never balanced by a matching stop --
@@ -280,24 +329,30 @@ public final class SystemPermissionsManager: ObservableObject {
     }
 
     // MARK: - Persistence
+    private static var storeURL: URL { AppStorageRoot.file("granted_folders.json") }
+
+    /// Under `AppStorageRoot`, not `UserDefaults.standard` (state#57): the
+    /// test suite was writing the developer's real grant list, and the
+    /// preferences domain moves with the bundle identity (`swift/CLAUDE.md`
+    /// Gotcha 12), so installing the app dropped every folder the user had
+    /// authorized under `swift run`. The old defaults key is read once and
+    /// left in place.
     private func loadCustomFolders() {
-        guard let data = UserDefaults.standard.data(forKey: Self.customFoldersStorageKey) else {
-            customFolders = []
-            return
+        var loaded =
+            AppJSONStore.load(
+                [GrantedCustomFolder].self, from: Self.storeURL, label: "granted folders") ?? []
+        if loaded.isEmpty,
+            let legacy = UserDefaults.standard.data(forKey: Self.customFoldersStorageKey),
+            let migrated = try? JSONDecoder().decode([GrantedCustomFolder].self, from: legacy),
+            !migrated.isEmpty
+        {
+            loaded = migrated
+            AppJSONStore.save(loaded, to: Self.storeURL, label: "Granted folders")
         }
-        do {
-            customFolders = try JSONDecoder().decode([GrantedCustomFolder].self, from: data)
-        } catch {
-            customFolders = []
-        }
+        customFolders = loaded
     }
 
     private func saveCustomFolders() {
-        do {
-            let data = try JSONEncoder().encode(customFolders)
-            UserDefaults.standard.set(data, forKey: Self.customFoldersStorageKey)
-        } catch {
-            // Non-fatal persistence failure
-        }
+        AppJSONStore.save(customFolders, to: Self.storeURL, label: "Granted folders")
     }
 }

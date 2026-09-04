@@ -198,8 +198,14 @@ public actor McpClientEngine {
         )
 
         defer {
+            // **SIGTERM IS A REQUEST** (state#61). A third-party server
+            // binary that traps or ignores it simply kept running, one orphan
+            // per tool call, holding its own child processes and sockets for
+            // the life of the app. `ProcessExecutor.terminateAndReap`
+            // escalates to SIGKILL after 2 s and is what every other spawn
+            // site here already uses.
             if process.isRunning {
-                process.terminate()
+                ProcessExecutor.terminateAndReap(process)
             }
         }
 
@@ -280,8 +286,14 @@ public actor McpClientEngine {
         )
 
         defer {
+            // **SIGTERM IS A REQUEST** (state#61). A third-party server
+            // binary that traps or ignores it simply kept running, one orphan
+            // per tool call, holding its own child processes and sockets for
+            // the life of the app. `ProcessExecutor.terminateAndReap`
+            // escalates to SIGKILL after 2 s and is what every other spawn
+            // site here already uses.
             if process.isRunning {
-                process.terminate()
+                ProcessExecutor.terminateAndReap(process)
             }
         }
 

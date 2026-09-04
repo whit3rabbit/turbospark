@@ -3,7 +3,11 @@ import Foundation
 extension AppModel {
     @discardableResult
     public func createChat(projectID: UUID? = nil) -> UUID {
-        guard !generating else { return selectedChatID }
+        // `pendingToolCall == nil` for `selectChat`'s reason (state#49):
+        // `generating` is false while a call waits, so this was legal, and
+        // starting a new chat there strands the approval card on a
+        // conversation the user can no longer see.
+        guard !generating, pendingToolCall == nil else { return selectedChatID }
         activeSection = .chat
         let assignedProjectID = projectID ?? selectedProjectID
         // If current chat is already empty and matches the target project, reset and stay on it
@@ -62,9 +66,10 @@ extension AppModel {
         // against a stale ID (state#9's own reasoning, applied to deletion
         // rather than to a chat switch).
         if pendingToolCallChatID == id {
-            pendingToolCall = nil
-            pendingToolCallChatID = nil
-            pendingToolCallStep = 0
+            // Through the helper, not three of its four fields open-coded
+            // (state#49): `pendingToolCallProject` was left behind, which is
+            // exactly the stale value the helper exists to prevent.
+            clearPendingToolCall()
         }
         chats.remove(at: index)
         if chats.isEmpty {
@@ -77,16 +82,36 @@ extension AppModel {
         persistChats()
         updateTokenEstimate()
         Task {
+            // The grants belonged to a conversation that no longer exists,
+            // and the ids are UUIDs, so nothing would ever collect them
+            // (state#49).
+            await SessionApprovalStore.shared.clear(sessionID: id.uuidString)
             _ = await self.dispatchSessionEnd(reason: "clear")
         }
     }
 
+    /// Clears the conversation.
+    ///
+    /// **FOUR THINGS OUTLIVED IT** (state#49), each of which describes the run
+    /// that was just erased: the SKILL.state bookkeeping, a call still
+    /// awaiting approval, the checklist, and the session's "always allow"
+    /// grants. `resetSkillState()` and `SessionApprovalStore.clear` both
+    /// existed for this and neither had a caller -- so a cleared conversation
+    /// came back with a tool pre-approved on the strength of a call the user
+    /// could no longer read.
     public func clearOutput() {
         guard !generating else { return }
+        let clearedChatID = selectedChatID
         if let index = selectedChatIndex {
             chats[index].messages.removeAll()
             chats[index].contextSummary = nil
+            chats[index].skillState = nil
+            chats[index].todos = []
             chats[index].updatedAt = Date()
+        }
+        skillStateLastError = nil
+        if pendingToolCallChatID == clearedChatID {
+            clearPendingToolCall()
         }
         outputText = ""
         outputReasoningText = ""
@@ -96,6 +121,7 @@ extension AppModel {
         persistChats()
         updateTokenEstimate()
         Task {
+            await SessionApprovalStore.shared.clear(sessionID: clearedChatID.uuidString)
             _ = await self.dispatchSessionEnd(reason: "clear")
         }
     }

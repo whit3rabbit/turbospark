@@ -205,8 +205,17 @@ public struct AppHookCommand: Identifiable, Codable, Sendable, Equatable {
     /// the hook actually does (how long it may block, whether its decision
     /// can gate a call at all), so a change to either must re-trigger the
     /// trust prompt rather than silently keep the old approval.
+    ///
+    /// **AND WIDENED AGAIN TO INCLUDE WHERE IT CAME FROM** (state#41). Trust
+    /// is granted to a hook, and a hook is a command AND a source: approving
+    /// one in `~/.claude/settings.json` used to approve the byte-identical
+    /// entry in a cloned repository's `.claude/settings.json`, because the
+    /// two hashed the same. The whole point of the prompt is that a
+    /// repository is not the user. Existing trust entries re-prompt once,
+    /// which is the correct direction to fail.
     public var contentHash: String {
-        let content = "\(event.rawValue):\(type.rawValue):\(command):\(ifCondition ?? ""):\(matcher ?? ""):\(shell.rawValue):\(timeoutSeconds):\(isAsync)"
+        let origin = "\(sourceType.rawValue):\(sourcePath ?? ""):\(pluginName ?? "")"
+        let content = "\(origin):\(event.rawValue):\(type.rawValue):\(command):\(ifCondition ?? ""):\(matcher ?? ""):\(shell.rawValue):\(timeoutSeconds):\(isAsync)"
         let digest = SHA256.hash(data: Data(content.utf8))
         return digest.compactMap { String(format: "%02x", $0) }.joined()
     }

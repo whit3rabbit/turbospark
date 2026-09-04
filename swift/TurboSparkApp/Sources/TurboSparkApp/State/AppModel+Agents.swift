@@ -33,7 +33,10 @@ extension AppModel {
 
     /// Toggles and persists the enabled state of an agent.
     public func toggleAgentEnabled(_ agent: AppAgentDefinition) {
-        AgentManager.shared.setAgentEnabled(!agent.isEnabled, name: agent.name)
+        // Scoped, so toggling a project agent does not also toggle the
+        // built-in of that name (state#57).
+        AgentManager.shared.setAgentEnabled(
+            !agent.isEnabled, name: agent.name, scope: agent.scope)
         reloadAgents()
     }
 
@@ -111,11 +114,18 @@ extension AppModel {
             return
         }
 
+        // Captured BEFORE anything can move the selection, the way `run()`
+        // captures `submissionChatID` (state#64). Nothing here awaits today,
+        // so resolving `selectedChatIndex` twice happens to agree -- but the
+        // two reads are what the next `await` inserted between them would
+        // break, and this function already learned that lesson once for its
+        // completion path.
+        let submissionChatID = selectedChatID
         let chatIndex: Int
-        if let existing = selectedChatIndex {
+        if let existing = chats.firstIndex(where: { $0.id == submissionChatID }) {
             chatIndex = existing
         } else {
-            let newChat = AppChat(id: selectedChatID, projectID: selectedProjectID)
+            let newChat = AppChat(id: submissionChatID, projectID: selectedProjectID)
             chats.insert(newChat, at: 0)
             chatIndex = 0
             selectedChatID = newChat.id
@@ -136,8 +146,8 @@ extension AppModel {
 
         // Captured before the run, like every other turn: a subagent run is
         // seconds to minutes of work and the user is free to click away.
-        let turnChatID = chats[chatIndex].id
-        let project = selectedProject
+        let turnChatID = submissionChatID
+        let project = turnProject(chatID: submissionChatID) ?? selectedProject
 
         generationEpoch += 1
         let myEpoch = generationEpoch
@@ -162,7 +172,8 @@ extension AppModel {
                 agent: agent,
                 taskPrompt: prompt,
                 session: self.session,
-                project: project
+                project: project,
+                chatID: turnChatID
             )
 
             let assistantContent = """

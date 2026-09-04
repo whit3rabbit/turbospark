@@ -9,6 +9,37 @@ extension AppModel {
         return chats.filter { $0.projectID == projectID }
     }
 
+    /// The project a chat belongs to, or nil.
+    ///
+    /// Resolved from `AppChat.projectID` rather than from `selectedProjectID`
+    /// so it cannot move under a turn.
+    public func project(forChat chatID: UUID) -> AppProject? {
+        guard let index = chats.firstIndex(where: { $0.id == chatID }),
+            let projectID = chats[index].projectID
+        else { return nil }
+        return projects.first { $0.id == projectID }
+    }
+
+    /// The project a GENERATION TURN runs under (state#30).
+    ///
+    /// **NOT `selectedProject`.** state#19 pinned the project an approved
+    /// call executes against; the turn that FOLLOWS it took its system
+    /// prompt, workspace root, agent type, step cap, skill-state toggle and
+    /// the next call's permission evaluation from whatever was selected at
+    /// that moment. `selectProject` guards only on `!generating`, which is
+    /// false for the whole time a call sits at an approval card, so the
+    /// switch is not merely possible -- it is legal precisely when a turn is
+    /// mid-flight.
+    ///
+    /// The `interactionMode` gate is preserved from the call site this
+    /// replaced: conversational Chat mode sends no project, hence no system
+    /// prompt and no tool definitions, and `extractToolCalls` refuses to
+    /// parse a call that was never offered.
+    public func turnProject(chatID: UUID) -> AppProject? {
+        guard interactionMode == .projects else { return nil }
+        return project(forChat: chatID)
+    }
+
     /// Creates and persists a new codebase project.
     @discardableResult
     public func createProject(
@@ -22,6 +53,11 @@ extension AppModel {
         skillStateEnabled: Bool = false,
         forgeGuardrailsEnabled: Bool? = nil
     ) -> AppProject {
+        // **THE SAME GUARD `selectProject` CARRIES** (state#55). Creating a
+        // project SELECTS it, rebinds `worktree` and rebinds `AppHookStore`,
+        // so doing it mid-turn moves the workspace under a running tool
+        // exactly as switching would -- and this had no guard at all.
+        guard !generating, !submitting else { return AppProject(name: name) }
         var instructions = customInstructions
         if instructions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
            let path = rootDirectoryPath,
@@ -43,6 +79,10 @@ extension AppModel {
 
         projects.insert(project, at: 0)
         selectedProjectID = project.id
+        // Stale-write hashes are per workspace; see `selectProject`. Creating
+        // a project is a workspace switch like any other, and this was the
+        // one such site that did not reset them.
+        Task { await FileSnapshotStore.shared.reset() }
         if let path = project.rootDirectoryPath, !path.isEmpty {
             worktree = WorktreeModel(rootDirectoryPath: path)
         } else {
@@ -99,12 +139,30 @@ extension AppModel {
         guard let index = projects.firstIndex(where: { $0.id == project.id }) else { return }
         var updated = project
         updated.updatedAt = Date()
+        let previousRoot = projects[index].rootDirectoryPath ?? ""
         projects[index] = updated
         persistProjects()
         reloadSkills()
         reloadAgents()
         if selectedProjectID == project.id {
             AppHookStore.shared.refresh(projectDirectory: updated.rootDirectoryPath)
+            // **A ROOT CHANGE IS A WORKSPACE SWITCH** (state#55). This
+            // rebound the hook store and left `worktree` and the snapshot
+            // hashes pointed at the OLD repository, so the git pane kept
+            // rendering the previous checkout and an `edit_file` could be
+            // allowed or refused on a hash recorded against a same-named
+            // file somewhere else entirely.
+            let newRoot = updated.rootDirectoryPath ?? ""
+            if newRoot != previousRoot {
+                Task { await FileSnapshotStore.shared.reset() }
+                if newRoot.isEmpty {
+                    worktree = nil
+                } else if let existing = worktree {
+                    existing.updateRoot(path: newRoot)
+                } else {
+                    worktree = WorktreeModel(rootDirectoryPath: newRoot)
+                }
+            }
         }
     }
 

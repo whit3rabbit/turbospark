@@ -325,7 +325,13 @@ public enum AppToolRegistry {
     ///   written by chat A's agent overwrites chat B's if the user switched
     ///   while the tool ran. Optional so the projectless and test call sites
     ///   need not invent one.
-    public static func execute(call: AppToolCall, in project: AppProject?, chatID: UUID? = nil) async -> AppToolResult {
+    /// - Parameter subagentDepth: how many subagents deep the caller already
+    ///   is (state#47). The `agent` tool spawns another run, and nothing
+    ///   carried a level, so a subagent could call `agent` which could call
+    ///   `agent` without bound.
+    public static func execute(
+        call: AppToolCall, in project: AppProject?, chatID: UUID? = nil, subagentDepth: Int = 0
+    ) async -> AppToolResult {
         let startTime = Date()
 
         // **NO PROJECT MEANS NO ROOT, AND THEREFORE NO FILE OR SHELL TOOL.**
@@ -473,6 +479,17 @@ public enum AppToolRegistry {
                             NSLocalizedDescriptionKey: "Skill '\(matched.name)' is disabled and cannot be invoked."
                         ])
                     }
+                    // `disable-model-invocation` was PARSED, DISPLAYED and
+                    // enforced nowhere (state#48). This is the one place it
+                    // can mean anything: the tool IS the model's invocation.
+                    guard !(matched.manifest.disableModelInvocation ?? false) else {
+                        throw NSError(domain: "TurboSparkTool", code: 18, userInfo: [
+                            NSLocalizedDescriptionKey:
+                                "Skill '\(matched.name)' declares "
+                                + "`disable-model-invocation: true` and can only be run by the "
+                                + "user."
+                        ])
+                    }
                     let expanded = SkillManager.shared.substituteArguments(
                         content: matched.content,
                         arguments: call.arguments,
@@ -485,7 +502,13 @@ public enum AppToolRegistry {
                     }
                     output = res
                 } else {
-                    let available = effectiveSkills.map { "- \($0.name): \($0.skillDescription)" }.joined(separator: "\n")
+                    // A skill the model may not invoke is not listed as
+                    // available to it either, or the next turn simply asks
+                    // for it again (state#48).
+                    let available = effectiveSkills
+                        .filter { $0.isEnabled && !($0.manifest.disableModelInvocation ?? false) }
+                        .map { "- \($0.name): \($0.skillDescription)" }
+                        .joined(separator: "\n")
                     output = "Skill '\(skillName)' was not found.\n\nAvailable skills:\n\(available.isEmpty ? "(No skills currently installed)" : available)"
                 }
 
@@ -517,7 +540,9 @@ public enum AppToolRegistry {
                     ])
                 }
                 let activeSession = await activeSessionProvider?()
-                let result = await SubagentRunner.run(agent: agentDef, taskPrompt: prompt, session: activeSession, project: project)
+                let result = await SubagentRunner.run(
+                    agent: agentDef, taskPrompt: prompt, session: activeSession, project: project,
+                    chatID: chatID, depth: subagentDepth + 1)
                 if result.status == "error" || result.status == "failed" {
                     throw NSError(domain: "TurboSparkTool", code: 21, userInfo: [NSLocalizedDescriptionKey: result.finalResponse])
                 }
@@ -565,6 +590,20 @@ public enum AppToolRegistry {
 
             let elapsed = Date().timeIntervalSince(startTime)
             return AppToolResult(callID: call.id, output: output, isError: false, durationSeconds: elapsed)
+        } catch is CancellationError {
+            // **A STOP IS NOT A TOOL FAILURE** (state#64). `CancellationError`
+            // localizes to "cancelled", so a command the USER stopped reached
+            // the model as `Error: cancelled` -- indistinguishable from a
+            // command that failed, which is an invitation to try again, and
+            // the loop obligingly does. Said plainly, so a model that gets one
+            // anyway stops rather than retries.
+            let elapsed = Date().timeIntervalSince(startTime)
+            return AppToolResult(
+                callID: call.id,
+                output: "Stopped by the user before it finished. Do not retry; wait for "
+                    + "further instructions.",
+                isError: true,
+                durationSeconds: elapsed)
         } catch {
             let elapsed = Date().timeIntervalSince(startTime)
             return AppToolResult(callID: call.id, output: "Error: \(error.localizedDescription)", isError: true, durationSeconds: elapsed)
@@ -578,10 +617,17 @@ public enum AppToolRegistry {
         project: AppProject?,
         rootURL: URL
     ) async throws -> String {
-        // Search in project servers first, then global servers
+        // **A GLOBAL SERVER WINS A NAME COLLISION** (state#61). This put
+        // PROJECT servers first, and `first(where:)` takes the first match --
+        // so a `.mcp.json` in a cloned repository could take the name of a
+        // server the user configured globally and be dialled in its place,
+        // with a different command, while the approval card showed only the
+        // name. Precedence is the opposite of the skills rule on purpose:
+        // there, a project overriding a user skill is the FEATURE; here the
+        // thing being overridden is a command the user chose to trust.
         let globalServers = GlobalMcpFileStore.load().servers
         let projectServers = project?.mcpServers ?? []
-        let allServers = projectServers + globalServers
+        let allServers = globalServers + projectServers
 
         guard let matchedServer = allServers.first(where: { $0.name.lowercased() == serverName.lowercased() }) else {
             throw NSError(domain: "TurboSparkTool", code: 7, userInfo: [NSLocalizedDescriptionKey: "MCP server '\(serverName)' not found in project or global configurations."])

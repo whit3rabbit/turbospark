@@ -97,13 +97,24 @@ public final class WorktreeModel: ObservableObject {
     private var refreshGeneration = 0
 
     public init(rootDirectoryPath: String) {
-        self.rootDirectoryPath = rootDirectoryPath
+        self.rootDirectoryPath = rootDirectoryPath.isEmpty
+            ? "" : PathContainment.canonical(URL(fileURLWithPath: rootDirectoryPath)).path
         refresh()
     }
 
+    /// Repoints at another repository.
+    ///
+    /// **STANDARDIZED BEFORE COMPARING** (state#55). Raw string equality
+    /// treats `/tmp/p`, `/tmp/p/` and `/private/tmp/p` as three roots, so a
+    /// caller passing a cosmetically different spelling of the SAME path
+    /// paid a full refresh, and one passing a symlinked spelling of a
+    /// DIFFERENT path... also worked, by luck. Compare canonical, store
+    /// canonical.
     public func updateRoot(path: String) {
-        guard path != rootDirectoryPath else { return }
-        rootDirectoryPath = path
+        let canonical = path.isEmpty
+            ? "" : PathContainment.canonical(URL(fileURLWithPath: path)).path
+        guard canonical != rootDirectoryPath else { return }
+        rootDirectoryPath = canonical
         refresh()
     }
 
@@ -200,35 +211,112 @@ public final class WorktreeModel: ObservableObject {
 
     // MARK: - Git Process Execution
 
-    private static func runGitCommand(args: [String], rootPath: String) async -> (exitCode: Int32, stdout: String, stderr: String) {
-        await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
-                let process = Process()
-                process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-                process.currentDirectoryURL = URL(fileURLWithPath: rootPath)
-                process.arguments = args
+    /// Runs one `git` invocation in `rootPath`.
+    ///
+    /// **THROUGH `ProcessExecutor`, WHICH IS NOT A TIDY-UP** (state#54). The
+    /// version this replaced called `waitUntilExit()` and THEN
+    /// `readDataToEndOfFile()`, which deadlocks the moment the output exceeds
+    /// one pipe buffer (64 KiB here): git blocks writing, this blocks
+    /// waiting, and neither moves. `git diff` on any real change reaches that
+    /// in one file. It also had no timeout and no handle, so a `git` blocked
+    /// on an index lock or a network remote parked a global-queue worker for
+    /// the life of the process with `isRefreshing` stuck true and the pane
+    /// showing a spinner forever.
+    ///
+    /// `ProcessExecutor` drains both pipes concurrently with the wait and
+    /// enforces a deadline, which is exactly the pair that was missing.
+    private static func runGitCommand(args: [String], rootPath: String) async -> (
+        exitCode: Int32, stdout: String, stderr: String
+    ) {
+        do {
+            let result = try await ProcessExecutor.run(
+                executableURL: URL(fileURLWithPath: "/usr/bin/git"),
+                arguments: args,
+                currentDirectoryURL: URL(fileURLWithPath: rootPath),
+                timeoutSeconds: gitTimeoutSeconds
+            )
+            if result.timedOut {
+                return (
+                    -1, result.stdout,
+                    "git \(args.first ?? "") timed out after \(Int(gitTimeoutSeconds))s"
+                )
+            }
+            return (result.exitCode, result.stdout, result.stderr)
+        } catch {
+            return (-1, "", error.localizedDescription)
+        }
+    }
 
-                let outPipe = Pipe()
-                let errPipe = Pipe()
-                process.standardOutput = outPipe
-                process.standardError = errPipe
+    /// Long enough for `git status` on a large repository, short enough that
+    /// a `git` blocked on an index lock releases the pane.
+    private static let gitTimeoutSeconds: TimeInterval = 20
 
-                do {
-                    try process.run()
-                    process.waitUntilExit()
+    /// The path a `--porcelain=v1` line really names (state#54).
+    ///
+    /// Two things were taken literally. A RENAME is `R  old -> new`, and the
+    /// whole string was used as a path -- so the row named a file that does
+    /// not exist, and the `--numstat` lookup beside it missed, reporting 0
+    /// additions and 0 deletions for every rename. And a path containing a
+    /// space, a quote or a non-ASCII byte is C-QUOTED by git, so it arrived
+    /// wrapped in `"` with `\\n` and `\\303\\251` style escapes intact.
+    ///
+    /// Pure, and separate from the loop, so both can be asserted without a
+    /// repository (`swift/CLAUDE.md` Gotcha 26). `nonisolated` for the same
+    /// reason `probe` is: the status parse runs off the main actor, and a
+    /// test asserting a pure function should not have to hop onto it.
+    nonisolated static func porcelainPath(_ raw: String) -> String {
+        var path = raw
+        // The arrow separates old from new; the NEW name is the file that
+        // exists. Only outside quotes, so a literal " -> " inside a quoted
+        // filename is left alone.
+        if !path.hasPrefix("\"") , let arrow = path.range(of: " -> ") {
+            path = String(path[arrow.upperBound...])
+        } else if path.hasPrefix("\""), let arrow = path.range(of: "\" -> ") {
+            path = String(path[arrow.upperBound...])
+        }
+        return unquotePorcelain(path.trimmingCharacters(in: .whitespaces))
+    }
 
-                    let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
-                    let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
-
-                    let outStr = String(data: outData, encoding: .utf8) ?? ""
-                    let errStr = String(data: errData, encoding: .utf8) ?? ""
-
-                    continuation.resume(returning: (process.terminationStatus, outStr, errStr))
-                } catch {
-                    continuation.resume(returning: (-1, "", error.localizedDescription))
+    /// Undoes git's C-style quoting. A path not wrapped in `"` is returned
+    /// unchanged, which is the overwhelmingly common case.
+    nonisolated static func unquotePorcelain(_ raw: String) -> String {
+        guard raw.count >= 2, raw.hasPrefix("\""), raw.hasSuffix("\"") else { return raw }
+        let body = Array(raw.dropFirst().dropLast().utf8)
+        var bytes: [UInt8] = []
+        var i = 0
+        while i < body.count {
+            guard body[i] == UInt8(ascii: "\\"), i + 1 < body.count else {
+                bytes.append(body[i])
+                i += 1
+                continue
+            }
+            let next = body[i + 1]
+            switch next {
+            case UInt8(ascii: "n"): bytes.append(0x0A); i += 2
+            case UInt8(ascii: "t"): bytes.append(0x09); i += 2
+            case UInt8(ascii: "r"): bytes.append(0x0D); i += 2
+            case UInt8(ascii: "\""), UInt8(ascii: "\\"): bytes.append(next); i += 2
+            case UInt8(ascii: "0")...UInt8(ascii: "7") where i + 3 < body.count:
+                // An octal escape is one BYTE, not one character: a UTF-8
+                // name arrives as several in a row and only reassembles
+                // correctly if they are collected as bytes and decoded once.
+                let digits = body[(i + 1)...(i + 3)]
+                let value = digits.reduce(0) { $0 * 8 + Int($1 - UInt8(ascii: "0")) }
+                if digits.allSatisfy({ $0 >= UInt8(ascii: "0") && $0 <= UInt8(ascii: "7") }),
+                    value <= 0xFF
+                {
+                    bytes.append(UInt8(value))
+                    i += 4
+                } else {
+                    bytes.append(body[i])
+                    i += 1
                 }
+            default:
+                bytes.append(next)
+                i += 2
             }
         }
+        return String(decoding: bytes, as: UTF8.self)
     }
 
     private static func queryGitStatus(rootPath: String) async -> (isGit: Bool, branch: String, changes: [WorktreeFileChange], adds: Int, dels: Int) {
@@ -267,7 +355,9 @@ public final class WorktreeModel: ObservableObject {
             guard line.count >= 4 else { continue }
             let indexCode = line[line.startIndex]
             let worktreeCode = line[line.index(line.startIndex, offsetBy: 1)]
-            let filePath = String(line[line.index(line.startIndex, offsetBy: 3)...]).trimmingCharacters(in: .whitespacesAndNewlines)
+            let rawPath = String(line[line.index(line.startIndex, offsetBy: 3)...])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let filePath = Self.porcelainPath(rawPath)
             guard !filePath.isEmpty else { continue }
 
             let status: WorktreeFileChange.Status

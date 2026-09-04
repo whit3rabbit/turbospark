@@ -136,6 +136,13 @@ extension AppModel {
                     style: .success
                 )
             } catch {
+                // **THE STOP REQUEST IS RESET ON FAILURE TOO** (state#53).
+                // It is set by a Stop pressed during the bind and cleared
+                // only on the success path, so a start that THREW left it
+                // latched -- and the next successful start read it at the
+                // publish point and stopped itself, reporting "Server
+                // stopped" for a server the user had just asked for.
+                self.serverStopRequested = false
                 let msg = "Failed to start server: \(error.localizedDescription)"
                 self.error = msg
                 showToast(msg, style: .error)
@@ -238,10 +245,20 @@ extension AppModel {
     /// one.
     public func detachModelFromServer(id: String) {
         guard let server else { return }
+        // **THE SWIFT REFERENCE GOES WHATEVER THE ENGINE SAYS** (state#53).
+        // This sat INSIDE the `do`, so a throwing detach kept the session in
+        // `serverAttachedSessions` -- which is the reference that holds the
+        // weights, the KV cache and the compiled pipelines alive -- while
+        // `refreshServerInfo` never ran and the row vanished from the pane
+        // anyway. The user sees nothing serving it and the memory is still
+        // committed. Dropping it here is the recoverable direction: the
+        // engine's own half either succeeded or is reported below.
+        defer {
+            serverAttachedSessions.removeValue(forKey: id)
+            refreshServerInfo()
+        }
         do {
             try server.detach(modelId: id)
-            serverAttachedSessions[id] = nil
-            refreshServerInfo()
             showToast("Stopped serving \(id)", style: .info)
         } catch {
             let msg = "Could not stop serving \(id): \(error.localizedDescription)"

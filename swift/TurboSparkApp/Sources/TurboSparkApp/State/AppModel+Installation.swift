@@ -41,6 +41,14 @@ extension AppModel {
                             self.installProgressFraction = min(Double(maxBytes) / Double(total), 1.0)
                         }
                     case .finished(let model):
+                        // **THE EPOCH CHECK BELONGS ON THE SUCCESS ARM TOO**
+                        // (state#52). The comment on the `catch` below says
+                        // it comes first, and it existed only there -- so a
+                        // `.finished` event buffered behind a cancel still
+                        // ran `refreshModels`, reassigned `selected` and
+                        // OPENED a model for an install nobody was watching,
+                        // on top of whatever the user had started since.
+                        guard self.installEpoch == myEpoch else { return }
                         self.installStageText = "Installation complete!"
                         self.refreshModels()
                         self.selected = model
@@ -65,6 +73,11 @@ extension AppModel {
             guard self.installEpoch == myEpoch else { return }
             self.installingAlias = nil
             self.isInstallingModel = false
+            // Cleared here rather than left showing the last stage forever
+            // (state#52): every other field of the progress row is reset and
+            // this one is what the row actually READS, so an install that
+            // finished left "Installation complete!" under an idle button.
+            self.installStageText = nil
             self.installProgressFraction = nil
             self.installDownloadedBytes = nil
             self.installTotalBytes = nil
@@ -84,6 +97,23 @@ extension AppModel {
         let trimmedRepo = repo.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedAlias = alias.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedRepo.isEmpty, !trimmedAlias.isEmpty else { return }
+        // **THE TWO-WRITER PROTECTION APPLIES HERE TOO** (state#44).
+        // `cancelInstall` records an abandoned alias because the engine
+        // exposes no install-cancel call: dropping the consumer ends DELIVERY
+        // while `ts_install_repo` keeps streaming the checkpoint into that
+        // directory. `installModel` refuses a retry for the rest of the
+        // process on that basis and this path did neither -- it never
+        // recorded `installingAlias`, so a cancel here marked nothing, and it
+        // never checked the set, so a retry wrote into a directory an
+        // orphaned thread was still filling.
+        guard !abandonedInstallAliases.contains(trimmedAlias) else {
+            showToast(
+                "'\(trimmedAlias)' has a download still running in the background from an earlier "
+                    + "attempt. Restart the app before installing it again.",
+                style: .warning, duration: 6.0)
+            return
+        }
+        installingAlias = trimmedAlias
 
         installEpoch += 1
         let myEpoch = installEpoch
@@ -116,6 +146,14 @@ extension AppModel {
                             self.installProgressFraction = min(Double(maxBytes) / Double(total), 1.0)
                         }
                     case .finished(let model):
+                        // **THE EPOCH CHECK BELONGS ON THE SUCCESS ARM TOO**
+                        // (state#52). The comment on the `catch` below says
+                        // it comes first, and it existed only there -- so a
+                        // `.finished` event buffered behind a cancel still
+                        // ran `refreshModels`, reassigned `selected` and
+                        // OPENED a model for an install nobody was watching,
+                        // on top of whatever the user had started since.
+                        guard self.installEpoch == myEpoch else { return }
                         self.installStageText = "Installation complete!"
                         self.refreshModels()
                         self.selected = model
@@ -140,6 +178,11 @@ extension AppModel {
             guard self.installEpoch == myEpoch else { return }
             self.installingAlias = nil
             self.isInstallingModel = false
+            // Cleared here rather than left showing the last stage forever
+            // (state#52): every other field of the progress row is reset and
+            // this one is what the row actually READS, so an install that
+            // finished left "Installation complete!" under an idle button.
+            self.installStageText = nil
             self.installProgressFraction = nil
             self.installDownloadedBytes = nil
             self.installTotalBytes = nil

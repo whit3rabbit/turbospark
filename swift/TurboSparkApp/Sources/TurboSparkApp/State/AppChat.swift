@@ -226,12 +226,23 @@ public struct AppChatMessage: Identifiable, Codable, Equatable, Sendable {
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
-        role = try container.decode(ChatMessage.Role.self, forKey: .role)
+        // **AN ENUM DECODED BY ITS OWN CONFORMANCE IS INTOLERANT** (state#45).
+        // `decode(Role.self)` throws `dataCorrupted` on any raw value this
+        // build does not know -- a role a NEWER release wrote, or one this
+        // one dropped -- and `AppJSONStore.load` then quarantines the whole
+        // archive over a single message. That is the same total, silent loss
+        // `swift/CLAUDE.md` Gotcha 13 records, reached through the one field
+        // the tolerant decoder still read strictly. Decoded through
+        // `rawValue`, an unknown role reads as `.assistant`: it is DISPLAY
+        // text either way, and keeping the other 400 messages beats being
+        // precise about one.
+        role = container.decodeTolerant(ChatMessage.Role.self, forKey: .role, fallback: .assistant)
         content = try container.decodeIfPresent(String.self, forKey: .content) ?? ""
         reasoning = try container.decodeIfPresent(String.self, forKey: .reasoning) ?? ""
         stopReason = try container.decodeIfPresent(String.self, forKey: .stopReason)
-        toolCalls = try container.decodeIfPresent([AppToolCall].self, forKey: .toolCalls) ?? []
-        toolResults = try container.decodeIfPresent([AppToolResult].self, forKey: .toolResults) ?? []
+        // Lossy: one malformed call must not take the whole archive down.
+        toolCalls = try container.decodeLossyArray(AppToolCall.self, forKey: .toolCalls)
+        toolResults = try container.decodeLossyArray(AppToolResult.self, forKey: .toolResults)
         imagePaths = try container.decodeIfPresent([String].self, forKey: .imagePaths) ?? []
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
     }
@@ -301,7 +312,7 @@ public struct AppChat: Identifiable, Codable, Equatable, Sendable {
         draft = try container.decodeIfPresent(String.self, forKey: .draft) ?? ""
         draftAttachments = try container.decodeIfPresent(
             [AppPromptAttachment].self, forKey: .draftAttachments) ?? []
-        messages = try container.decodeIfPresent([AppChatMessage].self, forKey: .messages) ?? []
+        messages = try container.decodeLossyArray(AppChatMessage.self, forKey: .messages)
         todos = try container.decodeIfPresent([TodoItem].self, forKey: .todos) ?? []
         contextSummary = try container.decodeIfPresent(String.self, forKey: .contextSummary)
         skillState = try container.decodeIfPresent(AppSkillState.self, forKey: .skillState)
@@ -346,7 +357,7 @@ public struct AppChatArchive: Codable, Sendable {
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         selectedChatID = try container.decodeIfPresent(UUID.self, forKey: .selectedChatID) ?? UUID()
-        chats = try container.decodeIfPresent([AppChat].self, forKey: .chats) ?? []
+        chats = try container.decodeLossyArray(AppChat.self, forKey: .chats)
     }
 }
 

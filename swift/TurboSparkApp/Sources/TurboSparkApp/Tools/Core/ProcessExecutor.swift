@@ -2,9 +2,8 @@ import Foundation
 
 /// Thread-safe growable byte buffer with a hard cap.
 ///
-/// `Pipe.fileHandleForReading.readabilityHandler` fires on an arbitrary GCD
-/// thread chosen by Foundation, never on the caller's thread, so this cannot
-/// be a plain `var` behind the executor's async function.
+/// The pipe readers run on GCD threads of their own, never on the caller's,
+/// so this cannot be a plain `var` behind the executor's async function.
 final class CappedOutputBuffer: @unchecked Sendable {
     private let lock = NSLock()
     private var data = Data()
@@ -44,8 +43,8 @@ final class CappedOutputBuffer: @unchecked Sendable {
 /// forever the moment a child writes more than the ~64KB pipe buffer before
 /// exiting, because nothing is draining the pipe while we wait, and the
 /// child then blocks on ITS OWN write() call. Reading stdout/stderr
-/// concurrently with the wait (via `readabilityHandler`) is what breaks that
-/// cycle, and a deadline that is re-checked on a timer -- never inside a
+/// concurrently with the wait, on one dedicated thread per pipe, is what
+/// breaks that cycle, and a deadline re-checked on a timer -- never inside a
 /// blocking read -- is what makes a timeout actually fire.
 enum ProcessExecutor {
     struct Output {
@@ -86,20 +85,42 @@ enum ProcessExecutor {
         let stdoutBuffer = CappedOutputBuffer(capBytes: outputCapBytes)
         let stderrBuffer = CappedOutputBuffer(capBytes: outputCapBytes)
 
-        stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
-            let chunk = handle.availableData
-            if chunk.isEmpty {
-                handle.readabilityHandler = nil
-            } else {
-                stdoutBuffer.append(chunk)
-            }
-        }
-        stderrPipe.fileHandleForReading.readabilityHandler = { handle in
-            let chunk = handle.availableData
-            if chunk.isEmpty {
-                handle.readabilityHandler = nil
-            } else {
-                stderrBuffer.append(chunk)
+        // **ONE READER PER PIPE, AND THE CALLER WAITS FOR IT** (state#66).
+        //
+        // This used a `readabilityHandler` plus a trailing `availableData`
+        // read after the wait. Setting `readabilityHandler = nil` does not
+        // wait for a block already dispatched on the handle's private source
+        // queue, so the trailing read could run CONCURRENTLY with the
+        // handler's own -- two readers on one descriptor. The lock-guarded
+        // buffer keeps that from corrupting memory and does nothing for the
+        // ORDER: a chunk read by the handler after the trailing read has
+        // appended lands out of sequence, and a hook's JSON verdict arriving
+        // in two halves parses as neither.
+        //
+        // A dedicated thread per pipe, looping on `availableData`, has no
+        // second reader to race, and cannot deadlock: it drains continuously,
+        // so the child never blocks on a full pipe, and it stops at EOF --
+        // which arrives when the child exits, including when
+        // `terminateAndReap` is what makes it exit. The `DispatchGroup` is
+        // what lets the caller know both are done before it reads the text.
+        let readers = DispatchGroup()
+        for (handle, buffer) in [
+            (stdoutPipe.fileHandleForReading, stdoutBuffer),
+            (stderrPipe.fileHandleForReading, stderrBuffer),
+        ] {
+            readers.enter()
+            DispatchQueue.global(qos: .utility).async {
+                defer { readers.leave() }
+                // Chunked, NOT `readDataToEndOfFile()`: that accumulates the
+                // whole stream in memory before returning, which would defeat
+                // `outputCapBytes` on a runaway command -- the cap can only
+                // bound what it is shown a piece at a time. `availableData`
+                // blocks until there is data or EOF, and returns empty at EOF.
+                while true {
+                    let chunk = handle.availableData
+                    if chunk.isEmpty { break }
+                    buffer.append(chunk)
+                }
             }
         }
 
@@ -147,13 +168,13 @@ enum ProcessExecutor {
             await uninterruptibleSleep(nanoseconds: 20_000_000)
         }
 
-        stdoutPipe.fileHandleForReading.readabilityHandler = nil
-        stderrPipe.fileHandleForReading.readabilityHandler = nil
-        // Drain anything left sitting in the pipe after the last handler firing.
-        let trailingOut = stdoutPipe.fileHandleForReading.availableData
-        if !trailingOut.isEmpty { stdoutBuffer.append(trailingOut) }
-        let trailingErr = stderrPipe.fileHandleForReading.availableData
-        if !trailingErr.isEmpty { stderrBuffer.append(trailingErr) }
+        // The readers finish at EOF, which the child's exit delivers. The
+        // bound is for the case where it does NOT: a grandchild inheriting
+        // the pipe holds the write end open after its parent is reaped, and
+        // waiting forever there would park this task for the life of the
+        // process. Two seconds is long past when a dead child's buffered
+        // output has arrived.
+        _ = readers.wait(timeout: .now() + 2.0)
 
         let exitCode = process.isRunning ? -1 : process.terminationStatus
         if cancelled { throw CancellationError() }
@@ -170,7 +191,12 @@ enum ProcessExecutor {
     /// Synchronous on purpose: it runs from the cancellation path, where an
     /// `await` would suspend on an already-cancelled task and hand back
     /// control before the child is dead.
-    private static func terminateAndReap(_ process: Process) {
+    ///
+    /// `internal` rather than `private` since state#61: `McpClientEngine`
+    /// spawns stdio children of its own and had only a bare `terminate()`,
+    /// so a server that traps or ignores SIGTERM survived every call and
+    /// accumulated one orphan per invocation for the life of the app.
+    static func terminateAndReap(_ process: Process) {
         process.terminate()
         let killDeadline = Date().addingTimeInterval(2.0)
         while process.isRunning && Date() < killDeadline {

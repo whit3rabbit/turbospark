@@ -71,6 +71,25 @@ public enum AppHookDecisionAggregator {
             case .nonBlockingError(let message):
                 if !message.isEmpty { feedback.append(message) }
 
+            case .unavailable(let reason):
+                // **A HOOK THAT COULD NOT ANSWER IS NOT AN ALLOW**
+                // (state#40). On a permission event it resolves `.ask`, so
+                // the failure reaches a human with its own reason on the
+                // card; deny still outranks it, and it outranks allow, so a
+                // second hook that really did say allow does not get to
+                // paper over the first one's silence. Everywhere else it is
+                // feedback: `UserPromptSubmit` and `Stop` block on a
+                // DELIBERATE verdict, and manufacturing one from a crash
+                // would wedge the app on a broken hook.
+                if isPermissionEvent {
+                    if rank(.ask) > rank(verdict.permissionDecision) {
+                        verdict.permissionDecision = .ask
+                        verdict.permissionReason = reason
+                    }
+                } else if !reason.isEmpty {
+                    feedback.append(reason)
+                }
+
             case .plainText:
                 continue
 

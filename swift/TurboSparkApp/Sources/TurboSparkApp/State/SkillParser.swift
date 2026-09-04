@@ -20,6 +20,8 @@ public enum SkillParseError: Error, LocalizedError, Sendable {
     case invalidEncoding(String)
     case invalidFrontmatter(String)
     case unreadableContent
+    /// The file resolves outside the project it was discovered in (state#39).
+    case escapesProjectRoot(String)
 
     public var errorDescription: String? {
         switch self {
@@ -27,6 +29,8 @@ public enum SkillParseError: Error, LocalizedError, Sendable {
             return "Skill file not found at: \(path)"
         case .invalidEncoding(let path):
             return "Could not read text with UTF-8 encoding from: \(path)"
+        case .escapesProjectRoot(let path):
+            return "Skill file resolves outside the project root: \(path)"
         case .invalidFrontmatter(let msg):
             return "Invalid skill frontmatter: \(msg)"
         case .unreadableContent:
@@ -38,13 +42,26 @@ public enum SkillParseError: Error, LocalizedError, Sendable {
 /// Lightweight, resilient parser for YAML frontmatter in Markdown skill files.
 public enum SkillParser {
     /// Parses a raw Markdown skill file from disk.
+    /// - Parameter containedIn: the project root a PROJECT-scoped skill must
+    ///   resolve inside, or nil for a user-scoped one (state#39).
+    ///
+    ///   **A SKILL BODY REACHES THE MODEL AND IS RATED ALWAYS-SAFE.** The
+    ///   `skill` tool returns `skill.content` verbatim and
+    ///   `ToolRiskClassifier` never gates it, so a cloned repository shipping
+    ///   `.claude/skills/x/SKILL.md -> ~/.aws/credentials` hands that file to
+    ///   the model on request. `ProjectRuleDetector` grew this check for
+    ///   exactly that shape in state#23 and this reader never got one.
     public static func parseFile(
         at fileURL: URL,
         scope: SkillScope = .userGlobal,
-        agentOrigin: SkillSourceAgent = .turboSpark
+        agentOrigin: SkillSourceAgent = .turboSpark,
+        containedIn root: URL? = nil
     ) throws -> AppSkill {
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             throw SkillParseError.fileNotFound(fileURL.path)
+        }
+        guard PathContainment.resolvedIfContained(fileURL, in: root) != nil else {
+            throw SkillParseError.escapesProjectRoot(fileURL.path)
         }
 
         guard let rawString = try? String(contentsOf: fileURL, encoding: .utf8) else {
@@ -55,7 +72,16 @@ public enum SkillParser {
         var refFiles: [String] = []
         if fileURL.lastPathComponent.uppercased() == "SKILL.MD" {
             if let dirContents = try? FileManager.default.contentsOfDirectory(atPath: skillDir.path) {
-                refFiles = dirContents.filter { $0 != "SKILL.md" && $0 != "SKILL.MD" && !$0.hasPrefix(".") }
+                refFiles = dirContents.filter { name in
+                    guard name != "SKILL.md", name != "SKILL.MD", !name.hasPrefix(".") else {
+                        return false
+                    }
+                    // The listing is what the model is told it may read, so a
+                    // reference entry that is itself a symlink out of the
+                    // project is an invitation the gate above just refused.
+                    return PathContainment.resolvedIfContained(
+                        skillDir.appendingPathComponent(name), in: root) != nil
+                }
             }
         }
 
@@ -105,7 +131,7 @@ public enum SkillParser {
             return (nil, text)
         }
 
-        let lines = text.components(separatedBy: .newlines)
+        let lines = normalizedLines(text)
         guard lines.first?.trimmingCharacters(in: .whitespaces) == "---" else {
             return (nil, text)
         }
@@ -131,6 +157,38 @@ public enum SkillParser {
         return (frontmatter, body)
     }
 
+    /// Splits into lines on LF, having first folded CRLF and bare CR into it
+    /// (state#56).
+    ///
+    /// **`components(separatedBy: .newlines)` SPLITS ON EACH CHARACTER OF A
+    /// CHARACTER SET**, measured: `"a\r\nb"` comes back as
+    /// `["a", "", "b"]`, an empty line between every real one. On a CRLF
+    /// file the block-scalar loop below met one of those immediately and
+    /// treated it as the end of the block, so a multi-line description
+    /// terminated after its first line and the rest was reparsed as
+    /// `key: value` pairs -- which is how a `name:` written inside a
+    /// description renamed the skill.
+    ///
+    /// **THIS IS NOT WHAT FIXES THAT, AND THE MUTATION CHECK IS WHAT SAID
+    /// SO.** Teaching the block loop that a blank line is PART of a block
+    /// covers the CRLF case on its own, so reverting this normalization
+    /// leaves every case green. It is kept because it makes a line index
+    /// mean a line -- every loop here counts them -- and because a bare-CR
+    /// file is not otherwise handled. Do not read it as the CRLF fix.
+    static func normalizedLines(_ text: String) -> [String] {
+        text.replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .components(separatedBy: "\n")
+    }
+
+    /// The four block-scalar markers YAML accepts, not the two this used to
+    /// know (state#56). `|-` and `>-` are strip-chomping variants and are
+    /// what most authors actually write; unrecognized, the marker itself was
+    /// stored as the value and its body was reparsed as keys.
+    static func isBlockScalarMarker(_ value: String) -> Bool {
+        ["|", ">", "|-", ">-", "|+", ">+"].contains(value)
+    }
+
     /// Parses YAML frontmatter key-value pairs into a `SkillManifest`.
     public static func parseFrontmatterYAML(_ yamlText: String) -> SkillManifest {
         var name: String?
@@ -146,7 +204,7 @@ public enum SkillParser {
         var paths: [String] = []
         var shell: SkillShellType = .bash
 
-        let lines = yamlText.components(separatedBy: .newlines)
+        let lines = normalizedLines(yamlText)
         var i = 0
 
         while i < lines.count {
@@ -169,7 +227,7 @@ public enum SkillParser {
             case "name":
                 name = unquote(valueRest)
             case "description":
-                if valueRest.isEmpty || valueRest == "|" || valueRest == ">" {
+                if valueRest.isEmpty || isBlockScalarMarker(valueRest) {
                     // Multiline string
                     var descLines: [String] = []
                     i += 1
@@ -178,12 +236,18 @@ public enum SkillParser {
                         if subLine.hasPrefix("  ") || subLine.hasPrefix("\t") {
                             descLines.append(subLine.trimmingCharacters(in: .whitespaces))
                             i += 1
+                        } else if subLine.trimmingCharacters(in: .whitespaces).isEmpty {
+                            // A blank line is PART of a block scalar, not its
+                            // end. Ending here is what let the paragraph after
+                            // it be reparsed as keys.
+                            i += 1
                         } else {
                             i -= 1
                             break
                         }
                     }
                     description = descLines.joined(separator: " ")
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
                 } else {
                     description = unquote(valueRest)
                 }

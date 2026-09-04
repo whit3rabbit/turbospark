@@ -221,11 +221,17 @@ public struct SkillsSettingsPaneView: View {
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
 
-                if !skill.manifest.allowedTools.isEmpty {
-                    Text("\(skill.manifest.allowedTools.count) tools")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
+                // **NO "N tools" CHIP** (state#48). `allowed-tools` is parsed
+                // into `SkillManifest` and read by NOTHING:
+                // `SkillManifest.isToolAllowed` has zero callers, and a skill
+                // is inlined into a prompt rather than scoped, so there is no
+                // window in which it could apply. The chip stated a
+                // restriction that does not exist -- `swift/CLAUDE.md`
+                // Gotcha 22's badge that cannot fail, in the direction that
+                // matters, since a reader would take it for a permission
+                // boundary. `disable-model-invocation` IS enforced now (in
+                // the `skill` tool); scoping a skill's tools is a feature,
+                // not a missing line, and is not claimed until it exists.
 
                 if !skill.referenceFiles.isEmpty {
                     Text("\(skill.referenceFiles.count) files")

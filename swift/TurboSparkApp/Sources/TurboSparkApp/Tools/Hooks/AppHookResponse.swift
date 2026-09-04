@@ -78,6 +78,15 @@ public enum AppHookOutcome: Sendable {
     /// tool already ran, so nothing can be blocked, but Claude still sees
     /// stderr), otherwise logged and ignored.
     case nonBlockingError(String)
+    /// The hook produced NO verdict at all: it timed out, its shell could
+    /// not be spawned, or its transport failed (state#40).
+    ///
+    /// **DISTINCT FROM A NIL OUTCOME, WHICH IS WHAT THIS REPLACES.** The
+    /// aggregator skips nil and the engine defaults to `.allow`, so all
+    /// three failure arms let a call through -- a deny hook whose
+    /// interpreter is missing permits every call it was written to block,
+    /// silently and on every run. A hook that cannot answer is not consent.
+    case unavailable(reason: String)
 }
 
 public enum AppHookResponseParser {

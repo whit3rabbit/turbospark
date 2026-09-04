@@ -162,7 +162,7 @@ public struct PermissionsSettingsPaneView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Authorized Workspace Folders")
                         .font(.headline)
-                    Text("Explicitly granted project and workspace directories for file tools and code editing.")
+                    Text("Folders you have granted macOS read access to. This does not widen what file tools may reach: those stay inside the selected project's root.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -188,7 +188,7 @@ public struct PermissionsSettingsPaneView: View {
                         Text("No custom folders authorized yet.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        Text("Add directories where your projects live to streamline autonomous tool access.")
+                        Text("Add a folder here to clear the macOS access prompt for it up front.")
                             .font(.caption2)
                             .foregroundStyle(.secondary.opacity(0.8))
                     }

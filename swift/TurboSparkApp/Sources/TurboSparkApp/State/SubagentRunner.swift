@@ -29,6 +29,10 @@ public struct SubagentRunResult: Sendable, Equatable {
 
 /// Executes subagent tasks in a clean, isolated context without parent conversation history.
 public enum SubagentRunner {
+    /// How many subagents may nest. Two, so an agent may delegate once and
+    /// what it delegates to may not (state#47).
+    public static let maxSubagentDepth = 2
+
     /// Builds the isolated system prompt for a subagent run.
     public static func buildSystemPrompt(for agent: AppAgentDefinition, project: AppProject?) -> String {
         var sections: [String] = []
@@ -48,7 +52,16 @@ public enum SubagentRunner {
         }
 
         // 3. Filtered Tool definitions
-        let allTools = AppToolCatalog.allTools
+        //
+        // **THE PROJECT'S SLICE, NOT THE WHOLE CATALOG** (state#47). This
+        // read `AppToolCatalog.allTools`, so a subagent under an agent
+        // profile with no `allowed-tools` clause was TOLD it had every tool
+        // the app implements -- including ones its own project's agent type
+        // does not offer. It then proposed them, `observation` refused them
+        // one at a time, and the run burned its turn budget on calls that
+        // were never available. `tools(for:)` is the same slice the main
+        // loop advertises.
+        let allTools = AppToolCatalog.tools(for: project?.agentType ?? .coder)
         let allowed = allTools.filter { agent.isToolAllowed($0.function.name) }
 
         if !allowed.isEmpty {
@@ -71,15 +84,37 @@ public enum SubagentRunner {
     }
 
     /// Executes an isolated subagent run to completion.
+    /// - Parameter chatID: the conversation this run belongs to, threaded to
+    ///   `AppToolRegistry.execute` (state#47). Without it `TodoWrite`'s
+    ///   callback falls back to `selectedChatID` on the main actor,
+    ///   asynchronously -- the hazard `AppTool.swift`'s own doc describes,
+    ///   reached by the one caller that passed nothing.
+    /// - Parameter depth: how many subagents deep this run already is. An
+    ///   `agent` tool call from inside a subagent used to nest without any
+    ///   bound at all, each level free to spawn its own.
     public static func run(
         agent: AppAgentDefinition,
         taskPrompt: String,
         session: TurboSparkSession?,
         project: AppProject?,
+        chatID: UUID? = nil,
+        depth: Int = 0,
         maxTurnsOverride: Int? = nil
     ) async -> SubagentRunResult {
         let startTime = Date()
         let maxTurns = maxTurnsOverride ?? agent.maxTurns
+        guard depth <= maxSubagentDepth else {
+            return SubagentRunResult(
+                agentName: agent.name,
+                status: "failed",
+                finalResponse:
+                    "Refused: subagents may nest at most \(maxSubagentDepth) deep and this run "
+                    + "is already at \(depth). Run this task from the main conversation.",
+                totalTurns: 0,
+                totalToolCalls: 0,
+                durationSeconds: Date().timeIntervalSince(startTime)
+            )
+        }
 
         // Verify session availability
         guard let session else {
@@ -161,7 +196,9 @@ public enum SubagentRunner {
             // Execute parsed tool calls
             for call in parsedCalls {
                 totalToolCalls += 1
-                history.append(await observation(for: call, agent: agent, project: project))
+                history.append(
+                    await observation(
+                        for: call, agent: agent, project: project, chatID: chatID, depth: depth))
             }
         }
 
@@ -191,7 +228,8 @@ public enum SubagentRunner {
     /// `permissionRefusal` alone stays green with the check deleted from the
     /// loop entirely, which is the exact defect this is guarding.
     static func observation(
-        for call: AppToolCall, agent: AppAgentDefinition, project: AppProject?
+        for call: AppToolCall, agent: AppAgentDefinition, project: AppProject?,
+        chatID: UUID? = nil, depth: Int = 0
     ) async -> ChatMessage {
         if !agent.isToolAllowed(call.name) {
             return ChatMessage(
@@ -203,7 +241,22 @@ public enum SubagentRunner {
         if let refusal = permissionRefusal(for: call, project: project) {
             return ChatMessage(role: .system, content: "<tool_error>\n\(refusal)\n</tool_error>")
         }
-        let toolResult = await AppToolRegistry.execute(call: call, in: project)
+        // **THE NESTING BOUND IS ENFORCED WHERE THE CALL IS SEEN, NOT WHERE
+        // THE RUN STARTS** (state#47). `run`'s own guard catches a run that
+        // was started too deep; this catches the call that would start it,
+        // and reports the reason to the model rather than letting it read a
+        // failed subagent as a tool that broke.
+        if call.name.lowercased() == "agent" || call.name.lowercased() == "task" {
+            guard depth < maxSubagentDepth else {
+                return ChatMessage(
+                    role: .system,
+                    content: "<tool_error>\nRefused: subagents may nest at most "
+                        + "\(maxSubagentDepth) deep and this one is already at \(depth). "
+                        + "Do the work yourself or report back.\n</tool_error>")
+            }
+        }
+        let toolResult = await AppToolRegistry.execute(
+            call: call, in: project, chatID: chatID, subagentDepth: depth)
         let tag = toolResult.isError ? "tool_error" : "tool_response"
         return ChatMessage(role: .system, content: "<\(tag)>\n\(toolResult.output)\n</\(tag)>")
     }
@@ -236,11 +289,19 @@ public enum SubagentRunner {
             break
         }
 
-        // The positive gate from swift/CLAUDE.md Gotcha 29, and it is NOT
-        // redundant with the engine even though `ToolRiskClassifier` already
-        // scores a non-allowlisted command `.high`: `permissive` mode returns
-        // `.allow` from `evaluate` BEFORE the high-risk gate is consulted, so
-        // that mode alone would let a subagent run `rm -rf ~` unattended.
+        // The positive gate from swift/CLAUDE.md Gotcha 29. It was written
+        // because `permissive` returned `.allow` from `evaluate` before the
+        // high-risk gate ran, so that mode alone would let a subagent run
+        // `rm -rf ~` unattended; state#46 moved the mode below that gate, so
+        // the engine no longer has the hole this was compensating for.
+        //
+        // **KEPT ANYWAY, AND NOT AS BELT-AND-BRACES.** A subagent cannot ask,
+        // so `.ask` is a refusal here rather than a prompt, and the engine's
+        // `.auto` and `.permissive` arms both return `.allow` for everything
+        // the DENYLIST does not score `.high`. Gotcha 29 records 18 of 23
+        // corpus strings surviving that denylist, so the positive allowlist
+        // is what actually bounds an unattended shell -- a different question
+        // from the one `evaluate` answers.
         if call.category == .terminal,
             let command = call.arguments["command"] ?? call.arguments["cmd"],
             !TerminalCommandClassifier.isAutoApprovable(command)

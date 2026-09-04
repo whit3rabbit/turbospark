@@ -41,6 +41,27 @@ public struct ToolRiskAssessment: Codable, Equatable, Sendable {
     public static var safe: ToolRiskAssessment {
         ToolRiskAssessment(level: .safe, category: .fileRead, reasons: [])
     }
+
+    /// Tolerant decode (state#45).
+    ///
+    /// This type is nested inside `AppToolCall`, which is nested inside
+    /// `AppChatMessage`, which is inside the chat archive -- so the
+    /// SYNTHESIZED decoder here is a way for one added field or one renamed
+    /// enum case to quarantine every conversation the user has, past the
+    /// hand-written tolerance `AppChatMessage` and `AppChat` already carry.
+    /// The whole point of a tolerant outer decoder is defeated by a strict
+    /// inner one.
+    ///
+    /// **An unknown risk level reads as `.high`, not as `.safe`.** This value
+    /// gates an approval card; a level this build cannot interpret is
+    /// precisely the case that should reach a human.
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        level = container.decodeTolerant(ToolRiskLevel.self, forKey: .level, fallback: .high)
+        category = container.decodeTolerant(
+            AppToolCategory.self, forKey: .category, fallback: .automation)
+        reasons = try container.decodeLossyArray(String.self, forKey: .reasons)
+    }
 }
 
 /// Analyzes tool arguments and command lines to classify security risk (Unsloth Studio parity).

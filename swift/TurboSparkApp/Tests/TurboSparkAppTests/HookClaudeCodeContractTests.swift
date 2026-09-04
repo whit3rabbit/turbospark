@@ -260,7 +260,7 @@ final class HookClaudeCodeContractTests: XCTestCase {
 
         var reentries = 0
         for _ in 0..<10 {
-            let blocked = await appModel.dispatchStopAndContinueIfBlocked(chatID: chat.id, resumeStep: 0)
+            let blocked = await appModel.dispatchStopAndContinueIfBlocked(chatID: chat.id, resumeStep: 0, project: nil)
             if blocked {
                 reentries += 1
             } else {
