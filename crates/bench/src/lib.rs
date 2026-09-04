@@ -16,4 +16,5 @@ pub mod real_model;
 #[cfg(target_os = "macos")]
 pub mod real_model_open;
 /// Real model protocol parameters.
+#[cfg(target_os = "macos")]
 pub mod real_model_params;
