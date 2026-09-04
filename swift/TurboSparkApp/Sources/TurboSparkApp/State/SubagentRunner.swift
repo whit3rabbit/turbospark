@@ -435,107 +435,17 @@ public enum SubagentRunner {
         return nil
     }
 
-    // MARK: - Tool Call Parsing Helper
+    // MARK: - Tool Call Parsing
 
-    /// - Parameter projectURL: the workspace root, so a PROJECT-scoped
-    ///   custom tool is classified under its own declared category rather
-    ///   than under the `default` arm (state#71).
+    /// **THE PARSER IS `ToolCallParser`'S NOW.** This file used to carry a
+    /// byte-identical copy of it plus its own `parseJSONArguments`, which is
+    /// the concrete reason state#68, state#74 and state#75 were three
+    /// separate discoveries: a change to how the main loop reads a call had
+    /// no way of reaching this one. The main loop's own guard is not shared,
+    /// because a subagent is inside a project by construction.
     public static func extractToolCalls(
         from text: String, projectURL: URL? = nil
     ) -> [AppToolCall] {
-        var calls: [AppToolCall] = []
-
-        // XML Format: <tool_call> ... </tool_call>
-        let xmlPattern = "<tool_call>([\\s\\S]*?)</tool_call>"
-        if let xmlRegex = try? NSRegularExpression(pattern: xmlPattern, options: []) {
-            let nsString = text as NSString
-            let matches = xmlRegex.matches(in: text, options: [], range: NSRange(location: 0, length: nsString.length))
-            for match in matches {
-                guard match.numberOfRanges > 1 else { continue }
-                let inner = nsString.substring(with: match.range(at: 1))
-                let raw = nsString.substring(with: match.range(at: 0))
-
-                var toolName = ""
-                if let nameRegex = try? NSRegularExpression(pattern: "<name>([\\s\\S]*?)</name>", options: []),
-                   let nameMatch = nameRegex.firstMatch(in: inner, options: [], range: NSRange(location: 0, length: (inner as NSString).length)) {
-                    toolName = (inner as NSString).substring(with: nameMatch.range(at: 1)).trimmingCharacters(in: .whitespacesAndNewlines)
-                }
-
-                var arguments: [String: String] = [:]
-                if let argsRegex = try? NSRegularExpression(pattern: "<arguments>([\\s\\S]*?)</arguments>", options: []),
-                   let argsMatch = argsRegex.firstMatch(in: inner, options: [], range: NSRange(location: 0, length: (inner as NSString).length)) {
-                    let argsString = (inner as NSString).substring(with: argsMatch.range(at: 1)).trimmingCharacters(in: .whitespacesAndNewlines)
-                    arguments = parseJSONArguments(argsString)
-                }
-
-                if !toolName.isEmpty {
-                    let category = AppToolRegistry.category(for: toolName, projectURL: projectURL)
-                    let risk = ToolRiskClassifier.assessRisk(name: toolName, arguments: arguments)
-                    calls.append(AppToolCall(
-                        name: toolName,
-                        arguments: arguments,
-                        rawInvocation: raw,
-                        status: .pendingApproval,
-                        category: category,
-                        riskAssessment: risk
-                    ))
-                }
-            }
-        }
-
-        // Markdown block format fallback: ```tool_call ... ```
-        if calls.isEmpty {
-            let mdPattern = "```(?:tool_call|json_tool_call)\\s*\\n([\\s\\S]*?)\\n```"
-            if let mdRegex = try? NSRegularExpression(pattern: mdPattern, options: []) {
-                let nsString = text as NSString
-                let matches = mdRegex.matches(in: text, options: [], range: NSRange(location: 0, length: nsString.length))
-                for match in matches {
-                    guard match.numberOfRanges > 1 else { continue }
-                    let inner = nsString.substring(with: match.range(at: 1)).trimmingCharacters(in: .whitespacesAndNewlines)
-                    let raw = nsString.substring(with: match.range(at: 0))
-
-                    if let data = inner.data(using: .utf8),
-                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                       let toolName = (json["name"] as? String) ?? (json["tool"] as? String) {
-                        var args: [String: String] = [:]
-                        if let rawArgs = json["arguments"] as? [String: Any] {
-                            for (k, v) in rawArgs {
-                                args[k] = "\(v)"
-                            }
-                        }
-                        let category = AppToolRegistry.category(for: toolName, projectURL: projectURL)
-                        let risk = ToolRiskClassifier.assessRisk(name: toolName, arguments: args)
-                        calls.append(AppToolCall(
-                            name: toolName,
-                            arguments: args,
-                            rawInvocation: raw,
-                            status: .pendingApproval,
-                            category: category,
-                            riskAssessment: risk
-                        ))
-                    }
-                }
-            }
-        }
-
-        return calls
-    }
-
-    private static func parseJSONArguments(_ string: String) -> [String: String] {
-        guard let data = string.data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return [:]
-        }
-        var result: [String: String] = [:]
-        for (key, val) in json {
-            if let str = val as? String {
-                result[key] = str
-            } else if let num = val as? NSNumber {
-                result[key] = num.stringValue
-            } else {
-                result[key] = "\(val)"
-            }
-        }
-        return result
+        ToolCallParser.parse(from: text, projectURL: projectURL)
     }
 }
