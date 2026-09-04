@@ -395,7 +395,7 @@ cargo test -p turbospark-gpu
 
 1. **Pipeline Cache Keying on Address**: `MetalContext::pipeline` keys its function and pipeline caches on shader string memory ADDRESS (`&'static str`), NOT string contents. Callers MUST pass identical `include_str!` static constants.
 2. **Autorelease Pool Wrapping**: Metal command buffer and compute encoder creations return autoreleased objects. Repeated encode loops MUST be wrapped in `gpu::autorelease_pool`.
-3. **MoE Phase 2 Down Reduction**: `moe_phase2_down_reduce_k8` (and its GGUF Q8_0/Q4_K/Q6_K/IQ4_NL siblings) reduce all 8 slots unconditionally. Unused slots must have a 0.0 routing weight, a valid blob pointer, and a finite activation row. **`moe_phase2_down_reduce_k8_mxfp4` is the one exception (ROADMAP's Phase-2 top_k specialization, landed 2026-08-31)**: it bakes `FC_MOE_TOP_K` and masks the dequant-and-dot-product for `sg_idx >= top_k`, so a `gpt-oss` layer (top-4 of 32 experts) no longer wastes compute on the 4 unused slots -- and no longer needs a valid blob pointer or finite activation row for them either, since they are never read. All 256 threads still reach the unconditional `threadgroup_barrier` regardless (masking the compute, never the thread, is what avoids Metal's undefined behaviour for divergent barrier participation); see `moe_gguf.metal`'s kernel comment and `moe_gguf/mxfp4.rs`'s `phase2_function_constants` for why this could NOT reuse the shared `FC_MOE_USE_FC` gate `moe_fc_top_k` reads (it also gates `moe_fc_d`/`moe_fc_f`, so turning it on silently zeroed `D`/`F` too -- caught immediately by `moe_gguf_parity.rs`'s existing tests reading back `0` where the CPU reference expected a real value). Verified bit-identical to the pre-change binary on the real `gpt-oss-20b` install: greedy and sampled stdout md5-identical, `gptoss_quality_gate`'s frozen perplexity and digests all reproduced exactly.
+3. **MoE Phase 2 Down Reduction**: `moe_phase2_down_reduce_k8`'s GGUF Q8_0/Q4_K/Q6_K/IQ4_NL siblings (`moe_gguf.metal`, each with their own literal-8 `partial[]` array, untouched by Gotcha 13) reduce all 8 slots unconditionally. Unused slots must have a 0.0 routing weight, a valid blob pointer, and a finite activation row. **`moe_phase2_down_reduce_k8_mxfp4` is one exception (ROADMAP's Phase-2 top_k specialization, landed 2026-08-31)**: it bakes `FC_MOE_TOP_K` and masks the dequant-and-dot-product for `sg_idx >= top_k`, so a `gpt-oss` layer (top-4 of 32 experts) no longer wastes compute on the 4 unused slots -- and no longer needs a valid blob pointer or finite activation row for them either, since they are never read. All 256 threads still reach the unconditional `threadgroup_barrier` regardless (masking the compute, never the thread, is what avoids Metal's undefined behaviour for divergent barrier participation); see `moe_gguf.metal`'s kernel comment and `moe_gguf/mxfp4.rs`'s `phase2_function_constants` for why this could NOT reuse the shared `FC_MOE_USE_FC` gate `moe_fc_top_k` reads (it also gates `moe_fc_d`/`moe_fc_f`, so turning it on silently zeroed `D`/`F` too -- caught immediately by `moe_gguf_parity.rs`'s existing tests reading back `0` where the CPU reference expected a real value). Verified bit-identical to the pre-change binary on the real `gpt-oss-20b` install: greedy and sampled stdout md5-identical, `gptoss_quality_gate`'s frozen perplexity and digests all reproduced exactly. **`moe.metal`'s own INT4-affine `moe_phase2_down_reduce_k8` (the vendored, non-GGUF pair) is the SECOND exception, and takes a different shape than the mask above -- see Gotcha 13.**
 4. **Two shader sources are CONCATENATIONS, and both for the same reason.** `gdn.rs` passes `dequant_int4.metal` + `gdn.metal` (the fused input projection calls `dequant_int4_gemv_simd_body`, a `static inline` in the former); `moe_gguf/` dispatches pass `moe.metal` + `dequant_q4_k.metal` + `dequant_q6_k.metal` + `dequant_iq.metal` + `moe_gguf.metal` (the last uses the first's `RoutedBlobs`, `ExpertOffsets` and `moe_hidden_activation`, and the second's `dequant_q4_k_row_simd`). Both resolve because the Swift build concatenates every module into one library, which is how these files were always compiled. `concat!` of two `include_str!`s is one `&'static str` with one stable address, which is what Gotcha 1's address-keyed cache needs. Never pass a component file's own constant to a dispatch that wants the concatenation (it would miss the cache, not misbehave), and expect the shared file's kernels to be compiled twice in the process.
 5. **`gdn_qk_norm` / `gdn_gated_norm` need EXACTLY 128 threads per threadgroup** -- both reduce four SIMD partials with a hardcoded loop. Fewer sums uninitialized slots, more drops work. `NORM_THREADS` pins it. The delta kernels are likewise fixed at `(32, 4)` threads, which is where `GdnShape::validate`'s `Dk % 32 == 0` and `Dk / 32 <= 8` come from.
 6. **`PassEncoder` ends encoding on drop, and that is load-bearing rather than tidy.** Every `?` between `begin_pass` and `commit` used to drop an encoder that had never been sent `endEncoding`, and Metal aborts the process from `-[_MTLCommandEncoder dealloc]` when that happens -- while the real error is still travelling up the stack, so the assertion is all anyone sees. `commit` therefore takes its profile with `Option::take` and clones the command buffer instead of moving fields out (a struct with a `Drop` impl cannot be destructured). A new pass-like wrapper needs the same or it reintroduces the blindfold.
@@ -496,3 +496,71 @@ cargo test -p turbospark-gpu
     pipeline is provably unmoved rather than merely retested). `qwen4_exp`'s
     own decode flow (Phase 3) is what will actually CALL the sigmoid
     encoder; nothing does yet.
+
+13. **`kMaxStreamedExperts` WAS A CEILING NO CHECKPOINT HAD EVER REACHED, AND
+    `qwen4_exp`'s REAP-288 IS THE FIRST ONE TO.** Every family through
+    `gpt-oss` tops out at `top_k_experts <= 8` (`docs/QWEN4_PHASE0.md`'s own
+    survey), so the constant had never been distinguished from "the widest
+    top_k anyone has shipped" -- `moe_phase2_down_reduce_k8`'s dispatch
+    (`THREADS_PER_GROUP = 256`, 8 simdgroups) and its unconditional 8-term
+    reduce both happened to equal every real caller's own `top_k` exactly,
+    with zero padding either way. `top_k_experts = 10` broke that equality
+    the moment a real checkpoint declared it, and `RealQwen4State::build`'s
+    own refusal (`top_k {} exceeds the {}-slot MoE kernels`) is what caught
+    it rather than a silent wrong answer -- this port's `open()`-time
+    field-by-field vetting doing its job.
+
+    Widened to 16 (headroom past the needed 10, matching
+    `ALLOWED_CACHE_SLOTS`' 8/16/24/32/48/64/96/128 progression rather than
+    hardcoding to one checkpoint's number -- AGENTS.md Gotcha 36) in THREE
+    places kept in sync by hand, because there is no shared codegen between
+    them: the Metal `constant constexpr uint kMaxStreamedExperts` in
+    `moe.metal`, the Rust `gpu::MAX_STREAMED_EXPERTS` in `moe_decode.rs`, and
+    every buffer sized off the latter (`RoutedBlobs`' pointer array,
+    `crates/runtime`'s `moe_acts`/`routing_w` scratch allocations, all of
+    which were ALREADY generic over the constant and needed no edit of their
+    own -- Gotcha 36's fine-grained-MoE arithmetic having been designed for
+    exactly this kind of widening).
+
+    **THE NAIVE FIX -- WIDEN THE FIXED DISPATCH TO 16 SIMDGROUPS FOR EVERY
+    CALLER -- WAS REJECTED BEFORE BEING WRITTEN, because it would have
+    doubled phase-2's GPU time for every top_k=8 family that predates this
+    one** (Gemma 4, and any other INT4-affine install at top_k=8): the
+    `moe_phase2_down_reduce_k8_mxfp4` precedent this bullet's sibling
+    describes masks compute at a FIXED width via a baked function constant,
+    which is the right shape for gpt-oss (top_k=4 of a MUCH wider ceiling,
+    so masking wastes only a little) and the wrong one here (top_k was
+    ALWAYS equal to the ceiling before this checkpoint, so a fixed-16
+    dispatch would waste exactly as many cycles as it used to spend on real
+    work). **The kernel is SIZED TO `top_k` INSTEAD, PROPORTIONALLY, THE WAY
+    PHASE 1 ALREADY WAS**: `encode_moe_phase2` now takes `top_k: u32`,
+    dispatches `top_k * 32` threads (one simdgroup per slot, matching
+    `sg_idx`), and the kernel's reduce loop is bounded by that same runtime
+    `top_k` rather than the compile-time ceiling -- so a top_k=8 caller
+    dispatches and reduces over exactly 8 slots, BYTE-IDENTICAL to the
+    pre-widening dispatch width and summation order (FP addition is not
+    associative -- AGENTS.md Gotcha 8's rule -- so the loop preserves the
+    same left-to-right `partial[0] + partial[1] + ...` order the old manual
+    unroll wrote by hand), and `qwen4_exp`'s top_k=10 dispatches and reduces
+    over exactly 10. Neither wastes a cycle on a padding slot. `partial[]`
+    itself stays sized at the compile-time CEILING (`kMaxStreamedExperts`)
+    since Metal threadgroup arrays need a static size, but only the first
+    `top_k` of its 16 slots are ever written or read on any one dispatch.
+
+    **RESEARCHED AGAINST `carloslfu/slotstream` (a Swift/MLX reference
+    implementation of the same architecture) BEFORE IMPLEMENTING, per this
+    port's own "check a derived convention against a reference before
+    reasoning your way to one" habit** (this file's own module docs cite
+    the same discipline for the control-vector numbering). It has NO custom
+    Metal kernel for MoE reduction at all -- pure MLX tensor ops, a
+    `(B, S, topK, H)` tensor summed with `.sum(axis: -2)`, fully
+    shape-driven rather than hardcoded to any width. That is not directly
+    portable (this port hand-writes Metal for bandwidth reasons the whole
+    rest of this file documents), but it is independent confirmation that
+    `top_k` is meant to be a genuine RUNTIME dimension here rather than a
+    constant to special-case per checkpoint, which is what tipped the
+    design toward "size the loop to `top_k`" over "mask a fixed 16 the way
+    MXFP4 masks a fixed 8". It also independently confirmed `top_k_experts
+    = 10` as a hard-validated property of the checkpoint family (REAP-288 is
+    a pruned-expert-pool variant of the same architecture at the same
+    top_k), which is what set the ceiling's headroom rather than guessing.

@@ -4,8 +4,9 @@
 //! activation into a per-slot activation row) and
 //! `moe_phase2_down_reduce_k8` (per output dim, each slot's INT4 down
 //! GEMV, weighted by its routing weight, summed on top of a residual).
-//! Expert weights are read IN PLACE from up to `kMaxStreamedExperts == 8`
-//! caller-owned blob buffers (streamer slots or any other page of memory)
+//! Expert weights are read IN PLACE from up to
+//! `kMaxStreamedExperts == `[`MAX_STREAMED_EXPERTS`] caller-owned blob
+//! buffers (streamer slots or any other page of memory)
 //! through a Metal argument buffer — the `RoutedBlobs` pointer array —
 //! with one uniform [`MoeExpertOffsets`] describing where each
 //! sub-tensor lives inside a blob. Nothing is copied.
@@ -24,11 +25,17 @@ const SOURCE: &str = include_str!("shaders/moe.metal");
 const ROWS_PER_THREADGROUP: u64 = 8;
 const THREADS_PER_GROUP: u64 = 256;
 
-/// `kMaxStreamedExperts` in the shader: the fixed slot count both decode
-/// kernels are written against. Phase 2 reduces all eight partials
-/// unconditionally, so unused slots must carry a zero routing weight and
-/// a valid (any) blob pointer.
-pub const MAX_STREAMED_EXPERTS: usize = 8;
+/// `kMaxStreamedExperts` in the shader: the CEILING both decode kernels'
+/// fixed-size buffers are sized against (16, widened from 8 for
+/// `qwen4_exp`'s top_k=10). Phase 1's dispatch width is proportional to
+/// `top_k * f_dim` regardless of this ceiling; phase 2's dispatch width and
+/// its reduce loop are both `top_k` slots exactly (`encode_moe_phase2`), so
+/// a caller below the ceiling pays no padding-slot compute. `RoutedBlobs`'
+/// pointer array and the routing-weight buffer are still sized at the full
+/// ceiling and zero/pointer-padded past `top_k` (`RoutedBlobsBuffer::bind`),
+/// because a caller with a smaller top_k than another install open in the
+/// same process must not under-allocate a buffer a wider install also uses.
+pub const MAX_STREAMED_EXPERTS: usize = 16;
 
 /// Blob-relative byte offsets of the nine expert sub-tensors — the
 /// shader's `ExpertOffsets` struct, uniform across all bound blobs.
@@ -122,8 +129,11 @@ impl RoutedBlobsBuffer {
 
     /// Points the argument buffer's `blob[i]` entries at `blobs[i]`
     /// (buffer + byte offset). Entries past `blobs.len()` are bound to
-    /// `blobs[0]` so phase 2's unconditional eight-slot reduce reads
-    /// valid memory (their routing weights must be zero).
+    /// `blobs[0]` so a WIDER install sharing this argument-buffer layout
+    /// still reads valid memory at any slot index up to
+    /// [`MAX_STREAMED_EXPERTS`]; phase 2 itself only reduces the first
+    /// `top_k` of them (`encode_moe_phase2`), so padding past `blobs.len()`
+    /// is defensive rather than load-bearing for a single install.
     pub fn bind(
         &self,
         context: &mut MetalContext,
@@ -192,9 +202,17 @@ pub fn encode_moe_phase1(
 }
 
 /// Phase 2: `y[d] = residual[d] + sum_slot routing_w[slot] *
-/// down_d(acts[slot])`. `routing_w` must hold exactly
-/// [`MAX_STREAMED_EXPERTS`] halfs (zero-padded past `top_k`); `residual`
-/// and `y` hold `d_dim` halfs.
+/// down_d(acts[slot])`, summed over exactly the first `top_k` slots (slot
+/// order is summation order -- AGENTS.md Gotcha 8). `routing_w` must hold
+/// at least `top_k` halfs; `residual` and `y` hold `d_dim` halfs.
+///
+/// The dispatch width is `top_k` simdgroups (one per slot, matching the
+/// kernel's `sg_idx`-indexed reduce), never the [`MAX_STREAMED_EXPERTS`]
+/// ceiling: a caller at the ceiling's own top_k (`qwen4_exp`) reduces every
+/// dispatched slot with no padding, and a caller below it (every
+/// pre-widening family) dispatches exactly as many threads as it always
+/// did, so this widening costs no phase-2 throughput on an unaffected
+/// install.
 #[allow(clippy::too_many_arguments)]
 pub fn encode_moe_phase2(
     context: &mut MetalContext,
@@ -207,9 +225,11 @@ pub fn encode_moe_phase2(
     y: (&metal::Buffer, u64),
     d_dim: u32,
     f_dim: u32,
+    top_k: u32,
     use_silu: bool,
 ) -> Result<(), GpuError> {
     assert_eq!(f_dim % 64, 0);
+    assert!((1..=MAX_STREAMED_EXPERTS as u32).contains(&top_k));
     let pipeline = context.pipeline(
         SOURCE,
         "moe_phase2_down_reduce_k8",
@@ -229,9 +249,10 @@ pub fn encode_moe_phase2(
             (&offsets.bytes(), 1),
             (u32_bytes(&d_dim), 6),
             (u32_bytes(&f_dim), 7),
+            (u32_bytes(&top_k), 8),
         ],
         d_dim as u64,
-        THREADS_PER_GROUP,
+        top_k as u64 * 32,
     );
     Ok(())
 }

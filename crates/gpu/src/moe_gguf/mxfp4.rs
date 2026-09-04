@@ -153,7 +153,9 @@ fn phase2_function_constants(use_silu: bool, top_k: u32) -> FunctionConstantValu
 }
 
 fn phase2_constants_key(use_silu: bool, top_k: u32) -> [u8; 2] {
-    // `top_k` never exceeds `MAX_STREAMED_EXPERTS == 8`, so one byte holds it.
+    // `top_k` never exceeds `MAX_STREAMED_EXPERTS` (16 as of qwen4_exp's
+    // bring-up, and MXFP4/gpt-oss's own top_k is 4 regardless), so one byte
+    // holds it.
     [use_silu as u8, top_k as u8]
 }
 
