@@ -1,6 +1,116 @@
 import Foundation
 
 extension AppModel {
+    // MARK: - Reading the selected chat
+    //
+    // Moved off the base file, which the package's convention reserves for
+    // published state and core lifecycle. These are chat operations reached
+    // from chat views, and `materializeDraftChatIfNeeded` in particular is
+    // called from exactly two places -- both of them the writers directly
+    // below it.
+
+    /// Index of the currently selected chat in `chats`.
+    public var selectedChatIndex: Int? {
+        chats.firstIndex { $0.id == selectedChatID }
+    }
+
+    /// The currently selected chat conversation.
+    ///
+    /// Pure: no mutation of `@Published` state on read (state#7 -- "Publishing
+    /// changes from within view updates" is undefined behavior, and this
+    /// getter is read from SwiftUI view bodies). `selectedChatID` is kept
+    /// valid at the points where `chats` actually changes -- `loadChats()`,
+    /// `selectChat`, `createChat`, `deleteChat` -- rather than patched
+    /// lazily here; `activeDraftChat`'s identity is kept in sync by
+    /// `selectedChatID`'s own `didSet` above.
+    public var selectedChat: AppChat {
+        if let index = selectedChatIndex {
+            return chats[index]
+        }
+        return activeDraftChat
+    }
+
+    /// Active task checklist for the currently selected chat.
+    public var currentTodos: [TodoItem] {
+        selectedChat.todos
+    }
+
+    /// Present continuous description of the active `in_progress` task, if any.
+    public var activeTaskDescription: String? {
+        if let inProgress = selectedChat.todos.first(where: { $0.isInProgress }) {
+            return inProgress.activeForm.isEmpty ? inProgress.content : inProgress.activeForm
+        }
+        return nil
+    }
+
+    /// Updates the checklist items for a given chat and persists the change.
+    public func updateTodos(for chatID: UUID, todos: [TodoItem]) {
+        if let index = chats.firstIndex(where: { $0.id == chatID }) {
+            chats[index].todos = todos
+            chats[index].updatedAt = Date()
+            persistChats()
+        } else if activeDraftChat.id == chatID {
+            activeDraftChat.todos = todos
+            activeDraftChat.updatedAt = Date()
+            materializeDraftChatIfNeeded()
+        }
+    }
+
+    /// Draft prompt text for the currently selected chat.
+    public var promptText: String {
+        get { selectedChat.draft }
+        set {
+            if let index = selectedChatIndex {
+                chats[index].draft = newValue
+                chats[index].updatedAt = Date()
+                // Debounced: this is one keystroke, and the store rewrites
+                // every chat in the archive on each call.
+                persistChatsDebounced()
+            } else {
+                activeDraftChat.draft = newValue
+                activeDraftChat.updatedAt = Date()
+                materializeDraftChatIfNeeded()
+            }
+            updateTokenEstimate()
+        }
+    }
+
+    /// Document attachments attached to the current prompt draft.
+    public var promptAttachments: [AppPromptAttachment] {
+        selectedChat.draftAttachments
+    }
+
+    /// Promotes the transient draft into `chats` once it has content.
+    ///
+    /// Called from the two writers (`promptText`, `updateTodos`) rather than
+    /// from a timer, so the promotion happens at the moment there is
+    /// something to lose. An empty draft is left alone: a chat row that
+    /// appears when the window opens, before the user has typed anything, is
+    /// noise -- and `createChat` reuses an empty selected chat anyway, so
+    /// nothing accumulates.
+    @discardableResult
+    func materializeDraftChatIfNeeded() -> Bool {
+        guard selectedChatIndex == nil else { return false }
+        let draft = activeDraftChat
+        let hasContent =
+            !draft.draft.isEmpty || !draft.draftAttachments.isEmpty || !draft.todos.isEmpty
+            || !draft.messages.isEmpty
+        guard hasContent else { return false }
+        // A draft that predates a project selection carries none, and this is
+        // the last point before it becomes a real row (state#79).
+        var draftToInsert = draft
+        if draftToInsert.projectID == nil {
+            draftToInsert.projectID = selectedProjectID
+        }
+        chats.insert(draftToInsert, at: 0)
+        // `selectedChatID` already equals `draft.id` (the `didSet` above keeps
+        // them in step), so this needs no re-selection.
+        persistChats()
+        return true
+    }
+
+    // MARK: - Chat lifecycle
+
     @discardableResult
     public func createChat(projectID: UUID? = nil) -> UUID {
         // `pendingToolCall == nil` for `selectChat`'s reason (state#49):
