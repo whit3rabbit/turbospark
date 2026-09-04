@@ -175,6 +175,58 @@ taken for its KV row alone, because a round where every proposal is accepted
 needs a row the proposal-producing steps do not write, which is the case a
 good drafter hits most often.
 
+## Installing a headed checkpoint
+
+Until 2026-09-04 the only way to get `~/models/qwen38-27b-mtp.gturbo` was
+`crates/repack/tests/qwen38_checkpoint_network.rs`'s ignored network test, run
+by hand. **That is no longer the only way**: `crates/catalog/src/models.json`
+now carries a `qwen38-27b-mtp` row beside the headless `qwen38-27b` one, and
+`turbospark-model pull qwen38-27b-mtp` produces the install through the
+ordinary catalog path, no hand-written test required.
+
+The mechanism is that test's, generalized rather than reimplemented.
+`CatalogEntry.mtp` (`crates/catalog/src/entry.rs`) names a repository SEPARATE
+from `source.repo` -- the whole reason a row needs one is that `source`'s own
+conversion drops the head -- and `stream_mlx` (`crates/catalog/src/stream.rs`)
+reads THAT repository's own shard index, finds the shard(s) whose tensors
+start with `mtp.`, filters each header down to just those tensors (dropping,
+for example, the official repo's bare BF16 `lm_head.weight` that shares the
+head's last shard), and merges the result into the same `Gemma4Shards`
+registry the trunk streams through. Nothing downstream -- classification,
+quantization, the writer -- changes: it is one merged tensor namespace, the
+same shape as the hand-written test's fourth `(header, source)` pair.
+
+**Verified against real bytes, not just re-derived from reading the test.** A
+fresh `turbospark-model pull qwen38-27b-mtp` wrote a `model_weights.bin` of
+15,371,847,680 bytes -- the exact figure this page's "Measured results"
+section below reports for the hand-built install -- which is what says the
+catalog path and the hand-written walk produce the SAME bytes rather than
+merely a plausible install of the same size. `turbospark-check --model
+qwen38-27b-mtp` opens it, and at `--temperature 0` speculative decoding
+auto-enables (`speculative decoding: on, mtp head (step drafter), block 2`)
+with output byte-identical to the same prompt run without a head present.
+
+**A caller who already has `qwen38-27b` installed does not have to pay for
+the trunk a second time.** `--reuse-trunk-from <alias>` (`turbospark-model
+pull qwen38-27b-mtp --reuse-trunk-from qwen38-27b`) reads the named install's
+resident entries back off its OWN `model_weights.bin`, byte for byte
+(`repack::read_resident_entries`), and only fetches the ~239 MB head shard
+over the network -- `build_resident_weights_bin_mixed` does not care where a
+spec's bytes came from, which is what licenses reusing them at all. Refused
+unless the named install's recorded repository and revision match
+`qwen38-27b-mtp`'s exactly, so pointing it at an unrelated or differently
+pinned install fails loudly rather than grafting the wrong bytes. Scoped to
+the `qwen35` dense family: the MoE half's routed experts live entirely
+outside `model_weights.bin`, in `packed_experts/`, which this path never
+touches.
+
+**Verified against real bytes.** `pull qwen38-27b-mtp --reuse-trunk-from
+qwen38-27b --out <dir>` finished in 4m21s against the plain pull's ~30
+minutes, and its `model_weights.bin` is BYTE-FOR-BYTE IDENTICAL (`cmp`, not
+just equal size) to the one the full network re-stream wrote earlier the
+same day. `turbospark-check` opens it and speculative decoding auto-enables
+exactly as it does for the fully-streamed install.
+
 ## Measured results
 
 **Weights.** The installed head against the published BF16 shard,

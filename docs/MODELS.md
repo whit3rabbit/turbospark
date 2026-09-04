@@ -234,6 +234,19 @@ for `merges.txt` **after** a 20-minute stream had written a perfectly good
 install (AGENTS.md Gotcha 47). By the time a byte of weight data moves, the
 install is known to have a tokenizer that loads and a template that renders.
 
+### A row can pull a second repository for a drafter head
+
+`CatalogEntry.mtp` (`repo`, `revision`) is optional and names a repository
+SEPARATE from `source.repo`, for a checkpoint whose own conversion drops a
+multi-token-prediction head (`docs/MTP.md`). Step 3 above reads that
+repository's own shard index, keeps only the shard(s) whose tensors are
+`mtp.`-prefixed, and merges them into the same multi-shard registry the trunk
+streams through -- one install, one resident index, no second artifact.
+`qwen38-27b-mtp` is the one row that carries it; see `docs/MTP.md`'s
+"Installing a headed checkpoint" for what was verified against real bytes.
+Leave the field out entirely for every other row -- it exists only where the
+weights repository and the head repository genuinely differ.
+
 ---
 
 ## The `measured` block

@@ -391,6 +391,87 @@ pub fn write_qwen_gdn_dense_install_streamed(
     write_gemma4_install_streamed(dir, arch, model_id, shards, quant, progress)
 }
 
+/// Grafts a multi-token-prediction head onto an EXISTING `qwen3_5` DENSE
+/// install's resident entries -- read back byte for byte off its own
+/// `model_weights.bin` (`crate::resident_reader::read_resident_entries`) --
+/// rather than re-streaming its ~15 GB trunk over the network a second time.
+/// `docs/MTP_SPECULATIVE.md`'s graft step: only the head's ~239 MB crosses
+/// the network here. `existing_dir`'s bytes are read once and never
+/// mutated; `out_dir` is always a FRESH directory, exactly like every other
+/// writer in this module.
+///
+/// Scoped to the dense half for the same reason `write_qwen_gdn_dense_install_streamed`
+/// guards on family: the MoE half's routed experts live in `packed_experts/`,
+/// entirely outside `model_weights.bin`, and this function touches only the
+/// resident index -- grafting onto an MoE install would silently produce a
+/// directory with no routed experts in it at all.
+#[allow(clippy::too_many_arguments)]
+pub fn graft_qwen_gdn_dense_mtp_head(
+    existing_dir: &Path,
+    out_dir: &Path,
+    arch: &ArchConfig,
+    model_id: &str,
+    head_shards: &Gemma4Shards<'_>,
+    mtp_bases: &[&str],
+    quant: &Gemma4Quant,
+    mut progress: impl FnMut(&str),
+) -> Result<(), Box<dyn std::error::Error>> {
+    if arch.family != ModelFamily::QwenGdnDense {
+        return Err(Box::new(Gemma4Error::Config(format!(
+            "graft_qwen_gdn_dense_mtp_head needs arch.family = qwen35, got {}",
+            arch.family.as_str()
+        ))));
+    }
+    let mut entries =
+        crate::resident_reader::read_resident_entries(existing_dir).map_err(Gemma4Error::Config)?;
+    progress(&format!(
+        "reused {} resident tensors from {}",
+        entries.len(),
+        existing_dir.display()
+    ));
+    if entries
+        .iter()
+        .any(|e| resident_entry_name(e).starts_with(MTP_PREFIX))
+    {
+        return Err(Box::new(Gemma4Error::Config(format!(
+            "{} already carries an MTP head; nothing to graft",
+            existing_dir.display()
+        ))));
+    }
+
+    let head = mtp::read_mtp_entries(head_shards, mtp_bases)?;
+    progress(&format!(
+        "ingested a {}-tensor multi-token-prediction head",
+        head.entries.len()
+    ));
+    entries.extend(head.entries);
+
+    let resident_bytes = crate::resident_writer::build_resident_weights_bin_mixed(&entries);
+    drop(entries);
+    progress(&format!(
+        "resident region built ({} bytes)",
+        resident_bytes.len()
+    ));
+
+    // Same shape as the `plan.routed.is_empty()` arm above: a dense install
+    // still needs its quant block declared, which is why this goes through
+    // the streaming writer at zero layers rather than through
+    // `write_gturbo_install_with_resident_index`.
+    let mut writer = crate::gturbo_writer::StreamingGturboWriter::new(out_dir, 0, 0)?;
+    writer.set_quant(manifest_quant_for(quant, arch.family, false));
+    writer.finish(arch, model_id, &resident_bytes)?;
+    progress("install written (reused trunk, no routed experts)");
+    Ok(())
+}
+
+fn resident_entry_name(spec: &crate::resident_writer::ResidentEntrySpec) -> &str {
+    use crate::resident_writer::ResidentEntrySpec::*;
+    match spec {
+        Int4(t) | Int8(t) | Int1(t) | Int2(t) => &t.name,
+        Raw(r) => &r.name,
+    }
+}
+
 /// The `muse_glimmer` install writer: the same family guard in front of
 /// [`write_gemma4_install`].
 ///

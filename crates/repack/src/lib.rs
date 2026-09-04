@@ -32,6 +32,7 @@ mod museglimmer_config;
 mod qwen36_config;
 mod ranged_download;
 mod repack;
+mod resident_reader;
 mod resident_writer;
 mod safetensors_header;
 mod synthetic_gguf;
@@ -49,17 +50,18 @@ pub use arch_registry::{
 };
 pub use gemma4_checkpoint::{
     classify_for_family, classify_gemma4, convert_raw_to_fp16, gemma4_manifest_quant,
-    is_supported_affine_shape, manifest_quant, narrow_raw_to_bf16, orchestrate_gemma4_checkpoint,
-    orchestrate_gemma4_checkpoint_sharded, parse_gemma4_config, parse_gemma4_quantization,
-    pass_through_packed, read_vision_entries, vision_arch_for_manifest, vision_should_ingest,
-    write_gemma4_install, write_gemma4_install_streamed, write_muse_glimmer_install,
-    write_muse_glimmer_install_streamed, write_ngram_table, write_qwen4_exp_install_streamed,
-    write_qwen_gdn_dense_install, write_qwen_gdn_dense_install_streamed,
-    write_qwen_gdn_moe_install, write_qwen_gdn_moe_install_streamed, ConvertedFp16, Gemma4Bucket,
-    Gemma4Error, Gemma4Quant, Gemma4RepackOutput, Gemma4Shards, NarrowedRaw, NgramPlan,
-    NgramTableSpec, NgramTableWriter, VisionRead, AFFINE_1BIT_GROUP_SIZE, AFFINE_2BIT_GROUP_SIZE,
-    AFFINE_GROUP_SIZE, DFLASH_PREFIX, GTURBO_PAGE_BYTES, MTP_PREFIX, VISION_BLOCK_ROLES,
-    VISION_INSTALL_PREFIX, VISION_PREFIX, VISION_RESIDENT_TENSORS,
+    graft_qwen_gdn_dense_mtp_head, is_supported_affine_shape, manifest_quant, manifest_quant_for,
+    narrow_raw_to_bf16, orchestrate_gemma4_checkpoint, orchestrate_gemma4_checkpoint_sharded,
+    parse_gemma4_config, parse_gemma4_quantization, pass_through_packed, read_vision_entries,
+    vision_arch_for_manifest, vision_should_ingest, write_gemma4_install,
+    write_gemma4_install_streamed, write_muse_glimmer_install, write_muse_glimmer_install_streamed,
+    write_ngram_table, write_qwen4_exp_install_streamed, write_qwen_gdn_dense_install,
+    write_qwen_gdn_dense_install_streamed, write_qwen_gdn_moe_install,
+    write_qwen_gdn_moe_install_streamed, ConvertedFp16, Gemma4Bucket, Gemma4Error, Gemma4Quant,
+    Gemma4RepackOutput, Gemma4Shards, NarrowedRaw, NgramPlan, NgramTableSpec, NgramTableWriter,
+    VisionRead, AFFINE_1BIT_GROUP_SIZE, AFFINE_2BIT_GROUP_SIZE, AFFINE_GROUP_SIZE, DFLASH_PREFIX,
+    GTURBO_PAGE_BYTES, MTP_PREFIX, VISION_BLOCK_ROLES, VISION_INSTALL_PREFIX, VISION_PREFIX,
+    VISION_RESIDENT_TENSORS,
 };
 pub use gguf_checkpoint::{
     dtype_tag_for_ggml_type, gguf_manifest_quant, orchestrate_gguf_checkpoint,
@@ -96,6 +98,7 @@ pub use ranged_download::{
 pub use repack::{
     int4_packed_bytes, int8_packed_bytes, quantize_matrix_int4, quantize_matrix_int8, RepackError,
 };
+pub use resident_reader::read_resident_entries;
 pub use resident_writer::{
     build_resident_weights_bin, build_resident_weights_bin_mixed, RawTensorSpec, ResidentEntrySpec,
     ResidentTensorSpec, DTYPE_BF16, DTYPE_FP16, DTYPE_FP32, DTYPE_GGUF_Q4_0, DTYPE_GGUF_Q4_K,
