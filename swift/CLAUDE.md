@@ -81,11 +81,31 @@ swift/
                                      # and tool permissions.
 ```
 
-`AppModel` is split across `AppModel.swift` plus `AppModel+{Chat, Files,
-Generation, Hooks, Installation, Mcp, Models, Persistence, Projects, Server,
-Tools, Transcript}.swift`. Published state and core lifecycle live in the base file;
-every functional domain is an extension. Add new behaviour as a new extension
-file rather than growing the base one.
+`AppModel` is split across `AppModel.swift` plus one extension per domain.
+**The base file is STORED PROPERTIES and `init`, and nothing else** -- that
+was always the rule and the file had drifted to 863 lines by growing
+accessors instead, which is why four gating predicates were each missing a
+term a sibling already carried (state#76, #73, #85). Add new behaviour as a
+new extension file rather than growing the base one; if a computed accessor
+is going into `AppModel.swift`, it belongs in an extension.
+
+Rather than list the extensions here, where the list rots: `ls
+Sources/TurboSparkApp/State/AppModel+*.swift`. Three groupings are worth
+knowing because they are not obvious from the names. A TURN is spread over
+`+Submission` (up to the appended user turn), `+Generation` (the stream),
+`+AgentLoop` (once a tool call is parsed out of the reply), `+Cancellation`
+(when it is stopped) and `+History` / `+SkillState` (the two prompt shapes).
+MODELS are split by what is on disk (`+ModelDiscovery`) against what is
+resident (`+Models`). And the SERVER is split by starting one (`+Server`)
+against which models it is holding (`+ServerAttachment`).
+
+**A MODEL'S PROPOSED TOOL CALLS ARE PARSED IN EXACTLY ONE PLACE**
+(`Tools/Core/ToolCallParser`). `AppModel` and `SubagentRunner` carried
+byte-identical copies of that parser until 2026-09-04, and that duplication
+is the concrete reason state#68, #74 and #75 were three separate
+discoveries: a fix to how the main loop reads or answers a call had no way
+of reaching the isolated one. Each caller keeps its own GUARD, which
+genuinely differs, and neither keeps its own parser.
 
 ## Build, test, dev commands
 
