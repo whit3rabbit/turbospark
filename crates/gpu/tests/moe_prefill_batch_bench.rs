@@ -211,6 +211,7 @@ mod affine {
                         (&seq_y, 0),
                         D as u32,
                         F as u32,
+                        TOP_K as u32,
                         false,
                     )
                     .expect("decode phase2");

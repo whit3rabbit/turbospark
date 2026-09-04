@@ -228,7 +228,17 @@ pub fn parse_gemma4_quantization(json: &str) -> Result<Gemma4Quant, Gemma4Error>
                 bits_overrides.insert(key.clone(), bits as u32);
             }
             if let Some(gs) = obj.get("group_size").and_then(|v| v.as_u64()) {
-                if gs as u32 != group_size {
+                // The n-gram table declares ITS OWN group size (32) against
+                // the trunk's (64) by design -- 160 values (one head's row)
+                // is not divisible by 64, only by 32 (`ngram.rs`'s
+                // `NGRAM_GROUP_SIZE` doc). `write_ngram_table` never reads
+                // this struct's `group_size`/`bits_overrides` for the n-gram
+                // table at all; it hardcodes `NGRAM_GROUP_SIZE`/`NGRAM_BITS`
+                // directly, so this exemption only has to stop a REAL
+                // declared value from being refused, never store it anywhere.
+                let is_ngram_own_group_size = key.contains(super::classify::NGRAM_CONTAINER)
+                    && gs == super::ngram::NGRAM_GROUP_SIZE;
+                if gs as u32 != group_size && !is_ngram_own_group_size {
                     return Err(Gemma4Error::Config(format!(
                         "per-tensor group_size {gs} for {key} differs from the \
                          global {group_size}; this port's kernels assume one group size"

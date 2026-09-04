@@ -148,6 +148,46 @@ pub fn encode_scalar_mul(
     Ok(())
 }
 
+/// `x[i] = silu(x[i])`, in place -- a plain UNARY silu, port-local
+/// (`qwen4_exp`'s hyper-connection mix). Every other silu call site in
+/// this port is `silu_mul_fp16`'s gated pair; this is the one place the
+/// activation applies to nothing but itself.
+pub fn encode_silu(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    x: (&metal::Buffer, u64),
+    count: u32,
+) -> Result<(), GpuError> {
+    let pipeline = context.pipeline(SOURCE, "silu_fp16", &FunctionConstantValues::new(), b"")?;
+    pass.encode_threads_3d(
+        &pipeline,
+        &[(x.0, 0, x.1)],
+        &[(u32_bytes(&count), 1)],
+        (grid_for(count), 1, 1),
+        (THREADS_PER_GROUP, 1, 1),
+    );
+    Ok(())
+}
+
+/// `x[i] = sigmoid(x[i])`, in place -- the unary sibling of
+/// [`encode_silu`], for the same reason.
+pub fn encode_sigmoid(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    x: (&metal::Buffer, u64),
+    count: u32,
+) -> Result<(), GpuError> {
+    let pipeline = context.pipeline(SOURCE, "sigmoid_fp16", &FunctionConstantValues::new(), b"")?;
+    pass.encode_threads_3d(
+        &pipeline,
+        &[(x.0, 0, x.1)],
+        &[(u32_bytes(&count), 1)],
+        (grid_for(count), 1, 1),
+        (THREADS_PER_GROUP, 1, 1),
+    );
+    Ok(())
+}
+
 /// `out[i] *= sigmoid(gate[i])`, in place -- Qwen 3.6's full-attention
 /// output gate (the second half of its packed `q_proj`).
 pub fn encode_sigmoid_gate_mul(

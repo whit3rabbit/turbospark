@@ -98,6 +98,7 @@ fn the_writer_emits_every_new_field_unconditionally() {
         "pleConvKernelSize",
         "pleLayerIds",
         "pleSeed",
+        "pleEosTokenId",
     ] {
         assert!(
             arch.get(key).is_some(),
@@ -233,6 +234,7 @@ fn the_peeker_reads_every_qwen4_block_back() {
             ),
             ("pleLayerIds", serde_json::json!(want.ple.layer_ids)),
             ("pleSeed", serde_json::json!(want.ple.seed)),
+            ("pleEosTokenId", serde_json::json!(want.ple.eos_token_id)),
         ] {
             arch.insert(key.to_string(), value);
         }

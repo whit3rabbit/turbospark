@@ -126,6 +126,37 @@ void scalar_mul_fp16(
     x[tid] = x[tid] * half(scalar);
 }
 
+// Plain UNARY silu, in place: `x[i] = x[i] * sigmoid(x[i])`. Port-local
+// (`qwen4_exp`'s hyper-connection mix, `docs/QWEN4_PHASE0.md` section 3):
+// `silu(down_proj(normed) / hc_count)` is a genuine unary activation, not a
+// gated pair, so `silu_mul_fp16` (which multiplies TWO buffers) does not
+// fit -- every other silu call site in this port is a SwiGLU gate*up pair.
+[[kernel, max_total_threads_per_threadgroup(256)]]
+void silu_fp16(
+    device half*   x     [[buffer(0)]],
+    constant uint& count [[buffer(1)]],
+    uint           tid   [[thread_position_in_grid]]
+) {
+    if (tid >= count) return;
+    const float v = float(x[tid]);
+    x[tid] = half(v / (1.0f + exp(-v)));
+}
+
+// Plain UNARY sigmoid, in place. Port-local, same reason as `silu_fp16`
+// above: `sigmoid(input_mix_weight_up(w))` and
+// `2 * sigmoid(block_inject_weight(normed) / hc_count)` are both unary,
+// where every other sigmoid call site here gates a SECOND buffer.
+[[kernel, max_total_threads_per_threadgroup(256)]]
+void sigmoid_fp16(
+    device half*   x     [[buffer(0)]],
+    constant uint& count [[buffer(1)]],
+    uint           tid   [[thread_position_in_grid]]
+) {
+    if (tid >= count) return;
+    const float v = float(x[tid]);
+    x[tid] = half(1.0f / (1.0f + exp(-v)));
+}
+
 // Port-local addition (not in the Swift utility.metal): the softcap half of
 // logit.metal's `logit_softcap_softmax`, in place, without the softmax.
 //

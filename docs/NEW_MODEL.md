@@ -141,6 +141,47 @@ the reference implementation. Every answer becomes a field in `ArchConfig`
       It streams and it is a good fit; it just does not land in the
       1.6-2.2 GiB band, and a bring-up should say which of those two
       outcomes it is expecting before the download rather than after.
+- [ ] **`top_k_experts` against the DECODE KERNEL's own fixed reduce width --
+      a THIRD capacity question, separate from expert granularity above.**
+      Granularity asks whether the slot CACHE holds enough experts at once;
+      this asks whether the MoE decode kernel's phase-2 down-reduce can even
+      iterate that many slots in a single dispatch, which is a property of
+      the KERNEL rather than of memory, and the two can disagree (a
+      checkpoint can fit the cache easily and still exceed the kernel).
+      `gpu::MAX_STREAMED_EXPERTS` (`crates/gpu/src/moe_decode.rs`) is the
+      vendored INT4-affine pair's ceiling; every family through `gpt-oss`
+      topped out at `top_k_experts = 8`, so nothing had ever forced it to be
+      distinguished from "the widest top_k anyone has shipped" until
+      `qwen4_exp`'s REAP-288 declared 10. Read the checkpoint's own
+      `top_k_experts` against this ceiling before the download, exactly as
+      the granularity bullet reads `expert_count`/`feed_forward_length` off
+      the header -- a checkpoint that exceeds it is refused at `open()` with
+      "top_k {} exceeds the {}-slot MoE kernels" rather than producing a
+      wrong answer, which is Phase 0's field-by-field vetting doing its job,
+      not a bug to work around quietly.
+      **If you have to widen the ceiling, do not dispatch every family at
+      the new width.** `crates/gpu/CLAUDE.md` Gotcha 13 has the full
+      account: the naive fix (mask a fixed dispatch, the way
+      `moe_phase2_down_reduce_k8_mxfp4` already does for `gpt-oss`'s
+      top-4-of-32) would have DOUBLED phase-2's GPU cost on every top_k=8
+      family that predates the new one, because their top_k had always
+      equaled the old ceiling exactly, with zero padding either way. The fix
+      that shipped instead sizes BOTH the dispatch width and the reduce
+      loop to the checkpoint's OWN `top_k` at runtime (mirroring how phase 1
+      already worked), so a top_k=8 caller is untouched and only the new,
+      wider checkpoint pays for its own width. **This ceiling is per KERNEL,
+      not global**: the GGUF-sourced sibling pairs (`moe_gguf.metal`'s
+      Q8_0/Q4_K/Q6_K/IQ4_NL/MXFP4 kernels) each carry their OWN separately
+      hardcoded reduce width and are untouched by raising
+      `MAX_STREAMED_EXPERTS` -- a family arriving via GGUF with a wide
+      `top_k` needs its own kernel widening, not a constant bump, and a
+      test that reuses the vendored kernel's ceiling as a proxy for a GGUF
+      kernel's own fixed width will silently start testing past what that
+      kernel can do (exactly what happened to `moe_gguf_parity.rs`'s
+      `all_eight_*_slots_participate` cases the day `MAX_STREAMED_EXPERTS`
+      first moved off 8 -- five tests failed with wildly wrong sums, fixed
+      by giving the GGUF siblings their own named constant rather than
+      sharing the vendored kernel's).
 - [ ] **Recurrent per-layer state.** Anything that is not KV: a linear
       layer's delta-rule `S`, a causal-conv tail, an SSM hidden state. For
       each, its shape, whether it grows with context (GDN's does not, which
@@ -688,6 +729,7 @@ byte figure pasted back into the row.
 | Output changed after a kernel tweak | Function constant missing from the pipeline cache key |
 | Babble on an instruction-tuned model with `--prompt` | Not a decode bug: `--prompt` does no templating; use `--messages-file` or `--chat` |
 | Footprint explodes, output correct | Routed-expert marker unrecognized: every expert became a resident tensor (Gotcha 26) |
+| `open()` refuses with "top_k N exceeds the M-slot MoE kernels" | The checkpoint's `top_k_experts` exceeds `gpu::MAX_STREAMED_EXPERTS`, the vendored INT4-affine decode kernel's fixed reduce width -- a kernel capacity limit, not a bug (Phase 0's "top_k_experts against the decode kernel" bullet, `crates/gpu/CLAUDE.md` Gotcha 13). Widen by sizing the dispatch and reduce loop to the checkpoint's OWN `top_k`, never by dispatching every family at a new fixed width -- that doubles phase-2 cost for every pre-existing family whose `top_k` used to equal the old ceiling exactly |
 | Manifest never validates, several extension fields mismatch at once | They were omitted and resolved against the GEMMA baseline (Gotcha 24); or a float field is not a binary fraction |
 | Second generation differs from the first | `reset()` rewound the KV cache but not the recurrent state |
 | Output differs between two `--expert-cache-slots` values | A BUG since 2026-08-08: the flow is dispatching routed slots in an order the expert cache can reach, so phase 2's reduce order follows cache state (AGENTS.md Gotcha 27). Dispatch in router rank |

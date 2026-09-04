@@ -171,6 +171,7 @@ fn moe_phase1_phase2_match_cpu_reference() {
         (&y_buf, 0),
         D as u32,
         F as u32,
+        top_k as u32,
         false,
     )
     .expect("phase2");

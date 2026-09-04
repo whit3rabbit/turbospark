@@ -17,6 +17,7 @@ mod expert_cache_policy;
 mod install_receipt;
 mod load_guard;
 mod manifest;
+mod ngram_hash;
 mod ngram_table;
 mod packed_experts_layout;
 mod resident_buffer;
@@ -52,6 +53,10 @@ pub use manifest::{
     known_flags, load as load_manifest, peek_family, validate as validate_manifest, Manifest,
     ManifestArch, ManifestFileEntry, ManifestQuant, ManifestQuantSlot, DEFAULT_MAX_BYTES,
     EXECUTABLE_GGUF_TYPES, REQUIRED_FILES,
+};
+pub use ngram_hash::{
+    build_layer_multipliers, derive_head_vocab_and_offsets, find_nth_prime_after, ple_ngram_rows,
+    NgramContext,
 };
 pub use ngram_table::{
     load_ngram_table_layout, NgramTableLayout, NGRAM_HEADER_MAX_BYTES, NGRAM_TABLE_BLOB,

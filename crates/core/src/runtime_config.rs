@@ -6,7 +6,15 @@
 //! fallback or clamping to a nearby value.
 
 /// Allowed cache-slot values.
-pub const ALLOWED_CACHE_SLOTS: [u32; 4] = [8, 16, 24, 32];
+///
+/// `[8, 16, 24, 32]` until `qwen4_exp`'s Phase 4 (`docs/QWEN4_PHASE0.md`):
+/// its 288 experts at top-10 cost 126.6 MiB per slot (48 layers x 2.7648 MB),
+/// so 32 slots is only 3.95 GiB / 11% residency of the routed table. 48, 64,
+/// 96 and 128 were added rather than replacing the old ceiling, because every
+/// existing family's frozen memory-oracle row was measured against `Auto`
+/// topping out at 32 and a wider set only raises that ceiling for an install
+/// whose expert stride is small enough to afford it (AGENTS.md Gotcha 36).
+pub const ALLOWED_CACHE_SLOTS: [u32; 8] = [8, 16, 24, 32, 48, 64, 96, 128];
 
 /// The speculative-decoding block sizes a caller may name.
 ///
@@ -163,7 +171,8 @@ impl RuntimeConfigBuilder {
         Self::default()
     }
 
-    /// Set the cache-slot count. Panics unless `value` is 8, 16, 24, or 32.
+    /// Set the cache-slot count. Panics unless `value` is one of
+    /// [`ALLOWED_CACHE_SLOTS`].
     pub fn cache_slots(mut self, value: u32) -> Self {
         assert!(
             is_allowed(value, &ALLOWED_CACHE_SLOTS),

@@ -99,9 +99,10 @@ pub(crate) fn encode_moe_phase2_any(
         RoutedBlobLayout::GgufIq4Nl => gpu::encode_moe_phase2_iq4_nl(
             context, pass, routed, offsets, acts, routing_w, residual, y, d_dim, f_dim, use_silu,
         ),
-        // The only layout narrow enough to waste phase-2 compute on unused
-        // slots (`gpt-oss` routes top-4 of 32 experts against the kernel's
-        // fixed 8); see the shader's own comment for the specialization.
+        // MXFP4 masks compute at a FIXED dispatch width rather than sizing
+        // the dispatch to top_k the way the Affine arm below does (`gpt-oss`
+        // routes top-4 of 32 experts against the kernel's fixed 8 slots);
+        // see the shader's own comment for that specialization.
         RoutedBlobLayout::GgufMxfp4 => gpu::encode_moe_phase2_mxfp4(
             context,
             pass,
@@ -118,7 +119,8 @@ pub(crate) fn encode_moe_phase2_any(
             offsets.down_b != 0,
         ),
         RoutedBlobLayout::Affine => gpu::encode_moe_phase2(
-            context, pass, routed, offsets, acts, routing_w, residual, y, d_dim, f_dim, use_silu,
+            context, pass, routed, offsets, acts, routing_w, residual, y, d_dim, f_dim, top_k,
+            use_silu,
         ),
         // No real file puts IQ3_XXS or IQ4_XS in `down`; see the phase-1
         // sibling's note.

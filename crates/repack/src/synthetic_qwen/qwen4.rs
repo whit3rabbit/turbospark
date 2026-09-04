@@ -40,6 +40,9 @@ const NGRAM_HEAD_DIM: usize = 32;
 const NGRAM_HEADS: usize = 4;
 /// Which zero-based layer carries the table. `layer_ids` is one-based.
 const PLE_LAYER: usize = 1;
+/// Arbitrary but distinct from every real token id this fixture uses, so a
+/// test can tell "the EOS-reset path fired" from "it read a real token".
+const NGRAM_EOS_TOKEN_ID: i64 = 999;
 
 /// A tiny `qwen4_exp`-shaped architecture with an active n-gram table.
 ///
@@ -64,6 +67,7 @@ pub fn tiny_qwen4_exp_arch(vocab_size: i64, num_layers: i64) -> ArchConfig {
         conv_kernel_size: 4,
         layer_ids: vec![PLE_LAYER as i64 + 1],
         seed: 1234,
+        eos_token_id: NGRAM_EOS_TOKEN_ID,
     };
     arch
 }

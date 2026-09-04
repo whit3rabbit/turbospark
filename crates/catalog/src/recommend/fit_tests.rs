@@ -114,14 +114,27 @@ fn the_counted_terms_reproduce_the_three_frozen_peaks() {
 }
 
 /// The same gate at the slot count a RECOMMENDATION resolves to, which on
-/// this machine is 32 rather than the protocol's 16.
+/// this machine is now ABOVE the protocol's 16 -- and, since `qwen4_exp`'s
+/// Phase 4 widened `ALLOWED_CACHE_SLOTS` past its old 32-slot ceiling, above
+/// 32 too.
 ///
 /// `docs/DECODE_BUDGET.md`'s slot sweep measured Gemma 4 at 3,728 and
-/// 3,654 MiB there, against 2,109-2,180 at 16 -- so the two arms together
+/// 3,654 MiB at 32, against 2,109-2,180 at 16 -- so the two arms together
 /// say the model tracks the slot cache rather than happening to land near
 /// one frozen number. Without this arm, the 16-slot assertion above would
 /// pass just as well with the slot term deleted entirely on the two dense
 /// rows, and the one MoE row would carry the whole claim.
+///
+/// **The bound above 32 slots is DERIVED, not a second real measurement** --
+/// nobody has run a memory oracle above 32 slots (this port's
+/// `ALLOWED_CACHE_SLOTS` only grew past it for `qwen4_exp`'s Phase 4), and
+/// `model-io` Gotcha 9's own rule is that a peak measured at one slot count
+/// does not apply at another. Rather than hand-computing what one extra slot
+/// costs (`fit.rs`'s `bytes_per_slot` is `stride * arch.num_layers`, and this
+/// fixture's `arch()` helper does not have to agree with real Gemma 4's 30),
+/// the per-slot cost is read back from `pinned.slot_cache_bytes / 16` --
+/// this test's OWN 16-slot call through the same code path -- so the
+/// derivation cannot silently disagree with what `fit()` actually computes.
 #[test]
 fn the_estimate_tracks_the_slot_count_a_recommendation_resolves_to() {
     let gemma = Shape {
@@ -137,19 +150,37 @@ fn the_estimate_tracks_the_slot_count_a_recommendation_resolves_to() {
         model_io::ExpertCacheSlots::Auto,
         DEFAULT_GUARD,
     );
-    assert_eq!(auto.slots, 32, "this machine has headroom for the top rung");
-    let counted_terms = auto.counted;
-    let measured = 3654 * MIB;
-    assert!(
-        counted_terms <= measured && measured - counted_terms < 500 * MIB,
-        "at 32 slots: {} MiB of counted terms against a measured 3,654 MiB",
-        counted_terms / MIB
-    );
-    // And the slot term is really what moved: doubling the count roughly
-    // doubles it, where the KV is untouched.
     let pinned = fit(&gemma, M4_MAX, 4096, PROTOCOL_SLOTS, DEFAULT_GUARD);
-    assert_eq!(auto.slot_cache_bytes, pinned.slot_cache_bytes * 2);
+    let model_io::ExpertCacheSlots::Fixed(pinned_slots) = PROTOCOL_SLOTS else {
+        panic!("PROTOCOL_SLOTS must be Fixed for this ratio to mean anything")
+    };
+    assert!(
+        auto.slots > 32,
+        "this machine has headroom past the old 32-slot ceiling; got {}",
+        auto.slots
+    );
+    // The slot term scales EXACTLY with slot count, KV untouched -- the
+    // property that licenses deriving a bound above 32 from the 32-slot
+    // measurement at all.
+    assert_eq!(
+        auto.slot_cache_bytes,
+        pinned.slot_cache_bytes / pinned_slots as u64 * auto.slots as u64
+    );
     assert_eq!(auto.kv_bytes, pinned.kv_bytes);
+
+    let per_slot_bytes = pinned.slot_cache_bytes / pinned_slots as u64;
+    let measured_at_32 = 3654 * MIB;
+    let extra_slots = auto.slots as u64 - 32;
+    let derived = measured_at_32 + extra_slots * per_slot_bytes;
+    let counted_terms = auto.counted;
+    assert!(
+        counted_terms <= derived && derived - counted_terms < 500 * MIB,
+        "at {} slots: {} MiB of counted terms against a derived {} MiB (32-slot measured \
+         3,654 MiB plus {extra_slots} more slots' stride)",
+        auto.slots,
+        counted_terms / MIB,
+        derived / MIB
+    );
 }
 
 /// The slot cache is what a fit is made of on an MoE install, and the
