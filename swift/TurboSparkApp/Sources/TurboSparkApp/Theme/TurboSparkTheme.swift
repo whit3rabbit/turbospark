@@ -49,8 +49,25 @@ public enum TurboSparkTheme {
         if config.translucentSidebar {
             return Color(nsColor: .windowBackgroundColor).opacity(0.7)
         }
-        if #available(macOS 15.0, *) {
-            return AppearanceManager.shared.activeBackgroundColor(isDark: isDark).mix(with: .black, by: 0.06)
+        // **`#available` DOES NOT HELP WITH A SYMBOL THE SDK DOES NOT HAVE.**
+        // This was `Color.mix(with:by:)` behind a `macOS 15.0` guard, which
+        // is correct for RUNTIME availability and does nothing for
+        // compilation: the macOS 14 SDK has no such member, so the guarded
+        // call is `value of type 'Color' has no member 'mix'` on any
+        // toolchain older than the one it was written on. CI builds the app
+        // bundle on `macos-14` and every developer here is on a far newer
+        // Xcode, so it failed for nobody who could see it.
+        //
+        // `NSColor.blended(withFraction:of:)` is AppKit's own and predates
+        // all of this. It needs both colours in one space or it returns nil,
+        // and `NSColor.black` is generic gray, hence the two conversions and
+        // the fallback that was already the `else` branch.
+        let base = NSColor(AppearanceManager.shared.activeBackgroundColor(isDark: isDark))
+        if let sRGB = base.usingColorSpace(.sRGB),
+            let black = NSColor.black.usingColorSpace(.sRGB),
+            let darkened = sRGB.blended(withFraction: 0.06, of: black)
+        {
+            return Color(nsColor: darkened)
         }
         return Color(nsColor: .underPageBackgroundColor)
     }

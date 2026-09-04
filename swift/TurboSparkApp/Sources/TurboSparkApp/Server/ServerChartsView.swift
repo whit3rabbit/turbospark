@@ -1,6 +1,8 @@
 import Charts
 import SwiftUI
 
+// Isolated explicitly: only `body` is isolated by the protocol on the
+// macOS 14 SDK (swift/CLAUDE.md Gotcha 45).
 /// Three charts over the rolling window, each answering one question.
 ///
 /// **EVERY SERIES IS FROM A MEASUREMENT, AND THE ONE THAT IS NOT MEASURABLE
@@ -9,6 +11,7 @@ import SwiftUI
 /// wait behind the runner's lock, so the honest split is prefill (measured),
 /// decode (measured), and queue (the subtraction). That last one is what a
 /// person actually wants when a request felt slow.
+@MainActor
 struct ServerChartsView: View {
     @ObservedObject var model: AppModel
 

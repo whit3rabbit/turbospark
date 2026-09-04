@@ -1,7 +1,10 @@
 import AppKit
 import SwiftUI
 
+// Isolated explicitly: only `body` is isolated by the protocol on the
+// macOS 14 SDK (swift/CLAUDE.md Gotcha 45).
 /// macOS File and Privacy Permissions management pane for app settings.
+@MainActor
 public struct PermissionsSettingsPaneView: View {
     @ObservedObject var model: AppModel
     @ObservedObject private var permissionsManager = SystemPermissionsManager.shared

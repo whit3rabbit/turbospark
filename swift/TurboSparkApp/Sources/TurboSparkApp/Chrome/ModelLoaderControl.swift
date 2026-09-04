@@ -2,11 +2,14 @@ import AppKit
 import SwiftUI
 import TurboSpark
 
+// Isolated explicitly: only `body` is isolated by the protocol on the
+// macOS 14 SDK (swift/CLAUDE.md Gotcha 45).
 /// The top bar's model loader: pick a model, load it, eject it.
 ///
 /// Load and eject are separate hit targets rather than one toggle, because the
 /// two have different costs and an accidental eject discards a warm session
 /// (weights, KV cache and expert slots) that takes seconds to rebuild.
+@MainActor
 struct ModelLoaderControl: View {
     @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel

@@ -1,7 +1,10 @@
 import AppKit
 import SwiftUI
 
+// Isolated explicitly: only `body` is isolated by the protocol on the
+// macOS 14 SDK (swift/CLAUDE.md Gotcha 45).
 /// Settings pane for discovering, inspecting, and managing built-in and custom Agents & Subagents.
+@MainActor
 public struct AgentsSettingsPaneView: View {
     @ObservedObject var model: AppModel
 

@@ -2,9 +2,12 @@ import AppKit
 import SwiftUI
 import TurboSpark
 
+// Isolated explicitly: only `body` is isolated by the protocol on the
+// macOS 14 SDK (swift/CLAUDE.md Gotcha 45).
 /// Welcome and initial setup view displayed when no local models are detected.
 /// Scans system hardware, displays memory limits, highlights MoE streaming advantages,
 /// and presents hardware-tailored recommendations.
+@MainActor
 struct ModelInstallView: View {
     @ObservedObject var model: AppModel
     @State private var recommendations: [ModelRecommendation] = []

@@ -1,7 +1,10 @@
 import SwiftUI
 
+// Isolated explicitly: only `body` is isolated by the protocol on the
+// macOS 14 SDK (swift/CLAUDE.md Gotcha 45).
 /// Slim bottom strip carrying live benchmarks: memory, CPU, context fill, throughput, and thermal telemetry.
 /// Supports both compact numeric text and real-time sparkline graph visualization modes.
+@MainActor
 struct StatusBarView: View {
     @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel

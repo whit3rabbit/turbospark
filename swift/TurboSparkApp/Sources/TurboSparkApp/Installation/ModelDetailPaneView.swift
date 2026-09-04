@@ -2,7 +2,10 @@ import AppKit
 import SwiftUI
 import TurboSpark
 
+// Isolated explicitly: only `body` is isolated by the protocol on the
+// macOS 14 SDK (swift/CLAUDE.md Gotcha 45).
 /// Right-column detail inspector and action pane for a selected model.
+@MainActor
 struct ModelDetailPaneView: View {
     @ObservedObject var model: AppModel
     let entry: CatalogEntry

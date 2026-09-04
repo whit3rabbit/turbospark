@@ -1,12 +1,15 @@
 import AppKit
 import SwiftUI
 
+// Isolated explicitly: only `body` is isolated by the protocol on the
+// macOS 14 SDK (swift/CLAUDE.md Gotcha 45).
 /// The window shell: icon rail, top bar, working panes, status strip.
 ///
 /// The chrome is banded rather than floating. Sections live in the rail so the
 /// chat sidebar can be hidden without stranding navigation, and every live
 /// metric lives in the bottom strip so nothing next to the model loader
 /// updates once per token.
+@MainActor
 struct RootView: View {
     @ObservedObject var model: AppModel
     @State private var conversationChromeHeight: CGFloat = 0

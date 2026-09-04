@@ -2,12 +2,15 @@ import AppKit
 import PDFKit
 import SwiftUI
 
+// Isolated explicitly: only `body` is isolated by the protocol on the
+// macOS 14 SDK (swift/CLAUDE.md Gotcha 45).
 /// Right-hand preview of one attachment: the real document where the format
 /// can be rendered, and the extracted text otherwise.
 ///
 /// The extracted text is what the MODEL sees, so it is never merely a fallback
 /// -- the toggle is always available, and on a PDF it is the only way to check
 /// what was actually pulled out of the file.
+@MainActor
 struct FilePreviewView: View {
     @ObservedObject var model: AppModel
     let attachment: AppPromptAttachment

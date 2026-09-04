@@ -1117,6 +1117,43 @@ so going through `make` recompiles the whole app every single time. Use
     every write -- three new cases failed on that before resolving by name
     (`findAgent(name: "general-purpose")`) instead of by index.
 
+45. **CI BUILDS THE APP BUNDLE ON `macos-14` AND YOU DO NOT, SO THE SWIFT
+    HALF CAN BE BROKEN ON MAIN WHILE EVERY LOCAL BUILD IS GREEN.** The
+    `verify` job runs `macos-latest` and compiles no Swift at all; the
+    `package-macos` job (and `release.yml`'s) pins `macos-14`, which is
+    Xcode 15 and the macOS 14 SDK. Nothing in the local verification policy
+    reaches that toolchain. Found 2026-09-04 with main already red, from
+    theme work written months earlier on a modern Xcode.
+
+    Three failure modes, and only the first is what anyone expects:
+
+    **A GUARDED CALL TO A NEWER API STILL HAS TO COMPILE.**
+    `Color.mix(with:by:)` behind `if #available(macOS 15.0, *)` is correct
+    about RUNTIME availability and irrelevant to the SDK: the macOS 14 SDK
+    has no such member, so it is `value of type 'Color' has no member
+    'mix'`. `#available` gates execution, not symbol resolution. Reach for
+    the AppKit equivalent (`NSColor.blended(withFraction:of:)` here) rather
+    than a guard.
+
+    **ONLY `body` IS MAIN-ACTOR-ISOLATED THERE.** A newer SwiftUI infers
+    `@MainActor` for the whole type conforming to `View`; the macOS 14 SDK
+    isolates the protocol witness alone, so a `private var chip: some View`
+    is nonisolated and every `TurboSparkTheme.accentColor` in it is an
+    error. 28 view types carry an explicit `@MainActor` for this, which is
+    true on both toolchains and is the compiler's own suggested fix. Annotate
+    the TYPE and not the member: helpers call each other, and a member-level
+    annotation just moves the error to the caller.
+
+    **AND THE TYPE CHECKER'S BUDGET IS SMALLER.** A `Form` holding five
+    inline `Section`s is one expression and exceeded the solver there
+    ("unable to type-check this expression in reasonable time") while
+    compiling fine locally. One property per section.
+
+    The standing consequence: `swift build` passing here says nothing about
+    the job that ships the DMG. Anything touching Theme, a view helper, or a
+    large SwiftUI container is worth reading with this in mind, because the
+    feedback arrives on a push to main rather than on the PR.
+
 ## The `state#N` ledger
 
 `AppModel` and its extensions carry `(state#N)` markers on the comments that

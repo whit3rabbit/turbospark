@@ -18,8 +18,11 @@ public final class WelcomeCharacterAssetCache {
     }
 }
 
+// Isolated explicitly: only `body` is isolated by the protocol on the
+// macOS 14 SDK (swift/CLAUDE.md Gotcha 45).
 /// Animated welcome hero view displayed on app launch and empty chat transcripts.
 /// Displays the Claude-inspired centered greeting with embedded floating prompt composer.
+@MainActor
 public struct WelcomeHeroView: View {
     @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel

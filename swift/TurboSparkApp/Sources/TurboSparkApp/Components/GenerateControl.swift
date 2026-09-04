@@ -1,9 +1,12 @@
 import SwiftUI
 
+// Isolated explicitly: only `body` is isolated by the protocol on the
+// macOS 14 SDK (swift/CLAUDE.md Gotcha 45).
 /// Primary generation action button and live progress/cancellation pill.
 ///
 /// Switches between "Generate" (Cmd+Return) when idle and a live progress pill
 /// showing tokens/sec or prefill counts with a Stop button (Cmd+.) while running.
+@MainActor
 struct GenerateControl: View {
     @ObservedObject var model: AppModel
     @ScaledMetric private var controlHeight: CGFloat = 34

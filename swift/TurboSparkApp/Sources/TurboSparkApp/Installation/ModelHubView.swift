@@ -2,12 +2,15 @@ import AppKit
 import SwiftUI
 import TurboSpark
 
+// Isolated explicitly: only `body` is isolated by the protocol on the
+// macOS 14 SDK (swift/CLAUDE.md Gotcha 45).
 /// The Models section: browse the catalog, see what fits this machine, install.
 ///
 /// The chrome matches the Files section rather than carrying its own: no page
 /// title block, no telemetry pills. Chip and RAM used to be repeated here and
 /// now live in the window's status strip, which is on screen in every section
 /// (`swift/CLAUDE.md` Gotcha 17).
+@MainActor
 struct ModelHubView: View {
     @ObservedObject var model: AppModel
 

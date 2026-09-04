@@ -1,6 +1,9 @@
 import SwiftUI
 
+// Isolated explicitly: only `body` is isolated by the protocol on the
+// macOS 14 SDK (swift/CLAUDE.md Gotcha 45).
 /// Project-scoped MCP server manager and auto-detection importer.
+@MainActor
 public struct ProjectMcpSettingsSheet: View {
     @ObservedObject var model: AppModel
     let projectID: UUID

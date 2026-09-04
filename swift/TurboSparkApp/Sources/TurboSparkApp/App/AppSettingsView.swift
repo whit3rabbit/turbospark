@@ -294,161 +294,22 @@ public struct AppSettingsView: View {
         }
     }
 
+    /// **FIVE PROPERTIES RATHER THAN ONE EXPRESSION.** A `Form` holding
+    /// all five `Section`s inline is ONE expression to the type checker,
+    /// and it exceeded the solver budget on the SDK 14 toolchain that CI
+    /// builds the app bundle with: "unable to type-check this expression
+    /// in reasonable time". It compiles on a newer one, which is why
+    /// nobody developing here saw it. Splitting is the fix the diagnostic
+    /// itself asks for, and it is cheap insurance on any toolchain -- a
+    /// SwiftUI container that grows a section at a time walks into this
+    /// eventually.
     private var engineSettingsTab: some View {
         Form {
-            Section("Generation Defaults") {
-                HStack {
-                    Text("Temperature")
-                    Spacer()
-                    Slider(value: $model.temperature, in: 0.0...1.5, step: 0.05)
-                        .frame(width: 160)
-                        .onChange(of: model.temperature) { _, _ in
-                            model.persistSettingsDebounced()
-                        }
-                    Text(String(format: "%.2f", model.temperature))
-                        .monospacedDigit()
-                        .frame(width: 40, alignment: .trailing)
-                }
-
-                HStack {
-                    Text("Top-P Sampling")
-                    Spacer()
-                    Toggle("", isOn: $model.topPEnabled)
-                        .labelsHidden()
-                        .onChange(of: model.topPEnabled) { _, _ in
-                            model.persistSettingsDebounced()
-                        }
-                    Slider(value: $model.topP, in: 0.1...1.0, step: 0.05)
-                        .frame(width: 160)
-                        .disabled(!model.topPEnabled)
-                        .onChange(of: model.topP) { _, _ in
-                            model.persistSettingsDebounced()
-                        }
-                    Text(String(format: "%.2f", model.topP))
-                        .monospacedDigit()
-                        .frame(width: 40, alignment: .trailing)
-                        .foregroundStyle(model.topPEnabled ? .primary : .secondary)
-                }
-            }
-
-            Section("Thinking & Reasoning Effort") {
-                Picker("Default Reasoning Level", selection: Binding(
-                    get: { model.reasoning },
-                    set: { model.setReasoning($0) }
-                )) {
-                    // With a model loaded this is that checkpoint's own set.
-                    // With none it is the union, because this is the default
-                    // a FUTURE model inherits and clamping it to nothing
-                    // would leave a picker with one entry.
-                    ForEach(model.session == nil
-                            ? GenerateOptions.Reasoning.allCases
-                            : model.availableReasoningLevels) { level in
-                        Text(model.reasoningLabel(for: level)).tag(level)
-                    }
-                }
-                .pickerStyle(.menu)
-
-                Text("Controls internal chain-of-thought depth. The accepted levels belong to each checkpoint's own chat template, not to this app: Qwen 3.8 tops out at Extra High and refuses High, while gpt-oss is the other way round. A level a model cannot express is clamped to its nearest one on load, and your choice is remembered per model.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section("Forge Tool-Call Guardrails") {
-                Picker("Guardrails Mode", selection: $model.guardrailsMode) {
-                    ForEach(AppGuardrailsMode.allCases) { mode in
-                        Text(mode.label).tag(mode)
-                    }
-                }
-                .pickerStyle(.menu)
-                .onChange(of: model.guardrailsMode) { _, _ in
-                    model.persistSettings()
-                }
-
-                Text(model.guardrailsMode.descriptionText)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section("Speculative Decoding") {
-                Picker("Speculation Mode", selection: $model.runtimeOptions.speculation) {
-                    ForEach(AppSpeculationOption.allCases) { opt in
-                        Text(opt.menuLabel).tag(opt)
-                    }
-                }
-                .pickerStyle(.menu)
-                .onChange(of: model.runtimeOptions.speculation) { _, _ in
-                    model.persistSettingsDebounced()
-                }
-
-                if model.runtimeOptions.speculation != .off {
-                    Picker("Speculative Drafter", selection: $model.runtimeOptions.speculativeDrafter) {
-                        ForEach(AppSpeculativeDrafterOption.allCases) { drafter in
-                            Text(drafter.menuLabel).tag(drafter)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .onChange(of: model.runtimeOptions.speculativeDrafter) { _, _ in
-                        model.persistSettingsDebounced()
-                    }
-                }
-            }
-
-            Section("In-Process Server") {
-                HStack {
-                    Toggle("Enable server", isOn: Binding(
-                        get: { model.server != nil },
-                        set: { $0 ? model.startServer() : model.stopServer() }
-                    ))
-                    .disabled(model.session == nil || model.serverBusy)
-
-                    if model.serverBusy {
-                        ProgressView()
-                            .controlSize(.small)
-                            .padding(.leading, 4)
-                    }
-                }
-
-                // Both rows are READ BACK from the running server rather than
-                // restated here. The address used to be half asserted (a
-                // `127.0.0.1` literal beside the real port) and the auth state
-                // was not shown at all, so a key of nothing but spaces trims
-                // to empty, starts an unauthenticated server, and looked
-                // identical to a key that took.
-                if let info = model.serverInfo {
-                    let rows = ServerStatusRows(info: info)
-
-                    HStack {
-                        Text("Address")
-                        Spacer()
-                        Text(rows.address)
-                            .font(.caption.monospaced())
-                            .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
-                    }
-
-                    HStack {
-                        Text("Auth")
-                        Spacer()
-                        Text(rows.authLabel)
-                            .font(.caption)
-                            .foregroundStyle(rows.authIsWarning ? Color.orange : Color.secondary)
-                    }
-                }
-
-                SecureField("API key (optional)", text: $model.serverAPIKeyInput)
-                    .disabled(model.server != nil)
-
-                Text(
-                    "Serves the currently loaded model over OpenAI- and Anthropic-compatible "
-                        + "HTTP endpoints on loopback, sharing the same engine this app's chat "
-                        + "uses -- not a second copy of the model. Loading a different model, "
-                        + "or unloading, stops the server. Loopback keeps it off the network "
-                        + "and NOT off this machine: without an API key, any process running "
-                        + "here can reach it."
-                )
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
+            generationDefaultsSection
+            reasoningEffortSection
+            guardrailsSection
+            speculationSection
+            inProcessServerSection
         }
         .formStyle(.grouped)
         .padding(16)
@@ -456,6 +317,170 @@ public struct AppSettingsView: View {
             if let tab = notification.object as? SettingsTab {
                 selectedTab = tab
             }
+        }
+    }
+
+    private var generationDefaultsSection: some View {
+        Section("Generation Defaults") {
+            HStack {
+                Text("Temperature")
+                Spacer()
+                Slider(value: $model.temperature, in: 0.0...1.5, step: 0.05)
+                    .frame(width: 160)
+                    .onChange(of: model.temperature) { _, _ in
+                        model.persistSettingsDebounced()
+                    }
+                Text(String(format: "%.2f", model.temperature))
+                    .monospacedDigit()
+                    .frame(width: 40, alignment: .trailing)
+            }
+
+            HStack {
+                Text("Top-P Sampling")
+                Spacer()
+                Toggle("", isOn: $model.topPEnabled)
+                    .labelsHidden()
+                    .onChange(of: model.topPEnabled) { _, _ in
+                        model.persistSettingsDebounced()
+                    }
+                Slider(value: $model.topP, in: 0.1...1.0, step: 0.05)
+                    .frame(width: 160)
+                    .disabled(!model.topPEnabled)
+                    .onChange(of: model.topP) { _, _ in
+                        model.persistSettingsDebounced()
+                    }
+                Text(String(format: "%.2f", model.topP))
+                    .monospacedDigit()
+                    .frame(width: 40, alignment: .trailing)
+                    .foregroundStyle(model.topPEnabled ? .primary : .secondary)
+            }
+        }
+    }
+
+    private var reasoningEffortSection: some View {
+        Section("Thinking & Reasoning Effort") {
+            Picker("Default Reasoning Level", selection: Binding(
+                get: { model.reasoning },
+                set: { model.setReasoning($0) }
+            )) {
+                // With a model loaded this is that checkpoint's own set.
+                // With none it is the union, because this is the default
+                // a FUTURE model inherits and clamping it to nothing
+                // would leave a picker with one entry.
+                ForEach(model.session == nil
+                        ? GenerateOptions.Reasoning.allCases
+                        : model.availableReasoningLevels) { level in
+                    Text(model.reasoningLabel(for: level)).tag(level)
+                }
+            }
+            .pickerStyle(.menu)
+
+            Text("Controls internal chain-of-thought depth. The accepted levels belong to each checkpoint's own chat template, not to this app: Qwen 3.8 tops out at Extra High and refuses High, while gpt-oss is the other way round. A level a model cannot express is clamped to its nearest one on load, and your choice is remembered per model.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var guardrailsSection: some View {
+        Section("Forge Tool-Call Guardrails") {
+            Picker("Guardrails Mode", selection: $model.guardrailsMode) {
+                ForEach(AppGuardrailsMode.allCases) { mode in
+                    Text(mode.label).tag(mode)
+                }
+            }
+            .pickerStyle(.menu)
+            .onChange(of: model.guardrailsMode) { _, _ in
+                model.persistSettings()
+            }
+
+            Text(model.guardrailsMode.descriptionText)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var speculationSection: some View {
+        Section("Speculative Decoding") {
+            Picker("Speculation Mode", selection: $model.runtimeOptions.speculation) {
+                ForEach(AppSpeculationOption.allCases) { opt in
+                    Text(opt.menuLabel).tag(opt)
+                }
+            }
+            .pickerStyle(.menu)
+            .onChange(of: model.runtimeOptions.speculation) { _, _ in
+                model.persistSettingsDebounced()
+            }
+
+            if model.runtimeOptions.speculation != .off {
+                Picker("Speculative Drafter", selection: $model.runtimeOptions.speculativeDrafter) {
+                    ForEach(AppSpeculativeDrafterOption.allCases) { drafter in
+                        Text(drafter.menuLabel).tag(drafter)
+                    }
+                }
+                .pickerStyle(.menu)
+                .onChange(of: model.runtimeOptions.speculativeDrafter) { _, _ in
+                    model.persistSettingsDebounced()
+                }
+            }
+        }
+    }
+
+    private var inProcessServerSection: some View {
+        Section("In-Process Server") {
+            HStack {
+                Toggle("Enable server", isOn: Binding(
+                    get: { model.server != nil },
+                    set: { $0 ? model.startServer() : model.stopServer() }
+                ))
+                .disabled(model.session == nil || model.serverBusy)
+
+                if model.serverBusy {
+                    ProgressView()
+                        .controlSize(.small)
+                        .padding(.leading, 4)
+                }
+            }
+
+            // Both rows are READ BACK from the running server rather than
+            // restated here. The address used to be half asserted (a
+            // `127.0.0.1` literal beside the real port) and the auth state
+            // was not shown at all, so a key of nothing but spaces trims
+            // to empty, starts an unauthenticated server, and looked
+            // identical to a key that took.
+            if let info = model.serverInfo {
+                let rows = ServerStatusRows(info: info)
+
+                HStack {
+                    Text("Address")
+                    Spacer()
+                    Text(rows.address)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+
+                HStack {
+                    Text("Auth")
+                    Spacer()
+                    Text(rows.authLabel)
+                        .font(.caption)
+                        .foregroundStyle(rows.authIsWarning ? Color.orange : Color.secondary)
+                }
+            }
+
+            SecureField("API key (optional)", text: $model.serverAPIKeyInput)
+                .disabled(model.server != nil)
+
+            Text(
+                "Serves the currently loaded model over OpenAI- and Anthropic-compatible "
+                    + "HTTP endpoints on loopback, sharing the same engine this app's chat "
+                    + "uses -- not a second copy of the model. Loading a different model, "
+                    + "or unloading, stops the server. Loopback keeps it off the network "
+                    + "and NOT off this machine: without an API key, any process running "
+                    + "here can reach it."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
         }
     }
 }

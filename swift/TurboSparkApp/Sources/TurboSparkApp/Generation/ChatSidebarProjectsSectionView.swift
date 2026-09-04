@@ -1,7 +1,10 @@
 import AppKit
 import SwiftUI
 
+// Isolated explicitly: only `body` is isolated by the protocol on the
+// macOS 14 SDK (swift/CLAUDE.md Gotcha 45).
 /// Projects section in the chat sidebar showing all-chats selector and active projects.
+@MainActor
 struct ChatSidebarProjectsSectionView: View {
     @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel

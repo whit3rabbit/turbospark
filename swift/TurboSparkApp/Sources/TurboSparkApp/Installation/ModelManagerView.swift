@@ -2,7 +2,10 @@ import AppKit
 import SwiftUI
 import TurboSpark
 
+// Isolated explicitly: only `body` is isolated by the protocol on the
+// macOS 14 SDK (swift/CLAUDE.md Gotcha 45).
 /// The dedicated Model Manager view for organizing, inspecting, and managing downloaded models.
+@MainActor
 struct ModelManagerView: View {
     @ObservedObject var model: AppModel
     @ObservedObject private var orgStore = ModelOrganizationStore.shared

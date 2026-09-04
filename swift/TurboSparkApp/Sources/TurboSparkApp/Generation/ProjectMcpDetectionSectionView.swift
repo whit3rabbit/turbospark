@@ -1,6 +1,9 @@
 import SwiftUI
 
+// Isolated explicitly: only `body` is isolated by the protocol on the
+// macOS 14 SDK (swift/CLAUDE.md Gotcha 45).
 /// Section in ProjectMcpSettingsSheet for scanning and importing MCP configuration files from the project codebase.
+@MainActor
 struct ProjectMcpDetectionSectionView: View {
     let project: AppProject?
     let detectedFiles: [DetectedProjectMcpFile]

@@ -1,7 +1,10 @@
 import AppKit
 import SwiftUI
 
+// Isolated explicitly: only `body` is isolated by the protocol on the
+// macOS 14 SDK (swift/CLAUDE.md Gotcha 45).
 /// Right-hand working tree and git diff inspector matching modern coding agent environments.
+@MainActor
 struct WorktreeView: View {
     @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel

@@ -1,6 +1,9 @@
 import SwiftUI
 
+// Isolated explicitly: only `body` is isolated by the protocol on the
+// macOS 14 SDK (swift/CLAUDE.md Gotcha 45).
 /// Codex-style MCP server management pane for app settings and preferences.
+@MainActor
 public struct McpSettingsPaneView: View {
     @ObservedObject var model: AppModel
 

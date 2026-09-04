@@ -1,7 +1,10 @@
 import SwiftUI
 import TurboSpark
 
+// Isolated explicitly: only `body` is isolated by the protocol on the
+// macOS 14 SDK (swift/CLAUDE.md Gotcha 45).
 /// Modal sheet for browsing the curated catalog, viewing local installs, and streaming Hugging Face models.
+@MainActor
 struct CatalogSheet: View {
     @ObservedObject var model: AppModel
     @Environment(\.dismiss) private var dismiss

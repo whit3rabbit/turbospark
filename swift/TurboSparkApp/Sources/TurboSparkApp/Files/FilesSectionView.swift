@@ -1,10 +1,13 @@
 import SwiftUI
 
+// Isolated explicitly: only `body` is isolated by the protocol on the
+// macOS 14 SDK (swift/CLAUDE.md Gotcha 45).
 /// The Files section: every document attached to any chat, in one list.
 ///
 /// Attachments were previously reachable only as chips on the composer of the
 /// chat that owned them, so a document attached three conversations ago was
 /// invisible and could not be removed without finding that chat first.
+@MainActor
 struct FilesSectionView: View {
     @ObservedObject var model: AppModel
 
