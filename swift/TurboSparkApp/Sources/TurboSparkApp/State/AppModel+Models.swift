@@ -71,12 +71,22 @@ extension AppModel {
             modelScanTask = nil
             guard lmPath != nil || !customDirs.isEmpty else { return }
 
-            modelScanTask = Task {
-                let scanned = await Task.detached(priority: .utility) {
-                    ModelStorageManager.scanExternal(lmStudioPath: lmPath, customPaths: customDirs)
-                }.value
-                guard !Task.isCancelled else { return }
-                self.mergeScannedModels(scanned, into: catalogRows)
+            // **THE STORED TASK IS THE ONE DOING THE WALK** (state#87).
+            // `modelScanTask` used to hold a MainActor wrapper awaiting an
+            // inner `Task.detached`, and cancelling a parent does not cancel
+            // a DETACHED child -- so `modelScanTask?.cancel()` above stopped
+            // nothing at all and the walk ran to completion whatever the
+            // settings said. Detached is still what keeps it off the main
+            // actor (this is a recursive `FileManager.enumerator` plus a
+            // second full walk per bundle found), so the fix is to store
+            // that task rather than to wrap it.
+            modelScanTask = Task.detached(priority: .utility) { [weak self] in
+                let scanned = ModelStorageManager.scanExternal(
+                    lmStudioPath: lmPath, customPaths: customDirs)
+                guard !Task.isCancelled, let self else { return }
+                await MainActor.run {
+                    self.mergeScannedModels(scanned, into: catalogRows)
+                }
             }
         } catch {
             self.error = "\(error)"
@@ -94,9 +104,14 @@ extension AppModel {
             catalogRows.map { URL(fileURLWithPath: $0.path).standardizedFileURL.path })
         var existingAliases = Set(catalogRows.map { $0.alias })
 
+        let excluded = ModelOrganizationStore.shared.excludedScanPaths
         for entry in scanned {
             let stdPath = URL(fileURLWithPath: entry.model.path).standardizedFileURL.path
             guard !existingPaths.contains(stdPath) else { continue }
+            // A row the user removed from TurboSpark stays removed (state#88).
+            // The scan finds it again on every refresh, so the exclusion is
+            // the only thing that can make the button mean anything.
+            guard !excluded.contains(stdPath) else { continue }
             existingPaths.insert(stdPath)
             var resolvedAlias = entry.model.alias
             if existingAliases.contains(resolvedAlias) {
@@ -184,7 +199,15 @@ extension AppModel {
         // when one is a scanned LM Studio/Custom entry, so alias equality
         // here could read "already selected" for a DIFFERENT model on disk
         // and silently refuse to switch to it.
-        guard !generating, !opening, selected?.path != model.path else { return }
+        // **"ALREADY SELECTED" IS NOT "ALREADY LOADED"** (state#84). This
+        // returned whenever the paths matched, session or no session -- so
+        // after an unload, or after an open that FAILED, both "Load Model"
+        // and "Load & Chat" were dead for the very model the user was
+        // looking at, with nothing on screen to say why. The refusal is for
+        // a redundant re-open, which needs a live session to be redundant.
+        guard !generating, !opening,
+            !(selected?.path == model.path && session != nil)
+        else { return }
         selected = model
         modelPathText = model.path
         Task {
@@ -347,7 +370,13 @@ extension AppModel {
     }
 
     public func unloadModel() {
-        guard !generating else { return }
+        // **THE PREDICATE THE UI DRAWS FROM** (state#85). This checked one of
+        // its three terms, and two panes called it with no `.disabled` at
+        // all, so Unload was live during a submission and during an open --
+        // where it clears `session` under a load that is about to publish
+        // one, leaving the pane and the engine disagreeing about what is
+        // resident.
+        guard canUnloadModel else { return }
         // Or the model stays resident and served, with the Chat pane showing
         // nothing loaded. See `detachChatSessionFromServer`'s own note.
         detachChatSessionFromServer()
@@ -465,9 +494,18 @@ extension AppModel {
         let isCatalogTracked = Self.isCatalogTracked(model: model, in: catalogInstalled)
 
         guard isCatalogTracked else {
-            ModelOrganizationStore.shared.removeMetadata(for: model.alias, path: model.path)
+            // **EXCLUDED, NOT FORGOTTEN** (state#88). This dropped the row's
+            // notes, tags and favorite and left the bytes alone -- and the
+            // next scan walked the same directory and put the row straight
+            // back, now stripped of everything the user had written on it.
+            // So the button destroyed exactly the data it had no business
+            // touching and failed at the one thing it claimed to do.
+            ModelOrganizationStore.shared.excludeFromScan(path: model.path)
             refreshModels()
-            showToast("Removed '\(model.alias)' from TurboSpark. The file was left on disk at \(model.path).", style: .info)
+            showToast(
+                "Removed '\(model.alias)' from TurboSpark. The file was left on disk at "
+                    + "\(model.path); restore it under Settings > Models.",
+                style: .info, duration: 5.0)
             return
         }
 

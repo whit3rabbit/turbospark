@@ -241,6 +241,9 @@ struct ModelDetailPaneView: View {
                     model.unloadModel()
                 }
                 .controlSize(.regular)
+                // state#85: `ModelLoaderControl` already read this predicate
+                // and the two detail panes did not.
+                .disabled(!model.canUnloadModel)
                 .accessibilityHint("Unloads the model from memory")
             } else if isInstalled {
                 Button {

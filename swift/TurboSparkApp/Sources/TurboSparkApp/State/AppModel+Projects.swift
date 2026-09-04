@@ -57,7 +57,9 @@ extension AppModel {
         // project SELECTS it, rebinds `worktree` and rebinds `AppHookStore`,
         // so doing it mid-turn moves the workspace under a running tool
         // exactly as switching would -- and this had no guard at all.
-        guard !generating, !submitting else { return AppProject(name: name) }
+        guard !generating, !submitting, pendingToolCall == nil else {
+            return AppProject(name: name)
+        }
         var instructions = customInstructions
         if instructions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
            let path = rootDirectoryPath,
@@ -100,7 +102,14 @@ extension AppModel {
 
     /// Selects an active project or clears the project filter.
     public func selectProject(id: UUID?) {
-        guard !generating else { return }
+        // **THE THREE FLAGS, NOT ONE** (state#77). The chat-side siblings
+        // grew `pendingToolCall` and `submitting` (state#33, state#49) and
+        // the project-side ones never did -- which is backwards, because a
+        // project switch is the bigger move: it resets `FileSnapshotStore`,
+        // which holds the hashes a pending `edit_file` was evaluated
+        // against, so the call the user is looking at is re-checked against
+        // nothing.
+        guard !generating, !submitting, pendingToolCall == nil else { return }
         selectedProjectID = id
         // Stale-write hashes are per workspace. Carrying them across a
         // project switch means an `edit_file` in the new project can be
@@ -137,6 +146,18 @@ extension AppModel {
     /// Updates an existing project and persists changes.
     public func updateProject(_ project: AppProject) {
         guard let index = projects.firstIndex(where: { $0.id == project.id }) else { return }
+        // A ROOT CHANGE is a workspace switch (state#55) and carries
+        // `selectProject`'s guards with it (state#77); everything else here
+        // is metadata and stays editable mid-turn, since refusing to rename
+        // a project while a tool runs would be friction with no hazard
+        // behind it.
+        let rootChanged =
+            (projects[index].rootDirectoryPath ?? "") != (project.rootDirectoryPath ?? "")
+        if rootChanged, generating || submitting || pendingToolCall != nil {
+            showToast(
+                "Cannot change the workspace root while a turn is running.", style: .warning)
+            return
+        }
         var updated = project
         updated.updatedAt = Date()
         let previousRoot = projects[index].rootDirectoryPath ?? ""
@@ -177,7 +198,11 @@ extension AppModel {
     /// `PreToolUse` hooks kept running for every later tool call, in a
     /// workspace the user had just removed.
     public func deleteProject(id: UUID) {
-        guard !generating else { return }
+        // As `selectProject` (state#77), plus one reason of its own: a
+        // pending call captured `pendingToolCallProject` at proposal time
+        // (state#19), so deleting that project leaves the card naming a
+        // workspace that no longer exists.
+        guard !generating, !submitting, pendingToolCall == nil else { return }
         let wasSelected = selectedProjectID == id
         projects.removeAll { $0.id == id }
         if wasSelected {

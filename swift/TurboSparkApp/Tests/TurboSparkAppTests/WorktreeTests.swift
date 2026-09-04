@@ -31,6 +31,31 @@ final class WorktreeTests: XCTestCase {
         XCTAssertEqual(projects.title, "Projects")
     }
 
+    /// state#89: `--numstat` and `--porcelain` disagree about how a rename is
+    /// spelled, and the join between them only normalized the porcelain side.
+    /// Every rename and every non-ASCII path therefore looked up a key that
+    /// could not exist and read 0/0.
+    func testNumstatPathsAreNormalizedTheSameWayPorcelainPathsAre() {
+        // The plain rename form.
+        XCTAssertEqual(
+            WorktreeModel.numstatPath("old/name.swift => new/name.swift"), "new/name.swift")
+        // The FACTORED form, which porcelain never emits at all.
+        XCTAssertEqual(
+            WorktreeModel.numstatPath("crates/{old => new}/src/lib.rs"),
+            "crates/new/src/lib.rs")
+        // A factored half can be empty, which is how git spells adding or
+        // removing a directory level.
+        XCTAssertEqual(WorktreeModel.numstatPath("d/{ => sub}/f.txt"), "d/sub/f.txt")
+        XCTAssertEqual(WorktreeModel.numstatPath("d/{sub => }/f.txt"), "d/f.txt")
+        // C-quoting, which numstat applies for exactly the reasons porcelain
+        // does. The two sides must agree byte for byte or the join misses.
+        XCTAssertEqual(
+            WorktreeModel.numstatPath("\"caf\\303\\251.txt\""),
+            WorktreeModel.porcelainPath("\"caf\\303\\251.txt\""))
+        // And an ordinary path is untouched, which is the common case.
+        XCTAssertEqual(WorktreeModel.numstatPath("src/main.swift"), "src/main.swift")
+    }
+
     @MainActor
     func testWorktreeModelRefreshOnEmptyPath() {
         let worktree = WorktreeModel(rootDirectoryPath: "")

@@ -67,7 +67,15 @@ extension AppModel {
     ///   project-scoped custom tool resolvable when its category is
     ///   classified (state#71).
     public func extractToolCalls(from text: String, project: AppProject?) -> [AppToolCall] {
-        guard interactionMode == .projects else { return [] }
+        // **AND NO PROJECT MEANS NO TOOLS** (state#82). The mode gate alone
+        // is not the same question: `deleteProject` nulls every chat's
+        // `projectID`, so a chat under a deleted project stays in Projects
+        // mode with `buildSystemPrompt(for: nil)` offering nothing -- and
+        // text that looked like a call was still parsed and dispatched. The
+        // rootless refusal in `AppToolRegistry.execute` catches the file and
+        // shell tools; `webfetch`, `websearch`, `skill` and `agent` are not
+        // in that list and ran.
+        guard interactionMode == .projects, project != nil else { return [] }
         let projectURL = project?.rootDirectoryURL
         var calls: [AppToolCall] = []
 
@@ -167,6 +175,14 @@ extension AppModel {
 
     /// User approval action for a pending tool call, with optional session-level persistence.
     public func approvePendingToolCall(id: UUID, alwaysAllowSession: Bool = false) {
+        // **NOT WHILE A TURN IS ALREADY RUNNING** (state#76). The card is
+        // reachable whenever it is on screen, and `generating` is lowered
+        // while it waits (state#9) -- so if anything else raised it since
+        // (a Send the old `canRun` still permitted, or the other button on
+        // this very card), approving spawns a SECOND `toolExecutionTask` and
+        // the second assignment drops the first where `cancel()` cannot
+        // reach it.
+        guard !generating, !submitting else { return }
         guard var call = pendingToolCall, call.id == id else { return }
         call.status = .running
         // Captured before clearing: the chat the call was PROPOSED in, the
@@ -253,6 +269,9 @@ extension AppModel {
 
     /// User denial action for a pending tool call.
     public func denyPendingToolCall(id: UUID) {
+        // The same guard approve carries (state#76): deny raises `generating`
+        // and installs its own `toolExecutionTask` too.
+        guard !generating, !submitting else { return }
         guard var call = pendingToolCall, call.id == id else { return }
         call.status = .denied
         let chatID = pendingToolCallChatID ?? selectedChatID

@@ -44,8 +44,23 @@ public final class ModelOrganizationStore: ObservableObject {
 
     @Published public private(set) var metadataByModelKey: [String: ModelCustomMetadata] = [:]
 
+    /// Scanned paths the user has removed from TurboSpark (state#88).
+    ///
+    /// **REMOVING A SCANNED ROW IS NOT DELETING A MODEL.** A row that only
+    /// ever came from walking LM Studio's library or a custom folder has no
+    /// bytes this app may remove, so "Remove from TurboSpark" dropped its
+    /// notes, tags and favorite and left the file alone -- and the very next
+    /// scan walked the same directory and put the row back, now stripped.
+    /// The exclusion is what the button actually means, it is reversible from
+    /// the Storage pane, and the metadata stays where it was.
+    ///
+    /// Standardized paths, so the same directory reached two ways is one
+    /// entry.
+    @Published public private(set) var excludedScanPaths: Set<String> = []
+
     public init() {
         load()
+        loadExclusions()
     }
 
     // MARK: - Key Generation
@@ -190,6 +205,26 @@ public final class ModelOrganizationStore: ObservableObject {
         save()
     }
 
+    // MARK: - Scan exclusions
+
+    public func isExcludedFromScan(path: String) -> Bool {
+        excludedScanPaths.contains(Self.standardized(path))
+    }
+
+    public func excludeFromScan(path: String) {
+        excludedScanPaths.insert(Self.standardized(path))
+        saveExclusions()
+    }
+
+    public func restoreToScan(path: String) {
+        excludedScanPaths.remove(Self.standardized(path))
+        saveExclusions()
+    }
+
+    private static func standardized(_ path: String) -> String {
+        URL(fileURLWithPath: ModelStorageManager.expandPath(path)).standardizedFileURL.path
+    }
+
     // MARK: - Persistence
 
     /// The one store that `AppStorageRoot` did not cover.
@@ -205,9 +240,28 @@ public final class ModelOrganizationStore: ObservableObject {
     /// about the same user's metadata.
     private static var fileURL: URL { AppStorageRoot.file("model_organization.json") }
 
+    /// **A SECOND FILE RATHER THAN A NEW ROOT SHAPE.** This archive's root IS
+    /// the `[String: ModelCustomMetadata]` dictionary, so wrapping it to add a
+    /// field would make every existing file fail to decode -- and
+    /// `AppJSONStore.load` returns the empty default on a decode failure,
+    /// which is `swift/CLAUDE.md` Gotcha 13's data loss exactly. Two files,
+    /// no migration, and each one independently tolerant.
+    private static var exclusionsFileURL: URL { AppStorageRoot.file("excluded_scan_paths.json") }
+
     private func save() {
         AppJSONStore.save(
             metadataByModelKey, to: Self.fileURL, label: "Model organization metadata")
+    }
+
+    private func saveExclusions() {
+        AppJSONStore.save(
+            excludedScanPaths.sorted(), to: Self.exclusionsFileURL, label: "Scan exclusions")
+    }
+
+    private func loadExclusions() {
+        let decoded = AppJSONStore.load(
+            [String].self, from: Self.exclusionsFileURL, label: "scan exclusions")
+        excludedScanPaths = Set(decoded ?? [])
     }
 
     private func load() {

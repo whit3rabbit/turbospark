@@ -65,6 +65,52 @@ final class HookDecisionRoutingTests: XCTestCase {
         XCTAssertFalse(engine.matchesCommandGlob("git push", against: "git push origin main"))
     }
 
+    // MARK: - state#78: a hook's `ask` must not lift a project's category deny
+
+    @MainActor
+    func testAHookAskingForConfirmationCannotOverrideAReadOnlyProject() async throws {
+        let appModel = AppModel()
+        let chat = AppChat(title: "deny chat")
+        appModel.chats = [chat]
+        appModel.selectedChatID = chat.id
+
+        let store = AppHookStore.shared
+        let hook = AppHookCommand(
+            name: "Ask First",
+            event: .preToolUse,
+            type: .command,
+            command:
+                "echo '{\"permissionDecision\":\"ask\","
+                + "\"permissionDecisionReason\":\"needs human review\"}'",
+            matcher: "run_command",
+            sourceType: .custom
+        )
+        store.addCustomHook(hook)
+        defer { store.deleteCustomHook(id: hook.id) }
+
+        // A project that refuses the terminal category outright.
+        let project = AppProject(
+            name: "read only",
+            rootDirectoryPath: "/tmp",
+            permissions: AppProjectPermissions(mode: .ask, terminal: .deny))
+        let call = AppToolCall(
+            name: "run_command", arguments: ["command": "cargo check"], category: .terminal)
+
+        await appModel.handleExtractedToolCall(
+            call, fullContent: "running a command", reasoning: "",
+            result: try makeGenerationResult(), currentStep: 0, chatID: chat.id, project: project)
+
+        XCTAssertNil(
+            appModel.pendingToolCall,
+            "The hook returned before `evaluate` ever ran, so a Strict Read-Only project got an "
+                + "Approve button for a shell command -- and `approvePendingToolCall` "
+                + "re-evaluates nothing.")
+        let recorded = appModel.chats[0].messages.last
+        XCTAssertEqual(
+            recorded?.toolCalls.first?.status, .denied,
+            "It must be recorded as refused, so the model is told rather than left waiting.")
+    }
+
     // MARK: - T10: a hook's `ask` decision must reach the approval UI, not fall through to allow
 
     @MainActor

@@ -52,8 +52,23 @@ extension AppModel {
                         self.installStageText = "Installation complete!"
                         self.refreshModels()
                         self.selected = model
-                        self.showToast("Successfully installed and loaded '\(model.alias)'", style: .success, duration: 4.0)
+                        // **THE TOAST FOLLOWS THE OPEN, NOT THE INSTALL**
+                        // (state#83). It claimed "installed and loaded"
+                        // BEFORE awaiting an open that returns silently at
+                        // its own `guard !generating, !opening` -- so an
+                        // install that finished while a turn was running
+                        // reported a model as loaded that was not, and the
+                        // Chat pane still showed nothing.
                         await self.open(model)
+                        if self.session != nil, self.selected?.path == model.path {
+                            self.showToast(
+                                "Successfully installed and loaded '\(model.alias)'",
+                                style: .success, duration: 4.0)
+                        } else {
+                            self.showToast(
+                                "Installed '\(model.alias)'. Load it from the Installed pane.",
+                                style: .info, duration: 5.0)
+                        }
                     }
                 }
             } catch is CancellationError {
@@ -157,8 +172,23 @@ extension AppModel {
                         self.installStageText = "Installation complete!"
                         self.refreshModels()
                         self.selected = model
-                        self.showToast("Successfully installed and loaded '\(model.alias)'", style: .success, duration: 4.0)
+                        // **THE TOAST FOLLOWS THE OPEN, NOT THE INSTALL**
+                        // (state#83). It claimed "installed and loaded"
+                        // BEFORE awaiting an open that returns silently at
+                        // its own `guard !generating, !opening` -- so an
+                        // install that finished while a turn was running
+                        // reported a model as loaded that was not, and the
+                        // Chat pane still showed nothing.
                         await self.open(model)
+                        if self.session != nil, self.selected?.path == model.path {
+                            self.showToast(
+                                "Successfully installed and loaded '\(model.alias)'",
+                                style: .success, duration: 4.0)
+                        } else {
+                            self.showToast(
+                                "Installed '\(model.alias)'. Load it from the Installed pane.",
+                                style: .info, duration: 5.0)
+                        }
                     }
                 }
             } catch is CancellationError {

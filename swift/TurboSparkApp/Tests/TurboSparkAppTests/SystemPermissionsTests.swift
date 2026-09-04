@@ -20,10 +20,20 @@ final class SystemPermissionsTests: XCTestCase {
         for folder in SystemFolderType.allCases {
             let status = manager.folderStatuses[folder]
             XCTAssertNotNil(status, "Status should be populated for \(folder.rawValue)")
-            // On standard macOS systems, home and documents exist
-            if folder == .home {
-                XCTAssertEqual(status, .granted, "Home folder should be readable")
-            }
+            // **THE HOME ROW IS NOT PINNED TO `.granted` ANY MORE**
+            // (state#94). This case used to assert exactly that, and it
+            // passed because the synchronous refresh called
+            // `checkFolderStatus`, whose home probe lists `~` -- which is not
+            // TCC-gated, so the row could only ever read `.granted` whatever
+            // the user had allowed (`swift/CLAUDE.md` Gotcha 22's badge that
+            // cannot fail, pinned as though it were behaviour). state#62
+            // taught `probe` to ask about the PROTECTED CHILDREN instead and
+            // fixed the background path only; pointing this one at the same
+            // probe reddened the assertion, which is the defect reproducing
+            // rather than a regression.
+            XCTAssertEqual(
+                status, SystemPermissionsManager.probe(folder),
+                "The synchronous refresh and the background one must answer the same question.")
         }
     }
 

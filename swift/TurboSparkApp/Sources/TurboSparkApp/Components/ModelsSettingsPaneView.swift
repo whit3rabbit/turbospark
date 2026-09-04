@@ -38,6 +38,10 @@ public struct ModelsSettingsPaneView: View {
                 // Section 3: Additional Custom Folders
                 CustomModelFoldersSectionView(model: model)
 
+                // Section 3b: what "Remove from TurboSpark" actually did, and
+                // the way back (state#88).
+                ExcludedScanPathsSectionView(model: model)
+
                 // Section 4: Local model defaults (AutoFit floor, memory
                 // guardrails). Its own file; this one is near the 400-line
                 // guideline.

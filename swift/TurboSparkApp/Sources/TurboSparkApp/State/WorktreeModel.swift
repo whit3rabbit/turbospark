@@ -277,6 +277,40 @@ public final class WorktreeModel: ObservableObject {
         return unquotePorcelain(path.trimmingCharacters(in: .whitespaces))
     }
 
+    /// The path `--numstat` names, in the same spelling `porcelainPath`
+    /// produces (state#89).
+    ///
+    /// **A JOIN NEEDS BOTH SIDES NORMALIZED, AND ONLY ONE OF THEM WAS.**
+    /// state#54 taught the PORCELAIN side about renames and C-quoting; the
+    /// numstat side kept `String(parts[2])` raw, and the two formats do not
+    /// even agree on how a rename is spelled -- porcelain writes
+    /// `old -> new` and numstat writes `old => new` or the factored
+    /// `dir/{old => new}/file`. So every rename and every non-ASCII path
+    /// looked up a key that could not exist, read 0/0, and silently
+    /// subtracted its real additions and deletions from the totals the pane
+    /// shows.
+    nonisolated static func numstatPath(_ raw: String) -> String {
+        let unquoted = unquotePorcelain(raw.trimmingCharacters(in: .whitespaces))
+        guard unquoted.contains(" => ") else { return unquoted }
+        // The factored form: everything outside the braces is common to both
+        // names, and the half after the arrow is the one that exists.
+        if let open = unquoted.firstIndex(of: "{"),
+            let close = unquoted[open...].firstIndex(of: "}"),
+            let arrow = unquoted[open...close].range(of: " => ")
+        {
+            let prefix = String(unquoted[..<open])
+            let renamed = String(unquoted[arrow.upperBound..<close])
+            let suffix = String(unquoted[unquoted.index(after: close)...])
+            // `dir/{name => }/file` factors an empty half, which would
+            // otherwise leave a doubled separator.
+            return (prefix + renamed + suffix).replacingOccurrences(of: "//", with: "/")
+        }
+        if let arrow = unquoted.range(of: " => ") {
+            return String(unquoted[arrow.upperBound...])
+        }
+        return unquoted
+    }
+
     /// Undoes git's C-style quoting. A path not wrapped in `"` is returned
     /// unchanged, which is the overwhelmingly common case.
     nonisolated static func unquotePorcelain(_ raw: String) -> String {
@@ -340,8 +374,7 @@ public final class WorktreeModel: ObservableObject {
             if parts.count >= 3 {
                 let adds = Int(parts[0]) ?? 0
                 let dels = Int(parts[1]) ?? 0
-                let file = String(parts[2]).trimmingCharacters(in: .whitespacesAndNewlines)
-                statMap[file] = (adds, dels)
+                statMap[Self.numstatPath(String(parts[2]))] = (adds, dels)
             }
         }
 
@@ -400,18 +433,42 @@ public final class WorktreeModel: ObservableObject {
         return (true, branch, changes, totalAdds, totalDels)
     }
 
-    private static func queryGitDiff(rootPath: String, file: String) async -> String {
+    /// **`nonisolated`, BOUNDED, AND CONTAINED** (state#90). The untracked
+    /// fallback below read a whole file into a String with no size limit and
+    /// no containment check, on the MAIN ACTOR -- so previewing an untracked
+    /// 2 GB checkpoint or log froze the window, and a `file` argument that
+    /// escaped the repository (git will not produce one, but this function's
+    /// signature does not say so) was read and displayed.
+    nonisolated private static func queryGitDiff(rootPath: String, file: String) async -> String {
         let diffResult = await runGitCommand(args: ["diff", "HEAD", "--", file], rootPath: rootPath)
         if diffResult.exitCode == 0 && !diffResult.stdout.isEmpty {
             return diffResult.stdout
         }
-        // If untracked, read the file directly
-        let fileURL = URL(fileURLWithPath: rootPath).appendingPathComponent(file)
-        if let content = try? String(contentsOf: fileURL, encoding: .utf8) {
-            let lines = content.components(separatedBy: .newlines)
-            let formatted = lines.map { "+ \($0)" }.joined(separator: "\n")
-            return "--- /dev/null\n+++ b/\(file)\n@@ -0,0 +1,\(lines.count) @@\n" + formatted
+        // If untracked, read the file directly.
+        let rootURL = URL(fileURLWithPath: rootPath, isDirectory: true)
+        guard
+            let fileURL = PathContainment.resolvedIfContained(
+                rootURL.appendingPathComponent(file), in: rootURL)
+        else {
+            return "No diff available: that path resolves outside the repository."
         }
-        return "No diff available."
+        guard let handle = try? FileHandle(forReadingFrom: fileURL) else {
+            return "No diff available."
+        }
+        defer { try? handle.close() }
+        // 64 KiB, which is far more than anyone reads in a diff pane and far
+        // less than a checkpoint.
+        let cap = 64 * 1024
+        guard let data = try? handle.read(upToCount: cap + 1) else {
+            return "No diff available."
+        }
+        let truncated = data.count > cap
+        let content = String(decoding: truncated ? data.prefix(cap) : data, as: UTF8.self)
+        let lines = content.components(separatedBy: .newlines)
+        var formatted = lines.map { "+ \($0)" }.joined(separator: "\n")
+        if truncated {
+            formatted += "\n+ [truncated at \(cap / 1024) KiB]"
+        }
+        return "--- /dev/null\n+++ b/\(file)\n@@ -0,0 +1,\(lines.count) @@\n" + formatted
     }
 }

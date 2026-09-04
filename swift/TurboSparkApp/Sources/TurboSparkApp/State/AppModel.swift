@@ -127,6 +127,12 @@ public final class AppModel: ObservableObject {
     /// only writer, called when something changed it and once per poll tick
     /// for the uptime.
     @Published public var serverInfo: ServerInfo?
+    /// Whether the last `info()` failure has already been reported (state#86).
+    ///
+    /// The poll runs at 2 Hz, so a server that has genuinely gone away would
+    /// otherwise raise the same banner twice a second for as long as the pane
+    /// is open.
+    var serverInfoErrorReported = false
     /// Sessions the server is holding, by the model id it serves them under.
     ///
     /// A model attached from the Server pane has its session here and
@@ -224,7 +230,13 @@ public final class AppModel: ObservableObject {
     @Published public var selectedChatID: UUID = UUID() {
         didSet {
             if activeDraftChat.id != selectedChatID {
-                activeDraftChat = AppChat(id: selectedChatID)
+                // **STAMPED WITH THE PROJECT** (state#79). `run()`'s lazy
+                // create passes `selectedProjectID` and this did not, so
+                // after deleting the last chat under a project, typing built
+                // a chat the sidebar filters OUT -- and one whose turns get
+                // no system prompt, no tools and no workspace root, because
+                // every one of those is resolved from the chat's project.
+                activeDraftChat = AppChat(id: selectedChatID, projectID: selectedProjectID)
             }
         }
     }
@@ -255,7 +267,13 @@ public final class AppModel: ObservableObject {
             !draft.draft.isEmpty || !draft.draftAttachments.isEmpty || !draft.todos.isEmpty
             || !draft.messages.isEmpty
         guard hasContent else { return false }
-        chats.insert(draft, at: 0)
+        // A draft that predates a project selection carries none, and this is
+        // the last point before it becomes a real row (state#79).
+        var draftToInsert = draft
+        if draftToInsert.projectID == nil {
+            draftToInsert.projectID = selectedProjectID
+        }
+        chats.insert(draftToInsert, at: 0)
         // `selectedChatID` already equals `draft.id` (the `didSet` above keeps
         // them in step), so this needs no re-selection.
         persistChats()
@@ -570,8 +588,35 @@ public final class AppModel: ObservableObject {
     public var isModelAvailable: Bool { session != nil }
 
     /// Whether conditions allow starting a new generation run.
+    ///
+    /// **A PENDING TOOL CALL COUNTS** (state#76). `generating` is lowered on
+    /// purpose while a call waits for a human (state#9), so Send was live for
+    /// the whole time an approval card sat on screen: a second `generate()`
+    /// started beside the one the card belongs to, overwrote `runTask`, and
+    /// left the first turn running with nothing able to cancel it. This is
+    /// `canCancel`'s third term, in the predicate that has to agree with it.
     public var canRun: Bool {
-        !generating && !submitting && !opening && session != nil && (!promptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !promptAttachments.isEmpty)
+        Self.canRunTerms(
+            generating: generating,
+            submitting: submitting,
+            opening: opening,
+            hasPendingCall: pendingToolCall != nil,
+            hasSession: session != nil,
+            hasInput: !promptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || !promptAttachments.isEmpty)
+    }
+
+    /// `canRun`'s terms, as a pure function of them (state#76).
+    ///
+    /// Split out for `swift/CLAUDE.md` Gotcha 26's reason: `session` is
+    /// non-nil only with a real install open, so the interesting combinations
+    /// of this predicate cannot be reached from a test at all -- and the term
+    /// that was missing is one of the ones a test could not see.
+    static func canRunTerms(
+        generating: Bool, submitting: Bool, opening: Bool, hasPendingCall: Bool,
+        hasSession: Bool, hasInput: Bool
+    ) -> Bool {
+        !generating && !submitting && !opening && !hasPendingCall && hasSession && hasInput
     }
 
     /// Whether the turn can be stopped.

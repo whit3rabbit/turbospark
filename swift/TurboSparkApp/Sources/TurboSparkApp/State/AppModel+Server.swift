@@ -331,7 +331,29 @@ extension AppModel {
     /// something actually changed it -- start, attach, detach -- and once a
     /// second by the poll timer for the uptime.
     public func refreshServerInfo() {
-        serverInfo = try? server?.info()
+        guard let server else {
+            serverInfo = nil
+            serverInfoErrorReported = false
+            return
+        }
+        do {
+            serverInfo = try server.info()
+            serverInfoErrorReported = false
+        } catch {
+            // **A TRANSIENT FAILURE IS NOT A SERVER WITH NO STATE**
+            // (state#86). `try?` wrote nil, and this runs twice a second: one
+            // failed read blanked the address, the port, the auth row and
+            // every model row, which reads as the server having stopped. The
+            // last good snapshot is the honest thing to keep showing, and the
+            // error is latched so the banner appears once rather than at
+            // 2 Hz.
+            if !serverInfoErrorReported {
+                serverInfoErrorReported = true
+                self.error =
+                    "Could not read the server's status: \(error.localizedDescription). The "
+                    + "panel is showing the last reading."
+            }
+        }
     }
 
     /// The rows the pane's model table draws.

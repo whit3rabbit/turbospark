@@ -152,13 +152,37 @@ extension AppModel {
             return
         }
 
-        // A hook that asked for confirmation was previously ignored
-        // outright -- only `.deny` was checked above, so `.ask` fell
-        // through to the ordinary permission evaluation below, which
-        // could return `.allow` and run the call with no prompt at all
-        // (T10). Route it into the same pending-approval UI the normal
-        // engine's own `.ask` uses, folding the hook's reason into the
-        // call's risk assessment rather than replacing it.
+        let sessionApproved = await SessionApprovalStore.shared.isApproved(sessionID: sessionID, toolName: call.name, command: cmd)
+        // The TURN's project, threaded in from `executeGenerationTurn`
+        // (state#30). Every branch below -- run, deny, or park for approval --
+        // refers to it, so the policy that produced the decision is the
+        // policy the call executes under even if the selection moves while
+        // the card is up.
+        let decisionProject = project
+        let decision = AppToolPermissionEngine.evaluate(
+            call: call, project: decisionProject, sessionApproved: sessionApproved,
+            globalServers: self.globalMcpServers)
+
+        // The engine's refusal wins over a hook that merely asked (state#78).
+        if case .deny(let reason) = decision {
+            await self.recordDeniedCall(
+                call, extra: extra, reason: reason, fullContent: fullContent,
+                reasoning: reasoning, chatID: chatID, currentStep: currentStep,
+                project: decisionProject)
+            return
+        }
+
+        // A hook that asked for confirmation is routed into the same
+        // pending-approval UI the engine's own `.ask` uses, folding the
+        // hook's reason into the call's risk assessment rather than
+        // replacing it (T10).
+        //
+        // **BELOW THE ENGINE, NOT ABOVE IT** (state#78). This returned
+        // before `evaluate` ever ran, so a hook's `ask` OUTRANKED a
+        // project's category deny: a Strict Read-Only project got an
+        // Approve button for a shell command, and `approvePendingToolCall`
+        // re-evaluates nothing. A refusal has to survive a hook that only
+        // wanted confirmation.
         if hookDecision.behavior == .ask {
             var pending = call
             pending.status = .pendingApproval
@@ -187,17 +211,6 @@ extension AppModel {
             }
             return
         }
-
-        let sessionApproved = await SessionApprovalStore.shared.isApproved(sessionID: sessionID, toolName: call.name, command: cmd)
-        // The TURN's project, threaded in from `executeGenerationTurn`
-        // (state#30). Every branch below -- run, deny, or park for approval --
-        // refers to it, so the policy that produced the decision is the
-        // policy the call executes under even if the selection moves while
-        // the card is up.
-        let decisionProject = project
-        let decision = AppToolPermissionEngine.evaluate(
-            call: call, project: decisionProject, sessionApproved: sessionApproved,
-            globalServers: self.globalMcpServers)
 
         switch decision {
         case .ask(let assessment, _):
@@ -238,8 +251,11 @@ extension AppModel {
         case .allow:
             await self.runApprovedCall(call, extra: extra, fullContent: fullContent, reasoning: reasoning, chatID: chatID, currentStep: currentStep, project: decisionProject)
 
-        case .deny(let reason):
-            await self.recordDeniedCall(call, extra: extra, reason: reason, fullContent: fullContent, reasoning: reasoning, chatID: chatID, currentStep: currentStep, project: decisionProject)
+        case .deny:
+            // Handled above the hook's `ask`, which is the whole point of
+            // state#78. Kept so the switch stays exhaustive over the enum
+            // rather than over what this function happens to reach.
+            break
         }
     }
 

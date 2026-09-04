@@ -8,6 +8,49 @@ final class CustomToolsTests: XCTestCase {
         return dir
     }
 
+    // MARK: - state#81: a failing command is a failing tool call
+
+    func testANonZeroExitIsReportedAsAnErrorEvenWhenTheCommandPrinted() async throws {
+        let tempDir = try makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let project = AppProject(
+            name: "P", rootDirectoryPath: tempDir.path,
+            permissions: AppProjectPermissions(mode: .auto, terminal: .allow))
+
+        let result = await AppToolRegistry.execute(
+            call: AppToolCall(
+                name: "run_command", arguments: ["command": "echo building; exit 7"],
+                category: .terminal),
+            in: project)
+
+        XCTAssertTrue(
+            result.isError,
+            "The exit code was read only when the command printed NOTHING, so a failing build -- "
+                + "which prints a great deal -- came back green and reached the model inside "
+                + "<tool_response>.")
+        XCTAssertTrue(
+            result.output.contains("exit 7"),
+            "And the code itself is what says which failure it was. Got: \(result.output)")
+        XCTAssertTrue(
+            result.output.contains("building"),
+            "The output is still carried: it is the part the model has to read.")
+    }
+
+    func testASucceedingCommandIsStillNotAnError() async throws {
+        let tempDir = try makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let project = AppProject(
+            name: "P", rootDirectoryPath: tempDir.path,
+            permissions: AppProjectPermissions(mode: .auto, terminal: .allow))
+
+        let result = await AppToolRegistry.execute(
+            call: AppToolCall(
+                name: "run_command", arguments: ["command": "echo fine"], category: .terminal),
+            in: project)
+        XCTAssertFalse(result.isError, "Or the check is a blanket failure.")
+        XCTAssertTrue(result.output.contains("fine"))
+    }
+
     // MARK: - state#70: a custom tool is workspace-rooted like any other
 
     func testACustomToolIsRefusedInAChatWithNoProject() async throws {

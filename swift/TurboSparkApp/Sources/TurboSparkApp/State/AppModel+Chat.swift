@@ -7,7 +7,11 @@ extension AppModel {
         // `generating` is false while a call waits, so this was legal, and
         // starting a new chat there strands the approval card on a
         // conversation the user can no longer see.
-        guard !generating, pendingToolCall == nil else { return selectedChatID }
+        // `!submitting` beside the other two (state#77): `run()` awaits its
+        // `UserPromptSubmit` hook with `generating` still false, and a chat
+        // created in that window is one the awaited submission then appends
+        // its user turn into by captured id.
+        guard !generating, !submitting, pendingToolCall == nil else { return selectedChatID }
         activeSection = .chat
         let assignedProjectID = projectID ?? selectedProjectID
         // If current chat is already empty and matches the target project, reset and stay on it
@@ -42,7 +46,7 @@ extension AppModel {
         // approval, with `generating` already false, read as an ordinary
         // chat switch and made it easy to lose track of which chat is
         // waiting on a decision.
-        guard !generating, pendingToolCall == nil else { return }
+        guard !generating, !submitting, pendingToolCall == nil else { return }
         activeSection = .chat
         guard id != selectedChatID else { return }
         selectedChatID = id
@@ -63,7 +67,12 @@ extension AppModel {
     }
 
     public func deleteChat(id: UUID) {
-        guard !generating, let index = chats.firstIndex(where: { $0.id == id }) else { return }
+        // **AND NOT MID-SUBMISSION** (state#77). `run()` captured this chat's
+        // id before awaiting its hook and re-creates the row under the SAME
+        // UUID if it is gone, so a chat deleted in that window comes back
+        // carrying the prompt the user thought they had thrown away.
+        guard !generating, !submitting, let index = chats.firstIndex(where: { $0.id == id })
+        else { return }
         // Captured before the removal below: `SessionEnd` describes the chat
         // that is going away, and after `chats.remove` there is no row left
         // to resolve its project from (state#67).
@@ -82,7 +91,22 @@ extension AppModel {
         if chats.isEmpty {
             selectedChatID = UUID()
         } else if selectedChatID == id {
-            selectedChatID = chats[min(index, chats.count - 1)].id
+            // **FROM THE PROJECT'S OWN CHATS** (state#80). The replacement
+            // was picked out of the UNFILTERED list, so deleting the last
+            // chat under project A selected a project-B conversation the
+            // sidebar does not even show -- the shape `selectProject`
+            // already gets right.
+            let siblings = chats.filter { $0.projectID == selectedProjectID }
+            if let replacement = siblings.first {
+                selectedChatID = replacement.id
+            } else if selectedProjectID == nil {
+                selectedChatID = chats[min(index, chats.count - 1)].id
+            } else {
+                // Nothing left under this project. A fresh id rather than
+                // another project's chat; `selectedChatID`'s own `didSet`
+                // builds the draft with the project stamped on it.
+                selectedChatID = UUID()
+            }
         }
         outputText = ""
         outputReasoningText = ""
@@ -108,7 +132,7 @@ extension AppModel {
     /// came back with a tool pre-approved on the strength of a call the user
     /// could no longer read.
     public func clearOutput() {
-        guard !generating else { return }
+        guard !generating, !submitting else { return }
         let clearedChatID = selectedChatID
         let clearedProject = project(forChat: clearedChatID)
         if let index = selectedChatIndex {
@@ -137,7 +161,7 @@ extension AppModel {
     }
 
     public func addPromptAttachment(_ attachment: AppPromptAttachment, toChatID chatID: UUID? = nil) {
-        guard !generating else {
+        guard !generating, !submitting else {
             error = "Cannot attach files while generating."
             return
         }
@@ -147,7 +171,7 @@ extension AppModel {
             chats[index].updatedAt = Date()
             persistChats()
         } else {
-            var chat = AppChat(id: targetID)
+            var chat = AppChat(id: targetID, projectID: selectedProjectID)
             chat.draftAttachments.append(attachment)
             chats.insert(chat, at: 0)
             selectedChatID = targetID

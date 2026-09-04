@@ -146,10 +146,20 @@ public final class SystemPermissionsManager: ObservableObject {
     ///
     /// Kept for the explicit Refresh button, where the user has asked and is
     /// waiting for an answer.
+    ///
+    /// **BOTH HALVES OF state#62 WERE REOPENED HERE** (state#94), because the
+    /// fix landed on the BACKGROUND path and this one is its twin. It ran
+    /// `checkFolderStatus`, whose home-row probe cannot fail (listing `~` is
+    /// not TCC-gated, so that row read `.granted` on every machine whatever
+    /// the user had allowed), and it bumped no generation -- so a synchronous
+    /// Refresh published its reading and an older background probe still in
+    /// flight could then land on top of it, which is the stale-reading defect
+    /// state#62 exists to prevent, in the direction nobody checked.
     public func refreshAllStatuses() {
+        probeGeneration += 1
         var newStatuses: [SystemFolderType: FolderAccessStatus] = [:]
         for folder in SystemFolderType.allCases {
-            newStatuses[folder] = checkFolderStatus(folder)
+            newStatuses[folder] = Self.probe(folder)
         }
         folderStatuses = newStatuses
     }

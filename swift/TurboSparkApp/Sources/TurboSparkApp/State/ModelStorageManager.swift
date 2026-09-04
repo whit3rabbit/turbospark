@@ -48,6 +48,12 @@ public enum ModelStorageManager {
 
         var total: UInt64 = 0
         for case let url as URL in enumerator {
+            // **THE WALK IS WHERE CANCELLATION HAS TO LAND** (state#87). A
+            // `Task.cancel()` on the scan is cooperative and this loop had no
+            // suspension point and no check, so a library on a slow external
+            // drive kept walking to the end after the setting that asked for
+            // it was turned off.
+            if Task.isCancelled { return total }
             if let resourceValues = try? url.resourceValues(forKeys: [.fileSizeKey, .isDirectoryKey]),
                resourceValues.isDirectory != true,
                let fileSize = resourceValues.fileSize {
@@ -84,6 +90,11 @@ public enum ModelStorageManager {
         dateFormatter.dateFormat = "yyyy-MM-dd"
 
         for case let fileURL as URL in enumerator {
+            // Per entry, for `directorySize`'s reason (state#87). Returning
+            // what was found so far rather than throwing: the caller drops
+            // the result on cancellation anyway, and a partial list costs
+            // nothing where an error would need a branch nobody reads.
+            if Task.isCancelled { return discovered }
             let path = fileURL.path
             if visitedPaths.contains(path) { continue }
 
@@ -202,6 +213,7 @@ extension ModelStorageManager {
             results += scanModels(in: lmStudioPath, sourceTag: "LM Studio").map { ($0, "LM Studio") }
         }
         for dir in customPaths {
+            if Task.isCancelled { return results }
             results += scanModels(in: dir, sourceTag: "Custom").map { ($0, "Custom") }
         }
         return results

@@ -262,6 +262,13 @@ public final class AgentManager: @unchecked Sendable {
             merged.disallowedTools = denies
         }
 
+        // **THE TURN BUDGET IS A RESTRICTION LIKE ANY OTHER** (state#95).
+        // state#22's rule is that a project agent taking a built-in's name
+        // may only add friction, and `maxTurns` was not held to it: a
+        // repository `explore.md` declaring 50 turns got 50 where the
+        // built-in it shadows allows 5.
+        merged.maxTurns = min(merged.maxTurns, builtIn.maxTurns)
+
         if let builtInAllows = builtIn.tools {
             // The built-in restricts to a list, so the override may only pick
             // a subset of it. A project allowlist naming something outside is

@@ -19,6 +19,18 @@ extension AppModel {
 
     /// The procedural specification P: fixed for the life of a project, so it
     /// is the only part of the prompt a prefix cache could ever reuse.
+    ///
+    /// **THE PATCH RULES DESCRIBE WHAT `AppSkillState.apply` DOES, AND ONE OF
+    /// THEM DID NOT** (state#91). It said a list or a map you include
+    /// REPLACES the stored one; `apply` merges an object entry by entry (RFC
+    /// 7386, which is what the sentence above it already claims the patch
+    /// is). A model following the instruction restated the whole map every
+    /// time, which is harmless -- but a model that could never DELETE an
+    /// entry, because the prompt offered no way to, watched `files` grow to
+    /// `maxRenderedBytes` and then had every later patch rejected for a limit
+    /// the instructions had told it could not be avoided. The fix is in the
+    /// PROMPT: the merge semantics are the correct ones and are what the
+    /// validator, the renderer and the size check are all written against.
     func skillStateProtocol() -> String {
         """
         ## Execution state
@@ -40,8 +52,11 @@ extension AppModel {
 
         Patch rules:
         - Include ONLY fields that change. If nothing changed, emit no patch.
-        - A list or a map you include REPLACES the stored one, so restate its \
-        whole contents, including the entries you are keeping.
+        - A LIST you include REPLACES the stored one, so restate its whole \
+        contents, including the entries you are keeping.
+        - A MAP you include MERGES entry by entry: the entries you name are \
+        added or overwritten and every other entry is kept. Set an entry to \
+        null to delete it.
         - To drop a field entirely, map it to null.
         - Record a finding the step it appears. There is no later chance.
         """
@@ -139,6 +154,18 @@ extension AppModel {
             ? removeStatePatchBlock(from: text)
             : text
 
+        // **A PATCH THAT WOULD NOT PARSE IS AN ERROR, NOT AN ABSENCE**
+        // (state#92). A turn carrying `<state_patch>` whose body is not JSON
+        // fell into the no-patch arm below and CLEARED the badge, so the one
+        // failure a user cannot see in the transcript -- the block is
+        // stripped before display -- was also the one that reported nothing.
+        if AppSkillStatePatch.taggedBody(in: text) != nil,
+            AppSkillStatePatch.extract(from: text) == nil
+        {
+            skillStateLastError =
+                "the <state_patch> block could not be parsed as JSON and was dropped."
+            return stripped
+        }
         guard let patch = AppSkillStatePatch.extract(from: text) else {
             // **A TURN WITH NO PATCH CLEARS THE ERROR** (state#58). This
             // returned before the `skillStateLastError = nil` below, so a

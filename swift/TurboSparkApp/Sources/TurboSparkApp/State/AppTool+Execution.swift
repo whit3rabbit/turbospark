@@ -401,7 +401,30 @@ extension AppToolRegistry {
         let combined = [result.stdout, result.stderr].filter { !$0.isEmpty }.joined(separator: "\n")
         if combined.isEmpty {
             let interp = TerminalCommandClassifier.interpretExitCode(result.exitCode)
+            // An empty-output failure already reported itself through the
+            // interpretation string, but only as PROSE: the result still came
+            // back `isError: false`, tagged `<tool_response>` and drawn as a
+            // green card. Both arms throw now (state#81).
+            if result.exitCode != 0 {
+                throw NSError(
+                    domain: "TurboSparkTool", code: 40,
+                    userInfo: [NSLocalizedDescriptionKey: "Command finished: \(interp)"])
+            }
             return "(Command finished: \(interp))"
+        }
+        // **A NON-ZERO EXIT WITH OUTPUT WAS REPORTED AS SUCCESS** (state#81).
+        // The exit code was read only when the command printed NOTHING, so a
+        // failing `cargo build` -- which prints a great deal -- returned
+        // `isError: false` and reached the model inside `<tool_response>`,
+        // with a green tool card beside it. The one signal that separates a
+        // build that failed from a build that passed was the one thing
+        // dropped. Thrown rather than annotated, so `isError` follows.
+        if result.exitCode != 0 {
+            throw NSError(
+                domain: "TurboSparkTool", code: 40,
+                userInfo: [
+                    NSLocalizedDescriptionKey: "Command failed (exit \(result.exitCode)):\n\(combined)"
+                ])
         }
         return combined
     }

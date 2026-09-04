@@ -40,8 +40,24 @@ extension AppModel {
         reloadAgents()
     }
 
-    /// Finds an agent by name.
+    /// Finds an ENABLED agent by name.
+    ///
+    /// **DISABLED MEANS DISABLED ON BOTH PATHS** (state#93). The `agent` TOOL
+    /// checks `agentDef.isEnabled` and refuses; this resolved against
+    /// `allManagedAgents`, which is the inspection list and deliberately
+    /// includes the switched-off ones -- so `/explore` ran an agent the user
+    /// had turned off, with its full prompt and its full tool set. Same shape
+    /// as state#12 on the skill side, where the flag was persisted and one
+    /// caller ignored it.
     public func findAgent(named name: String) -> AppAgentDefinition? {
+        let clean = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return allManagedAgents.first { $0.name.lowercased() == clean && $0.isEnabled }
+    }
+
+    /// The same lookup WITHOUT the enabled filter, for telling "no such
+    /// agent" apart from "that one is switched off" (state#93). A slash
+    /// command that silently does nothing reads as a broken command.
+    func findAnyAgent(named name: String) -> AppAgentDefinition? {
         let clean = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return allManagedAgents.first { $0.name.lowercased() == clean }
     }
@@ -76,13 +92,26 @@ extension AppModel {
                 taskPrompt = subParts.dropFirst().joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
             }
         default:
-            if let agent = findAgent(named: command) {
+            // `findAnyAgent`, so a bare `/name` naming a SWITCHED-OFF agent is
+            // recognized here and refused by name below, rather than falling
+            // through as "not a command" and being sent to the model as prose
+            // (state#93).
+            if let agent = findAnyAgent(named: command) {
                 targetAgentName = agent.name
                 taskPrompt = rest
             }
         }
 
-        guard let agentName = targetAgentName, let agent = findAgent(named: agentName) else {
+        guard let agentName = targetAgentName else { return false }
+        guard let agent = findAgent(named: agentName) else {
+            // Recognized, and refused with a reason rather than falling
+            // through to be sent to the model as prose (state#93).
+            if let disabled = findAnyAgent(named: agentName) {
+                showToast(
+                    "Agent '\(disabled.displayName)' is switched off. Enable it in Settings > "
+                        + "Agents to use it.", style: .warning)
+                return true
+            }
             return false
         }
 

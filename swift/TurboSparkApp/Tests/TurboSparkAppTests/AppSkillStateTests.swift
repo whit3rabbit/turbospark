@@ -12,6 +12,67 @@ import XCTest
 /// null. `mergeNullDeletesAField` and its siblings are that gap closed.
 final class AppSkillStateTests: XCTestCase {
 
+    // MARK: - state#91 and state#92: the prompt and the badge
+
+    /// The patch rules are the model's only description of what `apply` does,
+    /// and one of them was the opposite of the truth: it said a MAP you
+    /// include replaces the stored one, where `apply` merges it entry by
+    /// entry. A model following that has no way to delete an entry at all, so
+    /// `files` only ever grew -- to `maxRenderedBytes`, after which every
+    /// patch was rejected for a limit the instructions said could not be
+    /// avoided.
+    @MainActor
+    func testThePatchRulesDescribeTheMergeSemanticsApplyActuallyHas() {
+        let prompt = AppModel().skillStateProtocol()
+        XCTAssertTrue(
+            prompt.contains("MERGES entry by entry"),
+            "The prompt must describe merge, because that is what `apply` does.")
+        XCTAssertTrue(
+            prompt.contains("null to delete it"),
+            "And it must say how to remove an entry, or nothing can ever shrink.")
+        XCTAssertFalse(
+            prompt.contains("A list or a map you include REPLACES"),
+            "The old sentence is the defect; a map does not replace.")
+
+        // The behaviour the sentence now describes.
+        var s = state(["files": .object(["a.swift": .string("read"), "b.swift": .string("read")])])
+        s.apply(patch: ["files": .object(["b.swift": .null])])
+        XCTAssertEqual(
+            s.fields, ["files": .object(["a.swift": .string("read")])],
+            "A named entry set to null is dropped and the rest are kept.")
+    }
+
+    /// state#92: a `<state_patch>` block whose body is not JSON fell into the
+    /// no-patch arm and CLEARED the badge -- so the one failure a user cannot
+    /// see in the transcript (the block is stripped before display) was also
+    /// the one that reported nothing.
+    @MainActor
+    func testAnUnparseablePatchRaisesTheBadgeRatherThanClearingIt() {
+        let appModel = AppModel()
+        var project = AppProject(name: "P", rootDirectoryPath: "/tmp")
+        project.skillStateEnabled = true
+        let chat = AppChat(projectID: project.id, title: "one")
+        appModel.projects = [project]
+        appModel.chats = [chat]
+        appModel.selectedChatID = chat.id
+
+        let stripped = appModel.applySkillStatePatch(
+            from: "working on it\n<state_patch>\nnot json at all\n</state_patch>",
+            chatIndex: 0, project: project)
+
+        XCTAssertFalse(
+            stripped.contains("state_patch"), "The block is still removed from the reply.")
+        XCTAssertNotNil(
+            appModel.skillStateLastError,
+            "A patch that would not parse is an error, not an absence.")
+
+        // And a turn with no block at all still clears it (state#58).
+        appModel.applySkillStatePatch(from: "just prose", chatIndex: 0, project: project)
+        XCTAssertNil(
+            appModel.skillStateLastError,
+            "A clean turn must still clear the badge, or one bad patch lights it forever.")
+    }
+
     // MARK: - merge (RFC 7386)
 
     private func state(_ pairs: [String: AppJSONValue]) -> AppSkillState {

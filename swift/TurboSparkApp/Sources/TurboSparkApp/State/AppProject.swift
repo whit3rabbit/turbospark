@@ -284,6 +284,21 @@ public struct AppProject: Identifiable, Codable, Equatable, Sendable {
     public var permissions: AppProjectPermissions
     /// Maximum autonomous tool-execution iterations per turn.
     public var maxAutonomousSteps: Int
+
+    /// The range the picker offers, which is the range this field may hold
+    /// (state#95).
+    ///
+    /// `projects_archive.json` is a plain file a user or a future release can
+    /// write, and this one decoded whatever it found: a hand-edited 100000
+    /// is an agent loop that runs tools until the model stops proposing them.
+    /// Same rule as `clampedSetting` on the engine settings (state#35), and
+    /// the same reason -- the clamp belongs where the value ENTERS, not at
+    /// the one call site that happens to read it.
+    public static let autonomousStepRange = 1...15
+
+    static func clampedSteps(_ value: Int) -> Int {
+        min(max(value, autonomousStepRange.lowerBound), autonomousStepRange.upperBound)
+    }
     /// Project-specific MCP external servers.
     public var mcpServers: [McpServerConfig]
     /// Project-specific Forge Guardrails override (nil = auto/model default).
@@ -318,7 +333,7 @@ public struct AppProject: Identifiable, Codable, Equatable, Sendable {
         self.rulePreference = rulePreference
         self.customInstructions = customInstructions
         self.permissions = permissions
-        self.maxAutonomousSteps = maxAutonomousSteps
+        self.maxAutonomousSteps = Self.clampedSteps(maxAutonomousSteps)
         self.mcpServers = mcpServers
         self.forgeGuardrailsEnabled = forgeGuardrailsEnabled
         self.skillStateEnabled = skillStateEnabled
@@ -347,7 +362,8 @@ public struct AppProject: Identifiable, Codable, Equatable, Sendable {
             AppRulePreference.self, forKey: .rulePreference, fallback: .agentsFirst)
         self.customInstructions = try container.decodeIfPresent(String.self, forKey: .customInstructions) ?? ""
         self.permissions = try container.decodeIfPresent(AppProjectPermissions.self, forKey: .permissions) ?? .newProjectDefault
-        self.maxAutonomousSteps = try container.decodeIfPresent(Int.self, forKey: .maxAutonomousSteps) ?? 5
+        self.maxAutonomousSteps = Self.clampedSteps(
+            try container.decodeIfPresent(Int.self, forKey: .maxAutonomousSteps) ?? 5)
         self.mcpServers = try container.decodeLossyArray(McpServerConfig.self, forKey: .mcpServers)
         self.forgeGuardrailsEnabled = try container.decodeIfPresent(Bool.self, forKey: .forgeGuardrailsEnabled)
         self.skillStateEnabled = try container.decodeIfPresent(Bool.self, forKey: .skillStateEnabled) ?? false

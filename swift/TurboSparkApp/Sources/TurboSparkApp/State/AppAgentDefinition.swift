@@ -61,7 +61,20 @@ public struct AppAgentDefinition: Identifiable, Codable, Equatable, Sendable {
     /// Optional model identifier override.
     public var model: String?
     /// Maximum autonomous turn count for subagent execution.
+    ///
+    /// Clamped into `1...maxTurnsCeiling` by `init` (state#95), so the file
+    /// on disk is a request rather than a setting: `max_turns: 100000` in an
+    /// agent file out of a cloned repository is a model-driven loop with no
+    /// user in it, each turn free to run tools.
     public var maxTurns: Int
+
+    /// The most turns any agent file may ask for (state#95).
+    ///
+    /// 50 rather than a smaller number because the ceiling is there to bound
+    /// an unattended loop, not to second-guess a legitimate long task -- and
+    /// a project agent that shadows a built-in is additionally held to THAT
+    /// built-in's own value, which is 5 for every one shipped.
+    public static let maxTurnsCeiling = 50
     /// Originating tooling ecosystem.
     public var sourceAgent: AgentSourceAgent
     /// Scope of the agent definition.
@@ -94,7 +107,7 @@ public struct AppAgentDefinition: Identifiable, Codable, Equatable, Sendable {
         self.tools = tools
         self.disallowedTools = disallowedTools
         self.model = model
-        self.maxTurns = max(1, maxTurns)
+        self.maxTurns = min(max(1, maxTurns), Self.maxTurnsCeiling)
         self.sourceAgent = sourceAgent
         self.scope = scope
         self.filePath = filePath

@@ -209,6 +209,7 @@ struct InstalledModelDetailPaneView: View {
                 .buttonStyle(.plain)
                 .background(Color.orange.opacity(0.16), in: RoundedRectangle(cornerRadius: 6))
                 .foregroundStyle(Color.orange)
+                .disabled(!model.canUnloadModel)
                 .help("Eject model and release unified memory")
             } else {
                 Button {
