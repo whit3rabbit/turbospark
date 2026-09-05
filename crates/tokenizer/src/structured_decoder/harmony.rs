@@ -248,6 +248,12 @@ impl<'a> StructuredAssistantDecoder<'a> {
             arguments,
         };
         self.emitted_calls += 1;
+        debug_assert_eq!(
+            self.tokenizer.dialect.tool_call_support(),
+            crate::ToolCallSupport::Native,
+            "a dialect that hands a parsed tool call over must answer Native to \
+                         `tool_call_support`; the two matches have drifted"
+        );
         Ok(vec![StructuredAssistantEvent::ToolCall(call)])
     }
 }

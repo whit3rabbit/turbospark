@@ -372,24 +372,22 @@ impl RealForwardRunner {
         // allocates and encodes nothing on every existing caller.
         runner.steering =
             crate::steering::SteeringState::build(&runner.context, &runner.arch, &steering)?;
-        if runner.steering.is_some()
-            && !crate::steering::family_dispatches_steering(runner.arch.family)
-        {
+        if runner.steering.is_some() {
             // Refused BY NAME rather than ignored. A family whose flow does
             // not dispatch the edit would load a direction set, report it on
             // the startup line, and change nothing -- the caller would
             // measure the unsteered engine and report it as the steered one
             // (`MtpState::build`'s argument for an explicitly-requested
             // drafter).
-            return Err(RealForwardError::Unsupported(format!(
-                "steering is not wired for family {:?}: its flow does not dispatch the edit, \
-                 so a direction set here would be a silent no-op. Wired today: the qwen flow \
-                 (both halves), the llama flow (Mixtral, Qwen3-MoE, and the dense Llama / \
-                 Mistral half), Gemma 4 (sequential decode and chunked prefill, both \
-                 batched-routed and per-token), gpt-oss, and museGlimmer. Unwired: \
-                 DeepSeek-V4-Flash (no decode flow exists to hook)",
-                runner.arch.family
-            )));
+            //
+            // The wording comes from `steering_unsupported_reason` rather
+            // than from a `format!` here, because `crates/ffi` reports the
+            // same sentence as a CAPABILITY before anyone opens anything: a
+            // GUI that says a family steers while this refuses it reads as a
+            // broken engine rather than as an unsupported family.
+            if let Some(reason) = crate::steering::steering_unsupported_reason(runner.arch.family) {
+                return Err(RealForwardError::Unsupported(reason));
+            }
         }
         // STEERING AND SPECULATION USED TO BE MUTUALLY EXCLUSIVE HERE, and
         // the refusal was not conservatism: the speculative verify runs

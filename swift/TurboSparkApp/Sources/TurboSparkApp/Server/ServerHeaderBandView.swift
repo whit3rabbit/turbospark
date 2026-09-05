@@ -95,7 +95,7 @@ struct ServerHeaderBandView: View {
     }
 
     private func addressRow(_ info: ServerInfo) -> some View {
-        let rows = ServerStatusRows(info: info)
+        let rows = ServerStatusRows(info: info, guardrails: model.serverStartedGuardrails)
         return HStack(spacing: 8) {
             Text(rows.address)
                 .font(.system(size: 13, design: .monospaced))
@@ -113,6 +113,17 @@ struct ServerHeaderBandView: View {
             .help("Copy the address")
 
             Divider().frame(height: 12)
+
+            // The guardrails the SERVER started with, which is a different
+            // enforcement point from the Chat pane's own engine: an HTTP
+            // client bypasses that entirely. Reported here because it cannot
+            // be changed without a restart.
+            Label("guardrails " + rows.guardrailsLabel, systemImage: "shield.lefthalf.filled")
+                .font(.system(size: 11))
+                .foregroundStyle(Color.secondary)
+                .help(
+                    "Tool-call guardrails for requests this server answers. Resolved when the "
+                        + "server started; restart it to change them.")
 
             Label(rows.authLabel, systemImage: rows.authIsWarning ? "lock.open" : "lock")
                 .font(.system(size: 11))

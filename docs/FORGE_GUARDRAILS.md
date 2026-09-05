@@ -37,6 +37,51 @@ lsof -nP -p "$(pgrep -f 'turbospark-server --model' | head -1)" | grep -E 'TCP|U
 The only line is the loopback listener. There are no outbound sockets,
 because there is nothing in the linked code that could open one.
 
+## 0b. Where it can be turned off, and the two enforcement points
+
+`turbospark-server --guardrails on|off` is the flag. It is PROCESS-level and
+deliberately not per request: a per-request field would let any client opt its
+own traffic out of the repair this deployment chose.
+
+**THE IN-PROCESS SERVER TAKES THE SAME OPTION SINCE 2026-09-05, AND UNTIL IT
+DID A HOST HAD NO WAY TO TURN THIS OFF.** `ts_server_start`'s `options_json`
+recognises `guardrails: "on" | "off"`, absent meaning the engine default (on);
+anything else is an error rather than a silent fallback, because a host
+sending `"disabled"` and getting guardrails anyway has no way to tell.
+`ServerOptions.guardrails` is the Swift form. It applies to every model
+attached to that server, including ones attached later.
+
+**A NATIVE HOST HAS TWO ENFORCEMENT POINTS AND THEY ARE EASY TO CONFLATE.**
+`swift/TurboSparkApp` runs its own Swift `ForgeGuardrailsEngine` over replies
+its agent loop reads directly; every HTTP client of its in-process server
+bypasses that entirely and gets whatever the server was started with. A user
+who set the app to "Always Off" and then pointed a client at its server got
+guardrails anyway, with nothing anywhere saying so. The app passes its setting
+to `ServerOptions` now and the Server pane reports what the running server
+started with -- `unknown` for a server started before the value was tracked,
+rather than a guessed "on".
+
+## 0c. It does NOT need the model to frame tool calls, and that is the point
+
+`SessionInfo.toolCalling.native` says whether a checkpoint's OWN markup
+carries calls this engine parses. **`false` is the case a rescue helps MOST,
+not a case to turn guardrails off for**, and a host that hides the control on
+it removes the repair from exactly the checkpoints that need it. Section 1's
+first failure -- a call emitted in a syntax the model's own template never
+taught it -- is what a non-native dialect does by default.
+
+Three of this engine's seven dialects answer `false`. Two of them (Mistral,
+Llama 3) define no tool markup at all. The third is worth knowing about:
+Muse Glimmer DOES frame calls, as an `<atem:function_calls>` block, and this
+engine has no parser for it -- so `StructuredAssistantDecoder` routes them to
+the REASONING stream and no call is ever handed over. An app keying on the
+family name rather than on this field listed it as tool-capable.
+
+The honest condition for the control doing nothing is different and is
+checkable: `inspect`'s first branch accepts unconditionally when the request
+carried no tools, so a turn that sends none is where the toggle provably
+changes nothing.
+
 ## 1. The two failures this fixes
 
 Both are specific to running a SMALL model locally. A frontier model rarely

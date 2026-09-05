@@ -404,15 +404,29 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
             .into_iter()
             .map(|level| level.as_str().to_string())
             .collect(),
-        steering: if runner.steering_line().is_some() {
-            crate::wire::SteeringInfo {
-                active: true,
-                mode: Some(steering_policy.mode.as_str().to_string()),
-                scale: Some(steering_policy.alpha as f64),
-                summary: runner.steering_line(),
-            }
-        } else {
-            crate::wire::SteeringInfo::default()
+        // `supported` is filled on BOTH arms and never left to `default()`.
+        // An unsteered session on a family that steers perfectly well answers
+        // `active: false, supported: true`, and a `default()` here would have
+        // said `supported: false` -- a caller reading it would disable the
+        // control for every model that is not already steering, i.e. all of
+        // them at first open.
+        steering: crate::wire::SteeringInfo {
+            active: runner.steering_line().is_some(),
+            supported: runner.steering_supported(),
+            reason: runner.steering_unsupported_reason(),
+            mode: runner
+                .steering_line()
+                .is_some()
+                .then(|| steering_policy.mode.as_str().to_string()),
+            scale: runner
+                .steering_line()
+                .is_some()
+                .then_some(steering_policy.alpha as f64),
+            summary: runner.steering_line(),
+        },
+        tool_calling: crate::wire::ToolCallingInfo {
+            native: tokenizer.dialect.tool_call_support() == tokenizer::ToolCallSupport::Native,
+            reason: tokenizer.dialect.tool_call_unsupported_reason(),
         },
         speculation: SpeculationInfo {
             block: speculation_block,

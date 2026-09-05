@@ -201,7 +201,9 @@ void ts_session_cancel(const TsSession *s);
  *   { "modelPath", "family", "maxContext", "trainedContext",
  *     "pastTrainedContext", "expertCacheSlots", "vocabSize", "dialect",
  *     "reasoningSupport", "reasoningLevels",
- *     "steering": { "active", "mode", "scale", "summary" },
+ *     "steering": { "active", "supported", "reason", "mode", "scale",
+ *                   "summary" },
+ *     "toolCalling": { "native", "reason" },
  *     "speculation": { "block", "drafter", "reason" },
  *     "vision": { "active", "imageTokenId", "reason" },
  *     "specialTokens": { "bosId", "eosId", "padId", "endOfTurnId",
@@ -229,6 +231,27 @@ void ts_session_cancel(const TsSession *s);
  *
  * steering.active is true when a control vector is loaded on this session.
  * steering.summary holds a human-readable one-line description of the edit.
+ *
+ * steering.supported IS A DIFFERENT QUESTION FROM steering.active, and it is
+ * the one to gate a control on. active says a vector is running; supported
+ * says one COULD be. ts_session_open() REFUSES a control vector on a family
+ * whose decode flow does not dispatch the edit, so a host that offers the
+ * knob against such an install offers one whose only outcome is a failed
+ * load. steering.reason carries the refusal's own wording when supported is
+ * false, and is null when it is true. An unsteered session on a family that
+ * steers answers { active: false, supported: true, reason: null }.
+ *
+ * toolCalling.native says whether THIS CHECKPOINT'S OWN MARKUP carries tool
+ * calls the engine parses, i.e. whether a call can arrive already framed.
+ *
+ * IT IS NOT "TOOLS DO NOT WORK", AND HIDING A TOOL CONTROL ON IT IS THE WRONG
+ * READING. A model on a dialect with no tool markup can still be prompted
+ * into emitting a call as ordinary prose, and recovering exactly that is what
+ * a guardrail rescue is for -- so native:false marks the case a rescue helps
+ * MOST, not a case to refuse. Report it; do not gate on it. toolCalling.reason
+ * names the dialect, and for one checkpoint family names markup that exists
+ * and has no parser (calls are reported as reasoning there rather than handed
+ * over).
  *
  * speculation.block is the resolved block size, or null when this session
  * does not draft ahead; that null IS the "is it on" test, and drafter
@@ -439,9 +462,22 @@ int32_t ts_generate(const TsSession *s, const char *messages_json,
  * `options_json` may be NULL or "{}". Recognised keys:
  *   port    number (default 0, meaning let the OS choose; read the port
  *             ACTUALLY bound back from ts_server_info_json)
- *   apiKey  string | null (default null, meaning no auth -- appropriate for
- *             a server bound to loopback and reachable only by the process
- *             embedding it)
+ *   apiKey  string | null (default null, meaning NO AUTH AT ALL)
+ *   guardrails
+ *           "on" | "off" | null (default null, meaning the engine default,
+ *             which is on). Any other string is an error rather than a
+ *             silent fallback. PROCESS-LEVEL, matching
+ *             `turbospark-server --guardrails`: a per-request field would let
+ *             any client opt its own traffic out of the repair this
+ *             deployment chose. Applies to every model attached to this
+ *             server, including ones attached later.
+ *
+ * UNAUTHENTICATED DOES NOT MEAN PRIVATE TO THIS PROCESS. This comment used to
+ * say the socket was "reachable only by the process embedding it", which is
+ * not a property a TCP socket can have: a loopback bind keeps it off the
+ * network and reachable by EVERY process on the machine, so any local program
+ * that can read or guess the port can drive the model. apiKey is the only
+ * access control there is.
  *
  * THE SERVER OUTLIVES EVERY SESSION ATTACHED TO IT. It holds its own
  * reference to each underlying engine, so calling ts_session_close(s) after
@@ -611,6 +647,32 @@ int32_t ts_recommend_json(uint32_t context_window, const char *options_json,
  */
 int32_t ts_probe_json(const char *repo, const char *file,
                       const char *sidecar_repo, char **out);
+
+/*
+ * What a .gguf control vector declares, read from the file alone: no model,
+ * no session, no network. A vector is around 1.3 MB, so this is milliseconds.
+ *
+ *   { "hidden", "coveredLayers", "minLayer", "maxLayer", "spannedLayers",
+ *     "declaredMode", "declaredArch" }
+ *
+ * Call it BEFORE offering a vector against an install, so a host can say
+ * "this file is 4096 wide and your model is 5120" instead of letting
+ * ts_session_open() fail minutes into a load. It reads the same parser
+ * ts_session_open() reads, so the two cannot disagree about what a file
+ * means.
+ *
+ * A SHAPE MATCH IS NOT A SEMANTIC MATCH, and this reports the shape only. The
+ * engine refuses a width or layer-count mismatch and refuses NOTHING else: a
+ * vector extracted for a different checkpoint of the same hidden size opens,
+ * steers, and changes behaviour in a direction nobody asked for, silently. A
+ * host rendering these fields owes its user that sentence. declaredArch is
+ * advisory -- nothing validates against it, which is why it is worth showing.
+ *
+ * minLayer is normally 1 rather than 0. Block 0 is not expressible in a file
+ * this engine writes and llama.cpp never applies a direction there, so a
+ * "31 of 32" reading is that convention working, not a gap.
+ */
+int32_t ts_control_vector_info_json(const char *path, char **out);
 
 /*
  * What installing `alias` will cost, as {"downloadBytes","installBytes"}.

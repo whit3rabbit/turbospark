@@ -339,13 +339,48 @@ struct InstalledModelDetailPaneView: View {
                     )
                 }
 
-                // Tool Calls
-                if descriptor.supportsToolCalls {
+                // Tool calls. THREE states, not two: the fact is a property
+                // of the checkpoint's dialect, which is resolved from the
+                // tokenizer at load and appears in no file this pane can read
+                // -- so before the model is opened the honest answer is that
+                // it is not known. This badge was an unconditional `true`,
+                // i.e. one that could not fail (`swift/CLAUDE.md` Gotcha 22).
+                //
+                // Note what "Prompted" does NOT mean: guardrails still works
+                // there, and the rescue that recovers a call from raw prose
+                // is worth MORE on a checkpoint whose framing hands none
+                // over. That is why there is no arm that hides the badge.
+                switch descriptor.supportsToolCalls {
+                case .some(true):
                     ModelFeatureBadgeView(
-                        title: "Tool Guardrails",
+                        title: "Native Tool Calls",
                         iconSystemName: "hammer.fill",
                         tintColor: .orange,
-                        tooltip: "Supports Forge Tool-Call Guardrails with argument validation and nudging",
+                        tooltip:
+                            "This checkpoint's own markup frames tool calls, so a call arrives "
+                            + "already parsed. Forge Guardrails validates its arguments.",
+                        style: .regular
+                    )
+                case .some(false):
+                    ModelFeatureBadgeView(
+                        title: "Prompted Tool Calls",
+                        iconSystemName: "hammer",
+                        tintColor: .secondary,
+                        tooltip:
+                            "This checkpoint's framing hands no tool call over, so one has to be "
+                            + "prompted for and recovered from the reply. That is exactly what "
+                            + "Forge Guardrails' rescue does, so leave it on here.",
+                        style: .regular
+                    )
+                case .none:
+                    ModelFeatureBadgeView(
+                        title: "Tool Calls: unknown",
+                        iconSystemName: "questionmark.circle",
+                        tintColor: .secondary,
+                        tooltip:
+                            "Load this model to find out. Whether its own markup frames tool "
+                            + "calls is a property of its chat dialect, which is only resolved "
+                            + "when the tokenizer loads.",
                         style: .regular
                     )
                 }

@@ -39,6 +39,8 @@ public struct SessionInfo: Decodable, Sendable, Equatable {
     public let reasoningLevels: [String]
     /// What directional steering resolved to for this session.
     public let steering: Steering
+    /// Whether this checkpoint's own markup frames tool calls.
+    public let toolCalling: ToolCalling
     /// What speculative decoding resolved to for this session.
     public let speculation: Speculation
     /// Whether this session would accept an image.
@@ -98,12 +100,45 @@ public struct SessionInfo: Decodable, Sendable, Equatable {
     public struct Steering: Decodable, Sendable, Equatable {
         /// True when a control vector is active on this session.
         public let active: Bool
+        /// **A DIFFERENT QUESTION FROM `active`, and the one to gate a
+        /// control on.**
+        ///
+        /// `active` says a vector is running. This says one COULD be:
+        /// `TurboSparkSession.init` REFUSES a control vector on a family
+        /// whose decode flow does not dispatch the edit, so a UI offering the
+        /// knob against such an install offers one whose only outcome is a
+        /// failed load. An unsteered session on a family that steers answers
+        /// `active: false, supported: true`.
+        public let supported: Bool
+        /// Why `supported` is false, in the words the open would refuse with.
+        /// `nil` when it is true.
+        public let reason: String?
         /// `ablate` | `add` | `clamp` | `renorm`, present only when active.
         public let mode: String?
         /// Active scale multiplier, present only when active.
         public let scale: Double?
         /// Human-readable one-line description, or nil when inactive.
         public let summary: String?
+    }
+
+    /// Whether this checkpoint's OWN markup carries tool calls the engine
+    /// parses.
+    ///
+    /// **`native == false` IS NOT "TOOLS DO NOT WORK", and hiding a tool
+    /// control on it is the wrong reading.** A model on a dialect with no
+    /// tool markup can still be prompted into emitting a call as ordinary
+    /// prose, and recovering exactly that is what a guardrail rescue is for,
+    /// so `false` marks the case a rescue helps MOST rather than a case to
+    /// refuse. Report it; do not gate on it.
+    public struct ToolCalling: Decodable, Sendable, Equatable {
+        /// True when a call can arrive already framed, i.e. when the engine's
+        /// structured decoder can hand one over.
+        public let native: Bool
+        /// Why `native` is false, naming the dialect. One checkpoint family
+        /// frames calls in markup this engine has no parser for and reports
+        /// them as reasoning instead; its reason says so. `nil` when `native`
+        /// is true.
+        public let reason: String?
     }
 
     /// The session's resolved speculative decoding, reported once.

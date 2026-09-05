@@ -14,33 +14,64 @@ import TurboSpark
 /// (`swift/CLAUDE.md` Gotcha 24): two unrelated things in this app are called
 /// guardrails, they share no code, no settings key and no UI surface.
 extension AppModel {
-    /// Whether the active model supports tool calling and structured function invocation.
+    /// Whether this checkpoint's OWN markup frames tool calls the engine
+    /// parses.
     ///
-    /// **NO `installed.first` FALLBACK** (state#97). With nothing selected
-    /// this answered for whatever row happened to sort first, which is a
-    /// statement about a DIFFERENT model -- and it feeds
-    /// `forgeGuardrailsEnabled`, so the guardrails default was decided by an
-    /// unrelated install. With no model there is no answer, and the honest
-    /// default is the permissive one the empty case already returned. The
-    /// family list also lagged `crates/model-io/src/arch_config/family.rs`
-    /// by three entries.
+    /// **READ OFF THE ENGINE, NOT GUESSED FROM THE FAMILY** (root Gotcha 62:
+    /// read a property off the artifact, never off a note about it). This
+    /// used to match a hardcoded nine-entry family set and then fall through
+    /// to dialect substrings, and both halves were wrong in ways only the
+    /// engine can settle. `museglimmer` was in that set and is NOT native:
+    /// its checkpoint frames calls as an `<atem:function_calls>` block this
+    /// engine has no parser for, so `StructuredAssistantDecoder` reports them
+    /// as REASONING and no call is ever handed over. The list also carried
+    /// `deepseekv4flash`, whose decode flow does not exist.
+    ///
+    /// **THIS IS NOT "CAN THIS MODEL USE TOOLS", AND GATING A CONTROL ON IT
+    /// WOULD BE BACKWARDS.** A model on a dialect with no tool markup can
+    /// still be prompted into emitting a call as ordinary prose, and
+    /// recovering exactly that is what Forge Guardrails' rescue is for -- so
+    /// `false` marks the case a rescue helps MOST. It picks the DEFAULT and
+    /// feeds a tooltip; `guardrailsInertReason` is what actually gates.
     public var isToolCallingSupported: Bool {
-        guard let selectedModel = selected else {
-            return true
+        // With no session there is no answer. The permissive default is
+        // state#97's: the old `installed.first` fallback answered for a
+        // DIFFERENT model, which is worse than answering nothing.
+        info?.toolCalling.native ?? true
+    }
+
+    /// Why this checkpoint hands no framed call over, or nil when it does.
+    /// Shown beside the control rather than used to hide it.
+    public var toolCallingNativeReason: String? { info?.toolCalling.reason }
+
+    /// Why the Forge Guardrails control would do nothing right now, or nil
+    /// when it is live.
+    ///
+    /// **THE HONEST INERT CONDITION IS "NO TOOLS WERE OFFERED", NOT "THE
+    /// MODEL LACKS MARKUP".** `ForgeGuardrailsEngine.inspect`'s first branch
+    /// accepts unconditionally when the request carried no tools, exactly as
+    /// `docs/FORGE_GUARDRAILS.md` section 2 describes -- and this app offers
+    /// none in conversational Chat mode or under a chat whose project is gone
+    /// (`extractToolCalls`'s own guard, state#82). Those are the cases where
+    /// the toggle genuinely changes nothing.
+    ///
+    /// Takes the TURN's project rather than the selection, for the reason
+    /// every other read on this path does (state#30).
+    public func guardrailsInertReason(for project: AppProject?) -> String? {
+        if interactionMode != .projects {
+            return "This chat sends no tools, so guardrails has nothing to check. "
+                + "Switch to Projects mode to use tools."
         }
-        let family = selectedModel.family.lowercased()
-        let dialect = info?.dialect.lowercased() ?? ""
-        let toolFamilies: Set<String> = [
-            "gemma4", "qwen36", "qwen3moe", "qwen35", "gptoss", "llama",
-            "museglimmer", "qwen4exp", "deepseekv4flash",
-        ]
-        if toolFamilies.contains(family) {
-            return true
+        if project == nil {
+            return "This chat has no project, so no tools are offered and guardrails has "
+                + "nothing to check."
         }
-        if dialect.contains("chatml") || dialect.contains("harmony") || dialect.contains("llama") || dialect.contains("gemma") || dialect.contains("mistral") {
-            return true
-        }
-        return false
+        return nil
+    }
+
+    /// The UI's read of the same rule, taking the selection deliberately.
+    public var effectiveGuardrailsInertReason: String? {
+        guardrailsInertReason(for: selectedProject)
     }
 
     /// Forge Guardrails resolved for a NAMED project rather than for the

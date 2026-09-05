@@ -266,7 +266,11 @@ final class SurfaceTests: XCTestCase {
             "dialect": "ChatMl",
             "reasoningSupport": "level",
             "reasoningLevels": ["off", "low", "medium", "xhigh"],
-            "steering": { "active": false },
+            "steering": {
+                "active": false, "supported": true, "reason": null,
+                "mode": null, "scale": null, "summary": null
+            },
+            "toolCalling": { "native": true, "reason": null },
             "speculation": { "block": null, "drafter": null, "reason": null },
             "vision": { "active": false, "imageTokenId": null, "reason": null },
             "specialTokens": {
@@ -312,7 +316,11 @@ final class SurfaceTests: XCTestCase {
             "expertCacheSlots": 16, "vocabSize": 151936, "dialect": "ChatMl",
             "reasoningSupport": "level",
             "reasoningLevels": ["off", "low", "ludicrous", "xhigh"],
-            "steering": { "active": false },
+            "steering": {
+                "active": false, "supported": true, "reason": null,
+                "mode": null, "scale": null, "summary": null
+            },
+            "toolCalling": { "native": true, "reason": null },
             "speculation": { "block": null, "drafter": null, "reason": null },
             "vision": { "active": false, "imageTokenId": null, "reason": null },
             "specialTokens": {
@@ -652,6 +660,136 @@ final class SurfaceTests: XCTestCase {
             after - before, 128 * 1_024 * 1_024,
             "twenty failed opens grew peak footprint by \((after - before) / 1_024 / 1_024) MiB")
     }
+
+    /// **`supported` AND `active` ARE DIFFERENT QUESTIONS, and the fixture is
+    /// the combination a UI gets wrong.**
+    ///
+    /// An unsteered session on a family that steers perfectly well answers
+    /// `active: false, supported: true`. A caller that gated its control on
+    /// `active` would disable it for every model that is not already
+    /// steering, i.e. all of them at first open -- which is the control being
+    /// permanently off rather than being gated.
+    func testAnUnsteeredSessionOnASteerableFamilyStillReportsSupported() throws {
+        let info = try decodeInfo(
+            steering: """
+            { "active": false, "supported": true, "reason": null,
+              "mode": null, "scale": null, "summary": null }
+            """,
+            toolCalling: #"{ "native": true, "reason": null }"#
+        )
+        XCTAssertFalse(info.steering.active)
+        XCTAssertTrue(info.steering.supported)
+        XCTAssertNil(info.steering.reason)
+    }
+
+    /// A family that cannot steer names itself, so a disabled control can say
+    /// why rather than merely being grey.
+    func testAnUnsupportedFamilyCarriesTheRefusalsOwnWording() throws {
+        let info = try decodeInfo(
+            steering: """
+            { "active": false, "supported": false,
+              "reason": "steering is not wired for family Qwen4Exp: its flow does not dispatch the edit",
+              "mode": null, "scale": null, "summary": null }
+            """,
+            toolCalling: #"{ "native": true, "reason": null }"#
+        )
+        XCTAssertFalse(info.steering.supported)
+        XCTAssertEqual(
+            info.steering.reason?.contains("Qwen4Exp"), true,
+            "a reason that does not name the family cannot be shown to a user"
+        )
+    }
+
+    /// `toolCalling.native == false` arrives WITH a reason, because the
+    /// correct UI response is to explain rather than to hide: a dialect with
+    /// no tool markup is the case a guardrail rescue helps most.
+    func testANonNativeToolCallingReportCarriesItsReason() throws {
+        let info = try decodeInfo(
+            steering: """
+            { "active": false, "supported": true, "reason": null,
+              "mode": null, "scale": null, "summary": null }
+            """,
+            toolCalling: """
+            { "native": false,
+              "reason": "the Mistral dialect defines no tool-call markup" }
+            """
+        )
+        XCTAssertFalse(info.toolCalling.native)
+        XCTAssertEqual(info.toolCalling.reason?.contains("Mistral"), true)
+    }
+
+    /// **A MISSING `supported` FAILS THE DECODE, DELIBERATELY.** It is a
+    /// non-optional `Bool`, so engine-side field drift reddens here rather
+    /// than silently defaulting a capability to false and greying out a
+    /// control on every model (Gotcha 5's rule: this suite is the only thing
+    /// that can catch the two sides disagreeing).
+    func testAnAbsentSupportedFlagFailsTheDecodeRatherThanDefaulting() {
+        XCTAssertThrowsError(
+            try decodeInfo(
+                steering: #"{ "active": false }"#,
+                toolCalling: #"{ "native": true, "reason": null }"#
+            )
+        )
+    }
+
+    /// A server started with guardrails off says so in the options it encodes,
+    /// and absent means the engine default rather than off.
+    func testServerOptionsEncodeGuardrailsOnlyWhenAsked() throws {
+        let encoder = JSONEncoder()
+        let bare = String(data: try encoder.encode(ServerOptions()), encoding: .utf8) ?? ""
+        XCTAssertFalse(
+            bare.contains("guardrails"),
+            "an absent value must not encode, or every existing caller silently changes meaning"
+        )
+        let off = String(
+            data: try encoder.encode(ServerOptions(port: 0, apiKey: nil, guardrails: .off)),
+            encoding: .utf8
+        ) ?? ""
+        XCTAssertTrue(off.contains("\"guardrails\":\"off\""), off)
+    }
+
+    /// A control vector reports what the FILE carries. `minLayer` of 1 is the
+    /// llama.cpp convention working, not a gap, and `spannedLayers` rather
+    /// than `coveredLayers` is what a layer-count check compares against.
+    func testControlVectorInfoDecodesTheShapeItReports() throws {
+        let json = """
+        {
+            "hidden": 5120, "coveredLayers": 63, "minLayer": 1, "maxLayer": 63,
+            "spannedLayers": 64, "declaredMode": "ablate", "declaredArch": "qwen3_5"
+        }
+        """
+        let info = try JSONDecoder().decode(ControlVectorInfo.self, from: Data(json.utf8))
+        XCTAssertEqual(info.hidden, 5120)
+        XCTAssertEqual(info.minLayer, 1)
+        XCTAssertEqual(info.spannedLayers, 64)
+        XCTAssertNotEqual(
+            info.coveredLayers, info.spannedLayers,
+            "the two differ whenever block 0 is absent, which is every well-formed file"
+        )
+    }
+
+    /// Builds a `SessionInfo` around the two blocks under test, so a case
+    /// states only what it is about.
+    private func decodeInfo(steering: String, toolCalling: String) throws -> SessionInfo {
+        let json = """
+        {
+            "modelPath": "/m.gturbo", "family": "qwen38", "maxContext": 4096,
+            "trainedContext": null, "pastTrainedContext": false,
+            "expertCacheSlots": 16, "vocabSize": 151936, "dialect": "ChatMl",
+            "reasoningSupport": "none", "reasoningLevels": ["off"],
+            "steering": \(steering),
+            "toolCalling": \(toolCalling),
+            "speculation": { "block": null, "drafter": null, "reason": null },
+            "vision": { "active": false, "imageTokenId": null, "reason": null },
+            "specialTokens": {
+                "bosId": null, "eosId": null, "padId": null, "endOfTurnId": null,
+                "stopTokenIds": [], "thinkStartId": null, "thinkEndId": null
+            }
+        }
+        """
+        return try JSONDecoder().decode(SessionInfo.self, from: Data(json.utf8))
+    }
+
 }
 
 

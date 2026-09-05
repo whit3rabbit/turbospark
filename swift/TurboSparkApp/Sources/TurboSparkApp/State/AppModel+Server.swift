@@ -20,11 +20,28 @@ public struct ServerStatusRows: Equatable {
     /// colour because "none" is the state a user needs to notice, and it is
     /// reachable by typing nothing but spaces into the key field.
     public let authIsWarning: Bool
+    /// The tool-call guardrails this server STARTED with.
+    ///
+    /// **A SECOND ENFORCEMENT POINT FROM THE CHAT PANE'S, and worth stating
+    /// because the two are easy to conflate.** `ForgeGuardrailsEngine` runs
+    /// in this app's own agent loop, over a reply it read itself; every HTTP
+    /// client of this server bypasses that entirely. The server resolves its
+    /// own at start, from the same setting, and cannot be changed without a
+    /// restart -- which is exactly why it is reported rather than assumed.
+    public let guardrailsLabel: String
 
-    public init(info: ServerInfo) {
+    public init(info: ServerInfo, guardrails: ServerOptions.Guardrails? = nil) {
         self.address = info.baseURL?.absoluteString ?? "\(info.host):\(info.port)"
         self.authLabel = info.authEnabled ? "API key required" : "none"
         self.authIsWarning = !info.authEnabled
+        switch guardrails {
+        case .some(.on): self.guardrailsLabel = "on"
+        case .some(.off): self.guardrailsLabel = "off"
+        // Not "on": the server was started before this app tracked the value,
+        // so what it is running is genuinely unknown here and saying "on"
+        // would be a guess presented as a reading (Gotcha 23).
+        case .none: self.guardrailsLabel = "unknown (restart the server to report it)"
+        }
     }
 }
 
@@ -43,6 +60,16 @@ public struct ServerModelRow: Identifiable, Equatable {
     /// holds its own session.
     public let isChatSession: Bool
     public let requestsServed: Int
+    /// What this model is steering with, or `nil` when it is not.
+    ///
+    /// **READ BACK OFF THE SESSION, AND READ-ONLY HERE.** Steering resolves
+    /// once at OPEN, and this server serves models that were already opened
+    /// -- so it is a property of the model's load rather than of the server,
+    /// and an editable control in this pane would silently re-open the model
+    /// (tens of seconds, and a dropped KV cache) to take effect. Showing it
+    /// is what lets an operator tell two served models apart when one is
+    /// edited and the other is not.
+    public let steeringSummary: String?
 }
 
 extension AppModel {
@@ -81,6 +108,30 @@ extension AppModel {
     /// user pinned one. The bound ADDRESS -- host as well as port -- is read
     /// back from `TurboSparkServer.info()`; nothing here states one of its
     /// own.
+    /// The guardrails a server started under `mode` runs with.
+    ///
+    /// **THE SERVED PATH IS A SECOND ENFORCEMENT POINT, and until this
+    /// existed the app's guardrails setting did not reach it at all.**
+    /// `ForgeGuardrailsEngine` runs in the agent loop, over a reply this app
+    /// read itself; every HTTP client of this server bypasses that entirely
+    /// and gets whatever the engine defaults to. A user who set "Always Off"
+    /// and then pointed a client at this server got guardrails anyway, with
+    /// nothing anywhere saying so.
+    ///
+    /// **`.select` RESOLVES TO ON, and that is forced rather than chosen.**
+    /// It means "decide per project or per chat", and a server request has
+    /// neither -- so there is no per-request answer to resolve, and the
+    /// engine's own default is the honest fallback. `nonisolated` and static
+    /// so it can be asserted without a model (Gotcha 26).
+    nonisolated public static func serverGuardrails(
+        from mode: AppGuardrailsMode
+    ) -> ServerOptions.Guardrails {
+        switch mode {
+        case .alwaysOff: return .off
+        case .alwaysOn, .select: return .on
+        }
+    }
+
     public func startServer() {
         guard server == nil, !serverBusy else { return }
         serverBusy = true
@@ -89,9 +140,14 @@ extension AppModel {
             do {
                 let options = ServerOptions(
                     port: serverPinnedPort,
-                    apiKey: Self.serverAPIKey(from: serverAPIKeyInput)
+                    apiKey: Self.serverAPIKey(from: serverAPIKeyInput),
+                    guardrails: Self.serverGuardrails(from: guardrailsMode)
                 )
                 let started = try TurboSparkServer.start(options: options)
+                // Recorded from the OPTIONS the start actually used, so the
+                // pane reports what is running rather than what the setting
+                // says now.
+                serverStartedGuardrails = options.guardrails
                 // Attached AFTER the bind so a refused attach leaves a
                 // stoppable server rather than a half-started one.
                 if let session {
@@ -174,6 +230,7 @@ extension AppModel {
         self.server = nil
         self.serverInfo = nil
         self.serverAttachedSessions = [:]
+        self.serverStartedGuardrails = nil
         showToast("Server stopped", style: .info)
     }
 
@@ -229,7 +286,10 @@ extension AppModel {
                 maxContext: attached.map { UInt32($0.info.maxContext) } ?? 0,
                 expertCacheSlots: attached?.info.expertCacheSlots ?? 0,
                 isChatSession: attached != nil && attached === session,
-                requestsServed: served[id] ?? 0)
+                requestsServed: served[id] ?? 0,
+                steeringSummary: attached.flatMap { session in
+                    session.info.steering.active ? session.info.steering.summary : nil
+                })
         }
     }
 

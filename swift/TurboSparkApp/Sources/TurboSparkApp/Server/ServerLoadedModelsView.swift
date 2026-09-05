@@ -89,6 +89,18 @@ struct ServerLoadedModelsView: View {
                 Text(detailLine(row))
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
+                // READ-ONLY, and only when this model is steering. Steering
+                // resolves at OPEN and this server serves already-open
+                // sessions, so it is a property of the model's load rather
+                // than of the server -- an editable control here would
+                // silently re-open the model to take effect. Showing it is
+                // what lets an operator tell two served models apart when
+                // one carries an edit and the other does not.
+                if let summary = row.steeringSummary {
+                    Label(summary, systemImage: "dial.medium.fill")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.orange)
+                }
             }
 
             Spacer(minLength: 8)

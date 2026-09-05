@@ -275,7 +275,7 @@ impl SteeringState {
 /// hook in its flow, so the safe answer for an unlisted one is `false` --
 /// which fails loudly at open rather than writing a file of zeros
 /// (`ffn_hist`'s reason, and `crates/runtime` Gotcha 7's).
-pub(crate) fn family_dispatches_steering(family: model_io::ModelFamily) -> bool {
+pub fn family_dispatches_steering(family: model_io::ModelFamily) -> bool {
     use model_io::ModelFamily as F;
     match family {
         // `families/qwen/`, both halves, per-token and batched.
@@ -318,6 +318,31 @@ pub(crate) fn family_dispatches_steering(family: model_io::ModelFamily) -> bool 
         // stream. Decide it with the flow, not ahead of it.
         F::Qwen4Exp => false,
     }
+}
+
+/// Why a family cannot steer, in the ONE wording both readers use, or `None`
+/// when it can.
+///
+/// [`family_dispatches_steering`] answers the question and this answers "say
+/// why" -- and both the open-time refusal in `real_forward_open` and the
+/// capability block `crates/ffi` reports call this rather than spelling their
+/// own. Two spellings would be the same drift the predicate above exists to
+/// prevent, one level out: a GUI could tell a user a family steers while the
+/// open refuses it, which reads as a broken engine rather than as an
+/// unsupported family.
+pub fn steering_unsupported_reason(family: model_io::ModelFamily) -> Option<String> {
+    if family_dispatches_steering(family) {
+        return None;
+    }
+    Some(format!(
+        "steering is not wired for family {family:?}: its flow does not dispatch the edit, \
+         so a direction set here would be a silent no-op. Wired today: the qwen flow \
+         (both halves), the llama flow (Mixtral, Qwen3-MoE, and the dense Llama / \
+         Mistral half), Gemma 4 (sequential decode and chunked prefill, both \
+         batched-routed and per-token), gpt-oss, and museGlimmer. Unwired: \
+         DeepSeek-V4-Flash (no decode flow exists to hook) and qwen4_exp (its \
+         residual is hc_count streams wide, so the boundary is a different shape)"
+    ))
 }
 
 /// Apply this layer's directional-steering edit, if one is configured for it.

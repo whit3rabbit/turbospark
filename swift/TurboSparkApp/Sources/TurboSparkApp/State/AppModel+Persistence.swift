@@ -63,6 +63,15 @@ extension AppModel {
         self.runtimeOptions.steeringTarget = settings.steeringTarget
         self.runtimeOptions.steeringGate = settings.steeringGate
         self.steeringPath = self.runtimeOptions.steeringPath
+        self.steeringPresets = settings.steeringPresets
+        // A stored id naming a preset that is gone resolves to nil rather
+        // than to the first row: silently steering with a DIFFERENT direction
+        // than the one selected is the failure this whole surface exists to
+        // avoid, and `installed.first` was exactly that mistake one file over
+        // (state#97).
+        self.activeSteeringPresetID = UUID(uuidString: settings.activeSteeringPresetID)
+            .flatMap { id in settings.steeringPresets.contains(where: { $0.id == id }) ? id : nil }
+        self.steeringEnabled = settings.steeringEnabled
         self.modelsDirectory = settings.modelsDirectory
         self.enableLMStudioDetection = settings.enableLMStudioDetection
         self.lmStudioDirectory = settings.lmStudioDirectory
@@ -123,6 +132,9 @@ extension AppModel {
             steeringLayers: runtimeOptions.steeringLayers,
             steeringTarget: runtimeOptions.steeringTarget,
             steeringGate: runtimeOptions.steeringGate,
+            steeringPresets: steeringPresets,
+            activeSteeringPresetID: activeSteeringPresetID?.uuidString ?? "",
+            steeringEnabled: steeringEnabled,
             modelsDirectory: modelsDirectory,
             enableLMStudioDetection: enableLMStudioDetection,
             lmStudioDirectory: lmStudioDirectory,

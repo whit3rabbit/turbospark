@@ -48,6 +48,7 @@ throughput, measured below at 1.72% of decode with all 64 layers steered and
 | 9 | a fifth family (Gemma 4) and its chunked prefill driver | **LANDED**; found `encode_steering`/`encode_resid_capture` hardcoded the edited row at offset 0, fixed with an `x_off` parameter, mutation-checked on the real chunked path |
 | 10 | the sixth and seventh flows (`gpt-oss`, `muse_glimmer`) | **LANDED** on synthetic fixtures, mutation-checked, and **BOTH NOW MEASURED ON A REAL INSTALL** since 2026-08-25 (below). `muse_glimmer`: null control byte-identical, memory oracle clean, but at the time of that measurement the probe's single-position divergence check did not clear its (`qwen3_5`-borrowed) floor at the prompts tried, despite real coefficients and CLI-visible divergence over a generation. `gpt-oss`: the same pattern, one step sharper -- the null control passed on both instruments, the probe's single-position check missed for a now-EXACT reason (the position it measured is Harmony's near-fixed `<|channel|>` token, decoded and confirmed rather than guessed), and the edit was visibly real once generation ran past that token: coherent, differently-worded output at alpha 0.3, and a DIFFERENT failure mode from `qwen38-27b`'s at alpha 1.0 (an unresolved reasoning loop rather than an immediate collapse). **The single-position check itself is now FIXED, generally** (arm 2 asserts on a windowed teacher-forced KL trace rather than one position -- see "Open, and stated as open" below and `crates/bench/CLAUDE.md` Gotcha 25); re-captured with a fresh direction on each real install the same day, arm 2 now PASSES on both: museGlimmer's window max reads 11440x its floor (against 0x at the old single position), gpt-oss's reads 33x (against 0x at a position confirmed to decode to `<|channel|>` on both engines) |
 | 11 | Swift bindings and demo GUI integration | **LANDED**; full steering options in `turbospark-ffi` wire types / `turbospark.h`, `swift/TurboSpark` (`OpenOptions`, `SessionInfo.Steering`), and `swift/TurboSparkApp` status footer |
+| 12 | a CAPABILITY report and a preset UI | **LANDED**; `steering.supported`/`reason` over the ABI from the same predicate the open refuses with, `ts_control_vector_info_json` for a pre-open shape check, and named presets with a compatibility check plus a reload prompt in `swift/TurboSparkApp` |
 
 **It works.** On the real `qwen38-27b`, a direction extracted by this engine
 from its own activations, applied at runtime with no weight byte modified,
@@ -117,22 +118,63 @@ options.steeringTarget = 0.0            // for .clamp mode
 options.steeringGate = 0.0              // threshold to trigger edit
 
 let session = try await TurboSparkSession(modelPath: "qwen38-27b", options: options)
+```
 
-// Introspect active steering:
-if session.info.steering.active {
-    print("Mode: \(session.info.steering.mode ?? "none")")
-    print("Scale: \(session.info.steering.scale ?? 1.0)")
-    print("Summary: \(session.info.steering.summary ?? "")")
+**`steering.supported` IS A DIFFERENT QUESTION FROM `steering.active`, AND IT
+IS THE ONE A UI GATES ON.** `active` says a vector is running; `supported`
+says one COULD be, from `family_dispatches_steering`. An open is REFUSED on a
+family that answers false, so an app offering the knob there offers one whose
+only outcome is a failed load, and an unsteered session on a family that
+steers answers `active: false, supported: true` -- gating on `active` would
+disable the control for every model that is not already steering, i.e. all of
+them at first open.
+
+```swift
+if session.info.steering.supported {
+    print(session.info.steering.summary ?? "off")
+} else {
+    print(session.info.steering.reason!)   // the open's own refusal wording
 }
 ```
 
+`ts_control_vector_info_json(path)` reads a vector's header with no model, no
+session and no network, returning `hidden`, `coveredLayers`, `minLayer`,
+`maxLayer`, `spannedLayers`, `declaredMode` and `declaredArch`. It exists so a
+host can say "this file is 4096 wide and your model is 5120" instead of
+failing minutes into a load, and it reads the same parser the open reads.
+`TurboSparkCatalog.controlVectorInfo(path:)` is the Swift form. Two things it
+does NOT tell you: **a shape match is not a semantic match** (see "Running
+someone else's vector"), and `declaredArch` is advisory because nothing
+validates against it. `minLayer` is normally 1, which is the interop
+convention working rather than a gap.
+
 The C ABI (`turbospark.h`) exposes `steering`, `steeringMode`, `steeringScale`,
 `steeringLayers`, `steeringTarget`, `steeringGate` in `ts_session_open` JSON
-and reports `{ "active": bool, "mode": string?, "scale": number?, "summary": string? }`
+and reports
+`{ "active": bool, "supported": bool, "reason": string?, "mode": string?, "scale": number?, "summary": string? }`
 in `ts_session_info_json`.
 
-`swift/TurboSparkApp` surfaces steering in its inspector and displays active
-mode and summary details in its status bar footer.
+**`swift/TurboSparkApp` SURFACES THIS AS NAMED PRESETS, NOT AS SIX RAW
+KNOBS.** Settings > Safety and Steering registers directions (name, vector,
+mode, strength, layer band, notes), checks each one's shape against the
+selected install's `manifest.json`, and has one switch. The Inspector keeps
+the raw fields as the expert surface and what is set there becomes an implicit
+"Custom" preset. Three things the pane is deliberate about:
+
+- **It states that nothing ships a direction** and points at
+  `scripts/extract_direction.py`. A control labelled as though a behaviour
+  shipped would claim work that does not exist.
+- **The default strength is 0.3, not 1.0**, because 1.0 over every layer is a
+  documented collapse (below) and a default landing on a documented failure
+  mode is worse than no default. Past 0.8 the editor warns with the measured
+  bands.
+- **It says when the loaded model is not running the current setting.**
+  Steering resolves once at OPEN, so a changed preset does nothing until a
+  reload, and a switch that silently did nothing is the failure this whole
+  page is about. The Server pane reports each attached model's
+  `info.steering` read-only for the same reason: that server serves
+  already-open sessions, so steering is a property of the load rather than of
+  the server.
 
 **Wired today (seven of eight families)**: the qwen flow (both halves,
 per-token and batched-verify), `families/llama/` (Mixtral, `qwen3moe`, and

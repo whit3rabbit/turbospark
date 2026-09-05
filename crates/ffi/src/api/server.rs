@@ -38,6 +38,24 @@ fn model_id_of(session: &session::Session) -> String {
 /// the `TsSession *` it came from: `ts_session_close` drops only the
 /// caller's own reference, not the model the server is still serving. Stop
 /// the server, or detach that one model, to release it.
+/// `"on"` | `"off"` | absent, with the grammar and the meanings taken from
+/// `turbospark-server --guardrails` rather than restated.
+///
+/// An unrecognized spelling is an ERROR and never a silent fallback: a host
+/// sending `"disabled"` and getting guardrails anyway would have no way to
+/// tell, and the whole point of the option is that the served path agrees
+/// with what the host thinks it configured.
+fn guardrails_config(raw: Option<&str>) -> Result<turbospark_server::GuardrailConfig, String> {
+    match raw {
+        None => Ok(turbospark_server::GuardrailConfig::default()),
+        Some("on") => Ok(turbospark_server::GuardrailConfig::default()),
+        Some("off") => Ok(turbospark_server::GuardrailConfig::OFF),
+        Some(other) => Err(format!(
+            "guardrails must be \"on\" or \"off\", got \"{other}\""
+        )),
+    }
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn ts_server_start(
     session: *const TsSession,
@@ -49,8 +67,10 @@ pub unsafe extern "C" fn ts_server_start(
             return Err((abi::TS_ERR_INVALID_ARGUMENT, "out must not be null".into()));
         }
         let options = parse_json_or_default::<wire::ServerOptions>(options_json, "options")?;
-        let server =
-            Server::start(options.port, options.api_key).map_err(|e| (abi::TS_ERR_OPEN, e))?;
+        let guardrails = guardrails_config(options.guardrails.as_deref())
+            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let server = Server::start(options.port, options.api_key, guardrails)
+            .map_err(|e| (abi::TS_ERR_OPEN, e))?;
         // Attached AFTER the bind, through the same call a later attach
         // takes, so there is one code path rather than two. A failure here
         // drops `server`, which stops the thread it just started.
@@ -177,4 +197,47 @@ pub unsafe extern "C" fn ts_server_poll_events_json(
             .map_err(|e| (abi::TS_ERR_JSON, e.to_string()))?;
         strings::emit(&json, out).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
     })
+}
+
+#[cfg(test)]
+mod guardrails_option_tests {
+    use super::guardrails_config;
+
+    /// Absent is the ENGINE default, not `OFF`. A host that sends `{}` -- the
+    /// documented "everything automatic" options bag, and what every caller
+    /// predating this option sends -- must keep the guardrails it has always
+    /// had.
+    #[test]
+    fn absent_is_the_engine_default_and_not_off() {
+        let resolved = guardrails_config(None).expect("absent is legal");
+        assert_eq!(resolved, turbospark_server::GuardrailConfig::default());
+        assert!(resolved.active(), "the engine default is on");
+    }
+
+    #[test]
+    fn on_and_off_take_the_servers_own_spellings() {
+        assert_eq!(
+            guardrails_config(Some("on")).expect("on is legal"),
+            turbospark_server::GuardrailConfig::default()
+        );
+        let off = guardrails_config(Some("off")).expect("off is legal");
+        assert_eq!(off, turbospark_server::GuardrailConfig::OFF);
+        assert!(!off.active());
+    }
+
+    /// **AN UNRECOGNIZED SPELLING IS AN ERROR, NOT A FALLBACK.** A host
+    /// sending "disabled" and getting guardrails anyway has no way to tell,
+    /// and the whole point of the option is that the served path agrees with
+    /// what the host thinks it configured. The message names the value back.
+    #[test]
+    fn an_unrecognized_spelling_is_refused_by_name() {
+        let err = guardrails_config(Some("disabled")).expect_err("must refuse");
+        assert!(err.contains("disabled"), "{err}");
+        assert!(err.contains("\"on\""), "{err}");
+        // Case matters, deliberately: `crates/server/src/args.rs` matches
+        // these two literals and nothing else, so accepting "OFF" here would
+        // make the ABI more permissive than the flag it mirrors.
+        assert!(guardrails_config(Some("OFF")).is_err());
+        assert!(guardrails_config(Some("")).is_err());
+    }
 }

@@ -77,9 +77,97 @@ pub enum ChatDialect {
     Llama3,
 }
 
+/// Whether a dialect's own markup carries tool calls that this engine PARSES.
+///
+/// See [`ChatDialect::tool_call_support`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolCallSupport {
+    /// [`crate::StructuredAssistantDecoder`] can emit
+    /// `StructuredAssistantEvent::ToolCall` on this dialect.
+    Native,
+    /// It cannot. The model may still be PROMPTED into emitting a call as
+    /// ordinary prose, which a caller's own parser or a guardrail rescue can
+    /// recover -- but nothing in this engine's framing will hand one over.
+    Prompted,
+}
+
 /// Sentinel for token roles a dialect frames as plain text rather than a
 /// single special token (DeepSeek's tool markers). Never a valid token ID.
 pub const NO_SUCH_TOKEN_ID: i32 = -1;
+
+impl ChatDialect {
+    /// Does this dialect's own markup carry tool calls this engine parses?
+    ///
+    /// **THE INVARIANT: this answers `Native` for exactly the dialects whose
+    /// arm of [`crate::StructuredAssistantDecoder::consume`] can construct a
+    /// `StructuredAssistantEvent::ToolCall`, and `Prompted` for the rest.**
+    /// It is a MATCH with no default arm, so a new dialect cannot inherit a
+    /// neighbour's answer (root Gotcha 37's shape: a table keyed by X holding
+    /// a property of Y stays right for exactly as long as the mapping happens
+    /// to be injective).
+    ///
+    /// The two are separate matches because they cannot be merged -- Muse
+    /// Glimmer needs its decoder arm for the reasoning split while answering
+    /// `Prompted` here -- so the tie is a `debug_assert!` at every site that
+    /// builds a `ToolCall`, driven by the decoder's own test suite. Adding a
+    /// dialect to one and not the other panics in debug rather than drifting
+    /// quietly.
+    ///
+    /// **`Prompted` IS NOT "TOOLS DO NOT WORK"**, and a caller that reads it
+    /// that way will hide the wrong control. `docs/FORGE_GUARDRAILS.md`'s
+    /// whole first failure mode is a small model emitting a call in a syntax
+    /// its own template never taught it, which is what a `Prompted` dialect
+    /// does BY DEFAULT -- so this is the case a rescue helps most, not the
+    /// case to refuse.
+    pub fn tool_call_support(self) -> ToolCallSupport {
+        match self {
+            // `tool_call_start_id` / `tool_call_end_id` bracket a call, parsed
+            // by the Gemma arm in `structured_decoder/mod.rs`.
+            ChatDialect::Gemma => ToolCallSupport::Native,
+            // Qwen's `<tool_call>` pair, parsed by `QwenToolCallParser`.
+            ChatDialect::ChatMl => ToolCallSupport::Native,
+            // `<|DSML|tool_calls>` in plain text, parsed by
+            // `DeepseekToolCallParser`.
+            ChatDialect::Deepseek => ToolCallSupport::Native,
+            // Harmony's channel recipient plus `<|call|>`, parsed by the
+            // harmony arm.
+            ChatDialect::Harmony => ToolCallSupport::Native,
+            // No tool markup in either table at all: every tool id resolves to
+            // `NO_SUCH_TOKEN_ID` and the decoder's arm is a content-only
+            // passthrough.
+            ChatDialect::Mistral | ChatDialect::Llama3 => ToolCallSupport::Prompted,
+            // **NOT AN OVERSIGHT, AND NOT THE SAME AS THE TWO ABOVE.** This
+            // dialect DOES frame tool calls -- `<atem:function_calls>` on a
+            // `to=<tool>` message -- and this engine has NO PARSER for that
+            // block (`structured_decoder/muse.rs`'s `parse_header`). The
+            // decoder routes it to the REASONING stream on purpose, since
+            // unparseable markup is better hidden there than emitted as the
+            // reply. So a caller never sees a `ToolCall` here, and a rescue
+            // over the reply text will not see the markup either.
+            ChatDialect::MuseGlimmer => ToolCallSupport::Prompted,
+        }
+    }
+
+    /// Why [`ChatDialect::tool_call_support`] is not `Native`, or `None` when
+    /// it is. One wording, so a GUI and a log cannot describe it differently.
+    pub fn tool_call_unsupported_reason(self) -> Option<String> {
+        match self.tool_call_support() {
+            ToolCallSupport::Native => None,
+            ToolCallSupport::Prompted => Some(match self {
+                ChatDialect::MuseGlimmer => "this checkpoint frames tool calls as an \
+                     <atem:function_calls> block, which this engine has no parser for, so \
+                     calls are reported as reasoning rather than handed over. A tool call \
+                     has to be prompted for and parsed by the caller."
+                    .to_string(),
+                _ => format!(
+                    "the {self:?} dialect defines no tool-call markup, so nothing in this \
+                     checkpoint's framing hands a call over. A tool call has to be prompted \
+                     for and recovered from the reply text."
+                ),
+            }),
+        }
+    }
+}
 
 /// Tokenizer wrapper combining Hugging Face's `tokenizers` backend with
 /// chat dialect detection, special token ID mapping, and Jinja chat templates.

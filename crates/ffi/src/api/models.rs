@@ -84,6 +84,29 @@ pub unsafe extern "C" fn ts_probe_json(
     })
 }
 
+/// What a `.gguf` control vector declares: hidden size, covered blocks, and
+/// the mode and architecture the file itself names. No model, no session, no
+/// network -- a vector is ~1.3 MB and this is milliseconds.
+///
+/// A GUI needs this BEFORE it offers a vector against an install, so it can
+/// say "this file is 4096 wide and your model is 5120" rather than letting
+/// `ts_session_open` fail minutes into a load. It reads the same parser
+/// `ts_session_open` reads, so the two cannot disagree about what a file
+/// means.
+#[no_mangle]
+pub unsafe extern "C" fn ts_control_vector_info_json(
+    path: *const c_char,
+    out: *mut *mut c_char,
+) -> c_int {
+    guard_result(|| {
+        let path =
+            strings::required(path, "path").map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let json = models::control_vector_info_json(path)
+            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        strings::emit(&json, out).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
+    })
+}
+
 /// The `(downloadBytes, installBytes)` an install of `alias` will cost, as
 /// JSON, so a GUI can warn about space and show a determinate bar before the
 /// walk starts.

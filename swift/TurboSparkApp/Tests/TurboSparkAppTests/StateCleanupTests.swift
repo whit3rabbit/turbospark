@@ -45,11 +45,34 @@ final class StateCleanupTests: XCTestCase {
             "With nothing selected there is no answer; falling back to `installed.first` made "
                 + "an unrelated install decide the guardrails default.")
 
-        appModel.selected = model(alias: "mg", path: "/models/mg.gturbo", family: "museGlimmer")
-        XCTAssertTrue(
-            appModel.isToolCallingSupported,
-            "And the family list must track the engine's own (museGlimmer, qwen4exp and "
-                + "deepseekV4Flash were missing).")
+        // **THE SECOND HALF OF THIS CASE USED TO ASSERT A FALSEHOOD, and it
+        // is corrected here rather than deleted** (`swift/CLAUDE.md`
+        // Gotcha 42: a red pre-existing test after a state fix is as likely
+        // to be the defect reproducing as a regression).
+        //
+        // It read "the family list must track the engine's own (museGlimmer,
+        // qwen4exp and deepseekV4Flash were missing)" and selected a
+        // museGlimmer install to prove it. museGlimmer is NOT natively
+        // tool-calling: its checkpoint frames calls as an
+        // `<atem:function_calls>` block this engine has no parser for, so
+        // `StructuredAssistantDecoder` reports them as reasoning and no call
+        // is ever handed over. The list was wrong in the direction the case
+        // was pinning.
+        //
+        // There is no family list at all now -- the answer comes from
+        // `info.toolCalling.native`, which is a property of the DIALECT and
+        // therefore unanswerable from an install row. So selecting ANY
+        // family with no session open must still give the permissive default,
+        // which is what state#97 established and is all this can check
+        // offline.
+        for family in ["museGlimmer", "gemma4", "notafamily"] {
+            appModel.selected = model(
+                alias: "m", path: "/models/m.gturbo", family: family)
+            XCTAssertTrue(
+                appModel.isToolCallingSupported,
+                "\(family): with no session there is no answer, and the family must not be "
+                    + "consulted -- it cannot know the checkpoint's dialect.")
+        }
     }
 
     // MARK: - state#99

@@ -91,6 +91,23 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
     public var steeringTarget: Double
     /// Activation gate threshold for steering.
     public var steeringGate: Double
+    /// Named steering directions the operator has registered.
+    ///
+    /// **NOTHING SHIPS A DIRECTION**, so this is empty until someone supplies
+    /// a `.gguf` control vector of their own (`docs/OBLITERATION.md`,
+    /// `scripts/extract_direction.py`). The six `steering*` keys above remain
+    /// the implicit "Custom" preset the Inspector's raw knobs write to, so a
+    /// configuration made before presets existed keeps working.
+    public var steeringPresets: [AppSteeringPreset]
+    /// `id` of the selected preset, or empty for the Inspector's raw knobs.
+    public var activeSteeringPresetID: String
+    /// Whether steering is applied at the next model open.
+    ///
+    /// **OFF BY DEFAULT AND NOT DERIVED FROM "is a path set".** A path is a
+    /// configuration; running the edit is a decision, and separating them is
+    /// what lets the A/B this feature exists for be one click rather than a
+    /// re-typed path.
+    public var steeringEnabled: Bool
     /// Default root directory path for local model installs.
     public var modelsDirectory: String
     /// Whether auto-discovery of LM Studio model repositories is enabled.
@@ -164,6 +181,9 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         steeringLayers: String = "",
         steeringTarget: Double = 0.0,
         steeringGate: Double = 0.0,
+        steeringPresets: [AppSteeringPreset] = [],
+        activeSteeringPresetID: String = "",
+        steeringEnabled: Bool = false,
         modelsDirectory: String = "",
         enableLMStudioDetection: Bool = true,
         lmStudioDirectory: String = "",
@@ -199,6 +219,9 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.steeringLayers = steeringLayers
         self.steeringTarget = steeringTarget
         self.steeringGate = steeringGate
+        self.steeringPresets = steeringPresets
+        self.activeSteeringPresetID = activeSteeringPresetID
+        self.steeringEnabled = steeringEnabled
         self.modelsDirectory = modelsDirectory
         self.enableLMStudioDetection = enableLMStudioDetection
         self.lmStudioDirectory = lmStudioDirectory
@@ -248,6 +271,15 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.steeringLayers = c.decodeLenient(String.self, forKey: .steeringLayers, fallback: "")
         self.steeringTarget = c.decodeLenient(Double.self, forKey: .steeringTarget, fallback: 0.0)
         self.steeringGate = c.decodeLenient(Double.self, forKey: .steeringGate, fallback: 0.0)
+        // ELEMENT-LEVEL tolerance, not just key-level (state#45). Decoding
+        // the array whole would throw on ONE bad preset and `decodeLenient`
+        // would then fall back to `[]`, discarding every good one -- the same
+        // shape as the archive loss `swift/CLAUDE.md` Gotcha 13 records.
+        self.steeringPresets = c.decodeLenientElements(AppSteeringPreset.self, forKey: .steeringPresets)
+        self.activeSteeringPresetID = c.decodeLenient(
+            String.self, forKey: .activeSteeringPresetID, fallback: "")
+        self.steeringEnabled = c.decodeLenient(
+            Bool.self, forKey: .steeringEnabled, fallback: false)
         self.modelsDirectory = c.decodeLenient(String.self, forKey: .modelsDirectory, fallback: "")
         self.enableLMStudioDetection = c.decodeLenient(Bool.self, forKey: .enableLMStudioDetection, fallback: true)
         self.lmStudioDirectory = c.decodeLenient(String.self, forKey: .lmStudioDirectory, fallback: "")
