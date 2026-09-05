@@ -100,6 +100,7 @@ impl RealForwardRunner {
             slot_buffers,
             mapped,
             routed_blobs,
+            routed_blobs_banks,
             moe_offsets,
             routed_layouts,
             router_hist,
@@ -115,6 +116,7 @@ impl RealForwardRunner {
             &self.slot_buffers,
             &self.mapped,
             &self.routed_blobs,
+            &self.routed_blobs_banks,
             &self.moe_offsets,
             &self.routed_layouts,
             &mut self.router_hist,
@@ -140,6 +142,7 @@ impl RealForwardRunner {
                     hidden,
                     heads_per_ngram,
                     token,
+                    0,
                 )?;
             }
 
@@ -155,6 +158,7 @@ impl RealForwardRunner {
                 hidden,
                 (&scratch.normed, 0),
                 true,
+                0,
             )?;
 
             if arch.layer_is_linear(layer) {
@@ -212,6 +216,7 @@ impl RealForwardRunner {
                 hidden,
                 (&scratch.normed, 0),
                 true,
+                0,
             )?;
 
             moe::encode_moe_router(
@@ -224,6 +229,7 @@ impl RealForwardRunner {
                 layer,
                 hidden,
                 num_experts,
+                0,
             )?;
 
             let t_wait = Instant::now();
@@ -243,6 +249,7 @@ impl RealForwardRunner {
                 slot_buffers,
                 mapped,
                 routed_blobs.as_ref(),
+                routed_blobs_banks,
                 moe_offsets,
                 routed_layouts,
                 router_hist,
@@ -254,6 +261,7 @@ impl RealForwardRunner {
                 num_experts,
                 top_k,
                 use_silu,
+                &moe::RoutedSlot::sequential(),
             )?;
 
             gpu::encode_hc_inject_add(
@@ -295,6 +303,7 @@ impl RealForwardRunner {
                 hidden,
                 (&scratch.normed, 0),
                 false,
+                0,
             )?;
             let head_name = "language_model.lm_head.weight";
             encode_gemv_any(

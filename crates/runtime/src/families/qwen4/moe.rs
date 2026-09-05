@@ -19,6 +19,10 @@ use model_io::ResidentIndex;
 
 use crate::families::qwen4::layer_tensor;
 use crate::families::qwen4::state::RealQwen4State;
+// Re-exported (not just imported): `prefill.rs` reaches this type as
+// `moe::RoutedSlot`, matching `families/gemma4/moe.rs`'s own precedent for
+// why it is re-exported rather than imported separately at each call site.
+pub(crate) use crate::moe_prefill_pipeline::RoutedSlot;
 use crate::real_forward_dispatch::{
     encode_gemv_any, encode_moe_phase1_any, encode_moe_phase2_any, router_topk_gemma4,
 };
@@ -36,6 +40,12 @@ use crate::real_forward_utils::f16_slice_to_le_bytes;
 /// GEMV into `encode_moe_layer` itself would read back a stale (or
 /// undefined) buffer, since nothing would have waited for THIS token's
 /// GEMV to finish before `encode_moe_layer`'s readback runs.
+///
+/// `logits_row_offset` is the byte offset into `qwen4.router_logits_f32`
+/// this token's logits land at: `0` on the sequential decode path (single
+/// row), `t * num_experts * 4` inside a chunked-prefill micro-batch, where
+/// the whole layer's `cb1` writes every token's row before ONE host
+/// readback covers them all (`prefill.rs`).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn encode_moe_router(
     context: &mut gpu::MetalContext,
@@ -47,6 +57,7 @@ pub(crate) fn encode_moe_router(
     layer: usize,
     hidden: usize,
     num_experts: usize,
+    logits_row_offset: u64,
 ) -> Result<(), RealForwardError> {
     let gpu_err = RealForwardError::Gpu;
     let router_name = layer_tensor(layer, "mlp.gate.weight");
@@ -79,7 +90,7 @@ pub(crate) fn encode_moe_router(
         ),
         mixed,
         (&qwen4.router_ones, 0),
-        (&qwen4.router_logits_f32, 0),
+        (&qwen4.router_logits_f32, logits_row_offset),
         num_experts as u32,
         hidden as u32,
     )
@@ -90,6 +101,15 @@ pub(crate) fn encode_moe_router(
 /// [`encode_moe_router`] already committed and waited on, expert plan and
 /// bind, the gated shared expert, and the routed phase 1/2 pair. Runs on a
 /// NEW pass (`families/qwen/moe.rs`'s "routed cb").
+///
+/// `slot` names which token of a chunked-prefill micro-batch this call is
+/// for (`RoutedSlot::sequential()` on the decode path: token 0, bank 0,
+/// nothing protected) -- it selects the row `router_logits_f32` is read
+/// from, the bank `scratch.routing_w` is written to, and the slots the
+/// expert-cache plan may not evict because a previous token's command
+/// buffer is still in flight reading them (AGENTS.md Gotcha 64).
+/// Returns the cache slots THIS call bound, for the caller to
+/// hand to the next token's `RoutedSlot::protect`.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn encode_moe_layer(
     context: &mut gpu::MetalContext,
@@ -103,6 +123,7 @@ pub(crate) fn encode_moe_layer(
     slot_buffers: &[Vec<gpu::MetalBuffer>],
     mapped: &MappedResidency,
     routed_blobs: Option<&gpu::RoutedBlobsBuffer>,
+    routed_blobs_banks: &[gpu::RoutedBlobsBuffer],
     moe_offsets: &[gpu::MoeExpertOffsets],
     routed_layouts: &[RoutedLayerLayout],
     router_hist: &mut Option<crate::router_hist::RouterHistogram>,
@@ -114,10 +135,16 @@ pub(crate) fn encode_moe_layer(
     num_experts: usize,
     top_k: usize,
     use_silu: bool,
-) -> Result<(), RealForwardError> {
+    slot: &RoutedSlot,
+) -> Result<Vec<usize>, RealForwardError> {
     let gpu_err = RealForwardError::Gpu;
+    let rw_off = slot.bank * gpu::MAX_STREAMED_EXPERTS * 2;
     let t_router = Instant::now();
-    let router_logits = gpu::read_f32_buffer(&qwen4.router_logits_f32, num_experts);
+    let router_logits = gpu::read_f32_buffer_at(
+        &qwen4.router_logits_f32,
+        slot.token * num_experts,
+        num_experts,
+    );
     let (selected, route_weights) =
         router_topk_gemma4(&router_logits, top_k, &qwen4.per_expert_ones);
     if let Some(hist) = router_hist.as_mut() {
@@ -135,7 +162,15 @@ pub(crate) fn encode_moe_layer(
                 "real qwen4_exp layer {layer} has no packed-expert streamer"
             ))
         })?;
-        let plan = streamer.plan_experts_cached(&selected, &std::collections::HashSet::new());
+        // `slot.protect` is empty on the sequential decode path, so this is
+        // the same call it has always made. Inside a chunk it names the
+        // slots a previous token's in-flight command buffer is reading; the
+        // cache ASSERTS rather than degrades when it cannot honour that plus
+        // the misses (`ExpertCache::plan_if_possible`), so the caller has
+        // already ensured the arithmetic works or retired the buffer first
+        // (`moe_prefill_pipeline::routed_pipeline_banks`'s `banks == 1`
+        // fallback).
+        let plan = streamer.plan_experts_cached(&selected, &slot.protect);
         let (requests, hits) = (plan.experts.len() as u64, plan.hits as u64);
         phases.expert_requests += requests;
         phases.expert_hits += hits;
@@ -157,10 +192,14 @@ pub(crate) fn encode_moe_layer(
         .map(|i| (slots[i], route_weights[i]))
         .collect();
     let mut routing16 = vec![f16::from_f32(0.0); gpu::MAX_STREAMED_EXPERTS];
-    for (slot, &(_, weight)) in ordered.iter().enumerate() {
-        routing16[slot] = f16::from_f32(weight);
+    for (dispatch_slot, &(_, weight)) in ordered.iter().enumerate() {
+        routing16[dispatch_slot] = f16::from_f32(weight);
     }
-    gpu::write_buffer_bytes(&scratch.routing_w, 0, &f16_slice_to_le_bytes(&routing16));
+    gpu::write_buffer_bytes(
+        &scratch.routing_w,
+        rw_off,
+        &f16_slice_to_le_bytes(&routing16),
+    );
 
     let blob_refs: Vec<(&gpu::MetalBuffer, u64)> = if mapped_active {
         let buffer = mapped.buffers[layer]
@@ -180,7 +219,16 @@ pub(crate) fn encode_moe_layer(
             .map(|&(slot, _)| (&layer_slots[slot], 0u64))
             .collect()
     };
-    let routed = routed_blobs.ok_or_else(|| {
+    // Selected by bank, matching `families/gemma4/moe.rs`'s identical match:
+    // a pipelined bank rebinds its OWN argument-buffer object rather than
+    // the one a still-in-flight command buffer's dispatches may still be
+    // reading (the same host-write-while-GPU-reads hazard `routing_w`'s
+    // banking exists for, one buffer over).
+    let routed = match slot.bank {
+        0 => routed_blobs,
+        n => routed_blobs_banks.get(n - 1),
+    }
+    .ok_or_else(|| {
         RealForwardError::Unsupported("install has no routed-blob buffer".to_string())
     })?;
     let offsets = &moe_offsets[layer];
@@ -282,7 +330,7 @@ pub(crate) fn encode_moe_layer(
         routed,
         offsets,
         (&scratch.moe_acts, 0),
-        (&scratch.routing_w, 0),
+        (&scratch.routing_w, rw_off as u64),
         (&qwen4.h1, 0),
         (&qwen4.h2, 0),
         hidden as u32,
@@ -293,5 +341,8 @@ pub(crate) fn encode_moe_layer(
     .map_err(gpu_err)?;
 
     // NO residual add here -- see the module doc. `qwen4.h2` holds `moe(mixed)`.
-    Ok(())
+    // The cache slots this pass BOUND, so the caller can hand them to the
+    // next token as `RoutedSlot::protect` while this command buffer is in
+    // flight (`families/gemma4/moe.rs`'s identical return, one family over).
+    Ok(ordered.iter().map(|&(slot, _)| slot).collect())
 }

@@ -48,6 +48,21 @@ fn ple_conv_shape(wide_dim: usize) -> Result<gpu::GdnShape, RealForwardError> {
 /// into the residual (`docs/QWEN4_PHASE0.md` item 4: `hidden = hidden +
 /// ple(hidden, input_ids)`, a plain add and NOT a hyper-connection
 /// injection -- this sublayer has no `attn_hc`/`mlp_hc` of its own).
+///
+/// `emb_row_offset` is the byte offset into `qwen4.ngram_emb` this token's
+/// dequantized n-gram embedding lands at and is read back from: `0` on the
+/// sequential decode path (single row), `t * hidden * 2` inside a
+/// chunked-prefill micro-batch. **This is not an optimization, it is a
+/// correctness requirement**: `gpu::write_buffer_bytes` below is a HOST
+/// write, executed the instant this function runs, not a GPU dispatch
+/// queued for later -- so it does not respect command-buffer commit order
+/// the way every other per-token buffer in this file does. A micro-batch
+/// that calls this once per token into one uncommitted pass encodes EVERY
+/// token's `key_proj`/`value_proj` GEMV before ANY of them execute, so a
+/// single-row `ngram_emb` would hold only the LAST token's embedding by the
+/// time the GPU actually runs the pass -- every earlier token's PLE output
+/// would be computed from the wrong token's n-gram embedding, silently
+/// (`prefill.rs`).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn encode_ple_layer(
     context: &mut gpu::MetalContext,
@@ -59,6 +74,7 @@ pub(crate) fn encode_ple_layer(
     hidden: usize,
     heads_per_ngram: usize,
     token: i32,
+    emb_row_offset: u64,
 ) -> Result<(), RealForwardError> {
     let gpu_err = RealForwardError::Gpu;
     let hc_count = qwen4.hc_count;
@@ -110,7 +126,7 @@ pub(crate) fn encode_ple_layer(
         .iter()
         .flat_map(|&v| f16::from_f32(v).to_bits().to_le_bytes())
         .collect();
-    gpu::write_buffer_bytes(&qwen4.ngram_emb, 0, &emb_f16);
+    gpu::write_buffer_bytes(&qwen4.ngram_emb, emb_row_offset as usize, &emb_f16);
 
     // --- GPU: key = norm_key(key_proj(emb)).view(C, H) ---
     encode_gemv_any(
@@ -121,7 +137,7 @@ pub(crate) fn encode_ple_layer(
         &name("key_proj.weight"),
         wide_dim,
         hidden,
-        (&qwen4.ngram_emb, 0),
+        (&qwen4.ngram_emb, emb_row_offset),
         (&qwen4.ple_key, 0),
     )?;
     let norm_key_w = norm_view(weights, index, &name("norm_key.weight"), wide_dim)?;
@@ -146,7 +162,7 @@ pub(crate) fn encode_ple_layer(
         &name("value_proj.weight"),
         hidden,
         hidden,
-        (&qwen4.ngram_emb, 0),
+        (&qwen4.ngram_emb, emb_row_offset),
         (&qwen4.ple_value, 0),
     )?;
 

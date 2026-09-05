@@ -22,6 +22,7 @@ use model_io::{ArchConfig, NgramContext, NgramTableLayout, ResidentBuffer, Resid
 
 use crate::families::qwen4::layer_tensor;
 use crate::real_forward::RealForwardError;
+use crate::real_forward_types::MAX_PREFILL_BATCH;
 use crate::real_forward_utils::entry;
 
 /// `(taps - 1) * dilation` for PLE's depthwise conv: `kernel_size=4`,
@@ -39,19 +40,37 @@ pub(crate) struct RealQwen4State {
     /// single entry, converted from the checkpoint's one-based spelling).
     pub(crate) ple_layer: usize,
 
-    /// The residual stream, `hidden_size * hc_count` wide. See the module
-    /// doc for why this is not `DecodeScratch::x`.
+    /// The residual stream, `hidden_size * hc_count` wide, holding
+    /// [`MAX_PREFILL_BATCH`] rows. See the module doc for why this is not
+    /// `DecodeScratch::x` -- it is this struct's own analogue of that field,
+    /// widened for the identical reason (the residual crosses layers, so a
+    /// chunked prefill driver needs every token of a micro-batch to hold its
+    /// own row at once). The sequential decode path uses row 0 only.
     pub(crate) wide_x: gpu::MetalBuffer,
     /// `hc_norm`'s output, wide -- shared by both per-layer hyper-connection
     /// calls and the final mixer, which never overlap within one dispatch
-    /// sequence (commit-order execution, `crates/gpu` Gotcha 8).
+    /// sequence (commit-order execution, `crates/gpu` Gotcha 8). Single-row:
+    /// written and read back within one token's own dispatch sequence,
+    /// never crossing a command-buffer commit to a different token.
     pub(crate) hc_normed: gpu::MetalBuffer,
-    /// `input_mix_weight_down`'s output, `hc_lowrank` wide.
+    /// `input_mix_weight_down`'s output, `hc_lowrank` wide. Single-row, same
+    /// reason as `hc_normed`.
     pub(crate) hc_low: gpu::MetalBuffer,
     /// `input_mix_weight_up`'s output, wide -- this is `w` in `hc_mix`'s
-    /// contract.
+    /// contract. Single-row, same reason as `hc_normed`.
     pub(crate) hc_up: gpu::MetalBuffer,
-    /// `block_inject_weight`'s output, `hc_count` wide.
+    /// `block_inject_weight`'s output, `hc_count` wide, holding
+    /// [`MAX_PREFILL_BATCH`] rows. **Not single-row like its hyper-connection
+    /// siblings above**: `attn_hc`'s inject gate is read by the FIRST
+    /// `encode_hc_inject_add` immediately afterward, within the same token's
+    /// dispatch sequence (safe unwidened), but `mlp_hc`'s inject gate is read
+    /// by the SECOND one only after the layer's `cb1` has committed and a
+    /// new `"routed cb"` pass has begun for the per-token routed loop -- one
+    /// commit later than the write, in a chunked driver where the layer's
+    /// whole `cb1` covers all of a micro-batch's tokens before that commit.
+    /// Widened so every token's mlp-side inject gate survives to be read by
+    /// its own iteration of the routed loop. The sequential path uses row 0
+    /// only for both sublayers.
     pub(crate) hc_inject: gpu::MetalBuffer,
 
     /// `[2 * num_heads * full_head_dim]`: QSA's packed query/gate rows.
@@ -98,19 +117,59 @@ pub(crate) struct RealQwen4State {
     /// (this checkpoint has no `router.scale` either).
     pub(crate) router_ones: gpu::MetalBuffer,
     pub(crate) per_expert_ones: Vec<f32>,
+    /// Holding [`MAX_PREFILL_BATCH`] rows: the host reads back ALL of a
+    /// micro-batch's tokens' router logits in one go, after the layer's
+    /// `cb1` (which encodes every token's router GEMV) commits and waits
+    /// once -- exactly the property `RealGemmaState::router_logits_f32`
+    /// widens for. The sequential path writes and reads row 0 only.
     pub(crate) router_logits_f32: gpu::MetalBuffer,
+    /// `mlp_hc`'s `mixed` output (`hidden` wide), holding [`MAX_PREFILL_BATCH`]
+    /// rows. **Used only by the chunked-prefill driver (`prefill.rs`); the
+    /// sequential decode path (`produce.rs`) is unchanged and continues to
+    /// write `mlp_hc`'s output into `scratch.normed`**, which is safe there
+    /// (only one token is ever in flight) and left alone rather than moved,
+    /// per this repo's own rule that a numerics-verified path earns no
+    /// drive-by edits.
+    ///
+    /// The reason the CHUNKED driver cannot reuse `scratch.normed` the way
+    /// `attn_hc` does: `encode_moe_layer` reads this value one command-buffer
+    /// commit later than it was written (the layer's `cb1` commits, then a
+    /// new `"routed cb"` pass begins per token), so a chunked driver that
+    /// encodes a whole micro-batch's `cb1` before committing would have every
+    /// earlier token's value overwritten by the last token's by the time the
+    /// routed loop runs, were this single-row. Never widen `scratch.normed`
+    /// itself for this either: it is shared `DecodeScratch` state and
+    /// widening it would move every OTHER family's memory-oracle peak for a
+    /// buffer they never touch (matching `wide_x`'s own module-doc argument,
+    /// one field over).
+    pub(crate) moe_x: gpu::MetalBuffer,
     /// The gated shared-expert output, which SEEDS phase 2's accumulator
     /// (`docs/QWEN4_PHASE0.md` item 7, matching `families/qwen/moe.rs`'s
     /// existing choice: FP addition is not associative, so seeding differs
-    /// from appending to a finished routed sum).
+    /// from appending to a finished routed sum). Single-row: consumed by the
+    /// same token's own routed-loop iteration before the next token's plan
+    /// runs, never crossing to a different token's row.
     pub(crate) h1: gpu::MetalBuffer,
     /// Shared + routed, `moe(mixed)`'s final output -- the `out` the layer
-    /// pseudocode injects back into the wide stream.
+    /// pseudocode injects back into the wide stream. Single-row, same
+    /// reason as `h1`: read by the token's own `hc_inject_add` call
+    /// immediately after it is written, within that token's own routed-loop
+    /// iteration.
     pub(crate) h2: gpu::MetalBuffer,
     pub(crate) shared_gate_logit: gpu::MetalBuffer,
 
     /// PLE's concatenated n-gram lookup, `[hidden]` -- host dequant, GPU
-    /// upload.
+    /// upload, holding [`MAX_PREFILL_BATCH`] rows. **Widened for
+    /// correctness, not throughput, and the sharpest instance of this
+    /// pattern in the family**: the upload (`gpu::write_buffer_bytes`) is a
+    /// HOST write that happens the instant `encode_ple_layer` runs, not a
+    /// GPU dispatch queued for later, so it does not respect command-buffer
+    /// commit order at all -- a chunked micro-batch that stayed single-row
+    /// here would have every token's `key_proj`/`value_proj` GEMV read
+    /// whichever token's embedding was written LAST, since none of those
+    /// GEMVs execute until the whole pass commits, by which point every
+    /// token's host write has already landed. The sequential path uses row
+    /// 0 only.
     pub(crate) ngram_emb: gpu::MetalBuffer,
     /// `norm_key(key_proj(emb))`, wide.
     pub(crate) ple_key: gpu::MetalBuffer,
@@ -228,16 +287,18 @@ impl RealQwen4State {
         // ONE TOKEN'S TOP-K MUST FIT THE CACHE OUTRIGHT, independent of
         // AGENTS.md Gotcha 64's `2 * top_k` pipelining margin: that margin
         // protects a PREVIOUS token's still-in-flight slots from an
-        // overlapping plan, which only exists on a CHUNKED prefill driver.
-        // This flow has none (`mod.rs`'s own doc: chunked prefill is
-        // refused by name), so `moe::encode_moe_layer` always plans with an
-        // empty `protect` set and the only hard requirement is that
-        // `top_k_experts` distinct experts fit `expert_cache_slots` slots at
-        // all -- below that, `ExpertCache::plan` cannot select this layer's
-        // routing regardless of pipelining and aborts the process rather
-        // than degrading. A future chunked-prefill driver for this family
-        // would need to raise this to `2 * top_k`, matching every other
-        // family's driver.
+        // overlapping plan, and below it `moe_prefill_pipeline::
+        // routed_pipeline_banks` already degrades to `banks == 1`
+        // (retire-before-plan, an empty `protect` set) rather than relying
+        // on an open-time floor -- exactly the mechanism every other
+        // chunked-capable family's driver relies on instead of raising this
+        // check (none of gemma4, gpt-oss or llama has an equivalent `2 *
+        // top_k` floor in their own `state.rs`). So this stays the outright
+        // "does one token's routing fit the cache at all" backstop:
+        // `top_k_experts` distinct experts must fit `expert_cache_slots`
+        // slots at all, below which `ExpertCache::plan` cannot select this
+        // layer's routing regardless of pipelining and aborts the process
+        // rather than degrading.
         if expert_cache_slots < arch.top_k_experts as usize {
             return unsupported(format!(
                 "qwen4_exp routes {} experts per token, which does not fit a \
@@ -506,11 +567,11 @@ impl RealQwen4State {
             hc_lowrank,
             ple_layer,
 
-            wide_x: halfs(wide_dim),
+            wide_x: halfs(wide_dim * MAX_PREFILL_BATCH),
             hc_normed: halfs(wide_dim),
             hc_low: halfs(hc_lowrank),
             hc_up: halfs(wide_dim),
-            hc_inject: halfs(hc_count),
+            hc_inject: halfs(hc_count * MAX_PREFILL_BATCH),
 
             q_packed: halfs(2 * q_dim),
             attn_gate: halfs(q_dim),
@@ -533,12 +594,14 @@ impl RealQwen4State {
 
             router_ones,
             per_expert_ones: vec![1.0; num_experts],
-            router_logits_f32: context.new_output_buffer((num_experts.max(1) * 4) as u64),
+            router_logits_f32: context
+                .new_output_buffer((num_experts.max(1) * 4 * MAX_PREFILL_BATCH) as u64),
+            moe_x: halfs(hidden * MAX_PREFILL_BATCH),
             h1: halfs(hidden),
             h2: halfs(hidden),
             shared_gate_logit: halfs(1),
 
-            ngram_emb: halfs(hidden),
+            ngram_emb: halfs(hidden * MAX_PREFILL_BATCH),
             ple_key: halfs(wide_dim),
             ple_value: halfs(hidden),
             ple_query: halfs(wide_dim),

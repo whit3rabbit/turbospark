@@ -146,14 +146,22 @@
 //! ## Deliberately unsupported in this cut, refused by name at open
 //!
 //! An image prompt (this checkpoint is a VLM and only the text tower is
-//! ingested, as `qwen3_5` already does), chunked prefill, and speculative
-//! decoding. Sequential decode only; a prompt longer than the indexer
-//! budget runs one `produce` per token through the QSA path above.
+//! ingested, as `qwen3_5` already does) and speculative decoding.
+//!
+//! **Chunked prefill is wired** (`prefill.rs`, since the QSA indexer landed):
+//! `prefill_chunk_real_qwen4` loops the same per-token encoders sequential
+//! decode uses inside a `MAX_PREFILL_BATCH`-token micro-batch, one command
+//! buffer per layer, matching `families/gemma4/prefill.rs`'s shape. A prompt
+//! longer than the indexer budget still runs the QSA path's own per-token
+//! score readback above budget -- that mid-layer commit is unchanged and
+//! costs the same per token whether reached from the chunked driver or from
+//! sequential decode.
 
 pub(crate) mod attn;
 pub(crate) mod hc;
 pub(crate) mod moe;
 pub(crate) mod ple;
+pub(crate) mod prefill;
 mod produce;
 mod state;
 

@@ -227,7 +227,10 @@ impl RealForwardRunner {
     /// (`qwenGdnDense`) as long as this open has no image prompt attached
     /// and no drafter open -- `prefill_chunk_real_qwen_dense`'s two named
     /// refusals (`crates/runtime/CLAUDE.md`'s qwen chunked-prefill Gotcha).
-    /// The MoE half of qwen (`qwenGdnMoe`) still answers `false`.
+    /// The MoE half of qwen (`qwenGdnMoe`) still answers `false`. `qwen4_exp`
+    /// answers `true` unconditionally: unlike the dense qwen flow it has no
+    /// vision or drafter feature to refuse in the first place (`mod.rs`'s own
+    /// scope doc), so there is no open-time condition to check.
     pub fn supports_chunked_prefill(&self) -> bool {
         self.real.is_some()
             || self.real_llama.is_some()
@@ -237,6 +240,7 @@ impl RealForwardRunner {
                 && self.prompt_vision.is_none()
                 && self.real_mtp.is_none()
                 && self.real_dflash.is_none())
+            || self.real_qwen4.is_some()
     }
 
     /// Rows this model's output head writes, i.e. the length every `produce`

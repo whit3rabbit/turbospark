@@ -22,11 +22,21 @@ use crate::real_forward_utils::norm_view;
 ///
 /// `mixed_out` receives the `hidden`-wide mix (typically `scratch.normed`,
 /// which every sublayer already reads its normalized input from).
-/// `qwen4.hc_inject` receives the `hc_count`-wide inject gate when
-/// `has_inject_gate` is true; the caller reads it from there directly
-/// (`gpu::encode_hc_inject_add`'s `inject_w` argument). `has_inject_gate`
-/// is false only for the final `hyper_connection_mixer`, which has no
-/// `block_inject_weight` and returns `mixed` alone.
+/// `qwen4.hc_inject` receives the `hc_count`-wide inject gate at
+/// `inject_row_offset` when `has_inject_gate` is true; the caller reads it
+/// from there directly (`gpu::encode_hc_inject_add`'s `inject_w` argument,
+/// at the same offset). `has_inject_gate` is false only for the final
+/// `hyper_connection_mixer`, which has no `block_inject_weight` and returns
+/// `mixed` alone -- `inject_row_offset` is ignored in that case.
+///
+/// `inject_row_offset` is `0` on the sequential decode path (single row);
+/// inside a chunked-prefill micro-batch it is the calling token's own row
+/// (`t * hc_count * 2`), because `mlp_hc`'s inject gate is read by a SECOND
+/// `encode_hc_inject_add` call one command-buffer commit later than this one
+/// writes it (`RealQwen4State::hc_inject`'s own doc has the full argument):
+/// without a per-token row, a later token's `mlp_hc` call in the same
+/// micro-batch would silently overwrite an earlier token's gate before it is
+/// read back.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn encode_hyper_connection(
     context: &mut gpu::MetalContext,
@@ -39,6 +49,7 @@ pub(crate) fn encode_hyper_connection(
     hidden: usize,
     mixed_out: (&gpu::MetalBuffer, u64),
     has_inject_gate: bool,
+    inject_row_offset: u64,
 ) -> Result<(), RealForwardError> {
     let gpu_err = RealForwardError::Gpu;
     let hc_count = qwen4.hc_count;
@@ -124,20 +135,31 @@ pub(crate) fn encode_hyper_connection(
             hc_count,
             wide_dim,
             (&qwen4.hc_normed, 0),
-            (&qwen4.hc_inject, 0),
+            (&qwen4.hc_inject, inject_row_offset),
         )?;
         gpu::encode_scalar_mul(
             context,
             pass,
-            (&qwen4.hc_inject, 0),
+            (&qwen4.hc_inject, inject_row_offset),
             1.0 / hc_count as f32,
             hc_count as u32,
         )
         .map_err(gpu_err)?;
-        gpu::encode_sigmoid(context, pass, (&qwen4.hc_inject, 0), hc_count as u32)
-            .map_err(gpu_err)?;
-        gpu::encode_scalar_mul(context, pass, (&qwen4.hc_inject, 0), 2.0, hc_count as u32)
-            .map_err(gpu_err)?;
+        gpu::encode_sigmoid(
+            context,
+            pass,
+            (&qwen4.hc_inject, inject_row_offset),
+            hc_count as u32,
+        )
+        .map_err(gpu_err)?;
+        gpu::encode_scalar_mul(
+            context,
+            pass,
+            (&qwen4.hc_inject, inject_row_offset),
+            2.0,
+            hc_count as u32,
+        )
+        .map_err(gpu_err)?;
     }
     Ok(())
 }
