@@ -133,7 +133,7 @@ impl LogitProducer for RealForwardRunner {
         }
         let back = cursor - keep;
         if back > 0 {
-            if self.real_qwen.is_some() {
+            if self.real_qwen.is_some() || self.real_qwen4.is_some() {
                 return 0;
             }
             if back > self.kv.max_safe_rewind() {

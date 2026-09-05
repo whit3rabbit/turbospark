@@ -479,20 +479,27 @@ impl RealQwen4State {
     }
 
     /// Rewinds the recurrent state to empty context: the GDN chain's delta
-    /// rule and conv tail, and the PLE n-gram context.
+    /// rule and conv tail, the PLE n-gram context, AND the PLE dilated
+    /// conv's own tail.
     ///
-    /// **THE DILATED CONV'S OWN TAIL IS NOT RESET HERE, AND THAT IS A GAP
-    /// RATHER THAN A DECISION.** It is zeroed once at open and never again;
-    /// a caller resetting mid-process (a new conversation in the same
-    /// session) leaks the previous generation's PLE history into the next
-    /// one's first `PLE_CONV_HISTORY` tokens. `families/qwen/state.rs`'s
-    /// `reset` has the same shape of gap closed for GDN by routing through
-    /// `self.gdn.reset()`; this one needs the equivalent zero-fill added
-    /// when this family gains a caller that actually resets between
-    /// generations (today nothing does, since Phase 3 has no chunked
-    /// prefill or session pooling wired for this family yet).
+    /// **THIS WAS THE qwen4_exp QUALITY GATE'S DETERMINISM BUG
+    /// (`docs/QWEN4_EXP.md`'s "The quality gate is BLOCKED" section).** The
+    /// module doc used to claim the conv tail's staleness across `reset()`
+    /// was inert because "today nothing [resets mid-process]" -- that claim
+    /// was false the moment `crates/bench`'s quality gate called `reset()`
+    /// between two back-to-back warm generations on one open runner, which
+    /// is exactly the mid-process reset the old comment said did not exist
+    /// yet. Leaving `ple_conv_tail` stale meant generation 2 started PLE's
+    /// dilated conv from generation 1's leftover history instead of from
+    /// zero, diverging the wide residual from the very first PLE-layer
+    /// token onward and cascading into a completely different greedy
+    /// digest -- while a fresh process always starts from the zeros
+    /// `RealQwen4State::build` writes, which is why cross-process
+    /// generation reproduced exactly throughout that investigation.
     pub(crate) fn reset(&mut self) {
         self.gdn.reset();
         self.ngram_context = NgramContext::new(self.ngram_context_len, self.eos_token_id);
+        let tail_len = self.ple_conv_tail.length() as usize;
+        gpu::write_buffer_bytes(&self.ple_conv_tail, 0, &vec![0u8; tail_len]);
     }
 }

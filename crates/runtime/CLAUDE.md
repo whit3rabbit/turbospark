@@ -1221,3 +1221,42 @@ cargo test -p turbospark-runtime
     nothing to overwrite, and reporting an eviction for it would train an
     operator sizing `--session-slots` to distrust a signal that fires on
     every cold pool.
+
+33. **`try_reuse_prefix`'S RECURRENT-STATE GUARD NAMES ONE QWEN FAMILY AND
+    NOT THE OTHER, AND THE SECOND ONE HAS THE IDENTICAL HAZARD.** Found
+    2026-09-04 while investigating `qwen4_exp`'s quality-gate determinism
+    failure (see `docs/QWEN4_EXP.md`'s "The quality gate is BLOCKED"
+    section; this gotcha is a real, separate gap the investigation
+    surfaced, NOT the cause of that failure). The rewind guard at
+    `real_forward_traits.rs`'s `back > 0` branch refuses any rewind when
+    `self.real_qwen.is_some()`, for the reason Gotcha 30 states: gated
+    DeltaNet folds history into a fixed-size accumulator through a
+    non-invertible update, so there is no going back without a `RollbackPoint`
+    snapshot, and rewinding the KV alone would leave that accumulator
+    describing tokens the KV no longer holds -- fluent wrong output, not an
+    error. `qwen4_exp` carries the SAME kind of recurrent state
+    (`RealQwen4State::gdn: gpu::GdnStateManager`, reset the same two-line
+    way `families/qwen4/state.rs::reset` handles it), and the guard has no
+    `self.real_qwen4.is_some()` arm beside the one it has.
+
+    **This is inert TODAY because prefix reuse is opt-in and nothing turns
+    it on for this family yet.** `prefix_reuse_enabled` defaults `false` at
+    open (`real_forward_open.rs`), `crates/bench`'s openers never call
+    `set_prefix_reuse`, and this session found no other caller wired to this
+    family either -- so `try_reuse_prefix` returns 0 on every path reaching
+    it today regardless of this gap, and `reset()` runs unconditionally.
+    That is also how this gotcha was distinguished from the quality gate's
+    real bug: the same investigation confirmed `reset()` executes before
+    every generation in that gate's flow, which ruled prefix reuse OUT as
+    the cause there.
+
+    **The gap becomes live the moment ANY caller enables prefix reuse for
+    `qwen4_exp`** -- a future `--chat` REPL wiring, session pooling
+    (Gotcha 32), or a benchmark opting in for its own reasons. At that
+    point a shallow `keep` with `back > 0` would rewind the KV while
+    leaving the GDN accumulator exactly where the discarded generation left
+    it, which is Gotcha 30's failure mode arriving on the family the guard
+    forgot. Add `|| self.real_qwen4.is_some()` to the existing check (or
+    generalize both to one predicate over "families with recurrent state
+    and no rollback snapshot") before wiring prefix reuse to this family for
+    any reason.
