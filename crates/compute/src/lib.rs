@@ -24,6 +24,9 @@ pub mod hyper_connection;
 pub mod moe;
 /// `qwen4_exp`'s PLE (per-layer n-gram embedding) gate (PORT-LOCAL).
 pub mod ple;
+/// `qwen4_exp`'s QSA block indexer: pooling, scoring and top-k block
+/// selection (PORT-LOCAL, groundwork -- no decode flow reads this yet).
+pub mod qsa_indexer;
 /// Quantization and dequantization primitives for affine INT4 and INT8 formats.
 pub mod quant;
 /// Quantization and dequantization primitives for the affine 1-bit format.
@@ -61,6 +64,7 @@ pub use gdn::{gated_norm_sigmoid, sigmoid, silu, softplus, GdnDims, GdnReference
 pub use hyper_connection::{hc_inject_add, hc_mix};
 pub use moe::{apply_streamed_routed, gelu_tanh, run_ffn};
 pub use ple::{dequant_ngram_row, dilated_conv_step, ple_gate};
+pub use qsa_indexer::{pool_blocks_mean, score_blocks, select_blocks};
 pub use quant::{
     bf16_to_f32, dequant_int4_gemv, dequant_int8_gemv, dequantize_int4_affine,
     dequantize_int8_affine, embed_lookup_int4, embed_lookup_int8, f32_to_bf16,

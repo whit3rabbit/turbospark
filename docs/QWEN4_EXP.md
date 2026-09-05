@@ -325,6 +325,276 @@ in `produce.rs` was never the problem.
 throughput row can be written once someone wants one -- see "What's next"
 below.
 
+## MTP speculative decoding: an ingestible head does exist (2026-09-04)
+
+The prior handoff flagged an open question ahead of any wiring work: does an
+MTP-ingestible head artifact exist, published, for the REAP-288 checkpoint
+specifically, given that public MLX conversions of Qwen3.8-Flash-Next
+generally drop the `mtp.*` tensors? **It does.** Verified directly against
+the Hugging Face API (`/api/models/...`) and the repo's raw `README.md`, not
+via a summarized fetch:
+
+`sh0wie/Qwen3.8-Flash-Next-MTP-Drafter-MLX-bf16` (same publisher as our
+`qwen4-reap288` install, created 2026-08-27, last modified 2026-09-03) is a
+standalone drafter: "the 31 `mtp.*` tensors of `Qwen/Qwen3.8-Flash-Next`,
+taken from the official bf16 release and repacked in the standalone drafter
+layout with no other change." `model.safetensors`, BF16, 2,607,150,848
+parameters (~4.9 GB on disk, ~3 GB if quantized to 8-bit at load, matching
+the repo's own claim that 8-bit quantization "matches the published 8-bit
+head to the last bit"). `config.json` names its architecture
+`qwen4_exp_mtp`. License is Qwen Community License 1.0, inherited from the
+base model -- not a standard open-source license, worth knowing before
+anyone scripts an automated pull of it.
+
+**Compatibility is stated as architectural, not weight-dependent**, and the
+repo's own install instructions use our exact checkpoint alias as the
+worked example:
+
+```
+pmlx serve --model sh0wie/Qwen3.8-Flash-Next-REAP-288-MLX-4bit
+```
+
+("pmlx" is a third-party serving stack, `gethamster/pmlx` -- not this
+project's own tooling, and not `slotstream`'s. It is the vehicle the
+drafter's README happens to demonstrate against, not a dependency of the
+artifact itself: the artifact is a plain safetensors file of named tensors,
+attachable by anything that can read one.)
+
+**This is a second, distinct MTP artifact from the one `slotstream` fetches**
+(README.md's "Compared to slotstream" section: a 1.5 GB `mtp.safetensors`
+bundled with the full 512-expert `pipenetwork` checkpoint). Both trace back
+to the same 31 `mtp.*` tensors in Qwen's official bf16 release, but the
+size difference (1.5 GB against this repo's 4.9 GB BF16 / ~3 GB at 8-bit) was
+not reconciled here -- plausibly a different quantization width on
+slotstream's side, but that is an inference, not a read fact, and should be
+verified against slotstream's own artifact before being asserted anywhere.
+
+**What the drafter's own README says about when it helps, unverified by
+this port and worth re-checking before relying on it**: on the 288-expert
+pack (this checkpoint's own expert count), it measured 61.9 -> 69.2 tok/s
+warm-server and 51.5 -> 64.9 tok/s (+25.9%) via its own benchmark script,
+both 2026-09-03, on an M4 Max 128 GB -- a different memory tier than this
+machine's 36 GB, so the absolute tok/s numbers do not transfer even if the
+multiplier does. That +25.9% land inside, but not matching, the user's own
+"1.24-1.33x" framing for slotstream's number; the two are DIFFERENT measurements
+(different artifact, different engine, different chip) and should not be
+read as confirming each other. Three caveats from the same README, all
+unverified here: the drafter is reported to *cost* speed rather than save it
+on the full 512-expert pack (verifying against a split expert store costs
+about twice what it costs against a pruned one); acceptance-per-round falls
+as resident experts shrink (2.04 at 288 experts, 1.96 at 240, 1.53 at 200,
+all from its own benchmark script); and it falls back to plain decoding past
+~8,192 tokens of context on every pack it measured -- moot for this port
+today since `qwen4_exp` is capped at 2,048 until the QSA indexer exists (see
+below), but relevant the moment that cap is lifted.
+
+**What this resolves and what it does not.** It resolves the standing
+question of whether wiring MTP for this family would be blocked on someone
+publishing a head -- it would not be. It does not change anything about
+`families/qwen4/mod.rs`'s own scope statement, which is about this port's
+code rather than about artifact availability: there is still no MTP prefix
+constant and nothing under `mtp.` is read for this family (line ~154-156).
+
+**CORRECTION to this section's own first draft: wiring is NOT a
+`families/qwen/mtp.rs` reuse, and this doc already had the fact that says
+so.** Item 8 of THIS document ("The MTP head") did the dataflow fact-finding
+for these exact `mtp.*` tensors during Phase 0, from mlx-vlm's reference
+(`mlx_vlm/speculative/drafters/qwen4_exp_mtp/`), and it says plainly: "the
+head DOES carry hyper-connections... and is a QSA layer with a full
+512-expert MoE, which makes it far from free -- this is not the
+~1.5%-of-a-pass drafter `docs/MTP.md` records for `qwen3_5`." That sentence
+was already sitting in this file when this section's first draft was
+written and should have been read before writing "most likely following the
+pattern in `families/qwen/mtp.rs`" -- it is not that pattern.
+`families/qwen/mtp.rs` reuses the trunk's DENSE FFN and full-attention
+encoders wholesale because `qwen3_5`'s dense flow has no MoE and no
+hyper-connections to reuse; this family's trunk has both, and its MTP head
+carries a COMPLETE decoder layer of its own: hyper-connections (both
+sublayers, plus its own final `hyper_connection_mixer`), a QSA attention
+layer (packed `q_proj`, per-head norms, an unused-below-budget indexer, same
+shape as the trunk's mask-1 layers), and a full MoE with its OWN 512
+experts, shared expert, and router -- separate from the trunk's pruned
+288-expert table, not a subset or a reuse of it.
+
+Independently confirmed against `sh0wie/Qwen3.8-Flash-Next-MTP-Drafter-MLX-bf16`'s
+own safetensors header (fetched as a partial HTTP range read, ~8 MiB, not
+the 4.9 GB body) rather than taken on the repo's word: all 31 tensors match
+item 8's inventory name-for-name once the `mtp.` prefix is dropped
+(`fc_embedding.weight [2560,2560]`, `fc_hidden.weight [2560,2560]`,
+`hyper_connection_mixer.*`, `layers.0.attn_hyper_connection.*`,
+`layers.0.mlp_hyper_connection.*`, `layers.0.self_attn.{q,k,v,o}_proj`
+plus `q_norm`/`k_norm`, `layers.0.self_attn.indexer.*`,
+`layers.0.mlp.{gate,switch_mlp.{gate,up,down}_proj,shared_expert*}`,
+`pre_fc_norm_embedding`, `pre_fc_norm_hidden`), and its own `config.json`
+independently states `num_experts: 512`, `indexer_budget: 2048` (same
+budget as the trunk, so the same below-budget-QSA-is-dense-attention
+argument the trunk's mod.rs makes applies to the head's attention too),
+`mtp_num_hidden_layers: 1`, and `layer_types: ["full_attention"]` (no GDN,
+no PLE in the head -- matching item 8's "does NOT carry PLE"). So the
+standalone repo is a faithful, unmodified extraction of the official
+checkpoint's own `mtp.*` tensors, not a re-derived or re-trained artifact --
+this is worth having checked rather than assumed, since a repacked artifact
+silently diverging from its stated source is exactly `docs/QWEN4_EXP.md`'s
+own recurring failure class (Gotcha 62's rule, applied to a downloaded file
+rather than a written claim).
+
+**What this means for scoping the work, concretely.** Wiring this head is a
+materially bigger lift than `qwen3_5`'s MTP support, in three ways none of
+which `families/qwen/mtp.rs` needed to solve: (1) a repack path for a
+SECOND artifact carrying its own MoE section -- `crates/repack` refuses
+`Qwen4Exp` entirely today (GGUF ingestion section above), and even once the
+trunk's own safetensors intake is the model, this artifact's shape (no
+n-gram table, no PLE, a single QSA+MoE layer) needs its own manifest
+handling, not a reuse of the trunk's; (2) a SECOND, independent expert
+cache/streamer for the head's 512 experts, unrelated to the trunk's pruned
+288-expert one -- this is not a shared resource the two dataflows can pool,
+and doubling the resident/streaming machinery for one MoE layer is a real
+memory and complexity cost the `qwen3_5` head never had to pay; (3) the
+fusion is a BROADCAST ADDITION over the four hyper-connection streams
+(`fused = proj_embed[.., None, :] + proj_hidden`, item 8's "The fusion, and
+why `docs/MTP.md` is the wrong prior for it"), not the concatenation
+`qwen3_5`'s single `fc` tensor performs -- a different failure mode from the
+one Gotcha 16 warns about for that family, and `pre_fc_norm_hidden` is a
+PLAIN full-width (10240) norm, a THIRD norm shape in this family's own
+taxonomy (item 9) that appears nowhere else. Read `crates/runtime/CLAUDE.md`
+Gotcha 16 for the GENERAL traps that recur on any MTP head (priming before
+first draft, rewind on rollback, centered-vs-plain norm dispatch getting
+mixed up costing 0/7168 accepted once already) -- but do not read it as a
+template to copy; the shape being reused this time is `families/qwen4/`'s
+own `hc.rs`/`attn.rs`/`moe.rs` functions parameterized onto a second tensor
+prefix, not `families/qwen/`'s.
+
+**Economic viability is still the OPEN question item 13.1 of this document
+already flagged, and it has not been re-derived since.** "The head is a
+full QSA + 512-expert MoE layer... a recurrent trunk makes a rejected
+batched round expensive" (item 13). `sh0wie`'s own drafter README (this
+section, above) reports it as a net win only against a PRUNED target pack
+and a net LOSS against the full 512-expert one, with acceptance-per-round
+falling as target residency shrinks -- none of which has been checked
+against THIS engine's own batched-verify cost model (Gotcha 19 in
+`crates/runtime/CLAUDE.md`: a rejected round on a recurrent trunk must
+snapshot and replay, and the probability of paying that rises sharply with
+block depth). Before wiring, re-derive whether a head this expensive clears
+the bar on THIS engine's rollback cost, not just on `pmlx`'s.
+
+The `qwen4-reap288` catalog row's notes previously said "no speculative
+drafter exists for this checkpoint... no MTP-ingestible head in any
+published MLX conversion" -- written before this repo was found, now
+corrected in `crates/catalog/src/models.json`.
+
+## QSA indexer: repack groundwork was already done, a CPU reference now exists (2026-09-04)
+
+Before writing any code, checked what "repack groundwork" for the indexer
+(item 1 of the prior handoff's "Outstanding work") would actually mean, since
+`families/qwen4/mod.rs`'s own doc says "NO INDEXER CODE IN THIS PORT AT ALL".
+**It turned out the repack half was already complete, from Phase 1 bring-up,
+and verified against real bytes rather than assumed:**
+
+- `crates/model-io/src/arch_baselines/qwen.rs`'s `qwen4_exp_125b_a6b()`
+  already carries every `CompressedAttentionConfig` field this checkpoint's
+  indexer needs (`index_n_heads: 4`, `index_kv_heads: 1`, `index_head_dim:
+  128`, `index_top_k: 512`, `index_budget: 2048`, `csa_compress_rate: 4`),
+  matching `config.json` field for field -- the module's own doc says so
+  outright: "The indexer fields are RECORDED and not implemented."
+- `crates/repack`'s `classify_for_family` already classifies
+  `self_attn.indexer.{index_qk_proj,q_layernorm,k_layernorm}.weight` as
+  resident for every one of the 12 QSA layers, with a comment stating the
+  reason: "Carried rather than dropped: they are tiny, and an install
+  missing them would need a re-stream the day QSA lands."
+- **Verified this is not just a test fixture's claim**: `strings -a` against
+  `~/.turbospark/models/qwen4-reap288.gturbo/model_weights.bin` finds all 36
+  expected tensor names (12 layers x 3 tensors), confirming the indexer
+  weights are ALREADY resident in the real install on this machine today,
+  streamed there during Phase 1/3 bring-up with no further repack work
+  needed. `docs/QWEN4_PHASE0.md` section 5's own inventory anticipated
+  exactly this list.
+
+So there is no repack groundwork left to do; the missing piece is entirely
+on the decode/GPU side, where genuinely nothing exists: `Dsv4StateManager`
+(`crates/gpu/src/dsv4_state.rs`) looked like a candidate to build on and is
+not one -- it is DeepSeek-V4-Flash's own unwired memory-allocation
+scaffolding (its CSA/HCA scheme, with LoRA ranks and a two-rate compress
+split this checkpoint's QSA has none of), with no decode flow, no indexer
+scoring, and no block-selection kernel of any kind. `docs/QWEN4_PHASE0.md`'s
+own "`QsaCacheManager` decision stands" is a plan, not an implementation --
+nothing under that name exists in this port.
+
+**What this session added, following this port's own established
+discipline of a CPU reference before any Metal kernel** (the precedent
+`crates/compute/src/hyper_connection.rs` and `ple.rs` both set for this
+same family): `crates/compute/src/qsa_indexer.rs`, covering the
+BLOCK-POOLING, SCORING and SELECTION steps of section 5's pseudocode --
+`pool_blocks_mean` (mean-pools consecutive raw key rows into one pooled row
+per complete block, in FP32 as the spec requires, leaving the ragged tail
+untouched), `score_blocks` (`relu(sum over heads of q . pooled) /
+sqrt(head_dim)`, against the ONE shared pooled key every head reads since
+`index_kv_heads == 1`), and `select_blocks` (top-`min(block_topk,
+num_complete_blocks)` block selection plus the always-selected ragged
+tail, returning a boolean mask). 9 tests, each mutation-checked individually
+(reddens only its own case; `cargo test -p turbospark-compute --lib
+qsa_indexer` is the target). The below-budget exactness argument
+(`docs/QWEN4_PHASE0.md`'s own Q1 proof: `floor(visible/4) <= 512` selects
+every block) is re-derived as a property test at the exact boundary (2,051
+visible tokens) with DELIBERATELY ADVERSARIAL scores, so the test cannot
+pass by the scores happening to favor the right cutoff.
+
+**UPDATE, same day: the RoPE/norm question above is now RESOLVED, from
+source rather than guessed.** Read `Blaizzy/mlx-vlm`'s actual reference
+(`mlx_vlm/models/qwen4_exp/language.py` and `.../qwen3_5/language.py` at
+`d68a25e71e84`, `mlx_vlm/models/rope_utils.py` at `3db7f1d3402f`) rather
+than re-deriving from the pseudocode alone, the way `docs/QWEN4_PHASE0.md`'s
+own PLE section had to for its hash multiplier pairing. Two facts settle it
+completely:
+
+- **The norm is [`rms_norm_centered`](../crates/compute/src/rms_norm.rs),
+  applied per head.** `docs/QWEN4_PHASE0.md` item 9 already listed the
+  indexer's `q_layernorm`/`k_layernorm` as CENTERED; this just connects
+  that fact to the function.
+- **The RoPE is `rope_neox_subdim` at `rotary_dim = 64`, `theta = 1e7` --
+  the SAME two numbers the trunk's own QSA attention already dispatches --
+  because the reference's `Qwen4ExpQSAIndexer` is constructed with the
+  enclosing attention module's `rotary_emb` PASSED IN
+  (`Qwen4ExpQSAIndexer(config, self.rotary_emb)`): it is the identical
+  Python object, not merely the same convention by coincidence.** That
+  object is built as `Qwen3_5RotaryEmbedding(int(head_dim *
+  partial_rotary_factor), base=rope_theta, style="interleaved")`, and
+  despite mlx-vlm's own confusing label for it (their "interleaved" is
+  unrelated to this port's use of that word for mrope section handling),
+  tracing `style="interleaved"` through `apply_multimodal_rotary_pos_emb`
+  lands on `_apply_interleaved_rotary_pos_emb_axis1`, which is exactly
+  `rope_neox_subdim`'s contract (pair `i` with `i + rotary_dim/2`, confined
+  to the first `rotary_dim` elements) and NOT `rope_paired`'s (pair `2k`
+  with `2k+1`). Independently confirmed on this port's own side: the
+  trunk's already-verified quality gate (frozen perplexity 8.7224) is what
+  it measured dispatching `rope_neox_subdim` for this exact checkpoint, so
+  the shared object's convention is checked against real numbers here too,
+  not only read off the reference.
+
+`crates/compute/src/qsa_indexer.rs`'s module doc now states this as
+resolved fact with full citations, and a new test
+(`the_full_indexer_chain_composes`) proves the whole chain -- per-head
+centered norm, RoPE (one call per block, since pooled keys do not share a
+position), pool, score, select -- composes correctly using ONLY functions
+this crate already ships, against a hand-checked (Python cross-computed)
+example. **That test's first draft had a real, mutation-caught gap**: at
+`rotary_dim = 2` there is only one rotation pair, so `rope_neox_subdim`'s
+and `rope_paired`'s pairings coincide by construction and a
+wrong-RoPE-function mutation survived silently -- AGENTS.md Gotcha 23's
+self-relative-fixture shape, on a fixture rather than on a whole file.
+Widening to `rotary_dim = 4` (two pairs) made the two conventions
+genuinely diverge, and the same mutation now reddens exactly that one test.
+
+No new kernel-shaped function was needed for norm or RoPE -- both already
+exist and are simply called correctly now. What remains before any of this
+reaches a Metal kernel or a real tensor: the actual GPU dispatch (the CPU
+reference's per-block RoPE loop is a real cost model to carry forward,
+since pooled keys do not share one position the way every other RoPE call
+site in this port's kernels currently assumes), and reading
+`self_attn.indexer.*` at `open()` for the first time.
+
+The `qwen4-reap288` catalog row's notes now also states this in miniature
+so a reader does not have to re-derive it from the module doc.
+
 ## What's next
 
 1. ~~A memory oracle~~ -- **DONE** (2026-09-04, above).
@@ -355,3 +625,32 @@ below.
    measure against, and the tok/s spread item 3 records is itself an
    argument for asking: a wider cache should narrow that spread as well as
    raise the floor.
+5. ~~Resolve whether an MTP head artifact exists for REAP-288~~ -- **DONE**
+   (2026-09-04, above): it does, `sh0wie/Qwen3.8-Flash-Next-MTP-Drafter-MLX-bf16`,
+   confirmed byte-for-byte matching this document's own item 8 inventory.
+   Wiring it is still unstarted, and is NOT a `families/qwen/mtp.rs` reuse
+   (that assumption was written into this section's first draft and
+   corrected the same session, above): the head is a complete QSA + 512-expert
+   MoE decoder layer with its own hyper-connections, needing (a) a repack path
+   for a second artifact with its own MoE section, (b) a second, independent
+   expert cache separate from the trunk's pruned 288-expert one, and (c) a
+   broadcast-addition fusion, not `qwen3_5`'s concatenation. Read this
+   section's "What this means for scoping the work" paragraph before
+   estimating the size of this, and re-derive item 13's economic-viability
+   question (a recurrent trunk's rollback cost against a head this
+   expensive) before committing to build it.
+6. **QSA indexer groundwork, further along than "partially" (2026-09-04,
+   both entries above).** Repack was already complete from Phase 1
+   (verified against real bytes this session). A CPU reference for block
+   pooling, scoring and top-k selection exists
+   (`crates/compute/src/qsa_indexer.rs`), and the norm/RoPE convention that
+   was open earlier the same day is now RESOLVED from source (mlx-vlm's
+   indexer shares the trunk attention's own `rotary_emb` object, so it is
+   `rms_norm_centered` plus `rope_neox_subdim` at `rotary_dim=64`,
+   `theta=1e7` -- both already-existing functions in this crate, no new
+   kernel-shaped CPU reference needed) and composed end to end in a new
+   test. Still open: the actual Metal kernel (the per-block RoPE loop is a
+   real dispatch-shape cost to carry forward, since pooled keys do not
+   share one position), then reading `self_attn.indexer.*` at open and
+   wiring it into `families/qwen4/attn.rs`'s QSA-as-dense-attention path so
+   it becomes real block-sparse attention above the 2,048-token budget.
