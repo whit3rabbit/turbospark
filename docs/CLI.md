@@ -227,6 +227,8 @@ while a generation is in flight. `/v1/responses` is stateless: it refuses
 | `--speculative-drafter` | `auto\|mtp\|dflash` | `auto` | same as `turbospark-check`'s |
 | `--guardrails` | `on\|off` | `on` | tool-call rescue, argument validation, one retry (see [`docs/FORGE_GUARDRAILS.md`](FORGE_GUARDRAILS.md)); a request carrying `tools` is BUFFERED rather than streamed while this is on, since a verdict needs the whole turn -- a request without tools streams exactly as it always did |
 | `--reasoning` | `off\|low\|medium\|high\|xhigh` | `off` | default reasoning effort when a request omits `reasoning_effort` |
+| `--system` | text, repeatable | none | default system prompt for requests that carry no `system` or `developer` message of their own. Repeats join with a newline. THE CALLER WINS: a request that sends its own is left exactly as it arrived, so the two can never produce two system turns (which three of the five fallback renderers refuse outright). Applied at the one point every wire format funnels through, so it reaches `/v1/chat/completions`, `/v1/messages`, `/v1/responses` and `/api/chat` alike, and is counted by `/v1/messages/count_tokens`. `/v1/completions` renders no chat template and is unaffected |
+| `--system-file` | path | none | the same prompt read from a file, for one too long to sit on a command line. Mutually exclusive with `--system`; an empty file is refused rather than read as "no default" |
 | `--steering` | path to `.gguf` | none | see [Steering (obliteration)](#steering-obliteration) |
 | `--steering-mode` | `ablate\|add\|clamp\|renorm` | `ablate`, or the file's own | as above |
 | `--steering-scale` | float | `1.0` | as above |

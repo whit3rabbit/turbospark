@@ -540,3 +540,90 @@ fn session_slots_above_one_needs_prefix_reuse_on() {
     ])
     .is_ok());
 }
+
+// ---------------------------------------------------------------------------
+// `--system` / `--system-file`
+
+#[test]
+fn system_flag_defaults_to_absent_and_joins_repeats_with_a_newline() {
+    let d = parse(&["--model", "/tmp/m"]).unwrap().unwrap();
+    assert_eq!(d.default_system, None);
+
+    let one = parse(&["--model", "/tmp/m", "--system", "be brief"])
+        .unwrap()
+        .unwrap();
+    assert_eq!(one.default_system.as_deref(), Some("be brief"));
+
+    // Repeatable with the same grammar `turbospark-check --system` has, so a
+    // multi-line prompt can be written without embedding a newline in a shell
+    // argument.
+    let many = parse(&[
+        "--model", "/tmp/m", "--system", "be brief", "--system", "and kind",
+    ])
+    .unwrap()
+    .unwrap();
+    assert_eq!(many.default_system.as_deref(), Some("be brief\nand kind"));
+}
+
+/// An empty prompt is refused rather than treated as "no default". A caller
+/// who named the flag meant to set one, and serving every request unprompted
+/// is the failure they would not notice.
+#[test]
+fn an_empty_system_prompt_is_refused() {
+    let err = parse(&["--model", "/tmp/m", "--system", "   "]).unwrap_err();
+    assert!(err.contains("--system"), "{err}");
+}
+
+#[test]
+fn system_file_reads_the_prompt_from_disk() {
+    let dir = std::env::temp_dir().join(format!("ts-system-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("prompt.txt");
+    // The trailing newline a text editor leaves is trimmed, so the same prompt
+    // written two ways renders to the same prompt.
+    std::fs::write(&path, "answer only in haiku\n").unwrap();
+
+    let p = parse(&["--model", "/tmp/m", "--system-file", path.to_str().unwrap()])
+        .unwrap()
+        .unwrap();
+    assert_eq!(p.default_system.as_deref(), Some("answer only in haiku"));
+
+    std::fs::write(&path, "\n  \n").unwrap();
+    let err = parse(&["--model", "/tmp/m", "--system-file", path.to_str().unwrap()]).unwrap_err();
+    assert!(err.contains("empty"), "{err}");
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn a_missing_system_file_is_refused_by_name() {
+    let err = parse(&["--model", "/tmp/m", "--system-file", "/tmp/no/such/prompt"]).unwrap_err();
+    assert!(err.contains("/tmp/no/such/prompt"), "{err}");
+}
+
+/// Two spellings of one setting. Resolving a conflict silently is the shape
+/// this parser already refuses for an orphan steering parameter.
+#[test]
+fn system_and_system_file_together_are_refused() {
+    let err = parse(&[
+        "--model",
+        "/tmp/m",
+        "--system",
+        "be brief",
+        "--system-file",
+        "/tmp/whatever",
+    ])
+    .unwrap_err();
+    assert!(err.contains("--system-file"), "{err}");
+}
+
+/// Both flags appear in the usage text, or an operator cannot discover them.
+#[test]
+fn the_usage_text_documents_both_system_flags() {
+    assert!(
+        super::args::USAGE.contains("--system "),
+        "{}",
+        super::args::USAGE
+    );
+    assert!(super::args::USAGE.contains("--system-file"));
+}

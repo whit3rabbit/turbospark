@@ -64,6 +64,7 @@ fn open_real_model(args: &ModelArgs) -> Result<Arc<dyn turbospark_server::ChatMo
         args.steering.clone(),
         args.load_policy,
         args.reasoning,
+        args.default_system.clone(),
         args.prefix_reuse,
         args.session_slots,
     )?;
@@ -148,6 +149,16 @@ fn open_real_model(args: &ModelArgs) -> Result<Arc<dyn turbospark_server::ChatMo
     }
     if args.reasoning != tokenizer::ReasoningEffort::Off {
         eprintln!("  default reasoning: {}", args.reasoning.as_str());
+    }
+    // THE LENGTH, NEVER THE TEXT. A deployment prompt is often the operator's
+    // policy or persona and a server log is not where it belongs, but a line
+    // saying nothing at all leaves "did my --system-file actually load" with
+    // no answer short of sending a request.
+    if let Some(system) = &args.default_system {
+        eprintln!(
+            "  default system prompt: {} chars (applied only to requests that send none)",
+            system.chars().count()
+        );
     }
     Ok(Arc::new(model))
 }

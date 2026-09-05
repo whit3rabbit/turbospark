@@ -430,7 +430,54 @@ pub(crate) fn plan(model: &AppState, request: &ChatCompletionRequest) -> Result<
                 None => {}
             }
         }
+        // EVERY PLANNED MESSAGE MUST HAVE BEEN CONSUMED, and this checks the
+        // direction the `expect` above cannot. That one fires when `planned`
+        // runs SHORT. The opposite -- a message inserted into `messages`
+        // before this block, leaving one unconsumed at the end -- shifts every
+        // image onto the wrong turn and drops the last real one, silently.
+        // The default-system-prompt injection below sits after this block for
+        // exactly that reason, and a future insertion in the wrong place now
+        // gets an error rather than wrong pictures.
+        if planned.next().is_some() {
+            return Err(
+                "internal: a message was inserted before the image splice, so images \
+                 would attach to the wrong turn"
+                    .to_string(),
+            );
+        }
         messages = rebuilt;
+    }
+
+    // THE DEPLOYMENT'S DEFAULT SYSTEM PROMPT (`--system` / `--system-file`).
+    //
+    // **HERE, AND NOT WHERE `messages` IS BUILT.** The vision rebuild above
+    // walks `request.messages` and `messages` in LOCKSTEP and calls
+    // `planned.next().expect("one planned message per kept source")`. An extra
+    // element at the front of `messages` shifts every image onto the wrong
+    // turn and drops the last one, with no panic and no error -- just wrong
+    // pictures. Injecting after the rebuild is what keeps the two walks
+    // aligned.
+    //
+    // **AND THE CALLER WINS.** A request carrying its own system or developer
+    // turn is left exactly as it arrived. That is not politeness: three of the
+    // five fallback renderers refuse a system message at any index but 0
+    // (`chat_template/{chatml,gemma,deepseek}.rs`), so a second system turn
+    // beside the caller's would fail the render rather than read oddly. It
+    // also means a deployment default cannot silently override a client that
+    // believes it set the instructions.
+    //
+    // One insertion covers every wire format this server speaks: `/v1/messages`,
+    // `/v1/responses` and `/api/chat` all convert to `ChatCompletionRequest`
+    // before they reach here. It covers `count_tokens` too, which is correct --
+    // the count then matches what a real call prefills.
+    if let Some(system) = model.default_system() {
+        let caller_sent_one = request
+            .messages
+            .iter()
+            .any(|m| matches!(m.role, ChatRole::System | ChatRole::Developer));
+        if !caller_sent_one {
+            messages.insert(0, Message::new(Role::System, system));
+        }
     }
 
     let reasoning = reasoning_effort(request, model.default_reasoning())?;
