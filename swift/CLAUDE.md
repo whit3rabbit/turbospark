@@ -47,7 +47,7 @@ swift/
     |   +-- Files/                   # AttachmentImporter, FilePreviewView,
     |   |                            # FilesSectionView
     |   +-- State/                   # AppModel (@MainActor) + extensions,
-    |   |                            # AppChat/AppProject/AppTool,
+    |   |                            # AppChat/AppProject,
     |   |                            # GlobalMcpFileStore, SystemPermissionsManager
     |   +-- Generation/              # composer, output pane, chat sidebar (+ projects,
     |   |                            # chat rows, footer subviews), tool cards,
@@ -69,11 +69,20 @@ swift/
     |   +-- Theme/                   # AppearanceSettings, AppearanceTypes, AppDockIconRenderer,
     |   |                            # TurboSparkTheme, AppChromePresentation,
     |   |                            # PointerCursorModifier, ThemeCodePreviewView
-    |   +-- Tools/                   # AppToolCatalog, AppToolRegistry,
-    |   |   +-- Core/                # AppToolPermissionEngine, OpenAIToolSchema
+    |   +-- Tools/                   # everything a tool call passes through;
+    |   |   |                        # docs/SWIFT_TOOLS.md is the map
+    |   |   +-- Registry/            # AppToolRegistry (+Handlers, +Vocabulary),
+    |   |   |                        # AppToolTypes, AppToolCatalog: the five
+    |   |   |                        # files adding a tool touches
+    |   |   +-- Core/                # ToolCallParser, AppToolPermissionEngine,
+    |   |   |                        # ToolRiskClassifier, CommandGate (+ features),
+    |   |   |                        # AppToolSandbox, ProcessExecutor, OpenAIToolSchema
+    |   |   +-- Hooks/               # PreToolUse/PostToolUse engine, store, matcher
+    |   |   +-- Guardrails/          # ForgeGuardrailsEngine (tool-call rescue)
+    |   |   +-- Custom/              # user JSON tools: definition, parser, executor
     |   |   +-- MCP/                 # McpClientEngine, McpServerSpec, ProjectMcpDetector
-    |   |   +-- File/                # FileReadWriteTools
-    |   |   \-- Web/                 # WebTools
+    |   |   +-- File/ Terminal/ Web/ # per-domain schemas and executors
+    |   |   \-- Tasks/ Planning/ Projects/ Automation/
     |   \-- Resources/               # app-prompts.json, Logos/ (Bundle.module)
     \-- Tests/TurboSparkAppTests/    # Unit tests covering appearance settings,
                                      # MCP client engine, project MCP detection,
@@ -301,16 +310,18 @@ so going through `make` recompiles the whole app every single time. Use
 
 11. **THE APP IS UNSANDBOXED AND EXECUTES MODEL-PROPOSED SHELL COMMANDS.**
     `AppToolRegistry.execute` implements `run_command` alongside file read
-    and write. The barrier is `AppModel.permission(for:)`, which resolves the
-    project's `AppToolPermission` to `.ask`, `.allow` or `.deny` per
-    category; `.allow` on the terminal category runs the command with no
-    prompt, and a project's `maxAutonomousSteps` (default 5) bounds the agent
-    loop. **That description was true of the MECHANISM and false of the
+    and write. The barrier is `AppToolPermissionEngine.evaluate`, called by
+    the two agent loops (`AppModel+AgentLoop`, `SubagentRunner+Gate`) and
+    NEVER by `execute` itself; it resolves the project's `AppToolPermission`
+    to `.ask`, `.allow` or `.deny` per category; `.allow` on the terminal
+    category runs the command with no prompt, and a project's
+    `maxAutonomousSteps` (default 5) bounds the agent loop. (`AppModel
+    .permission(for:)` used to be named here; state#101 deleted it.) **That description was true of the MECHANISM and false of the
     CONFIGURATION every real project ran under until 2026-08-30: the sheet
     that creates them seeded `terminal: .allow`. Read Gotchas 28 and 29 with
-    this one.** Read `State/AppTool.swift` and `State/AppProject.swift` together
-    before changing anything on that path, and do not widen a default
-    permission without saying so.
+    this one.** Read `Tools/Registry/AppToolRegistry.swift` and
+    `State/AppProject.swift` together before changing anything on that path,
+    and do not widen a default permission without saying so.
 
     **`resolveSecurePath` DID NOT CHECK CONTAINMENT UNTIL 2026-08-28, and its
     name said it did.** It standardized the caller's path and appended it to
@@ -772,9 +783,11 @@ so going through `make` recompiles the whole app every single time. Use
     `~/Library/Application Support`, browser profiles, shell history and every
     token on disk, and `isSensitivePath` knows about a dozen filenames out of
     all of that. Path-taking and process-spawning tools are refused by name
-    now (`workspaceRootedToolNames`); `skill`, the task tools and
-    `askuserquestion` need no root and still work, which is the case the
-    fallback was really reaching for.
+    now (`workspaceRootedToolNames`); `skill`, `todowrite` and `agent` need
+    no root and still work, which is the case the fallback was really
+    reaching for. (`askuserquestion`, `taskcreate` and `tasklist` were in that
+    rootless group until 2026-09-04, when their canned no-op arms were removed
+    as the T5 class of Gotcha 32 and `docs/SWIFT_TOOLS.md` section 9.)
 
 31. **A CLASS INITIALIZER THAT THROWS PART-WAY DOES NOT RUN `deinit`, SO A C
     HANDLE ACQUIRED BEFORE THE THROW LEAKS IN FULL.** `TurboSparkSession.init`

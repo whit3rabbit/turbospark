@@ -60,6 +60,7 @@ If you are looking for more polished, general-purpose local LLM runners, GUI des
   - [With this engine against without it](#with-this-engine-against-without-it)
   - [Does this help if the model is dense, and what about the 1-bit checkpoint](#does-this-help-if-the-model-is-dense-and-what-about-the-1-bit-checkpoint)
   - [Parity with the Swift Original (Gemma 4 26B-A4B)](#parity-with-the-swift-original-gemma-4-26b-a4b)
+  - [Compared to slotstream, a Swift engine for the same model family](#compared-to-slotstream-a-swift-engine-for-the-same-model-family)
 - [GGUF Intake & Custom `.gturbo` Format](#gguf-intake--custom-gturbo-format)
   - [Why the Custom `.gturbo` Format?](#why-the-custom-gturbo-format)
   - [Compatibility with Upstream `turbo-fieldfare`](#compatibility-with-upstream-turbo-fieldfare)
@@ -145,8 +146,9 @@ The plain version: on a 36 GB laptop, a 26B-parameter model that would normally 
 | **Ornith-1.5 35B-A3B** (INT4) | 18 GB | **~1.6 GB** | 32 to 42 tok/s | 21 W (1 case) | ~0.47 J (1 case) |
 | **Qwen3-30B-A3B** (Q4_K_M) | 17 GB | ~2.7 GB | 16 to 28 tok/s | 21 W | ~0.8 to 1.4 J |
 | **gpt-oss-20b** (MXFP4) | 11 GB | ~5.4 GB | 23 to 30 tok/s | 29 to 33 W | ~1.1 to 1.3 J |
+| **Qwen3.8-Flash-Next REAP-288** (INT4) | 68 GB | **~2.5 GB** | 6.9 to 11.2 tok/s | not measured | not measured |
 
-**The first four rows are the point of the project**: a 26B model in ~2.1 GB and two 35B models in ~1.6 GB, against 13 GB and 18 GB on disk. The last two rows are honest counter-examples that still stream but land higher, and the reason is arithmetic rather than a defect: see the note on expert size below.
+**The first four rows are the point of the project**: a 26B model in ~2.1 GB and two 35B models in ~1.6 GB, against 13 GB and 18 GB on disk. The next two rows are honest counter-examples that still stream but land higher, and the reason is arithmetic rather than a defect: see the note on expert size below. **The last row is a different shape of counter-example**: an expert-pruned variant of a 125B-parameter architecture (288 of the original 512 experts per layer kept, top-10 routing unchanged) in ~2.5 GB, the largest model in this table by a wide margin, at this table's slowest speed and this repo's widest run-to-run spread (6.9 to 11.2 tok/s case to case) -- a 16-slot cache against 288 top-10-routed experts misses on most tokens, and which experts are already resident when a case starts moves its own hit rate more than it does for any other row here. It also runs at a 2,048-token context window rather than this table's usual 4,096, because the checkpoint's own query-sparse indexer is not yet implemented and this port refuses to run dense attention above the budget it was trained under. See [`docs/QWEN4_EXP.md`](docs/QWEN4_EXP.md) and the [slotstream comparison](#compared-to-slotstream-a-swift-engine-for-the-same-model-family) below.
 
 Ornith-1.5 35B-A3B lands on Qwen 3.6's memory and speed because it *is* Qwen 3.6's architecture, retrained: its config derives the same internal baseline field for field, so it needed no new kernel and no new decode flow.
 
@@ -173,6 +175,7 @@ The right-hand column is arithmetic rather than a measurement. A conventional ru
 
 | Install | Format | Bits | On disk | RAM here | A conventional runner needs | Ratio |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Qwen3.8-Flash-Next REAP-288 | MLX affine | 4 | 68 GB | **~2.5 GB** | ~68 GB | **~27x** |
 | Qwen 3.6 35B-A3B | MLX affine | 4 | 18 GB | **1.6 GB** | ~18 GB | **11x** |
 | Ornith-1.5 35B-A3B | MLX affine | 4 | 18 GB | **1.6 GB** | ~18 GB | **11x** |
 | Gemma 4 26B-A4B | MLX affine | 4 | 13 GB | **2.1 GB** | ~13 GB | **6x** |
@@ -230,6 +233,29 @@ Both engines opened the same install on the same machine. The Swift arm is [Mfer
 The 2-5% is one machine, one install, and one counter. It is `phys_footprint` on an M4 Max, and this port's process covered two generations to the Swift CLI's one, which if anything favours Swift. Peak RSS runs the other way (1,991 to 1,993 MiB here against 1,682 to 1,831), and that counter moves with how much of the mapped install happens to be resident, so neither number alone settles the question. Do not read a 2% gap as an engineering result. Read it as evidence the two engines do the same work.
 
 Full benchmarks, quality verification, KL divergence vs `mlx-lm`, and power consumption measurements are available in [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) and [`docs/POWER_BASELINE.md`](docs/POWER_BASELINE.md).
+
+### Compared to slotstream, a Swift engine for the same model family
+
+[slotstream](https://github.com/carloslfu/slotstream) is a Swift/MLX engine that streams **Qwen3.8-Flash-Next** experts from SSD, the same architecture family as this port's `qwen4exp` support. It is not a controlled A/B: different checkpoint, different chip, and neither project has published a same-machine side-by-side yet (slotstream's own README says as much about every engine it lists, this one included). Read the numbers below as two independent projects' own measurements, not a race result.
+
+| | This port (`qwen4exp`) | slotstream |
+| --- | --- | --- |
+| Checkpoint | `sh0wie/Qwen3.8-Flash-Next-REAP-288-MLX-4bit`, expert-pruned to 288 of 512 experts per layer | `pipenetwork/Qwen3.8-Flash-Next-MLX-4bit`, the full 512-expert checkpoint |
+| On disk | 68 GB | 105 GB |
+| Chip measured | Apple M4 Max, 36 GB | Apple M5 Pro, 48 GB |
+| Peak memory | **~2.5 GB** (fixed 16-slot cache) | 8.1 GB floor, auto-sizes up to 33 GB on a 48 GB+ Mac |
+| Decode | 6.9 to 11.2 tok/s | ~3 tok/s at its 8.1 GB floor, ~4 at 16 GB, ~12 at 33 GB (warm) |
+| Context window | 2,048 tokens (checkpoint's own QSA indexer not yet implemented) | 32,768 tokens |
+| Speculative decoding | not wired for this family yet | native MTP head, 1.24-1.33x measured |
+| Prefix-KV reuse | implemented in the engine, not yet enabled for this family | measured, cuts an 8th-turn prefill from 25.8s to 6.0s |
+
+Three things worth reading past the raw tok/s row before drawing a conclusion:
+
+- **The checkpoints are not the same size for a reason that matters to the comparison, and it is coincidence rather than agreement that both read "68 GB".** REAP-288 prunes 224 of the 512 experts per layer before quantizing, so this engine's 16-slot cache is choosing among 288 candidates where slotstream's is choosing among 512 -- a smaller haystack per token, independent of anything either engine's cache policy does. slotstream's own README puts its *routed-expert* bytes alone at 68 GB, on top of a separate 32 GB n-gram table and 3.8 GB trunk (105 GB total). This project's install (`du -sh` on the actual `.gturbo` directory) is 36 GB of pruned routed experts, 30 GB of n-gram table, and 2.6 GB of trunk -- 68 GB total, but a DIFFERENT 68 GB: the n-gram table and trunk are unaffected by expert pruning and read almost the same size both projects measure (30 GB vs slotstream's 32, 2.6 GB vs slotstream's 3.8), while the pruned expert table (36 GB) is a little over half of slotstream's unpruned 68 GB, consistent with keeping 288 of 512 experts.
+- **The memory strategies are different points on the tradeoff curve, not the same point measured twice.** slotstream auto-sizes toward whatever the machine can spare (its own example: 33 GB target, ~152 of 512 experts resident per layer, about 30% cache coverage) and treats a bigger cache as a bigger, faster machine. This port's expert cache defaults to a fixed 16 slots regardless of available RAM (`--expert-cache-slots` goes up to 128, but nothing has tuned this specific 288-expert routing profile past the default yet -- see [`docs/QWEN4_EXP.md`](docs/QWEN4_EXP.md)'s open item). So the fair reading of the tok/s row is "this port at ~2.5 GB lands above slotstream's 8 GB and 16 GB tiers, and in the neighborhood of its 24 GB one" -- a real result at a much smaller footprint, but against a smaller-haystack checkpoint on an older chip, three confounds in the same direction of making this port's number look better than a matched comparison would.
+- **slotstream is further along on two axes this port has not built for this family**: 16x the context window (32,768 against 2,048, gated on this port's missing QSA indexer above 2,048) and a working speculative-decode path for this exact checkpoint (this port's MTP drafter exists for the *dense* `qwen3_5` family, not yet wired here).
+
+A same-machine, same-checkpoint run is the only way to settle the tok/s and memory questions properly; nobody has published one yet, including slotstream's own comparisons against the other engines it lists.
 
 ---
 
