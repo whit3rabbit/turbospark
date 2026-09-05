@@ -1039,17 +1039,168 @@ above-budget difference, and REPORTS the KL rather than thresholding it
 (Gotcha 38); a future reading far from these numbers is the thing to
 investigate, not a test to loosen.
 
+### Chunked prefill landed (2026-09-05)
+
+`families/qwen4/prefill.rs`'s `prefill_chunk_real_qwen4` is the "Step 1"
+shape every other family's chunk driver already has: loop the existing
+per-token kernels inside a micro-batch of up to `MAX_PREFILL_BATCH` (16)
+tokens, one command buffer per layer for the attention-and-router half, a
+per-token routed-MoE loop pipelined the same way gemma4's is. No new kernel.
+The pessimistic note this section used to carry ("would need... a position
+list per QSA layer") turned out to be wrong once the driver preserved
+gemma4's own per-layer commit-and-wait ordering: the QSA indexer's shared
+`qsa_positions` buffer, and its mid-layer above-budget commit inside
+`encode_full_attention_block`, needed zero changes.
+
+Five buffers DID need widening to `MAX_PREFILL_BATCH` rows, four for the
+by-now-familiar reasons every chunk driver's buffers widen for (`wide_x`
+crosses layers; `router_logits_f32` is read back in one host round trip;
+`hc_inject` and a new `moe_x` bridge the `cb1`/`"routed cb"` split for
+`mlp_hc`). The fifth, PLE's `ngram_emb`, is the sharpest instance of this
+whole pattern found so far, and it shipped broken on the first cut of this
+driver: its upload (`gpu::write_buffer_bytes`) is a HOST write, executed the
+instant the encoding function runs rather than a GPU dispatch queued for
+later, so it does not respect command-buffer commit order at all. A
+single-row buffer left every token but the last in a micro-batch computing
+PLE from the WRONG token's n-gram embedding, silently -- caught by
+`real_forward_qwen4_chunked.rs`'s `the_chunk_boundary_does_not_move_the_logits`
+at chunk span 2, the first multi-token micro-batch the test tried. See
+`crates/runtime/CLAUDE.md` Gotcha 14's `qwen4_exp` paragraph for the full
+account.
+
+Verified byte-identical against sequential on the synthetic fixture
+(`tests/real_forward_qwen4_chunked.rs`: whole-prompt and chunk-span sweep
+`[1, 2, 3, 4, 7, 11]`, a span crossing the QSA sparsity boundary at position
+19, and the minimal-safe-slot-count case at `2 * top_k`), and on the real
+`qwen4-reap288.gturbo` install: greedy (`--temperature 0.0001 --top-k 1`) and
+sampled (CLI defaults, seed `20260721`) stdout md5-identical between the
+sequential and chunked paths on a 40-token prompt, 48 new tokens each. This
+was a short-prompt wiring check, not a throughput measurement -- both arms'
+prefill ran at ~40 tokens over 6-8s, too small a prompt to see the win a
+2,940-token prefill should get from batching, and cold-cache effects
+(Gotcha 20) dominate at this scale. `real_forward_qwen4.rs`'s existing 17
+cases, including its frozen digest (perplexity 8.7224, both digests), all
+reproduced unmoved -- the buffer widening changed sizes, not logic.
+
+### The chunked driver's first real-install run found a crash, at the default slot count
+
+The synthetic suite was green on seven cases and the driver still could not
+prefill a 426-token prompt on `qwen4-reap288`. It panicked in
+`crates/streaming/src/expert_cache.rs` with `expert cache cannot place
+requested misses`, which is AGENTS.md Gotcha 64 arriving on a second family.
+
+The arithmetic. `routed_pipeline_banks` pipelines only when
+`expert_cache_slots >= 2 * top_k`. This checkpoint routes **top-10** and the
+bench pins **16** slots, so `16 >= 20` fails and the loop degrades to
+`banks == 1`. In that branch the loop still reserved the previous token's
+slots through `RoutedSlot::protect`, leaving `16 - 10 = 6` places for a token
+that can miss on all 10, and `ExpertCache::plan` asserts rather than
+degrading.
+
+The reservation was never needed there. `protect` names slots a command
+buffer STILL IN FLIGHT is reading, and the `banks == 1` branch calls
+`retire_routed` before planning, so nothing is in flight by the time
+`protect` is consulted. The fix is an empty set at `banks == 1`, which is
+what Gotcha 64 had already argued for and what `families/gptoss/prefill.rs`'s
+own seam does.
+
+**Two things about this are worth more than the fix.**
+
+First, why gemma4 never showed it: that family routes top-8, so its default
+16 slots leave exactly 8 for up to 8 misses -- it fits by one, and the
+documented reproduction needed `--expert-cache-slots 8`. The bug is not
+about the number 8 or the number 16, it is about `slots < 2 * top_k`, and a
+family with a larger `top_k` reaches it at settings nobody would call
+exotic. This one reaches it through a plain `turbospark-bench --model`.
+
+Second, why seven green synthetic cases missed it. The suite carried a case
+called `a_cache_too_small_to_pipeline_still_reproduces_the_sequential_logits`
+that opens at `2 * TOP_K` -- which satisfies `>=` and therefore pipelines. It
+was named for the fallback and tested the pipelined path. When the threshold
+is `>=`, a fixture at exactly the threshold sits on the wrong side of it.
+`the_one_bank_fallback_reproduces_the_sequential_logits` opens at `TOP_K`
+instead, and reverting the fix reproduces the real install's exact panic
+message on the synthetic fixture.
+
+### The throughput measurement, attempted 2026-09-05: NOT CITABLE, and the reference arm says why
+
+Three interleaved pairs on the real install, `medium-review` (426-token
+prompt), warmup discarded, AC power, through the new `turbospark-bench
+--prefill-chunk`:
+
+| pair | sequential prefill | chunked prefill | ratio |
+|---|---|---|---|
+| 1 | 66.37 s | 50.07 s | 1.326x |
+| 2 | 48.59 s | 47.75 s | 1.018x |
+| 3 | 46.08 s | 50.79 s | 0.907x |
+
+**Read the reference arm before reading the ratios.** The SEQUENTIAL arm,
+doing byte-identical work three times, spans **1.440x** on its own
+(46.08 to 66.37) and does so MONOTONICALLY, 66.37 then 48.59 then 46.08.
+That is a warming trend rather than noise, and it is larger than any effect
+this A/B could be looking for, so `crates/bench/CLAUDE.md` Gotcha 23's gate
+is not met and no magnitude here is quotable. The chunked arm is much
+tighter (1.064x), which is itself a hint about the mechanism rather than
+evidence for the feature.
+
+**The ratios do not even agree on a SIGN.** Pair 1 reads 1.33x, pair 3 reads
+0.91x. Dropping pair 1 as further warmup leaves sequential at a 47.3 s mean
+against chunked's 49.3 s, i.e. chunked slightly SLOWER, which inverts the
+first pair's conclusion. So this is not "a win we could not size", it is a
+null result that cannot presently be distinguished from a small loss.
+
+**A null result is the EXPECTED one here, and the arithmetic was available
+before the run.** Chunked prefill batches COMMAND BUFFERS, not I/O. This
+page's parent (`docs/BATCHED_PREFILL.md`, "The expert `pread` does not
+batch") records that the expert read is the one prefill term step 1 cannot
+touch, and that is exactly the term this checkpoint is dominated by: 288
+experts routed top-10 against a 16-slot cache misses constantly, which is
+the same reasoning that scoped the GGUF arm of step 5 out of existence at a
+37.1% pread share. A family whose prefill is pread-bound has little for
+command-buffer batching to win. **This remains a hypothesis rather than a
+measurement**: no phase table was taken for this family, and
+`TURBOSPARK_DISPATCH_PROFILE` is the wrong instrument for it (AGENTS.md
+Gotcha 66). The cheap version is one `TURBOSPARK_PHASES=1` run read for its
+`pread` bucket, on a short prompt so the divisor is not swamped (Gotcha 21).
+
+**What a clean measurement would need**, and why this one could not have it:
+the install is 68 GiB on a 36 GiB machine, so it can never be fully page
+cached and every run re-reads expert bytes whose residency differs from the
+last run's. That is the likeliest source of the monotone warming, and it is
+a property of this checkpoint on this hardware rather than of the machine
+being busy. More warmup runs would help and cannot fix it. The honest
+options are a smaller checkpoint of the same family, or many more pairs than
+three.
+
 ### What remains
 
-- Chunked prefill for this family: a 2,940-token prompt is 2,940 sequential
-  decode steps (8 minutes cold here). Every other MoE family has a driver;
-  this one would need the indexer's per-token key write and block pooling
-  expressed per micro-batch, and a position list per QSA layer (the single
-  shared buffer relies on the per-layer wait, `attn.rs`'s comment at the
-  write).
+- **The throughput measurement**: ATTEMPTED 2026-09-05 and NOT CITABLE, see
+  the section above. The sequential reference arm's own spread (1.440x,
+  monotone) exceeds the effect, and the three paired ratios do not agree on a
+  sign. A null result is what the pread-bound arithmetic predicts for this
+  checkpoint, but that prediction is untested: the cheap next step is one
+  `TURBOSPARK_PHASES=1` run read for its `pread` bucket, not another A/B.
+
+  Note WHICH INSTRUMENT that comparison needs. `turbospark-bench` grew a
+  `--prefill-chunk` flag on 2026-09-05 and can now drive the chunked path
+  for every family, but this family's protocol window is pinned at 2,048
+  (the bullet below), so `long-synthesis` does not fit it and the bench can
+  only reach `short-explanation` and `medium-review`. The 506.58s baseline
+  was taken through `crates/cli`, so the apples-to-apples comparison has to
+  stay there; the bench flag is the right instrument for the protocol rows
+  and for the energy capture, not for this particular number.
 - The bench window: `QWEN4_EXP_MAX_CONTEXT` stays 2,048 so the frozen
   memory-oracle and quality-gate rows keep meaning what they say. Moving it
   to `PROTOCOL_MAX_CONTEXT` lets `long-synthesis` into the protocol and
   re-freezes every row of this family, a decision of its own.
 - A GPU top-k would remove the mid-layer commit (12 per token above budget);
   not built, no evidence yet that it is the bottleneck.
+- The chunked driver's family refusal in `turbospark-bench` (`--prefill-chunk`
+  against an install whose family has no chunked driver) has never been read
+  off a real run on this machine, because every install on disk answers
+  `supports_chunked_prefill()` true and the one family that does not
+  (`qwenGdnMoe`) has no install left here.
+- `crates/runtime/CLAUDE.md` Gotcha 33's one-line gap (the prefix-reuse
+  recurrent-state guard is missing a `real_qwen4.is_some()` arm) is still
+  open and is unrelated to chunked prefill; inert today because nothing
+  wires prefix reuse to this family yet.

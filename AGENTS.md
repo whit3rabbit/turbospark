@@ -1809,6 +1809,44 @@ configurable via `PREFIX` or `BINDIR`), and `make uninstall`.
     and the failure mode does not exist at that width. Do not read a
     passing oracle at 16 slots as evidence that 8 works.
 
+    **THIS BIT A SECOND FAMILY ON 2026-09-05, AT THE DEFAULT SLOT COUNT, AND
+    THAT IS THE PART TO CARRY.** Everything above is written as though 8
+    slots were the exotic configuration that reaches the bug. It is not the
+    slot count that matters, it is `slots < 2 * top_k`, and the gemma4 story
+    reads as being about `8` only because that family routes top-8. The real
+    `qwen4-reap288` install routes **top-10**, so the bench's own pinned
+    `PROTOCOL_EXPERT_CACHE_SLOTS` of 16 fails `16 >= 20`, degrades to
+    `banks == 1`, reserves the previous token's 10 slots and leaves 6 places
+    for a token that can miss on 10. It panics on the first multi-token
+    prompt with the identical message, on the DEFAULT configuration of a
+    supported family, reached by an ordinary `turbospark-bench --model` run.
+
+    **The fix is the one this entry already argued for and nobody had
+    applied**: at `banks == 1` the branch calls `retire_routed` BEFORE
+    planning, so nothing is in flight when `protect` is read and the correct
+    reservation is the EMPTY set. `families/qwen4/prefill.rs` passes
+    `HashSet::new()` there since 2026-09-05, pinned by
+    `the_one_bank_fallback_reproduces_the_sequential_logits`, whose mutation
+    (reverting to the unconditional `previous_slots`) reproduces the real
+    install's exact panic on the synthetic fixture.
+
+    **`families/{gemma4,gptoss,llama}/prefill.rs` STILL PASS IT
+    UNCONDITIONALLY.** They are unreachable at their own default slot counts
+    (top-8 of 16 leaves exactly 8, which is enough), so this is latent there
+    rather than live, and it stays open deliberately: changing them means
+    re-running three families' byte-identity gates for a path none of them
+    takes by default.
+
+    **AND NOTE WHAT LET IT SHIP.** `real_forward_qwen4_chunked.rs` carried a
+    case named `a_cache_too_small_to_pipeline_still_reproduces_the_sequential_logits`
+    which passes `2 * TOP_K` -- a value that SATISFIES `>=` and therefore
+    pipelines. The fallback had a test named after it and no test covering
+    it, which is Gotcha 51's shape (a fixture whose inputs cannot reach the
+    thing it claims to check) hiding behind a correct-sounding name. When a
+    threshold is `>=`, a test at exactly the threshold is on the WRONG side
+    of it.
+
+
 65. **WHEN A REFERENCE KERNEL DIFFERS ON SEVERAL AXES AT ONCE, CHANGING ONE
     IS NOT A CONTROLLED EXPERIMENT -- IT IS A THIRD, WORSE KERNEL.**
     Measured 2026-08-29. MLX's `qmm_t_impl` beats this port's
